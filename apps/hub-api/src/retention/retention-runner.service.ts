@@ -33,6 +33,8 @@ export class RetentionRunnerService {
     trafficMetric: number;
     trafficPath: number;
     trafficCountry: number;
+    trafficBreakdown: number;
+    trafficLatency: number;
   }> {
     const rawHours = Number(this.config.get("METRICS_RAW_RETENTION_HOURS") ?? 48);
     const hbDays = Number(this.config.get("HEARTBEAT_RETENTION_DAYS") ?? 30);
@@ -106,6 +108,14 @@ export class RetentionRunnerService {
       (take) => this.prisma.trafficCountry.findMany({ where: { bucket: { lt: trafficCutoff } }, select: { id: true }, take }),
       (ids) => this.prisma.trafficCountry.deleteMany({ where: { id: { in: ids } } }),
     );
+    const trafficBreakdown = await this.pruneOlderThan(
+      (take) => this.prisma.trafficBreakdown.findMany({ where: { bucket: { lt: trafficCutoff } }, select: { id: true }, take }),
+      (ids) => this.prisma.trafficBreakdown.deleteMany({ where: { id: { in: ids } } }),
+    );
+    const trafficLatency = await this.pruneOlderThan(
+      (take) => this.prisma.trafficLatency.findMany({ where: { bucket: { lt: trafficCutoff } }, select: { id: true }, take }),
+      (ids) => this.prisma.trafficLatency.deleteMany({ where: { id: { in: ids } } }),
+    );
     // Audit log is compliance-sensitive → pruned ONLY when AUDIT_RETENTION_DAYS is explicitly set (> 0).
     const auditLog = auditDays > 0
       ? await this.pruneOlderThan(
@@ -114,12 +124,12 @@ export class RetentionRunnerService {
         )
       : 0;
 
-    if (metric || containerMetric || heartbeat || metricRollup || containerMetricRollup || deployment || notificationDelivery || auditLog || containerEvent || trafficMetric || trafficPath || trafficCountry) {
+    if (metric || containerMetric || heartbeat || metricRollup || containerMetricRollup || deployment || notificationDelivery || auditLog || containerEvent || trafficMetric || trafficPath || trafficCountry || trafficBreakdown || trafficLatency) {
       this.logger.log(
-        `retention prune: metric=${metric} containerMetric=${containerMetric} heartbeat=${heartbeat} metricRollup=${metricRollup} containerMetricRollup=${containerMetricRollup} deployment=${deployment} notificationDelivery=${notificationDelivery} auditLog=${auditLog} containerEvent=${containerEvent} trafficMetric=${trafficMetric} trafficPath=${trafficPath} trafficCountry=${trafficCountry}`,
+        `retention prune: metric=${metric} containerMetric=${containerMetric} heartbeat=${heartbeat} metricRollup=${metricRollup} containerMetricRollup=${containerMetricRollup} deployment=${deployment} notificationDelivery=${notificationDelivery} auditLog=${auditLog} containerEvent=${containerEvent} trafficMetric=${trafficMetric} trafficPath=${trafficPath} trafficCountry=${trafficCountry} trafficBreakdown=${trafficBreakdown} trafficLatency=${trafficLatency}`,
       );
     }
-    return { metric, containerMetric, heartbeat, metricRollup, containerMetricRollup, deployment, notificationDelivery, auditLog, containerEvent, trafficMetric, trafficPath, trafficCountry };
+    return { metric, containerMetric, heartbeat, metricRollup, containerMetricRollup, deployment, notificationDelivery, auditLog, containerEvent, trafficMetric, trafficPath, trafficCountry, trafficBreakdown, trafficLatency };
   }
 
   /** Page through matching ids and delete them in batches until a short/empty page ends the run. */

@@ -1,7 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
-import type { TrafficMetricsMsg } from "@tugra/shared";
+import { TRAFFIC_LATENCY_BUCKETS_MS, type TrafficMetricsMsg } from "@tugra/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { HostResolverService, normalizeHost } from "./host-resolver.service";
 
@@ -14,6 +14,11 @@ const MAX_PATHS = 50; // distinct paths kept per (domain, bucket); the rest fold
 const MAX_RAW_COUNTRIES = 500; // incoming country entries examined per domain
 const MAX_COUNTRIES = 50; // distinct country codes kept per (domain, bucket); the rest fold into UNKNOWN_COUNTRY
 const MAX_UNMATCHED_COUNTRIES = 10; // same, for a kept unmatched (attacker-controlled) host
+const MAX_RAW_BREAKDOWN = 500; // incoming entries examined per (domain, dimension)
+const MAX_BREAKDOWN = 50; // distinct keys kept per (domain, bucket, dim); the rest fold into OTHER_KEY
+const MAX_UNMATCHED_BREAKDOWN = 10; // same, for a kept unmatched (attacker-controlled) host
+const MAX_KEY_LEN = 100;
+const LATENCY_BINS = TRAFFIC_LATENCY_BUCKETS_MS.length + 1; // 13 bounds + the overflow bucket = idx 0..13
 const MAX_PATH_LEN = 200;
 const MAX_HOST_LEN = 253;
 const MAX_INT = 2_147_483_647;
@@ -21,6 +26,16 @@ const MAX_AGE_MS = 24 * 3600_000; // a window older than this (or far in the fut
 const MAX_FUTURE_MS = 5 * 60_000;
 const ROW_CHUNK = 500; // rows per multi-row INSERT (parameter-count bound)
 export const OTHER_PATH = "(other)";
+export const OTHER_KEY = "(other)"; // overflow key of a TrafficBreakdown dimension
+/** Wire field on TrafficDomainStat -> TrafficBreakdown.dim. */
+export const BREAKDOWN_DIMS = [
+  ["browsers", "browser"],
+  ["os", "os"],
+  ["devices", "device"],
+  ["referrers", "referrer"],
+  ["cities", "city"],
+  ["networks", "network"],
+] as const;
 export const UNKNOWN_COUNTRY = "ZZ"; // invalid codes and the overflow beyond the per-bucket country cap
 const COUNTRY_RE = /^[A-Z]{2}$/;
 export const UNMATCHED_HOST = "(unmatched)"; // aggregate row for unmatched hosts beyond the per-bucket cap (appId null, no paths)
@@ -32,6 +47,8 @@ interface Counters {
   s4xx: number;
   s5xx: number;
   bytes: number;
+  bot: number;
+  human: number;
 }
 interface PathAcc {
   n: number;
@@ -51,6 +68,17 @@ const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[
 /** Drops NUL/control characters (Postgres TEXT rejects 0x00) and replaces lone surrogates (invalid JSON/UTF-8). */
 function sanitizeText(s: string): string {
   return s.replace(CONTROL_CHARS, "").replace(LONE_SURROGATE, "\uFFFD");
+}
+
+/** Breakdown key: sanitized, trimmed, bounded in length (never splitting a surrogate pair); empty/non-string -> "(other)". */
+export function cleanKey(raw: unknown): string {
+  if (typeof raw !== "string") return OTHER_KEY;
+  let k = sanitizeText(raw.slice(0, MAX_KEY_LEN + 1)).trim();
+  if (k.length > MAX_KEY_LEN) {
+    k = k.slice(0, MAX_KEY_LEN);
+    if (/[\uD800-\uDBFF]$/.test(k)) k = k.slice(0, -1);
+  }
+  return k === "" ? OTHER_KEY : k;
 }
 
 /** ISO-3166 alpha-2-shaped code (two uppercase letters) as-is; anything else → "ZZ". */
@@ -118,7 +146,7 @@ export class TrafficMetricsService {
     // Pass 1: merge duplicate hosts' counters (one INSERT must not touch the same key twice). Paths are merged
     // later, only for the hosts that survive ranking.
     const byHost = new Map<string, { c: Counters; src: TrafficMetricsMsg["domains"] }>();
-    const newCounters = (): Counters => ({ requests: 0, s2xx: 0, s3xx: 0, s4xx: 0, s5xx: 0, bytes: 0 });
+    const newCounters = (): Counters => ({ requests: 0, s2xx: 0, s3xx: 0, s4xx: 0, s5xx: 0, bytes: 0, bot: 0, human: 0 });
     const addCounters = (c: Counters, d: TrafficMetricsMsg["domains"][number] | Counters) => {
       c.requests = Math.min(MAX_INT, c.requests + count(d.requests));
       c.s2xx = Math.min(MAX_INT, c.s2xx + count(d.s2xx));
@@ -126,6 +154,9 @@ export class TrafficMetricsService {
       c.s4xx = Math.min(MAX_INT, c.s4xx + count(d.s4xx));
       c.s5xx = Math.min(MAX_INT, c.s5xx + count(d.s5xx));
       c.bytes = Math.min(Number.MAX_SAFE_INTEGER, c.bytes + count(d.bytes, Number.MAX_SAFE_INTEGER));
+      const split = "bot" in d ? d : d.bots; // already-merged Counters vs a wire stat ({ human, bot })
+      c.bot = Math.min(MAX_INT, c.bot + count(split?.bot));
+      c.human = Math.min(MAX_INT, c.human + count(split?.human));
     };
     for (const d of msg.domains.slice(0, MAX_RAW_DOMAINS)) {
       if (!d || typeof d !== "object") continue;
@@ -169,10 +200,12 @@ export class TrafficMetricsService {
     const metricRows: Prisma.Sql[] = [];
     const pathRows: Prisma.Sql[] = [];
     const countryRows: Prisma.Sql[] = [];
+    const breakdownRows: Prisma.Sql[] = [];
+    const latencyRows: Prisma.Sql[] = [];
     const bucketLit = tsLiteral(bucket);
     for (const { host, appId, c, src, maxPaths } of plan) {
       metricRows.push(
-        Prisma.sql`(${randomUUID()}, ${serverId}, ${host}, ${appId}, ${bucketLit}::timestamp, ${c.requests}::int, ${c.s2xx}::int, ${c.s3xx}::int, ${c.s4xx}::int, ${c.s5xx}::int, ${BigInt(c.bytes)}::bigint)`,
+        Prisma.sql`(${randomUUID()}, ${serverId}, ${host}, ${appId}, ${bucketLit}::timestamp, ${c.requests}::int, ${c.s2xx}::int, ${c.s3xx}::int, ${c.s4xx}::int, ${c.s5xx}::int, ${BigInt(c.bytes)}::bigint, ${c.bot}::int, ${c.human}::int)`,
       );
       if (maxPaths === 0) continue;
       const paths = new Map<string, PathAcc>();
@@ -230,13 +263,50 @@ export class TrafficMetricsService {
         if (n <= 0) continue;
         countryRows.push(Prisma.sql`(${randomUUID()}, ${serverId}, ${host}, ${bucketLit}::timestamp, ${cc}, ${n}::int)`);
       }
+
+      // Visitor dimensions (browser/os/device/referrer/city/network): sanitized keys, top-N by requests, the
+      // overflow (and any literal "(other)") folds into one "(other)" row. Rows are emitted in (dim, key) order.
+      const maxKeys = maxPaths === MAX_PATHS ? MAX_BREAKDOWN : MAX_UNMATCHED_BREAKDOWN;
+      for (const [field, dim] of BREAKDOWN_DIMS) {
+        const keys = new Map<string, number>();
+        for (const d of src) {
+          const list = d[field];
+          if (!Array.isArray(list)) continue;
+          for (const e of list.slice(0, MAX_RAW_BREAKDOWN)) {
+            if (!e || typeof e !== "object") continue;
+            const k = cleanKey(e.k);
+            keys.set(k, Math.min(MAX_INT, (keys.get(k) ?? 0) + count(e.n)));
+          }
+        }
+        const rankedK = [...keys.entries()].filter(([k, n]) => k !== OTHER_KEY && n > 0).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+        const keepK = rankedK.slice(0, maxKeys);
+        let overflowN = keys.get(OTHER_KEY) ?? 0;
+        for (const [, n] of rankedK.slice(maxKeys)) overflowN += n;
+        const kRows: [string, number][] = [...keepK];
+        if (overflowN > 0) kRows.push([OTHER_KEY, Math.min(MAX_INT, overflowN)]);
+        kRows.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+        for (const [k, n] of kRows) {
+          breakdownRows.push(Prisma.sql`(${randomUUID()}, ${serverId}, ${host}, ${bucketLit}::timestamp, ${dim}, ${k}, ${n}::int)`);
+        }
+      }
+
+      // Latency histogram: idx 0..13 into TRAFFIC_LATENCY_BUCKETS_MS (+overflow); entries past idx 13 are ignored,
+      // histograms of duplicate hosts sum, one row per non-empty bin.
+      const bins = new Array<number>(LATENCY_BINS).fill(0);
+      for (const d of src) {
+        if (!Array.isArray(d.latency)) continue;
+        for (let i = 0; i < LATENCY_BINS && i < d.latency.length; i++) bins[i] = Math.min(MAX_INT, bins[i] + count(d.latency[i]));
+      }
+      for (let i = 0; i < LATENCY_BINS; i++) {
+        if (bins[i] > 0) latencyRows.push(Prisma.sql`(${randomUUID()}, ${serverId}, ${host}, ${bucketLit}::timestamp, ${i}::int, ${bins[i]}::int)`);
+      }
     }
 
-    // One transaction for every chunk of all three tables: a failure leaves neither (no metric/path divergence).
+    // One transaction for every chunk of all five tables: a failure leaves neither (no metric/path divergence).
     const ops: Prisma.PrismaPromise<number>[] = [];
     for (let i = 0; i < metricRows.length; i += ROW_CHUNK) {
       ops.push(this.prisma.$executeRaw(Prisma.sql`
-        INSERT INTO "TrafficMetric" ("id", "serverId", "domain", "appId", "bucket", "requests", "s2xx", "s3xx", "s4xx", "s5xx", "bytes")
+        INSERT INTO "TrafficMetric" ("id", "serverId", "domain", "appId", "bucket", "requests", "s2xx", "s3xx", "s4xx", "s5xx", "bytes", "botRequests", "humanRequests")
         VALUES ${Prisma.join(metricRows.slice(i, i + ROW_CHUNK))}
         ON CONFLICT ("serverId", "domain", "bucket") DO UPDATE SET
           "requests" = "TrafficMetric"."requests" + EXCLUDED."requests",
@@ -245,6 +315,8 @@ export class TrafficMetricsService {
           "s4xx" = "TrafficMetric"."s4xx" + EXCLUDED."s4xx",
           "s5xx" = "TrafficMetric"."s5xx" + EXCLUDED."s5xx",
           "bytes" = "TrafficMetric"."bytes" + EXCLUDED."bytes",
+          "botRequests" = "TrafficMetric"."botRequests" + EXCLUDED."botRequests",
+          "humanRequests" = "TrafficMetric"."humanRequests" + EXCLUDED."humanRequests",
           "appId" = COALESCE(EXCLUDED."appId", "TrafficMetric"."appId")`));
     }
     for (let i = 0; i < pathRows.length; i += ROW_CHUNK) {
@@ -261,6 +333,20 @@ export class TrafficMetricsService {
         VALUES ${Prisma.join(countryRows.slice(i, i + ROW_CHUNK))}
         ON CONFLICT ("serverId", "domain", "bucket", "country") DO UPDATE SET
           "requests" = "TrafficCountry"."requests" + EXCLUDED."requests"`));
+    }
+    for (let i = 0; i < breakdownRows.length; i += ROW_CHUNK) {
+      ops.push(this.prisma.$executeRaw(Prisma.sql`
+        INSERT INTO "TrafficBreakdown" ("id", "serverId", "domain", "bucket", "dim", "key", "requests")
+        VALUES ${Prisma.join(breakdownRows.slice(i, i + ROW_CHUNK))}
+        ON CONFLICT ("serverId", "domain", "bucket", "dim", "key") DO UPDATE SET
+          "requests" = "TrafficBreakdown"."requests" + EXCLUDED."requests"`));
+    }
+    for (let i = 0; i < latencyRows.length; i += ROW_CHUNK) {
+      ops.push(this.prisma.$executeRaw(Prisma.sql`
+        INSERT INTO "TrafficLatency" ("id", "serverId", "domain", "bucket", "idx", "requests")
+        VALUES ${Prisma.join(latencyRows.slice(i, i + ROW_CHUNK))}
+        ON CONFLICT ("serverId", "domain", "bucket", "idx") DO UPDATE SET
+          "requests" = "TrafficLatency"."requests" + EXCLUDED."requests"`));
     }
     await this.prisma.$transaction(ops);
   }

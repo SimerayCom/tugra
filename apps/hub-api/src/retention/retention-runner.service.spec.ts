@@ -16,6 +16,8 @@ describe("RetentionRunnerService", () => {
       trafficMetric: [[]],
       trafficPath: [[]],
       trafficCountry: [[]],
+      trafficBreakdown: [[]],
+      trafficLatency: [[]],
     };
     const model = (name: string) => ({
       findMany: jest.fn().mockImplementation(() => Promise.resolve(pages[name].shift() ?? [])),
@@ -34,6 +36,8 @@ describe("RetentionRunnerService", () => {
       trafficMetric: model("trafficMetric"),
       trafficPath: model("trafficPath"),
       trafficCountry: model("trafficCountry"),
+      trafficBreakdown: model("trafficBreakdown"),
+      trafficLatency: model("trafficLatency"),
     } as any;
     const config = { get: jest.fn((k: string) => cfg[k]) } as any;
     return { svc: new RetentionRunnerService(prisma, config), prisma, pages };
@@ -75,7 +79,7 @@ describe("RetentionRunnerService", () => {
     const { svc, prisma } = make();
     const res = await svc.prune();
     expect(prisma.metric.deleteMany).not.toHaveBeenCalled();
-    expect(res).toEqual({ metric: 0, containerMetric: 0, heartbeat: 0, metricRollup: 0, containerMetricRollup: 0, deployment: 0, notificationDelivery: 0, auditLog: 0, containerEvent: 0, trafficMetric: 0, trafficPath: 0, trafficCountry: 0 });
+    expect(res).toEqual({ metric: 0, containerMetric: 0, heartbeat: 0, metricRollup: 0, containerMetricRollup: 0, deployment: 0, notificationDelivery: 0, auditLog: 0, containerEvent: 0, trafficMetric: 0, trafficPath: 0, trafficCountry: 0, trafficBreakdown: 0, trafficLatency: 0 });
   });
 
   it("prunes only terminal, non-rollbackable deployments (QUEUED/RUNNING and rollbackable rows are kept)", async () => {
@@ -123,13 +127,15 @@ describe("RetentionRunnerService", () => {
     expect(res.containerMetricRollup).toBe(1);
   });
 
-  it("prunes traffic metric/path/country rows by bucket < the traffic cutoff", async () => {
+  it("prunes traffic metric/path/country/breakdown/latency rows by bucket < the traffic cutoff", async () => {
     const { svc, prisma, pages } = make({ TRAFFIC_RETENTION_DAYS: 30 });
     pages.trafficMetric = [[{ id: "tm1" }]];
     pages.trafficPath = [[{ id: "tp1" }, { id: "tp2" }]];
     pages.trafficCountry = [[{ id: "tc1" }, { id: "tc2" }, { id: "tc3" }]];
+    pages.trafficBreakdown = [[{ id: "tb1" }, { id: "tb2" }, { id: "tb3" }, { id: "tb4" }]];
+    pages.trafficLatency = [[{ id: "tl1" }, { id: "tl2" }, { id: "tl3" }, { id: "tl4" }, { id: "tl5" }]];
     const res = await svc.prune();
-    for (const m of ["trafficMetric", "trafficPath", "trafficCountry"]) {
+    for (const m of ["trafficMetric", "trafficPath", "trafficCountry", "trafficBreakdown", "trafficLatency"]) {
       const where = prisma[m].findMany.mock.calls[0][0].where;
       expect(where.bucket.lt).toBeInstanceOf(Date);
       expect(where.ts).toBeUndefined();
@@ -138,5 +144,9 @@ describe("RetentionRunnerService", () => {
     expect(res.trafficMetric).toBe(1);
     expect(res.trafficPath).toBe(2);
     expect(res.trafficCountry).toBe(3);
+    expect(prisma.trafficBreakdown.deleteMany.mock.calls[0][0].where.id.in).toEqual(["tb1", "tb2", "tb3", "tb4"]);
+    expect(prisma.trafficLatency.deleteMany.mock.calls[0][0].where.id.in).toEqual(["tl1", "tl2", "tl3", "tl4", "tl5"]);
+    expect(res.trafficBreakdown).toBe(4);
+    expect(res.trafficLatency).toBe(5);
   });
 });

@@ -9,6 +9,9 @@ import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { ServersService } from "../servers/servers.service";
 import { TrafficService } from "./traffic.service";
 import {
+  TrafficBreakdownQuery,
+  TrafficBreakdownQuerySchema,
+  TrafficBreakdownSchema,
   TrafficCountriesQuery,
   TrafficCountriesQuerySchema,
   TrafficCountriesSchema,
@@ -81,5 +84,15 @@ export class TrafficController {
     @Query(new ZodValidationPipe(TrafficCountriesQuerySchema)) q: TrafficCountriesQuery,
   ) {
     return this.traffic.countries(await this.visibleServerIds(user.userId, q.teamId), q.range, q.domain, q.limit);
+  }
+
+  // Top keys of one visitor dimension (browser|os|device|referrer|city|network) over the range, ordered by requests.
+  @Get("breakdown")
+  @ApiZodResponse(TrafficBreakdownSchema)
+  async breakdown(
+    @CurrentUser() user: AuthUser,
+    @Query(new ZodValidationPipe(TrafficBreakdownQuerySchema)) q: TrafficBreakdownQuery,
+  ) {
+    return this.traffic.breakdown(await this.visibleServerIds(user.userId, q.teamId), q.dim, q.range, q.domain, q.limit);
   }
 }

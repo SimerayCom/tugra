@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import type { TrafficMetricsMsg } from "@tugra/shared";
-import { TrafficMetricsService, OTHER_PATH, UNMATCHED_HOST, UNKNOWN_COUNTRY, cleanPath, cleanCountry } from "./traffic-metrics.service";
+import { TrafficMetricsService, OTHER_PATH, OTHER_KEY, UNMATCHED_HOST, UNKNOWN_COUNTRY, cleanPath, cleanCountry, cleanKey } from "./traffic-metrics.service";
 import { HostResolverService } from "./host-resolver.service";
 
 function make(owners: Record<string, { appId: string; teamId: string }> = {}) {
@@ -15,13 +15,29 @@ function make(owners: Record<string, { appId: string; teamId: string }> = {}) {
   const metricCalls = () => calls.filter((c) => c.sql.includes(`INSERT INTO "TrafficMetric"`));
   const pathCalls = () => calls.filter((c) => c.sql.includes(`INSERT INTO "TrafficPath"`));
   const countryCalls = () => calls.filter((c) => c.sql.includes(`INSERT INTO "TrafficCountry"`));
-  return { svc, prisma, forServer, metricCalls, pathCalls, countryCalls };
+  const breakdownCalls = () => calls.filter((c) => c.sql.includes(`INSERT INTO "TrafficBreakdown"`));
+  const latencyCalls = () => calls.filter((c) => c.sql.includes(`INSERT INTO "TrafficLatency"`));
+  return { svc, prisma, forServer, metricCalls, pathCalls, countryCalls, breakdownCalls, latencyCalls };
 }
-// metric row = 11 params: id, serverId, domain, appId, bucket, requests, s2xx, s3xx, s4xx, s5xx, bytes
+// metric row = 13 params: id, serverId, domain, appId, bucket, requests, s2xx, s3xx, s4xx, s5xx, bytes, bot, human
 const metricRows = (c: Prisma.Sql) => {
   const v = c.values as unknown[];
   const rows: unknown[][] = [];
-  for (let i = 0; i < v.length; i += 11) rows.push(v.slice(i, i + 11));
+  for (let i = 0; i < v.length; i += 13) rows.push(v.slice(i, i + 13));
+  return rows;
+};
+// breakdown row = 7 params: id, serverId, domain, bucket, dim, key, requests
+const breakdownRows = (c: Prisma.Sql) => {
+  const v = c.values as unknown[];
+  const rows: unknown[][] = [];
+  for (let i = 0; i < v.length; i += 7) rows.push(v.slice(i, i + 7));
+  return rows;
+};
+// latency row = 6 params: id, serverId, domain, bucket, idx, requests
+const latencyRows = (c: Prisma.Sql) => {
+  const v = c.values as unknown[];
+  const rows: unknown[][] = [];
+  for (let i = 0; i < v.length; i += 6) rows.push(v.slice(i, i + 6));
   return rows;
 };
 // path row = 7 params: id, serverId, domain, bucket, path, requests, bytes
@@ -54,7 +70,7 @@ describe("TrafficMetricsService.ingest", () => {
         expect(call.sql).toContain(`"${col}" = "TrafficMetric"."${col}" + EXCLUDED."${col}"`);
       }
       const [row] = metricRows(call);
-      expect(row.slice(1)).toEqual(["srv1", "a.com", "app1", "2026-11-09 12:34:00.000", 10, 8, 0, 1, 1, 5000n]);
+      expect(row.slice(1)).toEqual(["srv1", "a.com", "app1", "2026-11-09 12:34:00.000", 10, 8, 0, 1, 1, 5000n, 0, 0]);
     } finally {
       jest.useRealTimers();
     }
@@ -201,7 +217,7 @@ describe("TrafficMetricsService.ingest", () => {
     const { svc, metricCalls } = make();
     await svc.ingest("srv1", msg([stat({ requests: -5, s2xx: Number.NaN, s3xx: Infinity, s4xx: "9" as any, s5xx: 2.9, bytes: -1 })]));
     const [row] = metricRows(metricCalls()[0]);
-    expect(row.slice(5)).toEqual([0, 0, 0, 0, 2, 0n]);
+    expect(row.slice(5)).toEqual([0, 0, 0, 0, 2, 0n, 0, 0]);
   });
 
   describe("countries", () => {
@@ -287,6 +303,171 @@ describe("TrafficMetricsService.ingest", () => {
       const { svc, countryCalls } = make();
       await svc.ingest("srv1", msg([stat({ host: "unknown.net", countries })]));
       expect(countryRows(countryCalls()[0]).filter((r) => r[4] !== "ZZ").length).toBeLessThanOrEqual(10);
+    });
+  });
+
+  describe("breakdown dimensions", () => {
+    const WIRE: [string, string][] = [["browsers", "browser"], ["os", "os"], ["devices", "device"], ["referrers", "referrer"], ["cities", "city"], ["networks", "network"]];
+
+    it("stores + sums each of the 6 dims with an additive upsert in the same transaction", async () => {
+      const { svc, prisma, breakdownCalls } = make();
+      const dims: Record<string, { k: string; n: number }[]> = {};
+      for (const [field] of WIRE) dims[field] = [{ k: `${field}-a`, n: 5 }, { k: `${field}-a`, n: 2 }, { k: `${field}-b`, n: 1 }];
+      await svc.ingest("srv1", msg([stat(dims)]));
+      const [call] = breakdownCalls();
+      expect(call.sql).toContain(`ON CONFLICT ("serverId", "domain", "bucket", "dim", "key") DO UPDATE SET`);
+      expect(call.sql).toContain(`"requests" = "TrafficBreakdown"."requests" + EXCLUDED."requests"`);
+      const rows = breakdownRows(call);
+      expect(rows).toHaveLength(12);
+      for (const [field, dim] of WIRE) {
+        expect(rows.filter((r) => r[4] === dim).map((r) => [r[1], r[2], r[5], r[6]])).toEqual([["srv1", "a.com", `${field}-a`, 7], ["srv1", "a.com", `${field}-b`, 1]]);
+      }
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.$transaction.mock.calls[0][0]).toHaveLength(2); // metric + one breakdown chunk
+    });
+
+    it("a resent bucket hits the same conflict key (sums, never overwrites)", async () => {
+      const ts = Math.floor(Date.now() / 60_000) * 60_000 + 5_000;
+      const { svc, breakdownCalls } = make();
+      await svc.ingest("srv1", msg([stat({ browsers: [{ k: "Chrome", n: 3 }] })], ts));
+      await svc.ingest("srv1", msg([stat({ browsers: [{ k: "Chrome", n: 4 }] })], ts + 20_000));
+      const [a, b] = breakdownCalls().map((c) => breakdownRows(c)[0]);
+      expect([a[1], a[2], a[3], a[4], a[5]]).toEqual([b[1], b[2], b[3], b[4], b[5]]);
+      expect([a[6], b[6]]).toEqual([3, 4]);
+    });
+
+    it("keeps the top 50 per (domain, bucket, dim) and folds the overflow (and a literal (other)) into one (other) row", async () => {
+      const browsers = Array.from({ length: 60 }, (_, i) => ({ k: `B${String(i).padStart(2, "0")}`, n: 100 - i })); // n = 100..41
+      browsers.push({ k: OTHER_KEY, n: 1000 });
+      const { svc, breakdownCalls } = make({ "a.com": { appId: "app1", teamId: "t1" } });
+      await svc.ingest("srv1", msg([stat({ browsers, os: [{ k: "Linux", n: 1 }] })]));
+      const rows = breakdownRows(breakdownCalls()[0]);
+      const br = rows.filter((r) => r[4] === "browser");
+      expect(br.filter((r) => r[5] !== OTHER_KEY)).toHaveLength(50);
+      const kept = new Set(br.map((r) => r[5]));
+      expect(kept.has("B00")).toBe(true);
+      expect(kept.has("B49")).toBe(true);
+      expect(kept.has("B50")).toBe(false);
+      let expected = 1000;
+      for (let n = 41; n <= 50; n++) expected += n;
+      expect(br.find((r) => r[5] === OTHER_KEY)![6]).toBe(expected);
+      expect(rows.filter((r) => r[4] === "os")).toHaveLength(1); // caps are per dim
+    });
+
+    it("caps a kept unmatched host at 10 keys per dim", async () => {
+      const { svc, breakdownCalls } = make();
+      await svc.ingest("srv1", msg([stat({ host: "scan.test", referrers: Array.from({ length: 30 }, (_, i) => ({ k: `r${i}.test`, n: 30 - i })) })]));
+      const rows = breakdownRows(breakdownCalls()[0]);
+      expect(rows.filter((r) => r[5] !== OTHER_KEY)).toHaveLength(10);
+      expect(rows.find((r) => r[5] === OTHER_KEY)).toBeDefined();
+    });
+
+    it("sanitizes keys: control chars stripped, length bounded without splitting a surrogate, empty/non-string -> (other)", async () => {
+      expect(cleanKey("Chro\u0000me\u001f")).toBe("Chrome");
+      expect(cleanKey("  Edge ")).toBe("Edge");
+      expect(cleanKey("\u0000")).toBe(OTHER_KEY);
+      for (const bad of [5, null, undefined, {}, ""]) expect(cleanKey(bad)).toBe(OTHER_KEY);
+      expect(cleanKey("x".repeat(500))).toHaveLength(100);
+      expect(cleanKey("x".repeat(99) + "\u{1F600}")).toBe("x".repeat(99));
+      expect(cleanKey("a\uD83D")).toBe("a\uFFFD");
+      const { svc, breakdownCalls } = make();
+      await svc.ingest("srv1", msg([stat({ browsers: [{ k: "Fire\u0000fox", n: 2 }, { k: "", n: 3 }] })]));
+      expect(breakdownRows(breakdownCalls()[0]).map((r) => [r[5], r[6]])).toEqual([["(other)", 3], ["Firefox", 2]]);
+    });
+
+    it("guards numbers; zero-only entries write no row; absent/malformed dims write nothing and never throw", async () => {
+      const { svc, prisma, breakdownCalls } = make();
+      await svc.ingest("srv1", msg([stat({ browsers: [{ k: "A", n: -5 }, { k: "B", n: Number.NaN }, { k: "C", n: Infinity }, { k: "D", n: "9" }, { k: "E", n: 2.9 }] })]));
+      expect(breakdownRows(breakdownCalls()[0]).map((r) => [r[5], r[6]])).toEqual([["E", 2]]);
+      const before = breakdownCalls().length;
+      for (const bad of [null, 5, "x", {}, [undefined], [null, 1, "s", []], [{ k: { toString: 1 }, n: {} }]]) {
+        for (const f of ["browsers", "os", "devices", "referrers", "cities", "networks"]) {
+          await expect(svc.ingest("srv1", msg([stat({ [f]: bad })]))).resolves.toBeUndefined();
+        }
+      }
+      await svc.ingest("srv1", msg([stat()])); // older agent: no dims at all
+      expect(breakdownCalls().length).toBe(before); // nothing but zero-count entries -> no rows
+      prisma.$transaction.mockRejectedValue(new Error("deadlock"));
+      await expect(svc.ingest("srv1", msg([stat({ os: [{ k: "Linux", n: 1 }] })]))).resolves.toBeUndefined();
+    });
+  });
+
+  describe("latency histogram", () => {
+    it("writes one additive row per non-empty bin (idx 0..13) in the same transaction", async () => {
+      const latency = new Array(14).fill(0);
+      latency[0] = 4; latency[6] = 10; latency[13] = 2;
+      const { svc, prisma, latencyCalls } = make();
+      await svc.ingest("srv1", msg([stat({ latency })]));
+      const [call] = latencyCalls();
+      expect(call.sql).toContain(`ON CONFLICT ("serverId", "domain", "bucket", "idx") DO UPDATE SET`);
+      expect(call.sql).toContain(`"requests" = "TrafficLatency"."requests" + EXCLUDED."requests"`);
+      expect(latencyRows(call).map((r) => [r[1], r[2], r[4], r[5]])).toEqual([["srv1", "a.com", 0, 4], ["srv1", "a.com", 6, 10], ["srv1", "a.com", 13, 2]]);
+      expect(prisma.$transaction.mock.calls[0][0]).toHaveLength(2);
+    });
+
+    it("sums the histograms of duplicate hosts; a resent bucket uses the same conflict key", async () => {
+      const a = new Array(14).fill(0); a[3] = 2; a[5] = 1;
+      const b = new Array(14).fill(0); b[3] = 3;
+      const { svc, latencyCalls } = make();
+      await svc.ingest("srv1", msg([stat({ host: "a.com", latency: a }), stat({ host: "A.COM.", latency: b })]));
+      expect(latencyRows(latencyCalls()[0]).map((r) => [r[4], r[5]])).toEqual([[3, 5], [5, 1]]);
+    });
+
+    it("ignores bins past idx 13, guards numbers, and writes nothing for empty / absent / malformed histograms", async () => {
+      const { svc, latencyCalls } = make();
+      const long = new Array(20).fill(7); // idx 14..19 are out of range
+      await svc.ingest("srv1", msg([stat({ latency: long })]));
+      const rows = latencyRows(latencyCalls()[0]);
+      expect(rows).toHaveLength(14);
+      expect(rows.every((r) => (r[4] as number) >= 0 && (r[4] as number) <= 13)).toBe(true);
+      await svc.ingest("srv1", msg([stat({ latency: [-1, Number.NaN, Infinity, "5", 2.9] })]));
+      expect(latencyRows(latencyCalls()[1]).map((r) => [r[4], r[5]])).toEqual([[4, 2]]);
+      const before = latencyCalls().length;
+      for (const bad of [undefined, null, 5, "x", {}, [], new Array(14).fill(0), [null, {}, "a"]]) {
+        await expect(svc.ingest("srv1", msg([stat({ latency: bad })]))).resolves.toBeUndefined();
+      }
+      expect(latencyCalls().length).toBe(before);
+    });
+
+    it("never throws when the transaction fails", async () => {
+      const { svc, prisma } = make();
+      prisma.$transaction.mockRejectedValue(new Error("deadlock"));
+      const latency = new Array(14).fill(1);
+      await expect(svc.ingest("srv1", msg([stat({ latency })]))).resolves.toBeUndefined();
+    });
+  });
+
+  describe("bot / human counters", () => {
+    it("adds both counters to the metric row and its additive ON CONFLICT upsert", async () => {
+      const { svc, metricCalls } = make();
+      await svc.ingest("srv1", msg([stat({ bots: { human: 7, bot: 3 } })]));
+      const [call] = metricCalls();
+      expect(call.sql).toContain(`"botRequests" = "TrafficMetric"."botRequests" + EXCLUDED."botRequests"`);
+      expect(call.sql).toContain(`"humanRequests" = "TrafficMetric"."humanRequests" + EXCLUDED."humanRequests"`);
+      const [row] = metricRows(call);
+      expect(row.slice(11)).toEqual([3, 7]);
+    });
+
+    it("merges duplicate hosts, folds overflow hosts into the (unmatched) aggregate, and guards negatives/NaN/garbage", async () => {
+      const { svc, metricCalls } = make();
+      await svc.ingest("srv1", msg([
+        stat({ host: "a.com", bots: { human: 1, bot: 2 } }),
+        stat({ host: "A.com", bots: { human: 3, bot: -4 } }),
+        stat({ host: "b.com", bots: { human: Number.NaN, bot: Infinity } }),
+        stat({ host: "c.com", bots: "x" }),
+        stat({ host: "d.com" }),
+      ]));
+      const byHost = new Map(metricRows(metricCalls()[0]).map((r) => [r[2] as string, r.slice(11)]));
+      expect(byHost.get("a.com")).toEqual([2, 4]);
+      for (const h of ["b.com", "c.com", "d.com"]) expect(byHost.get(h)).toEqual([0, 0]);
+
+      const junk = Array.from({ length: 30 }, (_, i) => stat({ host: `x${i}.test`, requests: 1 + i, bots: { human: 1, bot: 2 } }));
+      const m2 = make();
+      await m2.svc.ingest("srv1", msg(junk));
+      const rows = m2.metricCalls().flatMap((c) => metricRows(c));
+      const agg = rows.find((r) => r[2] === UNMATCHED_HOST)!;
+      expect(agg.slice(11)).toEqual([20, 10]); // the 10 lightest hosts folded
+      expect(rows.reduce((n, r) => n + (r[11] as number), 0)).toBe(60);
     });
   });
 

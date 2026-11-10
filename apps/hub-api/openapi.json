@@ -6106,6 +6106,12 @@
                         "type": "number"
                       }
                     },
+                    "p95Ms": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      }
+                    },
                     "totals": {
                       "type": "object",
                       "properties": {
@@ -6126,6 +6132,15 @@
                         },
                         "bytes": {
                           "type": "number"
+                        },
+                        "botRequests": {
+                          "type": "number"
+                        },
+                        "humanRequests": {
+                          "type": "number"
+                        },
+                        "p95Ms": {
+                          "type": "number"
                         }
                       },
                       "required": [
@@ -6134,7 +6149,10 @@
                         "s3xx",
                         "s4xx",
                         "s5xx",
-                        "bytes"
+                        "bytes",
+                        "botRequests",
+                        "humanRequests",
+                        "p95Ms"
                       ],
                       "additionalProperties": false
                     }
@@ -6149,6 +6167,7 @@
                     "s4xx",
                     "s5xx",
                     "bytes",
+                    "p95Ms",
                     "totals"
                   ],
                   "additionalProperties": false
@@ -6361,6 +6380,126 @@
                   "required": [
                     "range",
                     "countries"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "traffic"
+        ]
+      }
+    },
+    "/api/v1/traffic/breakdown": {
+      "get": {
+        "operationId": "TrafficController_breakdown",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "range": {
+                      "type": "string"
+                    },
+                    "dim": {
+                      "type": "string",
+                      "enum": [
+                        "browser",
+                        "os",
+                        "device",
+                        "referrer",
+                        "city",
+                        "network"
+                      ]
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          },
+                          "requests": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "requests"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "other": {
+                      "type": "object",
+                      "properties": {
+                        "requests": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "requests"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "range",
+                    "dim",
+                    "items",
+                    "other"
                   ],
                   "additionalProperties": false
                 }

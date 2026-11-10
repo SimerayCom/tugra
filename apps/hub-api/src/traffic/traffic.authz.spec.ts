@@ -32,6 +32,17 @@ const countryRows = [
   { serverId: "srv-bob", domain: "bob-secret.com", bucket, country: "KP", requests: 500 },
   { serverId: "srv-bob", domain: "alice.com", bucket, country: "TR", requests: 7000 },
 ];
+const breakdownRows = [
+  { serverId: "srv-alice", domain: "alice.com", bucket, dim: "browser", key: "Chrome", requests: 3 },
+  { serverId: "srv-alice", domain: "alice.com", bucket, dim: "os", key: "Linux", requests: 2 },
+  { serverId: "srv-bob", domain: "bob-secret.com", bucket, dim: "browser", key: "BobSecretBrowser", requests: 500 },
+  { serverId: "srv-bob", domain: "alice.com", bucket, dim: "browser", key: "Chrome", requests: 7000 },
+];
+const latencyRows = [
+  { serverId: "srv-alice", domain: "alice.com", bucket, idx: 6, requests: 10 },
+  { serverId: "srv-bob", domain: "bob-secret.com", bucket, idx: 13, requests: 999 },
+  { serverId: "srv-bob", domain: "alice.com", bucket, idx: 13, requests: 5000 },
+];
 const inScope = (r: any, w: any) =>
   w.serverId.in.includes(r.serverId) && r.bucket >= w.bucket.gte && (!w.domain || r.domain === w.domain);
 
@@ -81,6 +92,18 @@ function build() {
         return Promise.resolve([...acc.values()]);
       }),
     },
+    trafficBreakdown: {
+      groupBy: jest.fn(({ where }: any) => {
+        const acc = new Map<string, any>();
+        for (const r of breakdownRows.filter((x) => inScope(x, where) && x.dim === where.dim && x.key !== where.key?.not)) {
+          const a = acc.get(r.key) ?? { key: r.key, _sum: { requests: 0 } };
+          a._sum.requests += r.requests;
+          acc.set(r.key, a);
+        }
+        return Promise.resolve([...acc.values()]);
+      }),
+      aggregate: jest.fn(() => Promise.resolve({ _sum: { requests: null } })),
+    },
     application: {
       findMany: jest.fn(({ where }: any) =>
         Promise.resolve(
@@ -94,6 +117,16 @@ function build() {
     // Emulates the SQL: sums only rows whose serverId is among the bound ids (and domain if bound).
     $queryRaw: jest.fn((sql: any) => {
       const vals: unknown[] = sql.values;
+      if (sql.sql.includes(`"TrafficLatency"`)) {
+        const wantedL = latencyRows.find((r) => vals.includes(r.domain))?.domain;
+        const stepL = 900_000;
+        const tL = BigInt(Math.floor(bucket.getTime() / stepL) * stepL);
+        return Promise.resolve(
+          latencyRows
+            .filter((r) => vals.includes(r.serverId) && (!wantedL || r.domain === wantedL))
+            .map((r) => ({ t: tL, idx: r.idx, n: BigInt(r.requests) })),
+        );
+      }
       const wanted = metricRows.find((r) => vals.includes(r.domain))?.domain; // bound domain filter, if any
       const scoped = metricRows.filter((r) => vals.includes(r.serverId) && (!wanted || r.domain === wanted));
       const total = scoped.reduce((n, r) => n + r.requests, 0);
@@ -171,6 +204,32 @@ describe("traffic reads: a user can never read another team's traffic", () => {
     expect(JSON.stringify(alice)).not.toContain("KP");
     const bob = await ctrl.countries(as("bob"), {});
     expect(bob.countries.map((c) => c.country).sort()).toEqual(["KP", "TR"]);
+  });
+
+  it("breakdown: alice never sees bob's keys (unfiltered, ?teamId, ?domain), bob sees only his", async () => {
+    const { ctrl, prisma } = build();
+    const alice = await ctrl.breakdown(as("alice"), { dim: "browser" });
+    expect(alice.items).toEqual([{ key: "Chrome", requests: 3 }]); // not 3 + 7000
+    expect(JSON.stringify(alice)).not.toContain("BobSecretBrowser");
+    expect((await ctrl.breakdown(as("alice"), { dim: "browser", teamId: "team-bob" })).items).toEqual([]);
+    expect((await ctrl.breakdown(as("alice"), { dim: "browser", domain: "bob-secret.com" })).items).toEqual([]);
+    expect((await ctrl.breakdown(as("alice"), { dim: "browser", domain: "alice.com" })).items).toEqual([{ key: "Chrome", requests: 3 }]);
+    expect((await ctrl.breakdown(as("alice"), { dim: "os" })).items).toEqual([{ key: "Linux", requests: 2 }]);
+    const bob = await ctrl.breakdown(as("bob"), { dim: "browser" });
+    expect(bob.items.map((i) => i.key).sort()).toEqual(["BobSecretBrowser", "Chrome"]);
+    prisma.trafficBreakdown.groupBy.mockClear();
+    expect((await ctrl.breakdown(as("mallory"), { dim: "browser" })).items).toEqual([]);
+    expect(prisma.trafficBreakdown.groupBy).not.toHaveBeenCalled();
+  });
+
+  it("summary latency: p95 is computed from the caller's histogram only, never the victim's", async () => {
+    const { ctrl } = build();
+    const s = await ctrl.summary(as("alice"), { domain: "alice.com" });
+    expect(s.totals.p95Ms).toBeCloseTo(97.5, 1); // 10 requests in (50,100] -> 50 + 0.95*50; bob's overflow rows excluded
+    const all = await ctrl.summary(as("alice"), {});
+    expect(all.totals.p95Ms).toBeCloseTo(97.5, 1);
+    expect((await ctrl.summary(as("alice"), { domain: "bob-secret.com" })).totals.p95Ms).toBe(0);
+    expect((await ctrl.summary(as("mallory"), {})).totals.p95Ms).toBe(0);
   });
 
   it("bob sees only bob's side (symmetry)", async () => {

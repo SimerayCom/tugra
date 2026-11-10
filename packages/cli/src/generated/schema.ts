@@ -980,6 +980,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/traffic/breakdown": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["TrafficController_breakdown"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/monitors": {
         parameters: {
             query?: never;
@@ -9038,6 +9054,7 @@ export interface operations {
                         s4xx: number[];
                         s5xx: number[];
                         bytes: number[];
+                        p95Ms: number[];
                         totals: {
                             requests: number;
                             s2xx: number;
@@ -9045,6 +9062,9 @@ export interface operations {
                             s4xx: number;
                             s5xx: number;
                             bytes: number;
+                            botRequests: number;
+                            humanRequests: number;
+                            p95Ms: number;
                         };
                     };
                 };
@@ -9173,6 +9193,72 @@ export interface operations {
                             country: string;
                             requests: number;
                         }[];
+                    };
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    TrafficController_breakdown: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        range: string;
+                        /** @enum {string} */
+                        dim: "browser" | "os" | "device" | "referrer" | "city" | "network";
+                        items: {
+                            key: string;
+                            requests: number;
+                        }[];
+                        other: {
+                            requests: number;
+                        };
                     };
                 };
             };

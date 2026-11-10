@@ -362,6 +362,8 @@ model Server {
   trafficMetrics       TrafficMetric[]
   trafficPaths         TrafficPath[]
   trafficCountries     TrafficCountry[]
+  trafficBreakdowns    TrafficBreakdown[]
+  trafficLatencies     TrafficLatency[]
   logDrains            LogDrain[]
   proxyDynamicConfigs  ProxyDynamicConfig[]
   tunnel               ServerTunnel?
@@ -632,6 +634,9 @@ model TrafficMetric {
   s4xx     Int
   s5xx     Int
   bytes    BigInt
+  // Human vs bot request split (agent-side UA classification); older agents leave both at 0.
+  botRequests   Int @default(0)
+  humanRequests Int @default(0)
 
   @@unique([serverId, domain, bucket])
   @@index([bucket])
@@ -666,6 +671,40 @@ model TrafficCountry {
   requests Int
 
   @@unique([serverId, domain, bucket, country])
+  @@index([serverId, domain, bucket])
+  @@index([bucket])
+}
+
+// Requests per (dimension, key) per (server, host, minute) — ONE generic table for the visitor dimensions
+// dim = browser | os | device | referrer | city | network. Top-N per (host, bucket, dim); the overflow is
+// folded into a single "(other)" key. Counts only (no IPs / UA strings / full referrer URLs).
+model TrafficBreakdown {
+  id       String   @id @default(cuid())
+  server   Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  serverId String
+  domain   String
+  bucket   DateTime
+  dim      String
+  key      String
+  requests Int
+
+  @@unique([serverId, domain, bucket, dim, key])
+  @@index([serverId, domain, bucket, dim])
+  @@index([bucket])
+}
+
+// Response-latency histogram per (server, host, minute), long format: `idx` 0..13 indexes
+// TRAFFIC_LATENCY_BUCKETS_MS (13 inclusive upper bounds + the overflow bucket); one row per non-empty bucket.
+model TrafficLatency {
+  id       String   @id @default(cuid())
+  server   Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  serverId String
+  domain   String
+  bucket   DateTime
+  idx      Int
+  requests Int
+
+  @@unique([serverId, domain, bucket, idx])
   @@index([serverId, domain, bucket])
   @@index([bucket])
 }

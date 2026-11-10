@@ -1,4 +1,4 @@
-import { TrafficService } from "./traffic.service";
+import { TrafficService, p95FromHistogram } from "./traffic.service";
 
 const NOW = Date.UTC(2026, 10, 9, 12, 30, 0);
 
@@ -25,10 +25,20 @@ const countryRows = [
   { serverId: "mine", domain: "a.com", bucket: new Date(NOW - 40 * 86_400_000), country: "JP", requests: 99 }, // outside any range
   { serverId: "other-team", domain: "secret.com", bucket: new Date(NOW - 60_000), country: "KP", requests: 500 },
 ];
+const breakdownRows = [
+  { serverId: "mine", domain: "a.com", bucket: new Date(NOW - 60_000), dim: "browser", key: "Chrome", requests: 6 },
+  { serverId: "mine", domain: "a.com", bucket: new Date(NOW - 120_000), dim: "browser", key: "Chrome", requests: 4 },
+  { serverId: "mine", domain: "a.com", bucket: new Date(NOW - 60_000), dim: "browser", key: "Firefox", requests: 3 },
+  { serverId: "mine", domain: "a.com", bucket: new Date(NOW - 60_000), dim: "browser", key: "(other)", requests: 8 },
+  { serverId: "mine", domain: "z.com", bucket: new Date(NOW - 60_000), dim: "browser", key: "Safari", requests: 20 },
+  { serverId: "mine", domain: "a.com", bucket: new Date(NOW - 60_000), dim: "os", key: "Linux", requests: 9 },
+  { serverId: "mine", domain: "a.com", bucket: new Date(NOW - 40 * 86_400_000), dim: "browser", key: "Opera", requests: 99 }, // outside any range
+  { serverId: "other-team", domain: "secret.com", bucket: new Date(NOW - 60_000), dim: "browser", key: "SecretBrowser", requests: 500 },
+];
 const inScope = (r: any, where: any) =>
   where.serverId.in.includes(r.serverId) && r.bucket >= where.bucket.gte && (!where.domain || r.domain === where.domain);
 
-function make(queryRows: any[] = []) {
+function make(queryRows: any[] = [], latencyQueryRows: any[] = []) {
   const prisma = {
     trafficMetric: {
       groupBy: jest.fn(({ where }: any) => {
@@ -69,12 +79,28 @@ function make(queryRows: any[] = []) {
         return Promise.resolve([...acc.values()].sort((a, b) => b._sum.requests - a._sum.requests).slice(0, take));
       }),
     },
+    trafficBreakdown: {
+      groupBy: jest.fn(({ where, take }: any) => {
+        const acc = new Map<string, any>();
+        for (const r of breakdownRows.filter((x) => inScope(x, where) && x.dim === where.dim && x.key !== where.key?.not)) {
+          const a = acc.get(r.key) ?? { key: r.key, _sum: { requests: 0 } };
+          a._sum.requests += r.requests;
+          acc.set(r.key, a);
+        }
+        return Promise.resolve([...acc.values()].sort((a, b) => b._sum.requests - a._sum.requests).slice(0, take));
+      }),
+      aggregate: jest.fn(({ where }: any) => {
+        const rs = breakdownRows.filter((x) => inScope(x, where) && x.dim === where.dim && x.key === where.key);
+        return Promise.resolve({ _sum: { requests: rs.reduce((n, r) => n + r.requests, 0) || null } });
+      }),
+    },
     application: {
       findMany: jest.fn(({ where }: any) =>
         Promise.resolve([{ id: "app1", name: "Shop", serverId: "mine" }, { id: "appX", name: "Secret", serverId: "other-team" }].filter((a) => where.id.in.includes(a.id) && where.serverId.in.includes(a.serverId))),
       ),
     },
-    $queryRaw: jest.fn().mockResolvedValue(queryRows),
+    // 1st call = TrafficMetric rollup; 2nd (summary only) = TrafficLatency histogram rows
+    $queryRaw: jest.fn().mockResolvedValueOnce(queryRows).mockResolvedValue(latencyQueryRows),
   } as any;
   return { svc: new TrafficService(prisma), prisma };
 }
@@ -127,6 +153,26 @@ describe("TrafficService", () => {
       expect(sql.values).not.toContain("other-team");
     });
 
+    it("breakdown: constrained to the visible ids; other teams' keys never appear; no ids -> empty without a read", async () => {
+      const { svc, prisma } = make();
+      const out = await svc.breakdown(["mine"], "browser", "24h");
+      expect(prisma.trafficBreakdown.groupBy.mock.calls[0][0].where.serverId).toEqual({ in: ["mine"] });
+      expect(prisma.trafficBreakdown.aggregate.mock.calls[0][0].where.serverId).toEqual({ in: ["mine"] });
+      expect(out.items.map((i) => i.key)).toEqual(["Safari", "Chrome", "Firefox"]);
+      expect(JSON.stringify(out)).not.toContain("SecretBrowser");
+      expect((await svc.breakdown([], "browser", "24h")).items).toEqual([]);
+      expect(prisma.trafficBreakdown.groupBy).toHaveBeenCalledTimes(1);
+    });
+
+    it("summary latency query is bound to exactly the visible ids", async () => {
+      const { svc, prisma } = make();
+      await svc.summary(["mine"], "24h", "a.com");
+      const sql = prisma.$queryRaw.mock.calls[1][0];
+      expect(sql.sql).toContain(`"TrafficLatency"`);
+      expect(sql.values).toEqual(expect.arrayContaining(["mine", "a.com"]));
+      expect(sql.values).not.toContain("other-team");
+    });
+
     it("summary + paths with no visible servers return zero-filled/empty without touching the DB", async () => {
       const { svc, prisma } = make();
       const s = await svc.summary([], "1h");
@@ -148,7 +194,9 @@ describe("TrafficService", () => {
       expect(s.times[1] - s.times[0]).toBe(60_000);
       expect(s.requests[s.times.indexOf(minute)]).toBe(10);
       expect(s.requests.filter((x) => x === 0)).toHaveLength(n - 1);
-      expect(s.totals).toEqual({ requests: 10, s2xx: 8, s3xx: 0, s4xx: 1, s5xx: 1, bytes: 5000 });
+      expect(s.totals).toEqual({ requests: 10, s2xx: 8, s3xx: 0, s4xx: 1, s5xx: 1, bytes: 5000, botRequests: 0, humanRequests: 0, p95Ms: 0 });
+      expect(s.p95Ms).toHaveLength(n);
+      expect(s.p95Ms.every((x) => x === 0)).toBe(true);
       expect(typeof s.bytes[0]).toBe("number"); // BigInt never reaches the wire
     });
 
@@ -179,6 +227,111 @@ describe("TrafficService", () => {
       const { svc, prisma } = make();
       await svc.summary(["mine"], "1h", "A.com:443");
       expect(prisma.$queryRaw.mock.calls[0][0].values).toContain("a.com");
+    });
+  });
+
+  describe("summary: p95 latency + bot/human", () => {
+    it("computes a per-bucket p95 aligned to times, plus an overall p95 from the summed histograms", async () => {
+      const m1 = Math.floor((NOW - 60_000) / 60_000) * 60_000;
+      const m2 = m1 - 120_000;
+      const { svc } = make(
+        [
+          { t: BigInt(m1), requests: 30n, s2xx: 30n, s3xx: 0n, s4xx: 0n, s5xx: 0n, bytes: 1n, bot: 10n, human: 20n },
+          { t: BigInt(m2), requests: 10n, s2xx: 10n, s3xx: 0n, s4xx: 0n, s5xx: 0n, bytes: 1n, bot: 1n, human: 9n },
+        ],
+        [
+          { t: BigInt(m1), idx: 6, n: 100n }, // all in (50,100] -> 97.5
+          { t: BigInt(m2), idx: 13, n: 4n }, // overflow only -> 10000 floor
+          { t: BigInt(m2), idx: 99, n: 50n }, // invalid idx ignored
+          { t: BigInt(NOW + 10 * 3_600_000), idx: 2, n: 5n }, // outside the aligned window
+        ],
+      );
+      const s = await svc.summary(["mine"], "1h");
+      expect(s.p95Ms).toHaveLength(s.times.length);
+      expect(s.p95Ms[s.times.indexOf(m1)]).toBe(97.5);
+      expect(s.p95Ms[s.times.indexOf(m2)]).toBe(10000);
+      expect(s.p95Ms.filter((x) => x === 0)).toHaveLength(s.times.length - 2);
+      // overall: 100 @ idx6 + 4 @ idx13 -> target 98.8 reached inside idx6 -> 50 + 50*98.8/100 = 99.4
+      expect(s.totals.p95Ms).toBe(99.4);
+      expect(s.totals.botRequests).toBe(11);
+      expect(s.totals.humanRequests).toBe(29);
+    });
+  });
+
+  describe("p95FromHistogram", () => {
+    const hist = (entries: Record<number, number>) => {
+      const h = new Array(14).fill(0);
+      for (const [i, n] of Object.entries(entries)) h[Number(i)] = n;
+      return h;
+    };
+    it("empty histogram -> 0", () => {
+      expect(p95FromHistogram(hist({}))).toBe(0);
+      expect(p95FromHistogram([])).toBe(0);
+    });
+    it("everything in one bucket interpolates to lower + 0.95 * width", () => {
+      expect(p95FromHistogram(hist({ 6: 100 }))).toBeCloseTo(97.5, 6); // (50,100]
+      expect(p95FromHistogram(hist({ 0: 10 }))).toBeCloseTo(0.95, 6); // first bucket (0,1]
+      expect(p95FromHistogram(hist({ 12: 7 }))).toBeCloseTo(5000 + 0.95 * 5000, 6); // (5000,10000]
+    });
+    it("known multi-bucket histogram: 90 fast + 10 slow", () => {
+      // 90 in (0,1], 10 in (250,500]: target 95 -> falls in the slow bucket: 250 + 250 * (95-90)/10 = 375
+      expect(p95FromHistogram(hist({ 0: 90, 8: 10 }))).toBeCloseTo(375, 6);
+      // 95 fast + 5 slow: target exactly 95 reached by the fast bucket -> its upper bound 1
+      expect(p95FromHistogram(hist({ 0: 95, 8: 5 }))).toBeCloseTo(1, 6);
+    });
+    it("overflow bucket reports its lower bound (10000) as a floor", () => {
+      expect(p95FromHistogram(hist({ 13: 5 }))).toBe(10000);
+      expect(p95FromHistogram(hist({ 2: 90, 13: 10 }))).toBe(10000);
+      expect(p95FromHistogram(hist({ 2: 96, 13: 4 }))).toBeLessThan(5); // overflow below the 5% tail does not matter
+    });
+    it("ignores negative/NaN entries", () => {
+      expect(p95FromHistogram(hist({ 6: 100, 3: -50, 4: Number.NaN }))).toBeCloseTo(97.5, 6);
+    });
+  });
+
+  describe("breakdown", () => {
+    it("aggregates across buckets within the range, orders by requests desc, reports (other) separately", async () => {
+      const { svc } = make();
+      const out = await svc.breakdown(["mine"], "browser", "24h");
+      expect(out.range).toBe("24h");
+      expect(out.dim).toBe("browser");
+      expect(out.items).toEqual([
+        { key: "Safari", requests: 20 },
+        { key: "Chrome", requests: 10 },
+        { key: "Firefox", requests: 3 },
+      ]); // Opera (40 days old) is outside the range; "(other)" excluded from items
+      expect(out.other).toEqual({ requests: 8 });
+    });
+
+    it("filters by dimension: another dim's keys never mix in", async () => {
+      const { svc, prisma } = make();
+      const out = await svc.breakdown(["mine"], "os", "24h");
+      expect(prisma.trafficBreakdown.groupBy.mock.calls[0][0].where.dim).toBe("os");
+      expect(out.items).toEqual([{ key: "Linux", requests: 9 }]);
+    });
+
+    it("an unknown dim reads nothing (defense in depth behind the DTO enum)", async () => {
+      const { svc, prisma } = make();
+      expect((await svc.breakdown(["mine"], "country" as any, "24h")).items).toEqual([]);
+      expect(prisma.trafficBreakdown.groupBy).not.toHaveBeenCalled();
+    });
+
+    it("honors the normalized domain filter and only narrows within scope", async () => {
+      const { svc, prisma } = make();
+      const out = await svc.breakdown(["mine"], "browser", "24h", "A.com:443");
+      expect(prisma.trafficBreakdown.groupBy.mock.calls[0][0].where.domain).toBe("a.com");
+      expect(out.items).toEqual([{ key: "Chrome", requests: 10 }, { key: "Firefox", requests: 3 }]);
+      expect((await svc.breakdown(["mine"], "browser", "24h", "secret.com")).items).toEqual([]); // another team's host
+    });
+
+    it("clamps the limit", async () => {
+      const { svc, prisma } = make();
+      await svc.breakdown(["mine"], "browser", "24h", undefined, 100000);
+      expect(prisma.trafficBreakdown.groupBy.mock.calls[0][0].take).toBe(100);
+      await svc.breakdown(["mine"], "browser", "24h", undefined, -3);
+      expect(prisma.trafficBreakdown.groupBy.mock.calls[1][0].take).toBe(1);
+      await svc.breakdown(["mine"], "browser", "24h");
+      expect(prisma.trafficBreakdown.groupBy.mock.calls[2][0].take).toBe(20);
     });
   });
 
