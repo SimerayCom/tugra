@@ -1,5 +1,5 @@
-/** ISO-3166-1 alpha-2 -> numeric id (as 3-digit strings), the key world-atlas uses for its country features.
- *  Static and bundled: the map never needs a lookup service. "XK" (Kosovo) has no ISO numeric id; world-atlas ships it
+/** ISO-3166-1 alpha-2 -> numeric id (as 3-digit strings), the key the bundled world-atlas dataset uses for its country features.
+ *  Static and bundled: the map never needs a lookup service. "XK" (Kosovo) has no ISO numeric id; that dataset ships it
  *  without one, so it is handled separately in the map (see KOSOVO_FEATURE_NAME). */
 const PAIRS =
   "AD020 AE784 AF004 AG028 AI660 AL008 AM051 AO024 AQ010 AR032 AS016 AT040 AU036 AW533 AX248 AZ031 " +
@@ -23,7 +23,7 @@ export function alpha2ToNumeric(code: string): string | null {
   return ALPHA2_TO_NUMERIC.get((code ?? "").trim().toUpperCase()) ?? null;
 }
 
-/** Alpha-2 code for a numeric id as found on world-atlas features; null when unknown. */
+/** Alpha-2 code for a numeric id as found on the bundled map features; null when unknown. */
 export function numericToAlpha2(id: string | number | undefined | null): string | null {
   if (id === undefined || id === null || id === "") return null;
   return NUMERIC_TO_ALPHA2.get(String(id).padStart(3, "0")) ?? null;

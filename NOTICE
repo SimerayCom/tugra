@@ -46,3 +46,9 @@ locally by the agent; it is never fetched at runtime.
   Data:    Copyright (c) 2019-2026 DB-IP
   License: Creative Commons Attribution 4.0 International (CC BY 4.0),
            https://creativecommons.org/licenses/by/4.0/
+
+World map data
+--------------
+apps/web/src/lib/geo/world-countries-110m.json is the Natural Earth 1:110m
+country boundary dataset, public domain, via the world-atlas dataset. It is
+bundled as a static file; the map never fetches geography at runtime.

@@ -1,45 +1,42 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from "react";
-import { geoNaturalEarth1, geoPath } from "d3-geo";
-import { feature } from "topojson-client";
-import type { Feature, FeatureCollection, Geometry } from "geojson";
-// Bundled at build time (Natural Earth, public domain, via world-atlas): the map NEVER fetches geography at runtime.
-import worldTopology from "world-atlas/countries-110m.json";
+// Bundled at build time (Natural Earth, public domain, via the world-atlas dataset; vendored in src/lib/geo): the map NEVER
+// fetches geography at runtime. Decoding and projection are our own code (src/lib/geo), no map library.
+import worldTopology from "../lib/geo/world-countries-110m.json";
+import { decodeFeatures, type Topology } from "../lib/geo/topojson";
+import { equirectangular, heightFor, polygonsToPath } from "../lib/geo/project";
 import { useI18n } from "../i18n/provider";
 import { alpha2ToNumeric, numericToAlpha2 } from "../lib/country-codes";
 import { countryName } from "../lib/traffic";
 
+// Equirectangular, cropped to the inhabited latitudes (Antarctica is dropped, so the southern edge sits just below Tierra del Fuego).
+const LAT_TOP = 84;
+const LAT_BOTTOM = -57;
 const W = 960;
-const H = 480;
+const H = heightFor(W, LAT_TOP, LAT_BOTTOM);
 const STEPS = 5; // sequential bins (legend + fills share them)
 const ANTARCTICA = "010"; // no visitors, and it would eat a third of the vertical space
-// world-atlas ships Kosovo without an ISO numeric id; GeoIP databases report it as the user-assigned code "XK".
+// The bundled dataset ships Kosovo without an ISO numeric id; GeoIP databases report it as the user-assigned code "XK".
 const KOSOVO_FEATURE_NAME = "Kosovo";
 
 const nf = new Intl.NumberFormat("en-US");
 const TOUCH_TIP_MS = 4000; // a tap-opened tooltip dismisses itself after this long
 const isTouchLike = (e: PointerEvent) => e.pointerType === "touch" || e.pointerType === "pen";
 
-type TopoIn = Parameters<typeof feature>[0] & { objects: Record<string, unknown> };
-type TopoObj = Parameters<typeof feature>[1];
-type CountryFeature = Feature<Geometry, { name?: string }>;
 export type MapShape = { key: string; alpha2: string | null; fallbackName: string; d: string };
 
 let shapesCache: MapShape[] | null = null;
 /** Country outlines projected once per page load (pure computation over the bundled topology). */
 export function mapShapes(): MapShape[] {
   if (shapesCache) return shapesCache;
-  const topo = worldTopology as unknown as TopoIn;
-  const fc = feature(topo, topo.objects.countries as TopoObj) as unknown as FeatureCollection<Geometry, { name?: string }>;
-  const features: CountryFeature[] = fc.features.filter((f) => String(f.id ?? "").padStart(3, "0") !== ANTARCTICA);
-  const projection = geoNaturalEarth1().fitSize([W, H], { type: "FeatureCollection", features });
-  const path = geoPath(projection);
+  const features = decodeFeatures(worldTopology as unknown as Topology, "countries").filter((f) => (f.id ?? "").padStart(3, "0") !== ANTARCTICA);
+  const projection = equirectangular(W, H, LAT_TOP, LAT_BOTTOM);
   shapesCache = features.flatMap((f, i) => {
-    const d = path(f);
+    const d = polygonsToPath(f.polygons, projection);
     if (!d) return [];
-    const name = f.properties?.name ?? "";
-    const alpha2 = numericToAlpha2(f.id) ?? (name === KOSOVO_FEATURE_NAME ? "XK" : null);
+    const name = typeof f.properties.name === "string" ? f.properties.name : "";
+    const alpha2 = numericToAlpha2(f.id ?? null) ?? (name === KOSOVO_FEATURE_NAME ? "XK" : null);
     return [{ key: `${f.id ?? name}-${i}`, alpha2, fallbackName: name, d }];
   });
   return shapesCache;
@@ -136,7 +133,7 @@ export function WorldMap({ rows }: { rows: { country: string; requests: number }
                 data-testid="world-map-country"
                 data-country={s.alpha2 ?? undefined}
                 data-bin={bin}
-                style={{ fill: binFill(bin), stroke: "var(--c-sb)", strokeWidth: 0.6, strokeLinejoin: "round" }}
+                style={{ fill: binFill(bin), stroke: "var(--c-sb)", strokeWidth: 0.6, strokeLinejoin: "round", fillRule: "evenodd" }}
                 onPointerEnter={(e) => { if (!isTouchLike(e)) show(e, s, false); }}
                 onPointerMove={(e) => { if (!isTouchLike(e)) show(e, s, false); }}
                 onPointerDown={(e) => { if (isTouchLike(e)) show(e, s, true); }}

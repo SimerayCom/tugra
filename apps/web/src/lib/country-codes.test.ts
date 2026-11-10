@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import worldTopology from "world-atlas/countries-110m.json";
+import worldTopology from "./geo/world-countries-110m.json";
 import { alpha2ToNumeric, numericToAlpha2, KNOWN_ALPHA2 } from "./country-codes";
 
 describe("alpha2ToNumeric", () => {
