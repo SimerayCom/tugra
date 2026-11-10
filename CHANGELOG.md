@@ -7,13 +7,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.1.0-beta.6] - 2026-11-08
+## [0.1.0-beta.6] - 2026-11-10
 
+- **Traffic analytics.** A new Traffic page (under Monitor) with privacy-preserving, self-hosted visitor
+  analytics, computed on your own server from the reverse proxy's access log — no third-party service and
+  nothing leaves your machine. Enable it per server (Maintenance → Traffic analytics). It shows requests
+  and bandwidth over time, a status-code breakdown, top paths, p95 latency, unique visitors, a bot/human
+  split, and visitor browser, OS, device, referrer, country (with a world map), city and network
+  breakdowns. Raw client IPs, User-Agents and Referers are aggregated locally and never sent to the hub;
+  unique visitors use a HyperLogLog sketch that stores no IPs; query strings and path tokens are stripped.
+  Country/city geolocation works out of the box via a bundled DB-IP Lite database (offline, no download).
 - **Load average and swap in server monitoring.** The agent now reports 1/5/15-minute load average and
-  swap usage; the server Monitoring tab shows a load-average chart and a swap-usage chart (over the full
-  history range), and the live gauges show a swap meter and a load-average readout. Fields are optional,
-  so older agents keep working and simply omit them.
-- **Container type icons.** Each row in a server's container list now carries a small type glyph
+  swap usage; the server Monitoring tab shows a load-average chart and a swap-usage chart, and the live
+  gauges show a swap meter and a load-average readout. Older agents simply omit them.
+- **Cross-fleet hottest containers.** The dashboard now ranks the busiest containers across every server
+  you can see, by CPU, each linking to its app or database.
+- **Container type icons.** Each row in a server's container list carries a small type glyph
   (app, database, system, other) so the list scans by kind at a glance.
 
 ## [0.1.0-beta.5] - 2026-11-08
