@@ -8,8 +8,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/mileusna/useragent"
-
 	"github.com/SimerayCom/tugra/agent/internal/protocol"
 )
 
@@ -78,58 +76,19 @@ func loadIPMode(file string) string {
 	return mode
 }
 
-// The UA parser falls back to echoing (parts of) the raw UA string as the browser name for unknown
-// clients, so names are mapped through a closed whitelist; anything else is "Other".
-var knownBrowsers = map[string]string{
-	useragent.Chrome: "Chrome", useragent.HeadlessChrome: "Headless Chrome", useragent.Firefox: "Firefox",
-	useragent.Safari: "Safari", useragent.MobileSafari: "Safari", useragent.Edge: "Edge",
-	useragent.Opera: "Opera", useragent.OperaMini: "Opera Mini", useragent.OperaTouch: "Opera Touch",
-	useragent.Vivaldi: "Vivaldi", useragent.InternetExplorer: "Internet Explorer", useragent.Msie: "Internet Explorer",
-	useragent.SamsungBrowser: "Samsung Browser", "Android browser": "Android Browser",
-	"Miui Browser": "Miui Browser", "Huawei Browser": "Huawei Browser",
-	useragent.FacebookApp: "Facebook App", useragent.InstagramApp: "Instagram App", useragent.TiktokApp: "TikTok App",
-	useragent.BlackBerry: "BlackBerry", useragent.NetFront: "NetFront",
-	useragent.Googlebot: "Googlebot", useragent.GoogleAdsBot: "Google Ads Bot", useragent.Bingbot: "Bingbot",
-	useragent.Applebot: "Applebot", useragent.YandexBot: "YandexBot", useragent.YandexAdNet: "YandexAdNet",
-	useragent.Twitterbot: "Twitterbot", useragent.FacebookExternalHit: "Facebook Crawler", "Bytespider": "Bytespider",
-}
-
-var knownOS = map[string]string{
-	useragent.Windows: "Windows", useragent.WindowsPhone: "Windows Phone", useragent.Android: "Android",
-	useragent.MacOS: "macOS", useragent.IOS: "iOS", useragent.Linux: "Linux", useragent.FreeBSD: "FreeBSD",
-	useragent.ChromeOS: "ChromeOS", useragent.BlackBerry: "BlackBerry", useragent.Harmony: "HarmonyOS",
-}
-
-// classifyUA parses a User-Agent locally into whitelisted labels. The input is bounded and never retained.
+// classifyUA parses a User-Agent locally into whitelisted labels (see parseUserAgent: an unknown client is
+// "Other", the raw text is never echoed). The input is bounded and never retained.
 func classifyUA(ua string) (browser, os, device string, bot bool) {
 	ua = truncateUTF8(strings.TrimSpace(ua), maxUALen)
-	p := useragent.Parse(ua)
-	isBot := p.Bot || isAutomatedUA(ua)
-	browser, ok := knownBrowsers[p.Name]
-	if !ok {
-		browser = labelOther
+	p := parseUserAgent(ua)
+	if p.IsBot || isAutomatedUA(ua) {
+		return p.Browser, p.OS, "bot", true
 	}
-	os, ok = knownOS[p.OS]
-	if !ok {
-		os = labelOther
-	}
-	switch {
-	case isBot:
-		device = "bot"
-	case p.Tablet:
-		device = "tablet"
-	case p.Mobile:
-		device = "mobile"
-	case p.Desktop:
-		device = "desktop"
-	default:
-		device = deviceOther
-	}
-	return browser, os, device, isBot
+	return p.Browser, p.OS, p.DeviceClass, false
 }
 
 // automatedUATokens are lowercase substrings of programmatic clients, health probes and scanners that the
-// UA parser does not flag as bots (it only recognises bot/spider/crawler-style names).
+// name-based bot check in parseUserAgent does not catch (it only recognises bot/spider/crawler-style names).
 var automatedUATokens = []string{
 	"curl/", "wget", "libcurl", "python-requests", "python-urllib", "aiohttp", "httpx", "go-http-client",
 	"java/", "okhttp", "apache-httpclient", "axios", "node-fetch", "undici", "postmanruntime",

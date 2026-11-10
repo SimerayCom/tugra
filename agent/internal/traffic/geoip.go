@@ -1,12 +1,9 @@
 package traffic
 
 import (
-	"net"
 	"net/netip"
 	"os"
 	"strings"
-
-	"github.com/oschwald/maxminddb-golang"
 )
 
 const maxCityLen = 64
@@ -40,18 +37,7 @@ func geoIPCandidates(envPath string) []string {
 // geo resolves an IP to an ISO-3166 alpha-2 country code against a LOCAL database. The lookup never
 // touches the network. A nil *geo (no database) is valid and resolves everything to "" (unknown).
 type geo struct {
-	r *maxminddb.Reader
-}
-
-// countryRecord reads the country and, when the database is a City edition, the English city name. A
-// country-only database simply leaves City.Names empty.
-type countryRecord struct {
-	Country struct {
-		ISOCode string `maxminddb:"iso_code"`
-	} `maxminddb:"country"`
-	City struct {
-		Names map[string]string `maxminddb:"names"`
-	} `maxminddb:"city"`
+	r *mmdbReader
 }
 
 // loadGeo opens the first database in the lookup order (see geoIPCandidates) that exists and is readable.
@@ -75,7 +61,7 @@ func openGeo(path string) *geo {
 	if path == "" {
 		return nil
 	}
-	r, err := maxminddb.Open(path)
+	r, err := openMMDB(path)
 	if err != nil {
 		return nil
 	}
@@ -84,7 +70,7 @@ func openGeo(path string) *geo {
 
 func (g *geo) close() {
 	if g != nil && g.r != nil {
-		_ = g.r.Close()
+		_ = g.r.close()
 	}
 }
 
@@ -111,16 +97,22 @@ func (g *geo) lookup(clientHost string, wantCity bool) (code, city string) {
 	if !ok || !publicAddr(addr) {
 		return "", ""
 	}
-	var rec countryRecord
-	if err := g.r.Lookup(net.IP(addr.AsSlice()), &rec); err != nil {
+	// The country (country.iso_code) and, for a City edition, the English city name (city.names.en). A
+	// country-only database simply has no city record.
+	off, found := g.r.find(addr)
+	if !found {
 		return "", ""
 	}
-	cc := strings.ToUpper(rec.Country.ISOCode)
-	if len(cc) == 2 && cc[0] >= 'A' && cc[0] <= 'Z' && cc[1] >= 'A' && cc[1] <= 'Z' {
-		code = cc
+	if iso, ok := g.r.lookupAt(off, "country", "iso_code"); ok {
+		cc := strings.ToUpper(iso)
+		if len(cc) == 2 && cc[0] >= 'A' && cc[0] <= 'Z' && cc[1] >= 'A' && cc[1] <= 'Z' {
+			code = cc
+		}
 	}
 	if wantCity {
-		city = cleanLabel(rec.City.Names["en"], maxCityLen)
+		if name, ok := g.r.lookupAt(off, "city", "names", "en"); ok {
+			city = cleanLabel(name, maxCityLen)
+		}
 	}
 	return code, city
 }

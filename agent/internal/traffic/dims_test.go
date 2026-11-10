@@ -172,6 +172,15 @@ func TestParseLineDimensions(t *testing.T) {
 	if !ok || rec.browser != "Firefox" || rec.referrer != "dev.to" || !rec.hasLat {
 		t.Fatalf("nested rec=%+v ok=%v", rec, ok)
 	}
+	// A present-but-empty User-Agent is a bot; an absent one stays untracked.
+	rec, ok = parseLine([]byte(`{"RequestHost":"a.com","RouterName":"r@docker","request_User-Agent":""}`))
+	if !ok || !rec.hasUA || !rec.bot || rec.device != "bot" {
+		t.Fatalf("empty-UA rec=%+v ok=%v", rec, ok)
+	}
+	rec, ok = parseLine([]byte(`{"RequestHost":"a.com","RouterName":"r@docker"}`))
+	if !ok || rec.hasUA {
+		t.Fatalf("absent-UA rec=%+v ok=%v", rec, ok)
+	}
 	// Missing / wrong-typed fields are fine.
 	rec, ok = parseLine([]byte(`{"RequestHost":"a.com","RouterName":"r@docker","Duration":"x","request_User-Agent":5}`))
 	if !ok || rec.hasUA || rec.hasLat || rec.referrer != refDirect {

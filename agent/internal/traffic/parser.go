@@ -72,7 +72,10 @@ func parseLine(line []byte) (rec record, ok bool) {
 		clientIP: asString(raw.ClientHost),
 		unrouted: router == "",
 	}
-	if ua := headerValue(raw.RequestUserAgent, raw.Request, "User-Agent"); ua != "" {
+	// A User-Agent counts when the header is present, even if empty (an empty UA is a bot; see classifyUA). A
+	// line with no User-Agent key at all stays untracked: Traefik omits an absent header, so it cannot be told
+	// apart from a log that does not keep the header, and counting it would turn every request into a bot.
+	if ua, present := headerLookup(raw.RequestUserAgent, raw.Request, "User-Agent"); present {
 		rec.hasUA = true
 		rec.browser, rec.os, rec.device, rec.bot = classifyUA(ua)
 	}
@@ -98,6 +101,34 @@ func headerValue(flat, nested any, name string) string {
 		}
 	}
 	return ""
+}
+
+// headerLookup is headerValue plus whether a string value was present at all (empty included).
+func headerLookup(flat, nested any, name string) (string, bool) {
+	if s, ok := headerStringOK(flat); ok {
+		return s, true
+	}
+	if m, ok := nested.(map[string]any); ok {
+		for k, v := range m {
+			if strings.EqualFold(k, name) {
+				return headerStringOK(v)
+			}
+		}
+	}
+	return "", false
+}
+
+func headerStringOK(v any) (string, bool) {
+	switch t := v.(type) {
+	case string:
+		return t, true
+	case []any:
+		if len(t) > 0 {
+			s, ok := t[0].(string)
+			return s, ok
+		}
+	}
+	return "", false
 }
 
 func headerString(v any) string {
