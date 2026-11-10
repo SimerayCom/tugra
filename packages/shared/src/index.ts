@@ -358,7 +358,10 @@ export interface TrafficDomainStat {
   networks?: TrafficKeyCount[]; // ANONYMIZED network: IPv4 /24 ("1.2.3.0/24") or IPv6 /48 (omitted when IP mode is off)
   bots?: { human: number; bot: number };
   latency?: number[]; // counts per TRAFFIC_LATENCY_BUCKETS_MS bucket + overflow (length 14)
-  unique?: string; // RESERVED for a later unique-visitors (HyperLogLog) slice; agents leave it empty
+  // Unique visitors: base64 of a 4096-byte HyperLogLog register array (p=12, one byte per register; precision,
+  // hash and estimator are specified in agent/internal/traffic/hll.go and apps/hub-api/src/traffic/hll.ts).
+  // Registers only - never a client IP. Omitted/empty when no visitor was countable; the hub merges per minute.
+  unique?: string;
 }
 
 /**

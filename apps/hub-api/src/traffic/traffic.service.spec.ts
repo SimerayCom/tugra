@@ -1,4 +1,5 @@
 import { TrafficService, p95FromHistogram } from "./traffic.service";
+import { addString, estimate, mergeInto, newSketch } from "./hll";
 
 const NOW = Date.UTC(2026, 10, 9, 12, 30, 0);
 
@@ -38,7 +39,23 @@ const breakdownRows = [
 const inScope = (r: any, where: any) =>
   where.serverId.in.includes(r.serverId) && r.bucket >= where.bucket.gte && (!where.domain || r.domain === where.domain);
 
-function make(queryRows: any[] = [], latencyQueryRows: any[] = []) {
+// honours where (bucket gte/lt, id gt) / orderBy id / take, like Prisma
+const uniqueFindMany = (uniqueRows: any[]) => {
+  const sorted = [...uniqueRows].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return jest.fn(({ where, take }: any) => {
+    const out: any[] = [];
+    let lo = 0; // first row with id > where.id.gt (binary search keeps the 200k-row test fast)
+    if (where.id?.gt) for (let hi = sorted.length; lo < hi; ) { const mid = (lo + hi) >> 1; if (sorted[mid].id > where.id.gt) hi = mid; else lo = mid + 1; }
+    for (let k = lo; k < sorted.length && out.length < take; k++) {
+      const r = sorted[k];
+      if (!inScope(r, where) || (where.bucket.lt && r.bucket >= where.bucket.lt)) continue;
+      out.push(r);
+    }
+    return Promise.resolve(out);
+  });
+};
+
+function make(queryRows: any[] = [], latencyQueryRows: any[] = [], uniqueRows: any[] = [], uniqueHourRows: any[] = []) {
   const prisma = {
     trafficMetric: {
       groupBy: jest.fn(({ where }: any) => {
@@ -94,6 +111,8 @@ function make(queryRows: any[] = [], latencyQueryRows: any[] = []) {
         return Promise.resolve({ _sum: { requests: rs.reduce((n, r) => n + r.requests, 0) || null } });
       }),
     },
+    trafficUnique: { findMany: uniqueFindMany(uniqueRows) },
+    trafficUniqueHour: { findMany: uniqueFindMany(uniqueHourRows) },
     application: {
       findMany: jest.fn(({ where }: any) =>
         Promise.resolve([{ id: "app1", name: "Shop", serverId: "mine" }, { id: "appX", name: "Secret", serverId: "other-team" }].filter((a) => where.id.in.includes(a.id) && where.serverId.in.includes(a.serverId))),
@@ -104,6 +123,13 @@ function make(queryRows: any[] = [], latencyQueryRows: any[] = []) {
   } as any;
   return { svc: new TrafficService(prisma), prisma };
 }
+
+const ipsOf = (from: number, to: number) => Array.from({ length: to - from }, (_, i) => `100.${((from + i) >> 8) & 255}.${(from + i) & 255}.7`);
+const uRow = (id: string, serverId: string, domain: string, ms: number, ips: string[]) => {
+  const s = newSketch();
+  for (const ip of ips) addString(s, ip);
+  return { id, serverId, domain, bucket: new Date(ms), sketch: Buffer.from(s) };
+};
 
 describe("TrafficService", () => {
   beforeEach(() => jest.spyOn(Date, "now").mockReturnValue(NOW));
@@ -194,7 +220,7 @@ describe("TrafficService", () => {
       expect(s.times[1] - s.times[0]).toBe(60_000);
       expect(s.requests[s.times.indexOf(minute)]).toBe(10);
       expect(s.requests.filter((x) => x === 0)).toHaveLength(n - 1);
-      expect(s.totals).toEqual({ requests: 10, s2xx: 8, s3xx: 0, s4xx: 1, s5xx: 1, bytes: 5000, botRequests: 0, humanRequests: 0, p95Ms: 0 });
+      expect(s.totals).toEqual({ requests: 10, s2xx: 8, s3xx: 0, s4xx: 1, s5xx: 1, bytes: 5000, botRequests: 0, humanRequests: 0, p95Ms: 0, uniqueVisitors: 0 });
       expect(s.p95Ms).toHaveLength(n);
       expect(s.p95Ms.every((x) => x === 0)).toBe(true);
       expect(typeof s.bytes[0]).toBe("number"); // BigInt never reaches the wire
@@ -394,6 +420,112 @@ describe("TrafficService", () => {
       expect(prisma.trafficCountry.groupBy.mock.calls[1][0].take).toBe(1);
       await svc.countries(["mine"], "24h");
       expect(prisma.trafficCountry.groupBy.mock.calls[2][0].take).toBe(50);
+    });
+  });
+
+  describe("summary: unique visitors (merged HyperLogLog)", () => {
+    const m1 = Math.floor((NOW - 60_000) / 60_000) * 60_000;
+    const m2 = m1 - 60_000;
+
+    it("merges sketches, never sums estimates: a visitor seen in two minutes counts once; buckets align to times", async () => {
+      const rows = [
+        uRow("a", "mine", "a.com", m1, ipsOf(0, 100)),
+        uRow("b", "mine", "a.com", m2, ipsOf(50, 150)), // overlaps 50..99
+        uRow("c", "mine", "z.com", m2, ipsOf(120, 200)), // another host, overlaps 120..149
+      ];
+      const { svc } = make([], [], rows);
+      const s = await svc.summary(["mine"], "1h");
+      expect(s.uniqueVisitors).toHaveLength(s.times.length);
+      expect(Math.abs(s.totals.uniqueVisitors - 200)).toBeLessThanOrEqual(4); // the union, not 100+100+80
+      expect(Math.abs(s.uniqueVisitors[s.times.indexOf(m1)] - 100)).toBeLessThanOrEqual(3);
+      expect(Math.abs(s.uniqueVisitors[s.times.indexOf(m2)] - 150)).toBeLessThanOrEqual(4); // b + c within the same minute
+      expect(s.uniqueVisitors.filter((x) => x === 0)).toHaveLength(s.times.length - 2);
+      const host = await svc.summary(["mine"], "1h", "A.com:443"); // domain filter is normalized and applied
+      expect(Math.abs(host.totals.uniqueVisitors - 150)).toBeLessThanOrEqual(4);
+    });
+
+    it("7d/30d read the hourly rollup table (not the minute table); <= 24h read the minute table", async () => {
+      const hour = Math.floor((NOW - 3 * 3_600_000) / 3_600_000) * 3_600_000;
+      const hourRows = [uRow("a", "mine", "a.com", hour, ipsOf(0, 60)), uRow("b", "mine", "z.com", hour, ipsOf(30, 90))]; // two hosts, same hour
+      const { svc, prisma } = make([], [], [uRow("m", "mine", "a.com", hour + 60_000, ipsOf(5000, 9000))], hourRows);
+      for (const range of ["7d", "30d"]) {
+        const s = await svc.summary(["mine"], range);
+        const i = s.times.indexOf(hour);
+        expect(i).toBeGreaterThanOrEqual(0);
+        expect(Math.abs(s.uniqueVisitors[i] - 90)).toBeLessThanOrEqual(3); // union of the hour rows, the minute row is not read
+        expect(s.totals.uniqueVisitors).toBe(s.uniqueVisitors[i]);
+      }
+      expect(prisma.trafficUnique.findMany).not.toHaveBeenCalled();
+      await svc.summary(["mine"], "24h");
+      expect(prisma.trafficUnique.findMany).toHaveBeenCalled();
+      expect(prisma.trafficUniqueHour.findMany.mock.calls.length).toBeGreaterThan(0);
+    });
+
+    it("the row cap never hides recent data: windows are read newest-first and only the OLDEST are skipped", async () => {
+      const old = NOW - 29 * 86_400_000; // oldest 5-day window of a 30d range
+      const sk = uRow("x", "mine", "a.com", old, ipsOf(0, 5)).sketch;
+      const oldRows = Array.from({ length: 200_500 }, (_, i) => ({ id: `o${String(i).padStart(6, "0")}`, serverId: "mine", domain: "a.com", bucket: new Date(old), sketch: sk }));
+      const recentHour = Math.floor((NOW - 3_600_000) / 3_600_000) * 3_600_000;
+      const recent = uRow("recent", "mine", "a.com", recentHour, ipsOf(1000, 1100));
+      const { svc, prisma } = make([], [], [], [...oldRows, recent]);
+      const warn = jest.spyOn((svc as any).logger, "warn").mockImplementation(() => undefined);
+      const s = await svc.summary(["mine"], "30d");
+      expect(Math.abs(s.uniqueVisitors[s.times.indexOf(recentHour)] - 100)).toBeLessThanOrEqual(3); // newest data present
+      expect(s.totals.uniqueVisitors).toBeGreaterThanOrEqual(95);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("capped")); // not silent
+      const calls = prisma.trafficUniqueHour.findMany.mock.calls.map((c: any[]) => c[0]);
+      expect(calls[0].where.bucket.lt.getTime()).toBeGreaterThan(calls[calls.length - 1].where.bucket.lt.getTime()); // newest window first
+      expect(calls.every((c: any) => JSON.stringify(c.orderBy) === JSON.stringify({ id: "asc" }) && c.skip === undefined)).toBe(true); // keyset paging, no skip/offset sort
+    }, 60_000);
+
+    it("identical summaries within the TTL reuse one merge (cache); a different scope/host/range does not share it", async () => {
+      const rows = [uRow("a", "mine", "a.com", m1, ipsOf(0, 50)), uRow("b", "other-team", "a.com", m1, ipsOf(1000, 2000))];
+      const { svc, prisma } = make([], [], rows);
+      const a = await svc.summary(["mine"], "1h");
+      const calls = prisma.trafficUnique.findMany.mock.calls.length;
+      const b = await svc.summary(["mine"], "1h");
+      expect(prisma.trafficUnique.findMany.mock.calls.length).toBe(calls);
+      expect(b.totals.uniqueVisitors).toBe(a.totals.uniqueVisitors);
+      const other = await svc.summary(["other-team"], "1h"); // different scope -> never served mine's result
+      expect(other.totals.uniqueVisitors).toBeGreaterThan(900);
+      expect((await svc.summary(["mine"], "1h", "z.com")).totals.uniqueVisitors).toBe(0);
+      (Date.now as jest.Mock).mockReturnValue(NOW + 31_000);
+      await svc.summary(["mine"], "1h");
+      expect(prisma.trafficUnique.findMany.mock.calls.length).toBeGreaterThan(calls + 2); // expired -> re-read
+    });
+
+    it("pages through more than one page of rows and merges them all", async () => {
+      const rows = Array.from({ length: 1200 }, (_, i) => uRow(`r${String(i).padStart(4, "0")}`, "mine", "a.com", m1, ipsOf(i * 2, i * 2 + 2)));
+      const { svc, prisma } = make([], [], rows);
+      const s = await svc.summary(["mine"], "1h");
+      expect(prisma.trafficUnique.findMany.mock.calls.length).toBe(3); // 500 + 500 + 200
+      expect(Math.abs(s.totals.uniqueVisitors - 2400) / 2400).toBeLessThan(0.05);
+    });
+
+    it("is scoped to the visible ids, ignores malformed rows, and returns 0 when there is nothing", async () => {
+      const rows = [
+        uRow("a", "mine", "a.com", m1, ipsOf(0, 10)),
+        uRow("x", "other-team", "secret.com", m1, ipsOf(1000, 4000)),
+        { id: "bad", serverId: "mine", domain: "a.com", bucket: new Date(m1), sketch: Buffer.alloc(10) },
+      ];
+      const { svc, prisma } = make([], [], rows);
+      const s = await svc.summary(["mine"], "1h");
+      expect(s.totals.uniqueVisitors).toBe(10);
+      expect(prisma.trafficUnique.findMany.mock.calls[0][0].where.serverId).toEqual({ in: ["mine"] });
+      const none = await make().svc.summary(["mine"], "1h");
+      expect(none.totals.uniqueVisitors).toBe(0);
+      expect(none.uniqueVisitors.every((x) => x === 0)).toBe(true);
+      const empty = await svc.summary([], "1h");
+      expect(empty.totals.uniqueVisitors).toBe(0);
+    });
+
+    it("estimate helper agrees with the merged result (sanity)", () => {
+      const a = newSketch();
+      const b = newSketch();
+      for (const ip of ipsOf(0, 10)) addString(a, ip);
+      for (const ip of ipsOf(5, 15)) addString(b, ip);
+      mergeInto(a, b);
+      expect(estimate(a)).toBe(15);
     });
   });
 });

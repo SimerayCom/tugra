@@ -51,6 +51,9 @@ func (c *Collector) ingestNew() {
 			hasUA: rec.hasUA, browser: rec.browser, os: rec.os, device: rec.device, bot: rec.bot,
 			referrer: rec.referrer, hasLat: rec.hasLat, lat: rec.lat,
 		}
+		// Unique visitors: the address is hashed into a HyperLogLog sketch (registers only, no address is kept),
+		// so this runs in every IP mode, "off" included.
+		x.visitor = rec.clientIP
 		if wantIP {
 			x.city = city
 			x.network = anonymizeNetwork(rec.clientIP)

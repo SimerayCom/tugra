@@ -9055,6 +9055,7 @@ export interface operations {
                         s5xx: number[];
                         bytes: number[];
                         p95Ms: number[];
+                        uniqueVisitors: number[];
                         totals: {
                             requests: number;
                             s2xx: number;
@@ -9065,6 +9066,7 @@ export interface operations {
                             botRequests: number;
                             humanRequests: number;
                             p95Ms: number;
+                            uniqueVisitors: number;
                         };
                     };
                 };

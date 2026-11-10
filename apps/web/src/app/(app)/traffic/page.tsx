@@ -162,6 +162,9 @@ function StatTiles({ summary }: { summary: TrafficSummary }) {
   // Buckets without latency data (0) are not real 0 ms readings: NaN leaves a gap, placed by time like the big chart.
   const p95Spark = useMemo(() => (summary.p95Ms ?? []).map((v) => (Number.isFinite(v) && v > 0 ? v : NaN)), [summary.p95Ms]);
   const p95Interval = bucketIntervalMs(summary);
+  const unique = Number.isFinite(totals.uniqueVisitors) && (totals.uniqueVisitors ?? 0) > 0 ? (totals.uniqueVisitors as number) : 0; // 0 = no data
+  // A bucket with no visitors is a gap (NaN), not a real 0; each bucket is its own estimate, so the line is not a running sum.
+  const uniqueSpark = useMemo(() => (summary.uniqueVisitors ?? []).map((v) => (Number.isFinite(v) && v > 0 ? v : NaN)), [summary.uniqueVisitors]);
   const bots = botShare(totals);
   const tileStyle = { fontSize: 20, fontWeight: 700, color: "var(--c-tx)", fontVariantNumeric: "tabular-nums" } as const;
   return (
@@ -172,6 +175,21 @@ function StatTiles({ summary }: { summary: TrafficSummary }) {
           <div className="mono" style={tileStyle}>{x.value}</div>
         </Card>
       ))}
+      <Card key="unique" style={{ padding: 14 }}>
+        <div title={t("traffic.statUniqueHint")} style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("traffic.statUnique")}</div>
+        {unique > 0 ? (
+          <>
+            <div className="mono" style={tileStyle}>{nf.format(unique)}</div>
+            {uniqueSpark.filter((v) => Number.isFinite(v)).length >= 2 && (
+              <div style={{ marginTop: 6 }}>
+                <Sparkline data={uniqueSpark} times={summary.times} interval={p95Interval} width={110} height={22} color="var(--c-a)" label={t("traffic.chartUnique")} />
+              </div>
+            )}
+          </>
+        ) : (
+          <div style={{ fontSize: 13, color: "var(--c-tx3)" }}>{t("traffic.statUniqueNone")}</div>
+        )}
+      </Card>
       <Card key="p95" style={{ padding: 14 }}>
         <div title={t("traffic.statP95Hint")} style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("traffic.statP95")}</div>
         {p95 > 0 ? (

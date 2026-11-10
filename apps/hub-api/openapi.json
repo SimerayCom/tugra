@@ -6112,6 +6112,12 @@
                         "type": "number"
                       }
                     },
+                    "uniqueVisitors": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      }
+                    },
                     "totals": {
                       "type": "object",
                       "properties": {
@@ -6141,6 +6147,9 @@
                         },
                         "p95Ms": {
                           "type": "number"
+                        },
+                        "uniqueVisitors": {
+                          "type": "number"
                         }
                       },
                       "required": [
@@ -6152,7 +6161,8 @@
                         "bytes",
                         "botRequests",
                         "humanRequests",
-                        "p95Ms"
+                        "p95Ms",
+                        "uniqueVisitors"
                       ],
                       "additionalProperties": false
                     }
@@ -6168,6 +6178,7 @@
                     "s5xx",
                     "bytes",
                     "p95Ms",
+                    "uniqueVisitors",
                     "totals"
                   ],
                   "additionalProperties": false

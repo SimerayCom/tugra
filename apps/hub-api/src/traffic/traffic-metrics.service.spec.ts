@@ -2,12 +2,40 @@ import { Prisma } from "@prisma/client";
 import type { TrafficMetricsMsg } from "@tugra/shared";
 import { TrafficMetricsService, OTHER_PATH, OTHER_KEY, UNMATCHED_HOST, UNKNOWN_COUNTRY, cleanPath, cleanCountry, cleanKey } from "./traffic-metrics.service";
 import { HostResolverService } from "./host-resolver.service";
+import { HLL_M, addString, decodeSketch, encodeSketch, estimate, newSketch } from "./hll";
 
 function make(owners: Record<string, { appId: string; teamId: string }> = {}) {
   const calls: Prisma.Sql[] = [];
+  // In-memory TrafficUnique table behind the interactive transaction (insert-if-absent, locked read, update).
+  const store = new Map<string, Buffer>();
+  const hourStore = new Map<string, Buffer>(); // the hourly rollup table (TrafficUniqueHour)
+  const storeFor = (sql: Prisma.Sql) => (sql.sql.includes(`"TrafficUniqueHour"`) ? hourStore : store);
+  const execRaw = (sql: Prisma.Sql) => {
+    calls.push(sql);
+    const v = sql.values as unknown[];
+    if (sql.sql.includes(`INSERT INTO "TrafficUnique`)) {
+      const st = storeFor(sql);
+      for (let i = 0; i < v.length; i += 5) {
+        const k = `${v[i + 1]}|${v[i + 2]}|${v[i + 3]}`;
+        if (!st.has(k)) st.set(k, Buffer.from(v[i + 4] as Buffer));
+      }
+    } else if (sql.sql.includes(`UPDATE "TrafficUnique`)) {
+      storeFor(sql).set(`${v[1]}|${v[2]}|${v[3]}`, Buffer.from(v[0] as Buffer));
+    }
+    return Promise.resolve(1);
+  };
+  const tx = {
+    $executeRaw: jest.fn(execRaw),
+    $queryRaw: jest.fn((sql: Prisma.Sql) => {
+      calls.push(sql);
+      const [serverId, bucketLit, ...hosts] = sql.values as string[];
+      const st = storeFor(sql);
+      return Promise.resolve(hosts.filter((h) => st.has(`${serverId}|${h}|${bucketLit}`)).sort().map((h) => ({ domain: h, sketch: st.get(`${serverId}|${h}|${bucketLit}`)! })));
+    }),
+  };
   const prisma = {
-    $executeRaw: jest.fn((sql: Prisma.Sql) => { calls.push(sql); return Promise.resolve(1); }),
-    $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
+    $executeRaw: jest.fn(execRaw),
+    $transaction: jest.fn((arg: any) => (typeof arg === "function" ? arg(tx) : Promise.all(arg))),
   } as any;
   const resolver = new HostResolverService({} as any);
   const forServer = jest.spyOn(resolver, "forServer").mockResolvedValue(new Map(Object.entries(owners)));
@@ -17,7 +45,9 @@ function make(owners: Record<string, { appId: string; teamId: string }> = {}) {
   const countryCalls = () => calls.filter((c) => c.sql.includes(`INSERT INTO "TrafficCountry"`));
   const breakdownCalls = () => calls.filter((c) => c.sql.includes(`INSERT INTO "TrafficBreakdown"`));
   const latencyCalls = () => calls.filter((c) => c.sql.includes(`INSERT INTO "TrafficLatency"`));
-  return { svc, prisma, forServer, metricCalls, pathCalls, countryCalls, breakdownCalls, latencyCalls };
+  const uniqueSql = () => calls.filter((c) => c.sql.includes(`"TrafficUnique"`));
+  const hourSql = () => calls.filter((c) => c.sql.includes(`"TrafficUniqueHour"`));
+  return { svc, prisma, tx, store, hourStore, uniqueSql, hourSql, forServer, metricCalls, pathCalls, countryCalls, breakdownCalls, latencyCalls };
 }
 // metric row = 13 params: id, serverId, domain, appId, bucket, requests, s2xx, s3xx, s4xx, s5xx, bytes, bot, human
 const metricRows = (c: Prisma.Sql) => {
@@ -503,5 +533,120 @@ describe("TrafficMetricsService.ingest", () => {
     const { svc, forServer } = make();
     forServer.mockRejectedValue(new Error("boom"));
     await expect(svc.ingest("srv1", msg([stat()]))).resolves.toBeUndefined();
+  });
+});
+
+describe("TrafficMetricsService.ingest: unique-visitor sketches", () => {
+  const minuteStart = () => Math.floor(Date.now() / 60_000) * 60_000;
+  const ipsOf = (from: number, to: number) => Array.from({ length: to - from }, (_, i) => `100.${((from + i) >> 8) & 255}.${(from + i) & 255}.7`);
+  const sketchB64 = (ips: string[]) => {
+    const s = newSketch();
+    for (const ip of ips) addString(s, ip);
+    return encodeSketch(s);
+  };
+  const stored = (store: Map<string, Buffer>, key: string) => new Uint8Array(store.get(key)!);
+  const bucketKey = (ts: number) => new Date(Math.floor(ts / 60_000) * 60_000).toISOString().replace("T", " ").replace("Z", "");
+
+  it("stores the decoded 4096-byte sketch per (server, host, minute) with the insert/lock/merge sequence", async () => {
+    const ts = minuteStart() + 1_000; // fixed inside one minute so +5s never crosses a bucket
+    const { svc, store, uniqueSql, tx } = make();
+    await svc.ingest("srv1", msg([stat({ unique: sketchB64(ipsOf(0, 100)) })], ts));
+    const k = `srv1|a.com|${bucketKey(ts)}`;
+    expect(store.get(k)!.length).toBe(HLL_M);
+    expect(Math.abs(estimate(stored(store, k)) - 100)).toBeLessThanOrEqual(3);
+    const sqls = uniqueSql().map((c) => c.sql);
+    expect(sqls[0]).toContain(`ON CONFLICT ("serverId", "domain", "bucket") DO NOTHING`);
+    expect(sqls[1]).toContain("FOR UPDATE"); // rows locked before the read-merge-write
+    expect(tx.$executeRaw).toHaveBeenCalled();
+  });
+
+  it("also rolls every sketch up into ONE hourly row per (server, host, hour): minutes in the same hour merge, other hours stay apart", async () => {
+    const hour = Math.floor(minuteStart() / 3_600_000) * 3_600_000;
+    const { svc, store, hourStore } = make();
+    const m = (n: number) => hour + n * 60_000 + 1_000;
+    await svc.ingest("srv1", msg([stat({ unique: sketchB64(ipsOf(0, 60)) })], m(1)));
+    await svc.ingest("srv1", msg([stat({ unique: sketchB64(ipsOf(30, 100)) })], m(2)));
+    const hk = `srv1|a.com|${new Date(hour).toISOString().replace("T", " ").replace("Z", "")}`;
+    const expected = newSketch();
+    for (const ip of ipsOf(0, 100)) addString(expected, ip);
+    expect(Buffer.from(hourStore.get(hk)!).equals(Buffer.from(expected))).toBe(true); // byte-exact union of both minutes
+    expect(store.size).toBe(2); // the minute rows stay per-minute
+    expect(hourStore.size).toBe(1);
+    await svc.ingest("srv1", msg([stat({ unique: sketchB64(ipsOf(0, 10)) })], m(3))); // a smaller sketch cannot shrink the hour
+    expect(Buffer.from(hourStore.get(hk)!).equals(Buffer.from(expected))).toBe(true);
+  });
+
+  it("a resent / overlapping bucket MERGES (element-wise max, union) instead of overwriting", async () => {
+    const ts = minuteStart() + 1_000; // fixed inside one minute so +5s never crosses a bucket
+    const { svc, store } = make();
+    await svc.ingest("srv1", msg([stat({ unique: sketchB64(ipsOf(0, 100)) })], ts));
+    await svc.ingest("srv1", msg([stat({ unique: sketchB64(ipsOf(50, 150)) })], ts + 5_000)); // same minute, 50 overlap
+    const k = `srv1|a.com|${bucketKey(ts)}`;
+    const merged = stored(store, k);
+    expect(Math.abs(estimate(merged) - 150)).toBeLessThanOrEqual(4); // union, not 100 (overwrite) and not 200 (sum)
+    const expected = newSketch();
+    for (const ip of ipsOf(0, 150)) addString(expected, ip);
+    expect(Buffer.from(merged).equals(Buffer.from(expected))).toBe(true); // byte-exact union
+    await svc.ingest("srv1", msg([stat({ unique: sketchB64(ipsOf(0, 20)) })], ts)); // a smaller replay cannot shrink it
+    expect(Buffer.from(stored(store, k)).equals(Buffer.from(expected))).toBe(true);
+  });
+
+  it("merges duplicate hosts within one message, and folds overflowed unmatched hosts into one (unmatched) sketch", async () => {
+    const ts = minuteStart() + 1_000; // fixed inside one minute so +5s never crosses a bucket
+    const { svc, store } = make();
+    await svc.ingest("srv1", msg([stat({ host: "a.com", unique: sketchB64(ipsOf(0, 40)) }), stat({ host: "A.com", unique: sketchB64(ipsOf(20, 60)) })], ts));
+    expect(Math.abs(estimate(stored(store, `srv1|a.com|${bucketKey(ts)}`)) - 60)).toBeLessThanOrEqual(2);
+
+    const many = Array.from({ length: 25 }, (_, i) => stat({ host: `h${String(i).padStart(2, "0")}.com`, requests: 100 - i, unique: sketchB64(ipsOf(i * 10, i * 10 + 10)) }));
+    await svc.ingest("srv2", msg(many, ts));
+    const k = `srv2|${UNMATCHED_HOST}|${bucketKey(ts)}`;
+    expect(store.has(k)).toBe(true); // the 5 hosts beyond the 20-host cap
+    expect(Math.abs(estimate(stored(store, k)) - 50)).toBeLessThanOrEqual(2);
+  });
+
+  it("drops a short / long / malformed / absurd-rank sketch (counters still stored), and never throws", async () => {
+    const ts = minuteStart() + 1_000; // fixed inside one minute so +5s never crosses a bucket
+    const bad = Buffer.alloc(HLL_M);
+    bad[0] = 99;
+    for (const unique of [Buffer.alloc(100).toString("base64"), Buffer.alloc(HLL_M + 1).toString("base64"), "not base64 !!", bad.toString("base64"), 123, {}, ""]) {
+      const { svc, store, metricCalls } = make();
+      await expect(svc.ingest("srv1", msg([stat({ unique })], ts))).resolves.toBeUndefined();
+      expect(store.size).toBe(0);
+      expect(metricCalls()).toHaveLength(1);
+    }
+  });
+
+  it("an absent sketch (old agent) writes nothing to TrafficUnique and opens no interactive transaction", async () => {
+    const { svc, uniqueSql, prisma } = make();
+    await svc.ingest("srv1", msg([stat()]));
+    expect(uniqueSql()).toHaveLength(0);
+    expect(prisma.$transaction.mock.calls.every((c: any[]) => typeof c[0] !== "function")).toBe(true);
+  });
+
+  it("a failing sketch write is swallowed (never throws) and does not undo the counters", async () => {
+    const { svc, tx, metricCalls } = make();
+    tx.$queryRaw.mockRejectedValueOnce(new Error("deadlock"));
+    await expect(svc.ingest("srv1", msg([stat({ unique: sketchB64(ipsOf(0, 10)) })]))).resolves.toBeUndefined();
+    expect(metricCalls()).toHaveLength(1);
+  });
+
+  it("PRIVACY: no raw address reaches any SQL parameter; only counters and the register bytes do", async () => {
+    const ips = ["81.2.69.10", "89.160.20.7", "2001:4860:4860::8888"];
+    const { svc, uniqueSql, hourSql, store, hourStore } = make();
+    await svc.ingest("srv1", msg([stat({ unique: sketchB64(ips) })]));
+    for (const c of uniqueSql()) {
+      for (const v of c.values as unknown[]) {
+        const text = Buffer.isBuffer(v) ? v.toString("latin1") + v.toString("base64") : String(v);
+        for (const frag of [...ips, "81.2.69", "89.160.20", "2001:4860"]) expect(text).not.toContain(frag);
+      }
+    }
+    for (const b of [...store.values(), ...hourStore.values()]) expect(Math.max(...b)).toBeLessThanOrEqual(53);
+    for (const c of hourSql()) {
+      for (const v of c.values as unknown[]) {
+        const text = Buffer.isBuffer(v) ? v.toString("latin1") + v.toString("base64") : String(v);
+        for (const frag of [...ips, "81.2.69", "89.160.20", "2001:4860"]) expect(text).not.toContain(frag);
+      }
+    }
+    expect(decodeSketch(encodeSketch(newSketch()))).not.toBeNull();
   });
 });

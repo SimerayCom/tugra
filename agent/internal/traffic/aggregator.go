@@ -38,6 +38,7 @@ type dims struct {
 	city, network       string // "" = not counted
 	hasLat              bool
 	lat                 int
+	visitor             string // raw client address, hashed into the unique sketch and dropped; "" = not counted
 }
 
 type pathAcc struct{ n, b int64 }
@@ -51,6 +52,7 @@ type domainAcc struct {
 	human, bot                                           int64
 	latency                                              [len(protocol.TrafficLatencyBucketsMs) + 1]int64
 	latN                                                 int64
+	uniq                                                 *hll // unique-visitor sketch (registers only, never an address); nil until a visitor is added
 }
 
 // aggregator accumulates one delta window. It is not safe for concurrent use: a collector is owned by a
@@ -151,6 +153,12 @@ func (a *aggregator) addFull(host, path string, status int, bytes int64, country
 	}
 	if x.network != "" {
 		a.bump(&d.networks, x.network, 1)
+	}
+	if x.visitor != "" {
+		if d.uniq == nil {
+			d.uniq = newHLL()
+		}
+		d.uniq.addClient(x.visitor)
 	}
 	if x.hasLat && x.lat >= 0 && x.lat < len(d.latency) {
 		d.latency[x.lat]++
@@ -320,7 +328,7 @@ func (a *aggregator) flush(now time.Time) *protocol.TrafficMetrics {
 			Networks:  topKeys(d.networks),
 			Bots:      botSplit(d),
 			Latency:   latencyCounts(d),
-			// Unique is RESERVED for the later unique-visitors (HyperLogLog) slice and stays empty here.
+			Unique:    d.uniq.encodeOrEmpty(),
 		}
 	}
 	for _, h := range hosts {
@@ -364,6 +372,12 @@ func (d *domainAcc) fold(src *domainAcc) {
 	d.latN += src.latN
 	for i, n := range src.latency {
 		d.latency[i] += n
+	}
+	if src.uniq != nil {
+		if d.uniq == nil {
+			d.uniq = newHLL()
+		}
+		d.uniq.merge(src.uniq)
 	}
 }
 

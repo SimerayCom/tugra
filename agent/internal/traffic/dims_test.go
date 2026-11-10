@@ -351,8 +351,11 @@ func TestCollectorDimensionsAnonymizedDefault(t *testing.T) {
 	if got := keyMap(d.Networks); got["81.2.69.0/24"] != 2 || got["89.160.20.0/24"] != 1 {
 		t.Fatalf("networks=%v", d.Networks)
 	}
-	if len(d.Latency) != 14 || d.Unique != "" {
-		t.Fatalf("latency=%v unique=%q", d.Latency, d.Unique)
+	if len(d.Latency) != 14 {
+		t.Fatalf("latency=%v", d.Latency)
+	}
+	if sk, ok := decodeHLL(d.Unique); !ok || sk.estimate() != 3 { // three distinct public visitors
+		t.Fatalf("unique sketch wrong: ok=%v", ok)
 	}
 	if len(d.Countries) != 2 || d.Countries[0].C != "GB" || d.Countries[0].N != 2 || d.Countries[1].C != "SE" {
 		t.Fatalf("countries=%v", d.Countries)
@@ -478,7 +481,7 @@ func TestCollectorDimensionsNoRawLeak(t *testing.T) {
 		dom := generic["domains"].([]any)[0].(map[string]any)
 		allowed := map[string]bool{"host": true, "requests": true, "s2xx": true, "s3xx": true, "s4xx": true, "s5xx": true, "bytes": true,
 			"paths": true, "countries": true, "browsers": true, "os": true, "devices": true, "referrers": true, "cities": true,
-			"networks": true, "bots": true, "latency": true}
+			"networks": true, "bots": true, "latency": true, "unique": true}
 		for k := range dom {
 			if !allowed[k] {
 				t.Fatalf("unexpected domain field %q", k)

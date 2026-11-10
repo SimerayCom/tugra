@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { TRAFFIC_LATENCY_BUCKETS_MS, type TrafficMetricsMsg } from "@tugra/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { HostResolverService, normalizeHost } from "./host-resolver.service";
+import { decodeSketch, mergeInto, newSketch } from "./hll";
 
 const MAX_RAW_DOMAINS = 10_000; // incoming domain entries examined per message (work bound; ranking happens after merge)
 const MAX_UNMATCHED_HOSTS = 20; // unmatched (no owning app) hosts kept verbatim per (server, bucket); the rest fold into UNMATCHED_HOST
@@ -116,7 +117,9 @@ function tsLiteral(d: Date): string {
  * is disjoint windows, each reported at most once (never replayed). The Host header is attacker-controlled,
  * so hosts are ranked by requests: matched hosts are always kept, unmatched ones are capped per bucket and
  * the remainder folds into one UNMATCHED_HOST row. Both writes of a batch run in one transaction. Only counts
- * are stored — never client IPs. ingest() never throws: the socket handler closes the connection on a throw,
+ * are stored — never client IPs. Unique visitors arrive as a HyperLogLog register array per host (never an
+ * address); it is stored per (server, host, minute) and MERGED (element-wise max) on conflict, so a resent or
+ * overlapping bucket can only raise the sketch to the union, never overwrite it. ingest() never throws: the socket handler closes the connection on a throw,
  * so a bad batch is logged and dropped.
  */
 @Injectable()
@@ -145,7 +148,7 @@ export class TrafficMetricsService {
 
     // Pass 1: merge duplicate hosts' counters (one INSERT must not touch the same key twice). Paths are merged
     // later, only for the hosts that survive ranking.
-    const byHost = new Map<string, { c: Counters; src: TrafficMetricsMsg["domains"] }>();
+    const byHost = new Map<string, { c: Counters; src: TrafficMetricsMsg["domains"]; u: Uint8Array | null }>();
     const newCounters = (): Counters => ({ requests: 0, s2xx: 0, s3xx: 0, s4xx: 0, s5xx: 0, bytes: 0, bot: 0, human: 0 });
     const addCounters = (c: Counters, d: TrafficMetricsMsg["domains"][number] | Counters) => {
       c.requests = Math.min(MAX_INT, c.requests + count(d.requests));
@@ -163,9 +166,11 @@ export class TrafficMetricsService {
       const host = cleanHost(d.host);
       if (!host) continue;
       let e = byHost.get(host);
-      if (!e) byHost.set(host, (e = { c: newCounters(), src: [] }));
+      if (!e) byHost.set(host, (e = { c: newCounters(), src: [], u: null }));
       addCounters(e.c, d);
       e.src.push(d);
+      const sk = decodeSketch(d.unique); // wrong-length / malformed sketches are dropped, the counters still count
+      if (sk) mergeInto((e.u ??= newSketch()), sk);
     }
     if (byHost.size === 0) return;
 
@@ -184,9 +189,12 @@ export class TrafficMetricsService {
     const kept = new Set(keptUnmatched);
     const overflow = newCounters();
     let overflowAny = false;
+    let overflowU: Uint8Array | null = null;
     for (const h of unmatched) {
       if (kept.has(h)) continue;
       addCounters(overflow, byHost.get(h)!.c);
+      const u = byHost.get(h)!.u;
+      if (u) mergeInto((overflowU ??= newSketch()), u);
       overflowAny = true;
     }
 
@@ -196,6 +204,13 @@ export class TrafficMetricsService {
     ];
     if (overflowAny) plan.push({ host: UNMATCHED_HOST, appId: null, c: overflow, src: [], maxPaths: 0 });
     plan.sort((a, b) => (a.host < b.host ? -1 : a.host > b.host ? 1 : 0)); // stable lock order across concurrent upserts
+    // host -> unique-visitor registers to merge in. The overflow row's sketch is the union of every folded host
+    // (a literal "(unmatched)" reported by the agent is among them).
+    const sketches = new Map<string, Uint8Array>();
+    for (const { host } of plan) {
+      const u = host === UNMATCHED_HOST ? overflowU : byHost.get(host)?.u;
+      if (u) sketches.set(host, u);
+    }
 
     const metricRows: Prisma.Sql[] = [];
     const pathRows: Prisma.Sql[] = [];
@@ -349,5 +364,52 @@ export class TrafficMetricsService {
           "requests" = "TrafficLatency"."requests" + EXCLUDED."requests"`));
     }
     await this.prisma.$transaction(ops);
+    if (sketches.size > 0) await this.mergeSketches(serverId, bucket, sketches);
+  }
+
+  /**
+   * Stores the unique-visitor sketches, merging with whatever the row already holds, into the minute row AND the
+   * hour row that contains it (the hour rows serve the long ranges, see TrafficUniqueHour). Under concurrency the
+   * read-merge-write must not lose a register: (1) insert-if-absent so every row exists, (2) lock the rows in a
+   * stable (table, host) order and read them, (3) write back the element-wise max when it differs. Sketches carry
+   * only register ranks, never an address. A failure here is logged and never affects the counters stored above.
+   */
+  private async mergeSketches(serverId: string, bucket: Date, sketches: Map<string, Uint8Array>): Promise<void> {
+    try {
+      const hosts = [...sketches.keys()].sort();
+      const hourStart = new Date(Math.floor(bucket.getTime() / 3_600_000) * 3_600_000);
+      const targets = [
+        { table: Prisma.raw(`"TrafficUnique"`), lit: tsLiteral(bucket) },
+        { table: Prisma.raw(`"TrafficUniqueHour"`), lit: tsLiteral(hourStart) },
+      ];
+      await this.prisma.$transaction(async (tx) => {
+        for (const { table, lit } of targets) {
+          for (let i = 0; i < hosts.length; i += ROW_CHUNK) {
+            const chunk = hosts.slice(i, i + ROW_CHUNK);
+            await tx.$executeRaw(Prisma.sql`
+              INSERT INTO ${table} ("id", "serverId", "domain", "bucket", "sketch")
+              VALUES ${Prisma.join(chunk.map((h) => Prisma.sql`(${randomUUID()}, ${serverId}, ${h}, ${lit}::timestamp, ${Buffer.from(sketches.get(h)!)})`))}
+              ON CONFLICT ("serverId", "domain", "bucket") DO NOTHING`);
+            const rows = await tx.$queryRaw<{ domain: string; sketch: Uint8Array }[]>(Prisma.sql`
+              SELECT "domain", "sketch" FROM ${table}
+              WHERE "serverId" = ${serverId} AND "bucket" = ${lit}::timestamp AND "domain" IN (${Prisma.join(chunk)})
+              ORDER BY "domain" ASC FOR UPDATE`);
+            for (const row of rows) {
+              const incoming = sketches.get(row.domain);
+              if (!incoming) continue;
+              const cur = row.sketch ? new Uint8Array(row.sketch) : null;
+              const merged = cur && cur.length === incoming.length ? Uint8Array.from(cur) : newSketch();
+              mergeInto(merged, incoming);
+              if (cur && cur.length === merged.length && merged.every((v, j) => v === cur[j])) continue; // already the union
+              await tx.$executeRaw(Prisma.sql`
+                UPDATE ${table} SET "sketch" = ${Buffer.from(merged)}
+                WHERE "serverId" = ${serverId} AND "domain" = ${row.domain} AND "bucket" = ${lit}::timestamp`);
+            }
+          }
+        }
+      });
+    } catch (e) {
+      this.logger.warn(`unique-visitor sketches dropped for server ${serverId}: ${(e as Error)?.message ?? e}`);
+    }
   }
 }

@@ -1,10 +1,12 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
+import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { rangeToMs } from "../metrics/container-metrics.service";
 import { normalizeHost } from "./host-resolver.service";
 import { TRAFFIC_LATENCY_BUCKETS_MS } from "@tugra/shared";
 import { OTHER_KEY, OTHER_PATH } from "./traffic-metrics.service";
+import { estimate, mergeInto, newSketch } from "./hll";
 
 const MAX_SERVERS = 500;
 const MAX_DOMAINS = 500;
@@ -17,6 +19,12 @@ const MAX_BREAKDOWN_LIMIT = 100;
 export const BREAKDOWN_DIM_NAMES = ["browser", "os", "device", "referrer", "city", "network"] as const;
 export type BreakdownDim = (typeof BREAKDOWN_DIM_NAMES)[number];
 const LATENCY_BINS = TRAFFIC_LATENCY_BUCKETS_MS.length + 1;
+const UNIQUE_PAGE = 500; // sketch rows (4 KB each) read per page while merging, so memory stays bounded
+const MAX_UNIQUE_ROWS = 200_000; // sketch rows examined per query (work bound); newest windows are read first, so it only ever drops the OLDEST data
+const UNIQUE_WINDOW_MIN_MS = 24 * 3_600_000; // minute-row table (ranges <= 24h): one read window per day
+const UNIQUE_WINDOW_HOUR_MS = 5 * 86_400_000; // hour-row table (7d/30d): one read window per 5 days
+const UNIQUE_CACHE_TTL_MS = 30_000; // identical (scope, range, host) summaries within this window reuse one sketch merge
+const UNIQUE_CACHE_MAX = 64;
 
 /**
  * p95 latency (ms) from a histogram of counts per TRAFFIC_LATENCY_BUCKETS_MS bucket (+ the overflow bucket, so
@@ -61,6 +69,7 @@ export interface TrafficTotals {
   botRequests: number;
   humanRequests: number;
   p95Ms: number; // overall p95 latency over the range (0 = no latency data)
+  uniqueVisitors: number; // distinct visitors over the whole range (merged HyperLogLog estimate; 0 = none/unknown)
 }
 export interface TrafficSummary {
   range: string;
@@ -73,6 +82,7 @@ export interface TrafficSummary {
   s5xx: number[];
   bytes: number[];
   p95Ms: number[]; // per-bucket p95 latency in ms, aligned to `times` (0 = no latency data in that bucket)
+  uniqueVisitors: number[]; // per-bucket distinct visitors, aligned to `times` (each bucket is its own estimate; NOT additive)
   totals: TrafficTotals;
 }
 
@@ -85,6 +95,11 @@ const round1 = (n: number) => Math.round(n * 10) / 10;
  */
 @Injectable()
 export class TrafficService {
+  private readonly logger = new Logger(TrafficService.name);
+  // Short-lived cache of the merged unique-visitor result (the one expensive read), keyed by the exact id scope
+  // (hashed), range, host and aligned window start, so it can never serve one caller's scope to another.
+  private readonly uniqueCache = new Map<string, { at: number; value: Promise<{ per: [number, number][]; total: number }> }>();
+
   constructor(private readonly prisma: PrismaService) {}
 
   async domains(serverIds: string[], range?: string) {
@@ -141,7 +156,8 @@ export class TrafficService {
       s5xx: zeros(),
       bytes: zeros(),
       p95Ms: zeros(),
-      totals: { requests: 0, s2xx: 0, s3xx: 0, s4xx: 0, s5xx: 0, bytes: 0, botRequests: 0, humanRequests: 0, p95Ms: 0 },
+      uniqueVisitors: zeros(),
+      totals: { requests: 0, s2xx: 0, s3xx: 0, s4xx: 0, s5xx: 0, bytes: 0, botRequests: 0, humanRequests: 0, p95Ms: 0, uniqueVisitors: 0 },
     };
     if (ids.length === 0) return out;
 
@@ -201,7 +217,85 @@ export class TrafficService {
     }
     for (const [i, h] of perBucket) out.p95Ms[i] = round1(p95FromHistogram(h));
     out.totals.p95Ms = round1(p95FromHistogram(overall));
+
+    await this.fillUnique(out, ids, host, start, stepMs, idx);
     return out;
+  }
+
+  /**
+   * Unique visitors: HyperLogLog sketches of the scoped servers (and optional host) are merged element-wise (max)
+   * per chart bucket and over the whole range, then estimated. Merging sketches (not summing estimates) is what
+   * keeps range and fleet counts correct: a visitor seen in many minutes / on many servers / on many hosts is
+   * counted once. Ranges <= 24h read the per-minute rows, 7d/30d read the per-hour rollup rows (~60x fewer 4 KB rows
+   * for the same chart buckets). Reads walk time windows NEWEST-first (each window paged by primary key, so no
+   * cross-window sort) and the row cap, if ever hit, drops only the oldest windows (logged), never recent data.
+   * Memory is bounded by (buckets + 1) sketches. The merged result is cached for a short TTL.
+   */
+  private async fillUnique(out: TrafficSummary, ids: string[], host: string, start: number, stepMs: number, idx: Map<number, number>) {
+    const hourly = stepMs >= 3_600_000;
+    const key = [createHash("sha1").update([...new Set(ids)].sort().join("\n")).digest("hex"), out.range, host, start].join("|");
+    const now = Date.now();
+    let hit = this.uniqueCache.get(key);
+    if (!hit || now - hit.at > UNIQUE_CACHE_TTL_MS) {
+      const value = this.mergeUnique(ids, host, start, stepMs, idx, hourly);
+      hit = { at: now, value };
+      this.uniqueCache.delete(key);
+      this.uniqueCache.set(key, hit);
+      while (this.uniqueCache.size > UNIQUE_CACHE_MAX) this.uniqueCache.delete(this.uniqueCache.keys().next().value as string);
+      value.catch(() => {
+        if (this.uniqueCache.get(key) === hit) this.uniqueCache.delete(key); // never cache a failure
+      });
+    }
+    const { per, total } = await hit.value;
+    for (const [i, n] of per) out.uniqueVisitors[i] = n;
+    out.totals.uniqueVisitors = total;
+  }
+
+  private async mergeUnique(ids: string[], host: string, start: number, stepMs: number, idx: Map<number, number>, hourly: boolean) {
+    const windowMs = hourly ? UNIQUE_WINDOW_HOUR_MS : UNIQUE_WINDOW_MIN_MS;
+    const total = newSketch();
+    const perBucket = new Map<number, Uint8Array>();
+    const end = Math.floor(Date.now() / stepMs) * stepMs + stepMs; // exclusive: rows past the aligned window are ignored anyway
+    let seen = 0;
+    let truncated = false;
+    for (let hi = end; hi > start && !truncated; hi -= windowMs) {
+      const lo = Math.max(start, hi - windowMs);
+      let lastId: string | undefined;
+      for (;;) {
+        if (seen >= MAX_UNIQUE_ROWS) {
+          truncated = true;
+          break;
+        }
+        const args = {
+          where: {
+            serverId: { in: ids },
+            bucket: { gte: new Date(lo), lt: new Date(hi) },
+            ...(host ? { domain: host } : {}),
+            ...(lastId ? { id: { gt: lastId } } : {}),
+          },
+          orderBy: { id: "asc" },
+          select: { id: true, bucket: true, sketch: true },
+          take: UNIQUE_PAGE,
+        } satisfies Prisma.TrafficUniqueFindManyArgs;
+        // both tables share one shape; the table is picked per call so only the one in use is touched
+        const page = await (hourly ? this.prisma.trafficUniqueHour.findMany(args) : this.prisma.trafficUnique.findMany(args));
+        for (const row of page) {
+          const i = idx.get(Math.floor(row.bucket.getTime() / stepMs) * stepMs);
+          if (i === undefined || !row.sketch || row.sketch.length !== total.length) continue; // outside the window / malformed
+          const b = perBucket.get(i) ?? newSketch();
+          mergeInto(b, row.sketch);
+          perBucket.set(i, b);
+          mergeInto(total, row.sketch);
+        }
+        seen += page.length;
+        if (page.length < UNIQUE_PAGE) break;
+        lastId = page[page.length - 1].id;
+      }
+    }
+    if (truncated) this.logger.warn(`unique-visitor read capped at ${MAX_UNIQUE_ROWS} sketch rows (${hourly ? "hour" : "minute"} table); the oldest windows of the range were skipped`);
+    const per: [number, number][] = [];
+    for (const [i, sk] of perBucket) per.push([i, estimate(sk)]);
+    return { per, total: perBucket.size > 0 ? estimate(total) : 0 };
   }
 
   async paths(serverIds: string[], range?: string, domain?: string, limit?: number) {

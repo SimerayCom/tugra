@@ -364,6 +364,8 @@ model Server {
   trafficCountries     TrafficCountry[]
   trafficBreakdowns    TrafficBreakdown[]
   trafficLatencies     TrafficLatency[]
+  trafficUniques       TrafficUnique[]
+  trafficUniqueHours   TrafficUniqueHour[]
   logDrains            LogDrain[]
   proxyDynamicConfigs  ProxyDynamicConfig[]
   tunnel               ServerTunnel?
@@ -705,6 +707,38 @@ model TrafficLatency {
   requests Int
 
   @@unique([serverId, domain, bucket, idx])
+  @@index([serverId, domain, bucket])
+  @@index([bucket])
+}
+
+// Unique-visitor HyperLogLog sketch per (server, host, minute): the agent's 4096 one-byte registers (p=12), merged
+// element-wise (max) on conflict and again at query time, so range/fleet unique counts stay correct. The bytes are
+// register ranks only — never a client IP. See apps/hub-api/src/traffic/hll.ts for the contract.
+model TrafficUnique {
+  id       String   @id @default(cuid())
+  server   Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  serverId String
+  domain   String
+  bucket   DateTime
+  sketch   Bytes
+
+  @@unique([serverId, domain, bucket])
+  @@index([serverId, domain, bucket])
+  @@index([bucket])
+}
+
+// The same sketch rolled up to one row per (server, host, HOUR): written alongside every minute row (same merge), read
+// for the long ranges (7d/30d) so a summary scans ~60x fewer 4 KB rows and a long retention stays cheap, while the
+// minute rows (read only for ranges <= 24h) are pruned after ~48h. Register ranks only, never a client IP.
+model TrafficUniqueHour {
+  id       String   @id @default(cuid())
+  server   Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  serverId String
+  domain   String
+  bucket   DateTime
+  sketch   Bytes
+
+  @@unique([serverId, domain, bucket])
   @@index([serverId, domain, bucket])
   @@index([bucket])
 }

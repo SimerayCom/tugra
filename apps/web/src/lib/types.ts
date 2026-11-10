@@ -1557,6 +1557,8 @@ export interface TrafficTotals {
   humanRequests: number;
   /** Overall p95 latency (ms) over the range; 0 = no latency data. */
   p95Ms: number;
+  /** Distinct visitors over the range (merged HyperLogLog estimate, about +-1.6%); 0 = none. Absent on an older hub. */
+  uniqueVisitors?: number;
 }
 /** GET /traffic/summary: index i of every series is the bucket starting at times[i] (unix ms). */
 export interface TrafficSummary {
@@ -1571,6 +1573,8 @@ export interface TrafficSummary {
   bytes: number[];
   /** p95 latency (ms) per bucket; 0 where a bucket has no latency data. */
   p95Ms: number[];
+  /** Distinct visitors per bucket (each its own estimate, NOT additive); 0 = none. Absent on an older hub. */
+  uniqueVisitors?: number[];
   totals: TrafficTotals;
 }
 export type TrafficBreakdownDim = "browser" | "os" | "device" | "referrer" | "city" | "network";

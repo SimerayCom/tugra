@@ -525,7 +525,7 @@ func TestCollectorEndToEndNoIPLeak(t *testing.T) {
 	for k := range dom {
 		switch k {
 		case "host", "requests", "s2xx", "s3xx", "s4xx", "s5xx", "bytes", "paths", "countries",
-			"browsers", "os", "devices", "referrers", "cities", "networks", "bots", "latency":
+			"browsers", "os", "devices", "referrers", "cities", "networks", "bots", "latency", "unique":
 		default:
 			t.Fatalf("unexpected domain field %q", k)
 		}

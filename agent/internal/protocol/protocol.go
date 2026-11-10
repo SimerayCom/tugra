@@ -153,7 +153,7 @@ type TrafficDomainStat struct {
 	Networks  []TrafficKeyCount `json:"networks,omitempty"`
 	Bots      *TrafficBots      `json:"bots,omitempty"`
 	Latency   []int64           `json:"latency,omitempty"` // len(TrafficLatencyBucketsMs)+1 counts
-	Unique    string            `json:"unique,omitempty"`  // RESERVED for the unique-visitors (HyperLogLog) slice; left empty
+	Unique    string            `json:"unique,omitempty"`  // base64 of the 4096-byte HyperLogLog register array (p=12); registers only, never an address; empty = no visitors
 }
 
 // TrafficMetrics is the agent->hub per-window visitor traffic aggregate. The hub sums it additively (no

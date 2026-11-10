@@ -1,0 +1,227 @@
+package traffic
+
+import (
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"math"
+	"strings"
+	"testing"
+	"time"
+)
+
+// Cross-language golden. The SAME list and expected values live in
+// apps/hub-api/src/traffic/hll.spec.ts; if either implementation drifts, one of the two suites fails.
+var hllGoldenIPs = []string{
+	"1.1.1.1", "8.8.8.8", "8.8.4.4", "9.9.9.9", "81.2.69.10", "89.160.20.7", "203.0.113.7", "198.51.100.23",
+	"185.199.108.153", "151.101.1.69", "104.16.132.229", "52.95.110.1", "13.107.42.14", "172.217.16.14",
+	"2001:4860:4860::8888", "2606:4700:4700::1111", "2a00:1450:4001:81b::200e", "2620:fe::fe",
+	"2001:db8::1", "2a03:2880:f12f:83:face:b00c:0:25de", "45.33.32.156", "93.184.216.34", "216.58.214.78", "157.240.1.35",
+}
+
+// hllGoldenSketchB64 is the base64 of the 4096 register bytes for hllGoldenIPs.
+const hllGoldenSketchB64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+
+// Hash vectors: FNV-1a-64 then splitmix64 of the string, as 16 hex digits.
+var hllGoldenHashes = map[string]string{
+	"1.1.1.1":              "7b0212cbf4bd39cf",
+	"2001:4860:4860::8888": "0b42e0fd4e6e8f0f",
+	"":                     "f52a15e9a9b5e89b",
+}
+
+// hllGoldenBigSHA256 is sha256 of the register bytes for synthetic IPs "10.<i>" style (see syntheticIP), i<5000.
+const hllGoldenBigSHA256 = "e1b98243992e898c6c6d30bb2d1b7b71817dccd11a4e41680183ef6f78664498"
+
+func syntheticIP(i int) string {
+	return fmt.Sprintf("%d.%d.%d.%d", 11+(i>>16)%200, (i>>8)&255, i&255, 1+i%250)
+}
+
+func goldenSketch() *hll {
+	s := newHLL()
+	for _, ip := range hllGoldenIPs {
+		if !s.addClient(ip) {
+			panic("golden ip rejected: " + ip)
+		}
+	}
+	return s
+}
+
+func TestHLLGoldenSketchMatchesTS(t *testing.T) {
+	got := goldenSketch().encode()
+	if got != hllGoldenSketchB64 {
+		t.Fatalf("golden sketch drifted:\n got=%s", got)
+	}
+}
+
+func TestHLLGoldenHashes(t *testing.T) {
+	for in, want := range hllGoldenHashes {
+		if got := fmt.Sprintf("%016x", hllHash(in)); got != want {
+			t.Errorf("hash(%q)=%s want %s", in, got, want)
+		}
+	}
+}
+
+func TestHLLGoldenBigSetDigest(t *testing.T) {
+	s := newHLL()
+	for i := 0; i < 5000; i++ {
+		s.addString(syntheticIP(i))
+	}
+	sum := sha256.Sum256(s.reg[:])
+	if got := hex.EncodeToString(sum[:]); got != hllGoldenBigSHA256 {
+		t.Fatalf("big-set sketch digest drifted: %s", got)
+	}
+}
+
+func TestHLLAccuracy(t *testing.T) {
+	for _, n := range []int{1000, 10000, 100000} {
+		s := newHLL()
+		for i := 0; i < n; i++ {
+			s.addString(syntheticIP(i))
+		}
+		est := float64(s.estimate())
+		if rel := math.Abs(est-float64(n)) / float64(n); rel > 0.05 {
+			t.Errorf("n=%d est=%.0f rel=%.3f", n, est, rel)
+		}
+	}
+	if newHLL().estimate() != 0 {
+		t.Fatal("empty sketch must estimate 0")
+	}
+	s := newHLL()
+	for i := 0; i < 50; i++ {
+		s.addString(syntheticIP(i))
+		s.addString(syntheticIP(i)) // duplicates do not change the sketch
+	}
+	if e := s.estimate(); e < 48 || e > 52 {
+		t.Errorf("small-range est=%d want ~50", e)
+	}
+}
+
+func TestHLLMergeIsUnion(t *testing.T) {
+	a, b, u := newHLL(), newHLL(), newHLL()
+	for i := 0; i < 6000; i++ {
+		a.addString(syntheticIP(i))
+		u.addString(syntheticIP(i))
+	}
+	for i := 4000; i < 10000; i++ { // overlaps a on 4000..5999
+		b.addString(syntheticIP(i))
+		u.addString(syntheticIP(i))
+	}
+	a.merge(b)
+	if a.reg != u.reg {
+		t.Fatal("merge must equal the sketch of the union (element-wise max)")
+	}
+	if rel := math.Abs(float64(a.estimate())-10000) / 10000; rel > 0.05 {
+		t.Fatalf("union est=%d", a.estimate())
+	}
+}
+
+func TestHLLSkipsNonPublicAndInvalid(t *testing.T) {
+	s := newHLL()
+	for _, ip := range []string{"", "garbage", "10.0.0.1", "192.168.1.1", "127.0.0.1", "::1", "fe80::1", "0.0.0.0", "224.0.0.1", "172.16.0.9"} {
+		if s.addClient(ip) {
+			t.Errorf("%q must not be added", ip)
+		}
+	}
+	if !s.empty() || s.encode() != "" {
+		t.Fatal("nothing public was added; the sketch must stay empty")
+	}
+	// A mapped IPv6 and its IPv4 are the same visitor; an ip:port form is accepted.
+	a, b, c := newHLL(), newHLL(), newHLL()
+	a.addClient("8.8.8.8")
+	b.addClient("::ffff:8.8.8.8")
+	c.addClient("8.8.8.8:443")
+	if a.reg != b.reg || a.reg != c.reg {
+		t.Fatal("normalization must map all spellings to one visitor")
+	}
+}
+
+func TestHLLEncodeDecodeRoundTrip(t *testing.T) {
+	s := goldenSketch()
+	d, ok := decodeHLL(s.encode())
+	if !ok || d.reg != s.reg {
+		t.Fatal("round trip failed")
+	}
+	if _, ok := decodeHLL(base64.StdEncoding.EncodeToString(make([]byte, 100))); ok {
+		t.Fatal("short sketch must be rejected")
+	}
+	if _, ok := decodeHLL("!!"); ok {
+		t.Fatal("bad base64 must be rejected")
+	}
+}
+
+// Privacy: the aggregated message carries only the register array. No raw address (in any spelling), and no
+// field named like one, can appear; and in "off" mode unique visitors are still counted.
+func TestCollectorUniqueNoIPLeakAndWorksInOffMode(t *testing.T) {
+	ips := []string{"81.2.69.10", "89.160.20.7", "81.2.69.10", "2001:4860:4860::8888", "10.0.0.5"}
+	var lines strings.Builder
+	for _, ip := range ips {
+		lines.WriteString(fullLine(ip, "a.com", "/", uaChromeWin, "", 2_000_000))
+	}
+	for _, mode := range []string{"", "off"} {
+		m := collectOnce(t, mode, lines.String())
+		d := m.Domains[0]
+		if d.Unique == "" {
+			t.Fatalf("mode %q: unique sketch missing", mode)
+		}
+		sk, ok := decodeHLL(d.Unique)
+		if !ok {
+			t.Fatalf("mode %q: sketch not decodable", mode)
+		}
+		if got := sk.estimate(); got != 3 { // 3 distinct public visitors; the private one is skipped
+			t.Fatalf("mode %q: unique=%d want 3", mode, got)
+		}
+		b, _ := json.Marshal(m)
+		raw, _ := base64.StdEncoding.DecodeString(d.Unique)
+		// The whole message never carries a full address; the sketch (encoded and raw) carries no address
+		// fragment either. (Anonymized mode legitimately emits a /24 or /48 network label elsewhere.)
+		for _, ip := range ips {
+			if strings.Contains(string(b), ip) || strings.Contains(string(raw), ip) {
+				t.Fatalf("mode %q: message leaks %q", mode, ip)
+			}
+		}
+		for _, frag := range []string{"2001:4860", "81.2.69", "89.160.20", "8888"} {
+			if strings.Contains(d.Unique, frag) || strings.Contains(string(raw), frag) {
+				t.Fatalf("mode %q: sketch leaks fragment %q", mode, frag)
+			}
+		}
+		if len(raw) != hllM {
+			t.Fatalf("sketch must be exactly %d bytes, got %d", hllM, len(raw))
+		}
+		for _, r := range raw {
+			if r > hllSuffixBits+1 {
+				t.Fatalf("register out of range: %d", r)
+			}
+		}
+	}
+}
+
+func TestAggregatorUniqueIsPerDomainPerWindowAndFolds(t *testing.T) {
+	a := newAggregator(time.Now())
+	a.addFull("a.com", "/", 200, 1, "", false, dims{visitor: "8.8.8.8"})
+	a.addFull("a.com", "/", 200, 1, "", false, dims{visitor: "8.8.4.4"})
+	a.addFull("b.com", "/", 200, 1, "", false, dims{visitor: "8.8.8.8"})
+	a.addFull("c.com", "/", 200, 1, "", false, dims{}) // no address -> empty sketch
+	m := a.flush(time.Now())
+	by := map[string]string{}
+	for _, d := range m.Domains {
+		by[d.Host] = d.Unique
+	}
+	est := func(h string) int64 {
+		sk, ok := decodeHLL(by[h])
+		if !ok {
+			t.Fatalf("%s: no sketch", h)
+		}
+		return sk.estimate()
+	}
+	if est("a.com") != 2 || est("b.com") != 1 || by["c.com"] != "" {
+		t.Fatalf("per-domain sketches wrong: %v", by)
+	}
+	// Reset per window.
+	a.addFull("a.com", "/", 200, 1, "", false, dims{visitor: "9.9.9.9"})
+	m2 := a.flush(time.Now())
+	if sk, _ := decodeHLL(m2.Domains[0].Unique); sk.estimate() != 1 {
+		t.Fatalf("window must reset the sketch: %d", sk.estimate())
+	}
+}

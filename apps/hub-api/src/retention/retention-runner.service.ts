@@ -35,6 +35,8 @@ export class RetentionRunnerService {
     trafficCountry: number;
     trafficBreakdown: number;
     trafficLatency: number;
+    trafficUnique: number;
+    trafficUniqueHour: number;
   }> {
     const rawHours = Number(this.config.get("METRICS_RAW_RETENTION_HOURS") ?? 48);
     const hbDays = Number(this.config.get("HEARTBEAT_RETENTION_DAYS") ?? 30);
@@ -116,6 +118,17 @@ export class RetentionRunnerService {
       (take) => this.prisma.trafficLatency.findMany({ where: { bucket: { lt: trafficCutoff } }, select: { id: true }, take }),
       (ids) => this.prisma.trafficLatency.deleteMany({ where: { id: { in: ids } } }),
     );
+    // Minute sketches are only read for ranges <= 24h, so they are kept ~48h (or the traffic retention if shorter);
+    // the hourly rollup (TrafficUniqueHour) carries the long ranges for the full TRAFFIC_RETENTION_DAYS.
+    const uniqueMinuteCutoff = new Date(Math.max(trafficCutoff.getTime(), Date.now() - 48 * 3600_000));
+    const trafficUnique = await this.pruneOlderThan(
+      (take) => this.prisma.trafficUnique.findMany({ where: { bucket: { lt: uniqueMinuteCutoff } }, select: { id: true }, take }),
+      (ids) => this.prisma.trafficUnique.deleteMany({ where: { id: { in: ids } } }),
+    );
+    const trafficUniqueHour = await this.pruneOlderThan(
+      (take) => this.prisma.trafficUniqueHour.findMany({ where: { bucket: { lt: trafficCutoff } }, select: { id: true }, take }),
+      (ids) => this.prisma.trafficUniqueHour.deleteMany({ where: { id: { in: ids } } }),
+    );
     // Audit log is compliance-sensitive → pruned ONLY when AUDIT_RETENTION_DAYS is explicitly set (> 0).
     const auditLog = auditDays > 0
       ? await this.pruneOlderThan(
@@ -124,12 +137,12 @@ export class RetentionRunnerService {
         )
       : 0;
 
-    if (metric || containerMetric || heartbeat || metricRollup || containerMetricRollup || deployment || notificationDelivery || auditLog || containerEvent || trafficMetric || trafficPath || trafficCountry || trafficBreakdown || trafficLatency) {
+    if (metric || containerMetric || heartbeat || metricRollup || containerMetricRollup || deployment || notificationDelivery || auditLog || containerEvent || trafficMetric || trafficPath || trafficCountry || trafficBreakdown || trafficLatency || trafficUnique || trafficUniqueHour) {
       this.logger.log(
-        `retention prune: metric=${metric} containerMetric=${containerMetric} heartbeat=${heartbeat} metricRollup=${metricRollup} containerMetricRollup=${containerMetricRollup} deployment=${deployment} notificationDelivery=${notificationDelivery} auditLog=${auditLog} containerEvent=${containerEvent} trafficMetric=${trafficMetric} trafficPath=${trafficPath} trafficCountry=${trafficCountry} trafficBreakdown=${trafficBreakdown} trafficLatency=${trafficLatency}`,
+        `retention prune: metric=${metric} containerMetric=${containerMetric} heartbeat=${heartbeat} metricRollup=${metricRollup} containerMetricRollup=${containerMetricRollup} deployment=${deployment} notificationDelivery=${notificationDelivery} auditLog=${auditLog} containerEvent=${containerEvent} trafficMetric=${trafficMetric} trafficPath=${trafficPath} trafficCountry=${trafficCountry} trafficBreakdown=${trafficBreakdown} trafficLatency=${trafficLatency} trafficUnique=${trafficUnique} trafficUniqueHour=${trafficUniqueHour}`,
       );
     }
-    return { metric, containerMetric, heartbeat, metricRollup, containerMetricRollup, deployment, notificationDelivery, auditLog, containerEvent, trafficMetric, trafficPath, trafficCountry, trafficBreakdown, trafficLatency };
+    return { metric, containerMetric, heartbeat, metricRollup, containerMetricRollup, deployment, notificationDelivery, auditLog, containerEvent, trafficMetric, trafficPath, trafficCountry, trafficBreakdown, trafficLatency, trafficUnique, trafficUniqueHour };
   }
 
   /** Page through matching ids and delete them in batches until a short/empty page ends the run. */

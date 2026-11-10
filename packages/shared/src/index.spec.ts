@@ -153,7 +153,7 @@ describe("shared protocol", () => {
     };
     const msg: TrafficMetricsMsg = { type: "traffic_metrics", ts: 1, windowSec: 60, domains: [d] };
     expect(msg.domains[0].latency).toHaveLength(14);
-    expect(msg.domains[0].unique).toBeUndefined(); // reserved for the HyperLogLog slice
+    expect(msg.domains[0].unique).toBeUndefined(); // optional HyperLogLog sketch (base64, 4096 bytes)
     expect(PROTOCOL_VERSION).toBe(2);
   });
 });

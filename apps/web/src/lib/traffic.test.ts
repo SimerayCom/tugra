@@ -4,8 +4,9 @@ import type { TrafficSummary } from "./types";
 
 const summary = (over: Partial<TrafficSummary> = {}): TrafficSummary => ({
   range: "24h", stepSec: 300, times: [], requests: [], s2xx: [], s3xx: [], s4xx: [], s5xx: [], bytes: [],
-  totals: { requests: 0, s2xx: 0, s3xx: 0, s4xx: 0, s5xx: 0, bytes: 0, botRequests: 0, humanRequests: 0, p95Ms: 0 },
+  totals: { requests: 0, s2xx: 0, s3xx: 0, s4xx: 0, s5xx: 0, bytes: 0, botRequests: 0, humanRequests: 0, p95Ms: 0, uniqueVisitors: 0 },
   p95Ms: [],
+  uniqueVisitors: [],
   ...over,
 });
 

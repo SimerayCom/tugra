@@ -21,7 +21,8 @@ const summary: TrafficSummary = {
   s5xx: [0, 1, 1],
   bytes: [1024, 2048, 4096],
   p95Ms: [120, 0, 340],
-  totals: { requests: 1000, s2xx: 48, s3xx: 5, s4xx: 5, s5xx: 2, bytes: 7168, botRequests: 250, humanRequests: 650, p95Ms: 230 },
+  uniqueVisitors: [40, 0, 90],
+  totals: { requests: 1000, s2xx: 48, s3xx: 5, s4xx: 5, s5xx: 2, bytes: 7168, botRequests: 250, humanRequests: 650, p95Ms: 230, uniqueVisitors: 1234 },
 };
 const paths: TrafficPaths = {
   range: "24h",
@@ -34,8 +35,8 @@ const countries: TrafficCountries = {
   countries: [{ country: "US", requests: 60 }, { country: "DE", requests: 30 }, { country: "ZZ", requests: 10 }],
 };
 const emptySummary: TrafficSummary = {
-  ...summary, times: [], requests: [], s2xx: [], s3xx: [], s4xx: [], s5xx: [], bytes: [], p95Ms: [],
-  totals: { requests: 0, s2xx: 0, s3xx: 0, s4xx: 0, s5xx: 0, bytes: 0, botRequests: 0, humanRequests: 0, p95Ms: 0 },
+  ...summary, times: [], requests: [], s2xx: [], s3xx: [], s4xx: [], s5xx: [], bytes: [], p95Ms: [], uniqueVisitors: [],
+  totals: { requests: 0, s2xx: 0, s3xx: 0, s4xx: 0, s5xx: 0, bytes: 0, botRequests: 0, humanRequests: 0, p95Ms: 0, uniqueVisitors: 0 },
 };
 
 const breakdownBrowser: TrafficBreakdown = {
@@ -162,6 +163,23 @@ describe("TrafficPage", () => {
     expect(screen.getByText("650 human · 250 bot")).toBeTruthy();
     // p95 over time chart is present with honest labeling
     expect(screen.getAllByText("p95 latency over time").length).toBeGreaterThan(0);
+  });
+
+  it("renders the unique-visitors tile from totals.uniqueVisitors (the merged range estimate, not the sum of buckets)", async () => {
+    mockApi();
+    wrap();
+    await waitFor(() => expect(screen.getByText("Unique visitors")).toBeTruthy());
+    expect(screen.getByText("1,234")).toBeTruthy(); // totals.uniqueVisitors; 40 + 90 would be wrong
+    expect(screen.queryByText("130")).toBeNull();
+  });
+
+  it("unique tile shows a calm placeholder when there are no visitors or the hub predates the field (never NaN)", async () => {
+    const { uniqueVisitors: _drop, ...older } = summary;
+    mockApi({ summary: { ...older, totals: { ...summary.totals, uniqueVisitors: undefined } } as TrafficSummary });
+    wrap();
+    await waitFor(() => expect(screen.getByText("Unique visitors")).toBeTruthy());
+    expect(screen.getAllByText("No data").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/NaN/)).toBeNull();
   });
 
   it("guards the zero cases: no latency data and no classified requests render calm placeholders, never NaN", async () => {

@@ -1,6 +1,7 @@
 import { ServersService } from "../servers/servers.service";
 import { TrafficController } from "./traffic.controller";
 import { TrafficService } from "./traffic.service";
+import { addString, newSketch } from "./hll";
 
 /**
  * Cross-team isolation, proven through the REAL composition: TrafficController -> real
@@ -42,6 +43,17 @@ const latencyRows = [
   { serverId: "srv-alice", domain: "alice.com", bucket, idx: 6, requests: 10 },
   { serverId: "srv-bob", domain: "bob-secret.com", bucket, idx: 13, requests: 999 },
   { serverId: "srv-bob", domain: "alice.com", bucket, idx: 13, requests: 5000 },
+];
+const sk = (ips: string[]) => {
+  const s = newSketch();
+  for (const ip of ips) addString(s, ip);
+  return Buffer.from(s);
+};
+const manyIps = (n: number) => Array.from({ length: n }, (_, i) => `100.${(i >> 8) & 255}.${i & 255}.9`);
+const uniqueRows = [
+  { id: "u1", serverId: "srv-alice", domain: "alice.com", bucket, sketch: sk(["1.1.1.1", "8.8.8.8", "9.9.9.9"]) },
+  { id: "u2", serverId: "srv-bob", domain: "bob-secret.com", bucket, sketch: sk(manyIps(3000)) },
+  { id: "u3", serverId: "srv-bob", domain: "alice.com", bucket, sketch: sk(manyIps(3000)) },
 ];
 const inScope = (r: any, w: any) =>
   w.serverId.in.includes(r.serverId) && r.bucket >= w.bucket.gte && (!w.domain || r.domain === w.domain);
@@ -103,6 +115,12 @@ function build() {
         return Promise.resolve([...acc.values()]);
       }),
       aggregate: jest.fn(() => Promise.resolve({ _sum: { requests: null } })),
+    },
+    trafficUnique: {
+      findMany: jest.fn(({ where }: any) => Promise.resolve(uniqueRows.filter((x) => inScope(x, where) && (!where.bucket.lt || x.bucket < where.bucket.lt)))),
+    },
+    trafficUniqueHour: {
+      findMany: jest.fn(({ where }: any) => Promise.resolve(uniqueRows.filter((x) => inScope(x, where) && (!where.bucket.lt || x.bucket < where.bucket.lt)))),
     },
     application: {
       findMany: jest.fn(({ where }: any) =>
@@ -185,6 +203,23 @@ describe("traffic reads: a user can never read another team's traffic", () => {
     expect((await ctrl.countries(as("alice"), { domain: "alice.com" })).countries).toEqual([{ country: "TR", requests: 3 }]); // not 3 + 7000
   });
 
+  it("unique visitors: alice's sketch is merged alone; bob's sketches (same host included) never leak in", async () => {
+    const { ctrl, prisma } = build();
+    const s = await ctrl.summary(as("alice"), {});
+    expect(s.totals.uniqueVisitors).toBe(3); // not ~3000
+    expect(s.uniqueVisitors.reduce((a, b) => a + b, 0)).toBe(3);
+    expect(prisma.trafficUnique.findMany.mock.calls[0][0].where.serverId.in).toEqual(["srv-alice"]);
+    expect((await ctrl.summary(as("alice"), { domain: "alice.com" })).totals.uniqueVisitors).toBe(3); // shared host: only her server
+    expect((await ctrl.summary(as("alice"), { domain: "bob-secret.com" })).totals.uniqueVisitors).toBe(0);
+    expect((await ctrl.summary(as("alice"), { teamId: "team-bob" })).totals.uniqueVisitors).toBe(0);
+    const b = await ctrl.summary(as("bob"), {});
+    expect(Math.abs(b.totals.uniqueVisitors - 3000) / 3000).toBeLessThan(0.05);
+    // the hourly rollup path (7d) is scoped to the caller's servers too
+    await ctrl.summary(as("alice"), { range: "7d" });
+    expect(prisma.trafficUniqueHour.findMany.mock.calls.length).toBeGreaterThan(0);
+    for (const c of prisma.trafficUniqueHour.findMany.mock.calls) expect(c[0].where.serverId.in).toEqual(["srv-alice"]);
+  });
+
   it("a user in no team reads nothing from any endpoint, and the traffic tables are never queried", async () => {
     const { ctrl, prisma } = build();
     expect(await ctrl.domains(as("mallory"), {})).toEqual([]);
@@ -195,6 +230,7 @@ describe("traffic reads: a user can never read another team's traffic", () => {
     expect((await ctrl.countries(as("mallory"), {})).countries).toEqual([]);
     expect(prisma.trafficCountry.groupBy).not.toHaveBeenCalled();
     expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    expect(prisma.trafficUnique.findMany).not.toHaveBeenCalled();
   });
 
   it("countries: alice never sees bob's countries (unfiltered), bob sees only his", async () => {

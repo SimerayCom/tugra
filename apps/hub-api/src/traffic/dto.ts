@@ -50,6 +50,8 @@ const Totals = z.object({
   humanRequests: z.number(),
   // Overall p95 latency (ms) over the range, interpolated from the latency histogram; 0 = no latency data.
   p95Ms: z.number(),
+  // Distinct visitors over the range: a merged HyperLogLog estimate (about +-1.6%), never summed per bucket; 0 = none.
+  uniqueVisitors: z.number(),
 });
 
 // Aligned arrays: index i of every series is the bucket starting at times[i] (unix ms).
@@ -66,6 +68,8 @@ export const TrafficSummarySchema = z.object({
   // p95 latency (ms) per bucket (cumulative interpolation over the fixed histogram bounds; the overflow bucket
   // reports its 10000 ms lower bound as a floor); 0 where a bucket has no latency data.
   p95Ms: z.array(z.number()),
+  // Distinct visitors per bucket (each bucket is its own sketch estimate, so the series does NOT sum to the total).
+  uniqueVisitors: z.array(z.number()),
   totals: Totals,
 });
 
