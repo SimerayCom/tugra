@@ -12,6 +12,8 @@ export function Sparkline({
   color = "var(--c-a)",
   fixedMax,
   label,
+  times,
+  interval,
 }: {
   data: number[];
   width?: number;
@@ -19,29 +21,60 @@ export function Sparkline({
   color?: string;
   fixedMax?: number;
   label?: string;
+  /** Unix-ms timestamp per point (same length as `data`). When given, points are placed by TIME and a NaN point
+   *  (or, with `interval`, a step > 3x it) breaks the line instead of being squeezed out, matching MetricChart. */
+  times?: number[];
+  /** Nominal sampling interval in ms, only used together with `times`. */
+  interval?: number;
 }) {
+  const timed = !!times && times.length === data.length && data.length > 0 && times.every((x) => Number.isFinite(x));
   const clean = data.filter((v) => Number.isFinite(v));
   if (clean.length < 2) return <span style={{ color: "var(--c-tx3)" }}>—</span>;
   const max = fixedMax ?? Math.max(...clean, 1);
   const min = fixedMax !== undefined ? 0 : Math.min(...clean, 0);
   const span = max - min || 1;
+  const yOf = (v: number) => height - (Math.min(Math.max(v, min), max) - min) / span * (height - 2) - 1;
+  const strokeProps = { fill: "none", stroke: color, strokeWidth: 1.5, strokeLinejoin: "round", strokeLinecap: "round" } as const;
+  if (timed && times) {
+    const t0 = times[0];
+    const tSpan = times[times.length - 1] - t0 || 1;
+    const xOf = (i: number) => ((times[i] - t0) / tSpan) * width;
+    const segs: { x: number; y: number }[][] = [];
+    let cur: { x: number; y: number }[] = [];
+    data.forEach((v, i) => {
+      if (!Number.isFinite(v)) {
+        if (cur.length) segs.push(cur);
+        cur = [];
+        return;
+      }
+      if (cur.length && interval && interval > 0 && times[i] - times[i - 1] > interval * 3) {
+        segs.push(cur);
+        cur = [];
+      }
+      cur.push({ x: xOf(i), y: yOf(v) });
+    });
+    if (cur.length) segs.push(cur);
+    return (
+      <svg width={width} height={height} style={{ display: "block" }} role={label ? "img" : undefined} aria-label={label} aria-hidden={label ? undefined : true}>
+        {segs.map((seg, k) =>
+          seg.length === 1 ? (
+            <circle key={k} cx={seg[0].x.toFixed(1)} cy={seg[0].y.toFixed(1)} r={1.5} fill={color} />
+          ) : (
+            <polyline key={k} points={seg.map((q) => `${q.x.toFixed(1)},${q.y.toFixed(1)}`).join(" ")} {...strokeProps} />
+          ),
+        )}
+      </svg>
+    );
+  }
   const pts = clean
     .map((v, i) => {
       const x = (i / (clean.length - 1)) * width;
-      const y = height - (Math.min(Math.max(v, min), max) - min) / span * (height - 2) - 1;
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
+      return `${x.toFixed(1)},${yOf(v).toFixed(1)}`;
     })
     .join(" ");
   return (
     <svg width={width} height={height} style={{ display: "block" }} role={label ? "img" : undefined} aria-label={label} aria-hidden={label ? undefined : true}>
-      <polyline
-        points={pts}
-        fill="none"
-        stroke={color}
-        strokeWidth={1.5}
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
+      <polyline points={pts} {...strokeProps} />
     </svg>
   );
 }
@@ -301,7 +334,7 @@ type Item = { key: string; label: string; color: string; kind: ChartSeriesKind; 
 /** True when at least one stacked series has a finite value at i (else the stack has "no data" there). */
 const stackPresentAt = (its: Item[], i: number) => its.some((it) => it.kind === "stacked" && finite(it.vals[i]));
 
-function ToggleButton({ pressed, onClick, children, label }: { pressed: boolean; onClick: () => void; children: ReactNode; label?: string }) {
+export function ToggleButton({ pressed, onClick, children, label }: { pressed: boolean; onClick: () => void; children: ReactNode; label?: string }) {
   return (
     <button
       type="button"
@@ -370,6 +403,7 @@ export function MetricChart({
   interval,
   peakToggle = false,
   tableToggle = false,
+  tableView: tableViewProp,
   bare = false,
   interactive = true,
   hideHeader = false,
@@ -397,6 +431,9 @@ export function MetricChart({
   peakToggle?: boolean;
   /** Show a "View as table" toggle (off by default) — an accessible table of the values. */
   tableToggle?: boolean;
+  /** Controlled "view as table" state, for a host that renders the toggle itself (e.g. in a `ChartCard` `controls`
+   *  slot while `hideHeader` suppresses the chart's own header). Uncontrolled when omitted. */
+  tableView?: boolean;
   /** Drop the outer card chrome (border/padding) so the chart can live inside a `ChartCard`. */
   bare?: boolean;
   /** Default true. When false the plot is a static drawing: no `role="slider"`, no tab stop, no keyboard/pointer
@@ -411,7 +448,8 @@ export function MetricChart({
   const uid = useId().replace(/:/g, ""); // colons in useId break an SVG url(#…) reference
   const [active, setActive] = useState<number | null>(null);
   const [mode, setMode] = useState<"avg" | "peak">("avg");
-  const [tableView, setTableView] = useState(false);
+  const [tableViewState, setTableView] = useState(false);
+  const tableView = tableViewProp ?? tableViewState;
 
   // ── Normalise BOTH the legacy `data` path and the v2 `series` path into one series model ───────────
   // Legacy: a series may carry undefined/NaN (e.g. an older agent that omits a newer metric field, whose live

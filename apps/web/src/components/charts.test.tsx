@@ -219,6 +219,18 @@ describe("Sparkline", () => {
     render(<Sparkline data={[4, Number.NaN]} />);
     expect(screen.getByText("—")).toBeTruthy();
   });
+  it("with times, NaN gaps break the line and points sit at their time (not compacted by index)", () => {
+    const { container } = render(<Sparkline data={[5, 7, Number.NaN, Number.NaN, 6, 8]} times={[0, 10, 20, 30, 40, 100]} width={100} />);
+    const lines = container.querySelectorAll("polyline");
+    expect(lines).toHaveLength(2);
+    expect(lines[0].getAttribute("points")!.split(" ").map((p) => p.split(",")[0])).toEqual(["0.0", "10.0"]);
+    expect(lines[1].getAttribute("points")!.split(" ").map((p) => p.split(",")[0])).toEqual(["40.0", "100.0"]);
+  });
+  it("with times and an interval, a step > 3x the interval breaks the line", () => {
+    const { container } = render(<Sparkline data={[1, 2, 3, 4]} times={[0, 10, 20, 500]} interval={10} width={100} />);
+    expect(container.querySelectorAll("polyline").length + container.querySelectorAll("circle").length).toBe(2);
+    expect(container.querySelectorAll("circle")).toHaveLength(1);
+  });
   it("fixedMax pins the scale (a 10% series sits low, not stretched to the top)", () => {
     const { container } = render(<Sparkline data={[10, 10]} fixedMax={100} height={20} />);
     const y = Number(container.querySelector("polyline")!.getAttribute("points")!.split(" ")[0].split(",")[1]);

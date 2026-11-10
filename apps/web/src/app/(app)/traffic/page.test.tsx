@@ -5,7 +5,7 @@ import React from "react";
 import { I18nProvider } from "../../../i18n/provider";
 import TrafficPage from "./page";
 import { api } from "../../../lib/api";
-import type { TrafficCountries, TrafficPaths, TrafficSummary } from "../../../lib/types";
+import type { TrafficBreakdown, TrafficCountries, TrafficPaths, TrafficSummary } from "../../../lib/types";
 
 afterEach(cleanup);
 
@@ -20,7 +20,8 @@ const summary: TrafficSummary = {
   s4xx: [1, 2, 2],
   s5xx: [0, 1, 1],
   bytes: [1024, 2048, 4096],
-  totals: { requests: 1000, s2xx: 48, s3xx: 5, s4xx: 5, s5xx: 2, bytes: 7168 },
+  p95Ms: [120, 0, 340],
+  totals: { requests: 1000, s2xx: 48, s3xx: 5, s4xx: 5, s5xx: 2, bytes: 7168, botRequests: 250, humanRequests: 650, p95Ms: 230 },
 };
 const paths: TrafficPaths = {
   range: "24h",
@@ -33,8 +34,19 @@ const countries: TrafficCountries = {
   countries: [{ country: "US", requests: 60 }, { country: "DE", requests: 30 }, { country: "ZZ", requests: 10 }],
 };
 const emptySummary: TrafficSummary = {
-  ...summary, times: [], requests: [], s2xx: [], s3xx: [], s4xx: [], s5xx: [], bytes: [],
-  totals: { requests: 0, s2xx: 0, s3xx: 0, s4xx: 0, s5xx: 0, bytes: 0 },
+  ...summary, times: [], requests: [], s2xx: [], s3xx: [], s4xx: [], s5xx: [], bytes: [], p95Ms: [],
+  totals: { requests: 0, s2xx: 0, s3xx: 0, s4xx: 0, s5xx: 0, bytes: 0, botRequests: 0, humanRequests: 0, p95Ms: 0 },
+};
+
+const breakdownBrowser: TrafficBreakdown = {
+  range: "24h", dim: "browser",
+  items: [{ key: "Chrome", requests: 60 }, { key: "Firefox", requests: 20 }],
+  other: { requests: 20 },
+};
+const breakdownReferrer: TrafficBreakdown = {
+  range: "24h", dim: "referrer",
+  items: [{ key: "(direct)", requests: 30 }, { key: "news.example.org", requests: 10 }],
+  other: { requests: 0 },
 };
 
 let qc: QueryClient;
@@ -47,8 +59,10 @@ const wrap = () =>
     </QueryClientProvider>,
   );
 
-function mockApi(over: { summary?: TrafficSummary; paths?: TrafficPaths; countries?: TrafficCountries } = {}) {
+function mockApi(over: { summary?: TrafficSummary; paths?: TrafficPaths; countries?: TrafficCountries; breakdown?: (dim: string) => TrafficBreakdown } = {}) {
+  const bd = over.breakdown ?? ((dim: string) => (dim === "referrer" ? breakdownReferrer : dim === "browser" ? breakdownBrowser : { range: "24h", dim, items: [], other: { requests: 0 } } as unknown as TrafficBreakdown));
   return {
+    breakdown: vi.spyOn(api, "getTrafficBreakdown").mockImplementation(async (dim) => bd(dim)),
     summary: vi.spyOn(api, "getTrafficSummary").mockResolvedValue(over.summary ?? summary),
     paths: vi.spyOn(api, "getTrafficPaths").mockResolvedValue(over.paths ?? paths),
     countries: vi.spyOn(api, "getTrafficCountries").mockResolvedValue(over.countries ?? countries),
@@ -136,5 +150,132 @@ describe("TrafficPage", () => {
     fireEvent.change(screen.getByLabelText("Domain"), { target: { value: "a.example.com" } });
     await waitFor(() => expect(m.paths).toHaveBeenCalledWith(expect.objectContaining({ range: "7d", domain: "a.example.com" })));
     expect(m.countries).toHaveBeenCalledWith(expect.objectContaining({ domain: "a.example.com" }));
+  });
+
+  it("renders the p95 tile (ms) and the bot tile (bot share of classified requests)", async () => {
+    mockApi();
+    wrap();
+    await waitFor(() => expect(screen.getByText("p95 latency")).toBeTruthy());
+    expect(screen.getByText("230 ms")).toBeTruthy();
+    // 250 bot / (250 bot + 650 human) = 27.8% (not 25% of the 1,000 total)
+    expect(screen.getByText("27.8%")).toBeTruthy();
+    expect(screen.getByText("650 human · 250 bot")).toBeTruthy();
+    // p95 over time chart is present with honest labeling
+    expect(screen.getAllByText("p95 latency over time").length).toBeGreaterThan(0);
+  });
+
+  it("guards the zero cases: no latency data and no classified requests render calm placeholders, never NaN", async () => {
+    mockApi({ summary: { ...summary, p95Ms: [0, 0, 0], totals: { ...summary.totals, p95Ms: 0, botRequests: 0, humanRequests: 0 } } });
+    wrap();
+    await waitFor(() => expect(screen.getByText("No data")).toBeTruthy());
+    expect(screen.getByText("No classified requests")).toBeTruthy();
+    expect(screen.queryByText(/NaN/)).toBeNull();
+    expect(screen.queryAllByText("p95 latency over time")).toHaveLength(0);
+  });
+
+  it("shows 0.0% bots (not a placeholder) when only human requests were classified", async () => {
+    mockApi({ summary: { ...summary, totals: { ...summary.totals, botRequests: 0, humanRequests: 40 } } });
+    wrap();
+    await waitFor(() => expect(screen.getByText("0.0%", { selector: ".mono" })).toBeTruthy());
+    expect(screen.getByText("40 human · 0 bot")).toBeTruthy();
+  });
+
+  it("renders the browser breakdown by default with shares over items + (other)", async () => {
+    const m = mockApi();
+    wrap();
+    await waitFor(() => expect(screen.getAllByTestId("traffic-breakdown-row")).toHaveLength(3));
+    expect(m.breakdown).toHaveBeenCalledWith("browser", expect.objectContaining({ range: "24h", domain: undefined, limit: 20 }));
+    const rows = screen.getAllByTestId("traffic-breakdown-row");
+    // denominator = 60 + 20 + other 20 = 100
+    expect(within(rows[0]).getByText("Chrome")).toBeTruthy();
+    expect(within(rows[0]).getByText(/60 · 60\.0%/)).toBeTruthy();
+    expect(within(rows[1]).getByText(/20 · 20\.0%/)).toBeTruthy();
+    expect(within(rows[2]).getByText("Everything else")).toBeTruthy();
+    expect(within(rows[2]).getByText(/20 · 20\.0%/)).toBeTruthy();
+    expect(screen.getAllByTestId("traffic-breakdown-bar").map((b) => (b as HTMLElement).style.width)).toEqual(["60%", "20%", "20%"]);
+  });
+
+  it("switches dimension, refetches it with the page filters and localizes (direct)", async () => {
+    const m = mockApi();
+    wrap();
+    await waitFor(() => expect(screen.getAllByTestId("traffic-breakdown-row")).toHaveLength(3));
+    const group = screen.getByRole("group", { name: "Breakdown dimension" });
+    expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual(["Browser", "OS", "Device", "Referrer", "City", "Network"]);
+    fireEvent.click(within(group).getByText("Referrer"));
+    await waitFor(() => expect(m.breakdown).toHaveBeenCalledWith("referrer", expect.objectContaining({ range: "24h" })));
+    await waitFor(() => expect(screen.getByText("Direct")).toBeTruthy());
+    expect(screen.getByText("news.example.org")).toBeTruthy();
+    // 30 / (30 + 10 + 0 other) = 75%; no (other) row when it is zero
+    expect(screen.getByText(/30 · 75\.0%/)).toBeTruthy();
+    expect(screen.getAllByTestId("traffic-breakdown-row")).toHaveLength(2);
+    // range + domain filters flow through to the breakdown
+    fireEvent.click(screen.getByText("7d"));
+    await waitFor(() => expect(m.breakdown).toHaveBeenCalledWith("referrer", expect.objectContaining({ range: "7d" })));
+    await waitFor(() => expect(screen.getByRole("option", { name: "a.example.com (700)" })).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Domain"), { target: { value: "a.example.com" } });
+    await waitFor(() => expect(m.breakdown).toHaveBeenCalledWith("referrer", expect.objectContaining({ range: "7d", domain: "a.example.com" })));
+  });
+
+  it("localizes the agent's raw device labels and the literal Other without clashing with the folded row", async () => {
+    mockApi({
+      breakdown: (dim) =>
+        (dim === "device"
+          ? { range: "24h", dim, items: [{ key: "desktop", requests: 50 }, { key: "mobile", requests: 30 }, { key: "tablet", requests: 8 }, { key: "bot", requests: 5 }, { key: "other", requests: 2 }], other: { requests: 5 } }
+          : { range: "24h", dim, items: [{ key: "Chrome", requests: 60 }, { key: "Other", requests: 10 }], other: { requests: 5 } }) as unknown as TrafficBreakdown,
+    });
+    wrap();
+    await waitFor(() => expect(screen.getAllByTestId("traffic-breakdown-row")).toHaveLength(3));
+    // browser: the agent's literal "Other" and the synthetic overflow row read differently
+    const bRows = screen.getAllByTestId("traffic-breakdown-row");
+    expect(within(bRows[1]).getByText("Other")).toBeTruthy();
+    expect(within(bRows[2]).getByText("Everything else")).toBeTruthy();
+    fireEvent.click(within(screen.getByRole("group", { name: "Breakdown dimension" })).getByText("Device"));
+    await waitFor(() => expect(screen.getAllByTestId("traffic-breakdown-row")).toHaveLength(6));
+    const labels = screen.getAllByTestId("traffic-breakdown-row").map((r) => r.querySelector("span")!.textContent);
+    expect(labels).toEqual(["Desktop", "Mobile", "Tablet", "Bot", "Other device", "Everything else"]);
+  });
+
+  it("makes the scrollable lists keyboard-focusable named regions", async () => {
+    mockApi();
+    wrap();
+    await waitFor(() => expect(screen.getAllByTestId("traffic-breakdown-row")).toHaveLength(3));
+    const lists = [screen.getByRole("region", { name: "Countries list" }), screen.getByRole("region", { name: "Visitor breakdown: Browser" })];
+    for (const l of lists) expect(l.getAttribute("tabindex")).toBe("0");
+  });
+
+  it("gives every chart a View as table toggle that reveals the series as a table", async () => {
+    mockApi();
+    wrap();
+    await waitFor(() => expect(screen.getAllByText("Requests over time").length).toBeGreaterThan(0));
+    const toggles = screen.getAllByRole("button", { name: /^View as table:/ });
+    expect(toggles.length).toBe(4);
+    expect(screen.queryAllByTestId("chart-table")).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "View as table: Status codes over time" }));
+    expect(screen.getAllByTestId("chart-table")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "View as table: Status codes over time" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("shows a calm empty note for a dimension with no data", async () => {
+    mockApi();
+    wrap();
+    await waitFor(() => expect(screen.getAllByTestId("traffic-breakdown-row").length).toBeGreaterThan(0));
+    fireEvent.click(within(screen.getByRole("group", { name: "Breakdown dimension" })).getByText("City"));
+    await waitFor(() => expect(screen.getByText("No city data in this range.")).toBeTruthy());
+    expect(screen.queryAllByTestId("traffic-breakdown-row")).toHaveLength(0);
+  });
+
+  it("an only-(other) dimension still renders its single honest 100% row", async () => {
+    mockApi({ breakdown: () => ({ range: "24h", dim: "browser", items: [], other: { requests: 7 } }) });
+    wrap();
+    await waitFor(() => expect(screen.getAllByTestId("traffic-breakdown-row")).toHaveLength(1));
+    expect(screen.getByText(/7 · 100\.0%/)).toBeTruthy();
+  });
+
+  it("a failing breakdown shows a retry in its card without breaking the rest of the page", async () => {
+    mockApi();
+    vi.spyOn(api, "getTrafficBreakdown").mockRejectedValue(new Error("boom"));
+    wrap();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy());
+    expect(screen.getByText("/api/health")).toBeTruthy();
   });
 });

@@ -69,3 +69,37 @@ export function trafficIsEmpty(
 export function errorRatePct(t: Pick<TrafficSummary["totals"], "requests" | "s4xx" | "s5xx">): number {
   return t.requests > 0 ? ((t.s4xx + t.s5xx) / t.requests) * 100 : 0;
 }
+
+/** Bot vs human split of the requests the hub could classify. The denominator is bot + human (NOT totals.requests,
+ *  which can include requests the classifier never saw). Zero-guarded: no classified requests → 0/0, never NaN. */
+export function botShare(t: Pick<TrafficSummary["totals"], "botRequests" | "humanRequests">): { botPct: number; humanPct: number; classified: number } {
+  const bot = Number.isFinite(t.botRequests) && t.botRequests > 0 ? t.botRequests : 0;
+  const human = Number.isFinite(t.humanRequests) && t.humanRequests > 0 ? t.humanRequests : 0;
+  const classified = bot + human;
+  if (classified <= 0) return { botPct: 0, humanPct: 0, classified: 0 };
+  return { botPct: (bot / classified) * 100, humanPct: (human / classified) * 100, classified };
+}
+
+export interface BreakdownShare {
+  key: string;
+  requests: number;
+  /** Share (0-100) of the dimension's requests: the returned items PLUS the folded "(other)" overflow. */
+  pct: number;
+  /** True for the synthetic row built from the response's `other` overflow. */
+  isOther: boolean;
+}
+
+/**
+ * Ranked breakdown rows with honest shares. The denominator is the sum of the returned items' requests plus
+ * `other.requests`, so the rows (including the "(other)" row appended when non-zero) add up to 100%.
+ * Zero/invalid rows are dropped; an empty set yields no rows (never NaN).
+ */
+export function breakdownShares(items: { key: string; requests: number }[], otherRequests: number): BreakdownShare[] {
+  const clean = items.filter((r) => Number.isFinite(r.requests) && r.requests > 0);
+  const other = Number.isFinite(otherRequests) && otherRequests > 0 ? otherRequests : 0;
+  const denom = clean.reduce((n, r) => n + r.requests, 0) + other;
+  if (denom <= 0) return [];
+  const rows: BreakdownShare[] = clean.map((r) => ({ key: r.key, requests: r.requests, pct: (r.requests / denom) * 100, isOther: false }));
+  if (other > 0) rows.push({ key: "(other)", requests: other, pct: (other / denom) * 100, isOther: true });
+  return rows;
+}

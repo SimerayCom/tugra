@@ -74,6 +74,8 @@ import type {
   TrafficSummary,
   TrafficPaths,
   TrafficCountries,
+  TrafficBreakdown,
+  TrafficBreakdownDim,
   TrafficDomainRow,
   TrafficAnalyticsState,
   PublicUser,
@@ -644,6 +646,10 @@ export const api = {
   },
   getTrafficCountries(p: { range?: MetricsRange; teamId?: string | null; domain?: string | null; limit?: number } = {}) {
     return apiFetch<TrafficCountries>(`/traffic/countries${trafficQuery(p)}`);
+  },
+  getTrafficBreakdown(dim: TrafficBreakdownDim, p: { range?: MetricsRange; teamId?: string | null; domain?: string | null; limit?: number } = {}) {
+    const q = trafficQuery(p);
+    return apiFetch<TrafficBreakdown>(`/traffic/breakdown${q ? `${q}&` : "?"}dim=${encodeURIComponent(dim)}`);
   },
   getTrafficDomains(p: { range?: MetricsRange; teamId?: string | null } = {}) {
     return apiFetch<TrafficDomainRow[]>(`/traffic/domains${trafficQuery(p)}`);

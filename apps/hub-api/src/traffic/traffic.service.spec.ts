@@ -90,7 +90,7 @@ function make(queryRows: any[] = [], latencyQueryRows: any[] = []) {
         return Promise.resolve([...acc.values()].sort((a, b) => b._sum.requests - a._sum.requests).slice(0, take));
       }),
       aggregate: jest.fn(({ where }: any) => {
-        const rs = breakdownRows.filter((x) => inScope(x, where) && x.dim === where.dim && x.key === where.key);
+        const rs = breakdownRows.filter((x) => inScope(x, where) && x.dim === where.dim && (where.key?.not !== undefined ? x.key !== where.key.not : x.key === where.key));
         return Promise.resolve({ _sum: { requests: rs.reduce((n, r) => n + r.requests, 0) || null } });
       }),
     },
@@ -322,6 +322,15 @@ describe("TrafficService", () => {
       expect(prisma.trafficBreakdown.groupBy.mock.calls[0][0].where.domain).toBe("a.com");
       expect(out.items).toEqual([{ key: "Chrome", requests: 10 }, { key: "Firefox", requests: 3 }]);
       expect((await svc.breakdown(["mine"], "browser", "24h", "secret.com")).items).toEqual([]); // another team's host
+    });
+
+    it("folds keys ranked below the limit into other so items + other cover the whole dimension", async () => {
+      const { svc } = make();
+      const out = await svc.breakdown(["mine"], "browser", "24h", undefined, 1);
+      expect(out.items).toEqual([{ key: "Safari", requests: 20 }]);
+      // stored "(other)" 8 + tail below the limit (Chrome 10 + Firefox 3)
+      expect(out.other).toEqual({ requests: 21 });
+      expect(out.items.reduce((n, i) => n + i.requests, 0) + out.other.requests).toBe(41);
     });
 
     it("clamps the limit", async () => {

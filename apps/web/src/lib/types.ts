@@ -1553,6 +1553,10 @@ export interface TrafficTotals {
   s4xx: number;
   s5xx: number;
   bytes: number;
+  botRequests: number;
+  humanRequests: number;
+  /** Overall p95 latency (ms) over the range; 0 = no latency data. */
+  p95Ms: number;
 }
 /** GET /traffic/summary: index i of every series is the bucket starting at times[i] (unix ms). */
 export interface TrafficSummary {
@@ -1565,7 +1569,17 @@ export interface TrafficSummary {
   s4xx: number[];
   s5xx: number[];
   bytes: number[];
+  /** p95 latency (ms) per bucket; 0 where a bucket has no latency data. */
+  p95Ms: number[];
   totals: TrafficTotals;
+}
+export type TrafficBreakdownDim = "browser" | "os" | "device" | "referrer" | "city" | "network";
+/** GET /traffic/breakdown: top keys of one visitor dimension; `other` = overflow the agent folded into "(other)". */
+export interface TrafficBreakdown {
+  range: string;
+  dim: TrafficBreakdownDim;
+  items: { key: string; requests: number }[];
+  other: { requests: number };
 }
 export interface TrafficPaths {
   range: string;

@@ -268,7 +268,7 @@ export class TrafficService {
       bucket: { gte: new Date(r.sinceMs) },
       ...(host ? { domain: host } : {}),
     };
-    const [rows, other] = await Promise.all([
+    const [rows, other, named] = await Promise.all([
       this.prisma.trafficBreakdown.groupBy({
         by: ["key"],
         where: { ...where, key: { not: OTHER_KEY } },
@@ -277,12 +277,19 @@ export class TrafficService {
         take,
       }),
       this.prisma.trafficBreakdown.aggregate({ where: { ...where, key: OTHER_KEY }, _sum: { requests: true } }),
+      // Total over EVERY named key (not just the top `take`), so the tail ranked below the limit is not lost.
+      this.prisma.trafficBreakdown.aggregate({ where: { ...where, key: { not: OTHER_KEY } }, _sum: { requests: true } }),
     ]);
+    const items = rows.map((k) => ({ key: k.key, requests: k._sum.requests ?? 0 }));
+    const shown = items.reduce((n, k) => n + k.requests, 0);
+    const tail = Math.max(0, (named._sum.requests ?? 0) - shown);
+    // `other` = the agent/ingest per-bucket overflow PLUS the keys that fell below the hub limit, so items + other
+    // always cover the dimension's full request total.
     return {
       range: r.range,
       dim,
-      items: rows.map((k) => ({ key: k.key, requests: k._sum.requests ?? 0 })),
-      other: { requests: other._sum.requests ?? 0 },
+      items,
+      other: { requests: (other._sum.requests ?? 0) + tail },
     };
   }
 }

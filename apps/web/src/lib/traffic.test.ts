@@ -1,10 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { bucketIntervalMs, countryName, countryShares, errorRatePct, humanizeBytesSeries, trafficIsEmpty } from "./traffic";
+import { botShare, breakdownShares, bucketIntervalMs, countryName, countryShares, errorRatePct, humanizeBytesSeries, trafficIsEmpty } from "./traffic";
 import type { TrafficSummary } from "./types";
 
 const summary = (over: Partial<TrafficSummary> = {}): TrafficSummary => ({
   range: "24h", stepSec: 300, times: [], requests: [], s2xx: [], s3xx: [], s4xx: [], s5xx: [], bytes: [],
-  totals: { requests: 0, s2xx: 0, s3xx: 0, s4xx: 0, s5xx: 0, bytes: 0 },
+  totals: { requests: 0, s2xx: 0, s3xx: 0, s4xx: 0, s5xx: 0, bytes: 0, botRequests: 0, humanRequests: 0, p95Ms: 0 },
+  p95Ms: [],
   ...over,
 });
 
@@ -57,7 +58,37 @@ describe("misc", () => {
   it("trafficIsEmpty only when nothing at all is returned", () => {
     expect(trafficIsEmpty(summary(), { paths: [], other: { requests: 0 } }, { countries: [] })).toBe(true);
     expect(trafficIsEmpty(undefined, undefined, undefined)).toBe(true);
-    expect(trafficIsEmpty(summary({ totals: { requests: 3, s2xx: 3, s3xx: 0, s4xx: 0, s5xx: 0, bytes: 1 } }), undefined, undefined)).toBe(false);
+    expect(trafficIsEmpty(summary({ totals: { requests: 3, s2xx: 3, s3xx: 0, s4xx: 0, s5xx: 0, bytes: 1, botRequests: 0, humanRequests: 0, p95Ms: 0 } }), undefined, undefined)).toBe(false);
     expect(trafficIsEmpty(summary(), { paths: [{}], other: { requests: 0 } }, { countries: [] })).toBe(false);
+  });
+});
+
+describe("botShare", () => {
+  it("is bot / (bot + human), not bot / total requests", () => {
+    const r = botShare({ botRequests: 250, humanRequests: 750 });
+    expect(r.botPct).toBe(25);
+    expect(r.humanPct).toBe(75);
+    expect(r.classified).toBe(1000);
+  });
+  it("guards divide-by-zero and junk (never NaN)", () => {
+    expect(botShare({ botRequests: 0, humanRequests: 0 })).toEqual({ botPct: 0, humanPct: 0, classified: 0 });
+    expect(botShare({ botRequests: NaN, humanRequests: -5 })).toEqual({ botPct: 0, humanPct: 0, classified: 0 });
+    expect(botShare({ botRequests: 5, humanRequests: 0 }).botPct).toBe(100);
+  });
+});
+
+describe("breakdownShares", () => {
+  it("divides by the items PLUS the folded (other) overflow so rows add to 100%", () => {
+    const out = breakdownShares([{ key: "Chrome", requests: 60 }, { key: "Firefox", requests: 20 }], 20);
+    expect(out.map((r) => r.pct)).toEqual([60, 20, 20]);
+    expect(out[2]).toMatchObject({ key: "(other)", isOther: true, requests: 20 });
+    expect(out.reduce((n, r) => n + r.pct, 0)).toBeCloseTo(100);
+  });
+  it("omits the (other) row when it is zero", () => {
+    expect(breakdownShares([{ key: "a", requests: 5 }], 0)).toHaveLength(1);
+  });
+  it("drops zero/invalid rows and never yields NaN for an empty set", () => {
+    expect(breakdownShares([], 0)).toEqual([]);
+    expect(breakdownShares([{ key: "a", requests: 0 }, { key: "b", requests: NaN }], NaN)).toEqual([]);
   });
 });
