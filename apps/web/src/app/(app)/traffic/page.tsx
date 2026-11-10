@@ -14,6 +14,7 @@ import { Btn, Card, EmptyState, Spinner } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
 import { Select } from "../../../components/form";
 import { PageTitle } from "../../../components/page-header";
+import { WorldMap } from "../../../components/world-map";
 import { ChartCard, MetricChart, Sparkline, ToggleButton, METRIC_GRID_STYLE, METRIC_CHART_HEIGHT, type ChartSeries } from "../../../components/charts";
 
 const RANGES: MetricsRange[] = ["1h", "6h", "24h", "7d", "30d"];
@@ -138,10 +139,8 @@ export default function TrafficPage() {
           {summary.data && <StatTiles summary={summary.data} />}
           {summary.data && <TrafficCharts summary={summary.data} />}
           <BreakdownCard dim={dim} onDim={setDim} range={range} teamId={teamId} domain={domain} />
-          <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))", alignItems: "start" }}>
-            <PathsTable data={paths.data} />
-            <CountriesList rows={countries.data?.countries ?? []} totalRequests={summary.data?.totals.requests} lang={lang} />
-          </div>
+          <CountriesList rows={countries.data?.countries ?? []} totalRequests={summary.data?.totals.requests} lang={lang} />
+          <PathsTable data={paths.data} />
         </div>
       )}
     </div>
@@ -370,29 +369,34 @@ function CountriesList({ rows, totalRequests, lang }: { rows: { country: string;
       {shares.length === 0 ? (
         <div style={{ fontSize: 13, color: "var(--c-tx3)" }}>{t("traffic.noCountries")}</div>
       ) : (
-        <ul
-          tabIndex={0}
-          role="region"
-          aria-label={t("traffic.countriesList")}
-          style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 10, maxHeight: 480, overflowY: "auto" }}
-        >
-          {shares.map((c) => {
-            const name = countryName(c.country, lang) ?? t("traffic.otherCountry");
-            return (
-              <li key={c.country} data-testid="traffic-country">
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 13, marginBottom: 4 }}>
-                  <span style={{ color: "var(--c-tx)", minWidth: 0, wordBreak: "break-word" }}>{name}</span>
-                  <span className="mono" style={{ color: "var(--c-tx2)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
-                    {nf.format(c.requests)} · {c.pct.toFixed(1)}%
-                  </span>
-                </div>
-                <div aria-hidden="true" style={{ height: 6, borderRadius: 3, background: "var(--c-el)", overflow: "hidden" }}>
-                  <div data-testid="traffic-country-bar" style={{ width: `${c.pct}%`, height: "100%", background: "var(--c-a)" }} />
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "flex-start" }}>
+          <div style={{ flex: "2 1 min(100%, 420px)", minWidth: 0 }}>
+            <WorldMap rows={shares} />
+          </div>
+          <ul
+            tabIndex={0}
+            role="region"
+            aria-label={t("traffic.countriesList")}
+            style={{ flex: "1 1 min(100%, 260px)", minWidth: 0, listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 10, maxHeight: 480, overflowY: "auto" }}
+          >
+            {shares.map((c) => {
+              const name = countryName(c.country, lang) ?? t("traffic.otherCountry");
+              return (
+                <li key={c.country} data-testid="traffic-country">
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 13, marginBottom: 4 }}>
+                    <span style={{ color: "var(--c-tx)", minWidth: 0, wordBreak: "break-word" }}>{name}</span>
+                    <span className="mono" style={{ color: "var(--c-tx2)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+                      {nf.format(c.requests)} · {c.pct.toFixed(1)}%
+                    </span>
+                  </div>
+                  <div aria-hidden="true" style={{ height: 6, borderRadius: 3, background: "var(--c-el)", overflow: "hidden" }}>
+                    <div data-testid="traffic-country-bar" style={{ width: `${c.pct}%`, height: "100%", background: "var(--c-a)" }} />
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       )}
       {showCoverage && (
         <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "12px 0 0" }}>

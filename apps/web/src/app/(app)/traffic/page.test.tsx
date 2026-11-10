@@ -130,6 +130,21 @@ describe("TrafficPage", () => {
     expect(screen.getByText(/Share of requests with a known country/)).toBeTruthy();
   });
 
+  it("draws the world map beside the countries list (list stays the accessible data) and omits it with no country data", async () => {
+    mockApi();
+    wrap();
+    const map = await screen.findByTestId("world-map");
+    expect(map.querySelector("svg")!.getAttribute("aria-hidden")).toBe("true");
+    expect(map.querySelector('[data-country="US"]')!.getAttribute("data-bin")).toBe("5");
+    expect(screen.getByRole("region", { name: "Countries list" })).toBeTruthy();
+    cleanup();
+    qc.clear();
+    mockApi({ countries: { range: "24h", countries: [] } });
+    wrap();
+    expect(await screen.findByText("No country data in this range.")).toBeTruthy();
+    expect(screen.queryByTestId("world-map")).toBeNull();
+  });
+
   it("shows a calm empty state (not an error) when there is no data", async () => {
     mockApi({ summary: emptySummary, paths: { range: "24h", paths: [], other: { requests: 0, bytes: 0 } }, countries: { range: "24h", countries: [] } });
     wrap();
