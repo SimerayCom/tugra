@@ -76,7 +76,7 @@
   "keyUnmatched": "Unmatched",
   "keyUnknown": "Unknown",
   "emptyTitle": "No traffic data yet",
-  "emptyBody": "Traffic Analytics may be turned off, or no requests have reached your proxy in this range. To enable it, open Servers, pick a server, go to Maintenance and turn on Traffic analytics.",
+  "emptyBody": "Traffic Analytics may be turned off, or no requests have reached your proxy in this range.",
   "emptyAction": "Go to Servers",
   "toggleTitle": "Traffic analytics",
   "toggleDesc": "Record visitor requests (path, status, size, country) in the proxy's local access log to power the Traffic page. Data stays on your own server and hub; nothing is sent to any third party.",
@@ -89,5 +89,16 @@
   "toggleFailedDetail": "Traffic analytics saved, but re-applying the proxy failed: {error}",
   "toggleNotInPool": "Traffic analytics saved; this server is not in the proxy pool yet",
   "toggleClusterShared": "Traffic analytics saved; the cluster's shared ingress applies it",
-  "toggleError": "Could not change traffic analytics"
+  "toggleError": "Could not change traffic analytics",
+  "emptyNoServers": "Add a server to get started — Traffic Analytics is on by default for new servers, and data appears here once requests reach the proxy.",
+  "enablePrivacy": "Recording visitor requests (path, status, size, country) in the proxy's local access log powers this page. Data stays on your own server and hub; nothing is sent to any third party.",
+  "enableViewerNote": "Traffic Analytics is managed by an owner or admin of a server. You have read-only access, so ask them to enable it.",
+  "enableListLabel": "Servers you can enable Traffic Analytics on",
+  "enableStateOn": "Collecting",
+  "enableStateOff": "Off",
+  "enableCollecting": "Collecting: data appears shortly once requests reach this server's proxy.",
+  "enableBtn": "Enable",
+  "disableBtn": "Disable",
+  "enableFor": "Enable Traffic Analytics on {name}",
+  "disableFor": "Disable Traffic Analytics on {name}"
 }

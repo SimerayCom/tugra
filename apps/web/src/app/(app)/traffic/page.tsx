@@ -1,16 +1,15 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { BarChart3 } from "lucide-react";
 import { api } from "../../../lib/api";
 import { fmtBytes } from "../../../lib/fleet";
 import { botShare, breakdownShares, bucketIntervalMs, countryName, countryShares, errorRatePct, humanizeBytesSeries, trafficIsEmpty } from "../../../lib/traffic";
 import type { MetricsRange, TrafficBreakdownDim, TrafficPaths, TrafficSummary } from "../../../lib/types";
 import { useI18n } from "../../../i18n/provider";
 import { useTeamScope } from "../../../components/team-scope";
-import { Btn, Card, EmptyState, Spinner } from "../../../components/ui";
+import { Btn, Card, Spinner } from "../../../components/ui";
+import { TrafficEnablePanel } from "../../../components/traffic-enable-panel";
 import { ErrorState } from "../../../components/error-state";
 import { Select } from "../../../components/form";
 import { PageTitle } from "../../../components/page-header";
@@ -126,13 +125,7 @@ export default function TrafficPage() {
         <Card style={{ padding: 16, display: "flex", justifyContent: "center" }}><Spinner /></Card>
       ) : empty ? (
         <Card style={{ padding: 16 }}>
-          <EmptyState
-            icon={BarChart3}
-            title={t("traffic.emptyTitle")}
-            action={<Link href="/servers" className="tg-link" style={{ fontSize: 13 }}>{t("traffic.emptyAction")}</Link>}
-          >
-            {t("traffic.emptyBody")}
-          </EmptyState>
+          <TrafficEnablePanel teamId={teamId} />
         </Card>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>

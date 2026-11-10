@@ -8,14 +8,14 @@ import { useT } from "../i18n/provider";
 import { SectionCard } from "./ui";
 import { useToast } from "./toast";
 
-/** Per-server Traffic Analytics opt-in (the proxy writes a local JSON access log the Traffic page reads).
- *  Writers toggle it; a viewer sees the state read-only. The toast reflects how the proxy re-apply went. */
-export function TrafficAnalyticsCard({ id, enabled, canWrite }: { id: string; enabled: boolean; canWrite: boolean }) {
+/** The shared enable/disable mutation (PUT /servers/:id/traffic-analytics): reflects how the proxy re-apply went via a
+ *  toast and refreshes the server queries. Used by the server Maintenance card and the Traffic page's enable panel. */
+export function useTrafficAnalyticsToggle(id: string) {
   const t = useT();
   const qc = useQueryClient();
   const toast = useToast();
 
-  const set = useMutation({
+  return useMutation({
     mutationFn: (next: boolean) => api.setServerTrafficAnalytics(id, next),
     onSuccess: (r: TrafficAnalyticsState) => {
       const [message, type] = applyToast(r, t);
@@ -25,6 +25,13 @@ export function TrafficAnalyticsCard({ id, enabled, canWrite }: { id: string; en
     },
     onError: (e) => toast(`${t("traffic.toggleError")}: ${(e as Error).message}`, "error"),
   });
+}
+
+/** Per-server Traffic Analytics toggle (the proxy writes a local JSON access log the Traffic page reads; on by
+ *  default for new servers). Writers toggle it; a viewer sees the state read-only. The toast reflects how the proxy re-apply went. */
+export function TrafficAnalyticsCard({ id, enabled, canWrite }: { id: string; enabled: boolean; canWrite: boolean }) {
+  const t = useT();
+  const set = useTrafficAnalyticsToggle(id);
 
   // While a change is in flight show the requested value so the control feels instant.
   const checked = set.isPending ? !!set.variables : enabled;

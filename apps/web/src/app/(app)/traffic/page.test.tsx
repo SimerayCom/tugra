@@ -5,7 +5,8 @@ import React from "react";
 import { I18nProvider } from "../../../i18n/provider";
 import TrafficPage from "./page";
 import { api } from "../../../lib/api";
-import type { TrafficBreakdown, TrafficCountries, TrafficPaths, TrafficSummary } from "../../../lib/types";
+import type { ServerView, TrafficAnalyticsState, TrafficBreakdown, TrafficCountries, TrafficPaths, TrafficSummary } from "../../../lib/types";
+import { subscribeToast } from "../../../lib/toast-bus";
 
 afterEach(cleanup);
 
@@ -145,13 +146,77 @@ describe("TrafficPage", () => {
     expect(screen.queryByTestId("world-map")).toBeNull();
   });
 
-  it("shows a calm empty state (not an error) when there is no data", async () => {
-    mockApi({ summary: emptySummary, paths: { range: "24h", paths: [], other: { requests: 0, bytes: 0 } }, countries: { range: "24h", countries: [] } });
+  const srv = (over: Partial<ServerView>): ServerView => ({ id: "s1", name: "alpha", trafficAnalytics: false, canWrite: true, ...over } as ServerView);
+  const emptyApi = () => mockApi({ summary: emptySummary, paths: { range: "24h", paths: [], other: { requests: 0, bytes: 0 } }, countries: { range: "24h", countries: [] } });
+
+  it("empty state lists manageable servers with an Enable button and the privacy note; nothing is enabled automatically", async () => {
+    emptyApi();
+    vi.spyOn(api, "listServers").mockResolvedValue([srv({ id: "s1", name: "alpha" }), srv({ id: "s2", name: "beta", trafficAnalytics: true }), srv({ id: "s3", name: "gamma", canWrite: false })]);
+    const set = vi.spyOn(api, "setServerTrafficAnalytics");
     wrap();
     await waitFor(() => expect(screen.getByText("No traffic data yet")).toBeTruthy());
     expect(screen.getByText(/Traffic Analytics may be turned off/)).toBeTruthy();
+    expect(await screen.findByText(/nothing is sent to any third party/)).toBeTruthy();
+    const rows = await screen.findAllByTestId("traffic-enable-row");
+    expect(rows).toHaveLength(2); // gamma (read-only) is not offered
+    expect(screen.getByRole("button", { name: "Enable Traffic Analytics on alpha" })).toBeTruthy();
+    // already-enabled server: shows collecting + a Disable button, no Enable
+    expect(screen.getByRole("button", { name: "Disable Traffic Analytics on beta" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Enable Traffic Analytics on beta" })).toBeNull();
+    expect(within(rows[1]).getByText("Collecting")).toBeTruthy();
+    expect(within(rows[1]).getByText(/data appears shortly/)).toBeTruthy();
+    expect(within(rows[0]).getByText("Off")).toBeTruthy();
+    expect(screen.queryByText("gamma")).toBeNull();
     expect(screen.getByText("Go to Servers").getAttribute("href")).toBe("/servers");
     expect(screen.queryAllByText("Requests over time")).toHaveLength(0);
+    expect(set).not.toHaveBeenCalled(); // the panel reflects state; it never auto-toggles a server
+  });
+
+  it("clicking Enable PUTs enabled:true and surfaces the apply state", async () => {
+    emptyApi();
+    const servers = [srv({ id: "s1", name: "alpha" })];
+    vi.spyOn(api, "listServers").mockImplementation(async () => servers.map((x) => ({ ...x })));
+    const set = vi.spyOn(api, "setServerTrafficAnalytics").mockImplementation(async () => {
+      servers[0].trafficAnalytics = true;
+      return { trafficAnalytics: true, apply: "deferred", applyError: null } as TrafficAnalyticsState;
+    });
+    const toasts: { message: string; type: string }[] = [];
+    const unsub = subscribeToast((x) => toasts.push({ message: x.message, type: x.type }));
+    wrap();
+    fireEvent.click(await screen.findByRole("button", { name: "Enable Traffic Analytics on alpha" }));
+    await waitFor(() => expect(set).toHaveBeenCalledWith("s1", true));
+    await waitFor(() => expect(toasts).toEqual([{ message: "Traffic analytics saved; applies on next proxy start", type: "info" }]));
+    // the list refetches and the row flips to the collecting state
+    expect(await screen.findByRole("button", { name: "Disable Traffic Analytics on alpha" })).toBeTruthy();
+    expect(screen.getByText(/data appears shortly/)).toBeTruthy();
+    unsub();
+  });
+
+  it("a viewer (no manageable servers) sees a read-only explanation, no Enable button", async () => {
+    emptyApi();
+    vi.spyOn(api, "listServers").mockResolvedValue([srv({ canWrite: false })]);
+    wrap();
+    expect(await screen.findByText(/You have read-only access, so ask them to enable it/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Enable Traffic Analytics/ })).toBeNull();
+    expect(screen.queryByTestId("traffic-enable-row")).toBeNull();
+  });
+
+  it("with no servers at all shows the plain note", async () => {
+    emptyApi();
+    vi.spyOn(api, "listServers").mockResolvedValue([]);
+    wrap();
+    expect(await screen.findByText(/Add a server to get started/)).toBeTruthy();
+    expect(screen.queryByTestId("traffic-enable-row")).toBeNull();
+    expect(screen.getByText("Go to Servers").getAttribute("href")).toBe("/servers");
+  });
+
+  it("the populated page does not show the enable panel or fetch servers", async () => {
+    mockApi();
+    const list = vi.spyOn(api, "listServers").mockResolvedValue([srv({})]);
+    wrap();
+    await waitFor(() => expect(screen.getAllByText("Requests over time").length).toBeGreaterThan(0));
+    expect(screen.queryByTestId("traffic-enable-row")).toBeNull();
+    expect(list).not.toHaveBeenCalled();
   });
 
   it("shows an error state with retry when every request fails", async () => {
