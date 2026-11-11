@@ -44,5 +44,8 @@
   "noResults": "No results",
   "noResultsHint": "Nothing matches your search or filters.",
   "clearFilters": "Clear filters",
-  "noneInScope": "None in the current team scope. Switch team scope to see others."
+  "noneInScope": "None in the current team scope. Switch team scope to see others.",
+  "mailNotConfigured": "Email isn't set up on this hub.",
+  "mailNotConfiguredSetup": "Set it up in Settings → Email.",
+  "mailNotConfiguredAskAdmin": "Ask an administrator to set it up in Settings → Email."
 }

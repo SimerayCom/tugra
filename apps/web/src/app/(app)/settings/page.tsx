@@ -19,6 +19,7 @@ import { HubBackupCard } from "./hub-backup-card";
 import { UpdatesCard } from "./updates-card";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card } from "../../../components/ui";
+import { MailNotConfiguredNote } from "../../../components/mail-not-configured-note";
 import { Field, TextInput } from "../../../components/form";
 import { CopyBtn } from "../../../components/copy-row";
 import { useConfirm } from "../../../components/confirm";
@@ -69,12 +70,15 @@ export default function SettingsPage() {
   ];
   const [tab, setTab] = useTabState("account", tabs.map((x) => x.key));
 
-  // The top-bar "Update available" badge deep-links to /settings?tab=instance#updates. Once the instance
-  // tab is showing, bring the Updates card into view so the fix is one scroll-free click away.
+  // Deep links into an instance-tab card scroll it into view once that tab is showing: the top-bar
+  // "Update available" badge uses #updates, and the "Email isn't set up" notices use #email.
   useEffect(() => {
-    if (tab !== "instance" || typeof window === "undefined" || window.location.hash !== "#updates") return;
+    if (tab !== "instance" || typeof window === "undefined") return;
+    const anchors: Record<string, string> = { "#updates": "updates", "#email": "email" };
+    const target = anchors[window.location.hash];
+    if (!target) return;
     const raf = window.requestAnimationFrame(() => {
-      document.getElementById("updates")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      document.getElementById(target)?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
     return () => window.cancelAnimationFrame(raf);
   }, [tab]);
@@ -106,7 +110,7 @@ export default function SettingsPage() {
         <SettingsGrid hint={t("settings.sectionInstanceHint")}>
           <LicenseCard />
           <PanelTlsCard />
-          <EmailSettingsCard />
+          <div id="email"><EmailSettingsCard /></div>
           <HubBackupCard />
           <BrandingCard />
           <InstanceApiAccessCard />
@@ -178,6 +182,7 @@ function AccountCard() {
             <TextInput id="acc-pw" type="password" value={pw} onChange={(e) => setPw(e.target.value)} autoComplete="current-password" />
           </Field>
         )}
+        {emailChanged && <MailNotConfiguredNote consequence={t("settings.emailChangeNoMail")} />}
       </div>
       <div style={{ marginTop: 14 }}>
         <Btn onClick={() => save.mutate()} disabled={save.isPending || !email.trim() || (emailChanged && !pw)}>

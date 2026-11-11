@@ -14,6 +14,7 @@ import { Badge, Btn, Card, EmptyState, Spinner } from "../../../../components/ui
 import { PageHeader } from "../../../../components/page-header";
 import { IconBtn } from "../../../../components/icon-btn";
 import { useConfirm } from "../../../../components/confirm";
+import { MailNotConfiguredNote } from "../../../../components/mail-not-configured-note";
 
 const field: React.CSSProperties = {
   padding: "8px 10px",
@@ -45,6 +46,10 @@ export default function TeamDetailPage() {
     queryFn: () => api.listTeamInvitations(id),
     enabled: canManage,
   });
+  // Whether the hub can actually email an invite. Drives honest copy (the invite link is always shown, so
+  // invites work without mail; we just don't claim an email was sent when it wasn't).
+  const { data: instanceStatus } = useQuery({ queryKey: ["instanceStatus"], queryFn: () => api.getInstanceStatus(), staleTime: 60_000, enabled: canManage });
+  const mailOff = instanceStatus?.mailConfigured === false;
 
   const refetch = () => {
     qc.invalidateQueries({ queryKey: ["teamMembers", id] });
@@ -159,6 +164,7 @@ export default function TeamDetailPage() {
       {canManage && (
         <Card style={{ padding: 16, marginBottom: 16 }}>
           <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 10 }}>{t("teams.invite")}</div>
+          {mailOff && <div style={{ marginBottom: 10 }}><MailNotConfiguredNote consequence={t("teams.inviteNoMail")} /></div>}
           <form onSubmit={(e) => { e.preventDefault(); invite.mutate(); }} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <input style={{ ...field, flex: 1, minWidth: 180 }} type="email" placeholder={t("teams.inviteEmail")} aria-label={t("teams.inviteEmail")} value={email} onChange={(e) => setEmail(e.target.value)} required />
             <select style={field} value={inviteRole} onChange={(e) => setInviteRole(e.target.value as Role)}>
@@ -171,7 +177,7 @@ export default function TeamDetailPage() {
           {invite.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(invite.error as Error).message}</div>}
           {lastToken && (
             <div style={{ marginTop: 10, fontSize: 12, color: "var(--c-am)" }}>
-              {t("teams.inviteSent")}
+              {mailOff ? t("teams.inviteCreatedNoMail") : t("teams.inviteSent")}
               <div className="mono" style={{ fontSize: 11, color: "var(--c-tx2)", marginTop: 4, wordBreak: "break-all" }}>{inviteLink}</div>
             </div>
           )}

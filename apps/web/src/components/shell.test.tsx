@@ -15,8 +15,8 @@ vi.mock("next/navigation", () => ({
 // Hoisted spies so individual tests (the update badge) can override the signed-in user and the query
 // result; the defaults match the rest of the suite (a non-owner fleet user, empty query data).
 const mocks = vi.hoisted(() => ({
-  useAuth: vi.fn(() => ({ logout: vi.fn(), user: { uiMode: "fleet", email: "a@b.c" } })),
-  useQuery: vi.fn(() => ({ data: [] })),
+  useAuth: vi.fn((): { logout: () => void; user: Record<string, unknown> | null } => ({ logout: () => {}, user: { uiMode: "fleet", email: "a@b.c" } })),
+  useQuery: vi.fn((): { data: unknown } => ({ data: [] })),
 }));
 vi.mock("../lib/auth", () => ({ useAuth: mocks.useAuth }));
 vi.mock("@tanstack/react-query", () => ({ useQuery: mocks.useQuery }));

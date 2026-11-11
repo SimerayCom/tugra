@@ -50,6 +50,8 @@
   "invite": "Invite",
   "inviteEmail": "Member email",
   "inviteSent": "Invitation created — we've emailed the link, and you can share it directly too:",
+  "inviteCreatedNoMail": "Invitation created. Email isn't set up, so share this link directly:",
+  "inviteNoMail": "New members won't receive an email — share the invite link shown after you add them.",
   "pendingInvitations": "Pending invitations",
   "revoke": "Revoke",
   "remove": "Remove",
