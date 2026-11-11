@@ -517,7 +517,7 @@ fi
 PG_PWD="$(env_get POSTGRES_PASSWORD)"
 set_env NODE_ENV       "production"
 set_env DATABASE_URL   "postgresql://tugra:${PG_PWD}@postgres:5432/tugra?schema=public"
-set_env REDIS_URL      "redis://redis:6379"          # unauthenticated: BullMQ workers only use host/port
+set_env REDIS_URL      "redis://redis:6379"          # in-compose Redis (rewritten on every run). hub-api honours a full redis[s]://user:pass@host:port/db URL, but an external Redis is unsupported here: the tugra-updater sidecar is pinned to redis://redis:6379.
 set_env HUB_PORT       "$HUB_PORT"
 set_env WEB_PORT       "$WEB_PORT"
 # Preserve on re-run (ensure_env, not set_env): never clobber an operator's deliberate bind lock-down.

@@ -5,6 +5,7 @@ import {
   OnModuleDestroy,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { redisConnectionOptions } from "../common/redis-connection";
 import { Queue, Worker } from "bullmq";
 import { DEFAULT_JOB_OPTIONS } from "../common/queue-options";
 import { PrismaService } from "../prisma/prisma.service";
@@ -27,12 +28,7 @@ export class MonitorSchedulerService
   ) {}
 
   private connection() {
-    const url = new URL(this.config.get<string>("REDIS_URL")!);
-    return {
-      host: url.hostname,
-      port: Number(url.port || 6379),
-      maxRetriesPerRequest: null,
-    };
+    return redisConnectionOptions(this.config.get<string>("REDIS_URL")!);
   }
 
   async onApplicationBootstrap(): Promise<void> {
