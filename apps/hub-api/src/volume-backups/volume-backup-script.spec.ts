@@ -43,18 +43,27 @@ describe("volume-backup-script", () => {
     expect(s).toContain("gpg --batch --yes --passphrase 'pass' --symmetric --cipher-algo AES256");
   });
 
-  it("restore stages the archive to a temp file first, THEN wipes+extracts (a failed fetch never destroys data)", () => {
-    const s = buildVolumeRestoreScript("a1", "data", "tugra_appv_a1_data", "20260101.tar.gz", LOCAL);
+  it("restore validates the tar + snapshots for rollback BEFORE wiping, and marks success (corrupt archive never destroys data)", () => {
+    const s = buildVolumeRestoreScript("a1", "data", "tugra_appv_a1_data", "20260101.tar.gz", LOCAL, "r1");
     expect(s).toContain("gunzip");
     expect(s).toContain("TMP=$(mktemp)");
     expect(s).toContain('> "$TMP"'); // decode staged to temp BEFORE the volume is touched
-    expect(s).toContain("set -o pipefail"); // a failed source aborts (set -e) before the wipe
-    expect(s).toContain(`docker run --rm -i -v 'tugra_appv_a1_data':/data ${BACKUP_HELPER_IMAGE} sh -c`);
+    expect(s).toContain("set -o pipefail");
+    // validate the tar LAYER before any destructive step (a valid gzip wrapping a corrupt tar aborts here)
+    expect(s).toContain('tar -tf - < "$TMP"');
+    expect(s).toContain('[ -s "$TMP.list" ]'); // empty/all-zero archive guard (would otherwise wipe to empty)
+    expect(s).toContain("unsafe archive entry"); // absolute / .. traversal reject
+    expect(s).toContain("LC_ALL=C grep"); // locale-independent traversal match
+    // snapshot the live volume (labelled for discovery/cleanup) so a failed/interrupted extract rolls back
+    expect(s).toContain("docker volume create --label tugra.restore-rb='r1' 'tugra_restore_rb_r1'");
     expect(s).toContain("find . -mindepth 1 -delete");
     expect(s).toContain("tar -xf -");
     expect(s).toContain('< "$TMP"'); // extract reads the staged temp, not a live pipe
-    // the stage-to-temp MUST come before the destructive wipe — the whole point of the fix
-    expect(s.indexOf('> "$TMP"')).toBeLessThan(s.indexOf("find . -mindepth 1 -delete"));
+    expect(s).toContain("echo TUGRA_RESTORE_OK"); // success marker the hub requires
+    expect(s).toContain("TUGRA_RESTORE_RECOVERY_REQUIRED"); // rollback-also-failed signal
+    // validation + snapshot MUST come before the destructive wipe — the whole point of the fix
+    expect(s.indexOf('tar -tf - < "$TMP"')).toBeLessThan(s.indexOf("find . -mindepth 1 -delete"));
+    expect(s.indexOf("docker volume create")).toBeLessThan(s.indexOf("find . -mindepth 1 -delete"));
   });
 
   it("delete removes the local file or the S3 object", () => {
@@ -63,8 +72,8 @@ describe("volume-backup-script", () => {
   });
 
   describe("buildVolumeImportScript", () => {
-    it("stages the fetch to a temp file first, then wipes+extracts (a failed fetch never touches the volume)", () => {
-      const s = buildVolumeImportScript("tugra_appv_a1_data", "https://x.example/dump.tar.gz", {
+    it("stages the fetch, validates + snapshots before wipe, keeps --no-same-owner (a bad fetch never touches the volume)", () => {
+      const s = buildVolumeImportScript("tugra_appv_a1_data", "https://x.example/dump.tar.gz", "r2", {
         encrypted: false,
         key: "",
         gzip: true,
@@ -74,27 +83,29 @@ describe("volume-backup-script", () => {
       expect(s).toContain("| gunzip");
       expect(s).toContain('> "$TMP"'); // decode staged to temp BEFORE the volume is touched
       expect(s).toContain("set -o pipefail"); // a failed url/key/gzip aborts (set -e) before the wipe
-      expect(s).toContain(`docker run --rm -i -v 'tugra_appv_a1_data':/data ${BACKUP_HELPER_IMAGE} sh -c`);
+      expect(s).toContain('tar -tf - < "$TMP"'); // validate the tar layer before any destructive step
+      expect(s).toContain("docker volume create --label tugra.restore-rb='r2' 'tugra_restore_rb_r2'"); // labelled rollback snapshot
       expect(s).toContain("find . -mindepth 1 -delete");
       expect(s).toContain("tar --no-same-owner -xf -"); // untrusted tar → no arbitrary ownership
       expect(s).toContain('< "$TMP"'); // extract reads the staged temp, not a live pipe
-      // the download-to-temp MUST come before the destructive wipe
-      expect(s.indexOf('> "$TMP"')).toBeLessThan(s.indexOf("find . -mindepth 1 -delete"));
+      expect(s).toContain("echo TUGRA_RESTORE_OK");
+      // validation MUST come before the destructive wipe
+      expect(s.indexOf('tar -tf - < "$TMP"')).toBeLessThan(s.indexOf("find . -mindepth 1 -delete"));
       expect(s).not.toContain("gpg");
     });
 
     it("shell-quotes a URL with metacharacters (no command injection)", () => {
-      const s = buildVolumeImportScript("v", "https://x/$(touch pwned).tar", { encrypted: false, key: "", gzip: true });
+      const s = buildVolumeImportScript("v", "https://x/$(touch pwned).tar", "r", { encrypted: false, key: "", gzip: true });
       expect(s).toContain("'https://x/$(touch pwned).tar'"); // inside single quotes → inert
     });
 
     it("omits gunzip when gzip:false", () => {
-      const s = buildVolumeImportScript("v", "https://x/dump.tar", { encrypted: false, key: "", gzip: false });
+      const s = buildVolumeImportScript("v", "https://x/dump.tar", "r", { encrypted: false, key: "", gzip: false });
       expect(s).not.toContain("gunzip");
     });
 
     it("adds a gpg -d stage (passphrase quoted) when encrypted", () => {
-      const s = buildVolumeImportScript("v", "https://x/d.tar.gz.gpg", { encrypted: true, key: "pass", gzip: true });
+      const s = buildVolumeImportScript("v", "https://x/d.tar.gz.gpg", "r", { encrypted: true, key: "pass", gzip: true });
       expect(s).toContain("gpg --batch --yes --passphrase 'pass' --decrypt");
       // decode order: fetch → decrypt → gunzip
       expect(s.indexOf("curl")).toBeLessThan(s.indexOf("gpg"));
@@ -102,13 +113,13 @@ describe("volume-backup-script", () => {
     });
 
     it("leaves the decode UNBOUNDED for the trusted user path (no maxDecodedBytes)", () => {
-      const s = buildVolumeImportScript("v", "https://x/d.tar.gz", { encrypted: false, key: "", gzip: true });
+      const s = buildVolumeImportScript("v", "https://x/d.tar.gz", "r", { encrypted: false, key: "", gzip: true });
       expect(s).not.toContain("head -c"); // the user-driven import-from-url path is unchanged
       expect(s).not.toMatch(/exceeds the \d+-byte cap/);
     });
 
     it("bounds the DECODED size with head -c + a size check when a cap is given (gzip-bomb guard)", () => {
-      const s = buildVolumeImportScript("v", "https://x/d.tar.gz", { encrypted: false, key: "", gzip: true, maxDecodedBytes: 1000 });
+      const s = buildVolumeImportScript("v", "https://x/d.tar.gz", "r", { encrypted: false, key: "", gzip: true, maxDecodedBytes: 1000 });
       expect(s).toContain("| head -c 1001"); // cap + 1 so the exact-boundary case is detectable
       expect(s).toContain('if [ "$(wc -c < "$TMP")" -gt 1000 ]'); // explicit boundary check
       expect(s).toMatch(/exceeds the 1000-byte cap/);

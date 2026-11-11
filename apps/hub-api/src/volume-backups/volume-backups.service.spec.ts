@@ -1,4 +1,4 @@
-import { BadGatewayException, BadRequestException, ForbiddenException, NotFoundException } from "@nestjs/common";
+import { BadGatewayException, BadRequestException, ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { VolumeBackupsService } from "./volume-backups.service";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { TeamAccessService } from "../common/team-access.service";
@@ -85,6 +85,108 @@ describe("VolumeBackupsService.importFromUrl", () => {
     await expect(t.service.importFromUrl("u1", "a1", { ...input })).rejects.toBeInstanceOf(BadGatewayException);
     expect(t.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "app.volume_import_failed" }));
     expect(t.audit.log).not.toHaveBeenCalledWith(expect.objectContaining({ action: "app.volume_import" }));
+  });
+});
+
+describe("VolumeBackupsService.restore", () => {
+  type Send = { exitCode: number; output: string };
+  function setup(
+    opts: { send?: Send; sendImpl?: () => Promise<Send>; backup?: Record<string, unknown> | null; requirePermThrows?: boolean } = {},
+  ) {
+    const app = { id: "a1", teamId: "t1", serverId: "s1", environmentId: "e1", volumes: [{ name: "data", path: "/data" }] };
+    const backup = opts.backup === undefined ? { id: "vb1", appId: "a1", volumeName: "data", filename: "20260101.tar.gz", destinationId: null } : opts.backup;
+    const audit = { log: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService;
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app) },
+      volumeBackup: { findFirst: jest.fn().mockResolvedValue(backup) },
+    } as unknown as PrismaService;
+    const access = {
+      requirePermission: opts.requirePermThrows ? jest.fn().mockRejectedValue(new ForbiddenException("nope")) : jest.fn().mockResolvedValue(undefined),
+      teamRole: jest.fn().mockResolvedValue("OWNER"),
+      requireResourceAccess: jest.fn().mockResolvedValue(undefined),
+    } as unknown as TeamAccessService;
+    const sendCommand = opts.sendImpl ? jest.fn(opts.sendImpl) : jest.fn().mockResolvedValue(opts.send ?? { exitCode: 0, output: "TUGRA_RESTORE_OK" });
+    const agentWs = { sendCommand } as unknown as AgentWsServer;
+    const runner = { destinationSpecById: jest.fn().mockResolvedValue({ type: "LOCAL", encryption: { enabled: false, key: "" } }) } as unknown as VolumeBackupRunnerService;
+    const service = new VolumeBackupsService(prisma, access, audit, agentWs, runner, {} as unknown as VolumeBackupSchedulerService, fakeAlerts);
+    return { service, agentWs, audit };
+  }
+
+  it("requires the backups permission — nothing is dispatched", async () => {
+    const t = setup({ requirePermThrows: true });
+    await expect(t.service.restore("u1", "a1", "vb1")).rejects.toBeInstanceOf(ForbiddenException);
+    expect(t.agentWs.sendCommand).not.toHaveBeenCalled();
+  });
+
+  it("404s when the backup does not exist", async () => {
+    const t = setup({ backup: null });
+    await expect(t.service.restore("u1", "a1", "vb1")).rejects.toBeInstanceOf(NotFoundException);
+    expect(t.agentWs.sendCommand).not.toHaveBeenCalled();
+  });
+
+  it("audits success on exit 0 (the script exits 0 only from its success branch)", async () => {
+    const t = setup({ send: { exitCode: 0, output: "noise\nTUGRA_RESTORE_OK" } });
+    await t.service.restore("u1", "a1", "vb1");
+    expect(t.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "app.volume_restore", meta: { backupId: "vb1" } }));
+    expect(t.audit.log).not.toHaveBeenCalledWith(expect.objectContaining({ action: "app.volume_restore_failed" }));
+  });
+
+  it("still succeeds on exit 0 when the OK marker was truncated out of the output (keys off the exit code, not the marker)", async () => {
+    const t = setup({ send: { exitCode: 0, output: "" } }); // the agent's 64KB output cap can drop the end-of-output marker
+    await t.service.restore("u1", "a1", "vb1");
+    expect(t.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "app.volume_restore" }));
+    expect(t.audit.log).not.toHaveBeenCalledWith(expect.objectContaining({ action: "app.volume_restore_failed" }));
+  });
+
+  it("throws (no false success) when the agent restore exits non-zero", async () => {
+    const t = setup({ send: { exitCode: 2, output: "tar: Unrecognized archive format" } });
+    await expect(t.service.restore("u1", "a1", "vb1")).rejects.toBeInstanceOf(BadGatewayException);
+    expect(t.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "app.volume_restore_failed" }));
+    expect(t.audit.log).not.toHaveBeenCalledWith(expect.objectContaining({ action: "app.volume_restore" }));
+  });
+
+  it("reports the old data as preserved on a pre-wipe abort (72) or a rollback (71)", async () => {
+    for (const exitCode of [72, 71]) {
+      const t = setup({ send: { exitCode, output: "" } });
+      await expect(t.service.restore("u1", "a1", "vb1")).rejects.toThrow(/existing volume data was preserved/);
+      expect(t.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "app.volume_restore_failed" }));
+      expect(t.audit.log).not.toHaveBeenCalledWith(expect.objectContaining({ action: "app.volume_restore" }));
+    }
+  });
+
+  it("reports an uncertain outcome + the recovery volume on exit 70, and records it in the audit", async () => {
+    const t = setup({ send: { exitCode: 70, output: "TUGRA_RESTORE_RECOVERY_REQUIRED" } });
+    await expect(t.service.restore("u1", "a1", "vb1")).rejects.toThrow(/outcome is uncertain[\s\S]*tugra_restore_rb_/);
+    expect(t.audit.log).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "app.volume_restore_failed", meta: expect.objectContaining({ rbVolume: expect.stringContaining("tugra_restore_rb_") }) }),
+    );
+  });
+
+  it("treats a SIGKILL exit (-1) as an uncertain outcome, never 'preserved'", async () => {
+    const t = setup({ send: { exitCode: -1, output: "" } });
+    await expect(t.service.restore("u1", "a1", "vb1")).rejects.toThrow(/outcome is uncertain/);
+  });
+
+  it("records the failure and rethrows when the agent is offline / times out (never a silent success)", async () => {
+    const t = setup({ sendImpl: () => Promise.reject(new Error("command timed out")) });
+    await expect(t.service.restore("u1", "a1", "vb1")).rejects.toThrow(/timed out/);
+    expect(t.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "app.volume_restore_failed" }));
+    expect(t.audit.log).not.toHaveBeenCalledWith(expect.objectContaining({ action: "app.volume_restore" }));
+  });
+
+  it("rejects a second concurrent restore for the same volume with 409 (no corrupting overlap)", async () => {
+    let release!: (v: Send) => void;
+    const gate = new Promise<Send>((res) => {
+      release = res;
+    });
+    const t = setup({ sendImpl: () => gate });
+    const first = t.service.restore("u1", "a1", "vb1"); // in flight (sendCommand pending on the gate)
+    await new Promise((r) => setImmediate(r)); // let the first call take the per-volume lock
+    await expect(t.service.restore("u1", "a1", "vb1")).rejects.toBeInstanceOf(ConflictException);
+    release({ exitCode: 0, output: "TUGRA_RESTORE_OK" });
+    await first;
+    // lock released after the first completes → a later restore is allowed again
+    await expect(t.service.restore("u1", "a1", "vb1")).resolves.toBeUndefined();
   });
 });
 

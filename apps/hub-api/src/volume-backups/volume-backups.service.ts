@@ -1,4 +1,5 @@
-import { BadGatewayException, BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadGatewayException, BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { randomUUID } from "crypto";
 import { z } from "zod";
 import { Application, VolumeBackup } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
@@ -44,6 +45,10 @@ export class VolumeBackupsService {
     private readonly alerts: BackupAlertsService,
   ) {}
 
+  // In-flight restores keyed by `${appId}:${volumeName}` — a second restore to the same volume is rejected
+  // (two concurrent wipe+extracts into one volume corrupt each other). Single-hub, in-memory by design.
+  private readonly restoreInFlight = new Set<string>();
+
   async backupNow(userId: string, appId: string): Promise<VolumeBackupView[]> {
     await this.requireWrite(userId, appId);
     const rows = await this.runner.runBackup(appId, userId);
@@ -77,15 +82,52 @@ export class VolumeBackupsService {
     const app = await this.requireWrite(userId, appId);
     const backup = await this.prisma.volumeBackup.findFirst({ where: { id: backupId, appId } });
     if (!backup) throw new NotFoundException("backup not found");
-    // Read from the backup's OWN destination, not the app's current one.
-    const dest = await this.runner.destinationSpecById(backup.destinationId);
-    await this.agentWs.sendCommand(
-      app.serverId,
-      buildVolumeRestoreScript(app.id, backup.volumeName, appVolumeName(app, backup.volumeName), backup.filename, dest),
-      "backup",
-      300_000,
-    );
-    await this.audit.log({ actor: userId, action: "app.volume_restore", target: appId, meta: { backupId } });
+    // One restore per (app, volume) at a time — two concurrent wipe+extracts into the same volume corrupt
+    // each other.
+    const lockKey = `${appId}:${backup.volumeName}`;
+    if (this.restoreInFlight.has(lockKey)) throw new ConflictException("a restore is already running for this volume");
+    this.restoreInFlight.add(lockKey);
+    try {
+      // Read from the backup's OWN destination, not the app's current one.
+      const dest = await this.runner.destinationSpecById(backup.destinationId);
+      const restoreId = randomUUID().replace(/-/g, "");
+      const rbVolume = `tugra_restore_rb_${restoreId}`;
+      // Scale the timeout with the backup size (min 10 min, +1 min / 100 MB) so a large restore — which now
+      // also snapshots the live volume — is not SIGKILLed mid-extract. The agent uses this same value as
+      // its kill timer.
+      const timeoutMs = 600_000 + Math.ceil(Number(backup.sizeBytes ?? 0) / (100 * 1024 * 1024)) * 60_000;
+      let r: { exitCode: number; output: string };
+      try {
+        r = await this.agentWs.sendCommand(
+          app.serverId,
+          buildVolumeRestoreScript(app.id, backup.volumeName, appVolumeName(app, backup.volumeName), backup.filename, dest, restoreId),
+          "backup",
+          timeoutMs,
+        );
+      } catch (e) {
+        // Agent offline / hub timeout / disconnect: the outcome is unknown and is NOT a success. A timeout
+        // after dispatch may have left the volume mid-restore (the snapshot volume survives for recovery).
+        await this.audit.log({ actor: userId, action: "app.volume_restore_failed", target: appId, meta: { backupId, restoreId, rbVolume, error: "dispatch" } });
+        throw e;
+      }
+      // A failed restore must NEVER be recorded as success. The script exits 0 ONLY from its success branch
+      // (every failure exits 70/71/72, or is SIGKILLed to a non-zero code), so the hub keys off the EXIT
+      // CODE — not an end-of-output marker the agent's output cap could truncate away.
+      if (r.exitCode !== 0) {
+        await this.audit.log({ actor: userId, action: "app.volume_restore_failed", target: appId, meta: { backupId, restoreId, rbVolume, exitCode: r.exitCode } });
+        // 72 = aborted before the wipe; 71 = rolled back from the snapshot — both leave the old data intact.
+        // Any other code (70 rollback-also-failed, -1/137 SIGKILL, unexpected) means the outcome is uncertain.
+        const preserved = r.exitCode === 71 || r.exitCode === 72;
+        throw new BadGatewayException(
+          preserved
+            ? "volume restore failed; the existing volume data was preserved"
+            : `volume restore failed and the outcome is uncertain — the volume may be partially restored; recover from docker volume ${rbVolume} if it is present`,
+        );
+      }
+      await this.audit.log({ actor: userId, action: "app.volume_restore", target: appId, meta: { backupId } });
+    } finally {
+      this.restoreInFlight.delete(lockKey);
+    }
   }
 
   /**
@@ -145,7 +187,7 @@ export class VolumeBackupsService {
     if (!declared) throw new BadRequestException("unknown volume for this app");
     const r = await this.agentWs.sendCommand(
       app.serverId,
-      buildVolumeImportScript(appVolumeName(app, input.volumeName), input.url, {
+      buildVolumeImportScript(appVolumeName(app, input.volumeName), input.url, randomUUID().replace(/-/g, ""), {
         encrypted: input.encrypted,
         key: input.encryptionKey ?? "",
         gzip: input.gzip,

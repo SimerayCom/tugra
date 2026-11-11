@@ -76,12 +76,65 @@ export function buildVolumeBackupScript(
   return lines.join("\n");
 }
 
+/**
+ * The validated, rollback-protected wipe+extract shared by restore and import. The decoded archive is
+ * already staged at $TMP. Steps:
+ *  1. VALIDATE the tar layer BEFORE touching the volume — a valid gzip wrapping a corrupt/truncated tar
+ *     would otherwise wipe the volume and only then fail (`tar -tf` lists without extracting, in a helper
+ *     with NO volume mounted, so a bad archive aborts here under `set -e` with the live data intact).
+ *  2. Reject absolute paths and `..` traversal entries (defence in depth, even for our own backup).
+ *  3. SNAPSHOT the live volume to a rollback volume, so a failed/interrupted extract can be rolled back and
+ *     the old data is preserved. If the disk is too full to snapshot, `set -e` aborts HERE (before the
+ *     wipe) → the live data stays intact.
+ *  4. Wipe + extract the validated archive. On failure, restore from the snapshot; if that also fails,
+ *     leave BOTH volumes and signal recovery.
+ * Exit/marker contract the hub reads: exit 0 + `TUGRA_RESTORE_OK` = success; exit 1 = failed, old data
+ * restored; exit 2 + `TUGRA_RESTORE_RECOVERY_REQUIRED` = failed, manual recovery required. This is NOT
+ * atomic — Docker has no atomic volume swap; a hard kill mid-extract is recoverable from the snapshot, not
+ * seamless. `tarFlags` is "" for our own backup (keep ownership) or "--no-same-owner " for an untrusted import.
+ */
+function safeWipeExtract(dockerVolume: string, restoreId: string, tarFlags: string): string[] {
+  const img = BACKUP_HELPER_IMAGE;
+  const rb = `tugra_restore_rb_${restoreId}`;
+  const vol = shq(dockerVolume);
+  const rbq = shq(rb);
+  // Exit-code contract the hub reads (robust to the agent's output cap — the hub keys off the code, not an
+  // end-of-output marker): 0 = success; 72 = aborted BEFORE the wipe (live data intact); 71 = extract
+  // failed, rolled back from the snapshot (live data intact); 70 = extract AND rollback failed, snapshot
+  // kept for manual recovery. A SIGKILL (timeout/cancel, exit -1/137) skips all of this → the hub treats
+  // any other code as an unknown outcome (possibly mid-restore; the snapshot volume survives for recovery).
+  return [
+    // 1. VALIDATE the tar layer before touching the volume. Corrupt/truncated → exit 72, data intact.
+    `docker run --rm -i ${img} tar -tf - < "$TMP" > "$TMP.list" 2>/dev/null || { echo "invalid archive" >&2; exit 72; }`,
+    // 2. An all-zero / empty tar lists nothing and `tar -tf` exits 0 — reject it so it can't wipe to empty.
+    //    Our own backups always carry a `./` entry.
+    `[ -s "$TMP.list" ] || { echo "empty archive" >&2; exit 72; }`,
+    // 3. Reject absolute / `..` entries (LC_ALL=C so an invalid-UTF-8 byte can't dodge the match).
+    `if LC_ALL=C grep -Eq '^/|(^|/)[.][.](/|$)' "$TMP.list"; then echo "unsafe archive entry" >&2; exit 72; fi`,
+    // 4. SNAPSHOT the live volume (labelled for discovery/cleanup) so a failed/interrupted extract rolls
+    //    back. A snapshot failure (e.g. disk full) → exit 72 with data intact; clean up any partial snapshot.
+    `docker volume create --label tugra.restore-rb=${shq(restoreId)} ${rbq} >/dev/null || { echo "snapshot volume create failed" >&2; exit 72; }`,
+    `docker run --rm -v ${vol}:/src:ro -v ${rbq}:/dst ${img} sh -c 'cp -a /src/. /dst/' || { docker volume rm ${rbq} >/dev/null 2>&1 || true; echo "snapshot failed" >&2; exit 72; }`,
+    // 5. Extract the validated archive into the live volume; on failure restore from the snapshot.
+    `if docker run --rm -i -v ${vol}:/data ${img} sh -c 'cd /data && find . -mindepth 1 -delete; tar ${tarFlags}-xf -' < "$TMP"; then`,
+    `  docker volume rm ${rbq} >/dev/null 2>&1 || true`,
+    `  echo TUGRA_RESTORE_OK`,
+    `elif docker run --rm -v ${rbq}:/src:ro -v ${vol}:/data ${img} sh -c 'cd /data && find . -mindepth 1 -delete; cp -a /src/. /data/'; then`,
+    `  docker volume rm ${rbq} >/dev/null 2>&1 || true`,
+    `  echo TUGRA_RESTORE_FAILED_ROLLED_BACK >&2; exit 71`,
+    `else`,
+    `  echo "TUGRA_RESTORE_RECOVERY_REQUIRED rollback=${rb}" >&2; exit 70`,
+    `fi`,
+  ];
+}
+
 export function buildVolumeRestoreScript(
   appId: string,
   volumeName: string,
   dockerVolume: string,
   filename: string,
   dest: DestinationSpec,
+  restoreId: string,
 ): string {
   let source: string;
   if (dest.type === "S3" && dest.s3) {
@@ -93,21 +146,17 @@ export function buildVolumeRestoreScript(
   if (dest.encryption.enabled) decode.push(gpgDecrypt(dest));
   decode.push("gunzip");
 
-  // Stage the decoded archive to a temp file FIRST (like buildVolumeImportScript). With `set -e` +
-  // `set -o pipefail`, a failed/expired source (S3 fetch, wrong decryption key, gzip mismatch, truncated
-  // stream) aborts HERE — before the volume is touched — so a failed restore NEVER destroys existing data.
-  // Only once a full archive is staged do we wipe + extract (clean restore, including dotfiles). Unlike
-  // the untrusted-import path this restores OUR OWN backup, so ownership is preserved (no --no-same-owner).
-  const extract = `docker run --rm -i -v ${shq(dockerVolume)}:/data ${BACKUP_HELPER_IMAGE} sh -c ${shq(
-    "cd /data && find . -mindepth 1 -delete 2>/dev/null; tar -xf -",
-  )} < "$TMP"`;
+  // Stage the decoded archive to a temp file FIRST. With `set -e` + `set -o pipefail`, a failed/expired
+  // source (S3 fetch, wrong decryption key, gzip mismatch, truncated stream) aborts HERE — before the
+  // volume is touched. The validated, rollback-protected wipe+extract follows (see safeWipeExtract); this
+  // restores OUR OWN backup → ownership is preserved (tarFlags "").
   return [
     "set -e",
     "set -o pipefail",
     "TMP=$(mktemp)",
-    `trap 'rm -f "$TMP"' EXIT`,
+    `trap 'rm -f "$TMP" "$TMP.list"' EXIT`,
     `${decode.join(" | ")} > "$TMP"`,
-    extract,
+    ...safeWipeExtract(dockerVolume, restoreId, ""),
   ].join("\n");
 }
 
@@ -119,6 +168,7 @@ export function buildVolumeRestoreScript(
 export function buildVolumeImportScript(
   dockerVolume: string,
   url: string,
+  restoreId: string,
   opts: { encrypted: boolean; key: string; gzip: boolean; maxDecodedBytes?: number },
 ): string {
   const dest: DestinationSpec = { type: "LOCAL", encryption: { enabled: opts.encrypted, key: opts.key } };
@@ -132,23 +182,20 @@ export function buildVolumeImportScript(
   // (the user-driven import-from-url path) keeps the original unbounded behavior.
   const cap = opts.maxDecodedBytes && opts.maxDecodedBytes > 0 ? Math.floor(opts.maxDecodedBytes) : 0;
   if (cap) decode.push(`head -c ${cap + 1}`);
-  // Download + decode to a TEMP FILE FIRST. With `set -e` + `set -o pipefail`, a failed/expired URL,
-  // wrong key, or gzip-flag mismatch aborts HERE — before the volume is touched — so a failed import
-  // never destroys existing data. Only once a valid archive is staged do we wipe + extract (clean
-  // import). --no-same-owner: an UNTRUSTED external tar must not restore arbitrary uid/gid; the extract
-  // container is ephemeral (--rm) with only the target volume mounted at /data.
-  const extract = `docker run --rm -i -v ${shq(dockerVolume)}:/data ${BACKUP_HELPER_IMAGE} sh -c ${shq(
-    "cd /data && find . -mindepth 1 -delete 2>/dev/null; tar --no-same-owner -xf -",
-  )} < "$TMP"`;
+  // Download + decode to a TEMP FILE FIRST. With `set -e` + `set -o pipefail`, a failed/expired URL, wrong
+  // key, or gzip-flag mismatch aborts HERE — before the volume is touched. Then the validated,
+  // rollback-protected wipe+extract (safeWipeExtract) also validates the tar layer and snapshots the live
+  // volume, so a corrupt tar or an interrupted extract never destroys existing data. --no-same-owner: an
+  // UNTRUSTED external tar must not restore arbitrary uid/gid.
   const lines = [
     "set -e",
     "set -o pipefail",
     "TMP=$(mktemp)",
-    `trap 'rm -f "$TMP"' EXIT`,
+    `trap 'rm -f "$TMP" "$TMP.list"' EXIT`,
     `${decode.join(" | ")} > "$TMP"`,
   ];
   if (cap) lines.push(`if [ "$(wc -c < "$TMP")" -gt ${cap} ]; then echo "decoded volume exceeds the ${cap}-byte cap" >&2; exit 1; fi`);
-  lines.push(extract);
+  lines.push(...safeWipeExtract(dockerVolume, restoreId, "--no-same-owner "));
   return lines.join("\n");
 }
 
