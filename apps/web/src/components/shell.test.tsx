@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
-import { NAV, DESTS, noticeVisible, noticeMessage, Sidebar, UpdateBadge } from "./shell";
+import { NAV, DESTS, noticeVisible, noticeMessage, Sidebar, UpdateBadge, nextTheme, resolveTheme } from "./shell";
 import type { InstanceUpdateNotice } from "../lib/types";
 import { navForMode, isHomeAllowed } from "../lib/ui-mode";
 import { translate } from "../i18n/translate";
@@ -269,5 +269,20 @@ describe("top-bar update badge", () => {
     expect(link.getAttribute("href")).toBe("/settings?tab=instance#updates");
     expect(link.textContent).not.toContain("0.1.0-beta.7"); // version hidden in the compact pill
     expect(link.getAttribute("aria-label")).toContain("0.1.0-beta.7"); // still announced
+  });
+});
+
+describe("tri-state theme", () => {
+  it("cycles System → Light → Dark → System", () => {
+    expect(nextTheme("system")).toBe("light");
+    expect(nextTheme("light")).toBe("dark");
+    expect(nextTheme("dark")).toBe("system");
+  });
+
+  it("resolves 'system' from the OS preference and passes light/dark through", () => {
+    expect(resolveTheme("system", true)).toBe("dark");
+    expect(resolveTheme("system", false)).toBe("light");
+    expect(resolveTheme("light", true)).toBe("light"); // explicit choice ignores the OS
+    expect(resolveTheme("dark", false)).toBe("dark");
   });
 });

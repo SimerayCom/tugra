@@ -37,6 +37,7 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  Monitor,
   Moon,
   Plus,
   ScrollText,
@@ -124,20 +125,55 @@ export const DESTS: CommandDest[] = NAV.flatMap((g) =>
   { labelKey: "nav.addServer", href: "/servers/new" },
 ]);
 
-export function useTheme(): [string, () => void] {
-  const [theme, setTheme] = useState("dark");
+export type ThemePref = "system" | "light" | "dark";
+const THEME_KEY = "tugra.theme";
+
+/** Cycle order for the single theme control: System → Light → Dark → System. */
+export function nextTheme(pref: ThemePref): ThemePref {
+  return pref === "system" ? "light" : pref === "light" ? "dark" : "system";
+}
+/** Resolve a preference to the concrete theme written to <html data-theme>; "system" follows the OS. */
+export function resolveTheme(pref: ThemePref, prefersDark: boolean): "light" | "dark" {
+  if (pref === "system") return prefersDark ? "dark" : "light";
+  return pref;
+}
+function osPrefersDark(): boolean {
+  return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches;
+}
+
+/**
+ * Theme preference with a third "system" state that follows the OS (prefers-color-scheme). The stored
+ * preference is resolved to a concrete light/dark and written to <html data-theme> (matching the
+ * pre-paint script in layout.tsx, so there is no flash); in system mode an OS theme change updates it
+ * live. Returns the preference, the resolved theme, a setter and a cycle control.
+ */
+export function useTheme(): { pref: ThemePref; resolved: "light" | "dark"; setPref: (p: ThemePref) => void; cycle: () => void } {
+  const [pref, setPrefState] = useState<ThemePref>("dark");
   useEffect(() => {
-    const saved = localStorage.getItem("tugra.theme") ?? "dark";
-    setTheme(saved);
-    document.documentElement.setAttribute("data-theme", saved);
+    try {
+      const s = localStorage.getItem(THEME_KEY);
+      if (s === "system" || s === "light" || s === "dark") setPrefState(s);
+    } catch {
+      /* no storage → keep the dark default */
+    }
   }, []);
-  const toggle = () => {
-    const next = theme === "dark" ? "light" : "dark";
-    setTheme(next);
-    localStorage.setItem("tugra.theme", next);
-    document.documentElement.setAttribute("data-theme", next);
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", resolveTheme(pref, osPrefersDark()));
+    if (pref !== "system" || typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = () => document.documentElement.setAttribute("data-theme", resolveTheme("system", mq.matches));
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, [pref]);
+  const setPref = (p: ThemePref) => {
+    setPrefState(p);
+    try {
+      localStorage.setItem(THEME_KEY, p);
+    } catch {
+      /* ignore */
+    }
   };
-  return [theme, toggle];
+  return { pref, resolved: resolveTheme(pref, osPrefersDark()), setPref, cycle: () => setPref(nextTheme(pref)) };
 }
 
 export function CenteredSpinner() {
@@ -426,7 +462,9 @@ export function UpdateBadge({ compact }: { compact?: boolean }) {
 function TopHeader({ onMenu, showMenu }: { onMenu?: () => void; showMenu?: boolean }) {
   const { user } = useAuth();
   const t = useT();
-  const [theme, toggle] = useTheme();
+  const { pref: themePref, cycle: cycleTheme } = useTheme();
+  const themeMode = themePref === "system" ? t("nav.themeSystem") : themePref === "light" ? t("nav.themeLight") : t("nav.themeDark");
+  const ThemeIcon = themePref === "system" ? Monitor : themePref === "light" ? Sun : Moon;
   // Home mode hides fleet-only chrome (bulk "New", team scoping).
   const isHome = uiMode(user?.uiMode) === "home";
   return (
@@ -440,8 +478,8 @@ function TopHeader({ onMenu, showMenu }: { onMenu?: () => void; showMenu?: boole
       <div style={{ flex: 1 }} />
       <UpdateBadge compact={showMenu} />
       {!isHome && <TeamScopeSelect />}
-      <button onClick={toggle} title={t("nav.toggleTheme")} aria-label={t("nav.toggleTheme")} aria-pressed={theme === "dark"} style={{ display: "flex", alignItems: "center", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "6px 9px", cursor: "pointer", color: "var(--c-tx2)", fontFamily: "inherit" }}>
-        {theme === "dark" ? <Moon size={15} aria-hidden /> : <Sun size={15} aria-hidden />}
+      <button onClick={cycleTheme} title={t("nav.themeLabel", { mode: themeMode })} aria-label={t("nav.themeLabel", { mode: themeMode })} style={{ display: "flex", alignItems: "center", justifyContent: "center", minWidth: 34, background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "6px 9px", cursor: "pointer", color: "var(--c-tx2)", fontFamily: "inherit" }}>
+        <ThemeIcon size={15} aria-hidden />
       </button>
       {!showMenu && <span style={{ fontSize: 13, color: "var(--c-tx2)" }}>{user?.email}</span>}
     </header>
