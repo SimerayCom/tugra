@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
-import { NAV, DESTS, noticeVisible, noticeMessage, Sidebar } from "./shell";
+import { NAV, DESTS, noticeVisible, noticeMessage, Sidebar, UpdateBadge } from "./shell";
 import type { InstanceUpdateNotice } from "../lib/types";
 import { navForMode, isHomeAllowed } from "../lib/ui-mode";
 import { translate } from "../i18n/translate";
@@ -12,10 +12,14 @@ vi.mock("next/navigation", () => ({
   usePathname: () => mockPath,
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
 }));
-vi.mock("../lib/auth", () => ({
-  useAuth: () => ({ logout: vi.fn(), user: { uiMode: "fleet", email: "a@b.c" } }),
+// Hoisted spies so individual tests (the update badge) can override the signed-in user and the query
+// result; the defaults match the rest of the suite (a non-owner fleet user, empty query data).
+const mocks = vi.hoisted(() => ({
+  useAuth: vi.fn(() => ({ logout: vi.fn(), user: { uiMode: "fleet", email: "a@b.c" } })),
+  useQuery: vi.fn(() => ({ data: [] })),
 }));
-vi.mock("@tanstack/react-query", () => ({ useQuery: () => ({ data: [] }) }));
+vi.mock("../lib/auth", () => ({ useAuth: mocks.useAuth }));
+vi.mock("@tanstack/react-query", () => ({ useQuery: mocks.useQuery }));
 
 afterEach(() => {
   cleanup();
@@ -223,5 +227,47 @@ describe("grouped, collapsible sidebar nav", () => {
     renderSb();
     expect(screen.queryByRole("button", { name: /^Build$/i })).toBeNull();
     expect(screen.getAllByRole("link").map((a) => a.getAttribute("href"))).toContain("/projects");
+  });
+});
+
+describe("top-bar update badge", () => {
+  const owner = (over = {}) => ({ logout: vi.fn(), user: { uiMode: "fleet", email: "a@b.c", isInstanceOwner: true, ...over } });
+  afterEach(() => {
+    // restore the suite-wide defaults so later files/tests see a non-owner with empty query data
+    mocks.useAuth.mockReturnValue({ logout: vi.fn(), user: { uiMode: "fleet", email: "a@b.c" } });
+    mocks.useQuery.mockReturnValue({ data: [] });
+  });
+
+  it("links an owner straight to the Updates card when an update is available", () => {
+    mocks.useAuth.mockReturnValue(owner());
+    mocks.useQuery.mockReturnValue({ data: { updateAvailable: true, latest: "0.1.0-beta.7" } });
+    render(<I18nProvider><UpdateBadge /></I18nProvider>);
+    const link = screen.getByRole("link");
+    expect(link.getAttribute("href")).toBe("/settings?tab=instance#updates");
+    expect(link.textContent).toContain("0.1.0-beta.7");
+  });
+
+  it("renders nothing for a non-owner even when an update is available", () => {
+    mocks.useAuth.mockReturnValue({ logout: vi.fn(), user: { uiMode: "fleet", email: "a@b.c" } });
+    mocks.useQuery.mockReturnValue({ data: { updateAvailable: true, latest: "0.1.0-beta.7" } });
+    const { container } = render(<I18nProvider><UpdateBadge /></I18nProvider>);
+    expect(container.querySelector("a")).toBeNull();
+  });
+
+  it("renders nothing for an owner who is already up to date", () => {
+    mocks.useAuth.mockReturnValue(owner());
+    mocks.useQuery.mockReturnValue({ data: { updateAvailable: false, latest: "0.1.0-beta.6" } });
+    const { container } = render(<I18nProvider><UpdateBadge /></I18nProvider>);
+    expect(container.querySelector("a")).toBeNull();
+  });
+
+  it("hides its text (icon only) in compact mode but keeps the link and aria-label", () => {
+    mocks.useAuth.mockReturnValue(owner());
+    mocks.useQuery.mockReturnValue({ data: { updateAvailable: true, latest: "0.1.0-beta.7" } });
+    render(<I18nProvider><UpdateBadge compact /></I18nProvider>);
+    const link = screen.getByRole("link");
+    expect(link.getAttribute("href")).toBe("/settings?tab=instance#updates");
+    expect(link.textContent).not.toContain("0.1.0-beta.7"); // version hidden in the compact pill
+    expect(link.getAttribute("aria-label")).toContain("0.1.0-beta.7"); // still announced
   });
 });

@@ -17,6 +17,7 @@ import { TeamScopeSelect } from "./team-scope";
 import { BrandMark } from "./branding";
 import {
   Activity,
+  ArrowUpCircle,
   BarChart3,
   Bell,
   ChevronDown,
@@ -384,6 +385,44 @@ function NewMenu() {
   );
 }
 
+/** Owner-only top-bar pill that surfaces an available self-update automatically — without the owner having
+ *  to open Settings and press "check" — and links straight to the Updates card. Shares the ["instanceUpdate"]
+ *  query with the Updates card and notice banner, so it adds no request. Hidden when up to date or for
+ *  non-owners. Compact (icon only) on mobile, where the header has little room. */
+export function UpdateBadge({ compact }: { compact?: boolean }) {
+  const { user } = useAuth();
+  const t = useT();
+  const isOwner = !!user?.isInstanceOwner;
+  const { data } = useQuery({ queryKey: ["instanceUpdate"], queryFn: () => api.getInstanceUpdate(), enabled: isOwner });
+  if (!isOwner || !data?.updateAvailable) return null;
+  const label = data.latest ? `${t("settings.updateAvailable")} — ${data.latest}` : t("settings.updateAvailable");
+  return (
+    <Link
+      href="/settings?tab=instance#updates"
+      title={label}
+      aria-label={label}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        minHeight: 32,
+        padding: compact ? "6px 8px" : "6px 10px",
+        background: "color-mix(in srgb, var(--c-a) 14%, transparent)",
+        border: "1px solid color-mix(in srgb, var(--c-a) 40%, transparent)",
+        borderRadius: "var(--r1)",
+        color: "var(--c-tx)",
+        fontSize: 12.5,
+        fontWeight: 600,
+        textDecoration: "none",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <ArrowUpCircle size={15} aria-hidden style={{ color: "var(--c-a)", flexShrink: 0 }} />
+      {!compact && <span>{label}</span>}
+    </Link>
+  );
+}
+
 function TopHeader({ onMenu, showMenu }: { onMenu?: () => void; showMenu?: boolean }) {
   const { user } = useAuth();
   const t = useT();
@@ -399,6 +438,7 @@ function TopHeader({ onMenu, showMenu }: { onMenu?: () => void; showMenu?: boole
       )}
       {!isHome && <NewMenu />}
       <div style={{ flex: 1 }} />
+      <UpdateBadge compact={showMenu} />
       {!isHome && <TeamScopeSelect />}
       <button onClick={toggle} title={t("nav.toggleTheme")} aria-label={t("nav.toggleTheme")} aria-pressed={theme === "dark"} style={{ display: "flex", alignItems: "center", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "6px 9px", cursor: "pointer", color: "var(--c-tx2)", fontFamily: "inherit" }}>
         {theme === "dark" ? <Moon size={15} aria-hidden /> : <Sun size={15} aria-hidden />}

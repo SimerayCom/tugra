@@ -69,6 +69,16 @@ export default function SettingsPage() {
   ];
   const [tab, setTab] = useTabState("account", tabs.map((x) => x.key));
 
+  // The top-bar "Update available" badge deep-links to /settings?tab=instance#updates. Once the instance
+  // tab is showing, bring the Updates card into view so the fix is one scroll-free click away.
+  useEffect(() => {
+    if (tab !== "instance" || typeof window === "undefined" || window.location.hash !== "#updates") return;
+    const raf = window.requestAnimationFrame(() => {
+      document.getElementById("updates")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [tab]);
+
   return (
     <div style={{ padding: "var(--page-pad)", maxWidth: 1040, margin: "0 auto" }}>
       <h1 style={{ fontSize: 24, fontWeight: 700, margin: "0 0 20px" }}>{t("settings.title")}</h1>
@@ -100,7 +110,7 @@ export default function SettingsPage() {
           <HubBackupCard />
           <BrandingCard />
           <InstanceApiAccessCard />
-          <UpdatesCard />
+          <div id="updates"><UpdatesCard /></div>
           <TelemetryCard />
           <Wide><SsoConfigCard /></Wide>
         </SettingsGrid>
