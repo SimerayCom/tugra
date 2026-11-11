@@ -14,7 +14,7 @@ const QUEUE_KEY = "instance:update:queue";
 const LOCK_TTL_S = 900; // 15-min backstop; the sidecar releases the lock on any terminal status
 const STATUS_TTL_S = 3600; // must outlive the recreate so a reconnecting client can read the final state
 
-const TERMINAL_PHASES: readonly UpdateProgress["phase"][] = ["done", "failed"];
+const TERMINAL_PHASES: readonly UpdateProgress["phase"][] = ["done", "failed", "recovery_required"];
 
 /** Whether a progress phase is terminal (the SSE completes here). Pure — unit-tested directly. */
 export function isTerminalPhase(phase: UpdateProgress["phase"]): boolean {
@@ -26,7 +26,7 @@ export function mapStatus(raw: string | null): UpdateProgress {
   if (!raw) return { phase: "idle", targetVersion: null, error: null };
   try {
     const p = JSON.parse(raw) as Partial<UpdateProgress>;
-    const phases: UpdateProgress["phase"][] = ["idle", "queued", "pulling", "recreating", "done", "failed"];
+    const phases: UpdateProgress["phase"][] = ["idle", "queued", "pulling", "recreating", "done", "failed", "recovery_required"];
     return {
       phase: typeof p.phase === "string" && phases.includes(p.phase) ? p.phase : "idle",
       targetVersion: typeof p.targetVersion === "string" ? p.targetVersion : null,

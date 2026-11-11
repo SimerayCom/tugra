@@ -69,4 +69,52 @@ describe("scripts/update.sh", () => {
       expect(out).toContain("SET_ENV: TUGRA_VERSION=1.2.4");
     });
   });
+
+  describe("partial-failure compensation (F02)", () => {
+    it("defines recover_previous and uses it in BOTH post-pull failure branches", () => {
+      expect(source).toContain("recover_previous()");
+      // recover restores the prev tag, recreates, AND verifies health (the old code skipped the re-check)
+      expect(source).toMatch(/recover_previous\(\)\s*\{[\s\S]*?set_env TUGRA_VERSION "\$prev"[\s\S]*?compose up -d --no-deps hub-api web && wait_healthy/);
+      // used in BOTH the recreate-fail and the health-fail branches
+      expect((source.match(/if recover_previous "\$current"; then/g) ?? []).length).toBe(2);
+      // a distinct, non-expiring recovery_required terminal state when recovery itself fails
+      expect(source).toContain("set_recovery_required");
+      expect(source).toMatch(/redis SET "\$STATUS_KEY".*recovery_required/); // status persisted WITHOUT a TTL
+      expect(source).toContain('redis SET "instance:update:recovery_required"'); // durable gate marker
+    });
+
+    it("writes .env atomically (same-dir temp + mv, never a truncate-in-place)", () => {
+      expect(source).toContain('mktemp "${ENV_FILE}.XXXXXX"');
+      expect(source).toContain('mv "$tmp" "$ENV_FILE"');
+      expect(source).not.toContain('cat "$tmp" > "$ENV_FILE"'); // the old non-atomic truncate-write is gone
+    });
+
+    const dir = mkdtempSync(join(tmpdir(), "update-sh-f02-"));
+    const envFile = join(dir, ".env");
+    afterAll(() => rmSync(dir, { recursive: true, force: true }));
+    const runHealth = (health: string): string => {
+      writeFileSync(envFile, "TUGRA_VERSION=0.1.0\n");
+      return execFileSync("bash", [UPDATE_SH, "--dry-run", "--target", "0.2.0"], {
+        stdio: "pipe",
+        env: { PATH: process.env.PATH, ENV_FILE: envFile, DRY_HEALTH: health } as NodeJS.ProcessEnv,
+      }).toString();
+    };
+
+    it("on a failed health check restores AND verifies the previous version — status failed, not done", () => {
+      const out = runHealth("fail-once"); // unhealthy on the update, healthy again after the restore
+      expect(out).toContain("SET_ENV: TUGRA_VERSION=0.2.0"); // tried the target
+      expect(out).toContain("SET_ENV: TUGRA_VERSION=0.1.0"); // restored the previous version
+      expect(out).toContain("restored 0.1.0 and verified healthy");
+      expect(out).toContain('"phase":"failed"');
+      expect(out).not.toContain('"phase":"done"');
+    });
+
+    it("escalates to recovery_required when the previous version cannot be restored + verified", () => {
+      const out = runHealth("fail"); // stays unhealthy even after the restore attempt
+      expect(out).toContain('"phase":"recovery_required"');
+      expect(out).toContain("RECOVERY REQUIRED");
+      expect(out).toContain("instance:update:recovery_required"); // the persistent no-TTL marker is written
+      expect(out).not.toContain('"phase":"done"');
+    });
+  });
 });

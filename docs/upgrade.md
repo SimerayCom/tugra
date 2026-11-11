@@ -65,9 +65,21 @@ unsigned manifest is never trusted). Leave both empty to disable update checks.
 
 ## Rollback & troubleshooting
 
-If an image pull or recreate fails, the sidecar restores the previous version in `.env` and marks the
-update failed — the running stack is left intact. For a manual rollback, check out the previous tag and
-re-run `./scripts/install.sh`.
+If an image **pull** fails nothing has been recreated, so the running stack is untouched. If a **recreate or
+health check** fails after the pull, the sidecar actively restores the previous version — it rewrites
+`TUGRA_VERSION`, recreates hub-api + web, and verifies both become healthy — then marks the update `failed`.
+If that restore cannot be completed and verified, the status becomes **`recovery_required`**: the stack may
+be partly updated and needs manual recovery. The sidecar logs the exact command, which is:
+
+```sh
+# set TUGRA_VERSION=<previous version> in .env, then:
+docker compose --env-file .env -f deploy/docker-compose.yml up -d --no-deps hub-api web
+```
+
+**Database migrations are NOT rolled back.** A newer image runs `prisma migrate deploy` at boot, so its
+schema changes persist even after the image tag is restored, and the old image may be incompatible with the
+migrated schema (this is often why a failed health check ends in `recovery_required`). **Take a database
+backup before updating a production instance** so you have a restore point.
 
 ## Publishing releases (maintainers)
 

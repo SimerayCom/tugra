@@ -100,10 +100,11 @@ export function UpdatesCard() {
           ) : upd.phase === "done" ? (
             <span style={{ fontSize: 13, color: "var(--c-ok, var(--c-tx2))" }}>{t("settings.updatedTo", { version: upd.target ?? "" })}</span>
           ) : (
-            data?.updateAvailable && <Btn onClick={() => upd.start()}>{t("settings.updateNow")}</Btn>
+            // Don't invite another update when the stack needs manual recovery.
+            data?.updateAvailable && upd.phase !== "recovery_required" && <Btn onClick={() => upd.start()}>{t("settings.updateNow")}</Btn>
           )}
           {upd.messageKey && !working && upd.phase !== "done" && (
-            <span style={{ fontSize: 12, color: upd.phase === "failed" ? "var(--c-r)" : "var(--c-tx3)" }}>{t(upd.messageKey)}</span>
+            <span style={{ fontSize: 12, color: upd.phase === "failed" || upd.phase === "recovery_required" ? "var(--c-r)" : "var(--c-tx3)" }}>{t(upd.messageKey)}</span>
           )}
         </div>
       )}

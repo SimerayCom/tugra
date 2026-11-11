@@ -42,14 +42,48 @@ redis() { run redis-cli -u "$REDIS_URL" "$@"; }
 # assignment before the "latest" fallback can run. A fresh install has no TUGRA_VERSION line yet.
 env_get() { grep "^$1=" "$ENV_FILE" 2>/dev/null | head -n1 | cut -d= -f2- || true; }
 set_env() {
-  if [ "$DRY" -eq 1 ]; then printf 'SET_ENV: %s=%s\n' "$1" "$2"; return; fi
-  if [ -f "$ENV_FILE" ] && grep -q "^$1=" "$ENV_FILE"; then
-    local tmp; tmp="$(mktemp)"; grep -v "^$1=" "$ENV_FILE" > "$tmp"; cat "$tmp" > "$ENV_FILE"; rm -f "$tmp"
+  if [ "$DRY" -eq 1 ]; then printf 'SET_ENV: %s=%s\n' "$1" "$2"; return 0; fi
+  # Atomic: build the new file in a SAME-DIR temp (so `mv` is a same-filesystem atomic rename) and swap it
+  # in. A crash between write and rename can never leave a truncated .env — the old file stays until the mv.
+  # Every step is CHECKED and a failure returns 1: do_update/recover_previous key off it. (`set -e` is
+  # disabled inside `do_update ... || log`, so an unchecked write failure here would be silently swallowed
+  # and the update wrongly reported as "done".)
+  local tmp; tmp="$(mktemp "${ENV_FILE}.XXXXXX")" || return 1
+  if [ -f "$ENV_FILE" ]; then
+    { grep -v "^$1=" "$ENV_FILE" 2>/dev/null || true; } > "$tmp" || { rm -f "$tmp"; return 1; }
+    # Preserve the original owner + mode so a self-update never locks the installing user out of .env.
+    chmod "$(stat -c '%a' "$ENV_FILE" 2>/dev/null || echo 600)" "$tmp" 2>/dev/null || true
+    chown "$(stat -c '%u:%g' "$ENV_FILE" 2>/dev/null || echo 0:0)" "$tmp" 2>/dev/null || true
   fi
-  printf '%s=%s\n' "$1" "$2" >> "$ENV_FILE"
+  printf '%s=%s\n' "$1" "$2" >> "$tmp" || { rm -f "$tmp"; return 1; }
+  mv "$tmp" "$ENV_FILE" || { rm -f "$tmp"; return 1; }
 }
 set_status() { redis SET "$STATUS_KEY" "{\"phase\":\"$1\",\"targetVersion\":\"$2\",\"error\":${3:-null}}" EX "$STATUS_TTL"; }
 release_lock() { redis DEL "$LOCK_KEY"; }
+
+# Restore the PREVIOUSLY-running version and VERIFY both hub-api and web are healthy. Used by EVERY post-pull
+# failure branch so a partial `compose up` (not atomic across two services) never leaves a broken old+new mix.
+# Returns 0 ONLY when the .env write, the recreate, AND the health check of both services all succeed — a
+# failed set_env must escalate to recovery, not a false "restored".
+# NOTE: on the mutable `latest` tag the rollback uses whatever :latest was last pulled (concrete beta/release
+# versions roll back exactly). Either way we only claim "restored" once health passes; exact digest-pinning
+# of the rollback is a follow-up.
+recover_previous() {
+  local prev="$1"
+  log "restoring previous version $prev"
+  set_env TUGRA_VERSION "$prev" && compose up -d --no-deps hub-api web && wait_healthy hub-api web
+}
+
+# Terminal state when the previous version could NOT be restored+verified: the stack may be partly updated.
+# Record an explicit phase AND a NO-TTL marker so the recovery state doesn't silently expire back to idle.
+set_recovery_required() {
+  local target="$1" prev="$2"
+  log "RECOVERY REQUIRED — restore manually: set TUGRA_VERSION=$prev in $ENV_FILE then run: docker compose --env-file $ENV_FILE -f $COMPOSE_FILE up -d --no-deps hub-api web"
+  # Write the status WITHOUT a TTL (unlike set_status, which EXpires after STATUS_TTL) so the recovery state
+  # can't silently lapse back to idle, plus a durable marker the hub gates new updates on until it is cleared.
+  redis SET "$STATUS_KEY" "{\"phase\":\"recovery_required\",\"targetVersion\":\"$target\",\"error\":\"update to $target failed and the previous version could not be restored and verified — manual recovery required (set TUGRA_VERSION=$prev and recreate hub-api + web)\"}"
+  redis SET "instance:update:recovery_required" "{\"targetVersion\":\"$target\",\"previousVersion\":\"$prev\"}"
+}
 
 # Strictly-newer guard (defense-in-depth; the hub already gated never-downgrade). Semver-aware:
 # `sort -V` ranks 0.1.0 BELOW 0.1.0-beta.1 (the opposite of semver), which would strand beta instances.
@@ -85,22 +119,37 @@ EOF_B
   [ "$(printf '%s\n%s\n' "$bpre" "$apre" | sort -V | tail -1)" = "$apre" ]
 }
 
-# Poll the hub-api container until healthy (or give up). Returns 0 healthy, 1 unhealthy/exited/timeout.
-# Uses the compose healthcheck status; a service without one counts as healthy once it is "running".
-# In --dry-run nothing is polled (no Docker), so the happy path is assumed.
+# Poll the given services (default hub-api) until ALL are healthy, or give up. Returns 0 healthy, 1
+# unhealthy/exited/timeout. Uses the compose healthcheck status; a service without one counts as healthy once
+# it is "running". In --dry-run nothing is polled (no Docker), so the happy path is assumed.
 HEALTH_TIMEOUT="${UPDATE_HEALTH_TIMEOUT:-120}"
 wait_healthy() {
-  if [ "$DRY" -eq 1 ]; then printf 'RUN: wait up to %ss for hub-api healthy\n' "$HEALTH_TIMEOUT"; return 0; fi
-  local waited=0 cid state
+  local services="${*:-hub-api}"
+  if [ "$DRY" -eq 1 ]; then
+    # Test hook (dry-run only): DRY_HEALTH=fail → always unhealthy; fail-once → unhealthy the first call then
+    # healthy (so the recovery path can be exercised without Docker). Default: healthy.
+    case "${DRY_HEALTH:-ok}" in
+      fail) printf 'RUN: wait_healthy -> UNHEALTHY (dry)\n'; return 1 ;;
+      fail-once)
+        if [ -z "${DRY_HEALTH_FAILED:-}" ]; then DRY_HEALTH_FAILED=1; printf 'RUN: wait_healthy -> UNHEALTHY (dry, first call)\n'; return 1; fi
+        printf 'RUN: wait_healthy -> healthy (dry, recovered)\n'; return 0 ;;
+      *) printf 'RUN: wait up to %ss for %s healthy\n' "$HEALTH_TIMEOUT" "$services"; return 0 ;;
+    esac
+  fi
+  local waited=0 svc cid state all_ok
   while [ "$waited" -lt "$HEALTH_TIMEOUT" ]; do
-    cid="$(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps -q hub-api 2>/dev/null | head -n1 || true)"
-    if [ -n "$cid" ]; then
+    all_ok=1
+    for svc in $services; do
+      cid="$(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps -q "$svc" 2>/dev/null | head -n1 || true)"
+      if [ -z "$cid" ]; then all_ok=0; break; fi
       state="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$cid" 2>/dev/null || true)"
       case "$state" in
-        healthy|running) return 0 ;;
+        healthy|running) ;;        # this service is up — check the next one
         exited|dead) return 1 ;;   # crashed outright (e.g. failed migration with no restart) — no point waiting
+        *) all_ok=0; break ;;      # starting / unhealthy — keep polling
       esac
-    fi
+    done
+    [ "$all_ok" -eq 1 ] && return 0
     sleep 3; waited=$((waited + 3))
   done
   return 1
@@ -118,7 +167,12 @@ do_update() {
 
   log "updating $current -> $target"
   set_status pulling "$target"
-  set_env TUGRA_VERSION "$target"
+  if ! set_env TUGRA_VERSION "$target"; then
+    log "could not write $ENV_FILE — aborting"
+    set_status failed "$target" "\"could not update .env\""
+    release_lock
+    return 0
+  fi
 
   # Pull + recreate ONLY the app containers (--no-deps: never touch postgres/redis or this updater).
   if ! compose pull hub-api web; then
@@ -130,27 +184,37 @@ do_update() {
   fi
   set_status recreating "$target"
   if ! compose up -d --no-deps hub-api web; then
-    log "recreate failed — rolling back .env"
-    set_env TUGRA_VERSION "$current"
-    set_status failed "$target" "\"recreate failed\""
+    log "recreate failed — restoring $current"
+    # `compose up` is NOT atomic across hub-api + web: a partial recreate may already have swapped one of
+    # them to the new image. Actively bring the previous version back and VERIFY it, rather than only
+    # rewriting the .env tag (which left a broken old/new mix running).
+    if recover_previous "$current"; then
+      set_status failed "$target" "\"recreate failed; restored $current\""
+    else
+      set_recovery_required "$target" "$current"
+    fi
     release_lock
     return 0
   fi
 
   # `up` returning 0 only means the containers were created — a failing migration or a crash-looping hub
-  # still passes it. Only report success once hub-api is actually healthy; otherwise restore the old tag.
-  # (Phase stays "recreating": the hub/web only know idle|queued|pulling|recreating|done|failed.)
-  if ! wait_healthy; then
-    log "hub-api did not become healthy within ${HEALTH_TIMEOUT}s — rolling back to $current"
-    set_env TUGRA_VERSION "$current"
-    # Best-effort: bring the previous version back so the operator is not locked out.
-    compose up -d --no-deps hub-api web || log "rollback recreate failed — manual intervention needed"
-    set_status failed "$target" "\"update to $target failed health check; rolled back to $current\""
+  # still passes it. Only report success once hub-api AND web are actually healthy; otherwise restore the
+  # previous version (and escalate to recovery_required if that restore can't be verified).
+  if ! wait_healthy hub-api web; then
+    log "hub-api did not become healthy within ${HEALTH_TIMEOUT}s — restoring $current"
+    # Restore AND verify the previous version. The old code re-ran `up` without re-checking health and still
+    # reported "rolled back" even when that recreate failed — a false reassurance to the operator.
+    if recover_previous "$current"; then
+      set_status failed "$target" "\"update to $target failed health check; restored $current and verified healthy\""
+    else
+      set_recovery_required "$target" "$current"
+    fi
     release_lock
     return 0
   fi
 
   set_status done "$target"
+  redis DEL "instance:update:recovery_required" # a verified update clears any stale recovery marker
   release_lock
   log "update to $target complete"
 }

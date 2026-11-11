@@ -38,7 +38,7 @@ export type UpdateApplyResult = z.infer<typeof UpdateApplyResultSchema>;
 
 /** Live update progress (GET /instance/update/stream, from the Redis status the sidecar writes). */
 export const UpdateProgressSchema = z.object({
-  phase: z.enum(["idle", "queued", "pulling", "recreating", "done", "failed"]),
+  phase: z.enum(["idle", "queued", "pulling", "recreating", "done", "failed", "recovery_required"]),
   targetVersion: z.string().nullable(),
   error: z.string().nullable(),
 });

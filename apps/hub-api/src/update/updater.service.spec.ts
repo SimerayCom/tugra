@@ -109,11 +109,18 @@ describe("getProgress + pure helpers", () => {
     expect(mapStatus("{not json")).toEqual({ phase: "idle", targetVersion: null, error: null });
     expect(mapStatus(JSON.stringify({ phase: "bogus" }))).toMatchObject({ phase: "idle" });
     expect(mapStatus(JSON.stringify({ phase: "failed", error: "boom" }))).toEqual({ phase: "failed", targetVersion: null, error: "boom" });
+    // recovery_required is a recognised phase (must NOT fall back to idle — that would hide an unrecovered stack)
+    expect(mapStatus(JSON.stringify({ phase: "recovery_required", targetVersion: "0.2.0", error: "recover manually" }))).toEqual({
+      phase: "recovery_required",
+      targetVersion: "0.2.0",
+      error: "recover manually",
+    });
   });
 
-  it("isTerminalPhase is true only for done/failed", () => {
+  it("isTerminalPhase is true for done/failed/recovery_required", () => {
     expect(isTerminalPhase("done")).toBe(true);
     expect(isTerminalPhase("failed")).toBe(true);
+    expect(isTerminalPhase("recovery_required")).toBe(true); // the SSE must complete here, not hang
     expect(isTerminalPhase("pulling")).toBe(false);
     expect(isTerminalPhase("idle")).toBe(false);
   });

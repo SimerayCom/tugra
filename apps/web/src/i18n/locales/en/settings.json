@@ -133,6 +133,7 @@
   "updateWaiting": "Applying update — reconnecting…",
   "updatedTo": "Updated to {version}.",
   "updateFailed": "The update failed. Check the server logs and try again.",
+  "updateRecoveryRequired": "The update failed and the previous version could not be fully restored — the instance may be partly updated. Recover manually: set TUGRA_VERSION to the previous version in .env and recreate hub-api + web (the server logs print the exact command).",
   "updateInProgress": "An update is already in progress.",
   "updateUnconfigured": "Automatic updates aren't configured on this instance.",
   "updateNotifyOnly": "This is a minor/major release — review the changelog, then use your installer to upgrade.",

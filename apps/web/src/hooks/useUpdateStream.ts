@@ -5,7 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "../lib/api";
 import { consumeSseStream } from "../lib/sse";
 
-export type UpdatePhase = "idle" | "starting" | "queued" | "pulling" | "recreating" | "done" | "failed";
+export type UpdatePhase = "idle" | "starting" | "queued" | "pulling" | "recreating" | "done" | "failed" | "recovery_required";
 
 const APPLY_MESSAGE: Record<string, string> = {
   "up-to-date": "settings.updateUpToDate",
@@ -77,7 +77,7 @@ export function useUpdateStream() {
 
     setPhase("queued");
     // Best-effort live progress. The stream is torn down when hub-api is recreated — that's expected.
-    let failed = false;
+    let terminal: UpdatePhase | null = null; // failed OR recovery_required — a terminal non-success
     const ctrl = new AbortController();
     abort.current = ctrl;
     const streamDone = (async () => {
@@ -91,7 +91,7 @@ export function useUpdateStream() {
           await consumeSseStream(resp.body, (raw) => {
             try {
               const p = JSON.parse(raw) as { phase?: UpdatePhase };
-              if (p.phase === "failed") failed = true;
+              if (p.phase === "failed" || p.phase === "recovery_required") terminal = p.phase;
               if (p.phase && p.phase !== "idle") setPhase(p.phase);
             } catch {
               /* ignore malformed frame */
@@ -110,9 +110,11 @@ export function useUpdateStream() {
     await Promise.race([streamDone, cap]);
     clearTimeout(capId!);
     ctrl.abort(); // tear down the fetch if the cap won the race
-    if (failed) {
-      setPhase("failed");
-      setMessageKey("settings.updateFailed");
+    if (terminal) {
+      // Don't reconcile a terminal failure as if it might still succeed. recovery_required keeps its own
+      // message (the stack may be partly updated — manual recovery needed).
+      setPhase(terminal);
+      setMessageKey(terminal === "recovery_required" ? "settings.updateRecoveryRequired" : "settings.updateFailed");
       return;
     }
     // Reconcile via the running version — survives the recreate the SSE couldn't.
