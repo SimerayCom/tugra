@@ -10,6 +10,7 @@ import logdrains from "./logdrains.json";
 import destinations from "./destinations.json";
 import domains from "./domains.json";
 import errors from "./errors.json";
+import feedback from "./feedback.json";
 import fleet from "./fleet.json";
 import home from "./home.json";
 import importNs from "./import.json";
@@ -35,6 +36,6 @@ import terminal from "./terminal.json";
 import traffic from "./traffic.json";
 
 // Split into namespace files (this JSON gets large); merged here.
-const en = { apps, audit, auth, bulk, charts, cloudCredentials, secretProviders, clusters, common, dashboard, databases, destinations, domains, errors, fleet, home, import: importNs, logdrains, monitors, nav, notifications, onboarding, patching, projects, registries, resources, servers, settings, sources, shared, tags, teams, templates, terminal, traffic };
+const en = { apps, audit, auth, bulk, charts, cloudCredentials, secretProviders, clusters, common, dashboard, databases, destinations, domains, errors, feedback, fleet, home, import: importNs, logdrains, monitors, nav, notifications, onboarding, patching, projects, registries, resources, servers, settings, sources, shared, tags, teams, templates, terminal, traffic };
 
 export default en;

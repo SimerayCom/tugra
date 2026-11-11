@@ -1,0 +1,23 @@
+{
+  "cardTitle": "Feedback & support",
+  "cardBody": "Found a bug or have an idea? Send feedback — you choose whether to open a prefilled GitHub issue or download a report; nothing is sent on its own.",
+  "open": "Send feedback",
+  "title": "Send feedback",
+  "intro": "Tell us what's wrong or what you'd like. Nothing is posted automatically — opening a GitHub issue fills it in for you to review and submit, and Download just saves a file.",
+  "category": "Type",
+  "catBug": "Bug",
+  "catIdea": "Idea",
+  "catQuestion": "Question",
+  "message": "Your message",
+  "messagePlaceholder": "What happened, what you expected, and any steps to reproduce…",
+  "messageHint": "Required. GitHub issues are public — don't paste passwords, tokens or private logs.",
+  "includeDiagnostics": "Include diagnostic info (edition, version, your browser, viewport and the current page) — shown in full below",
+  "showPreview": "Preview exactly what will be shared",
+  "hidePreview": "Hide preview",
+  "previewLabel": "Report preview",
+  "privacyNote": "The diagnostics we add contain no secrets, tokens or IP addresses. Opening a GitHub issue sends the prefilled text to github.com when the tab opens — you review and submit it there, and the issue is public.",
+  "truncateWarn": "Your message is long — the GitHub link will be shortened. Use Download for the full report.",
+  "download": "Download report",
+  "openIssue": "Open a GitHub issue",
+  "openIssueHint": "Opens a prefilled issue in a new tab"
+}

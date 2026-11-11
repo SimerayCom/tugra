@@ -19,6 +19,7 @@ export function Modal({
   cardStyle: cardStyleOverride,
   backdropStyle: backdropStyleOverride,
   closeOnEsc = true,
+  closeOnBackdrop = true,
   trapTab = true,
 }: {
   onClose: () => void;
@@ -31,9 +32,17 @@ export function Modal({
   cardStyle?: CSSProperties;
   backdropStyle?: CSSProperties;
   closeOnEsc?: boolean;
+  /** Close when the backdrop is clicked. Set false for dialogs holding unsaved input (a stray click
+   *  shouldn't discard a half-written form). */
+  closeOnBackdrop?: boolean;
   trapTab?: boolean;
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
+  // Keep the latest onClose in a ref so the focus-management effect does NOT depend on its identity.
+  // A caller that passes an inline `() => ...` (the common case) would otherwise re-run this effect on
+  // every parent render, stealing focus back to the first field mid-typing and breaking focus restore.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     const card = cardRef.current;
@@ -45,7 +54,7 @@ export function Modal({
     const onKey = (e: KeyboardEvent) => {
       if (closeOnEsc && e.key === "Escape") {
         e.stopPropagation();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (trapTab && e.key === "Tab") {
@@ -72,7 +81,7 @@ export function Modal({
       document.removeEventListener("keydown", onKey, true);
       previouslyFocused?.focus?.();
     };
-  }, [onClose, closeOnEsc, trapTab]);
+  }, [closeOnEsc, trapTab]);
 
   const backdrop: CSSProperties = {
     position: "fixed",
@@ -100,7 +109,7 @@ export function Modal({
   return (
     <div
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (closeOnBackdrop && e.target === e.currentTarget) onCloseRef.current();
       }}
       style={backdrop}
     >

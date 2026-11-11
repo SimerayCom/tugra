@@ -20,6 +20,7 @@ import { UpdatesCard } from "./updates-card";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card } from "../../../components/ui";
 import { MailNotConfiguredNote } from "../../../components/mail-not-configured-note";
+import { FeedbackCard } from "../../../components/feedback-card";
 import { Field, TextInput } from "../../../components/form";
 import { CopyBtn } from "../../../components/copy-row";
 import { useConfirm } from "../../../components/confirm";
@@ -93,6 +94,7 @@ export default function SettingsPage() {
         <SettingsGrid>
           <AccountCard />
           <UiModeCard />
+          <FeedbackCard />
         </SettingsGrid>
       )}
 
