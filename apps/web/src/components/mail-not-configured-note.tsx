@@ -40,7 +40,7 @@ export function MailNotConfiguredNote({ consequence }: { consequence?: string })
         <strong style={{ color: "var(--c-tx)" }}>{t("common.mailNotConfigured")}</strong>
         {consequence ? ` ${consequence}` : ""}{" "}
         {isOwner ? (
-          <Link href="/settings?tab=instance#email" className="tg-link">
+          <Link href="/settings?tab=instance&section=email#email" className="tg-link">
             {t("common.mailNotConfiguredSetup")}
           </Link>
         ) : (

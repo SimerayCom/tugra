@@ -434,7 +434,7 @@ export function UpdateBadge({ compact }: { compact?: boolean }) {
   const label = data.latest ? `${t("settings.updateAvailable")} — ${data.latest}` : t("settings.updateAvailable");
   return (
     <Link
-      href="/settings?tab=instance#updates"
+      href="/settings?tab=instance&section=backups#updates"
       title={label}
       aria-label={label}
       style={{

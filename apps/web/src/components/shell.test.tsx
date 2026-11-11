@@ -243,7 +243,7 @@ describe("top-bar update badge", () => {
     mocks.useQuery.mockReturnValue({ data: { updateAvailable: true, latest: "0.1.0-beta.7" } });
     render(<I18nProvider><UpdateBadge /></I18nProvider>);
     const link = screen.getByRole("link");
-    expect(link.getAttribute("href")).toBe("/settings?tab=instance#updates");
+    expect(link.getAttribute("href")).toBe("/settings?tab=instance&section=backups#updates");
     expect(link.textContent).toContain("0.1.0-beta.7");
   });
 
@@ -266,7 +266,7 @@ describe("top-bar update badge", () => {
     mocks.useQuery.mockReturnValue({ data: { updateAvailable: true, latest: "0.1.0-beta.7" } });
     render(<I18nProvider><UpdateBadge compact /></I18nProvider>);
     const link = screen.getByRole("link");
-    expect(link.getAttribute("href")).toBe("/settings?tab=instance#updates");
+    expect(link.getAttribute("href")).toBe("/settings?tab=instance&section=backups#updates");
     expect(link.textContent).not.toContain("0.1.0-beta.7"); // version hidden in the compact pill
     expect(link.getAttribute("aria-label")).toContain("0.1.0-beta.7"); // still announced
   });

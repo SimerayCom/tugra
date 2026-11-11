@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Trash2, LayoutDashboard, ScrollText, Activity, DatabaseBackup, Settings2, Rocket, RotateCw, Play, Square, Terminal, Ellipsis, Pencil, Copy, X, Database as DatabaseIcon, CloudUpload } from "lucide-react";
+import { Trash2, LayoutDashboard, ScrollText, Activity, DatabaseBackup, Settings2, Rocket, RotateCw, Play, Square, Terminal, Pencil, Copy, X, Database as DatabaseIcon, CloudUpload } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, databaseIconUrl } from "../../../../lib/api";
 import { cropToPngBase64 } from "../../../../lib/icon";
-import { useDismiss } from "../../../../lib/use-dismiss";
+import { Menu } from "../../../../components/menu";
 import { dbColor, engineLabel, isDbTransitional } from "../../../../lib/databases";
 import { backupColor, formatSize, lastErrorLine, restoreColor } from "../../../../lib/backups";
 import { BackupRunModal } from "../../../../components/backup-run-modal";
@@ -98,9 +98,6 @@ export default function DatabaseDetailPage() {
     },
     onError: (e) => toast(errMsg(e), "error"),
   });
-  const [moreOpen, setMoreOpen] = useState(false);
-  const moreRef = useRef<HTMLDivElement>(null);
-  useDismiss(moreOpen, moreRef, () => setMoreOpen(false)); // close the "…" menu on outside-click / Esc
   const restore = useMutation({
     mutationFn: (bid: string) => api.restoreBackup(id, bid),
     onSuccess: () => toast(t("databases.restoreSucceeded"), "success"),
@@ -199,19 +196,14 @@ export default function DatabaseDetailPage() {
               </Btn>
               <Btn icon={Square} variant="dangerGhost" loading={stop.isPending} disabled={db.status !== "RUNNING"} onClick={async () => { if (await confirm({ body: t("databases.stopConfirm"), danger: true })) stop.mutate(); }}>{t("databases.stop")}</Btn>
               <Btn icon={Terminal} variant="ghost" onClick={() => setTab("shell")}>{t("databases.openShell")}</Btn>
-              <div ref={moreRef} style={{ position: "relative" }}>
-                <Btn variant="ghost" onClick={() => setMoreOpen((o) => !o)} aria-haspopup="menu" aria-expanded={moreOpen} aria-label={t("databases.more")}><Ellipsis size={16} /></Btn>
-                {moreOpen && (
-                  <div
-                    role="menu"
-                    style={{ position: "absolute", right: 0, top: "calc(100% + 4px)", zIndex: 20, display: "flex", flexDirection: "column", gap: 6, padding: 8, minWidth: 140, background: "var(--c-bg, var(--c-el))", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", boxShadow: "0 6px 20px rgba(0,0,0,0.25)" }}
-                  >
-                    <Btn role="menuitem" icon={Pencil} variant="ghost" onClick={() => { setMoreOpen(false); setRenameOpen(true); }}>{t("databases.rename")}</Btn>
-                    <Btn role="menuitem" icon={Copy} variant="ghost" onClick={() => { setMoreOpen(false); setCloneOpen(true); }}>{t("databases.clone")}</Btn>
-                    <Btn role="menuitem" icon={Trash2} variant="dangerGhost" onClick={() => { setMoreOpen(false); void confirmAndDelete(); }}>{t("databases.delete")}</Btn>
-                  </div>
-                )}
-              </div>
+              <Menu
+                label={t("databases.more")}
+                items={[
+                  { key: "rename", label: t("databases.rename"), icon: Pencil, onSelect: () => setRenameOpen(true) },
+                  { key: "clone", label: t("databases.clone"), icon: Copy, onSelect: () => setCloneOpen(true) },
+                  { key: "delete", label: t("databases.delete"), icon: Trash2, danger: true, onSelect: () => void confirmAndDelete() },
+                ]}
+              />
             </>
           ) : undefined
         }

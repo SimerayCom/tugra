@@ -602,6 +602,24 @@ body {
   background: var(--c-ad);
 }
 
+/* Dropdown menu item (components/menu). Transparent base so the hover/press wash shows (an inline
+   background would outrank the :hover rule); aria-disabled items stay focusable but don't react. */
+.tg-menuitem {
+  background: transparent;
+  transition: background 0.12s ease;
+}
+@media (hover: hover) {
+  .tg-menuitem:not([aria-disabled="true"]):hover {
+    background: var(--tg-hover);
+  }
+}
+.tg-menuitem:not([aria-disabled="true"]):active {
+  background: var(--tg-press);
+}
+.tg-menuitem:focus-visible {
+  outline-offset: -2px;
+}
+
 /* Underline tab strip (components/tabs-nav). */
 .tg-tab {
   color: var(--c-tx3);
@@ -720,6 +738,7 @@ body {
   .tg-nav-link,
   .tg-nav-group,
   .tg-row,
+  .tg-menuitem,
   .tg-tab,
   .tg-iconbtn,
   .tg-link {

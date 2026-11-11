@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Home, Server, User, ShieldCheck, SlidersHorizontal } from "lucide-react";
+import { Home, Server, User, ShieldCheck, SlidersHorizontal, Mail, DatabaseBackup, BadgeCheck } from "lucide-react";
 import { api } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth";
 import { ApiTokensCard } from "./api-tokens-card";
@@ -27,6 +27,7 @@ import { useConfirm } from "../../../components/confirm";
 import { useToast } from "../../../components/toast";
 import { Modal } from "../../../components/modal";
 import { Tabs } from "../../../components/tabs-nav";
+import { ConfigLayout } from "../../../components/config-layout";
 import { useTabState } from "../../../hooks/useTabState";
 
 /** A settings tab panel: an optional hint + a responsive card grid. The tab strip supplies the heading, so
@@ -70,19 +71,43 @@ export default function SettingsPage() {
     ...(isOwner ? [{ key: "instance", label: t("settings.sectionInstance"), icon: SlidersHorizontal }] : []),
   ];
   const [tab, setTab] = useTabState("account", tabs.map((x) => x.key));
+  // Instance tab is grouped into a ConfigLayout sub-nav (?section=); deep links below map a hash to a group.
+  const [isection, setISection] = useTabState("general", ["general", "security", "email", "backups", "branding"], "section");
 
   // Deep links into an instance-tab card scroll it into view once that tab is showing: the top-bar
   // "Update available" badge uses #updates, and the "Email isn't set up" notices use #email.
+  // Deep links into an instance card: the top-bar "Update available" badge → #updates, the "Email isn't
+  // set up" notices → #email. Those links also carry &section= so the holding group mounts from the URL;
+  // here we just scroll to the card once that group's panel is actually in the DOM. ConfigLayout mounts a
+  // group lazily and the URL change is an async transition, so poll a few frames, then drop the hash so a
+  // later manual group switch doesn't re-scroll. Re-runs on section change and on same-page hash changes.
   useEffect(() => {
     if (tab !== "instance" || typeof window === "undefined") return;
-    const anchors: Record<string, string> = { "#updates": "updates", "#email": "email" };
-    const target = anchors[window.location.hash];
-    if (!target) return;
-    const raf = window.requestAnimationFrame(() => {
-      document.getElementById(target)?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-    return () => window.cancelAnimationFrame(raf);
-  }, [tab]);
+    const ids: Record<string, string> = { "#updates": "updates", "#email": "email" };
+    let raf = 0;
+    const scrollToHash = () => {
+      const id = ids[window.location.hash];
+      if (!id) return;
+      let tries = 0;
+      const tick = () => {
+        const node = document.getElementById(id);
+        if (node) {
+          node.scrollIntoView({ behavior: "smooth", block: "start" });
+          window.history.replaceState(null, "", window.location.pathname + window.location.search);
+          return;
+        }
+        if (tries++ < 40) raf = window.requestAnimationFrame(tick);
+      };
+      window.cancelAnimationFrame(raf);
+      raf = window.requestAnimationFrame(tick);
+    };
+    scrollToHash();
+    window.addEventListener("hashchange", scrollToHash);
+    return () => {
+      window.removeEventListener("hashchange", scrollToHash);
+      window.cancelAnimationFrame(raf);
+    };
+  }, [tab, isection]);
 
   return (
     <div style={{ padding: "var(--page-pad)", maxWidth: 1040, margin: "0 auto" }}>
@@ -109,17 +134,67 @@ export default function SettingsPage() {
       )}
 
       {tab === "instance" && isOwner && (
-        <SettingsGrid hint={t("settings.sectionInstanceHint")}>
-          <LicenseCard />
-          <PanelTlsCard />
-          <div id="email"><EmailSettingsCard /></div>
-          <HubBackupCard />
-          <BrandingCard />
-          <InstanceApiAccessCard />
-          <div id="updates"><UpdatesCard /></div>
-          <TelemetryCard />
-          <Wide><SsoConfigCard /></Wide>
-        </SettingsGrid>
+        <ConfigLayout
+          navLabel={t("settings.instanceNav")}
+          active={isection}
+          onChange={setISection}
+          groups={[
+            {
+              key: "general",
+              label: t("settings.grpGeneral"),
+              icon: SlidersHorizontal,
+              content: (
+                <SettingsGrid hint={t("settings.sectionInstanceHint")}>
+                  <PanelTlsCard />
+                  <TelemetryCard />
+                </SettingsGrid>
+              ),
+            },
+            {
+              key: "security",
+              label: t("settings.grpSecurityAccess"),
+              icon: ShieldCheck,
+              content: (
+                <SettingsGrid>
+                  <InstanceApiAccessCard />
+                  <Wide><SsoConfigCard /></Wide>
+                </SettingsGrid>
+              ),
+            },
+            {
+              key: "email",
+              label: t("settings.grpEmailNotifs"),
+              icon: Mail,
+              content: (
+                <SettingsGrid>
+                  <div id="email"><EmailSettingsCard /></div>
+                </SettingsGrid>
+              ),
+            },
+            {
+              key: "backups",
+              label: t("settings.grpBackupsUpdates"),
+              icon: DatabaseBackup,
+              content: (
+                <SettingsGrid>
+                  <HubBackupCard />
+                  <div id="updates"><UpdatesCard /></div>
+                </SettingsGrid>
+              ),
+            },
+            {
+              key: "branding",
+              label: t("settings.grpLicenseBranding"),
+              icon: BadgeCheck,
+              content: (
+                <SettingsGrid>
+                  <LicenseCard />
+                  <BrandingCard />
+                </SettingsGrid>
+              ),
+            },
+          ]}
+        />
       )}
     </div>
   );

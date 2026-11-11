@@ -19,7 +19,7 @@ describe("MailNotConfiguredNote", () => {
     mocks.useAuth.mockReturnValue({ user: { isInstanceOwner: true } });
     mocks.useQuery.mockReturnValue({ data: { mailConfigured: false } });
     const { container } = draw(<MailNotConfiguredNote consequence="Invitees won't get an email." />);
-    expect(screen.getByRole("link").getAttribute("href")).toBe("/settings?tab=instance#email");
+    expect(screen.getByRole("link").getAttribute("href")).toBe("/settings?tab=instance&section=email#email");
     expect(container.textContent).toContain("Invitees won't get an email.");
   });
 

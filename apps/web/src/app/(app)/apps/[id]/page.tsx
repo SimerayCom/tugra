@@ -30,6 +30,7 @@ import { useTabState } from "../../../../hooks/useTabState";
 import { useLeaveGuard, useUnsavedChanges } from "../../../../hooks/useUnsavedChanges";
 import { CopyRow } from "../../../../components/copy-row";
 import { IconBtn } from "../../../../components/icon-btn";
+import { Menu } from "../../../../components/menu";
 import { useConfirm } from "../../../../components/confirm";
 import type { TerminalTarget } from "../../../../lib/ws";
 import { duplicateKeys, invalidKeys } from "../../../../lib/dotenv";
@@ -55,11 +56,10 @@ import { ConfigLayout } from "../../../../components/config-layout";
 import { CONFIG_GROUP_KEYS, visibleConfigGroups, type ConfigCardId } from "../../../../lib/config-groups";
 import { resolveTab } from "../../../../lib/tab-param";
 import { gitWebUrls } from "../../../../lib/git-web-url";
-import { useDismiss } from "../../../../lib/use-dismiss";
 import {
   LayoutDashboard, Settings2, Rocket, Activity, ScrollText, FolderOpen,
   SlidersHorizontal, Hammer, Variable, Globe, HardDrive, HeartPulse, Clock,
-  RotateCw, Play, Square, Terminal, Ellipsis, CloudDownload, CloudUpload,
+  RotateCw, Play, Square, Terminal, CloudDownload, CloudUpload,
   Pencil, Trash2, Copy, Lock, ChevronRight, ExternalLink, ArrowDown, X, History, ShieldAlert, type LucideIcon,
 } from "lucide-react";
 
@@ -297,9 +297,6 @@ export default function AppDetailPage() {
     if (appData.source !== "COMPOSE") boxes.push({ label: t("apps.removeImages"), ref: removeImages });
     if (await confirm({ title: t("apps.delete"), body: appData.source === "COMPOSE" ? t("apps.deleteConfirmCompose") : t("apps.deleteConfirm"), danger: true, confirmText: appData.name, checkbox: boxes })) del.mutate();
   };
-  const [moreOpen, setMoreOpen] = useState(false);
-  const moreRef = useRef<HTMLDivElement>(null);
-  useDismiss(moreOpen, moreRef, () => setMoreOpen(false)); // close the "…" menu on outside-click / Esc
   const regen = useMutation({
     mutationFn: () => api.regenerateWebhook(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
@@ -518,8 +515,8 @@ export default function AppDetailPage() {
         actions={
           appData.canWrite ? (
             <>
-              {/* Grouped so six controls read as three intents, not one undifferentiated row:
-                  1) ship code  2) lifecycle of the running container  3) tools. Groups 2/3 carry a border-left separator. */}
+              {/* One primary (ship code) + a lifecycle group (restart/start, stop) + an overflow menu for
+                  the rest (shell, rebuild, rename, clone, delete). Groups 2/3 carry a border-left separator. */}
               <div role="group" aria-label={t("apps.actionsDeploy")} style={actionGroup}>
                 <Btn
                   icon={appData.status === "NEW" ? Rocket : CloudUpload}
@@ -542,31 +539,31 @@ export default function AppDetailPage() {
                 <Btn icon={Square} variant="dangerGhost" loading={stop.isPending} disabled={!isRunning} onClick={async () => { if (await confirm({ body: t("apps.stopConfirm"), danger: true })) stop.mutate(); }}>{t("apps.stop")}</Btn>
               </div>
               <div role="group" aria-label={t("apps.actionsTools")} style={actionGroupSep}>
-                <Btn
-                  icon={Terminal}
-                  variant="ghost"
-                  onClick={() => (appData.source === "COMPOSE" ? setPickerOpen(true) : setShell({ app: id }))}
-                  disabled={!isRunning}
-                  title={!isRunning ? t("apps.shellDisabledHint") : undefined}
-                >
-                  {t("apps.openShell")}
-                </Btn>
-              <div ref={moreRef} style={{ position: "relative" }}>
-                <Btn variant="ghost" onClick={() => setMoreOpen((o) => !o)} aria-haspopup="menu" aria-expanded={moreOpen} aria-label={t("apps.more")}><Ellipsis size={16} /></Btn>
-                {moreOpen && (
-                  <div
-                    role="menu"
-                    style={{ position: "absolute", right: 0, top: "calc(100% + 4px)", zIndex: 20, display: "flex", flexDirection: "column", gap: 6, padding: 8, minWidth: 140, background: "var(--c-bg, var(--c-el))", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", boxShadow: "0 6px 20px rgba(0,0,0,0.25)" }}
-                  >
-                    <Btn role="menuitem" icon={appData.source === "COMPOSE" || appData.source === "IMAGE" ? CloudDownload : Hammer} iconTone="warn" variant="ghost" onClick={() => { setMoreOpen(false); onDeploy({ noCache: true }); }} disabled={deploy.isPending} title={t("apps.forceDeployHint")}>
-                      {appData.source === "COMPOSE" || appData.source === "IMAGE" ? t("apps.pullRedeploy") : t("apps.rebuild")}
-                    </Btn>
-                    <Btn role="menuitem" icon={Pencil} variant="ghost" onClick={() => { setMoreOpen(false); setRenameOpen(true); }}>{t("apps.rename")}</Btn>
-                    <Btn role="menuitem" icon={Copy} variant="ghost" onClick={() => { setMoreOpen(false); setCloneOpen(true); }}>{t("apps.clone")}</Btn>
-                    <Btn role="menuitem" icon={Trash2} variant="dangerGhost" onClick={() => { setMoreOpen(false); void confirmAndDelete(); }}>{t("apps.delete")}</Btn>
-                  </div>
-                )}
-              </div>
+                <Menu
+                  label={t("apps.more")}
+                  items={[
+                    {
+                      key: "shell",
+                      label: t("apps.openShell"),
+                      icon: Terminal,
+                      disabled: !isRunning,
+                      title: !isRunning ? t("apps.shellDisabledHint") : undefined,
+                      onSelect: () => (appData.source === "COMPOSE" ? setPickerOpen(true) : setShell({ app: id })),
+                    },
+                    {
+                      key: "rebuild",
+                      label: appData.source === "COMPOSE" || appData.source === "IMAGE" ? t("apps.pullRedeploy") : t("apps.rebuild"),
+                      icon: appData.source === "COMPOSE" || appData.source === "IMAGE" ? CloudDownload : Hammer,
+                      tone: "warn",
+                      disabled: deploy.isPending,
+                      title: t("apps.forceDeployHint"),
+                      onSelect: () => onDeploy({ noCache: true }),
+                    },
+                    { key: "rename", label: t("apps.rename"), icon: Pencil, onSelect: () => setRenameOpen(true) },
+                    { key: "clone", label: t("apps.clone"), icon: Copy, onSelect: () => setCloneOpen(true) },
+                    { key: "delete", label: t("apps.delete"), icon: Trash2, danger: true, onSelect: () => void confirmAndDelete() },
+                  ]}
+                />
               </div>
             </>
           ) : undefined
