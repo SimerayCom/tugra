@@ -24,9 +24,15 @@ export class MonitorRunnerService {
 
     let r;
     if (m.type === "METRIC") {
+      const now = Date.now();
+      // A sample older than ~3 check intervals (min 90s for scheduler jitter + agent report cadence) can't
+      // confirm current health → treated as a failure, never a recovery.
+      const maxAgeMs = Math.max(3 * (m.intervalSec ?? 30) * 1000, 90_000);
       const row = m.serverId
         ? await this.prisma.metric.findFirst({
-            where: { serverId: m.serverId },
+            // `ts` is the agent's clock: exclude a future-dated row so a single clock-skewed sample can't sort
+            // first and shadow the real, fresh rows (which would wedge the monitor DOWN until real time passes).
+            where: { serverId: m.serverId, ts: { lte: new Date(now + 60_000) } },
             orderBy: { ts: "desc" },
           })
         : null;
@@ -39,7 +45,17 @@ export class MonitorRunnerService {
             diskTotal: Number(row.diskTotal),
           }
         : null;
-      r = metricCheckResult((m.metric as MetricKind) ?? "DISK", sample, m.thresholdPct ?? 90);
+      // "no metrics yet" (UP) is a grace ONLY for a genuinely new monitor; an ESTABLISHED monitor (older than
+      // maxAge) with no fresh row can't confirm health → fail. This covers a DOWN/PENDING monitor, and the
+      // windows a DOWN-only check missed: disabled→re-enabled, a deleted server, the retention purge, and a
+      // long PENDING ladder.
+      const established = m.createdAt ? now - new Date(m.createdAt).getTime() > maxAgeMs : false;
+      r = metricCheckResult((m.metric as MetricKind) ?? "DISK", sample, m.thresholdPct ?? 90, {
+        ts: row?.ts,
+        now,
+        maxAgeMs,
+        noDataIsDown: m.status !== "UP" || established,
+      });
     } else {
       r = await checkers[m.type](m);
     }
