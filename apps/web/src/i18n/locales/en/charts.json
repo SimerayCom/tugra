@@ -12,5 +12,11 @@
   "viewAsTable": "View as table",
   "valueMode": "Value shown",
   "noPoint": "No data",
-  "gap": "Gap in data"
+  "gap": "Gap in data",
+  "event": {
+    "deploy": "Deploy",
+    "restart": "Restart",
+    "error": "Error",
+    "offline": "Agent offline"
+  }
 }

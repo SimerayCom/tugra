@@ -7,14 +7,14 @@ import { humanizeRatePair } from "../lib/metrics";
 import type { MetricsRange, ContainerMetricSample } from "../lib/types";
 import { useT } from "../i18n/provider";
 import { Btn, Card, EmptyState, Spinner } from "./ui";
-import { MetricChart, METRIC_GRID_STYLE, METRIC_CHART_HEIGHT } from "./charts";
+import { MetricChart, METRIC_GRID_STYLE, METRIC_CHART_HEIGHT, type ChartEvent } from "./charts";
 
 const METRIC_RANGES: MetricsRange[] = ["1h", "6h", "24h", "7d", "30d"];
 
 /** "Metrics" tab: per-container CPU/RAM/Net/Disk charts, range-switchable, auto-refreshing.
  *  Serves both applications and databases (`kind`) — the agent samples every container, so the chart
  *  data differs only by which resource endpoint it reads. Read-level (metrics carry no secrets). */
-export function AppMetricsCard({ id, kind = "app" }: { id: string; kind?: "app" | "database" }) {
+export function AppMetricsCard({ id, kind = "app", events }: { id: string; kind?: "app" | "database"; events?: ChartEvent[] }) {
   const t = useT();
   const [range, setRange] = useState<MetricsRange>("1h");
   const { data, isLoading, isError } = useQuery({
@@ -43,7 +43,7 @@ export function AppMetricsCard({ id, kind = "app" }: { id: string; kind?: "app" 
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
           {containers.map((c) => (
-            <ContainerMetricsSection key={c.name} name={c.name} samples={c.samples} />
+            <ContainerMetricsSection key={c.name} name={c.name} samples={c.samples} events={events} />
           ))}
         </div>
       )}
@@ -60,7 +60,7 @@ function friendlyContainer(name: string): string {
   return name;
 }
 
-function ContainerMetricsSection({ name, samples }: { name: string; samples: ContainerMetricSample[] }) {
+function ContainerMetricsSection({ name, samples, events }: { name: string; samples: ContainerMetricSample[]; events?: ChartEvent[] }) {
   const t = useT();
   const times = samples.map((s) => s.ts);
   const cpu = samples.map((s) => s.cpu);
@@ -73,14 +73,15 @@ function ContainerMetricsSection({ name, samples }: { name: string; samples: Con
     <div>
       <div style={{ fontSize: 13, fontWeight: 600, color: "var(--c-tx)", marginBottom: 10, wordBreak: "break-all" }} title={name}>{friendlyContainer(name)}</div>
       <div style={METRIC_GRID_STYLE}>
-        <MetricChart height={METRIC_CHART_HEIGHT} data={cpu} peaks={cpuPeaks} times={times} label={t("apps.metricsCpu")} unit="%" color="var(--c-a)" />
-        <MetricChart height={METRIC_CHART_HEIGHT} data={ram} times={times} label={t("apps.metricsRam")} unit="%" color="var(--c-lapis)" decimals={1} />
+        <MetricChart height={METRIC_CHART_HEIGHT} data={cpu} peaks={cpuPeaks} times={times} label={t("apps.metricsCpu")} unit="%" color="var(--c-a)" events={events} />
+        <MetricChart height={METRIC_CHART_HEIGHT} data={ram} times={times} label={t("apps.metricsRam")} unit="%" color="var(--c-lapis)" decimals={1} events={events} />
         <MetricChart
           height={METRIC_CHART_HEIGHT}
           times={times}
           label={t("apps.metricsNet")}
           unit={" " + net.unit}
           decimals={1}
+          events={events}
           series={[
             { key: "in", label: t("apps.metricsNetIn"), values: net.a, color: "var(--c-g)", kind: "area" },
             { key: "out", label: t("apps.metricsNetOut"), values: net.b, color: "var(--c-am)", kind: "area" },
@@ -92,6 +93,7 @@ function ContainerMetricsSection({ name, samples }: { name: string; samples: Con
           label={t("apps.metricsBlk")}
           unit={" " + blk.unit}
           decimals={1}
+          events={events}
           series={[
             { key: "read", label: t("apps.metricsBlkRead"), values: blk.a, color: "var(--c-lapis)", kind: "area" },
             { key: "write", label: t("apps.metricsBlkWrite"), values: blk.b, color: "var(--c-am)", kind: "area" },

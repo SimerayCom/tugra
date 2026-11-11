@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 import React from "react";
 import { I18nProvider } from "../i18n/provider";
-import { MetricChart } from "./charts";
+import { MetricChart, eventMarkers } from "./charts";
 
 afterEach(cleanup);
 
@@ -588,5 +588,64 @@ describe("MetricChart v2", () => {
   it("theme-aware: multi-series colours are CSS variables (no hard-coded hex)", () => {
     const { container } = wrapI18n(<MetricChart series={ov} times={times(4)} label="Network" unit=" MB/s" tableToggle />);
     expect(container.innerHTML).not.toMatch(/#[0-9a-fA-F]{3,6}\b/);
+  });
+});
+
+describe("eventMarkers", () => {
+  const T0 = 1_000_000;
+  const T1 = 1_000_000 + 600_000; // +10 min
+  const times = [T0, T0 + 300_000, T1];
+
+  it("maps an in-span event to its fractional X across the plot width", () => {
+    const m = eventMarkers([{ ts: T0 + 300_000, kind: "deploy" }], times, 200);
+    expect(m).toHaveLength(1);
+    expect(m[0].x).toBeCloseTo(100, 5); // halfway → width/2
+    expect(m[0].kind).toBe("deploy");
+  });
+
+  it("defaults an unspecified kind to 'deploy' and keeps the label", () => {
+    const m = eventMarkers([{ ts: T0, label: "v2 shipped" }], times, 100);
+    expect(m[0].kind).toBe("deploy");
+    expect(m[0].label).toBe("v2 shipped");
+    expect(m[0].x).toBeCloseTo(0, 5); // at the start of the span
+  });
+
+  it("drops events far outside the span but tolerates one sampling step beyond each edge (clamped)", () => {
+    const step = 300_000; // (T1 - T0) / (len - 1)
+    expect(eventMarkers([{ ts: T0 - step - 1 }, { ts: T1 + step + 1 }], times, 200)).toHaveLength(0);
+    const near = eventMarkers([{ ts: T1 + 1 }], times, 200); // just past the newest sample → kept at the edge
+    expect(near).toHaveLength(1);
+    expect(near[0].x).toBeCloseTo(200, 5);
+  });
+
+  it("clusters near-coincident markers into one with a count", () => {
+    const m = eventMarkers([{ ts: T0 + 300_000 }, { ts: T0 + 301_000 }], times, 200);
+    expect(m).toHaveLength(1);
+    expect(m[0].count).toBe(2);
+  });
+
+  it("returns nothing without usable times or width", () => {
+    expect(eventMarkers([{ ts: T0 }], undefined, 200)).toHaveLength(0);
+    expect(eventMarkers([{ ts: T0 }], [T0], 200)).toHaveLength(0); // single point = no span
+    expect(eventMarkers([{ ts: T0 }], times, 0)).toHaveLength(0);
+    expect(eventMarkers(undefined, times, 200)).toHaveLength(0);
+  });
+
+  it("renders a marker group in the plot when events are passed", () => {
+    const { container } = render(
+      <I18nProvider>
+        <MetricChart data={[1, 2, 3]} times={times} label="CPU" events={[{ ts: T0 + 300_000, kind: "deploy", label: "deploy abc" }]} />
+      </I18nProvider>,
+    );
+    expect(container.querySelectorAll('[data-testid="chart-event"]').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("renders no marker group when there are no events", () => {
+    const { container } = render(
+      <I18nProvider>
+        <MetricChart data={[1, 2, 3]} times={times} label="CPU" />
+      </I18nProvider>,
+    );
+    expect(container.querySelectorAll('[data-testid="chart-event"]').length).toBe(0);
   });
 });

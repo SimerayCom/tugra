@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, appIconUrl } from "../../../../lib/api";
@@ -13,6 +13,7 @@ import { backupColor, formatSize, lastErrorLine } from "../../../../lib/backups"
 import { BackupRunModal } from "../../../../components/backup-run-modal";
 import { useDeployLogStream } from "../../../../hooks/useDeployLogStream";
 import { AppMetricsCard } from "../../../../components/app-metrics-card";
+import { type ChartEvent } from "../../../../components/charts";
 import { AppCrashTimelineCard } from "../../../../components/app-crash-timeline-card";
 import { AppFilesCard } from "../../../../components/app-files-card";
 import { ConfigMountsCard } from "../../../../components/config-mounts-card";
@@ -242,6 +243,21 @@ export default function AppDetailPage() {
     queryFn: () => api.getDeployments(id),
     refetchInterval: 5000,
   });
+  // Deploy markers for the Metrics charts — "did this deploy cause the spike?". Only events that actually
+  // changed the running container get a marker: a SUCCESS deploy, or a rollback. A failed/cancelled/queued
+  // deploy never swapped the container, so it must not imply a code change at that moment. The timestamp is
+  // the cutover (createdAt + build durationMs), not the queue time. Only in-range markers render.
+  const deployEvents = useMemo<ChartEvent[]>(
+    () =>
+      deployments
+        .filter((d) => d.status === "SUCCESS" || d.kind === "ROLLBACK" || d.kind === "AUTO_ROLLBACK")
+        .map((d) => ({
+          ts: new Date(d.createdAt).getTime() + (d.durationMs ?? 0),
+          kind: d.kind === "AUTO_ROLLBACK" ? "error" : d.kind === "ROLLBACK" ? "restart" : "deploy",
+          label: d.commitMessage ?? (d.commitSha ? d.commitSha.slice(0, 7) : undefined),
+        })),
+    [deployments],
+  );
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["app", id] });
@@ -752,7 +768,7 @@ export default function AppDetailPage() {
           <SectionCard title={t("apps.crash.title")} desc={t("apps.crash.desc")}>
             <AppCrashTimelineCard id={id} />
           </SectionCard>
-          <AppMetricsCard id={id} />
+          <AppMetricsCard id={id} events={deployEvents} />
         </>
       )}
 

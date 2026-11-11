@@ -144,6 +144,71 @@ export function pickTimeTicks(times: number[] | undefined, count = 4): { frac: n
   });
 }
 
+/** A point-in-time annotation drawn as a vertical marker on the time axis (e.g. a deploy or a restart),
+ *  so a metric spike can be read against what happened — "did the deploy cause it?". */
+export type ChartEventKind = "deploy" | "restart" | "error" | "offline";
+export interface ChartEvent {
+  /** Unix-ms timestamp of the event. */
+  ts: number;
+  kind?: ChartEventKind;
+  /** Short human label shown on hover (e.g. a commit subject). */
+  label?: string;
+}
+
+export interface EventMarker {
+  x: number;
+  kind: ChartEventKind;
+  label?: string;
+  ts: number;
+  /** How many events this marker represents (clustered when their X positions nearly coincide). */
+  count: number;
+}
+
+/** X pixels within which two markers are merged into one cluster, so a burst of deploys never becomes an
+ *  unreadable comb of vertical lines. */
+const EVENT_CLUSTER_PX = 6;
+
+/**
+ * Map time-axis events to X pixel positions along the plot. MUST be given the SAME times the points are
+ * drawn from (the chart's `validTimes`), so a marker can never diverge from the data it annotates. An event
+ * within one sampling step beyond either edge is clamped to the edge (so a just-now deploy, whose timestamp
+ * is slightly past the newest sample, still shows instead of vanishing); anything further out is dropped.
+ * Near-coincident markers are clustered. Pure + deterministic; mirrors the point X-scale `(frac) * width`.
+ */
+export function eventMarkers(
+  events: ChartEvent[] | undefined,
+  times: number[] | undefined,
+  width: number,
+): EventMarker[] {
+  if (!events || events.length === 0 || !times || times.length < 2 || !(width > 0)) return [];
+  const t0 = times[0];
+  const t1 = times[times.length - 1];
+  if (!Number.isFinite(t0) || !Number.isFinite(t1) || t1 <= t0) return [];
+  const step = (t1 - t0) / (times.length - 1); // tolerate one sample/bucket beyond each edge
+  const placed = events
+    .filter((e) => Number.isFinite(e.ts) && e.ts >= t0 - step && e.ts <= t1 + step)
+    .map((e) => {
+      const clamped = Math.min(Math.max(e.ts, t0), t1);
+      return { x: ((clamped - t0) / (t1 - t0)) * width, kind: e.kind ?? ("deploy" as ChartEventKind), label: e.label, ts: e.ts };
+    })
+    .sort((a, b) => a.x - b.x);
+  const out: EventMarker[] = [];
+  for (const m of placed) {
+    const last = out[out.length - 1];
+    if (last && Math.abs(m.x - last.x) <= EVENT_CLUSTER_PX) {
+      last.count += 1;
+      if (m.ts >= last.ts) {
+        last.kind = m.kind; // the newest event in a cluster is the representative one
+        last.label = m.label;
+        last.ts = m.ts;
+      }
+    } else {
+      out.push({ x: m.x, kind: m.kind, label: m.label, ts: m.ts, count: 1 });
+    }
+  }
+  return out;
+}
+
 /** Index of the point whose X is closest to `x`. */
 export function nearestIndex(xs: number[], x: number): number {
   let best = 0;
@@ -281,6 +346,14 @@ function bandPath(xs: number[], upper: number[], lower: number[], runs: [number,
 
 const Y_GUTTER = 34; // px reserved left of the plot for the Y-axis numbers
 const PAD = 8; // px of vertical breathing room inside the plot
+
+// Colour per event-marker kind (vertical annotations on the time axis).
+const EVENT_COLOR: Record<ChartEventKind, string> = {
+  deploy: "var(--c-a)",
+  restart: "var(--c-am)",
+  error: "var(--c-r)",
+  offline: "var(--c-tx3)",
+};
 const FALLBACK_W = 600; // SSR / first-paint plot width until the real pixel width is measured
 
 /** Measure an element's real pixel width (ResizeObserver) so the SVG is drawn at true pixels — strokes, dots
@@ -407,6 +480,7 @@ export function MetricChart({
   bare = false,
   interactive = true,
   hideHeader = false,
+  events,
 }: {
   /** Legacy single series. Ignored when a non-empty `series` is given. */
   data?: number[];
@@ -442,6 +516,9 @@ export function MetricChart({
   /** Default false. When true the chart's own header row (label, axis-max tag, latest value, controls) is not
    *  drawn — only the plot + axes — for callers that already show the value elsewhere. */
   hideHeader?: boolean;
+  /** Point-in-time annotations (deploys, restarts, …) drawn as vertical markers on the time axis. Requires
+   *  `times`; events outside the span are ignored. */
+  events?: ChartEvent[];
 }) {
   const t = useT();
   const [setPlotEl, width] = useElementWidth(FALLBACK_W);
@@ -493,6 +570,20 @@ export function MetricChart({
   const spanMs = validTimes && n > 1 ? validTimes[n - 1] - validTimes[0] : 0;
   const timeBreak = useMemo(() => detectGaps(validTimes, interval), [validTimes, interval]);
   const xs = useMemo(() => pointXs(n, validTimes, width), [n, validTimes, width]);
+  // Event markers share the point X-scale (validTimes) so they can never drift from the data; skipped in
+  // static small-multiple mode. Titles are built in the memo (toLocaleString/formatStamp is slow to re-run
+  // on every hover frame).
+  const markers = useMemo(() => (interactive ? eventMarkers(events, validTimes, width) : []), [interactive, events, validTimes, width]);
+  const spanForStamp = validTimes && n > 1 ? validTimes[n - 1] - validTimes[0] : 0;
+  const markerTitles = useMemo(
+    () =>
+      markers.map((m) => {
+        const base = m.label ? `${m.label} · ` : "";
+        const more = m.count > 1 ? ` (+${m.count - 1})` : "";
+        return `${base}${t(`charts.event.${m.kind}`)}${more} · ${formatStamp(m.ts, spanForStamp)}`;
+      }),
+    [markers, t, spanForStamp],
+  );
 
   // Y scale: percent metrics are ALWAYS 0–100 so an idle series sits LOW with the frame visible (the Beszel
   // look); every other unit (rates, bytes) auto-scales to a round ceiling over the window's max (stack totals
@@ -859,6 +950,23 @@ export function MetricChart({
                     {!e.stacked && e.dots.map((i) => <circle key={i} cx={xs[i]} cy={e.top[i]} r={4} fill={e.item.color} />)}
                   </g>
                 ))}
+                {markers.map((m, i) => {
+                  const c = EVENT_COLOR[m.kind];
+                  const tx = Math.min(Math.max(m.x, 4), width - 4); // keep the triangle inside the plot box at the edges
+                  return (
+                    <g key={`ev${m.ts}-${i}`} data-testid="chart-event">
+                      {/* solid thin line (distinct from the dashed gridlines), drawn OVER the series so it stays visible */}
+                      <line x1={m.x} x2={m.x} y1={PAD} y2={baseY} stroke={c} strokeWidth={1.5} opacity={0.7} />
+                      {/* wide transparent hit line so the hover title is reachable — the 1.5px line is a poor target */}
+                      <line x1={m.x} x2={m.x} y1={PAD} y2={baseY} stroke="transparent" strokeWidth={10} style={{ pointerEvents: "stroke" }}>
+                        <title>{markerTitles[i]}</title>
+                      </line>
+                      <path d={`M ${tx - 4} ${PAD} L ${tx + 4} ${PAD} L ${tx} ${PAD + 5.5} Z`} fill={c} stroke="var(--c-sb)" strokeWidth={1}>
+                        <title>{markerTitles[i]}</title>
+                      </path>
+                    </g>
+                  );
+                })}
                 {idx !== null && xs[idx] !== undefined && (
                   <>
                     <line data-testid="chart-crosshair" x1={xs[idx]} x2={xs[idx]} y1={PAD} y2={baseY} stroke="var(--c-tx3)" strokeWidth={1} />
@@ -870,6 +978,15 @@ export function MetricChart({
                   </>
                 )}
               </svg>
+              {markers.length > 0 && (
+                // The plot SVG is aria-hidden, so the vertical markers aren't announced. This visually-hidden
+                // list gives keyboard/screen-reader users the same "a deploy happened here" information.
+                <ul style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clipPath: "inset(50%)", whiteSpace: "nowrap", margin: 0, padding: 0 }}>
+                  {markers.map((m, i) => (
+                    <li key={`eva${m.ts}-${i}`}>{markerTitles[i]}</li>
+                  ))}
+                </ul>
+              )}
               {n === 0 && (
                 <span style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "var(--c-tx3)" }}>
                   {t("charts.noData")}
