@@ -9,6 +9,7 @@
   "currentPasswordToChangeEmail": "Current password (to change email)",
   "emailVerifyPending": "We sent a confirmation link to {email}. Your email changes once you confirm it there.",
   "emailChangeNoMail": "A confirmation link is sent by email to confirm a new address, which this hub can't deliver yet — your email won't change until email is set up.",
+  "qrAlt": "Two-factor authentication QR code",
   "uiMode": "Interface mode",
   "uiModeDesc": "Choose how much of Tugra you see. Switch any time.",
   "uiModeSaved": "Interface mode updated",

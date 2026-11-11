@@ -1,5 +1,8 @@
 {
   "title": "Projects",
+  "envCount": "{n} env",
+  "appCount": "{n} apps",
+  "dbCount": "{n} dbs",
   "subtitle": "Group apps and databases by project and environment (prod, staging…).",
   "name": "Project name",
   "create": "Create",

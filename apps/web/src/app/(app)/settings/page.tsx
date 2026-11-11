@@ -365,7 +365,7 @@ function TwoFactorCard() {
       {setup && (
         <div style={{ marginTop: 16 }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={setup.qrDataUrl} alt="2FA QR" width={160} height={160} style={{ borderRadius: 8, background: "#fff", padding: 8 }} />
+          <img src={setup.qrDataUrl} alt={t("settings.qrAlt")} width={160} height={160} style={{ borderRadius: 8, background: "#fff", padding: 8 }} />
           <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
             <input className="mono" value={code} onChange={(e) => setCode(e.target.value)} placeholder="000000" aria-label={t("settings.codePrompt")} maxLength={6}
               style={{ flex: 1, padding: "8px 12px", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx)", letterSpacing: "0.2em", textAlign: "center" }} />

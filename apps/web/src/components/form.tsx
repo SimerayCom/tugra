@@ -137,7 +137,7 @@ export function Select({
   value,
   onChange,
   options,
-  placeholder = "Select…",
+  placeholder,
   autoSelectFirst = false,
   required = false,
   id,
@@ -157,6 +157,7 @@ export function Select({
   style?: CSSProperties;
   disabled?: boolean;
 }) {
+  const t = useT();
   useEffect(() => {
     if (autoSelectFirst && value === "" && options.length > 0) {
       onChange(options[0].value);
@@ -174,7 +175,7 @@ export function Select({
       onChange={(e) => onChange(e.target.value)}
       style={{ ...fieldStyle, ...style }}
     >
-      <option value="" disabled>{placeholder}</option>
+      <option value="" disabled>{placeholder ?? t("common.select")}</option>
       {options.map((o) => (
         <option key={o.value} value={o.value}>{o.label}</option>
       ))}

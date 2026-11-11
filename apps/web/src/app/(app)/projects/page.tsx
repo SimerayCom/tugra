@@ -106,9 +106,9 @@ export default function ProjectsPage() {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <Link href={`/projects/${p.id}`} style={{ fontWeight: 600, fontSize: 14, color: "var(--c-tx)", textDecoration: "none" }}>{p.name}</Link>
                   <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
-                    <Badge>{p.environments.length} env</Badge>
-                    <Badge>{apps} apps</Badge>
-                    <Badge>{dbs} dbs</Badge>
+                    <Badge>{t("projects.envCount", { n: p.environments.length })}</Badge>
+                    <Badge>{t("projects.appCount", { n: apps })}</Badge>
+                    <Badge>{t("projects.dbCount", { n: dbs })}</Badge>
                     {scope === null && teams.length > 1 && <TeamBadge teamId={p.teamId} teams={teams} />}
                   </div>
                 </div>
