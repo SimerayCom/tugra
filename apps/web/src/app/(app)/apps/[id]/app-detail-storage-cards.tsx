@@ -166,6 +166,9 @@ export function VolumeBackupsCard({ id, volumes, enabled, intervalHours, retenti
         </>
       }
     >
+      <div role="note" style={{ fontSize: 11, color: "var(--c-am)", marginBottom: 12, lineHeight: 1.5 }}>
+        {t("apps.volBackupsWarn")}
+      </div>
       {runDetail && (
         <BackupRunModal
           run={runDetail}
@@ -243,7 +246,7 @@ export function VolumeBackupsCard({ id, volumes, enabled, intervalHours, retenti
                   {exportUrl.isPending && exportUrl.variables === b.id ? "…" : t("apps.volExportUrl")}
                 </button>
               )}
-              <button onClick={async () => { if (await confirm({ body: t("databases.restoreConfirm"), danger: true })) restore.mutate(b.id); }} style={{ background: "transparent", border: "none", color: "var(--c-lapis)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+              <button onClick={async () => { if (await confirm({ body: t("apps.volRestoreConfirm"), danger: true })) restore.mutate(b.id); }} style={{ background: "transparent", border: "none", color: "var(--c-lapis)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
                 {t("databases.restore")}
               </button>
               <button aria-label={t("common.delete")} onClick={async () => { if (await confirm({ body: t("common.deleteNamedConfirm", { name: new Date(b.createdAt).toLocaleString() }), danger: true })) del.mutate(b.id); }} style={{ background: "transparent", border: "none", color: "var(--c-r)", cursor: "pointer", fontFamily: "inherit", display: "inline-flex", alignItems: "center" }}><X size={14} /></button>

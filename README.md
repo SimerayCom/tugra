@@ -62,7 +62,7 @@ Tugra is a self-hostable, open-core control plane for deploying, monitoring and 
 
 - **Fleet-first, not single-box** — group servers into clusters, form a real Docker Swarm across them, and run one command across your whole fleet in a single bulk-ops call instead of SSH-ing into each box.
 - **Agent-native too** — a built-in MCP server exposes 53 tools (read + PAT-scoped mutate/fleet ops) over `POST /api/v1/mcp`, scoped by the same personal-access tokens as the REST API.
-- **9 database engines, one workflow** — PostgreSQL, MySQL, MariaDB, MongoDB, Redis, KeyDB, Dragonfly, ClickHouse and LibSQL, all provisioned the same way; eight have built-in logical dump/restore backups (LibSQL, which has no dump tool, is covered by the volume backups).
+- **9 database engines, one workflow** — PostgreSQL, MySQL, MariaDB, MongoDB, Redis, KeyDB, Dragonfly, ClickHouse and LibSQL, all provisioned the same way; eight have built-in logical dump/restore backups (LibSQL, which has no dump tool, is covered only by file-level volume backups — stop the app first for a consistent copy).
 - **Real TLS, real wildcards** — automatic Let's Encrypt per app via Traefik, plus DNS-01 wildcard certificates (`*.yourdomain.com`) for clustered/Swarm ingress — not just single-domain HTTP-01.
 - **Backups that leave the building** — scheduled dumps to local disk or S3-compatible storage (S3/R2/MinIO), encrypted, with one-click restore.
 - **Open-core, not open-washed** — everything above ships free under AGPL-3.0 in *this* repository. Pro/Cloud (SSO, audit-log export, whitelabel, multi-tenant billing) is a separately-licensed add-on — nothing here nags you to upgrade or silently caps what you can do. Tugra sends anonymous usage stats, on by default — aggregate counts (servers, apps, databases, deploys) plus your version, edition and OS, under a random id; no names, IPs, domains or secrets, and the receiver doesn't store your IP — and you can turn them off anytime with `--no-telemetry` / `TUGRA_TELEMETRY=0` or in Settings. Update checks and public-IP detection are opt-in and off by default.
@@ -83,7 +83,7 @@ A side-by-side with the self-hostable PaaS tools people actually evaluate (compe
 | **Data** | | | | | | |
 | Managed database engines | **9** | 8 | 6 | — | — | — |
 | Scheduled S3 backups + restore | ✅ | ✅ | ✅ | — | — | ~ |
-| App Docker-volume backups | ✅ | — | ✅ | — | — | — |
+| App Docker-volume backups (file-level, not a snapshot) | ✅ | — | ✅ | — | — | — |
 | **Domains & TLS** | | | | | | |
 | Custom domains + automatic SSL | ✅ | ✅ | ✅ | — | ✅ | ✅ |
 | DNS-01 wildcard certificates | ✅ | ~ | — | — | — | ~ |

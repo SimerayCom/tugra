@@ -127,6 +127,8 @@ gpg --batch --passphrase "$PASS" -d tugra-hub-<ts>.dump.gz.gpg | gunzip \
 
 - `tugra_redis` needs no restore — the schedulers re-register their repeatable jobs on boot.
 - This protects the **control plane**. Your apps' own data is covered by Tugra's per-database and volume
-  backups (see the app/database backup settings in the UI).
+  backups (see the app/database backup settings in the UI). Volume backups are **file-level copies of the
+  running volume** (not point-in-time snapshots); for a database prefer its per-database backup, which is
+  transaction-consistent.
 - A managed-Postgres deployment (external `DATABASE_URL`) shifts hub DR to your database provider's backups;
   the `.env` caveat still applies, and the volume-move path does not apply (there is no local `tugra_pg`).

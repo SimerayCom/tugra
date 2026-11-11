@@ -66,6 +66,12 @@ to them at runtime, those writes are lost on the next deploy unless that path is
 - Back up: the `apps/<appId>/volume-backups` API (`volume-backups.controller.ts`) offers backup-now, restore,
   a scheduled config (`PUT .../volume-backups/config`), import-from-URL and a migration export URL. Only an S3
   destination can produce an export URL.
+- **Consistency:** a volume backup archives the **running** volume with `tar` (`buildVolumeBackupScript`); the
+  app is not stopped or paused and this is **not** a point-in-time snapshot, so the result is a **file-level
+  copy that may be inconsistent** (files are read at different moments) — not transaction-consistent. For a
+  database, use its engine backup (Databases → Backups: logical dump/restore) instead. For a SQLite/libSQL or
+  other file-based store, stop the app (or use its own snapshot/export) before backing up if you need a
+  guaranteed-consistent copy.
 - Moving volumes from Coolify is still a manual `tar` copy: see [Coolify migration](../coolify-migration.md).
 
 ### Clusters (Swarm)
@@ -127,4 +133,4 @@ If you hit one of these, convert the mount to a named volume.
 2. Did you redeploy after changing volumes? The list applies on the next deploy.
 3. Is it a Compose app? Use named volumes; know that deleting the app deletes them.
 4. On a cluster? Expect a single replica pinned to the manager.
-5. Before deleting an app or migrating, run a volume backup.
+5. Before deleting an app or migrating, run a volume backup (stop the app first if it holds a database or SQLite file — a volume backup of a running app is not guaranteed consistent).
