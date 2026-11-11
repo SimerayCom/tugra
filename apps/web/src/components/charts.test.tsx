@@ -649,3 +649,43 @@ describe("eventMarkers", () => {
     expect(container.querySelectorAll('[data-testid="chart-event"]').length).toBe(0);
   });
 });
+
+describe("MetricChart threshold + loading (#15)", () => {
+  const w = (ui: React.ReactElement) => render(<I18nProvider>{ui}</I18nProvider>);
+
+  it("draws a threshold reference line and its value label when data is present", () => {
+    const { container } = w(<MetricChart data={[10, 20, 30]} label="CPU" unit="%" threshold={{ value: 80 }} />);
+    expect(container.querySelector('[data-testid="chart-threshold"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="chart-threshold-label"]')?.textContent).toContain("80%");
+  });
+
+  it("uses a custom threshold label when one is given", () => {
+    const { container } = w(<MetricChart data={[10, 20]} label="RAM" unit="%" threshold={{ value: 90, label: "Limit" }} />);
+    expect(container.querySelector('[data-testid="chart-threshold-label"]')?.textContent).toContain("Limit");
+  });
+
+  it("extends the Y axis to include a threshold above the data", () => {
+    // Non-percent unit auto-scales; a 500 threshold over a max of 20 pulls the axis ceiling up to 500.
+    const { container } = w(<MetricChart data={[10, 20]} times={[1, 2]} label="Disk" unit=" MB/s" threshold={{ value: 500 }} />);
+    expect(container.querySelector('[data-testid="chart-threshold"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="chart-threshold-label"]')?.textContent).toContain("500");
+  });
+
+  it("draws no threshold line when there is no data", () => {
+    const { container } = w(<MetricChart data={[]} label="CPU" unit="%" threshold={{ value: 80 }} />);
+    expect(container.querySelector('[data-testid="chart-threshold"]')).toBeNull();
+    expect(container.querySelector('[data-testid="chart-threshold-label"]')).toBeNull();
+  });
+
+  it("shows a loading shimmer (role=status) instead of the no-data message while an empty chart is loading", () => {
+    w(<MetricChart data={[]} label="CPU" unit="%" loading />);
+    expect(screen.getByRole("status", { name: "Loading…" })).toBeTruthy();
+    expect(screen.queryByText("No data in this range")).toBeNull();
+  });
+
+  it("shows the no-data message and no shimmer when not loading and empty", () => {
+    w(<MetricChart data={[]} label="CPU" unit="%" />);
+    expect(screen.getByText("No data in this range")).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+});

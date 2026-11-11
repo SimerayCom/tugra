@@ -481,6 +481,8 @@ export function MetricChart({
   interactive = true,
   hideHeader = false,
   events,
+  threshold,
+  loading = false,
 }: {
   /** Legacy single series. Ignored when a non-empty `series` is given. */
   data?: number[];
@@ -519,6 +521,11 @@ export function MetricChart({
   /** Point-in-time annotations (deploys, restarts, …) drawn as vertical markers on the time axis. Requires
    *  `times`; events outside the span are ignored. */
   events?: ChartEvent[];
+  /** Optional horizontal reference line (e.g. a configured limit or alert level) drawn across the plot with a
+   *  small label. The Y axis extends to include it when it sits above the data. */
+  threshold?: { value: number; label?: string; color?: string };
+  /** Show a loading shimmer in the plot area, distinct from the "no data" message, while the first read is in flight. */
+  loading?: boolean;
 }) {
   const t = useT();
   const [setPlotEl, width] = useElementWidth(FALLBACK_W);
@@ -611,6 +618,7 @@ export function MetricChart({
     for (const it of plotItems) if (it.kind !== "stacked") for (const v of it.vals) if (finite(v) && v > dataMax) dataMax = v;
     for (const v of acc) if (stackedIdx.length && v > dataMax) dataMax = v;
     if (cleanPeaks && !showPeak) for (const v of cleanPeaks) if (finite(v) && v > dataMax) dataMax = v;
+    if (threshold && finite(threshold.value) && threshold.value > dataMax) dataMax = threshold.value;
     const axisMax = isPct ? (dataMax > 100 ? niceMax(dataMax) : 100) : niceMax(dataMax);
     const yOf = (v: number) => PAD + (1 - Math.min(Math.max(v, 0), axisMax) / axisMax) * plotH;
 
@@ -650,8 +658,12 @@ export function MetricChart({
     const gaps: [number, number][] = [];
     for (let i = 1; i < n; i++) if (timeBreak[i] && xs[i] !== undefined) gaps.push([xs[i - 1], xs[i]]);
     return { plotH, baseY, axisMax, entries, gaps, hasStack: stackedIdx.length > 0 };
-  }, [plotItems, n, height, unit, cleanPeaks, showPeak, timeBreak, xs]);
+  }, [plotItems, n, height, unit, cleanPeaks, showPeak, timeBreak, xs, threshold?.value]);
   const { plotH, baseY, axisMax, entries, gaps, hasStack } = geo;
+  const noData = n === 0;
+  const showLoading = loading && noData;
+  const thresholdY =
+    threshold && finite(threshold.value) ? PAD + (1 - Math.min(Math.max(threshold.value, 0), axisMax) / axisMax) * plotH : null;
 
   const gridFracs = [0, 0.25, 0.5, 0.75, 1];
   const stats = useMemo(() => {
@@ -742,7 +754,11 @@ export function MetricChart({
 
   // Header value: a lone series shows its latest value in its colour (as before); a stack shows its total;
   // overlaid series carry their values in the legend/tooltip instead.
-  const headerValue = lone ? (
+  const headerValue = showLoading ? (
+    <span style={{ fontSize: 18, fontWeight: 700, color: "var(--c-tx3)", whiteSpace: "nowrap" }} className="mono">
+      —
+    </span>
+  ) : lone ? (
     <span style={{ fontSize: 18, fontWeight: 700, color: plotItems[0]?.color ?? color, whiteSpace: "nowrap" }} className="mono">
       {!plotItems[0]
         ? (0).toFixed(decimals)
@@ -757,7 +773,6 @@ export function MetricChart({
     </span>
   ) : null;
 
-  const noData = n === 0;
   // A lone series with no controls keeps the original non-wrapping header (the 260-280px caller cards).
   const legacyHeader = lone && !controls;
 
@@ -862,7 +877,7 @@ export function MetricChart({
               {noData && (
                 <tr>
                   <td colSpan={items.length + 2} style={{ padding: 8, color: "var(--c-tx3)" }}>
-                    {t("charts.noData")}
+                    {loading ? t("charts.loading") : t("charts.noData")}
                   </td>
                 </tr>
               )}
@@ -894,7 +909,7 @@ export function MetricChart({
                     "aria-valuemin": 0,
                     "aria-valuemax": Math.max(n - 1, 0),
                     "aria-valuenow": idx ?? Math.max(n - 1, 0),
-                    "aria-valuetext": n === 0 ? t("charts.noData") : valueText(idx ?? n - 1),
+                    "aria-valuetext": n === 0 ? (loading ? t("charts.loading") : t("charts.noData")) : valueText(idx ?? n - 1),
                     onPointerMove: moveToClientX,
                     onPointerDown: moveToClientX,
                     onPointerLeave: (e: PointerEvent<HTMLDivElement>) => {
@@ -950,6 +965,9 @@ export function MetricChart({
                     {!e.stacked && e.dots.map((i) => <circle key={i} cx={xs[i]} cy={e.top[i]} r={4} fill={e.item.color} />)}
                   </g>
                 ))}
+                {threshold && thresholdY !== null && !noData && (
+                  <line data-testid="chart-threshold" x1={0} x2={width} y1={thresholdY} y2={thresholdY} stroke={threshold.color ?? "var(--c-am)"} strokeWidth={1.5} strokeDasharray="2 3" opacity={0.9} />
+                )}
                 {markers.map((m, i) => {
                   const c = EVENT_COLOR[m.kind];
                   const tx = Math.min(Math.max(m.x, 4), width - 4); // keep the triangle inside the plot box at the edges
@@ -987,7 +1005,24 @@ export function MetricChart({
                   ))}
                 </ul>
               )}
-              {n === 0 && (
+              {threshold && thresholdY !== null && !noData && (
+                <span
+                  data-testid="chart-threshold-label"
+                  className="mono"
+                  style={{ position: "absolute", right: 3, top: Math.min(Math.max(thresholdY - 14, 0), height - 14), fontSize: 11, lineHeight: "13px", padding: "0 4px", borderRadius: 3, color: threshold.color ?? "var(--c-am)", background: "color-mix(in srgb, var(--c-sb) 82%, transparent)", pointerEvents: "none", whiteSpace: "nowrap" }}
+                >
+                  {threshold.label ?? fmt(threshold.value)}
+                </span>
+              )}
+              {showLoading && (
+                <span
+                  role="status"
+                  aria-label={t("charts.loading")}
+                  className="skeleton-shimmer"
+                  style={{ position: "absolute", left: 0, right: 0, top: PAD, height: plotH, borderRadius: 4 }}
+                />
+              )}
+              {noData && !loading && (
                 <span style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "var(--c-tx3)" }}>
                   {t("charts.noData")}
                 </span>

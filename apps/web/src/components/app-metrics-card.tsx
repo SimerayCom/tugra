@@ -6,7 +6,7 @@ import { api } from "../lib/api";
 import { humanizeRatePair } from "../lib/metrics";
 import type { MetricsRange, ContainerMetricSample } from "../lib/types";
 import { useT } from "../i18n/provider";
-import { Btn, Card, EmptyState, Spinner } from "./ui";
+import { Btn, Card, EmptyState } from "./ui";
 import { MetricChart, METRIC_GRID_STYLE, METRIC_CHART_HEIGHT, type ChartEvent } from "./charts";
 
 const METRIC_RANGES: MetricsRange[] = ["1h", "6h", "24h", "7d", "30d"];
@@ -37,7 +37,7 @@ export function AppMetricsCard({ id, kind = "app", events }: { id: string; kind?
       {isError ? (
         <Card style={{ padding: 16 }}><EmptyState>{t("apps.noMetrics")}</EmptyState></Card>
       ) : isLoading && containers.length === 0 ? (
-        <Card style={{ padding: 16, display: "flex", justifyContent: "center" }}><Spinner /></Card>
+        <ContainerMetricsSection name="" samples={[]} events={events} loading />
       ) : containers.length === 0 ? (
         <Card style={{ padding: 16 }}><EmptyState>{t("apps.noMetrics")}</EmptyState></Card>
       ) : (
@@ -60,7 +60,7 @@ function friendlyContainer(name: string): string {
   return name;
 }
 
-function ContainerMetricsSection({ name, samples, events }: { name: string; samples: ContainerMetricSample[]; events?: ChartEvent[] }) {
+function ContainerMetricsSection({ name, samples, events, loading = false }: { name: string; samples: ContainerMetricSample[]; events?: ChartEvent[]; loading?: boolean }) {
   const t = useT();
   const times = samples.map((s) => s.ts);
   const cpu = samples.map((s) => s.cpu);
@@ -71,10 +71,12 @@ function ContainerMetricsSection({ name, samples, events }: { name: string; samp
   const blk = humanizeRatePair(samples.map((s) => s.blkRead), samples.map((s) => s.blkWrite));
   return (
     <div>
-      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--c-tx)", marginBottom: 10, wordBreak: "break-all" }} title={name}>{friendlyContainer(name)}</div>
+      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--c-tx)", marginBottom: 10, wordBreak: "break-all" }} title={name}>
+        {loading ? <span className="skeleton-shimmer" aria-hidden style={{ display: "inline-block", width: 90, height: 13, borderRadius: 4 }} /> : friendlyContainer(name)}
+      </div>
       <div style={METRIC_GRID_STYLE}>
-        <MetricChart height={METRIC_CHART_HEIGHT} data={cpu} peaks={cpuPeaks} times={times} label={t("apps.metricsCpu")} unit="%" color="var(--c-a)" events={events} />
-        <MetricChart height={METRIC_CHART_HEIGHT} data={ram} times={times} label={t("apps.metricsRam")} unit="%" color="var(--c-lapis)" decimals={1} events={events} />
+        <MetricChart height={METRIC_CHART_HEIGHT} data={cpu} peaks={cpuPeaks} times={times} label={t("apps.metricsCpu")} unit="%" color="var(--c-a)" events={events} loading={loading} />
+        <MetricChart height={METRIC_CHART_HEIGHT} data={ram} times={times} label={t("apps.metricsRam")} unit="%" color="var(--c-lapis)" decimals={1} events={events} loading={loading} />
         <MetricChart
           height={METRIC_CHART_HEIGHT}
           times={times}
@@ -82,6 +84,7 @@ function ContainerMetricsSection({ name, samples, events }: { name: string; samp
           unit={" " + net.unit}
           decimals={1}
           events={events}
+          loading={loading}
           series={[
             { key: "in", label: t("apps.metricsNetIn"), values: net.a, color: "var(--c-g)", kind: "area" },
             { key: "out", label: t("apps.metricsNetOut"), values: net.b, color: "var(--c-am)", kind: "area" },
@@ -94,6 +97,7 @@ function ContainerMetricsSection({ name, samples, events }: { name: string; samp
           unit={" " + blk.unit}
           decimals={1}
           events={events}
+          loading={loading}
           series={[
             { key: "read", label: t("apps.metricsBlkRead"), values: blk.a, color: "var(--c-lapis)", kind: "area" },
             { key: "write", label: t("apps.metricsBlkWrite"), values: blk.b, color: "var(--c-am)", kind: "area" },

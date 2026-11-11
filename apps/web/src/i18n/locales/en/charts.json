@@ -13,6 +13,7 @@
   "valueMode": "Value shown",
   "noPoint": "No data",
   "gap": "Gap in data",
+  "loading": "Loading…",
   "event": {
     "deploy": "Deploy",
     "restart": "Restart",
