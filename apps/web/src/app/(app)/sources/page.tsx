@@ -62,7 +62,7 @@ export default function SourcesPage() {
         <Card style={{ marginBottom: 20 }}><EmptyState icon={GitBranch} title={t("sources.emptyTitle")}>{t("sources.noSources")}</EmptyState></Card>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 24 }}>
-          {sources.map((s) => <SourceRow key={s.id} source={s} onDelete={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(s.id); }} />)}
+          {sources.map((s) => <SourceRow key={s.id} source={s} onDelete={async () => { if (await confirm({ body: t("common.deleteNamedConfirm", { name: s.name }), danger: true })) del.mutate(s.id); }} />)}
         </div>
       )}
 

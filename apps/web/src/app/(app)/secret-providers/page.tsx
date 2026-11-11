@@ -122,7 +122,7 @@ function SecretProviderRow({ provider, proReady, isPro }: { provider: SecretProv
   };
   const onDelete = async () => {
     if (provider.refCount > 0) return;
-    if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate();
+    if (await confirm({ body: t("common.deleteNamedConfirm", { name: provider.name }), danger: true })) del.mutate();
   };
   const gate = !proReady || !isPro; // Pro actions disabled while loading or on Community
 

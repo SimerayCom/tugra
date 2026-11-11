@@ -63,7 +63,7 @@ export default function RegistriesPage() {
               username={r.username}
               imagePrefix={r.imagePrefix}
               canWrite={r.canWrite}
-              onDelete={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(r.id); }}
+              onDelete={async () => { if (await confirm({ body: t("common.deleteNamedConfirm", { name: r.name }), danger: true })) del.mutate(r.id); }}
             />
           ))}
         </div>

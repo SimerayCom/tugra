@@ -53,7 +53,7 @@ export default function CloudCredentialsPage() {
               name={c.name}
               provider={c.provider}
               canWrite={c.canWrite}
-              onDelete={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(c.id); }}
+              onDelete={async () => { if (await confirm({ body: t("common.deleteNamedConfirm", { name: c.name }), danger: true })) del.mutate(c.id); }}
             />
           ))}
         </div>

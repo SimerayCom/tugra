@@ -27,6 +27,7 @@
   "edit": "Edit",
   "remove": "Remove",
   "deleteConfirm": "This can't be undone.",
+  "deleteNamedConfirm": "Delete \"{name}\"? This can't be undone.",
   "typeToConfirm": "Type {text} to confirm.",
   "status": {
     "NEW": "New",

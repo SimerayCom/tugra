@@ -71,7 +71,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
       {children}
       {state && (
         <Modal onClose={() => close(false)} zIndex={70} ariaLabel={opts?.title ?? t("common.confirmTitle")}>
-          <div style={{ fontWeight: 700, marginBottom: opts?.body ? 8 : 14 }}>{opts?.title ?? t("common.confirmTitle")}</div>
+          <h2 style={{ fontSize: 15, fontWeight: 700, margin: opts?.body ? "0 0 8px" : "0 0 14px" }}>{opts?.title ?? t("common.confirmTitle")}</h2>
           {opts?.body && <p style={{ fontSize: 13, color: "var(--c-tx2)", margin: "0 0 14px", lineHeight: 1.5 }}>{opts.body}</p>}
           {needsText && (
             <label style={{ display: "block", marginBottom: 14 }}>

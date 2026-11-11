@@ -2608,7 +2608,7 @@ function VolumeBackupsCard({ id, volumes, enabled, intervalHours, retention, des
               <button onClick={async () => { if (await confirm({ body: t("databases.restoreConfirm"), danger: true })) restore.mutate(b.id); }} style={{ background: "transparent", border: "none", color: "var(--c-lapis)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
                 {t("databases.restore")}
               </button>
-              <button aria-label={t("common.delete")} onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(b.id); }} style={{ background: "transparent", border: "none", color: "var(--c-r)", cursor: "pointer", fontFamily: "inherit", display: "inline-flex", alignItems: "center" }}><X size={14} /></button>
+              <button aria-label={t("common.delete")} onClick={async () => { if (await confirm({ body: t("common.deleteNamedConfirm", { name: new Date(b.createdAt).toLocaleString() }), danger: true })) del.mutate(b.id); }} style={{ background: "transparent", border: "none", color: "var(--c-r)", cursor: "pointer", fontFamily: "inherit", display: "inline-flex", alignItems: "center" }}><X size={14} /></button>
             </div>
             {b.status === "FAILED" && (
               // A failed row must say WHY (not look empty): the last line of the scrubbed output, full text in the modal.

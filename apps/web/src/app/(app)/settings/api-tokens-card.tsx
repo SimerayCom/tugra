@@ -125,7 +125,7 @@ export function ApiTokensCard() {
             <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>
               {tk.lastUsedAt ? `${t("settings.tokenUsed")} ${new Date(tk.lastUsedAt).toLocaleDateString()}` : t("settings.tokenUnused")}
             </span>
-            <button onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) revoke.mutate(tk.id); }} style={{ background: "transparent", border: "none", color: "var(--c-r)", fontSize: 12, cursor: "pointer" }}>
+            <button onClick={async () => { if (await confirm({ body: t("common.deleteNamedConfirm", { name: tk.name }), danger: true })) revoke.mutate(tk.id); }} style={{ background: "transparent", border: "none", color: "var(--c-r)", fontSize: 12, cursor: "pointer" }}>
               {t("settings.revoke")}
             </button>
           </div>

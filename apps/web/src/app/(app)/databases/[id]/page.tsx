@@ -433,7 +433,7 @@ export default function DatabaseDetailPage() {
                   {b.status === "SUCCESS" && db.canWrite && compatibleRestoreTargets(allDatabases, db).length > 0 && (
                     <button onClick={() => { setRestoreTarget(""); setRestoreToBackup(b.id); }} style={linkBtn}>{t("databases.restoreTo")}</button>
                   )}
-                  <button aria-label={t("common.delete")} onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) delBackup.mutate(b.id); }} style={{ ...linkBtn, color: "var(--c-r)", display: "inline-flex", alignItems: "center" }}><Trash2 size={14} /></button>
+                  <button aria-label={t("common.delete")} onClick={async () => { if (await confirm({ body: t("common.deleteNamedConfirm", { name: b.filename }), danger: true })) delBackup.mutate(b.id); }} style={{ ...linkBtn, color: "var(--c-r)", display: "inline-flex", alignItems: "center" }}><Trash2 size={14} /></button>
                 </div>
                 {b.status === "FAILED" && (
                   // A failed row must say WHY (not look empty): the last line of the scrubbed output, full text in the modal.

@@ -157,7 +157,7 @@ export default function DestinationsPage() {
                 </div>
                 {d.canWrite && d.type === "S3" && <Btn variant="ghost" onClick={() => setEditId(editId === d.id ? null : d.id)}>{editId === d.id ? t("common.cancel") : t("destinations.edit")}</Btn>}
                 {d.canWrite && <Btn variant="ghost" onClick={() => test.mutate(d.id)} disabled={test.isPending}>{test.isPending ? "…" : t("destinations.test")}</Btn>}
-                {d.canWrite && <Btn variant="danger" onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(d.id); }}>{t("destinations.delete")}</Btn>}
+                {d.canWrite && <Btn variant="danger" onClick={async () => { if (await confirm({ body: t("common.deleteNamedConfirm", { name: d.name }), danger: true })) del.mutate(d.id); }}>{t("destinations.delete")}</Btn>}
               </div>
               {editId === d.id && <EditDestinationForm dest={d} onDone={() => { setEditId(null); qc.invalidateQueries({ queryKey: ["destinations"] }); }} />}
             </div>
