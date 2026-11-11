@@ -1,5 +1,31 @@
 import { describe, it, expect } from "vitest";
-import { collapseCarriageReturns, summarizeDeployLog } from "./log-lines";
+import { collapseCarriageReturns, summarizeDeployLog, logLineLevel } from "./log-lines";
+
+describe("logLineLevel", () => {
+  it("flags structured error markers", () => {
+    expect(logLineLevel("[ERROR] connection refused")).toBe("error");
+    expect(logLineLevel("error: something broke")).toBe("error");
+    expect(logLineLevel('{"level":"error","msg":"boom"}')).toBe("error");
+    expect(logLineLevel("level=fatal reason=oom")).toBe("error");
+    expect(logLineLevel("PANIC: goroutine stack exceeds")).toBe("error");
+  });
+
+  it("flags structured warning markers", () => {
+    expect(logLineLevel("[WARN] disk almost full")).toBe("warn");
+    expect(logLineLevel("warning: deprecated flag")).toBe("warn");
+    expect(logLineLevel('level="warn" msg="retry"')).toBe("warn");
+  });
+
+  it("does NOT tint ordinary prose that merely mentions a level word", () => {
+    expect(logLineLevel("no errors found, all good")).toBeNull();
+    expect(logLineLevel("the user warned the system earlier")).toBeNull();
+    expect(logLineLevel("Listening on :3000")).toBeNull();
+  });
+
+  it("prefers error over warn when both could match", () => {
+    expect(logLineLevel("[ERROR] warning signs ignored")).toBe("error");
+  });
+});
 
 describe("collapseCarriageReturns", () => {
   it("returns input unchanged when there is no carriage return", () => {

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { API_BASE } from "../lib/api";
 import { parseAnsi } from "../lib/ansi";
+import { logLineLevel } from "../lib/log-lines";
 import { useDebounce } from "../hooks/useDebounce";
 import { useContainerLogStream } from "../hooks/useContainerLogStream";
 import { useT } from "../i18n/provider";
@@ -130,18 +131,28 @@ export function LiveLogsCard({
           <div
             ref={ref}
             className="mono"
-            style={{ margin: 0, fontSize: 11, color: "var(--c-tx2)", whiteSpace: wrap ? "pre-wrap" : "pre", wordBreak: wrap ? "break-word" : undefined, maxHeight: 360, overflowY: "auto", overflowX: "auto", background: "var(--c-el)", padding: 10, borderRadius: "var(--r1)" }}
+            // Resizable (height + resize:vertical): a sensible default the user can drag taller or shorter —
+            // the fixed-height panel was the "logs area isn't resizable" complaint.
+            style={{ margin: 0, fontSize: 11, color: "var(--c-tx2)", whiteSpace: wrap ? "pre-wrap" : "pre", wordBreak: wrap ? "break-word" : undefined, height: 380, minHeight: 160, maxHeight: "80vh", resize: "vertical", overflowY: "auto", overflowX: "auto", background: "var(--c-el)", padding: 10, borderRadius: "var(--r1)" }}
           >
             {lines.length
-              ? lines.map((line, i) => (
-                  <div key={i}>
-                    {parseAnsi(showTs ? line : line.replace(TS_RE, "")).map((seg, j) => (
-                      <span key={j} style={seg.color || seg.bold ? { color: seg.color, fontWeight: seg.bold ? 600 : undefined } : undefined}>
-                        {seg.text}
-                      </span>
-                    ))}
-                  </div>
-                ))
+              ? lines.map((line, i) => {
+                  const display = showTs ? line : line.replace(TS_RE, "");
+                  const segs = parseAnsi(display);
+                  // Only tint by level when the line carries NO colour of its own (an app that colours its
+                  // logs via ANSI is left untouched); keeps our heuristic from fighting the app's intent.
+                  const level = segs.some((s) => s.color) ? null : logLineLevel(display);
+                  const lineColor = level === "error" ? "var(--c-r)" : level === "warn" ? "var(--c-am)" : undefined;
+                  return (
+                    <div key={i} style={lineColor ? { color: lineColor } : undefined}>
+                      {segs.map((seg, j) => (
+                        <span key={j} style={seg.color || seg.bold ? { color: seg.color, fontWeight: seg.bold ? 600 : undefined } : undefined}>
+                          {seg.text}
+                        </span>
+                      ))}
+                    </div>
+                  );
+                })
               : t("apps.logsEmpty")}
           </div>
         </>

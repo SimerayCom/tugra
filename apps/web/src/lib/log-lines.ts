@@ -18,6 +18,23 @@ export function collapseCarriageReturns(raw: string): string {
     .join("\n");
 }
 
+/**
+ * Classify a log line's severity for subtle colour-coding, the way a terminal log viewer tints ERROR/WARN
+ * lines. Deliberately CONSERVATIVE to avoid tinting ordinary prose: it matches a structured level marker
+ * (`[ERROR]`, `ERROR:`, `level=error`, `"level":"warn"`) or an all-caps standalone level token, but NOT a
+ * lowercase word in a sentence (so "no errors found" stays untinted). Returns the level or null. Pure.
+ * Only used for lines the container emits WITHOUT their own ANSI colour — an app that colours its own logs
+ * is left alone.
+ */
+export function logLineLevel(line: string): "error" | "warn" | null {
+  const s = line.slice(0, 200);
+  if (/(\[\s*(error|fatal|panic|critical)\s*\]|(^|\s)(error|fatal|panic|critical)\s*:|level"?\s*[=:]\s*"?(error|fatal|panic|critical))/i.test(s)) return "error";
+  if (/(\[\s*warn(ing)?\s*\]|(^|\s)warn(ing)?\s*:|level"?\s*[=:]\s*"?warn(ing)?)/i.test(s)) return "warn";
+  if (/\b(ERROR|FATAL|PANIC)\b/.test(s)) return "error";
+  if (/\bWARN(ING)?\b/.test(s)) return "warn";
+  return null;
+}
+
 // Control lines the agent's deploy script echoes for the hub to parse — not meant for a human reader.
 // `TUGRA_DIGEST=…` feeds digest-pinning (shown separately as the lock chip); `TUGRA_ROLLOUT: <state>`
 // reports post-deploy health; `TUGRA_COMMIT=…` / `TUGRA_COMMIT_MSG_B64=…` carry the deployed commit
