@@ -17,6 +17,10 @@ import { normalizeEdition, type Edition } from "./editions";
 /** Wire-protocol version — the agent (Go) mirrors this; keep them in sync. */
 export const PROTOCOL_VERSION = 2;
 
+/** Lowest wire protocol the hub still accepts from an agent. Equals PROTOCOL_VERSION until a breaking
+ *  change forces supporting a range; raising PROTOCOL_VERSION without raising this keeps older agents. */
+export const MIN_PROTOCOL_VERSION = 2;
+
 /** The application release version, e.g. "0.1.0". "0.0.0-dev" when TUGRA_VERSION is unset. */
 export function appVersion(): string {
   return process.env.TUGRA_VERSION || "0.0.0-dev";
@@ -139,4 +143,69 @@ export function isPatchUpgrade(latest: string, current: string): boolean {
   if (!l || !c) return false;
   if (l.pre.length > 0 || c.pre.length > 0) return false;
   return l.core[0] === c.core[0] && l.core[1] === c.core[1] && compareVersions(l, c) === 1;
+}
+
+// ── Agent compatibility gate ──
+
+export type AgentCompatReason = "protocol_too_old" | "protocol_too_new" | "agent_too_old";
+
+/**
+ * Decide whether an agent may connect, from its wire protocol and (optionally) a minimum agent version.
+ * Pure + dependency-free so it is unit-testable and shared by the enroll AND auth handshakes. The caller
+ * applies policy on the result: reject *_too_old, but warn-and-ACCEPT protocol_too_new, so that rolling the
+ * hub back (e.g. the failed-update recovery) can never lock out an agent that already self-updated.
+ *
+ * `minAgentVersion` is UNSET by default (the version gate is OFF): existing deployments, dev builds
+ * ("0.0.0-dev") and the hub-bundled local agent are never rejected on version. An unparseable
+ * minAgentVersion fails OPEN (ignored) so a misconfigured env can never brick a fleet. This is a
+ * compatibility guard, not a security control — an agent can lie about its version; identity still rests
+ * on ed25519 auth and signed commands.
+ */
+export function checkAgentCompat(input: {
+  protocol: unknown;
+  agentVersion?: unknown;
+  minAgentVersion?: string | null;
+}): { ok: true } | { ok: false; reason: AgentCompatReason; detail: string } {
+  const p = input.protocol;
+  if (typeof p !== "number" || !Number.isSafeInteger(p)) {
+    return {
+      ok: false,
+      reason: "protocol_too_old",
+      detail: `agent sent an invalid protocol version; this hub speaks protocol ${MIN_PROTOCOL_VERSION}`,
+    };
+  }
+  if (p < MIN_PROTOCOL_VERSION) {
+    return {
+      ok: false,
+      reason: "protocol_too_old",
+      detail: `agent protocol ${p} is older than the minimum ${MIN_PROTOCOL_VERSION} this hub supports; update the agent`,
+    };
+  }
+  if (p > PROTOCOL_VERSION) {
+    return {
+      ok: false,
+      reason: "protocol_too_new",
+      detail: `agent protocol ${p} is newer than this hub's ${PROTOCOL_VERSION}; update the hub`,
+    };
+  }
+  // Minimum agent version is an optional operator policy, enforced only when set to a PARSEABLE version.
+  const min = typeof input.minAgentVersion === "string" ? input.minAgentVersion.trim() : "";
+  if (min) {
+    const parsedMin = parseVersion(min);
+    if (parsedMin) {
+      const av = typeof input.agentVersion === "string" ? input.agentVersion : "";
+      const parsedAgent = av ? parseVersion(av) : null;
+      if (!parsedAgent || compareVersions(parsedAgent, parsedMin) < 0) {
+        // The agent version is attacker-controlled and unauthenticated here, and `detail` is both logged and
+        // echoed back — bound and strip control chars so it can't bloat a log line or forge one with newlines.
+        const shown = av.slice(0, 64).replace(/[^\x20-\x7e]/g, "?") || "(unknown)";
+        return {
+          ok: false,
+          reason: "agent_too_old",
+          detail: `agent version ${shown} is below the minimum ${min} required by this hub; update the agent`,
+        };
+      }
+    }
+  }
+  return { ok: true };
 }

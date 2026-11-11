@@ -372,7 +372,7 @@ describe("AgentWsServer capability delivery (agent fail-closed)", () => {
     const server = new AgentWsServer({} as any, servers, {} as any, {} as any, hubSign, {} as any);
     const socket = { readyState: 1, send: jest.fn(), on: jest.fn() } as any;
     (server as any).state.set(socket, { nonce: "n", authed: false });
-    await (server as any).onMessage(socket, JSON.stringify({ type: "enroll", token: "t", publicKey: "pk", agentVersion: "1", hostname: "h" }));
+    await (server as any).onMessage(socket, JSON.stringify({ type: "enroll", protocol: 2, token: "t", publicKey: "pk", agentVersion: "1", hostname: "h" }));
     const sent = JSON.parse(socket.send.mock.calls.at(-1)![0]);
     expect(sent.type).toBe("enrolled");
     expect(sent.capabilities).toEqual(["deploy", "backup"]);
@@ -442,7 +442,7 @@ describe("AgentWsServer auth-rejection signaling (no agent self-brick)", () => {
     const server = serverWith(authResult);
     const sock = mockSocket();
     (server as any).onConnection(sock, { socket: { remoteAddress: "1.2.3.4" }, headers: {} });
-    await (server as any).onMessage(sock, JSON.stringify({ type: "auth", serverId: "s1", signature: "sig" }));
+    await (server as any).onMessage(sock, JSON.stringify({ type: "auth", protocol: 2, serverId: "s1", signature: "sig" }));
     // onConnection sends the challenge first; the rejection is the last frame written.
     const sent = String(sock.send.mock.calls.at(-1)?.[0] ?? "");
     return { sent, sock };
@@ -497,7 +497,7 @@ describe("AgentWsServer pre-auth handshake deadline", () => {
       // authenticates before the deadline → timer cleared → never closed
       const live = mockSocket();
       (server as any).onConnection(live, { socket: { remoteAddress: "1.2.3.4" }, headers: {} });
-      await (server as any).onMessage(live, JSON.stringify({ type: "auth", serverId: "s1", signature: "sig", agentVersion: "1" }));
+      await (server as any).onMessage(live, JSON.stringify({ type: "auth", protocol: 2, serverId: "s1", signature: "sig", agentVersion: "1" }));
       jest.advanceTimersByTime(10_000);
       expect(live.close).not.toHaveBeenCalled();
     } finally {
@@ -531,5 +531,75 @@ describe("AgentWsServer traffic_metrics routing", () => {
     (server as any).state.set(sock, { nonce: "n", authed: false, isAlive: true });
     await (server as any).onMessage(sock, JSON.stringify(body));
     expect(traffic.ingest).not.toHaveBeenCalled();
+  });
+});
+
+describe("AgentWsServer agent compatibility gate", () => {
+  const mockSocket = () => ({ readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn() }) as any;
+  const make = () => {
+    const servers = {
+      markOffline: jest.fn(),
+      enroll: jest.fn().mockResolvedValue({ serverId: "s1", seal: "SEAL" }),
+      authenticate: jest.fn().mockResolvedValue("ok"),
+      grantedCapabilities: jest.fn().mockResolvedValue(["deploy"]),
+    } as any;
+    const server = new AgentWsServer({} as any, servers, {} as any, {} as any, hubSign, {} as any);
+    const socket = mockSocket();
+    (server as any).state.set(socket, { nonce: "n", authed: false });
+    const lastSent = () => JSON.parse(socket.send.mock.calls.at(-1)![0]);
+    return { server, servers, socket, lastSent };
+  };
+  const enroll = (over: object = {}) => ({ type: "enroll", protocol: 2, token: "t", publicKey: "pk", agentVersion: "0.1.0", hostname: "h", ...over });
+  const auth = (over: object = {}) => ({ type: "auth", protocol: 2, serverId: "s1", signature: "sig", agentVersion: "0.1.0", ...over });
+
+  it("enrolls a compatible agent (protocol gate passes)", async () => {
+    const { server, servers, socket, lastSent } = make();
+    await (server as any).onMessage(socket, JSON.stringify(enroll()));
+    expect(servers.enroll).toHaveBeenCalledTimes(1);
+    expect(lastSent().type).toBe("enrolled");
+    expect(socket.close).not.toHaveBeenCalled();
+  });
+
+  it("rejects a too-old protocol on enroll WITHOUT consuming the token (never calls enroll)", async () => {
+    const { server, servers, socket, lastSent } = make();
+    await (server as any).onMessage(socket, JSON.stringify(enroll({ protocol: 1 })));
+    expect(servers.enroll).not.toHaveBeenCalled(); // one-time token preserved for a retry with an updated agent
+    const sent = lastSent();
+    expect(sent.type).toBe("error");
+    expect(sent.code).toBe("agent_incompatible");
+    expect(socket.close).toHaveBeenCalledWith(1008, "agent_incompatible");
+    expect((server as any).state.get(socket).authed).toBe(false);
+    expect((server as any).sockets.has("s1")).toBe(false);
+  });
+
+  it("rejects an agent below HUB_MIN_AGENT_VERSION as incompatible", async () => {
+    const prev = process.env.HUB_MIN_AGENT_VERSION;
+    process.env.HUB_MIN_AGENT_VERSION = "0.1.0-beta.7";
+    try {
+      const { server, servers, socket, lastSent } = make();
+      await (server as any).onMessage(socket, JSON.stringify(enroll({ agentVersion: "0.1.0-beta.3" })));
+      expect(servers.enroll).not.toHaveBeenCalled();
+      expect(lastSent().code).toBe("agent_incompatible");
+    } finally {
+      if (prev === undefined) delete process.env.HUB_MIN_AGENT_VERSION;
+      else process.env.HUB_MIN_AGENT_VERSION = prev;
+    }
+  });
+
+  it("rejects a too-old protocol on auth WITHOUT flipping the server online (never calls authenticate)", async () => {
+    const { server, servers, socket, lastSent } = make();
+    await (server as any).onMessage(socket, JSON.stringify(auth({ protocol: 1 })));
+    expect(servers.authenticate).not.toHaveBeenCalled();
+    expect(lastSent().code).toBe("agent_incompatible");
+    expect(socket.close).toHaveBeenCalledWith(1008, "agent_incompatible");
+    expect((server as any).state.get(socket).authed).toBe(false);
+  });
+
+  it("warns-and-ACCEPTS a newer protocol (hub rollback must not strand a self-updated agent)", async () => {
+    const { server, servers, socket, lastSent } = make();
+    await (server as any).onMessage(socket, JSON.stringify(auth({ protocol: 99 })));
+    expect(servers.authenticate).toHaveBeenCalledTimes(1); // accepted, not rejected
+    expect(lastSent().type).toBe("auth_ok");
+    expect(socket.close).not.toHaveBeenCalled();
   });
 });

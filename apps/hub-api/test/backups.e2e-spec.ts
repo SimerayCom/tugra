@@ -52,7 +52,7 @@ describe("Database backups (e2e)", () => {
       agent.on("message", (raw) => {
         const msg = JSON.parse(raw.toString());
         if (msg.type === "challenge") {
-          agent.send(JSON.stringify({ type: "enroll", protocol: 1, token: enrollToken, publicKey: spkiB64, agentVersion: "e2e", hostname: "h", fingerprint: "f" }));
+          agent.send(JSON.stringify({ type: "enroll", protocol: 2, token: enrollToken, publicKey: spkiB64, agentVersion: "e2e", hostname: "h", fingerprint: "f" }));
         } else if (msg.type === "enrolled") {
           resolve();
         } else if (msg.type === "command") {

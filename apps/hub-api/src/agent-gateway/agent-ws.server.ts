@@ -15,7 +15,7 @@ import type {
   TermExitMsg,
   TermOutputMsg,
 } from "@tugra/shared";
-import { PROTOCOL_VERSION, canonicalCommand, canonicalCommandCancel, canonicalTermStart, canonicalLogStart, canonicalAgentUpdate, canonicalFs } from "@tugra/shared";
+import { PROTOCOL_VERSION, checkAgentCompat, canonicalCommand, canonicalCommandCancel, canonicalTermStart, canonicalLogStart, canonicalAgentUpdate, canonicalFs } from "@tugra/shared";
 import { HubSigningService } from "./hub-signing.service";
 
 /** A sink for one live container-log stream (chunks + terminal exit), keyed by streamId. */
@@ -237,6 +237,8 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
     try {
       switch (msg.type) {
         case "enroll": {
+          // Compatibility gate BEFORE enroll so an incompatible agent never consumes its one-time token.
+          if (this.rejectedForCompat(socket, msg.protocol, msg.agentVersion, `enroll from ${st.remoteIp ?? "?"}`)) return;
           const { serverId, seal } = await this.servers.enroll({
             token: msg.token,
             publicKey: msg.publicKey,
@@ -259,6 +261,9 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           return;
         }
         case "auth": {
+          // Compatibility gate BEFORE authenticate so an incompatible agent never flips the server ONLINE.
+          // serverId is attacker-controlled on an unauthenticated socket — bound it before it reaches the log.
+          if (this.rejectedForCompat(socket, msg.protocol, msg.agentVersion, `auth for server ${String(msg.serverId).slice(0, 64).replace(/[^\x20-\x7e]/g, "?")}`)) return;
           const res = await this.servers.authenticate(
             msg.serverId,
             st.nonce,
@@ -654,11 +659,38 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
     if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(msg));
   }
 
-  private fail(socket: WebSocket, message: string, code?: string): void {
-    // `code` is an optional machine-readable reason. Only "reenroll" is sent today — the single signal
-    // that authorizes an agent to discard its stored identity (see the agent's shouldForgetIdentity).
+  private fail(socket: WebSocket, message: string, code?: string, closeCode?: number): void {
+    // `code` is an optional machine-readable reason. "reenroll" tells an agent to discard its identity;
+    // "agent_incompatible" tells it to keep its identity and update. `closeCode` sets the WS close status
+    // (e.g. 1008 policy-violation for an incompatible agent); omitted → a plain close.
     this.send(socket, code ? { type: "error", message, code } : { type: "error", message });
-    socket.close();
+    if (closeCode !== undefined) socket.close(closeCode, code);
+    else socket.close();
+  }
+
+  /** The operator's minimum required agent version, read lazily from the env so it is testable and
+   *  re-read per connection. Unset (the default) means the agent-version gate is off. */
+  private minAgentVersion(): string | null {
+    return process.env.HUB_MIN_AGENT_VERSION?.trim() || null;
+  }
+
+  /**
+   * Apply the protocol/version compatibility gate. Returns true (and has already rejected + closed the
+   * socket) when the agent is incompatible and must be turned away; false when it may proceed. A protocol
+   * that is merely NEWER than the hub's is logged and ACCEPTED (never a hard reject), so a hub rollback
+   * can't strand an agent that already self-updated. No DB write happens here: the socket is
+   * unauthenticated at this point, so an unverified peer must not be able to stamp state onto a server row.
+   */
+  private rejectedForCompat(socket: WebSocket, protocol: unknown, agentVersion: unknown, where: string): boolean {
+    const compat = checkAgentCompat({ protocol, agentVersion, minAgentVersion: this.minAgentVersion() });
+    if (compat.ok) return false;
+    if (compat.reason === "protocol_too_new") {
+      this.logger.warn(`agent protocol ${String(protocol)} newer than hub ${PROTOCOL_VERSION} (${where}); accepting`);
+      return false;
+    }
+    this.logger.warn(`rejecting incompatible agent (${compat.reason}) on ${where}: ${compat.detail}`);
+    this.fail(socket, compat.detail, "agent_incompatible", 1008);
+    return true;
   }
 
   get protocolVersion(): number {

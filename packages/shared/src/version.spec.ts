@@ -5,10 +5,12 @@ import {
   edition,
   versionInfo,
   PROTOCOL_VERSION,
+  MIN_PROTOCOL_VERSION,
   parseVersion,
   compareVersions,
   isNewer,
   isPatchUpgrade,
+  checkAgentCompat,
 } from "./version";
 
 // @tugra/shared carries no @types/node — type `process` for the spec the same way version.ts does.
@@ -147,6 +149,70 @@ describe("semver comparator", () => {
     it("is false (fail-safe) when either side is unparseable", () => {
       expect(isPatchUpgrade("garbage", "1.2.3")).toBe(false);
       expect(isPatchUpgrade("1.2.4", "")).toBe(false);
+    });
+  });
+});
+
+describe("checkAgentCompat", () => {
+  const ok = (r: ReturnType<typeof checkAgentCompat>) => r.ok === true;
+  const reasonOf = (r: ReturnType<typeof checkAgentCompat>) => (r.ok ? null : r.reason);
+
+  it("the supported floor never exceeds the current protocol", () => {
+    expect(MIN_PROTOCOL_VERSION).toBeLessThanOrEqual(PROTOCOL_VERSION);
+  });
+
+  describe("protocol", () => {
+    it("accepts the current protocol", () => {
+      expect(ok(checkAgentCompat({ protocol: PROTOCOL_VERSION }))).toBe(true);
+    });
+    it("rejects a protocol below the floor as protocol_too_old", () => {
+      expect(reasonOf(checkAgentCompat({ protocol: MIN_PROTOCOL_VERSION - 1 }))).toBe("protocol_too_old");
+    });
+    it("flags a protocol above the hub's as protocol_too_new (caller warns, does not hard-reject)", () => {
+      expect(reasonOf(checkAgentCompat({ protocol: PROTOCOL_VERSION + 1 }))).toBe("protocol_too_new");
+    });
+    it("treats a missing / non-integer / NaN protocol as protocol_too_old (fail closed)", () => {
+      expect(reasonOf(checkAgentCompat({ protocol: undefined }))).toBe("protocol_too_old");
+      expect(reasonOf(checkAgentCompat({ protocol: "2" as unknown }))).toBe("protocol_too_old");
+      expect(reasonOf(checkAgentCompat({ protocol: 2.5 }))).toBe("protocol_too_old");
+      expect(reasonOf(checkAgentCompat({ protocol: Number.NaN }))).toBe("protocol_too_old");
+    });
+  });
+
+  describe("minimum agent version (operator policy)", () => {
+    const P = PROTOCOL_VERSION;
+    it("is OFF by default: any compatible-protocol agent passes with no min set", () => {
+      expect(ok(checkAgentCompat({ protocol: P, agentVersion: "0.0.0-dev" }))).toBe(true);
+      expect(ok(checkAgentCompat({ protocol: P }))).toBe(true);
+    });
+    it("accepts an agent at or above the minimum", () => {
+      expect(ok(checkAgentCompat({ protocol: P, agentVersion: "0.1.0-beta.7", minAgentVersion: "0.1.0-beta.7" }))).toBe(true);
+      expect(ok(checkAgentCompat({ protocol: P, agentVersion: "0.1.0-beta.8", minAgentVersion: "0.1.0-beta.7" }))).toBe(true);
+      expect(ok(checkAgentCompat({ protocol: P, agentVersion: "0.2.0", minAgentVersion: "0.1.9" }))).toBe(true);
+    });
+    it("rejects an agent below the minimum as agent_too_old", () => {
+      expect(reasonOf(checkAgentCompat({ protocol: P, agentVersion: "0.1.0-beta.3", minAgentVersion: "0.1.0-beta.7" }))).toBe("agent_too_old");
+      // a pre-release ranks below the final release of the same core (SemVer §11.3)
+      expect(reasonOf(checkAgentCompat({ protocol: P, agentVersion: "0.1.0-beta.7", minAgentVersion: "0.1.0" }))).toBe("agent_too_old");
+    });
+    it("rejects a missing or unparseable agent version when a minimum is enforced", () => {
+      expect(reasonOf(checkAgentCompat({ protocol: P, minAgentVersion: "0.1.0" }))).toBe("agent_too_old");
+      expect(reasonOf(checkAgentCompat({ protocol: P, agentVersion: "garbage", minAgentVersion: "0.1.0" }))).toBe("agent_too_old");
+    });
+    it("fails OPEN on an unparseable minimum (misconfigured env never bricks a fleet)", () => {
+      expect(ok(checkAgentCompat({ protocol: P, agentVersion: "0.1.0", minAgentVersion: "garbage" }))).toBe(true);
+      expect(ok(checkAgentCompat({ protocol: P, agentVersion: "0.1.0", minAgentVersion: "   " }))).toBe(true);
+    });
+    it("the protocol gate runs before the version gate (too-old protocol wins even under a min)", () => {
+      expect(reasonOf(checkAgentCompat({ protocol: 1, agentVersion: "9.9.9", minAgentVersion: "0.1.0" }))).toBe("protocol_too_old");
+    });
+    it("bounds and sanitizes the echoed agent version (no log bloat / newline forging)", () => {
+      const r = checkAgentCompat({ protocol: PROTOCOL_VERSION, agentVersion: "x\n".repeat(100_000), minAgentVersion: "0.1.0" });
+      expect(r.ok).toBe(false);
+      if (!r.ok) {
+        expect(r.detail.length).toBeLessThan(200);
+        expect(r.detail).not.toContain("\n");
+      }
     });
   });
 });

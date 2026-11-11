@@ -264,10 +264,12 @@ export interface ErrorMsg {
   /**
    * Optional machine-readable reason. "reenroll" is the ONLY authoritative signal that tells an
    * already-enrolled agent its stored identity is gone (server row deleted / never enrolled) and a
-   * fresh enroll is the correct recovery. Absent on generic/transient rejections, which the agent must
-   * treat as "keep the identity and retry" so a transient failure can never brick a valid agent.
+   * fresh enroll is the correct recovery. "agent_incompatible" means the hub rejected this agent's
+   * protocol/version — the agent must KEEP its identity, update, and retry (it is NOT a reenroll signal).
+   * Absent on generic/transient rejections, which the agent must likewise treat as "keep the identity and
+   * retry" so a transient failure can never brick a valid agent.
    */
-  code?: "reenroll";
+  code?: "reenroll" | "agent_incompatible";
 }
 
 // ---- Agent -> Hub --------------------------------------------------------

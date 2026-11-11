@@ -166,7 +166,7 @@ describe("Servers + Agent (e2e)", () => {
             ws.send(
               JSON.stringify({
                 type: "enroll",
-                protocol: 1,
+                protocol: 2,
                 token: enrollToken,
                 publicKey: spkiB64,
                 agentVersion: "e2e",
@@ -289,7 +289,7 @@ describe("Servers + Agent (e2e)", () => {
           ws.send(
             JSON.stringify({
               type: "enroll",
-              protocol: 1,
+              protocol: 2,
               token: "tugra_en_bogus",
               publicKey: "k",
               agentVersion: "e2e",
