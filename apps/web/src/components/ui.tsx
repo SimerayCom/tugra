@@ -45,7 +45,7 @@ function btnChrome(variant: BtnVariant, disabled: boolean): CSSProperties {
       color: "var(--c-tx)",
       border: "1px solid var(--c-bd)",
     },
-    danger: { background: "var(--c-r)", color: "#fff" },
+    danger: { background: "var(--c-r)", color: "var(--c-on-danger)" },
     // Quiet destructive: red label + icon (via currentColor) on the normal ghost chrome. For
     // destructive actions in dense rows/toolbars where a solid-red fill would shout and sit
     // dangerously next to a primary button. The real guard stays the confirm step.
@@ -276,7 +276,7 @@ export function Badge({
   const tones: Record<string, CSSProperties> = {
     muted: { background: "var(--c-el)", color: "var(--c-tx3)" },
     gold: { background: "var(--c-ad)", color: "var(--c-a)" },
-    lapis: { background: "rgba(61,111,229,0.15)", color: "var(--c-lapis)" },
+    lapis: { background: "color-mix(in srgb, var(--c-lapis) 15%, transparent)", color: "var(--c-lapis)" },
     danger: { background: "color-mix(in srgb, var(--c-r) 15%, transparent)", color: "var(--c-r)" },
     warn: { background: "color-mix(in srgb, var(--c-am) 15%, transparent)", color: "var(--c-am)" },
     ok: { background: "color-mix(in srgb, var(--c-g) 15%, transparent)", color: "var(--c-g)" },
@@ -284,7 +284,7 @@ export function Badge({
   return (
     <span
       style={{
-        fontSize: 10,
+        fontSize: "var(--fs-xs)",
         fontWeight: 700,
         letterSpacing: "0.04em",
         padding: "2px 7px",

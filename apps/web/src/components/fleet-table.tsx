@@ -112,7 +112,7 @@ const FleetRowView = memo(
                 {s.name}
                 {row.stale && <span className="sr-only"> — {staleLabel}</span>}
               </Link>
-              <div className="mono" style={{ fontSize: 10.5, color: "var(--c-tx3)" }}>{s.hostname ?? s.publicIp ?? "—"}</div>
+              <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{s.hostname ?? s.publicIp ?? "—"}</div>
             </div>
           </div>
         </Td>
@@ -218,7 +218,7 @@ const FleetCardView = memo(
 function Gauge({ label, value, stale }: { label: string; value: number | null; stale: boolean }) {
   return (
     <div style={{ background: "var(--c-el)", borderRadius: "var(--r1)", padding: "8px 6px", textAlign: "center" }}>
-      <div style={{ fontSize: 9.5, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: ".05em" }}>{label}</div>
+      <div style={{ fontSize: 11, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: ".05em" }}>{label}</div>
       <div className="mono" style={{ fontSize: 16, fontWeight: 700, color: pctColor(value, stale) }}>{value === null ? "—" : `${value.toFixed(0)}%`}</div>
     </div>
   );

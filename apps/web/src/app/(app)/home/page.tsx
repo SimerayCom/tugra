@@ -171,7 +171,7 @@ function Tile({ tile, t, pinned, onManage, onExpose }: { tile: LauncherTile; t: 
         </div>
       ) : null}
       {tile.linkKind === "tunnel" && (
-        <div style={{ fontSize: 10, fontWeight: 600, color: "var(--c-g)", marginTop: 5 }}>{t("home.availableAnywhere")}</div>
+        <div style={{ fontSize: 11, fontWeight: 600, color: "var(--c-g)", marginTop: 5 }}>{t("home.availableAnywhere")}</div>
       )}
     </>
   );

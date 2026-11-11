@@ -68,7 +68,7 @@ export default function DomainsPage() {
                 </div>
                 <div style={{ textAlign: "right" }}>
                   <div style={{ fontSize: 12, color: sslColor(ssl.state), fontWeight: 600 }}>{sslText}</div>
-                  {ssl.issuer && <div style={{ fontSize: 10, color: "var(--c-tx3)" }}>{ssl.issuer}</div>}
+                  {ssl.issuer && <div style={{ fontSize: 11, color: "var(--c-tx3)" }}>{ssl.issuer}</div>}
                 </div>
               </ListRow>
             );

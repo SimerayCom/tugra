@@ -87,7 +87,7 @@ export function ApiTokensCard() {
                   />
                   <span style={{ minWidth: 0 }}>
                     <span style={{ fontWeight: 600 }}>{t(`settings.scope${s.stem}`)}</span>
-                    {s.ownerOnly && <span style={{ fontSize: 10, color: "var(--c-am)", marginLeft: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>{t("settings.scopeOwnerOnly")}</span>}
+                    {s.ownerOnly && <span style={{ fontSize: 11, color: "var(--c-am)", marginLeft: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>{t("settings.scopeOwnerOnly")}</span>}
                     <span style={{ display: "block", fontSize: 11, color: "var(--c-tx3)" }}>{t(`settings.scope${s.stem}Desc`)}</span>
                   </span>
                 </label>
@@ -118,7 +118,7 @@ export function ApiTokensCard() {
             <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{tk.prefix}…</span>
             <span style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
               {tk.scopes.map((sc) => (
-                <span key={sc} className="mono" style={{ fontSize: 10, padding: "1px 6px", borderRadius: 999, background: "var(--c-el)", border: "1px solid var(--c-bd)", color: "var(--c-tx3)" }}>{sc}</span>
+                <span key={sc} className="mono" style={{ fontSize: 11, padding: "1px 6px", borderRadius: 999, background: "var(--c-el)", border: "1px solid var(--c-bd)", color: "var(--c-tx3)" }}>{sc}</span>
               ))}
             </span>
             <span style={{ flex: 1 }} />

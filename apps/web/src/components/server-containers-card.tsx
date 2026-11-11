@@ -188,12 +188,12 @@ function ContainerRow({ row, canWrite, busy, onLogs, onAction, onRemove }: {
             <Badge key={b.key} tone={b.tone}>{t(`servers.badge_${b.key}`, b.vars)}</Badge>
           ))}
         </div>
-        <div className="mono" style={{ fontSize: 10.5, color: "var(--c-tx3)", wordBreak: "break-all", marginTop: 2 }}>{row.name}</div>
+        <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", wordBreak: "break-all", marginTop: 2 }}>{row.name}</div>
       </Td>
       <Td><MeterBar value={row.cpu} tone={metricTone(row.cpu)} text={`${row.cpu.toFixed(0)}%`} label={t("servers.cpu")} /></Td>
       <Td>
         <MeterBar value={row.memPct} tone={metricTone(row.memPct)} text={`${row.memPct.toFixed(0)}%`} label={t("servers.ram")} />
-        <span style={{ display: "block", color: "var(--c-tx3)", fontSize: 10.5, marginTop: 3 }}>{fmtBytes(row.memUsed)} / {fmtBytes(row.memTotal)}</span>
+        <span style={{ display: "block", color: "var(--c-tx3)", fontSize: 11, marginTop: 3 }}>{fmtBytes(row.memUsed)} / {fmtBytes(row.memTotal)}</span>
       </Td>
       <Td className="mono" style={{ color: "var(--c-tx2)" }}>↓{fmtBytes(row.netRx)}/s ↑{fmtBytes(row.netTx)}/s</Td>
       <Td className="mono" style={{ color: "var(--c-tx2)" }}>r{fmtBytes(row.blkRead)}/s w{fmtBytes(row.blkWrite)}/s</Td>
@@ -237,12 +237,12 @@ function StoppedRow({ row, canWrite, busy, onStart, onRemove }: {
           )}
           {row.kind === "system" && <Badge tone="muted">system</Badge>}
         </div>
-        <div className="mono" style={{ fontSize: 10.5, color: "var(--c-tx3)", wordBreak: "break-all", marginTop: 2 }}>{row.name}</div>
+        <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", wordBreak: "break-all", marginTop: 2 }}>{row.name}</div>
       </Td>
       <Td colSpan={4}>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
           <Badge tone="muted">{t("servers.stopped")}</Badge>
-          <span className="mono" style={{ fontSize: 10.5, color: "var(--c-tx3)" }}>{row.state}</span>
+          <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{row.state}</span>
           {/* A dead container is where "Exit 137" / "OOM" matter most — pass the real docker state so the
               exit badge fires for an exited container. */}
           {containerBadges({ ...row, status: row.state }).map((b) => (

@@ -267,7 +267,7 @@ export function Sidebar({ openPalette, mobile = false, open = false, onNavigate 
           ) : (
             <>
               <span style={{ flex: 1, textAlign: "left" }}>{t("nav.search")}</span>
-              <kbd className="mono" style={{ fontSize: 10, background: "var(--c-bd)", borderRadius: 3, padding: "1px 5px" }}>⌘K</kbd>
+              <kbd className="mono" style={{ fontSize: 11, background: "var(--c-bd)", borderRadius: 3, padding: "1px 5px" }}>⌘K</kbd>
             </>
           )}
         </button>
@@ -320,7 +320,7 @@ export function Sidebar({ openPalette, mobile = false, open = false, onNavigate 
                     col ? (
                       <span style={{ position: "absolute", top: 5, right: 9, width: 7, height: 7, borderRadius: "50%", background: "var(--c-r)" }} />
                     ) : (
-                      <span style={{ fontSize: 10, fontWeight: 700, background: "var(--c-r)", color: "#fff", borderRadius: 999, padding: "0 6px", minWidth: 16, textAlign: "center" }}>{badge}</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, background: "var(--c-r)", color: "var(--c-on-danger)", borderRadius: 999, padding: "0 6px", minWidth: 16, textAlign: "center" }}>{badge}</span>
                     )
                   )}
                 </Link>

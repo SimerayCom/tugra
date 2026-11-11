@@ -71,7 +71,7 @@ function ShellInner() {
   const badge = t(`terminal.status${status.charAt(0).toUpperCase()}${status.slice(1)}`);
 
   return (
-    <div ref={rootRef} style={{ height: "100%", display: "flex", flexDirection: "column", minHeight: 0, background: "#0b0b0c" }}>
+    <div ref={rootRef} style={{ height: "100%", display: "flex", flexDirection: "column", minHeight: 0, background: "var(--c-term-bg)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderBottom: "1px solid var(--c-bd)" }}>
         <TerminalIcon size={15} style={{ color: "var(--c-tx3)" }} aria-hidden />
         <span className="mono" style={{ fontSize: 12, color: "var(--c-tx2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</span>

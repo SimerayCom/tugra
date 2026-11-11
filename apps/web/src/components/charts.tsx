@@ -416,7 +416,7 @@ export function ToggleButton({ pressed, onClick, children, label }: { pressed: b
       onClick={onClick}
       style={{
         font: "inherit",
-        fontSize: 10.5,
+        fontSize: 11,
         lineHeight: "14px",
         padding: "2px 8px",
         minHeight: 22,
@@ -773,7 +773,7 @@ export function MetricChart({
         >
           <span style={{ display: "flex", alignItems: "baseline", gap: 6, minWidth: 0 }}>
             <span style={{ fontSize: 13, color: "var(--c-tx2)" }}>{label}</span>
-            <span style={{ fontSize: 10, color: "var(--c-tx3)" }} className="mono">
+            <span style={{ fontSize: 11, color: "var(--c-tx3)" }} className="mono">
               {axisMax.toFixed(decimals)}
               {unit}
             </span>
@@ -837,7 +837,7 @@ export function MetricChart({
                 <Fragment key={i}>
                   {timeBreak[i] && (
                     <tr data-testid="chart-table-gap">
-                      <td colSpan={1 + items.length + (cleanPeaks ? 1 : 0)} style={{ padding: "2px 8px", fontSize: 10, color: "var(--c-tx3)", fontStyle: "italic" }}>
+                      <td colSpan={1 + items.length + (cleanPeaks ? 1 : 0)} style={{ padding: "2px 8px", fontSize: 11, color: "var(--c-tx3)", fontStyle: "italic" }}>
                         {t("charts.gap")}
                       </td>
                     </tr>
@@ -877,7 +877,7 @@ export function MetricChart({
                 <span
                   key={f}
                   className="mono"
-                  style={{ position: "absolute", right: 0, top: PAD + f * plotH - 6, fontSize: 9.5, lineHeight: "12px", color: "var(--c-tx3)" }}
+                  style={{ position: "absolute", right: 0, top: PAD + f * plotH - 6, fontSize: 11, lineHeight: "12px", color: "var(--c-tx3)" }}
                 >
                   {fmtAxis(axisMax * (1 - f))}
                 </span>
@@ -1058,7 +1058,7 @@ export function MetricChart({
                     top: 0,
                     left: `${tk.frac * 100}%`,
                     transform: `translateX(${tk.frac <= 0 ? "0" : tk.frac >= 1 ? "-100%" : "-50%"})`,
-                    fontSize: 9.5,
+                    fontSize: 11,
                     lineHeight: "14px",
                     color: "var(--c-tx3)",
                     whiteSpace: "nowrap",

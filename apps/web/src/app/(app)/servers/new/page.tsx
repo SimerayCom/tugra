@@ -41,7 +41,7 @@ function TabBtn({ active, onClick, children }: { active: boolean; onClick: () =>
       onClick={onClick}
       style={{
         padding: "6px 12px", fontSize: 13, fontFamily: "inherit", cursor: "pointer", borderRadius: "var(--r1)",
-        border: "1px solid var(--c-bd)", background: active ? "var(--c-a)" : "transparent", color: active ? "#fff" : "var(--c-tx2)",
+        border: "1px solid var(--c-bd)", background: active ? "var(--c-a)" : "transparent", color: active ? "var(--c-on-a)" : "var(--c-tx2)",
       }}
     >
       {children}

@@ -32,7 +32,7 @@ export function TerminalModal({
       closeOnEsc={false}
       trapTab={false}
       backdropStyle={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(3px)" }}
-      cardStyle={{ width: "94vw", maxWidth: 1400, height: "88vh", background: "#0b0b0c", padding: 0, display: "flex", flexDirection: "column", overflow: "hidden", borderRadius: 10 }}
+      cardStyle={{ width: "94vw", maxWidth: 1400, height: "88vh", background: "var(--c-term-bg)", padding: 0, display: "flex", flexDirection: "column", overflow: "hidden", borderRadius: 10 }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid var(--c-bd)" }}>
         <span className="mono" style={{ fontSize: 12, color: "var(--c-tx3)" }}>{title}</span>

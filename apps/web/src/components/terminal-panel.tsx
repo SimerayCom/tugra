@@ -28,7 +28,7 @@ export function TerminalPanel({ target, unavailableReason, height = 460 }: { tar
   const badge = t(`terminal.status${status.charAt(0).toUpperCase()}${status.slice(1)}`);
 
   return (
-    <div style={{ background: "#0b0b0c", border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden", display: "flex", flexDirection: "column", height, marginTop: 4 }}>
+    <div style={{ background: "var(--c-term-bg)", border: "1px solid var(--c-bd)", borderRadius: "var(--r2)", overflow: "hidden", display: "flex", flexDirection: "column", height, marginTop: 4 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 10px", borderBottom: "1px solid var(--c-bd)" }}>
         {!unavailableReason && (
           <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: STATUS_COLOR[status] }}>

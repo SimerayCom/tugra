@@ -269,7 +269,7 @@ export default function ClusterDetailPage() {
                   </span>
                   <span style={{ fontWeight: 600, fontSize: 13 }}>{n.name}</span>
                   {n.swarmRole === "MANAGER" && n.serverId === swarm.managerServerId && (
-                    <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: "var(--c-a)", border: "1px solid var(--c-a)", borderRadius: 999, padding: "1px 7px" }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: "var(--c-a)", border: "1px solid var(--c-a)", borderRadius: 999, padding: "1px 7px" }}>
                       {t("clusters.primaryManager")}
                     </span>
                   )}

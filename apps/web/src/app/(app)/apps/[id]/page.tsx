@@ -35,6 +35,7 @@ import type { TerminalTarget } from "../../../../lib/ws";
 import { duplicateKeys, invalidKeys } from "../../../../lib/dotenv";
 import { completeBasicAuthRows, hasIncompleteBasicAuthRow, canSaveBasicAuth, basicAuthSaveRemovesAll } from "../../../../lib/basic-auth";
 import { collapseCarriageReturns, summarizeDeployLog } from "../../../../lib/log-lines";
+import { TERMINAL_PRE_STYLE } from "../../../../lib/terminal-theme";
 import { EnvironmentCard } from "../../../../components/environment-card";
 import { ClusterDeployCard } from "../../../../components/cluster-deploy-card";
 import { TagsCard } from "../../../../components/tags";
@@ -126,7 +127,7 @@ function AppOverview({ app, deployments }: { app: Application; deployments: Depl
   return (
     <Card style={{ padding: 16, marginBottom: 16 }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", paddingBottom: 14, marginBottom: 14, borderBottom: "1px solid var(--c-bd)" }}>
-        <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--c-tx3)" }}>{t("apps.ovLiveUrl")}</span>
+        <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--c-tx3)" }}>{t("apps.ovLiveUrl")}</span>
         {app.url ? (
           <a href={app.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--c-lapis)", fontSize: 14, wordBreak: "break-all" }}>
             {app.url}<ExternalLink size={13} aria-hidden style={{ marginLeft: 4, verticalAlign: "middle" }} />
@@ -138,7 +139,7 @@ function AppOverview({ app, deployments }: { app: Application; deployments: Depl
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 190px), 1fr))", gap: 14 }}>
         {stats.map((s) => (
           <div key={s.label}>
-            <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--c-tx3)", marginBottom: 3 }}>{s.label}</div>
+            <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--c-tx3)", marginBottom: 3 }}>{s.label}</div>
             <div style={{ fontSize: 13, color: "var(--c-tx)" }}>{s.node}</div>
           </div>
         ))}
@@ -579,7 +580,7 @@ export default function AppDetailPage() {
           {appData.source !== "COMPOSE" && (
             <span
               style={{
-                fontSize: 10,
+                fontSize: 11,
                 fontWeight: 700,
                 textTransform: "uppercase",
                 letterSpacing: "0.04em",
@@ -723,15 +724,15 @@ export default function AppDetailPage() {
                     style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", flex: 1, minWidth: 0, textAlign: "left", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "10px 12px", background: "transparent", color: "inherit", font: "inherit", cursor: "pointer", transition: "background .12s, border-color .12s" }}
                   >
                     <span style={{ fontSize: 11, fontWeight: 700, color: deploymentColor(d.status) }}>{d.status}</span>
-                    {d.kind && d.kind !== "DEPLOY" && <span style={{ fontSize: 10, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{t(`apps.kind_${d.kind}`)}</span>}
+                    {d.kind && d.kind !== "DEPLOY" && <span style={{ fontSize: 11, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{t(`apps.kind_${d.kind}`)}</span>}
                     {sum?.rollout && (
-                      <span style={{ fontSize: 10, fontWeight: 700, color: rolloutColor(sum.rollout), border: `1px solid ${rolloutColor(sum.rollout)}`, borderRadius: "999px", padding: "1px 7px", letterSpacing: "0.02em" }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: rolloutColor(sum.rollout), border: `1px solid ${rolloutColor(sum.rollout)}`, borderRadius: "999px", padding: "1px 7px", letterSpacing: "0.02em" }}>
                         {ROLLOUT_KNOWN.has(sum.rollout) ? t(`apps.rollout_${sum.rollout}`) : sum.rollout}
                       </span>
                     )}
                     {d.registryImage && <span title={d.registryImage} style={{ display: "inline-flex", alignItems: "center", color: "var(--c-tx3)" }}><CloudUpload size={12} aria-hidden /></span>}
                     {d.imageDigest && (
-                      <span title={d.imageDigest} className="mono" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10, color: "var(--c-tx3)" }}>
+                      <span title={d.imageDigest} className="mono" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--c-tx3)" }}>
                         <Lock size={11} aria-hidden /> {shortDigest(d.imageDigest)}
                       </span>
                     )}
@@ -1135,9 +1136,9 @@ function DeploymentDetail({
 
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
         <span style={{ fontSize: 15, fontWeight: 700, color: deploymentColor(d.status) }}>{d.status}</span>
-        {d.kind && d.kind !== "DEPLOY" && <span style={{ fontSize: 10, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{t(`apps.kind_${d.kind}`)}</span>}
+        {d.kind && d.kind !== "DEPLOY" && <span style={{ fontSize: 11, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{t(`apps.kind_${d.kind}`)}</span>}
         {sum?.rollout && (
-          <span style={{ fontSize: 10, fontWeight: 700, color: rolloutColor(sum.rollout), border: `1px solid ${rolloutColor(sum.rollout)}`, borderRadius: "999px", padding: "1px 7px", letterSpacing: "0.02em" }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: rolloutColor(sum.rollout), border: `1px solid ${rolloutColor(sum.rollout)}`, borderRadius: "999px", padding: "1px 7px", letterSpacing: "0.02em" }}>
             {ROLLOUT_KNOWN.has(sum.rollout) ? t(`apps.rollout_${sum.rollout}`) : sum.rollout}
           </span>
         )}
@@ -1157,7 +1158,7 @@ function DeploymentDetail({
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 190px), 1fr))", gap: 14, paddingBottom: 14, marginBottom: 14, borderBottom: "1px solid var(--c-bd)" }}>
         {stats.map((s) => (
           <div key={s.label}>
-            <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--c-tx3)", marginBottom: 3 }}>{s.label}</div>
+            <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--c-tx3)", marginBottom: 3 }}>{s.label}</div>
             <div style={{ fontSize: 13, color: "var(--c-tx)" }}>{s.node}</div>
           </div>
         ))}
@@ -1165,7 +1166,7 @@ function DeploymentDetail({
 
       {d.configChanges && d.configChanges.length > 0 && (
         <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--c-tx3)", marginBottom: 6 }}>{t("apps.configChanges", { count: d.configChanges.length })}</div>
+          <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--c-tx3)", marginBottom: 6 }}>{t("apps.configChanges", { count: d.configChanges.length })}</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
             {d.configChanges.map((c) => (
               <div key={c.field} className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>
@@ -1205,7 +1206,7 @@ function DeploymentDetail({
           className="mono"
           style={{ ...TERMINAL_PRE_STYLE, borderRadius: 0, minHeight: 300, maxHeight: "62vh" }}
         >
-          {shown || <span style={{ color: "#6b7280" }}>{t("apps.noBuildOutput")}</span>}
+          {shown || <span style={{ color: "var(--c-term-mute)" }}>{t("apps.noBuildOutput")}</span>}
         </pre>
       </div>
     </Card>
@@ -1244,7 +1245,7 @@ function LiveLogCard({ lines }: { lines: string }) {
           className="mono"
           style={{ ...TERMINAL_PRE_STYLE, maxHeight: 360 }}
         >
-          {collapseCarriageReturns(lines) || <span style={{ color: "#6b7280" }}>{t("apps.waitingForBuild")}</span>}
+          {collapseCarriageReturns(lines) || <span style={{ color: "var(--c-term-mute)" }}>{t("apps.waitingForBuild")}</span>}
         </pre>
         {!following && (
           <Btn
@@ -1260,21 +1261,6 @@ function LiveLogCard({ lines }: { lines: string }) {
     </Card>
   );
 }
-
-// The deployment/build log terminal look — intentionally dark in both themes (like Coolify/Dokploy). Shared
-// by the deployment drill-in, the Logs tab's last-deploy log, and the live build-log stream so they can't drift.
-const TERMINAL_PRE_STYLE: React.CSSProperties = {
-  margin: 0,
-  padding: "12px 14px",
-  fontSize: 12,
-  lineHeight: 1.55,
-  color: "#cdd3de",
-  background: "#0b0e14",
-  whiteSpace: "pre-wrap",
-  wordBreak: "break-word",
-  borderRadius: "var(--r1)",
-  overflow: "auto",
-};
 
 const envField: React.CSSProperties = {
   padding: "6px 9px",
@@ -1894,8 +1880,8 @@ function TaskRow({ appId, task }: { appId: string; task: ScheduledTask }) {
         <span style={{ fontSize: 13, width: 120, overflow: "hidden", textOverflow: "ellipsis" }}>{task.name}</span>
         <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", width: 110 }}>{task.schedule}</span>
         <span className="mono" style={{ fontSize: 11, color: "var(--c-tx2)", flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{task.command}</span>
-        {task.timeoutSec != null && <span style={{ fontSize: 10, color: "var(--c-tx3)" }} title={t("apps.taskTimeoutHint")}>{t("apps.taskTimeoutShort", { n: task.timeoutSec })}</span>}
-        {task.lastRunAt && <span style={{ fontSize: 10, color: "var(--c-tx3)" }}>{t("apps.taskLastRun")}: {new Date(task.lastRunAt).toLocaleString()}</span>}
+        {task.timeoutSec != null && <span style={{ fontSize: 11, color: "var(--c-tx3)" }} title={t("apps.taskTimeoutHint")}>{t("apps.taskTimeoutShort", { n: task.timeoutSec })}</span>}
+        {task.lastRunAt && <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("apps.taskLastRun")}: {new Date(task.lastRunAt).toLocaleString()}</span>}
         <IconBtn label={t("apps.taskRunNow")} onClick={() => run.mutate()} disabled={run.isPending}><Play size={14} /></IconBtn>
         <IconBtn label={t("apps.taskHistory")} onClick={() => setShowHistory((v) => !v)}><History size={14} /></IconBtn>
         <IconBtn label={t("common.edit")} onClick={startEdit}><Pencil size={14} /></IconBtn>

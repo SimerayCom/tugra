@@ -84,13 +84,13 @@ function HottestRow({ row, rank }: { row: HottestContainerRow; rank: number }) {
           <Icon size={15} strokeWidth={2} aria-hidden style={{ flexShrink: 0, opacity: 0.65 }} />
           {href ? <Link href={href} style={{ color: "var(--c-tx)", textDecoration: "none" }}>{row.label}</Link> : row.label}
         </div>
-        <div className="mono" style={{ fontSize: 10.5, color: "var(--c-tx3)", wordBreak: "break-all", marginTop: 2 }}>{row.containerName}</div>
+        <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", wordBreak: "break-all", marginTop: 2 }}>{row.containerName}</div>
       </Td>
       <Td><Link href={`/servers/${row.serverId}`} style={{ color: "var(--c-tx2)", textDecoration: "none" }}>{row.serverName}</Link></Td>
       <Td><MeterBar value={row.cpu} tone={metricTone(row.cpu)} text={`${row.cpu.toFixed(0)}%`} label={t("servers.cpu")} /></Td>
       <Td>
         <MeterBar value={row.memPct} tone={metricTone(row.memPct)} text={`${row.memPct.toFixed(0)}%`} label={t("servers.ram")} />
-        <span style={{ display: "block", color: "var(--c-tx3)", fontSize: 10.5, marginTop: 3 }}>{fmtBytes(row.memUsed)} / {fmtBytes(row.memTotal)}</span>
+        <span style={{ display: "block", color: "var(--c-tx3)", fontSize: 11, marginTop: 3 }}>{fmtBytes(row.memUsed)} / {fmtBytes(row.memTotal)}</span>
       </Td>
       <Td className="mono" style={{ color: "var(--c-tx2)" }}>↓{fmtBytes(row.netRx)}/s ↑{fmtBytes(row.netTx)}/s</Td>
       <Td className="mono" style={{ color: "var(--c-tx2)" }}>r{fmtBytes(row.blkRead)}/s w{fmtBytes(row.blkWrite)}/s</Td>

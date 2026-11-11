@@ -14,11 +14,11 @@ export function TrendCell({ row, cpuLabel, memLabel, width = 56, height = 22 }: 
   return (
     <div style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
       <span title={cpuLabel} style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-        <span aria-hidden="true" style={{ fontSize: 9, fontWeight: 600, letterSpacing: 0.2, color: "var(--c-a)" }}>CPU</span>
+        <span aria-hidden="true" style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.2, color: "var(--c-a)" }}>CPU</span>
         <Sparkline data={s.cpu} width={width} height={height} color="var(--c-a)" fixedMax={100} label={cpuLabel} />
       </span>
       <span title={memLabel} style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-        <span aria-hidden="true" style={{ fontSize: 9, fontWeight: 600, letterSpacing: 0.2, color: "var(--c-lapis)" }}>RAM</span>
+        <span aria-hidden="true" style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.2, color: "var(--c-lapis)" }}>RAM</span>
         <Sparkline data={s.mem} width={width} height={height} color="var(--c-lapis)" fixedMax={100} label={memLabel} />
       </span>
     </div>

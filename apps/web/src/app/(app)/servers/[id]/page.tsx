@@ -666,7 +666,7 @@ function DrainRow({ id, drain, onChanged }: { id: string; drain: LogDrain; onCha
     <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
       <input type="checkbox" checked={drain.enabled} onChange={(e) => toggle.mutate(e.target.checked)} aria-label={drain.name} />
       <span style={{ fontWeight: 600, width: 120, overflow: "hidden", textOverflow: "ellipsis" }}>{drain.name}</span>
-      <span className="mono" style={{ fontSize: 10, color: "var(--c-tx3)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "1px 5px" }}>{t(`logdrains.type_${drain.type}`)}</span>
+      <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "1px 5px" }}>{t(`logdrains.type_${drain.type}`)}</span>
       <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{drain.endpoint}</span>
       <IconBtn label={t("common.edit")} onClick={() => setEditing(true)}><Pencil size={14} /></IconBtn>
       <IconBtn label={t("common.delete")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(); }}>×</IconBtn>

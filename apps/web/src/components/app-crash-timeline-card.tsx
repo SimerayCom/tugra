@@ -8,20 +8,16 @@ import { useT } from "../i18n/provider";
 import { Badge, EmptyState, Spinner } from "./ui";
 import { relativeTime } from "../lib/fleet";
 import { containerBadges } from "../lib/container-badges";
+import { TERMINAL_PRE_STYLE } from "../lib/terminal-theme";
 
-// Frozen pre-crash log tail. Mirrors page.tsx's TERMINAL_PRE_STYLE (not exported there); kept local so
-// this card never imports the 2.5k-line app page. Bounded height — the tail is already clamped server-side.
+// Frozen pre-crash log tail: the shared terminal look with this card's own tighter sizing and a bounded
+// height (the tail is already clamped server-side). Colours/surface come from the one shared source.
 const LOG_PRE_STYLE: CSSProperties = {
+  ...TERMINAL_PRE_STYLE,
   margin: "8px 0 0",
   padding: "10px 12px",
   fontSize: 11,
   lineHeight: 1.5,
-  color: "#cdd3de",
-  background: "#0b0e14",
-  whiteSpace: "pre-wrap",
-  wordBreak: "break-word",
-  borderRadius: "var(--r1)",
-  overflow: "auto",
   maxHeight: 280,
 };
 

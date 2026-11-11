@@ -28,7 +28,7 @@ const installedPill = (running: boolean): React.CSSProperties => ({
   background: running ? "color-mix(in srgb, var(--c-g) 15%, transparent)" : "color-mix(in srgb, var(--c-tx) 8%, transparent)",
 });
 const badgeChip: React.CSSProperties = {
-  fontSize: 10, fontWeight: 600, padding: "1px 7px", borderRadius: 999, whiteSpace: "nowrap",
+  fontSize: 11, fontWeight: 600, padding: "1px 7px", borderRadius: 999, whiteSpace: "nowrap",
   color: "var(--c-tx2)", background: "color-mix(in srgb, var(--c-tx) 8%, transparent)",
 };
 

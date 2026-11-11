@@ -103,7 +103,7 @@ export function Tabs({
             {tab.badge != null && tab.badge > 0 && (
               <span
                 style={{
-                  fontSize: 10,
+                  fontSize: 11,
                   fontWeight: 700,
                   background: "var(--c-el)",
                   color: "var(--c-tx3)",
