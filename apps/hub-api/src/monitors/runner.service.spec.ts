@@ -59,6 +59,14 @@ describe("MonitorRunnerService — METRIC", () => {
     expect(out?.status).not.toBe("UP"); // an old monitor can't stay UP on no data (silent agent / retention purge)
   });
 
+  it("a JUST-CREATED PENDING monitor with no metrics stays UP — first-run grace (matches monitors.e2e)", async () => {
+    // A fresh monitor defaults to PENDING and may not have a sample yet; the freshness gate must NOT alarm it.
+    const { svc, fire } = make(metricMonitor({ status: "PENDING", createdAt: new Date() }), null);
+    const out = await svc.runCheck("m1");
+    expect(out?.status).toBe("UP");
+    expect(fire).not.toHaveBeenCalled();
+  });
+
   it("no metrics yet → UP (no false alarm)", async () => {
     const { svc } = make(metricMonitor(), null);
     const out = await svc.runCheck("m1");

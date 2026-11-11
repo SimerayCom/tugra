@@ -45,16 +45,17 @@ export class MonitorRunnerService {
             diskTotal: Number(row.diskTotal),
           }
         : null;
-      // "no metrics yet" (UP) is a grace ONLY for a genuinely new monitor; an ESTABLISHED monitor (older than
-      // maxAge) with no fresh row can't confirm health → fail. This covers a DOWN/PENDING monitor, and the
-      // windows a DOWN-only check missed: disabled→re-enabled, a deleted server, the retention purge, and a
-      // long PENDING ladder.
+      // "no metrics yet" (UP) is a grace ONLY for a genuinely NEW monitor (a fresh monitor defaults to PENDING
+      // and may not have a sample yet — don't false-alarm it). An absent row fails the check when the monitor
+      // is already DOWN (don't recover from no data) OR is ESTABLISHED (older than maxAge): that covers the
+      // windows a DOWN-only check missed — disabled→re-enabled, a deleted server, the retention purge, and a
+      // long PENDING ladder — without breaking a just-created monitor's grace.
       const established = m.createdAt ? now - new Date(m.createdAt).getTime() > maxAgeMs : false;
       r = metricCheckResult((m.metric as MetricKind) ?? "DISK", sample, m.thresholdPct ?? 90, {
         ts: row?.ts,
         now,
         maxAgeMs,
-        noDataIsDown: m.status !== "UP" || established,
+        noDataIsDown: m.status === "DOWN" || established,
       });
     } else {
       r = await checkers[m.type](m);
