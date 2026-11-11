@@ -128,9 +128,13 @@ jobs:
           file: ${{ matrix.dockerfile }}
           platforms: ${{ matrix.platforms }}
           push: true
-          # No SLSA attestation entry, so the pushed manifest list contains ONLY the platform entries —
-          # keeps the agent's per-arch digest extraction (below) clean.
-          provenance: false
+          # SLSA build provenance (max detail) + an SPDX SBOM, attached as OCI attestation manifests in the
+          # image index (registry-stored, verifiable by digest). These add `unknown/unknown` entries to the
+          # index; the agent's per-arch digest extraction below filters on platform os/arch (and skips the
+          # attestation-manifest entry explicitly), so they never match it. Only non-secret build-args are
+          # passed, so mode=max records nothing sensitive.
+          provenance: mode=max
+          sbom: true
           # hub consumes all four; agent consumes TUGRA_VERSION (via ldflags); web/updater ignore the
           # unused ones. web's NEXT_PUBLIC_API_URL is intentionally left unset → SPA resolves the hub
           # origin at runtime (window.location.origin).
@@ -145,8 +149,8 @@ jobs:
         run: |
           docker buildx imagetools inspect "${{ matrix.image }}:${{ steps.ver.outputs.version }}" --format '{{json .Manifest}}' \
             | jq '{
-                amd64: (.manifests[] | select(.platform.os=="linux" and .platform.architecture=="amd64") | .digest),
-                arm64: (.manifests[] | select(.platform.os=="linux" and .platform.architecture=="arm64") | .digest)
+                amd64: (.manifests[] | select((.annotations["vnd.docker.reference.type"] // "") != "attestation-manifest" and .platform.os=="linux" and .platform.architecture=="amd64") | .digest),
+                arm64: (.manifests[] | select((.annotations["vnd.docker.reference.type"] // "") != "attestation-manifest" and .platform.os=="linux" and .platform.architecture=="arm64") | .digest)
               }' > agent-digests.json
           cat agent-digests.json
       - uses: actions/upload-artifact@v4

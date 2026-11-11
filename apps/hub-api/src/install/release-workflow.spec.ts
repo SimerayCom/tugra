@@ -68,6 +68,35 @@ describe(".github/workflows/release.yml", () => {
     expect(steps.some((s) => s.uses?.startsWith("actions/upload-artifact") && s.with?.name === "agent-digests")).toBe(true);
   });
 
+  it("attaches SLSA provenance and an SBOM to every pushed image", () => {
+    const steps = doc.jobs["build-push"].steps as Array<{ uses?: string; with?: Record<string, unknown> }>;
+    const build = steps.find((s) => s.uses?.startsWith("docker/build-push-action"))!;
+    expect(build).toBeTruthy();
+    expect(String(build.with?.provenance)).toMatch(/^(true|mode=(min|max))$/); // never "false"
+    expect(build.with?.provenance).not.toBe(false);
+    expect(build.with?.sbom).toBe(true);
+  });
+
+  it("the agent digest capture still selects by platform and skips the attestation manifests", () => {
+    const steps = doc.jobs["build-push"].steps as Array<{ run?: string }>;
+    const capture = steps.find((s) => s.run?.includes("agent-digests.json"))!.run!;
+    expect(capture).toContain('.platform.os=="linux"');
+    expect(capture).toContain('.platform.architecture=="amd64"');
+    expect(capture).toContain('.platform.architecture=="arm64"');
+    // attestation entries (provenance/sbom) must be excluded so they can never be picked as the arch digest.
+    expect(capture).toContain("attestation-manifest");
+  });
+
+  it("adding attestations needs no new permissions (signed publish-manifest path untouched)", () => {
+    // Registry-stored BuildKit attestations ride on the existing packages:write; we do NOT add id-token /
+    // attestations here (that would be the separate Sigstore follow-up), and nothing moves to the top level.
+    expect(doc.jobs["build-push"].permissions?.["id-token"]).toBeUndefined();
+    expect(doc.jobs["build-push"].permissions?.attestations).toBeUndefined();
+    expect(doc.permissions?.["id-token"]).toBeUndefined();
+    expect(doc.permissions?.attestations).toBeUndefined();
+    expect(doc.jobs["publish-manifest"].permissions?.contents).toBe("write"); // unchanged
+  });
+
   it("has a publish-manifest job that signs + publishes to gh-pages after the images build", () => {
     const job = doc.jobs["publish-manifest"];
     expect(job).toBeTruthy();

@@ -42,7 +42,10 @@ applying an update. The pipeline lives in [`.github/workflows/release.yml`](../.
    `min_upgrade_from` (the minimum version required to upgrade directly to this release).
 4. The workflow:
    - builds + pushes `ghcr.io/simeraycom/tugra-{hub,web,agent,updater}:<version>` (and `:latest` for stable).
-     The **agent is multi-arch** (`linux/amd64,linux/arm64`); hub/web/updater are `amd64`.
+     The **agent is multi-arch** (`linux/amd64,linux/arm64`); hub/web/updater are `amd64`. Each image carries
+     a **SLSA build-provenance attestation and an SPDX SBOM** (registry-stored); inspect them with
+     `docker buildx imagetools inspect ghcr.io/simeraycom/tugra-hub:<version> --format '{{json .Provenance}}'`
+     (or `'{{json .SBOM}}'`).
    - signs a merged `versions.json` (updating only the released channel, preserving the other) and pushes
      it + its `.sig` to `gh-pages`. The signer self-verifies against the real consumer verifier and refuses
      to publish anything that wouldn't validate.
