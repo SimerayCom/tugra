@@ -45,7 +45,7 @@ function btnChrome(variant: BtnVariant, disabled: boolean): CSSProperties {
       color: "var(--c-tx)",
       border: "1px solid var(--c-bd)",
     },
-    danger: { background: "var(--c-r)", color: "var(--c-on-danger)" },
+    danger: { background: "var(--c-danger-fill)", color: "var(--c-on-danger)" },
     // Quiet destructive: red label + icon (via currentColor) on the normal ghost chrome. For
     // destructive actions in dense rows/toolbars where a solid-red fill would shout and sit
     // dangerously next to a primary button. The real guard stays the confirm step.

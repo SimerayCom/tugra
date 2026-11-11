@@ -184,7 +184,7 @@ export function DeploymentDetail({
           {hasCleaned && (
             <div style={{ display: "inline-flex", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", overflow: "hidden" }}>
               {([{ k: false, label: t("apps.viewRaw") }, { k: true, label: t("apps.viewCleaned") }] as const).map((o) => (
-                <button key={String(o.k)} type="button" onClick={() => setCleaned(o.k)} aria-pressed={cleaned === o.k} style={{ background: cleaned === o.k ? "var(--c-lapis)" : "transparent", color: cleaned === o.k ? "#fff" : "var(--c-tx3)", border: "none", font: "inherit", fontSize: 11, padding: "2px 10px", cursor: "pointer" }}>{o.label}</button>
+                <button key={String(o.k)} type="button" onClick={() => setCleaned(o.k)} aria-pressed={cleaned === o.k} style={{ background: cleaned === o.k ? "var(--c-lapis-fill)" : "transparent", color: cleaned === o.k ? "var(--c-on-lapis)" : "var(--c-tx3)", border: "none", font: "inherit", fontSize: 11, padding: "2px 10px", cursor: "pointer" }}>{o.label}</button>
               ))}
             </div>
           )}

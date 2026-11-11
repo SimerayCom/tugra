@@ -14,7 +14,10 @@
   --c-a: #d4af6a; /* gold — the seal (brand kit) */
   --c-ad: rgba(212, 175, 106, 0.15);
   --c-on-a: #0d0d11; /* text/icon placed ON a --c-a gold fill (gold is light here → dark text) */
-  --c-on-danger: #ffffff; /* text/icon on a solid --c-r danger fill (white reads in both themes) */
+  --c-on-danger: #ffffff; /* text/icon on a solid --c-danger-fill (white reads in both themes) */
+  --c-danger-fill: #dc2626; /* solid danger button/badge fill — deeper than --c-r so white text clears WCAG AA (4.8:1) in BOTH themes; --c-r itself stays the vivid red for text, icons, borders and status dots */
+  --c-lapis-fill: #2563eb; /* solid lapis fill carrying white text (--c-on-lapis clears AA at 5.2:1); --c-lapis stays the vivid blue for text and links */
+  --c-on-lapis: #ffffff; /* text/icon on a --c-lapis-fill */
   --c-tile: rgba(255, 255, 255, 0.06); /* subtle icon-tile surface */
   --c-lapis: #5588f5; /* brand kit blue */
   --c-g: #34c759; /* brand kit green */
