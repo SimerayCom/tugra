@@ -1,5 +1,6 @@
-import { Module } from "@nestjs/common";
+import { Module, type OnModuleInit } from "@nestjs/common";
 import { AgentGatewayModule } from "../agent-gateway/agent-gateway.module";
+import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { MetricsModule } from "../metrics/metrics.module";
 import { CryptoModule } from "../crypto/crypto.module";
 import { MonitorsModule } from "../monitors/monitors.module";
@@ -16,6 +17,7 @@ import { ApplicationsService } from "./applications.service";
 import { AppDatabaseLinksService } from "./app-database-links.service";
 import { AppSecretRefsService } from "./app-secret-refs.service";
 import { DeploymentReconcileService } from "./deployment-reconcile.service";
+import { DeployQueueSweepSchedulerService } from "./deploy-queue-sweep.scheduler.service";
 import { ProxyService } from "./proxy.service";
 import { PanelTlsService } from "./panel-tls.service";
 import { PanelTlsController } from "./panel-tls.controller";
@@ -33,6 +35,7 @@ import { APPLICATIONS_SERVICE } from "./applications.tokens";
     AppDatabaseLinksService,
     AppSecretRefsService,
     DeploymentReconcileService,
+    DeployQueueSweepSchedulerService,
     ProxyService,
     PanelTlsService,
     AiService,
@@ -44,4 +47,19 @@ import { APPLICATIONS_SERVICE } from "./applications.tokens";
   ],
   exports: [ApplicationsService, AppDatabaseLinksService, AppSecretRefsService, APPLICATIONS_SERVICE, PortAllocatorService],
 })
-export class ApplicationsModule {}
+export class ApplicationsModule implements OnModuleInit {
+  constructor(
+    private readonly agentWs: AgentWsServer,
+    private readonly apps: ApplicationsService,
+  ) {}
+
+  onModuleInit(): void {
+    // Re-drive a server's QUEUED deploys whenever its agent (re)connects — the SAFE HALF of surviving a hub
+    // restart (never-started QUEUED rows are re-driven as normal deploys, strictly gated on the agent being
+    // online, which holds by construction since the hook fires after the socket is registered). Mirrors
+    // ServerOpsModule's log-drain on-online piggyback.
+    this.agentWs.setDeployReDriveProvider((serverId) => {
+      void this.apps.redriveQueuedForServer(serverId).catch(() => undefined);
+    });
+  }
+}

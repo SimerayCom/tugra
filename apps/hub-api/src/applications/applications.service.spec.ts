@@ -929,6 +929,114 @@ describe("ApplicationsService", () => {
     );
   });
 
+  describe("redriveQueuedForServer (re-drive QUEUED deploys on agent reconnect)", () => {
+    it("drains once per DISTINCT app that has a QUEUED deploy on the reconnecting server (reuses claimNext)", async () => {
+      const prisma = {
+        deployment: {
+          findMany: jest.fn().mockResolvedValue([
+            { appId: "a1", application: { serverId: "s1", buildServerId: null } },
+            { appId: "a2", application: { serverId: "s1", buildServerId: null } },
+          ]),
+        },
+      } as unknown as PrismaService;
+      const isOnline = jest.fn().mockReturnValue(true);
+      const svc = make(prisma, {} as TeamAccessService, { isOnline } as unknown as AgentWsServer);
+      // Spy on the private drain so we assert the fan-out without exercising the whole execute pipeline;
+      // drain is the SAME machinery manual/webhook submits use, so one-RUNNING-per-app is honoured by reuse.
+      const drain = jest.spyOn(svc as unknown as { drain: (id: string) => Promise<void> }, "drain").mockResolvedValue(undefined);
+      await svc.redriveQueuedForServer("s1");
+      expect(drain).toHaveBeenCalledTimes(2);
+      expect(drain).toHaveBeenCalledWith("a1");
+      expect(drain).toHaveBeenCalledWith("a2");
+    });
+
+    it("queries only non-clustered QUEUED rows for apps on this server as run OR build target (OR mirrors cleanup-runner)", async () => {
+      const findMany = jest.fn().mockResolvedValue([]);
+      const prisma = { deployment: { findMany } } as unknown as PrismaService;
+      const svc = make(prisma, {} as TeamAccessService, { isOnline: jest.fn().mockReturnValue(true) } as unknown as AgentWsServer);
+      await svc.redriveQueuedForServer("s1");
+      const arg = findMany.mock.calls[0][0];
+      expect(arg.where.status).toBe("QUEUED");
+      // clusterId: null — CLUSTERED (swarm) apps are excluded from the reconnect re-drive (a swarm deploy targets
+      // the dynamically-resolved manager, not serverId, so the per-server gate can't gate it); they are cancelled
+      // at boot instead. Only single-server apps resume here.
+      expect(arg.where.application).toEqual({ clusterId: null, OR: [{ serverId: "s1" }, { buildServerId: "s1" }] });
+      expect(arg.distinct).toEqual(["appId"]);
+    });
+
+    it("does nothing when no QUEUED rows match", async () => {
+      const prisma = { deployment: { findMany: jest.fn().mockResolvedValue([]) } } as unknown as PrismaService;
+      const svc = make(prisma, {} as TeamAccessService, { isOnline: jest.fn().mockReturnValue(true) } as unknown as AgentWsServer);
+      const drain = jest.spyOn(svc as unknown as { drain: (id: string) => Promise<void> }, "drain").mockResolvedValue(undefined);
+      await svc.redriveQueuedForServer("s1");
+      expect(drain).not.toHaveBeenCalled();
+    });
+
+    it("STRICT ONLINE GATE: skips (leaves QUEUED) an app whose SEPARATE build server is offline", async () => {
+      const prisma = {
+        deployment: {
+          findMany: jest.fn().mockResolvedValue([
+            { appId: "a1", application: { serverId: "s1", buildServerId: "b1" } },
+          ]),
+        },
+      } as unknown as PrismaService;
+      // s1 (the reconnecting run server) is online, but its build server b1 is not → do NOT drive it yet.
+      const isOnline = jest.fn().mockImplementation((id: string) => id === "s1");
+      const svc = make(prisma, {} as TeamAccessService, { isOnline } as unknown as AgentWsServer);
+      const drain = jest.spyOn(svc as unknown as { drain: (id: string) => Promise<void> }, "drain").mockResolvedValue(undefined);
+      await svc.redriveQueuedForServer("s1");
+      expect(drain).not.toHaveBeenCalled();
+    });
+
+    it("respects one-RUNNING-per-app: when a deploy is already RUNNING, claimNext returns null and nothing is dispatched", async () => {
+      const sendCommand = jest.fn();
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue(app) },
+        deployment: {
+          findMany: jest.fn().mockResolvedValue([
+            { appId: "app1", application: { serverId: "s1", buildServerId: null } },
+          ]),
+          // claimNext's RUNNING-count check sees one already running → it promotes nothing (returns null).
+          count: jest.fn().mockResolvedValue(1),
+        },
+      } as unknown as PrismaService;
+      const isOnline = jest.fn().mockReturnValue(true);
+      const svc = make(prisma, {} as TeamAccessService, { sendCommand, isOnline } as unknown as AgentWsServer);
+      await svc.redriveQueuedForServer("s1");
+      await flushMicrotasks(); // drain is fire-and-forget; let claimNext resolve
+      expect(sendCommand).not.toHaveBeenCalled(); // no bypass of the lock — executeDeploy never ran
+    });
+  });
+
+  describe("sweepStaleQueued (stale-QUEUED backstop)", () => {
+    it("cancels QUEUED rows older than the cutoff whose app has NO RUNNING deploy, with a re-deploy hint", async () => {
+      const updateMany = jest.fn().mockResolvedValue({ count: 3 });
+      const prisma = { deployment: { updateMany } } as unknown as PrismaService;
+      const svc = make(prisma, {} as TeamAccessService, {} as AgentWsServer);
+      const before = Date.now();
+      const n = await svc.sweepStaleQueued(6 * 3600 * 1000);
+      expect(n).toBe(3);
+      const arg = updateMany.mock.calls[0][0];
+      // filters QUEUED ONLY — never SUCCESS/FAILED/RUNNING
+      expect(arg.where.status).toBe("QUEUED");
+      // older than cutoff = now - maxAgeMs (so a merely-rebooting server inside the window is untouched)
+      expect(arg.where.createdAt.lt).toBeInstanceOf(Date);
+      expect((arg.where.createdAt.lt as Date).getTime()).toBeLessThanOrEqual(before - 6 * 3600 * 1000 + 5);
+      // leaves a QUEUED row legitimately waiting BEHIND a RUNNING deploy untouched
+      expect(arg.where.application).toEqual({ deployments: { none: { status: "RUNNING" } } });
+      expect(arg.data).toEqual({ status: "CANCELLED", exitCode: -1, logs: expect.stringMatching(/reconnect/i) });
+    });
+
+    it("never targets a RUNNING/SUCCESS/FAILED row (status filter is exactly QUEUED)", async () => {
+      const updateMany = jest.fn().mockResolvedValue({ count: 0 });
+      const prisma = { deployment: { updateMany } } as unknown as PrismaService;
+      const svc = make(prisma, {} as TeamAccessService, {} as AgentWsServer);
+      await svc.sweepStaleQueued(1000);
+      expect(updateMany.mock.calls[0][0].where.status).toBe("QUEUED");
+      expect(updateMany.mock.calls[0][0].data.status).toBe("CANCELLED");
+    });
+  });
+
   describe("cancelDeployment", () => {
     function svcFor(updateCount: number, row: unknown, opts?: { denied?: boolean }) {
       const prisma = {

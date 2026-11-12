@@ -603,3 +603,57 @@ describe("AgentWsServer agent compatibility gate", () => {
     expect(socket.close).not.toHaveBeenCalled();
   });
 });
+
+describe("AgentWsServer deploy re-drive on (re)connect", () => {
+  const mockSocket = () => ({ readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn() }) as any;
+  const make = (authResult: "ok" | "unknown" | "bad_signature" = "ok") => {
+    const servers = {
+      markOffline: jest.fn(),
+      enroll: jest.fn().mockResolvedValue({ serverId: "s1", seal: "SEAL" }),
+      authenticate: jest.fn().mockResolvedValue(authResult),
+      grantedCapabilities: jest.fn().mockResolvedValue(["deploy"]),
+    } as any;
+    const server = new AgentWsServer({} as any, servers, {} as any, {} as any, hubSign, {} as any);
+    const socket = mockSocket();
+    (server as any).state.set(socket, { nonce: "n", authed: false });
+    return { server, socket };
+  };
+  const enroll = (over: object = {}) => ({ type: "enroll", protocol: 2, token: "t", publicKey: "pk", agentVersion: "0.1.0", hostname: "h", ...over });
+  const auth = (over: object = {}) => ({ type: "auth", protocol: 2, serverId: "s1", signature: "sig", agentVersion: "0.1.0", ...over });
+
+  it("fires the registered re-drive provider with the serverId on a successful ENROLL", async () => {
+    const { server, socket } = make();
+    const reDrive = jest.fn();
+    server.setDeployReDriveProvider(reDrive);
+    await (server as any).onMessage(socket, JSON.stringify(enroll()));
+    expect(reDrive).toHaveBeenCalledWith("s1");
+    // the hook runs AFTER sockets.set, so the server is already online when the callback sees it
+    expect(server.isOnline("s1")).toBe(true);
+  });
+
+  it("fires the registered re-drive provider with the serverId on a successful AUTH (every reconnect)", async () => {
+    const { server, socket } = make("ok");
+    const reDrive = jest.fn();
+    server.setDeployReDriveProvider(reDrive);
+    await (server as any).onMessage(socket, JSON.stringify(auth()));
+    expect(reDrive).toHaveBeenCalledWith("s1");
+    expect(server.isOnline("s1")).toBe(true);
+  });
+
+  it("does NOT fire the re-drive provider on a REJECTED auth (bad signature → agent never comes online)", async () => {
+    const { server, socket } = make("bad_signature");
+    const reDrive = jest.fn();
+    server.setDeployReDriveProvider(reDrive);
+    await (server as any).onMessage(socket, JSON.stringify(auth()));
+    expect(reDrive).not.toHaveBeenCalled();
+    expect(server.isOnline("s1")).toBe(false);
+  });
+
+  it("does NOT fire the re-drive provider on an incompatible agent (rejected before authenticate)", async () => {
+    const { server, socket } = make("ok");
+    const reDrive = jest.fn();
+    server.setDeployReDriveProvider(reDrive);
+    await (server as any).onMessage(socket, JSON.stringify(auth({ protocol: 1 })));
+    expect(reDrive).not.toHaveBeenCalled();
+  });
+});

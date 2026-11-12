@@ -104,6 +104,10 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
   private terminalDelegate?: TerminalDelegate;
   // Called when a server comes online so log-drain config can be (re)pushed.
   private logDrainProvider?: (serverId: string) => void;
+  // Called when a server's agent (re)connects so its QUEUED deploys can be re-driven now that the agent is
+  // online again (a hub restart no longer drops queued deploys). Mirrors logDrainProvider's on-online
+  // piggyback; invoked AFTER this.sockets.set(...), so isOnline(serverId) is already true in the callback.
+  private deployReDriveProvider?: (serverId: string) => void;
 
   constructor(
     private readonly httpAdapterHost: HttpAdapterHost,
@@ -258,6 +262,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
             capabilities: await this.servers.grantedCapabilities(serverId),
           });
           this.logDrainProvider?.(serverId);
+          this.deployReDriveProvider?.(serverId);
           return;
         }
         case "auth": {
@@ -292,6 +297,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
             capabilities: await this.servers.grantedCapabilities(msg.serverId),
           });
           this.logDrainProvider?.(msg.serverId);
+          this.deployReDriveProvider?.(msg.serverId);
           return;
         }
         case "metrics": {
@@ -602,6 +608,13 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
   /** Register a provider that pushes a server's log-drain config when it connects. */
   setLogDrainProvider(fn: (serverId: string) => void): void {
     this.logDrainProvider = fn;
+  }
+
+  /** Register a provider that re-drives a server's QUEUED deploys when its agent (re)connects. Invoked on
+   *  every (re)connect right after the socket is registered, so the callback's online gate holds by
+   *  construction (isOnline(serverId) === true). */
+  setDeployReDriveProvider(fn: (serverId: string) => void): void {
+    this.deployReDriveProvider = fn;
   }
 
   /** Fire-and-forget a message to a connected agent. Returns false if offline. */

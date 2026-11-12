@@ -1475,6 +1475,79 @@ export class ApplicationsService {
   }
 
   /**
+   * Re-drive every app on this server that still has a QUEUED deploy — called when the server's agent
+   * (re)connects to the gateway (registered in ApplicationsModule.onModuleInit). This is the SAFE HALF of
+   * surviving a hub restart: a QUEUED row has startedAt=null and has dispatched NOTHING to the agent
+   * (executeDeploy, the only sender, runs only on a RUNNING row), so re-driving it is a byte-identical
+   * NORMAL deploy — not a resume — with zero double-apply risk. (An interrupted RUNNING deploy is deliberately
+   * NOT resumed here; that stays reaped to FAILED at boot.)
+   *
+   * It fans out one private drain() per distinct app — zero new queue logic — so the one-RUNNING-per-app
+   * invariant is never bypassed: drain → claimNext takes SELECT ... FOR UPDATE on the Application row and
+   * returns null (no-op) if any deploy is already RUNNING, and the deployment_one_running_per_app partial
+   * index is the DB backstop. A deploy for an app that is already RUNNING is simply skipped.
+   *
+   * STRICT ONLINE GATE: a deploy may also need a SEPARATE build server. We drive a drain ONLY when every
+   * server the deploy needs is online (the app's run server AND, if different, its build server). Otherwise
+   * the row is left QUEUED and re-drives when the other server reconnects and fires this hook too — so a
+   * drain is never attempted against an offline agent (no "agent offline" failures in the normal path).
+   *
+   * CLUSTERED (swarm) apps are EXCLUDED here (clusterId: null filter): a swarm deploy targets the dynamically-
+   * resolved cluster manager, not Application.serverId, so this per-server online gate can't safely gate them.
+   * Their QUEUED rows are instead cancelled at boot (DeploymentReconcileService) — resuming clustered deploys
+   * is a deferred follow-up. This keeps the slice from ever driving a swarm deploy at an offline manager.
+   *
+   * Flapping is harmless: each (re)connect re-fires this, and drain/claimNext no-op when a deploy is already
+   * RUNNING, so no debounce is needed. Best-effort — any error is swallowed (the sweep is the backstop).
+   */
+  async redriveQueuedForServer(serverId: string): Promise<void> {
+    // The OR mirrors cleanup-runner.service.ts: an app whose SEPARATE build server reconnects is re-driven too.
+    // clusterId: null — only single-server apps; clustered (swarm) QUEUED rows are cancelled at boot, not resumed.
+    const rows = await this.prisma.deployment.findMany({
+      where: { status: "QUEUED", application: { clusterId: null, OR: [{ serverId }, { buildServerId: serverId }] } },
+      select: { appId: true, application: { select: { serverId: true, buildServerId: true } } },
+      distinct: ["appId"],
+    });
+    for (const row of rows) {
+      const runServerId = row.application.serverId;
+      const buildServerId = row.application.buildServerId;
+      const runOnline = this.agentWs.isOnline(runServerId);
+      const buildOnline = !buildServerId || buildServerId === runServerId || this.agentWs.isOnline(buildServerId);
+      if (!runOnline || !buildOnline) continue; // leave QUEUED — re-drives when the other server reconnects
+      void this.drain(row.appId).catch(() => undefined);
+    }
+  }
+
+  /**
+   * Backstop sweep: cancel QUEUED deploys older than maxAgeMs whose app has NO RUNNING deploy, so a row whose
+   * server's agent never reconnects does not linger QUEUED forever. Driven hourly by
+   * DeployQueueSweepSchedulerService. The `deployments none RUNNING` guard is what keeps this safe alongside
+   * the reconnect re-drive: a QUEUED row that is legitimately WAITING behind an active RUNNING deploy (it
+   * drains normally via executeDeploy's finally) is NOT cancelled — only genuinely-stranded rows are. Filters
+   * status:QUEUED ONLY, so it never touches a RUNNING/SUCCESS/FAILED row. Server-existence-agnostic, so it
+   * uniformly covers server-offline-forever, server-deleted-orphan (Application.serverId is a loose FK, so a
+   * deleted server orphans its apps and their QUEUED rows never re-drive), and any stuck-QUEUED bug. (A
+   * DELETED app needs no sweep: Deployment.application is onDelete:Cascade, so its QUEUED rows are gone.)
+   * Returns the number of rows cancelled. maxAgeMs is generous so a merely-rebooting server is never swept.
+   */
+  async sweepStaleQueued(maxAgeMs: number): Promise<number> {
+    const cutoff = new Date(Date.now() - maxAgeMs);
+    const { count } = await this.prisma.deployment.updateMany({
+      where: {
+        status: "QUEUED",
+        createdAt: { lt: cutoff },
+        application: { deployments: { none: { status: "RUNNING" } } },
+      },
+      data: {
+        status: "CANCELLED",
+        exitCode: -1,
+        logs: "Queued deploy cancelled: its server's agent did not reconnect in time. Re-deploy.",
+      },
+    });
+    return count;
+  }
+
+  /**
    * Cancel a deploy. A QUEUED one is a compare-and-set on status=QUEUED. A RUNNING one is cancelled by
    * killing the in-flight agent command's process group (SIGKILL): executeDeploy then records it CANCELLED
    * (not FAILED), skips auto-rollback and the failure notification, and leaves the app's running state
