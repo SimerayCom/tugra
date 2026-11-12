@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, ServiceUnavailableException } from "@nestjs/common";
 import { Role } from "@prisma/client";
 import { DatabasesService } from "./databases.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -768,5 +768,59 @@ describe("DatabasesService - custom icon", () => {
       const access = { requirePermission: jest.fn().mockRejectedValue(new ForbiddenException()) } as unknown as TeamAccessService;
       await expect(make(prisma, access).setVolumes("u1", "db1", [])).rejects.toThrow();
     });
+  });
+});
+
+describe("DatabasesService.withSystemThrowaway (ungated system seam)", () => {
+  const input = { name: "verify_db1_1", serverId: "s1", engine: "POSTGRES" as const, version: "16", username: "tugra", password: "pw", database: "verifydb" };
+
+  function setup(opts: { provisionExit?: number } = {}) {
+    let row: Record<string, unknown> | null = null;
+    const create = jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => { row = { id: "eph1", ...data }; return Promise.resolve(row); });
+    const update = jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => { row = { ...row, ...data }; return Promise.resolve(row); });
+    const findUnique = jest.fn().mockImplementation(() => Promise.resolve(row));
+    const del = jest.fn().mockResolvedValue({});
+    const linkFindMany = jest.fn().mockResolvedValue([]);
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) },
+      database: { create, update, findUnique, delete: del },
+      appDatabaseLink: { findMany: linkFindMany },
+    } as unknown as PrismaService;
+    const sendCommand = jest.fn().mockResolvedValue({ exitCode: opts.provisionExit ?? 0, output: "" });
+    const grantResourceAccess = jest.fn().mockResolvedValue(undefined);
+    const svc = make(prisma, { grantResourceAccess }, { sendCommand });
+    return { svc, create, update, del, sendCommand, grantResourceAccess };
+  }
+
+  it("creates + provisions a throwaway, runs fn against the live row, and ALWAYS reaps it", async () => {
+    const { svc, create, del, grantResourceAccess } = setup();
+    const seen: Array<{ id: string }> = [];
+    const result = await svc.withSystemThrowaway(input, "actor1", async (eph) => { seen.push(eph as never); return "done"; });
+    expect(result).toBe("done");
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(seen[0].id).toBe("eph1");
+    expect(del).toHaveBeenCalledWith({ where: { id: "eph1" } }); // reaped
+    // The ungated seam must NOT grant per-resource access (the row is reaped in seconds).
+    expect(grantResourceAccess).not.toHaveBeenCalled();
+  });
+
+  it("throws 503 and does NOT run fn when the throwaway never reaches RUNNING, but still reaps", async () => {
+    const { svc, del } = setup({ provisionExit: 1 });
+    const fn = jest.fn();
+    await expect(svc.withSystemThrowaway(input, "actor1", fn)).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(fn).not.toHaveBeenCalled();
+    expect(del).toHaveBeenCalledWith({ where: { id: "eph1" } });
+  });
+
+  it("reaps and propagates when fn throws", async () => {
+    const { svc, del } = setup();
+    await expect(svc.withSystemThrowaway(input, "actor1", async () => { throw new Error("boom"); })).rejects.toThrow("boom");
+    expect(del).toHaveBeenCalledWith({ where: { id: "eph1" } });
+  });
+
+  it("re-asserts the identifier invariants and never creates a row for a bad database name", async () => {
+    const { svc, create } = setup();
+    await expect(svc.withSystemThrowaway({ ...input, database: "bad name" }, "actor1", jest.fn())).rejects.toBeInstanceOf(BadRequestException);
+    expect(create).not.toHaveBeenCalled();
   });
 });

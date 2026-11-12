@@ -1,11 +1,14 @@
-import { Injectable, Logger } from "@nestjs/common";
-import { Backup, Database } from "@prisma/client";
+import { BadGatewayException, Injectable, Logger, ServiceUnavailableException } from "@nestjs/common";
+import { randomBytes } from "crypto";
+import { Backup, Database, Restore, RestoreKind, RestoreStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { NotificationsService } from "../notifications/notifications.service";
+import { DatabasesService } from "../databases/databases.service";
 import {
+  resolveImage,
   supportsBackup,
   type DbCredentials,
   type DbEngine,
@@ -15,12 +18,15 @@ import {
   backupFilename,
   buildBackupScript,
   buildDeleteBackupScript,
+  buildRestoreScript,
+  scrubRestoreOutput,
   scrubRunOutput,
 } from "./backup-script";
 import { BackupAlertsService } from "./backup-alerts.service";
 import { LOCAL_DEST, objectKey, type DestinationSpec } from "./destination";
 
 const BACKUP_TIMEOUT_MS = 300_000; // dumps can be slow
+const RESTORE_TIMEOUT_MS = 300_000;
 
 @Injectable()
 export class BackupRunnerService {
@@ -33,7 +39,142 @@ export class BackupRunnerService {
     private readonly agentWs: AgentWsServer,
     private readonly notifications: NotificationsService,
     private readonly alerts: BackupAlertsService,
+    private readonly databases: DatabasesService,
   ) {}
+
+  /**
+   * Run a restore command, recording the attempt + its outcome. A non-zero exit or an offline agent is
+   * recorded FAILED, alerted on, and thrown — never silently reported as success. Shared by the user-facing
+   * restore / restore-to / import-from-URL paths (via BackupsService) and the verify drill.
+   */
+  async runRestore(opts: {
+    db: Database;
+    command: string;
+    kind: RestoreKind;
+    createdBy: string;
+    auditAction: string;
+    auditMeta?: Record<string, unknown>;
+    backupId?: string | null;
+    sourceDatabaseId?: string | null;
+    // Receives the created Restore row's id as soon as it exists (before the command runs, so it fires on
+    // EVERY outcome including a thrown failure). The verify drill uses it to pin the exact attestation row.
+    onRecord?: (id: string) => void;
+  }): Promise<void> {
+    const { db, command, kind, createdBy, auditAction, auditMeta } = opts;
+    const rec = await this.prisma.restore.create({
+      data: {
+        databaseId: db.id,
+        backupId: opts.backupId ?? null,
+        sourceDatabaseId: opts.sourceDatabaseId ?? null,
+        kind,
+        status: RestoreStatus.RUNNING,
+        createdBy,
+      },
+    });
+    opts.onRecord?.(rec.id);
+
+    let r: { exitCode: number; output: string };
+    try {
+      r = await this.agentWs.sendCommand(db.serverId, command, "backup", RESTORE_TIMEOUT_MS);
+    } catch (e) {
+      await this.failRestore(rec.id, db, null, e instanceof Error ? e.message : String(e));
+      await this.audit.log({ actor: createdBy, action: auditAction, target: db.id, meta: { ...auditMeta, status: "FAILED" } });
+      throw new ServiceUnavailableException("restore could not run (agent offline)");
+    }
+    if (r.exitCode !== 0) {
+      await this.failRestore(rec.id, db, r.exitCode, r.output);
+      await this.audit.log({ actor: createdBy, action: auditAction, target: db.id, meta: { ...auditMeta, status: "FAILED", exitCode: r.exitCode } });
+      throw new BadGatewayException("restore failed");
+    }
+    await this.prisma.restore.update({
+      where: { id: rec.id },
+      data: { status: RestoreStatus.SUCCESS, exitCode: 0, completedAt: new Date() },
+    });
+    await this.audit.log({ actor: createdBy, action: auditAction, target: db.id, meta: { ...auditMeta, status: "SUCCESS" } });
+  }
+
+  private async failRestore(id: string, db: Database, exitCode: number | null, output: string): Promise<void> {
+    await this.prisma.restore.update({
+      where: { id },
+      // Scrub customer row data (pg/mysql echo values in errors) before storing.
+      data: { status: RestoreStatus.FAILED, exitCode, errorTail: scrubRestoreOutput(output), completedAt: new Date() },
+    });
+    // Best-effort: a notification failure must not mask the restore error. Scrub the raw output for
+    // the ctx too (pg/mysql echo customer row values).
+    await this.notifications
+      .fireForEvent(db.teamId, "backup_restore_failed", {
+        dbId: db.id,
+        dbName: db.name,
+        engine: db.engine,
+        exitCode,
+        errorTail: scrubRestoreOutput(output),
+      })
+      .catch(() => undefined);
+  }
+
+  /**
+   * Restore-verification CORE: prove `backup` actually RESTORES by restoring it into a disposable, faithful
+   * throwaway database (same engine/version/image/server as `src`), recording the outcome as a VERIFY Restore
+   * row HOMED ON `src` (so the attestation survives the throwaway's teardown — Restore.database is
+   * onDelete:Cascade). The throwaway is ALWAYS reaped (via {@link DatabasesService.withSystemThrowaway}). A
+   * backup that does not restore is attested FAILED (returned, not thrown); an offline agent surfaces 503.
+   *
+   * This is the cycle-safe home for the drill: BackupSchedulerService injects this runner, and this runner
+   * reaches DatabasesService (which has no backups dependency) — so a scheduled verify never routes through
+   * BackupsService. User-facing privilege checks ('backups'/'databases'/'apps:config') are the CALLER's job
+   * (BackupsService.verifyBackupNow); `createdBy` is only an audit/actor label, never an authz input.
+   */
+  async verifyBackup(src: Database, backup: Backup, createdBy: string): Promise<Restore> {
+    // Read from the backup's OWN destination — the source's current destination may have changed since.
+    const dest = await this.destinationSpecById(backup.destinationId);
+    // Faithful throwaway: only forward the image when it is NON-standard (a standard image is left for the
+    // throwaway to resolve, exactly the ref the source already uses).
+    const standardImage = resolveImage(src.engine as DbEngine, src.version);
+    const customImage = src.image !== standardImage ? src.image : undefined;
+    let recordId: string | undefined;
+    try {
+      await this.databases.withSystemThrowaway(
+        {
+          name: `verify_${src.id}_${Date.now()}`,
+          serverId: src.serverId, // SAME server → the LOCAL-backup same-server rule holds and sendCommand reaches it
+          engine: src.engine as DbEngine,
+          version: src.version,
+          image: customImage,
+          username: "tugra",
+          password: randomBytes(24).toString("base64url"),
+          database: "verifydb",
+          environmentId: src.environmentId,
+        },
+        createdBy,
+        async (ephDb) => {
+          await this.runRestore({
+            // Row HOMED ON SOURCE (survives teardown); same server, so sendCommand(src.serverId) reaches the
+            // throwaway container, while the restore pipeline targets the throwaway's own spec.
+            db: src,
+            command: buildRestoreScript(this.toSpec(ephDb), backup.filename, dest, backup.databaseId),
+            kind: RestoreKind.VERIFY,
+            createdBy,
+            backupId: backup.id,
+            auditAction: "database.verify",
+            auditMeta: { backupId: backup.id, ephemeral: ephDb.id },
+            onRecord: (id) => {
+              recordId = id;
+            },
+          });
+        },
+      );
+    } catch (e) {
+      // A non-zero restore exit (BadGateway) means the drill RAN and the backup did not restore — a
+      // successful verification with a FAILED result, so fall through and return the FAILED VERIFY row.
+      // Anything else (agent offline → ServiceUnavailable, provision failure → 503) propagates.
+      if (!(e instanceof BadGatewayException)) throw e;
+    }
+    // Pin to the EXACT row this drill created — a re-query by (databaseId, kind, backupId) could return a
+    // concurrent or prior same-backup drill's row and misreport this call's result.
+    const row = recordId ? await this.prisma.restore.findUnique({ where: { id: recordId } }) : null;
+    if (!row) throw new BadGatewayException("verification did not record a result");
+    return row;
+  }
 
   toSpec(db: Database): DbSpec {
     const creds = JSON.parse(this.crypto.decrypt(db.credentials)) as DbCredentials;

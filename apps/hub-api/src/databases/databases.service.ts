@@ -224,9 +224,9 @@ export class DatabasesService {
     return view;
   }
 
-  /** Shared DB-record creation: persist + grant-on-create + return the writer view. Callers audit. */
-  private async persistDatabase(
-    userId: string,
+  /** Create the DB record ONLY (no grant, no view) — the shared core for the user path and the ungated
+   *  system throwaway path. Callers that act for a user must additionally grant + audit. */
+  private async persistDatabaseRow(
     server: { id: string; teamId: string },
     fields: {
       name: string;
@@ -237,8 +237,8 @@ export class DatabasesService {
       environmentId: string;
       creds: DbCredentials;
     },
-  ): Promise<DatabaseView> {
-    const db = await this.prisma.database.create({
+  ): Promise<Database> {
+    return this.prisma.database.create({
       data: {
         name: fields.name,
         engine: fields.engine,
@@ -253,11 +253,91 @@ export class DatabasesService {
         status: DbStatus.NEW,
       },
     });
+  }
+
+  /** Shared DB-record creation for a USER: persist + grant-on-create + return the writer view. Callers audit. */
+  private async persistDatabase(
+    userId: string,
+    server: { id: string; teamId: string },
+    fields: {
+      name: string;
+      engine: DbEngine;
+      version: string;
+      image: string;
+      hostPort: number | null;
+      environmentId: string;
+      creds: DbCredentials;
+    },
+  ): Promise<DatabaseView> {
+    const db = await this.persistDatabaseRow(server, fields);
     // Grant-on-create: the creator keeps access to what they made even if later restricted.
     await this.access.grantResourceAccess(userId, server.teamId, db.id);
     const role = (await this.access.teamRole(userId, server.teamId))!;
     // Creator just passed the 'databases' permission gate, so they can write.
     return this.view(db, role, true);
+  }
+
+  /**
+   * Run `fn` against a freshly provisioned, DISPOSABLE database, then ALWAYS reap it (even if `fn` or the
+   * provisioning throws). The throwaway is created/provisioned/removed WITHOUT a user and WITHOUT any RBAC
+   * check — this is the single ungated seam, for in-process SYSTEM flows (the restore-verify drill). Keep it
+   * that way:
+   *  - callers must be in-process + trusted — NEVER wire this to a controller;
+   *  - the user-facing privilege checks ('databases'/'apps:config') live in the CALLER (e.g.
+   *    BackupsService.verifyBackupNow), not here;
+   *  - DatabasesService must stay free of any backups-side dependency, or scheduler→runner→databases would
+   *    close a DI cycle (BackupRunnerService injects this service).
+   * The same identifier/version/image invariants createForImport enforces are re-asserted, because the engine
+   * scripts splice these values. Throws 503 WITHOUT running `fn` if the throwaway never reaches RUNNING, so
+   * `fn` never sees a dead container.
+   */
+  async withSystemThrowaway<T>(
+    input: {
+      name: string;
+      serverId: string;
+      engine: DbEngine;
+      version?: string;
+      image?: string;
+      username: string;
+      password: string;
+      database: string;
+      environmentId?: string;
+    },
+    actor: string,
+    fn: (ephDb: Database) => Promise<T>,
+  ): Promise<T> {
+    const server = await this.prisma.server.findUnique({ where: { id: input.serverId } });
+    if (!server) throw new NotFoundException("server not found");
+    if (!DB_IDENT_RE.test(input.username)) throw new BadRequestException("invalid database username");
+    if (!DB_IDENT_RE.test(input.database)) throw new BadRequestException("invalid database name");
+    if (!input.password || input.password.length > 256) throw new BadRequestException("invalid database password");
+    const version = input.version ?? defaultVersion(input.engine);
+    if (!DB_VERSION_RE.test(version)) throw new BadRequestException("invalid database version");
+    const image = input.image ? assertValidDbImage(input.image) : resolveImage(input.engine, version);
+    const environmentId =
+      input.environmentId ?? (await this.teamDefaults.resolveDefaultEnvironmentId(server.teamId));
+    const db = await this.persistDatabaseRow(server, {
+      name: input.name,
+      engine: input.engine,
+      version,
+      image,
+      hostPort: null, // internal reach only (tugra-net) — a throwaway must never grab a host port
+      environmentId,
+      creds: { username: input.username, password: input.password, database: input.database },
+    });
+    try {
+      const provisioned = await this.provisionRow(db, actor);
+      if (provisioned.status !== DbStatus.RUNNING) {
+        throw new ServiceUnavailableException("could not provision the verification target — try again");
+      }
+      // Re-fetch the row so the caller gets decryptable credentials (the create returned the row as-is).
+      const live = await this.prisma.database.findUnique({ where: { id: db.id } });
+      if (!live) throw new ServiceUnavailableException("verification target vanished");
+      return await fn(live);
+    } finally {
+      // Always reap (no app links a throwaway, so removeRow proceeds even if the agent teardown fails).
+      await this.removeRow(db, { keepVolume: false }, actor).catch(() => undefined);
+    }
   }
 
   async list(userId: string, q?: string): Promise<DatabaseView[]> {
@@ -307,10 +387,19 @@ export class DatabasesService {
 
   async provision(userId: string, id: string): Promise<DatabaseView> {
     const db = await this.requireWrite(userId, id);
+    const updated = await this.provisionRow(db, userId);
+    const role = (await this.access.teamRole(userId, db.teamId))!;
+    // requireWrite above enforced the 'databases' permission, so the actor can write.
+    return this.view(updated, role, true);
+  }
+
+  /** Provisioning core (no RBAC): claim PROVISIONING, run the container, persist the outcome, audit.
+   *  Returns the updated row (status RUNNING/FAILED). Shared by {@link provision} and {@link withSystemThrowaway}. */
+  private async provisionRow(db: Database, actor: string): Promise<Database> {
     // Claim the row as PROVISIONING before the slow (≤5 min) agent call: while it runs we are creating the
     // container + data volume on db.serverId, so a concurrent moveToServer (NEW-only) must be excluded —
     // otherwise the row's serverId could change under us and strand the volume on the old server.
-    await this.prisma.database.update({ where: { id }, data: { status: DbStatus.PROVISIONING } });
+    await this.prisma.database.update({ where: { id: db.id }, data: { status: DbStatus.PROVISIONING } });
     let status: DbStatus = DbStatus.FAILED;
     try {
       const r = await this.agentWs.sendCommand(
@@ -323,11 +412,9 @@ export class DatabasesService {
     } catch {
       status = DbStatus.FAILED;
     }
-    const updated = await this.prisma.database.update({ where: { id }, data: { status } });
-    await this.audit.log({ actor: userId, action: "database.provision", target: id });
-    const role = (await this.access.teamRole(userId, db.teamId))!;
-    // requireWrite above enforced the 'databases' permission, so the actor can write.
-    return this.view(updated, role, true);
+    const updated = await this.prisma.database.update({ where: { id: db.id }, data: { status } });
+    await this.audit.log({ actor, action: "database.provision", target: db.id });
+    return updated;
   }
 
   async stop(userId: string, id: string): Promise<void> {
@@ -339,17 +426,23 @@ export class DatabasesService {
 
   async remove(userId: string, id: string, opts: { keepVolume?: boolean } = {}): Promise<void> {
     const db = await this.requireWrite(userId, id);
+    await this.removeRow(db, opts, userId);
+  }
+
+  /** Removal core (no RBAC): refuse while apps link it, tear the container/volumes down, delete the row, audit.
+   *  Shared by {@link remove} and {@link withSystemThrowaway}'s reap. */
+  private async removeRow(db: Database, opts: { keepVolume?: boolean }, actor: string): Promise<void> {
     // Refuse while apps still link this database — deleting it would break their injected connection
     // URIs. Name the apps so the user knows what to unlink first (the DB-level FK is NO ACTION as a
     // backstop, but this gives a friendly 409 instead of a raw constraint error).
-    const links = await this.prisma.appDatabaseLink.findMany({ where: { databaseId: id }, include: { app: { select: { name: true } } } });
+    const links = await this.prisma.appDatabaseLink.findMany({ where: { databaseId: db.id }, include: { app: { select: { name: true } } } });
     if (links.length > 0) {
       const names = links.map((l) => l.app?.name ?? l.appId);
       throw new ConflictException(`unlink this database from ${names.join(", ")} before deleting it`);
     }
     await this.agentWs.sendCommand(db.serverId, buildDbRemoveScript({ id: db.id, volumes: this.dbVolumes(db) }, opts), "database").catch(() => undefined);
-    await this.prisma.database.delete({ where: { id } });
-    await this.audit.log({ actor: userId, action: "database.remove", target: id, meta: { keepVolume: !!opts.keepVolume } });
+    await this.prisma.database.delete({ where: { id: db.id } });
+    await this.audit.log({ actor, action: "database.remove", target: db.id, meta: { keepVolume: !!opts.keepVolume } });
   }
 
   /**

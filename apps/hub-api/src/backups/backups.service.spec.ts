@@ -1,4 +1,4 @@
-import { BadGatewayException, BadRequestException, ForbiddenException, ServiceUnavailableException } from "@nestjs/common";
+import { BadGatewayException, BadRequestException, ForbiddenException } from "@nestjs/common";
 import { BackupsService } from "./backups.service";
 import { resolveImage } from "../databases/database-script";
 import { BackupRunnerService } from "./backup-runner.service";
@@ -9,7 +9,6 @@ import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { NotificationsService } from "../notifications/notifications.service";
-import { DatabasesService } from "../databases/databases.service";
 import { BackupConfigSchema } from "./dto";
 
 describe("BackupConfigSchema — cron + age retention", () => {
@@ -49,7 +48,6 @@ function make(
   scheduler: Partial<BackupSchedulerService> = {},
   agentWs: Partial<AgentWsServer> = {},
   notifications: Partial<NotificationsService> = { fireForEvent: jest.fn().mockResolvedValue(undefined) },
-  databases: Partial<DatabasesService> = {},
 ) {
   return new BackupsService(
     prisma as PrismaService,
@@ -60,7 +58,6 @@ function make(
     scheduler as BackupSchedulerService,
     notifications as NotificationsService,
     { onScheduleChanged: jest.fn().mockResolvedValue(undefined) } as unknown as BackupAlertsService,
-    databases as DatabasesService,
   );
 }
 
@@ -131,34 +128,32 @@ describe("BackupsService", () => {
     expect(scheduler.schedule).not.toHaveBeenCalled();
   });
 
-  it("imports from a URL by sending a curl restore command to the agent", async () => {
-    const prisma = {
-      database: { findUnique: jest.fn().mockResolvedValue(db) },
-      restore: { create: jest.fn().mockResolvedValue({ id: "r1" }), update: jest.fn().mockResolvedValue({}) },
-    } as unknown as PrismaService;
+  it("imports from a URL by delegating a curl restore command to the runner", async () => {
+    const prisma = { database: { findUnique: jest.fn().mockResolvedValue(db) } } as unknown as PrismaService;
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const runRestore = jest.fn().mockResolvedValue(undefined);
     const runner = {
       toSpec: jest.fn().mockReturnValue({ id: "db1", engine: "POSTGRES", image: "postgres:16", port: 5432, hostPort: null, credentials: { username: "tugra", password: "pw", database: "appdb" } }),
+      runRestore,
     } as unknown as BackupRunnerService;
-    const sendCommand = jest.fn().mockResolvedValue({ exitCode: 0, output: "" });
-    const svc = make(prisma, access, runner, {}, { sendCommand } as unknown as AgentWsServer);
-    await svc.importFromUrl("u1", "db1", { url: "https://x/d.sql.gz", gzip: true, encrypted: false });
-    expect(sendCommand).toHaveBeenCalledWith("s1", expect.stringContaining("curl -fsSL 'https://x/d.sql.gz'"), "backup", expect.any(Number));
-    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "database.import" }));
+    await make(prisma, access, runner).importFromUrl("u1", "db1", { url: "https://x/d.sql.gz", gzip: true, encrypted: false });
+    expect(runRestore).toHaveBeenCalledWith(expect.objectContaining({
+      command: expect.stringContaining("curl -fsSL 'https://x/d.sql.gz'"),
+      kind: "IMPORT_URL",
+      auditAction: "database.import",
+    }));
   });
 
-  it("imports for a Dragonfly database (now supported) — dispatches a DFLY LOAD restore", async () => {
-    const prisma = {
-      database: { findUnique: jest.fn().mockResolvedValue({ ...db, engine: "DRAGONFLY" }) },
-      restore: { create: jest.fn().mockResolvedValue({ id: "r1" }), update: jest.fn().mockResolvedValue({}) },
-    } as unknown as PrismaService;
+  it("imports for a Dragonfly database (now supported) — delegates a DFLY LOAD restore", async () => {
+    const prisma = { database: { findUnique: jest.fn().mockResolvedValue({ ...db, engine: "DRAGONFLY" }) } } as unknown as PrismaService;
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const runRestore = jest.fn().mockResolvedValue(undefined);
     const runner = {
       toSpec: jest.fn().mockReturnValue({ id: "db1", engine: "DRAGONFLY", image: "x", port: 6379, hostPort: null, credentials: { username: "tugra", password: "pw", database: "appdb" } }),
+      runRestore,
     } as unknown as BackupRunnerService;
-    const sendCommand = jest.fn().mockResolvedValue({ exitCode: 0, output: "" });
-    await make(prisma, access, runner, {}, { sendCommand } as unknown as AgentWsServer).importFromUrl("u1", "db1", { url: "https://x/d.rdb.gz", gzip: true, encrypted: false });
-    expect(sendCommand).toHaveBeenCalledWith("s1", expect.stringContaining("DFLY LOAD"), "backup", expect.any(Number));
+    await make(prisma, access, runner).importFromUrl("u1", "db1", { url: "https://x/d.rdb.gz", gzip: true, encrypted: false });
+    expect(runRestore).toHaveBeenCalledWith(expect.objectContaining({ command: expect.stringContaining("DFLY LOAD"), kind: "IMPORT_URL" }));
   });
 });
 
@@ -222,7 +217,7 @@ describe("BackupsService.restore / removeBackup — use the backup's own destina
     } as unknown as PrismaService;
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const destinationSpecById = jest.fn().mockResolvedValue({ type: "LOCAL", encryption: { enabled: false, key: "" } });
-    const runner = { toSpec: jest.fn().mockReturnValue({ engine: "POSTGRES", credentials: { username: "u", password: "p", database: "d" } }), destinationSpecById } as unknown as BackupRunnerService;
+    const runner = { toSpec: jest.fn().mockReturnValue({ engine: "POSTGRES", credentials: { username: "u", password: "p", database: "d" } }), destinationSpecById, runRestore: jest.fn().mockResolvedValue(undefined) } as unknown as BackupRunnerService;
     const agentWs = { sendCommand: jest.fn().mockResolvedValue({ output: "", exitCode: 0 }) } as unknown as AgentWsServer;
     return { svc: make(prisma, access, runner, {}, agentWs), destinationSpecById };
   }
@@ -241,50 +236,36 @@ describe("BackupsService.restore / removeBackup — use the backup's own destina
   });
 });
 
-describe("BackupsService.restore — result verification + history", () => {
+describe("BackupsService.restore — delegates to the runner + history", () => {
+  // runRestore (record RUNNING→SUCCESS/FAILED, fire backup_restore_failed, throw) now lives in
+  // BackupRunnerService and is covered by backup-runner.service.spec; here we prove BackupsService resolves
+  // the backup's own destination, builds the right command, and delegates with the right shape.
   const backup = { id: "bk", databaseId: "db1", status: "SUCCESS", filename: "t.dump.gz", destinationId: null };
   const dbRow = { id: "db1", name: "shop", teamId: "t1", serverId: "s1", engine: "POSTGRES", backupDestinationId: null };
 
-  function setup(sendResult: { output: string; exitCode: number } | Error) {
-    const create = jest.fn().mockResolvedValue({ id: "r1" });
-    const update = jest.fn().mockResolvedValue({});
+  function setup(runRestore = jest.fn().mockResolvedValue(undefined)) {
     const prisma = {
       database: { findUnique: jest.fn().mockResolvedValue(dbRow) },
       backup: { findFirst: jest.fn().mockResolvedValue(backup) },
-      restore: { create, update },
     } as unknown as PrismaService;
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const runner = {
       toSpec: jest.fn().mockReturnValue({ engine: "POSTGRES", credentials: { username: "u", password: "p", database: "d" } }),
       destinationSpecById: jest.fn().mockResolvedValue({ type: "LOCAL", encryption: { enabled: false, key: "" } }),
+      runRestore,
     } as unknown as BackupRunnerService;
-    const sendCommand = jest.fn(sendResult instanceof Error ? () => Promise.reject(sendResult) : () => Promise.resolve(sendResult));
-    const agentWs = { sendCommand } as unknown as AgentWsServer;
-    const fireForEvent = jest.fn().mockResolvedValue(undefined);
-    const svc = make(prisma, access, runner, {}, agentWs, { fireForEvent });
-    return { svc, create, update, fireForEvent };
+    return { svc: make(prisma, access, runner), runRestore };
   }
 
-  it("records a RUNNING attempt then SUCCESS when the command exits 0", async () => {
-    const { svc, create, update, fireForEvent } = setup({ output: "ok", exitCode: 0 });
+  it("delegates a RESTORE to the runner with the backup, kind and audit action", async () => {
+    const { svc, runRestore } = setup();
     await svc.restore("u1", "db1", "bk");
-    expect(create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ kind: "RESTORE", status: "RUNNING", backupId: "bk", createdBy: "u1" }) }));
-    expect(update).toHaveBeenCalledWith({ where: { id: "r1" }, data: expect.objectContaining({ status: "SUCCESS", exitCode: 0 }) });
-    expect(fireForEvent).not.toHaveBeenCalled();
+    expect(runRestore).toHaveBeenCalledWith(expect.objectContaining({ kind: "RESTORE", backupId: "bk", createdBy: "u1", auditAction: "database.restore" }));
   });
 
-  it("records FAILED, fires backup_restore_failed and throws on a non-zero exit", async () => {
-    const { svc, update, fireForEvent } = setup({ output: "ERROR: boom", exitCode: 1 });
-    await expect(svc.restore("u1", "db1", "bk")).rejects.toThrow();
-    expect(update).toHaveBeenCalledWith({ where: { id: "r1" }, data: expect.objectContaining({ status: "FAILED", exitCode: 1, errorTail: expect.stringContaining("boom") }) });
-    expect(fireForEvent).toHaveBeenCalledWith("t1", "backup_restore_failed", expect.objectContaining({ dbName: expect.stringContaining("shop"), exitCode: 1 }));
-  });
-
-  it("records FAILED and throws when the agent is offline (sendCommand rejects)", async () => {
-    const { svc, update, fireForEvent } = setup(new Error("agent offline"));
-    await expect(svc.restore("u1", "db1", "bk")).rejects.toThrow();
-    expect(update).toHaveBeenCalledWith({ where: { id: "r1" }, data: expect.objectContaining({ status: "FAILED", exitCode: null }) });
-    expect(fireForEvent).toHaveBeenCalledWith("t1", "backup_restore_failed", expect.objectContaining({ dbName: expect.stringContaining("shop"), exitCode: null }));
+  it("propagates a restore failure thrown by the runner", async () => {
+    const { svc } = setup(jest.fn().mockRejectedValue(new BadGatewayException("restore failed")));
+    await expect(svc.restore("u1", "db1", "bk")).rejects.toBeInstanceOf(BadGatewayException);
   });
 
   it("listRestores requires write and returns the history view", async () => {
@@ -307,10 +288,6 @@ describe("BackupsService.restoreTo (cross-resource)", () => {
   const okBackup = { id: "bk", databaseId: "A", status: "SUCCESS", filename: "a.sql", destinationId: "s3dest" };
 
   const targetSpec = { id: "B", engine: "POSTGRES", image: "postgres:16", port: 5432, hostPort: null, credentials: { username: "u", password: "p", database: "d" } };
-  const runner = {
-    toSpec: jest.fn().mockReturnValue(targetSpec),
-    destinationSpecById: jest.fn().mockResolvedValue({ type: "LOCAL", encryption: { enabled: false, key: "" } }),
-  } as unknown as BackupRunnerService;
 
   function setup(overrides: { source?: object; target?: object; backup?: object | null }) {
     const source = { ...dbA, ...overrides.source };
@@ -318,18 +295,21 @@ describe("BackupsService.restoreTo (cross-resource)", () => {
     const prisma = {
       database: { findUnique: jest.fn(({ where }: { where: { id: string } }) => Promise.resolve(where.id === "A" ? source : target)) },
       backup: { findFirst: jest.fn().mockResolvedValue("backup" in overrides ? overrides.backup : okBackup) },
-      restore: { create: jest.fn().mockResolvedValue({ id: "r1" }), update: jest.fn().mockResolvedValue({}) },
     } as unknown as PrismaService;
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
-    const sendCommand = jest.fn().mockResolvedValue({ output: "", exitCode: 0 });
-    const agentWs = { sendCommand } as unknown as AgentWsServer;
-    return { svc: make(prisma, access, runner, {}, agentWs), sendCommand };
+    const runRestore = jest.fn().mockResolvedValue(undefined);
+    const runner = {
+      toSpec: jest.fn().mockReturnValue(targetSpec),
+      destinationSpecById: jest.fn().mockResolvedValue({ type: "LOCAL", encryption: { enabled: false, key: "" } }),
+      runRestore,
+    } as unknown as BackupRunnerService;
+    return { svc: make(prisma, access, runner), runRestore };
   }
 
-  it("restores a backup from A into a compatible B (command goes to B's server)", async () => {
-    const { svc, sendCommand } = setup({});
+  it("restores a backup from A into a compatible B (delegates with the target db + source link)", async () => {
+    const { svc, runRestore } = setup({});
     await svc.restoreTo("u1", "A", "bk", "B");
-    expect(sendCommand).toHaveBeenCalledWith("s1", expect.any(String), "backup", 300_000);
+    expect(runRestore).toHaveBeenCalledWith(expect.objectContaining({ kind: "RESTORE_TO", backupId: "bk", sourceDatabaseId: "A", db: expect.objectContaining({ id: "B" }) }));
   });
 
   it("rejects an engine mismatch", async () => {
@@ -348,131 +328,76 @@ describe("BackupsService.restoreTo (cross-resource)", () => {
   });
 });
 
-describe("BackupsService.verifyBackupNow (restore-verify drill)", () => {
+describe("BackupsService.verifyBackupNow — authz + delegation to the runner", () => {
+  // The throwaway lifecycle (provision/restore/reap/pin) now lives in BackupRunnerService.verifyBackup +
+  // DatabasesService.withSystemThrowaway (covered by their own specs). Here BackupsService is the authz layer:
+  // it resolves the backup, enforces the user-facing privilege gates, and delegates.
   const version = "16";
   const stdImage = resolveImage("POSTGRES", version);
   const srcRow = { id: "db1", name: "shop", teamId: "t1", serverId: "s1", engine: "POSTGRES", version, image: stdImage, environmentId: "env1", credentials: "c" };
-  const ephRow = { id: "eph1", teamId: "t1", serverId: "s1", engine: "POSTGRES", version, image: stdImage, credentials: "c" };
   const okBackup = { id: "bk", databaseId: "db1", status: "SUCCESS", filename: "t.dump.gz", destinationId: null };
+  const verifyRow = { id: "r1", kind: "VERIFY", status: "SUCCESS", exitCode: 0, errorTail: null, backupId: "bk", createdAt: new Date(), completedAt: new Date() };
 
-  function setup(opts: { sendResult?: { output: string; exitCode: number } | Error; backup?: object | null; srcOverride?: Record<string, unknown>; provisionStatus?: string; provisionThrows?: boolean } = {}) {
+  function setup(opts: { backup?: object | null; srcOverride?: Record<string, unknown>; verifyResult?: object } = {}) {
     const src = { ...srcRow, ...opts.srcOverride };
-    // Id-keyed Restore store: runRestore creates a row (id "r1") and the drill pins its result by that exact
-    // id via findUnique — so a concurrent/prior same-backup row can never be returned by mistake.
-    const rows: Record<string, Record<string, unknown>> = {};
-    let seq = 0;
-    const create = jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => {
-      const id = `r${++seq}`;
-      rows[id] = { id, exitCode: null, errorTail: null, completedAt: null, ...data };
-      return Promise.resolve({ id });
-    });
-    const update = jest.fn().mockImplementation(({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
-      if (rows[where.id]) Object.assign(rows[where.id], data);
-      return Promise.resolve({});
-    });
-    const restoreFindUnique = jest.fn().mockImplementation(({ where }: { where: { id: string } }) => Promise.resolve(rows[where.id] ?? null));
+    const findFirst = jest.fn().mockResolvedValue("backup" in opts ? opts.backup : okBackup);
     const prisma = {
-      database: { findUnique: jest.fn(({ where }: { where: { id: string } }) => Promise.resolve(where.id === "db1" ? src : ephRow)) },
-      backup: { findFirst: jest.fn().mockResolvedValue("backup" in opts ? opts.backup : okBackup) },
-      restore: { create, update, findUnique: restoreFindUnique },
+      database: { findUnique: jest.fn().mockResolvedValue(src) },
+      backup: { findFirst },
     } as unknown as PrismaService;
     const requirePermission = jest.fn().mockResolvedValue(undefined);
     const access = { requirePermission } as unknown as TeamAccessService;
-    const runner = {
-      toSpec: jest.fn().mockReturnValue({ id: "eph1", engine: "POSTGRES", image: stdImage, port: 5432, hostPort: null, credentials: { username: "tugra", password: "p", database: "verifydb" } }),
-      destinationSpecById: jest.fn().mockResolvedValue({ type: "LOCAL", encryption: { enabled: false, key: "" } }),
-    } as unknown as BackupRunnerService;
-    const sr = opts.sendResult ?? { output: "ok", exitCode: 0 };
-    const sendCommand = jest.fn(sr instanceof Error ? () => Promise.reject(sr) : () => Promise.resolve(sr));
-    const agentWs = { sendCommand } as unknown as AgentWsServer;
-    const createForImport = jest.fn().mockResolvedValue({ id: "eph1" });
-    const provision = jest.fn(opts.provisionThrows
-      ? () => Promise.reject(new Error("provision boom"))
-      : () => Promise.resolve({ id: "eph1", status: opts.provisionStatus ?? "RUNNING" }));
-    const remove = jest.fn().mockResolvedValue(undefined);
-    const fireForEvent = jest.fn().mockResolvedValue(undefined);
-    const databases = { createForImport, provision, remove } as unknown as DatabasesService;
-    const svc = make(prisma, access, runner, {}, agentWs, { fireForEvent }, databases);
-    return { svc, createForImport, provision, remove, sendCommand, create, update, fireForEvent, requirePermission, rows };
+    const verifyBackup = jest.fn().mockResolvedValue(opts.verifyResult ?? verifyRow);
+    const runner = { verifyBackup } as unknown as BackupRunnerService;
+    const svc = make(prisma, access, runner);
+    return { svc, verifyBackup, requirePermission, findFirst };
   }
 
-  it("provisions a faithful throwaway, restores into it, attests SUCCESS on the source, and reaps it", async () => {
-    const { svc, createForImport, provision, remove, create, sendCommand } = setup();
+  it("resolves the latest SUCCESS backup, gates on 'backups' + 'databases', delegates, returns the view", async () => {
+    const { svc, verifyBackup, requirePermission } = setup();
     const view = await svc.verifyBackupNow("u1", "db1");
-    // Faithful target on the SAME server; a STANDARD image is left for createForImport to resolve (image
-    // undefined), so a plain drill does not demand apps:config.
-    const arg = createForImport.mock.calls[0][1];
-    expect(arg).toMatchObject({ serverId: "s1", engine: "POSTGRES", version, database: "verifydb" });
-    expect(arg.image).toBeUndefined();
-    expect(provision).toHaveBeenCalledWith("u1", "eph1");
-    // Restore command goes to the SOURCE server (same server as the throwaway); the row is kind=VERIFY,
-    // homed on the SOURCE db so teardown cannot cascade-delete it.
-    expect(sendCommand).toHaveBeenCalledWith("s1", expect.any(String), "backup", 300_000);
-    expect(create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ kind: "VERIFY", databaseId: "db1", backupId: "bk", createdBy: "u1" }) }));
+    expect(requirePermission).toHaveBeenCalledWith("u1", "t1", "backups");
+    expect(requirePermission).toHaveBeenCalledWith("u1", "t1", "databases");
+    // A STANDARD source image must NOT demand apps:config.
+    expect(requirePermission).not.toHaveBeenCalledWith("u1", "t1", "apps:config");
+    expect(verifyBackup).toHaveBeenCalledWith(expect.objectContaining({ id: "db1" }), expect.objectContaining({ id: "bk" }), "u1");
     expect(view).toMatchObject({ kind: "VERIFY", status: "SUCCESS" });
-    expect(remove).toHaveBeenCalledWith("u1", "eph1", { keepVolume: false });
-    expect(remove).toHaveBeenCalledTimes(1);
   });
 
-  it("forwards a NON-standard source image to the throwaway (reproducing a custom image → apps:config)", async () => {
-    const { svc, createForImport } = setup({ srcOverride: { image: "ghcr.io/acme/pg:custom" } });
+  it("requires apps:config when the source runs a NON-standard image", async () => {
+    const { svc, requirePermission } = setup({ srcOverride: { image: "ghcr.io/acme/pg:custom" } });
     await svc.verifyBackupNow("u1", "db1");
-    expect(createForImport.mock.calls[0][1].image).toBe("ghcr.io/acme/pg:custom");
+    expect(requirePermission).toHaveBeenCalledWith("u1", "t1", "apps:config");
   });
 
-  it("returns a FAILED verify view (not an HTTP error) when the backup does not restore, and still reaps the throwaway", async () => {
-    const { svc, remove, fireForEvent } = setup({ sendResult: { output: "ERROR: corrupt archive", exitCode: 1 } });
+  it("does not demand apps:config when verifying a specific backup id on a standard image", async () => {
+    const { svc, requirePermission, findFirst } = setup();
+    await svc.verifyBackupNow("u1", "db1", "bk");
+    // backupId path queries by id + status SUCCESS.
+    expect(findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: "bk", status: "SUCCESS" }) }));
+    expect(requirePermission).not.toHaveBeenCalledWith("u1", "t1", "apps:config");
+  });
+
+  it("rejects with 400 and never delegates when there is no successful backup to verify", async () => {
+    const { svc, verifyBackup } = setup({ backup: null });
+    await expect(svc.verifyBackupNow("u1", "db1")).rejects.toBeInstanceOf(BadRequestException);
+    expect(verifyBackup).not.toHaveBeenCalled();
+  });
+
+  it("requires 'backups' write on the source before resolving a backup", async () => {
+    const prisma = { database: { findUnique: jest.fn().mockResolvedValue(srcRow) }, backup: { findFirst: jest.fn() } } as unknown as PrismaService;
+    const requirePermission = jest.fn().mockRejectedValue(new ForbiddenException("nope"));
+    const verifyBackup = jest.fn();
+    const svc = make(prisma, { requirePermission } as unknown as TeamAccessService, { verifyBackup } as unknown as BackupRunnerService);
+    await expect(svc.verifyBackupNow("u1", "db1")).rejects.toThrow(/nope/);
+    expect(verifyBackup).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a FAILED verify view when the runner attests the backup did not restore", async () => {
+    const { svc } = setup({ verifyResult: { id: "r9", kind: "VERIFY", status: "FAILED", exitCode: 1, errorTail: "corrupt archive", backupId: "bk", createdAt: new Date(), completedAt: new Date() } });
     const view = await svc.verifyBackupNow("u1", "db1");
     expect(view).toMatchObject({ kind: "VERIFY", status: "FAILED", exitCode: 1 });
     expect(view.errorTail).toContain("corrupt archive");
-    expect(fireForEvent).toHaveBeenCalledWith("t1", "backup_restore_failed", expect.objectContaining({ exitCode: 1 }));
-    expect(remove).toHaveBeenCalledWith("u1", "eph1", { keepVolume: false });
-  });
-
-  it("surfaces 503 when the agent is offline (cannot verify now) and still reaps the throwaway", async () => {
-    const { svc, remove } = setup({ sendResult: new Error("agent offline") });
-    await expect(svc.verifyBackupNow("u1", "db1")).rejects.toBeInstanceOf(ServiceUnavailableException);
-    expect(remove).toHaveBeenCalledWith("u1", "eph1", { keepVolume: false });
-  });
-
-  it("rejects with 400 and provisions nothing when there is no successful backup to verify", async () => {
-    const { svc, createForImport, provision, remove } = setup({ backup: null });
-    await expect(svc.verifyBackupNow("u1", "db1")).rejects.toBeInstanceOf(BadRequestException);
-    expect(createForImport).not.toHaveBeenCalled();
-    expect(provision).not.toHaveBeenCalled();
-    expect(remove).not.toHaveBeenCalled();
-  });
-
-  it("requires 'backups' write on the source before doing anything", async () => {
-    const { svc, requirePermission } = setup();
-    await svc.verifyBackupNow("u1", "db1");
-    expect(requirePermission).toHaveBeenCalledWith("u1", "t1", "backups");
-  });
-
-  it("surfaces 503 (not a FAILED attestation) when the throwaway fails to provision, and still reaps it", async () => {
-    // provision() swallows agent failures and returns a FAILED view without throwing; the drill must not then
-    // restore into a non-existent container and blame the backup.
-    const { svc, remove, sendCommand, fireForEvent } = setup({ provisionStatus: "FAILED" });
-    await expect(svc.verifyBackupNow("u1", "db1")).rejects.toBeInstanceOf(ServiceUnavailableException);
-    expect(sendCommand).not.toHaveBeenCalled(); // never attempted the restore
-    expect(fireForEvent).not.toHaveBeenCalled(); // no false "backup won't restore" alert
-    expect(remove).toHaveBeenCalledWith("u1", "eph1", { keepVolume: false });
-  });
-
-  it("still reaps the throwaway when provisioning throws outright", async () => {
-    const { svc, remove } = setup({ provisionThrows: true });
-    await expect(svc.verifyBackupNow("u1", "db1")).rejects.toThrow();
-    expect(remove).toHaveBeenCalledWith("u1", "eph1", { keepVolume: false });
-  });
-
-  it("pins the returned attestation to THIS drill's row even when a prior VERIFY row exists for the same backup", async () => {
-    const { svc, rows } = setup();
-    // Seed a stale prior VERIFY attestation for the same backup (a different, older row).
-    rows["stale"] = { id: "stale", kind: "VERIFY", status: "FAILED", databaseId: "db1", backupId: "bk", exitCode: 1, errorTail: "old", completedAt: new Date(), createdAt: new Date() };
-    const view = await svc.verifyBackupNow("u1", "db1");
-    // The returned view is the row THIS call created (SUCCESS), not the stale FAILED one.
-    expect(view.status).toBe("SUCCESS");
-    expect(view.id).not.toBe("stale");
   });
 });
 
