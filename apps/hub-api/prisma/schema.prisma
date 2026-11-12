@@ -1263,6 +1263,7 @@ model Application {
   deployStrategy String       @default("ROLLING") // "ROLLING" (zero-downtime) | "RECREATE"
   rollbackOnFailure Boolean   @default(true)      // auto-rollback to the previous version on a failed health gate
   imagesToKeep   Int?         // rollback images retained for keep-N pruning (1..20); null → DEFAULT_DEPLOY_IMAGE_KEEP (5)
+  postCutoverSoakSec Int      @default(0) // ROLLING: seconds to keep the previous container after cutover and auto-revert on a sustained failure (0 = off)
   status         AppStatus    @default(NEW)
   webhookToken   String?      @unique
   webhookSecret  String?

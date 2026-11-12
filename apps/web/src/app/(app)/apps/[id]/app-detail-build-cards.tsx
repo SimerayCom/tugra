@@ -242,14 +242,15 @@ export function BuildArgsCard({ id }: { id: string }) {
   );
 }
 
-export function DeploySettingsCard({ id, deployStrategy, rollbackOnFailure, imagesToKeep }: { id: string; deployStrategy: string; rollbackOnFailure: boolean; imagesToKeep: number | null }) {
+export function DeploySettingsCard({ id, deployStrategy, rollbackOnFailure, imagesToKeep, postCutoverSoakSec }: { id: string; deployStrategy: string; rollbackOnFailure: boolean; imagesToKeep: number | null; postCutoverSoakSec: number }) {
   const t = useT();
   const qc = useQueryClient();
   const [strategy, setStrategy] = useState<"ROLLING" | "RECREATE">(deployStrategy === "RECREATE" ? "RECREATE" : "ROLLING");
   const [rollback, setRollback] = useState(rollbackOnFailure);
   const [keep, setKeep] = useState(imagesToKeep == null ? "" : String(imagesToKeep)); // blank = default (5)
+  const [soak, setSoak] = useState(postCutoverSoakSec ? String(postCutoverSoakSec) : ""); // blank = 0 (off)
   const save = useMutation({
-    mutationFn: () => api.setAppDeploySettings(id, { deployStrategy: strategy, rollbackOnFailure: rollback, imagesToKeep: keep.trim() === "" ? null : Number(keep) }),
+    mutationFn: () => api.setAppDeploySettings(id, { deployStrategy: strategy, rollbackOnFailure: rollback, imagesToKeep: keep.trim() === "" ? null : Number(keep), postCutoverSoakSec: soak.trim() === "" ? 0 : Number(soak) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
     meta: { successMessage: t("apps.saved") },
   });
@@ -270,9 +271,14 @@ export function DeploySettingsCard({ id, deployStrategy, rollbackOnFailure, imag
           {t("apps.imagesToKeep")}
           <input type="number" min={1} max={20} placeholder="5" style={{ ...envField, width: 72 }} value={keep} onChange={(e) => setKeep(e.target.value)} aria-label={t("apps.imagesToKeep")} />
         </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx)" }}>
+          {t("apps.postCutoverSoak")}
+          <input type="number" min={0} max={600} placeholder="0" style={{ ...envField, width: 72 }} value={soak} onChange={(e) => setSoak(e.target.value)} aria-label={t("apps.postCutoverSoak")} />
+        </label>
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>
       <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("apps.imagesToKeepDesc")}</div>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("apps.postCutoverSoakDesc")}</div>
       {!rollback && <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("apps.rollbackOnFailureDesc")}</div>}
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
     </SectionCard>

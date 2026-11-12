@@ -1,4 +1,17 @@
-import { CreateAppSchema, SetAutoDeploySchema, SetContainerPortSchema, SetExtraPortsSchema, SetBasicAuthSchema, SetBuildSchema, SetConfigMountContentSchema, SetContainerCommandSchema, SetDeployHooksSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetHealthCheckSchema, SetLimitsSchema, SetRedirectsSchema, SetRestartPolicySchema, SetServiceDomainsSchema, SetSourceSchema, SetWatchPathsSchema } from "./dto";
+import { CreateAppSchema, SetAutoDeploySchema, SetContainerPortSchema, SetDeploySettingsSchema, SetExtraPortsSchema, SetBasicAuthSchema, SetBuildSchema, SetConfigMountContentSchema, SetContainerCommandSchema, SetDeployHooksSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetHealthCheckSchema, SetLimitsSchema, SetRedirectsSchema, SetRestartPolicySchema, SetServiceDomainsSchema, SetSourceSchema, SetWatchPathsSchema } from "./dto";
+
+describe("SetDeploySettingsSchema — post-cutover soak", () => {
+  it("accepts a soak window in 0..600 (0 = off), on its own or with other fields", () => {
+    expect(SetDeploySettingsSchema.safeParse({ postCutoverSoakSec: 0 }).success).toBe(true);
+    expect(SetDeploySettingsSchema.safeParse({ postCutoverSoakSec: 600 }).success).toBe(true);
+    expect(SetDeploySettingsSchema.safeParse({ deployStrategy: "ROLLING", postCutoverSoakSec: 60 }).success).toBe(true);
+  });
+  it("rejects a negative window, over the 600s cap, or a non-integer", () => {
+    expect(SetDeploySettingsSchema.safeParse({ postCutoverSoakSec: -1 }).success).toBe(false);
+    expect(SetDeploySettingsSchema.safeParse({ postCutoverSoakSec: 601 }).success).toBe(false);
+    expect(SetDeploySettingsSchema.safeParse({ postCutoverSoakSec: 1.5 }).success).toBe(false);
+  });
+});
 
 describe("SetDomainOptionsSchema — ipAllowlist", () => {
   const ok = (ipAllowlist: unknown[]) => SetDomainOptionsSchema.safeParse({ ipAllowlist });

@@ -8891,6 +8891,9 @@
                         "type": "number",
                         "nullable": true
                       },
+                      "postCutoverSoakSec": {
+                        "type": "number"
+                      },
                       "zeroDowntime": {
                         "type": "boolean"
                       },
@@ -9235,6 +9238,7 @@
                       "deployStrategy",
                       "rollbackOnFailure",
                       "imagesToKeep",
+                      "postCutoverSoakSec",
                       "zeroDowntime",
                       "templateSlug",
                       "templateLogo",
@@ -9981,6 +9985,9 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "postCutoverSoakSec": {
+                      "type": "number"
+                    },
                     "zeroDowntime": {
                       "type": "boolean"
                     },
@@ -10325,6 +10332,7 @@
                     "deployStrategy",
                     "rollbackOnFailure",
                     "imagesToKeep",
+                    "postCutoverSoakSec",
                     "zeroDowntime",
                     "templateSlug",
                     "templateLogo",
@@ -11138,6 +11146,9 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "postCutoverSoakSec": {
+                      "type": "number"
+                    },
                     "zeroDowntime": {
                       "type": "boolean"
                     },
@@ -11482,6 +11493,7 @@
                     "deployStrategy",
                     "rollbackOnFailure",
                     "imagesToKeep",
+                    "postCutoverSoakSec",
                     "zeroDowntime",
                     "templateSlug",
                     "templateLogo",
@@ -12299,6 +12311,9 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "postCutoverSoakSec": {
+                      "type": "number"
+                    },
                     "zeroDowntime": {
                       "type": "boolean"
                     },
@@ -12643,6 +12658,7 @@
                     "deployStrategy",
                     "rollbackOnFailure",
                     "imagesToKeep",
+                    "postCutoverSoakSec",
                     "zeroDowntime",
                     "templateSlug",
                     "templateLogo",
@@ -17670,6 +17686,11 @@
                     "minimum": 1,
                     "maximum": 20,
                     "nullable": true
+                  },
+                  "postCutoverSoakSec": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 600
                   }
                 },
                 "additionalProperties": false
@@ -20852,6 +20873,9 @@
                           "type": "number",
                           "nullable": true
                         },
+                        "postCutoverSoakSec": {
+                          "type": "number"
+                        },
                         "zeroDowntime": {
                           "type": "boolean"
                         },
@@ -21196,6 +21220,7 @@
                         "deployStrategy",
                         "rollbackOnFailure",
                         "imagesToKeep",
+                        "postCutoverSoakSec",
                         "zeroDowntime",
                         "templateSlug",
                         "templateLogo",
@@ -21872,6 +21897,9 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "postCutoverSoakSec": {
+                      "type": "number"
+                    },
                     "zeroDowntime": {
                       "type": "boolean"
                     },
@@ -22216,6 +22244,7 @@
                     "deployStrategy",
                     "rollbackOnFailure",
                     "imagesToKeep",
+                    "postCutoverSoakSec",
                     "zeroDowntime",
                     "templateSlug",
                     "templateLogo",
@@ -22962,6 +22991,9 @@
                         "type": "number",
                         "nullable": true
                       },
+                      "postCutoverSoakSec": {
+                        "type": "number"
+                      },
                       "zeroDowntime": {
                         "type": "boolean"
                       },
@@ -23306,6 +23338,7 @@
                       "deployStrategy",
                       "rollbackOnFailure",
                       "imagesToKeep",
+                      "postCutoverSoakSec",
                       "zeroDowntime",
                       "templateSlug",
                       "templateLogo",
@@ -24137,6 +24170,9 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "postCutoverSoakSec": {
+                      "type": "number"
+                    },
                     "zeroDowntime": {
                       "type": "boolean"
                     },
@@ -24481,6 +24517,7 @@
                     "deployStrategy",
                     "rollbackOnFailure",
                     "imagesToKeep",
+                    "postCutoverSoakSec",
                     "zeroDowntime",
                     "templateSlug",
                     "templateLogo",
@@ -26555,6 +26592,9 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "postCutoverSoakSec": {
+                      "type": "number"
+                    },
                     "zeroDowntime": {
                       "type": "boolean"
                     },
@@ -26899,6 +26939,7 @@
                     "deployStrategy",
                     "rollbackOnFailure",
                     "imagesToKeep",
+                    "postCutoverSoakSec",
                     "zeroDowntime",
                     "templateSlug",
                     "templateLogo",

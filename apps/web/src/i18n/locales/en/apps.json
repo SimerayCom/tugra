@@ -472,6 +472,8 @@
   "rollbackOnFailureDesc": "Off: a failed deploy stays down instead of restoring the previous version.",
   "imagesToKeep": "Rollback images to keep",
   "imagesToKeepDesc": "How many past versions to keep for rollback (1–20; blank = 5). Lowering it prunes the extra images on the next deploy; the running version is always kept.",
+  "postCutoverSoak": "Post-cutover soak (seconds)",
+  "postCutoverSoakDesc": "Zero-downtime deploys only: after traffic switches, keep the previous version ready for this many seconds and re-check the new one. A sustained failure in that window auto-reverts to the previous version. 0 = off. For a revert to be possible, use at least a few times your health-check interval.",
   "zeroDowntime": "zero-downtime",
   "recreateStrategy": "recreate",
   "clusterDeploy": "Cluster deploy (Docker Swarm)",

@@ -89,6 +89,10 @@ export interface AppSpec {
   healthRetries?: number | null;
   healthStartPeriod?: number | null;
   healthExpectedStatus?: number | null;
+  /** ROLLING path only: seconds to keep the PREVIOUS container (stopped, renamed <name>__prev) after the
+   *  gate passes and traffic switches, re-probing the NEW container; a sustained failure in that window
+   *  auto-reverts to the previous version (exit 4). 0/null = off (byte-identical to no soak). */
+  postCutoverSoakSec?: number | null;
   memoryMb?: number | null;
   cpus?: number | null;
   /** Soft Swarm scheduling hints (`docker service --reserve-memory`/`--reserve-cpu`) — swarm-only; ignored on
@@ -276,6 +280,14 @@ export function containerName(app: { id: string }): string {
  *  router/service (traffic overlaps cleanly) until the old one is removed + rename. */
 export function rolloutName(app: { id: string }): string {
   return `${containerName(app)}__rollout`;
+}
+
+/** Name the PREVIOUS generation is renamed to (stopped) during a post-cutover soak window, so it can be
+ *  brought back for an instant auto-revert if the new version breaks AFTER traffic switched. The double
+ *  underscore keeps it clear of the `<prefix>-`/`<prefix>.` runtime-badge match (like `__rollout`), so a
+ *  transiently-retained previous container never leaks into the app's container list. */
+export function prevName(app: { id: string }): string {
+  return `${containerName(app)}__prev`;
 }
 
 /** Docker volume name for an app's named volume (persists across redeploys). */
@@ -1319,6 +1331,34 @@ export function resolveHealthGate(app: AppSpec): HealthGate {
   };
 }
 
+/** Consecutive bad post-cutover probes before an auto-revert fires. A FIXED constant (not a per-app column)
+ *  so the soak stays to one new setting: `fails` resets to 0 on any passing probe, so only a SUSTAINED
+ *  failure (never a single blip) trips the revert. */
+export const SOAK_FAIL_THRESHOLD = 3;
+
+/** Post-cutover soak timings. windowSec is the bounded watch after traffic switched (0 = off); intervalSec
+ *  reuses the gate interval. soakRetries() derives the loop count. */
+export interface SoakWindow {
+  windowSec: number;
+  intervalSec: number;
+}
+
+/** The post-cutover soak window for an app: the per-app postCutoverSoakSec (seconds; 0/null = off), re-probed
+ *  on the same interval the deploy gate uses. Mirrors resolveHealthGate. */
+export function resolveSoak(app: AppSpec): SoakWindow {
+  return {
+    windowSec: Math.max(0, app.postCutoverSoakSec ?? 0),
+    intervalSec: app.healthInterval ?? 3,
+  };
+}
+
+/** Number of soak probe iterations: one per interval across the window, at least 1 when the soak is on. When
+ *  soakRetries < SOAK_FAIL_THRESHOLD the watch runs but can never trip (conservative: no false revert on a
+ *  too-short window). */
+export function soakRetries(s: SoakWindow): number {
+  return Math.max(1, Math.floor(s.windowSec / Math.max(1, s.intervalSec)));
+}
+
 /**
  * Pick the deploy-gate probe from the app's health-check config. `healthCheckType`:
  * null = auto (a container health-cmd → native; a routed OR host-port app → HTTP; else a
@@ -1343,23 +1383,26 @@ export function resolveHealthProbe(app: AppSpec): HealthProbe {
   return { kind: "stableWait" }; // NONE
 }
 
-/**
- * Shell fragment (runs under `set +e`) that sets `healthy=1` iff the target container
- * passes its probe within the bounded window, else leaves it 0. Guards every probe
- * with `if` so a failed check never aborts the surrounding script.
- */
-export function buildHealthGateFragment(target: string, probe: HealthProbe, t: HealthGate): string[] {
-  const lines = ["healthy=0", `sleep ${t.startPeriodSec}`];
+/** One probe attempt against `target`, decomposed so the deploy GATE (break-on-first-success) and the
+ *  post-cutover SOAK (count-consecutive-failures) share the exact same probe primitive. `capture` are the
+ *  lines that read the container's state into a shell var; `pass` is the test expression that is TRUE when
+ *  this attempt passed; `failFast` (native only) is a test expression that means "stop early, it's broken".
+ *  The strings are byte-for-byte what buildHealthGateFragment emitted before this was factored out. */
+interface ProbeStep {
+  capture: string[];
+  pass: string;
+  failFast?: string;
+}
+
+function buildProbeStep(target: string, probe: HealthProbe): ProbeStep {
   if (probe.kind === "native") {
-    lines.push(
-      `for i in $(seq 1 ${t.retries}); do`,
-      `  st=$(docker inspect --format '{{json .State.Health.Status}}' ${target} 2>/dev/null || echo '""')`,
-      `  if [ "$st" = '"healthy"' ]; then healthy=1; break; fi`,
-      `  if [ "$st" = '"unhealthy"' ]; then break; fi`, // fail fast
-      `  sleep ${t.intervalSec}`,
-      "done",
-    );
-  } else if (probe.kind === "httpExternal") {
+    return {
+      capture: [`st=$(docker inspect --format '{{json .State.Health.Status}}' ${target} 2>/dev/null || echo '""')`],
+      pass: `[ "$st" = '"healthy"' ]`,
+      failFast: `[ "$st" = '"unhealthy"' ]`,
+    };
+  }
+  if (probe.kind === "httpExternal") {
     // Reach a routed app by its container name over the proxy network; reach a host-port
     // app via localhost on the host network (onHost). "Reachable and serving" = any HTTP
     // response below 500: a booted app commonly answers the probe path with 404 (API root),
@@ -1397,17 +1440,56 @@ export function buildHealthGateFragment(target: string, probe: HealthProbe, t: H
     const bodyMatch = probe.responseText
       ? ` && docker run --rm --network ${net} ${HEALTH_PROBE_IMAGE} ${insecure}-s --max-time ${maxTime} ${url} 2>/dev/null | grep -qF -- ${shq(probe.responseText)}`
       : "";
-    lines.push(
-      `for i in $(seq 1 ${t.retries}); do`,
-      `  code=$(docker run --rm --network ${net} ${HEALTH_PROBE_IMAGE} ${methodArg}${insecure}-s -o /dev/null -w '%{http_code}' --max-time ${maxTime} ${url} 2>/dev/null || echo 000)`,
-      `  if ${pass}${bodyMatch}; then healthy=1; break; fi`,
-      `  sleep ${t.intervalSec}`,
-      "done",
-    );
-  } else {
-    // stableWait: already slept the start period; require the container still Running.
-    lines.push(`if [ "$(docker inspect --format '{{.State.Running}}' ${target} 2>/dev/null)" = "true" ]; then healthy=1; fi`);
+    return {
+      capture: [`code=$(docker run --rm --network ${net} ${HEALTH_PROBE_IMAGE} ${methodArg}${insecure}-s -o /dev/null -w '%{http_code}' --max-time ${maxTime} ${url} 2>/dev/null || echo 000)`],
+      pass: `${pass}${bodyMatch}`,
+    };
   }
+  // stableWait: no capture; the test is an inline inspect of the container's running state.
+  return {
+    capture: [],
+    pass: `[ "$(docker inspect --format '{{.State.Running}}' ${target} 2>/dev/null)" = "true" ]`,
+  };
+}
+
+/**
+ * Shell fragment (runs under `set +e`) that sets `healthy=1` iff the target container
+ * passes its probe within the bounded window, else leaves it 0. Guards every probe
+ * with `if` so a failed check never aborts the surrounding script.
+ */
+export function buildHealthGateFragment(target: string, probe: HealthProbe, t: HealthGate): string[] {
+  const lines = ["healthy=0", `sleep ${t.startPeriodSec}`];
+  const step = buildProbeStep(target, probe);
+  if (probe.kind === "stableWait") {
+    // already slept the start period; require the container still Running (no retry loop).
+    lines.push(`if ${step.pass}; then healthy=1; fi`);
+    return lines;
+  }
+  lines.push(`for i in $(seq 1 ${t.retries}); do`);
+  for (const c of step.capture) lines.push(`  ${c}`);
+  lines.push(`  if ${step.pass}; then healthy=1; break; fi`);
+  if (step.failFast) lines.push(`  if ${step.failFast}; then break; fi`); // native: fail fast on unhealthy
+  lines.push(`  sleep ${t.intervalSec}`, "done");
+  return lines;
+}
+
+/**
+ * Post-cutover SOAK watch (runs under `set +e`, INLINE on the agent after traffic switched). Re-probes the
+ * now-live `target` over the soak window and sets `soak_ok=0` iff the NEW version fails SOAK_FAIL_THRESHOLD
+ * consecutive probes (sustained failure), else leaves `soak_ok=1`. `fails` resets on any passing probe, so a
+ * single transient blip never trips the revert, and the loop makes exactly ONE decision at its end (no
+ * oscillation). Reuses the gate's probe primitive, so distroless apps are covered by the external probe image.
+ */
+export function buildSoakWatchFragment(target: string, probe: HealthProbe, soak: SoakWindow): string[] {
+  const step = buildProbeStep(target, probe);
+  const retries = soakRetries(soak);
+  const lines = ["soak_ok=1", "fails=0", `for i in $(seq 1 ${retries}); do`, `  sleep ${soak.intervalSec}`];
+  for (const c of step.capture) lines.push(`  ${c}`);
+  lines.push(`  if ${step.pass}; then probe_ok=1; else probe_ok=0; fi`);
+  lines.push(
+    `  if [ "$probe_ok" = 1 ]; then fails=0; else fails=$((fails+1)); if [ "$fails" -ge ${SOAK_FAIL_THRESHOLD} ]; then soak_ok=0; break; fi; fi`,
+    "done",
+  );
   return lines;
 }
 
@@ -1417,35 +1499,28 @@ export function buildHealthGateFragment(target: string, probe: HealthProbe, t: H
  * during the overlap), health-gates it, then on success removes the old container and
  * renames the new one into place (exit 0); on failure removes the new container and
  * leaves the old one serving untouched (exit 3 — auto-rollback, zero downtime).
+ *
+ * POST-CUTOVER SOAK (opt-in, opts.soak.windowSec > 0): instead of destroying the old container at cutover,
+ * stop + rename it to `<name>__prev` and keep it for a bounded window while re-probing the NEW container. On
+ * a SUSTAINED failure in that window auto-revert to __prev (exit 4 — a distinct post-cutover marker); on
+ * staying healthy, GC __prev and exit 0. The whole soak/revert branch is emitted ONLY when the window is on,
+ * so a soak==0 (default) deploy is byte-identical to the pre-soak success block.
  */
 export function buildRollingDeployScript(
   app: AppSpec,
   version: string,
-  opts: { build?: boolean; noCache?: boolean; probe: HealthProbe } & HealthGate,
+  opts: { build?: boolean; noCache?: boolean; probe: HealthProbe; soak?: SoakWindow } & HealthGate,
 ): string {
   const canonical = containerName(app);
   const rollout = rolloutName(app);
+  const prev = prevName(app);
   const build = opts.build ?? true;
+  const soakActive = (opts.soak?.windowSec ?? 0) > 0;
   // Give the rollout a Traefik LB health check so it stays out of rotation until ready
   // (only meaningful for a routed app; the external probe already gates the cutover).
   const hcPath = opts.probe.kind === "httpExternal" ? opts.probe.path : "/";
   const rApp: AppSpec = { ...app, rollingHealthPath: app.domain ? hcPath : null };
-  // Traefik's LB check (its `healthcheck.status` label is a single int, not a range) only counts 2xx/3xx
-  // as UP, but the httpExternal gate accepts any code < 500 (404/401/403/400 = booted). Labels are
-  // immutable across `docker rename`, so when the gate passed on a >= 400 code the renamed rollout would be
-  // marked DOWN by its own check label (every request 503, deploy reported success). In that case re-create
-  // the live container from `app` (NO LB-check label) instead of renaming the labelled rollout. `$code` is
-  // the passing probe's status (set by the httpExternal gate fragment).
-  const relabel =
-    opts.probe.kind === "httpExternal"
-      ? [
-          `  if [ "$code" -ge 400 ]; then`,
-          `    docker rm -f ${rollout} 2>/dev/null || true`,
-          `    if ${runContainerArgs(app, version, canonical)}; then echo "TUGRA_ROLLOUT: healthy"; exit 0; else echo "TUGRA_ROLLOUT: relabel_failed"; exit 1; fi`,
-          "  fi",
-        ]
-      : [];
-  return [
+  const head = [
     "set -e",
     ...(build ? prepSteps(app, version, opts.noCache ?? false) : []),
     ...envPreludeFor(app),
@@ -1456,16 +1531,90 @@ export function buildRollingDeployScript(
     runContainerArgs(rApp, version, rollout),
     "set +e", // the health gate must not abort the script on a failed probe
     ...buildHealthGateFragment(rollout, opts.probe, opts),
-    `if [ "$healthy" = 1 ]; then`,
-    `  docker rm -f ${canonical} 2>/dev/null || true`,
-    ...relabel,
-    // Gate success on the rename actually landing — otherwise the live container keeps
-    // the temp name and every lifecycle command (stop/start/logs) would miss it.
-    `  if docker rename ${rollout} ${canonical}; then echo "TUGRA_ROLLOUT: healthy"; exit 0; else echo "TUGRA_ROLLOUT: rename_failed"; exit 1; fi`,
+  ];
+  // Gate FAILED (pre-cutover): the old container was never touched → drop the new, keep the old, exit 3.
+  const gateFailBranch = [
     "else",
     `  docker rm -f ${rollout} 2>/dev/null || true`, // old container stays; zero downtime
     `  echo "TUGRA_ROLLOUT: rolled_back"; exit 3`,
     "fi",
+  ];
+
+  if (!soakActive) {
+    // Traefik's LB check (its `healthcheck.status` label is a single int, not a range) only counts 2xx/3xx
+    // as UP, but the httpExternal gate accepts any code < 500 (404/401/403/400 = booted). Labels are
+    // immutable across `docker rename`, so when the gate passed on a >= 400 code the renamed rollout would be
+    // marked DOWN by its own check label (every request 503, deploy reported success). In that case re-create
+    // the live container from `app` (NO LB-check label) instead of renaming the labelled rollout. `$code` is
+    // the passing probe's status (set by the httpExternal gate fragment).
+    const relabel =
+      opts.probe.kind === "httpExternal"
+        ? [
+            `  if [ "$code" -ge 400 ]; then`,
+            `    docker rm -f ${rollout} 2>/dev/null || true`,
+            `    if ${runContainerArgs(app, version, canonical)}; then echo "TUGRA_ROLLOUT: healthy"; exit 0; else echo "TUGRA_ROLLOUT: relabel_failed"; exit 1; fi`,
+            "  fi",
+          ]
+        : [];
+    return [
+      ...head,
+      `if [ "$healthy" = 1 ]; then`,
+      `  docker rm -f ${canonical} 2>/dev/null || true`,
+      ...relabel,
+      // Gate success on the rename actually landing — otherwise the live container keeps
+      // the temp name and every lifecycle command (stop/start/logs) would miss it.
+      `  if docker rename ${rollout} ${canonical}; then echo "TUGRA_ROLLOUT: healthy"; exit 0; else echo "TUGRA_ROLLOUT: rename_failed"; exit 1; fi`,
+      ...gateFailBranch,
+    ].join("\n");
+  }
+
+  // --- Post-cutover soak path (opts.soak.windowSec > 0) --------------------------------------------------
+  const soak = opts.soak!;
+  // CUTOVER, soak variant: identical placement logic to the no-soak relabel/rename, but each arm FALLS
+  // THROUGH to the soak watch instead of `exit 0`. The old live container has already been renamed to __prev
+  // (below), so the canonical name is free for either arm. `:` is a no-op success so the else arm can fail.
+  const cutover =
+    opts.probe.kind === "httpExternal"
+      ? [
+          `  if [ "$code" -ge 400 ]; then`, // gate passed on a >=400 code → recreate canonical WITHOUT the LB-check label
+          `    docker rm -f ${rollout} 2>/dev/null || true`,
+          `    if ${runContainerArgs(app, version, canonical)}; then :; else echo "TUGRA_ROLLOUT: relabel_failed"; exit 1; fi`,
+          `  else`,
+          `    if docker rename ${rollout} ${canonical}; then :; else echo "TUGRA_ROLLOUT: rename_failed"; exit 1; fi`,
+          `  fi`,
+        ]
+      : [`  if docker rename ${rollout} ${canonical}; then :; else echo "TUGRA_ROLLOUT: rename_failed"; exit 1; fi`];
+  return [
+    ...head,
+    `if [ "$healthy" = 1 ]; then`,
+    // RETENTION: keep the OLD container (renamed __prev, stopped) through the soak window instead of
+    // destroying it, so an instant auto-revert is possible if the new version breaks after cutover.
+    `  docker rm -f ${prev} 2>/dev/null || true`, // reap a __prev orphaned by a prior SIGKILLed soak
+    `  docker stop ${canonical} 2>/dev/null || true`, // graceful stop → Traefik deregisters it (no crash/oom episode)
+    `  docker rename ${canonical} ${prev} 2>/dev/null || true`, // keep it, stopped (|| true: a first-ever deploy has no old container)
+    ...cutover,
+    // POST-CUTOVER SOAK: re-probe the now-live canonical container; a SUSTAINED failure reverts to __prev.
+    ...buildSoakWatchFragment(canonical, opts.probe, soak).map((l) => "  " + l),
+    `  if [ "$soak_ok" = 1 ]; then`,
+    `    docker rm -f ${prev} 2>/dev/null || true`, // survived the window → drop the retained old generation
+    `    echo "TUGRA_ROLLOUT: healthy"; exit 0`,
+    `  else`,
+    // AUTO-REVERT — only when we actually have a __prev to go back to. Remove the broken new FIRST (so Traefik
+    // never round-robins to it), then bring __prev back; a docker start event re-registers it with the proxy's
+    // docker provider (its preserved Traefik labels).
+    `    if docker inspect ${prev} >/dev/null 2>&1; then`,
+    `      docker stop ${canonical} 2>/dev/null || true`,
+    `      docker rm -f ${canonical} 2>/dev/null || true`,
+    `      if docker rename ${prev} ${canonical} && docker start ${canonical}; then echo "TUGRA_ROLLOUT: reverted"; exit 4; else echo "TUGRA_ROLLOUT: revert_failed"; exit 1; fi`,
+    `    else`,
+    // No previous generation to revert to (e.g. a first-ever deploy). The NEW version PASSED the health gate at
+    // cutover and is the only thing we have, so KEEP it running rather than take the app fully down — exactly
+    // today's no-soak outcome (a gate-passed version that later degrades is a monitoring concern). The marker
+    // records that the soak tripped but could not revert.
+    `      echo "TUGRA_ROLLOUT: soak_failed_no_prev"; exit 0`,
+    `    fi`,
+    `  fi`,
+    ...gateFailBranch,
   ].join("\n");
 }
 

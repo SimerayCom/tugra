@@ -502,6 +502,100 @@ describe("ApplicationsService", () => {
     expect(appUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: { status: "FAILED" } }));
   });
 
+  it("exit 4 (post-cutover soak auto-revert) → FAILED/AUTO_ROLLBACK, app RUNNING, deploy_rolled_back — WITHOUT a prev-success DB lookup", async () => {
+    const soakApp = { ...app, domain: "app.example.com", deployStrategy: "ROLLING", rollbackOnFailure: true, postCutoverSoakSec: 30 };
+    const depUpdate = jest.fn().mockResolvedValue({});
+    const appUpdate = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(soakApp), update: appUpdate },
+      deployment: {
+        create: jest.fn().mockResolvedValue({ id: "d1", createdAt: new Date() }),
+        update: depUpdate,
+        findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "FAILED", kind: "AUTO_ROLLBACK" }),
+        // NO prior SUCCESS row exists — exit 4 must still classify as a rollback (the script already restored
+        // __prev, so the previous version is provably live; no DB re-derivation like exit 3 needs).
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      server: { findUnique: jest.fn().mockResolvedValue({ publicIp: null, publicIpv6: null }) },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    let sentCmd = "";
+    const agentWs = {
+      sendCommand: jest.fn().mockImplementation((_s: string, cmd: string, cap: string) => {
+        if (cap === "deploy") sentCmd = cmd;
+        return Promise.resolve({ exitCode: 4, output: "TUGRA_ROLLOUT: reverted" });
+      }),
+    } as unknown as AgentWsServer;
+    const svc = make(prisma, access, agentWs);
+    await svc.deploy("u1", "app1");
+    await flushMicrotasks();
+    // the rolling builder emitted the soak retention (keep the old as __prev)
+    expect(sentCmd).toContain("tugra_app1__prev");
+    // exit 4 → deployment FAILED + AUTO_ROLLBACK (the new image never stayed live → imageTag null, exitCode 4)
+    expect(depUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "FAILED", kind: "AUTO_ROLLBACK", exitCode: 4, imageTag: null }) }),
+    );
+    // but the app is RUNNING on the previous version (__prev was started by the script)
+    expect(appUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: { status: "RUNNING" } }));
+    expect((svc as unknown as { notifications: { fireForEvent: jest.Mock } }).notifications.fireForEvent).toHaveBeenCalledWith(
+      "t1",
+      "deploy_rolled_back",
+      expect.objectContaining({ appName: "web", appId: "app1" }),
+    );
+  });
+
+  it("a rolling deploy with a post-cutover soak extends the agent timeout by the soak budget", async () => {
+    const soakApp = { ...app, domain: "app.example.com", deployStrategy: "ROLLING", rollbackOnFailure: true, postCutoverSoakSec: 60, healthInterval: 5 };
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(soakApp), update: jest.fn().mockResolvedValue({}) },
+      deployment: {
+        create: jest.fn().mockResolvedValue({ id: "d1" }),
+        update: jest.fn().mockResolvedValue({}),
+        findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "SUCCESS" }),
+        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    let deployTimeout = -1;
+    const agentWs = {
+      sendCommand: jest.fn().mockImplementation((_s: string, _cmd: string, cap: string, t: number) => {
+        if (cap === "deploy") deployTimeout = t;
+        return Promise.resolve({ exitCode: 0, output: "ok" });
+      }),
+    } as unknown as AgentWsServer;
+    await make(prisma, access, agentWs).deploy("u1", "app1");
+    // base 300s + soak budget (60s window + 12 probes*5s + 15s margin = 135s) → 435s, well above the bare default
+    expect(deployTimeout).toBeGreaterThanOrEqual((300 + 60) * 1000);
+  });
+
+  it("a rolling deploy with NO soak passes the bare deploy timeout (no added latency)", async () => {
+    const noSoakApp = { ...app, domain: "app.example.com", deployStrategy: "ROLLING", rollbackOnFailure: true };
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(noSoakApp), update: jest.fn().mockResolvedValue({}) },
+      deployment: {
+        create: jest.fn().mockResolvedValue({ id: "d1" }),
+        update: jest.fn().mockResolvedValue({}),
+        findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "SUCCESS" }),
+        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    let deployTimeout = -1;
+    const agentWs = {
+      sendCommand: jest.fn().mockImplementation((_s: string, _cmd: string, cap: string, t: number) => {
+        if (cap === "deploy") deployTimeout = t;
+        return Promise.resolve({ exitCode: 0, output: "ok" });
+      }),
+    } as unknown as AgentWsServer;
+    await make(prisma, access, agentWs).deploy("u1", "app1");
+    expect(deployTimeout).toBe(300 * 1000); // unchanged default
+  });
+
   it("a host-port app deploys via recreate (health-gated, no temp container), not rolling", async () => {
     const hp = { ...app, domain: "app.example.com", hostPort: 8080, deployStrategy: "ROLLING", rollbackOnFailure: true };
     const prisma = {
@@ -2040,6 +2134,21 @@ describe("ApplicationsService", () => {
     // an update that omits imagesToKeep must not touch the column
     await svc.setDeploySettings("u1", "app1", { rollbackOnFailure: true });
     expect("imagesToKeep" in update.mock.calls[1][0].data).toBe(false);
+  });
+
+  it("setDeploySettings threads postCutoverSoakSec (undefined-means-keep: a partial update never wipes it)", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const svc = make(prisma, access, {} as AgentWsServer);
+    // explicit set (0 = off is a legitimate value and IS written)
+    await svc.setDeploySettings("u1", "app1", { postCutoverSoakSec: 45 });
+    expect(update.mock.calls[0][0].data).toEqual({ postCutoverSoakSec: 45 });
+    await svc.setDeploySettings("u1", "app1", { postCutoverSoakSec: 0 });
+    expect(update.mock.calls[1][0].data).toEqual({ postCutoverSoakSec: 0 });
+    // a partial update that omits the soak must not touch the column
+    await svc.setDeploySettings("u1", "app1", { imagesToKeep: 3 });
+    expect("postCutoverSoakSec" in update.mock.calls[2][0].data).toBe(false);
   });
 
   it("setBuildConfig rejects a build server with no registry configured", async () => {

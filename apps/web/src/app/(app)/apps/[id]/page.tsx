@@ -234,7 +234,7 @@ export default function AppDetailPage() {
   const renderConfigCard: Record<ConfigCardId, () => ReactNode> = {
     description: () => <AppDescriptionCard id={id} description={appData.description} />,
     deploySettings: () => (
-      <DeploySettingsCard id={id} deployStrategy={appData.deployStrategy} rollbackOnFailure={appData.rollbackOnFailure} imagesToKeep={appData.imagesToKeep} />
+      <DeploySettingsCard id={id} deployStrategy={appData.deployStrategy} rollbackOnFailure={appData.rollbackOnFailure} imagesToKeep={appData.imagesToKeep} postCutoverSoakSec={appData.postCutoverSoakSec} />
     ),
     clusterDeploy: () => (
       <ClusterDeployCard id={id} teamId={appData.teamId} clusterId={appData.clusterId} replicas={appData.replicas} placement={appData.placement} volumes={appData.volumes} constraintServerId={appData.constraintServerId} />

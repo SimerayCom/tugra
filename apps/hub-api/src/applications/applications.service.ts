@@ -57,6 +57,8 @@ import {
   buildPostDeployScript,
   resolveHealthProbe,
   resolveHealthGate,
+  resolveSoak,
+  soakRetries,
   buildStartScript,
   buildStopScript,
   runTag,
@@ -211,6 +213,7 @@ export const AppViewSchema = z.object({
   deployStrategy: z.string(),
   rollbackOnFailure: z.boolean(),
   imagesToKeep: z.number().nullable(),
+  postCutoverSoakSec: z.number(), // ROLLING: seconds to keep the previous container after cutover for an auto-revert (0 = off)
   zeroDowntime: z.boolean(),
   templateSlug: z.string().nullable(),
   templateLogo: z.string().nullable(),
@@ -842,6 +845,7 @@ export class ApplicationsService {
           deployStrategy: src.deployStrategy,
           rollbackOnFailure: src.rollbackOnFailure,
           imagesToKeep: src.imagesToKeep,
+          postCutoverSoakSec: src.postCutoverSoakSec,
           tags: src.tags,
           iconUpdatedAt: icon ? new Date() : null,
           // A fresh webhook (the token is unique; sharing it would double-trigger + collide on the unique index).
@@ -1747,7 +1751,7 @@ export class ApplicationsService {
         : isCompose
           ? buildComposeUpScript(spec, noCache)
           : rolling
-            ? buildRollingDeployScript(spec, dep.id, { build: true, noCache, probe: resolveHealthProbe(spec), ...resolveHealthGate(spec) })
+            ? buildRollingDeployScript(spec, dep.id, { build: true, noCache, probe: resolveHealthProbe(spec), soak: resolveSoak(spec), ...resolveHealthGate(spec) })
           : recreate
             ? buildRecreateDeployScript(spec, dep.id, {
                 build: true,
@@ -1760,11 +1764,15 @@ export class ApplicationsService {
       // The main deploy command runs on the live server from here; a throw after this (agent offline, timeout)
       // is not a safe pre-swap failure, so the catch keeps FAILED.
       swapAttempted = true;
+      // A rolling deploy with a post-cutover soak runs the whole soak window INSIDE this one command; extend
+      // the agent timeout by the soak budget (window + probe time + margin) or the agent would SIGKILL the
+      // watch mid-soak → ambiguous state (new live, __prev stopped, no revert decision). Zero for every other
+      // path, so their timeout is unchanged.
       const r = await this.agentWs.sendCommand(
         app.serverId,
         command,
         "deploy",
-        this.deployTimeoutMs(app),
+        this.deployTimeoutMs(app) + (rolling ? this.soakBudgetMs(spec) : 0),
         (chunk) => this.deployLogs.push(app.id, chunk),
         (reqId) => this.activeDeployCommands.set(dep.id, { serverId: app.serverId, reqId }),
       );
@@ -1805,6 +1813,11 @@ export class ApplicationsService {
           rolledBack = !!p;
         }
       }
+      // exit 4 = POST-CUTOVER auto-revert: the rolling soak switched traffic, the new version then failed its
+      // soak, and the script already `docker start`-ed __prev — so the previous version is PROVABLY live. No
+      // DB re-derivation needed (that is exactly why the code is distinct from the pre-cutover exit 3, whose
+      // old container was merely left untouched). Rolling-only; a compose/hard-cutover build never emits it.
+      if (code === 4 && rolling && !isCompose) rolledBack = true;
       // The IMAGE prep steps echo the digest marker; for a build-server deploy those steps run on the
       // BUILD server (buildLog), not the deploy server (r.output), so parse the COMBINED output.
       const combinedOutput = buildLog ? `${buildLog}\n${r.output}` : r.output;
@@ -3066,6 +3079,21 @@ export class ApplicationsService {
     return (app.deployTimeoutSec ?? 300) * 1000;
   }
 
+  /** Extra ms a rolling deploy's command needs beyond deployTimeoutMs when a post-cutover soak is configured.
+   *  The soak sleeps the whole window AND each re-probe can take up to the probe timeout, so budget both (plus
+   *  a margin) — otherwise the agent SIGKILLs the soak mid-watch and leaves an ambiguous state. 0 when soak is
+   *  off. */
+  private soakBudgetMs(spec: AppSpec): number {
+    const soak = resolveSoak(spec);
+    if (soak.windowSec <= 0) return 0;
+    const probe = resolveHealthProbe(spec);
+    const probeSec = probe.kind === "httpExternal" ? (probe.timeoutSec ?? 5) : 1; // native/stableWait probes are ~instant
+    // Upper bound of the real loop: each of soakRetries iterations does `sleep intervalSec` THEN a probe (up to
+    // probeSec), plus a generous 30s tail for the revert's docker stop/rm/rename/start — so the agent never
+    // SIGKILLs mid-soak or mid-revert and strands a __prev.
+    return (soakRetries(soak) * (soak.intervalSec + probeSec) + 30) * 1000;
+  }
+
   async setLimits(
     userId: string,
     id: string,
@@ -3383,15 +3411,18 @@ export class ApplicationsService {
   async setDeploySettings(
     userId: string,
     id: string,
-    cfg: { deployStrategy?: "ROLLING" | "RECREATE"; rollbackOnFailure?: boolean; imagesToKeep?: number | null },
+    cfg: { deployStrategy?: "ROLLING" | "RECREATE"; rollbackOnFailure?: boolean; imagesToKeep?: number | null; postCutoverSoakSec?: number },
   ): Promise<void> {
     await this.requireWrite(userId, id);
     await this.prisma.application.update({
       where: { id },
       data: {
+        // undefined-means-keep (mirrors imagesToKeep) so a partial API/MCP update can't wipe an untouched
+        // setting; the web card sends the full object, so its behaviour is unchanged.
         ...(cfg.deployStrategy !== undefined ? { deployStrategy: cfg.deployStrategy } : {}),
         ...(cfg.rollbackOnFailure !== undefined ? { rollbackOnFailure: cfg.rollbackOnFailure } : {}),
         ...(cfg.imagesToKeep !== undefined ? { imagesToKeep: cfg.imagesToKeep } : {}),
+        ...(cfg.postCutoverSoakSec !== undefined ? { postCutoverSoakSec: cfg.postCutoverSoakSec } : {}),
       },
     });
     await this.audit.log({ actor: userId, action: "app.deploysettings.update", target: id });
@@ -3990,6 +4021,7 @@ export class ApplicationsService {
       reserveMemoryMb: app.reserveMemoryMb,
       reserveCpus: app.reserveCpus,
       gpus: app.gpus,
+      postCutoverSoakSec: app.postCutoverSoakSec,
       replicas: app.replicas,
       placementConstraints: this.appPlacement(app).constraints,
       placementSpreadLabelKey: this.appPlacement(app).spreadLabelKey,
@@ -4242,6 +4274,7 @@ export class ApplicationsService {
       deployStrategy: app.deployStrategy,
       rollbackOnFailure: app.rollbackOnFailure,
       imagesToKeep: app.imagesToKeep,
+      postCutoverSoakSec: app.postCutoverSoakSec,
       // Whether this app will ACTUALLY deploy zero-downtime (rolling) — surfaces the fact
       // that a ROLLING preference silently falls back to recreate for non-eligible apps.
       // Mirrors runDeploy's real decision (`!isCompose && rollingEligible`): a compose app

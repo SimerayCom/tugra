@@ -1264,6 +1264,7 @@ export interface Application {
   deployStrategy: string;
   rollbackOnFailure: boolean;
   imagesToKeep: number | null;
+  postCutoverSoakSec: number;
   zeroDowntime: boolean;
   environmentId: string;
   projectId: string | null;

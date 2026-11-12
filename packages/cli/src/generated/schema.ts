@@ -10468,6 +10468,7 @@ export interface operations {
                         deployStrategy: string;
                         rollbackOnFailure: boolean;
                         imagesToKeep: number | null;
+                        postCutoverSoakSec: number;
                         zeroDowntime: boolean;
                         templateSlug: string | null;
                         templateLogo: string | null;
@@ -10753,6 +10754,7 @@ export interface operations {
                         deployStrategy: string;
                         rollbackOnFailure: boolean;
                         imagesToKeep: number | null;
+                        postCutoverSoakSec: number;
                         zeroDowntime: boolean;
                         templateSlug: string | null;
                         templateLogo: string | null;
@@ -11149,6 +11151,7 @@ export interface operations {
                         deployStrategy: string;
                         rollbackOnFailure: boolean;
                         imagesToKeep: number | null;
+                        postCutoverSoakSec: number;
                         zeroDowntime: boolean;
                         templateSlug: string | null;
                         templateLogo: string | null;
@@ -11500,6 +11503,7 @@ export interface operations {
                         deployStrategy: string;
                         rollbackOnFailure: boolean;
                         imagesToKeep: number | null;
+                        postCutoverSoakSec: number;
                         zeroDowntime: boolean;
                         templateSlug: string | null;
                         templateLogo: string | null;
@@ -15048,6 +15052,7 @@ export interface operations {
                     deployStrategy?: "ROLLING" | "RECREATE";
                     rollbackOnFailure?: boolean;
                     imagesToKeep?: number | null;
+                    postCutoverSoakSec?: number;
                 };
             };
         };
@@ -16981,6 +16986,7 @@ export interface operations {
                             deployStrategy: string;
                             rollbackOnFailure: boolean;
                             imagesToKeep: number | null;
+                            postCutoverSoakSec: number;
                             zeroDowntime: boolean;
                             templateSlug: string | null;
                             templateLogo: string | null;
@@ -17261,6 +17267,7 @@ export interface operations {
                         deployStrategy: string;
                         rollbackOnFailure: boolean;
                         imagesToKeep: number | null;
+                        postCutoverSoakSec: number;
                         zeroDowntime: boolean;
                         templateSlug: string | null;
                         templateLogo: string | null;
@@ -17610,6 +17617,7 @@ export interface operations {
                         deployStrategy: string;
                         rollbackOnFailure: boolean;
                         imagesToKeep: number | null;
+                        postCutoverSoakSec: number;
                         zeroDowntime: boolean;
                         templateSlug: string | null;
                         templateLogo: string | null;
@@ -18017,6 +18025,7 @@ export interface operations {
                         deployStrategy: string;
                         rollbackOnFailure: boolean;
                         imagesToKeep: number | null;
+                        postCutoverSoakSec: number;
                         zeroDowntime: boolean;
                         templateSlug: string | null;
                         templateLogo: string | null;
@@ -19245,6 +19254,7 @@ export interface operations {
                         deployStrategy: string;
                         rollbackOnFailure: boolean;
                         imagesToKeep: number | null;
+                        postCutoverSoakSec: number;
                         zeroDowntime: boolean;
                         templateSlug: string | null;
                         templateLogo: string | null;

@@ -24,9 +24,14 @@ import {
   buildRollingDeployScript,
   buildRecreateDeployScript,
   buildHealthGateFragment,
+  buildSoakWatchFragment,
   resolveHealthProbe,
   resolveHealthGate,
+  resolveSoak,
+  soakRetries,
+  SOAK_FAIL_THRESHOLD,
   rolloutName,
+  prevName,
   HEALTH_PROBE_IMAGE,
   PROXY_IMAGE,
   containerName,
@@ -787,6 +792,148 @@ describe("deploy-script", () => {
       expect(tuned).toContain("--health-timeout=8s");
       expect(tuned).toContain("--health-retries=5");
       expect(tuned).toContain("--health-start-period=120s");
+    });
+  });
+
+  describe("post-cutover soak + auto-revert (rolling path)", () => {
+    const domained: AppSpec = { ...base, domain: "app.example.com" };
+    const gate = { retries: 10, intervalSec: 3, startPeriodSec: 5 };
+    const httpProbe = { kind: "httpExternal", port: 80, path: "/" } as const;
+
+    it("prevName is <container>__prev (clear of the __rollout / badge match)", () => {
+      expect(prevName({ id: "abc" })).toBe("tugra_abc__prev");
+    });
+
+    it("resolveSoak maps postCutoverSoakSec→window (0/null/undefined = off), interval reuses the gate interval", () => {
+      expect(resolveSoak(base)).toEqual({ windowSec: 0, intervalSec: 3 });
+      expect(resolveSoak({ ...base, postCutoverSoakSec: 0 })).toEqual({ windowSec: 0, intervalSec: 3 });
+      expect(resolveSoak({ ...base, postCutoverSoakSec: null })).toEqual({ windowSec: 0, intervalSec: 3 });
+      expect(resolveSoak({ ...base, postCutoverSoakSec: 60 })).toEqual({ windowSec: 60, intervalSec: 3 });
+      expect(resolveSoak({ ...base, postCutoverSoakSec: 60, healthInterval: 5 })).toEqual({ windowSec: 60, intervalSec: 5 });
+    });
+
+    it("soakRetries = floor(window/interval), ≥1; a window < interval*THRESHOLD watches but cannot trip", () => {
+      expect(soakRetries({ windowSec: 60, intervalSec: 5 })).toBe(12);
+      expect(soakRetries({ windowSec: 7, intervalSec: 5 })).toBe(1); // floor(7/5)=1
+      // window < interval*threshold → retries < threshold → `fails` can never reach the trip count
+      const retries = soakRetries({ windowSec: 5, intervalSec: 5 });
+      expect(retries).toBeLessThan(SOAK_FAIL_THRESHOLD); // 1 < 3 → watch-only
+    });
+
+    it("soak OFF (default) emits the BYTE-IDENTICAL pre-soak success block — no __prev / revert / exit 4", () => {
+      const noSoak = buildRollingDeployScript(domained, "v2", { probe: httpProbe, ...gate });
+      const explicitZero = buildRollingDeployScript(domained, "v2", { probe: httpProbe, soak: { windowSec: 0, intervalSec: 3 }, ...gate });
+      // off by omission and off by an explicit 0 window both produce exactly today's script
+      expect(explicitZero).toBe(noSoak);
+      // today's happy-path cutover (destroy old, rename new in, exit 0) is intact
+      expect(noSoak).toContain("docker rm -f tugra_abc 2>/dev/null || true");
+      expect(noSoak).toContain("docker rename tugra_abc__rollout tugra_abc");
+      expect(noSoak).toContain('echo "TUGRA_ROLLOUT: healthy"; exit 0');
+      // and NONE of the soak machinery leaked in
+      expect(noSoak).not.toContain("__prev");
+      expect(noSoak).not.toContain("TUGRA_ROLLOUT: reverted");
+      expect(noSoak).not.toContain("exit 4");
+      expect(noSoak).not.toContain("soak_ok");
+    });
+
+    it("soak ON retains the OLD container as __prev (graceful stop + rename), not a destroy, at cutover", () => {
+      const s = buildRollingDeployScript(domained, "v2", { probe: httpProbe, soak: { windowSec: 60, intervalSec: 5 }, ...gate });
+      // leading stale-clear of any __prev orphaned by a prior interrupted soak
+      expect(s).toContain("docker rm -f tugra_abc__prev 2>/dev/null || true");
+      // graceful stop (SIGTERM, clean) then rename-to-__prev — the old is KEPT, not `docker rm -f`'d
+      expect(s).toContain("docker stop tugra_abc 2>/dev/null || true");
+      expect(s).toContain("docker rename tugra_abc tugra_abc__prev 2>/dev/null || true");
+      // order: stop BEFORE the rename-to-prev
+      expect(s.indexOf("docker stop tugra_abc 2>/dev/null")).toBeLessThan(s.indexOf("docker rename tugra_abc tugra_abc__prev"));
+      // the cutover itself still renames the rollout into the canonical name, but now WITHOUT an exit 0
+      expect(s).toContain("if docker rename tugra_abc__rollout tugra_abc; then :;");
+    });
+
+    it("soak ON re-probes the NEW canonical container (not __rollout) over the proxy, looping soakRetries, resetting on a pass", () => {
+      const s = buildRollingDeployScript(domained, "v2", { probe: { kind: "httpExternal", port: 3000, path: "/healthz" }, soak: { windowSec: 60, intervalSec: 5 }, ...gate });
+      // the soak probe targets the post-rename canonical name, NOT the rollout the gate probed
+      expect(s).toContain(`docker run --rm --network tugra-proxy ${HEALTH_PROBE_IMAGE} -s -o /dev/null -w '%{http_code}' --max-time 5 'http://tugra_abc:3000/healthz'`);
+      // soak loop count = floor(60/5) = 12
+      expect(s).toContain("for i in $(seq 1 12); do");
+      // sustained-only: reset the consecutive-fail counter on any passing probe, trip at the threshold
+      expect(s).toContain("if [ \"$probe_ok\" = 1 ]; then fails=0; else fails=$((fails+1)); if [ \"$fails\" -ge 3 ]; then soak_ok=0; break; fi; fi");
+      expect(s).toContain("soak_ok=1");
+    });
+
+    it("soak ON, survived the window → GC __prev and succeed (exit 0)", () => {
+      const s = buildRollingDeployScript(domained, "v2", { probe: httpProbe, soak: { windowSec: 60, intervalSec: 5 }, ...gate });
+      expect(s).toContain('if [ "$soak_ok" = 1 ]; then');
+      // GC the retained previous generation, then succeed
+      const gc = s.slice(s.indexOf('if [ "$soak_ok" = 1 ]; then'));
+      expect(gc).toContain("docker rm -f tugra_abc__prev 2>/dev/null || true");
+      expect(gc).toContain('echo "TUGRA_ROLLOUT: healthy"; exit 0');
+    });
+
+    it("soak ON, sustained failure → auto-revert to __prev (remove new, rename+start prev) with the exit-4 marker", () => {
+      const s = buildRollingDeployScript(domained, "v2", { probe: httpProbe, soak: { windowSec: 60, intervalSec: 5 }, ...gate });
+      const revert = s.slice(s.indexOf("else", s.indexOf('if [ "$soak_ok" = 1 ]; then')));
+      // remove the broken NEW before bringing the old back (never round-robin onto the broken copy)
+      expect(revert).toContain("docker stop tugra_abc 2>/dev/null || true");
+      expect(revert).toContain("docker rm -f tugra_abc 2>/dev/null || true");
+      // bring __prev back live; a docker start re-registers it with the proxy's docker provider
+      expect(revert).toContain("if docker rename tugra_abc__prev tugra_abc && docker start tugra_abc; then");
+      // distinct post-cutover marker + exit 4 (vs the pre-cutover exit 3), and an honest hard-fail arm
+      expect(revert).toContain('echo "TUGRA_ROLLOUT: reverted"; exit 4');
+      expect(revert).toContain('echo "TUGRA_ROLLOUT: revert_failed"; exit 1');
+    });
+
+    it("soak ON, sustained failure but NO __prev to revert to (first-ever deploy) → keeps the new, exit 0 (never app-down)", () => {
+      const s = buildRollingDeployScript(domained, "v2", { probe: httpProbe, soak: { windowSec: 60, intervalSec: 5 }, ...gate });
+      const revert = s.slice(s.indexOf("else", s.indexOf('if [ "$soak_ok" = 1 ]; then')));
+      // the revert is guarded on actually HAVING a previous generation
+      expect(revert).toContain("if docker inspect tugra_abc__prev >/dev/null 2>&1; then");
+      // no __prev (e.g. a first-ever deploy): KEEP the gate-passed new running rather than remove it with
+      // nothing to fall back to — a distinct marker + exit 0 (app stays up, same as today's no-soak outcome)
+      expect(revert).toContain('echo "TUGRA_ROLLOUT: soak_failed_no_prev"; exit 0');
+    });
+
+    it("soak ON keeps the PRE-cutover gate-fail behaviour (old untouched, exit 3) unchanged", () => {
+      const s = buildRollingDeployScript(domained, "v2", { probe: httpProbe, soak: { windowSec: 60, intervalSec: 5 }, ...gate });
+      // the else arm of the health gate still drops the rollout and keeps the old container → exit 3
+      expect(s).toContain("docker rm -f tugra_abc__rollout 2>/dev/null || true");
+      expect(s).toContain('echo "TUGRA_ROLLOUT: rolled_back"; exit 3');
+    });
+
+    it("soak ON + gate-accepted >=400 (relabel): the recreated canonical is the soak target, NOT an early exit 0", () => {
+      const s = buildRollingDeployScript(domained, "v2", { probe: httpProbe, soak: { windowSec: 60, intervalSec: 5 }, ...gate });
+      // the relabel arm recreates canonical WITHOUT the LB-check label, then falls THROUGH to the soak (`:`),
+      // never the no-soak arm's `echo "TUGRA_ROLLOUT: healthy"; exit 0`
+      expect(s).toContain('if [ "$code" -ge 400 ]; then');
+      const live = s.split("\n").find((l) => l.includes("docker run -d --name tugra_abc ") && !l.includes("__rollout"))!;
+      expect(live).toBeDefined();
+      expect(live).not.toContain("loadbalancer.healthcheck");
+      // relabel arm does NOT short-circuit to exit 0; it continues into the soak watch
+      expect(s).toContain('if docker run -d --name tugra_abc');
+      expect(s).not.toContain('echo "TUGRA_ROLLOUT: healthy"; exit 0\n  fi'); // (the relabel arm never exits 0 inline)
+      // the soak machinery is still reached after the relabel cutover
+      expect(s).toContain("soak_ok=1");
+      expect(s).toContain('echo "TUGRA_ROLLOUT: reverted"; exit 4');
+    });
+
+    it("soak ON with a native (container health-cmd) probe soaks the canonical's docker health status", () => {
+      const s = buildRollingDeployScript({ ...domained, healthCmd: "curl -f http://localhost/ || exit 1" }, "v2", {
+        probe: { kind: "native" },
+        soak: { windowSec: 30, intervalSec: 5 },
+        ...gate,
+      });
+      // gate probes the rollout; soak probes the canonical — both via docker inspect health status
+      expect(s).toContain("docker inspect --format '{{json .State.Health.Status}}' tugra_abc__rollout");
+      expect(s).toContain("docker inspect --format '{{json .State.Health.Status}}' tugra_abc 2>/dev/null");
+      expect(s).toContain('echo "TUGRA_ROLLOUT: reverted"; exit 4');
+    });
+
+    it("buildSoakWatchFragment: sustained-failure loop shape (reset-on-pass, trip at THRESHOLD, one decision)", () => {
+      const frag = buildSoakWatchFragment("tugra_abc", httpProbe, { windowSec: 30, intervalSec: 5 }).join("\n");
+      expect(frag).toContain("soak_ok=1");
+      expect(frag).toContain("fails=0");
+      expect(frag).toContain("for i in $(seq 1 6); do"); // floor(30/5)=6
+      expect(frag).toContain("sleep 5");
+      expect(frag).toContain("if [ \"$probe_ok\" = 1 ]; then fails=0; else fails=$((fails+1)); if [ \"$fails\" -ge 3 ]; then soak_ok=0; break; fi; fi");
     });
   });
 
