@@ -150,6 +150,9 @@ export default function DatabaseDetailPage() {
     onSettled: invalidateRestores,
   });
   const [destinationId, setDestinationId] = useState("");
+  const [verifyEnabled, setVerifyEnabled] = useState(false);
+  const [verifyInterval, setVerifyInterval] = useState("24");
+  const [verifyCron, setVerifyCron] = useState("");
   useEffect(() => {
     if (db) {
       setSchedEnabled(db.backupEnabled);
@@ -158,6 +161,9 @@ export default function DatabaseDetailPage() {
       setRetention(String(db.backupRetention));
       setRetentionDays(db.backupRetentionDays != null ? String(db.backupRetentionDays) : "");
       setDestinationId(db.backupDestinationId ?? "");
+      setVerifyEnabled(db.verifyEnabled);
+      setVerifyInterval(String(db.verifyIntervalHours ?? 24));
+      setVerifyCron(db.verifyCron ?? "");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [db?.id]);
@@ -172,6 +178,16 @@ export default function DatabaseDetailPage() {
         destinationId: destinationId || null,
       }),
     onSuccess: invalidate,
+  });
+  const saveVerify = useMutation({
+    mutationFn: () =>
+      api.setVerifyConfig(id, {
+        enabled: verifyEnabled,
+        intervalHours: Number(verifyInterval) || 24,
+        cron: verifyCron.trim() || null,
+      }),
+    onSuccess: () => { toast(t("databases.verifyScheduleSaved"), "success"); invalidate(); },
+    onError: () => toast(t("databases.verifyScheduleFailed"), "error"),
   });
 
   const tabDefs = [
@@ -414,6 +430,25 @@ export default function DatabaseDetailPage() {
               </select>
             </label>
             <Btn variant="ghost" onClick={() => saveSchedule.mutate()} disabled={saveSchedule.isPending}>{t("databases.save")}</Btn>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14, paddingBottom: 14, borderBottom: "1px solid var(--c-bd)" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx2)" }} title={t("databases.verifyScheduleHint")}>
+              <input type="checkbox" checked={verifyEnabled} onChange={(e) => setVerifyEnabled(e.target.checked)} />
+              {t("databases.verifySchedule")}
+            </label>
+            <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 6 }}>
+              {t("databases.every")}
+              <input style={fieldSm} type="number" min={12} value={verifyInterval} onChange={(e) => setVerifyInterval(e.target.value)} disabled={!!verifyCron.trim()} />
+            </label>
+            <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 6 }} title={t("databases.verifyCronHint")}>
+              {t("databases.backupCron")}
+              <input style={{ ...fieldSm, width: 120 }} value={verifyCron} onChange={(e) => setVerifyCron(e.target.value)} placeholder="0 4 * * 0" />
+            </label>
+            <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>
+              {t("databases.lastVerified")}: {db.lastVerifiedAt ? new Date(db.lastVerifiedAt).toLocaleString() : t("databases.neverVerified")}
+            </span>
+            <Btn variant="ghost" onClick={() => saveVerify.mutate()} disabled={saveVerify.isPending}>{t("databases.save")}</Btn>
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>

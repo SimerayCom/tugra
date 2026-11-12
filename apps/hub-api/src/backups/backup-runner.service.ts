@@ -173,7 +173,42 @@ export class BackupRunnerService {
     // concurrent or prior same-backup drill's row and misreport this call's result.
     const row = recordId ? await this.prisma.restore.findUnique({ where: { id: recordId } }) : null;
     if (!row) throw new BadGatewayException("verification did not record a result");
+    if (row.status === RestoreStatus.SUCCESS) {
+      // Stamp the last-verified time (UI + watchdog reference) and clear any verify_missing/failure state.
+      // Best-effort: a stamp/notify failure must not mask a successful verification.
+      await this.prisma.database.update({ where: { id: src.id }, data: { lastVerifiedAt: new Date() } }).catch(() => undefined);
+      await this.alerts
+        .recover("verify", src.id, src.teamId, { dbId: src.id, dbName: src.name, engine: src.engine, version: src.version })
+        .catch(() => undefined);
+    } else if (row.status === RestoreStatus.FAILED) {
+      // Record the verify fail-state so a later SUCCESS fires verify_recovered (after a failure, not only
+      // after a watchdog "missing"). The user-facing failure notice is backup_restore_failed, already fired
+      // by the restore path; this only arms recovery. Best-effort.
+      await this.alerts.shouldNotifyFailure("verify", src.id).catch(() => undefined);
+    }
     return row;
+  }
+
+  /**
+   * The scheduled restore-verify tick: verify the LATEST successful backup of `databaseId`. No-ops when the
+   * schedule was disabled since the job was enqueued, the engine lost backup support, or there is no SUCCESS
+   * backup yet (the liveness watchdog, not this, alerts on a drill that never runs). An offline agent / failed
+   * provision is swallowed (logged) so the repeatable is not retry-spammed — the watchdog catches a drill that
+   * stops producing attestations. A RAN-but-FAILED drill is recorded + alerted inside {@link verifyBackup}.
+   */
+  async verifyScheduled(databaseId: string): Promise<void> {
+    const src = await this.prisma.database.findUnique({ where: { id: databaseId } });
+    if (!src || !src.verifyEnabled || !supportsBackup(src.engine as DbEngine)) return;
+    const backup = await this.prisma.backup.findFirst({
+      where: { databaseId, status: "SUCCESS" },
+      orderBy: { createdAt: "desc" },
+    });
+    if (!backup) return;
+    try {
+      await this.verifyBackup(src, backup, "scheduler");
+    } catch (e) {
+      this.logger.warn(`scheduled verify for database ${databaseId} could not run: ${e instanceof Error ? e.message : e}`);
+    }
   }
 
   toSpec(db: Database): DbSpec {

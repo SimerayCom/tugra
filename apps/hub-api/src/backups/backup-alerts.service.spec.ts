@@ -209,3 +209,56 @@ describe("BackupAlertsService.checkApps — volume watchdog", () => {
     expect(fireForEvent).toHaveBeenLastCalledWith("t1", "backup_recovered", expect.objectContaining({ kind: "volume", reason: "missing", appId: "app1" }));
   });
 });
+
+describe("BackupAlertsService — restore-verify watchdog + recovery", () => {
+  function makeVerify(opts: { dbs?: unknown[]; lastAttempt?: unknown } = {}) {
+    const redis = fakeRedis();
+    const fireForEvent = jest.fn().mockResolvedValue(undefined);
+    const prisma = {
+      database: { findMany: jest.fn().mockResolvedValue(opts.dbs ?? []) },
+      restore: { findFirst: jest.fn().mockResolvedValue(opts.lastAttempt ?? null) },
+    } as unknown as PrismaService;
+    const svc = new BackupAlertsService(prisma, redis as unknown as RedisService, { fireForEvent } as unknown as NotificationsService);
+    return { svc, redis, fireForEvent };
+  }
+  const vdb = { id: "db1", name: "shop", teamId: "t1", engine: "POSTGRES", version: "16", verifyIntervalHours: 24, verifyCron: null, lastVerifiedAt: null };
+
+  it("fires verify_missing ONCE when the last drill is older than the window (then dedupes)", async () => {
+    const t = makeVerify({ dbs: [vdb], lastAttempt: { createdAt: ago(100 * H), completedAt: ago(100 * H) } });
+    expect(await t.svc.checkVerifyLiveness(now)).toBe(1);
+    expect(t.fireForEvent).toHaveBeenCalledWith("t1", "verify_missing", expect.objectContaining({ dbId: "db1", kind: "verify", windowHours: "48" }));
+    // Re-arm is a success's job; a second tick with the same state must not re-fire.
+    expect(await t.svc.checkVerifyLiveness(now)).toBe(0);
+    expect(t.fireForEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays quiet when a drill RAN within the window", async () => {
+    const t = makeVerify({ dbs: [vdb], lastAttempt: { createdAt: ago(1 * H), completedAt: ago(1 * H) } });
+    expect(await t.svc.checkVerifyLiveness(now)).toBe(0);
+    expect(t.fireForEvent).not.toHaveBeenCalled();
+  });
+
+  it("a never-verified db skips the first tick (stamps the first-seen marker, no instant alert)", async () => {
+    const t = makeVerify({ dbs: [vdb], lastAttempt: null });
+    expect(await t.svc.checkVerifyLiveness(now)).toBe(0);
+    expect(t.fireForEvent).not.toHaveBeenCalled();
+    expect(t.redis.m.has("backupalert:watch:verify:db1")).toBe(true);
+  });
+
+  it("recover('verify') fires verify_recovered (not backup_recovered) after a missing alert", async () => {
+    const t = makeVerify();
+    t.redis.m.set("backupalert:missing:verify:db1", "1");
+    const out = await t.svc.recover("verify", "db1", "t1", { dbId: "db1", dbName: "shop", engine: "POSTGRES", version: "16" });
+    expect(out).toBe(true);
+    expect(t.fireForEvent).toHaveBeenCalledWith("t1", "verify_recovered", expect.objectContaining({ kind: "verify", reason: "missing" }));
+    expect(t.fireForEvent).not.toHaveBeenCalledWith("t1", "backup_recovered", expect.anything());
+  });
+
+  it("recover('verify') fires verify_recovered after a FAILED drill (the fail-state the runner arms)", async () => {
+    const t = makeVerify();
+    t.redis.m.set("backupalert:fail:verify:db1", String(Date.now())); // runner.verifyBackup arms this on a FAILED attestation
+    const out = await t.svc.recover("verify", "db1", "t1", { dbId: "db1", dbName: "shop" });
+    expect(out).toBe(true);
+    expect(t.fireForEvent).toHaveBeenCalledWith("t1", "verify_recovered", expect.objectContaining({ kind: "verify", reason: "failed" }));
+  });
+});

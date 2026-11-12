@@ -9,7 +9,7 @@ import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { NotificationsService } from "../notifications/notifications.service";
-import { BackupConfigSchema } from "./dto";
+import { BackupConfigSchema, VerifyConfigSchema } from "./dto";
 
 describe("BackupConfigSchema — cron + age retention", () => {
   const ok = (o: Record<string, unknown>) => BackupConfigSchema.safeParse({ enabled: true, ...o }).success;
@@ -31,6 +31,33 @@ describe("BackupConfigSchema — cron + age retention", () => {
   });
 });
 
+describe("VerifyConfigSchema — 12h floor, cron, no retention/destination", () => {
+  const ok = (o: Record<string, unknown>) => VerifyConfigSchema.safeParse({ enabled: true, ...o }).success;
+  it("accepts a cron, an interval ≥ the 12h floor, and a bare enabled/disabled", () => {
+    expect(ok({ cron: "0 4 * * 0" })).toBe(true);
+    expect(ok({ intervalHours: 12 })).toBe(true);
+    expect(ok({ intervalHours: 24 })).toBe(true);
+    expect(VerifyConfigSchema.safeParse({ enabled: false }).success).toBe(true);
+  });
+  it("floors the interval FAR above the backup minimum (each run provisions a real DB)", () => {
+    expect(ok({ intervalHours: 1 })).toBe(false);
+    expect(ok({ intervalHours: 11 })).toBe(false);
+  });
+  it("floors the cron too, so a too-frequent cron cannot bypass the 12h minimum", () => {
+    expect(ok({ cron: "0 4 * * 0" })).toBe(true); // weekly
+    expect(ok({ cron: "0 */12 * * *" })).toBe(true); // every 12h — exactly the floor
+    expect(ok({ cron: "* * * * *" })).toBe(false); // every minute — the bypass
+    expect(ok({ cron: "0 */6 * * *" })).toBe(false); // every 6h — below the floor
+  });
+  it("rejects an out-of-range cron and does not accept retention/destination keys as meaningful", () => {
+    expect(ok({ cron: "0 25 * * *" })).toBe(false);
+    // retention/destination are not part of the verify schema (ignored by zod's default strip).
+    const parsed = VerifyConfigSchema.parse({ enabled: true, intervalHours: 24, retention: 5, destinationId: "d1" } as never);
+    expect("retention" in parsed).toBe(false);
+    expect("destinationId" in parsed).toBe(false);
+  });
+});
+
 const audit = { log: jest.fn() } as unknown as AuditService;
 
 // OWNER/ADMIN hold every granular permission; VIEWER holds none.
@@ -39,7 +66,7 @@ const ALL_PERMS = new Set([
   "servers:ops", "terminal", "bulk", "monitors", "projects", "integrations", "variables",
 ]);
 
-const db = { id: "db1", teamId: "t1", serverId: "s1", engine: "POSTGRES", backupIntervalHours: 6, backupRetention: 7 };
+const db = { id: "db1", teamId: "t1", serverId: "s1", engine: "POSTGRES", version: "16", image: resolveImage("POSTGRES", "16"), backupIntervalHours: 6, backupRetention: 7 };
 
 function make(
   prisma: Partial<PrismaService>,
@@ -126,6 +153,73 @@ describe("BackupsService", () => {
     await expect(svc.setSchedule("u1", "db1", { enabled: true, intervalHours: 6 })).rejects.toThrow(/not supported/);
     expect(update).not.toHaveBeenCalled();
     expect(scheduler.schedule).not.toHaveBeenCalled();
+  });
+
+  it("arms a verify schedule when enabled, gated on 'backups' AND 'databases'", async () => {
+    const update = jest.fn().mockResolvedValue({ ...db, verifyEnabled: true, verifyIntervalHours: 24 });
+    const prisma = { database: { findUnique: jest.fn().mockResolvedValue(db), update } } as unknown as PrismaService;
+    const requirePermission = jest.fn().mockResolvedValue(undefined);
+    const scheduler = { scheduleVerify: jest.fn(), scheduleVerifyCron: jest.fn(), unscheduleVerify: jest.fn() } as unknown as BackupSchedulerService;
+    const svc = make(prisma, { requirePermission } as unknown as TeamAccessService, {}, scheduler);
+    await svc.setVerifySchedule("u1", "db1", { enabled: true, intervalHours: 24 });
+    expect(requirePermission).toHaveBeenCalledWith("u1", "t1", "backups");
+    expect(requirePermission).toHaveBeenCalledWith("u1", "t1", "databases");
+    expect(scheduler.scheduleVerify).toHaveBeenCalledWith("db1", 24 * 3600);
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "database.verify.schedule" }));
+  });
+
+  it("a verify cron drives scheduleVerifyCron and overrides the interval", async () => {
+    const update = jest.fn().mockResolvedValue({ ...db, verifyEnabled: true, verifyIntervalHours: 24, verifyCron: "0 4 * * 0" });
+    const prisma = { database: { findUnique: jest.fn().mockResolvedValue(db), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const scheduler = { scheduleVerify: jest.fn(), scheduleVerifyCron: jest.fn(), unscheduleVerify: jest.fn() } as unknown as BackupSchedulerService;
+    const svc = make(prisma, access, {}, scheduler);
+    await svc.setVerifySchedule("u1", "db1", { enabled: true, cron: "0 4 * * 0", intervalHours: 24 });
+    expect(scheduler.scheduleVerifyCron).toHaveBeenCalledWith("db1", "0 4 * * 0");
+    expect(scheduler.scheduleVerify).not.toHaveBeenCalled();
+  });
+
+  it("disabling the verify schedule unschedules its repeatable", async () => {
+    const update = jest.fn().mockResolvedValue({ ...db, verifyEnabled: false });
+    const prisma = { database: { findUnique: jest.fn().mockResolvedValue(db), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const scheduler = { scheduleVerify: jest.fn(), scheduleVerifyCron: jest.fn(), unscheduleVerify: jest.fn() } as unknown as BackupSchedulerService;
+    const svc = make(prisma, access, {}, scheduler);
+    await svc.setVerifySchedule("u1", "db1", { enabled: false });
+    expect(scheduler.unscheduleVerify).toHaveBeenCalledWith("db1");
+  });
+
+  it("refuses to enable verify for an engine with no backup pipeline and never persists it", async () => {
+    const update = jest.fn();
+    const prisma = { database: { findUnique: jest.fn().mockResolvedValue({ ...db, engine: "LIBSQL" }), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const scheduler = { scheduleVerify: jest.fn(), unscheduleVerify: jest.fn() } as unknown as BackupSchedulerService;
+    const svc = make(prisma, access, {}, scheduler);
+    await expect(svc.setVerifySchedule("u1", "db1", { enabled: true, intervalHours: 24 })).rejects.toThrow(/not supported/);
+    expect(update).not.toHaveBeenCalled();
+    expect(scheduler.scheduleVerify).not.toHaveBeenCalled();
+  });
+
+  it("denying 'databases' blocks arming the verify schedule (no persist, no schedule)", async () => {
+    const update = jest.fn();
+    const prisma = { database: { findUnique: jest.fn().mockResolvedValue(db), update } } as unknown as PrismaService;
+    const requirePermission = jest.fn().mockImplementation((_u: string, _t: string, p: string) => (p === "databases" ? Promise.reject(new ForbiddenException("nope")) : Promise.resolve(undefined)));
+    const scheduler = { scheduleVerify: jest.fn(), scheduleVerifyCron: jest.fn(), unscheduleVerify: jest.fn() } as unknown as BackupSchedulerService;
+    const svc = make(prisma, { requirePermission } as unknown as TeamAccessService, {}, scheduler);
+    await expect(svc.setVerifySchedule("u1", "db1", { enabled: true, intervalHours: 24 })).rejects.toThrow(/nope/);
+    expect(update).not.toHaveBeenCalled();
+    expect(scheduler.scheduleVerify).not.toHaveBeenCalled();
+  });
+
+  it("arming verify on a CUSTOM-image source requires apps:config, and a denial blocks it", async () => {
+    const update = jest.fn();
+    const prisma = { database: { findUnique: jest.fn().mockResolvedValue({ ...db, image: "ghcr.io/acme/pg:custom" }), update } } as unknown as PrismaService;
+    const requirePermission = jest.fn().mockImplementation((_u: string, _t: string, p: string) => (p === "apps:config" ? Promise.reject(new ForbiddenException("nope")) : Promise.resolve(undefined)));
+    const scheduler = { scheduleVerify: jest.fn(), scheduleVerifyCron: jest.fn(), unscheduleVerify: jest.fn() } as unknown as BackupSchedulerService;
+    const svc = make(prisma, { requirePermission } as unknown as TeamAccessService, {}, scheduler);
+    await expect(svc.setVerifySchedule("u1", "db1", { enabled: true, intervalHours: 24 })).rejects.toThrow(/nope/);
+    expect(update).not.toHaveBeenCalled();
+    expect(requirePermission).toHaveBeenCalledWith("u1", "t1", "apps:config");
   });
 
   it("imports from a URL by delegating a curl restore command to the runner", async () => {
@@ -398,6 +492,26 @@ describe("BackupsService.verifyBackupNow — authz + delegation to the runner", 
     const view = await svc.verifyBackupNow("u1", "db1");
     expect(view).toMatchObject({ kind: "VERIFY", status: "FAILED", exitCode: 1 });
     expect(view.errorTail).toContain("corrupt archive");
+  });
+
+  // Gate-RELOCATION guard: 5.2a moved the 'databases'/'apps:config' checks out of createForImport into this
+  // wrapper, so a denial of either must BLOCK the drill (not merely "be called") or the privilege bar silently drops.
+  const denyOnly = (perm: string) => jest.fn().mockImplementation((_u: string, _t: string, p: string) => (p === perm ? Promise.reject(new ForbiddenException("nope")) : Promise.resolve(undefined)));
+
+  it("denying ONLY 'databases' blocks the drill — runner.verifyBackup is never reached", async () => {
+    const prisma = { database: { findUnique: jest.fn().mockResolvedValue(srcRow) }, backup: { findFirst: jest.fn().mockResolvedValue(okBackup) } } as unknown as PrismaService;
+    const verifyBackup = jest.fn();
+    const svc = make(prisma, { requirePermission: denyOnly("databases") } as unknown as TeamAccessService, { verifyBackup } as unknown as BackupRunnerService);
+    await expect(svc.verifyBackupNow("u1", "db1")).rejects.toThrow(/nope/);
+    expect(verifyBackup).not.toHaveBeenCalled();
+  });
+
+  it("denying ONLY 'apps:config' on a custom-image source blocks the drill", async () => {
+    const prisma = { database: { findUnique: jest.fn().mockResolvedValue({ ...srcRow, image: "ghcr.io/acme/pg:custom" }) }, backup: { findFirst: jest.fn().mockResolvedValue(okBackup) } } as unknown as PrismaService;
+    const verifyBackup = jest.fn();
+    const svc = make(prisma, { requirePermission: denyOnly("apps:config") } as unknown as TeamAccessService, { verifyBackup } as unknown as BackupRunnerService);
+    await expect(svc.verifyBackupNow("u1", "db1")).rejects.toThrow(/nope/);
+    expect(verifyBackup).not.toHaveBeenCalled();
   });
 });
 

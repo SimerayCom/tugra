@@ -20,7 +20,7 @@ import { BackupRunnerService } from "./backup-runner.service";
 import { BackupSchedulerService } from "./backups.scheduler.service";
 import { BackupAlertsService } from "./backup-alerts.service";
 import { planTargets } from "../bulk/bulk.service";
-import type { BackupConfigInput, ImportFromUrlInput } from "./dto";
+import type { BackupConfigInput, ImportFromUrlInput, VerifyConfigInput } from "./dto";
 
 export const BackupViewSchema = z.object({
   id: z.string(),
@@ -269,6 +269,28 @@ export class BackupsService {
   }
 
   /**
+   * Arm/disarm the scheduled restore-verify drill. A stricter bar than backup-config: arming it schedules
+   * RECURRING system provisioning (each tick spins up + tears down a real DB), so it needs both 'backups'
+   * write AND the 'databases' permission — exactly the privileges the on-demand drill enforces.
+   */
+  async setVerifySchedule(userId: string, dbId: string, cfg: VerifyConfigInput): Promise<Database> {
+    const existing = await this.requireWrite(userId, dbId);
+    await this.access.requirePermission(userId, existing.teamId, "databases");
+    // Mirror the on-demand drill's bar exactly: arming a recurring drill on a NON-standard image means the
+    // scheduler will reproduce that image every tick, so require the same 'apps:config' privilege the
+    // on-demand drill (verifyBackupNow) demands. Only when enabling — disarming never provisions.
+    if (cfg.enabled && existing.image !== resolveImage(existing.engine as DbEngine, existing.version)) {
+      await this.access.requirePermission(userId, existing.teamId, "apps:config");
+    }
+    if (cfg.enabled && !supportsBackup(existing.engine as DbEngine)) {
+      throw new BadRequestException(`scheduled verify is not supported for ${existing.engine} yet`);
+    }
+    const db = await this.applyVerify(dbId, cfg);
+    await this.audit.log({ actor: userId, action: "database.verify.schedule", target: dbId });
+    return db;
+  }
+
+  /**
    * Apply one backup schedule to many databases (fleet bulk op). Each db is
    * gated by the caller's role in its team — non-writable / cross-team / unknown
    * databases are SKIPPED (not an error). destinationId is not touched.
@@ -333,6 +355,29 @@ export class BackupsService {
     // Re-arm the missing-backup watchdog from now + clear stale alerts, so a re-enable / interval change never
     // fires a stale backup_missing against an old success.
     await this.alerts.onScheduleChanged("database", dbId);
+    return db;
+  }
+
+  /** Persist the verify schedule + (re)schedule its repeatable. Caller handles authz + engine-support. */
+  private async applyVerify(dbId: string, cfg: VerifyConfigInput): Promise<Database> {
+    const db = await this.prisma.database.update({
+      where: { id: dbId },
+      data: {
+        verifyEnabled: cfg.enabled,
+        verifyIntervalHours: cfg.intervalHours ?? null,
+        ...(cfg.cron !== undefined ? { verifyCron: cfg.cron } : {}),
+      },
+    });
+    // A cron expression wins over the plain interval when both are set.
+    if (db.verifyEnabled && db.verifyCron) {
+      await this.scheduler.scheduleVerifyCron(dbId, db.verifyCron);
+    } else if (db.verifyEnabled && db.verifyIntervalHours) {
+      await this.scheduler.scheduleVerify(dbId, db.verifyIntervalHours * 3600);
+    } else {
+      await this.scheduler.unscheduleVerify(dbId);
+    }
+    // Re-arm the verify-liveness watchdog from now + clear stale alerts.
+    await this.alerts.onScheduleChanged("verify", dbId);
     return db;
   }
 

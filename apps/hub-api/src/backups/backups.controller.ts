@@ -25,6 +25,8 @@ import {
   ExportUrlSchema,
   ImportFromUrlInput,
   ImportFromUrlSchema,
+  VerifyConfigInput,
+  VerifyConfigSchema,
 } from "./dto";
 
 @ApiTags("backups")
@@ -143,6 +145,20 @@ export class BackupsController {
     @Body(new ZodValidationPipe(BackupConfigSchema)) body: BackupConfigInput,
   ) {
     await this.backups.setSchedule(user.userId, id, body);
+    return { ok: true };
+  }
+
+  // Arm/disarm the scheduled restore-verify drill. Config write, gated at the service by
+  // requireWrite('backups') + 'databases' (arming recurring system provisioning), like backup-config.
+  @Put("verify-config")
+  @HttpCode(200)
+  @ApiZodBody(VerifyConfigSchema)
+  async setVerifySchedule(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(VerifyConfigSchema)) body: VerifyConfigInput,
+  ) {
+    await this.backups.setVerifySchedule(user.userId, id, body);
     return { ok: true };
   }
 }

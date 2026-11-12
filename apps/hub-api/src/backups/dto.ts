@@ -1,10 +1,11 @@
 import { z } from "zod";
-import { isValidCron } from "../common/cron";
+import { isValidCron, minCronGapMs } from "../common/cron";
 
 // 5-field cron (minute hour day-of-month month day-of-week) — same shape the server-ops cleanup DTO uses.
 // When set it overrides intervalHours ("daily at 03:00" instead of "every 24h"); null clears it.
 // The regex fixes the shape; `isValidCron` rejects out-of-range fields that would crash the scheduler.
-const CRON = z
+// Exported so the verify-config DTO reuses the exact same validator (accepted ⇒ schedulable).
+export const CRON = z
   .string()
   .regex(/^\s*(\S+\s+){4}\S+\s*$/, "must be a 5-field cron expression")
   .refine(isValidCron, "cron expression is not valid (check the field ranges)");
@@ -19,6 +20,26 @@ export const BackupConfigSchema = z.object({
   destinationId: z.string().nullable().optional(),
 });
 export type BackupConfigInput = z.infer<typeof BackupConfigSchema>;
+
+// Minimum interval between scheduled restore-verify drills. Floored FAR above the backup minimum (1h):
+// each drill provisions + restores + tears down a REAL database, so it must stay sparse to spare the host.
+export const VERIFY_MIN_HOURS = 12;
+
+// Scheduled restore-verify drill config. No retention/destination — a drill retains nothing and reads the
+// chosen backup's own destination per-backup. The cron is floored to the SAME minimum as the plain interval:
+// otherwise a cron like "* * * * *" would bypass VERIFY_MIN_HOURS and provision+restore+tear-down a real
+// database every minute.
+export const VerifyConfigSchema = z
+  .object({
+    enabled: z.boolean(),
+    intervalHours: z.number().int().min(VERIFY_MIN_HOURS).max(24 * 30).optional(),
+    cron: CRON.nullable().optional(),
+  })
+  .refine((c) => !c.cron || (minCronGapMs(c.cron) ?? 0) >= VERIFY_MIN_HOURS * 3_600_000, {
+    message: `the verify cron may run at most once every ${VERIFY_MIN_HOURS} hours (each run provisions a real database)`,
+    path: ["cron"],
+  });
+export type VerifyConfigInput = z.infer<typeof VerifyConfigSchema>;
 
 // Apply one backup schedule to many databases (fleet bulk op). destinationId is
 // intentionally excluded — destinations are team-scoped, so a single one can't

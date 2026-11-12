@@ -1519,6 +1519,15 @@ model Database {
   // Optional age-based retention: also delete SUCCESS backups older than N days (alongside the keep-N count).
   backupRetentionDays Int?
   backupDestinationId String?
+  // Scheduled restore-verify drill (prove a backup actually RESTORES). Independent of the backup schedule:
+  // each run provisions a disposable DB, restores the latest SUCCESS backup into it, then tears it down.
+  verifyEnabled       Boolean  @default(false)
+  verifyIntervalHours Int?
+  // Optional 5-field cron; when set it drives the verify schedule and overrides verifyIntervalHours.
+  verifyCron          String?
+  // Last time a scheduled OR on-demand verify SUCCEEDED — powers the UI "last verified" line and the
+  // verify-liveness watchdog's reference point.
+  lastVerifiedAt      DateTime?
   tags        String[] @default([])
   backups     Backup[]
   restores    Restore[]

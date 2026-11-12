@@ -3236,6 +3236,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/databases/{id}/verify-config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["BackupsController_setVerifySchedule"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/fleet/backup-config": {
         parameters: {
             query?: never;
@@ -8559,7 +8575,7 @@ export interface operations {
                     config: {
                         [key: string]: unknown;
                     };
-                    eventTypes?: ("deploy_success" | "deploy_failed" | "deploy_rolled_back" | "server_offline" | "server_online" | "swarm_degraded" | "ssl_expiring" | "token_expiring" | "backup_failed" | "backup_success" | "backup_missing" | "backup_recovered" | "backup_restore_failed" | "volume_backup_success" | "volume_backup_failed" | "scheduled_task_success" | "scheduled_task_failed" | "docker_cleanup_success" | "docker_cleanup_failed" | "container_crashed" | "container_oom" | "container_unhealthy" | "container_mem_pressure")[];
+                    eventTypes?: ("deploy_success" | "deploy_failed" | "deploy_rolled_back" | "server_offline" | "server_online" | "swarm_degraded" | "ssl_expiring" | "token_expiring" | "backup_failed" | "backup_success" | "backup_missing" | "backup_recovered" | "backup_restore_failed" | "verify_missing" | "verify_recovered" | "volume_backup_success" | "volume_backup_failed" | "scheduled_task_success" | "scheduled_task_failed" | "docker_cleanup_success" | "docker_cleanup_failed" | "container_crashed" | "container_oom" | "container_unhealthy" | "container_mem_pressure")[];
                     /** @default en */
                     locale?: string;
                 };
@@ -8686,7 +8702,7 @@ export interface operations {
                 "application/json": {
                     name?: string;
                     enabled?: boolean;
-                    eventTypes?: ("deploy_success" | "deploy_failed" | "deploy_rolled_back" | "server_offline" | "server_online" | "swarm_degraded" | "ssl_expiring" | "token_expiring" | "backup_failed" | "backup_success" | "backup_missing" | "backup_recovered" | "backup_restore_failed" | "volume_backup_success" | "volume_backup_failed" | "scheduled_task_success" | "scheduled_task_failed" | "docker_cleanup_success" | "docker_cleanup_failed" | "container_crashed" | "container_oom" | "container_unhealthy" | "container_mem_pressure")[];
+                    eventTypes?: ("deploy_success" | "deploy_failed" | "deploy_rolled_back" | "server_offline" | "server_online" | "swarm_degraded" | "ssl_expiring" | "token_expiring" | "backup_failed" | "backup_success" | "backup_missing" | "backup_recovered" | "backup_restore_failed" | "verify_missing" | "verify_recovered" | "volume_backup_success" | "volume_backup_failed" | "scheduled_task_success" | "scheduled_task_failed" | "docker_cleanup_success" | "docker_cleanup_failed" | "container_crashed" | "container_oom" | "container_unhealthy" | "container_mem_pressure")[];
                     config?: {
                         [key: string]: unknown;
                     };
@@ -21126,6 +21142,11 @@ export interface operations {
                         backupRetentionDays: number | null;
                         backupDestinationId: string | null;
                         backupSupported: boolean;
+                        verifyEnabled: boolean;
+                        verifyIntervalHours: number | null;
+                        verifyCron: string | null;
+                        /** Format: date-time */
+                        lastVerifiedAt: string | null;
                         tags: string[];
                         volumes: {
                             name: string;
@@ -21238,6 +21259,11 @@ export interface operations {
                         backupRetentionDays: number | null;
                         backupDestinationId: string | null;
                         backupSupported: boolean;
+                        verifyEnabled: boolean;
+                        verifyIntervalHours: number | null;
+                        verifyCron: string | null;
+                        /** Format: date-time */
+                        lastVerifiedAt: string | null;
                         tags: string[];
                         volumes: {
                             name: string;
@@ -21349,6 +21375,11 @@ export interface operations {
                         backupRetentionDays: number | null;
                         backupDestinationId: string | null;
                         backupSupported: boolean;
+                        verifyEnabled: boolean;
+                        verifyIntervalHours: number | null;
+                        verifyCron: string | null;
+                        /** Format: date-time */
+                        lastVerifiedAt: string | null;
                         tags: string[];
                         volumes: {
                             name: string;
@@ -21595,6 +21626,11 @@ export interface operations {
                         backupRetentionDays: number | null;
                         backupDestinationId: string | null;
                         backupSupported: boolean;
+                        verifyEnabled: boolean;
+                        verifyIntervalHours: number | null;
+                        verifyCron: string | null;
+                        /** Format: date-time */
+                        lastVerifiedAt: string | null;
                         tags: string[];
                         volumes: {
                             name: string;
@@ -22603,6 +22639,11 @@ export interface operations {
                         backupRetentionDays: number | null;
                         backupDestinationId: string | null;
                         backupSupported: boolean;
+                        verifyEnabled: boolean;
+                        verifyIntervalHours: number | null;
+                        verifyCron: string | null;
+                        /** Format: date-time */
+                        lastVerifiedAt: string | null;
                         tags: string[];
                         volumes: {
                             name: string;
@@ -24086,6 +24127,87 @@ export interface operations {
                     retention?: number;
                     retentionDays?: number | null;
                     destinationId?: string | null;
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    BackupsController_setVerifySchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    enabled: boolean;
+                    intervalHours?: number;
+                    cron?: string | null;
                 };
             };
         };

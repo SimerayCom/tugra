@@ -374,6 +374,7 @@ describe("BackupRunnerService.verifyBackup — restore-verify drill", () => {
     const findUnique = jest.fn().mockImplementation(({ where }: { where: { id: string } }) => Promise.resolve(rows[where.id] ?? null));
     const prisma = {
       restore: { create, update, findUnique },
+      database: { update: jest.fn().mockResolvedValue({}) },
       backupDestination: { findUnique: jest.fn().mockResolvedValue(null) }, // → LOCAL dest
     } as unknown as PrismaService;
     const sr = opts.sendResult ?? { output: "ok", exitCode: 0 };
@@ -388,16 +389,17 @@ describe("BackupRunnerService.verifyBackup — restore-verify drill", () => {
       return fn(ephDb);
     });
     const databases = { withSystemThrowaway } as unknown as DatabasesService;
+    const alerts = { shouldNotifyFailure: jest.fn().mockResolvedValue(true), recover: jest.fn().mockResolvedValue(false) } as unknown as BackupAlertsService;
     const svc = new BackupRunnerService(
       prisma,
       { log: jest.fn() } as unknown as AuditService,
       crypto,
       { sendCommand } as unknown as AgentWsServer,
       { fireForEvent } as unknown as NotificationsService,
-      noAlerts(),
+      alerts,
       databases,
     );
-    return { svc, create, sendCommand, fireForEvent, withSystemThrowaway, getInput: () => seenInput };
+    return { svc, prisma, create, sendCommand, fireForEvent, withSystemThrowaway, alerts, getInput: () => seenInput };
   }
 
   it("provisions a faithful throwaway (standard image → undefined), restores into it, attests SUCCESS on the source", async () => {
@@ -436,5 +438,70 @@ describe("BackupRunnerService.verifyBackup — restore-verify drill", () => {
     await expect(svc.verifyBackup({ ...src } as never, backup as never, "u1")).rejects.toBeInstanceOf(ServiceUnavailableException);
     expect(sendCommand).not.toHaveBeenCalled();
     expect(fireForEvent).not.toHaveBeenCalled();
+  });
+
+  it("on SUCCESS stamps the source's lastVerifiedAt and asks for a verify recovery notice", async () => {
+    const { svc, prisma, alerts } = make();
+    await svc.verifyBackup({ ...src } as never, backup as never, "u1");
+    expect((prisma.database.update as jest.Mock)).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "db1" }, data: expect.objectContaining({ lastVerifiedAt: expect.any(Date) }) }));
+    expect(alerts.recover).toHaveBeenCalledWith("verify", "db1", "t1", expect.objectContaining({ dbName: "shop" }));
+  });
+
+  it("on a FAILED attestation does NOT stamp lastVerifiedAt or recover, but ARMS the verify fail-state", async () => {
+    const { svc, prisma, alerts } = make({ sendResult: { output: "ERROR: corrupt", exitCode: 1 } });
+    await svc.verifyBackup({ ...src } as never, backup as never, "u1");
+    expect((prisma.database.update as jest.Mock)).not.toHaveBeenCalled();
+    expect(alerts.recover).not.toHaveBeenCalled();
+    // Arms the fail-state so a later SUCCESS can fire verify_recovered (after a failure, not only "missing").
+    expect(alerts.shouldNotifyFailure).toHaveBeenCalledWith("verify", "db1");
+  });
+});
+
+describe("BackupRunnerService.verifyScheduled", () => {
+  const version = "16";
+  const stdImage = resolveImage("POSTGRES", version);
+  const src = { id: "db1", name: "shop", teamId: "t1", serverId: "s1", engine: "POSTGRES", version, image: stdImage, environmentId: "env1", credentials: "c", verifyEnabled: true };
+  const backup = { id: "bk", databaseId: "db1", status: "SUCCESS", filename: "t.dump.gz", destinationId: null };
+
+  function make(opts: { db?: Record<string, unknown> | null; backup?: unknown } = {}) {
+    const prisma = {
+      database: { findUnique: jest.fn().mockResolvedValue("db" in opts ? opts.db : src) },
+      backup: { findFirst: jest.fn().mockResolvedValue("backup" in opts ? opts.backup : backup) },
+    } as unknown as PrismaService;
+    const svc = new BackupRunnerService(
+      prisma,
+      { log: jest.fn() } as unknown as AuditService,
+      {} as unknown as CryptoService,
+      {} as unknown as AgentWsServer,
+      {} as unknown as NotificationsService,
+      noAlerts(),
+      noDbs(),
+    );
+    const verifyBackup = jest.spyOn(svc, "verifyBackup").mockResolvedValue({ id: "r1", status: "SUCCESS" } as never);
+    return { svc, verifyBackup, prisma };
+  }
+
+  it("verifies the latest SUCCESS backup as the 'scheduler' actor", async () => {
+    const { svc, verifyBackup } = make();
+    await svc.verifyScheduled("db1");
+    expect(verifyBackup).toHaveBeenCalledWith(expect.objectContaining({ id: "db1" }), expect.objectContaining({ id: "bk" }), "scheduler");
+  });
+
+  it("no-ops when verify was disabled since the job was enqueued", async () => {
+    const { svc, verifyBackup } = make({ db: { ...src, verifyEnabled: false } });
+    await svc.verifyScheduled("db1");
+    expect(verifyBackup).not.toHaveBeenCalled();
+  });
+
+  it("no-ops when there is no SUCCESS backup yet (the watchdog alerts, not this)", async () => {
+    const { svc, verifyBackup } = make({ backup: null });
+    await svc.verifyScheduled("db1");
+    expect(verifyBackup).not.toHaveBeenCalled();
+  });
+
+  it("swallows an offline/provision error so the repeatable is not retry-spammed", async () => {
+    const { svc } = make();
+    jest.spyOn(svc, "verifyBackup").mockRejectedValue(new ServiceUnavailableException("agent offline"));
+    await expect(svc.verifyScheduled("db1")).resolves.toBeUndefined();
   });
 });

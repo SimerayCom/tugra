@@ -5362,6 +5362,8 @@
                         "backup_missing",
                         "backup_recovered",
                         "backup_restore_failed",
+                        "verify_missing",
+                        "verify_recovered",
                         "volume_backup_success",
                         "volume_backup_failed",
                         "scheduled_task_success",
@@ -5561,6 +5563,8 @@
                         "backup_missing",
                         "backup_recovered",
                         "backup_restore_failed",
+                        "verify_missing",
+                        "verify_recovered",
                         "volume_backup_success",
                         "volume_backup_failed",
                         "scheduled_task_success",
@@ -29567,6 +29571,22 @@
                       "backupSupported": {
                         "type": "boolean"
                       },
+                      "verifyEnabled": {
+                        "type": "boolean"
+                      },
+                      "verifyIntervalHours": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "verifyCron": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "lastVerifiedAt": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                      },
                       "tags": {
                         "type": "array",
                         "items": {
@@ -29644,6 +29664,10 @@
                       "backupRetentionDays",
                       "backupDestinationId",
                       "backupSupported",
+                      "verifyEnabled",
+                      "verifyIntervalHours",
+                      "verifyCron",
+                      "lastVerifiedAt",
                       "tags",
                       "volumes",
                       "role",
@@ -29898,6 +29922,22 @@
                     "backupSupported": {
                       "type": "boolean"
                     },
+                    "verifyEnabled": {
+                      "type": "boolean"
+                    },
+                    "verifyIntervalHours": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "verifyCron": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "lastVerifiedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
                     "tags": {
                       "type": "array",
                       "items": {
@@ -29975,6 +30015,10 @@
                     "backupRetentionDays",
                     "backupDestinationId",
                     "backupSupported",
+                    "verifyEnabled",
+                    "verifyIntervalHours",
+                    "verifyCron",
+                    "lastVerifiedAt",
                     "tags",
                     "volumes",
                     "role",
@@ -30196,6 +30240,22 @@
                     "backupSupported": {
                       "type": "boolean"
                     },
+                    "verifyEnabled": {
+                      "type": "boolean"
+                    },
+                    "verifyIntervalHours": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "verifyCron": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "lastVerifiedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
                     "tags": {
                       "type": "array",
                       "items": {
@@ -30273,6 +30333,10 @@
                     "backupRetentionDays",
                     "backupDestinationId",
                     "backupSupported",
+                    "verifyEnabled",
+                    "verifyIntervalHours",
+                    "verifyCron",
+                    "lastVerifiedAt",
                     "tags",
                     "volumes",
                     "role",
@@ -30688,6 +30752,22 @@
                     "backupSupported": {
                       "type": "boolean"
                     },
+                    "verifyEnabled": {
+                      "type": "boolean"
+                    },
+                    "verifyIntervalHours": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "verifyCron": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "lastVerifiedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
                     "tags": {
                       "type": "array",
                       "items": {
@@ -30765,6 +30845,10 @@
                     "backupRetentionDays",
                     "backupDestinationId",
                     "backupSupported",
+                    "verifyEnabled",
+                    "verifyIntervalHours",
+                    "verifyCron",
+                    "lastVerifiedAt",
                     "tags",
                     "volumes",
                     "role",
@@ -32243,6 +32327,22 @@
                     "backupSupported": {
                       "type": "boolean"
                     },
+                    "verifyEnabled": {
+                      "type": "boolean"
+                    },
+                    "verifyIntervalHours": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "verifyCron": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "lastVerifiedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
                     "tags": {
                       "type": "array",
                       "items": {
@@ -32326,6 +32426,10 @@
                     "backupRetentionDays",
                     "backupDestinationId",
                     "backupSupported",
+                    "verifyEnabled",
+                    "verifyIntervalHours",
+                    "verifyCron",
+                    "lastVerifiedAt",
                     "tags",
                     "volumes",
                     "role",
@@ -34530,6 +34634,123 @@
                   },
                   "destinationId": {
                     "type": "string",
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "enabled"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "backups"
+        ]
+      }
+    },
+    "/api/v1/databases/{id}/verify-config": {
+      "put": {
+        "operationId": "BackupsController_setVerifySchedule",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "intervalHours": {
+                    "type": "integer",
+                    "minimum": 12,
+                    "maximum": 720
+                  },
+                  "cron": {
+                    "type": "string",
+                    "pattern": "^\\s*(\\S+\\s+){4}\\S+\\s*$",
                     "nullable": true
                   }
                 },

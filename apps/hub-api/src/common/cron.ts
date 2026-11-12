@@ -15,3 +15,24 @@ export function isValidCron(expr: string): boolean {
     return false;
   }
 }
+
+/**
+ * Smallest gap between consecutive fires of `expr`, sampled over the next `samples` occurrences, in ms
+ * (null for an unparsable expression). Floors how FREQUENTLY an expensive schedule may run: an interval
+ * floor only bounds the plain-hours field, so without this a cron like "* * * * *" bypasses it entirely.
+ */
+export function minCronGapMs(expr: string, samples = 24, from: Date = new Date()): number | null {
+  try {
+    const it = parseExpression(expr, { currentDate: from });
+    let prev = it.next().toDate().getTime();
+    let min = Infinity;
+    for (let i = 0; i < samples; i++) {
+      const next = it.next().toDate().getTime();
+      min = Math.min(min, next - prev);
+      prev = next;
+    }
+    return Number.isFinite(min) ? min : null;
+  } catch {
+    return null;
+  }
+}

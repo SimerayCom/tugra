@@ -9,6 +9,7 @@ import type { MsgField, MsgLevel, RenderedMessage } from "./rendered-message";
 import { deployTemplate } from "./templates/deploy";
 import { backupFailedTemplate, backupSucceededTemplate, restoreFailedTemplate } from "./templates/backup";
 import { backupMissingTemplate, backupRecoveredTemplate } from "./templates/backup-health";
+import { verifyMissingTemplate, verifyRecoveredTemplate } from "./templates/backup-verify";
 import { serverOfflineTemplate, serverOnlineTemplate } from "./templates/server";
 import { swarmDegradedTemplate } from "./templates/swarm";
 import { sslExpiringTemplate, tokenExpiringTemplate } from "./templates/expiry";
@@ -107,6 +108,8 @@ const REGISTRY: Record<string, EventTemplate> = {
   backup_missing: backupMissingTemplate,
   backup_recovered: backupRecoveredTemplate,
   backup_restore_failed: restoreFailedTemplate,
+  verify_missing: verifyMissingTemplate,
+  verify_recovered: verifyRecoveredTemplate,
   ssl_expiring: sslExpiringTemplate,
   token_expiring: tokenExpiringTemplate,
   server_offline: serverOfflineTemplate,

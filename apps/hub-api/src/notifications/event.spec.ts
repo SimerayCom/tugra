@@ -93,6 +93,25 @@ describe("renderEvent — typed per-event templates", () => {
     expect(render("backup_restore_failed", { dbName: "x", exitCode: 0 }).fields.find((f) => f.label === "Exit code")?.value).toBe("0");
   });
 
+  it("verify_missing: failure + critical, last-verified + window, db link", () => {
+    const m = render("verify_missing", { kind: "verify", dbId: "db1", dbName: "shop", engine: "postgres", version: "16", lastVerifiedAt: "2026-08-01T10:30:00.000Z", windowHours: "48" });
+    expect(m.level).toBe("failure");
+    expect(m.title).toBe("Restore-verify stalled — shop");
+    expect(m.critical).toBe(true);
+    expect(fieldVal(m, "Last verified")).toBe("2026-08-01 10:30 UTC");
+    expect(fieldVal(m, "Alert window")).toBe("48h");
+    expect(linkUrl(m, "Open database")).toBe("https://web.test/databases/db1");
+  });
+
+  it("verify_recovered: success, not critical, after-missing vs after-failed summary", () => {
+    const miss = render("verify_recovered", { kind: "verify", dbId: "db1", dbName: "shop", reason: "missing" });
+    expect(miss.level).toBe("success");
+    expect(miss.title).toBe("Restore-verify recovered — shop");
+    expect(miss.critical).toBeFalsy();
+    expect(miss.summary).toContain("ran again");
+    expect(render("verify_recovered", { dbName: "shop", reason: "failed" }).summary).toContain("succeeded again after a failure");
+  });
+
   it("ssl_expiring: warning, days + formatted expiry, app link", () => {
     const m = render("ssl_expiring", {
       appId: "app1", appName: "blog", domain: "blog.io", days: 7,
@@ -284,7 +303,7 @@ describe("renderEvent — typed per-event templates", () => {
   it("empty ctx never yields the string 'undefined' and drops empty fields", () => {
     for (const type of [
       "deploy_success", "deploy_failed", "deploy_rolled_back", "backup_failed", "backup_success",
-      "backup_missing", "backup_recovered",
+      "backup_missing", "backup_recovered", "verify_missing", "verify_recovered",
       "backup_restore_failed", "ssl_expiring", "token_expiring", "server_offline", "server_online", "swarm_degraded",
       "volume_backup_success", "volume_backup_failed", "scheduled_task_success", "scheduled_task_failed",
       "docker_cleanup_success", "docker_cleanup_failed", "monitor_up", "monitor_down",
@@ -310,11 +329,11 @@ describe("renderEvent — typed per-event templates", () => {
     // critical events are volume_backup_failed and scheduled_task_failed (real failed operations).
     const critical = new Set([
       "deploy_failed", "backup_failed", "backup_restore_failed", "server_offline", "monitor_down",
-      "volume_backup_failed", "scheduled_task_failed", "swarm_degraded", "backup_missing",
+      "volume_backup_failed", "scheduled_task_failed", "swarm_degraded", "backup_missing", "verify_missing",
     ]);
     const all = [
       "deploy_success", "deploy_failed", "deploy_rolled_back", "backup_failed", "backup_success",
-      "backup_missing", "backup_recovered",
+      "backup_missing", "backup_recovered", "verify_missing", "verify_recovered",
       "backup_restore_failed", "ssl_expiring", "token_expiring", "server_offline", "server_online", "swarm_degraded",
       "volume_backup_success", "volume_backup_failed", "scheduled_task_success", "scheduled_task_failed",
       "docker_cleanup_success", "docker_cleanup_failed", "monitor_up", "monitor_down",

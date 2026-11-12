@@ -38,6 +38,18 @@
     },
     "link": { "openDatabase": "Open database", "openApp": "Open app" }
   },
+  "verify": {
+    "missing": {
+      "title": "Restore-verify stalled — {name}",
+      "summary": "{name} has run no restore-verify drill in the last {hours} hours — its verify schedule may have stopped."
+    },
+    "recovered": {
+      "title": "Restore-verify recovered — {name}",
+      "after_failed": "A restore-verify drill for {name} succeeded again after a failure.",
+      "after_missing": "A restore-verify drill for {name} ran again after a stretch with none."
+    },
+    "field": { "lastVerified": "Last verified" }
+  },
   "server": {
     "offline": { "title": "Server offline — {server}", "summary": "Server {server} stopped responding." },
     "online": { "title": "Server online — {server}", "summary": "Server {server} is back online." },

@@ -30,6 +30,8 @@
   "eventBackupMissing": "No recent backup (schedule stalled)",
   "eventBackupRecovered": "Backups recovered",
   "eventBackupRestoreFailed": "Restore failed",
+  "eventVerifyMissing": "Restore-verify stalled (schedule stopped)",
+  "eventVerifyRecovered": "Restore-verify recovered",
   "eventVolumeBackupSuccess": "Volume backup succeeded",
   "eventVolumeBackupFailed": "Volume backup failed",
   "eventScheduledTaskSuccess": "Scheduled task succeeded",

@@ -1,11 +1,13 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { RestoreKind } from "@prisma/client";
 import { parseExpression } from "cron-parser";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { NotificationsService } from "../notifications/notifications.service";
 
-/** Which backup family an alert is about. Database backups and app-volume backups share one state machine. */
-export type BackupKind = "database" | "volume";
+/** Which backup family an alert is about. Database backups, app-volume backups, and the restore-verify drill
+ *  all share one state machine (the Redis keys namespace on the kind, so a 'verify' kind can never collide). */
+export type BackupKind = "database" | "volume" | "verify";
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -107,8 +109,10 @@ export class BackupAlertsService {
       return false; // can't read state → stay silent (a missed recovery beats a false one)
     }
     if (!failed && !missing) return false;
+    // The verify drill has its own recovery event; database + volume share backup_recovered.
+    const event = kind === "verify" ? "verify_recovered" : "backup_recovered";
     await this.notifications
-      .fireForEvent(teamId, "backup_recovered", { ...ctx, kind, reason: missing ? "missing" : "failed" })
+      .fireForEvent(teamId, event, { ...ctx, kind, reason: missing ? "missing" : "failed" })
       .catch(() => undefined);
     return true;
   }
@@ -186,6 +190,49 @@ export class BackupAlertsService {
       fired++;
     }
     if (fired) this.logger.warn(`backup watchdog: ${fired} app(s) with no recent successful volume backup`);
+    return fired;
+  }
+
+  /**
+   * Watchdog for the scheduled restore-verify drill: for every verify-enabled database whose last VERIFY
+   * attempt (any status) is older than its window, fire `verify_missing` ONCE — catching a drill that silently
+   * stopped running. Deliberately anchored on the latest ATTEMPT, not the last SUCCESS: a drill that RAN and
+   * found the backup bad already fired backup_restore_failed, so anchoring on success would double-alert.
+   * Returns how many alerts were fired.
+   */
+  async checkVerifyLiveness(now: Date = new Date()): Promise<number> {
+    const dbs = await this.prisma.database.findMany({
+      where: { verifyEnabled: true, OR: [{ verifyIntervalHours: { not: null } }, { verifyCron: { not: null } }] },
+      select: { id: true, name: true, teamId: true, engine: true, version: true, verifyIntervalHours: true, verifyCron: true, lastVerifiedAt: true },
+    });
+    let fired = 0;
+    for (const d of dbs) {
+      const window = missingWindowMs({ intervalHours: d.verifyIntervalHours, cron: d.verifyCron }, now);
+      if (window == null) continue;
+      const lastAttempt = await this.prisma.restore.findFirst({
+        where: { databaseId: d.id, kind: RestoreKind.VERIFY },
+        orderBy: { createdAt: "desc" },
+        select: { createdAt: true, completedAt: true },
+      });
+      // referenceTime: latest attempt → its time; none ever → first-seen watch marker (skip the first tick so
+      // enabling verify on an old db does not alert instantly).
+      const ref = await this.referenceTime("verify", d.id, lastAttempt, null, now);
+      if (ref == null || now.getTime() - ref.getTime() <= window) continue;
+      if (!(await this.claimMissing("verify", d.id))) continue;
+      await this.notifications
+        .fireForEvent(d.teamId, "verify_missing", {
+          kind: "verify",
+          dbId: d.id,
+          dbName: d.name,
+          engine: d.engine,
+          version: d.version,
+          lastVerifiedAt: d.lastVerifiedAt ? d.lastVerifiedAt.toISOString() : "",
+          windowHours: String(Math.round(window / HOUR_MS)),
+        })
+        .catch(() => undefined);
+      fired++;
+    }
+    if (fired) this.logger.warn(`verify watchdog: ${fired} database(s) with no recent restore-verify drill`);
     return fired;
   }
 

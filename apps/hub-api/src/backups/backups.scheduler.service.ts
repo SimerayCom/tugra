@@ -50,11 +50,19 @@ export class BackupSchedulerService
       async (job) => {
         if (job.name === WATCHDOG_JOB) {
           await this.alerts.checkDatabases();
+          await this.alerts.checkVerifyLiveness();
           return;
         }
         const databaseId = job.data.databaseId as string;
-        // Orphan self-heal: the database was deleted → stop this repeatable instead of failing every tick.
-        if (!(await reapIfGone(databaseId, () => this.prisma.database.findUnique({ where: { id: databaseId }, select: { id: true } }).then(Boolean), (i) => this.unschedule(i)))) return;
+        const stillExists = () => this.prisma.database.findUnique({ where: { id: databaseId }, select: { id: true } }).then(Boolean);
+        // The verify branch MUST come before the backup fall-through, or a verify tick would run a backup.
+        if (job.name.startsWith("verify:")) {
+          // Orphan self-heal: the database was deleted → stop this repeatable instead of failing every tick.
+          if (!(await reapIfGone(databaseId, stillExists, (i) => this.unscheduleVerify(i)))) return;
+          await this.runner.verifyScheduled(databaseId);
+          return;
+        }
+        if (!(await reapIfGone(databaseId, stillExists, (i) => this.unschedule(i)))) return;
         await this.runner.runBackup(databaseId);
       },
       { connection },
@@ -81,6 +89,22 @@ export class BackupSchedulerService
       }
     }
     this.logger.log(`scheduled ${ok}/${dbs.length} database backup(s)`);
+
+    // Enroll the verify schedules the same way (own per-db try/catch so a stale bad verifyCron can't crash boot).
+    const verifyDbs = await this.prisma.database.findMany({
+      where: { verifyEnabled: true, OR: [{ verifyIntervalHours: { not: null } }, { verifyCron: { not: null } }] },
+    });
+    let vok = 0;
+    for (const d of verifyDbs) {
+      try {
+        if (d.verifyCron) await this.scheduleVerifyCron(d.id, d.verifyCron);
+        else await this.scheduleVerify(d.id, (d.verifyIntervalHours ?? 24) * 3600);
+        vok++;
+      } catch (e) {
+        this.logger.warn(`skipped verify schedule for database ${d.id} (bad cron "${d.verifyCron}"): ${e instanceof Error ? e.message : e}`);
+      }
+    }
+    this.logger.log(`scheduled ${vok}/${verifyDbs.length} database verify drill(s)`);
   }
 
   async schedule(databaseId: string, intervalSec: number): Promise<void> {
@@ -105,6 +129,32 @@ export class BackupSchedulerService
     const reps = await this.queue.getRepeatableJobs();
     for (const r of reps) {
       if (r.name === `backup:${databaseId}`) {
+        await this.queue.removeRepeatableByKey(r.key);
+      }
+    }
+  }
+
+  // ── restore-verify drill: a SECOND repeatable family, keyed `verify:<id>` so it never collides with
+  //    `backup:<id>` or the watchdog. Mirrors schedule/scheduleCron/unschedule exactly. ──
+
+  async scheduleVerify(databaseId: string, intervalSec: number): Promise<void> {
+    if (!this.queue) return;
+    await this.unscheduleVerify(databaseId);
+    await this.queue.add(`verify:${databaseId}`, { databaseId }, { repeat: { every: intervalSec * 1000 } });
+  }
+
+  /** Schedule the verify drill on a cron pattern (e.g. "0 4 * * 0" — 04:00 every Sunday). */
+  async scheduleVerifyCron(databaseId: string, cron: string): Promise<void> {
+    if (!this.queue) return;
+    await this.unscheduleVerify(databaseId);
+    await this.queue.add(`verify:${databaseId}`, { databaseId }, { repeat: { pattern: cron } });
+  }
+
+  async unscheduleVerify(databaseId: string): Promise<void> {
+    if (!this.queue) return;
+    const reps = await this.queue.getRepeatableJobs();
+    for (const r of reps) {
+      if (r.name === `verify:${databaseId}`) {
         await this.queue.removeRepeatableByKey(r.key);
       }
     }

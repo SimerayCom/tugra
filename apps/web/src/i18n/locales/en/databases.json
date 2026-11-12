@@ -169,5 +169,12 @@
   "runDownloadOpen": "Open download link",
   "runDownloadFailed": "Could not generate a download link",
   "runLocalNote": "This backup is stored on the server's local disk. Add an S3 destination to download backups from here.",
-  "runClose": "Close"
+  "runClose": "Close",
+  "verifySchedule": "Scheduled restore-verify",
+  "verifyScheduleHint": "Periodically restore the latest backup into a disposable database to prove it still restores, then tear it down. Independent of the backup schedule.",
+  "verifyCronHint": "A 5-field cron (e.g. 0 4 * * 0 = 04:00 every Sunday). When set it overrides the hours interval. Keep it sparse — each run provisions a real database.",
+  "lastVerified": "Last verified",
+  "neverVerified": "Never",
+  "verifyScheduleSaved": "Verify schedule saved",
+  "verifyScheduleFailed": "Could not save the verify schedule"
 }

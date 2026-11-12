@@ -1444,6 +1444,10 @@ export interface Database {
   backupRetentionDays: number | null;
   backupDestinationId: string | null;
   backupSupported: boolean;
+  verifyEnabled: boolean;
+  verifyIntervalHours: number | null;
+  verifyCron: string | null;
+  lastVerifiedAt: string | null;
   tags: string[];
   volumes: { name: string; path: string }[];
   role: Role;

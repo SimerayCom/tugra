@@ -58,6 +58,8 @@ const EVENT_LABEL: Record<string, string> = {
   backup_missing: "eventBackupMissing",
   backup_recovered: "eventBackupRecovered",
   backup_restore_failed: "eventBackupRestoreFailed",
+  verify_missing: "eventVerifyMissing",
+  verify_recovered: "eventVerifyRecovered",
   volume_backup_success: "eventVolumeBackupSuccess",
   volume_backup_failed: "eventVolumeBackupFailed",
   scheduled_task_success: "eventScheduledTaskSuccess",

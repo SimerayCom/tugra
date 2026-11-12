@@ -34,6 +34,8 @@ export const EVENT_TYPES = [
   "backup_missing",
   "backup_recovered",
   "backup_restore_failed",
+  "verify_missing",
+  "verify_recovered",
   "volume_backup_success",
   "volume_backup_failed",
   "scheduled_task_success",

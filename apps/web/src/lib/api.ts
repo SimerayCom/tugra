@@ -1647,6 +1647,13 @@ export const api = {
       body: JSON.stringify(cfg),
     });
   },
+  // Arm/disarm the scheduled restore-verify drill (prove the latest backup restores, on a cron/interval).
+  setVerifyConfig(dbId: string, cfg: { enabled: boolean; intervalHours?: number; cron?: string | null }) {
+    return apiFetch<{ ok: true }>(`/databases/${dbId}/verify-config`, {
+      method: "PUT",
+      body: JSON.stringify(cfg),
+    });
+  },
   bulkSetBackupConfig(databaseIds: string[], cfg: { enabled: boolean; intervalHours?: number; retention?: number }) {
     return apiFetch<{ applied: string[]; skipped: string[] }>(`/fleet/backup-config`, {
       method: "POST",
