@@ -1467,11 +1467,18 @@ model Deployment {
   startedAt     DateTime?      // when the row moved QUEUED -> RUNNING; null while queued (durationMs measures from here)
   commitSha     String?        // deployed git commit (GIT source only); null otherwise
   commitMessage String?        // first line of the deployed commit's message (GIT source only), capped + sanitized
+  idempotencyKey String?       // raw client Idempotency-Key for durable at-most-once ENQUEUE; NULL = no client key (unconstrained)
   createdAt   DateTime         @default(now())
 
   // NOTE: a partial unique index `deployment_one_running_per_app ON Deployment(appId) WHERE status='RUNNING'`
   // enforces one RUNNING deploy per app at the DB level (Prisma can't model partial indexes — see the
   // 20261030170000_deploy_queue migration). It is the backstop for the queue's SELECT ... FOR UPDATE claim.
+  //
+  // Durable at-most-once ENQUEUE backstop that survives a Redis flush / hub crash — complements the in-flight
+  // IdempotencyInterceptor (see its docstring in common/idempotency.interceptor.ts). Scoped by appId so one
+  // literal key reused across two apps never collides. NULLABLE + Postgres default NULLS DISTINCT means every
+  // keyless (appId, NULL) tuple is distinct, so the no-key path stays unconstrained (many keyless deploys/app).
+  @@unique([appId, idempotencyKey])
   @@index([appId])
   @@index([appId, status])
 }

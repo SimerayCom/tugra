@@ -1079,10 +1079,12 @@ export class ApplicationsService {
     return this.view(app, perms?.has("apps:config") ?? false, perms?.has("apps:deploy") ?? false, ctx, await this.serverIp(app.serverId));
   }
 
-  async deploy(userId: string, id: string, opts?: { noCache?: boolean }) {
+  async deploy(userId: string, id: string, opts?: { noCache?: boolean }, idempotencyKey?: string) {
     const app = await this.requireWrite(userId, id, "apps:deploy");
     // No 409 on a busy app any more: submitDeploy queues it and runs it when the current deploy finishes.
-    return this.submitDeploy(app, userId, opts?.noCache ?? false);
+    // idempotencyKey (the client's Idempotency-Key header) is the DURABLE at-most-once enqueue backstop; it is
+    // null for every non-interactive caller (webhook/preview/first-deploy/MCP) → no constraint → unchanged.
+    return this.submitDeploy(app, userId, opts?.noCache ?? false, idempotencyKey ?? null);
   }
 
   /** One RUNNING deploy per app at a time (keeps the live-log stream unambiguous). Still used by rollback and
@@ -1365,16 +1367,61 @@ export class ApplicationsService {
    * deploy finishes. A webhook submit supersedes older still-QUEUED webhook deploys for the same app (a newer
    * push wins; manual/preview rows are kept). Returns the row to report: the finished row if it ran inline,
    * else the QUEUED row.
+   *
+   * `idempotencyKey` (the client's raw Idempotency-Key header, or null) gives this enqueue a DURABLE at-most-once
+   * guarantee that COMPLEMENTS — does not replace — the IdempotencyInterceptor. The interceptor is the fast
+   * in-flight HTTP replay while Redis is healthy on a single hub; the (appId, idempotencyKey) unique index is
+   * the backstop that still dedupes after a Redis flush / outage / hub crash. A null key stores NULL, which
+   * Postgres treats as DISTINCT from every other NULL, so the keyless path is byte-identical to before.
    */
-  private async submitDeploy(app: Application, actor: string, noCache = false) {
+  private async submitDeploy(app: Application, actor: string, noCache = false, idempotencyKey: string | null = null) {
     const QUEUE_CAP = 10; // max QUEUED deploys per app (Coolify caps per server at 25)
     const trigger = this.triggerOf(actor);
+    // Normalize: a blank/whitespace/non-string header behaves as absent (keyless fail-open), never throws.
+    const key = typeof idempotencyKey === "string" && idempotencyKey.trim() ? idempotencyKey.trim() : null;
+
+    // Fast idempotent pre-check: a retry of an ALREADY-enqueued keyed deploy returns the existing row even when
+    // the queue is at cap, so a legitimate retry never trips the "queue full" guard. Not the authority — the
+    // unique index + the P2002 branch below is, because of the TOCTOU window between this read and the insert.
+    if (key) {
+      const prior = await this.prisma.deployment.findUnique({
+        where: { appId_idempotencyKey: { appId: app.id, idempotencyKey: key } },
+      });
+      if (prior) return prior;
+    }
+
     if ((await this.prisma.deployment.count({ where: { appId: app.id, status: "QUEUED" } })) >= QUEUE_CAP) {
       throw new ConflictException("deploy queue is full — wait for queued deploys to run");
     }
-    const dep = await this.prisma.deployment.create({
-      data: { appId: app.id, status: "QUEUED", trigger, requestedBy: actor, noCache },
-    });
+
+    // Durable at-most-once ENQUEUE. Two concurrent duplicate submits resolve to exactly one row: the loser
+    // catches P2002 on the idempotencyKey index and returns the winner's row (an idempotent 200, never a 500).
+    // The P2002 branch is gated on `key`, so a keyless insert takes the exact original path with one extra
+    // always-null column — no behavior change. The bounded loop (<=3 attempts) handles the only null-after-P2002
+    // case: the conflicting row was deleted (cancel+prune) between our insert and the re-read, freeing the key.
+    let dep: Deployment;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        dep = await this.prisma.deployment.create({
+          data: { appId: app.id, status: "QUEUED", trigger, requestedBy: actor, noCache, idempotencyKey: key },
+        });
+        break;
+      } catch (e) {
+        if (
+          key &&
+          e instanceof Prisma.PrismaClientKnownRequestError &&
+          e.code === "P2002" &&
+          String(e.meta?.target ?? "").includes("idempotencyKey") // never swallow the one-running-per-app conflict
+        ) {
+          const existing = await this.prisma.deployment.findUnique({
+            where: { appId_idempotencyKey: { appId: app.id, idempotencyKey: key } },
+          });
+          if (existing) return existing; // idempotent response — the durable at-most-once win
+          if (attempt < 2) continue; // RACE: conflicting row deleted in the gap → key free again → re-insert
+        }
+        throw e;
+      }
+    }
     if (trigger === "webhook") {
       await this.prisma.deployment.updateMany({
         where: { appId: app.id, status: "QUEUED", trigger: "webhook", id: { not: dep.id } },

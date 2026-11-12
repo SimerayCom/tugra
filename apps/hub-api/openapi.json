@@ -13944,6 +13944,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "idempotency-key",
+            "required": false,
+            "in": "header",
+            "description": "Durable at-most-once deploy enqueue key.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {

@@ -1,5 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { Prisma, Role } from "@prisma/client";
 import { ApplicationsService } from "./applications.service";
 import { SetEnvironmentSchema } from "./dto";
@@ -4619,5 +4621,249 @@ describe("ApplicationsService.runtimeState", () => {
       { containerName: { startsWith: "tugra_a1-" } },
       { containerName: { startsWith: "tugra_a1." } },
     ]);
+  });
+});
+
+// ── Durable at-most-once deploy ENQUEUE (Deployment.idempotencyKey) ─────────────────────────────────────────
+//
+// These exercise the DURABLE DB backstop directly — no Redis, no IdempotencyInterceptor in the path — so they
+// prove the dedupe survives even when the in-flight interceptor is bypassed/flushed (a Redis flush / hub crash).
+// The authority is the (appId, idempotencyKey) unique index; here we simulate it with a faithful in-memory store
+// (create throws P2002 on a duplicate non-null key; findUnique resolves the compound accessor), plus bespoke
+// mocks for the TOCTOU/race branches. Every app is kept "busy" (RUNNING count = 1) so claimNext returns null and
+// submitDeploy returns the QUEUED row without pulling in the inline executeDeploy machinery.
+describe("ApplicationsService / deploy idempotency (durable DB backstop)", () => {
+  // Build a Prisma.P2002 the exact shape submitDeploy's guard checks (meta.target names the idempotencyKey index).
+  const p2002 = (target: string[] = ["appId", "idempotencyKey"]) =>
+    new Prisma.PrismaClientKnownRequestError("Unique constraint failed on the fields: (`appId`,`idempotencyKey`)", {
+      code: "P2002",
+      clientVersion: "test",
+      meta: { target },
+    });
+
+  // A faithful in-memory deployment store: unique on (appId, non-null idempotencyKey), lookup by id or by the
+  // compound accessor. RUNNING count is always 1 so the just-queued row never runs inline.
+  function keyedStore() {
+    const byId = new Map<string, Record<string, unknown>>();
+    const byKey = new Map<string, Record<string, unknown>>();
+    let seq = 0;
+    const kkey = (appId: unknown, key: unknown) => `${String(appId)}\u0000${String(key)}`;
+    return {
+      byId,
+      byKey,
+      create: jest.fn(async ({ data }: { data: Record<string, unknown> }) => {
+        if (data.idempotencyKey != null) {
+          const k = kkey(data.appId, data.idempotencyKey);
+          if (byKey.has(k)) throw p2002(); // the unique index rejects a duplicate non-null key
+          const row = { id: `d${++seq}`, createdAt: new Date(), ...data };
+          byKey.set(k, row);
+          byId.set(row.id, row);
+          return row;
+        }
+        const row = { id: `d${++seq}`, createdAt: new Date(), ...data }; // NULL key → never collides (NULLS DISTINCT)
+        byId.set(row.id, row);
+        return row;
+      }),
+      findUnique: jest.fn(async ({ where }: { where: Record<string, { appId: string; idempotencyKey: string } | undefined> & { id?: string } }) => {
+        if (where.appId_idempotencyKey) {
+          const { appId, idempotencyKey } = where.appId_idempotencyKey;
+          return byKey.get(kkey(appId, idempotencyKey)) ?? null;
+        }
+        if (where.id) return byId.get(where.id) ?? null;
+        return null;
+      }),
+      // RUNNING → 1 (keep the app busy); any other status (QUEUED cap check) → 0 (well under QUEUE_CAP).
+      count: jest.fn(async ({ where }: { where?: { status?: string } }) => (where?.status === "RUNNING" ? 1 : 0)),
+    };
+  }
+
+  // application.findUnique resolves any app id to a {id, teamId} the deploy path accepts.
+  const appFindUnique = () =>
+    jest.fn(async ({ where }: { where: { id: string } }) => ({ ...app, id: where.id, teamId: "t1", source: "IMAGE" }));
+
+  const buildSvc = (deployment: Record<string, jest.Mock>) =>
+    make(
+      {
+        application: { findUnique: appFindUnique() },
+        deployment,
+        sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+      } as unknown as PrismaService,
+      {} as Partial<TeamAccessService>,
+      {} as AgentWsServer,
+    );
+
+  it("(core) same Idempotency-Key => at most ONE Deployment row; the retry returns the SAME row (interceptor bypassed)", async () => {
+    const store = keyedStore();
+    const svc = buildSvc(store as unknown as Record<string, jest.Mock>);
+
+    const first = (await svc.deploy("u1", "app1", undefined, "idem-A")) as { id: string; idempotencyKey: string };
+    const second = (await svc.deploy("u1", "app1", undefined, "idem-A")) as { id: string };
+
+    expect(first.id).toBe(second.id); // idempotent: the retry resolves to the first row
+    expect(first.idempotencyKey).toBe("idem-A"); // the raw client key is persisted on the row
+    expect(store.create).toHaveBeenCalledTimes(1); // the second submit never inserted — pre-check short-circuited
+    expect(store.byId.size).toBe(1); // exactly one Deployment row exists
+  });
+
+  it("concurrent duplicate submits resolve to exactly ONE row (loser catches P2002 and returns the winner)", async () => {
+    const store = keyedStore();
+    const svc = buildSvc(store as unknown as Record<string, jest.Mock>);
+
+    const [a, b] = (await Promise.all([
+      svc.deploy("u1", "app1", undefined, "race-K"),
+      svc.deploy("u1", "app1", undefined, "race-K"),
+    ])) as Array<{ id: string }>;
+
+    expect(a.id).toBe(b.id); // both callers converge on the single winning row
+    expect(store.byId.size).toBe(1); // no second row was persisted
+  });
+
+  it("P2002 on insert (TOCTOU: a concurrent winner slipped in after the pre-check) returns the EXISTING row, not a 500", async () => {
+    const existing = { id: "winner", appId: "app1", status: "QUEUED", idempotencyKey: "toctou" };
+    let findCalls = 0;
+    const deployment = {
+      // pre-check misses (null) the first time; the post-P2002 re-fetch finds the winner.
+      findUnique: jest.fn(async ({ where }: { where: { id?: string; appId_idempotencyKey?: unknown } }) => {
+        if (where.appId_idempotencyKey) return findCalls++ === 0 ? null : existing;
+        return where.id === "winner" ? existing : null;
+      }),
+      create: jest.fn(async () => {
+        throw p2002(); // the concurrent winner already holds the key
+      }),
+      count: jest.fn(async ({ where }: { where?: { status?: string } }) => (where?.status === "RUNNING" ? 1 : 0)),
+    };
+    const svc = buildSvc(deployment as unknown as Record<string, jest.Mock>);
+
+    const res = (await svc.deploy("u1", "app1", undefined, "toctou")) as { id: string };
+    expect(res.id).toBe("winner"); // idempotent response, no 500
+    expect(deployment.create).toHaveBeenCalledTimes(1); // one failed insert, then return-existing (no retry needed)
+  });
+
+  it("a P2002 whose target is NOT the idempotencyKey index is re-thrown (never swallowed)", async () => {
+    const deployment = {
+      findUnique: jest.fn(async () => null),
+      create: jest.fn(async () => {
+        throw p2002(["deployment_one_running_per_app"]); // a different unique conflict
+      }),
+      count: jest.fn(async ({ where }: { where?: { status?: string } }) => (where?.status === "RUNNING" ? 1 : 0)),
+    };
+    const svc = buildSvc(deployment as unknown as Record<string, jest.Mock>);
+    await expect(svc.deploy("u1", "app1", undefined, "other-conflict")).rejects.toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+  });
+
+  it("race-after-delete: the conflicting keyed row is deleted in the gap => the bounded retry re-inserts exactly one row", async () => {
+    let calls = 0;
+    let created: Record<string, unknown> | null = null;
+    const deployment = {
+      // the key is never resolvable (the conflicting row was deleted); by-id resolves the eventual insert.
+      findUnique: jest.fn(async ({ where }: { where: { id?: string; appId_idempotencyKey?: unknown } }) => {
+        if (where.appId_idempotencyKey) return null;
+        return where.id && created && created.id === where.id ? created : null;
+      }),
+      create: jest.fn(async ({ data }: { data: Record<string, unknown> }) => {
+        calls++;
+        if (calls === 1) throw p2002(); // first insert races a row that is then deleted
+        created = { id: "retried", createdAt: new Date(), ...data };
+        return created;
+      }),
+      count: jest.fn(async ({ where }: { where?: { status?: string } }) => (where?.status === "RUNNING" ? 1 : 0)),
+    };
+    const svc = buildSvc(deployment as unknown as Record<string, jest.Mock>);
+
+    const res = (await svc.deploy("u1", "app1", undefined, "deleted-in-gap")) as { id: string };
+    expect(res.id).toBe("retried"); // the retry re-inserted and succeeded
+    expect(deployment.create).toHaveBeenCalledTimes(2); // exactly one retry (bounded, not unbounded)
+  });
+
+  it("(fail-open) NO Idempotency-Key => null key => two independent deploys are both allowed (today's behavior)", async () => {
+    const store = keyedStore();
+    const svc = buildSvc(store as unknown as Record<string, jest.Mock>);
+
+    const a = (await svc.deploy("u1", "app1")) as { id: string; idempotencyKey: string | null };
+    const b = (await svc.deploy("u1", "app1")) as { id: string; idempotencyKey: string | null };
+
+    expect(a.id).not.toBe(b.id); // two distinct rows
+    expect(a.idempotencyKey).toBeNull(); // keyless row stores NULL
+    expect(b.idempotencyKey).toBeNull();
+    expect(store.byId.size).toBe(2);
+    expect(store.byKey.size).toBe(0); // no key ever constrained a keyless deploy
+  });
+
+  it("(fail-open) a blank/whitespace Idempotency-Key is treated as absent (no pre-check, no constraint)", async () => {
+    const store = keyedStore();
+    const svc = buildSvc(store as unknown as Record<string, jest.Mock>);
+
+    const a = (await svc.deploy("u1", "app1", undefined, "   ")) as { id: string; idempotencyKey: string | null };
+    const b = (await svc.deploy("u1", "app1", undefined, "")) as { id: string };
+
+    expect(a.id).not.toBe(b.id);
+    expect(a.idempotencyKey).toBeNull(); // whitespace normalized to null
+    expect(store.findUnique).not.toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ appId_idempotencyKey: expect.anything() }) }));
+  });
+
+  it("different keys on the same app => two distinct rows", async () => {
+    const store = keyedStore();
+    const svc = buildSvc(store as unknown as Record<string, jest.Mock>);
+    const a = (await svc.deploy("u1", "app1", undefined, "K1")) as { id: string };
+    const b = (await svc.deploy("u1", "app1", undefined, "K2")) as { id: string };
+    expect(a.id).not.toBe(b.id);
+    expect(store.byId.size).toBe(2);
+  });
+
+  it("cross-app isolation: the SAME literal key on two different apps => two distinct rows (compound (appId,key) scope)", async () => {
+    const store = keyedStore();
+    const svc = buildSvc(store as unknown as Record<string, jest.Mock>);
+    const a = (await svc.deploy("u1", "app1", undefined, "shared-literal")) as { id: string };
+    const b = (await svc.deploy("u1", "app2", undefined, "shared-literal")) as { id: string };
+    expect(a.id).not.toBe(b.id); // the same string on app1 and app2 does not collide
+    expect(store.byId.size).toBe(2);
+  });
+
+  it("queue-full retry: a retry carrying an already-enqueued key returns the existing row (not a 'queue full' 409)", async () => {
+    const existing = { id: "enqueued", appId: "app1", status: "QUEUED", idempotencyKey: "cap-K" };
+    const deployment = {
+      findUnique: jest.fn(async ({ where }: { where: { appId_idempotencyKey?: { idempotencyKey: string } } }) =>
+        where.appId_idempotencyKey?.idempotencyKey === "cap-K" ? existing : null,
+      ),
+      create: jest.fn(), // must NOT be called — the pre-check returns before the cap check
+      count: jest.fn(async ({ where }: { where?: { status?: string } }) => (where?.status === "QUEUED" ? 10 : 1)), // queue full
+    };
+    const svc = buildSvc(deployment as unknown as Record<string, jest.Mock>);
+    const res = (await svc.deploy("u1", "app1", undefined, "cap-K")) as { id: string };
+    expect(res.id).toBe("enqueued"); // returned the existing row despite a full queue
+    expect(deployment.create).not.toHaveBeenCalled();
+  });
+
+  it("keyless submit at a full queue still 409s (the cap guard is unchanged for no-key traffic)", async () => {
+    const deployment = {
+      findUnique: jest.fn(async () => null),
+      create: jest.fn(),
+      count: jest.fn(async ({ where }: { where?: { status?: string } }) => (where?.status === "QUEUED" ? 10 : 0)),
+    };
+    const svc = buildSvc(deployment as unknown as Record<string, jest.Mock>);
+    await expect(svc.deploy("u1", "app1")).rejects.toBeInstanceOf(ConflictException);
+    expect(deployment.create).not.toHaveBeenCalled();
+  });
+});
+
+// ── Migration SQL (durable backstop) is present and correctly shaped ────────────────────────────────────────
+describe("Deployment.idempotencyKey migration SQL", () => {
+  const sql = readFileSync(
+    join(__dirname, "../../prisma/migrations/20261112120000_deployment_idempotency_key/migration.sql"),
+    "utf8",
+  );
+  // Executable DDL only (drop `--` comment lines, which may legitimately discuss NULLS semantics in prose).
+  const ddl = sql
+    .split("\n")
+    .filter((l) => !l.trim().startsWith("--"))
+    .join("\n");
+
+  it("adds the nullable column and the compound unique index with the Prisma default name", () => {
+    expect(ddl).toMatch(/ALTER TABLE "Deployment" ADD COLUMN "idempotencyKey" TEXT/);
+    expect(ddl).toMatch(/CREATE UNIQUE INDEX "Deployment_appId_idempotencyKey_key" ON "Deployment"\("appId", "idempotencyKey"\)/);
+  });
+
+  it("relies on Postgres default NULLS DISTINCT — the DDL must NOT emit NULLS NOT DISTINCT (that would break fail-open)", () => {
+    expect(ddl).not.toMatch(/NULLS NOT DISTINCT/i);
   });
 });

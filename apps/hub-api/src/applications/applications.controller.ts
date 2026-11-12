@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Header,
+  Headers,
   HttpCode,
   type MessageEvent,
   Param,
@@ -16,7 +17,7 @@ import {
   UseInterceptors,
 } from "@nestjs/common";
 import { concat, EMPTY, from, map, mergeMap, type Observable } from "rxjs";
-import { ApiTags, ApiSecurity } from "@nestjs/swagger";
+import { ApiTags, ApiSecurity, ApiHeader } from "@nestjs/swagger";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { Paginated } from "../common/pagination.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
@@ -327,12 +328,20 @@ export class ApplicationsController {
   @RequireScopes("deploy")
   @HttpCode(200)
   @ApiZodBody(DeploySchema)
+  // Optional: a client MAY send Idempotency-Key for durable at-most-once enqueue; absent => today's behavior.
+  // (@Headers("name") alone would be documented as required: true, which is wrong — this overrides it.)
+  @ApiHeader({ name: "idempotency-key", required: false, description: "Durable at-most-once deploy enqueue key." })
   deploy(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
     @Body(new ZodValidationPipe(DeploySchema)) body: DeployInput,
+    // Read the client Idempotency-Key straight from the request header (Node lowercases header names, so this is
+    // the same name IdempotencyInterceptor reads). Independent of the interceptor: the interceptor is the fast
+    // in-flight HTTP replay; this header also feeds the DURABLE (appId, idempotencyKey) enqueue backstop in the
+    // service, which survives a Redis flush / hub crash. A blank/absent header → null key → today's behavior.
+    @Headers("idempotency-key") idempotencyKey?: string,
   ) {
-    return this.apps.deploy(user.userId, id, body);
+    return this.apps.deploy(user.userId, id, body, idempotencyKey);
   }
 
   // Cancel a deploy: a QUEUED one (CAS) or a RUNNING one (kills its build on the agent → CANCELLED). A swarm
