@@ -1,4 +1,5 @@
 import { ForbiddenException } from "@nestjs/common";
+import { AgentOfflineException } from "../agent-gateway/agent-offline.exception";
 import { PatchService } from "./patch.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
@@ -35,6 +36,7 @@ describe("PatchService", () => {
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     let cap = "";
     const agentWs = {
+      isOnline: jest.fn().mockReturnValue(true),
       sendCommand: jest.fn().mockImplementation((_s: string, _c: string, capability: string) => {
         cap = capability;
         return Promise.resolve({ exitCode: 0, output: "TUGRA_HOST_ENTERED\nTUGRA_MGR=apt\nTUGRA_UPGRADABLE\nListing...\ndocker-ce/noble 5:29.6.0 amd64 [upgradable from: 5:29.5.0]\n" });
@@ -46,10 +48,30 @@ describe("PatchService", () => {
     expect(r.packages[0].name).toBe("docker-ce");
   });
 
+  it("checkUpdates throws a typed AgentOfflineException (503) when the agent is offline — not a 500, and signs/audits nothing", async () => {
+    const prisma = { server: { findUnique: jest.fn().mockResolvedValue(server) } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const agentWs = {
+      isOnline: jest.fn().mockReturnValue(false),
+      sendCommand: jest.fn(),
+    } as unknown as AgentWsServer;
+    // audit.log is a module-level mock shared by every test (no clearMocks) — reset it so the
+    // "never audited" assertion is about THIS call only.
+    (audit.log as jest.Mock).mockClear();
+    const err = await make(prisma, access, agentWs).checkUpdates("u1", "s1").catch((e: unknown) => e);
+    // Clean 503 with a human message (not the masked 500), short-circuiting BEFORE signing + audit.
+    expect(err).toBeInstanceOf(AgentOfflineException);
+    expect((err as AgentOfflineException).getStatus()).toBe(503);
+    expect((err as AgentOfflineException).message).toMatch(/offline/);
+    expect(agentWs.sendCommand).not.toHaveBeenCalled();
+    expect(audit.log as jest.Mock).not.toHaveBeenCalled();
+  });
+
   it("checkUpdates SURFACES a host-exec failure (no TUGRA_HOST_ENTERED) as an error — never a false 'unsupported'", async () => {
     const prisma = { server: { findUnique: jest.fn().mockResolvedValue(server) } } as unknown as PrismaService;
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const agentWs = {
+      isOnline: jest.fn().mockReturnValue(true),
       // the wrapper could not enter the host (e.g. rootless docker) → marker, non-zero, no host-entered
       sendCommand: jest.fn().mockResolvedValue({ exitCode: 1, output: "TUGRA_HOST_UNAVAILABLE reason=userns\nTUGRA_HOST_EXEC_RC=1\n" }),
     } as unknown as AgentWsServer;
@@ -106,6 +128,7 @@ describe("PatchService", () => {
     const prisma = { server: { findUnique: jest.fn().mockResolvedValue(server) } } as unknown as PrismaService;
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const agentWs = {
+      isOnline: jest.fn().mockReturnValue(true),
       sendCommand: jest.fn().mockResolvedValue({ exitCode: 125, output: 'docker: Error response: Conflict. The container name "/tugra-patch" is already in use.\n' }),
     } as unknown as AgentWsServer;
     await expect(make(prisma, access, agentWs).checkUpdates("u1", "s1")).rejects.toThrow(/already running/);

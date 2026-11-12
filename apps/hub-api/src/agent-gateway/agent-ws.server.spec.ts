@@ -1,4 +1,6 @@
+import { ServiceUnavailableException } from "@nestjs/common";
 import { AgentWsServer } from "./agent-ws.server";
+import { AgentOfflineException } from "./agent-offline.exception";
 
 /**
  * Unit-level coverage of command/log/result correlation. The full agent
@@ -68,6 +70,16 @@ describe("AgentWsServer command streaming", () => {
   it("cancelCommand is a no-op when the agent is offline (no throw)", () => {
     const { server } = harness();
     expect(() => server.cancelCommand("nope", "r1")).not.toThrow();
+  });
+
+  it("sendCommand throws a typed AgentOfflineException (503) when the agent is offline — an HTTP-reached caller gets a clean 503, not a masked 500", async () => {
+    const { server } = harness(); // only "s1" is registered
+    const err = await server.sendCommand("ghost", "echo hi", "deploy", 5000).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AgentOfflineException);
+    expect(err).toBeInstanceOf(ServiceUnavailableException); // subclass → existing 503 pre-check assertions still hold
+    expect(err).toBeInstanceOf(Error); // still an Error → schedulers' .catch and message-reading runners unaffected
+    expect((err as AgentOfflineException).getStatus()).toBe(503);
+    expect((err as AgentOfflineException).message).toMatch(/offline/); // keeps the substring the /offline/ tests match
   });
 
   it("refuses to sign a command for a capability the server hasn't granted", async () => {
@@ -314,6 +326,10 @@ describe("AgentWsServer file ops", () => {
   it("rejects when the agent is offline", async () => {
     const { server } = fsHarness();
     await expect(server.sendFsReq("ghost", "list", "v", "")).rejects.toThrow(/offline/);
+    // Typed so an HTTP-reached caller (GET /apps/:id/files) surfaces a clean 503, not a masked 500.
+    const err = await server.sendFsReq("ghost", "list", "v", "").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AgentOfflineException);
+    expect((err as AgentOfflineException).getStatus()).toBe(503);
   });
 
   it("ignores an fs_result whose serverId doesn't match the pending request (cross-agent isolation)", async () => {

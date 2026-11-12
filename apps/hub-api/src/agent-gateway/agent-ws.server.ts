@@ -17,6 +17,7 @@ import type {
 } from "@tugra/shared";
 import { PROTOCOL_VERSION, checkAgentCompat, canonicalCommand, canonicalCommandCancel, canonicalTermStart, canonicalLogStart, canonicalAgentUpdate, canonicalFs } from "@tugra/shared";
 import { HubSigningService } from "./hub-signing.service";
+import { AgentOfflineException } from "./agent-offline.exception";
 
 /** A sink for one live container-log stream (chunks + terminal exit), keyed by streamId. */
 export interface LogListener {
@@ -402,7 +403,9 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
   ): Promise<{ exitCode: number; output: string }> {
     const socket = this.sockets.get(serverId);
     if (!socket || socket.readyState !== WebSocket.OPEN) {
-      throw new Error("agent offline");
+      // Typed so an HTTP-reached caller gets a clean 503 (not a masked 500). Still an Error whose
+      // message contains "offline", so catch/message callers and schedulers are unaffected.
+      throw new AgentOfflineException();
     }
     // Hub-side capability grant check BEFORE signing: never sign a command for a capability the
     // server hasn't been granted.
@@ -443,7 +446,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
   async sendFsReq(serverId: string, op: "list", volume: string, path: string, timeoutMs = 35_000): Promise<FsListing> {
     const socket = this.sockets.get(serverId);
     if (!socket || socket.readyState !== WebSocket.OPEN) {
-      throw new Error("agent offline");
+      throw new AgentOfflineException();
     }
     const capability: AgentCapability = "files";
     if (!(await this.isCapabilityGranted(serverId, capability))) {

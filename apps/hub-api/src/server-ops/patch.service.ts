@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
+import { AgentOfflineException } from "../agent-gateway/agent-offline.exception";
 import { DeployLogHub } from "../agent-gateway/deploy-log.hub";
 import { planTargets } from "../bulk/bulk.service";
 import {
@@ -78,6 +79,10 @@ export class PatchService {
 
   async checkUpdates(userId: string, serverId: string): Promise<PatchInfo> {
     await this.requireWrite(userId, serverId);
+    // Fail fast (before signing + audit) when the agent is offline, mirroring the bulk path's graceful
+    // gate (checkUpdatesBulk) — a clean 503, never a masked 500. sendCommand's own guard is the backstop
+    // for an agent that flaps offline mid-call.
+    if (!this.agentWs.isOnline(serverId)) throw new AgentOfflineException();
     const r = await this.agentWs.sendCommand(serverId, wrapHostExec(buildCheckScript(), CHECK_HOST), "patch", CHECK_TIMEOUT_MS);
     await this.audit.log({ actor: userId, action: "server.patch.check", target: serverId });
     // If the wrapper could not reach the host, surface that clearly — NOT a mis-parsed "unsupported OS".
