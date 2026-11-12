@@ -12438,7 +12438,10 @@ export interface operations {
     ApplicationsController_deploy: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Durable at-most-once deploy enqueue key. */
+                "idempotency-key"?: string;
+            };
             path: {
                 id: string;
             };
