@@ -76,7 +76,9 @@ export class ProxyOpsService {
   /** Recreate the classic per-server Traefik from the resolved config. Single source of truth
    *  (ProxyConfigService) — SAME resolver as ProxyService.ensureProxy, so `start` and a domained deploy produce
    *  an identical proxy (email, bind mode, DNS-01 creds, access log, and — on the local server — the panel
-   *  router). It recreates the container, so the bind mode / access log are (re)applied here too. */
+   *  router). `force: true` omits the reconcile gate: these are explicit operator actions (Start / Restart /
+   *  Traffic-Analytics toggle), so pressing the button ALWAYS rebuilds the container even when the config hash
+   *  would match — the bind mode / access log are (re)applied here regardless. */
   private async recreateClassic(serverId: string): Promise<void> {
     const cfg = await this.proxyConfig.resolveFor(serverId);
     const r = await this.agentWs.sendCommand(
@@ -88,6 +90,7 @@ export class ProxyOpsService {
         dnsCreds: cfg.dnsCreds,
         panel: cfg.panel,
         accessLog: cfg.accessLog,
+        force: true,
       }),
       "deploy",
       PROXY_TIMEOUT_MS,

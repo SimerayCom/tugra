@@ -102,9 +102,11 @@ describe("ProxyOpsService", () => {
   });
 
   // Drift guard: ProxyOpsService.start and ProxyService.ensureProxy BOTH resolve through ProxyConfigService
-  // and pass the result identically into buildProxySetupScript — so for the same resolved config the emitted
-  // script is byte-identical. This is what guarantees `start` and a domained deploy can never diverge.
-  it("start and ProxyService.ensureProxy build the SAME script from the shared resolver (no drift)", async () => {
+  // and pass the result identically into buildProxySetupScript — so for the same resolved config they build the
+  // SAME proxy definition. The ONLY intended difference now is `force`: `start` (operator action) passes
+  // force:true (always rm+run, no gate); a domained deploy passes force:false (the reconcile gate is prepended).
+  // So the two scripts must be identical MODULO the gate — proving no drift in the proxy definition itself.
+  it("start and ProxyService.ensureProxy build the SAME proxy definition (differ only by the reconcile gate)", async () => {
     const cfg: ResolvedProxyConfig = { acmeEmail: "me@x.com", bind: "public", panel: { domain: "app.example.com", resolver: "le" } };
     const proxyConfig = { resolveFor: jest.fn().mockResolvedValue(cfg) } as unknown as ProxyConfigService;
 
@@ -125,7 +127,35 @@ describe("ProxyOpsService", () => {
     const app = new ProxyService({ sendCommand: appSend } as unknown as AgentWsServer, appPrisma, proxyConfig);
     await app.ensureProxy("s1");
 
-    expect(opsSend.mock.calls[0][1]).toBe(appSend.mock.calls[0][1]);
+    const opsScript = opsSend.mock.calls[0][1] as string; // force:true → no gate
+    const appScript = appSend.mock.calls[0][1] as string; // force:false → reconcile gate prepended
+    // `start` is the operator path: it must NOT carry the skip gate (so Start rebuilds even when the hash matches).
+    expect(opsScript).not.toContain("exit 0; fi");
+    expect(appScript).toContain("exit 0; fi");
+    // Strip ONLY the gate lines from the deploy script → it must be byte-identical to the operator script.
+    const stripGate = (s: string) =>
+      s
+        .split("\n")
+        .filter((l) => !/^(DESIRED=|CUR=|STATE=|if \[ "\$CUR")/.test(l))
+        .join("\n");
+    expect(stripGate(appScript)).toBe(opsScript);
+    // ...and both stamp the SAME confighash label (same resolved config ⇒ same hash).
+    const label = (s: string) => s.match(/--label tugra\.proxy\.confighash='[a-f0-9]{12}'/)?.[0];
+    expect(label(opsScript)).toBeTruthy();
+    expect(label(appScript)).toBe(label(opsScript));
+  });
+
+  it("recreateClassic (start) forces a rebuild — no reconcile gate, so Start recreates even when the hash matches", async () => {
+    const send = jest
+      .fn()
+      .mockResolvedValueOnce({ exitCode: 0, output: "" })
+      .mockResolvedValueOnce({ exitCode: 0, output: "running\n" });
+    await make(Role.OWNER, send).start("u1", "s1");
+    const script = send.mock.calls[0][1] as string;
+    expect(script).not.toContain("exit 0; fi"); // force path: no skip
+    expect(script).not.toContain("DESIRED=");
+    expect(script).toContain("docker rm -f tugra-proxy");
+    expect(script).toContain("docker run -d --name tugra-proxy");
   });
 });
 

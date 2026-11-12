@@ -6,6 +6,10 @@ import {
   buildRestartScript,
   buildStartScript,
   buildProxySetupScript,
+  proxyConfigHash,
+  proxyConfigPreimage,
+  PROXY_CONFIGHASH_LABEL,
+  PROXY_SETUP_VERSION,
   buildProxyAccessLogCleanupScript,
   buildPanelRouterWriteScript,
   buildProxyLogsScript,
@@ -50,6 +54,7 @@ import {
   buildImageRemoveScriptForTags,
   type AppSpec,
 } from "./deploy-script";
+import { createHash } from "node:crypto";
 
 const base: AppSpec = {
   id: "abc",
@@ -1628,6 +1633,171 @@ describe("deploy-script", () => {
     const rm = buildPanelRouterWriteScript(null);
     expect(rm).toContain("rm -f /etc/tugra/proxy-dynamic/panel.yml");
     expect(rm).not.toContain("docker run");
+  });
+
+  // --- Conditional recreate: the confighash label + the in-script reconcile gate ------------------------
+  describe("proxy reconcile gate (conditional recreate)", () => {
+    const base = { acmeEmail: "me@x.com" };
+
+    it("stamps --label tugra.proxy.confighash=<hash> on docker run, and the hash equals proxyConfigHash(opts)", () => {
+      const s = buildProxySetupScript(base);
+      const hash = proxyConfigHash(base);
+      expect(PROXY_CONFIGHASH_LABEL).toBe("tugra.proxy.confighash");
+      expect(hash).toMatch(/^[a-f0-9]{12}$/);
+      expect(s).toContain(`--label tugra.proxy.confighash='${hash}'`);
+      // the label rides the `docker run`, not a stray line
+      const run = s.split("\n").find((l) => l.startsWith("docker run -d --name tugra-proxy"));
+      expect(run).toContain(`--label tugra.proxy.confighash='${hash}'`);
+    });
+
+    it("pins the stamped-label == gate-DESIRED invariant + cleans up a container on a post-run failure", () => {
+      const s = buildProxySetupScript(base);
+      const hash = proxyConfigHash(base);
+      // the gate compares against the SAME hash it stamps — a silent drift (label and gate hash computed from
+      // different inputs → recreate-always or always-skip) would break this pin.
+      expect(s).toContain(`DESIRED='${hash}'`);
+      expect(s).toContain(`--label tugra.proxy.confighash='${hash}'`);
+      // a step failing AFTER `docker run` removes the freshly-created container, so it can't linger RUNNING with
+      // the success hash (which the gate would then skip forever). Armed after the gate's skip, bracketing run.
+      expect(s).toContain("trap 'rc=$?;");
+      expect(s).toContain("docker rm -f tugra-proxy >/dev/null 2>&1 || true; fi' EXIT");
+      expect(s).toContain("trap - EXIT");
+      const skip = s.indexOf("exit 0; fi");
+      const arm = s.indexOf("trap 'rc=$?;");
+      const runIdx = s.indexOf("docker run -d --name tugra-proxy");
+      const disarm = s.indexOf("trap - EXIT");
+      expect(arm).toBeGreaterThan(skip); // never cleans up on a healthy no-op (skip precedes the arm)
+      expect(runIdx).toBeGreaterThan(arm);
+      expect(disarm).toBeGreaterThan(runIdx);
+    });
+
+    it("is deterministic — identical opts emit the SAME hash/label twice", () => {
+      expect(proxyConfigHash(base)).toBe(proxyConfigHash({ acmeEmail: "me@x.com" }));
+      expect(buildProxySetupScript(base)).toBe(buildProxySetupScript({ acmeEmail: "me@x.com" }));
+    });
+
+    it("the reconcile gate (docker inspect label + state, exit 0 on match+running) appears BEFORE docker rm -f", () => {
+      const s = buildProxySetupScript(base);
+      const gateLabel = s.indexOf(`{{index .Config.Labels "tugra.proxy.confighash"}}`);
+      const gateState = s.indexOf("{{.State.Status}}");
+      const skip = s.indexOf('exit 0; fi');
+      const rm = s.indexOf("docker rm -f tugra-proxy");
+      const run = s.indexOf("docker run -d --name tugra-proxy");
+      expect(gateLabel).toBeGreaterThanOrEqual(0);
+      expect(gateState).toBeGreaterThan(gateLabel);
+      expect(skip).toBeGreaterThan(gateState);
+      expect(rm).toBeGreaterThan(skip); // the gate (and its skip) precede any destructive step
+      expect(run).toBeGreaterThan(rm);
+      // the gate compares the running container's label to the DESIRED hash and only skips when running
+      expect(s).toContain(`CUR=$(docker inspect -f '{{index .Config.Labels "tugra.proxy.confighash"}}' tugra-proxy`);
+      expect(s).toContain(`STATE=$(docker inspect -f '{{.State.Status}}' tugra-proxy`);
+      expect(s).toContain('if [ "$CUR" = "$DESIRED" ] && [ "$STATE" = "running" ]; then');
+    });
+
+    it("the acme / dns-env-file / panel / access-log writes appear only AFTER the gate (inside the recreate branch)", () => {
+      const s = buildProxySetupScript({
+        acmeEmail: "me@x.com",
+        dnsProvider: "cloudflare",
+        dnsCreds: { CF_DNS_API_TOKEN: "s3cr3t-token" },
+        panel: { domain: "app.example.com", resolver: "le-dns" },
+        accessLog: true,
+      });
+      const skip = s.indexOf("exit 0; fi");
+      expect(skip).toBeGreaterThanOrEqual(0);
+      // every host-touching step sits after the skip — a skipped reconcile touches NOTHING
+      for (const step of [
+        "touch /etc/tugra/letsencrypt/acme.json",
+        "printf %s '", // dns env-file / panel YAML blob writes
+        "/etc/tugra/proxy/dns.env",
+        "/etc/tugra/proxy-dynamic/.panel.yml.tmp",
+        "mkdir -p /etc/tugra/proxy-logs",
+      ]) {
+        expect(s.indexOf(step)).toBeGreaterThan(skip);
+      }
+    });
+
+    it("force:true omits the gate entirely — no skip, always docker rm -f + run", () => {
+      const s = buildProxySetupScript({ ...base, force: true });
+      expect(s).not.toContain("exit 0; fi");
+      expect(s).not.toContain("DESIRED=");
+      expect(s).not.toContain("{{.State.Status}}");
+      expect(s).toContain("docker rm -f tugra-proxy");
+      expect(s).toContain("docker run -d --name tugra-proxy");
+      // the label is still stamped (so the NEXT non-force deploy can skip an unchanged proxy)
+      expect(s).toContain(`--label tugra.proxy.confighash='${proxyConfigHash({ ...base, force: true })}'`);
+    });
+
+    it("force differs from non-force ONLY by the reconcile gate (same proxy definition)", () => {
+      const nonForce = buildProxySetupScript(base);
+      const force = buildProxySetupScript({ ...base, force: true });
+      const stripGate = (s: string) =>
+        s
+          .split("\n")
+          .filter((l) => !/^(DESIRED=|CUR=|STATE=|if \[ "\$CUR")/.test(l))
+          .join("\n");
+      expect(stripGate(nonForce)).toBe(force);
+      // force never changes the hash (force is not a hashed input)
+      expect(proxyConfigHash(base)).toBe(proxyConfigHash({ ...base, force: true }));
+    });
+
+    it("the DNS creds plaintext/token NEVER appears in the emitted label (only the folded sha)", () => {
+      const opts = {
+        acmeEmail: "me@x.com",
+        dnsProvider: "cloudflare",
+        dnsCreds: { CF_DNS_API_TOKEN: "super-secret-token" },
+      };
+      const hash = proxyConfigHash(opts);
+      const label = `--label tugra.proxy.confighash='${hash}'`;
+      expect(label).not.toContain("super-secret-token");
+      // the hash is a 12-hex digest, not the token or any creds text
+      expect(hash).toMatch(/^[a-f0-9]{12}$/);
+    });
+
+    it("EACH proxy-level input changes the hash; a per-app label/container name is not even an input", () => {
+      const h = proxyConfigHash(base);
+      // email
+      expect(proxyConfigHash({ acmeEmail: "other@x.com" })).not.toBe(h);
+      // bind modes
+      expect(proxyConfigHash({ ...base, bind: "loopback" })).not.toBe(h);
+      expect(proxyConfigHash({ ...base, bind: "none" })).not.toBe(h);
+      // dns present vs absent, and a creds change
+      const withDns = proxyConfigHash({ ...base, dnsProvider: "cloudflare", dnsCreds: { CF_DNS_API_TOKEN: "a" } });
+      expect(withDns).not.toBe(h);
+      expect(proxyConfigHash({ ...base, dnsProvider: "cloudflare", dnsCreds: { CF_DNS_API_TOKEN: "b" } })).not.toBe(withDns);
+      // panel domain + resolver
+      const withPanel = proxyConfigHash({ ...base, panel: { domain: "app.example.com", resolver: "le" } });
+      expect(withPanel).not.toBe(h);
+      expect(proxyConfigHash({ ...base, panel: { domain: "other.example.com", resolver: "le" } })).not.toBe(withPanel);
+      expect(proxyConfigHash({ ...base, panel: { domain: "app.example.com", resolver: "le-dns" }, dnsProvider: "cloudflare", dnsCreds: { CF_DNS_API_TOKEN: "a" } })).not.toBe(
+        proxyConfigHash({ ...base, panel: { domain: "app.example.com", resolver: "le" }, dnsProvider: "cloudflare", dnsCreds: { CF_DNS_API_TOKEN: "a" } }),
+      );
+      // accessLog on/off
+      expect(proxyConfigHash({ ...base, accessLog: true })).not.toBe(h);
+      // by construction proxyConfigHash takes NO per-app input (no app id / router label), so app churn can't
+      // change it — bind:'public' is the normalized default and must equal the bare base.
+      expect(proxyConfigHash({ ...base, bind: "public" })).toBe(h);
+    });
+
+    it("folds PROXY_IMAGE + PROXY_SETUP_VERSION into the hash (a Traefik bump / definition change reconciles)", () => {
+      const pre = proxyConfigPreimage(base);
+      // the hash is exactly sha256(preimage) truncated — so proving the preimage carries the image/version
+      // proves a change to either moves the hash (both are module constants, changed only by an edit here).
+      expect(proxyConfigHash(base)).toBe(
+        createHash("sha256").update(pre).digest("hex").slice(0, 12),
+      );
+      expect(pre).toContain(PROXY_IMAGE);
+      expect(pre).toContain(`v=${PROXY_SETUP_VERSION}`);
+    });
+
+    it("the preimage folds DNS creds as a sha, never the plaintext token", () => {
+      const pre = proxyConfigPreimage({
+        acmeEmail: "me@x.com",
+        dnsProvider: "cloudflare",
+        dnsCreds: { CF_DNS_API_TOKEN: "super-secret-token" },
+      });
+      expect(pre).not.toContain("super-secret-token");
+      expect(pre).toContain("cloudflare"); // provider name is fine to include
+    });
   });
 
   it("start/restart scripts target the app container (no rebuild)", () => {

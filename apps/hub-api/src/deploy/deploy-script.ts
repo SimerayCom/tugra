@@ -36,6 +36,17 @@ export const HEALTH_PROBE_IMAGE =
 export const PROXY_IMAGE =
   "traefik:v3.7.16@sha256:22a759fb803abb5c3a7ba5d5a55a201c5fb0fc8993d5c72c47a89075e64f1953";
 
+// The `docker run` label that carries the resolved proxy-LEVEL config hash on the running Traefik container.
+// buildProxySetupScript's reconcile gate reads it back (docker inspect) to decide skip-vs-recreate, so a
+// domained deploy whose proxy flags did not change is a zero-drop no-op (app routes hot-reload on their own).
+export const PROXY_CONFIGHASH_LABEL = "tugra.proxy.confighash";
+
+// Bumped whenever the proxy run-args / flag STRUCTURE changes (the Traefik image itself is already folded into
+// the hash via PROXY_IMAGE). It forces every existing proxy to reconcile to the new definition on its next
+// deploy — before the reconcile gate every domained deploy recreated unconditionally, so such a change
+// propagated "for free"; now making the hash change is what carries it.
+export const PROXY_SETUP_VERSION = "1";
+
 export type Source = "IMAGE" | "GIT" | "COMPOSE";
 export type BuildKind = "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
 
@@ -1640,25 +1651,26 @@ export function buildProxyAccessLogCleanupScript(): string {
   return `rm -f ${PROXY_ACCESSLOG_DIR}/access.json ${PROXY_ACCESSLOG_DIR}/access.json.* ${PROXY_ACCESSLOG_LOGROTATE_PATH}`;
 }
 
-/**
- * Idempotent setup of the Traefik proxy on a server: always a Let's Encrypt HTTP-01
- * resolver `le`, and — when the server has DNS-01 creds — a second `le-dns` resolver
- * for wildcard certificates. The DNS provider credentials are written to a 0600
- * --env-file (never `-e`/argv), so they never appear on the process list.
- */
-export function buildProxySetupScript(
-  opts: {
-    acmeEmail?: string | null;
-    dnsProvider?: string | null;
-    dnsCreds?: Record<string, string> | null;
-    bind?: string | null;
-    // Traffic Analytics: when true the proxy writes a JSON access log to PROXY_ACCESSLOG_DIR on the host.
-    // Default (undefined/false) emits none of it — the script is byte-identical to before.
-    accessLog?: boolean;
-    // Panel-TLS (DİLİM 1): object => (re)write the panel router file; null => remove it; undefined => leave it.
-    panel?: { domain: string; resolver?: PanelResolver } | null;
-  } = {},
-): string {
+export interface ProxySetupOpts {
+  acmeEmail?: string | null;
+  dnsProvider?: string | null;
+  dnsCreds?: Record<string, string> | null;
+  bind?: string | null;
+  // Traffic Analytics: when true the proxy writes a JSON access log to PROXY_ACCESSLOG_DIR on the host.
+  // Default (undefined/false) emits none of it — the script is byte-identical to before.
+  accessLog?: boolean;
+  // Panel-TLS (DİLİM 1): object => (re)write the panel router file; null => remove it; undefined => leave it.
+  panel?: { domain: string; resolver?: PanelResolver } | null;
+  // Explicit operator "recreate" (Start / Restart / traffic-analytics toggle / panel-apply): omit the reconcile
+  // gate and ALWAYS rm+run, regardless of the on-host hash. The ordinary domained-deploy path leaves this false,
+  // so an unchanged proxy is a zero-drop no-op. `force` is NOT a hashed input — it never changes the label.
+  force?: boolean;
+}
+
+/** Normalize the proxy opts to EXACTLY the values the script renders — shared by {@link buildProxySetupScript}
+ *  (to render) and {@link proxyConfigHash} (to hash), so the running container's confighash label can never
+ *  disagree with what was actually launched. */
+function resolveProxyRender(opts: ProxySetupOpts) {
   // The panel path demands a real ACME email (no admin@example.com fallback — Let's Encrypt rejects it); the
   // classic app path keeps the fallback so existing http deploys never break.
   const email = opts.panel ? validateAcmeEmail(opts.acmeEmail) : opts.acmeEmail || "admin@example.com";
@@ -1666,23 +1678,75 @@ export function buildProxySetupScript(
     opts.dnsProvider && opts.dnsCreds && Object.keys(opts.dnsCreds).length > 0
       ? { provider: opts.dnsProvider, creds: opts.dnsCreds }
       : null;
-
-  // How the proxy binds the host's :80/:443, so Tugra can share a box that already runs
-  // something on those ports (e.g. CloudPanel's nginx):
+  // How the proxy binds the host's :80/:443, so Tugra can share a box that already runs something on those
+  // ports (e.g. CloudPanel's nginx):
   //  - "public" (default): publish on all interfaces — unchanged behavior.
   //  - "loopback": publish on 127.0.0.1 only — reachable through a front proxy on the box, not from outside.
-  //  - "none": publish nothing — the proxy is reachable only on the tugra-proxy docker network, i.e. via the
-  //    Cloudflare tunnel (cloudflared hits Traefik by container name); zero open host ports.
-  // Traefik's own entrypoints stay on :80/:443 inside the container either way.
+  //  - "none": publish nothing — reachable only on the tugra-proxy docker network (Cloudflare tunnel).
   const bind = opts.bind === "loopback" || opts.bind === "none" ? opts.bind : "public";
+  const accessLog = opts.accessLog === true;
+  // httpOnly when the proxy publishes no host ports (CF tunnel terminates TLS).
+  const panelHttpOnly = bind === "none";
+  // The resolver buildPanelRouterYaml actually renders: "le-dns" only when explicitly requested, else "le".
+  const panelResolver: PanelResolver = opts.panel?.resolver === "le-dns" ? "le-dns" : "le";
+  return { email, dns, bind, accessLog, panelHttpOnly, panelResolver };
+}
+
+/** The exact pre-image the proxy confighash is computed over — the normalized proxy-LEVEL values the script
+ *  renders, and nothing else. Exported so a test can prove PROXY_IMAGE + PROXY_SETUP_VERSION are folded in and
+ *  the plaintext DNS token never is (creds enter only as a sha of their env-file body). It carries NO per-app
+ *  input (no app id, container name or router/service label) — those hot-reload via Traefik's docker + file
+ *  providers with no recreate, which is the whole reason the recreate can become conditional. */
+export function proxyConfigPreimage(opts: ProxySetupOpts = {}): string {
+  const r = resolveProxyRender(opts);
+  const dnsPart = r.dns
+    ? `dns=${r.dns.provider}:${createHash("sha256").update(envFileB64(r.dns.creds)).digest("hex")}`
+    : "dns=none";
+  const panelPart = opts.panel
+    ? `panel=${opts.panel.domain}:${r.panelResolver}:${r.panelHttpOnly ? "http" : "tls"}`
+    : "panel=none";
+  return [
+    `v=${PROXY_SETUP_VERSION}`,
+    `img=${PROXY_IMAGE}`,
+    `email=${r.email}`,
+    `bind=${r.bind}`,
+    dnsPart,
+    panelPart,
+    `access=${r.accessLog ? "1" : "0"}`,
+  ].join("|");
+}
+
+/** The resolved proxy-LEVEL config hash (sha256, 12 hex) stamped on the running Traefik container as
+ *  {@link PROXY_CONFIGHASH_LABEL}. See {@link proxyConfigPreimage} for exactly what it folds (and excludes). */
+export function proxyConfigHash(opts: ProxySetupOpts = {}): string {
+  return createHash("sha256").update(proxyConfigPreimage(opts)).digest("hex").slice(0, 12);
+}
+
+/**
+ * Idempotent, SELF-RECONCILING setup of the Traefik proxy on a server: always a Let's Encrypt HTTP-01 resolver
+ * `le`, and — when the server has DNS-01 creds — a second `le-dns` resolver for wildcard certificates. The DNS
+ * provider credentials are written to a 0600 --env-file (never `-e`/argv), so they never appear on the process
+ * list.
+ *
+ * Reconcile gate (unless `force`): the running container's PROXY_CONFIGHASH_LABEL is compared to the DESIRED
+ * hash of the resolved proxy-level config. When it matches AND the container is running, the script is a clean
+ * no-op (`exit 0`) that touches nothing on the host — app routes keep hot-reloading via Traefik's docker + file
+ * providers, so a deploy whose proxy flags did not change never drops the edge. On any mismatch — a changed
+ * proxy flag, an absent container, or a non-running one (exited/dead/crash-loop) — it falls through and
+ * recreates (self-heal). `force` omits the gate for an explicit operator recreate (always rm+run).
+ */
+export function buildProxySetupScript(opts: ProxySetupOpts = {}): string {
+  const { email, dns, bind, accessLog, panelHttpOnly, panelResolver } = resolveProxyRender(opts);
+  const hash = proxyConfigHash(opts);
+
   const portPublish =
     bind === "none" ? [] : [bind === "loopback" ? "-p 127.0.0.1:80:80 -p 127.0.0.1:443:443" : "-p 80:80 -p 443:443"];
-
-  const accessLog = opts.accessLog === true;
 
   const runArgs = [
     `docker run -d --name ${PROXY_NAME} --restart unless-stopped`,
     LOG_ROTATION_ARGS,
+    // Stamp the resolved proxy-level config hash so the NEXT deploy's reconcile gate can skip an unchanged proxy.
+    `--label ${PROXY_CONFIGHASH_LABEL}=${shq(hash)}`,
     `--network ${PROXY_NETWORK}`,
     ...portPublish,
     "-v /var/run/docker.sock:/var/run/docker.sock:ro",
@@ -1722,8 +1786,7 @@ export function buildProxySetupScript(
   ].join(" ");
 
   // Panel router file: object => atomic write (tmp+mv INSIDE the mounted dir so fsnotify fires); null =>
-  // remove; undefined => leave untouched. httpOnly when the proxy publishes no host ports (CF tunnel).
-  const panelHttpOnly = bind === "none";
+  // remove; undefined => leave untouched.
   const panelWriteSteps =
     opts.panel === undefined
       ? []
@@ -1731,7 +1794,7 @@ export function buildProxySetupScript(
         ? [`rm -f ${PROXY_DYNAMIC_DIR}/${PANEL_FILE}`]
         : [
             `printf %s ${shq(
-              b64(buildPanelRouterYaml({ domain: opts.panel.domain, resolver: opts.panel.resolver, httpOnly: panelHttpOnly })),
+              b64(buildPanelRouterYaml({ domain: opts.panel.domain, resolver: panelResolver, httpOnly: panelHttpOnly })),
             )} | base64 -d > ${PROXY_DYNAMIC_DIR}/.${PANEL_FILE}.tmp`,
             `mv ${PROXY_DYNAMIC_DIR}/.${PANEL_FILE}.tmp ${PROXY_DYNAMIC_DIR}/${PANEL_FILE}`,
           ];
@@ -1745,9 +1808,24 @@ export function buildProxySetupScript(
       ]
     : [];
 
-  return [
-    "set -e",
-    `docker network create ${PROXY_NETWORK} 2>/dev/null || true`,
+  // Reconcile gate (skipped when `force`): compare the running proxy's stamped hash + state to DESIRED, and
+  // skip (zero drop) ONLY when the hash matches AND it is running. Self-heal is inherent: absent ⇒ CUR="" &
+  // STATE=absent ⇒ recreate; exited/dead/restarting(crash-loop) ⇒ STATE!=running ⇒ recreate — regardless of the
+  // hash. Traefik carries no HEALTHCHECK, so .State.Status==running IS the health signal. The `|| echo` guards
+  // keep `set -e` from aborting on a missing container.
+  const gate = opts.force
+    ? []
+    : [
+        `DESIRED=${shq(hash)}`,
+        `CUR=$(docker inspect -f '{{index .Config.Labels "${PROXY_CONFIGHASH_LABEL}"}}' ${PROXY_NAME} 2>/dev/null || echo "")`,
+        `STATE=$(docker inspect -f '{{.State.Status}}' ${PROXY_NAME} 2>/dev/null || echo absent)`,
+        `if [ "$CUR" = "$DESIRED" ] && [ "$STATE" = "running" ]; then echo "${PROXY_NAME} up to date ($DESIRED)"; exit 0; fi`,
+      ];
+
+  // Everything that TOUCHES the host — the destructive container replace, the acme / dns-env-file / panel /
+  // access-log writes, the `docker run`, and the panel network (re)attach — lives below the gate, so a skipped
+  // reconcile is a pure no-op (zero edge drop, zero host churn).
+  const recreate = [
     `docker rm -f ${PROXY_NAME} 2>/dev/null || true`,
     `mkdir -p ${PROXY_DYNAMIC_DIR}`,
     ...(accessLog ? proxyAccessLogDirSteps() : []),
@@ -1761,8 +1839,22 @@ export function buildProxySetupScript(
         ]
       : []),
     ...panelWriteSteps,
+    // Arm a failure-cleanup around container creation: if any step AFTER `docker run` (e.g. the panel-network
+    // attach) fails, remove the freshly-created container so it can't linger RUNNING carrying the success
+    // confighash — otherwise the next reconcile's gate would see hash-match + running and skip it forever,
+    // never completing the attach (a self-heal hole). Disarmed once every post-run step has succeeded.
+    `trap 'rc=$?; if [ "$rc" -ne 0 ]; then docker rm -f ${PROXY_NAME} >/dev/null 2>&1 || true; fi' EXIT`,
     runArgs,
     ...panelConnectSteps,
+    "trap - EXIT",
+  ];
+
+  return [
+    "set -e",
+    // Idempotent + harmless whether or not we recreate, so it can sit before the gate.
+    `docker network create ${PROXY_NETWORK} 2>/dev/null || true`,
+    ...gate,
+    ...recreate,
   ].join("\n");
 }
 

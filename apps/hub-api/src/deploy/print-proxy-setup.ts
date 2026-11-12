@@ -31,6 +31,10 @@ export function renderProxySetupFromEnv(env: NodeJS.ProcessEnv): string {
     dnsProvider: dnsCreds ? dnsProvider : undefined,
     dnsCreds,
     panel: { domain, resolver },
+    // install.sh pipes this to `sh` as an explicit operator setup/apply — always (re)create the proxy, the same
+    // force semantics as ProxyService (panel-TLS apply) and ProxyOpsService (Start/Restart). Omitting it would
+    // let the reconcile gate skip an "up to date" proxy, silently changing the installer's always-apply behaviour.
+    force: true,
   });
 }
 

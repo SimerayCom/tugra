@@ -2,10 +2,12 @@ import { renderProxySetupFromEnv } from "./print-proxy-setup";
 import { buildProxySetupScript } from "./deploy-script";
 
 describe("print-proxy-setup CLI", () => {
-  it("output equals the in-process builder for the same env (single source of truth)", () => {
+  it("output equals the in-process builder for the same env (single source of truth) — installer forces (always apply)", () => {
     const env = { PANEL_DOMAIN: "app.example.com", ACME_EMAIL: "ops@tugra.io" } as NodeJS.ProcessEnv;
+    // install.sh pipes this to `sh` as an explicit operator setup — it force-recreates (no reconcile gate), the
+    // same semantics as the panel-TLS apply / Start / Restart paths, so the expected builder call also forces.
     expect(renderProxySetupFromEnv(env)).toBe(
-      buildProxySetupScript({ acmeEmail: "ops@tugra.io", bind: null, panel: { domain: "app.example.com", resolver: "le" } }),
+      buildProxySetupScript({ acmeEmail: "ops@tugra.io", bind: null, panel: { domain: "app.example.com", resolver: "le" }, force: true }),
     );
   });
 

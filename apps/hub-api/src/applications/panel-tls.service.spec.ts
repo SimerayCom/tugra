@@ -109,7 +109,8 @@ describe("PanelTlsService.apply", () => {
       cfg: { panel: { domain: "demo.tugra.io", resolver: "le" } },
     });
     await svc.apply("owner-1");
-    expect(proxy.ensureProxy).toHaveBeenCalledWith("s-local");
+    // explicit operator apply → force a rebuild (bypass the reconcile gate + coalescer)
+    expect(proxy.ensureProxy).toHaveBeenCalledWith("s-local", { force: true });
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "instance.panel_tls.apply", actor: "owner-1" }));
   });
 

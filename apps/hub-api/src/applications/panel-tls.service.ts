@@ -116,7 +116,9 @@ export class PanelTlsService {
     }
     // ensureProxy recreates the proxy with the file provider + panel router (+ the tugra-panel attach); it
     // throws on a non-zero exit AND refuses on a swarm-manager host, so a failure never looks like success.
-    await this.proxy.ensureProxy(local.id);
+    // force: this is an explicit operator apply — always rebuild (bypass the reconcile gate + the coalescer),
+    // so the panel is (re)provisioned now even if the resolved hash happens to match a running proxy.
+    await this.proxy.ensureProxy(local.id, { force: true });
     await this.audit.log({ actor: userId, action: "instance.panel_tls.apply", target: local.id });
     return this.status();
   }
