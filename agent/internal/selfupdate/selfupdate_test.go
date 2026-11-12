@@ -108,6 +108,114 @@ func TestBuildRecreateInvocation(t *testing.T) {
 	}
 }
 
+func TestBuildRecreateInvocationReAttachesNetworks(t *testing.T) {
+	// Single compose network: applied at create time via --network, no connect loop.
+	argv, script, err := BuildRecreateInvocation(RecreateSpec{
+		SelfName: "tugra-agent", DataVolume: "tugra-agent-data", HubURL: "ws://hub-api:3000/agent",
+		NewImageRef: "img@sha256:abc", OldImageRef: "old", Networks: []string{"tugra_default"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(script, `docker run -d --name "$SELF" --restart unless-stopped --network "$NET" -v`) {
+		t.Errorf("recreate run must carry --network \"$NET\"\n---\n%s", script)
+	}
+	if !argvHas(argv, "-e", "NET=tugra_default") {
+		t.Errorf("argv must pass -e NET=tugra_default, got %#v", argv)
+	}
+	if argvHasKey(argv, "EXTRA_NETS=") || strings.Contains(script, "EXTRA_NETS") {
+		t.Errorf("a single network must NOT emit EXTRA_NETS\n---\n%s\n%#v", script, argv)
+	}
+
+	// Multiple networks: first via --network, the rest connected after each run.
+	argv2, script2, err := BuildRecreateInvocation(RecreateSpec{
+		SelfName: "tugra-agent", DataVolume: "tugra-agent-data", HubURL: "ws://hub-api:3000/agent",
+		NewImageRef: "img@sha256:abc", OldImageRef: "old", Networks: []string{"tugra_default", "extra_net"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !argvHas(argv2, "-e", "NET=tugra_default") || !argvHas(argv2, "-e", "EXTRA_NETS=extra_net") {
+		t.Errorf("argv must pass NET + EXTRA_NETS, got %#v", argv2)
+	}
+	if !strings.Contains(script2, `for n in $EXTRA_NETS; do docker network connect "$n" "$SELF"`) {
+		t.Errorf("multi-network recreate must connect the extras\n---\n%s", script2)
+	}
+	// The extras must be connected after BOTH the new-image run and the old-image fallback.
+	if strings.Count(script2, "docker network connect") < 2 {
+		t.Errorf("extras must be connected after both the new and fallback runs\n---\n%s", script2)
+	}
+}
+
+func TestBuildRecreateInvocationDropsUnsafeNetwork(t *testing.T) {
+	// A network name that fails the charset check is DROPPED, never injected into the docker command.
+	argv, script, err := BuildRecreateInvocation(RecreateSpec{
+		SelfName: "tugra-agent", DataVolume: "tugra-agent-data", HubURL: "ws://h",
+		NewImageRef: "img@sha256:abc", OldImageRef: "old", Networks: []string{"tugra_default", "bad;rm -rf /"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, s := range append([]string{script}, argv...) {
+		if strings.Contains(s, "bad;rm") || strings.Contains(s, "rm -rf") {
+			t.Fatalf("unsafe network name leaked into the invocation: %q", s)
+		}
+	}
+	// The valid one still survives as the primary; the dropped one leaves no EXTRA_NETS.
+	if !argvHas(argv, "-e", "NET=tugra_default") || argvHasKey(argv, "EXTRA_NETS=") {
+		t.Errorf("expected only the valid network as primary, got %#v", argv)
+	}
+}
+
+func TestBuildRecreateInvocationNoNetworksIsHistorical(t *testing.T) {
+	// No networks → the recreate carries NO --network (historical bridge behaviour), so a remote agent on a
+	// public hub URL is unaffected.
+	_, script, err := BuildRecreateInvocation(RecreateSpec{
+		SelfName: "tugra-agent", DataVolume: "tugra-agent-data", HubURL: "wss://hub.example.com/agent",
+		NewImageRef: "img@sha256:abc", OldImageRef: "old",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(script, "--network") {
+		t.Errorf("no-networks recreate must not carry --network\n---\n%s", script)
+	}
+}
+
+func TestOrderNetworks(t *testing.T) {
+	got := orderNetworks([]string{"bridge", "tugra_default", "tugra_default", "", "tugra-panel"})
+	want := []string{"tugra_default", "tugra-panel", "bridge"} // user-defined first (deduped), bridge last
+	if len(got) != len(want) {
+		t.Fatalf("orderNetworks = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("orderNetworks[%d] = %q, want %q (full %#v)", i, got[i], want[i], got)
+		}
+	}
+	if n := orderNetworks([]string{"bridge"}); len(n) != 1 || n[0] != "bridge" {
+		t.Errorf("a bridge-only agent must stay [bridge], got %#v", n)
+	}
+}
+
+func argvHas(argv []string, flag, val string) bool {
+	for i := 0; i+1 < len(argv); i++ {
+		if argv[i] == flag && argv[i+1] == val {
+			return true
+		}
+	}
+	return false
+}
+
+func argvHasKey(argv []string, prefix string) bool {
+	for _, a := range argv {
+		if strings.HasPrefix(a, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestBuildRecreateInvocationRejectsBadInput(t *testing.T) {
 	base := RecreateSpec{SelfName: "tugra-agent", DataVolume: "tugra-agent-data", HubURL: "ws://h", NewImageRef: "img@sha256:x", OldImageRef: "old"}
 	bad := []RecreateSpec{

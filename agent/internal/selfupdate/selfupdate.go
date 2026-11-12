@@ -102,6 +102,12 @@ type RecreateSpec struct {
 	HubURL      string // TUGRA_HUB for the new container (the reconnect uses the volume identity, no token)
 	NewImageRef string // image@sha256:digest to run
 	OldImageRef string // fallback if the new image fails to start (host must never be left agentless)
+	// Networks the current container is attached to, to RE-ATTACH on recreate. Without this the new container
+	// lands on the default bridge and a single-box agent (TUGRA_HUB=ws://hub-api:3000/agent) can no longer
+	// resolve the hub by its compose service name — it would brick itself on every update. The first entry
+	// is applied via `docker run --network`, the rest via `docker network connect`. Empty = leave on the
+	// default bridge (the historical behaviour; correct for a remote agent that dials a public hub URL).
+	Networks []string
 }
 
 // BuildRecreateInvocation returns the exact `docker run` argv for the detached helper and the fixed inner
@@ -121,13 +127,44 @@ func BuildRecreateInvocation(s RecreateSpec) (argv []string, innerScript string,
 	// host is never left without a running agent. `docker run -d` exiting 0 only means "started", so we
 	// health-gate: the new container must still be Running with 0 restarts a few seconds later. Each run is
 	// preceded by `docker rm -f "$SELF"` so a leftover container never blocks the next run on a name conflict.
-	runNew := `docker run -d --name "$SELF" --restart unless-stopped -v /var/run/docker.sock:/var/run/docker.sock -v "$DATA_VOL":/root/.tugra -v /etc/tugra:/etc/tugra -e TUGRA_HUB="$HUB" -e TUGRA_AGENT_IMAGE="$NEW_IMAGE" "$NEW_IMAGE"`
-	runOld := `docker run -d --name "$SELF" --restart unless-stopped -v /var/run/docker.sock:/var/run/docker.sock -v "$DATA_VOL":/root/.tugra -v /etc/tugra:/etc/tugra -e TUGRA_HUB="$HUB" -e TUGRA_AGENT_IMAGE="$OLD_IMAGE" "$OLD_IMAGE"`
-	innerScript = strings.Join([]string{
+	// Re-attach the OLD container's docker networks so a single-box agent keeps resolving the hub by its
+	// compose service name (otherwise the recreate lands on the default bridge and bricks itself). Each name
+	// is re-validated (defense-in-depth: it reached us from `docker inspect`, not a signed field) and an
+	// invalid one is dropped rather than injected. The first valid network is applied at create time via
+	// `--network`; any extras are connected afterwards. No valid network → the historical bridge behaviour,
+	// byte-identical to before (so a remote agent on a public hub URL is unaffected).
+	var nets []string
+	for _, n := range s.Networks {
+		if nameRe.MatchString(n) {
+			nets = append(nets, n)
+		}
+	}
+	netFlag := ""
+	var primary string
+	var extras []string
+	if len(nets) > 0 {
+		primary = nets[0]
+		extras = nets[1:]
+		netFlag = ` --network "$NET"`
+	}
+	runNew := `docker run -d --name "$SELF" --restart unless-stopped` + netFlag + ` -v /var/run/docker.sock:/var/run/docker.sock -v "$DATA_VOL":/root/.tugra -v /etc/tugra:/etc/tugra -e TUGRA_HUB="$HUB" -e TUGRA_AGENT_IMAGE="$NEW_IMAGE" "$NEW_IMAGE"`
+	runOld := `docker run -d --name "$SELF" --restart unless-stopped` + netFlag + ` -v /var/run/docker.sock:/var/run/docker.sock -v "$DATA_VOL":/root/.tugra -v /etc/tugra:/etc/tugra -e TUGRA_HUB="$HUB" -e TUGRA_AGENT_IMAGE="$OLD_IMAGE" "$OLD_IMAGE"`
+	// Connect any secondary networks to the just-created container (best-effort; the primary is already on via
+	// --network). Names are charset-validated above, so the unquoted `for` word-split is injection-safe.
+	connectExtras := ""
+	if len(extras) > 0 {
+		connectExtras = `for n in $EXTRA_NETS; do docker network connect "$n" "$SELF" >/dev/null 2>&1 || true; done`
+	}
+	lines := []string{
 		"set -e",
 		"sleep 3",
 		`docker rm -f "$SELF" >/dev/null 2>&1 || true`,
 		"if " + runNew + "; then",
+	}
+	if connectExtras != "" {
+		lines = append(lines, "  "+connectExtras)
+	}
+	lines = append(lines,
 		"  sleep 5",
 		`  if [ "$(docker inspect -f '{{.State.Running}}' "$SELF" 2>/dev/null)" = "true" ] && [ "$(docker inspect -f '{{.RestartCount}}' "$SELF" 2>/dev/null)" = "0" ]; then`,
 		"    exit 0",
@@ -135,7 +172,11 @@ func BuildRecreateInvocation(s RecreateSpec) (argv []string, innerScript string,
 		"fi",
 		`docker rm -f "$SELF" >/dev/null 2>&1 || true`,
 		runOld,
-	}, "\n")
+	)
+	if connectExtras != "" {
+		lines = append(lines, connectExtras)
+	}
+	innerScript = strings.Join(lines, "\n")
 	argv = []string{
 		"docker", "run", "-d", "--rm", "--entrypoint", "/bin/sh",
 		"-v", "/var/run/docker.sock:/var/run/docker.sock",
@@ -144,8 +185,14 @@ func BuildRecreateInvocation(s RecreateSpec) (argv []string, innerScript string,
 		"-e", "HUB=" + s.HubURL,
 		"-e", "NEW_IMAGE=" + s.NewImageRef,
 		"-e", "OLD_IMAGE=" + s.OldImageRef,
-		s.NewImageRef, "-c", innerScript,
 	}
+	if primary != "" {
+		argv = append(argv, "-e", "NET="+primary)
+	}
+	if len(extras) > 0 {
+		argv = append(argv, "-e", "EXTRA_NETS="+strings.Join(extras, " "))
+	}
+	argv = append(argv, s.NewImageRef, "-c", innerScript)
 	return argv, innerScript, nil
 }
 
@@ -164,7 +211,31 @@ func Resolve(ctx context.Context, hubURL string) RecreateSpec {
 	if vol := dockerInspect(ctx, host, `{{range .Mounts}}{{if eq .Destination "/root/.tugra"}}{{.Name}}{{end}}{{end}}`); vol != "" {
 		spec.DataVolume = vol
 	}
+	// Capture the networks this container is on so the recreate re-attaches them (see RecreateSpec.Networks).
+	if raw := dockerInspect(ctx, host, `{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}`); raw != "" {
+		spec.Networks = orderNetworks(strings.Fields(raw))
+	}
 	return spec
+}
+
+// orderNetworks dedupes and puts user-defined networks first, the default "bridge" last — so the recreate's
+// single `--network` targets the network that resolves the compose hub (e.g. tugra_default), not the default
+// bridge that cannot. A bridge-only agent (remote, public hub URL) is returned unchanged.
+func orderNetworks(nets []string) []string {
+	var named, def []string
+	seen := map[string]bool{}
+	for _, n := range nets {
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		if n == "bridge" {
+			def = append(def, n)
+		} else {
+			named = append(named, n)
+		}
+	}
+	return append(named, def...)
 }
 
 // Apply pulls the digest-pinned image (Docker verifies the digest) while the agent is still alive, then
