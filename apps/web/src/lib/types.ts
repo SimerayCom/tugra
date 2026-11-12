@@ -1519,7 +1519,7 @@ export interface Backup {
   errorTail: string | null; // scrubbed failure output; null for read-only members (writer-only server-side)
 }
 
-export type RestoreKind = "RESTORE" | "RESTORE_TO" | "IMPORT_URL";
+export type RestoreKind = "RESTORE" | "RESTORE_TO" | "IMPORT_URL" | "VERIFY";
 export type RestoreStatus = "RUNNING" | "SUCCESS" | "FAILED";
 export interface Restore {
   id: string;

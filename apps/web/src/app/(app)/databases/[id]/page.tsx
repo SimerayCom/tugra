@@ -88,6 +88,15 @@ export default function DatabaseDetailPage() {
     if (await confirm({ title: t("databases.delete"), body: t("databases.deleteConfirm"), danger: true, confirmText: db.name, checkbox: { label: t("databases.keepVolume"), ref: keepVolume } })) del.mutate();
   };
   const backupNow = useMutation({ mutationFn: () => api.backupNow(id), onSuccess: invalidateBackups, onError: (e) => toast(errMsg(e), "error") });
+  // Restore-verify drill: provisions a throwaway, restores the latest backup into it, attests the result. A
+  // SUCCESS proves the backup restores; a FAILED attestation (the drill ran, the backup is bad) is surfaced as
+  // an error toast, while an offline agent / no-backup surfaces via errMsg.
+  const verifyLatest = useMutation({
+    mutationFn: () => api.verifyLatestBackup(id),
+    onSuccess: (r) => toast(r.status === "SUCCESS" ? t("databases.verifyPassed") : t("databases.verifyFailedToast"), r.status === "SUCCESS" ? "success" : "error"),
+    onError: (e) => toast(errMsg(e), "error"),
+    onSettled: invalidateRestores,
+  });
   const [cloneOpen, setCloneOpen] = useState(false);
   const clone = useMutation({
     mutationFn: (name: string) => api.cloneDatabase(id, { name }),
@@ -365,9 +374,14 @@ export default function DatabaseDetailPage() {
           desc={t("databases.backupsDesc")}
           style={{ marginBottom: 0 }}
           right={
-            <Btn onClick={() => backupNow.mutate()} disabled={backupNow.isPending}>
-              {backupNow.isPending ? t("databases.backingUp") : t("databases.backupNow")}
-            </Btn>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <Btn variant="ghost" onClick={() => verifyLatest.mutate()} loading={verifyLatest.isPending} title={t("databases.verifyLatestHint")}>
+                {verifyLatest.isPending ? t("databases.verifying") : t("databases.verifyLatest")}
+              </Btn>
+              <Btn onClick={() => backupNow.mutate()} disabled={backupNow.isPending}>
+                {backupNow.isPending ? t("databases.backingUp") : t("databases.backupNow")}
+              </Btn>
+            </div>
           }
         >
 

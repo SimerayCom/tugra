@@ -138,7 +138,7 @@ describe("backup-script", () => {
       expect(s).toContain("cat /etc/tugra/backups/db1/t.dump.gz");
       expect(s).toContain("gunzip");
       expect(s).toContain("pg_restore --no-owner --clean --if-exists --single-transaction -U 'tugra' -d 'appdb'");
-      expect(s).not.toContain(" psql "); // custom format never uses psql
+      expect(s).not.toContain("ON_ERROR_STOP"); // custom format loads via pg_restore, never a psql data-load (the readiness SELECT 1 poll aside)
     });
 
     it("legacy plain .sql backups still restore via psql, now atomic + fail-loud (back-compat)", () => {
@@ -154,6 +154,20 @@ describe("backup-script", () => {
       expect(s).toContain("--decrypt");
       expect(s).toContain("gunzip");
       expect(s).toContain("pg_restore --no-owner --clean --if-exists --single-transaction");
+    });
+
+    it("Postgres restore waits for the engine to accept connections first (fresh-container verify/clone race guard)", () => {
+      const s = buildRestoreScript(spec("POSTGRES"), "t.dump.gz", LOCAL_DEST);
+      expect(s).toContain(`-c "SELECT 1"`); // readiness poll on the target role+db (quotes escaped inside sh -c)
+      expect(s).toContain("postgres not ready"); // fail-loud on a never-ready server
+      expect(s.indexOf("SELECT 1")).toBeLessThan(s.indexOf("pg_restore")); // …before the restore runs
+    });
+
+    it("Mongo restore waits for authenticated mongod before restoring (fresh-container verify/clone race guard)", () => {
+      const s = buildRestoreScript(spec("MONGO"), "t.archive.gz", LOCAL_DEST);
+      expect(s).toContain("db.runCommand({ping:1})"); // readiness ping (mongosh || legacy mongo)
+      expect(s).toContain("mongo not ready");
+      expect(s.indexOf("ping:1")).toBeLessThan(s.indexOf("mongorestore")); // …before the restore runs
     });
 
     it("Redis restore kills (no shutdown-save) before swapping the rdb, then waits for PONG", () => {
@@ -238,7 +252,7 @@ describe("backup-script", () => {
     it("Postgres: a .dump(.gz) migration URL uses pg_restore (custom format), even with a presigned query string", () => {
       const s = buildImportScript(spec("POSTGRES"), "https://s3/b/db1/2026.dump.gz?X-Amz-Signature=sig", { encrypted: false, key: "", gzip: true });
       expect(s).toContain("pg_restore --no-owner --clean --if-exists --single-transaction");
-      expect(s).not.toContain("psql");
+      expect(s).not.toContain("ON_ERROR_STOP"); // custom format → pg_restore, not a psql data-load
     });
 
     it("a look-alike .dumped URL is NOT treated as custom format (precise match)", () => {
@@ -250,7 +264,7 @@ describe("backup-script", () => {
     it("pgFormat:'custom' forces pg_restore for a foreign dump whose extension lies (Coolify .dmp)", () => {
       const s = buildImportScript(spec("POSTGRES"), "https://x/backup.dmp.gz", { encrypted: false, key: "", gzip: true, pgFormat: "custom" });
       expect(s).toContain("pg_restore --no-owner --clean --if-exists --single-transaction");
-      expect(s).not.toContain(" psql ");
+      expect(s).not.toContain("ON_ERROR_STOP"); // custom format → pg_restore, not a psql data-load
     });
 
     it("pgFormat:'sql' forces psql even when the URL ends in .dump (explicit override beats the sniff)", () => {

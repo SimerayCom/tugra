@@ -1552,6 +1552,7 @@ enum RestoreKind {
   RESTORE
   RESTORE_TO
   IMPORT_URL
+  VERIFY
 }
 
 enum RestoreStatus {

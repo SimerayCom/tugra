@@ -7,14 +7,16 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { z } from "zod";
-import { Backup, Database, RestoreKind, RestoreStatus } from "@prisma/client";
+import { Backup, Database, DbStatus, RestoreKind, RestoreStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { loadProjectCtx } from "../common/resource-project";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { NotificationsService } from "../notifications/notifications.service";
-import { supportsBackup, type DbEngine } from "../databases/database-script";
+import { randomBytes } from "crypto";
+import { resolveImage, supportsBackup, type DbEngine } from "../databases/database-script";
+import { DatabasesService } from "../databases/databases.service";
 import { buildBackupExportUrlScript, buildDeleteBackupScript, buildImportScript, buildRestoreScript, scrubRestoreOutput } from "./backup-script";
 import { parseShareUrl } from "./destination";
 import { BackupRunnerService } from "./backup-runner.service";
@@ -66,6 +68,7 @@ export class BackupsService {
     private readonly scheduler: BackupSchedulerService,
     private readonly notifications: NotificationsService,
     private readonly alerts: BackupAlertsService,
+    private readonly databases: DatabasesService,
   ) {}
 
   /**
@@ -82,6 +85,9 @@ export class BackupsService {
     auditMeta?: Record<string, unknown>;
     backupId?: string | null;
     sourceDatabaseId?: string | null;
+    // Receives the created Restore row's id as soon as it exists (before the command runs, so it fires on
+    // EVERY outcome including a thrown failure). The verify drill uses it to pin the exact attestation row.
+    onRecord?: (id: string) => void;
   }): Promise<void> {
     const { db, command, kind, createdBy, auditAction, auditMeta } = opts;
     const rec = await this.prisma.restore.create({
@@ -94,6 +100,7 @@ export class BackupsService {
         createdBy,
       },
     });
+    opts.onRecord?.(rec.id);
 
     let r: { exitCode: number; output: string };
     try {
@@ -225,6 +232,100 @@ export class BackupsService {
       auditAction: "database.restore",
       auditMeta: { backupId, from: sourceId },
     });
+  }
+
+  /**
+   * Restore-verification drill: prove a backup actually RESTORES. Provisions a disposable, faithful
+   * throwaway DB (same engine/version/image/server as the source), restores the chosen backup INTO it,
+   * and records the outcome as a VERIFY Restore row homed on the SOURCE db — so the attestation survives
+   * the throwaway's teardown (Restore.database is onDelete:Cascade). The throwaway is ALWAYS reaped. A
+   * backup that does not restore is attested FAILED + alerted, never silently assumed good.
+   *
+   * Permissions: 'backups' write on the source (requireWrite) AND the 'databases' permission (it
+   * provisions a real DB, enforced by createForImport); a source on a NON-standard image additionally
+   * needs 'apps:config' (reproducing that image is an image-level privilege). An offline agent surfaces
+   * 503 (cannot verify now); a backup that ran but did not restore returns a FAILED VERIFY view — the
+   * verification itself succeeded, the backup is simply bad, so that is not an HTTP error.
+   */
+  async verifyBackupNow(userId: string, dbId: string, backupId?: string): Promise<RestoreView> {
+    const src = await this.requireWrite(userId, dbId);
+    if (!supportsBackup(src.engine as DbEngine)) {
+      throw new BadRequestException(`backup not supported for ${src.engine} yet`);
+    }
+    const backup = backupId
+      ? await this.prisma.backup.findFirst({ where: { id: backupId, databaseId: dbId, status: "SUCCESS" } })
+      : await this.prisma.backup.findFirst({ where: { databaseId: dbId, status: "SUCCESS" }, orderBy: { createdAt: "desc" } });
+    if (!backup) throw new BadRequestException("no successful backup to verify");
+    // Read from the backup's OWN destination — the DB's current destination may have changed since.
+    const dest = await this.runner.destinationSpecById(backup.destinationId);
+    // Faithful throwaway. Only pass the image when it is NON-standard: createForImport gates ANY explicit
+    // image behind apps:config, so handing it a standard image would force that privilege on every drill.
+    // A standard image is left for createForImport to resolve (the same ref the source already uses).
+    const standardImage = resolveImage(src.engine as DbEngine, src.version);
+    const customImage = src.image !== standardImage ? src.image : undefined;
+    const eph = await this.databases.createForImport(userId, {
+      name: `verify_${src.id}_${Date.now()}`,
+      serverId: src.serverId, // SAME server → the LOCAL-backup same-server rule holds and sendCommand reaches it
+      engine: src.engine as DbEngine,
+      version: src.version,
+      image: customImage,
+      username: "tugra",
+      password: randomBytes(24).toString("base64url"),
+      database: "verifydb",
+      environmentId: src.environmentId,
+    });
+    let recordId: string | undefined;
+    try {
+      // provision() swallows agent failures and returns a FAILED view WITHOUT throwing, so a throwaway that
+      // never came up (image pull failed, disk full, name/port clash) would otherwise let the restore hit a
+      // non-existent container and mis-attribute an infra failure to the backup. Bail to a 503 instead.
+      const provisioned = await this.databases.provision(userId, eph.id);
+      if (provisioned.status !== DbStatus.RUNNING) {
+        throw new ServiceUnavailableException("could not provision the verification target — try again");
+      }
+      // toSpec decrypts credentials off the Database ROW; createForImport returned a VIEW without them.
+      const ephDb = await this.prisma.database.findUnique({ where: { id: eph.id } });
+      if (!ephDb) throw new BadGatewayException("verification target vanished");
+      try {
+        await this.runRestore({
+          // Row HOMED ON SOURCE (survives teardown); same server, so sendCommand(src.serverId) reaches the
+          // throwaway container, while the restore pipeline targets the throwaway's own spec.
+          db: src,
+          command: buildRestoreScript(this.runner.toSpec(ephDb), backup.filename, dest, backup.databaseId),
+          kind: RestoreKind.VERIFY,
+          createdBy: userId,
+          backupId: backup.id,
+          auditAction: "database.verify",
+          auditMeta: { backupId: backup.id, ephemeral: eph.id },
+          onRecord: (id) => {
+            recordId = id;
+          },
+        });
+      } catch (e) {
+        // A non-zero restore exit (BadGateway) means the drill RAN and the backup did not restore — a
+        // successful verification with a FAILED result, so fall through and return the FAILED VERIFY view.
+        // Anything else (agent offline → ServiceUnavailable, or an unexpected error) propagates.
+        if (!(e instanceof BadGatewayException)) throw e;
+      }
+    } finally {
+      // Always reap the throwaway (no app links it, so remove() proceeds and deletes the row even if the
+      // agent teardown command fails or the agent is offline).
+      await this.databases.remove(userId, eph.id, { keepVolume: false }).catch(() => undefined);
+    }
+    // Pin to the EXACT row this drill created — a re-query by (databaseId, kind, backupId) could return a
+    // concurrent or prior same-backup drill's row and misreport this call's result.
+    const row = recordId ? await this.prisma.restore.findUnique({ where: { id: recordId } }) : null;
+    if (!row) throw new BadGatewayException("verification did not record a result");
+    return {
+      id: row.id,
+      kind: row.kind,
+      status: row.status,
+      exitCode: row.exitCode,
+      errorTail: row.errorTail,
+      backupId: row.backupId,
+      createdAt: row.createdAt,
+      completedAt: row.completedAt,
+    };
   }
 
   /** Import an external dump from a URL into the database (overwrites current data). */

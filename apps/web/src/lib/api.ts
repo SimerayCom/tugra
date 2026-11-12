@@ -1621,6 +1621,11 @@ export const api = {
   backupNow(dbId: string) {
     return apiFetch<Backup>(`/databases/${dbId}/backups`, { method: "POST" });
   },
+  // Restore-verify drill: prove the latest successful backup actually restores (into a disposable throwaway).
+  // Returns the VERIFY attestation; a FAILED status means the drill ran and the backup did not restore.
+  verifyLatestBackup(dbId: string) {
+    return apiFetch<Restore>(`/databases/${dbId}/backups/verify-latest`, { method: "POST" });
+  },
   restoreBackup(dbId: string, backupId: string) {
     return apiFetch<{ ok: true }>(`/databases/${dbId}/backups/${backupId}/restore`, { method: "POST" });
   },

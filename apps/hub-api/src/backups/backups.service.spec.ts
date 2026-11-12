@@ -1,5 +1,6 @@
-import { BadGatewayException, BadRequestException, ForbiddenException } from "@nestjs/common";
+import { BadGatewayException, BadRequestException, ForbiddenException, ServiceUnavailableException } from "@nestjs/common";
 import { BackupsService } from "./backups.service";
+import { resolveImage } from "../databases/database-script";
 import { BackupRunnerService } from "./backup-runner.service";
 import type { BackupAlertsService } from "./backup-alerts.service";
 import { BackupSchedulerService } from "./backups.scheduler.service";
@@ -8,6 +9,7 @@ import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { NotificationsService } from "../notifications/notifications.service";
+import { DatabasesService } from "../databases/databases.service";
 import { BackupConfigSchema } from "./dto";
 
 describe("BackupConfigSchema — cron + age retention", () => {
@@ -47,6 +49,7 @@ function make(
   scheduler: Partial<BackupSchedulerService> = {},
   agentWs: Partial<AgentWsServer> = {},
   notifications: Partial<NotificationsService> = { fireForEvent: jest.fn().mockResolvedValue(undefined) },
+  databases: Partial<DatabasesService> = {},
 ) {
   return new BackupsService(
     prisma as PrismaService,
@@ -57,6 +60,7 @@ function make(
     scheduler as BackupSchedulerService,
     notifications as NotificationsService,
     { onScheduleChanged: jest.fn().mockResolvedValue(undefined) } as unknown as BackupAlertsService,
+    databases as DatabasesService,
   );
 }
 
@@ -341,6 +345,134 @@ describe("BackupsService.restoreTo (cross-resource)", () => {
   it("rejects a LOCAL backup crossing servers (needs S3)", async () => {
     const { svc } = setup({ target: { serverId: "s2" }, backup: { ...okBackup, destinationId: null } });
     await expect(svc.restoreTo("u1", "A", "bk", "B")).rejects.toThrow(/S3/);
+  });
+});
+
+describe("BackupsService.verifyBackupNow (restore-verify drill)", () => {
+  const version = "16";
+  const stdImage = resolveImage("POSTGRES", version);
+  const srcRow = { id: "db1", name: "shop", teamId: "t1", serverId: "s1", engine: "POSTGRES", version, image: stdImage, environmentId: "env1", credentials: "c" };
+  const ephRow = { id: "eph1", teamId: "t1", serverId: "s1", engine: "POSTGRES", version, image: stdImage, credentials: "c" };
+  const okBackup = { id: "bk", databaseId: "db1", status: "SUCCESS", filename: "t.dump.gz", destinationId: null };
+
+  function setup(opts: { sendResult?: { output: string; exitCode: number } | Error; backup?: object | null; srcOverride?: Record<string, unknown>; provisionStatus?: string; provisionThrows?: boolean } = {}) {
+    const src = { ...srcRow, ...opts.srcOverride };
+    // Id-keyed Restore store: runRestore creates a row (id "r1") and the drill pins its result by that exact
+    // id via findUnique — so a concurrent/prior same-backup row can never be returned by mistake.
+    const rows: Record<string, Record<string, unknown>> = {};
+    let seq = 0;
+    const create = jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => {
+      const id = `r${++seq}`;
+      rows[id] = { id, exitCode: null, errorTail: null, completedAt: null, ...data };
+      return Promise.resolve({ id });
+    });
+    const update = jest.fn().mockImplementation(({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
+      if (rows[where.id]) Object.assign(rows[where.id], data);
+      return Promise.resolve({});
+    });
+    const restoreFindUnique = jest.fn().mockImplementation(({ where }: { where: { id: string } }) => Promise.resolve(rows[where.id] ?? null));
+    const prisma = {
+      database: { findUnique: jest.fn(({ where }: { where: { id: string } }) => Promise.resolve(where.id === "db1" ? src : ephRow)) },
+      backup: { findFirst: jest.fn().mockResolvedValue("backup" in opts ? opts.backup : okBackup) },
+      restore: { create, update, findUnique: restoreFindUnique },
+    } as unknown as PrismaService;
+    const requirePermission = jest.fn().mockResolvedValue(undefined);
+    const access = { requirePermission } as unknown as TeamAccessService;
+    const runner = {
+      toSpec: jest.fn().mockReturnValue({ id: "eph1", engine: "POSTGRES", image: stdImage, port: 5432, hostPort: null, credentials: { username: "tugra", password: "p", database: "verifydb" } }),
+      destinationSpecById: jest.fn().mockResolvedValue({ type: "LOCAL", encryption: { enabled: false, key: "" } }),
+    } as unknown as BackupRunnerService;
+    const sr = opts.sendResult ?? { output: "ok", exitCode: 0 };
+    const sendCommand = jest.fn(sr instanceof Error ? () => Promise.reject(sr) : () => Promise.resolve(sr));
+    const agentWs = { sendCommand } as unknown as AgentWsServer;
+    const createForImport = jest.fn().mockResolvedValue({ id: "eph1" });
+    const provision = jest.fn(opts.provisionThrows
+      ? () => Promise.reject(new Error("provision boom"))
+      : () => Promise.resolve({ id: "eph1", status: opts.provisionStatus ?? "RUNNING" }));
+    const remove = jest.fn().mockResolvedValue(undefined);
+    const fireForEvent = jest.fn().mockResolvedValue(undefined);
+    const databases = { createForImport, provision, remove } as unknown as DatabasesService;
+    const svc = make(prisma, access, runner, {}, agentWs, { fireForEvent }, databases);
+    return { svc, createForImport, provision, remove, sendCommand, create, update, fireForEvent, requirePermission, rows };
+  }
+
+  it("provisions a faithful throwaway, restores into it, attests SUCCESS on the source, and reaps it", async () => {
+    const { svc, createForImport, provision, remove, create, sendCommand } = setup();
+    const view = await svc.verifyBackupNow("u1", "db1");
+    // Faithful target on the SAME server; a STANDARD image is left for createForImport to resolve (image
+    // undefined), so a plain drill does not demand apps:config.
+    const arg = createForImport.mock.calls[0][1];
+    expect(arg).toMatchObject({ serverId: "s1", engine: "POSTGRES", version, database: "verifydb" });
+    expect(arg.image).toBeUndefined();
+    expect(provision).toHaveBeenCalledWith("u1", "eph1");
+    // Restore command goes to the SOURCE server (same server as the throwaway); the row is kind=VERIFY,
+    // homed on the SOURCE db so teardown cannot cascade-delete it.
+    expect(sendCommand).toHaveBeenCalledWith("s1", expect.any(String), "backup", 300_000);
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ kind: "VERIFY", databaseId: "db1", backupId: "bk", createdBy: "u1" }) }));
+    expect(view).toMatchObject({ kind: "VERIFY", status: "SUCCESS" });
+    expect(remove).toHaveBeenCalledWith("u1", "eph1", { keepVolume: false });
+    expect(remove).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards a NON-standard source image to the throwaway (reproducing a custom image → apps:config)", async () => {
+    const { svc, createForImport } = setup({ srcOverride: { image: "ghcr.io/acme/pg:custom" } });
+    await svc.verifyBackupNow("u1", "db1");
+    expect(createForImport.mock.calls[0][1].image).toBe("ghcr.io/acme/pg:custom");
+  });
+
+  it("returns a FAILED verify view (not an HTTP error) when the backup does not restore, and still reaps the throwaway", async () => {
+    const { svc, remove, fireForEvent } = setup({ sendResult: { output: "ERROR: corrupt archive", exitCode: 1 } });
+    const view = await svc.verifyBackupNow("u1", "db1");
+    expect(view).toMatchObject({ kind: "VERIFY", status: "FAILED", exitCode: 1 });
+    expect(view.errorTail).toContain("corrupt archive");
+    expect(fireForEvent).toHaveBeenCalledWith("t1", "backup_restore_failed", expect.objectContaining({ exitCode: 1 }));
+    expect(remove).toHaveBeenCalledWith("u1", "eph1", { keepVolume: false });
+  });
+
+  it("surfaces 503 when the agent is offline (cannot verify now) and still reaps the throwaway", async () => {
+    const { svc, remove } = setup({ sendResult: new Error("agent offline") });
+    await expect(svc.verifyBackupNow("u1", "db1")).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(remove).toHaveBeenCalledWith("u1", "eph1", { keepVolume: false });
+  });
+
+  it("rejects with 400 and provisions nothing when there is no successful backup to verify", async () => {
+    const { svc, createForImport, provision, remove } = setup({ backup: null });
+    await expect(svc.verifyBackupNow("u1", "db1")).rejects.toBeInstanceOf(BadRequestException);
+    expect(createForImport).not.toHaveBeenCalled();
+    expect(provision).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it("requires 'backups' write on the source before doing anything", async () => {
+    const { svc, requirePermission } = setup();
+    await svc.verifyBackupNow("u1", "db1");
+    expect(requirePermission).toHaveBeenCalledWith("u1", "t1", "backups");
+  });
+
+  it("surfaces 503 (not a FAILED attestation) when the throwaway fails to provision, and still reaps it", async () => {
+    // provision() swallows agent failures and returns a FAILED view without throwing; the drill must not then
+    // restore into a non-existent container and blame the backup.
+    const { svc, remove, sendCommand, fireForEvent } = setup({ provisionStatus: "FAILED" });
+    await expect(svc.verifyBackupNow("u1", "db1")).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(sendCommand).not.toHaveBeenCalled(); // never attempted the restore
+    expect(fireForEvent).not.toHaveBeenCalled(); // no false "backup won't restore" alert
+    expect(remove).toHaveBeenCalledWith("u1", "eph1", { keepVolume: false });
+  });
+
+  it("still reaps the throwaway when provisioning throws outright", async () => {
+    const { svc, remove } = setup({ provisionThrows: true });
+    await expect(svc.verifyBackupNow("u1", "db1")).rejects.toThrow();
+    expect(remove).toHaveBeenCalledWith("u1", "eph1", { keepVolume: false });
+  });
+
+  it("pins the returned attestation to THIS drill's row even when a prior VERIFY row exists for the same backup", async () => {
+    const { svc, rows } = setup();
+    // Seed a stale prior VERIFY attestation for the same backup (a different, older row).
+    rows["stale"] = { id: "stale", kind: "VERIFY", status: "FAILED", databaseId: "db1", backupId: "bk", exitCode: 1, errorTail: "old", completedAt: new Date(), createdAt: new Date() };
+    const view = await svc.verifyBackupNow("u1", "db1");
+    // The returned view is the row THIS call created (SUCCESS), not the stale FAILED one.
+    expect(view.status).toBe("SUCCESS");
+    expect(view.id).not.toBe("stale");
   });
 });
 

@@ -151,6 +151,30 @@ export function readinessPrelude(engine: DbEngine, name: string, creds: DbCreden
         `do i=$((i+1)); [ $i -ge 60 ] && { echo "tugra: ${client} not ready" >&2; exit 1; }; sleep 1; done`;
       return `docker exec -e MYSQL_PWD=${shq(password)} ${name} sh -c ${shq(wait)}`;
     }
+    case "POSTGRES": {
+      // Wait until the role AND the target DB exist and accept connections — first-boot initdb creates them a
+      // few seconds after the container reports "running", so a restore into a freshly provisioned container
+      // (verify drill / clone) would otherwise race startup. psql over the local socket matches how pg_restore
+      // connects below (an already-running same-DB restore passes this on the first try).
+      const u = shqInner(username);
+      const db = shqInner(database);
+      const wait =
+        `i=0; until psql -U ${u} -d ${db} -c "SELECT 1" >/dev/null 2>&1; ` +
+        `do i=$((i+1)); [ $i -ge 60 ] && { echo "tugra: postgres not ready" >&2; exit 1; }; sleep 1; done`;
+      return `docker exec -e PGPASSWORD=${shq(password)} ${name} sh -c ${shq(wait)}`;
+    }
+    case "MONGO": {
+      // Wait until mongod is up and first-boot init has created the root user, so mongorestore's auth does not
+      // race startup. Try mongosh (Mongo 5+) then the legacy mongo shell (Mongo 4) — one ships beside
+      // mongorestore in each image era.
+      const auth = `-u ${shqInner(username)} -p ${shqInner(password)} --authenticationDatabase admin`;
+      const ping = `--eval ${shqInner("db.runCommand({ping:1})")}`;
+      const probe = `{ mongosh --quiet ${auth} ${ping} || mongo --quiet ${auth} ${ping}; } >/dev/null 2>&1`;
+      const wait =
+        `i=0; until ${probe}; ` +
+        `do i=$((i+1)); [ $i -ge 60 ] && { echo "tugra: mongo not ready" >&2; exit 1; }; sleep 1; done`;
+      return `docker exec ${name} sh -c ${shq(wait)}`;
+    }
     default:
       return null;
   }
@@ -280,6 +304,10 @@ function restorePipeline(db: DbSpec, sourceCmd: string, dest: DestinationSpec, g
   const lines = ["set -e", "set -o pipefail"];
   switch (db.engine) {
     case "POSTGRES": {
+      // Block until the engine accepts connections first — a restore into a freshly provisioned container
+      // (verify drill / clone) otherwise races startup and mis-records a GOOD backup as unrestorable.
+      const prelude = readinessPrelude(db.engine, name, db.credentials);
+      if (prelude) lines.push(prelude);
       const pg =
         pgMode === "custom"
           ? // custom-format archive → pg_restore. --clean --if-exists makes it
@@ -313,6 +341,10 @@ function restorePipeline(db: DbSpec, sourceCmd: string, dest: DestinationSpec, g
       break;
     }
     case "MONGO": {
+      // Block until mongod accepts authenticated connections first — a restore into a freshly provisioned
+      // container (verify drill / clone) otherwise races the root-user creation and fails auth.
+      const prelude = readinessPrelude(db.engine, name, db.credentials);
+      if (prelude) lines.push(prelude);
       // Importing a foreign dump: a full-instance `mongodump --archive` carries admin.system.users /
       // admin.system.version. Under `--drop` those would overwrite the target's own Tugra root user and lock
       // out the stored credentials, so exclude the admin namespaces on import. Tugra's own clone keeps them.

@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { AgentGatewayModule } from "../agent-gateway/agent-gateway.module";
 import { CryptoModule } from "../crypto/crypto.module";
+import { DatabasesModule } from "../databases/databases.module";
 import { NotificationsModule } from "../notifications/notifications.module";
 import { BackupsController } from "./backups.controller";
 import { FleetBackupsController } from "./fleet-backups.controller";
@@ -10,7 +11,7 @@ import { BackupSchedulerService } from "./backups.scheduler.service";
 import { BackupAlertsService } from "./backup-alerts.service";
 
 @Module({
-  imports: [AgentGatewayModule, CryptoModule, NotificationsModule],
+  imports: [AgentGatewayModule, CryptoModule, DatabasesModule, NotificationsModule],
   controllers: [BackupsController, FleetBackupsController],
   providers: [BackupsService, BackupRunnerService, BackupSchedulerService, BackupAlertsService],
   exports: [BackupsService, BackupRunnerService, BackupAlertsService],

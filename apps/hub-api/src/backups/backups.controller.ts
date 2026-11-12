@@ -65,6 +65,25 @@ export class BackupsController {
     return { ok: true };
   }
 
+  // Restore-verification drill: provision a disposable throwaway, restore this backup INTO it, attest the
+  // outcome (VERIFY Restore row on the source), tear the throwaway down. restore-class (runs runRestore +
+  // provisions a real DB) → 'deploy' scope; the service additionally enforces the 'databases' permission.
+  @Post("backups/verify-latest")
+  @RequireScopes("deploy")
+  @HttpCode(200)
+  @ApiZodResponse(RestoreViewSchema)
+  verifyLatest(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.backups.verifyBackupNow(user.userId, id);
+  }
+
+  @Post("backups/:backupId/verify")
+  @RequireScopes("deploy")
+  @HttpCode(200)
+  @ApiZodResponse(RestoreViewSchema)
+  verify(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("backupId") backupId: string) {
+    return this.backups.verifyBackupNow(user.userId, id, backupId);
+  }
+
   @Post("backups/:backupId/restore")
   @RequireScopes("deploy")
   @HttpCode(200)
