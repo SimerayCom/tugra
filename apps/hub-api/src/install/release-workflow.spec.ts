@@ -87,14 +87,39 @@ describe(".github/workflows/release.yml", () => {
     expect(capture).toContain("attestation-manifest");
   });
 
-  it("adding attestations needs no new permissions (signed publish-manifest path untouched)", () => {
-    // Registry-stored BuildKit attestations ride on the existing packages:write; we do NOT add id-token /
-    // attestations here (that would be the separate Sigstore follow-up), and nothing moves to the top level.
-    expect(doc.jobs["build-push"].permissions?.["id-token"]).toBeUndefined();
-    expect(doc.jobs["build-push"].permissions?.attestations).toBeUndefined();
+  it("grants build-push id-token + attestations write for Sigstore signing, but only there", () => {
+    // The Sigstore signed provenance (actions/attest-build-provenance) needs id-token:write (keyless OIDC)
+    // and attestations:write — granted ONLY on build-push, keeping packages:write + contents:read. These do
+    // NOT move to the top level and are NOT given to ci/guard, so unvetted test code never holds them.
+    expect(doc.jobs["build-push"].permissions?.["id-token"]).toBe("write");
+    expect(doc.jobs["build-push"].permissions?.attestations).toBe("write");
+    expect(doc.jobs["build-push"].permissions?.packages).toBe("write");
+    expect(doc.jobs["build-push"].permissions?.contents).toBe("read");
+    // No top-level escalation.
     expect(doc.permissions?.["id-token"]).toBeUndefined();
     expect(doc.permissions?.attestations).toBeUndefined();
+    expect(doc.permissions?.packages).toBeUndefined();
+    // ci + guard never hold the signing/publish tokens.
+    for (const job of ["ci", "guard"]) {
+      expect(doc.jobs[job].permissions?.["id-token"]).toBeUndefined();
+      expect(doc.jobs[job].permissions?.attestations).toBeUndefined();
+      expect(doc.jobs[job].permissions?.packages).toBeUndefined();
+    }
     expect(doc.jobs["publish-manifest"].permissions?.contents).toBe("write"); // unchanged
+  });
+
+  it("adds a Sigstore signed build-provenance attestation step wired to the pushed digest", () => {
+    const steps = doc.jobs["build-push"].steps as Array<{ id?: string; uses?: string; with?: Record<string, unknown> }>;
+    // The build step exposes its pushed digest via `id: build`.
+    const build = steps.find((s) => s.uses?.startsWith("docker/build-push-action"))!;
+    expect(build.id).toBe("build");
+    // A keyless-signed, Rekor-logged provenance attestation, pushed to the registry as an OCI referrer.
+    const attest = steps.find((s) => s.uses?.startsWith("actions/attest-build-provenance"))!;
+    expect(attest).toBeTruthy();
+    expect(attest.uses).toMatch(/@v\d+\.\d+\.\d+$/); // pinned to an exact version, not a floating major
+    expect(attest.with?.["push-to-registry"]).toBe(true);
+    expect(String(attest.with?.["subject-digest"])).toContain("steps.build.outputs.digest");
+    expect(String(attest.with?.["subject-name"])).toContain("matrix.image");
   });
 
   it("has a publish-manifest job that signs + publishes to gh-pages after the images build", () => {

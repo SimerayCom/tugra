@@ -43,9 +43,14 @@ applying an update. The pipeline lives in [`.github/workflows/release.yml`](../.
 4. The workflow:
    - builds + pushes `ghcr.io/simeraycom/tugra-{hub,web,agent,updater}:<version>` (and `:latest` for stable).
      The **agent is multi-arch** (`linux/amd64,linux/arm64`); hub/web/updater are `amd64`. Each image carries
-     a **SLSA build-provenance attestation and an SPDX SBOM** (registry-stored); inspect them with
-     `docker buildx imagetools inspect ghcr.io/simeraycom/tugra-hub:<version> --format '{{json .Provenance}}'`
-     (or `'{{json .SBOM}}'`).
+     **two** provenance layers (see [Supply-chain verification](#supply-chain-verification) below):
+     - an **unsigned BuildKit SLSA provenance + SPDX SBOM**, attached as OCI attestation manifests in the
+       index — inspect with
+       `docker buildx imagetools inspect ghcr.io/simeraycom/tugra-hub:<version> --format '{{json .Provenance}}'`
+       (or `'{{json .SBOM}}'`);
+     - a **Sigstore-signed, Rekor-logged SLSA provenance attestation** (keyless, via
+       `actions/attest-build-provenance`), pushed as an OCI referrer — publicly verifiable with
+       `gh attestation verify` (no key to distribute).
    - signs a merged `versions.json` (updating only the released channel, preserving the other) and pushes
      it + its `.sig` to `gh-pages`. The signer self-verifies against the real consumer verifier and refuses
      to publish anything that wouldn't validate.
@@ -63,6 +68,61 @@ applying an update. The pipeline lives in [`.github/workflows/release.yml`](../.
   docker run --rm ghcr.io/simeraycom/tugra-agent:<version> --version   # prints the real version, not 0.0.0-dev
   curl -s https://simeraycom.github.io/tugra/versions.json | jq .tugra.stable.version
   ```
+
+## Supply-chain verification
+
+### Signed build provenance (Sigstore)
+
+Every released image carries a **Sigstore-signed, transparency-logged** SLSA provenance attestation in
+addition to the unsigned BuildKit one. Signing is **keyless** — the release job mints a short-lived GitHub
+OIDC token (`id-token: write`) that Fulcio exchanges for a signing certificate, and the attestation is
+recorded in the public Rekor log, so there is **no signing key to manage or distribute**. Verify any image
+against this repository:
+
+```sh
+gh attestation verify oci://ghcr.io/simeraycom/tugra-hub:<version> --repo SimerayCom/tugra
+# …same for tugra-web / tugra-agent / tugra-updater
+```
+
+A pass proves the image was built by this repo's release workflow from the attested commit. The permissions
+for this (`id-token: write` + `attestations: write`) live **only on the `build-push` job** — `ci`/`guard`
+run read-only, so unvetted test code on a tagged commit can never mint a signing token.
+
+### Pinned third-party images
+
+`deploy/docker-compose.yml` pins the two third-party images by **multi-arch manifest-list (OCI index)
+digest** so a moved or compromised upstream tag can't swap them, while the readable `:16-alpine`/`:7-alpine`
+tag is kept for docs and install messages:
+
+- `postgres:16-alpine@sha256:…`
+- `redis:7-alpine@sha256:…`
+
+**Refreshing a pin** (e.g. to pick up a patched Alpine/Postgres build within the same major). Resolve the
+current index digest and update the `@sha256:` in compose — this is also exactly how the initial pins were
+set, and is a deterministic refresh path independent of Dependabot:
+
+```sh
+# Needs Docker (buildx). Prints the index (manifest-list) digest, NOT a per-arch one:
+docker buildx imagetools inspect postgres:16-alpine --format '{{json .Manifest.digest}}'
+docker buildx imagetools inspect redis:7-alpine     --format '{{json .Manifest.digest}}'
+
+# No Docker? Resolve straight from the registry (the Docker-Content-Digest header is the index digest):
+TOKEN=$(curl -fsS "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/postgres:pull" | jq -r .token)
+curl -fsSI -H "Authorization: Bearer $TOKEN" \
+  -H "Accept: application/vnd.oci.image.index.v1+json" \
+  -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json" \
+  https://registry-1.docker.io/v2/library/postgres/manifests/16-alpine | grep -i docker-content-digest
+```
+
+> Always pin the **index** digest (multi-arch), never a per-arch manifest digest — an arm64 control plane
+> (`install.sh --build` on a Pi) must be able to resolve its own architecture.
+
+**Auto-refresh:** `.github/dependabot.yml` runs the `docker-compose` updater weekly against `/deploy`; it
+rewrites the `@sha256:` digest when the pinned tag is re-pushed and opens a PR. A **major** bump
+(`16 → 17`, `7 → 8`) is a deliberate, manual on-disk data-migration event and is **ignored** by Dependabot
+(`version-update:semver-major`), so an auto-refresh can never break an existing install's data volume. The
+first-party `ghcr.io/…:${TUGRA_VERSION}` images are intentionally **not** pinned here (Dependabot skips them —
+it can't parse the `${…}` interpolation); they are threaded from the signed update manifest instead.
 
 ## Notes & caveats
 

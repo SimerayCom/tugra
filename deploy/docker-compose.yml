@@ -12,7 +12,13 @@ name: tugra
 
 services:
   postgres:
-    image: postgres:16-alpine
+    # Digest-pinned to the MULTI-ARCH manifest-list (OCI index) so a moved/compromised `16-alpine` tag can
+    # never swap the image — reproducible + tamper-evident. The tag stays readable; compose pulls by the
+    # @sha256 digest. Pin is kept fresh (within PG16) by .github/dependabot.yml; refresh manually with the
+    # command in docs/RELEASING.md. Resolved 2026-11-12 via the Docker Hub registry v2 API (index digest,
+    # header == sha256(body) verified): Accept application/vnd.oci.image.index.v1+json on
+    # registry-1.docker.io/v2/library/postgres/manifests/16-alpine.
+    image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
     restart: unless-stopped
     environment:
       POSTGRES_USER: tugra
@@ -27,7 +33,10 @@ services:
       retries: 20
 
   redis:
-    image: redis:7-alpine
+    # Digest-pinned to the MULTI-ARCH manifest-list (OCI index); same rationale + refresh path as postgres
+    # above. Resolved 2026-11-12 via the Docker Hub registry v2 API (index digest, header == sha256(body)
+    # verified): registry-1.docker.io/v2/library/redis/manifests/7-alpine.
+    image: redis:7-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
     restart: unless-stopped
     volumes:
       - tugra_redis:/data

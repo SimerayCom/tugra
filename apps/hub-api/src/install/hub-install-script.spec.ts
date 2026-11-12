@@ -211,5 +211,24 @@ describe("scripts/install.sh", () => {
       const redisEnv = compose.services["redis"].environment ?? {};
       expect(Object.keys(redisEnv)).not.toContain("REQUIREPASS");
     });
+
+    it("digest-pins the third-party postgres/redis images (tag-readable AND @sha256-pinned)", () => {
+      // Supply-chain: the third-party images must be pinned to a multi-arch index digest so a moved tag
+      // can't swap them, while the readable `:16-alpine`/`:7-alpine` tag is kept for docs/messages. Dependabot
+      // (.github/dependabot.yml) refreshes the digest within the major. Drift-guard against a silent revert
+      // back to a floating tag.
+      expect(compose.services["postgres"].image).toMatch(/^postgres:16-alpine@sha256:[0-9a-f]{64}$/);
+      expect(compose.services["redis"].image).toMatch(/^redis:7-alpine@sha256:[0-9a-f]{64}$/);
+    });
+
+    it("leaves the first-party images floating on ${TUGRA_VERSION} (NOT digest-pinned here)", () => {
+      // First-party images are threaded from the signed update manifest, not pinned in compose — so they
+      // must stay on the interpolated tag and must NOT be accidentally caught by the digest-pin guard above.
+      for (const s of ["hub-api", "web", "agent", "tugra-updater"]) {
+        expect(compose.services[s].image).toContain("ghcr.io/simeraycom/tugra-");
+        expect(compose.services[s].image).toContain("${TUGRA_VERSION");
+        expect(compose.services[s].image).not.toContain("@sha256:");
+      }
+    });
   });
 });

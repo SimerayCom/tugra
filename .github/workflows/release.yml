@@ -71,7 +71,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write # push images to GHCR
+      packages: write # push images to GHCR (also carries the attestation referrer)
+      id-token: write # mint the OIDC token for keyless Sigstore (Fulcio) signing
+      attestations: write # write the signed SLSA provenance attestation to GitHub's attestation store
     outputs:
       version: ${{ steps.ver.outputs.version }}
       channel: ${{ steps.ver.outputs.channel }}
@@ -122,7 +124,8 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
+      - id: build
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ${{ matrix.dockerfile }}
@@ -144,6 +147,19 @@ jobs:
             GIT_SHA=${{ github.sha }}
             TUGRA_EDITION=community
           tags: ${{ steps.tags.outputs.tags }}
+      # Sigstore-signed, Rekor-logged SLSA provenance (the deferred "Option B"). This COMPLEMENTS the
+      # unsigned BuildKit provenance/SBOM above: it adds a keyless-signed (Fulcio cert) attestation, stored
+      # in GitHub's attestation store AND as an OCI referrer on the image (push-to-registry). Runs once per
+      # matrix leg → all four GHCR images. Publicly verifiable:
+      #   gh attestation verify oci://ghcr.io/simeraycom/tugra-<name>:<version> --repo SimerayCom/tugra
+      # subject-digest is the pushed image/index digest, so the attestation is a referrer (not an index
+      # .manifests[] entry) and the agent per-arch digest capture below is unaffected. Fails closed.
+      - name: Attest build provenance (Sigstore-signed)
+        uses: actions/attest-build-provenance@v4.2.2
+        with:
+          subject-name: ${{ matrix.image }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
       - name: Capture agent per-arch digests
         if: matrix.name == 'agent'
         run: |

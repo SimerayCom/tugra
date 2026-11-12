@@ -1,0 +1,19 @@
+# Keeps the digest-pinned third-party images in deploy/docker-compose.yml fresh so the @sha256 pins can't
+# rot into stale, unpatched builds (pinning without a refresh path is itself a security regression). The
+# `docker-compose` updater rewrites the `@sha256` digest when the pinned tag (16-alpine / 7-alpine) is
+# re-pushed, and `ignore` blocks any MAJOR bump (16→17 / 7→8) — those are on-disk data-migration events,
+# never automated. The first-party ghcr.io/...:${TUGRA_VERSION:-latest} lines are skipped automatically
+# (Dependabot can't parse the ${...} interpolation); they're threaded from the signed manifest elsewhere.
+version: 2
+updates:
+  - package-ecosystem: "docker-compose"
+    directory: "/deploy"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "deps"
+    ignore:
+      - dependency-name: "postgres"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "redis"
+        update-types: ["version-update:semver-major"]
