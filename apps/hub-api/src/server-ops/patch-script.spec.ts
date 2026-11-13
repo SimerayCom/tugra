@@ -41,6 +41,19 @@ describe("patch-script", () => {
     expect(s).toContain("apk upgrade");
   });
 
+  it("self-heals an interrupted dpkg before the apt upgrade (configure -a precedes upgrade, idempotent)", () => {
+    const all = buildUpgradeAllScript();
+    const one = buildUpgradeOneScript("openssl");
+    for (const s of [all, one]) {
+      expect(s).toContain("dpkg --configure -a");
+      // the heal must run BEFORE the apt upgrade/install, and never abort it (|| true)
+      expect(s.indexOf("dpkg --configure -a")).toBeLessThan(s.indexOf("apt-get -o Dpkg"));
+      expect(s).toMatch(/dpkg --configure -a 2>&1 \|\| true;/);
+    }
+    // dnf/yum/apk branches are untouched (no dpkg heal spliced into them)
+    expect(all.split("dnf -y upgrade")[1] ?? "").not.toContain("dpkg");
+  });
+
   it("builds upgrade-one per manager; strictly validates the package name", () => {
     const s = buildUpgradeOneScript("docker-ce");
     expect(s).toContain("--only-upgrade -y docker-ce"); // apt

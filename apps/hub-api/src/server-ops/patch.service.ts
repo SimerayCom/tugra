@@ -18,12 +18,16 @@ import {
 } from "./patch-script";
 
 const CHECK_TIMEOUT_MS = 120_000;
-const UPGRADE_ALL_TIMEOUT_MS = 600_000;
-const UPGRADE_ONE_TIMEOUT_MS = 300_000;
+// The APPLY hub timeouts sit JUST ABOVE their in-container backstops (deadline+kill), so the hub waits for the
+// real outcome of a long-but-healthy upgrade instead of giving up first. A hub timeout well below the host
+// backstop (the old 10-min hub vs 30-min host) abandons a large multi-package upgrade mid-run — the user sees
+// a failure while the agent keeps patching, and a connection drop at that point can leave dpkg interrupted.
+const UPGRADE_ALL_TIMEOUT_MS = 1_860_000; // > UPGRADE_ALL_HOST deadline+kill (1800+30)
+const UPGRADE_ONE_TIMEOUT_MS = 960_000; // > UPGRADE_ONE_HOST deadline+kill (900+30)
 // In-container `timeout` backstops for the host-exec helper. CHECK is BELOW the hub timeout so a slow check
-// is killed cleanly in-container (clean marker, not a hub-side timeout). APPLY backstops are ABOVE the hub
-// timeout: a long apt/dpkg must finish rather than be killed mid-run; the backstop only frees a truly hung
-// helper (the tugra-patch name mutex) eventually.
+// is killed cleanly in-container (clean marker, not a hub-side timeout). The APPLY backstops free a truly hung
+// helper (the tugra-patch name mutex); the hub timeouts above are set to outlast them so the agent, not the
+// hub, decides when a long upgrade is done.
 const CHECK_HOST = { deadlineSec: 100, killSec: 5 };
 const UPGRADE_ALL_HOST = { deadlineSec: 1800, killSec: 30 };
 const UPGRADE_ONE_HOST = { deadlineSec: 900, killSec: 30 };

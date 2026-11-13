@@ -53,11 +53,17 @@ export function buildCheckScript(): string {
 // apt hardening for an unattended host upgrade: keep the running config on conffile conflicts
 // (--force-confold) and don't let needrestart stop for input (NEEDRESTART_SUSPEND).
 const APT_UP = "DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get -o Dpkg::Options::=--force-confold";
+// Self-heal an interrupted dpkg before any apt upgrade. A prior run that was cut off mid-configure (the hub
+// giving up, the agent container being recreated, a reboot) leaves dpkg "interrupted", after which EVERY apt
+// operation exits 100 ("dpkg was interrupted, you must manually run 'dpkg --configure -a'") and the server is
+// stuck — unrecoverable from the panel. Running `dpkg --configure -a` first is idempotent (a no-op when
+// clean) and is exactly the documented recovery, so the next upgrade heals it instead of failing forever.
+const APT_HEAL = "DEBIAN_FRONTEND=noninteractive dpkg --configure -a 2>&1 || true;";
 
 /** Upgrade every package, for whichever manager the server has. */
 export function buildUpgradeAllScript(): string {
   return [
-    `if command -v apt-get >/dev/null 2>&1; then ${APT_UP} upgrade -y;`,
+    `if command -v apt-get >/dev/null 2>&1; then ${APT_HEAL} ${APT_UP} upgrade -y;`,
     "elif command -v dnf >/dev/null 2>&1; then dnf -y upgrade;",
     "elif command -v yum >/dev/null 2>&1; then yum -y update;",
     "elif command -v apk >/dev/null 2>&1; then apk upgrade;",
@@ -69,7 +75,7 @@ export function buildUpgradeAllScript(): string {
 export function buildUpgradeOneScript(pkg: string): string {
   if (!PKG_RE.test(pkg)) throw new Error("invalid package name");
   return [
-    `if command -v apt-get >/dev/null 2>&1; then ${APT_UP} install --only-upgrade -y ${pkg};`,
+    `if command -v apt-get >/dev/null 2>&1; then ${APT_HEAL} ${APT_UP} install --only-upgrade -y ${pkg};`,
     `elif command -v dnf >/dev/null 2>&1; then dnf -y upgrade ${pkg};`,
     `elif command -v yum >/dev/null 2>&1; then yum -y update ${pkg};`,
     `elif command -v apk >/dev/null 2>&1; then apk upgrade ${pkg};`,
