@@ -178,6 +178,15 @@ export class BaseBackupRunnerService {
    *  destination); cap FAILED history so the table stays bounded. COUNT-ONLY in 5.3 — 5.4 replaces this with a
    *  WAL-aware rule (a base must outlive the WAL it anchors) before any PITR window is advertised. */
   async pruneBase(db: Database): Promise<void> {
+    // Never prune while a point-in-time replay of this database is in flight: it may be streaming one of these
+    // base objects right now (a deleted object mid-stream = a failed restore). The next base backup prunes.
+    // Bounded by the longest possible replay (14h): a RUNNING row older than that is a hub-restart orphan the PITR
+    // sweep resolves, and must never block pruning forever.
+    const replaying = await this.prisma.restore.findFirst({
+      where: { databaseId: db.id, kind: "PITR", status: "RUNNING", createdAt: { gte: new Date(Date.now() - 14 * 3_600_000) } },
+      select: { id: true },
+    });
+    if (replaying) return;
     const ns = baseNs(db.id);
     const stale = (
       await this.prisma.baseBackup.findMany({ where: { databaseId: db.id, status: "SUCCESS" }, orderBy: { createdAt: "desc" } })

@@ -1569,6 +1569,7 @@ enum RestoreKind {
   RESTORE_TO
   IMPORT_URL
   VERIFY
+  PITR
 }
 
 enum RestoreStatus {
@@ -1585,6 +1586,11 @@ model Restore {
   databaseId       String        // the database restored INTO
   backupId         String?       // source backup (may be deleted later → no FK)
   sourceDatabaseId String?       // source DB for a cross-resource restore-to
+  // PITR replay (kind PITR): the row is homed on the SOURCE (so a failed target's reap never cascades the
+  // evidence away) and points at the NEW database it produced, the moment restored to, and the base used.
+  targetDatabaseId String?
+  targetTime       DateTime?
+  baseBackupId     String?
   kind             RestoreKind
   status           RestoreStatus @default(RUNNING)
   exitCode         Int?

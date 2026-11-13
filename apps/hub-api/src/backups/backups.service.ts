@@ -50,6 +50,13 @@ export const RestoreViewSchema = z.object({
   exitCode: z.number().nullable(),
   errorTail: z.string().nullable(), // writer-only (may hold command error output)
   backupId: z.string().nullable(),
+  // Which database the row is homed on and, for cross-database restores, the other side. A PITR replay is homed
+  // on the SOURCE and names the NEW database it produced plus the moment and base used.
+  databaseId: z.string(),
+  sourceDatabaseId: z.string().nullable(),
+  targetDatabaseId: z.string().nullable(),
+  targetTime: z.date().nullable(),
+  baseBackupId: z.string().nullable(),
   createdAt: z.date(),
   completedAt: z.date().nullable(),
 });
@@ -91,8 +98,9 @@ export class BackupsService {
     // Writer-only: errorTail may contain command output.
     await this.requireWrite(userId, dbId);
     const rows = await this.prisma.restore.findMany({
-      // Also show cross-DB restores this DB initiated (recorded under the target).
-      where: { OR: [{ databaseId: dbId }, { sourceDatabaseId: dbId }] },
+      // Also show cross-DB restores this DB initiated (recorded under the target) and PITR replays that produced
+      // this DB (recorded under the source).
+      where: { OR: [{ databaseId: dbId }, { sourceDatabaseId: dbId }, { targetDatabaseId: dbId }] },
       orderBy: { createdAt: "desc" },
       take: 20,
     });
@@ -213,6 +221,11 @@ export class BackupsService {
       exitCode: r.exitCode,
       errorTail: r.errorTail,
       backupId: r.backupId,
+      databaseId: r.databaseId,
+      sourceDatabaseId: r.sourceDatabaseId,
+      targetDatabaseId: r.targetDatabaseId,
+      targetTime: r.targetTime,
+      baseBackupId: r.baseBackupId,
       createdAt: r.createdAt,
       completedAt: r.completedAt,
     };

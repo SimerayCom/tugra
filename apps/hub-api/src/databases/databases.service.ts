@@ -29,6 +29,7 @@ import {
   reservedDbEnvKeys,
   publicConnectionUri,
   dbContainerName,
+  dbVolumeName,
   enginePort,
   ENGINES,
   resolveImage,
@@ -103,6 +104,14 @@ export interface ProvisionOutcome {
   output: string;
   error?: string;
 }
+
+/** Result of reaping a PITR replay target: `cleaned` = the host cleanup was PROVEN and the row deleted; otherwise
+ *  the row is kept FAILED and `reason` says why ("agent" = cleanup not confirmed, "links" = apps still linked). */
+export interface ReapOutcome {
+  cleaned: boolean;
+  reason?: "agent" | "links";
+}
+const REAP_TIMEOUT_MS = 120_000; // rm -rf of a seeded multi-GB volume + up to 64 GiB of staged WAL
 
 // A clone returns the new database as a flat view (so RedactSecretsInterceptor, which only nulls top-level
 // fields, masks its credentials for scope-limited PATs) plus the non-fatal warnings the UI surfaces.
@@ -262,7 +271,7 @@ export class DatabasesService {
       creds: DbCredentials;
     },
     // Optional carried config (PITR replay target copies the source's). Absent for every existing caller.
-    extra: Pick<Prisma.DatabaseUncheckedCreateInput, "backupDestinationId" | "healthCmd" | "memoryMb" | "cpus" | "tags" | "envEnc" | "volumes"> = {},
+    extra: Pick<Prisma.DatabaseUncheckedCreateInput, "status" | "backupDestinationId" | "healthCmd" | "memoryMb" | "cpus" | "tags" | "envEnc" | "volumes"> = {},
   ): Promise<Database> {
     return this.prisma.database.create({
       data: {
@@ -488,6 +497,8 @@ export class DatabasesService {
       { id: src.serverId, teamId: src.teamId },
       { name, engine: src.engine as DbEngine, version: src.version, image: src.image, hostPort: null, environmentId, creds: this.creds(src) },
       {
+        // Born PROVISIONING: a NEW row would be movable (moveToServer) / editable while the replay stages + seeds.
+        status: DbStatus.PROVISIONING,
         backupDestinationId: src.backupDestinationId,
         healthCmd: src.healthCmd,
         memoryMb: src.memoryMb,
@@ -497,14 +508,61 @@ export class DatabasesService {
         ...(src.volumes ? { volumes: src.volumes as Prisma.InputJsonValue } : {}),
       },
     );
-    await this.audit.log({ actor, action: "database.pitr.restore_target", target: row.id, meta: { from: src.id } });
+    // Best-effort: an audit hiccup must not strand a freshly created row with no caller to reap it.
+    try {
+      await this.audit.log({ actor, action: "database.pitr.restore_target", target: row.id, meta: { from: src.id } });
+    } catch {
+      /* audited later by the orchestrator's own entries */
+    }
     return row;
   }
 
-  /** Tear a failed replay target down (container + volume + row), best-effort. Only ever called on a row this
-   *  hub created via {@link createRecoveryTarget}; a successful replay keeps its row. */
-  async reapRecoveryTarget(row: Database, actor: string): Promise<void> {
-    await this.removeRow(row, { keepVolume: false, walRestore: true }, actor).catch(() => undefined);
+  /**
+   * Tear a failed replay target down: container + data volume + staged-WAL dir, then the row. STRICT about the
+   * agent step: when the remove script could not run or failed (agent offline, timeout, non-zero exit), the row is
+   * KEPT (status FAILED) and `false` is returned — deleting the only handle to a seeded volume / possibly running
+   * recovery container / plaintext WAL dir would leak them untracked; the user's later delete of the FAILED
+   * database re-runs the same cleanup. Only ever called on a row this hub created via {@link createRecoveryTarget};
+   * a successful replay keeps its row.
+   */
+  async reapRecoveryTarget(row: Database, actor: string): Promise<ReapOutcome> {
+    let outcome: ReapOutcome = { cleaned: false, reason: "agent" };
+    try {
+      const links = await this.prisma.appDatabaseLink.count({ where: { databaseId: row.id } });
+      if (links > 0) {
+        // Deleting the row would break the linked apps' injected URIs; keep it for the user to unlink + delete.
+        outcome = { cleaned: false, reason: "links" };
+      } else {
+        // The shared remove script swallows every docker error (`|| true`), so PROVE the cleanup: exit 0 only when
+        // neither the container nor the data volume still exists.
+        const name = dbContainerName(row);
+        const vol = dbVolumeName(row);
+        const script = [
+          buildDbRemoveScript({ id: row.id, volumes: this.dbVolumes(row) }, { keepVolume: false, walRestore: true }),
+          `! docker inspect ${name} >/dev/null 2>&1 && ! docker volume inspect ${vol} >/dev/null 2>&1`,
+        ].join("\n");
+        const r = await this.agentWs.sendCommand(row.serverId, script, "database", REAP_TIMEOUT_MS);
+        outcome = r.exitCode === 0 ? { cleaned: true } : { cleaned: false, reason: "agent" };
+      }
+    } catch {
+      outcome = { cleaned: false, reason: "agent" };
+    }
+    if (!outcome.cleaned) {
+      try {
+        await this.prisma.database.update({ where: { id: row.id }, data: { status: DbStatus.FAILED } });
+        await this.audit.log({ actor, action: "database.pitr.restore_target_reap_failed", target: row.id, meta: { reason: outcome.reason } });
+      } catch {
+        /* best-effort bookkeeping: the row stays as the handle either way */
+      }
+      return outcome;
+    }
+    try {
+      await this.prisma.database.delete({ where: { id: row.id } });
+      await this.audit.log({ actor, action: "database.remove", target: row.id, meta: { keepVolume: false, replayTarget: true } });
+    } catch {
+      /* the host is clean; a lingering row is deletable by the user */
+    }
+    return outcome;
   }
 
   private async runProvision(
@@ -585,8 +643,14 @@ export class DatabasesService {
     }
     // A PITR database also reclaims its host WAL spool (any un-shipped tail is dropped by design — the DB is being
     // destroyed). `walSpool` is false for every non-PITR row, so their remove script stays byte-identical.
+    // A Postgres row may be a PITR replay target (FAILED-kept or promoted): also reclaim its staged-WAL dir — an
+    // idempotent rm -rf of a dir that only ever exists for such targets. Non-Postgres remove scripts are unchanged.
     await this.agentWs
-      .sendCommand(db.serverId, buildDbRemoveScript({ id: db.id, volumes: this.dbVolumes(db) }, { ...opts, walSpool: db.pitrEnabled }), "database")
+      .sendCommand(
+        db.serverId,
+        buildDbRemoveScript({ id: db.id, volumes: this.dbVolumes(db) }, { ...opts, walSpool: db.pitrEnabled, walRestore: opts.walRestore ?? db.engine === "POSTGRES" }),
+        "database",
+      )
       .catch(() => undefined);
     await this.prisma.database.delete({ where: { id: db.id } });
     await this.audit.log({ actor, action: "database.remove", target: db.id, meta: { keepVolume: !!opts.keepVolume } });

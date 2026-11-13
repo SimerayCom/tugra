@@ -33736,7 +33736,8 @@
                           "RESTORE",
                           "RESTORE_TO",
                           "IMPORT_URL",
-                          "VERIFY"
+                          "VERIFY",
+                          "PITR"
                         ]
                       },
                       "status": {
@@ -33759,6 +33760,26 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "databaseId": {
+                        "type": "string"
+                      },
+                      "sourceDatabaseId": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "targetDatabaseId": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "targetTime": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                      },
+                      "baseBackupId": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "createdAt": {
                         "type": "string",
                         "format": "date-time"
@@ -33776,6 +33797,11 @@
                       "exitCode",
                       "errorTail",
                       "backupId",
+                      "databaseId",
+                      "sourceDatabaseId",
+                      "targetDatabaseId",
+                      "targetTime",
+                      "baseBackupId",
                       "createdAt",
                       "completedAt"
                     ],
@@ -34403,7 +34429,8 @@
                         "RESTORE",
                         "RESTORE_TO",
                         "IMPORT_URL",
-                        "VERIFY"
+                        "VERIFY",
+                        "PITR"
                       ]
                     },
                     "status": {
@@ -34426,6 +34453,26 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "databaseId": {
+                      "type": "string"
+                    },
+                    "sourceDatabaseId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "targetDatabaseId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "targetTime": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "baseBackupId": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "createdAt": {
                       "type": "string",
                       "format": "date-time"
@@ -34443,6 +34490,11 @@
                     "exitCode",
                     "errorTail",
                     "backupId",
+                    "databaseId",
+                    "sourceDatabaseId",
+                    "targetDatabaseId",
+                    "targetTime",
+                    "baseBackupId",
                     "createdAt",
                     "completedAt"
                   ],
@@ -34550,7 +34602,8 @@
                         "RESTORE",
                         "RESTORE_TO",
                         "IMPORT_URL",
-                        "VERIFY"
+                        "VERIFY",
+                        "PITR"
                       ]
                     },
                     "status": {
@@ -34573,6 +34626,26 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "databaseId": {
+                      "type": "string"
+                    },
+                    "sourceDatabaseId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "targetDatabaseId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "targetTime": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "baseBackupId": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "createdAt": {
                       "type": "string",
                       "format": "date-time"
@@ -34590,6 +34663,11 @@
                     "exitCode",
                     "errorTail",
                     "backupId",
+                    "databaseId",
+                    "sourceDatabaseId",
+                    "targetDatabaseId",
+                    "targetTime",
+                    "baseBackupId",
                     "createdAt",
                     "completedAt"
                   ],
@@ -35483,6 +35561,298 @@
                     "enabledAt",
                     "destinationType",
                     "needsBaseBackup"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "backups"
+        ]
+      }
+    },
+    "/api/v1/databases/{id}/pitr/window": {
+      "get": {
+        "operationId": "BackupsController_pitrWindow",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "earliest": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "latest": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "approx": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "not_enabled",
+                        "no_base",
+                        "agent_offline",
+                        "capability",
+                        "list_failed",
+                        "no_wal"
+                      ],
+                      "nullable": true
+                    },
+                    "bases": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "from": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "to": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "startLsn": {
+                            "type": "string"
+                          },
+                          "timeline": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "from",
+                          "to",
+                          "startLsn",
+                          "timeline"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "earliest",
+                    "latest",
+                    "approx",
+                    "reason",
+                    "bases"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "backups"
+        ]
+      }
+    },
+    "/api/v1/databases/{id}/pitr/restore": {
+      "post": {
+        "operationId": "BackupsController_pitrRestoreToTime",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "targetTime": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 60
+                  },
+                  "environmentId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "targetTime"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "restoreId": {
+                      "type": "string"
+                    },
+                    "databaseId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "restoreId",
+                    "databaseId"
                   ],
                   "additionalProperties": false
                 }

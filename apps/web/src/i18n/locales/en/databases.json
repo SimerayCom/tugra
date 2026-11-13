@@ -100,6 +100,7 @@
   "restoreKind_RESTORE_TO": "Restore to another DB",
   "restoreKind_IMPORT_URL": "Import from URL",
   "restoreKind_VERIFY": "Verify",
+  "restoreKind_PITR": "Point in time",
   "restoreTo": "Restore to…",
   "restoreToTitle": "Restore to another database",
   "restoreToConfirm": "Pick a compatible database (same engine). This overwrites the target's data.",

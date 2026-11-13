@@ -51,6 +51,20 @@ export const PitrConfigSchema = z.object({
 });
 export type PitrConfigInput = z.infer<typeof PitrConfigSchema>;
 
+// Point-in-time replay: restore the database AS IT WAS at `targetTime` into a NEW database (the source is never
+// touched). The hub validates the time against the recoverable window.
+export const PitrRestoreSchema = z.object({
+  // An ISO-8601 instant WITH an offset (e.g. 2026-11-13T10:30:00Z): a bare local time would be read in the hub's
+  // time zone and restore to a different moment than the one the user picked; null/garbage is rejected outright.
+  targetTime: z
+    .string()
+    .datetime({ offset: true })
+    .transform((s) => new Date(s)),
+  name: z.string().trim().min(1).max(60).optional(),
+  environmentId: z.string().optional(),
+});
+export type PitrRestoreInput = z.infer<typeof PitrRestoreSchema>;
+
 // Apply one backup schedule to many databases (fleet bulk op). destinationId is
 // intentionally excluded — destinations are team-scoped, so a single one can't
 // validly apply across databases in different teams; each db keeps its own.

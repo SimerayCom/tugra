@@ -12,7 +12,7 @@ const db = { id: "db1", name: "shop", teamId: "t1", serverId: "s1", engine: "POS
 const spec = { id: "db1", engine: "POSTGRES", image: "postgres:16", port: 5432, hostPort: null, credentials: { username: "tugra", password: "s3cr3tPassw0rd", database: "appdb" } };
 
 /** Mutable baseBackup row store + a backup-table spy to prove the logical table is never touched. */
-function make(opts: { sendResult?: { output: string; exitCode: number } | Error; inflight?: unknown; dbOverride?: Record<string, unknown>; alerts?: Partial<BackupAlertsService> } = {}) {
+function make(opts: { sendResult?: { output: string; exitCode: number } | Error; inflight?: unknown; dbOverride?: Record<string, unknown>; alerts?: Partial<BackupAlertsService>; replaying?: boolean } = {}) {
   const create = jest.fn().mockResolvedValue({ id: "bb1" });
   const update = jest.fn().mockResolvedValue({});
   const findUnique = jest.fn().mockResolvedValue({ id: "bb1", status: "SUCCESS" });
@@ -27,6 +27,8 @@ function make(opts: { sendResult?: { output: string; exitCode: number } | Error;
     database: { findUnique: jest.fn().mockResolvedValue({ ...db, ...opts.dbOverride }) },
     baseBackup: { create, update, findUnique, findFirst, findMany, updateMany, delete: del, deleteMany },
     backup,
+    // pruneBase skips while a PITR replay of this db is RUNNING (it may be streaming a base object)
+    restore: { findFirst: jest.fn().mockResolvedValue(opts.replaying ? { id: "r1" } : null) },
   } as unknown as PrismaService;
   const sr = opts.sendResult ?? { output: "write-ahead log start point: 0/2000028 on timeline 1\n1048576", exitCode: 0 };
   const sendCommand = jest.fn((..._args: unknown[]) => (sr instanceof Error ? Promise.reject(sr) : Promise.resolve(sr)));
@@ -132,6 +134,7 @@ describe("BaseBackupRunnerService.pruneBase", () => {
         deleteMany: jest.fn().mockResolvedValue({}),
       },
       backup,
+      restore: { findFirst: jest.fn().mockResolvedValue(null) }, // no PITR replay in flight
     } as unknown as PrismaService;
     const destinationSpecById = jest.fn().mockResolvedValue({ type: "LOCAL", encryption: { enabled: false, key: "" } });
     const sendCommand = jest.fn().mockResolvedValue({ output: "", exitCode: 0 });

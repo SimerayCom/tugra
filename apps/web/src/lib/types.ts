@@ -1525,11 +1525,18 @@ export interface Backup {
   errorTail: string | null; // scrubbed failure output; null for read-only members (writer-only server-side)
 }
 
-export type RestoreKind = "RESTORE" | "RESTORE_TO" | "IMPORT_URL" | "VERIFY";
+export type RestoreKind = "RESTORE" | "RESTORE_TO" | "IMPORT_URL" | "VERIFY" | "PITR";
 export type RestoreStatus = "RUNNING" | "SUCCESS" | "FAILED";
 export interface Restore {
   id: string;
   kind: RestoreKind;
+  /** The database the row is homed on; for cross-database restores the other side. A PITR replay is homed on
+   *  the SOURCE and names the NEW database it produced, the moment restored to, and the base used. */
+  databaseId: string;
+  sourceDatabaseId: string | null;
+  targetDatabaseId: string | null;
+  targetTime: string | null;
+  baseBackupId: string | null;
   status: RestoreStatus;
   exitCode: number | null;
   errorTail: string | null;

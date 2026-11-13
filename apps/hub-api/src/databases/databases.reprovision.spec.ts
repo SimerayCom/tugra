@@ -39,7 +39,7 @@ function make(db: Record<string, unknown>, sendResult: { output: string; exitCod
   const update = jest.fn((args: { data: Record<string, unknown> }) => Promise.resolve({ ...db, ...args.data }));
   const prisma = {
     database: { findUnique: jest.fn().mockResolvedValue(db), update, delete: jest.fn().mockResolvedValue(db) },
-    appDatabaseLink: { findMany: jest.fn().mockResolvedValue([]) },
+    appDatabaseLink: { findMany: jest.fn().mockResolvedValue([]), count: jest.fn().mockResolvedValue(0) },
   } as unknown as PrismaService;
   const access = {
     requirePermission: jest.fn().mockResolvedValue(undefined),
@@ -118,8 +118,16 @@ describe("DatabasesService.remove — WAL spool reclaim", () => {
     expect(script(sendCommand)).toContain("rm -rf /etc/tugra/wal/db1");
   });
 
-  it("a non-PITR database's remove script is byte-identical (no spool line)", async () => {
+  it("a non-PITR Postgres database's removal never touches the archive spool, but does reclaim a (possible) staged-WAL dir", async () => {
     const { svc, sendCommand } = make(row({ pitrEnabled: false }));
+    await svc.remove("u1", "db1");
+    expect(script(sendCommand)).not.toContain("/etc/tugra/wal/"); // archive spool: only when PITR was on
+    // a FAILED-kept or promoted replay target is deleted through this same path, so its staging dir must go too
+    expect(script(sendCommand)).toContain("rm -rf /etc/tugra/wal-restore/db1");
+  });
+
+  it("a non-Postgres database's remove script is byte-identical (no WAL lines at all)", async () => {
+    const { svc, sendCommand } = make(row({ engine: "MYSQL", image: "mysql:8", port: 3306 }));
     await svc.remove("u1", "db1");
     expect(script(sendCommand)).not.toContain("/etc/tugra/wal");
   });
@@ -189,7 +197,8 @@ describe("DatabasesService — PITR replay seams (5.6a)", () => {
     const out = await svc.createRecoveryTarget(src as never, {}, "u1");
     expect(out.id).toBe("new1");
     const data = create.mock.calls[0][0].data;
-    expect(data).toMatchObject({ name: "main (restored)", engine: "POSTGRES", version: "16", image: "postgres:16", hostPort: null, serverId: "s1", teamId: "t1", environmentId: "env1", status: "NEW", backupDestinationId: "d1", tags: ["prod"], memoryMb: 512 });
+    // born PROVISIONING: a NEW row would be movable/editable while the replay stages + seeds for hours
+    expect(data).toMatchObject({ name: "main (restored)", engine: "POSTGRES", version: "16", image: "postgres:16", hostPort: null, serverId: "s1", teamId: "t1", environmentId: "env1", status: "PROVISIONING", backupDestinationId: "d1", tags: ["prod"], memoryMb: 512 });
     // same creds as the source (the base tar's roles/password hashes are authoritative)
     expect(data.credentials).toBe(`enc:${JSON.stringify({ username: "tugra", password: "pw", database: "main" })}`);
     // nothing arms archiving/backups on the copy
@@ -211,14 +220,34 @@ describe("DatabasesService — PITR replay seams (5.6a)", () => {
     expect(create.mock.calls[0][0].data.environmentId).toBe("env2");
   });
 
-  it("reapRecoveryTarget tears the target down best-effort (container + volume + row) and never throws", async () => {
+  it("reapRecoveryTarget removes container + volume + staged WAL and PROVES it (inspect must fail), then deletes the row", async () => {
     const { svc, sendCommand } = make(row());
     const prisma = (svc as unknown as { prisma: { database: Record<string, jest.Mock> } }).prisma.database;
-    await svc.reapRecoveryTarget(row() as never, "u1");
-    expect(script(sendCommand)).toContain("docker volume rm tugra_dbv_db1");
-    expect(script(sendCommand)).toContain("rm -rf /etc/tugra/wal-restore/db1"); // staged WAL reclaimed too
+    await expect(svc.reapRecoveryTarget(row() as never, "u1")).resolves.toEqual({ cleaned: true });
+    const s = script(sendCommand);
+    expect(s).toContain("docker volume rm tugra_dbv_db1");
+    expect(s).toContain("rm -rf /etc/tugra/wal-restore/db1"); // staged WAL reclaimed too
+    // the shared remove script swallows docker errors (`|| true`), so the reap appends a strict proof
+    expect(s).toContain("! docker inspect tugra_db_db1 >/dev/null 2>&1 && ! docker volume inspect tugra_dbv_db1 >/dev/null 2>&1");
+    expect((sendCommand.mock.calls[0] as unknown[])[3]).toBe(120_000); // long enough for a multi-GB rm
     expect(prisma.delete).toHaveBeenCalled();
-    sendCommand.mockRejectedValueOnce(new Error("offline"));
-    await expect(svc.reapRecoveryTarget(row() as never, "u1")).resolves.toBeUndefined();
+  });
+
+  it("reapRecoveryTarget KEEPS the row (FAILED) with a reason when the cleanup is not confirmed — never an untracked volume", async () => {
+    for (const bad of [new Error("offline"), { output: "still there", exitCode: 1 }]) {
+      const { svc, sendCommand } = make(row(), bad as never);
+      const prisma = (svc as unknown as { prisma: { database: Record<string, jest.Mock> } }).prisma.database;
+      await expect(svc.reapRecoveryTarget(row() as never, "u1")).resolves.toEqual({ cleaned: false, reason: "agent" });
+      expect(prisma.delete).not.toHaveBeenCalled();
+      expect(prisma.update).toHaveBeenCalledWith(expect.objectContaining({ data: { status: "FAILED" } }));
+      expect(sendCommand).toHaveBeenCalledTimes(1);
+    }
+    // apps linked to the target: no cleanup attempted, row kept for the user to unlink + delete
+    const { svc, sendCommand } = make(row());
+    const prisma = (svc as unknown as { prisma: { appDatabaseLink: Record<string, jest.Mock>; database: Record<string, jest.Mock> } }).prisma;
+    prisma.appDatabaseLink.count.mockResolvedValue(1);
+    await expect(svc.reapRecoveryTarget(row() as never, "u1")).resolves.toEqual({ cleaned: false, reason: "links" });
+    expect(sendCommand).not.toHaveBeenCalled();
+    expect(prisma.database.delete).not.toHaveBeenCalled();
   });
 });

@@ -3300,6 +3300,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/databases/{id}/pitr/window": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["BackupsController_pitrWindow"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/databases/{id}/pitr/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["BackupsController_pitrRestoreToTime"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/fleet/backup-config": {
         parameters: {
             query?: never;
@@ -23590,12 +23622,18 @@ export interface operations {
                     "application/json": {
                         id: string;
                         /** @enum {string} */
-                        kind: "RESTORE" | "RESTORE_TO" | "IMPORT_URL" | "VERIFY";
+                        kind: "RESTORE" | "RESTORE_TO" | "IMPORT_URL" | "VERIFY" | "PITR";
                         /** @enum {string} */
                         status: "RUNNING" | "SUCCESS" | "FAILED";
                         exitCode: number | null;
                         errorTail: string | null;
                         backupId: string | null;
+                        databaseId: string;
+                        sourceDatabaseId: string | null;
+                        targetDatabaseId: string | null;
+                        /** Format: date-time */
+                        targetTime: string | null;
+                        baseBackupId: string | null;
                         /** Format: date-time */
                         createdAt: string;
                         /** Format: date-time */
@@ -23987,12 +24025,18 @@ export interface operations {
                     "application/json": {
                         id: string;
                         /** @enum {string} */
-                        kind: "RESTORE" | "RESTORE_TO" | "IMPORT_URL" | "VERIFY";
+                        kind: "RESTORE" | "RESTORE_TO" | "IMPORT_URL" | "VERIFY" | "PITR";
                         /** @enum {string} */
                         status: "RUNNING" | "SUCCESS" | "FAILED";
                         exitCode: number | null;
                         errorTail: string | null;
                         backupId: string | null;
+                        databaseId: string;
+                        sourceDatabaseId: string | null;
+                        targetDatabaseId: string | null;
+                        /** Format: date-time */
+                        targetTime: string | null;
+                        baseBackupId: string | null;
                         /** Format: date-time */
                         createdAt: string;
                         /** Format: date-time */
@@ -24067,12 +24111,18 @@ export interface operations {
                     "application/json": {
                         id: string;
                         /** @enum {string} */
-                        kind: "RESTORE" | "RESTORE_TO" | "IMPORT_URL" | "VERIFY";
+                        kind: "RESTORE" | "RESTORE_TO" | "IMPORT_URL" | "VERIFY" | "PITR";
                         /** @enum {string} */
                         status: "RUNNING" | "SUCCESS" | "FAILED";
                         exitCode: number | null;
                         errorTail: string | null;
                         backupId: string | null;
+                        databaseId: string;
+                        sourceDatabaseId: string | null;
+                        targetDatabaseId: string | null;
+                        /** Format: date-time */
+                        targetTime: string | null;
+                        baseBackupId: string | null;
                         /** Format: date-time */
                         createdAt: string;
                         /** Format: date-time */
@@ -24675,6 +24725,177 @@ export interface operations {
                         /** @enum {string} */
                         destinationType: "LOCAL" | "S3";
                         needsBaseBackup: boolean;
+                    };
+                };
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    BackupsController_pitrWindow: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: date-time */
+                        earliest: string | null;
+                        /** Format: date-time */
+                        latest: string | null;
+                        /** @enum {boolean} */
+                        approx: true;
+                        /** @enum {string|null} */
+                        reason: "not_enabled" | "no_base" | "agent_offline" | "capability" | "list_failed" | "no_wal" | null;
+                        bases: {
+                            id: string;
+                            /** Format: date-time */
+                            from: string;
+                            /** Format: date-time */
+                            to: string;
+                            startLsn: string;
+                            timeline: number;
+                        }[];
+                    };
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    BackupsController_pitrRestoreToTime: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: date-time */
+                    targetTime: string;
+                    name?: string;
+                    environmentId?: string;
+                };
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        restoreId: string;
+                        databaseId: string;
                     };
                 };
             };

@@ -19,6 +19,7 @@ import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { BackupsService, BackupViewSchema, BaseBackupViewSchema, RestoreViewSchema } from "./backups.service";
 import { PitrService, PitrStatusSchema } from "./pitr.service";
+import { PitrRestoreService, PitrRestoreStartSchema, PitrWindowSchema } from "./pitr-restore.service";
 import {
   BackupConfigInput,
   BackupConfigSchema,
@@ -28,6 +29,8 @@ import {
   ImportFromUrlSchema,
   PitrConfigInput,
   PitrConfigSchema,
+  PitrRestoreInput,
+  PitrRestoreSchema,
   VerifyConfigInput,
   VerifyConfigSchema,
 } from "./dto";
@@ -40,6 +43,7 @@ export class BackupsController {
   constructor(
     private readonly backups: BackupsService,
     private readonly pitr: PitrService,
+    private readonly pitrRestore: PitrRestoreService,
   ) {}
 
   @Get("backups")
@@ -211,5 +215,30 @@ export class BackupsController {
     @Body(new ZodValidationPipe(PitrConfigSchema)) body: PitrConfigInput,
   ) {
     return body.enabled ? this.pitr.enable(user.userId, id) : this.pitr.disable(user.userId, id, { purgeSpool: body.purgeSpool });
+  }
+
+  // The recoverable window (read-level): which base backups + archived WAL can serve a point-in-time restore.
+  @Get("pitr/window")
+  @ApiZodResponse(PitrWindowSchema)
+  pitrWindow(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.pitrRestore.window(user.userId, id);
+  }
+
+  // Restore AS OF a moment into a NEW database. Minutes-to-hours (seed + stage + replay), so it is ASYNC: 202 with
+  // the ids; progress is the Restore row (kind PITR, listed under this database) and the new database's status.
+  // Recreate-class → 'deploy' scope; the service additionally requires 'databases' + 'backups' (+ 'apps:config'
+  // for a custom image).
+  @Post("pitr/restore")
+  @RequireScopes("deploy")
+  @HttpCode(202)
+  @ApiZodBody(PitrRestoreSchema)
+  @ApiZodResponse(PitrRestoreStartSchema, { status: 202 })
+  async pitrRestoreToTime(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(PitrRestoreSchema)) body: PitrRestoreInput,
+  ) {
+    const r = await this.pitrRestore.start(user.userId, id, body);
+    return { restoreId: r.restoreId, databaseId: r.databaseId };
   }
 }
