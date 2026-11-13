@@ -51,12 +51,17 @@ export function buildPitrPreflightScript(db: DbSpec): string {
   const readiness = readinessPrelude("POSTGRES", container, db.credentials);
   if (readiness) lines.push(readiness);
   lines.push(psqlFn(container, db.credentials));
-  // One round trip; archive_command LAST so a user value containing '|' survives `cut -f4-`.
-  const q = "SELECT current_setting('server_version_num'), current_setting('wal_level'), current_setting('archive_mode'), current_setting('archive_command')";
+  // One round trip; archive_command LAST so a user value containing '|' survives `cut -f5-`.
+  const q =
+    "SELECT current_setting('server_version_num'), current_setting('wal_level'), current_setting('archive_mode'), current_setting('wal_segment_size'), current_setting('archive_command')";
   lines.push(
     `PF=$(docker exec -e PGPASSWORD=${shq(db.credentials.password)} ${container} psql -U ${shq(db.credentials.username)} -d ${shq(db.credentials.database)} -tAF'|' -c ${shqInner(q)}) || { echo "tugra: could not read postgres settings" >&2; exit 6; }`,
-    `VER=$(printf '%s' "$PF" | cut -d'|' -f1); WAL=$(printf '%s' "$PF" | cut -d'|' -f2); AM=$(printf '%s' "$PF" | cut -d'|' -f3); AC=$(printf '%s' "$PF" | cut -d'|' -f4-)`,
+    `VER=$(printf '%s' "$PF" | cut -d'|' -f1); WAL=$(printf '%s' "$PF" | cut -d'|' -f2); AM=$(printf '%s' "$PF" | cut -d'|' -f3); SEG=$(printf '%s' "$PF" | cut -d'|' -f4); AC=$(printf '%s' "$PF" | cut -d'|' -f5-)`,
     `[ "$VER" -ge 100000 ] 2>/dev/null || { echo "tugra: PITR needs Postgres 10 or newer" >&2; exit 15; }`,
+    // The hub derives WAL segment names from LSNs with the default 16 MiB segment size (the window, the replay
+    // seed and the WAL-aware retention all depend on it). A cluster initdb'd with --wal-segsize=N would make
+    // those names wrong, so it is refused up front instead of being mis-anchored later.
+    `[ "$SEG" = "16MB" ] || { echo "tugra: wal_segment_size is $SEG; PITR supports the default 16MB only" >&2; exit 16; }`,
     `case "$WAL" in minimal) echo "tugra: wal_level=minimal cannot archive WAL; run ALTER SYSTEM SET wal_level='replica', restart the database, then enable PITR" >&2; exit 4;; esac`,
     // Already archiving with a command that is not ours → refuse (re-enabling our own setup is fine).
     `case "$AM" in on|always) case "$AC" in *${WAL_CONTAINER_DIR}/*) ;; "") ;; *) echo "tugra: this database already has its own archive_command; PITR would override it" >&2; exit 12;; esac;; esac`,
@@ -150,6 +155,7 @@ export function pitrExitHint(exitCode: number | null, phase: "preflight" | "veri
     13: "The database image could not be pulled from its registry.",
     14: "The WAL spool is not empty (left over from an earlier session). Disable PITR with purge first.",
     15: "PITR needs Postgres 10 or newer.",
+    16: "This cluster uses a non-default WAL segment size; PITR supports the default 16MB only.",
   };
   const verify: Record<number, string> = {
     9: "archive_command is failing inside the container (see the tail for the last failed segment).",

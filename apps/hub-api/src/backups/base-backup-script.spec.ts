@@ -104,11 +104,18 @@ describe("base-backup-script", () => {
 
   describe("parseBaseMeta", () => {
     it("parses the -v start LSN + timeline, nulls on a miss", () => {
-      const out = "pg_basebackup: initiating base backup, waiting for checkpoint to complete\npg_basebackup: write-ahead log start point: 0/2000028 on timeline 1\n12345";
-      expect(parseBaseMeta(out)).toEqual({ startLsn: "0/2000028", timeline: 1 });
-      expect(parseBaseMeta("no metadata here\n999")).toEqual({ startLsn: null, timeline: null });
+      const out = "TUGRA_BASE_SEGSIZE 16MB\npg_basebackup: initiating base backup, waiting for checkpoint to complete\npg_basebackup: write-ahead log start point: 0/2000028 on timeline 1\n12345";
+      expect(parseBaseMeta(out)).toEqual({ startLsn: "0/2000028", timeline: 1, walSegmentSize: "16MB" });
+      expect(parseBaseMeta("no metadata here\n999")).toEqual({ startLsn: null, timeline: null, walSegmentSize: null });
       // start point without an explicit timeline → LSN captured, timeline null
-      expect(parseBaseMeta("write-ahead log start point: 1/ABC\n5")).toEqual({ startLsn: "1/ABC", timeline: null });
+      expect(parseBaseMeta("write-ahead log start point: 1/ABC\n5")).toEqual({ startLsn: "1/ABC", timeline: null, walSegmentSize: null });
+      expect(parseBaseMeta("TUGRA_BASE_SEGSIZE 64MB\nwrite-ahead log start point: 1/ABC on timeline 1\n5").walSegmentSize).toBe("64MB");
+    });
+
+    it("the prelude reports the WAL segment size (the hub drops the anchor for anything but 16MB)", () => {
+      const s = buildBaseBackupScript(pgSpec(), "t.basebackup.tar.gz", { type: "LOCAL", encryption: { enabled: false, key: "" } }, "ts");
+      expect(s).toContain("wal_segment_size");
+      expect(s).toContain('echo "TUGRA_BASE_SEGSIZE $SEG"');
     });
   });
 });

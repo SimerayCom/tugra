@@ -3,10 +3,13 @@ import {
   buildPitrPrepareScript,
   buildPitrRecoveryWaitScript,
   buildPitrSeedScript,
+  buildWalDeleteScript,
   buildWalObjectListScript,
   buildWalRestoreCleanScript,
   buildWalStageScript,
   contiguousRun,
+  parseWalDeleted,
+  walGcCandidates,
   WAL_LIST_PAGE,
   WAL_LIST_ROW_MAX_BYTES,
   nextSegmentName,
@@ -243,5 +246,68 @@ describe("pitr-restore-script — recovery wait", () => {
     expect(pitrRestoreExitHint(20, "seed")).toMatch(/already holds data/);
     expect(pitrRestoreExitHint(22, "prepare")).toMatch(/18\+/);
     expect(pitrRestoreExitHint(99, "stage")).toMatch(/exit 99/);
+  });
+});
+
+describe("pitr-restore-script — WAL-aware retention (5.7)", () => {
+  const names = (...n: string[]) => n.map((name) => ({ name }));
+
+  it("reclaims only SAME-timeline segments sorting strictly before the cutoff; keeps history files + other timelines", () => {
+    const objs = names(
+      "000000010000000000000001",
+      "000000010000000000000002",
+      "000000010000000000000003", // == cutoff → kept (the oldest kept base starts here)
+      "000000010000000000000004",
+      "00000001.history",
+      "00000002.history",
+      "000000020000000000000001", // other timeline → never reclaimed here
+      "0000000100000000000000FF.00000028.backup",
+    );
+    expect(walGcCandidates(objs, "000000010000000000000003")).toEqual(["000000010000000000000001", "000000010000000000000002"]);
+    // the SAME-timeline filter decides, not name order: timeline-1 names sort before a timeline-2 cutoff yet stay
+    const tl2 = names("000000010000000000000001", "000000010000000000000009", "000000020000000000000003", "000000020000000000000005", "000000020000000000000007", "00000002.history");
+    expect(walGcCandidates(tl2, "000000020000000000000005")).toEqual(["000000020000000000000003"]);
+  });
+
+  it("an invalid cutoff reclaims nothing; the cutoff is the start segment of the OLDEST kept base", () => {
+    expect(walGcCandidates(names("000000010000000000000001"), "junk")).toEqual([]);
+    expect(walGcCandidates(names("000000010000000000000001"), "")).toEqual([]);
+    const cut = walSegmentName("1/3A000000", 1)!;
+    expect(cut).toBe("00000001000000010000003A");
+    // crossing the high word: 0000000100000000000000FF < 00000001000000010000003A lexically AND numerically
+    expect(walGcCandidates(names("0000000100000000000000FF", "00000001000000010000003A", "00000001000000010000003B"), cut)).toEqual([
+      "0000000100000000000000FF",
+    ]);
+  });
+
+  it("delete script: LOCAL rm -f per object under the wal namespace, one marker each, trailing total; names validated", () => {
+    const s = buildWalDeleteScript("db1", ["000000010000000000000001", "00000001.history"], LOCAL_DEST);
+    expect(s).toContain("rm -f '/etc/tugra/backups/db1/wal/000000010000000000000001.gz'");
+    expect(s).toContain('then echo "TUGRA_WAL_GONE 000000010000000000000001"');
+    expect(s).toContain('else echo "TUGRA_WAL_KEEP 000000010000000000000001"');
+    expect(s).toContain("00000001.history.gz");
+    expect(s.trim().endsWith('echo "TUGRA_WAL_GC n=$n"')).toBe(true);
+    expect(() => buildWalDeleteScript("db1", ["../etc/passwd"], LOCAL_DEST)).toThrow(/invalid WAL name/);
+    expect(() => buildWalDeleteScript("db1", ["000000010000000000000001; rm -rf /"], LOCAL_DEST)).toThrow(/invalid WAL name/);
+  });
+
+  it("delete script: S3 mc rm on the db's wal namespace with creds in env (never argv) and the encrypted suffix", () => {
+    const s = buildWalDeleteScript("db1", ["000000010000000000000001"], s3Enc);
+    expect(s).toContain("mc rm tdest/bk/tugra/db1/wal/000000010000000000000001.gz.gpg");
+    expect(s).toMatch(/MC_HOST_tdest='[^']*' mc rm /);
+    for (const arg of s.split("mc rm ").slice(1)) expect(arg.split("\n")[0]).not.toMatch(/AK|SK|secretpass/);
+    // LOCAL + encryption → the .gz.gpg object under the backups dir
+    const l = buildWalDeleteScript("db1", ["000000010000000000000001"], { ...LOCAL_DEST, encryption: { enabled: true, key: "k" } });
+    expect(l).toContain("rm -f '/etc/tugra/backups/db1/wal/000000010000000000000001.gz.gpg'");
+  });
+
+  it("parses deleted/kept markers; total is null without the trailer (a died command is NOT 'done')", () => {
+    expect(parseWalDeleted("TUGRA_WAL_GONE A\nTUGRA_WAL_KEEP B\nTUGRA_WAL_GONE C\nTUGRA_WAL_GC n=2\n")).toEqual({
+      deleted: ["A", "C"],
+      kept: ["B"],
+      total: 2,
+    });
+    expect(parseWalDeleted("TUGRA_WAL_GONE A\n").total).toBeNull();
+    expect(parseWalDeleted("").total).toBeNull();
   });
 });

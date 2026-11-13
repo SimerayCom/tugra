@@ -1450,6 +1450,9 @@ export interface Database {
   lastVerifiedAt: string | null;
   pitrEnabled: boolean;
   pitrEnabledAt: string | null;
+  baseBackupEnabled: boolean;
+  baseBackupIntervalHours: number | null;
+  baseBackupCron: string | null;
   tags: string[];
   volumes: { name: string; path: string }[];
   role: Role;

@@ -73,14 +73,18 @@ export function basebackupPrelude(containerName: string, creds: DbCredentials, o
   lines.push(
     `docker exec ${containerName} sh -c ${shq("command -v pg_basebackup >/dev/null 2>&1")} || { echo "tugra: pg_basebackup is not available in this database image" >&2; exit 6; }`,
   );
-  // 3+4. One psql round-trip for wal_level + non-default tablespace count.
-  const pf = `SELECT current_setting('wal_level'), (SELECT count(*) FROM pg_tablespace WHERE spcname NOT IN ('pg_default','pg_global'))`;
+  // 3+4. One psql round-trip for wal_level + non-default tablespace count + the WAL segment size. The segment
+  //      size is REPORTED, not enforced: the hub's LSN → segment-name math (PITR window, replay, WAL retention) is
+  //      only valid for the default 16MB, so a base on another cluster stays a valid physical snapshot but is
+  //      never recorded as a PITR anchor (its start LSN is dropped).
+  const pf = `SELECT current_setting('wal_level'), (SELECT count(*) FROM pg_tablespace WHERE spcname NOT IN ('pg_default','pg_global')), current_setting('wal_segment_size')`;
   const probe = `docker exec -e PGPASSWORD=${shq(password)} ${containerName} psql -U ${u} -d ${db} -tAF, -c ${shqInner(pf)}`;
   lines.push(
     `PF=$(${probe}) || { echo "tugra: could not read postgres settings" >&2; exit 6; }; ` +
-      `WAL=$(printf '%s' "$PF" | cut -d, -f1); TBS=$(printf '%s' "$PF" | cut -d, -f2); ` +
+      `WAL=$(printf '%s' "$PF" | cut -d, -f1); TBS=$(printf '%s' "$PF" | cut -d, -f2); SEG=$(printf '%s' "$PF" | cut -d, -f3); ` +
       `case "$WAL" in minimal) echo "tugra: wal_level=minimal cannot take a physical base backup; set wal_level=replica" >&2; exit 4;; esac; ` +
-      `[ "$TBS" = 0 ] || { echo "tugra: extra tablespaces are not supported by the stdout base backup" >&2; exit 7; }`,
+      `[ "$TBS" = 0 ] || { echo "tugra: extra tablespaces are not supported by the stdout base backup" >&2; exit 7; }; ` +
+      `echo "TUGRA_BASE_SEGSIZE $SEG"`,
   );
   // 5. LOCAL only: a base is ~full-cluster size on the shared host disk. Refuse ONLY when both numbers are
   //    known AND avail is clearly short of ~half the cluster size (a compression heuristic); S3 streams, so
@@ -116,7 +120,11 @@ export function buildBaseBackupScript(db: DbSpec, filename: string, dest: Destin
  * backup; the authoritative copy lives in backup_label inside the tar (read by a later slice). The size line
  * is produced after the pipe completes, so these -v lines always precede it and `parseSize` is unaffected.
  */
-export function parseBaseMeta(output: string): { startLsn: string | null; timeline: number | null } {
+export function parseBaseMeta(output: string): { startLsn: string | null; timeline: number | null; walSegmentSize: string | null } {
   const m = output.match(/write-ahead log start point:\s*([0-9A-Fa-f]+\/[0-9A-Fa-f]+)(?:\s+on timeline\s+(\d+))?/);
-  return { startLsn: m ? m[1] : null, timeline: m && m[2] ? Number(m[2]) : null };
+  const s = output.match(/^TUGRA_BASE_SEGSIZE (\S+)$/m);
+  return { startLsn: m ? m[1] : null, timeline: m && m[2] ? Number(m[2]) : null, walSegmentSize: s ? s[1] : null };
 }
+
+/** The only WAL segment size the hub's LSN → segment-name math is valid for (see pitr-restore-script). */
+export const SUPPORTED_WAL_SEGMENT_SIZE = "16MB";

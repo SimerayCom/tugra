@@ -8,6 +8,7 @@ import { AgentOfflineException } from "../agent-gateway/agent-offline.exception"
 import { DatabasesService } from "../databases/databases.service";
 import { BackupRunnerService } from "./backup-runner.service";
 import { WalShipperRunnerService } from "./wal-shipper-runner.service";
+import { BackupSchedulerService } from "./backups.scheduler.service";
 
 const PW = "s3cr3tPassw0rd";
 const SEG = "000000010000000000000003";
@@ -113,9 +114,10 @@ function make(opts: {
     return next instanceof Error ? Promise.reject(next) : Promise.resolve(next);
   });
   const shipper = { shipOnce } as unknown as WalShipperRunnerService;
-  const svc = new PitrService(prisma, access, audit, agentWs, runner, databases, shipper);
+  const unscheduleBase = jest.fn().mockResolvedValue(undefined);
+  const svc = new PitrService(prisma, access, audit, agentWs, runner, databases, shipper, { unscheduleBase } as unknown as BackupSchedulerService);
   (svc as unknown as { delay: () => Promise<void> }).delay = () => Promise.resolve(); // no real sleeps in the drain loop
-  return { svc, row, sendCommand, updateMany, update, findMany, backupFindFirst, reprovision, shipOnce, log, requirePermission, maintenance };
+  return { svc, row, sendCommand, updateMany, update, findMany, backupFindFirst, reprovision, shipOnce, log, requirePermission, maintenance, unscheduleBase };
 }
 
 const scripts = (sendCommand: jest.Mock) => sendCommand.mock.calls.map((c) => String(c[1]));
@@ -280,6 +282,14 @@ describe("PitrService.disable", () => {
     expect(sendCommand.mock.invocationCallOrder[purgeIdx]).toBeLessThan(clearOrder); // purge before the flag clears
     expect(log).toHaveBeenCalledWith(expect.objectContaining({ action: "database.pitr.disable", meta: { drained: true, purged: true } }));
     expect(maintenance.size).toBe(0);
+  });
+
+  it("clears the scheduled base backups with the flag (same write) and removes their repeatable: the schedule is owned by PITR", async () => {
+    const { svc, update, unscheduleBase } = make({ row: ACTIVE, ship: [{ shipped: 0, failed: 0, backlog: 0 }] });
+    await svc.disable("u1", "db1");
+    const clear = update.mock.calls.find((c) => c[0].data.pitrEnabled === false)!;
+    expect(clear[0].data).toMatchObject({ pitrEnabled: false, pitrEnabledAt: null, baseBackupEnabled: false });
+    expect(unscheduleBase).toHaveBeenCalledWith("db1");
   });
 
   it("a drain tick skipped by the scheduled sweep's lock is RETRIED, not treated as failure", async () => {

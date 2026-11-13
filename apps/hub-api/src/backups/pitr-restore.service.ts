@@ -22,6 +22,7 @@ import { loadProjectCtx } from "../common/resource-project";
 import { resolveImage, type DbEngine, type DbSpec } from "../databases/database-script";
 import { type DestinationSpec } from "./destination";
 import { BackupRunnerService } from "./backup-runner.service";
+import { PitrClaimsService } from "./pitr-claims.service";
 import { scrubRunOutput } from "./backup-script";
 import {
   baseIntervals,
@@ -126,9 +127,6 @@ export class PitrRestoreService implements OnApplicationBootstrap, OnModuleDestr
   private readonly windowCache = new Map<string, { at: number; value: PitrWindowView }>();
   /** Restore ids this hub is executing right now (the orphan sweep never touches them). */
   private readonly live = new Set<string>();
-  /** Source ids with a start() in progress or a replay running — taken SYNCHRONOUSLY so a double submit can't
-   *  pass the DB check twice while the first request is still listing WAL. */
-  private readonly bySource = new Set<string>();
   private timer?: ReturnType<typeof setInterval>;
 
   constructor(
@@ -139,6 +137,9 @@ export class PitrRestoreService implements OnApplicationBootstrap, OnModuleDestr
     private readonly runner: BackupRunnerService,
     private readonly databases: DatabasesService,
     private readonly notifications: NotificationsService,
+    /** Source ids with a start() in progress or a replay running — claimed SYNCHRONOUSLY so a double submit can't
+     *  pass the DB check twice while the first request is still listing WAL; shared with the retention prune. */
+    private readonly claims: PitrClaimsService,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -234,8 +235,7 @@ export class PitrRestoreService implements OnApplicationBootstrap, OnModuleDestr
     const src = await this.requireWrite(userId, id);
     // Synchronous per-source claim (no await between the check and the add): the DB check below cannot see a
     // sibling request that is still listing WAL.
-    if (this.bySource.has(src.id)) throw new ConflictException("a point-in-time restore of this database is already running");
-    this.bySource.add(src.id);
+    if (!this.claims.claim(src.id)) throw new ConflictException("a point-in-time restore of this database is already running");
     let launched = false;
     try {
       if ((src.engine as DbEngine) !== "POSTGRES") throw new BadRequestException("point-in-time restore is supported only for Postgres");
@@ -289,6 +289,11 @@ export class PitrRestoreService implements OnApplicationBootstrap, OnModuleDestr
             createdBy: userId,
           },
         });
+        // The retention prune checks for a RUNNING Restore row before each delete, and we check the base after
+        // writing ours: whichever side went second sees the other, so a base pruned between the window read
+        // and this point is caught here instead of failing minutes later mid-seed.
+        const stillThere = await this.prisma.baseBackup.findUnique({ where: { id: pick.base.id }, select: { status: true } });
+        if (!stillThere || stillThere.status !== "SUCCESS") throw new ConflictException("the base backup for that moment was just pruned; retry");
         await this.audit
           .log({ actor: userId, action: "database.pitr.restore.start", target: src.id, meta: { restoreId: rec.id, targetDatabaseId: target.id, targetTime: targetTime.toISOString(), baseBackupId: pick.base.id, segments: run.length } })
           .catch(() => undefined);
@@ -308,12 +313,12 @@ export class PitrRestoreService implements OnApplicationBootstrap, OnModuleDestr
         .catch((e) => this.logger.error(`pitr replay ${ctx.rec.id} crashed: ${e instanceof Error ? e.message : e}`))
         .finally(() => {
           this.live.delete(ctx.rec.id);
-          this.bySource.delete(src.id);
+          this.claims.release(src.id);
           release?.();
         });
       return { restoreId: rec.id, databaseId: target.id, done };
     } finally {
-      if (!launched) this.bySource.delete(src.id);
+      if (!launched) this.claims.release(src.id);
     }
   }
 

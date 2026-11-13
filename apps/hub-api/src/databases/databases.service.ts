@@ -86,6 +86,10 @@ export const DatabaseViewSchema = z.object({
   // PITR (Postgres only): whether WAL archiving is on, and when it was switched on.
   pitrEnabled: z.boolean(),
   pitrEnabledAt: z.date().nullable(),
+  // Scheduled physical base backups (the PITR anchors).
+  baseBackupEnabled: z.boolean(),
+  baseBackupIntervalHours: z.number().nullable(),
+  baseBackupCron: z.string().nullable(),
   tags: z.array(z.string()),
   volumes: z.array(z.object({ name: z.string(), path: z.string() })),
   role: z.nativeEnum(Role),
@@ -1035,6 +1039,9 @@ export class DatabasesService {
       lastVerifiedAt: db.lastVerifiedAt,
       pitrEnabled: db.pitrEnabled,
       pitrEnabledAt: db.pitrEnabledAt,
+      baseBackupEnabled: db.baseBackupEnabled,
+      baseBackupIntervalHours: db.baseBackupIntervalHours,
+      baseBackupCron: db.baseBackupCron,
       tags: db.tags,
       volumes: this.dbVolumes(db),
       role,

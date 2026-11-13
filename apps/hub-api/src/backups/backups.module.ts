@@ -14,6 +14,7 @@ import { WalShipperRunnerService } from "./wal-shipper-runner.service";
 import { WalShipperSchedulerService } from "./wal-shipper.scheduler.service";
 import { PitrService } from "./pitr.service";
 import { PitrRestoreService } from "./pitr-restore.service";
+import { PitrClaimsService } from "./pitr-claims.service";
 
 @Module({
   imports: [AgentGatewayModule, CryptoModule, DatabasesModule, NotificationsModule],
@@ -28,6 +29,7 @@ import { PitrRestoreService } from "./pitr-restore.service";
     WalShipperSchedulerService,
     PitrService,
     PitrRestoreService,
+    PitrClaimsService,
   ],
   exports: [BackupsService, BackupRunnerService, BaseBackupRunnerService, BackupAlertsService, WalShipperRunnerService, PitrService, PitrRestoreService],
 })

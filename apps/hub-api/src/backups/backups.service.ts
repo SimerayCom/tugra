@@ -23,7 +23,7 @@ import { BaseBackupRunnerService } from "./base-backup-runner.service";
 import { BackupSchedulerService } from "./backups.scheduler.service";
 import { BackupAlertsService } from "./backup-alerts.service";
 import { planTargets } from "../bulk/bulk.service";
-import type { BackupConfigInput, ImportFromUrlInput, VerifyConfigInput } from "./dto";
+import type { BackupConfigInput, BaseBackupConfigInput, ImportFromUrlInput, VerifyConfigInput } from "./dto";
 
 export const BackupViewSchema = z.object({
   id: z.string(),
@@ -421,6 +421,46 @@ export class BackupsService {
     }
     // Re-arm the verify-liveness watchdog from now + clear stale alerts.
     await this.alerts.onScheduleChanged("verify", dbId);
+    return db;
+  }
+
+  /**
+   * Arm/disarm the scheduled physical base backup (the PITR anchor). Same bar as the verify drill: 'backups' write
+   * AND 'databases' (a base is a full-cluster copy on the database's host). Postgres-only.
+   */
+  async setBaseBackupSchedule(userId: string, dbId: string, cfg: BaseBackupConfigInput): Promise<Database> {
+    const existing = await this.requireWrite(userId, dbId);
+    await this.access.requirePermission(userId, existing.teamId, "databases");
+    if ((existing.engine as DbEngine) !== "POSTGRES") {
+      throw new BadRequestException("scheduled base backups are supported only for Postgres");
+    }
+    // The schedule is owned by PITR (bases are its anchors; disabling PITR clears it): arming needs PITR ACTIVE.
+    if (cfg.enabled && (!existing.pitrEnabled || !existing.pitrEnabledAt)) {
+      throw new ConflictException("enable PITR on this database before scheduling base backups");
+    }
+    const db = await this.applyBase(dbId, cfg);
+    await this.audit.log({ actor: userId, action: "database.basebackup.schedule", target: dbId });
+    return db;
+  }
+
+  /** Persist the base backup schedule + (re)schedule its repeatable. Caller handles authz + engine. */
+  private async applyBase(dbId: string, cfg: BaseBackupConfigInput): Promise<Database> {
+    const db = await this.prisma.database.update({
+      where: { id: dbId },
+      data: {
+        baseBackupEnabled: cfg.enabled,
+        baseBackupIntervalHours: cfg.intervalHours ?? null,
+        ...(cfg.cron !== undefined ? { baseBackupCron: cfg.cron } : {}),
+      },
+    });
+    if (db.baseBackupEnabled && db.baseBackupCron) {
+      await this.scheduler.scheduleBaseCron(dbId, db.baseBackupCron);
+    } else if (db.baseBackupEnabled && db.baseBackupIntervalHours) {
+      await this.scheduler.scheduleBase(dbId, db.baseBackupIntervalHours * 3600);
+    } else {
+      await this.scheduler.unscheduleBase(dbId);
+    }
+    await this.alerts.onScheduleChanged("basebackup", dbId);
     return db;
   }
 

@@ -21,6 +21,7 @@ import { DatabasesService } from "../databases/databases.service";
 import { buildDbStopScript, dbContainerName, type DbEngine, type DbSpec } from "../databases/database-script";
 import { BackupRunnerService } from "./backup-runner.service";
 import { WalShipperRunnerService } from "./wal-shipper-runner.service";
+import { BackupSchedulerService } from "./backups.scheduler.service";
 import { scrubRunOutput } from "./backup-script";
 import { buildPitrPreflightScript, buildPitrVerifyScript, buildWalSpoolPurgeScript, parsePitrVerify, pitrExitHint } from "./pitr-script";
 
@@ -83,7 +84,19 @@ export class PitrService implements OnApplicationBootstrap, OnModuleDestroy {
     private readonly runner: BackupRunnerService,
     private readonly databases: DatabasesService,
     private readonly shipper: WalShipperRunnerService,
+    private readonly scheduler: BackupSchedulerService,
   ) {}
+
+  /** The scheduled base backups are owned by PITR: a disable (or a failed enable) always clears the schedule so a
+   *  full-cluster copy never keeps running against a database that is no longer archiving. The flag is cleared in
+   *  the same write as the PITR flag; the repeatable removal is best-effort (the tick re-checks the flags). */
+  private async dropBaseSchedule(id: string): Promise<void> {
+    try {
+      await this.scheduler.unscheduleBase(id);
+    } catch (e) {
+      this.logger.warn(`pitr disable for database ${id}: could not remove the base backup repeatable: ${e instanceof Error ? e.message : e}`);
+    }
+  }
 
   onApplicationBootstrap(): void {
     if (process.env.NODE_ENV === "test") return;
@@ -286,8 +299,9 @@ export class PitrService implements OnApplicationBootstrap, OnModuleDestroy {
 
         // Only now — no archiving container exists — may the spool go and the flag clear (flag-LAST).
         if (backlog === 0 || opts.purgeSpool) await this.purgeSpool(db);
-        await this.prisma.database.update({ where: { id }, data: { pitrEnabled: false, pitrEnabledAt: null } });
+        await this.prisma.database.update({ where: { id }, data: { pitrEnabled: false, pitrEnabledAt: null, baseBackupEnabled: false } });
         committed = true;
+        await this.dropBaseSchedule(id);
         await this.audit
           .log({ actor: userId, action: "database.pitr.disable", target: id, meta: { drained: backlog === 0, purged: backlog === 0 || !!opts.purgeSpool } })
           .catch(() => undefined); // best-effort: a failed audit after the clear must never re-arm archiving
@@ -417,8 +431,9 @@ export class PitrService implements OnApplicationBootstrap, OnModuleDestroy {
       await this.purgeSpool(db);
       const cleared = await this.prisma.database.updateMany({
         where: { id: db.id, pitrEnabled: true, pitrEnabledAt: null },
-        data: { pitrEnabled: false, pitrEnabledAt: null, status: DbStatus.RUNNING },
+        data: { pitrEnabled: false, pitrEnabledAt: null, baseBackupEnabled: false, status: DbStatus.RUNNING },
       });
+      await this.dropBaseSchedule(db.id);
       await this.audit.log({ actor, action: "database.pitr.enable_failed", target: db.id, meta: { step, exitCode, rolledBack: cleared.count > 0 } });
       if (cleared.count === 0) {
         this.logger.warn(`pitr rollback for database ${db.id}: row was no longer ARMING when the flag was to be cleared`);

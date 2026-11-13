@@ -1656,6 +1656,13 @@ export const api = {
       body: JSON.stringify(cfg),
     });
   },
+  // Scheduled physical base backups (the PITR anchors). Postgres-only; at most once every 6 hours.
+  setBaseBackupConfig(dbId: string, cfg: { enabled: boolean; intervalHours?: number; cron?: string | null }) {
+    return apiFetch<{ ok: true }>(`/databases/${dbId}/base-backup-config`, {
+      method: "PUT",
+      body: JSON.stringify(cfg),
+    });
+  },
   // PITR (Postgres): status + the enable/disable switch. Enable recreates the container with WAL archiving on
   // (a one-time restart) and verifies it end to end; disable drains the un-shipped WAL first. Both are
   // synchronous and can take a minute or more.

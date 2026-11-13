@@ -231,5 +231,16 @@
   "pitrWindowLoading": "Checking what can be restored…",
   "pitrWindowUnavailable": "The recoverable window could not be loaded — retrying.",
   "pitrPickedInstant": "= {iso} (UTC)",
-  "pitrRunningHint": "A point-in-time restore of this database is running — follow it in the restore history below."
+  "pitrRunningHint": "A point-in-time restore of this database is running — follow it in the restore history below.",
+  "pitrBaseSchedule": "Scheduled base backups",
+  "pitrBaseScheduleHint": "Take a fresh base backup automatically. The newest 3 are kept and archived WAL older than the oldest kept base is reclaimed, so this bounds both the recovery window and storage. Each run copies the whole cluster — at most once every 6 hours.",
+  "pitrBaseEvery": "every {hours} hours",
+  "pitrBaseEveryLabel": "Every (hours)",
+  "pitrBaseCron": "Cron (optional)",
+  "pitrBaseCronHint": "A 5-field cron (e.g. 0 2 * * * = 02:00 daily). When set it overrides the hours interval. Must be at least 6 hours apart.",
+  "pitrBaseScheduleSaved": "Base backup schedule saved",
+  "pitrBaseScheduleFailed": "Could not save the base backup schedule",
+  "pitrBaseScheduleOff": "Off",
+  "pitrBaseScheduleActive": "Active — {when}",
+  "pitrBaseScheduleCron": "cron {cron}"
 }

@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, UnprocessableEntityException } from "@nestjs/common";
 import { PitrRestoreService, stageSetFor } from "./pitr-restore.service";
+import { PitrClaimsService } from "./pitr-claims.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
@@ -106,9 +107,10 @@ function make(opts: {
     isUnderMaintenance: jest.fn().mockReturnValue(opts.locked ?? false),
   } as unknown as DatabasesService;
   const fireForEvent = jest.fn().mockResolvedValue(undefined);
-  const svc = new PitrRestoreService(prisma, access, { log } as unknown as AuditService, agentWs, runner, databases, { fireForEvent } as unknown as NotificationsService);
+  const claims = new PitrClaimsService();
+  const svc = new PitrRestoreService(prisma, access, { log } as unknown as AuditService, agentWs, runner, databases, { fireForEvent } as unknown as NotificationsService, claims);
   (svc as unknown as { delay: () => Promise<void> }).delay = () => Promise.resolve();
-  return { svc, sendCommand, dbUpdate, dbFindUnique, restoreCreate, restoreUpdate, restoreUpdateMany, restoreFindMany, reprovision, reap, release, log, fireForEvent, access, databases };
+  return { svc, sendCommand, dbUpdate, dbFindUnique, restoreCreate, restoreUpdate, restoreUpdateMany, restoreFindMany, reprovision, reap, release, log, fireForEvent, access, databases, claims };
 }
 const phases = (sendCommand: jest.Mock) => sendCommand.mock.calls.map((c) => phaseOf(String(c[1])));
 const stagedNames = (sendCommand: jest.Mock) =>
@@ -176,6 +178,16 @@ describe("PitrRestoreService.start — replay", () => {
     await expect(svc.start("u1", "db1", { targetTime: T })).resolves.toMatchObject({ restoreId: "r1" });
   });
 
+
+  it("fails fast when the picked base was pruned between the window read and the RUNNING row (the retention handshake), leaving nothing behind", async () => {
+    const m = make({});
+    (m as unknown as { svc: { prisma: { baseBackup: { findUnique: jest.Mock } } } }).svc.prisma.baseBackup.findUnique.mockResolvedValue(null);
+    await expect(m.svc.start("u1", "db1", { targetTime: T })).rejects.toBeInstanceOf(ConflictException);
+    expect(lastRestoreWrite(m.restoreUpdate).data).toMatchObject({ status: "FAILED" });
+    expect(m.reap).toHaveBeenCalled();
+    expect(m.release).toHaveBeenCalled();
+    expect(m.claims.has("db1")).toBe(false);
+  });
   it("refuses BEFORE creating anything: non-Postgres 400, PITR off 409, offline 503, denied permission 403, future / out-of-window 422, DB-known concurrent replay 409", async () => {
     await expect(make({ src: { engine: "MYSQL" } }).svc.start("u1", "db1", { targetTime: T })).rejects.toBeInstanceOf(BadRequestException);
     await expect(make({ src: { pitrEnabled: false } }).svc.start("u1", "db1", { targetTime: T })).rejects.toBeInstanceOf(ConflictException);

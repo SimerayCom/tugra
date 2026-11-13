@@ -382,6 +382,58 @@ export function buildWalRestoreCleanScript(newId: string): string {
   return `rm -rf ${shq(walRestoreHostDir(newId))} 2>/dev/null || true`;
 }
 
+// ── WAL-aware retention ──
+
+/**
+ * The archived objects that no retained base can ever need: segments on the SAME timeline as `cutoffSeg` whose
+ * name sorts strictly BEFORE it (the oldest kept base's start segment). Other timelines and `.history` files are
+ * kept (conservative — a timeline switch needs its history, and a foreign-timeline segment is never reclaimed here).
+ */
+export function walGcCandidates(objects: ReadonlyArray<{ name: string }>, cutoffSeg: string): string[] {
+  const cut = parseSegmentName(cutoffSeg);
+  if (!cut) return [];
+  return objects
+    .map((o) => o.name)
+    .filter((n) => {
+      const p = parseSegmentName(n);
+      return !!p && p.timeline === cut.timeline && n < cutoffSeg;
+    })
+    .sort();
+}
+
+/** Delete the given WAL objects (already allow-list-validated by the caller) at the destination, best-effort per
+ *  object, one marker each; `TUGRA_WAL_GC n=<deleted>` trails. Idempotent (a missing object is a no-op). */
+export function buildWalDeleteScript(srcId: string, names: ReadonlyArray<string>, dest: DestinationSpec): string {
+  const lines: string[] = ["n=0"];
+  if (dest.type === "S3" && dest.s3) lines.push(MC_INSTALL);
+  for (const name of names) {
+    if (!isShippableWalName(name)) throw new Error(`refusing to delete an invalid WAL name: ${name}`);
+    const obj = walObjectName(name, dest);
+    const rm =
+      dest.type === "S3" && dest.s3
+        ? `${mcHostEnv(dest.s3)} mc rm ${mcTarget(dest.s3, walNs(srcId), obj)} >/dev/null 2>&1`
+        : `rm -f ${shq(`${backupDir(walNs(srcId))}/${obj}`)} 2>/dev/null`;
+    lines.push(`if ${rm}; then echo "TUGRA_WAL_GONE ${name}"; n=$((n+1)); else echo "TUGRA_WAL_KEEP ${name}"; fi`);
+  }
+  lines.push(`echo "TUGRA_WAL_GC n=$n"`);
+  return lines.join("\n");
+}
+
+export function parseWalDeleted(output: string): { deleted: string[]; kept: string[]; total: number | null } {
+  const deleted: string[] = [];
+  const kept: string[] = [];
+  let total: number | null = null;
+  for (const line of output.split("\n")) {
+    const g = /^TUGRA_WAL_GONE (\S+)$/.exec(line);
+    if (g) deleted.push(g[1]);
+    const k = /^TUGRA_WAL_KEEP (\S+)$/.exec(line);
+    if (k) kept.push(k[1]);
+    const t = /^TUGRA_WAL_GC n=(\d+)$/.exec(line);
+    if (t) total = Number(t[1]);
+  }
+  return { deleted, kept, total };
+}
+
 /** Actionable text for a prepare/seed/stage/wait exit code. */
 export function pitrRestoreExitHint(exitCode: number | null, phase: "prepare" | "seed" | "stage" | "wait"): string {
   const table: Record<string, Record<number, string>> = {

@@ -20,11 +20,15 @@ describe("pitr-script", () => {
       expect(s).toContain("exit 3"); // not running
       expect(s).toContain("tugra: postgres not ready"); // shared readiness prelude
       expect(s).toContain("-tAF'|'"); // single psql round trip, archive_command last
-      expect(s).toContain("cut -d'|' -f4-"); // a user archive_command containing '|' survives
+      expect(s).toContain("cut -d'|' -f5-"); // a user archive_command containing '|' survives
     });
 
     it("maps each refusal to a distinct exit code with an actionable message", () => {
       expect(s).toMatch(/Postgres 10 or newer[^\n]*exit 15/);
+      // the hub's LSN → segment-name math is 16 MiB-only: a --wal-segsize cluster is refused before any mutation
+      expect(s).toContain("wal_segment_size");
+      expect(s).toMatch(/\[ "\$SEG" = "16MB" \] \|\|[^\n]*exit 16/);
+      expect(pitrExitHint(16, "preflight")).toMatch(/16MB/);
       expect(s).toMatch(/wal_level=minimal[^\n]*exit 4/);
       expect(s).toMatch(/already has its own archive_command[^\n]*exit 12/);
       expect(s).toMatch(/under 1 GiB free[^\n]*exit 5/i);

@@ -7,6 +7,7 @@ import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { NotificationsService } from "../notifications/notifications.service";
 import { BackupRunnerService } from "./backup-runner.service";
 import { BackupAlertsService } from "./backup-alerts.service";
+import { PitrClaimsService } from "./pitr-claims.service";
 
 const db = { id: "db1", name: "shop", teamId: "t1", serverId: "s1", engine: "POSTGRES", version: "16", backupDestinationId: null, credentials: "enc" };
 const spec = { id: "db1", engine: "POSTGRES", image: "postgres:16", port: 5432, hostPort: null, credentials: { username: "tugra", password: "s3cr3tPassw0rd", database: "appdb" } };
@@ -30,7 +31,7 @@ function make(opts: { sendResult?: { output: string; exitCode: number } | Error;
     // pruneBase skips while a PITR replay of this db is RUNNING (it may be streaming a base object)
     restore: { findFirst: jest.fn().mockResolvedValue(opts.replaying ? { id: "r1" } : null) },
   } as unknown as PrismaService;
-  const sr = opts.sendResult ?? { output: "write-ahead log start point: 0/2000028 on timeline 1\n1048576", exitCode: 0 };
+  const sr = opts.sendResult ?? { output: "TUGRA_BASE_SEGSIZE 16MB\nwrite-ahead log start point: 0/2000028 on timeline 1\n1048576", exitCode: 0 };
   const sendCommand = jest.fn((..._args: unknown[]) => (sr instanceof Error ? Promise.reject(sr) : Promise.resolve(sr)));
   const fireForEvent = jest.fn().mockResolvedValue(undefined);
   const runner = {
@@ -45,6 +46,7 @@ function make(opts: { sendResult?: { output: string; exitCode: number } | Error;
     { fireForEvent } as unknown as NotificationsService,
     runner,
     alerts,
+    new PitrClaimsService(),
   );
   return { svc, create, update, findFirst, findMany, del, sendCommand, fireForEvent, alerts, backup };
 }
@@ -62,6 +64,15 @@ describe("BaseBackupRunnerService.runBaseBackup", () => {
     expect(data).toMatchObject({ status: "SUCCESS", sizeBytes: 1048576n, startLsn: "0/2000028", timeline: 1 });
     expect(fireForEvent).toHaveBeenCalledWith("t1", "backup_success", expect.objectContaining({ dbName: "shop (base backup)", sizeBytes: "1048576" }));
     expect(alerts.recover).toHaveBeenCalledWith("basebackup", "db1", "t1", expect.anything());
+  });
+
+  it("drops the PITR anchor (start LSN + timeline) when the cluster's wal_segment_size is not 16MB or unknown — a snapshot, never a wrong anchor", async () => {
+    const m64 = make({ sendResult: { output: "TUGRA_BASE_SEGSIZE 64MB\nwrite-ahead log start point: 0/8000028 on timeline 1\n1048576", exitCode: 0 } });
+    await m64.svc.runBaseBackup("db1", "u1");
+    expect(m64.update.mock.calls.at(-1)![0].data).toMatchObject({ status: "SUCCESS", startLsn: null, timeline: null });
+    const unknown = make({ sendResult: { output: "write-ahead log start point: 0/8000028 on timeline 1\n1048576", exitCode: 0 } });
+    await unknown.svc.runBaseBackup("db1", "u1");
+    expect(unknown.update.mock.calls.at(-1)![0].data).toMatchObject({ status: "SUCCESS", startLsn: null, timeline: null });
   });
 
   it("NEVER touches the logical backup table (coexistence)", async () => {
@@ -145,6 +156,7 @@ describe("BaseBackupRunnerService.pruneBase", () => {
       { fireForEvent: jest.fn() } as unknown as NotificationsService,
       { destinationSpecById } as unknown as BackupRunnerService,
       { shouldNotifyFailure: jest.fn(), recover: jest.fn() } as unknown as BackupAlertsService,
+      new PitrClaimsService(),
     );
     await svc.pruneBase({ id: "db1", serverId: "s1" } as never);
     expect(del).toHaveBeenCalledTimes(2); // s1, s2 (the two oldest beyond 3)

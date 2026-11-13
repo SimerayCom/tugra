@@ -41,6 +41,30 @@ export const VerifyConfigSchema = z
   });
 export type VerifyConfigInput = z.infer<typeof VerifyConfigSchema>;
 
+// Minimum interval between scheduled physical base backups: a base is a full-cluster copy (checkpoint + IO +
+// upload), so it is floored well above the logical minimum. The cron is floored to the same bound.
+export const BASE_BACKUP_MIN_HOURS = 6;
+
+// Scheduled pg_basebackup config — the PITR anchors. No retention here: bases are kept count-wise (newest 3)
+// and the WAL they anchor is pruned WAL-aware behind the oldest kept base.
+export const BaseBackupConfigSchema = z
+  .object({
+    enabled: z.boolean(),
+    intervalHours: z.number().int().min(BASE_BACKUP_MIN_HOURS).max(24 * 30).optional(),
+    cron: CRON.nullable().optional(),
+  })
+  .refine((c) => !c.cron || (minCronGapMs(c.cron) ?? 0) >= BASE_BACKUP_MIN_HOURS * 3_600_000, {
+    message: `the base backup cron may run at most once every ${BASE_BACKUP_MIN_HOURS} hours (each run copies the whole cluster)`,
+    path: ["cron"],
+  })
+  // An "enabled" row with neither an interval nor a cron would be stored as enabled yet never run (and never be
+  // enrolled at boot) — a silent no-op schedule. Refuse it up front.
+  .refine((c) => !c.enabled || c.intervalHours != null || !!c.cron, {
+    message: "an enabled base backup schedule needs an interval (hours) or a cron expression",
+    path: ["intervalHours"],
+  });
+export type BaseBackupConfigInput = z.infer<typeof BaseBackupConfigSchema>;
+
 // PITR (point-in-time recovery) switch for a Postgres database. Enabling recreates the container with WAL
 // archiving on (a one-time restart), verifies archiving end to end and auto-rolls back on failure. Disabling
 // drains the un-shipped spool to the destination first; `purgeSpool` explicitly accepts dropping any WAL that

@@ -628,6 +628,44 @@ function DbPitrCard({ id, db, running }: { id: string; db: Database; running: bo
     onError: (e) => toast(errMsg(e), "error"),
     onSettled: invalidate,
   });
+  // Scheduled base backups (the PITR anchors): a local draft of the stored schedule, saved explicitly. The form
+  // re-seeds from the row whenever it changes elsewhere (another tab / a save), never while the user is typing.
+  const [baseDraft, setBaseDraft] = useState<{ enabled: boolean; hours: string; cron: string }>({
+    enabled: db.baseBackupEnabled,
+    hours: String(db.baseBackupIntervalHours ?? 24),
+    cron: db.baseBackupCron ?? "",
+  });
+  const baseHoursInt = Math.round(Number(baseDraft.hours));
+  const baseDirty =
+    baseDraft.enabled !== db.baseBackupEnabled ||
+    (baseDraft.enabled && baseDraft.cron.trim() !== (db.baseBackupCron ?? "")) ||
+    (baseDraft.enabled && !baseDraft.cron.trim() && baseHoursInt !== (db.baseBackupIntervalHours ?? 24));
+  const baseKey = `${db.baseBackupEnabled}|${db.baseBackupIntervalHours ?? ""}|${db.baseBackupCron ?? ""}`;
+  const baseDirtyRef = useRef(baseDirty);
+  baseDirtyRef.current = baseDirty;
+  useEffect(() => {
+    // Re-seed only when the user is not mid-edit (own save → draft equals the row → not dirty → harmless).
+    if (!baseDirtyRef.current) setBaseDraft({ enabled: db.baseBackupEnabled, hours: String(db.baseBackupIntervalHours ?? 24), cron: db.baseBackupCron ?? "" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baseKey]);
+  const baseSchedule = useMutation({
+    mutationFn: () => {
+      // Disabling sends only the switch (the hidden inputs are not part of the request).
+      if (!baseDraft.enabled) return api.setBaseBackupConfig(id, { enabled: false });
+      const cron = baseDraft.cron.trim();
+      return api.setBaseBackupConfig(id, {
+        enabled: true,
+        ...(Number.isFinite(baseHoursInt) && baseHoursInt > 0 ? { intervalHours: baseHoursInt } : {}),
+        cron: cron ? cron : null,
+      });
+    },
+    onSuccess: () => {
+      toast(t("databases.pitrBaseScheduleSaved"), "success");
+      setBaseDraft((d) => ({ ...d, hours: Number.isFinite(baseHoursInt) && baseHoursInt > 0 ? String(baseHoursInt) : d.hours, cron: d.cron.trim() }));
+    },
+    onError: (e) => toast(`${t("databases.pitrBaseScheduleFailed")}: ${errMsg(e)}`, "error"),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["database", id] }),
+  });
   // Point-in-time restore: the recoverable window (approximate bounds) + a picker modal. The restore is ASYNC on the
   // hub (202) — progress shows in the restore history (kind "Point in time") and on the new database's page.
   const { data: win, isError: winError, isLoading: winLoading } = useQuery({
@@ -758,6 +796,69 @@ function DbPitrCard({ id, db, running }: { id: string; db: Database; running: bo
                     : winError
                       ? t("databases.pitrWindowUnavailable")
                       : t("databases.pitrWindowNone")}
+          </div>
+        )}
+        {(state === "ACTIVE" || db.baseBackupEnabled) && (
+          // Also shown for a leftover enabled schedule while PITR is off, so it can always be switched off here.
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingTop: 6, borderTop: "1px solid var(--c-bd)" }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--c-tx2)", fontWeight: 600 }} title={t("databases.pitrBaseScheduleHint")}>
+                <input
+                  type="checkbox"
+                  checked={baseDraft.enabled}
+                  onChange={(e) => setBaseDraft((d) => ({ ...d, enabled: e.target.checked }))}
+                  disabled={baseSchedule.isPending}
+                />
+                {t("databases.pitrBaseSchedule")}
+              </label>
+              <span style={{ color: "var(--c-tx3)" }}>
+                {db.baseBackupEnabled
+                  ? t("databases.pitrBaseScheduleActive", {
+                      when: db.baseBackupCron
+                        ? t("databases.pitrBaseScheduleCron", { cron: db.baseBackupCron })
+                        : t("databases.pitrBaseEvery", { hours: db.baseBackupIntervalHours ?? 24 }),
+                    })
+                  : t("databases.pitrBaseScheduleOff")}
+              </span>
+            </div>
+            {baseDraft.enabled && (
+              <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
+                <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "var(--c-tx2)" }}>
+                  {t("databases.pitrBaseEveryLabel")}
+                  <input
+                    style={{ ...limField, width: 110 }}
+                    type="number"
+                    min={6}
+                    max={720}
+                    step={1}
+                    value={baseDraft.hours}
+                    onChange={(e) => setBaseDraft((d) => ({ ...d, hours: e.target.value }))}
+                    disabled={baseSchedule.isPending || !!baseDraft.cron.trim()}
+                    aria-label={t("databases.pitrBaseEveryLabel")}
+                  />
+                </label>
+                <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "var(--c-tx2)" }} title={t("databases.pitrBaseCronHint")}>
+                  {t("databases.pitrBaseCron")}
+                  <input
+                    style={{ ...limField, width: 160 }}
+                    className="mono"
+                    placeholder="0 2 * * *"
+                    value={baseDraft.cron}
+                    onChange={(e) => setBaseDraft((d) => ({ ...d, cron: e.target.value }))}
+                    disabled={baseSchedule.isPending}
+                    aria-label={t("databases.pitrBaseCron")}
+                  />
+                </label>
+              </div>
+            )}
+            {baseDirty && (
+              <div>
+                <Btn variant="ghost" onClick={() => baseSchedule.mutate()} loading={baseSchedule.isPending} disabled={baseSchedule.isPending}>
+                  {t("common.save")}
+                </Btn>
+              </div>
+            )}
+            <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: 0 }}>{t("databases.pitrBaseScheduleHint")}</p>
           </div>
         )}
       </div>

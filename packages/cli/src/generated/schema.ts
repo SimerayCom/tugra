@@ -3284,6 +3284,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/databases/{id}/base-backup-config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["BackupsController_setBaseBackupSchedule"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/databases/{id}/pitr": {
         parameters: {
             query?: never;
@@ -21230,6 +21246,9 @@ export interface operations {
                         pitrEnabled: boolean;
                         /** Format: date-time */
                         pitrEnabledAt: string | null;
+                        baseBackupEnabled: boolean;
+                        baseBackupIntervalHours: number | null;
+                        baseBackupCron: string | null;
                         tags: string[];
                         volumes: {
                             name: string;
@@ -21350,6 +21369,9 @@ export interface operations {
                         pitrEnabled: boolean;
                         /** Format: date-time */
                         pitrEnabledAt: string | null;
+                        baseBackupEnabled: boolean;
+                        baseBackupIntervalHours: number | null;
+                        baseBackupCron: string | null;
                         tags: string[];
                         volumes: {
                             name: string;
@@ -21469,6 +21491,9 @@ export interface operations {
                         pitrEnabled: boolean;
                         /** Format: date-time */
                         pitrEnabledAt: string | null;
+                        baseBackupEnabled: boolean;
+                        baseBackupIntervalHours: number | null;
+                        baseBackupCron: string | null;
                         tags: string[];
                         volumes: {
                             name: string;
@@ -21723,6 +21748,9 @@ export interface operations {
                         pitrEnabled: boolean;
                         /** Format: date-time */
                         pitrEnabledAt: string | null;
+                        baseBackupEnabled: boolean;
+                        baseBackupIntervalHours: number | null;
+                        baseBackupCron: string | null;
                         tags: string[];
                         volumes: {
                             name: string;
@@ -22739,6 +22767,9 @@ export interface operations {
                         pitrEnabled: boolean;
                         /** Format: date-time */
                         pitrEnabledAt: string | null;
+                        baseBackupEnabled: boolean;
+                        baseBackupIntervalHours: number | null;
+                        baseBackupCron: string | null;
                         tags: string[];
                         volumes: {
                             name: string;
@@ -24538,6 +24569,87 @@ export interface operations {
         };
     };
     BackupsController_setVerifySchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    enabled: boolean;
+                    intervalHours?: number;
+                    cron?: string | null;
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    BackupsController_setBaseBackupSchedule: {
         parameters: {
             query?: never;
             header?: never;

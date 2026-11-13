@@ -23,6 +23,8 @@ import { PitrRestoreService, PitrRestoreStartSchema, PitrWindowSchema } from "./
 import {
   BackupConfigInput,
   BackupConfigSchema,
+  BaseBackupConfigInput,
+  BaseBackupConfigSchema,
   ExportUrlInput,
   ExportUrlSchema,
   ImportFromUrlInput,
@@ -190,6 +192,20 @@ export class BackupsController {
     @Body(new ZodValidationPipe(VerifyConfigSchema)) body: VerifyConfigInput,
   ) {
     await this.backups.setVerifySchedule(user.userId, id, body);
+    return { ok: true };
+  }
+
+  // Arm/disarm the scheduled physical base backup (the PITR anchor). Config write, gated at the service by
+  // requireWrite('backups') + 'databases', like verify-config.
+  @Put("base-backup-config")
+  @HttpCode(200)
+  @ApiZodBody(BaseBackupConfigSchema)
+  async setBaseBackupSchedule(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(BaseBackupConfigSchema)) body: BaseBackupConfigInput,
+  ) {
+    await this.backups.setBaseBackupSchedule(user.userId, id, body);
     return { ok: true };
   }
 

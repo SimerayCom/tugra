@@ -5,6 +5,7 @@ import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { NotificationsService } from "../notifications/notifications.service";
 import { BackupRunnerService } from "./backup-runner.service";
 import { BackupAlertsService } from "./backup-alerts.service";
+import { PitrClaimsService } from "./pitr-claims.service";
 
 const db = { id: "db1", name: "shop", teamId: "t1", serverId: "s1", engine: "POSTGRES", version: "16", backupDestinationId: null };
 
@@ -28,6 +29,7 @@ function make(replaying: boolean) {
     { fireForEvent: jest.fn() } as unknown as NotificationsService,
     { destinationSpecById: jest.fn().mockResolvedValue({ type: "LOCAL", encryption: { enabled: false, key: "" } }) } as unknown as BackupRunnerService,
     {} as BackupAlertsService,
+    new PitrClaimsService(),
   );
   return { svc, baseBackup, sendCommand };
 }
