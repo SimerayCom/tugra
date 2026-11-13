@@ -352,8 +352,15 @@ export function buildDatabaseRunScript(db: DbSpec): string {
   ].join("\n");
 }
 
-export function buildDbStopScript(db: { id: string }): string {
-  return `docker stop ${dbContainerName(db)} 2>/dev/null || true`;
+/** Stop the container. `graceSec` (opt-in) gives Postgres a longer shutdown grace (`docker stop -t N`) so a PITR
+ *  enable/disable recreate flushes + archives cleanly instead of being SIGKILLed by the run script's `docker rm -f`
+ *  into crash recovery; the default output is byte-identical to before. */
+export function buildDbStopScript(db: { id: string }, opts: { graceSec?: number; strict?: boolean } = {}): string {
+  const t = opts.graceSec && opts.graceSec > 0 ? ` -t ${Math.floor(opts.graceSec)}` : "";
+  // strict: surface docker stop's real exit code (no `|| true`) — the PITR disable must KNOW the archiving
+  // container is down before it trusts a "spool drained" reading. Default stays byte-identical.
+  if (opts.strict) return `docker stop${t} ${dbContainerName(db)} 2>&1`;
+  return `docker stop${t} ${dbContainerName(db)} 2>/dev/null || true`;
 }
 
 /** Destroy: remove the container AND its volumes (the data is intentionally dropped). */

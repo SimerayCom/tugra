@@ -355,6 +355,14 @@ export class BackupsService {
 
   /** Persist the backup schedule + (re)schedule. Caller handles authz + engine-support; destinationId untouched when absent. */
   private async apply(dbId: string, cfg: BackupConfigInput): Promise<Database> {
+    // PITR pins the destination: the WAL chain (and the base backups it anchors to) must live in ONE store, so a
+    // destination change while PITR is on would split the chain and break replay. Disable PITR first.
+    if (cfg.destinationId !== undefined) {
+      const cur = await this.prisma.database.findUnique({ where: { id: dbId }, select: { pitrEnabled: true, backupDestinationId: true } });
+      if (cur?.pitrEnabled && (cfg.destinationId || null) !== cur.backupDestinationId) {
+        throw new ConflictException("the backup destination cannot change while PITR is enabled; disable PITR first");
+      }
+    }
     const db = await this.prisma.database.update({
       where: { id: dbId },
       data: {

@@ -96,9 +96,15 @@ export class WalShipperRunnerService {
       };
 
       try {
-        const listed = parseWalList(
-          (await this.agentWs.sendCommand(db.serverId, buildWalListScript(db.id), "backup", WALSHIP_TIMEOUT_MS)).output,
-        );
+        const listOut = await this.agentWs.sendCommand(db.serverId, buildWalListScript(db.id), "backup", WALSHIP_TIMEOUT_MS);
+        const listed = parseWalList(listOut.output);
+        // An unknown backlog (list command failed or its summary marker never arrived) must NEVER read as "empty":
+        // the disable path purges the spool on backlog 0. Report unknown (-1) and let the next tick retry.
+        if (listOut.exitCode !== 0 || listed.total == null) {
+          this.logger.warn(`wal ship for database ${db.id}: spool list unreadable (exit ${listOut.exitCode}); backlog unknown`);
+          return { shipped: 0, failed: 0, backlog: -1, skipped: true };
+        }
+        const total = listed.total;
         // Re-validate every name on the hub before it reaches a root shell (defence in depth with the agent-side
         // allow-list); anything that does not match a WAL-name shape is dropped and logged, never shipped.
         const valid = listed.entries.filter((e) => isShippableWalName(e.name));
@@ -109,7 +115,7 @@ export class WalShipperRunnerService {
         if (valid.length === 0) {
           // An empty spool is a clean drain; a spool that holds ONLY foreign/invalid files is not — surface it
           // as backlog (and do not clear the alert state), so it does not read as healthy.
-          if (listed.total > 0) return { shipped: 0, failed: 0, backlog: listed.total };
+          if (total > 0) return { shipped: 0, failed: 0, backlog: total };
           await this.alerts.recover("walship", db.id, db.teamId, ctx).catch(() => undefined);
           return { shipped: 0, failed: 0, backlog: 0 };
         }
@@ -125,7 +131,7 @@ export class WalShipperRunnerService {
           WALSHIP_TIMEOUT_MS,
         );
         const { shipped, failed } = parseWalShipped(shipOut.output);
-        const backlog = Math.max(0, listed.total - shipped.length);
+        const backlog = Math.max(0, total - shipped.length);
         // A non-zero exit with no FAIL marker (the script was killed, hit a syntax error, or its output was
         // truncated past the agent's 64KB cap) is STILL a failure — never treat it as a clean partial tick.
         const scriptFailed = failed.length > 0 || shipOut.exitCode !== 0;

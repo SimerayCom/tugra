@@ -202,5 +202,19 @@ describe("WalShipperRunnerService", () => {
       expect(r.backlog).toBe(2); // two foreign/invalid files are dropped by the allow-list but still occupy the spool
       expect(recover).not.toHaveBeenCalled();
     });
+
+    it("an UNREADABLE spool list (non-zero exit or no summary marker) is backlog UNKNOWN (-1, skipped) — never 'empty'", async () => {
+      // a wrong "empty" here would let the PITR disable path purge an un-shipped spool
+      for (const list of [
+        { output: "", exitCode: 1 },
+        { output: `WAL ${SEG1} 1`, exitCode: 0 }, // truncated: entries but no TUGRA_WAL_LIST marker
+      ]) {
+        const { svc, sendCommand, recover } = make({ results: [list] });
+        const r = await svc.shipOnce("db1");
+        expect(r).toMatchObject({ backlog: -1, skipped: true });
+        expect(sendCommand).toHaveBeenCalledTimes(1); // no ship command on an unknown backlog
+        expect(recover).not.toHaveBeenCalled();
+      }
+    });
   });
 });

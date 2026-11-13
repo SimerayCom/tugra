@@ -132,8 +132,9 @@ export interface WalListEntry {
 }
 
 /** Parse buildWalListScript output into the enumerated entries (first WAL_LIST_SIZE_CAP) and the full backlog
- *  count. `total` falls back to the number of entries seen if the summary line is absent (truncated output). */
-export function parseWalList(output: string): { entries: WalListEntry[]; total: number } {
+ *  count. `total` is NULL when the summary marker is absent (the list command died or its output was truncated):
+ *  an unknown backlog must never be read as "empty" — the disable path purges the spool on backlog 0. */
+export function parseWalList(output: string): { entries: WalListEntry[]; total: number | null } {
   const entries: WalListEntry[] = [];
   let total: number | null = null;
   for (const line of output.split("\n")) {
@@ -145,7 +146,7 @@ export function parseWalList(output: string): { entries: WalListEntry[]; total: 
     const sum = line.match(/^TUGRA_WAL_LIST total=(\d+)$/);
     if (sum) total = Number(sum[1]);
   }
-  return { entries, total: total ?? entries.length };
+  return { entries, total };
 }
 
 /** Parse buildWalShipScript output into the segments that shipped (deleted from the spool) and the one that

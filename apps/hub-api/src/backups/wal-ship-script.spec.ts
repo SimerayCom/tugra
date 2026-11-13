@@ -120,9 +120,10 @@ describe("wal-ship-script", () => {
         { name: HISTORY, size: 42n },
       ]);
     });
-    it("falls back to the entry count when the summary line is missing (truncated output)", () => {
-      expect(parseWalList(`WAL ${SEG} 1`).total).toBe(1);
-      expect(parseWalList("").total).toBe(0);
+    it("reports total=null (UNKNOWN, never 'empty') when the summary marker is missing — truncated/dead list", () => {
+      expect(parseWalList(`WAL ${SEG} 1`).total).toBeNull();
+      expect(parseWalList("").total).toBeNull();
+      expect(parseWalList("TUGRA_WAL_LIST total=0").total).toBe(0); // a real empty spool is explicit
     });
   });
 

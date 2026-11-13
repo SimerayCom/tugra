@@ -12,6 +12,7 @@ import { BackupSchedulerService } from "./backups.scheduler.service";
 import { BackupAlertsService } from "./backup-alerts.service";
 import { WalShipperRunnerService } from "./wal-shipper-runner.service";
 import { WalShipperSchedulerService } from "./wal-shipper.scheduler.service";
+import { PitrService } from "./pitr.service";
 
 @Module({
   imports: [AgentGatewayModule, CryptoModule, DatabasesModule, NotificationsModule],
@@ -24,7 +25,8 @@ import { WalShipperSchedulerService } from "./wal-shipper.scheduler.service";
     BackupAlertsService,
     WalShipperRunnerService,
     WalShipperSchedulerService,
+    PitrService,
   ],
-  exports: [BackupsService, BackupRunnerService, BaseBackupRunnerService, BackupAlertsService, WalShipperRunnerService],
+  exports: [BackupsService, BackupRunnerService, BaseBackupRunnerService, BackupAlertsService, WalShipperRunnerService, PitrService],
 })
 export class BackupsModule {}

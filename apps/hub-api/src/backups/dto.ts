@@ -41,6 +41,16 @@ export const VerifyConfigSchema = z
   });
 export type VerifyConfigInput = z.infer<typeof VerifyConfigSchema>;
 
+// PITR (point-in-time recovery) switch for a Postgres database. Enabling recreates the container with WAL
+// archiving on (a one-time restart), verifies archiving end to end and auto-rolls back on failure. Disabling
+// drains the un-shipped spool to the destination first; `purgeSpool` explicitly accepts dropping any WAL that
+// could not be shipped (default false — un-shipped WAL is never deleted silently).
+export const PitrConfigSchema = z.object({
+  enabled: z.boolean(),
+  purgeSpool: z.boolean().optional(),
+});
+export type PitrConfigInput = z.infer<typeof PitrConfigSchema>;
+
 // Apply one backup schedule to many databases (fleet bulk op). destinationId is
 // intentionally excluded — destinations are team-scoped, so a single one can't
 // validly apply across databases in different teams; each db keeps its own.

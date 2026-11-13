@@ -18,6 +18,7 @@ import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { BackupsService, BackupViewSchema, BaseBackupViewSchema, RestoreViewSchema } from "./backups.service";
+import { PitrService, PitrStatusSchema } from "./pitr.service";
 import {
   BackupConfigInput,
   BackupConfigSchema,
@@ -25,6 +26,8 @@ import {
   ExportUrlSchema,
   ImportFromUrlInput,
   ImportFromUrlSchema,
+  PitrConfigInput,
+  PitrConfigSchema,
   VerifyConfigInput,
   VerifyConfigSchema,
 } from "./dto";
@@ -34,7 +37,10 @@ import {
 @Controller("databases/:id")
 @UseGuards(ApiAuthGuard, ScopesGuard)
 export class BackupsController {
-  constructor(private readonly backups: BackupsService) {}
+  constructor(
+    private readonly backups: BackupsService,
+    private readonly pitr: PitrService,
+  ) {}
 
   @Get("backups")
   @ApiZodResponse(BackupViewSchema, { isArray: true })
@@ -181,5 +187,29 @@ export class BackupsController {
   ) {
     await this.backups.setVerifySchedule(user.userId, id, body);
     return { ok: true };
+  }
+
+  // ── PITR (point-in-time recovery) — Postgres only ──
+
+  @Get("pitr")
+  @ApiZodResponse(PitrStatusSchema)
+  pitrStatus(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.pitr.status(user.userId, id);
+  }
+
+  // Enable recreates the container with WAL archiving on (a one-time restart), verifies archiving end to end and
+  // auto-rolls back on failure; disable drains the spool first. Recreate-class → 'deploy' scope (like provision),
+  // and the service additionally requires the 'databases' + 'backups' permissions.
+  @Put("pitr")
+  @RequireScopes("deploy")
+  @HttpCode(200)
+  @ApiZodBody(PitrConfigSchema)
+  @ApiZodResponse(PitrStatusSchema)
+  setPitr(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(PitrConfigSchema)) body: PitrConfigInput,
+  ) {
+    return body.enabled ? this.pitr.enable(user.userId, id) : this.pitr.disable(user.userId, id, { purgeSpool: body.purgeSpool });
   }
 }

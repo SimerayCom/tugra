@@ -1,4 +1,5 @@
 import {
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -144,6 +145,12 @@ export class DestinationsService {
 
   async remove(userId: string, id: string): Promise<void> {
     const dest = await this.requireWrite(userId, id);
+    // A PITR-enabled database pins its destination (its WAL chain + base backups live there); silently falling it
+    // back to LOCAL would split the chain. Refuse until PITR is disabled on those databases.
+    const pinned = await this.prisma.database.count({ where: { backupDestinationId: id, pitrEnabled: true } });
+    if (pinned > 0) {
+      throw new ConflictException(`${pinned} database(s) have PITR enabled on this destination; disable PITR on them first`);
+    }
     // Detach any databases pointing at this destination (fall back to LOCAL).
     await this.prisma.database.updateMany({
       where: { backupDestinationId: id },

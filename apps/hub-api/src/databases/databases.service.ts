@@ -94,6 +94,16 @@ export const DatabaseViewSchema = z.object({
 });
 export type DatabaseView = z.infer<typeof DatabaseViewSchema>;
 
+/** Result of a container (re)create: the updated row plus the agent's raw exit code / output tail (or the thrown
+ *  error) so a caller can build an actionable message. `error` is set when the agent call itself threw (offline,
+ *  timeout, capability) rather than the script failing. */
+export interface ProvisionOutcome {
+  row: Database;
+  exitCode: number | null;
+  output: string;
+  error?: string;
+}
+
 // A clone returns the new database as a flat view (so RedactSecretsInterceptor, which only nulls top-level
 // fields, masks its credentials for scope-limited PATs) plus the non-fatal warnings the UI surfaces.
 export const CloneDatabaseResponseSchema = DatabaseViewSchema.extend({
@@ -392,51 +402,119 @@ export class DatabasesService {
     return this.audit.listForTarget(id, filters);
   }
 
+  /** In-process mutual exclusion for operations that recreate/stop/remove a database's container: a user
+   *  provision and a PITR enable/disable (which flips the archiving flag and the container in two steps) must
+   *  never interleave — a stale-flag recreate landing mid-transition would leave an archiving container behind a
+   *  cleared flag. Single-hub assumption (documented), like the PITR inflight guard; a crashed hub drops the
+   *  locks, so a row can never get permanently stuck behind one. */
+  private readonly maintenance = new Set<string>();
+
+  /** Take the lock for `id` (409 if held); returns the release function — always call it in a `finally`. */
+  acquireMaintenance(id: string): () => void {
+    if (this.maintenance.has(id)) {
+      throw new ConflictException("another provisioning or PITR change is in progress for this database; retry shortly");
+    }
+    this.maintenance.add(id);
+    return () => this.maintenance.delete(id);
+  }
+
+  isUnderMaintenance(id: string): boolean {
+    return this.maintenance.has(id);
+  }
+
   async provision(userId: string, id: string): Promise<DatabaseView> {
     const db = await this.requireWrite(userId, id);
-    const updated = await this.provisionRow(db, userId);
+    const release = this.acquireMaintenance(id);
+    let updated: Database;
+    try {
+      // Re-read under the lock: the row above was loaded BEFORE it was taken, and a PITR transition that finished in
+      // between may have flipped pitrEnabled — the run script must follow the current flag, never a stale snapshot.
+      const fresh = (await this.prisma.database.findUnique({ where: { id } })) ?? db;
+      updated = await this.provisionRow(fresh, userId);
+    } finally {
+      release();
+    }
     const role = (await this.access.teamRole(userId, db.teamId))!;
     // requireWrite above enforced the 'databases' permission, so the actor can write.
     return this.view(updated, role, true);
   }
 
   /** Provisioning core (no RBAC): claim PROVISIONING, run the container, persist the outcome, audit.
-   *  Returns the updated row (status RUNNING/FAILED). Shared by {@link provision} and {@link withSystemThrowaway}. */
+   *  Returns the updated row (status RUNNING/FAILED). Shared by {@link provision} and {@link withSystemThrowaway}.
+   *  Thin wrapper over {@link runProvision} that keeps every existing caller's behaviour byte-identical. */
   private async provisionRow(db: Database, actor: string): Promise<Database> {
+    return (await this.runProvision(db, actor)).row;
+  }
+
+  /**
+   * Recreate this database's container (no RBAC — the caller MUST have authorized). Used by the PITR enable /
+   * disable / rollback flow, which needs (a) to force the WAL-archiving flag independently of the row's current
+   * value (the row is flipped flag-first for enable and flag-last for disable, so the spec and the row disagree
+   * mid-flight by design) and (b) the agent's exit code + output tail to build an actionable error. Same proven
+   * recreate path as every other provision — `docker rm -f` + `docker run` over the persistent named volume, so
+   * the data survives. Never reachable from a controller or from withSystemThrowaway.
+   */
+  async reprovision(db: Database, actor: string, opts: { pitr: boolean }): Promise<ProvisionOutcome> {
+    return this.runProvision(db, actor, opts);
+  }
+
+  private async runProvision(db: Database, actor: string, opts: { pitr?: boolean } = {}): Promise<ProvisionOutcome> {
     // Claim the row as PROVISIONING before the slow (≤5 min) agent call: while it runs we are creating the
     // container + data volume on db.serverId, so a concurrent moveToServer (NEW-only) must be excluded —
     // otherwise the row's serverId could change under us and strand the volume on the old server.
     await this.prisma.database.update({ where: { id: db.id }, data: { status: DbStatus.PROVISIONING } });
     let status: DbStatus = DbStatus.FAILED;
+    let exitCode: number | null = null;
+    let output = "";
+    let error: string | undefined;
     try {
       const r = await this.agentWs.sendCommand(
         db.serverId,
-        // pitr rides the row's own flag. Throwaway verify DBs are persisted with pitrEnabled=false (never set),
-        // so this is false for them → their run script stays byte-identical. Only an explicitly-enabled real DB
-        // provisions with WAL archiving on.
-        buildDatabaseRunScript({ ...this.toSpec(db), env: this.dbEnv(db), volumes: this.dbVolumes(db), pitr: db.pitrEnabled }),
+        // pitr rides the row's own flag unless the caller overrides it (PITR enable/disable). Throwaway verify
+        // DBs are persisted with pitrEnabled=false (never set) and never pass an override, so their run script
+        // stays byte-identical. Only an explicitly-enabled real DB provisions with WAL archiving on.
+        buildDatabaseRunScript({
+          ...this.toSpec(db),
+          env: this.dbEnv(db),
+          volumes: this.dbVolumes(db),
+          pitr: opts.pitr ?? db.pitrEnabled,
+        }),
         "database",
         PROVISION_TIMEOUT_MS,
       );
+      exitCode = r.exitCode;
+      output = r.output;
       status = r.exitCode === 0 ? DbStatus.RUNNING : DbStatus.FAILED;
-    } catch {
+    } catch (e) {
       status = DbStatus.FAILED;
+      error = e instanceof Error ? e.message : String(e);
     }
-    const updated = await this.prisma.database.update({ where: { id: db.id }, data: { status } });
+    const row = await this.prisma.database.update({ where: { id: db.id }, data: { status } });
     await this.audit.log({ actor, action: "database.provision", target: db.id });
-    return updated;
+    return { row, exitCode, output, error };
   }
 
   async stop(userId: string, id: string): Promise<void> {
     const db = await this.requireWrite(userId, id);
-    await this.agentWs.sendCommand(db.serverId, buildDbStopScript(db), "database").catch(() => undefined);
-    await this.prisma.database.update({ where: { id }, data: { status: DbStatus.STOPPED } });
+    // HOLD the lock (not just test it): a transition taking it right after a bare check would race the stop.
+    const release = this.acquireMaintenance(id);
+    try {
+      await this.agentWs.sendCommand(db.serverId, buildDbStopScript(db), "database").catch(() => undefined);
+      await this.prisma.database.update({ where: { id }, data: { status: DbStatus.STOPPED } });
+    } finally {
+      release();
+    }
     await this.audit.log({ actor: userId, action: "database.stop", target: id });
   }
 
   async remove(userId: string, id: string, opts: { keepVolume?: boolean } = {}): Promise<void> {
     const db = await this.requireWrite(userId, id);
-    await this.removeRow(db, opts, userId);
+    const release = this.acquireMaintenance(id);
+    try {
+      await this.removeRow(db, opts, userId);
+    } finally {
+      release();
+    }
   }
 
   /** Removal core (no RBAC): refuse while apps link it, tear the container/volumes down, delete the row, audit.
@@ -450,7 +528,11 @@ export class DatabasesService {
       const names = links.map((l) => l.app?.name ?? l.appId);
       throw new ConflictException(`unlink this database from ${names.join(", ")} before deleting it`);
     }
-    await this.agentWs.sendCommand(db.serverId, buildDbRemoveScript({ id: db.id, volumes: this.dbVolumes(db) }, opts), "database").catch(() => undefined);
+    // A PITR database also reclaims its host WAL spool (any un-shipped tail is dropped by design — the DB is being
+    // destroyed). `walSpool` is false for every non-PITR row, so their remove script stays byte-identical.
+    await this.agentWs
+      .sendCommand(db.serverId, buildDbRemoveScript({ id: db.id, volumes: this.dbVolumes(db) }, { ...opts, walSpool: db.pitrEnabled }), "database")
+      .catch(() => undefined);
     await this.prisma.database.delete({ where: { id: db.id } });
     await this.audit.log({ actor, action: "database.remove", target: db.id, meta: { keepVolume: !!opts.keepVolume } });
   }

@@ -2,6 +2,7 @@ import {
   buildDatabaseRunScript,
   reservedDbEnvKeys,
   buildDbRemoveScript,
+  buildDbStopScript,
   connectionInfo,
   publicConnectionUri,
   credentialEnv,
@@ -209,6 +210,17 @@ describe("database-script", () => {
     it("walSpool is a no-op under keepVolume (recreate keeps the WAL)", () => {
       const s = buildDbRemoveScript({ id: "db1" }, { walSpool: true, keepVolume: true });
       expect(s).not.toContain("/etc/tugra/wal/");
+    });
+  });
+
+  describe("buildDbStopScript", () => {
+    it("is byte-identical to before by default", () => {
+      expect(buildDbStopScript({ id: "db1" })).toBe("docker stop tugra_db_db1 2>/dev/null || true");
+      expect(buildDbStopScript({ id: "db1" }, {})).toBe("docker stop tugra_db_db1 2>/dev/null || true");
+    });
+    it("adds a shutdown grace (`-t N`) when asked — the PITR recreate's graceful stop", () => {
+      expect(buildDbStopScript({ id: "db1" }, { graceSec: 60 })).toBe("docker stop -t 60 tugra_db_db1 2>/dev/null || true");
+      expect(buildDbStopScript({ id: "db1" }, { graceSec: 0 })).toBe("docker stop tugra_db_db1 2>/dev/null || true");
     });
   });
 
