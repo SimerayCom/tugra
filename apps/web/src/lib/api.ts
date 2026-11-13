@@ -103,6 +103,7 @@ import type {
   TokenPair,
   TunnelView,
   PitrStatus,
+  PitrWindow,
 } from "./types";
 
 // Same-origin path the SPA calls; next.config rewrites proxy it to the hub, so the httpOnly session
@@ -1670,6 +1671,18 @@ export const api = {
   // Physical base backup (pg_basebackup) — the anchor a PITR recovery replays WAL onto. Long-running.
   baseBackupNow(dbId: string) {
     return apiFetch<{ id: string; status: string }>(`/databases/${dbId}/base-backups`, { method: "POST" });
+  },
+  // The recoverable window (approximate bounds) and the point-in-time restore itself: ASYNC — the hub answers
+  // 202 with the new database + Restore ids and replays in the background; progress is the Restore row (kind
+  // PITR, listed under this database) and the new database's status.
+  getPitrWindow(dbId: string) {
+    return apiFetch<PitrWindow>(`/databases/${dbId}/pitr/window`);
+  },
+  pitrRestoreToTime(dbId: string, input: { targetTime: string; name?: string; environmentId?: string }) {
+    return apiFetch<{ restoreId: string; databaseId: string }>(`/databases/${dbId}/pitr/restore`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
   },
   bulkSetBackupConfig(databaseIds: string[], cfg: { enabled: boolean; intervalHours?: number; retention?: number }) {
     return apiFetch<{ applied: string[]; skipped: string[] }>(`/fleet/backup-config`, {

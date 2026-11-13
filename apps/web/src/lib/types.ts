@@ -1631,3 +1631,12 @@ export interface PitrStatus {
   /** ACTIVE but no base backup taken since enabling — WAL alone cannot anchor a recovery. */
   needsBaseBackup: boolean;
 }
+
+/** The recoverable window — GET /databases/:id/pitr/window. Both bounds are approximate (upper bounds). */
+export interface PitrWindow {
+  earliest: string | null;
+  latest: string | null;
+  approx: true;
+  reason: "not_enabled" | "no_base" | "agent_offline" | "capability" | "list_failed" | "no_wal" | null;
+  bases: { id: string; from: string; to: string; startLsn: string; timeline: number }[];
+}

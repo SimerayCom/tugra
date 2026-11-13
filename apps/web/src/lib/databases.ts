@@ -79,3 +79,37 @@ export function pitrState(db: { pitrEnabled: boolean; pitrEnabledAt: string | nu
 export function pitrAvailable(db: { engine: DbEngine; backupSupported: boolean }): boolean {
   return db.engine === "POSTGRES" && db.backupSupported;
 }
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/** A Date as the LOCAL `YYYY-MM-DDTHH:mm:ss` string a `<input type="datetime-local" step="1">` holds. */
+export function toDatetimeLocal(d: Date): string {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+}
+
+/** The input's local string back to a Date (null when empty/invalid). The browser parses it in local time. */
+export function fromDatetimeLocal(s: string): Date | null {
+  if (!s) return null;
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** How far before the window's upper bound the picker defaults to: the very end is the moment most likely to have
+ *  no committed change after it (the hub then fails the restore), so start a little earlier. */
+export const PITR_DEFAULT_MARGIN_MS = 60_000;
+
+/** Picker bounds + a sensible default from the recoverable window. The picker has second precision, so `min` is
+ *  rounded UP to the next whole second (a floored min would offer an instant just before the real earliest, which
+ *  the hub rejects) while `max` is floored (always inside). Null when the window is empty/inverted — the caller
+ *  disables the picker and shows the window's reason. */
+export function pitrPickerBounds(w: { earliest: string | null; latest: string | null }): { min: string; max: string; initial: string } | null {
+  if (!w.earliest || !w.latest) return null;
+  const earliest = new Date(w.earliest);
+  const latest = new Date(w.latest);
+  if (Number.isNaN(earliest.getTime()) || Number.isNaN(latest.getTime()) || latest < earliest) return null;
+  const minDate = new Date(Math.ceil(earliest.getTime() / 1000) * 1000);
+  const maxDate = new Date(Math.floor(latest.getTime() / 1000) * 1000);
+  if (maxDate < minDate) return null; // a sub-second window has no whole-second instant inside it
+  const initialDate = new Date(Math.max(minDate.getTime(), maxDate.getTime() - PITR_DEFAULT_MARGIN_MS));
+  return { min: toDatetimeLocal(minDate), max: toDatetimeLocal(maxDate), initial: toDatetimeLocal(initialDate) };
+}

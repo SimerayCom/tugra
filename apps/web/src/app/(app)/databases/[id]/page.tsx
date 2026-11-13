@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, databaseIconUrl } from "../../../../lib/api";
 import { cropToPngBase64 } from "../../../../lib/icon";
 import { Menu } from "../../../../components/menu";
-import { dbColor, engineLabel, isDbTransitional, pitrAvailable, pitrState } from "../../../../lib/databases";
+import { dbColor, engineLabel, fromDatetimeLocal, isDbTransitional, pitrAvailable, pitrPickerBounds, pitrState, toDatetimeLocal } from "../../../../lib/databases";
 import type { Database, PitrState } from "../../../../lib/types";
 import { backupColor, formatSize, lastErrorLine, restoreColor } from "../../../../lib/backups";
 import { BackupRunModal } from "../../../../components/backup-run-modal";
@@ -60,7 +60,10 @@ export default function DatabaseDetailPage() {
     queryKey: ["restores", id],
     queryFn: () => api.listRestores(id),
     enabled: !!db?.canWrite, // writer-only endpoint (errorTail may hold output)
+    // A point-in-time replay runs for minutes to hours in the background — keep the history live while one runs.
+    refetchInterval: (q) => (q.state.data?.some((r) => r.status === "RUNNING") ? 5000 : false),
   });
+  const pitrRunning = restores.some((r) => r.kind === "PITR" && r.status === "RUNNING");
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["database", id] });
   const invalidateBackups = () => qc.invalidateQueries({ queryKey: ["backups", id] });
@@ -387,7 +390,7 @@ export default function DatabaseDetailPage() {
 
       {tab === "backups" && db.canWrite && pitrAvailable(db) && (
         <div style={{ marginBottom: 16 }}>
-          <DbPitrCard id={id} db={db} />
+          <DbPitrCard id={id} db={db} running={pitrRunning} />
         </div>
       )}
 
@@ -521,10 +524,16 @@ export default function DatabaseDetailPage() {
               <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 8 }}>{t("databases.restoreHistory")}</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {restores.map((r) => (
-                  <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "8px 12px" }}>
+                  <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "8px 12px" }}>
                     <span style={{ fontSize: 11, fontWeight: 700, color: restoreColor(r.status) }}>{r.status}</span>
                     <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t(`databases.restoreKind_${r.kind}`)}</span>
+                    {r.kind === "PITR" && r.targetTime && (
+                      <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("databases.pitrRestoredAt", { time: new Date(r.targetTime).toLocaleString() })}</span>
+                    )}
                     <span style={{ fontSize: 11, color: "var(--c-tx3)", flex: 1 }}>{new Date(r.createdAt).toLocaleString()}</span>
+                    {r.kind === "PITR" && r.status === "SUCCESS" && r.targetDatabaseId && r.targetDatabaseId !== id && (
+                      <a href={`/databases/${r.targetDatabaseId}`} style={{ fontSize: 11, color: "var(--c-a)" }}>{t("databases.pitrOpenRestored")}</a>
+                    )}
                     {r.status === "FAILED" && r.errorTail && (
                       <span className="mono" title={r.errorTail} style={{ fontSize: 11, color: "var(--c-r)", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {r.errorTail.trim().split("\n").pop()}
@@ -577,7 +586,7 @@ const limField: React.CSSProperties = {
  * a confirmed button, not a draft setting. Disable drains un-shipped WAL first; discarding it is an explicit opt-in.
  * The ARMING state (flag on, not yet verified — e.g. the hub restarted mid-enable) offers "finish enabling".
  */
-function DbPitrCard({ id, db }: { id: string; db: Database }) {
+function DbPitrCard({ id, db, running }: { id: string; db: Database; running: boolean }) {
   const t = useT();
   const qc = useQueryClient();
   const toast = useToast();
@@ -619,6 +628,44 @@ function DbPitrCard({ id, db }: { id: string; db: Database }) {
     onError: (e) => toast(errMsg(e), "error"),
     onSettled: invalidate,
   });
+  // Point-in-time restore: the recoverable window (approximate bounds) + a picker modal. The restore is ASYNC on the
+  // hub (202) — progress shows in the restore history (kind "Point in time") and on the new database's page.
+  const { data: win, isError: winError, isLoading: winLoading } = useQuery({
+    queryKey: ["pitr-window", id],
+    queryFn: () => api.getPitrWindow(id),
+    enabled: state === "ACTIVE",
+    refetchInterval: 60_000,
+  });
+  const bounds = win ? pitrPickerBounds(win) : null;
+  // The modal works on a SNAPSHOT of the window taken when it opened: a 60s refetch (or a transient empty window)
+  // must never unmount it mid-edit or move the bounds under the user's cursor.
+  const [snap, setSnap] = useState<{ earliest: string; latest: string; min: string; max: string } | null>(null);
+  const [pickTime, setPickTime] = useState("");
+  const [pickName, setPickName] = useState("");
+  const restore = useMutation({
+    mutationFn: (input: { targetTime: string; name?: string }) => api.pitrRestoreToTime(id, input),
+    onSuccess: () => {
+      toast(t("databases.pitrRestoreStarted"), "success");
+      setSnap(null);
+      qc.invalidateQueries({ queryKey: ["restores", id] });
+    },
+    // The hub's message (422 "not recoverable: earliest/latest…", 409 "already running") is shown INLINE in the
+    // modal; the window may have moved, so refresh it for the next attempt.
+    onError: () => qc.invalidateQueries({ queryKey: ["pitr-window", id] }),
+  });
+  const openPicker = () => {
+    if (!bounds || !win?.earliest || !win?.latest) return;
+    restore.reset(); // never reopen on a previous attempt's error
+    setSnap({ earliest: win.earliest, latest: win.latest, min: bounds.min, max: bounds.max });
+    setPickTime(bounds.initial);
+    setPickName("");
+  };
+  const picked = fromDatetimeLocal(pickTime);
+  const submitPick = () => {
+    // Validate against the ORIGINAL instants, not re-parsed local strings (no second-rounding drift).
+    if (!snap || !picked || picked < new Date(snap.earliest) || picked > new Date(snap.latest)) return toast(t("databases.pitrRestoreInvalidTime"), "error");
+    restore.mutate({ targetTime: picked.toISOString(), ...(pickName.trim() ? { name: pickName.trim().slice(0, 60) } : {}) });
+  };
   // A stale inline error (e.g. "already in progress") must not outlive the state it described.
   const resetSet = set.reset;
   useEffect(() => {
@@ -648,6 +695,16 @@ function DbPitrCard({ id, db }: { id: string; db: Database }) {
           {state !== "ACTIVE" && (
             <Btn onClick={enable} loading={set.isPending && set.variables === true} disabled={set.isPending}>
               {busyLabel && set.variables ? busyLabel : state === "ARMING" ? t("databases.pitrResume") : t("databases.pitrEnable")}
+            </Btn>
+          )}
+          {state === "ACTIVE" && (
+            <Btn
+              variant="ghost"
+              onClick={openPicker}
+              disabled={!bounds || running || set.isPending || restore.isPending}
+              title={running ? t("databases.pitrRunningHint") : bounds ? undefined : t("databases.pitrWindowNone")}
+            >
+              {t("databases.pitrRestore")}
             </Btn>
           )}
           {state !== "OFF" && (
@@ -688,7 +745,67 @@ function DbPitrCard({ id, db }: { id: string; db: Database }) {
           </label>
         )}
         {set.isError && <div role="alert" style={{ color: "var(--c-r)" }}>{errMsg(set.error)}</div>}
+        {state === "ACTIVE" && (
+          <div style={{ color: "var(--c-tx3)" }}>
+            {running
+              ? t("databases.pitrRunningHint")
+              : winLoading
+                ? t("databases.pitrWindowLoading")
+                : bounds && win?.earliest && win?.latest
+                  ? t("databases.pitrWindow", { from: new Date(win.earliest).toLocaleString(), to: new Date(win.latest).toLocaleString() })
+                  : win?.reason
+                    ? `${t("databases.pitrWindowNone")} — ${t(`databases.pitrWindowReason_${win.reason}`)}`
+                    : winError
+                      ? t("databases.pitrWindowUnavailable")
+                      : t("databases.pitrWindowNone")}
+          </div>
+        )}
       </div>
+      {snap && (
+        <Modal onClose={() => !restore.isPending && setSnap(null)} ariaLabel={t("databases.pitrRestoreTitle")} width={520}>
+          <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ fontSize: 15, fontWeight: 600 }}>{t("databases.pitrRestoreTitle")}</div>
+            <p style={{ fontSize: 12, color: "var(--c-tx2)", margin: 0 }}>{t("databases.pitrRestoreDesc")}</p>
+            <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>
+              {t("databases.pitrWindow", { from: new Date(snap.earliest).toLocaleString(), to: new Date(snap.latest).toLocaleString() })}
+            </div>
+            <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "var(--c-tx2)" }}>
+              {t("databases.pitrTargetTime")}
+              <input
+                style={limField}
+                type="datetime-local"
+                step="1"
+                min={snap.min}
+                max={snap.max}
+                value={pickTime}
+                onChange={(e) => setPickTime(e.target.value)}
+                aria-label={t("databases.pitrTargetTime")}
+                disabled={restore.isPending}
+              />
+            </label>
+            {/* The exact instant that will be sent (UTC) — removes any local-time / DST ambiguity before committing. */}
+            {picked && <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("databases.pitrPickedInstant", { iso: picked.toISOString() })}</div>}
+            <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: 0 }}>{t("databases.pitrTargetTimeHint")}</p>
+            <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "var(--c-tx2)" }}>
+              {t("databases.pitrNewName")}
+              <input
+                style={limField}
+                placeholder={t("databases.pitrNewNameHint", { name: db.name })}
+                aria-label={t("databases.pitrNewName")}
+                value={pickName}
+                maxLength={60}
+                onChange={(e) => setPickName(e.target.value)}
+                disabled={restore.isPending}
+              />
+            </label>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <Btn variant="ghost" onClick={() => setSnap(null)} disabled={restore.isPending}>{t("common.cancel")}</Btn>
+              <Btn onClick={submitPick} loading={restore.isPending} disabled={restore.isPending || !pickTime}>{t("databases.pitrRestoreConfirm")}</Btn>
+            </div>
+            {restore.isError && <div role="alert" style={{ fontSize: 12, color: "var(--c-r)" }}>{errMsg(restore.error)}</div>}
+          </div>
+        </Modal>
+      )}
     </SectionCard>
   );
 }
