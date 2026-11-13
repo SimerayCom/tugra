@@ -630,6 +630,18 @@ export class ServersService {
       .catch(() => undefined);
   }
 
+  /**
+   * Reconcile a stale status: a live agent heartbeat says the server is connected, so if the row is NOT
+   * ONLINE (a reconnect-race or a hub-restart left it OFFLINE/PENDING-ish), flip it back. Conditional, so it
+   * is a no-op write in steady state, and it does NOT fire a server_online notification — this is repairing
+   * truth, not a real recovery edge (markOnline owns the notified OFFLINE→ONLINE transition).
+   */
+  async healOnline(serverId: string): Promise<void> {
+    await this.prisma.server
+      .updateMany({ where: { id: serverId, status: { not: ServerStatus.ONLINE } }, data: { status: ServerStatus.ONLINE } })
+      .catch(() => undefined);
+  }
+
   /** Store/refresh the host hardware+OS inventory (sent on every (re)connect). */
   async saveHostInfo(serverId: string, info: HostInfoInput): Promise<void> {
     const reportedIps = info.reportedIps ?? [];

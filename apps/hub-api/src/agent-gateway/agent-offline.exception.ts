@@ -1,4 +1,4 @@
-import { ServiceUnavailableException } from "@nestjs/common";
+import { GatewayTimeoutException, ServiceUnavailableException } from "@nestjs/common";
 
 /**
  * Thrown when an operation needs a connected agent but the server's agent isn't online.
@@ -16,6 +16,31 @@ import { ServiceUnavailableException } from "@nestjs/common";
  */
 export class AgentOfflineException extends ServiceUnavailableException {
   constructor(message = "The agent is offline — try again once it reconnects.") {
+    super(message);
+  }
+}
+
+/**
+ * Thrown when a connected agent's socket drops WHILE a command/file-op is in flight (the pending request is
+ * rejected). Extends {@link ServiceUnavailableException} so an HTTP-reached caller gets a clean `503` with a
+ * human message instead of a plain `Error` masked as `500 Internal server error` — a mid-flight drop is a
+ * transient "retry later", not a server fault. The message is kept as "agent disconnected" so every existing
+ * message-matching caller/spec (and `.catch(() => undefined)` schedulers) is unaffected.
+ */
+export class AgentDisconnectedException extends ServiceUnavailableException {
+  constructor(message = "agent disconnected") {
+    super(message);
+  }
+}
+
+/**
+ * Thrown when an agent command (or file op) does not complete within its deadline. Extends
+ * {@link GatewayTimeoutException} so an HTTP-reached caller gets a clean `504` with a human message instead of
+ * a masked `500`. The message is preserved ("command timed out" / the caller-supplied one) so message-matching
+ * callers/specs are unaffected.
+ */
+export class AgentCommandTimeoutException extends GatewayTimeoutException {
+  constructor(message = "command timed out") {
     super(message);
   }
 }

@@ -1,6 +1,6 @@
 import { ServiceUnavailableException } from "@nestjs/common";
 import { AgentWsServer } from "./agent-ws.server";
-import { AgentOfflineException } from "./agent-offline.exception";
+import { AgentCommandTimeoutException, AgentDisconnectedException, AgentOfflineException } from "./agent-offline.exception";
 
 /**
  * Unit-level coverage of command/log/result correlation. The full agent
@@ -15,7 +15,7 @@ const flush = () => new Promise((r) => setImmediate(r));
 const ALL_CAPS = ["deploy", "database", "backup", "cleanup", "bulk", "terminal", "schedule", "patch", "logs"];
 
 function harness() {
-  const servers = { markOffline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue(ALL_CAPS), touch: jest.fn() } as any;
+  const servers = { markOffline: jest.fn(), markOnline: jest.fn(), healOnline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue(ALL_CAPS), touch: jest.fn() } as any;
   const metrics = { ingest: jest.fn() } as any;
   const containerMetrics = { ingest: jest.fn() } as any;
   const server = new AgentWsServer({} as any, servers, metrics, containerMetrics, hubSign, {} as any);
@@ -83,7 +83,7 @@ describe("AgentWsServer command streaming", () => {
   });
 
   it("refuses to sign a command for a capability the server hasn't granted", async () => {
-    const servers = { markOffline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue(["deploy", "database"]) } as any;
+    const servers = { markOffline: jest.fn(), healOnline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue(["deploy", "database"]) } as any;
     const server = new AgentWsServer({} as any, servers, {} as any, {} as any, hubSign, {} as any);
     const socket = { readyState: 1, send: jest.fn(), on: jest.fn() } as any;
     (server as any).sockets.set("s1", socket);
@@ -97,7 +97,7 @@ describe("AgentWsServer command streaming", () => {
   });
 
   it("fail-safe: an empty grant denies every capability (never means 'all')", async () => {
-    const servers = { markOffline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue([]) } as any;
+    const servers = { markOffline: jest.fn(), healOnline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue([]) } as any;
     const server = new AgentWsServer({} as any, servers, {} as any, {} as any, hubSign, {} as any);
     const socket = { readyState: 1, send: jest.fn(), on: jest.fn() } as any;
     (server as any).sockets.set("s1", socket);
@@ -189,7 +189,7 @@ describe("AgentWsServer terminal relay", () => {
     });
 
     it("returns false (no send) when the deploy capability is not granted (fail-closed)", async () => {
-      const servers = { markOffline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue(["logs"]) } as any;
+      const servers = { markOffline: jest.fn(), healOnline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue(["logs"]) } as any;
       const server = new AgentWsServer({} as any, servers, {} as any, {} as any, hubSign, {} as any);
       const socket = { readyState: 1, send: jest.fn() } as any;
       (server as any).sockets.set("s1", socket);
@@ -231,7 +231,7 @@ describe("AgentWsServer live container-log streams", () => {
 
   it("refuses to start a log stream when the 'logs' capability is not granted", async () => {
     // A server whose granted set excludes "logs".
-    const servers = { markOffline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue(["deploy"]) } as any;
+    const servers = { markOffline: jest.fn(), healOnline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue(["deploy"]) } as any;
     const s2 = new AgentWsServer({} as any, servers, { ingest: jest.fn() } as any, { ingest: jest.fn() } as any, hubSign, {} as any);
     const socket = { readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn() } as any;
     (s2 as any).sockets.set("s1", socket);
@@ -266,7 +266,7 @@ describe("AgentWsServer live container-log streams", () => {
 
   it("ends the stream at once if the agent drops during the capability await (no 30-min listener leak)", async () => {
     let resolveCaps!: (v: string[]) => void;
-    const servers = { markOffline: jest.fn(), grantedCapabilities: jest.fn(() => new Promise<string[]>((r) => (resolveCaps = r))) } as any;
+    const servers = { markOffline: jest.fn(), healOnline: jest.fn(), grantedCapabilities: jest.fn(() => new Promise<string[]>((r) => (resolveCaps = r))) } as any;
     const s = new AgentWsServer({} as any, servers, { ingest: jest.fn() } as any, { ingest: jest.fn() } as any, hubSign, {} as any);
     const socket = { readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn() } as any;
     (s as any).sockets.set("s1", socket);
@@ -284,7 +284,7 @@ describe("AgentWsServer live container-log streams", () => {
 describe("AgentWsServer file ops", () => {
   // A server whose granted set includes "files" (default-off capability).
   function fsHarness(caps: string[] = [...ALL_CAPS, "files"]) {
-    const servers = { markOffline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue(caps) } as any;
+    const servers = { markOffline: jest.fn(), healOnline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue(caps) } as any;
     const server = new AgentWsServer({} as any, servers, { ingest: jest.fn() } as any, { ingest: jest.fn() } as any, hubSign, {} as any);
     const socket = { readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn() } as any;
     (server as any).state.set(socket, { nonce: "n", serverId: "s1", authed: true });
@@ -381,7 +381,7 @@ describe("AgentWsServer container metrics ingest", () => {
 describe("AgentWsServer capability delivery (agent fail-closed)", () => {
   it("seeds the agent's allowlist by putting the granted set in the enrolled payload", async () => {
     const servers = {
-      markOffline: jest.fn(),
+      markOffline: jest.fn(), healOnline: jest.fn(),
       enroll: jest.fn().mockResolvedValue({ serverId: "s1", seal: "SEAL" }),
       grantedCapabilities: jest.fn().mockResolvedValue(["deploy", "backup"]),
     } as any;
@@ -396,7 +396,7 @@ describe("AgentWsServer capability delivery (agent fail-closed)", () => {
 
   it("registers a pusher that live-sends the granted set as a 'capabilities' message", () => {
     const setCapabilityPusher = jest.fn();
-    const servers = { markOffline: jest.fn(), setCapabilityPusher } as any;
+    const servers = { markOffline: jest.fn(), healOnline: jest.fn(), setCapabilityPusher } as any;
     const fakeHttp = { on: jest.fn() };
     const httpAdapterHost = { httpAdapter: { getHttpServer: () => fakeHttp } } as any;
     const server = new AgentWsServer(httpAdapterHost, servers, {} as any, {} as any, hubSign, {} as any);
@@ -413,7 +413,7 @@ describe("AgentWsServer capability delivery (agent fail-closed)", () => {
 
 describe("AgentWsServer keepalive sweep (half-open detection)", () => {
   const makeServer = () =>
-    new AgentWsServer({} as any, { markOffline: jest.fn(), grantedCapabilities: jest.fn(), touch: jest.fn() } as any, {} as any, {} as any, hubSign, {} as any);
+    new AgentWsServer({} as any, { markOffline: jest.fn(), healOnline: jest.fn(), grantedCapabilities: jest.fn(), touch: jest.fn() } as any, {} as any, {} as any, hubSign, {} as any);
 
   it("terminates a socket that missed its pong (dead/half-open) and pings a live one", () => {
     const server = makeServer();
@@ -448,7 +448,7 @@ describe("AgentWsServer auth-rejection signaling (no agent self-brick)", () => {
   const serverWith = (authResult: "ok" | "unknown" | "bad_signature") =>
     new AgentWsServer(
       {} as any,
-      { authenticate: jest.fn().mockResolvedValue(authResult), grantedCapabilities: jest.fn().mockResolvedValue([]), markOffline: jest.fn() } as any,
+      { authenticate: jest.fn().mockResolvedValue(authResult), grantedCapabilities: jest.fn().mockResolvedValue([]), markOffline: jest.fn(), healOnline: jest.fn() } as any,
       {} as any,
       {} as any,
       hubSign,
@@ -482,7 +482,7 @@ describe("AgentWsServer auth-rejection signaling (no agent self-brick)", () => {
 describe("AgentWsServer pre-auth handshake deadline", () => {
   const mockSocket = () => ({ readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn(), terminate: jest.fn() }) as any;
   const makeServer = (authenticate = jest.fn().mockResolvedValue("ok")) =>
-    new AgentWsServer({} as any, { authenticate, grantedCapabilities: jest.fn().mockResolvedValue([]), markOffline: jest.fn() } as any, {} as any, {} as any, hubSign, {} as any);
+    new AgentWsServer({} as any, { authenticate, grantedCapabilities: jest.fn().mockResolvedValue([]), markOffline: jest.fn(), healOnline: jest.fn() } as any, {} as any, {} as any, hubSign, {} as any);
 
   it("closes a socket still unauthenticated when the deadline fires (1008)", () => {
     const server = makeServer();
@@ -526,7 +526,7 @@ describe("AgentWsServer traffic_metrics routing", () => {
   const mockSocket = () => ({ readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn(), terminate: jest.fn() }) as any;
   const make = () => {
     const traffic = { ingest: jest.fn().mockResolvedValue(undefined) };
-    const servers = { markOffline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue([]) } as any;
+    const servers = { markOffline: jest.fn(), healOnline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue([]) } as any;
     const server = new AgentWsServer({} as any, servers, {} as any, {} as any, hubSign, traffic as any);
     return { server, traffic };
   };
@@ -554,7 +554,7 @@ describe("AgentWsServer agent compatibility gate", () => {
   const mockSocket = () => ({ readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn() }) as any;
   const make = () => {
     const servers = {
-      markOffline: jest.fn(),
+      markOffline: jest.fn(), healOnline: jest.fn(),
       enroll: jest.fn().mockResolvedValue({ serverId: "s1", seal: "SEAL" }),
       authenticate: jest.fn().mockResolvedValue("ok"),
       grantedCapabilities: jest.fn().mockResolvedValue(["deploy"]),
@@ -624,7 +624,7 @@ describe("AgentWsServer deploy re-drive on (re)connect", () => {
   const mockSocket = () => ({ readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn() }) as any;
   const make = (authResult: "ok" | "unknown" | "bad_signature" = "ok") => {
     const servers = {
-      markOffline: jest.fn(),
+      markOffline: jest.fn(), healOnline: jest.fn(),
       enroll: jest.fn().mockResolvedValue({ serverId: "s1", seal: "SEAL" }),
       authenticate: jest.fn().mockResolvedValue(authResult),
       grantedCapabilities: jest.fn().mockResolvedValue(["deploy"]),
@@ -671,5 +671,102 @@ describe("AgentWsServer deploy re-drive on (re)connect", () => {
     server.setDeployReDriveProvider(reDrive);
     await (server as any).onMessage(socket, JSON.stringify(auth({ protocol: 1 })));
     expect(reDrive).not.toHaveBeenCalled();
+  });
+});
+
+describe("AgentWsServer stale-socket supersede + reconnect (C1)", () => {
+  const mockSocket = () => ({ readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn(), terminate: jest.fn() }) as any;
+  const req = { socket: { remoteAddress: "1.2.3.4" }, headers: {} } as any;
+  const closeCb = (sock: any) => sock.on.mock.calls.find((c: any[]) => c[0] === "close")![1] as () => void;
+  const makeServer = () => {
+    const servers = {
+      authenticate: jest.fn().mockResolvedValue("ok"),
+      grantedCapabilities: jest.fn().mockResolvedValue(["patch"]),
+      markOffline: jest.fn(), markOnline: jest.fn(), healOnline: jest.fn(), touch: jest.fn(),
+    } as any;
+    return { server: new AgentWsServer({} as any, servers, {} as any, {} as any, hubSign, {} as any), servers };
+  };
+  const auth = async (server: any, sock: any) => {
+    (server as any).onConnection(sock, req);
+    await (server as any).onMessage(sock, JSON.stringify({ type: "auth", protocol: 2, serverId: "s1", signature: "sig" }));
+  };
+
+  it("a reconnect supersedes the old socket (terminates it) and the OLD socket's late close is inert", async () => {
+    const { server, servers } = makeServer();
+    const a = mockSocket();
+    await auth(server, a);
+    expect((server as any).sockets.get("s1")).toBe(a);
+
+    const b = mockSocket();
+    await auth(server, b);
+    expect(a.terminate).toHaveBeenCalled(); // old socket superseded
+    expect((server as any).sockets.get("s1")).toBe(b); // new socket is current
+
+    // The old (superseded) socket's close finally fires ~60s later — it must NOT flip the live agent OFFLINE.
+    closeCb(a)();
+    expect(servers.markOffline).not.toHaveBeenCalled();
+    expect((server as any).sockets.get("s1")).toBe(b); // still routable on the new socket
+
+    // The CURRENT socket's close is the only one that marks offline, exactly once.
+    closeCb(b)();
+    expect(servers.markOffline).toHaveBeenCalledTimes(1);
+    expect(servers.markOffline).toHaveBeenCalledWith("s1");
+  });
+
+  it("superseding rejects the old socket's in-flight command (so it never hangs to timeout)", async () => {
+    const { server } = makeServer();
+    const a = mockSocket();
+    await auth(server, a);
+    // a command is in flight on the OLD socket
+    const p = (server as any).sendCommand("s1", "sleep 99", "patch", 600000).catch((e: any) => e);
+    await flush(); // let the pending register (after the capability-grant await) before superseding
+    const b = mockSocket();
+    await auth(server, b); // supersede → rejectPendingFor runs
+    const err = await p;
+    expect(err).toBeInstanceOf(AgentDisconnectedException);
+  });
+
+  it("a heartbeat on the current socket touches lastSeenAt and self-heals a stale OFFLINE status", async () => {
+    const { server, deliver, } = harness();
+    await deliver({ type: "heartbeat" });
+    const servers = (server as any).servers;
+    expect(servers.touch).toHaveBeenCalledWith("s1");
+    expect(servers.healOnline).toHaveBeenCalledWith("s1");
+  });
+
+  it("a heartbeat does NOT heal if the socket stopped being current during the touch round-trip (no resurrecting a dead server)", async () => {
+    const { server, socket, deliver } = harness();
+    const servers = (server as any).servers;
+    // Simulate the socket's close landing mid-touch: it removes itself from the sockets map.
+    servers.touch.mockImplementation(async () => { if ((server as any).sockets.get("s1") === socket) (server as any).sockets.delete("s1"); });
+    await deliver({ type: "heartbeat" });
+    expect(servers.touch).toHaveBeenCalledWith("s1");
+    expect(servers.healOnline).not.toHaveBeenCalled(); // re-check after the await prevented the resurrection
+  });
+
+  it("a reconnect re-asserts ONLINE (healOnline) after adopting the new socket, closing the markOnline/close race window", async () => {
+    const { server, servers } = makeServer();
+    await auth(server, mockSocket());
+    expect(servers.healOnline).toHaveBeenCalledWith("s1"); // runs after adoptSocket on every auth
+  });
+});
+
+describe("AgentWsServer typed mid-flight errors (C2: clean 503/504, not a masked 500)", () => {
+  it("a command timeout rejects with AgentCommandTimeoutException (GatewayTimeout → 504)", async () => {
+    const { server } = harness();
+    // Real short timeout: no command_result is ever delivered, so the timer fires and rejects.
+    const err = await server.sendCommand("s1", "slow", "patch", 25).catch((e: any) => e);
+    expect(err).toBeInstanceOf(AgentCommandTimeoutException);
+    expect((err as Error).message).toBe("command timed out");
+  });
+
+  it("an agent drop mid-command rejects pending with AgentDisconnectedException (ServiceUnavailable → 503)", async () => {
+    const { server } = harness();
+    const p = server.sendCommand("s1", "work", "patch", 600000).catch((e: any) => e);
+    await flush();
+    (server as any).rejectPendingFor("s1");
+    const err = await p;
+    expect(err).toBeInstanceOf(AgentDisconnectedException);
+    expect((err as Error).message).toBe("agent disconnected");
   });
 });

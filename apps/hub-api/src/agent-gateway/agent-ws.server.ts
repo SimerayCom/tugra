@@ -17,7 +17,7 @@ import type {
 } from "@tugra/shared";
 import { PROTOCOL_VERSION, checkAgentCompat, canonicalCommand, canonicalCommandCancel, canonicalTermStart, canonicalLogStart, canonicalAgentUpdate, canonicalFs } from "@tugra/shared";
 import { HubSigningService } from "./hub-signing.service";
-import { AgentOfflineException } from "./agent-offline.exception";
+import { AgentCommandTimeoutException, AgentDisconnectedException, AgentOfflineException } from "./agent-offline.exception";
 
 /** A sink for one live container-log stream (chunks + terminal exit), keyed by streamId. */
 export interface LogListener {
@@ -215,10 +215,12 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
     socket.on("close", () => {
       const st = this.state.get(socket);
       if (st) this.clearAuthTimer(st);
-      if (st?.authed && st.serverId) {
-        if (this.sockets.get(st.serverId) === socket) {
-          this.sockets.delete(st.serverId);
-        }
+      // Act ONLY if this socket is still the CURRENT connection for the server. A superseded socket's late
+      // close (e.g. a half-open connection the keepalive terminates ~60s after the agent already reconnected
+      // on a fresh socket) must NOT flip a live agent OFFLINE, nor reject the NEW socket's pending commands /
+      // kill its terminals. The replaced socket's own resources were already torn down at supersede time.
+      if (st?.authed && st.serverId && this.sockets.get(st.serverId) === socket) {
+        this.sockets.delete(st.serverId);
         this.rejectPendingFor(st.serverId);
         this.failLogStreamsFor(st.serverId);
         this.terminalDelegate?.handleServerDisconnect(st.serverId);
@@ -254,7 +256,11 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           st.serverId = serverId;
           st.authed = true;
           this.clearAuthTimer(st);
-          this.sockets.set(serverId, socket);
+          this.adoptSocket(serverId, socket);
+          // Re-assert ONLINE on the live socket: if a prior socket closed during the enroll/auth await, its
+          // close handler may have landed markOffline AFTER the status write — heal it immediately (conditional,
+          // no notification) rather than waiting for the next heartbeat.
+          await this.servers.healOnline(serverId);
           this.send(socket, {
             type: "enrolled",
             serverId,
@@ -290,7 +296,10 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           st.serverId = msg.serverId;
           st.authed = true;
           this.clearAuthTimer(st);
-          this.sockets.set(msg.serverId, socket);
+          this.adoptSocket(msg.serverId, socket);
+          // Re-assert ONLINE on the live socket (see the enroll path): a prior socket closing during the auth
+          // await could otherwise land markOffline after authenticate's markOnline, leaving a live agent OFFLINE.
+          await this.servers.healOnline(msg.serverId);
           this.send(socket, {
             type: "auth_ok",
             serverId: msg.serverId,
@@ -318,7 +327,16 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           return;
         }
         case "heartbeat": {
-          if (st.authed && st.serverId) await this.servers.touch(st.serverId);
+          // Only the current socket's heartbeat counts. Touch lastSeenAt, and self-heal a stale status: if a
+          // live agent socket exists but the row is not ONLINE (a reconnect race or a hub restart left it
+          // OFFLINE), flip it back — no server_online notification (reconciling truth, not a real edge).
+          if (st.authed && st.serverId && this.sockets.get(st.serverId) === socket) {
+            await this.servers.touch(st.serverId);
+            // Re-check AFTER the touch round-trip: if this socket closed meanwhile, its close handler already
+            // ran markOffline — healing unconditionally would resurrect a now-dead server (no socket, nothing
+            // to re-correct it, no lastSeenAt sweeper). Only heal while we are still the current socket.
+            if (this.sockets.get(st.serverId) === socket) await this.servers.healOnline(st.serverId);
+          }
           return;
         }
         case "host_info": {
@@ -417,7 +435,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
       const timer = setTimeout(() => {
         this.pending.delete(reqId);
         this.chunkListeners.delete(reqId);
-        reject(new Error("command timed out"));
+        reject(new AgentCommandTimeoutException("command timed out"));
       }, timeoutMs);
       // Don't let a stray command timer keep the process alive (clean teardown).
       timer.unref?.();
@@ -456,7 +474,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
     return new Promise<FsListing>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.fsPending.delete(reqId);
-        reject(new Error("file operation timed out"));
+        reject(new AgentCommandTimeoutException("file operation timed out"));
       }, timeoutMs);
       timer.unref?.();
       this.fsPending.set(reqId, { serverId, resolve, reject, timer });
@@ -642,6 +660,25 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
     return granted.includes(capability);
   }
 
+  /**
+   * Make `socket` the CURRENT connection for `serverId`, superseding any prior socket. The agent reconnected
+   * (new socket) while an old one may still be half-open; tear the OLD connection's resources down ONCE here
+   * (they belong to the replaced socket; the new socket has no pending work yet) and terminate it. Its later
+   * close is then inert because the close handler only acts for the current socket. Called from enroll + auth;
+   * the caller then re-asserts ONLINE (healOnline) to close the window where a prior socket's late close could
+   * land markOffline after the status write.
+   */
+  private adoptSocket(serverId: string, socket: WebSocket): void {
+    const prev = this.sockets.get(serverId);
+    if (prev && prev !== socket) {
+      this.rejectPendingFor(serverId);
+      this.failLogStreamsFor(serverId);
+      this.terminalDelegate?.handleServerDisconnect(serverId);
+      prev.terminate();
+    }
+    this.sockets.set(serverId, socket);
+  }
+
   /** Reject (and clean up) every pending command for a server that went away. */
   private rejectPendingFor(serverId: string): void {
     for (const [reqId, p] of this.pending) {
@@ -649,13 +686,13 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
       clearTimeout(p.timer);
       this.pending.delete(reqId);
       this.chunkListeners.delete(reqId);
-      p.reject(new Error("agent disconnected"));
+      p.reject(new AgentDisconnectedException("agent disconnected"));
     }
     for (const [reqId, p] of this.fsPending) {
       if (p.serverId !== serverId) continue;
       clearTimeout(p.timer);
       this.fsPending.delete(reqId);
-      p.reject(new Error("agent disconnected"));
+      p.reject(new AgentDisconnectedException("agent disconnected"));
     }
   }
 
