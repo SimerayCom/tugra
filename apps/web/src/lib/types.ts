@@ -1448,6 +1448,8 @@ export interface Database {
   verifyIntervalHours: number | null;
   verifyCron: string | null;
   lastVerifiedAt: string | null;
+  pitrEnabled: boolean;
+  pitrEnabledAt: string | null;
   tags: string[];
   volumes: { name: string; path: string }[];
   role: Role;

@@ -7,6 +7,44 @@
 
 export const DB_NET = "tugra-net";
 
+// PITR WAL archive layout. Each completed WAL segment is copied by Postgres's archive_command into a per-DB
+// host spool under /etc/tugra/wal/<id> (a bind mount — the agent has /etc/tugra at the host path, so the 5.5
+// shipper reads/drains it directly). Deliberately NOT under /etc/tugra/backups, so the LOCAL-backup list/prune
+// never sees WAL files. The dir is mounted into the container at WAL_CONTAINER_DIR.
+export const WAL_HOST_ROOT = "/etc/tugra/wal";
+export const WAL_CONTAINER_DIR = "/tugra-wal";
+// How long an idle Postgres waits before force-switching to a new WAL segment (so PITR has a bounded recovery
+// granularity even with little write activity).
+const ARCHIVE_TIMEOUT_SEC = 300;
+
+/** The per-database host spool dir (bind-mounted into the container). Keyed on the row id, never user input. */
+export function walHostDir(dbId: string): string {
+  return `${WAL_HOST_ROOT}/${dbId}`;
+}
+
+/**
+ * The archive_command Postgres runs (inside its own container, via /bin/sh) for each completed WAL segment.
+ * %p = the segment's path (relative to the data dir), %f = its filename — both expanded by Postgres, not the
+ * shell here. Idempotent (an already-archived segment is a success, so a retry after a crash never loops),
+ * atomic (copy to a .part then rename, so the shipper never reads a half-written segment) and DURABLE: the
+ * .part is fsync'd before the rename. Postgres treats exit 0 as "this segment is safely archived" and may
+ * recycle it from pg_wal at the next checkpoint, so the host spool is then the ONLY copy — without the sync a
+ * power loss inside the writeback window could leave a truncated segment that the `[ -f ]` guard would treat as
+ * archived forever, silently breaking the WAL chain. `sync <file>` fsyncs just that file on GNU coreutils (the
+ * stock postgres image) and falls back to a global flush on busybox — correct either way.
+ */
+export function pgArchiveCommand(): string {
+  const dest = `${WAL_CONTAINER_DIR}/%f`;
+  return `[ -f "${dest}" ] && exit 0; cp %p "${dest}.part" && sync "${dest}.part" && mv "${dest}.part" "${dest}"`;
+}
+
+/** Postgres server args that enable WAL archiving. Placed in the engine-command slot (after the image) when a
+ *  DB has PITR on. wal_level is deliberately NOT forced (replica is the stock default; forcing it could
+ *  downgrade a logical setup) — an off-default wal_level is caught by the enable-path preflight (slice 5.4b). */
+export function pgArchiveArgs(): string {
+  return `-c archive_mode=on -c archive_timeout=${ARCHIVE_TIMEOUT_SEC} -c archive_command=${shq(pgArchiveCommand())}`;
+}
+
 export type DbEngine =
   | "POSTGRES"
   | "MYSQL"
@@ -70,6 +108,10 @@ export interface DbSpec {
   // Extra persistent named volumes (beyond the managed data volume). Name is a short label; the real docker
   // volume name is derived per-database so it can never collide with another DB's (or infra) volumes.
   volumes?: DbVolume[] | null;
+  // PITR: when true (Postgres only) the container is (re)created with WAL ARCHIVING on — archive_mode=on + an
+  // archive_command that copies each completed WAL segment to a host spool the shipper drains. Default/false →
+  // the run script is byte-identical to a non-PITR database. Set only from the real-DB path (never throwaways).
+  pitr?: boolean;
 }
 
 export interface DbVolume {
@@ -252,7 +294,12 @@ export function buildDatabaseRunScript(db: DbSpec): string {
   const extraVolFlags = (db.volumes ?? [])
     .map((v) => `-v ${dbExtraVolumeName(db, v.name)}:${v.path}`)
     .join(" ");
-  const command = engineCommand(db.engine, db.credentials);
+  // PITR (Postgres only): mount the host WAL spool and append the archive_mode args to the engine command.
+  // When off, walFlag is "" (filtered) and command is unchanged → the script is byte-identical to today.
+  const pitr = db.engine === "POSTGRES" && !!db.pitr;
+  const walFlag = pitr ? `-v ${walHostDir(db.id)}:${WAL_CONTAINER_DIR}` : "";
+  const baseCommand = engineCommand(db.engine, db.credentials);
+  const command = pitr ? [baseCommand, pgArchiveArgs()].filter(Boolean).join(" ") : baseCommand;
 
   // Optional resource limits + container health check (mirrors app deploys).
   const limitArgs: string[] = [];
@@ -278,6 +325,7 @@ export function buildDatabaseRunScript(db: DbSpec): string {
     `--network ${DB_NET}`,
     `-v ${vol}:${def.dataDir}`,
     extraVolFlags,
+    walFlag,
     limitArgs.join(" "),
     userEnvFlags,
     credEnvFlags,
@@ -291,9 +339,15 @@ export function buildDatabaseRunScript(db: DbSpec): string {
   return [
     "set -e",
     `docker network create ${DB_NET} 2>/dev/null || true`,
+    // PITR: create the host WAL spool before the mount so the first archive attempt never fails on a missing
+    // dir; tightened to 0700 (it holds raw WAL). postgres in the container runs as uid 999 and can't write
+    // into a root-owned bind, so after the container is up we chown the mount to its runtime uid. Both lines
+    // are emitted only when pitr is on, so the off-path script is byte-identical to today.
+    ...(pitr ? [`mkdir -p ${walHostDir(db.id)} && chmod 700 ${walHostDir(db.id)}`] : []),
     `docker pull ${shq(db.image)}`,
     `docker rm -f ${name} 2>/dev/null || true`,
     runArgs,
+    ...(pitr ? [`docker exec -u root ${name} chown postgres:postgres ${WAL_CONTAINER_DIR}`] : []),
     `docker ps --filter name=${name} --format '{{.Status}}'`,
   ].join("\n");
 }
@@ -305,7 +359,7 @@ export function buildDbStopScript(db: { id: string }): string {
 /** Destroy: remove the container AND its volumes (the data is intentionally dropped). */
 export function buildDbRemoveScript(
   db: { id: string; volumes?: DbVolume[] | null },
-  opts: { keepVolume?: boolean } = {},
+  opts: { keepVolume?: boolean; walSpool?: boolean } = {},
 ): string {
   const lines = [`docker rm -f ${dbContainerName(db)} 2>/dev/null || true`];
   // keepVolume: leave the data volume on the host (recreate the DB over it later, or copy it off). Default
@@ -315,5 +369,9 @@ export function buildDbRemoveScript(
     lines.push(`docker volume rm ${dbVolumeName(db)} 2>/dev/null || true`);
     for (const v of db.volumes ?? []) lines.push(`docker volume rm ${dbExtraVolumeName(db, v.name)} 2>/dev/null || true`);
   }
+  // walSpool: this DB had PITR on, so its host WAL spool must be reclaimed too (idempotent; the dir holds raw
+  // WAL, not the data dir). Only emitted when the caller opts in — every current caller omits it, so the
+  // script stays byte-identical until the PITR enable path (next slice) starts passing it on destroy.
+  if (opts.walSpool && !opts.keepVolume) lines.push(`rm -rf ${walHostDir(db.id)} 2>/dev/null || true`);
   return lines.join("\n");
 }

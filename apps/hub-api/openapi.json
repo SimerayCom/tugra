@@ -29587,6 +29587,14 @@
                         "format": "date-time",
                         "nullable": true
                       },
+                      "pitrEnabled": {
+                        "type": "boolean"
+                      },
+                      "pitrEnabledAt": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                      },
                       "tags": {
                         "type": "array",
                         "items": {
@@ -29668,6 +29676,8 @@
                       "verifyIntervalHours",
                       "verifyCron",
                       "lastVerifiedAt",
+                      "pitrEnabled",
+                      "pitrEnabledAt",
                       "tags",
                       "volumes",
                       "role",
@@ -29938,6 +29948,14 @@
                       "format": "date-time",
                       "nullable": true
                     },
+                    "pitrEnabled": {
+                      "type": "boolean"
+                    },
+                    "pitrEnabledAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
                     "tags": {
                       "type": "array",
                       "items": {
@@ -30019,6 +30037,8 @@
                     "verifyIntervalHours",
                     "verifyCron",
                     "lastVerifiedAt",
+                    "pitrEnabled",
+                    "pitrEnabledAt",
                     "tags",
                     "volumes",
                     "role",
@@ -30256,6 +30276,14 @@
                       "format": "date-time",
                       "nullable": true
                     },
+                    "pitrEnabled": {
+                      "type": "boolean"
+                    },
+                    "pitrEnabledAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
                     "tags": {
                       "type": "array",
                       "items": {
@@ -30337,6 +30365,8 @@
                     "verifyIntervalHours",
                     "verifyCron",
                     "lastVerifiedAt",
+                    "pitrEnabled",
+                    "pitrEnabledAt",
                     "tags",
                     "volumes",
                     "role",
@@ -30768,6 +30798,14 @@
                       "format": "date-time",
                       "nullable": true
                     },
+                    "pitrEnabled": {
+                      "type": "boolean"
+                    },
+                    "pitrEnabledAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
                     "tags": {
                       "type": "array",
                       "items": {
@@ -30849,6 +30887,8 @@
                     "verifyIntervalHours",
                     "verifyCron",
                     "lastVerifiedAt",
+                    "pitrEnabled",
+                    "pitrEnabledAt",
                     "tags",
                     "volumes",
                     "role",
@@ -32343,6 +32383,14 @@
                       "format": "date-time",
                       "nullable": true
                     },
+                    "pitrEnabled": {
+                      "type": "boolean"
+                    },
+                    "pitrEnabledAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
                     "tags": {
                       "type": "array",
                       "items": {
@@ -32430,6 +32478,8 @@
                     "verifyIntervalHours",
                     "verifyCron",
                     "lastVerifiedAt",
+                    "pitrEnabled",
+                    "pitrEnabledAt",
                     "tags",
                     "volumes",
                     "role",

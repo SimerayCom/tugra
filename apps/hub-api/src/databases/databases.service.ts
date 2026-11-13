@@ -82,6 +82,9 @@ export const DatabaseViewSchema = z.object({
   verifyIntervalHours: z.number().nullable(),
   verifyCron: z.string().nullable(),
   lastVerifiedAt: z.date().nullable(),
+  // PITR (Postgres only): whether WAL archiving is on, and when it was switched on.
+  pitrEnabled: z.boolean(),
+  pitrEnabledAt: z.date().nullable(),
   tags: z.array(z.string()),
   volumes: z.array(z.object({ name: z.string(), path: z.string() })),
   role: z.nativeEnum(Role),
@@ -408,7 +411,10 @@ export class DatabasesService {
     try {
       const r = await this.agentWs.sendCommand(
         db.serverId,
-        buildDatabaseRunScript({ ...this.toSpec(db), env: this.dbEnv(db), volumes: this.dbVolumes(db) }),
+        // pitr rides the row's own flag. Throwaway verify DBs are persisted with pitrEnabled=false (never set),
+        // so this is false for them → their run script stays byte-identical. Only an explicitly-enabled real DB
+        // provisions with WAL archiving on.
+        buildDatabaseRunScript({ ...this.toSpec(db), env: this.dbEnv(db), volumes: this.dbVolumes(db), pitr: db.pitrEnabled }),
         "database",
         PROVISION_TIMEOUT_MS,
       );
@@ -826,6 +832,8 @@ export class DatabasesService {
       verifyIntervalHours: db.verifyIntervalHours,
       verifyCron: db.verifyCron,
       lastVerifiedAt: db.lastVerifiedAt,
+      pitrEnabled: db.pitrEnabled,
+      pitrEnabledAt: db.pitrEnabledAt,
       tags: db.tags,
       volumes: this.dbVolumes(db),
       role,

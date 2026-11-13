@@ -21179,6 +21179,9 @@ export interface operations {
                         verifyCron: string | null;
                         /** Format: date-time */
                         lastVerifiedAt: string | null;
+                        pitrEnabled: boolean;
+                        /** Format: date-time */
+                        pitrEnabledAt: string | null;
                         tags: string[];
                         volumes: {
                             name: string;
@@ -21296,6 +21299,9 @@ export interface operations {
                         verifyCron: string | null;
                         /** Format: date-time */
                         lastVerifiedAt: string | null;
+                        pitrEnabled: boolean;
+                        /** Format: date-time */
+                        pitrEnabledAt: string | null;
                         tags: string[];
                         volumes: {
                             name: string;
@@ -21412,6 +21418,9 @@ export interface operations {
                         verifyCron: string | null;
                         /** Format: date-time */
                         lastVerifiedAt: string | null;
+                        pitrEnabled: boolean;
+                        /** Format: date-time */
+                        pitrEnabledAt: string | null;
                         tags: string[];
                         volumes: {
                             name: string;
@@ -21663,6 +21672,9 @@ export interface operations {
                         verifyCron: string | null;
                         /** Format: date-time */
                         lastVerifiedAt: string | null;
+                        pitrEnabled: boolean;
+                        /** Format: date-time */
+                        pitrEnabledAt: string | null;
                         tags: string[];
                         volumes: {
                             name: string;
@@ -22676,6 +22688,9 @@ export interface operations {
                         verifyCron: string | null;
                         /** Format: date-time */
                         lastVerifiedAt: string | null;
+                        pitrEnabled: boolean;
+                        /** Format: date-time */
+                        pitrEnabledAt: string | null;
                         tags: string[];
                         volumes: {
                             name: string;

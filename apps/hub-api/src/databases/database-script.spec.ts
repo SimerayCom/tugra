@@ -9,6 +9,10 @@ import {
   enginePort,
   resolveImage,
   supportsBackup,
+  walHostDir,
+  pgArchiveCommand,
+  pgArchiveArgs,
+  WAL_CONTAINER_DIR,
   type DbCredentials,
   type DbEngine,
   type DbSpec,
@@ -195,6 +199,17 @@ describe("database-script", () => {
       const s = buildDbRemoveScript({ id: "db1", volumes: [{ name: "cache", path: "/cache" }] }, { keepVolume: true });
       expect(s).not.toContain("docker volume rm");
     });
+
+    it("walSpool: reclaims the host WAL dir only when opted in (byte-identical otherwise)", () => {
+      expect(buildDbRemoveScript({ id: "db1" })).not.toContain("/etc/tugra/wal/");
+      const s = buildDbRemoveScript({ id: "db1" }, { walSpool: true });
+      expect(s).toContain("rm -rf /etc/tugra/wal/db1");
+    });
+
+    it("walSpool is a no-op under keepVolume (recreate keeps the WAL)", () => {
+      const s = buildDbRemoveScript({ id: "db1" }, { walSpool: true, keepVolume: true });
+      expect(s).not.toContain("/etc/tugra/wal/");
+    });
   });
 
   describe("resource limits + health-check", () => {
@@ -264,6 +279,73 @@ describe("database-script", () => {
       expect(s).toContain("--network tugra-net");
       expect(s).toContain("tugra_dbv_db1:/var/lib/sqld");
       expect(s).not.toContain("-e "); // no credential env for sqld
+    });
+  });
+
+  describe("PITR (5.4) — WAL archiving run builder", () => {
+    // Frozen pre-slice output. These GOLDENS are the real regression guard for "the PITR layer is inert when
+    // off": a `toBe` against the whole script fails on ANY drift (a stray space, a non-filtered "" flag, an
+    // ordering change), which a self-comparison or `not.toContain` cannot catch. POSTGRES is the engine PITR
+    // targets; REDIS exercises the non-empty engine-command slot (the other place the command token is built).
+    const PG_GOLDEN =
+      "set -e\n" +
+      "docker network create tugra-net 2>/dev/null || true\n" +
+      "docker pull 'postgres:16'\n" +
+      "docker rm -f tugra_db_db1 2>/dev/null || true\n" +
+      "docker run -d --name tugra_db_db1 --restart unless-stopped --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 --network tugra-net -v tugra_dbv_db1:/var/lib/postgresql/data -e 'POSTGRES_USER=tugra' -e 'POSTGRES_PASSWORD=p@ss' -e 'POSTGRES_DB=appdb' 'postgres:16'\n" +
+      "docker ps --filter name=tugra_db_db1 --format '{{.Status}}'";
+    const REDIS_GOLDEN =
+      "set -e\n" +
+      "docker network create tugra-net 2>/dev/null || true\n" +
+      "docker pull 'redis:7-alpine'\n" +
+      "docker rm -f tugra_db_db1 2>/dev/null || true\n" +
+      "docker run -d --name tugra_db_db1 --restart unless-stopped --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 --network tugra-net -v tugra_dbv_db1:/data 'redis:7-alpine' redis-server --requirepass 'p@ss'\n" +
+      "docker ps --filter name=tugra_db_db1 --format '{{.Status}}'";
+
+    it("is byte-identical to the pre-slice script when pitr is off/undefined (POSTGRES + REDIS goldens)", () => {
+      expect(buildDatabaseRunScript(spec("POSTGRES"))).toBe(PG_GOLDEN);
+      expect(buildDatabaseRunScript(spec("POSTGRES", { pitr: false }))).toBe(PG_GOLDEN);
+      expect(buildDatabaseRunScript(spec("REDIS"))).toBe(REDIS_GOLDEN);
+      // ...and the whole WAL layer leaves zero trace on the off-path.
+      expect(PG_GOLDEN).not.toContain("archive_mode");
+      expect(PG_GOLDEN).not.toContain("/tugra-wal");
+      expect(PG_GOLDEN).not.toContain("/etc/tugra/wal");
+    });
+
+    it("never arms PITR for a non-Postgres engine even when the flag is set", () => {
+      const mysql = buildDatabaseRunScript(spec("MYSQL"));
+      expect(buildDatabaseRunScript(spec("MYSQL", { pitr: true }))).toBe(mysql);
+      expect(mysql).not.toContain("archive_mode");
+    });
+
+    it("on Postgres: mounts the host WAL spool, arms archive_mode, and fixes the mount's owner", () => {
+      const s = buildDatabaseRunScript(spec("POSTGRES", { pitr: true }));
+      // bind-mount host spool → container dir (NOT a named volume, so the shipper reads it on the host path)
+      expect(s).toContain(`-v ${walHostDir("db1")}:${WAL_CONTAINER_DIR}`);
+      // spool created + locked down before the container mounts it
+      expect(s).toContain("mkdir -p /etc/tugra/wal/db1 && chmod 700 /etc/tugra/wal/db1");
+      // archive args ride the engine-command slot
+      expect(s).toContain("-c archive_mode=on");
+      expect(s).toContain("-c archive_timeout=300");
+      expect(s).toContain("archive_command=");
+      // postgres runs as its own uid; the root-owned bind is chowned after the container is up
+      expect(s).toContain(`docker exec -u root tugra_db_db1 chown postgres:postgres ${WAL_CONTAINER_DIR}`);
+    });
+
+    it("archive_command is idempotent (already-archived → exit 0), durable (fsync) and atomic (.part then rename)", () => {
+      const cmd = pgArchiveCommand();
+      expect(cmd).toContain(`[ -f "${WAL_CONTAINER_DIR}/%f" ] && exit 0`);
+      expect(cmd).toContain(`${WAL_CONTAINER_DIR}/%f.part`);
+      // the segment is fsync'd BEFORE the rename publishes it — otherwise a power loss could leave a truncated
+      // segment the idempotence guard treats as archived forever (silent WAL-chain break).
+      expect(cmd).toMatch(/sync "[^"]*%f\.part".*&& mv .*%f\.part.*%f"/);
+    });
+
+    it("pgArchiveArgs shell-quotes the archive_command as a single -c token", () => {
+      const args = pgArchiveArgs();
+      // the command contains spaces/&&/; — it must arrive as ONE quoted arg, never split across -c flags
+      expect(args).toContain("-c archive_command='");
+      expect(args.match(/-c archive_mode=on/g)).toHaveLength(1);
     });
   });
 });

@@ -1528,6 +1528,12 @@ model Database {
   // Last time a scheduled OR on-demand verify SUCCEEDED — powers the UI "last verified" line and the
   // verify-liveness watchdog's reference point.
   lastVerifiedAt      DateTime?
+  // PITR (Postgres only): when on, the container is (re)created with WAL archiving so point-in-time recovery
+  // is possible. Additive + default-off — an existing/throwaway DB is untouched and its run script is
+  // byte-identical. The enable/disable flow (recreate + verify) and the WAL shipper land in the next slice;
+  // this column is the inert anchor those build on. pitrEnabledAt stamps when it was switched on.
+  pitrEnabled         Boolean  @default(false)
+  pitrEnabledAt       DateTime?
   tags        String[] @default([])
   backups     Backup[]
   baseBackups BaseBackup[]
