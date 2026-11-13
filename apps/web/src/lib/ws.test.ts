@@ -202,4 +202,69 @@ describe("connectTerminalWithRetry", () => {
     expect(ws.sent).toContain("x");
     conn.close();
   });
+
+  it("retries FOREVER by default (no give-up) on repeated transient drops", async () => {
+    vi.useFakeTimers();
+    try {
+      const statuses: string[] = [];
+      let tickets = 0;
+      const conn = connectTerminalWithRetry({ server: "s1" }, { onEvent: () => {}, onStatus: (s) => statuses.push(s) }, { WS: FakeWSCtor, fetchTicket: async () => `t${++tickets}`, rand: () => 0 });
+      await vi.advanceTimersByTimeAsync(0); // resolve the first ticket → ws created
+      // Drop the socket far past the old 10-attempt cap; it must keep scheduling reconnects.
+      for (let i = 0; i < 15; i++) {
+        FakeWS.last!.onclose!({ code: 1006, reason: "" });
+        await vi.advanceTimersByTimeAsync(30000); // fire the backoff → fresh ticket + new socket
+      }
+      expect(statuses).not.toContain("closed"); // never gave up
+      expect(tickets).toBeGreaterThan(10); // reconnected well beyond the old cap
+      conn.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fires onReconnect ONLY on a real reopen, never on a failed retry attempt", async () => {
+    vi.useFakeTimers();
+    try {
+      let reconnects = 0;
+      const conn = connectTerminalWithRetry({ server: "s1" }, { onEvent: () => {}, onReconnect: () => reconnects++ }, { WS: FakeWSCtor, fetchTicket: async () => "t", rand: () => 0 });
+      await vi.advanceTimersByTimeAsync(0);
+      FakeWS.last!.onopen!(); // first open is not a reconnect
+      expect(reconnects).toBe(0);
+      FakeWS.last!.onclose!({ code: 1006, reason: "" }); // drop
+      await vi.advanceTimersByTimeAsync(30000); // retry → ws2 (still connecting)
+      FakeWS.last!.onclose!({ code: 1006, reason: "" }); // ws2 drops BEFORE it ever opened
+      expect(reconnects).toBe(0); // must NOT fire on a failed attempt (old bug printed the banner here)
+      await vi.advanceTimersByTimeAsync(30000); // retry → ws3
+      FakeWS.last!.onopen!(); // the real reopen...
+      expect(reconnects).toBe(0); // ...but not yet — only after it proves STABLE
+      await vi.advanceTimersByTimeAsync(2000); // stays up past STABLE_MS
+      expect(reconnects).toBe(1);
+      conn.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("an OFFLINE server (upgrade accepted then immediate 1011) backs off and never fires the reconnect banner", async () => {
+    vi.useFakeTimers();
+    try {
+      let tickets = 0;
+      let reconnects = 0;
+      const conn = connectTerminalWithRetry({ server: "s1" }, { onEvent: () => {}, onReconnect: () => reconnects++ }, { WS: FakeWSCtor, fetchTicket: async () => `t${++tickets}`, rand: () => 0 });
+      await vi.advanceTimersByTimeAsync(0);
+      // The hub accepts the WS upgrade (onopen) and only THEN closes 1011 — simulate 5 such cycles.
+      for (let i = 0; i < 5; i++) {
+        FakeWS.last!.onopen!(); // upgrade accepted → arms the stability timer
+        FakeWS.last!.onclose!({ code: 1011, reason: "agent offline" }); // closed well before STABLE_MS → stability cancelled
+        await vi.advanceTimersByTimeAsync(30000); // fire the (growing) backoff → next attempt
+      }
+      // Never stayed up long enough to be "stable", so the attempt counter is NEVER reset → the backoff grows
+      // (no ~1.5s hammer) and the "reconnected" banner is never shown for a shell that never worked.
+      expect(reconnects).toBe(0);
+      conn.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

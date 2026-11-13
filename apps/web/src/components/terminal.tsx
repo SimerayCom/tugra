@@ -50,6 +50,7 @@ export default function TerminalView({
       cursorBlink: true,
       cursorStyle: "bar",
       scrollback: 5000,
+      scrollOnUserInput: true, // typing always jumps back to the live prompt
       // Full 16-colour ANSI theme (lib/terminal-theme) so `ls --color`, prompts and TUIs render like a
       // real terminal; cursor in Tugra gold, surfaces matched to the dark panel.
       theme: XTERM_THEME,
@@ -59,6 +60,14 @@ export default function TerminalView({
     term.loadAddon(fit);
     term.open(host);
     fit.fit();
+    term.scrollToBottom();
+
+    // xterm only follows new output while the viewport is already at the bottom. The first fit() runs before
+    // the dynamic-import layout is settled, and a resize can leave the viewport mid-buffer — so new output
+    // (and the reconnect/exit banners) stop auto-scrolling. Re-pin to the bottom whenever we were already
+    // following, so a live shell keeps tracking its output.
+    const atBottom = () => term.buffer.active.viewportY >= term.buffer.active.baseY;
+    const stick = () => term.scrollToBottom();
 
     let exited = false;
     const conn = connectTerminalWithRetry(
@@ -77,6 +86,7 @@ export default function TerminalView({
           onStatus?.(s);
           if (s === "open") {
             conn.send(encodeResize(term.cols, term.rows));
+            stick(); // a fresh/reconnected shell starts pinned to the live prompt
           } else if (s === "denied") {
             // Surface the hub's actual reason (most often: terminal capability off) with an actionable hint.
             const reason = info?.reason?.trim();
@@ -92,7 +102,7 @@ export default function TerminalView({
           }
         },
         // The hub kills the PTY when the socket drops, so a reconnect is a NEW shell — say so.
-        onReconnect: () => term.write(`\r\n\x1b[2m${tRef.current("terminal.reconnected")}\x1b[0m\r\n`),
+        onReconnect: () => { term.write(`\r\n\x1b[2m${tRef.current("terminal.reconnected")}\x1b[0m\r\n`); stick(); },
       },
       { fetchTicket: () => api.terminalTicket().then((r) => r.ticket) },
     );
@@ -107,12 +117,14 @@ export default function TerminalView({
       rt = setTimeout(() => {
         try {
           if (host.clientWidth < 24 || host.clientHeight < 24) return;
+          const wasBottom = atBottom();
           fit.fit();
           if (term.cols !== lastCols || term.rows !== lastRows) {
             lastCols = term.cols;
             lastRows = term.rows;
             conn.send(encodeResize(term.cols, term.rows));
           }
+          if (wasBottom) stick(); // a reflow must not strand us above the live output
         } catch {
           /* element detaching */
         }

@@ -35,6 +35,7 @@ import { Tabs } from "../../../../components/tabs-nav";
 import { usePatchLogStream } from "../../../../hooks/useDeployLogStream";
 import { useMetricsStream } from "../../../../hooks/useMetricsStream";
 import { useServerReconnect } from "../../../../hooks/useServerReconnect";
+import { useStickToBottom } from "../../../../hooks/useStickToBottom";
 
 const serverColor = (s: ServerStatus) =>
   s === "ONLINE" ? "var(--c-g)" : s === "PENDING" ? "var(--c-am)" : "var(--c-r)";
@@ -295,7 +296,10 @@ export default function ServerDetailPage() {
       {tab === "shell" && server.canWrite && (
         <TerminalPanel
           target={{ server: id }}
-          unavailableReason={server.status !== "ONLINE" ? t("servers.waiting") : undefined}
+          // Never blocked here: a PENDING server is handled by its own UI above, so this tab only sees
+          // ONLINE/OFFLINE. On an OFFLINE blip we KEEP the xterm mounted and let its own auto-reconnect +
+          // status badge ride it out — tearing it down on every 5s-poll OFFLINE would drop the live session
+          // and scrollback on a brief drop.
           height={540}
         />
       )}
@@ -546,6 +550,8 @@ function PatchCard({ id }: { id: string }) {
   const [output, setOutput] = useState("");
   const [applying, setApplying] = useState(false);
   const log = usePatchLogStream(id, applying);
+  const logText = applying ? log.lines : output;
+  const logRef = useStickToBottom<HTMLPreElement>(logText); // follow the live apt output as it streams
   const check = useMutation({ mutationFn: () => api.checkUpdates(id) });
   const info = check.data;
   const upgradeAll = useMutation({
@@ -623,8 +629,8 @@ function PatchCard({ id }: { id: string }) {
         </>
       )}
 
-      {(applying ? log.lines : output) && (
-        <pre className="mono" style={{ margin: "8px 0 0", fontSize: 11, color: "var(--c-tx3)", whiteSpace: "pre-wrap", maxHeight: 220, overflowY: "auto", background: "var(--c-el)", padding: 10, borderRadius: "var(--r1)" }}>{applying ? log.lines : output}</pre>
+      {logText && (
+        <pre ref={logRef} className="mono" style={{ margin: "8px 0 0", fontSize: 11, color: "var(--c-tx3)", whiteSpace: "pre-wrap", maxHeight: 220, overflowY: "auto", background: "var(--c-el)", padding: 10, borderRadius: "var(--r1)" }}>{logText}</pre>
       )}
     </SectionCard>
   );

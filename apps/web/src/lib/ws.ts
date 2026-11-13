@@ -153,35 +153,76 @@ export function connectTerminalWithRetry(
   },
   opts: { fetchTicket?: () => Promise<string>; WS?: typeof WebSocket; maxAttempts?: number; rand?: () => number } = {},
 ): TerminalConn {
-  const maxAttempts = opts.maxAttempts ?? 10;
+  // No default cap: a transient drop (agent blip, hub redeploy, a server reboot) retries FOREVER with the 30s
+  // backoff so the shell recovers on its own — "connections must not stay dropped". An explicit cap is kept
+  // only for tests. 1000 (clean exit) and 1008 (auth/capability) never retry.
+  const cap = opts.maxAttempts;
   const rand = opts.rand ?? Math.random;
   let conn: TerminalConn | undefined;
   let attempt = 0;
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let stableTimer: ReturnType<typeof setTimeout> | undefined;
+  let reconnecting = false; // true between a retryable close and the next STABLE open
+  let connected = false;
+  // A bare WebSocket open is NOT proof the shell is usable: the hub accepts the upgrade and only THEN may
+  // close 1011 ("agent offline"/"agent disconnected"). So for an OFFLINE server the socket opens and closes
+  // in well under a second. Treat a connection as STABLE — reset the backoff, announce the reconnect — only
+  // after it survives this long; a connection that drops sooner counts as a failed attempt and keeps backing
+  // off (otherwise an OFFLINE server would reconnect every ~1.5s forever and hammer the throttled ticket
+  // endpoint). The `open` status still fires immediately so the terminal sizes/uses the socket at once.
+  const STABLE_MS = 2000;
 
   const start = () => {
     if (stopped) return;
-    handlers.onStatus?.(attempt === 0 ? "connecting" : "reconnecting");
+    if (timer) { clearTimeout(timer); timer = undefined; }
+    handlers.onStatus?.(attempt === 0 && !reconnecting ? "connecting" : "reconnecting");
     conn = connectTerminal(
       target,
       {
         onEvent: handlers.onEvent,
-        onOpen: () => { attempt = 0; handlers.onStatus?.("open"); },
+        onOpen: () => {
+          connected = true;
+          handlers.onStatus?.("open");
+          if (stableTimer) clearTimeout(stableTimer);
+          stableTimer = setTimeout(() => {
+            attempt = 0; // only NOW is the backoff reset — the connection proved it stays up
+            if (reconnecting) { handlers.onReconnect?.(); reconnecting = false; }
+          }, STABLE_MS);
+        },
         onClose: (info) => {
+          connected = false;
+          if (stableTimer) { clearTimeout(stableTimer); stableTimer = undefined; } // never became stable
           if (stopped) return;
           if (info?.code === 1000) return handlers.onStatus?.("closed", info); // process exited cleanly
           if (info?.code === 1008) return handlers.onStatus?.("denied", info); // auth / capability / policy — no retry
-          if (attempt >= maxAttempts) return handlers.onStatus?.("closed", info);
+          if (cap != null && attempt >= cap) return handlers.onStatus?.("closed", info);
+          reconnecting = true;
           const delay = Math.min(1000 * 2 ** attempt + rand() * 1000, 30000);
           attempt += 1;
           handlers.onStatus?.("reconnecting");
-          timer = setTimeout(() => { if (!stopped) { handlers.onReconnect?.(); start(); } }, delay);
+          timer = setTimeout(() => { if (!stopped) start(); }, delay);
         },
       },
       { fetchTicket: opts.fetchTicket, WS: opts.WS },
     );
   };
+
+  // When the browser/tab comes back, fire a PENDING backoff immediately instead of waiting out its delay
+  // (up to 30s) — so a laptop wake / network return reconnects the shell at once. No-op unless we're waiting.
+  const retryNow = () => {
+    if (stopped || connected || !timer) return;
+    clearTimeout(timer);
+    timer = undefined;
+    attempt = 0;
+    start();
+  };
+  const onWake = () => { if (typeof document === "undefined" || !document.hidden) retryNow(); };
+  if (typeof window !== "undefined") {
+    window.addEventListener("online", retryNow);
+    if (typeof document !== "undefined") document.addEventListener("visibilitychange", onWake);
+  }
+
   start();
 
   return {
@@ -189,6 +230,11 @@ export function connectTerminalWithRetry(
     close: () => {
       stopped = true;
       if (timer) clearTimeout(timer);
+      if (stableTimer) clearTimeout(stableTimer);
+      if (typeof window !== "undefined") {
+        window.removeEventListener("online", retryNow);
+        if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onWake);
+      }
       conn?.close();
     },
   };
