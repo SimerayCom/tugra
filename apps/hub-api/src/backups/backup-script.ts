@@ -199,7 +199,21 @@ function gpgDecrypt(dest: DestinationSpec): string {
  * / local subdir, e.g. a database id or "hub"); `prelude` lines (a readiness/existence check) run first. The
  * encrypted/plain object is streamed straight to the destination — only a size line comes back.
  */
-export function buildDumpUploadScript(dumpCmd: string, nsId: string, filename: string, dest: DestinationSpec, prelude?: string | null): string {
+export function buildDumpUploadScript(
+  dumpCmd: string,
+  nsId: string,
+  filename: string,
+  dest: DestinationSpec,
+  prelude?: string | null,
+  // atomicLocal (default off): for the LOCAL branch, stream to `<file>.part` then `mv` to the final name, so a
+  // crash mid-write never leaves a truncated object at the real path. Default off keeps every existing caller
+  // (dump / base backup / hub backup) byte-identical; the WAL shipper opts in because its objects are replayed
+  // by PITR and a half-written segment would silently corrupt recovery. The S3 branch is NOT made atomic here:
+  // `mc pipe` finalizes whatever bytes arrived before EOF, so an upstream (cat/gzip/gpg) failure can briefly
+  // leave a truncated object at the key — the caller must treat the non-zero exit as a failure (the WAL shipper
+  // does: it keeps the spool copy and re-ships, and the deterministic key means the retry overwrites it).
+  opts?: { atomicLocal?: boolean },
+): string {
   const lines = ["set -e", "set -o pipefail"];
   if (prelude) lines.push(prelude);
   const pipe = [dumpCmd, "gzip"];
@@ -218,7 +232,12 @@ export function buildDumpUploadScript(dumpCmd: string, nsId: string, filename: s
     const dir = backupDir(nsId);
     const file = backupPath(nsId, filename);
     lines.push(`mkdir -p ${dir}`);
-    lines.push(`${pipe.join(" | ")} > ${file}`);
+    if (opts?.atomicLocal) {
+      lines.push(`${pipe.join(" | ")} > ${file}.part`);
+      lines.push(`mv ${file}.part ${file}`);
+    } else {
+      lines.push(`${pipe.join(" | ")} > ${file}`);
+    }
     lines.push(`stat -c %s ${file}`);
   }
   return lines.join("\n");

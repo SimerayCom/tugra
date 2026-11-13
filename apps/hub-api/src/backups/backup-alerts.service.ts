@@ -8,7 +8,7 @@ import { NotificationsService } from "../notifications/notifications.service";
 /** Which backup family an alert is about. Database backups, app-volume backups, the restore-verify drill and
  *  the physical base backup all share one state machine (the Redis keys namespace on the kind, so one kind's
  *  failure/throttle state can never collide with another's). */
-export type BackupKind = "database" | "volume" | "verify" | "basebackup";
+export type BackupKind = "database" | "volume" | "verify" | "basebackup" | "walship";
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;

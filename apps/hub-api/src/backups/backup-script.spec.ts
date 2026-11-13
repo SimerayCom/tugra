@@ -4,6 +4,7 @@ import {
   buildBackupScript,
   buildBackupExportUrlScript,
   buildDeleteBackupScript,
+  buildDumpUploadScript,
   buildImportScript,
   buildRestoreScript,
   scrubRestoreOutput,
@@ -52,6 +53,31 @@ describe("backup-script", () => {
       expect(s).toContain("stat -c %s /etc/tugra/backups/db1/t.dump.gz");
       expect(s).not.toContain("mc pipe");
       expect(s).not.toContain("gpg");
+    });
+  });
+
+  describe("buildDumpUploadScript — atomicLocal", () => {
+    it("is byte-identical to today when the option is off (LOCAL writes straight to the final path)", () => {
+      const plain = buildDumpUploadScript("cat /x", "db1/wal", "seg.gz", LOCAL_DEST);
+      const off = buildDumpUploadScript("cat /x", "db1/wal", "seg.gz", LOCAL_DEST, null, { atomicLocal: false });
+      expect(off).toBe(plain);
+      expect(plain).toContain("> /etc/tugra/backups/db1/wal/seg.gz");
+      expect(plain).not.toContain(".part");
+      expect(plain).not.toContain("mv ");
+    });
+
+    it("writes <file>.part then mv when atomicLocal is on (a crash never leaves a truncated final object)", () => {
+      const s = buildDumpUploadScript("cat /x", "db1/wal", "seg.gz", LOCAL_DEST, null, { atomicLocal: true });
+      expect(s).toContain("> /etc/tugra/backups/db1/wal/seg.gz.part");
+      expect(s).toContain("mv /etc/tugra/backups/db1/wal/seg.gz.part /etc/tugra/backups/db1/wal/seg.gz");
+      expect(s).toContain("stat -c %s /etc/tugra/backups/db1/wal/seg.gz");
+    });
+
+    it("has no effect on the S3 branch (mc pipe is already atomic)", () => {
+      const on = buildDumpUploadScript("cat /x", "db1/wal", "seg.gz", s3Dest, null, { atomicLocal: true });
+      const off = buildDumpUploadScript("cat /x", "db1/wal", "seg.gz", s3Dest);
+      expect(on).toBe(off);
+      expect(on).not.toContain(".part");
     });
   });
 
