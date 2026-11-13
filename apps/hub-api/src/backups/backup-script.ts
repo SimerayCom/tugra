@@ -259,15 +259,28 @@ export function buildRestoreScript(
 ): string {
   // source → [gpg -d] → gunzip → engine restore. Source is a stored backup
   // (S3 object or local file); the pipeline + engine handling is shared.
-  const source =
-    dest.type === "S3" && dest.s3
-      ? `${mcHostEnv(dest.s3)} mc cat ${mcTarget(dest.s3, storageDbId, filename)}`
-      : `cat ${backupPath(storageDbId, filename)}`;
+  const source = storedObjectSourceCmd(dest, storageDbId, filename);
   // Postgres backups written before the custom-format switch are plain SQL
   // (`.sql.gz`); newer ones are `.dump.gz`. Both are OUR dumps of a single DB,
   // so the plain path can safely run atomically (--single-transaction).
   const pgMode: PgMode = filename.includes(".dump") ? "custom" : "sql-atomic";
   return restorePipeline(db, source, dest, true, pgMode);
+}
+
+/** The command that streams ONE stored object (S3 `mc cat` with creds in the MC_HOST env, or a LOCAL `cat`) to
+ *  stdout. `nsId` is the storage namespace (a db id, `<id>/base`, `<id>/wal`, "hub"…). Shared by every read path
+ *  (logical restore, PITR base seed, WAL staging) so the source shape has one definition. */
+export function storedObjectSourceCmd(dest: DestinationSpec, nsId: string, filename: string): string {
+  return dest.type === "S3" && dest.s3 ? `${mcHostEnv(dest.s3)} mc cat ${mcTarget(dest.s3, nsId, filename)}` : `cat ${backupPath(nsId, filename)}`;
+}
+
+/** source → [gpg -d] → [gunzip] as one pipe string — the decode half of the restore pipeline, reusable on its
+ *  own (PITR stages WAL and seeds the base tar through it without an engine client at the end). */
+export function decodeChain(dest: DestinationSpec, sourceCmd: string, opts: { gzip: boolean }): string {
+  const decode = [sourceCmd];
+  if (dest.encryption.enabled) decode.push(gpgDecrypt(dest));
+  if (opts.gzip) decode.push("gunzip");
+  return decode.join(" | ");
 }
 
 /**
@@ -316,9 +329,7 @@ function restorePipeline(db: DbSpec, sourceCmd: string, dest: DestinationSpec, g
   const name = dbContainerName(db);
   const { username, password, database } = db.credentials;
 
-  const decode = [sourceCmd];
-  if (dest.encryption.enabled) decode.push(gpgDecrypt(dest));
-  if (gzip) decode.push("gunzip");
+  const decoded = decodeChain(dest, sourceCmd, { gzip });
 
   const lines = ["set -e", "set -o pipefail"];
   switch (db.engine) {
@@ -340,7 +351,7 @@ function restorePipeline(db: DbSpec, sourceCmd: string, dest: DestinationSpec, g
             : // external SQL (import) → fail-loud only; its own transaction
               // structure may forbid a single wrapping transaction.
               `psql -v ON_ERROR_STOP=1 -U ${shq(username)} -d ${shq(database)}`;
-      lines.push(`${decode.join(" | ")} | docker exec -i -e PGPASSWORD=${shq(password)} ${name} ${pg}`);
+      lines.push(`${decoded} | docker exec -i -e PGPASSWORD=${shq(password)} ${name} ${pg}`);
       break;
     }
     case "MYSQL":
@@ -356,7 +367,7 @@ function restorePipeline(db: DbSpec, sourceCmd: string, dest: DestinationSpec, g
       // via credentialEnv) so DEFINER/SQL-SECURITY and privilege gaps in another installation's views, triggers
       // and routines don't abort the restore. Tugra's own restores stay as the app user (byte-identical).
       const restoreUser = opts.importMode ? "root" : username;
-      lines.push(`${decode.join(" | ")} | docker exec -i -e MYSQL_PWD=${shq(password)} ${name} ${client} -u${shq(restoreUser)} --protocol=TCP -h127.0.0.1 ${shq(database)}`);
+      lines.push(`${decoded} | docker exec -i -e MYSQL_PWD=${shq(password)} ${name} ${client} -u${shq(restoreUser)} --protocol=TCP -h127.0.0.1 ${shq(database)}`);
       break;
     }
     case "MONGO": {
@@ -368,7 +379,7 @@ function restorePipeline(db: DbSpec, sourceCmd: string, dest: DestinationSpec, g
       // admin.system.version. Under `--drop` those would overwrite the target's own Tugra root user and lock
       // out the stored credentials, so exclude the admin namespaces on import. Tugra's own clone keeps them.
       const nsExclude = opts.importMode ? " --nsExclude 'admin.*'" : "";
-      lines.push(`${decode.join(" | ")} | docker exec -i ${name} mongorestore --username ${shq(username)} --password ${shq(password)} --authenticationDatabase admin --archive --drop${nsExclude}`);
+      lines.push(`${decoded} | docker exec -i ${name} mongorestore --username ${shq(username)} --password ${shq(password)} --authenticationDatabase admin --archive --drop${nsExclude}`);
       break;
     }
     case "REDIS":
@@ -381,7 +392,7 @@ function restorePipeline(db: DbSpec, sourceCmd: string, dest: DestinationSpec, g
       const cli = db.engine === "KEYDB" ? "keydb-cli" : "redis-cli";
       const tmp = `/tmp/${name}.rdb`;
       lines.push(`trap 'rm -f ${tmp}' EXIT`);
-      lines.push(`${decode.join(" | ")} > ${tmp}`);
+      lines.push(`${decoded} > ${tmp}`);
       lines.push(`head -c5 ${tmp} | grep -q REDIS`);
       lines.push(`docker kill ${name} >/dev/null 2>&1 || true`);
       lines.push(`docker cp ${tmp} ${name}:/data/dump.rdb`);
@@ -401,7 +412,7 @@ function restorePipeline(db: DbSpec, sourceCmd: string, dest: DestinationSpec, g
         '{ rm -f /data/tugra_restore.rdb; echo "tugra: bad rdb signature" >&2; exit 1; }; ' +
         "r=$(redis-cli --no-auth-warning DFLY LOAD /data/tugra_restore.rdb 2>&1); rm -f /data/tugra_restore.rdb; " +
         '[ "$r" = OK ] || { echo "dragonfly DFLY LOAD failed: $r" >&2; exit 1; }';
-      lines.push(`${decode.join(" | ")} | docker exec -i -e ${shq(`REDISCLI_AUTH=${password}`)} ${name} sh -c ${shq(inner)}`);
+      lines.push(`${decoded} | docker exec -i -e ${shq(`REDISCLI_AUTH=${password}`)} ${name} sh -c ${shq(inner)}`);
       break;
     }
     case "CLICKHOUSE": {
@@ -426,7 +437,7 @@ function restorePipeline(db: DbSpec, sourceCmd: string, dest: DestinationSpec, g
         `${chCli} --query "DROP DATABASE IF EXISTS \\"${database}\\" SYNC" && ` +
         `${chCli} --query "RENAME DATABASE \\"${tmpDb}\\" TO \\"${database}\\""; ` +
         `rc=$?; rm -f ${zip}; exit $rc`;
-      lines.push(`${decode.join(" | ")} | docker exec -i ${name} sh -c ${shq(inner)}`);
+      lines.push(`${decoded} | docker exec -i ${name} sh -c ${shq(inner)}`);
       break;
     }
     case "LIBSQL":

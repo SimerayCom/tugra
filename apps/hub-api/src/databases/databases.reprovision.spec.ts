@@ -168,3 +168,57 @@ describe("DatabasesService maintenance lock (mutual exclusion with PITR transiti
     expect(script(sendCommand)).not.toContain("archive_mode");
   });
 });
+
+describe("DatabasesService — PITR replay seams (5.6a)", () => {
+  const T = new Date("2026-11-13T10:20:30.123Z");
+
+  it("reprovision({recovery}) starts the container in archive recovery toward the target, never archiving", async () => {
+    const { svc, sendCommand } = make(row({ pitrEnabled: true }));
+    await svc.reprovision(row({ pitrEnabled: true }) as never, "u1", { pitr: false, recovery: { targetTime: T } });
+    const s = script(sendCommand);
+    expect(s).toContain("-v /etc/tugra/wal-restore/db1:/tugra-wal-restore:ro");
+    expect(s).toContain("-c recovery_target_time='2026-11-13 10:20:30.123+00'");
+    expect(s).not.toContain("archive_mode=on");
+  });
+
+  it("createRecoveryTarget: NEW row on the same server with the SAME credentials, carried config, backups/PITR off", async () => {
+    const src = row({ pitrEnabled: true, pitrEnabledAt: new Date(), backupDestinationId: "d1", tags: ["prod"], memoryMb: 512, environmentId: "env1" });
+    const create = jest.fn((args: { data: Record<string, unknown> }) => Promise.resolve({ id: "new1", ...args.data }));
+    const { svc } = make(src);
+    (svc as unknown as { prisma: { database: Record<string, jest.Mock> } }).prisma.database.create = create;
+    const out = await svc.createRecoveryTarget(src as never, {}, "u1");
+    expect(out.id).toBe("new1");
+    const data = create.mock.calls[0][0].data;
+    expect(data).toMatchObject({ name: "main (restored)", engine: "POSTGRES", version: "16", image: "postgres:16", hostPort: null, serverId: "s1", teamId: "t1", environmentId: "env1", status: "NEW", backupDestinationId: "d1", tags: ["prod"], memoryMb: 512 });
+    // same creds as the source (the base tar's roles/password hashes are authoritative)
+    expect(data.credentials).toBe(`enc:${JSON.stringify({ username: "tugra", password: "pw", database: "main" })}`);
+    // nothing arms archiving/backups on the copy
+    expect(data).not.toHaveProperty("pitrEnabled");
+    expect(data).not.toHaveProperty("backupEnabled");
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "database.pitr.restore_target", target: "new1", meta: { from: "db1" } }));
+  });
+
+  it("createRecoveryTarget honours a custom name (clamped to 60) and validates a different environment", async () => {
+    const src = row({ environmentId: "env1" });
+    const create = jest.fn((args: { data: Record<string, unknown> }) => Promise.resolve({ id: "new1", ...args.data }));
+    const { svc } = make(src);
+    const s = svc as unknown as { prisma: { database: Record<string, jest.Mock>; environment?: Record<string, jest.Mock> }; assertEnvInTeam: jest.Mock };
+    s.prisma.database.create = create;
+    const envCheck = jest.spyOn(svc as unknown as { assertEnvInTeam: (e: string, t: string) => Promise<void> }, "assertEnvInTeam").mockResolvedValue(undefined);
+    await svc.createRecoveryTarget(src as never, { name: " x".repeat(50), environmentId: "env2" }, "u1");
+    expect(envCheck).toHaveBeenCalledWith("env2", "t1");
+    expect(String(create.mock.calls[0][0].data.name).length).toBeLessThanOrEqual(60);
+    expect(create.mock.calls[0][0].data.environmentId).toBe("env2");
+  });
+
+  it("reapRecoveryTarget tears the target down best-effort (container + volume + row) and never throws", async () => {
+    const { svc, sendCommand } = make(row());
+    const prisma = (svc as unknown as { prisma: { database: Record<string, jest.Mock> } }).prisma.database;
+    await svc.reapRecoveryTarget(row() as never, "u1");
+    expect(script(sendCommand)).toContain("docker volume rm tugra_dbv_db1");
+    expect(script(sendCommand)).toContain("rm -rf /etc/tugra/wal-restore/db1"); // staged WAL reclaimed too
+    expect(prisma.delete).toHaveBeenCalled();
+    sendCommand.mockRejectedValueOnce(new Error("offline"));
+    await expect(svc.reapRecoveryTarget(row() as never, "u1")).resolves.toBeUndefined();
+  });
+});

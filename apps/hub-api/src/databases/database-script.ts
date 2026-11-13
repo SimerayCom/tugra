@@ -45,6 +45,44 @@ export function pgArchiveArgs(): string {
   return `-c archive_mode=on -c archive_timeout=${ARCHIVE_TIMEOUT_SEC} -c archive_command=${shq(pgArchiveCommand())}`;
 }
 
+// PITR REPLAY staging layout. Restored WAL segments (downloaded + decrypted + gunzipped by the hub-driven staging
+// script) are placed in a per-target host dir, OUTSIDE both the archive spool (/etc/tugra/wal) and the backup tree
+// (/etc/tugra/backups) so neither the shipper nor LOCAL prune ever sees them, and bind-mounted read-only into the
+// recovering container at WAL_RESTORE_CONTAINER_DIR.
+export const WAL_RESTORE_HOST_ROOT = "/etc/tugra/wal-restore";
+export const WAL_RESTORE_CONTAINER_DIR = "/tugra-wal-restore";
+
+/** The per-target host staging dir. Keyed on the NEW row id, never user input. */
+export function walRestoreHostDir(dbId: string): string {
+  return `${WAL_RESTORE_HOST_ROOT}/${dbId}`;
+}
+
+/** Format a target time for recovery_target_time: UTC with an EXPLICIT offset (a bare timestamp would be read in
+ *  the server's session time zone) and millisecond precision. Always built from a Date — never a user string. */
+export function pgRecoveryTargetTime(t: Date): string {
+  const iso = t.toISOString(); // 2026-11-13T10:20:30.123Z
+  return `${iso.slice(0, 10)} ${iso.slice(11, 23)}+00`;
+}
+
+/**
+ * Postgres server args for a point-in-time REPLAY, placed in the engine-command slot (after the image) like the
+ * archive args. restore_command must exit non-zero for a segment that is not staged (`test -f` does), which is
+ * how Postgres learns the archive is exhausted. recovery_target_timeline=current: we stage the base's own
+ * timeline only. recovery_target_action=promote: the cluster comes up read-write at the target and, because these
+ * are `-c` flags rather than postgresql.auto.conf lines, carries no recovery settings into its later life.
+ */
+export function pgRecoveryArgs(targetTime: Date): string {
+  const d = WAL_RESTORE_CONTAINER_DIR;
+  const restoreCmd = `test -f "${d}/%f" && cp "${d}/%f" "%p"`;
+  return [
+    `-c restore_command=${shq(restoreCmd)}`,
+    `-c recovery_target_time=${shq(pgRecoveryTargetTime(targetTime))}`,
+    "-c recovery_target_action=promote",
+    "-c recovery_target_timeline=current",
+    "-c archive_mode=off",
+  ].join(" ");
+}
+
 export type DbEngine =
   | "POSTGRES"
   | "MYSQL"
@@ -112,6 +150,10 @@ export interface DbSpec {
   // archive_command that copies each completed WAL segment to a host spool the shipper drains. Default/false →
   // the run script is byte-identical to a non-PITR database. Set only from the real-DB path (never throwaways).
   pitr?: boolean;
+  // PITR REPLAY (Postgres only, never persisted): start this container in archive recovery — mount the host
+  // staging dir of restored WAL segments read-only and pass the recovery targets as ephemeral `-c` flags, so the
+  // cluster promotes at `targetTime` and carries NO recovery settings afterwards. Absent → byte-identical script.
+  recovery?: { targetTime: Date } | null;
 }
 
 export interface DbVolume {
@@ -298,8 +340,16 @@ export function buildDatabaseRunScript(db: DbSpec): string {
   // When off, walFlag is "" (filtered) and command is unchanged → the script is byte-identical to today.
   const pitr = db.engine === "POSTGRES" && !!db.pitr;
   const walFlag = pitr ? `-v ${walHostDir(db.id)}:${WAL_CONTAINER_DIR}` : "";
+  // PITR REPLAY (Postgres only): mount the staged-WAL dir read-only and append the recovery args. Mutually
+  // exclusive with archiving (a recovering copy never archives). Absent → "" / unchanged → byte-identical.
+  const recovery = db.engine === "POSTGRES" && db.recovery ? db.recovery : null;
+  const recFlag = recovery ? `-v ${walRestoreHostDir(db.id)}:${WAL_RESTORE_CONTAINER_DIR}:ro` : "";
   const baseCommand = engineCommand(db.engine, db.credentials);
-  const command = pitr ? [baseCommand, pgArchiveArgs()].filter(Boolean).join(" ") : baseCommand;
+  const command = recovery
+    ? [baseCommand, pgRecoveryArgs(recovery.targetTime)].filter(Boolean).join(" ")
+    : pitr
+      ? [baseCommand, pgArchiveArgs()].filter(Boolean).join(" ")
+      : baseCommand;
 
   // Optional resource limits + container health check (mirrors app deploys).
   const limitArgs: string[] = [];
@@ -326,6 +376,7 @@ export function buildDatabaseRunScript(db: DbSpec): string {
     `-v ${vol}:${def.dataDir}`,
     extraVolFlags,
     walFlag,
+    recFlag,
     limitArgs.join(" "),
     userEnvFlags,
     credEnvFlags,
@@ -366,7 +417,7 @@ export function buildDbStopScript(db: { id: string }, opts: { graceSec?: number;
 /** Destroy: remove the container AND its volumes (the data is intentionally dropped). */
 export function buildDbRemoveScript(
   db: { id: string; volumes?: DbVolume[] | null },
-  opts: { keepVolume?: boolean; walSpool?: boolean } = {},
+  opts: { keepVolume?: boolean; walSpool?: boolean; walRestore?: boolean } = {},
 ): string {
   const lines = [`docker rm -f ${dbContainerName(db)} 2>/dev/null || true`];
   // keepVolume: leave the data volume on the host (recreate the DB over it later, or copy it off). Default
@@ -380,5 +431,8 @@ export function buildDbRemoveScript(
   // WAL, not the data dir). Only emitted when the caller opts in — every current caller omits it, so the
   // script stays byte-identical until the PITR enable path (next slice) starts passing it on destroy.
   if (opts.walSpool && !opts.keepVolume) lines.push(`rm -rf ${walHostDir(db.id)} 2>/dev/null || true`);
+  // walRestore: a PITR replay target's staged-WAL dir (only ever exists for such a target). Opt-in, so every
+  // other remove script stays byte-identical.
+  if (opts.walRestore) lines.push(`rm -rf ${walRestoreHostDir(db.id)} 2>/dev/null || true`);
   return lines.join("\n");
 }

@@ -13,6 +13,7 @@ import {
   walHostDir,
   pgArchiveCommand,
   pgArchiveArgs,
+  pgRecoveryTargetTime,
   WAL_CONTAINER_DIR,
   type DbCredentials,
   type DbEngine,
@@ -211,6 +212,11 @@ describe("database-script", () => {
       const s = buildDbRemoveScript({ id: "db1" }, { walSpool: true, keepVolume: true });
       expect(s).not.toContain("/etc/tugra/wal/");
     });
+
+    it("walRestore reclaims a replay target's staged-WAL dir only when opted in (byte-identical otherwise)", () => {
+      expect(buildDbRemoveScript({ id: "db1" })).not.toContain("wal-restore");
+      expect(buildDbRemoveScript({ id: "db1" }, { walRestore: true })).toContain("rm -rf /etc/tugra/wal-restore/db1");
+    });
   });
 
   describe("buildDbStopScript", () => {
@@ -358,6 +364,41 @@ describe("database-script", () => {
       // the command contains spaces/&&/; — it must arrive as ONE quoted arg, never split across -c flags
       expect(args).toContain("-c archive_command='");
       expect(args.match(/-c archive_mode=on/g)).toHaveLength(1);
+    });
+  });
+
+  describe("PITR replay (5.6) — recovery run builder", () => {
+    const T = new Date("2026-11-13T10:20:30.123Z");
+
+    it("is byte-identical to the plain run when recovery is absent/null", () => {
+      const base = buildDatabaseRunScript(spec("POSTGRES"));
+      expect(buildDatabaseRunScript(spec("POSTGRES", { recovery: null }))).toBe(base);
+      expect(base).not.toContain("wal-restore");
+      expect(base).not.toContain("restore_command");
+    });
+
+    it("on Postgres: mounts the staged WAL read-only and passes ephemeral -c recovery flags (promote at the target, no archiving)", () => {
+      const s = buildDatabaseRunScript(spec("POSTGRES", { recovery: { targetTime: T } }));
+      expect(s).toContain("-v /etc/tugra/wal-restore/db1:/tugra-wal-restore:ro");
+      expect(s).toContain("-c restore_command='test -f \"/tugra-wal-restore/%f\" && cp \"/tugra-wal-restore/%f\" \"%p\"'");
+      expect(s).toContain("-c recovery_target_time='2026-11-13 10:20:30.123+00'"); // UTC with an explicit offset
+      expect(s).toContain("-c recovery_target_action=promote");
+      expect(s).toContain("-c recovery_target_timeline=current");
+      expect(s).toContain("-c archive_mode=off");
+      expect(s).not.toContain("archive_mode=on"); // a recovering copy never archives, even if pitr were set
+      expect(s).not.toContain("/etc/tugra/wal/db1:"); // no archive spool mount
+    });
+
+    it("recovery wins over pitr (mutually exclusive) and is ignored for non-Postgres engines", () => {
+      const s = buildDatabaseRunScript(spec("POSTGRES", { recovery: { targetTime: T }, pitr: true }));
+      expect(s).toContain("recovery_target_time");
+      expect(s).not.toContain("archive_mode=on");
+      const my = buildDatabaseRunScript(spec("MYSQL"));
+      expect(buildDatabaseRunScript(spec("MYSQL", { recovery: { targetTime: T } }))).toBe(my);
+    });
+
+    it("pgRecoveryTargetTime formats a Date as UTC with ms and explicit +00 (never a user string)", () => {
+      expect(pgRecoveryTargetTime(T)).toBe("2026-11-13 10:20:30.123+00");
     });
   });
 });

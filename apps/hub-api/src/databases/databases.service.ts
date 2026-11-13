@@ -117,6 +117,13 @@ function copyName(name: string): string {
   return (name.length > room ? name.slice(0, room) : name) + suffix;
 }
 
+/** Default label for a point-in-time restore target: "<name> (restored)", clamped to the 60-char name limit. */
+function restoredName(name: string): string {
+  const suffix = " (restored)";
+  const room = 60 - suffix.length;
+  return (name.length > room ? name.slice(0, room) : name) + suffix;
+}
+
 function slug(name: string): string {
   const s = name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
   return s || "tugra";
@@ -254,6 +261,8 @@ export class DatabasesService {
       environmentId: string;
       creds: DbCredentials;
     },
+    // Optional carried config (PITR replay target copies the source's). Absent for every existing caller.
+    extra: Pick<Prisma.DatabaseUncheckedCreateInput, "backupDestinationId" | "healthCmd" | "memoryMb" | "cpus" | "tags" | "envEnc" | "volumes"> = {},
   ): Promise<Database> {
     return this.prisma.database.create({
       data: {
@@ -268,6 +277,7 @@ export class DatabasesService {
         teamId: server.teamId,
         credentials: this.crypto.encrypt(JSON.stringify(fields.creds)),
         status: DbStatus.NEW,
+        ...extra,
       },
     });
   }
@@ -454,11 +464,54 @@ export class DatabasesService {
    * recreate path as every other provision — `docker rm -f` + `docker run` over the persistent named volume, so
    * the data survives. Never reachable from a controller or from withSystemThrowaway.
    */
-  async reprovision(db: Database, actor: string, opts: { pitr: boolean }): Promise<ProvisionOutcome> {
+  async reprovision(db: Database, actor: string, opts: { pitr: boolean; recovery?: { targetTime: Date } | null }): Promise<ProvisionOutcome> {
     return this.runProvision(db, actor, opts);
   }
 
-  private async runProvision(db: Database, actor: string, opts: { pitr?: boolean } = {}): Promise<ProvisionOutcome> {
+  /**
+   * PITR replay target (no RBAC — the caller MUST have authorized; in-process only, never wired to a controller,
+   * same trust class as {@link withSystemThrowaway} / {@link reprovision}). Creates a NEW row for a point-in-time
+   * copy of `src` with the SAME credentials: the restored cluster already holds the source's roles/password
+   * hashes/database name (the stock entrypoint skips initdb when PG_VERSION exists and ignores POSTGRES_*), so
+   * fresh credentials would simply never authenticate. Same server (the base/WAL objects for a LOCAL destination
+   * and the staging dir live on that host), no host port, config carried like clone(), backups/PITR/verify OFF.
+   * Status NEW — the orchestrator seeds its volume and starts it in recovery.
+   */
+  async createRecoveryTarget(src: Database, input: { name?: string; environmentId?: string }, actor: string): Promise<Database> {
+    let environmentId = src.environmentId;
+    if (input.environmentId && input.environmentId !== src.environmentId) {
+      await this.assertEnvInTeam(input.environmentId, src.teamId);
+      environmentId = input.environmentId;
+    }
+    const name = (input.name?.trim() || restoredName(src.name)).slice(0, 60);
+    const row = await this.persistDatabaseRow(
+      { id: src.serverId, teamId: src.teamId },
+      { name, engine: src.engine as DbEngine, version: src.version, image: src.image, hostPort: null, environmentId, creds: this.creds(src) },
+      {
+        backupDestinationId: src.backupDestinationId,
+        healthCmd: src.healthCmd,
+        memoryMb: src.memoryMb,
+        cpus: src.cpus,
+        tags: src.tags,
+        envEnc: src.envEnc,
+        ...(src.volumes ? { volumes: src.volumes as Prisma.InputJsonValue } : {}),
+      },
+    );
+    await this.audit.log({ actor, action: "database.pitr.restore_target", target: row.id, meta: { from: src.id } });
+    return row;
+  }
+
+  /** Tear a failed replay target down (container + volume + row), best-effort. Only ever called on a row this
+   *  hub created via {@link createRecoveryTarget}; a successful replay keeps its row. */
+  async reapRecoveryTarget(row: Database, actor: string): Promise<void> {
+    await this.removeRow(row, { keepVolume: false, walRestore: true }, actor).catch(() => undefined);
+  }
+
+  private async runProvision(
+    db: Database,
+    actor: string,
+    opts: { pitr?: boolean; recovery?: { targetTime: Date } | null } = {},
+  ): Promise<ProvisionOutcome> {
     // Claim the row as PROVISIONING before the slow (≤5 min) agent call: while it runs we are creating the
     // container + data volume on db.serverId, so a concurrent moveToServer (NEW-only) must be excluded —
     // otherwise the row's serverId could change under us and strand the volume on the old server.
@@ -478,6 +531,8 @@ export class DatabasesService {
           env: this.dbEnv(db),
           volumes: this.dbVolumes(db),
           pitr: opts.pitr ?? db.pitrEnabled,
+          // PITR replay only (never persisted): start in archive recovery toward the target time.
+          recovery: opts.recovery ?? null,
         }),
         "database",
         PROVISION_TIMEOUT_MS,
@@ -519,7 +574,7 @@ export class DatabasesService {
 
   /** Removal core (no RBAC): refuse while apps link it, tear the container/volumes down, delete the row, audit.
    *  Shared by {@link remove} and {@link withSystemThrowaway}'s reap. */
-  private async removeRow(db: Database, opts: { keepVolume?: boolean }, actor: string): Promise<void> {
+  private async removeRow(db: Database, opts: { keepVolume?: boolean; walRestore?: boolean }, actor: string): Promise<void> {
     // Refuse while apps still link this database — deleting it would break their injected connection
     // URIs. Name the apps so the user knows what to unlink first (the DB-level FK is NO ACTION as a
     // backstop, but this gives a friendly 409 instead of a raw constraint error).
