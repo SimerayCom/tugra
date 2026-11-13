@@ -1530,6 +1530,7 @@ model Database {
   lastVerifiedAt      DateTime?
   tags        String[] @default([])
   backups     Backup[]
+  baseBackups BaseBackup[]
   restores    Restore[]
   appLinks    AppDatabaseLink[]
   createdAt   DateTime @default(now())
@@ -1586,6 +1587,38 @@ model Restore {
   createdAt        DateTime      @default(now())
   completedAt      DateTime?
 
+  @@index([databaseId, createdAt])
+}
+
+// A PHYSICAL base backup (pg_basebackup) — the base image for WAL/PITR restore. A SIBLING of Backup, not a
+// kind of it: every Backup consumer (prune/verify/watchdog/list/restore) is kind-blind, so a separate table
+// keeps the logical path byte-identical and makes a mis-selection (a tar fed to pg_restore) impossible.
+// Postgres-only. Retention is count-only in 5.3 (each -X fetch base is standalone); 5.4 makes it WAL-aware.
+model BaseBackup {
+  id            String       @id @default(cuid())
+  database      Database     @relation(fields: [databaseId], references: [id], onDelete: Cascade)
+  databaseId    String
+  status        BackupStatus @default(PENDING)
+  filename      String
+  path          String
+  destinationId String?
+  objectKey     String?
+  sizeBytes     BigInt?
+  // Physical-base anchor metadata for the WAL/PITR slices. pgVersion is a snapshot of Database.version (a
+  // physical base restores only into the same major); startLsn/timeline come from pg_basebackup -v and are
+  // nullable — a parse miss never fails the backup (backup_label inside the tar is authoritative).
+  pgVersion     String?
+  startLsn      String?
+  timeline      Int?
+  createdBy     String
+  createdAt     DateTime     @default(now())
+  completedAt   DateTime?
+  exitCode      Int?
+  errorTail     String?
+  durationMs    Int?
+
+  // A partial UNIQUE index (one RUNNING per database) also exists — created in the migration, since Prisma
+  // has no partial-index support. It atomically backstops the runner's inflight guard against a create race.
   @@index([databaseId, createdAt])
 }
 

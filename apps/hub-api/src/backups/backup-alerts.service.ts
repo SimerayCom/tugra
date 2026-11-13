@@ -5,9 +5,10 @@ import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { NotificationsService } from "../notifications/notifications.service";
 
-/** Which backup family an alert is about. Database backups, app-volume backups, and the restore-verify drill
- *  all share one state machine (the Redis keys namespace on the kind, so a 'verify' kind can never collide). */
-export type BackupKind = "database" | "volume" | "verify";
+/** Which backup family an alert is about. Database backups, app-volume backups, the restore-verify drill and
+ *  the physical base backup all share one state machine (the Redis keys namespace on the kind, so one kind's
+ *  failure/throttle state can never collide with another's). */
+export type BackupKind = "database" | "volume" | "verify" | "basebackup";
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;

@@ -17,7 +17,7 @@ import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
-import { BackupsService, BackupViewSchema, RestoreViewSchema } from "./backups.service";
+import { BackupsService, BackupViewSchema, BaseBackupViewSchema, RestoreViewSchema } from "./backups.service";
 import {
   BackupConfigInput,
   BackupConfigSchema,
@@ -52,6 +52,27 @@ export class BackupsController {
   @ApiZodResponse(BackupViewSchema, { status: 201 })
   backupNow(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.backups.backupNow(user.userId, id);
+  }
+
+  // Physical base backup (pg_basebackup) — the PITR base image. Postgres-only; recorded separately from
+  // logical backups so it never appears in the backups list / restore / verify paths.
+  @Get("base-backups")
+  @ApiZodResponse(BaseBackupViewSchema, { isArray: true })
+  listBaseBackups(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.backups.listBaseBackups(user.userId, id);
+  }
+
+  @Post("base-backups")
+  @ApiZodResponse(BaseBackupViewSchema, { status: 201 })
+  baseBackupNow(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.backups.baseBackupNow(user.userId, id);
+  }
+
+  @Delete("base-backups/:baseId")
+  @HttpCode(200)
+  async removeBaseBackup(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("baseId") baseId: string) {
+    await this.backups.removeBaseBackup(user.userId, id, baseId);
+    return { ok: true };
   }
 
   @Post("backups/import-from-url")

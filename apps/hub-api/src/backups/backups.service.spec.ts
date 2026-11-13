@@ -1,7 +1,8 @@
-import { BadGatewayException, BadRequestException, ForbiddenException } from "@nestjs/common";
+import { BadGatewayException, BadRequestException, ConflictException, ForbiddenException } from "@nestjs/common";
 import { BackupsService } from "./backups.service";
 import { resolveImage } from "../databases/database-script";
 import { BackupRunnerService } from "./backup-runner.service";
+import { BaseBackupRunnerService } from "./base-backup-runner.service";
 import type { BackupAlertsService } from "./backup-alerts.service";
 import { BackupSchedulerService } from "./backups.scheduler.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -75,6 +76,7 @@ function make(
   scheduler: Partial<BackupSchedulerService> = {},
   agentWs: Partial<AgentWsServer> = {},
   notifications: Partial<NotificationsService> = { fireForEvent: jest.fn().mockResolvedValue(undefined) },
+  baseRunner: Partial<BaseBackupRunnerService> = {},
 ) {
   return new BackupsService(
     prisma as PrismaService,
@@ -85,6 +87,7 @@ function make(
     scheduler as BackupSchedulerService,
     notifications as NotificationsService,
     { onScheduleChanged: jest.fn().mockResolvedValue(undefined) } as unknown as BackupAlertsService,
+    baseRunner as BaseBackupRunnerService,
   );
 }
 
@@ -596,5 +599,77 @@ describe("BackupsService.list — run outcome, errorTail is WRITER-ONLY", () => 
   it("an unresolvable membership is treated as read-only", async () => {
     const [v] = await mk(null).list("u1", "db1");
     expect(v.errorTail).toBeNull();
+  });
+});
+
+describe("BackupsService — physical base backups (sibling family, Postgres-only)", () => {
+  const pgDb = { id: "db1", name: "shop", teamId: "t1", serverId: "s1", engine: "POSTGRES", version: "16" };
+  const baseRow = { id: "bb1", status: "SUCCESS", filename: "t.basebackup.tar.gz", sizeBytes: 999n, destinationId: null, pgVersion: "16", startLsn: "0/2000028", timeline: 1, createdBy: "u1", createdAt: new Date(), completedAt: new Date(), exitCode: 0, errorTail: "secret detail", durationMs: 42 };
+
+  it("baseBackupNow requires write, delegates to the runner, and returns a writer view (BigInt stringified)", async () => {
+    const prisma = { database: { findUnique: jest.fn().mockResolvedValue(pgDb) } } as unknown as PrismaService;
+    const requirePermission = jest.fn().mockResolvedValue(undefined);
+    const runBaseBackup = jest.fn().mockResolvedValue(baseRow);
+    const svc = make(prisma, { requirePermission } as unknown as TeamAccessService, {}, {}, {}, undefined, { runBaseBackup } as unknown as BaseBackupRunnerService);
+    const view = await svc.baseBackupNow("u1", "db1");
+    expect(requirePermission).toHaveBeenCalledWith("u1", "t1", "backups");
+    expect(runBaseBackup).toHaveBeenCalledWith("db1", "u1");
+    expect(view).toMatchObject({ status: "SUCCESS", sizeBytes: "999", startLsn: "0/2000028", timeline: 1 });
+    expect(view.errorTail).toBe("secret detail"); // writer sees it
+  });
+
+  it("baseBackupNow rejects a non-Postgres database with 400 and never calls the runner", async () => {
+    const prisma = { database: { findUnique: jest.fn().mockResolvedValue({ ...pgDb, engine: "MYSQL" }) } } as unknown as PrismaService;
+    const runBaseBackup = jest.fn();
+    const svc = make(prisma, { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService, {}, {}, {}, undefined, { runBaseBackup } as unknown as BaseBackupRunnerService);
+    await expect(svc.baseBackupNow("u1", "db1")).rejects.toBeInstanceOf(BadRequestException);
+    expect(runBaseBackup).not.toHaveBeenCalled();
+  });
+
+  it("listBaseBackups hides errorTail from a read-only member", async () => {
+    const prisma = {
+      database: { findUnique: jest.fn().mockResolvedValue(pgDb) },
+      baseBackup: { findMany: jest.fn().mockResolvedValue([baseRow]) },
+    } as unknown as PrismaService;
+    const access = {
+      teamRole: jest.fn().mockResolvedValue("VIEWER"),
+      requireResourceAccess: jest.fn().mockResolvedValue(undefined),
+      membershipPermissions: jest.fn().mockResolvedValue(new Set()),
+    } as unknown as TeamAccessService;
+    const [v] = await make(prisma, access).listBaseBackups("u1", "db1");
+    expect(v.errorTail).toBeNull();
+    expect(v.sizeBytes).toBe("999");
+    expect(JSON.stringify(v)).not.toContain("secret detail");
+  });
+
+  it("removeBaseBackup deletes the object from its OWN destination then the row", async () => {
+    const del = jest.fn().mockResolvedValue({});
+    const prisma = {
+      database: { findUnique: jest.fn().mockResolvedValue(pgDb) },
+      baseBackup: { findFirst: jest.fn().mockResolvedValue({ ...baseRow, filename: "old.basebackup.tar.gz", destinationId: "oldDest" }), delete: del },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const destinationSpecById = jest.fn().mockResolvedValue({ type: "LOCAL", encryption: { enabled: false, key: "" } });
+    const runner = { destinationSpecById } as unknown as BackupRunnerService;
+    const sendCommand = jest.fn().mockResolvedValue({ output: "", exitCode: 0 });
+    const svc = make(prisma, access, runner, {}, { sendCommand } as unknown as AgentWsServer);
+    await svc.removeBaseBackup("u1", "db1", "bb1");
+    expect(destinationSpecById).toHaveBeenCalledWith("oldDest");
+    expect(sendCommand).toHaveBeenCalledWith("s1", expect.stringContaining("db1/base/old.basebackup.tar.gz"), "backup");
+    expect(del).toHaveBeenCalledWith({ where: { id: "bb1" } });
+  });
+
+  it("removeBaseBackup refuses a RUNNING base (409) and deletes nothing — never breaks the in-flight runner", async () => {
+    const del = jest.fn();
+    const prisma = {
+      database: { findUnique: jest.fn().mockResolvedValue(pgDb) },
+      baseBackup: { findFirst: jest.fn().mockResolvedValue({ ...baseRow, status: "RUNNING" }), delete: del },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const sendCommand = jest.fn();
+    const svc = make(prisma, access, { destinationSpecById: jest.fn() } as unknown as BackupRunnerService, {}, { sendCommand } as unknown as AgentWsServer);
+    await expect(svc.removeBaseBackup("u1", "db1", "bb1")).rejects.toBeInstanceOf(ConflictException);
+    expect(sendCommand).not.toHaveBeenCalled();
+    expect(del).not.toHaveBeenCalled();
   });
 });

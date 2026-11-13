@@ -1,12 +1,13 @@
 import {
   BadGatewayException,
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
 import { z } from "zod";
-import { Backup, Database, Restore, RestoreKind, RestoreStatus } from "@prisma/client";
+import { Backup, BaseBackup, Database, Restore, RestoreKind, RestoreStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
@@ -15,8 +16,10 @@ import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { NotificationsService } from "../notifications/notifications.service";
 import { resolveImage, supportsBackup, type DbEngine } from "../databases/database-script";
 import { buildBackupExportUrlScript, buildDeleteBackupScript, buildImportScript, buildRestoreScript } from "./backup-script";
+import { baseNs } from "./base-backup-script";
 import { parseShareUrl } from "./destination";
 import { BackupRunnerService } from "./backup-runner.service";
+import { BaseBackupRunnerService } from "./base-backup-runner.service";
 import { BackupSchedulerService } from "./backups.scheduler.service";
 import { BackupAlertsService } from "./backup-alerts.service";
 import { planTargets } from "../bulk/bulk.service";
@@ -52,6 +55,24 @@ export const RestoreViewSchema = z.object({
 });
 export type RestoreView = z.infer<typeof RestoreViewSchema>;
 
+export const BaseBackupViewSchema = z.object({
+  id: z.string(),
+  status: z.string(),
+  filename: z.string(),
+  sizeBytes: z.string().nullable(), // BigInt serialized
+  destinationId: z.string().nullable(),
+  pgVersion: z.string().nullable(),
+  startLsn: z.string().nullable(), // WAL anchor for the PITR slices (best-effort; may be null)
+  timeline: z.number().nullable(),
+  createdBy: z.string(),
+  createdAt: z.date(),
+  completedAt: z.date().nullable(),
+  exitCode: z.number().nullable(),
+  durationMs: z.number().nullable(),
+  errorTail: z.string().nullable(), // writer-only (scrubbed command output)
+});
+export type BaseBackupView = z.infer<typeof BaseBackupViewSchema>;
+
 @Injectable()
 export class BackupsService {
   constructor(
@@ -63,6 +84,7 @@ export class BackupsService {
     private readonly scheduler: BackupSchedulerService,
     private readonly notifications: NotificationsService,
     private readonly alerts: BackupAlertsService,
+    private readonly baseRunner: BaseBackupRunnerService,
   ) {}
 
   async listRestores(userId: string, dbId: string): Promise<RestoreView[]> {
@@ -379,6 +401,60 @@ export class BackupsService {
     // Re-arm the verify-liveness watchdog from now + clear stale alerts.
     await this.alerts.onScheduleChanged("verify", dbId);
     return db;
+  }
+
+  // ── physical base backups (pg_basebackup) — the PITR base image. A SIBLING family: recorded in BaseBackup,
+  //    never in Backup, so the logical backup / verify / prune / watchdog paths are untouched. Postgres-only. ──
+
+  async baseBackupNow(userId: string, dbId: string): Promise<BaseBackupView> {
+    const db = await this.requireWrite(userId, dbId);
+    if ((db.engine as DbEngine) !== "POSTGRES") {
+      throw new BadRequestException("physical base backups are supported only for Postgres");
+    }
+    const row = await this.baseRunner.runBaseBackup(dbId, userId);
+    return this.baseView(row, true); // requireWrite above → the caller is a writer
+  }
+
+  async listBaseBackups(userId: string, dbId: string): Promise<BaseBackupView[]> {
+    const db = await this.require(userId, dbId);
+    // errorTail is command output → writers only (same gate as list()).
+    const perms = await this.access.membershipPermissions(userId, db.teamId);
+    const canWrite = perms?.has("backups") ?? false;
+    const rows = await this.prisma.baseBackup.findMany({ where: { databaseId: dbId }, orderBy: { createdAt: "desc" }, take: 50 });
+    return rows.map((r) => this.baseView(r, canWrite));
+  }
+
+  async removeBaseBackup(userId: string, dbId: string, baseId: string): Promise<void> {
+    const db = await this.requireWrite(userId, dbId);
+    const row = await this.prisma.baseBackup.findFirst({ where: { id: baseId, databaseId: dbId } });
+    if (!row) throw new NotFoundException("base backup not found");
+    // Refuse while it is still RUNNING: deleting the row + its half-written object would make the in-flight
+    // runner's completion update throw (record gone) and strand the finished artifact. Let it finish first.
+    if (row.status === "RUNNING") throw new ConflictException("this base backup is still running — wait for it to finish");
+    // Delete from the base's OWN destination (same free-form namespace helper the runner stores under).
+    const dest = await this.runner.destinationSpecById(row.destinationId);
+    await this.agentWs.sendCommand(db.serverId, buildDeleteBackupScript(baseNs(dbId), row.filename, dest), "backup").catch(() => undefined);
+    await this.prisma.baseBackup.delete({ where: { id: row.id } });
+    await this.audit.log({ actor: userId, action: "database.basebackup.remove", target: dbId });
+  }
+
+  private baseView(b: BaseBackup, canWrite: boolean): BaseBackupView {
+    return {
+      id: b.id,
+      status: b.status,
+      filename: b.filename,
+      sizeBytes: b.sizeBytes != null ? b.sizeBytes.toString() : null,
+      destinationId: b.destinationId,
+      pgVersion: b.pgVersion,
+      startLsn: b.startLsn,
+      timeline: b.timeline,
+      createdBy: b.createdBy,
+      createdAt: b.createdAt,
+      completedAt: b.completedAt,
+      exitCode: b.exitCode,
+      durationMs: b.durationMs,
+      errorTail: canWrite ? b.errorTail : null,
+    };
   }
 
   // ── helpers ──
