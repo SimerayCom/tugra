@@ -34,6 +34,10 @@ function ServersPageInner() {
   const { data: servers, isLoading, isError, refetch } = useQuery({
     queryKey: ["servers"],
     queryFn: () => api.listServers(),
+    // Poll so an agent going OFFLINE→ONLINE shows on its own (the detail page + fleet already poll 5s; the
+    // list had no interval, so its status badges only updated on a manual refresh/navigation). Selection
+    // state is component-local, so a background refetch never clears it.
+    refetchInterval: 5000,
   });
   const trends = useFleetTrend();
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });

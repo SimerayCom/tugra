@@ -34,6 +34,7 @@ import { PageHeader } from "../../../../components/page-header";
 import { Tabs } from "../../../../components/tabs-nav";
 import { usePatchLogStream } from "../../../../hooks/useDeployLogStream";
 import { useMetricsStream } from "../../../../hooks/useMetricsStream";
+import { useServerReconnect } from "../../../../hooks/useServerReconnect";
 
 const serverColor = (s: ServerStatus) =>
   s === "ONLINE" ? "var(--c-g)" : s === "PENDING" ? "var(--c-am)" : "var(--c-r)";
@@ -92,6 +93,10 @@ export default function ServerDetailPage() {
     if (prevStatus.current === "PENDING" && server?.status === "ONLINE") setEnrolled(true);
     if (server) prevStatus.current = server.status;
   }, [server?.status]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Agent came back (any non-ONLINE → ONLINE): the Maintenance/Updates/Proxy cards are one-shot queries that
+  // loaded or errored while it was down and never refetch on their own — re-pull everything keyed to this
+  // server on the status edge so the panel recovers WITHOUT a manual refresh.
+  useServerReconnect(id, server?.status);
 
   if (isError && !server) return <div style={{ padding: "var(--page-pad)" }}><ErrorState onRetry={() => refetch()} /></div>;
   if (isLoading || !server) return <ServerDetailSkeleton />;
