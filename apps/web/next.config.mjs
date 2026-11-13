@@ -5,6 +5,10 @@ const nextConfig = {
   // live logs/metrics/update-progress in the quick start. A reverse proxy does compression anyway.
   compress: false,
   transpilePackages: ["@tugra/shared"],
+  // Some hub calls are synchronous and long-running by design (PITR enable = preflight + recreate + archive
+  // verify; a physical base backup; the restore-verify drill). Next's rewrite proxy would otherwise cut them at
+  // its 30s default and the UI would report a failure for an operation that then completes server-side.
+  experimental: { proxyTimeout: 600_000 },
   // Same-origin proxy: the SPA calls "/api/v1/*" (relative), rewritten to the hub's versioned API so the
   // httpOnly session cookies stay same-origin (SameSite=Lax, no CORS). HUB_INTERNAL_URL is a server-side
   // env (the hub's address reachable from the Next server). OAuth start is exempt from the /api/v1 prefix

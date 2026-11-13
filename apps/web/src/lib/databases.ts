@@ -68,3 +68,14 @@ export function engineSupportsBackup(engine: DbEngine): boolean {
   // libSQL has no dump/restore pipeline (its SQLite file is captured by volume backups) — mirror the hub.
   return engine !== "LIBSQL";
 }
+
+/** PITR switch state derived from the two row fields (mirrors the hub's state machine: no stamp = still arming). */
+export function pitrState(db: { pitrEnabled: boolean; pitrEnabledAt: string | null }): "OFF" | "ARMING" | "ACTIVE" {
+  if (!db.pitrEnabled) return "OFF";
+  return db.pitrEnabledAt ? "ACTIVE" : "ARMING";
+}
+
+/** Only a Postgres database that supports backups can have PITR at all. */
+export function pitrAvailable(db: { engine: DbEngine; backupSupported: boolean }): boolean {
+  return db.engine === "POSTGRES" && db.backupSupported;
+}

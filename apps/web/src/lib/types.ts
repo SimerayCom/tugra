@@ -1613,3 +1613,14 @@ export interface TrafficAnalyticsState {
   apply: TrafficApplyState;
   applyError: string | null;
 }
+
+/** PITR (point-in-time recovery) switch state for a Postgres database — GET /databases/:id/pitr. */
+export type PitrState = "OFF" | "ARMING" | "ACTIVE";
+export interface PitrStatus {
+  enabled: boolean;
+  state: PitrState;
+  enabledAt: string | null;
+  destinationType: "LOCAL" | "S3";
+  /** ACTIVE but no base backup taken since enabling — WAL alone cannot anchor a recovery. */
+  needsBaseBackup: boolean;
+}

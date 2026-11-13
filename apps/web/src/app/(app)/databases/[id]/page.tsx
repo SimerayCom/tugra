@@ -7,7 +7,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, databaseIconUrl } from "../../../../lib/api";
 import { cropToPngBase64 } from "../../../../lib/icon";
 import { Menu } from "../../../../components/menu";
-import { dbColor, engineLabel, isDbTransitional } from "../../../../lib/databases";
+import { dbColor, engineLabel, isDbTransitional, pitrAvailable, pitrState } from "../../../../lib/databases";
+import type { Database, PitrState } from "../../../../lib/types";
 import { backupColor, formatSize, lastErrorLine, restoreColor } from "../../../../lib/backups";
 import { BackupRunModal } from "../../../../components/backup-run-modal";
 import { ErrorState } from "../../../../components/error-state";
@@ -384,6 +385,12 @@ export default function DatabaseDetailPage() {
         </Card>
       )}
 
+      {tab === "backups" && db.canWrite && pitrAvailable(db) && (
+        <div style={{ marginBottom: 16 }}>
+          <DbPitrCard id={id} db={db} />
+        </div>
+      )}
+
       {tab === "backups" && db.canWrite && db.backupSupported && (
         <SectionCard
           title={t("databases.backups")}
@@ -563,6 +570,128 @@ const limField: React.CSSProperties = {
   fontSize: 12,
   fontFamily: "inherit",
 };
+
+/**
+ * PITR (point-in-time recovery) switch for a Postgres database. Enable is a restart-class action (the hub
+ * recreates the container with WAL archiving on, verifies it end to end and auto-rolls back on failure), so it is
+ * a confirmed button, not a draft setting. Disable drains un-shipped WAL first; discarding it is an explicit opt-in.
+ * The ARMING state (flag on, not yet verified — e.g. the hub restarted mid-enable) offers "finish enabling".
+ */
+function DbPitrCard({ id, db }: { id: string; db: Database }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const confirm = useConfirm();
+  const [purge, setPurge] = useState(false);
+  const { data: status, isError: statusError } = useQuery({
+    queryKey: ["pitr", id],
+    queryFn: () => api.getDatabasePitr(id),
+    refetchInterval: (q) => (q.state.data?.state === "ARMING" ? 2000 : 10000),
+  });
+  const state: PitrState = status?.state ?? pitrState(db);
+  const errMsg = (e: unknown) => (e instanceof Error && e.message ? e.message : t("databases.actionFailed"));
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["pitr", id] });
+    qc.invalidateQueries({ queryKey: ["database", id] });
+  };
+  const set = useMutation({
+    // purgeSpool is an explicit, irreversible opt-in: only ever sent for a disable from ACTIVE (the only state that
+    // shows the checkbox), never carried over from a stale tick.
+    mutationFn: (enabled: boolean) => api.setDatabasePitr(id, enabled ? { enabled } : { enabled, purgeSpool: state === "ACTIVE" && purge }),
+    onSuccess: (s) => {
+      qc.setQueryData(["pitr", id], s); // no stale flicker until the next poll
+      toast(s.enabled ? t("databases.pitrEnabled") : t("databases.pitrDisabled"), "success");
+    },
+    onError: (e) => toast(errMsg(e), "error"),
+    onSettled: () => {
+      setPurge(false);
+      invalidate();
+    },
+  });
+  // The base-backup call is SYNCHRONOUS (it returns the finished row), so the toast must follow its outcome.
+  const base = useMutation({
+    mutationFn: () => api.baseBackupNow(id),
+    onSuccess: (r) => {
+      if (r.status === "FAILED") toast(t("databases.pitrBaseFailed"), "error");
+      else if (r.status === "RUNNING") toast(t("databases.pitrBaseStarted"), "success");
+      else toast(t("databases.pitrBaseDone"), "success");
+    },
+    onError: (e) => toast(errMsg(e), "error"),
+    onSettled: invalidate,
+  });
+  // A stale inline error (e.g. "already in progress") must not outlive the state it described.
+  const resetSet = set.reset;
+  useEffect(() => {
+    resetSet();
+  }, [state, resetSet]);
+  // Every transition restarts the database (resume re-verifies; disabling an ARMING row rolls back) — confirm all.
+  const enable = async () => {
+    if (!(await confirm({ body: t(state === "ARMING" ? "databases.pitrResumeConfirm" : "databases.pitrEnableConfirm") }))) return;
+    set.mutate(true);
+  };
+  const disable = async () => {
+    const purging = state === "ACTIVE" && purge;
+    if (!(await confirm({ body: t(purging ? "databases.pitrDisablePurgeConfirm" : "databases.pitrDisableConfirm"), danger: true }))) return;
+    set.mutate(false);
+  };
+  const stateColor = state === "ACTIVE" ? "var(--c-g)" : state === "ARMING" ? "var(--c-am)" : "var(--c-tx3)";
+  const stateLabel = state === "ACTIVE" ? t("databases.pitrStateActive") : state === "ARMING" ? t("databases.pitrStateArming") : t("databases.pitrStateOff");
+  const busyLabel = set.isPending ? (set.variables ? t("databases.pitrEnabling") : t("databases.pitrDisabling")) : null;
+  const destLabel = status ? t(status.destinationType === "LOCAL" ? "databases.pitrDestLocal" : "databases.pitrDestS3") : null;
+  return (
+    <SectionCard
+      title={t("databases.pitrTitle")}
+      desc={t("databases.pitrDesc")}
+      style={{ marginBottom: 0 }}
+      right={
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          {state !== "ACTIVE" && (
+            <Btn onClick={enable} loading={set.isPending && set.variables === true} disabled={set.isPending}>
+              {busyLabel && set.variables ? busyLabel : state === "ARMING" ? t("databases.pitrResume") : t("databases.pitrEnable")}
+            </Btn>
+          )}
+          {state !== "OFF" && (
+            <Btn variant="dangerGhost" onClick={disable} loading={set.isPending && set.variables === false} disabled={set.isPending}>
+              {busyLabel && !set.variables ? busyLabel : t("databases.pitrDisable")}
+            </Btn>
+          )}
+        </div>
+      }
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 13 }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", color: "var(--c-tx2)" }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <span aria-hidden style={{ width: 8, height: 8, borderRadius: 999, background: stateColor }} />
+            <span style={{ color: stateColor, fontWeight: 600 }}>{stateLabel}</span>
+          </span>
+          {state === "ACTIVE" && status?.enabledAt && <span>{t("databases.pitrEnabledSince", { date: new Date(status.enabledAt).toLocaleString() })}</span>}
+          {destLabel && <span style={{ color: "var(--c-tx3)" }}>{t("databases.pitrDestination", { type: destLabel })}</span>}
+        </div>
+        {state === "ARMING" && <div role="status" style={{ color: "var(--c-am)" }}>{t("databases.pitrArmingHint")}</div>}
+        {statusError && !status && <div role="status" style={{ color: "var(--c-am)" }}>{t("databases.pitrStatusUnavailable")}</div>}
+        {status?.destinationType === "LOCAL" && (
+          // Shown in every state: the user should know BEFORE enabling that WAL would stay on the same disk.
+          <div role="status" style={{ color: "var(--c-am)" }}>{t("databases.pitrLocalWarning")}</div>
+        )}
+        {state === "ACTIVE" && status?.needsBaseBackup && (
+          <div role="status" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", color: "var(--c-am)" }}>
+            <span>{t("databases.pitrNeedsBase")}</span>
+            <Btn variant="ghost" onClick={() => base.mutate()} loading={base.isPending} disabled={base.isPending || set.isPending}>
+              {t("databases.pitrTakeBase")}
+            </Btn>
+          </div>
+        )}
+        {state === "ACTIVE" && (
+          <label style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--c-tx2)" }} title={t("databases.pitrPurgeSpoolHint")}>
+            <input type="checkbox" checked={purge} onChange={(e) => setPurge(e.target.checked)} disabled={set.isPending} />
+            {t("databases.pitrPurgeSpool")}
+          </label>
+        )}
+        {set.isError && <div role="alert" style={{ color: "var(--c-r)" }}>{errMsg(set.error)}</div>}
+      </div>
+    </SectionCard>
+  );
+}
 
 function DbLimitsCard({ id, healthCmd, memoryMb, cpus }: { id: string; healthCmd: string | null; memoryMb: number | null; cpus: number | null }) {
   const t = useT();

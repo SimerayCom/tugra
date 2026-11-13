@@ -102,6 +102,7 @@ import type {
   TemplateManifest,
   TokenPair,
   TunnelView,
+  PitrStatus,
 } from "./types";
 
 // Same-origin path the SPA calls; next.config rewrites proxy it to the hub, so the httpOnly session
@@ -1653,6 +1654,22 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(cfg),
     });
+  },
+  // PITR (Postgres): status + the enable/disable switch. Enable recreates the container with WAL archiving on
+  // (a one-time restart) and verifies it end to end; disable drains the un-shipped WAL first. Both are
+  // synchronous and can take a minute or more.
+  getDatabasePitr(dbId: string) {
+    return apiFetch<PitrStatus>(`/databases/${dbId}/pitr`);
+  },
+  setDatabasePitr(dbId: string, cfg: { enabled: boolean; purgeSpool?: boolean }) {
+    return apiFetch<PitrStatus>(`/databases/${dbId}/pitr`, {
+      method: "PUT",
+      body: JSON.stringify(cfg),
+    });
+  },
+  // Physical base backup (pg_basebackup) — the anchor a PITR recovery replays WAL onto. Long-running.
+  baseBackupNow(dbId: string) {
+    return apiFetch<{ id: string; status: string }>(`/databases/${dbId}/base-backups`, { method: "POST" });
   },
   bulkSetBackupConfig(databaseIds: string[], cfg: { enabled: boolean; intervalHours?: number; retention?: number }) {
     return apiFetch<{ applied: string[]; skipped: string[] }>(`/fleet/backup-config`, {
