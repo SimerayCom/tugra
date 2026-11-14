@@ -14,9 +14,15 @@
  *  - An unterminated quote is read leniently to end-of-input rather than throwing; the server rejects the
  *    resulting newline value, so it surfaces as an error, never as silently-persisted corruption. */
 
+import { flagsEqual } from "./env-flags";
+
+type EnvFlagLike = NonNullable<EnvRow["flags"]>;
+
 export interface EnvRow {
   key: string;
   value: string;
+  /** Per-variable flags (apps only; the database card never sets it). */
+  flags?: { buildTime: boolean; runtime: boolean; literal: boolean; multiline: boolean };
 }
 
 /** A value that can't be written bare on a `KEY=value` line without changing its meaning on the way back
@@ -134,14 +140,25 @@ export function duplicateKeys(rows: EnvRow[]): string[] {
  * post-error Save would silently wipe everything. Gate on this: it is false until the env has loaded, and
  * false when the rows already match what's stored (nothing to save), true only when there's a real change.
  */
-export function envDirty(rows: EnvRow[], stored: Record<string, string> | undefined): boolean {
+export function envDirty(
+  rows: EnvRow[],
+  stored: Record<string, string> | undefined,
+  storedFlags?: Record<string, Partial<EnvFlagLike>>,
+): boolean {
   if (!stored) return false; // not loaded yet, or the load failed — never safe to save
   const map: Record<string, string> = {};
-  for (const r of rows) if (r.key.trim()) map[r.key.trim()] = r.value;
+  const flags: Record<string, EnvRow["flags"]> = {};
+  for (const r of rows) {
+    if (!r.key.trim()) continue;
+    map[r.key.trim()] = r.value;
+    flags[r.key.trim()] = r.flags;
+  }
   const mapKeys = Object.keys(map);
   const storedKeys = Object.keys(stored);
   if (mapKeys.length !== storedKeys.length) return true;
   for (const k of mapKeys) if (stored[k] !== map[k]) return true;
+  // Flags only participate when the caller tracks them (the apps card); the database card stays exactly as before.
+  if (storedFlags) for (const k of mapKeys) if (!flagsEqual(flags[k], storedFlags[k])) return true;
   return false;
 }
 

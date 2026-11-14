@@ -196,3 +196,19 @@ describe("invalidKeys", () => {
     expect(invalidKeys([{ key: "FOO", value: "" }, { key: "BAR_BAZ2", value: "" }])).toEqual([]);
   });
 });
+
+describe("envDirty with flags", () => {
+  const rows = [{ key: "A", value: "1", flags: { buildTime: false, runtime: true, literal: false, multiline: false } }];
+  it("Record-only form is unchanged (flags ignored when not tracked)", () => {
+    expect(envDirty([{ key: "A", value: "1", flags: { buildTime: true, runtime: true, literal: false, multiline: false } }], { A: "1" })).toBe(false);
+  });
+  it("a flag-only change is dirty; the same flags in a different shape are not", () => {
+    expect(envDirty([{ ...rows[0], flags: { ...rows[0].flags, multiline: true } }], { A: "1" }, {})).toBe(true);
+    expect(envDirty(rows, { A: "1" }, {})).toBe(false);
+    expect(envDirty(rows, { A: "1" }, { A: { runtime: true } })).toBe(false); // sparse stored form, other order/omitted
+    expect(envDirty([{ ...rows[0], flags: { multiline: true, literal: false, runtime: true, buildTime: false } }], { A: "1" }, { A: { multiline: true } })).toBe(false);
+  });
+  it("still false before the env has loaded", () => {
+    expect(envDirty(rows, undefined, {})).toBe(false);
+  });
+});

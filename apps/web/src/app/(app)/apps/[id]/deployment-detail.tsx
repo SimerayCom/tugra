@@ -186,7 +186,7 @@ export function DeploymentDetailView({
             {d.configChanges.map((c) => (
               <div key={c.field} className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>
                 <span style={{ color: c.kind === "added" ? "var(--c-g)" : c.kind === "removed" ? "var(--c-r)" : "var(--c-a)" }}>{t(`apps.cfg_${c.kind}`)}</span>{" "}
-                <span style={{ color: "var(--c-tx2)" }}>{c.field}</span>
+                <span style={{ color: "var(--c-tx2)" }}>{c.field.startsWith("envFlags.") ? t("apps.configEnvFlags", { key: c.field.slice("envFlags.".length) }) : c.field}</span>
                 {c.kind === "changed" && <span>: {c.before} → {c.after}</span>}
                 {c.kind === "added" && c.after != null && <span>: {c.after}</span>}
               </div>

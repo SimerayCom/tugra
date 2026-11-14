@@ -100,6 +100,21 @@ describe("DeploymentDetailPage", () => {
     expect(screen.queryByRole("button", { name: "Analyze with AI" })).toBeNull();
   });
 
+  it("renders env flag changes with a readable label and token chips, and a build-env change with the secret placeholder", async () => {
+    vi.spyOn(api, "getDeployment").mockResolvedValue(
+      dep({
+        configChanges: [
+          { field: "envFlags.PEM_KEY", kind: "changed", before: "multiline", after: "literal+multiline" },
+          { field: "buildEnv.API_URL", kind: "changed", before: "•••", after: "•••" },
+        ],
+      }),
+    );
+    wrap();
+    expect(await screen.findByText("PEM_KEY options")).toBeTruthy();
+    expect(screen.getByText(/multiline → literal\+multiline/)).toBeTruthy();
+    expect(screen.getByText("buildEnv.API_URL")).toBeTruthy();
+  });
+
   it("an older rollbackable deploy offers Roll back (confirm → api.rollbackApp); a FAILED one offers AI analysis and shows the result", async () => {
     vi.spyOn(api, "getDeployment").mockResolvedValue(dep({ isCurrent: false, status: "FAILED", exitCode: 1, rollbackable: false }));
     wrap();

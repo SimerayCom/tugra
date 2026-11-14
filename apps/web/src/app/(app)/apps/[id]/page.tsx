@@ -265,7 +265,7 @@ export default function AppDetailPage() {
     credentials: () => (
       <CredentialsCard id={id} source={appData.source} gitUrl={appData.gitUrl} composePath={appData.composePath} hasGitToken={appData.hasGitToken} hasGitSshKey={appData.hasGitSshKey} gitSshPublicKey={appData.gitSshPublicKey} registryUrl={appData.registryUrl} registryUser={appData.registryUser} />
     ),
-    env: () => <EnvCard id={id} clusterId={appData.clusterId} canWrite={appData.canWrite} />,
+    env: () => <EnvCard id={id} clusterId={appData.clusterId} canWrite={appData.canWrite} flagsEnabled />,
     databaseLinks: () => <DatabaseLinksCard id={id} serverId={appData.serverId} canWrite={appData.canWrite} />,
     secretRefs: () => <AppSecretRefsCard id={id} teamId={appData.teamId} canWrite={appData.canWrite} />,
     expose: () => (

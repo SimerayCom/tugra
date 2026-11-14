@@ -5,7 +5,7 @@ import React from "react";
 import { I18nProvider } from "../i18n/provider";
 import { ToastProvider } from "./toast";
 import { EnvCard } from "./env-card";
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
 
 vi.mock("../lib/clipboard", () => ({ copyText: vi.fn().mockResolvedValue(true) }));
 import { copyText } from "../lib/clipboard";
@@ -229,5 +229,161 @@ describe("EnvCard", () => {
     expect(unload()).toBe(false);
     fireEvent.change(screen.getByDisplayValue("1"), { target: { value: "2" } });
     expect(unload()).toBe(true);
+  });
+});
+
+describe("EnvCard — per-variable flags (flagsEnabled)", () => {
+  const view = (o: Partial<{ buildTime: boolean; runtime: boolean; literal: boolean; multiline: boolean }> = {}) => ({ buildTime: false, runtime: true, literal: false, multiline: false, ...o });
+  const flagsResp = (flags: Record<string, ReturnType<typeof view>> = {}, applicable = { buildTime: true, literal: false }) => ({
+    flags,
+    applicable,
+    limits: { multilineValueBytes: 16384, multilineKeys: 32, multilineTotalBytes: 49152, buildTotalBytes: 49152 },
+  });
+  const setup = (env: Record<string, string>, flags = flagsResp(), canWrite = true) => {
+    vi.spyOn(api, "getAppEnv").mockResolvedValue(env);
+    vi.spyOn(api, "getAppEnvFlags").mockResolvedValue(flags);
+    const setAppEnv = vi.spyOn(api, "setAppEnv").mockResolvedValue({ ok: true });
+    wrap(<EnvCard id="a1" canWrite={canWrite} flagsEnabled />);
+    return { setAppEnv };
+  };
+  const saveBtn = () => screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+
+  it("loads flags, shows chips for non-default flags, and the plain card (no flagsEnabled) never asks for them", async () => {
+    setup({ A: "1", B: "2" }, flagsResp({ A: view({ buildTime: true, runtime: false }), B: view({ multiline: true }) }));
+    await screen.findByDisplayValue("1");
+    expect(screen.getByText("Build only")).toBeTruthy();
+    expect(screen.getByText("Multiline")).toBeTruthy();
+    expect(api.getAppEnvFlags).toHaveBeenCalledWith("a1");
+    cleanup();
+    vi.spyOn(api, "getAppEnv").mockResolvedValue({ A: "1" });
+    const spy = vi.spyOn(api, "getAppEnvFlags");
+    spy.mockClear();
+    wrap(<EnvCard id="a1" canWrite />);
+    await screen.findByDisplayValue("1");
+    expect(spy).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Variable options" })).toBeNull();
+  });
+
+  it("Save stays disabled until BOTH queries loaded (never a PUT with partial state)", async () => {
+    vi.spyOn(api, "getAppEnv").mockResolvedValue({ A: "1" });
+    let release!: (v: ReturnType<typeof flagsResp>) => void;
+    vi.spyOn(api, "getAppEnvFlags").mockReturnValue(new Promise((r) => (release = r)));
+    wrap(<EnvCard id="a1" canWrite flagsEnabled />);
+    await waitFor(() => expect(api.getAppEnv).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull(); // spinner, no editor yet
+    await act(async () => release(flagsResp()));
+    await screen.findByDisplayValue("1");
+    expect(saveBtn().disabled).toBe(true);
+  });
+
+  it("the options panel toggles each flag; a flag-only edit enables Save and the PUT carries flags", async () => {
+    const { setAppEnv } = setup({ A: "1" });
+    await screen.findByDisplayValue("1");
+    const optsBtn = screen.getByRole("button", { name: "Variable options" });
+    expect(optsBtn.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(optsBtn);
+    expect(optsBtn.getAttribute("aria-expanded")).toBe("true");
+    expect(saveBtn().disabled).toBe(true);
+    fireEvent.click(screen.getByLabelText("Multiline value"));
+    expect(saveBtn().disabled).toBe(false);
+    fireEvent.click(screen.getByLabelText("Available at build time"));
+    expect(screen.getByLabelText("Available at runtime")).toBeTruthy(); // only shown once build time is on
+    fireEvent.click(screen.getByLabelText("Available at runtime"));
+    fireEvent.click(saveBtn());
+    await waitFor(() => expect(setAppEnv).toHaveBeenCalled());
+    expect(setAppEnv).toHaveBeenCalledWith("a1", { A: "1" }, { A: { buildTime: true, runtime: false, literal: false, multiline: true } });
+  });
+
+  it("applicable flags hide Build/Literal: Literal shows the inert note, Build is absent", async () => {
+    setup({ A: "1" }, flagsResp({}, { buildTime: false, literal: false }));
+    await screen.findByDisplayValue("1");
+    fireEvent.click(screen.getByRole("button", { name: "Variable options" }));
+    expect(screen.queryByLabelText("Available at build time")).toBeNull();
+    expect(screen.queryByLabelText("Literal value")).toBeNull();
+    expect(screen.getByText("This app type already passes every value literally.")).toBeTruthy();
+    expect(screen.getByLabelText("Multiline value")).toBeTruthy();
+  });
+
+  it("a Compose app shows the Literal checkbox", async () => {
+    setup({ A: "1" }, flagsResp({}, { buildTime: false, literal: true }));
+    await screen.findByDisplayValue("1");
+    fireEvent.click(screen.getByRole("button", { name: "Variable options" }));
+    expect(screen.getByLabelText("Literal value")).toBeTruthy();
+  });
+
+  it("a multiline row is a textarea named Value when revealed, and a masked 'N lines' block otherwise", async () => {
+    setup({ PEM: "l1\nl2\nl3" }, flagsResp({ PEM: view({ multiline: true }) }));
+    await screen.findByTestId("env-ml-masked");
+    expect(screen.getByTestId("env-ml-masked").textContent).toContain("3 lines");
+    expect(screen.queryByLabelText("Value")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Reveal value" }));
+    const ta = screen.getByLabelText("Value") as HTMLTextAreaElement;
+    expect(ta.tagName).toBe("TEXTAREA");
+    expect(ta.value).toBe("l1\nl2\nl3");
+  });
+
+  it("pasting text with line breaks into a single-line value turns Multiline on and keeps the full text", async () => {
+    const { setAppEnv } = setup({ K: "" });
+    await screen.findByLabelText("Value");
+    const input = screen.getByLabelText("Value") as HTMLInputElement;
+    fireEvent.paste(input, { clipboardData: { getData: () => "-----BEGIN-----\nabc\n-----END-----" } });
+    const ta = (await screen.findByRole("button", { name: "Reveal value" })) && screen.getByTestId("env-ml-masked");
+    expect(ta.textContent).toContain("3 lines");
+    expect(screen.getByText("Multiline")).toBeTruthy(); // chip
+    fireEvent.click(saveBtn());
+    await waitFor(() => expect(setAppEnv).toHaveBeenCalled());
+    expect(setAppEnv.mock.calls[0][1]).toEqual({ K: "-----BEGIN-----\nabc\n-----END-----" });
+    expect(setAppEnv.mock.calls[0][2]).toMatchObject({ K: { multiline: true } });
+  });
+
+  it("bulk edit: a quoted multiline value gets the flag, existing flags survive a bulk apply", async () => {
+    setup({ A: "1" }, flagsResp({ A: view({ literal: true }) }, { buildTime: true, literal: true }));
+    await screen.findByDisplayValue("1");
+    fireEvent.click(screen.getByRole("button", { name: "Bulk edit" }));
+    const ta = screen.getByLabelText("Bulk edit") as HTMLTextAreaElement;
+    fireEvent.change(ta, { target: { value: 'A=1\nPEM="l1\nl2"' } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    expect(screen.getByText("Literal")).toBeTruthy(); // A kept its flag
+    expect(screen.getByTestId("env-ml-masked").textContent).toContain("2 lines"); // PEM auto-multiline
+  });
+
+  it("a line break without the flag (legacy data) shows an inline error, blocks Save, and one click turns Multiline on", async () => {
+    // jsdom strips line breaks typed into an <input>, so seed the state from stored data instead.
+    setup({ A: "a\nb", B: "x" });
+    await screen.findByDisplayValue("x");
+    expect(screen.getByText("This value has line breaks. Turn on Multiline to keep them.")).toBeTruthy();
+    expect(saveBtn().disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Turn on Multiline" }));
+    expect(screen.queryByText("This value has line breaks. Turn on Multiline to keep them.")).toBeNull();
+    expect(saveBtn().disabled).toBe(false);
+  });
+
+  it("reveal state follows the row through sort and delete when rows carry flags", async () => {
+    setup({ ZED: "1", ALPHA: "2" }, flagsResp({ ZED: view({ literal: true }) }, { buildTime: true, literal: true }));
+    await screen.findByDisplayValue("1");
+    fireEvent.click(screen.getAllByRole("button", { name: "Reveal value" })[1]); // ALPHA
+    fireEvent.click(screen.getByRole("button", { name: "Sort A-Z" }));
+    const keys = (screen.getAllByLabelText("Key") as HTMLInputElement[]).map((e) => e.value);
+    expect(keys).toEqual(["ALPHA", "ZED"]);
+    expect(vals("Value")).toEqual(["text", "password"]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[0]); // delete ALPHA
+    expect(vals("Value")).toEqual(["password"]);
+    expect(screen.getByText("Literal")).toBeTruthy(); // ZED's flags stayed on ZED
+  });
+
+  it("a server 400 shows the server's message under the card", async () => {
+    const { setAppEnv } = setup({ A: "x" });
+    setAppEnv.mockRejectedValue(new ApiError(400, "variable LD_PRELOAD: a multiline variable name must use letters"));
+    await screen.findByDisplayValue("x");
+    fireEvent.change(screen.getByLabelText("Value"), { target: { value: "y" } });
+    fireEvent.click(saveBtn());
+    expect(await screen.findByText(/Could not save the environment variables: variable LD_PRELOAD/)).toBeTruthy();
+  });
+
+  it("a read-only viewer sees chips but cannot change the flags", async () => {
+    setup({ PEM: "a\nb" }, flagsResp({ PEM: view({ multiline: true }) }), false);
+    await screen.findByTestId("env-ml-masked");
+    fireEvent.click(screen.getByRole("button", { name: "Variable options" }));
+    expect((screen.getByLabelText("Multiline value") as HTMLInputElement).disabled).toBe(true);
   });
 });

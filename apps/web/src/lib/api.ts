@@ -207,6 +207,14 @@ function readCookie(name: string): string | null {
   return null;
 }
 
+/** Per-variable env flags as the hub returns them (full booleans; defaults: runtime on, the rest off). */
+export type EnvFlagView = { buildTime: boolean; runtime: boolean; literal: boolean; multiline: boolean };
+export type EnvFlagsResponse = {
+  flags: Record<string, EnvFlagView>;
+  applicable: { buildTime: boolean; literal: boolean };
+  limits: { multilineValueBytes: number; multilineKeys: number; multilineTotalBytes: number; buildTotalBytes: number };
+};
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -1368,10 +1376,14 @@ export const api = {
   getAppEnv(id: string) {
     return apiFetch<Record<string, string>>(`/apps/${id}/env`);
   },
-  setAppEnv(id: string, env: Record<string, string>) {
+  getAppEnvFlags(id: string) {
+    return apiFetch<EnvFlagsResponse>(`/apps/${id}/env-flags`);
+  },
+  // `flags` is sent ONLY when provided: a present `flags` replaces every stored flag, an omitted one keeps them.
+  setAppEnv(id: string, env: Record<string, string>, flags?: Record<string, Partial<EnvFlagView>>) {
     return apiFetch<{ ok: true }>(`/apps/${id}/env`, {
       method: "PUT",
-      body: JSON.stringify({ env }),
+      body: JSON.stringify(flags === undefined ? { env } : { env, flags }),
     });
   },
   getAppDatabaseLinks(id: string) {
