@@ -744,6 +744,56 @@ describe("Applications / deploy (e2e)", () => {
     await put(b, "network-aliases", { aliases: ["shared-name"] }).expect(400); // the old setter can't bypass it
   });
 
+  it("delete cleanup: ?pruneNetworks=1&pruneBuildCache=1 sends the label-gated network rm and a builder prune; the default delete sends neither; bad combinations are 400", async () => {
+    const mkApp = async (name: string, body: Record<string, unknown> = {}) =>
+      (await request(app.getHttpServer()).post("/apps").set("Authorization", `Bearer ${token}`).send({ name, serverId, image: "nginx:alpine", ...body }).expect(201)).body.id as string;
+    const del = (id: string, qs = "") => request(app.getHttpServer()).delete(`/apps/${id}${qs}`).set("Authorization", `Bearer ${token}`);
+
+    const gitApp = async (name: string, nets: string[]) => {
+      const id = await mkApp(name);
+      await prisma.application.update({ where: { id }, data: { source: "GIT", networks: nets } });
+      return id;
+    };
+    const a = await gitApp("prune-a", ["e2e-own"]);
+    const b = await gitApp("prune-b", ["e2e-b"]);
+
+    commands.length = 0;
+    await del(b).expect(200); // default: nothing network/builder related
+    expect(commands.join("\n")).not.toMatch(/network rm|builder prune/);
+
+    commands.length = 0;
+    await del(a, "?pruneNetworks=1&pruneBuildCache=1").expect(200).expect({ ok: true });
+    const sent = commands.join("\n");
+    expect(sent).toContain(`docker network inspect -f '{{index .Labels "tugra.managed"}}' 'e2e-own'`);
+    expect(sent).toContain("docker network rm 'e2e-own'");
+    expect(sent).toContain("docker builder prune -f");
+  });
+
+  it("delete cleanup: a network another app still lists is kept, and refused combinations return 400 with nothing sent", async () => {
+    const mk = async (name: string, data: Record<string, unknown>) => {
+      const id = (await request(app.getHttpServer()).post("/apps").set("Authorization", `Bearer ${token}`).send({ name, serverId, image: "nginx:alpine" }).expect(201)).body.id as string;
+      await prisma.application.update({ where: { id }, data });
+      return id;
+    };
+    const del = (id: string, qs = "") => request(app.getHttpServer()).delete(`/apps/${id}${qs}`).set("Authorization", `Bearer ${token}`);
+    const x = await mk("keep-x", { source: "GIT", networks: ["e2e-keep", "e2e-gone"] });
+    const y = await mk("keep-y", { source: "GIT", networks: ["e2e-keep"] });
+    commands.length = 0;
+    await del(x, "?pruneNetworks=1").expect(200);
+    expect(commands.join("\n")).toContain("docker network rm 'e2e-gone'");
+    expect(commands.join("\n")).not.toContain("docker network rm 'e2e-keep'");
+
+    const img = await mk("img", { source: "IMAGE" });
+    const cmp = await mk("cmp", { source: "COMPOSE" });
+    commands.length = 0;
+    await del(img, "?pruneBuildCache=1").expect(400);
+    await del(cmp, "?pruneNetworks=1").expect(400);
+    expect(commands).toHaveLength(0);
+    await del(y).expect(200);
+    await del(img).expect(200);
+    await del(cmp).expect(200);
+  });
+
   it("configures a build server (registry required, push forced on) and rejects it without a registry", async () => {
     const regRes = await request(app.getHttpServer())
       .post("/registries")

@@ -13190,9 +13190,15 @@ export interface operations {
     };
     ApplicationsController_remove: {
         parameters: {
-            query: {
-                keepVolumes: string;
-                removeImages: string;
+            query?: {
+                /** @description 1 = keep the app's named volumes on the host */
+                keepVolumes?: string;
+                /** @description 1 = also remove the app's locally stored image tags */
+                removeImages?: string;
+                /** @description 1 = also remove its Tugra-created custom networks when no other app on the server uses them (classic apps) */
+                pruneNetworks?: string;
+                /** @description 1 = also prune dangling Docker build cache on the host that builds it (host-wide, built apps) */
+                pruneBuildCache?: string;
             };
             header?: never;
             path: {

@@ -112,3 +112,18 @@ describe("api instance settings (owner)", () => {
     expect(JSON.parse(calls[1].body!)).toEqual({ apiEnabled: false, apiAllowedIps: ["1.2.3.4"] });
   });
 });
+
+describe("api.deleteApp (cleanup query)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const urlFor = async (opts?: Parameters<typeof api.deleteApp>[1]) => {
+    const fetchMock = vi.fn(async () => jsonRes(200, { ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+    await api.deleteApp("a1", opts);
+    return String((fetchMock.mock.calls[0] as unknown as [string])[0]);
+  };
+  it("sends no query by default, and only the flags that are set", async () => {
+    expect(await urlFor()).toMatch(/\/apps\/a1$/);
+    expect(await urlFor({ keepVolumes: true, removeImages: true, pruneNetworks: true, pruneBuildCache: true })).toMatch(/\/apps\/a1\?keepVolumes=1&removeImages=1&pruneNetworks=1&pruneBuildCache=1$/);
+    expect(await urlFor({ pruneBuildCache: true })).toMatch(/\/apps\/a1\?pruneBuildCache=1$/);
+  });
+});

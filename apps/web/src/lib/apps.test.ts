@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { appColor, appStatusDisplay, appSourceSummary, appUrl, deploymentColor, shortDigest, webhookUrl } from "./apps";
+import { appColor, appStatusDisplay, deleteCleanupOptions, appSourceSummary, appUrl, deploymentColor, shortDigest, webhookUrl } from "./apps";
 
 describe("app helpers", () => {
   it("maps app status to a color", () => {
@@ -64,5 +64,22 @@ describe("appStatusDisplay", () => {
 
   it("never alarms on missing data", () => {
     expect(d("RUNNING", h("unknown", "CMD"))).toEqual({ key: "RUNNING", color: "var(--c-g)" });
+  });
+});
+
+describe("deleteCleanupOptions", () => {
+  it("IMAGE without custom networks offers neither", () => {
+    expect(deleteCleanupOptions({ source: "IMAGE", clusterId: null, networks: [] })).toEqual({ networks: [], buildCache: false });
+    expect(deleteCleanupOptions({ source: "IMAGE", clusterId: null, networks: ["tugra-apps"] })).toEqual({ networks: [], buildCache: false }); // the shared bridge is never listed
+  });
+  it("GIT with custom networks offers both, listing the names", () => {
+    expect(deleteCleanupOptions({ source: "GIT", clusterId: null, networks: ["tugra-apps", "backend", "db"] })).toEqual({ networks: ["backend", "db"], buildCache: true });
+  });
+  it("COMPOSE offers the build cache but no networks; IMAGE with networks offers networks only", () => {
+    expect(deleteCleanupOptions({ source: "COMPOSE", clusterId: null, networks: ["x"] })).toEqual({ networks: [], buildCache: true });
+    expect(deleteCleanupOptions({ source: "IMAGE", clusterId: null, networks: ["x"] })).toEqual({ networks: ["x"], buildCache: false });
+  });
+  it("a clustered app offers neither", () => {
+    expect(deleteCleanupOptions({ source: "GIT", clusterId: "c1", networks: ["x"] })).toEqual({ networks: [], buildCache: false });
   });
 });

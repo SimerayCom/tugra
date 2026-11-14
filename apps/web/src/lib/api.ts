@@ -1263,8 +1263,8 @@ export const api = {
   restartApp(id: string) {
     return apiFetch<{ ok: true }>(`/apps/${id}/restart`, { method: "POST" });
   },
-  deleteApp(id: string, keepVolumes = false, removeImages = false) {
-    const q = [keepVolumes ? "keepVolumes=1" : "", removeImages ? "removeImages=1" : ""].filter(Boolean).join("&");
+  deleteApp(id: string, opts: { keepVolumes?: boolean; removeImages?: boolean; pruneNetworks?: boolean; pruneBuildCache?: boolean } = {}) {
+    const q = [opts.keepVolumes ? "keepVolumes=1" : "", opts.removeImages ? "removeImages=1" : "", opts.pruneNetworks ? "pruneNetworks=1" : "", opts.pruneBuildCache ? "pruneBuildCache=1" : ""].filter(Boolean).join("&");
     return apiFetch<{ ok: true }>(`/apps/${id}${q ? `?${q}` : ""}`, { method: "DELETE" });
   },
   getDeployments(id: string, opts?: { slim?: boolean }) {

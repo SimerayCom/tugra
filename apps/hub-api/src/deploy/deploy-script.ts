@@ -7,7 +7,7 @@
 import { createHash } from "node:crypto";
 import { DB_NET } from "../databases/database-script"; // single source for the managed-DB network name
 import { injectableBuildArgs } from "./build-args";
-import { APPS_NETWORK } from "./network-names";
+import { APPS_NETWORK, isUserNetworkNameAllowed } from "./network-names";
 import {
   buildPanelRouterYaml,
   validateAcmeEmail,
@@ -1221,7 +1221,13 @@ function envPreludeFor(app: AppSpec): string[] {
  *  for a routed app with no db link and no extra networks, so those scripts stay byte-identical. */
 function dbNetPreludeFor(app: AppSpec): string[] {
   const plan = appNetworkPlan(app);
-  const make = (n: string) => `docker network create ${n === DB_NET || n === APPS_NETWORK ? n : shq(n)} 2>/dev/null || true`;
+  // A user-named network is created with an ownership label: it's the only thing that lets app deletion tell a
+  // network Tugra created (safe to prune, once unused) from one the operator made by hand. tugra-net / tugra-apps
+  // stay unlabelled and are never pruned.
+  const make = (n: string) =>
+    n === DB_NET || n === APPS_NETWORK
+      ? `docker network create ${n} 2>/dev/null || true`
+      : `docker network create --label ${NETWORK_OWNER_LABEL} ${shq(n)} 2>/dev/null || true`;
   return [
     ...(app.dbNetwork ? [make(DB_NET)] : []), // first line byte-identical to the db-only form
     ...(plan.primary === APPS_NETWORK ? [make(APPS_NETWORK)] : []),
@@ -2330,16 +2336,36 @@ export function buildStartScript(app: { id: string }): string {
   return `docker start ${containerName(app)}`;
 }
 
+/** Prune dangling Docker build cache on a host. `docker builder prune` without `-a` drops only unreferenced
+ *  records, so cache an in-flight build holds is spared. The cache is host-global (no per-app purge exists), so
+ *  this is the honest host-wide cleanup, distinct from the scheduled `builder prune -af --filter until=` sweep. */
+export function buildBuildCachePruneScript(): string {
+  return "docker builder prune -f 2>/dev/null || true";
+}
+
 /** Restart the app container (no rebuild). */
 export function buildRestartScript(app: { id: string }): string {
   return `docker restart ${containerName(app)}`;
 }
 
-export function buildRemoveScript(app: { id: string }, volumes: AppVolume[] = []): string {
+/** `docker network create --label` ownership marker for the user-named networks a deploy creates. */
+export const NETWORK_OWNER_LABEL = "tugra.managed=true";
+
+/**
+ * Remove an app's container, volumes and build tree. With `opts.networks` it also removes those user networks, but
+ * only the ones carrying the Tugra ownership label (a hand-made or pre-label network is left alone) and only while
+ * nothing is attached (docker refuses otherwise). Reserved and shared names are re-filtered here, so a buggy
+ * caller still can't remove tugra-proxy / tugra-net / tugra-apps or a docker built-in.
+ */
+export function buildRemoveScript(app: { id: string }, volumes: AppVolume[] = [], opts: { networks?: string[] } = {}): string {
   // Removing an app destroys its container and its named volumes (intentional).
+  const nets = [...new Set(opts.networks ?? [])].filter((n) => n !== APPS_NETWORK && isUserNetworkNameAllowed(n));
   return [
     `docker rm -f ${containerName(app)} 2>/dev/null || true`,
     ...volumes.map((v) => `docker volume rm ${appVolumeName(app, v.name)} 2>/dev/null || true`),
+    ...nets.map(
+      (n) => `docker network inspect -f '{{index .Labels "tugra.managed"}}' ${shq(n)} 2>/dev/null | grep -qx true && docker network rm ${shq(n)} 2>/dev/null || true`,
+    ),
     // Reclaim any leftover build working tree + Nixpacks plan (GIT apps clone into /etc/tugra/builds/<id>);
     // nothing references these once the app is gone, so they'd otherwise be orphaned on disk forever.
     `rm -rf /etc/tugra/builds/${app.id} /etc/tugra/builds/${app.id}.plan.json`,

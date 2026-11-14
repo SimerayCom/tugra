@@ -4,7 +4,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, appIconUrl } from "../../../../lib/api";
-import { appStatusDisplay, appSourceSummary, webhookUrl } from "../../../../lib/apps";
+import { appStatusDisplay, appSourceSummary, deleteCleanupOptions, webhookUrl } from "../../../../lib/apps";
 import { statusLabel } from "../../../../lib/status";
 import { useDeployLogStream } from "../../../../hooks/useDeployLogStream";
 import { type ChartEvent } from "../../../../components/charts";
@@ -108,8 +108,10 @@ export default function AppDetailPage() {
   // ticked in the confirm dialog isn't lost to a stale closure inside the async handler.
   const keepVolumes = useRef(false);
   const removeImages = useRef(false);
+  const pruneNetworks = useRef(false);
+  const pruneBuildCache = useRef(false);
   const del = useMutation({
-    mutationFn: () => api.deleteApp(id, keepVolumes.current, removeImages.current),
+    mutationFn: () => api.deleteApp(id, { keepVolumes: keepVolumes.current, removeImages: removeImages.current, pruneNetworks: pruneNetworks.current, pruneBuildCache: pruneBuildCache.current }),
     onSuccess: () => router.replace("/apps"),
     onError: (e) => toast(errMsg(e), "error"),
   });
@@ -119,10 +121,17 @@ export default function AppDetailPage() {
     if (!appData || del.isPending) return; // guard both entry points (header "…" menu + Danger-zone card) against a double-fire
     keepVolumes.current = false;
     removeImages.current = false;
+    pruneNetworks.current = false;
+    pruneBuildCache.current = false;
     // Offer "also remove images" only for Image/Git apps — a compose app's images are its
     // upstream/compose-built tags, which the hub intentionally never removes.
     const boxes = [{ label: t("apps.keepVolumes"), ref: keepVolumes }];
     if (appData.source !== "COMPOSE") boxes.push({ label: t("apps.removeImages"), ref: removeImages });
+    // Custom networks: classic non-compose apps with a network of their own (the shared tugra-apps bridge is never
+    // listed). Build cache: only apps that build, on a single server (swarm cleanup isn't wired).
+    const cleanup = deleteCleanupOptions(appData);
+    if (cleanup.networks.length > 0) boxes.push({ label: t("apps.pruneNetworks", { names: cleanup.networks.join(", ") }), ref: pruneNetworks });
+    if (cleanup.buildCache) boxes.push({ label: t("apps.pruneBuildCache"), ref: pruneBuildCache });
     if (await confirm({ title: t("apps.delete"), body: appData.source === "COMPOSE" ? t("apps.deleteConfirmCompose") : t("apps.deleteConfirm"), danger: true, confirmText: appData.name, checkbox: boxes })) del.mutate();
   };
   const regen = useMutation({

@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Cleanup options when deleting an app.** The delete dialog can also remove the app's custom Docker networks
+  and prune dangling build cache. Networks are removed only if Tugra created them (they now carry a
+  `tugra.managed=true` label), no other app on the server lists them and nothing is still attached; `tugra-proxy`,
+  `tugra-net`, `tugra-apps` and networks you made by hand are never touched. Networks created before this release
+  have no label (Docker cannot add one to an existing network) and are left in place. The build cache is
+  host-wide, so it is pruned on the build server (or the app's server) and may make another app's next build
+  slower. The API takes `pruneNetworks=1` and `pruneBuildCache=1` on `DELETE /apps/{id}`, and all four delete
+  query parameters are now documented as optional.
+
 - **More resource limits for Image and Git apps.** Memory plus swap, a maximum process count, shared-memory
   size, CPU weight and CPU pinning, next to the existing memory and CPU limits. They are `docker run` flags, so
   Compose and Swarm apps refuse to set them (clearing is always allowed); the Resources card shows them for

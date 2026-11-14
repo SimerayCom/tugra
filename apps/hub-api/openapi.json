@@ -16237,16 +16237,36 @@
           },
           {
             "name": "keepVolumes",
-            "required": true,
+            "required": false,
             "in": "query",
+            "description": "1 = keep the app's named volumes on the host",
             "schema": {
               "type": "string"
             }
           },
           {
             "name": "removeImages",
-            "required": true,
+            "required": false,
             "in": "query",
+            "description": "1 = also remove the app's locally stored image tags",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "pruneNetworks",
+            "required": false,
+            "in": "query",
+            "description": "1 = also remove its Tugra-created custom networks when no other app on the server uses them (classic apps)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "pruneBuildCache",
+            "required": false,
+            "in": "query",
+            "description": "1 = also prune dangling Docker build cache on the host that builds it (host-wide, built apps)",
             "schema": {
               "type": "string"
             }

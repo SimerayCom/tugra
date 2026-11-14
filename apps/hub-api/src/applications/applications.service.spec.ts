@@ -6402,3 +6402,100 @@ describe("ApplicationsService.setLimits — extra limits", () => {
     expect(v).toMatchObject({ memorySwapMb: 512, pidsLimit: 100, shmSizeMb: 64, cpuShares: 512, cpusetCpus: "0-1" });
   });
 });
+
+describe("ApplicationsService.remove — pruneNetworks / pruneBuildCache", () => {
+  const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+  const mk = (stored: Record<string, unknown> = {}, others: { networks: string[] }[] = [], online = true) => {
+    const sent: { host: string; cmd: string }[] = [];
+    const findMany = jest.fn().mockResolvedValue(others);
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...app, source: "GIT", clusterId: null, networks: [], dockerOptions: null, buildServerId: null, ...stored }), delete: jest.fn().mockResolvedValue({}), findMany },
+    } as unknown as PrismaService;
+    const agentWs = {
+      sendCommand: jest.fn().mockImplementation((host: string, cmd: string) => { sent.push({ host, cmd }); return Promise.resolve({ exitCode: 0, output: "" }); }),
+      isOnline: jest.fn().mockReturnValue(online),
+    } as unknown as AgentWsServer;
+    return { sent, findMany, prisma, agentWs, svc: make(prisma, access, agentWs, makeDeployLogs(), makeMonitors()) };
+  };
+
+  it("a default delete sends no network or builder command and makes no extra Prisma call", async () => {
+    const t = mk({ networks: ["backend"] });
+    await t.svc.remove("u1", "app1");
+    expect(t.sent).toHaveLength(1);
+    expect(t.sent[0].cmd).not.toMatch(/network|builder/);
+    expect(t.findMany).not.toHaveBeenCalled();
+  });
+
+  it("removes an unshared network but not one another app on the server still lists", async () => {
+    const t = mk({ networks: ["backend", "shared"] }, [{ networks: ["shared", "other"] }]);
+    await t.svc.remove("u1", "app1", { pruneNetworks: true });
+    expect(t.findMany.mock.calls[0][0].where).toMatchObject({ serverId: "s1", id: { not: "app1" }, networks: { hasSome: ["backend", "shared"] } });
+    const cmd = t.sent[0].cmd;
+    expect(cmd).toContain("docker network rm 'backend'");
+    expect(cmd).not.toContain("'shared'");
+    expect(cmd.indexOf("docker rm -f tugra_app1")).toBeLessThan(cmd.indexOf("docker network rm 'backend'"));
+  });
+
+  it("nothing is sent when nothing is removable (empty list, reserved only, raw --network)", async () => {
+    for (const stored of [{ networks: [] }, { networks: ["tugra-apps"] }, { networks: ["backend"], dockerOptions: "--network mynet" }]) {
+      const t = mk(stored);
+      await t.svc.remove("u1", "app1", { pruneNetworks: true });
+      expect(t.sent[0].cmd).not.toContain("network");
+      expect(t.findMany).not.toHaveBeenCalled();
+    }
+  });
+
+  it("refuses with 400 before any side effect: compose/cluster networks, image/cluster build cache", async () => {
+    const cases: [Record<string, unknown>, { pruneNetworks?: boolean; pruneBuildCache?: boolean }][] = [
+      [{ source: "COMPOSE" }, { pruneNetworks: true }],
+      [{ clusterId: "c1" }, { pruneNetworks: true }],
+      [{ source: "IMAGE" }, { pruneBuildCache: true }],
+      [{ clusterId: "c1" }, { pruneBuildCache: true }],
+    ];
+    for (const [stored, o] of cases) {
+      const t = mk(stored);
+      await expect(t.svc.remove("u1", "app1", o)).rejects.toBeInstanceOf(BadRequestException);
+      expect(t.sent).toHaveLength(0);
+      expect((t.prisma.application.delete as jest.Mock)).not.toHaveBeenCalled();
+    }
+  });
+
+  it("prunes the build cache on the build server for a non-compose app, after the removal command", async () => {
+    const t = mk({ buildServerId: "build1" });
+    await t.svc.remove("u1", "app1", { pruneBuildCache: true });
+    expect(t.sent.map((s) => s.host)).toEqual(["s1", "build1"]);
+    expect(t.sent[1].cmd).toBe("docker builder prune -f 2>/dev/null || true");
+    expect(t.sent[0].cmd).not.toContain("builder");
+  });
+
+  it("prunes on the run server when no build server is set, and for a compose app even if one is set", async () => {
+    const a = mk();
+    await a.svc.remove("u1", "app1", { pruneBuildCache: true });
+    expect(a.sent.map((s) => s.host)).toEqual(["s1", "s1"]);
+    const b = mk({ source: "COMPOSE", buildServerId: "build1" });
+    await b.svc.remove("u1", "app1", { pruneBuildCache: true });
+    expect(b.sent.map((s) => s.host)).toEqual(["s1", "s1"]);
+  });
+
+  it("an offline build host skips the prune, and a rejected prune never blocks the delete", async () => {
+    const off = mk({ buildServerId: "build1" }, [], false);
+    await off.svc.remove("u1", "app1", { pruneBuildCache: true });
+    expect(off.sent.some((s) => s.cmd.includes("builder"))).toBe(false);
+    expect((off.prisma.application.delete as jest.Mock)).toHaveBeenCalled();
+
+    const t = mk({ buildServerId: "build1" });
+    (t.agentWs.sendCommand as jest.Mock).mockImplementation((_h: string, cmd: string) => (cmd.includes("builder") ? Promise.reject(new Error("boom")) : Promise.resolve({ exitCode: 0, output: "" })));
+    await expect(t.svc.remove("u1", "app1", { pruneBuildCache: true })).resolves.toBeUndefined();
+    expect((t.prisma.application.delete as jest.Mock)).toHaveBeenCalled();
+  });
+
+  it("records the pruned networks and the build-cache flag in the audit entry only when set", async () => {
+    (audit.log as jest.Mock).mockClear();
+    const t = mk({ networks: ["backend"] });
+    await t.svc.remove("u1", "app1", { pruneNetworks: true, pruneBuildCache: true });
+    expect(audit.log).toHaveBeenCalledWith({ actor: "u1", action: "app.remove", target: "app1", meta: { pruneNetworks: ["backend"], pruneBuildCache: true } });
+    (audit.log as jest.Mock).mockClear();
+    await mk().svc.remove("u1", "app1");
+    expect(audit.log).toHaveBeenCalledWith({ actor: "u1", action: "app.remove", target: "app1" });
+  });
+});

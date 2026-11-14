@@ -1117,13 +1117,24 @@ export class ApplicationsController {
 
   @Delete(":id")
   @HttpCode(200)
+  @ApiQuery({ name: "keepVolumes", required: false, type: String, description: "1 = keep the app's named volumes on the host" })
+  @ApiQuery({ name: "removeImages", required: false, type: String, description: "1 = also remove the app's locally stored image tags" })
+  @ApiQuery({ name: "pruneNetworks", required: false, type: String, description: "1 = also remove its Tugra-created custom networks when no other app on the server uses them (classic apps)" })
+  @ApiQuery({ name: "pruneBuildCache", required: false, type: String, description: "1 = also prune dangling Docker build cache on the host that builds it (host-wide, built apps)" })
   async remove(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
     @Query("keepVolumes") keepVolumes?: string,
     @Query("removeImages") removeImages?: string,
+    @Query("pruneNetworks") pruneNetworks?: string,
+    @Query("pruneBuildCache") pruneBuildCache?: string,
   ) {
-    await this.apps.remove(user.userId, id, { keepVolumes: keepVolumes === "1", removeImages: removeImages === "1" });
+    await this.apps.remove(user.userId, id, {
+      keepVolumes: keepVolumes === "1",
+      removeImages: removeImages === "1",
+      pruneNetworks: pruneNetworks === "1",
+      pruneBuildCache: pruneBuildCache === "1",
+    });
     return { ok: true };
   }
 }

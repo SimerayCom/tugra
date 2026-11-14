@@ -98,6 +98,8 @@
   "deleteConfirmCompose": "Delete this compose app? Its containers AND its named volumes (all data) are removed. This cannot be undone — back up volumes first.",
   "keepVolumes": "Keep volumes (don't delete this app's data)",
   "removeImages": "Also remove this app's built/pulled images (reclaim disk)",
+  "pruneNetworks": "Also remove its custom networks ({names}) if no other app uses them",
+  "pruneBuildCache": "Also prune dangling Docker build cache on the build server (shared by every app there, so another build may run slower once)",
   "overviewHint": "Use Deploy to build and start this app. The sections on the left hold environment variables, limits, volumes and more.",
   "readOnlyHint": "You have read-only access to this app.",
   "iconTitle": "App icon",

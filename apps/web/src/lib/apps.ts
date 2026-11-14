@@ -20,6 +20,17 @@ export function appStatusDisplay(app: { status: AppStatus; containerHealth: AppC
   return { key: "RUNNING", color: "var(--c-g)" };
 }
 
+/** Which extra cleanup opt-ins the delete dialog offers for an app. `networks` are its own custom networks (the
+ *  shared tugra-apps bridge is never listed) and only for a classic non-compose app; `buildCache` only for an app
+ *  that builds, on a single server. Mirrors the hub's refusals, so the dialog never offers what it would 400. */
+export function deleteCleanupOptions(app: { source: "IMAGE" | "GIT" | "COMPOSE"; clusterId: string | null; networks?: string[] | null }): { networks: string[]; buildCache: boolean } {
+  const classic = !app.clusterId;
+  return {
+    networks: app.source !== "COMPOSE" && classic ? (app.networks ?? []).filter((n) => n !== "tugra-apps") : [],
+    buildCache: app.source !== "IMAGE" && classic,
+  };
+}
+
 export function deploymentColor(s: DeploymentStatus): string {
   if (s === "SUCCESS") return "var(--c-g)";
   if (s === "FAILED") return "var(--c-r)";

@@ -77,6 +77,7 @@ import {
   containerName,
   appVolumeName,
   hasNetworkOpt,
+  buildBuildCachePruneScript,
   resolveHealthCheckType,
   internalHostFor,
   tokenizeDockerOptions,
@@ -2721,8 +2722,39 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.restart", target: id });
   }
 
-  async remove(userId: string, id: string, opts: { keepVolumes?: boolean; removeImages?: boolean } = {}): Promise<void> {
+  /**
+   * The user-named networks this app may take down with it: its own `networks[]` minus anything reserved, minus
+   * any name another app on the same server still lists (server-wide, stricter than the cross-team alias rule).
+   * Empty for an app with a raw `--network` (the operator owns its networking). The script additionally gates on
+   * the Tugra ownership label, so a hand-made or pre-label network is never removed.
+   */
+  private async removableNetworks(app: Application): Promise<string[]> {
+    if (hasNetworkOpt(app.dockerOptions)) return [];
+    const candidates = [...new Set(app.networks ?? [])].filter((n) => n !== APPS_NETWORK && isUserNetworkNameAllowed(n));
+    if (!candidates.length) return [];
+    const others = await this.prisma.application.findMany({
+      where: { serverId: app.serverId, id: { not: app.id }, networks: { hasSome: candidates } },
+      select: { networks: true },
+    });
+    const shared = new Set(others.flatMap((o) => o.networks ?? []));
+    return candidates.filter((n) => !shared.has(n));
+  }
+
+  async remove(
+    userId: string,
+    id: string,
+    opts: { keepVolumes?: boolean; removeImages?: boolean; pruneNetworks?: boolean; pruneBuildCache?: boolean } = {},
+  ): Promise<void> {
     const app = await this.requireWrite(userId, id);
+    // Refuse before any side effect (never a silent ignore): a compose stack removes its own networks on `down`,
+    // swarm cleanup isn't wired, and only built apps have a build cache to prune.
+    if (opts.pruneNetworks && (app.source === "COMPOSE" || app.clusterId)) {
+      throw new BadRequestException(app.clusterId ? "network cleanup isn't supported for swarm apps" : "a compose stack removes its own networks when it comes down");
+    }
+    if (opts.pruneBuildCache && (app.source === "IMAGE" || app.clusterId)) {
+      throw new BadRequestException(app.clusterId ? "build cache cleanup isn't supported for swarm apps" : "only apps built on this host have a build cache to prune");
+    }
+    const prunedNetworks = opts.pruneNetworks ? await this.removableNetworks(app) : [];
     if (app.clusterId) {
       // Swarm: remove the service cluster-wide (Swarm tears down every task on every node). Per-node image
       // cleanup isn't wired for swarm, so removeImages is a classic-only option (ignored here).
@@ -2733,7 +2765,7 @@ export class ApplicationsService {
       let cmd =
         app.source === "COMPOSE"
           ? buildComposeDownScript(this.toSpec(app), { volumes: !opts.keepVolumes })
-          : buildRemoveScript(app, opts.keepVolumes ? [] : this.appVolumes(app));
+          : buildRemoveScript(app, opts.keepVolumes ? [] : this.appVolumes(app), { networks: prunedNetworks });
       // removeImages: also drop the app's OWN locally-stored image tags (tugra_<appId>:*) to reclaim disk.
       // IMAGE/GIT only — a COMPOSE app's images are its upstream/compose-built tags, not in this namespace,
       // so we never risk removing a shared base image.
@@ -2741,6 +2773,15 @@ export class ApplicationsService {
         cmd += "\n" + buildAppImagesRemoveScript(app);
       }
       await this.agentWs.sendCommand(app.serverId, cmd, "deploy").catch(() => undefined);
+    }
+    // Build cache is host-global (no per-app purge): prune dangling records on the host that actually builds this
+    // app — its build server for a non-compose app, else the run server. Sent after the removal so layers just
+    // orphaned by deleting the app are included. Best-effort: an offline host never blocks the delete.
+    if (opts.pruneBuildCache) {
+      const host = app.source !== "COMPOSE" && app.buildServerId ? app.buildServerId : app.serverId;
+      if (this.agentWs.isOnline(host)) {
+        await this.agentWs.sendCommand(host, buildBuildCachePruneScript(), "deploy").catch(() => undefined);
+      }
     }
     // Drop the app's uploaded custom cert from the proxy's /dynamic (best-effort; classic apps only — a
     // clustered app's cert lives on the manager's swarm proxy, a separate path).
@@ -2754,7 +2795,12 @@ export class ApplicationsService {
     await this.prisma.application.delete({ where: { id } });
     // Drop the deleted app's stale rule from its server's tunnel ingress (recomputed from DB truth).
     if (app.tunnelExposed) await this.syncTunnelIngress(app.serverId);
-    await this.audit.log({ actor: userId, action: "app.remove", target: id });
+    await this.audit.log({
+      actor: userId,
+      action: "app.remove",
+      target: id,
+      ...(opts.pruneNetworks || opts.pruneBuildCache ? { meta: { pruneNetworks: prunedNetworks, pruneBuildCache: !!opts.pruneBuildCache } } : {}),
+    });
   }
 
   /** Compensating delete for a create() that must be undone before any deploy ran (e.g. the

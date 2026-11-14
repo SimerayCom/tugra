@@ -17,6 +17,7 @@ import {
   buildProxyStatusScript,
   buildProxyStopScript,
   buildRemoveScript,
+  buildBuildCachePruneScript,
   buildRunScript,
   buildRegistryPushSteps,
   buildBuildOnlyScript,
@@ -2542,9 +2543,9 @@ describe("container ops + networking", () => {
     it("creates every network before the run line", () => {
       const s = buildRunScript({ ...dom, networks: ["a", "b"] }, "v1");
       const run = s.indexOf("docker run -d");
-      expect(s.indexOf("docker network create 'a'")).toBeGreaterThan(-1);
-      expect(s.indexOf("docker network create 'a'")).toBeLessThan(run);
-      expect(s.indexOf("docker network create 'b'")).toBeLessThan(run);
+      expect(s.indexOf("docker network create --label tugra.managed=true 'a'")).toBeGreaterThan(-1);
+      expect(s.indexOf("docker network create --label tugra.managed=true 'a'")).toBeLessThan(run);
+      expect(s.indexOf("docker network create --label tugra.managed=true 'b'")).toBeLessThan(run);
     });
     it("pins Traefik to tugra-proxy only when the routed app has extra networks", () => {
       expect(c(buildRunScript({ ...dom, networks: ["a"] }, "v1"))).toContain("traefik.docker.network=tugra-proxy");
@@ -2557,7 +2558,7 @@ describe("container ops + networking", () => {
       expect(l).not.toContain("docker network connect 'tugra-apps'");
     });
     it("names are shell-quoted", () => {
-      expect(buildRunScript({ ...dom, networks: ["a"] }, "v1")).toContain("docker network create 'a' 2>/dev/null || true");
+      expect(buildRunScript({ ...dom, networks: ["a"] }, "v1")).toContain("docker network create --label tugra.managed=true 'a' 2>/dev/null || true");
     });
     it("a raw --network gives none of it", () => {
       const s = buildRunScript({ ...base, dockerOptions: "--network mynet", networks: ["a"] }, "v1");
@@ -2655,5 +2656,59 @@ describe("extra resource limits (swap, cpu shares, cpuset, pids, shm)", () => {
     const l = withLimits({ memoryMb: 256, shmSizeMb: 64, dockerOptions: "--shm-size 1g" });
     expect(l.indexOf("--shm-size 64m")).toBeGreaterThan(-1);
     expect(l.indexOf("--shm-size 64m")).toBeLessThan(l.indexOf("'--shm-size' '1g'"));
+  });
+});
+
+describe("delete cleanup: network prune and build cache", () => {
+  const gated = (n: string) => `docker network inspect -f '{{index .Labels "tugra.managed"}}' ${n} 2>/dev/null | grep -qx true && docker network rm ${n} 2>/dev/null || true`;
+  const vols = [{ name: "data", path: "/app/data" }];
+
+  it("defaults are byte-identical: no opts, empty networks, and undefined all give the old script", () => {
+    const old = [
+      "docker rm -f tugra_abc 2>/dev/null || true",
+      "docker volume rm tugra_appv_abc_data 2>/dev/null || true",
+      "rm -rf /etc/tugra/builds/abc /etc/tugra/builds/abc.plan.json",
+    ].join("\n");
+    expect(buildRemoveScript({ id: "abc" }, vols)).toBe(old);
+    expect(buildRemoveScript({ id: "abc" }, vols, {})).toBe(old);
+    expect(buildRemoveScript({ id: "abc" }, vols, { networks: [] })).toBe(old);
+    expect(buildRemoveScript({ id: "abc" }, vols, { networks: undefined })).toBe(old);
+  });
+
+  it("emits one label-gated, quoted network rm per name, after the container and volumes and before the build tree", () => {
+    const lines = buildRemoveScript({ id: "abc" }, vols, { networks: ["backend", "api-net"] }).split("\n");
+    expect(lines).toEqual([
+      "docker rm -f tugra_abc 2>/dev/null || true",
+      "docker volume rm tugra_appv_abc_data 2>/dev/null || true",
+      gated("'backend'"),
+      gated("'api-net'"),
+      "rm -rf /etc/tugra/builds/abc /etc/tugra/builds/abc.plan.json",
+    ]);
+    for (const l of lines.filter((x) => x.includes("network rm"))) expect(l).toContain("network inspect"); // never inspect-less
+  });
+
+  it("de-duplicates, and quotes an injection-shaped name", () => {
+    const s = buildRemoveScript({ id: "abc" }, [], { networks: ["a", "a", "x'; rm -rf / #"] });
+    expect(s.match(/docker network rm 'a'/g)).toHaveLength(1);
+    expect(s).toContain(`docker network rm 'x'\\''; rm -rf / #'`);
+    expect(s).not.toMatch(/docker network rm x/);
+  });
+
+  it("re-filters reserved and shared names even if a caller passes them", () => {
+    const s = buildRemoveScript({ id: "abc" }, [], { networks: ["tugra-proxy", "tugra-net", "tugra-apps", "bridge", "host", "tugra-swarm", "ok"] });
+    expect(s.match(/network rm/g)).toHaveLength(1);
+    expect(s).toContain(gated("'ok'"));
+    for (const r of ["tugra-proxy", "tugra-net", "tugra-apps", "bridge", "host", "tugra-swarm"]) expect(s).not.toContain(`'${r}'`);
+  });
+
+  it("buildBuildCachePruneScript is the dangling-only prune (no -a)", () => {
+    expect(buildBuildCachePruneScript()).toBe("docker builder prune -f 2>/dev/null || true");
+  });
+
+  it("the user-network create line carries the ownership label; DB_NET and tugra-apps lines are unchanged", () => {
+    const s = buildRunScript({ ...base, domain: "a.example.com", dbNetwork: true, networks: ["a"] }, "v1");
+    expect(s).toContain("docker network create --label tugra.managed=true 'a' 2>/dev/null || true");
+    expect(s).toContain("docker network create tugra-net 2>/dev/null || true");
+    expect(buildRunScript(base, "v1")).toContain("docker network create tugra-apps 2>/dev/null || true");
   });
 });
