@@ -4,11 +4,13 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Eye, EyeOff, ExternalLink, X } from "lucide-react";
 import { useToast } from "../../../../components/toast";
-import { Btn, SectionCard } from "../../../../components/ui";
+import { Select } from "../../../../components/form";
+import { Badge, Btn, SectionCard } from "../../../../components/ui";
 import { useUnsavedChanges } from "../../../../hooks/useUnsavedChanges";
 import { useT } from "../../../../i18n/provider";
 import { api } from "../../../../lib/api";
 import { duplicateKeys, invalidKeys } from "../../../../lib/dotenv";
+import { gitUrlHost, isSshGitUrl } from "../../../../lib/git-host";
 import { gitWebUrls } from "../../../../lib/git-web-url";
 import { type AppSource, type BuildType, type SourceCommitMode } from "../../../../lib/types";
 import { BUILD_TYPE_LABEL, envField, normalizeBaseDir } from "./app-detail-shared";
@@ -47,10 +49,12 @@ export function WatchPathsCard({ id, watchPaths }: { id: string; watchPaths: str
   );
 }
 
+const NO_SOURCE = "__none__"; // Select sentinel for "no linked Git provider" (the form Select has no null option value)
+
 // Edit WHERE the app's code/image comes from, after create. GIT -> repo URL + branch; IMAGE -> image ref.
 // (Git credentials themselves live in the Credentials card.) Applies on the next deploy; a host change that
 // resets a stored credential is reported back as a warning.
-export function SourceCard({ id, source, gitUrl, gitBranch, gitCommit, image, composePath }: { id: string; source: AppSource; gitUrl: string | null; gitBranch: string | null; gitCommit: string | null; image: string | null; composePath: string | null }) {
+export function SourceCard({ id, source, gitUrl, gitBranch, gitCommit, image, composePath, gitSourceId, teamId, hasGitToken, isPreview }: { id: string; source: AppSource; gitUrl: string | null; gitBranch: string | null; gitCommit: string | null; image: string | null; composePath: string | null; gitSourceId: string | null; teamId: string; hasGitToken: boolean; isPreview: boolean }) {
   const t = useT();
   const qc = useQueryClient();
   const toast = useToast();
@@ -84,6 +88,30 @@ export function SourceCard({ id, source, gitUrl, gitBranch, gitCommit, image, co
   });
   useUnsavedChanges(dirty && !save.isPending);
 
+  // Git provider link: independent of the URL/branch form (its own mutation, so it never touches `dirty`).
+  // Previews inherit their parent's source, and image / pasted-compose apps have no repository to authenticate.
+  const showProvider = gitLike && !isPreview;
+  const { data: allSources } = useQuery({ queryKey: ["gitSources"], queryFn: () => api.listGitSources(), enabled: showProvider });
+  const [pickedSource, setPickedSource] = useState<string | null>(null); // optimistic value while the change is in flight
+  const link = useMutation({
+    mutationFn: (next: string | null) => api.setAppSource(id, { gitSourceId: next }),
+    onSuccess: (res, next) => {
+      for (const w of res.warnings ?? []) toast(t(`apps.sourceWarn_${w}`), "info");
+      toast(t(next ? "apps.sourceProviderLinkedToast" : "apps.sourceProviderUnlinkedToast"), "success");
+      return qc.invalidateQueries({ queryKey: ["app", id] }).finally(() => setPickedSource(null));
+    },
+    onError: (e) => {
+      setPickedSource(null); // revert the select to the saved link
+      toast(e instanceof Error ? e.message : t("apps.sourceSaveFailed"), "error");
+    },
+  });
+  const pickSource = (value: string) => {
+    const next = value === NO_SOURCE ? null : value;
+    if (next === gitSourceId) return;
+    setPickedSource(value);
+    link.mutate(next);
+  };
+
   return (
     <SectionCard title={t("apps.source")} desc={t("apps.sourceDesc")}>
       {gitLike ? (
@@ -98,6 +126,40 @@ export function SourceCard({ id, source, gitUrl, gitBranch, gitCommit, image, co
       ) : (
         <input style={{ ...envField, width: "100%" }} placeholder={t("apps.sourceImage")} value={img} onChange={(e) => setImg(e.target.value)} aria-label={t("apps.sourceImage")} />
       )}
+      {showProvider && (() => {
+        // Offer only this team's sources whose credential host matches the SAVED repo host; the currently linked
+        // source is always listed (even when incompatible, or not visible to this viewer) so it can be seen and unlinked.
+        const ssh = isSshGitUrl(gitUrl);
+        const host = gitUrlHost(gitUrl);
+        const teamSources = (allSources ?? []).filter((s) => s.teamId === teamId);
+        const linked = gitSourceId ? teamSources.find((s) => s.id === gitSourceId) ?? null : null;
+        const options = [
+          { value: NO_SOURCE, label: t("apps.sourceProviderNone") },
+          ...teamSources.filter((s) => s.id === gitSourceId || (host != null && s.cloneHost === host)).map((s) => ({ value: s.id, label: `${s.name} · ${s.kind}` })),
+          ...(gitSourceId && !linked && allSources ? [{ value: gitSourceId, label: t("apps.sourceProviderMissing") }] : []),
+        ];
+        const value = pickedSource ?? gitSourceId ?? NO_SOURCE;
+        return (
+          <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--c-bd)" }}>
+            <label style={{ display: "block" }}>
+              <span style={{ display: "block", fontSize: 12, color: "var(--c-tx2)", marginBottom: 6 }}>{t("apps.sourceProvider")}</span>
+              <Select value={value} onChange={pickSource} options={options} ariaLabel={t("apps.sourceProvider")} disabled={link.isPending || (ssh && !gitSourceId)} />
+            </label>
+            {gitSourceId ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 8, fontSize: 12, color: "var(--c-tx3)" }}>
+                {linked && <><span>{t("apps.sourceProviderLinked", { name: linked.name })}</span><Badge tone="lapis">{linked.kind}</Badge></>}
+                <span>{t("apps.sourceProviderPrecedence")}</span>
+                <Btn variant="ghost" onClick={() => pickSource(NO_SOURCE)} disabled={link.isPending}>{t("apps.sourceProviderUnlink")}</Btn>
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8, lineHeight: 1.5 }}>
+                {ssh ? t("apps.sourceProviderSsh") : t("apps.sourceProviderHint")}
+                {hasGitToken && !ssh ? <> {t("apps.sourceProviderTokenStored")}</> : null}
+              </div>
+            )}
+          </div>
+        );
+      })()}
       <div style={{ display: "flex", gap: 14, marginTop: 10, alignItems: "center", flexWrap: "wrap" }}>
         {gitLike && (() => {
           // Links reflect the SAVED source (props), not unsaved edits in the inputs.

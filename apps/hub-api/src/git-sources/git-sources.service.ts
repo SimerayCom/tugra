@@ -28,6 +28,9 @@ export interface GitSourceView {
   apiUrl: string | null;
   /** A credential is stored (GitHub App key or access token). The credential itself is never returned. */
   hasToken: boolean;
+  /** The only host this source's credential authenticates (github.com for a GitHub App, the instance host for a
+   *  token source). A repo URL on any other host can't use it, so UIs only offer the source for matching repos. */
+  cloneHost: string;
   createdAt: Date;
   canWrite: boolean;
 }
@@ -73,7 +76,8 @@ export class GitSourcesService {
     return {
       id: s.id, name: s.name, teamId: s.teamId, provider: s.provider, kind: s.provider as GitKind, appId: s.appId,
       appSlug: s.appSlug, installationId: s.installationId, htmlUrl: s.htmlUrl,
-      apiUrl: s.apiUrl ?? null, hasToken: !!(s.tokenEnc || s.privateKeyEnc), createdAt: s.createdAt, canWrite,
+      apiUrl: s.apiUrl ?? null, hasToken: !!(s.tokenEnc || s.privateKeyEnc), cloneHost: sourceCloneHost({ provider: s.provider, apiUrl: s.apiUrl ?? null }),
+      createdAt: s.createdAt, canWrite,
     };
   }
 

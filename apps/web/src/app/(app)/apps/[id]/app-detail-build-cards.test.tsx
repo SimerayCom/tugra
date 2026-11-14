@@ -4,7 +4,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import { I18nProvider } from "../../../../i18n/provider";
 import { api } from "../../../../lib/api";
-import { BuildSecretsCard, BuildSettingsCard, DeploySettingsCard, RestartPolicyCard, looksSensitiveKey } from "./app-detail-build-cards";
+import { subscribeToast, type ToastInput } from "../../../../lib/toast-bus";
+import type { GitSource } from "../../../../lib/types";
+import { BuildSecretsCard, BuildSettingsCard, DeploySettingsCard, RestartPolicyCard, SourceCard, looksSensitiveKey } from "./app-detail-build-cards";
 
 afterEach(cleanup);
 let qc: QueryClient;
@@ -219,5 +221,124 @@ describe("RestartPolicyCard — max retries", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(set).toHaveBeenCalledTimes(2));
     expect(set.mock.calls[1]).toEqual(["a1", "on-failure", 3]);
+  });
+});
+
+describe("SourceCard — Git provider link", () => {
+  const src = (id: string, over: Partial<GitSource> = {}): GitSource => ({
+    id, name: id, teamId: "t1", provider: "github", kind: "github", appId: "1", appSlug: null, installationId: null, htmlUrl: null,
+    apiUrl: null, hasToken: true, cloneHost: "github.com", createdAt: "2026-11-01T00:00:00.000Z", canWrite: true, ...over,
+  });
+  const SOURCES = [
+    src("gh", { name: "GitHub App" }),
+    src("gt", { name: "Company Gitea", kind: "gitea", provider: "gitea", apiUrl: "https://git.example.com", cloneHost: "git.example.com" }),
+    src("other-team", { name: "Foreign", teamId: "t2" }),
+  ];
+  const base = {
+    id: "a1", source: "GIT" as const, gitUrl: "https://github.com/acme/app.git", gitBranch: "main", gitCommit: null, image: null, composePath: null,
+    gitSourceId: null as string | null, teamId: "t1", hasGitToken: false, isPreview: false,
+  };
+  const select = () => screen.getByLabelText("Git provider") as HTMLSelectElement;
+  const optionLabels = () => Array.from(select().options).filter((o) => !o.disabled).map((o) => o.textContent);
+  let toasts: ToastInput[] = [];
+  let off: () => void;
+  beforeEach(() => {
+    toasts = [];
+    off = subscribeToast((x) => toasts.push(x));
+    vi.spyOn(api, "listGitSources").mockResolvedValue(SOURCES);
+  });
+  afterEach(() => off());
+
+  it("is hidden for an image app, a pasted compose app and a preview, and shown for git and git-compose", async () => {
+    const list = vi.spyOn(api, "listGitSources");
+    const { unmount } = wrap(<SourceCard {...base} source="IMAGE" gitUrl={null} image="nginx" />);
+    expect(screen.queryByLabelText("Git provider")).toBeNull();
+    unmount();
+    const b = wrap(<SourceCard {...base} source="COMPOSE" gitUrl={null} composePath={null} />);
+    expect(screen.queryByLabelText("Git provider")).toBeNull();
+    b.unmount();
+    const c = wrap(<SourceCard {...base} isPreview />);
+    expect(screen.queryByLabelText("Git provider")).toBeNull();
+    expect(list).not.toHaveBeenCalled();
+    c.unmount();
+    const d = wrap(<SourceCard {...base} />);
+    await waitFor(() => expect(optionLabels().length).toBeGreaterThan(1));
+    d.unmount();
+    wrap(<SourceCard {...base} source="COMPOSE" composePath="docker-compose.yml" />);
+    await waitFor(() => expect(optionLabels().length).toBeGreaterThan(1));
+  });
+
+  it("offers only this team's sources for the repo host", async () => {
+    wrap(<SourceCard {...base} />);
+    await waitFor(() => expect(optionLabels()).toContain("GitHub App · github"));
+    expect(optionLabels()).toEqual(["None (public repo or personal access token)", "GitHub App · github"]);
+  });
+
+  it("keeps the linked source in the list even when its host no longer matches the repo", async () => {
+    wrap(<SourceCard {...base} gitSourceId="gt" />);
+    await waitFor(() => expect(optionLabels()).toContain("Company Gitea · gitea"));
+    expect(select().value).toBe("gt");
+    expect(screen.getByText("Cloning with Company Gitea")).toBeTruthy();
+    expect(screen.getByText("Takes precedence over a stored personal access token.")).toBeTruthy();
+  });
+
+  it("shows a missing-source note when the linked source isn't in the viewer's list", async () => {
+    wrap(<SourceCard {...base} gitSourceId="vanished" />);
+    await waitFor(() => expect(optionLabels()).toContain("Linked provider (not visible to you)"));
+    expect(select().value).toBe("vanished");
+    expect(screen.getByRole("button", { name: "Unlink" })).toBeTruthy();
+  });
+
+  it("selecting a provider sends exactly the source id, and None / Unlink send null", async () => {
+    const set = vi.spyOn(api, "setAppSource").mockResolvedValue({ warnings: [] });
+    wrap(<SourceCard {...base} />);
+    await waitFor(() => expect(optionLabels()).toContain("GitHub App · github"));
+    fireEvent.change(select(), { target: { value: "gh" } });
+    await waitFor(() => expect(set).toHaveBeenCalledWith("a1", { gitSourceId: "gh" }));
+    await waitFor(() => expect(toasts.some((x) => x.type === "success")).toBe(true));
+    cleanup();
+
+    set.mockClear();
+    wrap(<SourceCard {...base} gitSourceId="gh" />);
+    await waitFor(() => expect(select().value).toBe("gh"));
+    fireEvent.change(select(), { target: { value: "__none__" } });
+    await waitFor(() => expect(set).toHaveBeenCalledWith("a1", { gitSourceId: null }));
+    cleanup();
+
+    set.mockClear();
+    wrap(<SourceCard {...base} gitSourceId="gh" />);
+    await waitFor(() => expect(select().value).toBe("gh"));
+    fireEvent.click(screen.getByRole("button", { name: "Unlink" }));
+    await waitFor(() => expect(set).toHaveBeenCalledWith("a1", { gitSourceId: null }));
+  });
+
+  it("never touches the URL/branch form's save state", async () => {
+    vi.spyOn(api, "setAppSource").mockResolvedValue({ warnings: [] });
+    wrap(<SourceCard {...base} />);
+    await waitFor(() => expect(optionLabels()).toContain("GitHub App · github"));
+    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(select(), { target: { value: "gh" } });
+    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("an ssh repository disables the select and explains why", async () => {
+    wrap(<SourceCard {...base} gitUrl="git@github.com:acme/app.git" />);
+    await waitFor(() => expect(select()).toBeTruthy());
+    expect(select().disabled).toBe(true);
+    expect(screen.getByText(/clones with a deploy key/)).toBeTruthy();
+  });
+
+  it("a hub error toasts its message verbatim and reverts the select", async () => {
+    vi.spyOn(api, "setAppSource").mockRejectedValue(new Error("the linked github source only authenticates github.com repositories"));
+    wrap(<SourceCard {...base} />);
+    await waitFor(() => expect(optionLabels()).toContain("GitHub App · github"));
+    fireEvent.change(select(), { target: { value: "gh" } });
+    await waitFor(() => expect(toasts.some((x) => x.type === "error" && x.message.includes("only authenticates github.com"))).toBe(true));
+    await waitFor(() => expect(select().value).toBe("__none__"));
+  });
+
+  it("mentions a stored personal access token under None", async () => {
+    wrap(<SourceCard {...base} hasGitToken />);
+    await waitFor(() => expect(screen.getByText(/personal access token is stored/)).toBeTruthy());
   });
 });

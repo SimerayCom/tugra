@@ -235,7 +235,7 @@ export default function AppDetailPage() {
     ),
     environment: () => <EnvironmentCard kind="app" id={id} environmentId={appData.environmentId} />,
     tags: () => <TagsCard tags={appData.tags} canWrite={appData.canWrite} onSave={(next) => tags.mutate(next)} />,
-    source: () => <SourceCard id={id} source={appData.source} gitUrl={appData.gitUrl} gitBranch={appData.gitBranch} gitCommit={appData.gitCommit} image={appData.image} composePath={appData.composePath} />,
+    source: () => <SourceCard id={id} source={appData.source} gitUrl={appData.gitUrl} gitBranch={appData.gitBranch} gitCommit={appData.gitCommit} image={appData.image} composePath={appData.composePath} gitSourceId={appData.gitSourceId} teamId={appData.teamId} hasGitToken={appData.hasGitToken} isPreview={appData.isPreview} />,
     build: () => <BuildSettingsCard id={id} buildType={appData.buildType} dockerfilePath={appData.dockerfilePath} dockerBuildTarget={appData.dockerBuildTarget} baseDirectory={appData.baseDirectory} buildCommand={appData.buildCommand} outputDir={appData.outputDir} nixpacksInstallCmd={appData.nixpacksInstallCmd} nixpacksBuildCmd={appData.nixpacksBuildCmd} nixpacksStartCmd={appData.nixpacksStartCmd} gitSubmodules={appData.gitSubmodules} gitLfs={appData.gitLfs} gitShallowClone={appData.gitShallowClone} disableBuildCache={appData.disableBuildCache} injectEnvAsBuildArgs={appData.injectEnvAsBuildArgs} sourceCommitMode={appData.sourceCommitMode} />,
     buildConfig: () => (
       <BuildConfigCard id={id} teamId={appData.teamId} registryId={appData.registryId} pushToRegistry={appData.pushToRegistry} buildServerId={appData.buildServerId} />

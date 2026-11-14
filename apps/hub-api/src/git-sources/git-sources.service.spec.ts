@@ -94,6 +94,22 @@ describe("GitSourcesService", () => {
     expect(list.find((s) => s.id === "s2")!.canWrite).toBe(false);
   });
 
+  it("list() exposes cloneHost: github.com for a GitHub App, the instance host for a token source", async () => {
+    const base = { teamId: "t1", appId: null, appSlug: null, installationId: null, htmlUrl: null, createdAt: new Date() };
+    const rows = [
+      { ...base, id: "gh", name: "gh", provider: "github", appId: "1" },
+      { ...base, id: "gt", name: "gt", provider: "gitea", apiUrl: "https://Git.Example.com:8443/", tokenEnc: "enc(x)" },
+      { ...base, id: "cb", name: "cb", provider: "codeberg", apiUrl: "https://codeberg.org", tokenEnc: "enc(y)" },
+    ];
+    const prisma = { gitSource: { findMany: jest.fn().mockResolvedValue(rows) } } as unknown as PrismaService;
+    const access = { permissionsByTeam: jest.fn().mockResolvedValue(new Map([["t1", new Set(ALL_PERMS)]])) } as unknown as TeamAccessService;
+    const list = await make(prisma, access).list("u1");
+    const host = (id: string) => list.find((s) => s.id === id)!.cloneHost;
+    expect(host("gh")).toBe("github.com");
+    expect(host("gt")).toBe("git.example.com");
+    expect(host("cb")).toBe("codeberg.org");
+  });
+
   it("appJwt signs with a PKCS#1 'BEGIN RSA PRIVATE KEY' key (Dokploy's format)", () => {
     const pkcs1 = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ format: "pem", type: "pkcs1" }).toString();
     expect(pkcs1).toContain("BEGIN RSA PRIVATE KEY");

@@ -32,6 +32,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   environments, defaulting to the app's own) and shows what was not carried over once the clone is created. The
   hub also checks the caller's access to the destination project when moving or cloning an app to another
   environment.
+- **Link a Git provider from the app's Source card.** Pick a connected provider (GitHub App, Gitea, Forgejo,
+  Codeberg) for a Git or Git-compose app, or unlink it, without leaving the app. Only this team's providers for
+  the repository's host are offered, and a linked provider takes precedence over a stored personal access token.
+  `GET /git-sources` now also returns each source's `cloneHost`.
 
 ## [0.1.0-beta.12] - 2026-11-14
 

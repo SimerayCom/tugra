@@ -828,6 +828,8 @@ export interface GitSource {
   apiUrl: string | null;
   /** A credential is stored. The credential itself is write-only and never returned. */
   hasToken: boolean;
+  /** The only repository host this source's credential authenticates (github.com for a GitHub App, the instance host otherwise). */
+  cloneHost: string;
   createdAt: string;
   canWrite: boolean;
 }

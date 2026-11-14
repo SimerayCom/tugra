@@ -1627,6 +1627,40 @@ describe("ApplicationsService", () => {
   };
   const noActiveDeploy = { findFirst: jest.fn().mockResolvedValue(null) };
 
+  it("a linked git source's token overrides a stored personal access token in the deploy clone (precedence)", async () => {
+    const run = async (gitSourceId: string | null) => {
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue({ ...gitApp, gitSourceId }), update: jest.fn().mockResolvedValue({}) },
+        deployment: {
+          create: jest.fn().mockResolvedValue({ id: "d1", createdAt: new Date() }),
+          update: jest.fn().mockResolvedValue({}),
+          findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "SUCCESS" }),
+          findFirst: jest.fn().mockResolvedValue(null),
+          findMany: jest.fn().mockResolvedValue([]),
+        },
+        server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) },
+        sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+      } as unknown as PrismaService;
+      const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+      const commands: string[] = [];
+      const agentWs = {
+        cancelCommand: jest.fn(),
+        sendCommand: jest.fn().mockImplementation(async (_s: string, c: string) => { commands.push(c); return { exitCode: 0, output: "ok" }; }),
+      } as unknown as AgentWsServer;
+      await make(prisma, access, agentWs).deploy("u1", "app1");
+      await flushMicrotasks();
+      return commands.join("\n");
+    };
+    const b64 = (v: string) => Buffer.from(v, "utf8").toString("base64");
+    // stored PAT only (the spec decrypts "enc(tok)" to itself in this harness)
+    const pat = await run(null);
+    expect(pat).toContain(b64("enc(tok)"));
+    // a linked source wins: its minted token is cloned with, the PAT is never sent
+    const linked = await run("gs1");
+    expect(linked).toContain(b64("ghs_inst"));
+    expect(linked).not.toContain(b64("enc(tok)"));
+  });
+
   it("setSource rejects a COMPOSE app (use the compose-file endpoint)", async () => {
     const update = jest.fn();
     const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...app, source: "COMPOSE" }), update }, deployment: noActiveDeploy } as unknown as PrismaService;
