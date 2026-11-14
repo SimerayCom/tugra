@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.12] - 2026-11-14
+
 - **Per-deployment detail page.** Every deployment row opens its own page: a queued → started → finished
   timeline with queue wait and run time, who or what triggered it, the deployed commit (linked to the
   repository), image tag and digest, the configuration diff against the previous deployment, the full build
