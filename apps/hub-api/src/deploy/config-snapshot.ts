@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { AppSpec } from "./deploy-script";
+import { flagsToken } from "../common/env-flags";
 
 /**
  * A redacted, persistable snapshot of the config a deploy ran with — so the
@@ -66,6 +67,11 @@ export interface ConfigSnapshot {
   configMounts?: { target: string; mode?: string; fp: string }[];
   /** env var name → 12-hex fingerprint of its value (value itself is never stored). */
   env: Record<string, string>;
+  /** Per-variable flags: env var name -> readable token (build, build-only, literal, multiline, joined by +). Only keys
+   *  with non-default flags; omitted when none. Flags are not secrets, so the token is stored verbatim. */
+  envFlags?: Record<string, string>;
+  /** Build-time flagged variable name -> 12-hex fingerprint of its build value (never the value). Omitted when none. */
+  buildEnv?: Record<string, string>;
   hasGitToken: boolean;
   hasRegistryAuth: boolean;
 }
@@ -144,6 +150,14 @@ function fingerprint(value: string): string {
 export function buildConfigSnapshot(spec: AppSpec): ConfigSnapshot {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(spec.env ?? {})) env[k] = fingerprint(v);
+  const envFlags: Record<string, string> = {};
+  const buildEnv: Record<string, string> = {};
+  for (const k of Object.keys(spec.envMeta ?? {}).sort()) {
+    const f = spec.envMeta![k];
+    const token = flagsToken(f);
+    if (token) envFlags[k] = token;
+    if (f.buildTime && spec.buildArgs && Object.prototype.hasOwnProperty.call(spec.buildArgs, k)) buildEnv[k] = fingerprint(spec.buildArgs[k]);
+  }
   return {
     snapV: 2,
     source: spec.source,
@@ -197,6 +211,8 @@ export function buildConfigSnapshot(spec: AppSpec): ConfigSnapshot {
       ? { configMounts: spec.configMounts.map((m) => ({ target: m.target, mode: m.mode, fp: fingerprint(m.content) })) }
       : {}),
     env,
+    ...(Object.keys(envFlags).length ? { envFlags } : {}),
+    ...(Object.keys(buildEnv).length ? { buildEnv } : {}),
     hasGitToken: !!spec.gitToken,
     hasRegistryAuth: !!spec.registryAuth,
   };
@@ -289,6 +305,25 @@ export function diffSnapshots(
   for (const k of Object.keys(pe)) {
     if (!(k in ne)) changes.push({ field: `env.${k}`, kind: "removed", before: SECRET });
   }
+
+  // env flags: readable tokens (flags are not secrets), so a flag-only edit shows up. A snapshot from before the
+  // feature has no field, which reads as {} - no spurious diff.
+  const pf = prev.envFlags ?? {};
+  const nf = next.envFlags ?? {};
+  for (const k of Object.keys(nf)) {
+    if (!(k in pf)) changes.push({ field: `envFlags.${k}`, kind: "added", after: nf[k] });
+    else if (pf[k] !== nf[k]) changes.push({ field: `envFlags.${k}`, kind: "changed", before: pf[k], after: nf[k] });
+  }
+  for (const k of Object.keys(pf)) if (!(k in nf)) changes.push({ field: `envFlags.${k}`, kind: "removed", before: pf[k] });
+
+  // build-time variables: fingerprint changes, value never revealed (SECRET placeholder like env)
+  const pb = prev.buildEnv ?? {};
+  const nb = next.buildEnv ?? {};
+  for (const k of Object.keys(nb)) {
+    if (!(k in pb)) changes.push({ field: `buildEnv.${k}`, kind: "added", after: SECRET });
+    else if (pb[k] !== nb[k]) changes.push({ field: `buildEnv.${k}`, kind: "changed", before: SECRET, after: SECRET });
+  }
+  for (const k of Object.keys(pb)) if (!(k in nb)) changes.push({ field: `buildEnv.${k}`, kind: "removed", before: SECRET });
 
   // credential presence
   if (prev.hasGitToken !== next.hasGitToken)

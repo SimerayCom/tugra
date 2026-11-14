@@ -208,3 +208,51 @@ describe("git/build settings in the snapshot", () => {
     expect(JSON.stringify(buildConfigSnapshot(git({ injectEnvAsBuildArgs: true, buildArgs: { LEAK: "zzz" } })))).not.toContain("zzz");
   });
 });
+
+describe("env flags in the snapshot", () => {
+  const git = (over: Partial<AppSpec> = {}) => spec({ source: "GIT", env: { A: "1", T: "tok" }, ...over });
+
+  it("records tokens + build fingerprints only for flagged keys, never values; omits both when there are none", () => {
+    const plain = buildConfigSnapshot(git());
+    expect(plain.envFlags).toBeUndefined();
+    expect(plain.buildEnv).toBeUndefined();
+    const s = buildConfigSnapshot(git({ envMeta: { A: { multiline: true }, B: { buildTime: true, runtime: false } }, buildArgs: { B: "SECRETBUILDVALUE" } }));
+    expect(s.envFlags).toEqual({ A: "multiline", B: "build-only" });
+    expect(Object.keys(s.buildEnv!)).toEqual(["B"]);
+    expect(s.buildEnv!.B).toMatch(/^[0-9a-f]{12}$/);
+    expect(JSON.stringify(s)).not.toContain("SECRETBUILDVALUE");
+  });
+
+  it("an old snapshot without the fields yields no spurious diff", () => {
+    const old = buildConfigSnapshot(git());
+    expect(diffSnapshots(old, buildConfigSnapshot(git()))).toEqual([]);
+    delete (old as { envFlags?: unknown }).envFlags;
+    expect(diffSnapshots(old, buildConfigSnapshot(git()))).toEqual([]);
+  });
+
+  it("a flag-only change shows envFlags.K with readable tokens before/after", () => {
+    const a = buildConfigSnapshot(git());
+    const b = buildConfigSnapshot(git({ envMeta: { A: { multiline: true } } }));
+    expect(diffSnapshots(a, b)).toEqual([{ field: "envFlags.A", kind: "added", after: "multiline" }]);
+    const c = buildConfigSnapshot(git({ envMeta: { A: { multiline: true, literal: true } } }));
+    expect(diffSnapshots(b, c)).toEqual([{ field: "envFlags.A", kind: "changed", before: "multiline", after: "literal+multiline" }]);
+    expect(diffSnapshots(c, a)).toEqual([{ field: "envFlags.A", kind: "removed", before: "literal+multiline" }]);
+  });
+
+  it("buildEnv changes use fingerprints and the secret placeholder, never the value", () => {
+    const mk = (v: string) => buildConfigSnapshot(git({ envMeta: { B: { buildTime: true } }, buildArgs: { B: v } }));
+    const d = diffSnapshots(mk("one"), mk("two"));
+    expect(d).toEqual([{ field: "buildEnv.B", kind: "changed", before: "•••", after: "•••" }]);
+    expect(diffSnapshots(buildConfigSnapshot(git()), mk("one"))).toEqual([
+      { field: "envFlags.B", kind: "added", after: "build" },
+      { field: "buildEnv.B", kind: "added", after: "•••" },
+    ]);
+  });
+
+  it("runtime:false reads as env.K removed plus envFlags.K added", () => {
+    const a = buildConfigSnapshot(git({ env: { A: "1", K: "v" } }));
+    const b = buildConfigSnapshot(git({ env: { A: "1" }, envMeta: { K: { buildTime: true, runtime: false } }, buildArgs: { K: "v" } }));
+    const fields = diffSnapshots(a, b).map((c) => `${c.field}:${c.kind}`);
+    expect(fields).toEqual(expect.arrayContaining(["env.K:removed", "envFlags.K:added", "buildEnv.K:added"]));
+  });
+});
