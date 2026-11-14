@@ -24,6 +24,7 @@ import {
   certPreludeFor,
   type AppSpec,
 } from "./deploy-script";
+import { assertScriptFits, mlPrefix, mlPrelude, planEnv } from "./env-render";
 import { composeOverride, composeProject, composeGitDir, composeGitCloneDir, composeOpFile } from "./compose-script";
 
 // Re-export the shared path helpers (defined in compose-script.ts so the lifecycle builders there can reuse
@@ -59,10 +60,13 @@ function symlinkGuardSteps(): string[] {
 /** Shared head: clone into `$CLONE`, run the symlink guard, and (when the app has env) write the resolved
  *  .env OUTSIDE the clone. Used by both the render and up scripts so they produce an identical rendered
  *  config (same clone, same env → same sha). */
-function cloneAndEnvSteps(app: AppSpec): { lines: string[]; envArg: string } {
+function cloneAndEnvSteps(app: AppSpec): { lines: string[]; envArg: string; prefix: string; fits: boolean } {
   const clone = composeGitCloneDir(app);
   const env = app.env && typeof app.env === "object" ? app.env : {};
-  const hasEnv = Object.keys(env).length > 0;
+  // Literal / multiline variables ride the compose process environment instead of the interpolating `.env`. BOTH
+  // git scripts (render and up) carry the identical prelude + prefix, otherwise the rendered-config sha diverges.
+  const plan = planEnv(env, app.envMeta, "compose");
+  const hasEnv = Object.keys(plan.fileEnv).length > 0;
   const envPath = `${composeGitDir(app)}/.env`;
   const lines = [
     "set -e",
@@ -73,18 +77,19 @@ function cloneAndEnvSteps(app: AppSpec): { lines: string[]; envArg: string } {
   ];
   if (hasEnv) {
     lines.push(
-      `printf %s ${shq(envFileB64(env))} | base64 -d > ${envPath}`,
+      `printf %s ${shq(envFileB64(plan.fileEnv))} | base64 -d > ${envPath}`,
       `chmod 600 ${envPath}`,
     );
   }
-  return { lines, envArg: hasEnv ? `--env-file ${envPath} ` : "" };
+  lines.push(...mlPrelude(plan.shell));
+  return { lines, envArg: hasEnv ? `--env-file ${envPath} ` : "", prefix: mlPrefix(plan.shell), fits: plan.shell.length > 0 };
 }
 
 /** The `docker compose config` invocation that renders the stack. `2>/dev/null` keeps compose's warnings
  *  off stdout so only the canonical YAML is captured. */
-function renderExpr(app: AppSpec, envArg: string): string {
+function renderExpr(app: AppSpec, envArg: string, prefix: string): string {
   const proj = composeProject(app);
-  return `docker compose -p ${proj} -f ${shq(composeFileArg(app))} ${envArg}config 2>/dev/null`;
+  return `${prefix}docker compose -p ${proj} -f ${shq(composeFileArg(app))} ${envArg}config 2>/dev/null`;
 }
 
 /**
@@ -93,14 +98,16 @@ function renderExpr(app: AppSpec, envArg: string): string {
  * output also carries the deployed commit for the deployment record.
  */
 export function buildComposeGitRenderScript(app: AppSpec): string {
-  const { lines, envArg } = cloneAndEnvSteps(app);
+  const { lines, envArg, prefix, fits } = cloneAndEnvSteps(app);
   lines.push(
-    `TUGRA_RENDERED=$(${renderExpr(app, envArg)})`,
+    `TUGRA_RENDERED=$(${renderExpr(app, envArg, prefix)})`,
     `[ -n "$TUGRA_RENDERED" ] || { echo "TUGRA: docker compose could not render ${shq(composeFileArg(app))} — check the compose path and the file's validity"; exit 1; }`,
     `printf '%s%s\\n' "${COMPOSE_RENDERED_MARKER}" "$(printf %s "$TUGRA_RENDERED" | base64 | tr -d '\\n')"`,
     `printf '%s%s\\n' "${COMPOSE_SHA_MARKER}" "$(printf %s "$TUGRA_RENDERED" | sha256sum | cut -d' ' -f1)"`,
   );
-  return lines.join("\n");
+  const script = lines.join("\n");
+  if (fits) assertScriptFits(script);
+  return script;
 }
 
 /**
@@ -109,14 +116,14 @@ export function buildComposeGitRenderScript(app: AppSpec): string {
  * the app has per-service domains, the Tugra routing override is layered with a second `-f`.
  */
 export function buildComposeGitUpScript(app: AppSpec, sha: string, noCache = false): string {
-  const { lines, envArg } = cloneAndEnvSteps(app);
+  const { lines, envArg, prefix, fits } = cloneAndEnvSteps(app);
   const proj = composeProject(app);
   const file = composeFileArg(app);
   const rows = app.serviceDomains ?? [];
   const writeOverride = rows.length > 0;
   const overridePath = `${composeGitDir(app)}/override.yml`;
   lines.push(
-    `TUGRA_RENDERED=$(${renderExpr(app, envArg)})`,
+    `TUGRA_RENDERED=$(${renderExpr(app, envArg, prefix)})`,
     `TUGRA_SHA=$(printf %s "$TUGRA_RENDERED" | sha256sum | cut -d' ' -f1)`,
     // TOCTOU lock: the repo must still render to exactly what the hub validated. A mismatch means the branch
     // moved (or the render was non-deterministic) between validation and run → refuse rather than run unvetted.
@@ -129,11 +136,13 @@ export function buildComposeGitUpScript(app: AppSpec, sha: string, noCache = fal
   lines.push(...registryLoginPrelude(app.registryAuth));
   const overrideArg = writeOverride ? `-f ${overridePath} ` : "";
   lines.push(
-    `docker compose --progress plain -p ${proj} -f ${shq(file)} ${overrideArg}${envArg}up -d --build ${noCache ? "--pull always --no-cache " : ""}--force-recreate --remove-orphans`,
+    `${prefix}docker compose --progress plain -p ${proj} -f ${shq(file)} ${overrideArg}${envArg}up -d --build ${noCache ? "--pull always --no-cache " : ""}--force-recreate --remove-orphans`,
     ...registryLogoutSteps(app.registryAuth),
     `docker compose -p ${proj} -f ${shq(file)} ${overrideArg}ps`,
   );
-  return lines.join("\n");
+  const script = lines.join("\n");
+  if (fits) assertScriptFits(script);
+  return script;
 }
 
 /** Parse the render script's markers out of the agent output: the rendered compose YAML (decoded) and its

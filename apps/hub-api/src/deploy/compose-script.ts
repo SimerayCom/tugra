@@ -18,6 +18,7 @@ import {
   PROXY_NETWORK,
   type AppSpec,
 } from "./deploy-script";
+import { assertScriptFits, mlPrefix, mlPrelude, planEnv } from "./env-render";
 
 /** A named volume declared in a compose app's docker-compose.yml. `dockerName` is the real docker
  *  volume: `<project>_<key>` for a normal declaration, the explicit `name:` when set, or the key
@@ -254,7 +255,10 @@ export function buildComposeUpScript(app: AppSpec, noCache = false): string {
   const file = composeFilePath(app);
   const proj = composeProject(app);
   const env = app.env && typeof app.env === "object" ? app.env : {};
-  const hasEnv = Object.keys(env).length > 0;
+  // Multiline / literal variables bypass the interpolating `.env` and ride the compose process environment
+  // (decoded into unexported shell vars, attached to the one `docker compose ... up` by prefix assignment).
+  const plan = planEnv(env, app.envMeta, "compose");
+  const hasEnv = Object.keys(plan.fileEnv).length > 0;
   const envPath = `${dir}/.env`;
   // Route the web service through Traefik (magic/custom domain) via a label override.
   const magic = !!(app.domain && app.composeWebService);
@@ -289,10 +293,11 @@ export function buildComposeUpScript(app: AppSpec, noCache = false): string {
   }
   if (hasEnv) {
     lines.push(
-      `printf %s ${shq(envFileB64(env))} | base64 -d > ${envPath}`,
+      `printf %s ${shq(envFileB64(plan.fileEnv))} | base64 -d > ${envPath}`,
       `chmod 600 ${envPath}`,
     );
   }
+  lines.push(...mlPrelude(plan.shell));
   // Private registry: log in (isolated config) before pulling, log out after.
   lines.push(...registryLoginPrelude(app.registryAuth));
   const envArg = hasEnv ? `--env-file ${envPath} ` : "";
@@ -300,11 +305,13 @@ export function buildComposeUpScript(app: AppSpec, noCache = false): string {
   lines.push(
     // `--progress plain`: emit clean, append-only pull/build status (no TTY `\r`-animated "Downloading
     // [===>] MB" bars) so the deploy log reads like a tidy build log, not hundreds of progress frames.
-    `docker compose --progress plain -p ${proj} -f ${file} ${overrideArg}${envArg}up -d ${noCache ? "--pull always " : ""}--remove-orphans`,
+    `${mlPrefix(plan.shell)}docker compose --progress plain -p ${proj} -f ${file} ${overrideArg}${envArg}up -d ${noCache ? "--pull always " : ""}--remove-orphans`,
     ...registryLogoutSteps(app.registryAuth),
     `docker compose -p ${proj} -f ${file} ${overrideArg}ps`,
   );
-  return lines.join("\n");
+  const script = lines.join("\n");
+  if (plan.shell.length > 0) assertScriptFits(script);
+  return script;
 }
 
 export function buildComposeStopScript(app: AppSpec): string {

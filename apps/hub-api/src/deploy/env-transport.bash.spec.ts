@@ -7,6 +7,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildRunScript, type AppSpec } from "./deploy-script";
+import { buildComposeUpScript } from "./compose-script";
 import { mlEnvFlags, mlPrefix, mlPrelude, planEnv } from "./env-render";
 import { normalizeFlags } from "../common/env-flags";
 
@@ -32,6 +33,9 @@ d("multiline env transport (real bash + stub docker)", () => {
         '    if [ "$prev" = "-e" ]; then printf "VAL %s %s\\n" "$a" "$(printf %s "${!a}" | od -An -v -tx1 | tr -d " \\n")" >> "$LOG"; fi',
         '    prev="$a"',
         "  done",
+        "fi",
+        'if [ "$1" = compose ]; then',
+        '  for k in PW PEM_KEY PLAIN; do if [ -n "${!k+x}" ]; then printf "CENV %s %s\\n" "$k" "$(printf %s "${!k}" | od -An -v -tx1 | tr -d " \\n")" >> "$LOG"; fi; done',
         "fi",
         "exit 0",
       ].join("\n") + "\n",
@@ -95,5 +99,24 @@ d("multiline env transport (real bash + stub docker)", () => {
     expect(r.log).toMatch(/ARGV:run -d --name tugra_abc [^\n]*--env-file [^ ]+abc\.env -e PEM_KEY /);
     const envFile = readFileSync(join(dir, "env", "abc.env"), "utf8");
     expect(envFile).toBe("PLAIN=1");
+  });
+
+  it("compose: a literal value keeps its $ and a multiline value stays intact in the compose process environment", () => {
+    const app: AppSpec = {
+      id: "abc",
+      source: "COMPOSE",
+      composeFile: "services:\n  web:\n    image: nginx",
+      env: { PLAIN: "p", PW: "pa$$word${X}", PEM_KEY: "l1\nl2\n" },
+      envMeta: { PW: { literal: true }, PEM_KEY: { multiline: true } },
+      hostPort: null,
+      containerPort: null,
+    };
+    const script = buildComposeUpScript(app).replaceAll("/etc/tugra", join(dir, "etc"));
+    const r = run(script);
+    expect(r.status).toBe(0);
+    expect(r.log).toContain(`CENV PW ${hex("pa$$word${X}")}\n`);
+    expect(r.log).toContain(`CENV PEM_KEY ${hex("l1\nl2\n")}\n`);
+    expect(r.log).not.toContain("CENV PLAIN"); // the plain value rides the .env file, not the process env
+    expect(readFileSync(join(dir, "etc", "compose", "abc", ".env"), "utf8")).toBe("PLAIN=p");
   });
 });

@@ -376,3 +376,48 @@ describe("lifecycle ops target the right compose file (pasted vs git)", () => {
     expect(buildContainersScript(git)).toContain("label=com.docker.compose.project=tugra_abc");
   });
 });
+
+describe("compose-script — per-variable env flags", () => {
+  const envOf = (s: string) => {
+    const m = s.match(/printf %s '([A-Za-z0-9+/=]+)' \| base64 -d > \/etc\/tugra\/compose\/abc\/\.env/);
+    return m ? Buffer.from(m[1], "base64").toString() : null;
+  };
+  const flagged: AppSpec = {
+    ...base,
+    env: { PLAIN: "p", PW: "pa$$word${X}", PEM_KEY: "l1\nl2\n" },
+    envMeta: { PW: { literal: true }, PEM_KEY: { multiline: true } },
+  };
+
+  it("flag-free output is unchanged (empty meta == no meta)", () => {
+    const e: AppSpec = { ...base, env: { A: "1" } };
+    expect(buildComposeUpScript({ ...e, envMeta: {} })).toBe(buildComposeUpScript(e));
+    expect(buildComposeUpScript(e)).not.toContain("TUGRA_ML");
+  });
+
+  it("literal and multiline keys are absent from the .env body and travel by prefix on the one compose up", () => {
+    const s = buildComposeUpScript(flagged);
+    expect(envOf(s)).toBe("PLAIN=p");
+    expect(s).toContain("--env-file /etc/tugra/compose/abc/.env");
+    expect(s).toContain('PEM_KEY="$TUGRA_ML_0" PW="$TUGRA_ML_1" docker compose --progress plain');
+    const ups = s.match(/docker compose --progress/g) ?? [];
+    expect(s.match(/PEM_KEY="\$TUGRA_ML_0" PW="\$TUGRA_ML_1" docker compose --progress/g) ?? []).toHaveLength(ups.length);
+    expect(s).not.toContain("pa$$word");
+    expect(s).not.toMatch(/export /);
+  });
+
+  it("when every variable is literal/multiline there is no .env and no --env-file", () => {
+    const s = buildComposeUpScript({ ...flagged, env: { PW: "x$y" }, envMeta: { PW: { literal: true } } });
+    expect(envOf(s)).toBeNull();
+    expect(s).not.toContain("--env-file");
+    expect(s).toContain('PW="$TUGRA_ML_0" docker compose');
+  });
+
+  it("a reserved name cannot be literal/multiline on compose", () => {
+    expect(() => buildComposeUpScript({ ...base, env: { DOCKER_HOST: "x" }, envMeta: { DOCKER_HOST: { literal: true } } })).toThrow(/cannot be a multiline or literal/);
+  });
+
+  it("config mounts still interpolate ${KEY} from the FULL env", () => {
+    const s = buildComposeUpScript({ ...flagged, configMounts: [{ containerPath: "/c", content: "pw=${PW}", mode: "0444" } as never] });
+    expect(s).toContain(Buffer.from("pw=pa$$word${X}").toString("base64"));
+  });
+});
