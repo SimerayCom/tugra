@@ -17,12 +17,13 @@ import { type Application, type Deployment } from "../../../../lib/types";
 import { ContainerPickerModal } from "./app-detail-misc-cards";
 import { ROLLOUT_KNOWN, rolloutColor } from "./app-detail-shared";
 
-export function LiveContainerLogsCard({ id, isCompose }: { id: string; isCompose: boolean }) {
+export function LiveContainerLogsCard({ id, isCompose, neverDeployed = false }: { id: string; isCompose: boolean; neverDeployed?: boolean }) {
   const t = useT();
   const [container, setContainer] = useState<string | undefined>(undefined);
   const [pickerOpen, setPickerOpen] = useState(false);
-  // A compose app has many containers → the user must pick one before we can follow it.
-  const active = !isCompose || !!container;
+  // A NEW app has no container yet → nothing to follow (a stream would only relay "No such container"
+  // on every reconnect). A compose app has many containers → the user must pick one before we can follow it.
+  const active = !neverDeployed && (!isCompose || !!container);
 
   return (
     <>
@@ -30,9 +31,9 @@ export function LiveContainerLogsCard({ id, isCompose }: { id: string; isCompose
         basePath={`/apps/${id}`}
         container={container}
         active={active}
-        emptyHint={t("apps.pickContainerToStream")}
+        emptyHint={neverDeployed ? t("apps.logsBeforeFirstDeploy") : t("apps.pickContainerToStream")}
         headerExtra={
-          isCompose ? (
+          isCompose && !neverDeployed ? (
             <Btn variant="ghost" onClick={() => setPickerOpen(true)}>
               {container ?? t("apps.selectContainer")}
             </Btn>
@@ -132,13 +133,13 @@ export function FilesTab({ id, app }: { id: string; app: Pick<Application, "sour
   );
 }
 
-export function LogsTab({ id, canWrite, isCompose, streamActive, liveLines, lastDeployLog }: { id: string; canWrite: boolean; isCompose: boolean; streamActive: boolean; liveLines: string; lastDeployLog: string | null | undefined }) {
+export function LogsTab({ id, canWrite, isCompose, neverDeployed, streamActive, liveLines, lastDeployLog }: { id: string; canWrite: boolean; isCompose: boolean; neverDeployed: boolean; streamActive: boolean; liveLines: string; lastDeployLog: string | null | undefined }) {
   const t = useT();
   return (
     <>
       {/* During a deploy the BUILD log belongs up top; runtime container logs sit below it. */}
       {streamActive && <LiveLogCard lines={liveLines} />}
-      {canWrite && <LiveContainerLogsCard id={id} isCompose={isCompose} />}
+      {canWrite && <LiveContainerLogsCard id={id} isCompose={isCompose} neverDeployed={neverDeployed} />}
       {!streamActive &&
         (lastDeployLog ? (
           <SectionCard title={t("apps.lastDeployLog")} style={{ marginBottom: 0 }}>

@@ -6565,4 +6565,32 @@ describe("ApplicationsService.remove — pruneNetworks / pruneBuildCache", () =>
     await mk().svc.remove("u1", "app1");
     expect(audit.log).toHaveBeenCalledWith({ actor: "u1", action: "app.remove", target: "app1" });
   });
+
+  describe("container logs on a never-deployed app", () => {
+    const prismaFor = (a: typeof app) =>
+      ({ application: { findUnique: jest.fn().mockResolvedValue(a) } }) as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+
+    it("streamContainerLogs / assertContainerLogStreamAccess / downloadLogs refuse a NEW app with 409 (no daemon noise)", async () => {
+      const sendCommand = jest.fn();
+      const isOnline = jest.fn().mockReturnValue(true);
+      const svc = make(prismaFor({ ...app, status: "NEW" }), access, { sendCommand, isOnline } as unknown as AgentWsServer);
+      const logStream = (svc as unknown as { logStream: { stream: jest.Mock } }).logStream;
+      await expect(svc.streamContainerLogs("u1", "app1", {})).rejects.toBeInstanceOf(ConflictException);
+      await expect(svc.assertContainerLogStreamAccess("u1", "app1")).rejects.toBeInstanceOf(ConflictException);
+      await expect(svc.downloadLogs("u1", "app1", {})).rejects.toBeInstanceOf(ConflictException);
+      expect(logStream.stream).not.toHaveBeenCalled();
+      expect(sendCommand).not.toHaveBeenCalled();
+    });
+
+    it("streams the app's own container once it has been deployed", async () => {
+      const isOnline = jest.fn().mockReturnValue(true);
+      const svc = make(prismaFor({ ...app, status: "RUNNING" }), access, { isOnline } as unknown as AgentWsServer);
+      const logStream = (svc as unknown as { logStream: { stream: jest.Mock } }).logStream;
+      logStream.stream.mockReturnValue("observable");
+      await expect(svc.assertContainerLogStreamAccess("u1", "app1")).resolves.toBeUndefined();
+      await expect(svc.streamContainerLogs("u1", "app1", { container: "ignored-for-classic" })).resolves.toBe("observable");
+      expect(logStream.stream).toHaveBeenCalledWith("s1", "tugra_app1", expect.objectContaining({ follow: true }));
+    });
+  });
 });

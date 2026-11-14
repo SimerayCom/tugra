@@ -534,6 +534,7 @@
   "logWrap": "Wrap",
   "logTimestamps": "Timestamps",
   "pickContainerToStream": "Pick a container to stream its logs.",
+  "logsBeforeFirstDeploy": "Container logs appear after the first deploy.",
   "streamingLogs": "Streaming live…",
   "logStreamConnecting": "Connecting…",
   "logStreamEnded": "Stream ended.",

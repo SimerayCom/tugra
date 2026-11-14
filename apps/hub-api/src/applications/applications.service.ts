@@ -3011,6 +3011,7 @@ export class ApplicationsService {
     opts: { container?: string; tail?: number; follow?: boolean; since?: string; search?: string },
   ): Promise<Observable<LogStreamEvent>> {
     const app = await this.requireWrite(userId, id);
+    this.assertHasContainerLogs(app);
     const tail = clampTail(opts.tail);
     const since = normalizeSince(opts.since);
     const search = normalizeSearch(opts.search);
@@ -3037,6 +3038,7 @@ export class ApplicationsService {
    */
   async assertContainerLogStreamAccess(userId: string, id: string): Promise<void> {
     const app = await this.requireWrite(userId, id);
+    this.assertHasContainerLogs(app);
     if (app.clusterId) {
       await this.swarmDeploy.resolveManager(app.clusterId); // throws if the swarm isn't ACTIVE / the manager is offline
       return;
@@ -3055,6 +3057,7 @@ export class ApplicationsService {
     opts: { container?: string; tail?: number; since?: string },
   ): Promise<string> {
     const app = await this.requireWrite(userId, id);
+    this.assertHasContainerLogs(app);
     const tail = clampTail(opts.tail, 10000);
     // Swarm app: aggregated service logs from the manager (honor the since window + timestamps, like classic).
     if (app.clusterId) {
@@ -3070,6 +3073,15 @@ export class ApplicationsService {
     const r = await this.agentWs.sendCommand(app.serverId, cmd, "deploy", 60_000);
     await this.audit.log({ actor: userId, action: "app.logs.download", target: id });
     return r.output.slice(0, 5_000_000); // hard cap the response size
+  }
+
+  /**
+   * A NEW app has never been deployed, so there is no container (or swarm service) to read logs
+   * from: `docker logs` would only answer "No such container", and a follow stream would re-emit
+   * that line on every reconnect. Refuse up front with a clear 409 instead of relaying daemon noise.
+   */
+  private assertHasContainerLogs(app: Pick<Application, "status">): void {
+    if (app.status === "NEW") throw new ConflictException("app has not been deployed yet — no container logs");
   }
 
   /** Resolve + validate the target container for a log op (writer already checked by requireWrite).
