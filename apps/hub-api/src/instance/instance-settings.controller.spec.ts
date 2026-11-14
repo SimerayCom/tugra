@@ -89,7 +89,8 @@ function make(current: CurrentSettings) {
     source: jest.fn().mockReturnValue("db"),
     sendTest: jest.fn().mockResolvedValue({ ok: true }),
   } as unknown as MailService;
-  return { ctrl: new InstanceSettingsController(settings, audit, update, updater, crypto, license, telemetry, mail), settings, audit, update, updater, crypto, license, telemetry, mail };
+  const rotation = { status: jest.fn().mockResolvedValue({ currentKeyId: "k", previousKeyIds: [] }), start: jest.fn().mockReturnValue({ startedAt: new Date() }) };
+  return { ctrl: new InstanceSettingsController(settings, audit, update, updater, crypto, license, telemetry, mail, rotation as never), settings, audit, update, updater, crypto, license, telemetry, mail, rotation };
 }
 
 const ORIGINAL_EDITION = process.env.TUGRA_EDITION;

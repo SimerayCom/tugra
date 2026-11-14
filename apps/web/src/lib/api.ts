@@ -107,6 +107,7 @@ import type {
   Rollout,
   RolloutCreateInput,
   RolloutPlan,
+  SecretsKeyStatus,
 } from "./types";
 
 // Same-origin path the SPA calls; next.config rewrites proxy it to the hub, so the httpOnly session
@@ -443,6 +444,13 @@ export const api = {
   },
   resetTelemetryId() {
     return apiFetch<TelemetryStatus>("/instance/telemetry/reset", { method: "POST" });
+  },
+  // Master-key rotation (owner, session-only): status of stored secrets vs the current key + re-encrypt trigger.
+  getSecretsKeyStatus() {
+    return apiFetch<SecretsKeyStatus>("/instance/secrets-key");
+  },
+  reencryptSecrets() {
+    return apiFetch<{ startedAt: string }>("/instance/secrets-key/reencrypt", { method: "POST" });
   },
   updateProfile(input: { name?: string; email?: string; uiMode?: "fleet" | "home"; currentPassword?: string }) {
     // An email change is deferred (confirmed via a link to the new address) and requires the current

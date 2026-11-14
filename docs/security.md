@@ -10,7 +10,8 @@ vulnerability**, see the [security policy](../SECURITY.md) — please don't open
   granted a capability set the agent enforces fail-closed. See [architecture](architecture.md).
 - **Fail-closed secrets.** `HUB_SIGNING_KEY` is required in production (the hub won't boot without it
   outside dev/test). Stored secrets (env vars, credentials, DB connection strings) are encrypted at rest
-  with `SECRETS_ENCRYPTION_KEY`.
+  with `SECRETS_ENCRYPTION_KEY`; the key can be rotated without downtime (see
+  [Rotating the secrets key](#rotating-the-secrets-key)).
 - **API access control.** Personal access tokens are scoped; secret values are gated behind `read:secrets`.
   The instance owner can disable PAT access entirely (`apiEnabled`) or restrict it to an IP allowlist
   (`apiAllowedIps`). Details in the [API docs](api.md).
@@ -74,3 +75,34 @@ runtime toggle. See [Open-core & editions](open-core.md).
 
 Tugra is in early development — only the latest `main` receives security fixes. See the
 [security policy](../SECURITY.md) for the current support statement.
+
+## Rotating the secrets key
+
+Every stored secret is encrypted with a key derived from `SECRETS_ENCRYPTION_KEY`. Each ciphertext records the
+id of the key it was written with, so the hub can hold the current key **and** previous keys at the same time
+and rewrite everything under the new one while it keeps running.
+
+1. Generate a new passphrase (e.g. `openssl rand -base64 24`).
+2. In the repo-root `.env`: move the old value to `SECRETS_ENCRYPTION_KEY_PREVIOUS` and put the new one in
+   `SECRETS_ENCRYPTION_KEY`. Several previous keys may be listed, comma-separated.
+3. Restart the hub (`docker compose --env-file .env -f deploy/docker-compose.yml up -d hub-api`). It boots,
+   reads old secrets through the previous key and writes new ones with the current key.
+4. Settings → Instance → Security → **Secrets encryption key** → **Re-encrypt now**. The job rewrites every
+   stored secret under the current key (resumable; re-run it if it was interrupted). The card shows how many
+   values are still on an old key, per table.
+5. When the card says every secret is under the current key, remove `SECRETS_ENCRYPTION_KEY_PREVIOUS` and
+   restart once more. Keep the old passphrase in your password manager until every backup taken **before** the
+   rotation is obsolete: restoring a pre-rotation backup (Postgres dump, volume bundle or in-app `.gpg`) under
+   the current `.env` needs the old passphrase back in `SECRETS_ENCRYPTION_KEY_PREVIOUS`, otherwise its secrets
+   are reported unreadable. In-app `.gpg` backups also derive their gpg passphrase from the key that was current
+   when they were taken (see [disaster recovery](disaster-recovery.md)).
+
+Notes:
+- Two-factor **recovery codes** are stored as keyed hashes and cannot be rewritten (the code itself is never
+  stored). They keep working while the previous key is configured; users should regenerate them before it is
+  removed — the card tells you how many were issued before the rotation.
+- A secret written with a key that is no longer configured is reported as **unreadable** (never silently
+  dropped): add that key back to `SECRETS_ENCRYPTION_KEY_PREVIOUS` and re-encrypt, or re-enter the value.
+- The importer's one-time migration tokens and in-flight imports are derived from the current key: finish or
+  restart an import across a rotation.
+

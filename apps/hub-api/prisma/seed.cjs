@@ -38,13 +38,15 @@ async function main() {
   const passphrase = process.env.SECRETS_ENCRYPTION_KEY;
   if (!passphrase) throw new Error("SECRETS_ENCRYPTION_KEY missing — is apps/hub-api/.env set?");
   const key = sodium.crypto_generichash(sodium.crypto_secretbox_KEYBYTES, passphrase, null);
+  // Same versioned format as CryptoService.encrypt: "tk1.<keyId>.<base64(nonce||cipher)>"
+  const keyId = sodium.to_hex(sodium.crypto_generichash(8, key, null));
   const enc = (plaintext) => {
     const nonce = sodium.randombytes_buf(sodium.crypto_secretbox_NONCEBYTES);
     const cipher = sodium.crypto_secretbox_easy(sodium.from_string(plaintext), nonce, key);
     const combined = new Uint8Array(nonce.length + cipher.length);
     combined.set(nonce);
     combined.set(cipher, nonce.length);
-    return sodium.to_base64(combined, sodium.base64_variants.ORIGINAL);
+    return `tk1.${keyId}.${sodium.to_base64(combined, sodium.base64_variants.ORIGINAL)}`;
   };
   const encJson = (obj) => enc(JSON.stringify(obj));
 

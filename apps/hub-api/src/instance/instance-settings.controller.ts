@@ -11,6 +11,7 @@ import { InstanceSettingsService } from "./instance-settings.service";
 import { InstanceOwnerGuard } from "./instance-owner.guard";
 import { currentEdition, RequireEdition, RequireEditionGuard } from "../common/edition";
 import { CryptoService } from "../crypto/crypto.service";
+import { SecretsRotationService } from "../crypto/secrets-rotation.service";
 import { assertSafeUrl, allowPrivateTargets } from "../notifications/safe-url";
 import { LicenseService } from "../license/license.service";
 import {
@@ -56,7 +57,30 @@ export class InstanceSettingsController {
     private readonly license: LicenseService,
     private readonly telemetry: TelemetryService,
     private readonly mail: MailService,
+    private readonly rotation: SecretsRotationService,
   ) {}
+
+  /**
+   * Master-key rotation status (owner-only, session-only): which key is current, which previous keys are still
+   * configured, and how many stored secrets are not yet under the current key. Never returns a key or a secret.
+   */
+  @Get("secrets-key")
+  secretsKeyStatus() {
+    return this.rotation.status();
+  }
+
+  /** Re-encrypt every stored secret under the CURRENT key (detached; poll the status). 409 while one runs. */
+  @Post("secrets-key/reencrypt")
+  @HttpCode(202)
+  async reencryptSecrets(@CurrentUser() user: AuthUser) {
+    const run = this.rotation.start(user.userId);
+    try {
+      await this.audit.log({ actor: user.userId, action: "instance.secrets_key.reencrypt_start", target: "singleton" });
+    } catch {
+      /* best-effort: the run is already going (its completion is audited too); never turn a started run into a 500 */
+    }
+    return { startedAt: run.startedAt };
+  }
 
   /**
    * Self-update status: the running version, the latest published version for the tracked channel (from

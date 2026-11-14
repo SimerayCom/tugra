@@ -1705,3 +1705,31 @@ export interface RolloutCreateInput {
   appIds: string[];
   config: Partial<RolloutConfig>;
 }
+
+// ── Master-key rotation (GET /instance/secrets-key) ──
+export interface SecretsKeyCounts {
+  current: number;
+  stale: number;
+  unreadable: number;
+}
+export interface SecretsKeyStatus {
+  currentKeyId: string;
+  previousKeyIds: string[];
+  models: ({ model: string } & SecretsKeyCounts)[];
+  totals: SecretsKeyCounts;
+  hmacRowsOnOldKeys: { model: string; column: string; count: number | null }[];
+  previousKeyRemovable: boolean;
+  running: boolean;
+  lastRun: {
+    startedAt: string;
+    finishedAt: string | null;
+    actor: string;
+    rewritten: number;
+    alreadyCurrent: number;
+    unreadable: number;
+    skipped: number;
+    errors: number;
+    unreadableRefs: string[];
+    error: string | null;
+  } | null;
+}

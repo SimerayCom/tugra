@@ -37,6 +37,13 @@ export const envSchema = z
   JWT_ACCESS_SECRET: z.string().min(16, "JWT_ACCESS_SECRET must be at least 16 chars"),
   JWT_REFRESH_SECRET: z.string().min(16, "JWT_REFRESH_SECRET must be at least 16 chars"),
   SECRETS_ENCRYPTION_KEY: z.string().min(16, "SECRETS_ENCRYPTION_KEY must be at least 16 chars"),
+  // Key rotation: comma-separated PREVIOUS passphrases that may still open old ciphertexts while the stored
+  // secrets are re-encrypted under SECRETS_ENCRYPTION_KEY (Settings → Instance → Secrets encryption key). Each
+  // entry obeys the same floor; drop it once the status shows nothing left under the old key.
+  SECRETS_ENCRYPTION_KEY_PREVIOUS: z
+    .string()
+    .optional()
+    .refine((v) => !v || v.split(",").every((p) => !p.trim() || p.trim().length >= 16), "every SECRETS_ENCRYPTION_KEY_PREVIOUS entry must be at least 16 chars"),
   // The hub's ed25519 command-signing identity (base64 32-byte seed). Optional in
   // dev/test (an ephemeral key is generated), but REQUIRED in production so the
   // identity is stable across restarts and consistent across instances.

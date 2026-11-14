@@ -14,7 +14,11 @@ The hub stores everything in one Docker volume plus the repo-root `.env`:
 | Redis volume (`tugra_redis`) | Job queues, live-metric cache, rate-limit counters | Rebuildable — schedules re-register on boot; safe to lose |
 | `.env` (repo root) | `SECRETS_ENCRYPTION_KEY`, `POSTGRES_PASSWORD`, `HUB_SIGNING_KEY`, JWT secrets | **Critical** — the Postgres data is unusable without it (see below) |
 
-> ⚠️ **The `.env` is part of your backup.** Secrets in Postgres are encrypted with `SECRETS_ENCRYPTION_KEY`,
+> ⚠️ **The `.env` is part of your backup.** Secrets in Postgres are encrypted with `SECRETS_ENCRYPTION_KEY`
+> (if you have rotated it, keep the previous passphrase too — `SECRETS_ENCRYPTION_KEY_PREVIOUS` — until every
+> backup taken under the old key is obsolete — when restoring a pre-rotation backup under a post-rotation `.env`,
+> put the old passphrase back in `SECRETS_ENCRYPTION_KEY_PREVIOUS` or restore the `.env` that was current at
+> backup time; see [Rotating the secrets key](security.md#rotating-the-secrets-key)),
 > and a copied Postgres data dir still expects the original `POSTGRES_PASSWORD` — **the database is unusable
 > without the same `.env`.** (`HUB_SIGNING_KEY` keeps the agent command-signing identity stable; agents pin
 > the hub key per connection, so a changed one is re-pinned, not fatal, but keep it to avoid churn.) Store

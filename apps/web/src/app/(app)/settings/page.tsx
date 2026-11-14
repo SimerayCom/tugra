@@ -9,6 +9,7 @@ import { api } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth";
 import { ApiTokensCard } from "./api-tokens-card";
 import { InstanceApiAccessCard } from "./instance-api-access-card";
+import { SecretsKeyCard } from "./secrets-key-card";
 import { LicenseCard } from "./license-card";
 import { SsoConfigCard } from "./sso-config-card";
 import { TelemetryCard } from "./telemetry-card";
@@ -158,6 +159,7 @@ export default function SettingsPage() {
                 <SettingsGrid>
                   <InstanceApiAccessCard />
                   <Wide><SsoConfigCard /></Wide>
+                  <Wide><SecretsKeyCard /></Wide>
                 </SettingsGrid>
               ),
             },

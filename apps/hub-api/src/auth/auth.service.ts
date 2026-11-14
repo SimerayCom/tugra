@@ -578,8 +578,10 @@ export class AuthService {
     if (this.totp.verify(code, this.crypto.decrypt(user.twoFaSecret as string))) {
       return { ok: true, remaining: null };
     }
+    // A code's MAC was written under whichever key was current at the time; during a key rotation the previous
+    // key's MAC must still match (the plaintext is gone, so a rotation cannot rewrite it) → match any candidate.
     const consumed = await this.prisma.twoFactorRecoveryCode.updateMany({
-      where: { userId: user.id, codeHash: this.crypto.hmac(recoveryHashInput(user.id, code)), usedAt: null },
+      where: { userId: user.id, codeHash: { in: this.crypto.hmacCandidates(recoveryHashInput(user.id, code)) }, usedAt: null },
       data: { usedAt: new Date() },
     });
     if (consumed.count !== 1) return { ok: false, remaining: null };

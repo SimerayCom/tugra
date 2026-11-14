@@ -168,3 +168,12 @@ describe("validateEnv — MAGIC_DOMAIN_SUFFIX", () => {
     ).toBe("nip.io");
   });
 });
+
+describe("validateEnv — SECRETS_ENCRYPTION_KEY_PREVIOUS", () => {
+  it("accepts a comma-separated list of previous passphrases (each ≥16 chars) and refuses a short one", () => {
+    const env = { ...base, NODE_ENV: "development" };
+    expect(() => validateEnv({ ...env, SECRETS_ENCRYPTION_KEY_PREVIOUS: "old-passphrase-00001, old-passphrase-00002" })).not.toThrow();
+    expect(() => validateEnv({ ...env, SECRETS_ENCRYPTION_KEY_PREVIOUS: "" })).not.toThrow();
+    expect(() => validateEnv({ ...env, SECRETS_ENCRYPTION_KEY_PREVIOUS: "short" })).toThrow(/SECRETS_ENCRYPTION_KEY_PREVIOUS/);
+  });
+});

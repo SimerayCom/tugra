@@ -79,6 +79,7 @@ services:
       JWT_ACCESS_SECRET: "${JWT_ACCESS_SECRET}"
       JWT_REFRESH_SECRET: "${JWT_REFRESH_SECRET}"
       SECRETS_ENCRYPTION_KEY: "${SECRETS_ENCRYPTION_KEY}"
+      SECRETS_ENCRYPTION_KEY_PREVIOUS: "${SECRETS_ENCRYPTION_KEY_PREVIOUS:-}"
       HUB_SIGNING_KEY: "${HUB_SIGNING_KEY}"
       # In-container listen port is fixed; HUB_PORT in .env only changes the HOST port mapping below.
       HUB_PORT: "3000"

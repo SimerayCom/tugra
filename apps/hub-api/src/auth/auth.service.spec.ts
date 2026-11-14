@@ -147,7 +147,7 @@ describe("AuthService 2FA recovery codes", () => {
       prisma as PrismaService,
       new JwtService({}),
       config,
-      { decrypt: () => "SECRET", encrypt: (s: string) => s, hmac: (d: string) => createHash("sha256").update(d).digest("hex") } as unknown as CryptoService,
+      { decrypt: () => "SECRET", encrypt: (s: string) => s, hmac: (d: string) => createHash("sha256").update(d).digest("hex"), hmacCandidates: (d: string) => [createHash("sha256").update(d).digest("hex")] } as unknown as CryptoService,
       { verify: totpVerify } as unknown as TotpService,
       { log: jest.fn() } as unknown as AuditService,
       new FakeRedis() as unknown as RedisService,
