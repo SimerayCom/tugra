@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import {
   gitCloneSteps,
   buildRunScript,
@@ -47,6 +51,9 @@ describe("gitCloneSteps: LFS", () => {
     expect(s.indexOf("unset GIT_LFS_SKIP_SMUDGE")).toBeLessThan(s.indexOf("TUGRA_C="));
     expect(s.indexOf("unset GIT_LFS_SKIP_SMUDGE")).toBeGreaterThan(s.indexOf("git clone"));
   });
+  it("a missing git-lfs fails with the agent-image wording", () => {
+    expect(joined({ ...git, gitLfs: true })).toContain("TUGRA: this agent image has no git-lfs - update the agent or turn Git LFS off");
+  });
   it("gitLfs:true checks for git-lfs, then pulls after the pin checkout", () => {
     const s = joined({ ...git, gitLfs: true, gitCommit: "abc1234" });
     expect(s).toContain("command -v git-lfs");
@@ -92,14 +99,40 @@ describe("gitCloneSteps: host-pinned askpass", () => {
   };
   it("is written only with submodules or LFS, and answers only for the repo's own host", () => {
     const body = askpassOf(joined({ ...git, gitToken: "tok", gitSubmodules: true }));
-    expect(body).toContain(`*"//github.com'"*|*"@github.com'"*) ;;`);
+    expect(body).toContain(`"Username for 'https://github.com': ") echo x-access-token ;;`);
+    expect(body).toContain(`"Password for 'https://x-access-token@github.com': ") cat "$(dirname "$0")/token" ;;`);
     expect(body).toContain("*) exit 1 ;;");
-    expect(body).toContain("Username*) echo x-access-token ;;");
+    expect(body).not.toMatch(/\*"/); // no substring (glob) matching on the prompt
     expect(askpassOf(joined({ ...git, gitToken: "tok", gitLfs: true }))).not.toBeNull();
     expect(askpassOf(joined({ ...git, gitToken: "tok" }))).toBeNull();
   });
   it("keeps a port in the pinned host", () => {
-    expect(askpassOf(joined({ ...git, gitUrl: "https://git.example.com:8443/a/b.git", gitToken: "t", gitSubmodules: true }))).toContain("//git.example.com:8443'");
+    expect(askpassOf(joined({ ...git, gitUrl: "https://git.example.com:8443/a/b.git", gitToken: "t", gitSubmodules: true }))).toContain("'https://git.example.com:8443': ");
+  });
+  it("executed: answers the exact legit prompts and refuses spoofed ones", () => {
+    const dir = mkdtempSync(join(tmpdir(), "askpass-"));
+    try {
+      writeFileSync(join(dir, "askpass"), askpassOf(joined({ ...git, gitToken: "tok", gitSubmodules: true }))!, { mode: 0o700 });
+      writeFileSync(join(dir, "token"), "s3cret-token");
+      const run = (prompt: string) => spawnSync("bash", [join(dir, "askpass"), prompt], { encoding: "utf8" });
+      expect(run("Username for 'https://github.com': ").stdout.trim()).toBe("x-access-token");
+      expect(run("Password for 'https://x-access-token@github.com': ").stdout).toBe("s3cret-token");
+      const spoofs = [
+        "Password for 'https:////github.com'@evil.example': ", // percent-decoded userinfo spoof ending in the host
+        "Password for 'https://%40github.com%27@evil.example': ",
+        "Password for 'https://x-access-token@evil.example': ",
+        "Password for 'https://x-access-token@github.com.evil.example': ",
+        "Username for 'https://evil.example/github.com': ",
+        "Password for 'https://github.com': ", // wrong user
+        "",
+      ];
+      for (const p of spoofs) {
+        const r = run(p);
+        expect({ p, status: r.status, out: r.stdout }).toEqual({ p, status: 1, out: "" });
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
   it("fails closed when the host cannot be derived", () => {
     const s = joined({ ...git, gitUrl: "https://bad host/x.git", gitToken: "t", gitSubmodules: true });
@@ -202,6 +235,23 @@ describe("runContainerArgs: runtime SOURCE_COMMIT", () => {
     const g = { ...git, sourceCommitMode: "RUNTIME" as const };
     expect(buildRollingDeployScript({ ...g, domain: "app.example.com" }, "v1", { probe: { kind: "stableWait" }, ...gate })).toContain(TOKEN);
     expect(buildRecreateDeployScript({ ...g, hostPort: 8080 }, "v1", { probe: { kind: "stableWait" }, ...gate })).toContain(TOKEN);
+  });
+  it("recreate rollback runs the previous image with the PREVIOUS commit, never the new clone's TUGRA_C", () => {
+    const g = { ...git, sourceCommitMode: "RUNTIME" as const, hostPort: 8080 };
+    const out = buildRecreateDeployScript(g, "v2", { prevVersion: "v1", prevCommit: "abc1234def", probe: { kind: "stableWait" }, ...gate });
+    const rb = out.split("\n").find((l) => l.includes("rolled_back"))!;
+    expect(rb).toContain("tugra_abc:v1");
+    expect(rb).toContain("-e SOURCE_COMMIT=abc1234def");
+    expect(rb).not.toContain("${TUGRA_C");
+    expect(out).toContain(TOKEN); // the NEW container still reads the new clone's SHA
+    // unknown / invalid previous commit (e.g. non-GIT history, null) -> no SOURCE_COMMIT at all on the rollback line
+    for (const prevCommit of [null, undefined, "x; rm -rf /"]) {
+      const o = buildRecreateDeployScript(g, "v2", { prevVersion: "v1", prevCommit, probe: { kind: "stableWait" }, ...gate });
+      const line = o.split("\n").find((l) => l.includes("rolled_back"))!;
+      expect(line).not.toContain("SOURCE_COMMIT");
+      expect(line).not.toContain("TUGRA_C");
+      expect(line).not.toContain("rm -rf /");
+    }
   });
   it("the build-only script (build server) clones with the new flags", () => {
     const s = buildBuildOnlyScript({ ...git, gitSubmodules: true, gitLfs: false }, "v1");

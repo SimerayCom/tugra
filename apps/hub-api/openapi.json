@@ -11705,6 +11705,9 @@
                           "type": "string"
                         }
                       },
+                      "networkingLocked": {
+                        "type": "boolean"
+                      },
                       "internalHost": {
                         "type": "object",
                         "properties": {
@@ -12023,6 +12026,7 @@
                       "restartMaxRetries",
                       "containerAlias",
                       "networks",
+                      "networkingLocked",
                       "internalHost",
                       "domain",
                       "extraDomains",
@@ -12887,6 +12891,9 @@
                         "type": "string"
                       }
                     },
+                    "networkingLocked": {
+                      "type": "boolean"
+                    },
                     "internalHost": {
                       "type": "object",
                       "properties": {
@@ -13205,6 +13212,7 @@
                     "restartMaxRetries",
                     "containerAlias",
                     "networks",
+                    "networkingLocked",
                     "internalHost",
                     "domain",
                     "extraDomains",
@@ -14136,6 +14144,9 @@
                         "type": "string"
                       }
                     },
+                    "networkingLocked": {
+                      "type": "boolean"
+                    },
                     "internalHost": {
                       "type": "object",
                       "properties": {
@@ -14454,6 +14465,7 @@
                     "restartMaxRetries",
                     "containerAlias",
                     "networks",
+                    "networkingLocked",
                     "internalHost",
                     "domain",
                     "extraDomains",
@@ -15389,6 +15401,9 @@
                         "type": "string"
                       }
                     },
+                    "networkingLocked": {
+                      "type": "boolean"
+                    },
                     "internalHost": {
                       "type": "object",
                       "properties": {
@@ -15707,6 +15722,7 @@
                     "restartMaxRetries",
                     "containerAlias",
                     "networks",
+                    "networkingLocked",
                     "internalHost",
                     "domain",
                     "extraDomains",
@@ -24864,6 +24880,9 @@
                             "type": "string"
                           }
                         },
+                        "networkingLocked": {
+                          "type": "boolean"
+                        },
                         "internalHost": {
                           "type": "object",
                           "properties": {
@@ -25182,6 +25201,7 @@
                         "restartMaxRetries",
                         "containerAlias",
                         "networks",
+                        "networkingLocked",
                         "internalHost",
                         "domain",
                         "extraDomains",
@@ -25976,6 +25996,9 @@
                         "type": "string"
                       }
                     },
+                    "networkingLocked": {
+                      "type": "boolean"
+                    },
                     "internalHost": {
                       "type": "object",
                       "properties": {
@@ -26294,6 +26317,7 @@
                     "restartMaxRetries",
                     "containerAlias",
                     "networks",
+                    "networkingLocked",
                     "internalHost",
                     "domain",
                     "extraDomains",
@@ -27158,6 +27182,9 @@
                           "type": "string"
                         }
                       },
+                      "networkingLocked": {
+                        "type": "boolean"
+                      },
                       "internalHost": {
                         "type": "object",
                         "properties": {
@@ -27476,6 +27503,7 @@
                       "restartMaxRetries",
                       "containerAlias",
                       "networks",
+                      "networkingLocked",
                       "internalHost",
                       "domain",
                       "extraDomains",
@@ -28425,6 +28453,9 @@
                         "type": "string"
                       }
                     },
+                    "networkingLocked": {
+                      "type": "boolean"
+                    },
                     "internalHost": {
                       "type": "object",
                       "properties": {
@@ -28743,6 +28774,7 @@
                     "restartMaxRetries",
                     "containerAlias",
                     "networks",
+                    "networkingLocked",
                     "internalHost",
                     "domain",
                     "extraDomains",
@@ -30935,6 +30967,9 @@
                         "type": "string"
                       }
                     },
+                    "networkingLocked": {
+                      "type": "boolean"
+                    },
                     "internalHost": {
                       "type": "object",
                       "properties": {
@@ -31253,6 +31288,7 @@
                     "restartMaxRetries",
                     "containerAlias",
                     "networks",
+                    "networkingLocked",
                     "internalHost",
                     "domain",
                     "extraDomains",

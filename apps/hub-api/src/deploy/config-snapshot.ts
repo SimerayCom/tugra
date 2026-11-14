@@ -8,6 +8,8 @@ import type { AppSpec } from "./deploy-script";
  * only for change detection, and git/registry credentials collapse to booleans.
  */
 export interface ConfigSnapshot {
+  /** Schema marker. 2 = records restartPolicy (always, even the default). Absent = an older snapshot that never did. */
+  snapV?: number;
   source?: string;
   image?: string | null;
   gitUrl?: string | null;
@@ -131,6 +133,7 @@ export function buildConfigSnapshot(spec: AppSpec): ConfigSnapshot {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(spec.env ?? {})) env[k] = fingerprint(v);
   return {
+    snapV: 2,
     source: spec.source,
     image: spec.image ?? null,
     gitUrl: spec.gitUrl ?? null,
@@ -200,6 +203,9 @@ export function diffSnapshots(
   const changes: ConfigChange[] = [];
 
   for (const f of SCALAR_FIELDS) {
+    // An old snapshot (no snapV) never recorded restartPolicy, so its absence is not 'unset' - skip rather than
+    // report a false before:'—' diff against every newer snapshot.
+    if (f === "restartPolicy" && prev.snapV === undefined) continue;
     const a = (prev as unknown as Record<string, unknown>)[f] ?? SNAPSHOT_DEFAULTS[f];
     const b = (next as unknown as Record<string, unknown>)[f] ?? SNAPSHOT_DEFAULTS[f];
     if (show(a) !== show(b)) {

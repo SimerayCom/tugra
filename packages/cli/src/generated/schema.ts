@@ -11909,6 +11909,7 @@ export interface operations {
                         restartMaxRetries: number | null;
                         containerAlias: string | null;
                         networks: string[];
+                        networkingLocked: boolean;
                         internalHost: {
                             host: string;
                             port: number;
@@ -12213,6 +12214,7 @@ export interface operations {
                         restartMaxRetries: number | null;
                         containerAlias: string | null;
                         networks: string[];
+                        networkingLocked: boolean;
                         internalHost: {
                             host: string;
                             port: number;
@@ -12628,6 +12630,7 @@ export interface operations {
                         restartMaxRetries: number | null;
                         containerAlias: string | null;
                         networks: string[];
+                        networkingLocked: boolean;
                         internalHost: {
                             host: string;
                             port: number;
@@ -12998,6 +13001,7 @@ export interface operations {
                         restartMaxRetries: number | null;
                         containerAlias: string | null;
                         networks: string[];
+                        networkingLocked: boolean;
                         internalHost: {
                             host: string;
                             port: number;
@@ -18886,6 +18890,7 @@ export interface operations {
                             restartMaxRetries: number | null;
                             containerAlias: string | null;
                             networks: string[];
+                            networkingLocked: boolean;
                             internalHost: {
                                 host: string;
                                 port: number;
@@ -19185,6 +19190,7 @@ export interface operations {
                         restartMaxRetries: number | null;
                         containerAlias: string | null;
                         networks: string[];
+                        networkingLocked: boolean;
                         internalHost: {
                             host: string;
                             port: number;
@@ -19553,6 +19559,7 @@ export interface operations {
                         restartMaxRetries: number | null;
                         containerAlias: string | null;
                         networks: string[];
+                        networkingLocked: boolean;
                         internalHost: {
                             host: string;
                             port: number;
@@ -19979,6 +19986,7 @@ export interface operations {
                         restartMaxRetries: number | null;
                         containerAlias: string | null;
                         networks: string[];
+                        networkingLocked: boolean;
                         internalHost: {
                             host: string;
                             port: number;
@@ -21226,6 +21234,7 @@ export interface operations {
                         restartMaxRetries: number | null;
                         containerAlias: string | null;
                         networks: string[];
+                        networkingLocked: boolean;
                         internalHost: {
                             host: string;
                             port: number;

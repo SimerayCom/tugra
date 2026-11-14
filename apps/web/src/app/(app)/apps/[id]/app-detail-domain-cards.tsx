@@ -181,7 +181,7 @@ export type InternalHost = { host: string; port: number; networks: string[]; ali
 
 /** Where other containers reach this app (read-only), plus its stable name and extra Docker networks. The
  *  stable alias + networks are replace-set via PUT /apps/:id/networks and apply on the next deploy. */
-export function NetworkingCard({ id, internalHost, containerAlias, networks }: { id: string; internalHost: InternalHost | null; containerAlias: string | null; networks: string[] }) {
+export function NetworkingCard({ id, internalHost, containerAlias, networks, locked = false }: { id: string; internalHost: InternalHost | null; containerAlias: string | null; networks: string[]; locked?: boolean }) {
   const t = useT();
   const qc = useQueryClient();
   const toast = useToast();
@@ -228,9 +228,10 @@ export function NetworkingCard({ id, internalHost, containerAlias, networks }: {
             <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.internalAddressUnmanaged")}</div>
           )}
         </div>
+        {locked && <div role="note" style={{ fontSize: 12, color: "var(--c-am)" }}>{t("apps.networkingLockedNote")}</div>}
         <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           <span style={{ fontSize: 12, color: "var(--c-tx2)" }}>{t("apps.containerAlias")}</span>
-          <input className="mono" style={field} value={alias} spellCheck={false} placeholder="api" onChange={(e) => setAlias(e.target.value)} aria-label={t("apps.containerAlias")} />
+          <input className="mono" style={field} disabled={locked} value={alias} spellCheck={false} placeholder="api" onChange={(e) => setAlias(e.target.value)} aria-label={t("apps.containerAlias")} />
           <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("apps.containerAliasHint")}</span>
           <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("apps.containerAliasRollingNote")}</span>
         </label>
@@ -240,6 +241,7 @@ export function NetworkingCard({ id, internalHost, containerAlias, networks }: {
           <textarea
             className="mono"
             value={text}
+            disabled={locked}
             spellCheck={false}
             onChange={(e) => setText(e.target.value)}
             placeholder={"backend\ntugra-apps"}
@@ -250,7 +252,7 @@ export function NetworkingCard({ id, internalHost, containerAlias, networks }: {
           <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("apps.networksReserved")}</span>
         </label>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <Btn onClick={() => save.mutate()} disabled={!dirty || save.isPending}>{t("apps.save")}</Btn>
+          <Btn onClick={() => save.mutate()} disabled={locked || !dirty || save.isPending}>{t("apps.save")}</Btn>
         </div>
       </div>
       {save.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(save.error as Error).message}</div>}

@@ -1224,6 +1224,7 @@ export interface Application {
   restartMaxRetries: number | null; // on-failure retry cap
   containerAlias: string | null; // stable DNS name on every network the app joins
   networks: string[]; // extra user Docker networks
+  networkingLocked: boolean; // a raw --network in Docker options owns networking; the alias/networks inputs are disabled
   // Where other containers reach this app; null when unknown (compose / swarm / custom --network in Docker options).
   internalHost: { host: string; port: number; networks: string[]; aliases: string[] } | null;
   outputDir: string | null;

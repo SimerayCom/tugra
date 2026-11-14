@@ -314,7 +314,7 @@ export default function AppDetailPage() {
     redirects: () => <RedirectsCard id={id} redirects={appData.redirects} />,
     containerPort: () => <ContainerPortCard id={id} containerPort={appData.containerPort} />,
     extraPorts: () => <ExtraPortsCard id={id} ports={appData.extraPorts} />,
-    networking: () => <NetworkingCard id={id} internalHost={appData.internalHost} containerAlias={appData.containerAlias} networks={appData.networks} />,
+    networking: () => <NetworkingCard id={id} internalHost={appData.internalHost} containerAlias={appData.containerAlias} networks={appData.networks} locked={appData.networkingLocked} />,
     networkAliases: () => <NetworkAliasesCard id={id} aliases={appData.networkAliases} />,
     preview: () => <PreviewCard id={id} previewEnabled={appData.previewEnabled} domain={appData.domain} excludeKeys={appData.previewExcludeKeys} limit={appData.previewLimit} />,
     danger: () => (

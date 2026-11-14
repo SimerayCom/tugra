@@ -54,4 +54,18 @@ describe("NetworkingCard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(set).toHaveBeenCalledWith("a1", { networks: ["backend"], containerAlias: null }));
   });
+
+  it("is locked (inputs and Save disabled, explanation shown) when a raw --network owns networking", () => {
+    wrap(<NetworkingCard id="a1" internalHost={null} containerAlias="api" networks={["backend"]} locked />);
+    expect(screen.getByText(/Networking is managed by the --network flag in Docker options/)).toBeTruthy();
+    expect(screen.getByLabelText("Stable name")).toHaveProperty("disabled", true);
+    expect(screen.getByLabelText("Extra networks")).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Save" })).toHaveProperty("disabled", true);
+  });
+
+  it("is not locked by default", () => {
+    wrap(<NetworkingCard id="a1" internalHost={host} containerAlias={null} networks={[]} />);
+    expect(screen.queryByText(/Networking is managed by the --network flag/)).toBeNull();
+    expect(screen.getByLabelText("Stable name")).toHaveProperty("disabled", false);
+  });
 });

@@ -76,6 +76,16 @@ describe("buildConfigSnapshot", () => {
     expect(changes).toContainEqual(expect.objectContaining({ field: "containerAlias", after: "api" }));
   });
 
+  it("restartPolicy: an old snapshot without snapV never diffs it; two v2 snapshots do", () => {
+    const { snapV: _v, ...old } = buildConfigSnapshot(spec()); // a snapshot from before restartPolicy was recorded
+    expect(old).not.toHaveProperty("snapV");
+    const now = buildConfigSnapshot(spec({ restartPolicy: "always" }));
+    expect(now.snapV).toBe(2);
+    expect(diffSnapshots(old, now).some((c) => c.field === "restartPolicy")).toBe(false);
+    const d = diffSnapshots(buildConfigSnapshot(spec({ restartPolicy: "no" })), now);
+    expect(d).toContainEqual({ field: "restartPolicy", kind: "changed", before: "no", after: "always" });
+  });
+
   it("diffs extra networks as a set (added/removed), order-insensitive", () => {
     const a = buildConfigSnapshot(spec({ networks: ["b", "a"] }));
     expect(a.networks).toEqual(["a", "b"]);

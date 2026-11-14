@@ -18,6 +18,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   each other by container name. Anything that relied on default-bridge addressing (the `docker0` gateway, a
   fixed bridge IP) must be adjusted; add `--network` in the app's Docker options to keep full control.
 
+- **Git and build settings per app.** Git submodules, Git LFS, shallow clone, disabling the build cache, passing
+  env vars as build arguments, and a source commit mode (`SOURCE_COMMIT` off / runtime / build and runtime). Two
+  behaviour changes for existing Git apps on their next deploy: the container now gets a runtime `SOURCE_COMMIT`
+  env (a `SOURCE_COMMIT` you set yourself wins; Build settings, Source commit, Off opts out), and the clone
+  exports `GIT_LFS_SKIP_SMUDGE=1` unless Git LFS is enabled, so LFS files stay pointer stubs (the build log
+  warns when `.gitattributes` uses LFS). Submodules and LFS authenticate with the app's token for any repository
+  on the same git host; previews never clone submodules or pull LFS. The agent image now ships `git-lfs`.
+
 ## [0.1.0-beta.12] - 2026-11-14
 
 - **Per-deployment detail page.** Every deployment row opens its own page: a queued → started → finished

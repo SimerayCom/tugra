@@ -5740,7 +5740,10 @@ describe("ApplicationsService — git/build settings", () => {
     jest.spyOn(svc as unknown as { submitDeploy: (...a: unknown[]) => Promise<unknown> }, "submitDeploy").mockResolvedValue(undefined);
     const parent = { ...gitApp, ...allSix, name: "web", environmentId: "e1", previewEnabled: true, domain: "app.example.com", envEnc: "{}", previewExcludeKeys: [] } as unknown as Parameters<typeof svc.upsertPreview>[0];
     await svc.upsertPreview(parent, 7, "feature-7");
-    expect(create.mock.calls[0][0].data).toMatchObject(allSix);
+    const { gitSubmodules: _s, gitLfs: _l, ...rest } = allSix;
+    expect(create.mock.calls[0][0].data).toMatchObject(rest); // shallow / no-cache / build-args / source-commit copy
+    // a preview builds a PR author's head: it must never clone submodules or pull LFS with the app's token
+    expect(create.mock.calls[0][0].data).toMatchObject({ gitSubmodules: false, gitLfs: false });
   });
 
   it("toSpec maps the settings for GIT apps only; inject is DOCKERFILE-gated", () => {
@@ -5864,6 +5867,18 @@ describe("ApplicationsService — container ops + networking", () => {
       const { svc, update } = mk(row);
       await expect(svc.setNetworks("u1", "app1", { networks: ["a"] })).rejects.toBeInstanceOf(BadRequestException);
       expect(update).not.toHaveBeenCalled();
+    });
+
+    it("with a raw --network: refuses setting values but allows a pure clearing write", async () => {
+      const { svc, update } = mk({ dockerOptions: "--network mynet", networks: ["stale"], containerAlias: "old" });
+      await expect(svc.setNetworks("u1", "app1", { networks: ["a"] })).rejects.toBeInstanceOf(BadRequestException);
+      await expect(svc.setNetworks("u1", "app1", { containerAlias: "api" })).rejects.toBeInstanceOf(BadRequestException);
+      await expect(svc.setNetworks("u1", "app1", { networks: [], containerAlias: "api" })).rejects.toBeInstanceOf(BadRequestException);
+      expect(update).not.toHaveBeenCalled();
+      await svc.setNetworks("u1", "app1", { networks: [], containerAlias: null });
+      expect(update.mock.calls[0][0].data).toEqual({ networks: [], containerAlias: null });
+      await svc.setNetworks("u1", "app1", { containerAlias: null });
+      expect(update.mock.calls[1][0].data).toEqual({ containerAlias: null });
     });
 
     it("refuses a reserved network name and a reserved alias (defence in depth over the DTO)", async () => {
@@ -6010,6 +6025,8 @@ describe("ApplicationsService — container ops + networking", () => {
       expect((await listOne({ source: "COMPOSE" })).internalHost).toBeNull();
       expect((await listOne({ clusterId: "c1" })).internalHost).toBeNull();
       expect((await listOne({ dockerOptions: "--network mynet" })).internalHost).toBeNull();
+      expect((await listOne({ dockerOptions: "--network mynet" })).networkingLocked).toBe(true);
+      expect((await listOne({ dockerOptions: null })).networkingLocked).toBe(false);
     });
     it("defaults for an app with no D2 columns (older row shape)", async () => {
       const v = await listOne({ networks: undefined, containerAlias: undefined });

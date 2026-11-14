@@ -876,7 +876,7 @@ export function gitCloneSteps(app: AppSpec, dir: string): string[] {
   if (lfsManaged) {
     // Never let a host-global smudge filter pull LFS during clone/checkout/submodule update; deterministic across hosts.
     steps.push("export GIT_LFS_SKIP_SMUDGE=1");
-    if (wantLfs) steps.push(`command -v git-lfs >/dev/null 2>&1 || { echo "TUGRA: git-lfs is not installed on this server - install it or turn LFS off"; exit 1; }`);
+    if (wantLfs) steps.push(`command -v git-lfs >/dev/null 2>&1 || { echo "TUGRA: this agent image has no git-lfs - update the agent or turn Git LFS off"; exit 1; }`);
   }
   let authEnv = "GIT_TERMINAL_PROMPT=0"; // env for the follow-up git commands (submodules / lfs); replaced per branch below
   if (useSsh) {
@@ -905,20 +905,18 @@ export function gitCloneSteps(app: AppSpec, dir: string): string[] {
       'chmod 600 "$sd/token"',
     );
     if (wantSub || wantLfs) {
-      // Submodules / LFS can reach OTHER hosts (a PR author controls .gitmodules): the askpass answers only for the
-      // repo's own host, so the token is never handed to a different server. Host charset is regex-restricted, so
-      // the case pattern cannot be injected into. Without either feature the original two-line askpass is kept.
+      // Submodules / LFS can reach OTHER hosts (a PR author controls .gitmodules): the askpass answers only the exact
+      // whole-prompt strings git prints for the repo's own host (user embedded by gitAuthUrl() is x-access-token for
+      // every token kind), so the token is never handed to a different server - no substring matching to spoof.
+      // The host charset is regex-restricted, so the case patterns cannot be injected into. Without either feature the original two-line askpass is kept.
       const hostM = /^https:\/\/([A-Za-z0-9.-]+(?::[0-9]{1,5})?)(?:\/|$)/i.exec(url);
       if (!hostM) steps.push(`echo "TUGRA: cannot derive the repo host to pin git credentials to"; exit 1`);
       else {
         const askpass = `#!/bin/sh
 case "$1" in
-  *"//${hostM[1]}'"*|*"@${hostM[1]}'"*) ;;
+  "Username for 'https://${hostM[1]}': ") echo x-access-token ;;
+  "Password for 'https://x-access-token@${hostM[1]}': ") cat "$(dirname "$0")/token" ;;
   *) exit 1 ;;
-esac
-case "$1" in
-  Username*) echo x-access-token ;;
-  *) cat "$(dirname "$0")/token" ;;
 esac
 `;
         steps.push(`printf %s ${shq(b64(askpass))} | base64 -d > "$sd/askpass"`);
@@ -1882,14 +1880,18 @@ export function buildRollingDeployScript(
 export function buildRecreateDeployScript(
   app: AppSpec,
   version: string,
-  opts: { build?: boolean; noCache?: boolean; prevVersion?: string | null; probe: HealthProbe } & HealthGate,
+  opts: { build?: boolean; noCache?: boolean; prevVersion?: string | null; prevCommit?: string | null; probe: HealthProbe } & HealthGate,
 ): string {
   const canonical = containerName(app);
   const build = opts.build ?? true;
   // prevVersion is the previous successful deployment id → its retained image is
   // runTag(app, prevVersion). Re-run it (no rebuild) to restore service.
+  // The rollback runs the PREVIOUS image, so SOURCE_COMMIT must be the previous commit (literal, hex-validated) or
+  // absent - never the `${TUGRA_C:+...}` expansion, which would read the NEW clone's SHA recorded earlier in this script.
+  const prevSha = opts.prevCommit && /^[0-9a-f]{7,64}$/.test(opts.prevCommit) ? opts.prevCommit : null;
+  const prevApp: AppSpec = { ...app, sourceCommit: prevSha, sourceCommitMode: prevSha ? app.sourceCommitMode : "OFF" };
   const rollback = opts.prevVersion
-    ? `  if ${runContainerArgs(app, opts.prevVersion, canonical)}; then echo "TUGRA_ROLLOUT: rolled_back"; exit 3; else echo "TUGRA_ROLLOUT: rollback_failed"; exit 1; fi`
+    ? `  if ${runContainerArgs(prevApp, opts.prevVersion, canonical)}; then echo "TUGRA_ROLLOUT: rolled_back"; exit 3; else echo "TUGRA_ROLLOUT: rollback_failed"; exit 1; fi`
     : `  echo "TUGRA_ROLLOUT: failed"; exit 1`;
   return [
     "set -e",

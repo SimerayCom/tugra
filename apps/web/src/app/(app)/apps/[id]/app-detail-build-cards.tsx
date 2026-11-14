@@ -234,7 +234,7 @@ export function BuildSettingsCard({ id, buildType, dockerfilePath, dockerBuildTa
         </label>
         <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: 0 }}>{t("apps.buildSourceCommitHint")}</p>
         {commitMode === "BUILD" && (
-          <div role="note" style={{ fontSize: 12, color: "var(--c-am)" }}>{t(type === "STATIC" ? "apps.buildSourceCommitStaticNote" : "apps.buildSourceCommitBuildNote")}</div>
+          <div role="note" style={{ fontSize: 12, color: "var(--c-am)" }}>{t(type === "STATIC" ? "apps.buildSourceCommitStaticNote" : type === "DOCKERFILE" ? "apps.buildSourceCommitBuildNote" : "apps.buildSourceCommitBuildEnvNote")}</div>
         )}
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.sourceRedeploy")}</div>}

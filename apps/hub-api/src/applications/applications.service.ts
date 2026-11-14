@@ -248,6 +248,7 @@ export const AppViewSchema = z.object({
   restartMaxRetries: z.number().nullable(), // on-failure retry cap
   containerAlias: z.string().nullable(), // stable DNS name on every network the app joins
   networks: z.array(z.string()), // extra user Docker networks
+  networkingLocked: z.boolean(), // a raw --network in Docker options owns networking: alias/networks can't be set (only cleared)
   // Where other containers reach this app; null when unknown (compose / swarm / an operator-owned --network).
   internalHost: z.object({ host: z.string(), port: z.number(), networks: z.array(z.string()), aliases: z.array(z.string()) }).nullable(),
   domain: z.string().nullable(),
@@ -1263,10 +1264,11 @@ export class ApplicationsService {
           dockerfilePath: parent.dockerfilePath,
           dockerBuildTarget: parent.dockerBuildTarget,
           baseDirectory: parent.baseDirectory, // a monorepo preview must build the same subdirectory as its parent
-          // a preview must build the same way as its parent (clone + build behaviour). Safe for previews: with
-          // submodules/LFS on, the token askpass is host-pinned, so a PR author's .gitmodules can't exfiltrate it.
-          gitSubmodules: parent.gitSubmodules,
-          gitLfs: parent.gitLfs,
+          // a preview builds the parent's way (shallow/no-cache/build-args/source-commit) EXCEPT submodules and LFS:
+          // the preview builds a PR author's head, and its .gitmodules / .lfsconfig can point at attacker-chosen
+          // repos on the same git host, which the app's token would authenticate to. So previews never clone either.
+          gitSubmodules: false,
+          gitLfs: false,
           gitShallowClone: parent.gitShallowClone,
           disableBuildCache: parent.disableBuildCache,
           injectEnvAsBuildArgs: parent.injectEnvAsBuildArgs,
@@ -1929,6 +1931,7 @@ export class ApplicationsService {
                 build: true,
                 noCache,
                 prevVersion: prev?.id ?? null,
+                prevCommit: prev?.commitSha ?? null,
                 probe: resolveHealthProbe(spec),
                 ...resolveHealthGate(spec),
               })
@@ -3495,7 +3498,11 @@ export class ApplicationsService {
     if (app.clusterId) throw new BadRequestException("networks and a container alias aren't supported for clustered (swarm) apps");
     if (app.source === "COMPOSE") throw new BadRequestException("a compose app manages its own networks — declare them in the compose file");
     if (app.isPreview) throw new BadRequestException("networks and a container alias aren't supported on preview apps");
-    if (hasNetworkOpt(app.dockerOptions)) throw new BadRequestException("remove --network from Docker options first");
+    // A raw --network owns networking, so setting values is refused; a pure CLEARING write (no networks, no alias)
+    // is still allowed so stale values saved before the flag was added can be removed.
+    if (hasNetworkOpt(app.dockerOptions) && ((cfg.networks?.length ?? 0) > 0 || !!cfg.containerAlias)) {
+      throw new BadRequestException("remove --network from Docker options first");
+    }
     for (const n of cfg.networks ?? []) {
       if (!isUserNetworkNameAllowed(n)) throw new BadRequestException(`'${n}' is a reserved network name`);
     }
@@ -4882,6 +4889,7 @@ export class ApplicationsService {
       drainSec: app.drainSec,
       containerAlias: app.containerAlias,
       networks: app.networks ?? [],
+      networkingLocked: hasNetworkOpt(app.dockerOptions),
       dbNetwork: !!app.dbNetwork && !app.clusterId,
       volumes: this.appVolumes(app),
       hostMounts: this.appHostMounts(app),
