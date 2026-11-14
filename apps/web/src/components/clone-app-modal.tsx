@@ -23,6 +23,7 @@ const CLONE_WARNINGS = new Set([
   "tasks_disabled",
   "cpuset_reset",
   "privileged_options_dropped",
+  "gpus_unavailable_on_target",
 ]);
 
 /**

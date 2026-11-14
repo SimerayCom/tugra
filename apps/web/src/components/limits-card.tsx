@@ -1,9 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
+import { gpusAdvice } from "../lib/gpu-advice";
 import { useT } from "../i18n/provider";
+import { gpusQueryKey, gpuErrorKey, gpuMemoryGb } from "./gpu-card";
 import { ConfigCard, Field, NumberInput, TextInput, useSaveFeedback } from "./form";
 
 /**
@@ -11,7 +13,7 @@ import { ConfigCard, Field, NumberInput, TextInput, useSaveFeedback } from "./fo
  * carries a visible label — the inputs used to be placeholder-only, so they had no accessible name
  * at all — and Save is gated until something actually changes.
  */
-export function LimitsCard({ id, memoryMb, cpus, reserveMemoryMb, reserveCpus, memorySwapMb, pidsLimit, shmSizeMb, cpuShares, cpusetCpus, gpus, deployTimeoutSec, clusterId }: {
+export function LimitsCard({ id, memoryMb, cpus, reserveMemoryMb, reserveCpus, memorySwapMb, pidsLimit, shmSizeMb, cpuShares, cpusetCpus, gpus, deployTimeoutSec, clusterId, serverId }: {
   id: string;
   memoryMb: number | null;
   cpus: number | null;
@@ -25,6 +27,8 @@ export function LimitsCard({ id, memoryMb, cpus, reserveMemoryMb, reserveCpus, m
   gpus: string | null;
   deployTimeoutSec: number | null;
   clusterId: string | null;
+  /** The app's server — enables the advisory "detected GPUs" hints. Optional: the card works without it. */
+  serverId?: string | null;
 }) {
   const t = useT();
   const qc = useQueryClient();
@@ -117,6 +121,7 @@ export function LimitsCard({ id, memoryMb, cpus, reserveMemoryMb, reserveCpus, m
           <NumberInput min={0} value={timeout} onChange={(e) => setTimeoutS(e.target.value)} />
         </Field>
       </div>
+      {serverId && !clusterId && <GpuHints serverId={serverId} value={gpu} onPick={setGpu} />}
       {!clusterId && (
         <>
           <div style={{ margin: "16px 0 8px", fontSize: 12, fontWeight: 600, color: "var(--c-tx3)" }}>{t("apps.limitsAdvanced")}</div>
@@ -141,5 +146,66 @@ export function LimitsCard({ id, memoryMb, cpus, reserveMemoryMb, reserveCpus, m
         </>
       )}
     </ConfigCard>
+  );
+}
+
+const chipStyle = { fontFamily: "inherit", fontSize: 12, padding: "3px 10px", borderRadius: 999, border: "1px solid var(--c-bd)", background: "var(--c-el)", color: "var(--c-tx)", cursor: "pointer" } as const;
+
+/**
+ * Advisory-only GPU awareness under the GPUs field: what was detected on this app's server, one-click suggestions and a
+ * soft warning when the value doesn't match. It never blocks Save or alters the payload — the snapshot can be stale and
+ * Jetson/vGPU/LXC hosts report oddly, so the hub stays the only validator. Unknown never nags.
+ */
+function GpuHints({ serverId, value, onPick }: { serverId: string; value: string; onPick: (v: string) => void }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: gpusQueryKey(serverId), queryFn: () => api.getServerGpus(serverId), staleTime: 30_000, retry: false });
+  const [err, setErr] = useState<string | null>(null);
+  const redetect = useMutation({
+    mutationFn: () => api.refreshServerGpus(serverId),
+    onSuccess: (r) => {
+      setErr(null);
+      qc.setQueryData(gpusQueryKey(serverId), r);
+    },
+    onError: (e: unknown) => setErr(t(`servers.gpus.${gpuErrorKey(e)}`)),
+  });
+  const report = q.data;
+  if (!report) return null;
+  const real = (report.inventory?.gpus ?? []).filter((g) => g.kind === "gpu");
+  const smi = real.filter((g) => g.source === "nvidia-smi");
+  const advice = gpusAdvice(value, report, null);
+  const label = (g: (typeof real)[number]) =>
+    [g.index != null ? t("servers.gpus.gpuLabel", { index: g.index }) : (g.pci ?? ""), g.name, g.memoryMb != null ? t("servers.gpus.memory", { gb: gpuMemoryGb(g.memoryMb) }) : ""].filter(Boolean).join(" ");
+  const chips: { value: string; text: string }[] = [];
+  if (smi.length > 0) {
+    chips.push({ value: "all", text: "all" });
+    for (let n = 1; n <= Math.min(smi.length, 8); n++) chips.push({ value: String(n), text: String(n) });
+    for (const g of smi.slice(0, 8)) {
+      if (g.index != null) chips.push({ value: `device=${g.index}`, text: `device=${g.index}` });
+      if (g.uuid) chips.push({ value: `device=${g.uuid}`, text: `device=${g.uuid.slice(0, 12)}…` });
+    }
+  }
+  return (
+    <div style={{ marginTop: 8, fontSize: 12.5, color: "var(--c-tx3)" }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
+          {report.readiness === "unknown" ? t("apps.gpusNotChecked") : real.length === 0 ? t("apps.gpusNone") : t("apps.gpusDetected", { list: real.map(label).join(", ") })}
+        </span>
+        <button type="button" style={chipStyle} disabled={redetect.isPending} onClick={() => redetect.mutate()}>
+          {redetect.isPending ? t("apps.gpusRedetecting") : t("apps.gpusRedetect")}
+        </button>
+      </div>
+      {chips.length > 0 && (
+        <div role="group" aria-label={t("apps.gpusSuggest")} style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+          {chips.map((c) => (
+            <button key={c.value} type="button" style={chipStyle} title={c.value} onClick={() => onPick(c.value)}>{c.text}</button>
+          ))}
+        </div>
+      )}
+      {advice && (
+        <p role="note" style={{ margin: "6px 0 0", color: "var(--c-am)" }}>{t(`apps.gpusAdvice_${advice.key}`, advice.params)}</p>
+      )}
+      {err && <p role="alert" style={{ margin: "6px 0 0", color: "var(--c-r)" }}>{err}</p>}
+    </div>
   );
 }

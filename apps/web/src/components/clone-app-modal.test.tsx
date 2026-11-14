@@ -98,4 +98,12 @@ describe("CloneAppModal", () => {
     expect(await screen.findByText("environment not found in this team")).toBeTruthy();
     expect(pushMock).not.toHaveBeenCalled();
   });
+
+  it("renders the gpus_unavailable_on_target warning as its localized string", async () => {
+    clone.mockResolvedValue({ app: { id: "a2" } as Application, warnings: ["gpus_unavailable_on_target"] });
+    show();
+    await waitFor(() => expect((screen.getByLabelText("Environment") as HTMLSelectElement).value).toBe("e1"));
+    fireEvent.click(screen.getByRole("button", { name: "Clone" }));
+    expect(await screen.findByText(/requests GPUs but the target server has no detected NVIDIA GPU/)).toBeTruthy();
+  });
 });

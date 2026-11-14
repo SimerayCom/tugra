@@ -268,5 +268,32 @@
   "viewName": "View name (e.g. prod-eu)",
   "viewPersonal": "Personal",
   "viewShareWith": "Share with…",
-  "openHostShell": "Open host shell"
+  "openHostShell": "Open host shell",
+  "gpus": {
+    "title": "Detected GPUs",
+    "checkedAgo": "checked {ago}",
+    "stale": "Stale",
+    "refresh": "Refresh",
+    "refreshing": "Checking…",
+    "refreshNeedsWrite": "You need server-ops permission to re-run GPU detection",
+    "refreshOffline": "The server is offline",
+    "neverChecked": "Not checked yet",
+    "serverOffline": "Server is offline",
+    "none": "No GPU detected",
+    "ready": "Ready for GPU apps",
+    "driverMissing": "NVIDIA GPU found but no driver loaded",
+    "runtimeMissing": "Docker has no NVIDIA runtime registered. GPU containers may still work if the NVIDIA Container Toolkit is installed.",
+    "nonNvidia": "Docker's --gpus flag is NVIDIA-only, so these GPUs can't be handed to containers here.",
+    "probeFailed": "GPU detection didn't complete",
+    "probeFailedDetail": "Reported: {error}",
+    "gpuLabel": "GPU {index}",
+    "memory": "{gb} GB",
+    "driver": "Driver {v}",
+    "virtualDisplays": "Virtual displays ({n})",
+    "copyFlag": "Copy device flag",
+    "busy": "Another detection is already running on this server; showing the last result.",
+    "errForbidden": "GPU detection needs the 'bulk' capability and server-ops permission",
+    "errUnavailable": "Couldn't reach the server agent",
+    "errGeneric": "GPU detection failed"
+  }
 }

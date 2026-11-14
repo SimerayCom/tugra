@@ -100,6 +100,7 @@ import type {
   ImportRemapResult,
   Template,
   DiskUsage,
+  GpuReport,
   TemplateManifest,
   TokenPair,
   TunnelView,
@@ -720,6 +721,12 @@ export const api = {
   },
   diskUsage(id: string) {
     return apiFetch<DiskUsage>(`/servers/${id}/disk-usage`);
+  },
+  getServerGpus(id: string) {
+    return apiFetch<GpuReport>(`/servers/${id}/gpus`);
+  },
+  refreshServerGpus(id: string) {
+    return apiFetch<GpuReport>(`/servers/${id}/gpus/refresh`, { method: "POST" });
   },
   getProxyStatus(id: string) {
     return apiFetch<{ status: ProxyStatus }>(`/servers/${id}/proxy`);

@@ -1628,6 +1628,40 @@ export interface DiskUsage {
   buildCache: DiskUsageRow;
 }
 
+/** Persisted GPU detection snapshot (GET /servers/:id/gpus). `inventory: null` + readiness "unknown" = never probed — NOT "no GPU". */
+export interface GpuDevice {
+  index: number | null;
+  uuid: string | null;
+  name: string;
+  vendor: "nvidia" | "amd" | "intel" | "other";
+  kind: "gpu" | "virtual";
+  memoryMb: number | null;
+  driver: string | null;
+  pci: string | null;
+  source: "nvidia-smi" | "pci";
+}
+export interface GpuInventory {
+  v: 1;
+  gpus: GpuDevice[];
+  runtimes: string[];
+  defaultRuntime: string | null;
+  nvidiaRuntime: boolean;
+  nvidiaDriverLoaded: boolean;
+  nvidiaModuleVersion: string | null;
+  error: string | null;
+}
+export type GpuReadiness = "unknown" | "none" | "driver_missing" | "runtime_missing" | "ready" | "non_nvidia" | "probe_failed";
+export interface GpuReport {
+  inventory: GpuInventory | null;
+  readiness: GpuReadiness;
+  checkedAt: string | null;
+  ageSeconds: number | null;
+  stale: boolean;
+  ttlSeconds: number;
+  throttled?: boolean;
+  busy?: boolean;
+}
+
 // ── Traffic Analytics (proxy access-log based, read-level, team-scoped) ─────────────────────────────
 export interface TrafficTotals {
   requests: number;

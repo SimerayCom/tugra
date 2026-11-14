@@ -20,6 +20,7 @@ import { useT } from "../../../../i18n/provider";
 import { MetricChart, METRIC_GRID_STYLE, METRIC_CHART_HEIGHT } from "../../../../components/charts";
 import { ServerContainersCard } from "../../../../components/server-containers-card";
 import { LiveGauges } from "../../../../components/live-gauges";
+import { GpuCard } from "../../../../components/gpu-card";
 import { DiscoverAdoptCard } from "../../../../components/discover-adopt-card";
 import { Modal } from "../../../../components/modal";
 import { fieldStyle } from "../../../../components/form";
@@ -194,6 +195,7 @@ export default function ServerDetailPage() {
               <Info label={t("servers.uptime")} value={formatUptime(server.uptimeSeconds)} />
             </Card>
           )}
+          <GpuCard serverId={id} canWrite={server.canWrite} online={server.status === "ONLINE"} />
         </>
       )}
 
