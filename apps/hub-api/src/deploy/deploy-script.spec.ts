@@ -2712,3 +2712,28 @@ describe("delete cleanup: network prune and build cache", () => {
     expect(buildRunScript(base, "v1")).toContain("docker network create tugra-apps 2>/dev/null || true");
   });
 });
+
+describe("envFileContent — fail-closed render guard", () => {
+  it("throws on a value with LF/CR/NUL naming the key but never the value", () => {
+    for (const v of ["a\nINJECTED=1", "a\rb", "a\u0000b"]) {
+      expect(() => envFileContent({ SECRET_K: v })).toThrow(/"SECRET_K" contains a line break or NUL/);
+      try {
+        envFileContent({ SECRET_K: v });
+      } catch (e) {
+        expect((e as Error).message).not.toContain("INJECTED");
+      }
+    }
+  });
+  it("throws on an empty key or one with =, CR, LF or NUL", () => {
+    for (const k of ["", "A=B", "A\nB", "A\rB", "A\u0000B"]) {
+      expect(() => envFileContent({ [k]: "v" })).toThrow(/is not valid for an env file/);
+    }
+  });
+  it("does not tighten the key policy (dotted, dashed and # keys still render)", () => {
+    expect(envFileContent({ "spring.profiles.active": "x", "my-key": "y" })).toBe("spring.profiles.active=x\nmy-key=y");
+  });
+  it("b64Keys are emitted as KEY:b64=<base64> and may carry line breaks", () => {
+    expect(envFileContent({ A: "1", PEM: "l1\nl2\n" }, new Set(["PEM"]))).toBe(`A=1\nPEM:b64=${Buffer.from("l1\nl2\n").toString("base64")}`);
+    expect(Buffer.from(envFileB64({ PEM: "x\ny" }, new Set(["PEM"])), "base64").toString()).toBe(`PEM:b64=${Buffer.from("x\ny").toString("base64")}`);
+  });
+});

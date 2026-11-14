@@ -1,3 +1,4 @@
+import { SetSharedVarSchema } from "./dto";
 import { ForbiddenException } from "@nestjs/common";
 import { SharedVariablesService } from "./shared-variables.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -109,5 +110,16 @@ describe("SharedVariablesService", () => {
       ]) },
     } as unknown as PrismaService;
     expect(await make(prisma, {}).resolvedMap("t1")).toEqual({ A: "1", B: "two" });
+  });
+});
+
+describe("SetSharedVarSchema — single-line values", () => {
+  it("rejects a newline / carriage return / NUL with the legacy message", () => {
+    for (const value of ["a\nb", "a\rb", "a\u0000b"]) {
+      const r = SetSharedVarSchema.safeParse({ teamId: "t", key: "K", value });
+      expect(r.success).toBe(false);
+      expect(r.success ? "" : r.error.issues[0].message).toBe("environment value must not contain a newline");
+    }
+    expect(SetSharedVarSchema.safeParse({ teamId: "t", key: "K", value: "plain value" }).success).toBe(true);
   });
 });

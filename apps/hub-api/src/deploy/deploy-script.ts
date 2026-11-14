@@ -1186,16 +1186,29 @@ export function envFilePath(app: { id: string }): string {
   return `${ENV_DIR}/${app.id}.env`;
 }
 
-/** docker --env-file body: one KEY=VALUE per line (values are literal). */
-export function envFileContent(env: Record<string, string>): string {
+/**
+ * docker --env-file body: one KEY=VALUE per line (values are literal). FAIL-CLOSED: a key that is empty or has
+ * `=`, CR, LF or NUL, or a value with CR/LF/NUL, would define an extra variable (or truncate one), so it THROWS
+ * (naming the key, never the value). Keys in `b64Keys` are emitted as `KEY:b64=<base64>` (swarm multiline).
+ */
+export function envFileContent(env: Record<string, string>, b64Keys?: ReadonlySet<string>): string {
   return Object.entries(env)
-    .map(([k, v]) => `${k}=${v}`)
+    .map(([k, v]) => {
+      if (k.length === 0 || /[=\r\n\u0000]/.test(k)) {
+        throw new Error(`TUGRA: environment variable ${JSON.stringify(k.slice(0, 40))} is not valid for an env file`);
+      }
+      if (b64Keys?.has(k)) return `${k}:b64=${Buffer.from(v, "utf8").toString("base64")}`;
+      if (/[\r\n\u0000]/.test(v)) {
+        throw new Error(`TUGRA: environment variable ${JSON.stringify(k.slice(0, 40))} contains a line break or NUL (mark it multiline or remove it)`);
+      }
+      return `${k}=${v}`;
+    })
     .join("\n");
 }
 
 /** base64 of the env file, so it can be written on the host without quoting issues. */
-export function envFileB64(env: Record<string, string>): string {
-  return Buffer.from(envFileContent(env), "utf8").toString("base64");
+export function envFileB64(env: Record<string, string>, b64Keys?: ReadonlySet<string>): string {
+  return Buffer.from(envFileContent(env, b64Keys), "utf8").toString("base64");
 }
 
 /**
