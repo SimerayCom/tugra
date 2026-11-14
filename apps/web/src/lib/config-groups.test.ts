@@ -150,6 +150,17 @@ describe("visibleConfigGroups", () => {
     expect(group(facts({ clusterId: "c1" }), "domains")!.cardIds).not.toContain("networkAliases"); // swarm can't emit --network-alias
   });
 
+  it("networking card is non-compose, writer-only, non-preview and non-swarm", () => {
+    expect(group(facts(), "domains")!.cardIds).toContain("networking"); // GIT
+    expect(group(facts({ source: "IMAGE" }), "domains")!.cardIds).toContain("networking");
+    expect(group(facts({ source: "COMPOSE", domain: null, domainKind: null, volumes: [] }), "domains")?.cardIds ?? []).not.toContain("networking");
+    expect(group(facts({ isPreview: true }), "domains")?.cardIds ?? []).not.toContain("networking");
+    expect(group(facts({ canWrite: false }), "domains")?.cardIds ?? []).not.toContain("networking");
+    expect(group(facts({ clusterId: "c1" }), "domains")!.cardIds).not.toContain("networking");
+    const ids = group(facts(), "domains")!.cardIds;
+    expect(ids.indexOf("networking")).toBeLessThan(ids.indexOf("networkAliases")); // sits directly above the aliases card
+  });
+
   it("containerPort card is non-compose only (+ write, non-preview)", () => {
     expect(group(facts(), "domains")!.cardIds).toContain("containerPort"); // GIT
     expect(group(facts({ source: "IMAGE" }), "domains")!.cardIds).toContain("containerPort");

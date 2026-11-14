@@ -310,15 +310,25 @@ export function BuildArgsCard({ id }: { id: string }) {
   );
 }
 
-export function DeploySettingsCard({ id, deployStrategy, rollbackOnFailure, imagesToKeep, postCutoverSoakSec }: { id: string; deployStrategy: string; rollbackOnFailure: boolean; imagesToKeep: number | null; postCutoverSoakSec: number }) {
+export function DeploySettingsCard({ id, deployStrategy, rollbackOnFailure, imagesToKeep, postCutoverSoakSec, stopGracePeriodSec, drainSec, clustered = false }: { id: string; deployStrategy: string; rollbackOnFailure: boolean; imagesToKeep: number | null; postCutoverSoakSec: number; stopGracePeriodSec: number | null; drainSec: number | null; clustered?: boolean }) {
   const t = useT();
   const qc = useQueryClient();
   const [strategy, setStrategy] = useState<"ROLLING" | "RECREATE">(deployStrategy === "RECREATE" ? "RECREATE" : "ROLLING");
   const [rollback, setRollback] = useState(rollbackOnFailure);
   const [keep, setKeep] = useState(imagesToKeep == null ? "" : String(imagesToKeep)); // blank = default (5)
   const [soak, setSoak] = useState(postCutoverSoakSec ? String(postCutoverSoakSec) : ""); // blank = 0 (off)
+  const [grace, setGrace] = useState(stopGracePeriodSec == null ? "" : String(stopGracePeriodSec)); // blank = Docker default (10s)
+  const [drain, setDrain] = useState(drainSec ? String(drainSec) : ""); // blank = off
   const save = useMutation({
-    mutationFn: () => api.setAppDeploySettings(id, { deployStrategy: strategy, rollbackOnFailure: rollback, imagesToKeep: keep.trim() === "" ? null : Number(keep), postCutoverSoakSec: soak.trim() === "" ? 0 : Number(soak) }),
+    mutationFn: () =>
+      api.setAppDeploySettings(id, {
+        deployStrategy: strategy,
+        rollbackOnFailure: rollback,
+        imagesToKeep: keep.trim() === "" ? null : Number(keep),
+        postCutoverSoakSec: soak.trim() === "" ? 0 : Number(soak),
+        // Swarm apps don't take these (the hub refuses a non-null value), so a clustered app never sends them.
+        ...(clustered ? {} : { stopGracePeriodSec: grace.trim() === "" ? null : Number(grace), drainSec: drain.trim() === "" ? null : Number(drain) }),
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
     meta: { successMessage: t("apps.saved") },
   });
@@ -343,10 +353,24 @@ export function DeploySettingsCard({ id, deployStrategy, rollbackOnFailure, imag
           {t("apps.postCutoverSoak")}
           <input type="number" min={0} max={600} placeholder="0" style={{ ...envField, width: 72 }} value={soak} onChange={(e) => setSoak(e.target.value)} aria-label={t("apps.postCutoverSoak")} />
         </label>
+        {!clustered && (
+          <>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx)" }}>
+              {t("apps.stopGracePeriod")}
+              <input type="number" min={1} max={3600} placeholder="10" style={{ ...envField, width: 72 }} value={grace} onChange={(e) => setGrace(e.target.value)} aria-label={t("apps.stopGracePeriod")} />
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx)" }}>
+              {t("apps.drainSeconds")}
+              <input type="number" min={0} max={300} placeholder="0" style={{ ...envField, width: 72 }} value={drain} onChange={(e) => setDrain(e.target.value)} aria-label={t("apps.drainSeconds")} />
+            </label>
+          </>
+        )}
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>
       <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("apps.imagesToKeepDesc")}</div>
       <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("apps.postCutoverSoakDesc")}</div>
+      {!clustered && <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("apps.stopGracePeriodHint")}</div>}
+      {!clustered && <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("apps.drainSecondsHint")}</div>}
       {!rollback && <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("apps.rollbackOnFailureDesc")}</div>}
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
     </SectionCard>
@@ -442,14 +466,18 @@ export function ContainerCommandCard({ id, entrypoint, command }: { id: string; 
   );
 }
 
-export function RestartPolicyCard({ id, restartPolicy }: { id: string; restartPolicy: string | null }) {
+export function RestartPolicyCard({ id, restartPolicy, restartMaxRetries }: { id: string; restartPolicy: string | null; restartMaxRetries: number | null }) {
   const t = useT();
   const qc = useQueryClient();
   const POLICIES = ["unless-stopped", "always", "on-failure", "no"] as const;
   const [policy, setPolicy] = useState<string>(restartPolicy ?? "unless-stopped");
+  const [retries, setRetries] = useState(restartMaxRetries == null ? "" : String(restartMaxRetries)); // blank = unlimited
+  const onFailure = policy === "on-failure";
   const save = useMutation({
     // "unless-stopped" is the default → store null (keeps the run line byte-identical); else the chosen policy.
-    mutationFn: () => api.setAppRestartPolicy(id, policy === "unless-stopped" ? null : policy),
+    // The retry cap only applies to on-failure (the hub rejects it with any other policy), so it's sent only then.
+    mutationFn: () =>
+      api.setAppRestartPolicy(id, policy === "unless-stopped" ? null : policy, ...(onFailure ? [retries.trim() === "" ? null : Number(retries)] : [])),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
     meta: { successMessage: t("apps.saved") },
   });
@@ -462,13 +490,28 @@ export function RestartPolicyCard({ id, restartPolicy }: { id: string; restartPo
   return (
     <SectionCard title={t("apps.restartPolicy")} desc={t("apps.restartPolicyDesc")}>
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-        <select aria-label={t("apps.restartPolicy")} value={policy} onChange={(e) => setPolicy(e.target.value)} style={{ ...envField, maxWidth: 240 }}>
+        <select
+          aria-label={t("apps.restartPolicy")}
+          value={policy}
+          onChange={(e) => {
+            setPolicy(e.target.value);
+            if (e.target.value !== "on-failure") setRetries(""); // the cap belongs to on-failure only
+          }}
+          style={{ ...envField, maxWidth: 240 }}
+        >
           {POLICIES.map((p) => (
             <option key={p} value={p}>{label[p]}</option>
           ))}
         </select>
+        {onFailure && (
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx)" }}>
+            {t("apps.restartMaxRetries")}
+            <input type="number" min={1} max={1000} placeholder="∞" style={{ ...envField, width: 80 }} value={retries} onChange={(e) => setRetries(e.target.value)} aria-label={t("apps.restartMaxRetries")} />
+          </label>
+        )}
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>
+      {onFailure && <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("apps.restartMaxRetriesHint")}</div>}
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.restartPolicyRedeploy")}</div>}
     </SectionCard>
   );

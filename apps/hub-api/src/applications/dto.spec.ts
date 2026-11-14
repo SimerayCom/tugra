@@ -1,4 +1,4 @@
-import { CreateAppSchema, SetAutoDeploySchema, SetContainerPortSchema, SetDeploySettingsSchema, SetExtraPortsSchema, SetBasicAuthSchema, SetBuildSchema, SetConfigMountContentSchema, SetContainerCommandSchema, SetDeployHooksSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetHealthCheckSchema, SetLimitsSchema, SetRedirectsSchema, SetRestartPolicySchema, SetServiceDomainsSchema, SetSourceSchema, SetWatchPathsSchema } from "./dto";
+import { CreateAppSchema, SetAutoDeploySchema, SetContainerPortSchema, SetDeploySettingsSchema, SetExtraPortsSchema, SetBasicAuthSchema, SetBuildSchema, SetConfigMountContentSchema, SetContainerCommandSchema, SetDeployHooksSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetHealthCheckSchema, SetLimitsSchema, SetRedirectsSchema, SetNetworksSchema, SetRestartPolicySchema, SetServiceDomainsSchema, SetSourceSchema, SetWatchPathsSchema } from "./dto";
 
 describe("SetDeploySettingsSchema — post-cutover soak", () => {
   it("accepts a soak window in 0..600 (0 = off), on its own or with other fields", () => {
@@ -94,7 +94,7 @@ describe("SetRestartPolicySchema — Docker restart policy", () => {
     expect(SetRestartPolicySchema.safeParse({ restartPolicy: null }).success).toBe(true);
   });
   it("rejects unknown policies, missing field, extra keys", () => {
-    expect(SetRestartPolicySchema.safeParse({ restartPolicy: "on-failure:3" }).success).toBe(false); // retry-count form not allowed in v1
+    expect(SetRestartPolicySchema.safeParse({ restartPolicy: "on-failure:3" }).success).toBe(false); // the retry count is the separate maxRetries field, never the "on-failure:N" string
     expect(SetRestartPolicySchema.safeParse({ restartPolicy: "whenever" }).success).toBe(false);
     expect(SetRestartPolicySchema.safeParse({}).success).toBe(false); // field required (null to clear)
     expect(SetRestartPolicySchema.safeParse({ restartPolicy: "always", foo: 1 }).success).toBe(false); // strict
@@ -422,5 +422,58 @@ describe("SetBuildSchema — git/build behaviour toggles", () => {
   });
   it("stays strict about unknown keys", () => {
     expect(SetBuildSchema.safeParse({ buildType: "NIXPACKS", gitSubmodule: true }).success).toBe(false);
+  });
+});
+
+describe("SetRestartPolicySchema — maxRetries", () => {
+  it("accepts on-failure with a bounded count, and null/omitted", () => {
+    expect(SetRestartPolicySchema.safeParse({ restartPolicy: "on-failure", maxRetries: 5 }).success).toBe(true);
+    expect(SetRestartPolicySchema.safeParse({ restartPolicy: "on-failure", maxRetries: null }).success).toBe(true);
+    expect(SetRestartPolicySchema.safeParse({ restartPolicy: "always", maxRetries: null }).success).toBe(true);
+    expect(SetRestartPolicySchema.safeParse({ restartPolicy: null }).success).toBe(true);
+  });
+  it("rejects a count with another policy, out of range, or non-integer", () => {
+    expect(SetRestartPolicySchema.safeParse({ restartPolicy: "always", maxRetries: 5 }).success).toBe(false);
+    expect(SetRestartPolicySchema.safeParse({ restartPolicy: null, maxRetries: 5 }).success).toBe(false);
+    expect(SetRestartPolicySchema.safeParse({ restartPolicy: "on-failure", maxRetries: 0 }).success).toBe(false);
+    expect(SetRestartPolicySchema.safeParse({ restartPolicy: "on-failure", maxRetries: 1001 }).success).toBe(false);
+    expect(SetRestartPolicySchema.safeParse({ restartPolicy: "on-failure", maxRetries: 1.5 }).success).toBe(false);
+  });
+});
+
+describe("SetDeploySettingsSchema — stop grace + drain", () => {
+  it("accepts in-range values, null (clear) and omitted", () => {
+    expect(SetDeploySettingsSchema.safeParse({ stopGracePeriodSec: 1 }).success).toBe(true);
+    expect(SetDeploySettingsSchema.safeParse({ stopGracePeriodSec: 3600 }).success).toBe(true);
+    expect(SetDeploySettingsSchema.safeParse({ stopGracePeriodSec: null, drainSec: null }).success).toBe(true);
+    expect(SetDeploySettingsSchema.safeParse({ drainSec: 0 }).success).toBe(true);
+    expect(SetDeploySettingsSchema.safeParse({ drainSec: 300 }).success).toBe(true);
+    expect(SetDeploySettingsSchema.safeParse({}).success).toBe(true);
+  });
+  it("rejects out-of-range and non-integer values", () => {
+    expect(SetDeploySettingsSchema.safeParse({ stopGracePeriodSec: 0 }).success).toBe(false);
+    expect(SetDeploySettingsSchema.safeParse({ stopGracePeriodSec: 3601 }).success).toBe(false);
+    expect(SetDeploySettingsSchema.safeParse({ stopGracePeriodSec: 1.5 }).success).toBe(false);
+    expect(SetDeploySettingsSchema.safeParse({ drainSec: 301 }).success).toBe(false);
+    expect(SetDeploySettingsSchema.safeParse({ drainSec: -1 }).success).toBe(false);
+  });
+});
+
+describe("SetNetworksSchema", () => {
+  it("accepts tugra-apps, ordinary names, an alias, and alias null", () => {
+    expect(SetNetworksSchema.safeParse({ networks: ["tugra-apps", "db-net"] }).success).toBe(true);
+    expect(SetNetworksSchema.safeParse({ containerAlias: "api" }).success).toBe(true);
+    expect(SetNetworksSchema.safeParse({ containerAlias: null }).success).toBe(true);
+    expect(SetNetworksSchema.safeParse({ networks: [] }).success).toBe(true);
+  });
+  it("rejects reserved/invalid names, too many, duplicates, empty body, reserved alias", () => {
+    for (const n of ["tugra-net", "tugra-proxy", "bridge", "host", "Foo", "a_b"]) {
+      expect(SetNetworksSchema.safeParse({ networks: [n] }).success).toBe(false);
+    }
+    expect(SetNetworksSchema.safeParse({ networks: Array.from({ length: 11 }, (_, i) => `n${i}`) }).success).toBe(false);
+    expect(SetNetworksSchema.safeParse({ networks: ["a", "a"] }).success).toBe(false);
+    expect(SetNetworksSchema.safeParse({}).success).toBe(false);
+    expect(SetNetworksSchema.safeParse({ containerAlias: "tugra-x" }).success).toBe(false);
+    expect(SetNetworksSchema.safeParse({ networks: ["a"], foo: 1 }).success).toBe(false);
   });
 });

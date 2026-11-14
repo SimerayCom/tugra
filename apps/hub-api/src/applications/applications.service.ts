@@ -44,6 +44,7 @@ import { SwarmService } from "../clusters/swarm.service";
 import { DnsAutomationService } from "../dns/dns-automation.service";
 import type { PlacementConstraint } from "../deploy/deploy-script";
 import { injectableBuildArgs } from "../deploy/build-args";
+import { APPS_NETWORK, isUserNetworkNameAllowed } from "../deploy/network-names";
 import type { SetPlacementInput } from "./dto";
 import { PlacementConstraintSchema } from "./dto";
 import { serviceName, parseServiceTasks, parseSwarmTasks, type SwarmTask } from "../deploy/service-script";
@@ -76,6 +77,7 @@ import {
   containerName,
   appVolumeName,
   hasNetworkOpt,
+  internalHostFor,
   tokenizeDockerOptions,
   type AppSpec,
   type AppVolume,
@@ -241,6 +243,13 @@ export const AppViewSchema = z.object({
   containerPort: z.number().nullable(),
   extraPorts: z.array(z.object({ hostPort: z.number(), containerPort: z.number(), protocol: z.enum(["tcp", "udp"]) })),
   networkAliases: z.array(z.string()),
+  stopGracePeriodSec: z.number().nullable(), // graceful-stop window; null = Docker default (10s)
+  drainSec: z.number().nullable(), // ROLLING only: seconds both containers serve before the old is stopped
+  restartMaxRetries: z.number().nullable(), // on-failure retry cap
+  containerAlias: z.string().nullable(), // stable DNS name on every network the app joins
+  networks: z.array(z.string()), // extra user Docker networks
+  // Where other containers reach this app; null when unknown (compose / swarm / an operator-owned --network).
+  internalHost: z.object({ host: z.string(), port: z.number(), networks: z.array(z.string()), aliases: z.array(z.string()) }).nullable(),
   domain: z.string().nullable(),
   extraDomains: z.array(z.string()), // additional alias hostnames routed to the same container
   domainRedirect: z.string().nullable(),
@@ -841,6 +850,10 @@ export class ApplicationsService {
           containerEntrypoint: jsonOrNull(src.containerEntrypoint),
           containerCommand: jsonOrNull(src.containerCommand),
           restartPolicy: src.restartPolicy,
+          restartMaxRetries: src.restartMaxRetries,
+          stopGracePeriodSec: src.stopGracePeriodSec,
+          drainSec: src.drainSec,
+          networks: src.networks ?? [],
           // Volume DEFINITIONS copy, but the docker volume name derives from the new app id → fresh empty
           // volumes, no data shared (structural). Data copy is a follow-up.
           volumes: jsonOrNull(src.volumes),
@@ -871,6 +884,9 @@ export class ApplicationsService {
           // Network aliases are reset, NOT copied: a duplicate alias on the shared user-defined network
           // would round-robin between the source and the clone. The operator re-adds any it wants.
           networkAliases: [],
+          // The stable container alias is reset for the same reason (and (serverId, containerAlias) is unique, so a
+          // same-server clone would violate the index).
+          containerAlias: null,
           containerPort: src.containerPort,
           domain: expose.domain,
           https: expose.https,
@@ -1266,6 +1282,9 @@ export class ApplicationsService {
           containerEntrypoint: (parent.containerEntrypoint ?? Prisma.JsonNull) as Prisma.InputJsonValue,
           containerCommand: (parent.containerCommand ?? Prisma.JsonNull) as Prisma.InputJsonValue,
           restartPolicy: parent.restartPolicy, // a preview runs with the same restart policy as its parent
+          restartMaxRetries: parent.restartMaxRetries, // …and the same on-failure cap (else an on-failure preview is unbounded)
+          stopGracePeriodSec: parent.stopGracePeriodSec,
+          // NOT copied: containerAlias (collides), networks (like dbNetwork, previews don't inherit), drainSec (previews never drain).
 
           composeFile: parent.composeFile,
           healthCmd: parent.healthCmd,
@@ -1411,6 +1430,7 @@ export class ApplicationsService {
       !app.hostPort &&
       !(Array.isArray(app.extraPorts) && app.extraPorts.length > 0) && // extra published ports can't overlap → recreate
       !(Array.isArray(app.networkAliases) && app.networkAliases.length > 0) && // a rollout container would share the alias with the old one and round-robin to the not-yet-healthy copy → recreate
+      !app.containerAlias && // same reason: the rollout copy would carry the live copy's alias and DNS-round-robin to the not-yet-healthy one → recreate
       !(app.dockerOptions && RISKY_DOCKER_OPTS.test(app.dockerOptions)) &&
       !app.gpus &&
       this.appVolumes(app).length === 0
@@ -1920,7 +1940,8 @@ export class ApplicationsService {
       // the agent timeout by the soak budget (window + probe time + margin) or the agent would SIGKILL the
       // watch mid-soak → ambiguous state (new live, __prev stopped, no revert decision). Zero for every other
       // path, so their timeout is unchanged.
-      const mainTimeoutMs = this.deployTimeoutMs(app) + (rolling ? this.soakBudgetMs(spec) : 0);
+      // The drain sleep and graceful stops (stopGracePeriodSec) also run inside this one command → budget them too.
+      const mainTimeoutMs = this.deployTimeoutMs(app) + (rolling ? this.soakBudgetMs(spec) : 0) + this.opsBudgetMs(spec, rolling);
       // DURABLE dispatch (hub-crash recovery): when the agent journals commands (cmd_journal_v1), persist the
       // command's reqId + a frozen outcome plan on the row with a compare-and-set BEFORE the frame goes out, so a
       // hub that dies mid-deploy can re-adopt this exact command (DeployRecoveryService) instead of failing it
@@ -2389,7 +2410,7 @@ export class ApplicationsService {
         app.serverId,
         command,
         "deploy",
-        this.deployTimeoutMs(app),
+        this.deployTimeoutMs(app) + this.opsBudgetMs(spec, false), // buildRunScript now contains a graceful stop
         (chunk) => this.deployLogs.push(app.id, chunk),
       );
       const ok = r.exitCode === 0;
@@ -2600,7 +2621,7 @@ export class ApplicationsService {
       // the command itself succeeded. (Classic stop ends `|| true` so it always exits 0 — this is a no-op there.)
       if (!this.agentWs.isOnline(app.serverId)) throw new ServiceUnavailableException("agent offline");
       const cmd = app.source === "COMPOSE" ? buildComposeStopScript(this.toSpec(app)) : buildStopScript(app);
-      const res = await this.agentWs.sendCommand(app.serverId, cmd, "deploy", LIFECYCLE_TIMEOUT_MS);
+      const res = await this.agentWs.sendCommand(app.serverId, cmd, "deploy", this.lifecycleTimeoutMs(app));
       if (res.exitCode !== 0) throw new ServiceUnavailableException(`stop failed (exit ${res.exitCode}) — the app's status is unchanged`);
     }
     await this.prisma.application.update({
@@ -2638,7 +2659,7 @@ export class ApplicationsService {
       // falsely reporting RUNNING (see stop()). Pre-check online for a clean 503 rather than an opaque 500.
       if (!this.agentWs.isOnline(app.serverId)) throw new ServiceUnavailableException("agent offline");
       const cmd = app.source === "COMPOSE" ? buildComposeRestartScript(this.toSpec(app)) : buildRestartScript(app);
-      const res = await this.agentWs.sendCommand(app.serverId, cmd, "deploy", LIFECYCLE_TIMEOUT_MS);
+      const res = await this.agentWs.sendCommand(app.serverId, cmd, "deploy", this.lifecycleTimeoutMs(app));
       if (res.exitCode !== 0) throw new ServiceUnavailableException(`restart failed (exit ${res.exitCode}) — the app's status is unchanged`);
     }
     await this.prisma.application.update({ where: { id }, data: { status: AppStatus.RUNNING } });
@@ -3138,6 +3159,10 @@ export class ApplicationsService {
     if (app.dbNetwork && hasNetworkOpt(dockerOptions)) {
       throw new BadRequestException("this app is linked to the managed-DB network — remove --network here, or unlink the DB network first");
     }
+    // Extra networks / a stable alias are attached by Tugra itself; a raw --network would make that ambiguous.
+    if ((app.networks?.length || app.containerAlias) && hasNetworkOpt(dockerOptions)) {
+      throw new BadRequestException("remove the extra networks / alias first, or drop --network here");
+    }
     // A raw `--entrypoint` here would collide with a structured container-entrypoint override (docker takes
     // the LAST one — order-dependent). Refuse rather than silently depend on flag order. (The reverse
     // direction is checked in setContainerCommand.)
@@ -3446,8 +3471,73 @@ export class ApplicationsService {
     // the panel routers, the agent, tugra_db_<id>) — a tenant could otherwise hijack their DNS name.
     const reserved = aliases.find((a) => /^tugra[-_]/i.test(a));
     if (reserved) throw new BadRequestException(`'${reserved}' is reserved for Tugra-managed containers`);
+    // A network alias equal to a stable container alias (this app's or another same-server app's) would bypass the
+    // (serverId, containerAlias) unique index through this setter.
+    if (aliases.length > 0) {
+      if (app.containerAlias && aliases.includes(app.containerAlias)) throw new BadRequestException("alias already in use on this server");
+      const clash = await this.prisma.application.findFirst({
+        where: { serverId: app.serverId, id: { not: id }, containerAlias: { in: aliases } },
+        select: { id: true },
+      });
+      if (clash) throw new BadRequestException("alias already in use on this server");
+    }
     await this.prisma.application.update({ where: { id }, data: { networkAliases: aliases } });
     await this.audit.log({ actor: userId, action: "app.network_aliases.update", target: id, meta: { count: aliases.length } });
+  }
+
+  /** Set the app's extra user Docker networks and/or its stable container alias (DNS name on every network it
+   *  joins). Classic IMAGE/GIT apps only; refused for swarm/compose/preview and when a raw --network is in docker
+   *  options. Network names are DTO-validated; re-checked here as defence in depth. A network name another TEAM
+   *  already uses on this server is refused (two tenants must not silently share a bridge), and the alias must not
+   *  collide with any app's alias on the same server (the unique index closes the race). Applies on the next deploy. */
+  async setNetworks(userId: string, id: string, cfg: { networks?: string[]; containerAlias?: string | null }): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    if (app.clusterId) throw new BadRequestException("networks and a container alias aren't supported for clustered (swarm) apps");
+    if (app.source === "COMPOSE") throw new BadRequestException("a compose app manages its own networks — declare them in the compose file");
+    if (app.isPreview) throw new BadRequestException("networks and a container alias aren't supported on preview apps");
+    if (hasNetworkOpt(app.dockerOptions)) throw new BadRequestException("remove --network from Docker options first");
+    for (const n of cfg.networks ?? []) {
+      if (!isUserNetworkNameAllowed(n)) throw new BadRequestException(`'${n}' is a reserved network name`);
+    }
+    const alias = cfg.containerAlias;
+    if (alias && /^tugra[-_]/i.test(alias)) throw new BadRequestException(`'${alias}' is reserved for Tugra-managed containers`);
+    const names = (cfg.networks ?? []).filter((n) => n !== APPS_NETWORK);
+    if (names.length > 0) {
+      const other = await this.prisma.application.findFirst({
+        where: { serverId: app.serverId, teamId: { not: app.teamId }, networks: { hasSome: names } },
+        select: { id: true },
+      });
+      if (other) throw new BadRequestException("network name is already used by another team on this server");
+    }
+    if (alias) {
+      const taken = (app.networkAliases ?? []).includes(alias)
+        ? { id }
+        : await this.prisma.application.findFirst({
+            where: { serverId: app.serverId, id: { not: id }, networkAliases: { has: alias } },
+            select: { id: true },
+          });
+      if (taken) throw new BadRequestException("alias already in use on this server");
+    }
+    try {
+      await this.prisma.application.update({
+        where: { id },
+        data: {
+          ...(cfg.networks !== undefined ? { networks: cfg.networks } : {}),
+          ...(cfg.containerAlias !== undefined ? { containerAlias: cfg.containerAlias } : {}),
+        },
+      });
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+        throw new ConflictException("alias already in use on this server");
+      }
+      throw e;
+    }
+    await this.audit.log({
+      actor: userId,
+      action: "app.networks.update",
+      target: id,
+      meta: { networks: cfg.networks ?? app.networks ?? [], alias: !!(cfg.containerAlias !== undefined ? cfg.containerAlias : app.containerAlias) },
+    });
   }
 
   /** Set the ingress container port an IMAGE/GIT app listens on inside the container (the proxy's
@@ -3518,6 +3608,23 @@ export class ApplicationsService {
   /** Per-app deploy/rollback timeout in ms (default 5 min). */
   private deployTimeoutMs(app: Application): number {
     return (app.deployTimeoutSec ?? 300) * 1000;
+  }
+
+  /** Extra ms the swap legs add beyond deployTimeoutMs: the drain sleep (rolling only) + the graceful stops that
+   *  run inside the one agent command. 0 when neither is set, so an unset app's timeout is unchanged. */
+  private opsBudgetMs(spec: AppSpec, rolling: boolean): number {
+    const stop = spec.stopGracePeriodSec ?? 0;
+    const drain = rolling ? (spec.drainSec ?? 0) : 0;
+    if (!stop && !drain) return 0;
+    const stops = rolling && resolveSoak(spec).windowSec > 0 ? 2 : 1; // soak: the old stop + a possible revert stop
+    return (drain + stop * stops + 15) * 1000;
+  }
+
+  /** Stop/restart agent timeout: the 2-minute default, widened to the container's graceful-stop window (+ margin)
+   *  so a long stopGracePeriodSec isn't SIGKILLed by the agent mid-stop. COMPOSE/swarm ignore the setting. */
+  private lifecycleTimeoutMs(app: Application): number {
+    if (app.source === "COMPOSE" || app.clusterId) return LIFECYCLE_TIMEOUT_MS;
+    return Math.max(LIFECYCLE_TIMEOUT_MS, ((app.stopGracePeriodSec ?? 0) + 30) * 1000);
   }
 
   /** Extra ms a rolling deploy's command needs beyond deployTimeoutMs when a post-cutover soak is configured.
@@ -3852,9 +3959,24 @@ export class ApplicationsService {
   async setDeploySettings(
     userId: string,
     id: string,
-    cfg: { deployStrategy?: "ROLLING" | "RECREATE"; rollbackOnFailure?: boolean; imagesToKeep?: number | null; postCutoverSoakSec?: number },
+    cfg: {
+      deployStrategy?: "ROLLING" | "RECREATE";
+      rollbackOnFailure?: boolean;
+      imagesToKeep?: number | null;
+      postCutoverSoakSec?: number;
+      stopGracePeriodSec?: number | null;
+      drainSec?: number | null;
+    },
   ): Promise<void> {
-    await this.requireWrite(userId, id);
+    const app = await this.requireWrite(userId, id);
+    // The grace window / drain are applied by the classic docker-run scripts only. Setting one on a compose or
+    // swarm app would be a silent no-op, so refuse (clearing with null is always allowed).
+    if ((cfg.stopGracePeriodSec != null || cfg.drainSec != null) && app.source === "COMPOSE") {
+      throw new BadRequestException("set stop_grace_period in the compose file instead");
+    }
+    if ((cfg.stopGracePeriodSec != null || cfg.drainSec != null) && app.clusterId) {
+      throw new BadRequestException("stop grace period and drain aren't supported for swarm apps yet");
+    }
     await this.prisma.application.update({
       where: { id },
       data: {
@@ -3864,9 +3986,23 @@ export class ApplicationsService {
         ...(cfg.rollbackOnFailure !== undefined ? { rollbackOnFailure: cfg.rollbackOnFailure } : {}),
         ...(cfg.imagesToKeep !== undefined ? { imagesToKeep: cfg.imagesToKeep } : {}),
         ...(cfg.postCutoverSoakSec !== undefined ? { postCutoverSoakSec: cfg.postCutoverSoakSec } : {}),
+        ...(cfg.stopGracePeriodSec !== undefined ? { stopGracePeriodSec: cfg.stopGracePeriodSec } : {}),
+        ...(cfg.drainSec !== undefined ? { drainSec: cfg.drainSec } : {}),
       },
     });
-    await this.audit.log({ actor: userId, action: "app.deploysettings.update", target: id });
+    await this.audit.log({
+      actor: userId,
+      action: "app.deploysettings.update",
+      target: id,
+      ...(cfg.stopGracePeriodSec !== undefined || cfg.drainSec !== undefined
+        ? {
+            meta: {
+              ...(cfg.stopGracePeriodSec !== undefined ? { stopGracePeriodSec: cfg.stopGracePeriodSec } : {}),
+              ...(cfg.drainSec !== undefined ? { drainSec: cfg.drainSec } : {}),
+            },
+          }
+        : {}),
+    });
   }
 
   async setEnvironment(userId: string, id: string, environmentId: string): Promise<void> {
@@ -4079,13 +4215,24 @@ export class ApplicationsService {
    *  emitted only on the classic docker-run path (compose declares its own `restart:`, swarm its own restart-
    *  condition). Clearing (null) is always allowed so a stale policy can be removed after a move. Applies on
    *  the next deploy. */
-  async setRestartPolicy(userId: string, id: string, restartPolicy: string | null): Promise<void> {
+  async setRestartPolicy(userId: string, id: string, restartPolicy: string | null, maxRetries?: number | null): Promise<void> {
     const app = await this.requireWrite(userId, id);
     if (restartPolicy !== null && (app.source === "COMPOSE" || app.clusterId || app.isPreview)) {
       throw new BadRequestException("a restart policy is only supported on single-server Image and Git apps");
     }
-    await this.prisma.application.update({ where: { id }, data: { restartPolicy } });
-    await this.audit.log({ actor: userId, action: "app.restartPolicy.update", target: id, meta: { restartPolicy: restartPolicy ?? "unless-stopped" } });
+    // The retry cap belongs to on-failure only: any other policy (or null) clears it; on-failure keeps the stored
+    // value when the caller doesn't send one.
+    const retries = restartPolicy === "on-failure" ? maxRetries : null;
+    await this.prisma.application.update({
+      where: { id },
+      data: { restartPolicy, ...(retries !== undefined ? { restartMaxRetries: retries } : {}) },
+    });
+    await this.audit.log({
+      actor: userId,
+      action: "app.restartPolicy.update",
+      target: id,
+      meta: { restartPolicy: restartPolicy ?? "unless-stopped", maxRetries: retries ?? null },
+    });
   }
 
   /**
@@ -4436,6 +4583,9 @@ export class ApplicationsService {
     // targets the right service + its real container port (not the meaningless 80
     // default a multi-service stack stores).
     const web = app.source === "COMPOSE" ? this.composeWeb(app) : null;
+    // D2 settings apply to classic docker-run apps only; mask them for COMPOSE/swarm (like networkAliases) so a
+    // stale value left from before a move can't leak into a script that doesn't honour it.
+    const classic = app.source !== "COMPOSE" && !app.clusterId;
     return {
       id: app.id,
       source: app.source,
@@ -4490,6 +4640,11 @@ export class ApplicationsService {
       containerEntrypoint: this.argv(app.containerEntrypoint),
       containerCommand: this.argv(app.containerCommand),
       restartPolicy: app.restartPolicy,
+      restartMaxRetries: classic && app.restartPolicy === "on-failure" ? app.restartMaxRetries : null,
+      stopGracePeriodSec: classic ? app.stopGracePeriodSec : null,
+      drainSec: classic ? app.drainSec : null,
+      networks: classic ? (app.networks ?? []) : [],
+      containerAlias: classic ? app.containerAlias : null,
       preDeployCommand: app.preDeployCommand,
       postDeployCommand: app.postDeployCommand,
       // Attach to the node-local managed-DB network only for a classic (non-swarm) deploy — a clustered app
@@ -4722,6 +4877,11 @@ export class ApplicationsService {
       containerEntrypoint: canWrite ? this.argv(app.containerEntrypoint) : null,
       containerCommand: canWrite ? this.argv(app.containerCommand) : null,
       restartPolicy: app.restartPolicy, // not secret → shown regardless of write access
+      restartMaxRetries: app.restartMaxRetries, // not secret → shown regardless of write access
+      stopGracePeriodSec: app.stopGracePeriodSec,
+      drainSec: app.drainSec,
+      containerAlias: app.containerAlias,
+      networks: app.networks ?? [],
       dbNetwork: !!app.dbNetwork && !app.clusterId,
       volumes: this.appVolumes(app),
       hostMounts: this.appHostMounts(app),
@@ -4761,6 +4921,21 @@ export class ApplicationsService {
       containerPort: app.containerPort,
       extraPorts: parseExtraPorts(app.extraPorts),
       networkAliases: app.networkAliases ?? [],
+      // Same plan the run line uses (no env resolution needed); null for compose/swarm or an operator-owned --network.
+      internalHost:
+        app.source === "COMPOSE" || app.clusterId
+          ? null
+          : internalHostFor({
+              id: app.id,
+              domain: app.domain,
+              dbNetwork: !!app.dbNetwork,
+              dockerOptions: app.dockerOptions,
+              source: app.source,
+              networks: app.networks ?? [],
+              networkAliases: app.networkAliases ?? [],
+              containerAlias: app.containerAlias,
+              containerPort: app.containerPort,
+            }),
       domain: app.domain,
       extraDomains: app.extraDomains ?? [],
       domainRedirect: app.domainRedirect,

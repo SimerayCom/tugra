@@ -7,6 +7,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Per-app container operations and networking.** Set a graceful stop window (`--stop-timeout`, also used by
+  deploy swaps, Stop and Restart), a drain pause for zero-downtime deploys (both versions keep serving for N
+  seconds before the old one stops), a cap on `on-failure` restart retries, a stable container name that
+  resolves on every network the app joins, and extra Docker networks per app. The app page shows the internal
+  address other containers can reach it on. Unset, nothing about a deploy changes.
+- **Behaviour change: apps without a domain now join the shared `tugra-apps` network.** A classic Image/Git app
+  with no domain, no managed-database link and no `--network` in its Docker options is created on a per-server
+  `tugra-apps` bridge on its next deploy instead of Docker's default bridge, so apps on the server can reach
+  each other by container name. Anything that relied on default-bridge addressing (the `docker0` gateway, a
+  fixed bridge IP) must be adjusted; add `--network` in the app's Docker options to keep full control.
+
 ## [0.1.0-beta.12] - 2026-11-14
 
 - **Per-deployment detail page.** Every deployment row opens its own page: a queued → started → finished

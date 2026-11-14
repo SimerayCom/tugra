@@ -74,6 +74,8 @@ import {
   SetExtraPortsSchema,
   SetNetworkAliasesInput,
   SetNetworkAliasesSchema,
+  SetNetworksInput,
+  SetNetworksSchema,
   SetBasicAuthInput,
   SetBasicAuthSchema,
   SetRedirectsInput,
@@ -630,6 +632,18 @@ export class ApplicationsController {
     return { ok: true };
   }
 
+  @Put(":id/networks")
+  @HttpCode(200)
+  @ApiZodBody(SetNetworksSchema)
+  async setNetworks(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetNetworksSchema)) body: SetNetworksInput,
+  ) {
+    await this.apps.setNetworks(user.userId, id, { networks: body.networks, containerAlias: body.containerAlias });
+    return { ok: true };
+  }
+
   @Put(":id/container-port")
   @HttpCode(200)
   @ApiZodBody(SetContainerPortSchema)
@@ -951,7 +965,7 @@ export class ApplicationsController {
     @Param("id") id: string,
     @Body(new ZodValidationPipe(SetRestartPolicySchema)) body: SetRestartPolicyInput,
   ) {
-    await this.apps.setRestartPolicy(user.userId, id, body.restartPolicy);
+    await this.apps.setRestartPolicy(user.userId, id, body.restartPolicy, body.maxRetries);
     return { ok: true };
   }
 

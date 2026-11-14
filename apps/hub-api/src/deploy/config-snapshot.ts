@@ -39,6 +39,15 @@ export interface ConfigSnapshot {
   domainRedirect?: "www" | "root" | null;
   securityHeaders?: boolean;
   gzip?: boolean;
+  // Container ops/networking. Each is emitted only when set (non-default), so a deploy from before the field
+  // existed and one with it unset both read "—" and produce no spurious diff entry.
+  restartPolicy?: string | null;
+  restartMaxRetries?: number | null;
+  stopGracePeriodSec?: number | null;
+  drainSec?: number | null;
+  containerAlias?: string | null;
+  /** Extra user Docker networks (sorted; diffed as a set). */
+  networks?: string[];
   /** Extra alias hostnames routed to the primary service (sorted; diffed as a set). */
   extraDomains?: string[];
   /** Per-service compose domains: hostname → the service + port it routes to (diffed by hostname). */
@@ -95,6 +104,11 @@ const SCALAR_FIELDS = [
   "disableBuildCache",
   "injectEnvAsBuildArgs",
   "sourceCommitMode",
+  "restartPolicy",
+  "restartMaxRetries",
+  "stopGracePeriodSec",
+  "drainSec",
+  "containerAlias",
 ] as const;
 
 /** Defaults of the git/build toggles: a snapshot taken before they existed (undefined) must not diff as a change
@@ -148,6 +162,12 @@ export function buildConfigSnapshot(spec: AppSpec): ConfigSnapshot {
     domainRedirect: spec.domainRedirect ?? null,
     securityHeaders: spec.securityHeaders,
     gzip: spec.gzip,
+    ...(spec.restartPolicy ? { restartPolicy: spec.restartPolicy } : {}),
+    ...(spec.restartMaxRetries ? { restartMaxRetries: spec.restartMaxRetries } : {}),
+    ...(spec.stopGracePeriodSec ? { stopGracePeriodSec: spec.stopGracePeriodSec } : {}),
+    ...(spec.drainSec ? { drainSec: spec.drainSec } : {}),
+    ...(spec.containerAlias ? { containerAlias: spec.containerAlias } : {}),
+    ...(spec.networks && spec.networks.length ? { networks: [...spec.networks].sort() } : {}),
     ...(spec.extraDomains && spec.extraDomains.length ? { extraDomains: [...spec.extraDomains].sort() } : {}),
     ...(spec.serviceDomains && spec.serviceDomains.length
       ? { serviceDomains: spec.serviceDomains.map((d) => ({ service: d.service, hostname: d.hostname, port: d.port })) }
@@ -204,6 +224,12 @@ export function diffSnapshots(
   const nd = new Set(next.extraDomains ?? []);
   for (const h of nd) if (!pd.has(h)) changes.push({ field: `extraDomain.${h}`, kind: "added", after: h });
   for (const h of pd) if (!nd.has(h)) changes.push({ field: `extraDomain.${h}`, kind: "removed", before: h });
+
+  // extra networks: a name set (added/removed).
+  const pn = new Set(prev.networks ?? []);
+  const nn = new Set(next.networks ?? []);
+  for (const n of nn) if (!pn.has(n)) changes.push({ field: `network.${n}`, kind: "added", after: n });
+  for (const n of pn) if (!nn.has(n)) changes.push({ field: `network.${n}`, kind: "removed", before: n });
 
   // per-service domains: compare by hostname → "service:port".
   const psd = new Map((prev.serviceDomains ?? []).map((d) => [d.hostname, `${d.service}:${d.port}`]));

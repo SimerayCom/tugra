@@ -43,7 +43,7 @@ import { resolveTab } from "../../../../lib/tab-param";
 import { LayoutDashboard, Settings2, Rocket, Activity, ScrollText, FolderOpen, Hammer, RotateCw, Play, Square, Terminal, CloudDownload, CloudUpload, Pencil, Trash2, Copy } from "lucide-react";
 import { CONFIG_GROUP_ICONS, actionGroup, actionGroupSep } from "./app-detail-shared";
 import { SourceCard, BuildSettingsCard, BuildArgsCard, BuildSecretsCard, DeploySettingsCard, BuildConfigCard, ContainerCommandCard, RestartPolicyCard, ContainerPortCard, DeployHooksCard, CredentialsCard, WatchPathsCard } from "./app-detail-build-cards";
-import { ExtraDomainsCard, ServiceDomainsCard, DomainOptionsCard, CustomCertCard, RedirectsCard, BasicAuthCard, NetworkAliasesCard } from "./app-detail-domain-cards";
+import { ExtraDomainsCard, ServiceDomainsCard, DomainOptionsCard, CustomCertCard, RedirectsCard, BasicAuthCard, NetworkAliasesCard, NetworkingCard } from "./app-detail-domain-cards";
 import { VolumesCard, HostMountsCard, VolumeBackupsCard } from "./app-detail-storage-cards";
 import { ScheduledTasksCard, PreviewCard, AppDescriptionCard, ComposeEditorCard, GitComposeSourceCard, AppIconCard, AppOverview, ContainerPickerModal } from "./app-detail-misc-cards";
 import { DeploymentsTab, MetricsTab, LogsTab, FilesTab } from "./app-detail-tabs";
@@ -228,7 +228,7 @@ export default function AppDetailPage() {
   const renderConfigCard: Record<ConfigCardId, () => ReactNode> = {
     description: () => <AppDescriptionCard id={id} description={appData.description} />,
     deploySettings: () => (
-      <DeploySettingsCard id={id} deployStrategy={appData.deployStrategy} rollbackOnFailure={appData.rollbackOnFailure} imagesToKeep={appData.imagesToKeep} postCutoverSoakSec={appData.postCutoverSoakSec} />
+      <DeploySettingsCard id={id} deployStrategy={appData.deployStrategy} rollbackOnFailure={appData.rollbackOnFailure} imagesToKeep={appData.imagesToKeep} postCutoverSoakSec={appData.postCutoverSoakSec} stopGracePeriodSec={appData.stopGracePeriodSec} drainSec={appData.drainSec} clustered={!!appData.clusterId} />
     ),
     clusterDeploy: () => (
       <ClusterDeployCard id={id} teamId={appData.teamId} clusterId={appData.clusterId} replicas={appData.replicas} placement={appData.placement} volumes={appData.volumes} constraintServerId={appData.constraintServerId} />
@@ -244,7 +244,7 @@ export default function AppDetailPage() {
     buildSecrets: () => <BuildSecretsCard id={id} buildType={appData.buildType} source={appData.source} />,
     dockerOptions: () => <DockerOptionsCard id={id} dockerOptions={appData.dockerOptions} allowPrivileged={appData.allowPrivilegedDockerOptions} />,
     containerCommand: () => <ContainerCommandCard id={id} entrypoint={appData.containerEntrypoint} command={appData.containerCommand} />,
-    restartPolicy: () => <RestartPolicyCard id={id} restartPolicy={appData.restartPolicy} />,
+    restartPolicy: () => <RestartPolicyCard id={id} restartPolicy={appData.restartPolicy} restartMaxRetries={appData.restartMaxRetries} />,
     deployHooks: () => <DeployHooksCard id={id} pre={appData.preDeployCommand} post={appData.postDeployCommand} />,
     credentials: () => (
       <CredentialsCard id={id} source={appData.source} gitUrl={appData.gitUrl} composePath={appData.composePath} hasGitToken={appData.hasGitToken} hasGitSshKey={appData.hasGitSshKey} gitSshPublicKey={appData.gitSshPublicKey} registryUrl={appData.registryUrl} registryUser={appData.registryUser} />
@@ -314,6 +314,7 @@ export default function AppDetailPage() {
     redirects: () => <RedirectsCard id={id} redirects={appData.redirects} />,
     containerPort: () => <ContainerPortCard id={id} containerPort={appData.containerPort} />,
     extraPorts: () => <ExtraPortsCard id={id} ports={appData.extraPorts} />,
+    networking: () => <NetworkingCard id={id} internalHost={appData.internalHost} containerAlias={appData.containerAlias} networks={appData.networks} />,
     networkAliases: () => <NetworkAliasesCard id={id} aliases={appData.networkAliases} />,
     preview: () => <PreviewCard id={id} previewEnabled={appData.previewEnabled} domain={appData.domain} excludeKeys={appData.previewExcludeKeys} limit={appData.previewLimit} />,
     danger: () => (

@@ -11683,6 +11683,59 @@
                           "type": "string"
                         }
                       },
+                      "stopGracePeriodSec": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "drainSec": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "restartMaxRetries": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "containerAlias": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "networks": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "internalHost": {
+                        "type": "object",
+                        "properties": {
+                          "host": {
+                            "type": "string"
+                          },
+                          "port": {
+                            "type": "number"
+                          },
+                          "networks": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "aliases": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "host",
+                          "port",
+                          "networks",
+                          "aliases"
+                        ],
+                        "additionalProperties": false,
+                        "nullable": true
+                      },
                       "domain": {
                         "type": "string",
                         "nullable": true
@@ -11965,6 +12018,12 @@
                       "containerPort",
                       "extraPorts",
                       "networkAliases",
+                      "stopGracePeriodSec",
+                      "drainSec",
+                      "restartMaxRetries",
+                      "containerAlias",
+                      "networks",
+                      "internalHost",
                       "domain",
                       "extraDomains",
                       "domainRedirect",
@@ -12806,6 +12865,59 @@
                         "type": "string"
                       }
                     },
+                    "stopGracePeriodSec": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "drainSec": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "restartMaxRetries": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "containerAlias": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "networks": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "internalHost": {
+                      "type": "object",
+                      "properties": {
+                        "host": {
+                          "type": "string"
+                        },
+                        "port": {
+                          "type": "number"
+                        },
+                        "networks": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "aliases": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "host",
+                        "port",
+                        "networks",
+                        "aliases"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
                     "domain": {
                       "type": "string",
                       "nullable": true
@@ -13088,6 +13200,12 @@
                     "containerPort",
                     "extraPorts",
                     "networkAliases",
+                    "stopGracePeriodSec",
+                    "drainSec",
+                    "restartMaxRetries",
+                    "containerAlias",
+                    "networks",
+                    "internalHost",
                     "domain",
                     "extraDomains",
                     "domainRedirect",
@@ -13996,6 +14114,59 @@
                         "type": "string"
                       }
                     },
+                    "stopGracePeriodSec": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "drainSec": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "restartMaxRetries": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "containerAlias": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "networks": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "internalHost": {
+                      "type": "object",
+                      "properties": {
+                        "host": {
+                          "type": "string"
+                        },
+                        "port": {
+                          "type": "number"
+                        },
+                        "networks": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "aliases": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "host",
+                        "port",
+                        "networks",
+                        "aliases"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
                     "domain": {
                       "type": "string",
                       "nullable": true
@@ -14278,6 +14449,12 @@
                     "containerPort",
                     "extraPorts",
                     "networkAliases",
+                    "stopGracePeriodSec",
+                    "drainSec",
+                    "restartMaxRetries",
+                    "containerAlias",
+                    "networks",
+                    "internalHost",
                     "domain",
                     "extraDomains",
                     "domainRedirect",
@@ -15190,6 +15367,59 @@
                         "type": "string"
                       }
                     },
+                    "stopGracePeriodSec": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "drainSec": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "restartMaxRetries": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "containerAlias": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "networks": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "internalHost": {
+                      "type": "object",
+                      "properties": {
+                        "host": {
+                          "type": "string"
+                        },
+                        "port": {
+                          "type": "number"
+                        },
+                        "networks": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "aliases": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "host",
+                        "port",
+                        "networks",
+                        "aliases"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
                     "domain": {
                       "type": "string",
                       "nullable": true
@@ -15472,6 +15702,12 @@
                     "containerPort",
                     "extraPorts",
                     "networkAliases",
+                    "stopGracePeriodSec",
+                    "drainSec",
+                    "restartMaxRetries",
+                    "containerAlias",
+                    "networks",
+                    "internalHost",
                     "domain",
                     "extraDomains",
                     "domainRedirect",
@@ -20276,6 +20512,131 @@
         ]
       }
     },
+    "/api/v1/apps/{id}/networks": {
+      "put": {
+        "operationId": "ApplicationsController_setNetworks",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "networks": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 63,
+                      "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+                    },
+                    "maxItems": 10
+                  },
+                  "containerAlias": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 63,
+                    "allOf": [
+                      {
+                        "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+                      },
+                      {
+                        "pattern": "^(?!tugra[-_])"
+                      }
+                    ],
+                    "nullable": true
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
     "/api/v1/apps/{id}/container-port": {
       "put": {
         "operationId": "ApplicationsController_setContainerPort",
@@ -21172,6 +21533,18 @@
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 600
+                  },
+                  "stopGracePeriodSec": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3600,
+                    "nullable": true
+                  },
+                  "drainSec": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 300,
+                    "nullable": true
                   }
                 },
                 "additionalProperties": false
@@ -23372,6 +23745,12 @@
                       "on-failure"
                     ],
                     "nullable": true
+                  },
+                  "maxRetries": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1000,
+                    "nullable": true
                   }
                 },
                 "required": [
@@ -24463,6 +24842,59 @@
                             "type": "string"
                           }
                         },
+                        "stopGracePeriodSec": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "drainSec": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "restartMaxRetries": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "containerAlias": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "networks": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "internalHost": {
+                          "type": "object",
+                          "properties": {
+                            "host": {
+                              "type": "string"
+                            },
+                            "port": {
+                              "type": "number"
+                            },
+                            "networks": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "aliases": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "required": [
+                            "host",
+                            "port",
+                            "networks",
+                            "aliases"
+                          ],
+                          "additionalProperties": false,
+                          "nullable": true
+                        },
                         "domain": {
                           "type": "string",
                           "nullable": true
@@ -24745,6 +25177,12 @@
                         "containerPort",
                         "extraPorts",
                         "networkAliases",
+                        "stopGracePeriodSec",
+                        "drainSec",
+                        "restartMaxRetries",
+                        "containerAlias",
+                        "networks",
+                        "internalHost",
                         "domain",
                         "extraDomains",
                         "domainRedirect",
@@ -25516,6 +25954,59 @@
                         "type": "string"
                       }
                     },
+                    "stopGracePeriodSec": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "drainSec": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "restartMaxRetries": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "containerAlias": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "networks": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "internalHost": {
+                      "type": "object",
+                      "properties": {
+                        "host": {
+                          "type": "string"
+                        },
+                        "port": {
+                          "type": "number"
+                        },
+                        "networks": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "aliases": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "host",
+                        "port",
+                        "networks",
+                        "aliases"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
                     "domain": {
                       "type": "string",
                       "nullable": true
@@ -25798,6 +26289,12 @@
                     "containerPort",
                     "extraPorts",
                     "networkAliases",
+                    "stopGracePeriodSec",
+                    "drainSec",
+                    "restartMaxRetries",
+                    "containerAlias",
+                    "networks",
+                    "internalHost",
                     "domain",
                     "extraDomains",
                     "domainRedirect",
@@ -26639,6 +27136,59 @@
                           "type": "string"
                         }
                       },
+                      "stopGracePeriodSec": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "drainSec": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "restartMaxRetries": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "containerAlias": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "networks": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "internalHost": {
+                        "type": "object",
+                        "properties": {
+                          "host": {
+                            "type": "string"
+                          },
+                          "port": {
+                            "type": "number"
+                          },
+                          "networks": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "aliases": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "host",
+                          "port",
+                          "networks",
+                          "aliases"
+                        ],
+                        "additionalProperties": false,
+                        "nullable": true
+                      },
                       "domain": {
                         "type": "string",
                         "nullable": true
@@ -26921,6 +27471,12 @@
                       "containerPort",
                       "extraPorts",
                       "networkAliases",
+                      "stopGracePeriodSec",
+                      "drainSec",
+                      "restartMaxRetries",
+                      "containerAlias",
+                      "networks",
+                      "internalHost",
                       "domain",
                       "extraDomains",
                       "domainRedirect",
@@ -27847,6 +28403,59 @@
                         "type": "string"
                       }
                     },
+                    "stopGracePeriodSec": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "drainSec": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "restartMaxRetries": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "containerAlias": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "networks": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "internalHost": {
+                      "type": "object",
+                      "properties": {
+                        "host": {
+                          "type": "string"
+                        },
+                        "port": {
+                          "type": "number"
+                        },
+                        "networks": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "aliases": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "host",
+                        "port",
+                        "networks",
+                        "aliases"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
                     "domain": {
                       "type": "string",
                       "nullable": true
@@ -28129,6 +28738,12 @@
                     "containerPort",
                     "extraPorts",
                     "networkAliases",
+                    "stopGracePeriodSec",
+                    "drainSec",
+                    "restartMaxRetries",
+                    "containerAlias",
+                    "networks",
+                    "internalHost",
                     "domain",
                     "extraDomains",
                     "domainRedirect",
@@ -30298,6 +30913,59 @@
                         "type": "string"
                       }
                     },
+                    "stopGracePeriodSec": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "drainSec": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "restartMaxRetries": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "containerAlias": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "networks": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "internalHost": {
+                      "type": "object",
+                      "properties": {
+                        "host": {
+                          "type": "string"
+                        },
+                        "port": {
+                          "type": "number"
+                        },
+                        "networks": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "aliases": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "host",
+                        "port",
+                        "networks",
+                        "aliases"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
                     "domain": {
                       "type": "string",
                       "nullable": true
@@ -30580,6 +31248,12 @@
                     "containerPort",
                     "extraPorts",
                     "networkAliases",
+                    "stopGracePeriodSec",
+                    "drainSec",
+                    "restartMaxRetries",
+                    "containerAlias",
+                    "networks",
+                    "internalHost",
                     "domain",
                     "extraDomains",
                     "domainRedirect",

@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import { I18nProvider } from "../../../../i18n/provider";
 import { api } from "../../../../lib/api";
-import { BuildSecretsCard, BuildSettingsCard, looksSensitiveKey } from "./app-detail-build-cards";
+import { BuildSecretsCard, BuildSettingsCard, DeploySettingsCard, RestartPolicyCard, looksSensitiveKey } from "./app-detail-build-cards";
 
 afterEach(cleanup);
 let qc: QueryClient;
@@ -157,5 +157,67 @@ describe("BuildSettingsCard — git/build behaviour toggles", () => {
     unmount();
     wrap(<BuildSettingsCard {...props} buildType="STATIC" sourceCommitMode="BUILD" />);
     expect(screen.getByText(/Static builds have no build arguments/)).toBeTruthy();
+  });
+});
+
+describe("DeploySettingsCard — stop grace + drain", () => {
+  const props = { id: "a1", deployStrategy: "ROLLING", rollbackOnFailure: true, imagesToKeep: null, postCutoverSoakSec: 0 };
+
+  it("sends null for blank stop-grace / drain and the numbers when filled", async () => {
+    const set = vi.spyOn(api, "setAppDeploySettings").mockResolvedValue({ ok: true });
+    wrap(<DeploySettingsCard {...props} stopGracePeriodSec={null} drainSec={null} />);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(set).toHaveBeenCalledTimes(1));
+    expect(set.mock.calls[0][1]).toMatchObject({ stopGracePeriodSec: null, drainSec: null });
+    fireEvent.change(screen.getByLabelText("Stop grace period (seconds)"), { target: { value: "45" } });
+    fireEvent.change(screen.getByLabelText("Drain (seconds)"), { target: { value: "7" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(set).toHaveBeenCalledTimes(2));
+    expect(set.mock.calls[1][1]).toMatchObject({ stopGracePeriodSec: 45, drainSec: 7 });
+  });
+
+  it("prefills the stored values", () => {
+    wrap(<DeploySettingsCard {...props} stopGracePeriodSec={30} drainSec={5} />);
+    expect((screen.getByLabelText("Stop grace period (seconds)") as HTMLInputElement).value).toBe("30");
+    expect((screen.getByLabelText("Drain (seconds)") as HTMLInputElement).value).toBe("5");
+  });
+
+  it("a clustered app hides both fields and never sends them", async () => {
+    const set = vi.spyOn(api, "setAppDeploySettings").mockResolvedValue({ ok: true });
+    wrap(<DeploySettingsCard {...props} stopGracePeriodSec={null} drainSec={null} clustered />);
+    expect(screen.queryByLabelText("Stop grace period (seconds)")).toBeNull();
+    expect(screen.queryByLabelText("Drain (seconds)")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(set).toHaveBeenCalled());
+    expect("stopGracePeriodSec" in set.mock.calls[0][1]).toBe(false);
+    expect("drainSec" in set.mock.calls[0][1]).toBe(false);
+  });
+});
+
+describe("RestartPolicyCard — max retries", () => {
+  it("shows the retries input only for on-failure, and clears it when switching away", async () => {
+    const set = vi.spyOn(api, "setAppRestartPolicy").mockResolvedValue({ ok: true });
+    wrap(<RestartPolicyCard id="a1" restartPolicy="on-failure" restartMaxRetries={5} />);
+    const retries = screen.getByLabelText("Max retries") as HTMLInputElement;
+    expect(retries.value).toBe("5");
+    fireEvent.change(screen.getByLabelText("Restart policy"), { target: { value: "always" } });
+    expect(screen.queryByLabelText("Max retries")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(set).toHaveBeenCalledTimes(1));
+    expect(set.mock.calls[0]).toEqual(["a1", "always"]); // no cap sent with another policy
+    fireEvent.change(screen.getByLabelText("Restart policy"), { target: { value: "on-failure" } });
+    expect((screen.getByLabelText("Max retries") as HTMLInputElement).value).toBe(""); // cleared locally on the way out
+  });
+
+  it("sends null for a blank cap and the number when filled (on-failure)", async () => {
+    const set = vi.spyOn(api, "setAppRestartPolicy").mockResolvedValue({ ok: true });
+    wrap(<RestartPolicyCard id="a1" restartPolicy="on-failure" restartMaxRetries={null} />);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(set).toHaveBeenCalledTimes(1));
+    expect(set.mock.calls[0]).toEqual(["a1", "on-failure", null]);
+    fireEvent.change(screen.getByLabelText("Max retries"), { target: { value: "3" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(set).toHaveBeenCalledTimes(2));
+    expect(set.mock.calls[1]).toEqual(["a1", "on-failure", 3]);
   });
 });

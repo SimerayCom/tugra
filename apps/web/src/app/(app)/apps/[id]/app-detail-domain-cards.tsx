@@ -9,6 +9,7 @@ import { Btn, SectionCard } from "../../../../components/ui";
 import { useUnsavedChanges } from "../../../../hooks/useUnsavedChanges";
 import { useT } from "../../../../i18n/provider";
 import { api } from "../../../../lib/api";
+import { copyText } from "../../../../lib/clipboard";
 import { basicAuthSaveRemovesAll, canSaveBasicAuth, completeBasicAuthRows, hasIncompleteBasicAuthRow } from "../../../../lib/basic-auth";
 import { envField } from "./app-detail-shared";
 
@@ -172,6 +173,88 @@ export function ExtraDomainsCard({ id, extraDomains }: { id: string; extraDomain
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.extraDomainsRedeploy")}</div>}
+    </SectionCard>
+  );
+}
+
+export type InternalHost = { host: string; port: number; networks: string[]; aliases: string[] };
+
+/** Where other containers reach this app (read-only), plus its stable name and extra Docker networks. The
+ *  stable alias + networks are replace-set via PUT /apps/:id/networks and apply on the next deploy. */
+export function NetworkingCard({ id, internalHost, containerAlias, networks }: { id: string; internalHost: InternalHost | null; containerAlias: string | null; networks: string[] }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [alias, setAlias] = useState(containerAlias ?? "");
+  const [text, setText] = useState(networks.join("\n"));
+  useEffect(() => { setAlias(containerAlias ?? ""); }, [containerAlias]);
+  useEffect(() => { setText(networks.join("\n")); }, [networks]);
+  const parse = (s: string) => Array.from(new Set(s.split(/[\n,]/).map((l) => l.trim().toLowerCase()).filter(Boolean)));
+  const aliasNorm = alias.trim().toLowerCase();
+  const dirty = parse(text).join("\n") !== networks.join("\n") || aliasNorm !== (containerAlias ?? "");
+  const save = useMutation({
+    mutationFn: () => api.setAppNetworks(id, { networks: parse(text), containerAlias: aliasNorm || null }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+    meta: { successMessage: t("apps.saved") },
+  });
+  useUnsavedChanges(dirty && !save.isPending);
+  const address = internalHost ? `${internalHost.host}:${internalHost.port}` : null;
+  const field: React.CSSProperties = { ...envField, width: "100%", boxSizing: "border-box" };
+  return (
+    <SectionCard title={t("apps.networking")} desc={t("apps.networkingDesc")}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div>
+          <div style={{ fontSize: 12, color: "var(--c-tx2)", marginBottom: 4 }}>{t("apps.internalAddress")}</div>
+          {address ? (
+            <>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <code className="mono" style={{ fontSize: 12, color: "var(--c-tx)", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "6px 10px" }}>{address}</code>
+                <Btn
+                  variant="ghost"
+                  onClick={async () => {
+                    const ok = await copyText(address);
+                    toast(ok ? t("common.copied") : t("common.copyFailed"), ok ? "success" : "error");
+                  }}
+                >
+                  {t("apps.copyAddress")}
+                </Btn>
+              </div>
+              <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 6 }}>{t("apps.internalAddressHint", { networks: internalHost!.networks.join(", ") })}</div>
+              {internalHost!.aliases.length > 0 && (
+                <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 4 }}>{t("apps.internalAddressAliases", { aliases: internalHost!.aliases.join(", ") })}</div>
+              )}
+            </>
+          ) : (
+            <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.internalAddressUnmanaged")}</div>
+          )}
+        </div>
+        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span style={{ fontSize: 12, color: "var(--c-tx2)" }}>{t("apps.containerAlias")}</span>
+          <input className="mono" style={field} value={alias} spellCheck={false} placeholder="api" onChange={(e) => setAlias(e.target.value)} aria-label={t("apps.containerAlias")} />
+          <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("apps.containerAliasHint")}</span>
+          <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("apps.containerAliasRollingNote")}</span>
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span style={{ fontSize: 12, color: "var(--c-tx2)" }}>{t("apps.extraNetworks")}</span>
+          <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("apps.extraNetworksDesc")}</span>
+          <textarea
+            className="mono"
+            value={text}
+            spellCheck={false}
+            onChange={(e) => setText(e.target.value)}
+            placeholder={"backend\ntugra-apps"}
+            aria-label={t("apps.extraNetworks")}
+            style={{ ...field, minHeight: 64, maxHeight: 160, resize: "vertical", fontSize: 12, lineHeight: 1.5, padding: 10 }}
+          />
+          <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("apps.extraNetworksHint")}</span>
+          <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("apps.networksReserved")}</span>
+        </label>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <Btn onClick={() => save.mutate()} disabled={!dirty || save.isPending}>{t("apps.save")}</Btn>
+        </div>
+      </div>
+      {save.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(save.error as Error).message}</div>}
+      {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.networkingRedeploy")}</div>}
     </SectionCard>
   );
 }

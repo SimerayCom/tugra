@@ -49,6 +49,7 @@ export type ConfigCardId =
   | "basicAuth"
   | "redirects"
   | "extraPorts"
+  | "networking"
   | "networkAliases"
   | "containerPort"
   | "customCert"
@@ -134,6 +135,9 @@ export const CONFIG_CARDS: { id: ConfigCardId; group: ConfigGroupKey; visible: (
   { id: "containerPort", group: "domains", visible: (a) => notCompose(a) && a.canWrite && !a.isPreview },
   // Extra published ports (raw TCP/UDP maps) — docker-run apps only (a compose app declares its own ports).
   { id: "extraPorts", group: "domains", visible: (a) => notCompose(a) && a.canWrite && !a.isPreview },
+  // Internal address + stable name + extra Docker networks — docker-run apps only (compose declares its own
+  // networks; swarm deploys on the overlay, which doesn't take these).
+  { id: "networking", group: "domains", visible: (a) => notCompose(a) && a.canWrite && !a.isPreview && !a.clusterId },
   // Docker network aliases — docker-run apps only (a compose app declares aliases in its YAML), and not for
   // swarm/cluster apps (the swarm deploy path does not emit --network-alias, so it would be a silent no-op).
   { id: "networkAliases", group: "domains", visible: (a) => notCompose(a) && a.canWrite && !a.isPreview && !a.clusterId },

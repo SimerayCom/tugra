@@ -62,6 +62,29 @@ describe("buildConfigSnapshot", () => {
     expect(changes).toContainEqual(expect.objectContaining({ field: "nixpacksBuildCmd", kind: "changed", after: "vite build" }));
   });
 
+  it("records the container ops/networking scalars only when set (no spurious first-deploy diff)", () => {
+    const plain = buildConfigSnapshot(spec());
+    for (const k of ["restartPolicy", "restartMaxRetries", "stopGracePeriodSec", "drainSec", "containerAlias", "networks"]) {
+      expect(plain).not.toHaveProperty(k);
+    }
+    // An old snapshot (no keys) vs a new one with everything unset → no change entries.
+    expect(diffSnapshots(plain, buildConfigSnapshot(spec({ stopGracePeriodSec: null, drainSec: 0, networks: [], containerAlias: null })))).toEqual([]);
+    const set = buildConfigSnapshot(spec({ restartPolicy: "on-failure", restartMaxRetries: 3, stopGracePeriodSec: 30, drainSec: 5, containerAlias: "api" }));
+    expect(set).toMatchObject({ restartPolicy: "on-failure", restartMaxRetries: 3, stopGracePeriodSec: 30, drainSec: 5, containerAlias: "api" });
+    const changes = diffSnapshots(plain, set);
+    expect(changes).toContainEqual(expect.objectContaining({ field: "stopGracePeriodSec", kind: "changed", before: "—", after: "30" }));
+    expect(changes).toContainEqual(expect.objectContaining({ field: "containerAlias", after: "api" }));
+  });
+
+  it("diffs extra networks as a set (added/removed), order-insensitive", () => {
+    const a = buildConfigSnapshot(spec({ networks: ["b", "a"] }));
+    expect(a.networks).toEqual(["a", "b"]);
+    const changes = diffSnapshots(a, buildConfigSnapshot(spec({ networks: ["a", "c"] })));
+    expect(changes).toContainEqual({ field: "network.c", kind: "added", after: "c" });
+    expect(changes).toContainEqual({ field: "network.b", kind: "removed", before: "b" });
+    expect(diffSnapshots(a, buildConfigSnapshot(spec({ networks: ["a", "b"] })))).toEqual([]);
+  });
+
   it("fingerprints config-mount content (never stored verbatim)", () => {
     const snap = buildConfigSnapshot(
       spec({

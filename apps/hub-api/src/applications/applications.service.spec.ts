@@ -1420,7 +1420,7 @@ describe("ApplicationsService", () => {
 
   it("replaces network aliases and audits the change", async () => {
     const update = jest.fn().mockResolvedValue({});
-    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app), update } } as unknown as PrismaService;
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app), findFirst: jest.fn().mockResolvedValue(null), update } } as unknown as PrismaService;
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).setNetworkAliases("u1", "app1", ["api", "cache"]);
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { networkAliases: ["api", "cache"] } }));
@@ -4477,6 +4477,7 @@ describe("ApplicationsService.clone", () => {
     expect(data.isPreview).toBeUndefined(); // DB default false
     expect(data.hostPort).toBeNull(); // reset (would clash on the same server)
     expect(data.networkAliases).toEqual([]); // reset — a duplicate alias on the shared network collides
+    expect(data.containerAlias).toBeNull(); // reset — duplicate on the shared network AND the (serverId, containerAlias) unique index
     expect(data.volumes).toEqual([{ name: "data", path: "/data" }]); // definition copied (fresh volume via new id)
     expect(data.healthCheckMethod).toBe("POST"); // HTTP method/scheme carried (else a POST/HTTPS-only app's clone fails its first gate)
     expect(data.healthCheckScheme).toBe("https");
@@ -5830,5 +5831,225 @@ describe("ApplicationsService — git/build settings", () => {
     } as unknown as AgentWsServer;
     await make(prisma, accessWith({}), agentWs).rollback("u1", "app1", "target");
     expect(sentCmd).toContain(`-e SOURCE_COMMIT=${sha}`);
+  });
+});
+
+describe("ApplicationsService — container ops + networking", () => {
+  const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+  const classic = { ...app, teamId: "t1", source: "IMAGE", networks: [], containerAlias: null, networkAliases: [], dockerOptions: null };
+  const mk = (row: Record<string, unknown>, extra: Record<string, unknown> = {}) => {
+    const update = jest.fn().mockResolvedValue({});
+    const findFirst = jest.fn().mockResolvedValue(null);
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...classic, ...row }), update, findFirst, ...extra } } as unknown as PrismaService;
+    return { svc: make(prisma, access, {} as AgentWsServer), update, findFirst };
+  };
+  const priv = (svc: unknown) => svc as { opsBudgetMs: (s: unknown, r: boolean) => number; lifecycleTimeoutMs: (a: unknown) => number; rollingEligible: (a: unknown) => boolean; toSpec: (a: unknown) => Record<string, unknown> };
+
+  describe("setNetworks", () => {
+    it("stores networks + alias and audits (undefined keys are kept)", async () => {
+      const { svc, update } = mk({});
+      await svc.setNetworks("u1", "app1", { networks: ["db-net", "tugra-apps"], containerAlias: "api" });
+      expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { networks: ["db-net", "tugra-apps"], containerAlias: "api" } }));
+      expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "app.networks.update", meta: { networks: ["db-net", "tugra-apps"], alias: true } }));
+      await svc.setNetworks("u1", "app1", { containerAlias: null });
+      expect(update.mock.calls[1][0].data).toEqual({ containerAlias: null });
+    });
+
+    it.each([
+      ["cluster", { clusterId: "c1" }],
+      ["compose", { source: "COMPOSE" }],
+      ["preview", { isPreview: true }],
+      ["raw --network", { dockerOptions: "--network mynet" }],
+    ])("refuses a %s app", async (_n, row) => {
+      const { svc, update } = mk(row);
+      await expect(svc.setNetworks("u1", "app1", { networks: ["a"] })).rejects.toBeInstanceOf(BadRequestException);
+      expect(update).not.toHaveBeenCalled();
+    });
+
+    it("refuses a reserved network name and a reserved alias (defence in depth over the DTO)", async () => {
+      const { svc, update } = mk({});
+      await expect(svc.setNetworks("u1", "app1", { networks: ["tugra-net"] })).rejects.toBeInstanceOf(BadRequestException);
+      await expect(svc.setNetworks("u1", "app1", { networks: ["bridge"] })).rejects.toBeInstanceOf(BadRequestException);
+      await expect(svc.setNetworks("u1", "app1", { containerAlias: "tugra-x" })).rejects.toBeInstanceOf(BadRequestException);
+      expect(update).not.toHaveBeenCalled();
+    });
+
+    it("refuses a network name another team already uses on this server (tugra-apps is excluded from the check)", async () => {
+      const { svc, update, findFirst } = mk({});
+      findFirst.mockResolvedValueOnce({ id: "other" });
+      await expect(svc.setNetworks("u1", "app1", { networks: ["backend"] })).rejects.toThrow(/another team/);
+      expect(findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { serverId: "s1", teamId: { not: "t1" }, networks: { hasSome: ["backend"] } } }));
+      expect(update).not.toHaveBeenCalled();
+      findFirst.mockClear();
+      await svc.setNetworks("u1", "app1", { networks: ["tugra-apps"] }); // shared bridge by design → no cross-team query
+      expect(findFirst).not.toHaveBeenCalled();
+    });
+
+    it("refuses an alias that collides with this app's or another app's network alias on the server", async () => {
+      const own = mk({ networkAliases: ["api"] });
+      await expect(own.svc.setNetworks("u1", "app1", { containerAlias: "api" })).rejects.toThrow(/already in use/);
+      const other = mk({});
+      other.findFirst.mockResolvedValueOnce({ id: "other" });
+      await expect(other.svc.setNetworks("u1", "app1", { containerAlias: "api" })).rejects.toThrow(/already in use/);
+      expect(other.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ networkAliases: { has: "api" } }) }));
+    });
+
+    it("maps a unique-index violation (P2002) to Conflict", async () => {
+      const { svc, update } = mk({});
+      update.mockRejectedValueOnce(new Prisma.PrismaClientKnownRequestError("dup", { code: "P2002", clientVersion: "x" }));
+      await expect(svc.setNetworks("u1", "app1", { containerAlias: "api" })).rejects.toBeInstanceOf(ConflictException);
+    });
+  });
+
+  describe("reverse guards", () => {
+    it("setNetworkAliases refuses an alias equal to this app's or another app's containerAlias", async () => {
+      const own = mk({ containerAlias: "stable" });
+      await expect(own.svc.setNetworkAliases("u1", "app1", ["stable"])).rejects.toBeInstanceOf(BadRequestException);
+      const other = mk({});
+      other.findFirst.mockResolvedValueOnce({ id: "other" });
+      await expect(other.svc.setNetworkAliases("u1", "app1", ["x"])).rejects.toBeInstanceOf(BadRequestException);
+      expect(other.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { serverId: "s1", id: { not: "app1" }, containerAlias: { in: ["x"] } } }));
+    });
+
+    it("setDockerOptions refuses --network while extra networks or an alias are set", async () => {
+      await expect(mk({ networks: ["a"] }).svc.setDockerOptions("u1", "app1", "--network x")).rejects.toThrow(/extra networks/);
+      await expect(mk({ containerAlias: "a" }).svc.setDockerOptions("u1", "app1", "--net=x")).rejects.toThrow(/extra networks/);
+      await mk({ networks: ["a"] }).svc.setDockerOptions("u1", "app1", "--dns 1.1.1.1"); // unrelated options still fine
+    });
+  });
+
+  describe("setDeploySettings (stop grace + drain)", () => {
+    it("keeps when undefined, writes when set, and clears with null", async () => {
+      const { svc, update } = mk({});
+      await svc.setDeploySettings("u1", "app1", { stopGracePeriodSec: 45, drainSec: 5 });
+      expect(update.mock.calls[0][0].data).toEqual({ stopGracePeriodSec: 45, drainSec: 5 });
+      expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "app.deploysettings.update", meta: { stopGracePeriodSec: 45, drainSec: 5 } }));
+      await svc.setDeploySettings("u1", "app1", { imagesToKeep: 3 });
+      expect("stopGracePeriodSec" in update.mock.calls[1][0].data).toBe(false);
+      expect("drainSec" in update.mock.calls[1][0].data).toBe(false);
+      await svc.setDeploySettings("u1", "app1", { stopGracePeriodSec: null, drainSec: null });
+      expect(update.mock.calls[2][0].data).toEqual({ stopGracePeriodSec: null, drainSec: null });
+    });
+
+    it("refuses a non-null value on COMPOSE and cluster apps, but allows clearing", async () => {
+      await expect(mk({ source: "COMPOSE" }).svc.setDeploySettings("u1", "app1", { stopGracePeriodSec: 30 })).rejects.toThrow(/compose file/);
+      await expect(mk({ clusterId: "c1" }).svc.setDeploySettings("u1", "app1", { drainSec: 5 })).rejects.toThrow(/swarm/);
+      const ok = mk({ source: "COMPOSE" });
+      await ok.svc.setDeploySettings("u1", "app1", { stopGracePeriodSec: null });
+      expect(ok.update).toHaveBeenCalled();
+    });
+  });
+
+  describe("setRestartPolicy (maxRetries)", () => {
+    it("stores the cap with on-failure, keeps it when omitted, and clears it when the policy leaves on-failure", async () => {
+      const { svc, update } = mk({});
+      await svc.setRestartPolicy("u1", "app1", "on-failure", 5);
+      expect(update.mock.calls[0][0].data).toEqual({ restartPolicy: "on-failure", restartMaxRetries: 5 });
+      await svc.setRestartPolicy("u1", "app1", "on-failure"); // omitted → keep
+      expect(update.mock.calls[1][0].data).toEqual({ restartPolicy: "on-failure" });
+      await svc.setRestartPolicy("u1", "app1", "always", 5); // not on-failure → cap dropped
+      expect(update.mock.calls[2][0].data).toEqual({ restartPolicy: "always", restartMaxRetries: null });
+      await svc.setRestartPolicy("u1", "app1", null);
+      expect(update.mock.calls[3][0].data).toEqual({ restartPolicy: null, restartMaxRetries: null });
+      expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "app.restartPolicy.update", meta: { restartPolicy: "on-failure", maxRetries: 5 } }));
+    });
+  });
+
+  describe("rollingEligible / timeouts / toSpec", () => {
+    const rolling = { ...classic, domain: "a.com", deployStrategy: "ROLLING", rollbackOnFailure: true, volumes: null, extraPorts: null };
+    it("rollingEligible is false with a containerAlias (the rollout copy would share it)", () => {
+      const svc = priv(mk({}).svc);
+      expect(svc.rollingEligible(rolling)).toBe(true);
+      expect(svc.rollingEligible({ ...rolling, containerAlias: "stable" })).toBe(false);
+    });
+
+    it("opsBudgetMs: unset is 0; drain counts only for rolling; soak doubles the stop budget", () => {
+      const svc = priv(mk({}).svc);
+      expect(svc.opsBudgetMs({ id: "a" }, true)).toBe(0);
+      expect(svc.opsBudgetMs({ id: "a", drainSec: 0, stopGracePeriodSec: null }, true)).toBe(0);
+      expect(svc.opsBudgetMs({ id: "a", drainSec: 20, stopGracePeriodSec: 10 }, true)).toBe((20 + 10 + 15) * 1000);
+      expect(svc.opsBudgetMs({ id: "a", drainSec: 20, stopGracePeriodSec: 10 }, false)).toBe((10 + 15) * 1000);
+      expect(svc.opsBudgetMs({ id: "a", stopGracePeriodSec: 3600, postCutoverSoakSec: 30 }, true)).toBe((3600 * 2 + 15) * 1000);
+    });
+
+    it("lifecycleTimeoutMs: 120s default, grace+30s when longer, base for compose/cluster", () => {
+      const svc = priv(mk({}).svc);
+      expect(svc.lifecycleTimeoutMs(classic)).toBe(120_000);
+      expect(svc.lifecycleTimeoutMs({ ...classic, stopGracePeriodSec: 60 })).toBe(120_000);
+      expect(svc.lifecycleTimeoutMs({ ...classic, stopGracePeriodSec: 3600 })).toBe(3630_000);
+      expect(svc.lifecycleTimeoutMs({ ...classic, stopGracePeriodSec: 3600, source: "COMPOSE" })).toBe(120_000);
+      expect(svc.lifecycleTimeoutMs({ ...classic, stopGracePeriodSec: 3600, clusterId: "c1" })).toBe(120_000);
+    });
+
+    it("toSpec carries the settings for a classic app and masks them for COMPOSE and cluster", () => {
+      const svc = priv(mk({}).svc);
+      const row = { ...classic, stopGracePeriodSec: 30, drainSec: 5, networks: ["a"], containerAlias: "x", restartPolicy: "on-failure", restartMaxRetries: 4 };
+      expect(svc.toSpec(row)).toMatchObject({ stopGracePeriodSec: 30, drainSec: 5, networks: ["a"], containerAlias: "x", restartMaxRetries: 4 });
+      for (const masked of [{ source: "COMPOSE" }, { clusterId: "c1" }]) {
+        expect(svc.toSpec({ ...row, ...masked })).toMatchObject({ stopGracePeriodSec: null, drainSec: null, networks: [], containerAlias: null, restartMaxRetries: null });
+      }
+      expect(svc.toSpec({ ...row, restartPolicy: "always" })).toMatchObject({ restartMaxRetries: null }); // cap only with on-failure
+    });
+  });
+
+  describe("view().internalHost + new fields", () => {
+    const listOne = async (row: Record<string, unknown>) => {
+      const prisma = {
+        application: { findMany: jest.fn().mockResolvedValue([{ ...classic, environmentId: "e1", ...row }]) },
+        environment: { findMany: jest.fn().mockResolvedValue([{ id: "e1", name: "production", project: { id: "p1", name: "Default" } }]) },
+      } as unknown as PrismaService;
+      const acc = { accessByTeam: jest.fn().mockResolvedValue(new Map([["t1", { role: Role.OWNER, restrictedAccess: false, accessedProjects: [], accessedResources: [] }]])) } as unknown as TeamAccessService;
+      return (await make(prisma, acc, {} as AgentWsServer).list("u1"))[0];
+    };
+    it("a bare app resolves as tugra_<id>:<port> on tugra-apps", async () => {
+      const v = await listOne({ containerAlias: "stable", networkAliases: ["api"], stopGracePeriodSec: 20, drainSec: 3, restartMaxRetries: 2, networks: ["a"] });
+      expect(v.internalHost).toEqual({ host: "tugra_app1", port: 80, networks: ["tugra-apps", "a"], aliases: ["api", "stable"] });
+      expect(v).toMatchObject({ stopGracePeriodSec: 20, drainSec: 3, restartMaxRetries: 2, containerAlias: "stable", networks: ["a"] });
+    });
+    it("internalHost is null for compose, cluster and a raw --network", async () => {
+      expect((await listOne({ source: "COMPOSE" })).internalHost).toBeNull();
+      expect((await listOne({ clusterId: "c1" })).internalHost).toBeNull();
+      expect((await listOne({ dockerOptions: "--network mynet" })).internalHost).toBeNull();
+    });
+    it("defaults for an app with no D2 columns (older row shape)", async () => {
+      const v = await listOne({ networks: undefined, containerAlias: undefined });
+      expect(v.networks).toEqual([]);
+    });
+  });
+
+  describe("upsertPreview copies", () => {
+    it("copies restartMaxRetries + stopGracePeriodSec, NOT containerAlias/networks/drainSec", async () => {
+      const create = jest.fn().mockResolvedValue({ id: "pv1", teamId: "t1", serverId: "s1", source: "GIT", isPreview: true });
+      const prisma = { application: { findFirst: jest.fn().mockResolvedValue(null), create } } as unknown as PrismaService;
+      const svc = make(prisma, {} as TeamAccessService, {} as AgentWsServer);
+      jest.spyOn(svc as unknown as { submitDeploy: (...a: unknown[]) => Promise<unknown> }, "submitDeploy").mockResolvedValue(undefined);
+      const parent = {
+        id: "app1", name: "web", teamId: "t1", serverId: "s1", environmentId: "e1", source: "GIT", previewEnabled: true, domain: "app.example.com",
+        envEnc: JSON.stringify({}), restartPolicy: "on-failure", restartMaxRetries: 3, stopGracePeriodSec: 25, drainSec: 9, containerAlias: "stable", networks: ["a"],
+      } as unknown as Parameters<typeof svc.upsertPreview>[0];
+      await svc.upsertPreview(parent, 7, "feature-7");
+      const data = create.mock.calls[0][0].data;
+      expect(data.restartMaxRetries).toBe(3);
+      expect(data.stopGracePeriodSec).toBe(25);
+      expect("containerAlias" in data).toBe(false);
+      expect("networks" in data).toBe(false);
+      expect("drainSec" in data).toBe(false);
+    });
+  });
+
+  describe("clone copies", () => {
+    it("copies stop/drain/retries/networks and resets containerAlias", async () => {
+      const src = { ...classic, id: "src1", name: "shop", image: "nginx", isPreview: false, volumes: null, stopGracePeriodSec: 30, drainSec: 4, restartMaxRetries: 2, networks: ["a"], containerAlias: "stable" };
+      const create = jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ ...data, id: "clone1", createdAt: new Date() }));
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue(src), create },
+        server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1", publicIp: null, publicIpv6: null, wildcardDomain: null, magicSuffix: null, certMode: "http", proxyBind: "public" }) },
+        appIcon: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
+        scheduledTask: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
+      } as unknown as PrismaService;
+      await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", {});
+      const data = create.mock.calls[0][0].data;
+      expect(data).toMatchObject({ stopGracePeriodSec: 30, drainSec: 4, restartMaxRetries: 2, networks: ["a"], containerAlias: null });
+    });
   });
 });

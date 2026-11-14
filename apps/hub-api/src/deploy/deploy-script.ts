@@ -7,6 +7,7 @@
 import { createHash } from "node:crypto";
 import { DB_NET } from "../databases/database-script"; // single source for the managed-DB network name
 import { injectableBuildArgs } from "./build-args";
+import { APPS_NETWORK } from "./network-names";
 import {
   buildPanelRouterYaml,
   validateAcmeEmail,
@@ -17,6 +18,7 @@ import {
 } from "./panel-router";
 
 export const PROXY_NETWORK = "tugra-proxy";
+export { APPS_NETWORK };
 export const PROXY_NAME = "tugra-proxy";
 
 // Tugra's own infrastructure images, pinned to their multi-arch manifest-list (index) @sha256 digest
@@ -166,6 +168,17 @@ export interface AppSpec {
   // integers + tcp/udp, safe to interpolate. Classic docker-run apps only (compose declares its own ports).
   extraPorts?: { hostPort: number; containerPort: number; protocol: "tcp" | "udp" }[] | null;
   networkAliases?: string[] | null; // extra --network-alias names on the app's user-defined network
+  /** Extra user Docker networks the container joins (attached after create via `docker network connect`).
+   *  DTO-validated DNS labels, shell-quoted here too. Masked off for COMPOSE/swarm in toSpec. */
+  networks?: string[];
+  /** Stable DNS label the container answers to on every network it joins (+ a `tugra.alias` label). */
+  containerAlias?: string | null;
+  /** `--restart on-failure:N` retry cap; honoured only with restartPolicy "on-failure". Bounded 1..1000. */
+  restartMaxRetries?: number | null;
+  /** Graceful stop window (`--stop-timeout` / `docker stop -t`). Bounded 1..3600; null = Docker default. */
+  stopGracePeriodSec?: number | null;
+  /** ROLLING only: seconds both containers serve after the new one is healthy, before the old is stopped. */
+  drainSec?: number | null;
   /** Opt-in: also attach the container to the node-local managed-DB network (tugra-net) so it resolves
    *  tugra_db_<id> by name. Co-located classic apps only (masked off for swarm in toSpec). */
   dbNetwork?: boolean | null;
@@ -294,6 +307,47 @@ export interface AppConfigMount {
 
 export function containerName(app: { id: string }): string {
   return `tugra_${app.id}`;
+}
+
+/** Integer in [lo, hi] or null. Guards every numeric setting that is interpolated into a bash command. */
+const boundedInt = (v: number | null | undefined, lo: number, hi: number): number | null =>
+  typeof v === "number" && Number.isInteger(v) && v >= lo && v <= hi ? v : null;
+
+/** The single predicate for "this app lands on the shared per-server bridge (tugra-apps)": a classic app with
+ *  no domain (tugra-proxy), no db link (tugra-net) and no operator-owned raw `--network`. */
+function usesAppsNetwork(app: AppSpec): boolean {
+  return !app.domain && !app.dbNetwork && !hasNetworkOpt(app.dockerOptions) && app.source !== "COMPOSE";
+}
+
+export interface NetworkPlan {
+  primary: string | null;
+  connect: string[];
+  all: string[];
+}
+/** Which network the container is created on and which are attached after create. Single source of truth for
+ *  the run line, the network prelude, the pre-deploy hook and AppView.internalHost. */
+export function appNetworkPlan(app: AppSpec): NetworkPlan {
+  const primary = app.domain ? PROXY_NETWORK : app.dbNetwork ? DB_NET : usesAppsNetwork(app) ? APPS_NETWORK : null;
+  const connect = [
+    ...(app.domain && app.dbNetwork ? [DB_NET] : []),
+    ...(hasNetworkOpt(app.dockerOptions) ? [] : (app.networks ?? []).filter((n) => n !== primary)),
+  ];
+  return { primary, connect, all: [...(primary ? [primary] : []), ...connect] };
+}
+
+/** Where other containers reach this app, from the same plan the run line uses. Null when unknown: a COMPOSE
+ *  app (compose-generated names) or an operator-owned raw `--network` (resolution is theirs). */
+export function internalHostFor(
+  a: Pick<AppSpec, "id" | "domain" | "dbNetwork" | "dockerOptions" | "source" | "networks" | "networkAliases" | "containerAlias" | "containerPort">,
+): { host: string; port: number; networks: string[]; aliases: string[] } | null {
+  const plan = appNetworkPlan(a as AppSpec);
+  if (a.source === "COMPOSE" || plan.primary === null) return null;
+  return {
+    host: containerName(a),
+    port: a.containerPort ?? 80,
+    networks: plan.all,
+    aliases: [...(a.networkAliases ?? []), ...(a.containerAlias ? [a.containerAlias] : [])],
+  };
 }
 
 /** Temporary name for the not-yet-live container during a rolling deploy. It carries
@@ -1154,10 +1208,17 @@ function envPreludeFor(app: AppSpec): string[] {
   ];
 }
 
-/** Ensure the managed-DB network exists before a dbNetwork app's container joins it (idempotent; tolerates
- *  a pruned or never-created network). No-op for a default app, so default deploy scripts stay byte-identical. */
+/** Ensure every network the container joins exists before it does (idempotent; tolerates a pruned or
+ *  never-created network): the managed-DB network, the shared tugra-apps bridge, and any user networks. Empty
+ *  for a routed app with no db link and no extra networks, so those scripts stay byte-identical. */
 function dbNetPreludeFor(app: AppSpec): string[] {
-  return app.dbNetwork ? [`docker network create ${DB_NET} 2>/dev/null || true`] : [];
+  const plan = appNetworkPlan(app);
+  const make = (n: string) => `docker network create ${n === DB_NET || n === APPS_NETWORK ? n : shq(n)} 2>/dev/null || true`;
+  return [
+    ...(app.dbNetwork ? [make(DB_NET)] : []), // first line byte-identical to the db-only form
+    ...(plan.primary === APPS_NETWORK ? [make(APPS_NETWORK)] : []),
+    ...plan.connect.filter((n) => n !== DB_NET).map(make),
+  ];
 }
 
 /** Host dir for operator-uploaded custom certs, UNDER PROXY_DYNAMIC_DIR so the proxy (which mounts that
@@ -1269,20 +1330,25 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
   const env = app.env && typeof app.env === "object" ? app.env : {};
   const envArg = Object.keys(env).length > 0 ? `--env-file ${envFilePath(app)}` : "";
 
+  const plan = appNetworkPlan(app);
   let netExpose: string;
   if (app.domain) {
     const labels = [...traefikLabels(app)];
     // A dbNetwork app is on BOTH tugra-proxy and tugra-net; pin Traefik to the proxy network or it may
     // pick the (proxy-unreachable) tugra-net IP and 502. Only added when the app opts in, so default
-    // apps keep byte-identical labels.
-    if (app.dbNetwork) labels.push(`traefik.docker.network=${PROXY_NETWORK}`);
+    // apps keep byte-identical labels. Extra user networks put the app on >1 network too → same pin.
+    if (app.dbNetwork || plan.connect.length > 0) labels.push(`traefik.docker.network=${PROXY_NETWORK}`);
     netExpose = `--network ${PROXY_NETWORK} ` + labels.map((l) => `--label ${shq(l)}`).join(" ");
   } else if (app.dbNetwork) {
     // No ingress → run ON the DB network as the sole network (single --network works on any engine), so the
     // app resolves tugra_db_<id> by name. Keep the optional host-port publish.
     netExpose = `--network ${DB_NET}` + (app.hostPort ? ` -p ${app.hostPort}:${app.containerPort ?? 80}` : "");
+  } else if (usesAppsNetwork(app)) {
+    // No domain, no db link, no raw --network → the shared per-server bridge, so the container resolves by its
+    // stable name/aliases instead of sitting on the default bridge (no DNS). Keep the optional host-port publish.
+    netExpose = `--network ${APPS_NETWORK}` + (app.hostPort ? ` -p ${app.hostPort}:${app.containerPort ?? 80}` : "");
   } else {
-    netExpose = app.hostPort ? `-p ${app.hostPort}:${app.containerPort ?? 80}` : "";
+    netExpose = app.hostPort ? `-p ${app.hostPort}:${app.containerPort ?? 80}` : ""; // raw --network in dockerOptions: unchanged
   }
 
   // Optional resource limits + container health check.
@@ -1291,6 +1357,9 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
   if (app.cpus) limitArgs.push(`--cpus ${app.cpus}`);
   // GPU passthrough — the value is validated at the DTO (all | count | device=…) and shell-quoted here.
   if (app.gpus) limitArgs.push(`--gpus ${shq(app.gpus)}`);
+  // Graceful-stop window baked into the container so a plain stop/restart/remove honours it. Bounded int.
+  const stopT = boundedInt(app.stopGracePeriodSec, 1, 3600);
+  if (stopT) limitArgs.push(`--stop-timeout ${stopT}`);
   if (app.healthCmd) {
     limitArgs.push(
       `--health-cmd ${shq(app.healthCmd)}`,
@@ -1325,13 +1394,15 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
   // app is on a user-defined network (a domain → tugra-proxy, or a db link → tugra-net): `--network-alias`
   // requires a `--network` on the same `docker run`, and on the default bridge aliases are meaningless.
   // Names are DTO-validated DNS labels; shell-quoted as defence-in-depth.
-  const onUserNetwork = !!(app.domain || app.dbNetwork);
-  const aliasArgs = onUserNetwork
-    ? (app.networkAliases ?? []).map((a) => `--network-alias ${shq(a)}`).join(" ")
-    : "";
-  // A domain+db app runs on tugra-proxy (aliasArgs above) and is then CONNECTED to tugra-net separately, so
-  // its aliases must be repeated on that connect (`--alias`) or db-net peers couldn't resolve them.
-  const connectAliasArgs = (app.networkAliases ?? []).map((a) => `--alias ${shq(a)}`).join(" ");
+  const aliasNames = [...(app.networkAliases ?? []), ...(app.containerAlias ? [app.containerAlias] : [])];
+  const onUserNetwork = plan.primary !== null; // domain→proxy, db→tugra-net, else tugra-apps; null only for an operator-owned --network
+  const aliasArgs = onUserNetwork ? aliasNames.map((a) => `--network-alias ${shq(a)}`).join(" ") : "";
+  // The stable alias is also stamped as a label so it is discoverable from `docker inspect`. NOT in traefikLabels
+  // (swarm/compose share that and it returns nothing without a domain).
+  const aliasLabel = onUserNetwork && app.containerAlias ? `--label ${shq(`tugra.alias=${app.containerAlias}`)}` : "";
+  // The container is CONNECTED to every extra network after create, so its aliases must be repeated on each
+  // connect (`--alias`) or peers on those networks couldn't resolve them.
+  const connectAliasArgs = aliasNames.map((a) => `--alias ${shq(a)}`).join(" ");
 
   // Container command override (exec-form argv). `--entrypoint` replaces the image ENTRYPOINT and takes a
   // single executable, so argv[1..] is prepended to the command args; words AFTER the image ref replace the
@@ -1342,11 +1413,12 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
   const epFlag = ep ? `--entrypoint=${shq(ep[0] ?? "")}` : "";
   const argvTail = [...(ep ? ep.slice(1) : []), ...(app.containerCommand ?? [])].map(shq).join(" ");
 
+  const retries = app.restartPolicy === "on-failure" ? boundedInt(app.restartMaxRetries, 1, 1000) : null;
   const run = [
     "docker run -d",
     `--name ${name}`,
     // Null → "unless-stopped" (byte-identical). Enum value (DTO-validated) → shell-safe without quoting.
-    `--restart ${app.restartPolicy ?? "unless-stopped"}`,
+    `--restart ${app.restartPolicy ?? "unless-stopped"}${retries ? ":" + retries : ""}`,
     // Cap json-file logs; skipped when the operator sets their own --log-driver/--log-opt (dockerOptions).
     logRotationArgs(app.dockerOptions),
     limitArgs.join(" "),
@@ -1359,6 +1431,7 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
     sourceCommitRunToken(app),
     netExpose.trim(),
     aliasArgs,
+    aliasLabel,
     volArgs,
     hostMountArgs,
     shq(ref),
@@ -1376,9 +1449,13 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
   // makes ANY failure (run or connect) remove the half-created container and end non-zero — so set -e aborts
   // a bare use (buildRunScript), and an `if <this>; then` gate (rolling/recreate/relabel/rollback) takes its
   // failure branch with no labelled-but-unreachable container left in rotation.
-  return app.dbNetwork && app.domain
-    ? `${run} && docker network connect ${connectAliasArgs ? connectAliasArgs + " " : ""}${DB_NET} ${name} || { docker rm -f ${name} 2>/dev/null; false; }`
-    : run;
+  // User networks always attach via `connect` too (works below Engine 25 and keeps `--network` single at run);
+  // ONE trailing cleanup covers a failed run and any failed connect.
+  if (plan.connect.length === 0) return run;
+  const connects = plan.connect.map(
+    (n) => `docker network connect ${connectAliasArgs ? connectAliasArgs + " " : ""}${n === DB_NET ? n : shq(n)} ${name}`,
+  );
+  return `${run} && ${connects.join(" && ")} || { docker rm -f ${name} 2>/dev/null; false; }`;
 }
 
 /** Container flags for a one-shot PRE-deploy run: the app's env file (so DATABASE_URL etc. are present),
@@ -1388,7 +1465,13 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
 function preDeployContainerArgs(app: AppSpec): string {
   const env = app.env && typeof app.env === "object" ? app.env : {};
   const envArg = Object.keys(env).length > 0 ? `--env-file ${envFilePath(app)}` : "";
-  const net = app.dbNetwork ? `--network ${DB_NET}` : "";
+  // The managed-DB net when db-linked, else the app's first user network (so a migration can reach its database;
+  // `docker run` takes one --network on any engine). Never tugra-apps; none when a raw --network is set.
+  const net = app.dbNetwork
+    ? `--network ${DB_NET}`
+    : app.networks?.length && !hasNetworkOpt(app.dockerOptions)
+      ? `--network ${shq(app.networks[0])}`
+      : "";
   const volArgs = (app.volumes ?? []).map((v) => `-v ${appVolumeName(app, v.name)}:${v.path}`).join(" ");
   const hostMountArgs = (app.hostMounts ?? [])
     .map((m) => `-v ${shq(`${m.hostPath}:${m.containerPath}${m.readOnly ? ":ro" : ""}`)}`)
@@ -1449,10 +1532,19 @@ export function buildRunScript(app: AppSpec, version: string, build = true, noCa
     ...(build
       ? []
       : [`if ! docker image inspect ${ref} >/dev/null 2>&1; then echo "TUGRA_ROLLBACK: image ${ref} not found locally; keeping the running container"; exit 7; fi`]),
-    `docker rm -f ${name} 2>/dev/null || true`,
+    ...gracefulStopLines(app, name),
+    `docker rm -f ${name} 2>/dev/null || true`, // still the guaranteed remover
     runContainerArgs(app, version, name),
     `docker ps --filter name=${name} --format '{{.Status}}'`,
   ].join("\n");
+}
+
+/** Graceful stop before the hard `rm -f` of a container about to be replaced, honouring the app's grace window.
+ *  Empty when unset (byte-identical). `|| true`: a missing container (first deploy) or a stop error must not
+ *  abort the swap — the `rm -f` that follows is the guaranteed remover. */
+function gracefulStopLines(app: AppSpec, name: string): string[] {
+  const t = boundedInt(app.stopGracePeriodSec, 1, 3600);
+  return t ? [`docker stop -t ${t} ${name} 2>/dev/null || true`] : [];
 }
 
 /** How to health-check a container before treating a deploy as live. */
@@ -1663,6 +1755,12 @@ export function buildRollingDeployScript(
   const prev = prevName(app);
   const build = opts.build ?? true;
   const soakActive = (opts.soak?.windowSec ?? 0) > 0;
+  const drainN = boundedInt(app.drainSec, 1, 300); // 0/null = off
+  const graceN = boundedInt(app.stopGracePeriodSec, 1, 3600);
+  // Drain: both containers are in Traefik's rotation while we sleep, so in-flight requests on the old one can
+  // finish before it is stopped. Not a deregister — SIGTERM + the grace window is the actual shutdown.
+  const drainLines = (indent: string): string[] =>
+    drainN ? [`${indent}echo "TUGRA: draining ${drainN}s before removing the previous container"; sleep ${drainN}`] : [];
   // Give the rollout a Traefik LB health check so it stays out of rotation until ready
   // (only meaningful for a routed app; the external probe already gates the cutover).
   const hcPath = opts.probe.kind === "httpExternal" ? opts.probe.path : "/";
@@ -1706,6 +1804,8 @@ export function buildRollingDeployScript(
     return [
       ...head,
       `if [ "$healthy" = 1 ]; then`,
+      ...drainLines("  "),
+      ...(graceN ? [`  docker stop -t ${graceN} ${canonical} 2>/dev/null || true`] : []),
       `  docker rm -f ${canonical} 2>/dev/null || true`,
       ...relabel,
       // Gate success on the rename actually landing — otherwise the live container keeps
@@ -1734,10 +1834,11 @@ export function buildRollingDeployScript(
   return [
     ...head,
     `if [ "$healthy" = 1 ]; then`,
+    ...drainLines("  "),
     // RETENTION: keep the OLD container (renamed __prev, stopped) through the soak window instead of
     // destroying it, so an instant auto-revert is possible if the new version breaks after cutover.
     `  docker rm -f ${prev} 2>/dev/null || true`, // reap a __prev orphaned by a prior SIGKILLed soak
-    `  docker stop ${canonical} 2>/dev/null || true`, // graceful stop → Traefik deregisters it (no crash/oom episode)
+    `  docker stop${graceN ? ` -t ${graceN}` : ""} ${canonical} 2>/dev/null || true`, // graceful stop → Traefik deregisters it (no crash/oom episode)
     `  docker rename ${canonical} ${prev} 2>/dev/null || true`, // keep it, stopped (|| true: a first-ever deploy has no old container)
     ...cutover,
     // POST-CUTOVER SOAK: re-probe the now-live canonical container; a SUSTAINED failure reverts to __prev.
@@ -1797,6 +1898,7 @@ export function buildRecreateDeployScript(
     ...dbNetPreludeFor(app),
     ...certPreludeFor(app),
     ...(build ? preDeploySteps(app, version) : []),
+    ...gracefulStopLines(app, canonical),
     `docker rm -f ${canonical} 2>/dev/null || true`, // stop old (brief downtime begins)
     "set +e", // from here a start/health failure must reach the rollback branch, not abort
     // Guard the start itself: a `docker run` rejected by the daemon (port clash, bad mount,

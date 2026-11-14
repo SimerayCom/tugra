@@ -4,6 +4,7 @@ import { isIP as netIsIP } from "node:net";
 // labels validate identically (dto files don't usually import each other — kept intentional + documented).
 import { LABEL_KEY_RE, LABEL_VALUE_RE } from "../clusters/dto";
 import { isValidUserEnvKey, isSafeEnvValue } from "../common/env-key";
+import { isUserNetworkNameAllowed } from "../deploy/network-names";
 
 // Every ingress for user-supplied env goes through this: it closes the `--env-file` line-injection
 // boundary (a key with '=', whitespace or a newline, or a value with a newline, would define an extra
@@ -247,6 +248,10 @@ export const SetDeploySettingsSchema = z
     // sustained failure in that window auto-reverts to the previous version. 0 = off (<= the deploy-timeout
     // headroom). A per-app setting with a safe default (0), so existing deploys gain no latency.
     postCutoverSoakSec: z.number().int().min(0).max(600).optional(),
+    // Graceful-stop window (--stop-timeout / docker stop -t). null clears to Docker's default (10s).
+    stopGracePeriodSec: z.number().int().min(1).max(3600).nullable().optional(),
+    // ROLLING only: seconds both containers serve after the new one is healthy, before the old is stopped. 0 = off.
+    drainSec: z.number().int().min(0).max(300).nullable().optional(),
   })
   .strict();
 export type SetDeploySettingsInput = z.infer<typeof SetDeploySettingsSchema>;
@@ -459,9 +464,14 @@ export type SetRedirectsInput = z.infer<typeof SetRedirectsSchema>;
 
 // Docker restart policy for the app container. One of Docker's standard policies; null clears it back to the
 // "unless-stopped" default. A raw dockerOptions `--restart` still overrides it at deploy time (escape hatch).
+// `maxRetries` caps on-failure restarts (rendered as `on-failure:N`); only valid with that policy.
 export const SetRestartPolicySchema = z.object({
   restartPolicy: z.enum(["no", "always", "unless-stopped", "on-failure"]).nullable(),
-}).strict();
+  maxRetries: z.number().int().min(1).max(1000).nullable().optional(),
+}).strict().refine(
+  (d) => d.maxRetries == null || d.restartPolicy === "on-failure",
+  { message: "maxRetries only applies to the on-failure restart policy", path: ["maxRetries"] },
+);
 export type SetRestartPolicyInput = z.infer<typeof SetRestartPolicySchema>;
 
 // Upload a custom TLS cert (certType "custom"). The 64 KiB cap mirrors parseCustomCert's; the real
@@ -582,7 +592,7 @@ export type SetExtraPortsInput = z.infer<typeof SetExtraPortsSchema>;
 // a DNS label (lowercase letters/digits/hyphen, not starting/ending with a hyphen) — the same shape Docker
 // accepts for --network-alias — so a value can never inject a flag; it is shell-quoted at the call site too.
 // Replace-set (the whole list each time); empty clears. Capped at 20.
-const DNS_LABEL = z
+export const DNS_LABEL = z
   .string()
   .min(1)
   .max(63)
@@ -598,6 +608,29 @@ export const SetNetworkAliasesSchema = z
   })
   .strict();
 export type SetNetworkAliasesInput = z.infer<typeof SetNetworkAliasesSchema>;
+
+// Extra user Docker networks the app joins + a stable container alias. Names are DNS labels (no underscore, which
+// also excludes compose default networks and docker_gwbridge) and never a Docker built-in or a Tugra-managed
+// network (except the shared per-server `tugra-apps` bridge). The alias reuses the DNS_LABEL guard (incl. the
+// tugra- prefix refusal). undefined = keep, null (alias) = clear.
+const NETWORK_NAME = z
+  .string()
+  .min(1)
+  .max(63)
+  .regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/, "a network name must be a DNS label (a-z, 0-9, hyphen)")
+  .refine(isUserNetworkNameAllowed, "reserved network name ('tugra-*' except 'tugra-apps', or a docker built-in)");
+export const SetNetworksSchema = z
+  .object({
+    networks: z
+      .array(NETWORK_NAME)
+      .max(10)
+      .refine((a) => new Set(a).size === a.length, { message: "a network can't repeat" })
+      .optional(),
+    containerAlias: DNS_LABEL.nullable().optional(),
+  })
+  .strict()
+  .refine((d) => d.networks !== undefined || d.containerAlias !== undefined, { message: "nothing to update" });
+export type SetNetworksInput = z.infer<typeof SetNetworksSchema>;
 
 // The ingress container port an IMAGE/GIT app listens on inside the container (proxy routes here). Editable
 // after create so a wrong imported value (default 80) can be fixed without recreating the app. COMPOSE apps

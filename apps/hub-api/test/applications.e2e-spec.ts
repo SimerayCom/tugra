@@ -659,6 +659,60 @@ describe("Applications / deploy (e2e)", () => {
     await prisma.user.deleteMany({ where: { email: email2 } }).catch(() => undefined);
   });
 
+  it("container ops + networking: sets networks/alias/stop-grace/drain/retries and reflects them (with internalHost) on GET", async () => {
+    const created = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "netapp", serverId, image: "nginx:alpine" })
+      .expect(201);
+    const rid = created.body.id;
+    const put = (path: string, body: Record<string, unknown>) =>
+      request(app.getHttpServer()).put(`/apps/${rid}/${path}`).set("Authorization", `Bearer ${token}`).send(body);
+
+    await put("networks", { networks: ["backend", "tugra-apps"], containerAlias: `e2e-${rid.slice(-6).toLowerCase()}` }).expect(200);
+    await put("deploy-settings", { stopGracePeriodSec: 45, drainSec: 5 }).expect(200);
+    await put("restart-policy", { restartPolicy: "on-failure", maxRetries: 4 }).expect(200);
+
+    const detail = await request(app.getHttpServer()).get(`/apps/${rid}`).set("Authorization", `Bearer ${token}`).expect(200);
+    expect(detail.body).toMatchObject({ stopGracePeriodSec: 45, drainSec: 5, restartMaxRetries: 4, networks: ["backend", "tugra-apps"] });
+    expect(detail.body.containerAlias).toMatch(/^e2e-/);
+    expect(detail.body.internalHost).toEqual({
+      host: `tugra_${rid}`,
+      port: expect.any(Number),
+      networks: ["tugra-apps", "backend"],
+      aliases: [detail.body.containerAlias],
+    });
+
+    // leaving on-failure drops the retry cap; null clears the stop grace
+    await put("restart-policy", { restartPolicy: "always" }).expect(200);
+    await put("deploy-settings", { stopGracePeriodSec: null }).expect(200);
+    const after = await request(app.getHttpServer()).get(`/apps/${rid}`).set("Authorization", `Bearer ${token}`).expect(200);
+    expect(after.body.restartMaxRetries).toBeNull();
+    expect(after.body.stopGracePeriodSec).toBeNull();
+  });
+
+  it("container ops + networking: 400 for a reserved network, a compose app, and a retry cap with another policy; 409 for a duplicate alias on the server", async () => {
+    const mkApp = async (name: string) =>
+      (await request(app.getHttpServer()).post("/apps").set("Authorization", `Bearer ${token}`).send({ name, serverId, image: "nginx:alpine" }).expect(201)).body.id as string;
+    const a = await mkApp("alias-a");
+    const b = await mkApp("alias-b");
+    const put = (id: string, path: string, body: Record<string, unknown>) =>
+      request(app.getHttpServer()).put(`/apps/${id}/${path}`).set("Authorization", `Bearer ${token}`).send(body);
+
+    await put(a, "networks", { networks: ["tugra-net"] }).expect(400); // reserved (DTO)
+    await put(a, "networks", { networks: ["bridge"] }).expect(400);
+    await put(a, "restart-policy", { restartPolicy: "always", maxRetries: 3 }).expect(400);
+
+    await prisma.application.update({ where: { id: b }, data: { source: "COMPOSE" } });
+    await put(b, "networks", { networks: ["x"] }).expect(400); // compose declares its own networks
+    await put(b, "deploy-settings", { stopGracePeriodSec: 30 }).expect(400);
+    await prisma.application.update({ where: { id: b }, data: { source: "IMAGE" } });
+
+    await put(a, "networks", { containerAlias: "shared-name" }).expect(200);
+    await put(b, "networks", { containerAlias: "shared-name" }).expect(409); // (serverId, containerAlias) unique index
+    await put(b, "network-aliases", { aliases: ["shared-name"] }).expect(400); // the old setter can't bypass it
+  });
+
   it("configures a build server (registry required, push forced on) and rejects it without a registry", async () => {
     const regRes = await request(app.getHttpServer())
       .post("/registries")

@@ -1265,6 +1265,11 @@ model Application {
   // "unless-stopped" default (byte-identical). A raw dockerOptions `--restart` still overrides it (emitted
   // after this flag; Docker last-wins). Classic docker-run apps only.
   restartPolicy                String?
+  stopGracePeriodSec           Int? // graceful stop seconds 1..3600; null = Docker default (10s)
+  drainSec                     Int? // ROLLING only: seconds both containers serve before the old is stopped, 0..300
+  restartMaxRetries            Int? // 1..1000, only with restartPolicy "on-failure"
+  containerAlias               String? // stable DNS label on every network the app joins; reset (NOT copied) on clone
+  networks                     String[]           @default([]) // extra user Docker networks the app joins (created on deploy)
   https                        Boolean            @default(true)
   domainKind                   String             @default("none") // "none" | "magic" | "custom" — is the domain user-set or generated
   exposeMode                   String             @default("magic") // create preference: "magic" | "port" | "none" | "custom"
@@ -1310,6 +1315,7 @@ model Application {
 
   @@index([environmentId])
   @@index([parentAppId])
+  @@unique([serverId, containerAlias])
 }
 
 // A per-app custom icon (user-uploaded PNG), stored inline in Postgres so it rides the normal DB backups —

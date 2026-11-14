@@ -57,6 +57,8 @@ import {
   logRotationArgs,
   LOG_ROTATION_ARGS,
   buildImageRemoveScriptForTags,
+  appNetworkPlan,
+  internalHostFor,
   type AppSpec,
 } from "./deploy-script";
 import { createHash } from "node:crypto";
@@ -305,8 +307,14 @@ describe("network aliases (--network-alias)", () => {
     expect(l).toContain("--network-alias 'api'");
   });
 
-  it("emits NO alias on the default bridge (no domain, no db link) — --network-alias would error", () => {
+  it("emits the alias on the shared tugra-apps bridge (no domain, no db link, no raw --network)", () => {
     const l = runLine(buildRunScript({ ...base, networkAliases: ["api"] }, "v1"));
+    expect(l).toContain("--network tugra-apps");
+    expect(l).toContain("--network-alias 'api'");
+  });
+
+  it("emits NO alias when docker options own the network (--network-alias would error without our --network)", () => {
+    const l = runLine(buildRunScript({ ...base, dockerOptions: "--network mynet", networkAliases: ["api"] }, "v1"));
     expect(l).not.toContain("--network-alias");
   });
 
@@ -1015,7 +1023,7 @@ describe("deploy-script", () => {
     expect(s).toContain("docker pull -q 'nginx:1.27'");
     expect(s).toContain("docker tag 'nginx:1.27' tugra_abc:v1");
     expect(s).toContain("docker rm -f tugra_abc");
-    expect(s).toContain("docker run -d --name tugra_abc --restart unless-stopped --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 'tugra_abc:v1'");
+    expect(s).toContain("docker run -d --name tugra_abc --restart unless-stopped --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 --network tugra-apps 'tugra_abc:v1'");
   });
 
   it("rollback (build=false): no prep, just runs the existing versioned tag", () => {
@@ -1023,7 +1031,7 @@ describe("deploy-script", () => {
     expect(s).not.toContain("docker pull");
     expect(s).not.toContain("docker tag");
     expect(s).not.toContain("git clone");
-    expect(s).toContain("docker run -d --name tugra_abc --restart unless-stopped --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 'tugra_abc:old1'");
+    expect(s).toContain("docker run -d --name tugra_abc --restart unless-stopped --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 --network tugra-apps 'tugra_abc:old1'");
   });
 
   it("rollback (build=false): refuses (exit 7) if the local image is gone, BEFORE removing the live container", () => {
@@ -2037,7 +2045,7 @@ describe("deploy-script", () => {
     expect(s).not.toContain("/etc/tugra/builds/abc/.tugra-plan.json");
     expect(s).toContain("rm -f /etc/tugra/builds/abc.plan.json /etc/tugra/builds/abc.plan.json.tmp");
     expect(s).not.toContain("docker pull");
-    expect(s).toContain("docker run -d --name tugra_abc --restart unless-stopped --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 'tugra_abc:v2'");
+    expect(s).toContain("docker run -d --name tugra_abc --restart unless-stopped --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 --network tugra-apps 'tugra_abc:v2'");
   });
 
   it("GIT + Dockerfile: docker build to the versioned tag", () => {
@@ -2160,7 +2168,7 @@ describe("deploy-script", () => {
       expect(s).not.toContain("nixpacks build");
       expect(s).not.toContain("docker push"); // pull path never pushes
       // and it still runs the container
-      expect(s).toContain("docker run -d --name tugra_abc --restart unless-stopped --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 'tugra_abc:v1'");
+      expect(s).toContain("docker run -d --name tugra_abc --restart unless-stopped --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 --network tugra-apps 'tugra_abc:v1'");
     });
 
     it("buildBuildOnlyScript builds + pushes but does NOT run (for a build server)", () => {
@@ -2338,5 +2346,257 @@ describe("json-file log rotation", () => {
 
   it("the Traefik proxy run line carries the rotation cap", () => {
     expect(buildProxySetupScript({ acmeEmail: "me@x.com" })).toContain(LOG_ROTATION_ARGS);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// Container ops + networking (stop grace, drain, restart retries, container alias, per-app networks, tugra-apps)
+// ---------------------------------------------------------------------------------------------------------------
+describe("container ops + networking", () => {
+  const runLine = (s: string) => s.split("\n").find((l) => l.includes("docker run -d"))!;
+  const gate = { retries: 10, intervalSec: 3, startPeriodSec: 5 };
+  const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+  const withEnv: AppSpec = { ...base, env: { A: "1" } };
+  const dom: AppSpec = { ...withEnv, domain: "x.com" };
+  const rollingOpts = { probe: { kind: "httpExternal" as const, port: 80, path: "/" }, ...gate };
+
+  describe("byte-identity matrix (golden values captured from the pre-change builders)", () => {
+    it("domain app run line is unchanged", () => {
+      expect(runLine(buildRunScript(dom, "v1"))).toBe("docker run -d --name tugra_abc --restart unless-stopped --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 --env-file /etc/tugra/env/abc.env --network tugra-proxy --label 'traefik.enable=true' --label 'traefik.http.routers.tugra_abc.rule=Host(`x.com`)' --label 'traefik.http.routers.tugra_abc.entrypoints=websecure' --label 'traefik.http.routers.tugra_abc.tls.certresolver=le' --label 'traefik.http.services.tugra_abc.loadbalancer.server.port=80' --label 'traefik.http.routers.tugra_abc-web.rule=Host(`x.com`)' --label 'traefik.http.routers.tugra_abc-web.entrypoints=web' --label 'traefik.http.routers.tugra_abc-web.middlewares=tugra_abc-redirect' --label 'traefik.http.middlewares.tugra_abc-redirect.redirectscheme.scheme=https' 'tugra_abc:v1'");
+    });
+    it("domain + dbNetwork run line is unchanged (same single trailing cleanup + connect)", () => {
+      expect(runLine(buildRunScript({ ...dom, dbNetwork: true }, "v1"))).toBe("docker run -d --name tugra_abc --restart unless-stopped --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 --env-file /etc/tugra/env/abc.env --network tugra-proxy --label 'traefik.enable=true' --label 'traefik.http.routers.tugra_abc.rule=Host(`x.com`)' --label 'traefik.http.routers.tugra_abc.entrypoints=websecure' --label 'traefik.http.routers.tugra_abc.tls.certresolver=le' --label 'traefik.http.services.tugra_abc.loadbalancer.server.port=80' --label 'traefik.http.routers.tugra_abc-web.rule=Host(`x.com`)' --label 'traefik.http.routers.tugra_abc-web.entrypoints=web' --label 'traefik.http.routers.tugra_abc-web.middlewares=tugra_abc-redirect' --label 'traefik.http.middlewares.tugra_abc-redirect.redirectscheme.scheme=https' --label 'traefik.docker.network=tugra-proxy' 'tugra_abc:v1' && docker network connect tugra-net tugra_abc || { docker rm -f tugra_abc 2>/dev/null; false; }");
+    });
+    it("no-domain dbNetwork run line is unchanged", () => {
+      expect(runLine(buildRunScript({ ...withEnv, dbNetwork: true }, "v1"))).toBe("docker run -d --name tugra_abc --restart unless-stopped --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 --env-file /etc/tugra/env/abc.env --network tugra-net 'tugra_abc:v1'");
+    });
+    it("no-domain raw --network run line is unchanged (operator owns the network)", () => {
+      expect(runLine(buildRunScript({ ...withEnv, dockerOptions: "--network mynet" }, "v1"))).toBe("docker run -d --name tugra_abc --restart unless-stopped --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 '--network' 'mynet' --env-file /etc/tugra/env/abc.env 'tugra_abc:v1'");
+    });
+    it("whole swap scripts are unchanged when every new field is unset/null/0", () => {
+      const unset: Partial<AppSpec> = { stopGracePeriodSec: null, drainSec: 0, restartMaxRetries: null, containerAlias: null, networks: [] };
+      expect(sha(buildRunScript({ ...dom, ...unset }, "v1"))).toBe("7fb942d4aefb5a69ff453b3ac7013446ac2ea6a7a2c0eb41c3e6730a0dca1a74");
+      expect(sha(buildRunScript({ ...dom, dbNetwork: true, ...unset }, "v1"))).toBe("c509ecc91b9514aea4799261efcc584f65b9899b4947c1085e1cf70a8ea2bd98");
+      expect(sha(buildRollingDeployScript({ ...dom, ...unset }, "v2", rollingOpts))).toBe("e06315e0a60affaf7ec73d20397cde5837cf8937fdef4aa1aee32a9e65b0052d");
+      expect(
+        sha(buildRollingDeployScript({ ...dom, ...unset }, "v2", { ...rollingOpts, soak: { windowSec: 30, intervalSec: 5 } })),
+      ).toBe("71207a530ddddaaa2fb71a7c71b29f5dea670fbd0378022c6ca93ce165df135a");
+      expect(
+        sha(buildRecreateDeployScript({ ...withEnv, dbNetwork: true, hostPort: 8080, ...unset }, "v2", { probe: { kind: "stableWait" }, prevVersion: "v1", ...gate })),
+      ).toBe("b0368331d6cd6a95a1f6d642dfedfdf44a8ed8ad9decd41c9cee694b611ee2b1");
+      expect(sha(buildRunScript({ ...withEnv, dockerOptions: "--network mynet", ...unset }, "v1"))).toBe("0fad3ec7600ac783a3e75d09961669daa9d41755e54f476f5356b98a6e8007a3");
+    });
+  });
+
+  describe("tugra-apps shared bridge (default for no-domain, no-db, no raw --network)", () => {
+    it("emits --network tugra-apps before the image ref, and creates the network BEFORE the run line", () => {
+      const s = buildRunScript(base, "v1");
+      expect(runLine(s)).toContain("--network tugra-apps 'tugra_abc:v1'");
+      expect(s).toContain("docker network create tugra-apps 2>/dev/null || true");
+      expect(s.indexOf("docker network create tugra-apps")).toBeLessThan(s.indexOf("docker run -d"));
+    });
+    it("keeps the host-port publish after the network", () => {
+      expect(runLine(buildRunScript({ ...base, hostPort: 8080 }, "v1"))).toContain("--network tugra-apps -p 8080:80");
+    });
+    it("a raw --network in dockerOptions: no tugra-apps, no create", () => {
+      const s = buildRunScript({ ...base, dockerOptions: "--network mynet" }, "v1");
+      expect(s).not.toContain("tugra-apps");
+    });
+    it("a routed or db-linked app never uses tugra-apps", () => {
+      expect(buildRunScript(dom, "v1")).not.toContain("tugra-apps");
+      expect(buildRunScript({ ...base, dbNetwork: true }, "v1")).not.toContain("tugra-apps");
+    });
+    it("a COMPOSE-source spec is never put on tugra-apps", () => {
+      expect(appNetworkPlan({ ...base, source: "COMPOSE" }).primary).toBeNull();
+    });
+  });
+
+  describe("restartMaxRetries", () => {
+    it("on-failure + N renders on-failure:N", () => {
+      expect(runLine(buildRunScript({ ...base, restartPolicy: "on-failure", restartMaxRetries: 5 }, "v1"))).toContain("--restart on-failure:5 ");
+    });
+    it("a count with any other policy is ignored", () => {
+      expect(runLine(buildRunScript({ ...base, restartPolicy: "always", restartMaxRetries: 5 }, "v1"))).toContain("--restart always ");
+      expect(runLine(buildRunScript({ ...base, restartMaxRetries: 5 }, "v1"))).toContain("--restart unless-stopped ");
+    });
+    it("out-of-range / non-integer counts emit no suffix", () => {
+      for (const n of [0, -1, 1001, 1.5, Number.NaN]) {
+        expect(runLine(buildRunScript({ ...base, restartPolicy: "on-failure", restartMaxRetries: n }, "v1"))).toContain("--restart on-failure ");
+      }
+    });
+    it("a raw --restart in dockerOptions still follows and wins", () => {
+      const l = runLine(buildRunScript({ ...base, restartPolicy: "on-failure", restartMaxRetries: 3, dockerOptions: "--restart no" }, "v1"));
+      expect(l.indexOf("--restart on-failure:3")).toBeLessThan(l.indexOf("'--restart' 'no'"));
+    });
+  });
+
+  describe("stopGracePeriodSec", () => {
+    it("--stop-timeout sits after the log opts and before the image ref", () => {
+      const l = runLine(buildRunScript({ ...base, stopGracePeriodSec: 45 }, "v1"));
+      expect(l).toContain("--log-opt max-file=3 --stop-timeout 45 --network tugra-apps 'tugra_abc:v1'");
+    });
+    it("unset keeps the contiguous pinned run line", () => {
+      expect(runLine(buildRunScript(base, "v1"))).toContain("--log-opt max-file=3 --network tugra-apps 'tugra_abc:v1'");
+      expect(runLine(buildRunScript(base, "v1"))).not.toContain("--stop-timeout");
+    });
+    it("hard cutover: docker stop -t N precedes rm -f, and follows the rollback exit-7 guard", () => {
+      const s = buildRunScript({ ...base, stopGracePeriodSec: 30 }, "old1", false);
+      const guard = s.indexOf("exit 7");
+      const stop = s.indexOf("docker stop -t 30 tugra_abc 2>/dev/null || true");
+      const rm = s.indexOf("docker rm -f tugra_abc 2>/dev/null || true");
+      expect(guard).toBeGreaterThan(-1);
+      expect(stop).toBeGreaterThan(guard);
+      expect(rm).toBeGreaterThan(stop);
+    });
+    it("recreate: graceful stop precedes the rm -f of the old container", () => {
+      const s = buildRecreateDeployScript({ ...base, hostPort: 8080, stopGracePeriodSec: 30 }, "v2", { probe: { kind: "stableWait" }, ...gate });
+      expect(s.indexOf("docker stop -t 30 tugra_abc")).toBeGreaterThan(-1);
+      expect(s.indexOf("docker stop -t 30 tugra_abc")).toBeLessThan(s.indexOf("docker rm -f tugra_abc 2>/dev/null || true"));
+    });
+    it("rolling no-soak: drain, then stop, then rm -f (in that order) after the healthy check", () => {
+      const s = buildRollingDeployScript({ ...dom, stopGracePeriodSec: 30, drainSec: 7 }, "v2", rollingOpts);
+      const healthy = s.indexOf('if [ "$healthy" = 1 ]; then');
+      const sleep = s.indexOf("sleep 7");
+      const stop = s.indexOf("docker stop -t 30 tugra_abc 2>/dev/null || true");
+      const rm = s.indexOf("docker rm -f tugra_abc 2>/dev/null || true", healthy);
+      expect(healthy).toBeGreaterThan(-1);
+      expect(sleep).toBeGreaterThan(healthy);
+      expect(stop).toBeGreaterThan(sleep);
+      expect(rm).toBeGreaterThan(stop);
+    });
+    it("rolling soak: drain then stop -t N canonical, both before the rename to __prev; revert/rollout removals stay rm -f", () => {
+      const s = buildRollingDeployScript({ ...dom, stopGracePeriodSec: 30, drainSec: 7 }, "v2", { ...rollingOpts, soak: { windowSec: 30, intervalSec: 5 } });
+      const sleep = s.indexOf("sleep 7");
+      const stop = s.indexOf("docker stop -t 30 tugra_abc 2>/dev/null || true");
+      const rename = s.indexOf("docker rename tugra_abc tugra_abc__prev");
+      const reapPrev = s.indexOf("docker rm -f tugra_abc__prev");
+      expect(sleep).toBeGreaterThan(-1);
+      expect(sleep).toBeLessThan(reapPrev);
+      expect(stop).toBeGreaterThan(sleep);
+      expect(rename).toBeGreaterThan(stop);
+      // the broken-new revert stop keeps its plain form; the never-served rollout is still hard-removed
+      expect(s).toContain("      docker stop tugra_abc 2>/dev/null || true");
+      expect(s).toContain("docker rm -f tugra_abc__rollout");
+    });
+    it("rollout (never-served) removals stay rm -f with no stop", () => {
+      const s = buildRollingDeployScript({ ...dom, stopGracePeriodSec: 30 }, "v2", rollingOpts);
+      expect(s).not.toContain("docker stop -t 30 tugra_abc__rollout");
+    });
+  });
+
+  describe("drainSec", () => {
+    it("recreate has no sleep (no overlapping container)", () => {
+      const s = buildRecreateDeployScript({ ...withEnv, hostPort: 8080, drainSec: 9 }, "v2", { probe: { kind: "stableWait" }, ...gate });
+      expect(s).not.toContain("sleep 9");
+    });
+    it("0 / null / out-of-range emit no sleep", () => {
+      for (const n of [0, null, 301, -1, 2.5]) {
+        expect(buildRollingDeployScript({ ...dom, drainSec: n }, "v2", rollingOpts)).not.toContain("draining");
+      }
+    });
+    it("the hard-cutover run script never drains", () => {
+      expect(buildRunScript({ ...base, drainSec: 9 }, "v1")).not.toContain("sleep 9");
+    });
+  });
+
+  describe("containerAlias", () => {
+    it("emits --network-alias + a tugra.alias label on the primary network, after networkAliases", () => {
+      const l = runLine(buildRunScript({ ...base, networkAliases: ["api"], containerAlias: "stable" }, "v1"));
+      expect(l).toContain("--network-alias 'api' --network-alias 'stable' --label 'tugra.alias=stable'");
+    });
+    it("works on the routed network too, and is absent from traefikLabels output", () => {
+      expect(runLine(buildRunScript({ ...dom, containerAlias: "stable" }, "v1"))).toContain("--network-alias 'stable'");
+      expect(traefikLabels({ ...dom, containerAlias: "stable" }).join("\n")).not.toContain("tugra.alias");
+    });
+    it("repeats the alias on every connect", () => {
+      const l = runLine(buildRunScript({ ...dom, dbNetwork: true, containerAlias: "stable", networks: ["extra"] }, "v1"));
+      expect(l).toContain("docker network connect --alias 'stable' tugra-net tugra_abc");
+      expect(l).toContain("docker network connect --alias 'stable' 'extra' tugra_abc");
+    });
+    it("is not emitted with a raw --network", () => {
+      const l = runLine(buildRunScript({ ...base, dockerOptions: "--network mynet", containerAlias: "stable" }, "v1"));
+      expect(l).not.toContain("--network-alias");
+      expect(l).not.toContain("tugra.alias");
+    });
+  });
+
+  describe("per-app networks", () => {
+    const c = (s: string) => runLine(s);
+    it("a routed app attaches each user network via connect, with ONE trailing cleanup", () => {
+      const l = c(buildRunScript({ ...dom, networks: ["a", "b"] }, "v1"));
+      expect(l).toContain("&& docker network connect 'a' tugra_abc && docker network connect 'b' tugra_abc || { docker rm -f tugra_abc 2>/dev/null; false; }");
+      expect(l.match(/docker rm -f/g)).toHaveLength(1);
+    });
+    it("creates every network before the run line", () => {
+      const s = buildRunScript({ ...dom, networks: ["a", "b"] }, "v1");
+      const run = s.indexOf("docker run -d");
+      expect(s.indexOf("docker network create 'a'")).toBeGreaterThan(-1);
+      expect(s.indexOf("docker network create 'a'")).toBeLessThan(run);
+      expect(s.indexOf("docker network create 'b'")).toBeLessThan(run);
+    });
+    it("pins Traefik to tugra-proxy only when the routed app has extra networks", () => {
+      expect(c(buildRunScript({ ...dom, networks: ["a"] }, "v1"))).toContain("traefik.docker.network=tugra-proxy");
+      expect(c(buildRunScript(dom, "v1"))).not.toContain("traefik.docker.network");
+    });
+    it("a network equal to the primary is dropped; tugra-apps is the primary for a bare app", () => {
+      const l = c(buildRunScript({ ...base, networks: ["tugra-apps", "a"] }, "v1"));
+      expect(l).toContain("--network tugra-apps");
+      expect(l).toContain("docker network connect 'a' tugra_abc");
+      expect(l).not.toContain("docker network connect 'tugra-apps'");
+    });
+    it("names are shell-quoted", () => {
+      expect(buildRunScript({ ...dom, networks: ["a"] }, "v1")).toContain("docker network create 'a' 2>/dev/null || true");
+    });
+    it("a raw --network gives none of it", () => {
+      const s = buildRunScript({ ...base, dockerOptions: "--network mynet", networks: ["a"] }, "v1");
+      expect(s).not.toContain("network connect");
+      expect(s).not.toContain("network create");
+    });
+  });
+
+  describe("pre-deploy hook network", () => {
+    const git: AppSpec = { ...base, source: "GIT", gitUrl: "https://github.com/acme/app.git", gitBranch: "main", preDeployCommand: "migrate" };
+    const hook = (s: string) => s.split("\n").find((l) => l.includes("docker run --rm"))!;
+    it("dbNetwork still uses tugra-net", () => {
+      expect(hook(buildRunScript({ ...git, dbNetwork: true }, "v1", true))).toContain("--network tugra-net");
+    });
+    it("the app's first user network is used otherwise", () => {
+      expect(hook(buildRunScript({ ...git, networks: ["a", "b"] }, "v1", true))).toContain("--network 'a'");
+    });
+    it("default (no networks) gets no --network and never tugra-apps", () => {
+      expect(hook(buildRunScript(git, "v1", true))).not.toContain("--network");
+    });
+  });
+
+  describe("boundedInt guards", () => {
+    it("rejects 0, negatives, floats and over-range values (no token emitted)", () => {
+      for (const n of [0, -5, 1.5, 3601]) {
+        expect(runLine(buildRunScript({ ...base, stopGracePeriodSec: n }, "v1"))).not.toContain("--stop-timeout");
+        expect(buildRunScript({ ...base, stopGracePeriodSec: n }, "v1")).not.toContain("docker stop -t");
+      }
+    });
+  });
+
+  describe("appNetworkPlan / internalHostFor", () => {
+    it("table over every placement", () => {
+      expect(appNetworkPlan(base)).toEqual({ primary: "tugra-apps", connect: [], all: ["tugra-apps"] });
+      expect(appNetworkPlan(dom)).toEqual({ primary: "tugra-proxy", connect: [], all: ["tugra-proxy"] });
+      expect(appNetworkPlan({ ...dom, dbNetwork: true })).toEqual({ primary: "tugra-proxy", connect: ["tugra-net"], all: ["tugra-proxy", "tugra-net"] });
+      expect(appNetworkPlan({ ...base, dbNetwork: true })).toEqual({ primary: "tugra-net", connect: [], all: ["tugra-net"] });
+      expect(appNetworkPlan({ ...base, networks: ["a"] })).toEqual({ primary: "tugra-apps", connect: ["a"], all: ["tugra-apps", "a"] });
+      expect(appNetworkPlan({ ...base, dockerOptions: "--network x", networks: ["a"] })).toEqual({ primary: null, connect: [], all: [] });
+      expect(appNetworkPlan({ ...base, source: "COMPOSE" }).primary).toBeNull();
+    });
+    it("internalHostFor mirrors the plan; null for compose and raw --network", () => {
+      expect(internalHostFor({ ...base, networkAliases: ["api"], containerAlias: "stable", containerPort: 3000 })).toEqual({
+        host: "tugra_abc",
+        port: 3000,
+        networks: ["tugra-apps"],
+        aliases: ["api", "stable"],
+      });
+      expect(internalHostFor({ ...base, containerPort: null })?.port).toBe(80);
+      expect(internalHostFor({ ...base, dockerOptions: "--network x" })).toBeNull();
+      expect(internalHostFor({ ...base, source: "COMPOSE" })).toBeNull();
+    });
   });
 });

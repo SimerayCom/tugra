@@ -1892,6 +1892,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/apps/{id}/networks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["ApplicationsController_setNetworks"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/apps/{id}/container-port": {
         parameters: {
             query?: never;
@@ -11888,6 +11904,17 @@ export interface operations {
                             protocol: "tcp" | "udp";
                         }[];
                         networkAliases: string[];
+                        stopGracePeriodSec: number | null;
+                        drainSec: number | null;
+                        restartMaxRetries: number | null;
+                        containerAlias: string | null;
+                        networks: string[];
+                        internalHost: {
+                            host: string;
+                            port: number;
+                            networks: string[];
+                            aliases: string[];
+                        } | null;
                         domain: string | null;
                         extraDomains: string[];
                         domainRedirect: string | null;
@@ -12181,6 +12208,17 @@ export interface operations {
                             protocol: "tcp" | "udp";
                         }[];
                         networkAliases: string[];
+                        stopGracePeriodSec: number | null;
+                        drainSec: number | null;
+                        restartMaxRetries: number | null;
+                        containerAlias: string | null;
+                        networks: string[];
+                        internalHost: {
+                            host: string;
+                            port: number;
+                            networks: string[];
+                            aliases: string[];
+                        } | null;
                         domain: string | null;
                         extraDomains: string[];
                         domainRedirect: string | null;
@@ -12585,6 +12623,17 @@ export interface operations {
                             protocol: "tcp" | "udp";
                         }[];
                         networkAliases: string[];
+                        stopGracePeriodSec: number | null;
+                        drainSec: number | null;
+                        restartMaxRetries: number | null;
+                        containerAlias: string | null;
+                        networks: string[];
+                        internalHost: {
+                            host: string;
+                            port: number;
+                            networks: string[];
+                            aliases: string[];
+                        } | null;
                         domain: string | null;
                         extraDomains: string[];
                         domainRedirect: string | null;
@@ -12944,6 +12993,17 @@ export interface operations {
                             protocol: "tcp" | "udp";
                         }[];
                         networkAliases: string[];
+                        stopGracePeriodSec: number | null;
+                        drainSec: number | null;
+                        restartMaxRetries: number | null;
+                        containerAlias: string | null;
+                        networks: string[];
+                        internalHost: {
+                            host: string;
+                            port: number;
+                            networks: string[];
+                            aliases: string[];
+                        } | null;
                         domain: string | null;
                         extraDomains: string[];
                         domainRedirect: string | null;
@@ -16199,6 +16259,86 @@ export interface operations {
             };
         };
     };
+    ApplicationsController_setNetworks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    networks?: string[];
+                    containerAlias?: (string & (unknown & unknown)) | null;
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
     ApplicationsController_setContainerPort: {
         parameters: {
             query?: never;
@@ -16777,6 +16917,8 @@ export interface operations {
                     rollbackOnFailure?: boolean;
                     imagesToKeep?: number | null;
                     postCutoverSoakSec?: number;
+                    stopGracePeriodSec?: number | null;
+                    drainSec?: number | null;
                 };
             };
         };
@@ -18217,6 +18359,7 @@ export interface operations {
                 "application/json": {
                     /** @enum {string|null} */
                     restartPolicy: "no" | "always" | "unless-stopped" | "on-failure" | null;
+                    maxRetries?: number | null;
                 };
             };
         };
@@ -18738,6 +18881,17 @@ export interface operations {
                                 protocol: "tcp" | "udp";
                             }[];
                             networkAliases: string[];
+                            stopGracePeriodSec: number | null;
+                            drainSec: number | null;
+                            restartMaxRetries: number | null;
+                            containerAlias: string | null;
+                            networks: string[];
+                            internalHost: {
+                                host: string;
+                                port: number;
+                                networks: string[];
+                                aliases: string[];
+                            } | null;
                             domain: string | null;
                             extraDomains: string[];
                             domainRedirect: string | null;
@@ -19026,6 +19180,17 @@ export interface operations {
                             protocol: "tcp" | "udp";
                         }[];
                         networkAliases: string[];
+                        stopGracePeriodSec: number | null;
+                        drainSec: number | null;
+                        restartMaxRetries: number | null;
+                        containerAlias: string | null;
+                        networks: string[];
+                        internalHost: {
+                            host: string;
+                            port: number;
+                            networks: string[];
+                            aliases: string[];
+                        } | null;
                         domain: string | null;
                         extraDomains: string[];
                         domainRedirect: string | null;
@@ -19383,6 +19548,17 @@ export interface operations {
                             protocol: "tcp" | "udp";
                         }[];
                         networkAliases: string[];
+                        stopGracePeriodSec: number | null;
+                        drainSec: number | null;
+                        restartMaxRetries: number | null;
+                        containerAlias: string | null;
+                        networks: string[];
+                        internalHost: {
+                            host: string;
+                            port: number;
+                            networks: string[];
+                            aliases: string[];
+                        } | null;
                         domain: string | null;
                         extraDomains: string[];
                         domainRedirect: string | null;
@@ -19798,6 +19974,17 @@ export interface operations {
                             protocol: "tcp" | "udp";
                         }[];
                         networkAliases: string[];
+                        stopGracePeriodSec: number | null;
+                        drainSec: number | null;
+                        restartMaxRetries: number | null;
+                        containerAlias: string | null;
+                        networks: string[];
+                        internalHost: {
+                            host: string;
+                            port: number;
+                            networks: string[];
+                            aliases: string[];
+                        } | null;
                         domain: string | null;
                         extraDomains: string[];
                         domainRedirect: string | null;
@@ -21034,6 +21221,17 @@ export interface operations {
                             protocol: "tcp" | "udp";
                         }[];
                         networkAliases: string[];
+                        stopGracePeriodSec: number | null;
+                        drainSec: number | null;
+                        restartMaxRetries: number | null;
+                        containerAlias: string | null;
+                        networks: string[];
+                        internalHost: {
+                            host: string;
+                            port: number;
+                            networks: string[];
+                            aliases: string[];
+                        } | null;
                         domain: string | null;
                         extraDomains: string[];
                         domainRedirect: string | null;

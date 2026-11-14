@@ -1219,6 +1219,13 @@ export interface Application {
   previewLimit: number | null;
   extraPorts: { hostPort: number; containerPort: number; protocol: "tcp" | "udp" }[];
   networkAliases: string[];
+  stopGracePeriodSec: number | null; // graceful-stop window; null = Docker's default (10s)
+  drainSec: number | null; // rolling deploys: seconds both versions serve before the old one stops
+  restartMaxRetries: number | null; // on-failure retry cap
+  containerAlias: string | null; // stable DNS name on every network the app joins
+  networks: string[]; // extra user Docker networks
+  // Where other containers reach this app; null when unknown (compose / swarm / custom --network in Docker options).
+  internalHost: { host: string; port: number; networks: string[]; aliases: string[] } | null;
   outputDir: string | null;
   composeFile: string | null;
   composePath: string | null;

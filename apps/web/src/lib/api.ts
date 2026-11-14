@@ -1093,7 +1093,7 @@ export const api = {
   setAppBuildConfig(id: string, cfg: { registryId?: string | null; pushToRegistry?: boolean; buildServerId?: string | null }) {
     return apiFetch<{ ok: true }>(`/apps/${id}/build-config`, { method: "PUT", body: JSON.stringify(cfg) });
   },
-  setAppDeploySettings(id: string, cfg: { deployStrategy?: "ROLLING" | "RECREATE"; rollbackOnFailure?: boolean; imagesToKeep?: number | null; postCutoverSoakSec?: number }) {
+  setAppDeploySettings(id: string, cfg: { deployStrategy?: "ROLLING" | "RECREATE"; rollbackOnFailure?: boolean; imagesToKeep?: number | null; postCutoverSoakSec?: number; stopGracePeriodSec?: number | null; drainSec?: number | null }) {
     return apiFetch<{ ok: true }>(`/apps/${id}/deploy-settings`, { method: "PUT", body: JSON.stringify(cfg) });
   },
   setAppClusterConfig(id: string, cfg: { clusterId?: string | null; replicas?: number | null }) {
@@ -1144,6 +1144,9 @@ export const api = {
   },
   setAppNetworkAliases(id: string, aliases: string[]) {
     return apiFetch<{ ok: true }>(`/apps/${id}/network-aliases`, { method: "PUT", body: JSON.stringify({ aliases }) });
+  },
+  setAppNetworks(id: string, cfg: { networks?: string[]; containerAlias?: string | null }) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/networks`, { method: "PUT", body: JSON.stringify(cfg) });
   },
   setAppContainerPort(id: string, containerPort: number) {
     return apiFetch<{ ok: true }>(`/apps/${id}/container-port`, { method: "PUT", body: JSON.stringify({ containerPort }) });
@@ -1417,8 +1420,8 @@ export const api = {
       body: JSON.stringify(body),
     });
   },
-  setAppRestartPolicy(id: string, restartPolicy: string | null) {
-    return apiFetch<{ ok: true }>(`/apps/${id}/restart-policy`, { method: "PUT", body: JSON.stringify({ restartPolicy }) });
+  setAppRestartPolicy(id: string, restartPolicy: string | null, maxRetries?: number | null) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/restart-policy`, { method: "PUT", body: JSON.stringify({ restartPolicy, ...(maxRetries !== undefined ? { maxRetries } : {}) }) });
   },
   setAppComposeFile(id: string, composeFile: string) {
     return apiFetch<{ ok: true }>(`/apps/${id}/compose-file`, {
