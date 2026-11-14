@@ -122,6 +122,19 @@ describe("validateEnv — remote catalog", () => {
   });
 });
 
+describe("validateEnv — IMAGE_UPDATE_CHECK_INTERVAL_MIN", () => {
+  it("defaults to 360 minutes and accepts 0 (kill switch) and overrides", () => {
+    expect(validateEnv({ ...base, NODE_ENV: "development" }).IMAGE_UPDATE_CHECK_INTERVAL_MIN).toBe(360);
+    expect(validateEnv({ ...base, NODE_ENV: "development", IMAGE_UPDATE_CHECK_INTERVAL_MIN: "0" }).IMAGE_UPDATE_CHECK_INTERVAL_MIN).toBe(0);
+    expect(validateEnv({ ...base, NODE_ENV: "development", IMAGE_UPDATE_CHECK_INTERVAL_MIN: "60" }).IMAGE_UPDATE_CHECK_INTERVAL_MIN).toBe(60);
+  });
+
+  it("rejects a negative or fractional interval", () => {
+    expect(() => validateEnv({ ...base, NODE_ENV: "development", IMAGE_UPDATE_CHECK_INTERVAL_MIN: "-1" })).toThrow();
+    expect(() => validateEnv({ ...base, NODE_ENV: "development", IMAGE_UPDATE_CHECK_INTERVAL_MIN: "1.5" })).toThrow();
+  });
+});
+
 describe("validateEnv — blank values are treated as UNSET", () => {
   // An operator who copies .env.example (which ships blank optional keys) — or forwards the whole .env
   // into the hub container via compose env_file — must not trip the optional .email()/.url()/base64

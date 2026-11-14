@@ -145,6 +145,12 @@
     "value": { "days": "{days} day(s)" },
     "link": { "openApp": "Open app", "manageTokens": "Manage tokens" }
   },
+  "imageUpdate": {
+    "title": "Image update available for {app}",
+    "summary": "A newer image for {image} is available upstream than the one deployed.",
+    "field": { "app": "App", "image": "Image", "deployed": "Deployed", "upstream": "Upstream", "project": "Project", "environment": "Environment" },
+    "link": { "openApp": "Open app" }
+  },
   "monitor": {
     "up": { "title": "Monitor recovered — {monitor}", "summary": "{monitor} ({target}) is back UP." },
     "down": { "title": "Monitor down — {monitor}", "summary": "{monitor} ({target}) is DOWN." },

@@ -5495,7 +5495,8 @@
                         "rollout_halted",
                         "rollout_completed",
                         "rollout_rolled_back",
-                        "rollout_rollback_failed"
+                        "rollout_rollback_failed",
+                        "image_update_available"
                       ]
                     }
                   },
@@ -5700,7 +5701,8 @@
                         "rollout_halted",
                         "rollout_completed",
                         "rollout_rolled_back",
-                        "rollout_rollback_failed"
+                        "rollout_rollback_failed",
+                        "image_update_available"
                       ]
                     }
                   },
@@ -11200,6 +11202,68 @@
                       "autoDeploy": {
                         "type": "boolean"
                       },
+                      "imageUpdate": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "disabled",
+                              "pinned",
+                              "no_baseline",
+                              "pending",
+                              "up_to_date",
+                              "update_available",
+                              "error"
+                            ]
+                          },
+                          "updateAvailable": {
+                            "type": "boolean"
+                          },
+                          "checkedAt": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "changedAt": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "error": {
+                            "type": "string",
+                            "enum": [
+                              "auth",
+                              "notfound",
+                              "unsupported",
+                              "timeout",
+                              "failed"
+                            ],
+                            "nullable": true
+                          },
+                          "upstreamDigest": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "deployedDigest": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "enabled",
+                          "state",
+                          "updateAvailable",
+                          "checkedAt",
+                          "changedAt",
+                          "error",
+                          "upstreamDigest",
+                          "deployedDigest"
+                        ],
+                        "additionalProperties": false,
+                        "nullable": true
+                      },
                       "outputDir": {
                         "type": "string",
                         "nullable": true
@@ -12066,6 +12130,7 @@
                       "baseDirectory",
                       "watchPaths",
                       "autoDeploy",
+                      "imageUpdate",
                       "outputDir",
                       "composeFile",
                       "composePath",
@@ -12502,6 +12567,68 @@
                     },
                     "autoDeploy": {
                       "type": "boolean"
+                    },
+                    "imageUpdate": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "disabled",
+                            "pinned",
+                            "no_baseline",
+                            "pending",
+                            "up_to_date",
+                            "update_available",
+                            "error"
+                          ]
+                        },
+                        "updateAvailable": {
+                          "type": "boolean"
+                        },
+                        "checkedAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "changedAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "error": {
+                          "type": "string",
+                          "enum": [
+                            "auth",
+                            "notfound",
+                            "unsupported",
+                            "timeout",
+                            "failed"
+                          ],
+                          "nullable": true
+                        },
+                        "upstreamDigest": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "deployedDigest": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "state",
+                        "updateAvailable",
+                        "checkedAt",
+                        "changedAt",
+                        "error",
+                        "upstreamDigest",
+                        "deployedDigest"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
                     },
                     "outputDir": {
                       "type": "string",
@@ -13369,6 +13496,7 @@
                     "baseDirectory",
                     "watchPaths",
                     "autoDeploy",
+                    "imageUpdate",
                     "outputDir",
                     "composeFile",
                     "composePath",
@@ -13873,6 +14001,68 @@
                     "autoDeploy": {
                       "type": "boolean"
                     },
+                    "imageUpdate": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "disabled",
+                            "pinned",
+                            "no_baseline",
+                            "pending",
+                            "up_to_date",
+                            "update_available",
+                            "error"
+                          ]
+                        },
+                        "updateAvailable": {
+                          "type": "boolean"
+                        },
+                        "checkedAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "changedAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "error": {
+                          "type": "string",
+                          "enum": [
+                            "auth",
+                            "notfound",
+                            "unsupported",
+                            "timeout",
+                            "failed"
+                          ],
+                          "nullable": true
+                        },
+                        "upstreamDigest": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "deployedDigest": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "state",
+                        "updateAvailable",
+                        "checkedAt",
+                        "changedAt",
+                        "error",
+                        "upstreamDigest",
+                        "deployedDigest"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
                     "outputDir": {
                       "type": "string",
                       "nullable": true
@@ -14739,6 +14929,7 @@
                     "baseDirectory",
                     "watchPaths",
                     "autoDeploy",
+                    "imageUpdate",
                     "outputDir",
                     "composeFile",
                     "composePath",
@@ -15247,6 +15438,68 @@
                     "autoDeploy": {
                       "type": "boolean"
                     },
+                    "imageUpdate": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "disabled",
+                            "pinned",
+                            "no_baseline",
+                            "pending",
+                            "up_to_date",
+                            "update_available",
+                            "error"
+                          ]
+                        },
+                        "updateAvailable": {
+                          "type": "boolean"
+                        },
+                        "checkedAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "changedAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "error": {
+                          "type": "string",
+                          "enum": [
+                            "auth",
+                            "notfound",
+                            "unsupported",
+                            "timeout",
+                            "failed"
+                          ],
+                          "nullable": true
+                        },
+                        "upstreamDigest": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "deployedDigest": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "state",
+                        "updateAvailable",
+                        "checkedAt",
+                        "changedAt",
+                        "error",
+                        "upstreamDigest",
+                        "deployedDigest"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
                     "outputDir": {
                       "type": "string",
                       "nullable": true
@@ -16113,6 +16366,7 @@
                     "baseDirectory",
                     "watchPaths",
                     "autoDeploy",
+                    "imageUpdate",
                     "outputDir",
                     "composeFile",
                     "composePath",
@@ -20759,6 +21013,263 @@
         ]
       }
     },
+    "/api/v1/apps/{id}/image-update-check": {
+      "put": {
+        "operationId": "ApplicationsController_setImageUpdateCheck",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "enabled"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      },
+      "post": {
+        "operationId": "ApplicationsController_checkImageUpdate",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "imageUpdate": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "disabled",
+                            "pinned",
+                            "no_baseline",
+                            "pending",
+                            "up_to_date",
+                            "update_available",
+                            "error"
+                          ]
+                        },
+                        "updateAvailable": {
+                          "type": "boolean"
+                        },
+                        "checkedAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "changedAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "error": {
+                          "type": "string",
+                          "enum": [
+                            "auth",
+                            "notfound",
+                            "unsupported",
+                            "timeout",
+                            "failed"
+                          ],
+                          "nullable": true
+                        },
+                        "upstreamDigest": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "deployedDigest": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "state",
+                        "updateAvailable",
+                        "checkedAt",
+                        "changedAt",
+                        "error",
+                        "upstreamDigest",
+                        "deployedDigest"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "imageUpdate"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
     "/api/v1/apps/{id}/extra-ports": {
       "put": {
         "operationId": "ApplicationsController_setExtraPorts",
@@ -24923,6 +25434,68 @@
                         "autoDeploy": {
                           "type": "boolean"
                         },
+                        "imageUpdate": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "state": {
+                              "type": "string",
+                              "enum": [
+                                "disabled",
+                                "pinned",
+                                "no_baseline",
+                                "pending",
+                                "up_to_date",
+                                "update_available",
+                                "error"
+                              ]
+                            },
+                            "updateAvailable": {
+                              "type": "boolean"
+                            },
+                            "checkedAt": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "changedAt": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "error": {
+                              "type": "string",
+                              "enum": [
+                                "auth",
+                                "notfound",
+                                "unsupported",
+                                "timeout",
+                                "failed"
+                              ],
+                              "nullable": true
+                            },
+                            "upstreamDigest": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "deployedDigest": {
+                              "type": "string",
+                              "nullable": true
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "state",
+                            "updateAvailable",
+                            "checkedAt",
+                            "changedAt",
+                            "error",
+                            "upstreamDigest",
+                            "deployedDigest"
+                          ],
+                          "additionalProperties": false,
+                          "nullable": true
+                        },
                         "outputDir": {
                           "type": "string",
                           "nullable": true
@@ -25789,6 +26362,7 @@
                         "baseDirectory",
                         "watchPaths",
                         "autoDeploy",
+                        "imageUpdate",
                         "outputDir",
                         "composeFile",
                         "composePath",
@@ -26155,6 +26729,68 @@
                     },
                     "autoDeploy": {
                       "type": "boolean"
+                    },
+                    "imageUpdate": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "disabled",
+                            "pinned",
+                            "no_baseline",
+                            "pending",
+                            "up_to_date",
+                            "update_available",
+                            "error"
+                          ]
+                        },
+                        "updateAvailable": {
+                          "type": "boolean"
+                        },
+                        "checkedAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "changedAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "error": {
+                          "type": "string",
+                          "enum": [
+                            "auth",
+                            "notfound",
+                            "unsupported",
+                            "timeout",
+                            "failed"
+                          ],
+                          "nullable": true
+                        },
+                        "upstreamDigest": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "deployedDigest": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "state",
+                        "updateAvailable",
+                        "checkedAt",
+                        "changedAt",
+                        "error",
+                        "upstreamDigest",
+                        "deployedDigest"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
                     },
                     "outputDir": {
                       "type": "string",
@@ -27022,6 +27658,7 @@
                     "baseDirectory",
                     "watchPaths",
                     "autoDeploy",
+                    "imageUpdate",
                     "outputDir",
                     "composeFile",
                     "composePath",
@@ -27458,6 +28095,68 @@
                       },
                       "autoDeploy": {
                         "type": "boolean"
+                      },
+                      "imageUpdate": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "disabled",
+                              "pinned",
+                              "no_baseline",
+                              "pending",
+                              "up_to_date",
+                              "update_available",
+                              "error"
+                            ]
+                          },
+                          "updateAvailable": {
+                            "type": "boolean"
+                          },
+                          "checkedAt": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "changedAt": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "error": {
+                            "type": "string",
+                            "enum": [
+                              "auth",
+                              "notfound",
+                              "unsupported",
+                              "timeout",
+                              "failed"
+                            ],
+                            "nullable": true
+                          },
+                          "upstreamDigest": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "deployedDigest": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "enabled",
+                          "state",
+                          "updateAvailable",
+                          "checkedAt",
+                          "changedAt",
+                          "error",
+                          "upstreamDigest",
+                          "deployedDigest"
+                        ],
+                        "additionalProperties": false,
+                        "nullable": true
                       },
                       "outputDir": {
                         "type": "string",
@@ -28325,6 +29024,7 @@
                       "baseDirectory",
                       "watchPaths",
                       "autoDeploy",
+                      "imageUpdate",
                       "outputDir",
                       "composeFile",
                       "composePath",
@@ -28846,6 +29546,68 @@
                     },
                     "autoDeploy": {
                       "type": "boolean"
+                    },
+                    "imageUpdate": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "disabled",
+                            "pinned",
+                            "no_baseline",
+                            "pending",
+                            "up_to_date",
+                            "update_available",
+                            "error"
+                          ]
+                        },
+                        "updateAvailable": {
+                          "type": "boolean"
+                        },
+                        "checkedAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "changedAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "error": {
+                          "type": "string",
+                          "enum": [
+                            "auth",
+                            "notfound",
+                            "unsupported",
+                            "timeout",
+                            "failed"
+                          ],
+                          "nullable": true
+                        },
+                        "upstreamDigest": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "deployedDigest": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "state",
+                        "updateAvailable",
+                        "checkedAt",
+                        "changedAt",
+                        "error",
+                        "upstreamDigest",
+                        "deployedDigest"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
                     },
                     "outputDir": {
                       "type": "string",
@@ -29713,6 +30475,7 @@
                     "baseDirectory",
                     "watchPaths",
                     "autoDeploy",
+                    "imageUpdate",
                     "outputDir",
                     "composeFile",
                     "composePath",
@@ -31478,6 +32241,68 @@
                     "autoDeploy": {
                       "type": "boolean"
                     },
+                    "imageUpdate": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "disabled",
+                            "pinned",
+                            "no_baseline",
+                            "pending",
+                            "up_to_date",
+                            "update_available",
+                            "error"
+                          ]
+                        },
+                        "updateAvailable": {
+                          "type": "boolean"
+                        },
+                        "checkedAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "changedAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "error": {
+                          "type": "string",
+                          "enum": [
+                            "auth",
+                            "notfound",
+                            "unsupported",
+                            "timeout",
+                            "failed"
+                          ],
+                          "nullable": true
+                        },
+                        "upstreamDigest": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "deployedDigest": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "state",
+                        "updateAvailable",
+                        "checkedAt",
+                        "changedAt",
+                        "error",
+                        "upstreamDigest",
+                        "deployedDigest"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
                     "outputDir": {
                       "type": "string",
                       "nullable": true
@@ -32344,6 +33169,7 @@
                     "baseDirectory",
                     "watchPaths",
                     "autoDeploy",
+                    "imageUpdate",
                     "outputDir",
                     "composeFile",
                     "composePath",

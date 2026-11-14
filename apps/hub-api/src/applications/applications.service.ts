@@ -137,6 +137,8 @@ import { inferComposeWeb } from "../deploy/compose-web";
 import { appIdOfContainer, liveContainerOf, reduceHealth, UNKNOWN_HEALTH, CONTAINER_STATE_MAX_AGE_MS, type AppContainerHealth } from "./container-health";
 import { classifyReadiness, parseStoredInventory } from "../server-ops/gpu-inventory";
 import { cpusetMax } from "./dto";
+import { computeImageUpdateView, isImageCheckSubject, ImageUpdateViewSchema, loadLiveImageMany, type LiveImage } from "./image-update";
+import { ImageUpdateService } from "./image-update.service";
 import type { CreateAppInput, SetLimitsInput, SetSourceInput, SetBuildInput, SetContainerCommandInput, AppRuntimeState } from "./dto";
 
 const DEPLOY_TIMEOUT_MS = 300_000; // builds can be slow
@@ -165,6 +167,8 @@ interface ViewExtras {
   serviceDomains?: { service: string; hostname: string; port: number }[];
   /** Aggregated container health (list/get batch the ContainerState read); absent = `unknown`. */
   health?: AppContainerHealth;
+  /** The app's live (latest successful) deploy digest, for the image-update state; absent = no baseline. */
+  imageLive?: LiveImage | null;
 }
 
 export const AppViewSchema = z.object({
@@ -193,6 +197,7 @@ export const AppViewSchema = z.object({
   baseDirectory: z.string().nullable(), // GIT: repo-relative build context/root for monorepos (null = repo root)
   watchPaths: z.array(z.string()), // monorepo deploy-trigger globs (empty = deploy on every push)
   autoDeploy: z.boolean(), // per-app push-to-deploy switch
+  imageUpdate: ImageUpdateViewSchema.nullable(), // IMAGE apps only: upstream digest vs deployed digest (null otherwise)
   outputDir: z.string().nullable(),
   composeFile: z.string().nullable(),
   composePath: z.string().nullable(), // COMPOSE-from-git: repo-relative path to the compose file (null = pasted compose)
@@ -483,6 +488,7 @@ export class ApplicationsService {
     private readonly secretRefs: AppSecretRefsService,
     private readonly moduleRef: ModuleRef,
     private readonly lease: DeployLeaseService,
+    private readonly imageUpdate: ImageUpdateService,
   ) {}
 
   /** DeployRecoveryService registers here (see leaseReleasedHook). */
@@ -877,6 +883,7 @@ export class ApplicationsService {
           nixpacksStartCmd: src.nixpacksStartCmd,
           watchPaths: src.watchPaths, // keep the clone's monorepo deploy-trigger globs
           autoDeploy: src.autoDeploy,
+          imageUpdateCheck: src.imageUpdateCheck, // the opt-out is config; the probe state stays at its defaults
           composeFile: src.composeFile,
           composePath: src.composePath, // keep a cloned git-compose app git-sourced
           healthCmd: src.healthCmd,
@@ -1187,10 +1194,12 @@ export class ApplicationsService {
     const healthById = await this.loadHealthMany(apps);
     // Per-resource scoping: a restricted member only sees apps in projects they're granted.
     const visible = apps.filter((a) => canAccessResource(access.get(a.teamId), a.id, ctxByEnv.get(a.environmentId)?.projectId ?? null));
+    // Image-update state: ONE batched live-digest query for the enabled IMAGE apps of the page (no N+1).
+    const liveById = await this.loadImageLiveMany(visible);
     // Per-service domains feed the `links` field: one batched read for the visible compose apps, none otherwise.
     const domainsByApp = await this.loadServiceDomainsMany(visible.filter((a) => a.source === "COMPOSE").map((a) => a.id));
     const views = visible.map((a) =>
-      this.view(a, perms.get(a.teamId)?.has("apps:config") ?? false, perms.get(a.teamId)?.has("apps:deploy") ?? false, ctxByEnv.get(a.environmentId), ipByServer.get(a.serverId) ?? null, { serviceDomains: domainsByApp.get(a.id) ?? [], health: healthById.get(a.id) }),
+      this.view(a, perms.get(a.teamId)?.has("apps:config") ?? false, perms.get(a.teamId)?.has("apps:deploy") ?? false, ctxByEnv.get(a.environmentId), ipByServer.get(a.serverId) ?? null, { serviceDomains: domainsByApp.get(a.id) ?? [], health: healthById.get(a.id), imageLive: liveById.get(a.id) }),
     );
     // `?q`: in-memory substring filter over non-secret fields of the already-authorized views.
     return filterByQuery(views, q, (a) => [a.name, a.domain, a.image, a.gitUrl, a.templateSlug]);
@@ -1203,7 +1212,7 @@ export class ApplicationsService {
     // Per-service domains are non-secret routing facts every viewer sees as links; reading them is not write-gated
     // (only the dedicated service-domains endpoint is). Only a compose app can have any.
     const serviceDomains = app.source === "COMPOSE" ? await this.loadServiceDomains(app.id) : [];
-    return this.view(app, perms?.has("apps:config") ?? false, perms?.has("apps:deploy") ?? false, ctx, await this.serverIp(app.serverId), { serviceDomains, health: await this.loadHealth(app) });
+    return this.view(app, perms?.has("apps:config") ?? false, perms?.has("apps:deploy") ?? false, ctx, await this.serverIp(app.serverId), { serviceDomains, health: await this.loadHealth(app), imageLive: await this.loadImageLive(app) });
   }
 
   async deploy(userId: string, id: string, opts?: { noCache?: boolean }, idempotencyKey?: string) {
@@ -2733,7 +2742,7 @@ export class ApplicationsService {
     const perms = await this.access.membershipPermissions(userId, app.teamId);
     // Resolve the server IP like the other single-app paths so a domainless,
     // port-publishing app keeps its synthesized url in this response (consistency).
-    return this.view(updated, perms?.has("apps:config") ?? false, perms?.has("apps:deploy") ?? false, undefined, await this.serverIp(updated.serverId));
+    return this.view(updated, perms?.has("apps:config") ?? false, perms?.has("apps:deploy") ?? false, undefined, await this.serverIp(updated.serverId), { imageLive: await this.loadImageLive(updated) });
   }
 
   async stop(userId: string, id: string): Promise<void> {
@@ -3513,6 +3522,16 @@ export class ApplicationsService {
       }
       if (input.image === undefined) throw new BadRequestException("provide an image reference");
       data.image = input.image;
+      // A different image is a different upstream: drop the old probe verdict (the dedupe column too, so the first
+      // probe of the new ref seeds silently instead of notifying).
+      if (input.image !== app.image) {
+        data.imageUpstreamDigest = null;
+        data.imageUpstreamCheckedAt = null;
+        data.imageUpstreamChangedAt = null;
+        data.imageCheckError = null;
+        data.imageUpdateNotifiedDigest = null;
+        data.imageCheckFailures = 0;
+      }
     } else {
       // GIT build, or a git-sourced COMPOSE app (both clone a repo → same URL/branch/credential rules).
       if (input.image !== undefined) throw new BadRequestException("this app builds from Git — `image` does not apply (the source type is fixed at create)");
@@ -3649,6 +3668,25 @@ export class ApplicationsService {
     await this.requireWrite(userId, id);
     await this.prisma.application.update({ where: { id }, data: { autoDeploy: enabled } });
     await this.audit.log({ actor: userId, action: "app.auto_deploy.update", target: id, meta: { enabled } });
+  }
+
+  /** Per-app opt-out of the scheduled "image update available" probe (IMAGE apps). Disabling keeps the stored
+   *  verdict so re-enabling is instant. */
+  async setImageUpdateCheck(userId: string, id: string, enabled: boolean): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    if (app.source !== "IMAGE" || app.isPreview) throw new BadRequestException("image update checks apply to image apps only");
+    await this.prisma.application.update({ where: { id }, data: { imageUpdateCheck: enabled } });
+    await this.audit.log({ actor: userId, action: "app.image_update_check.update", target: id, meta: { enabled } });
+  }
+
+  /** "Check now": probe the upstream registry from the app's own server. apps:deploy (it uses the stored registry
+   *  credentials), throttled + coalesced in ImageUpdateService, audited. */
+  async checkImageUpdate(userId: string, id: string): Promise<{ imageUpdate: z.infer<typeof ImageUpdateViewSchema> }> {
+    const app = await this.requireWrite(userId, id, "apps:deploy");
+    const perms = await this.access.membershipPermissions(userId, app.teamId);
+    const result = await this.imageUpdate.checkApp(app, perms?.has("apps:config") ?? false);
+    await this.audit.log({ actor: userId, action: "app.image_update_check.run", target: id, meta: { state: result.imageUpdate.state } });
+    return result;
   }
 
   /** Replace the app's extra published ports (raw host:container TCP/UDP maps beyond the ingress port).
@@ -3983,6 +4021,10 @@ export class ApplicationsService {
       data.registryAuthEnc = creds.registry
         ? this.crypto.encrypt(JSON.stringify(creds.registry))
         : null;
+      // New credentials invalidate a recorded auth failure: probe again right away (the good digest is kept).
+      data.imageCheckError = null;
+      data.imageUpstreamCheckedAt = null;
+      data.imageCheckFailures = 0;
     }
     await this.prisma.application.update({ where: { id }, data });
     await this.audit.log({ actor: userId, action: "app.credentials.update", target: id });
@@ -4394,7 +4436,7 @@ export class ApplicationsService {
     const ctx = await loadProjectCtx(this.prisma, app.environmentId);
     // Reflect a cleared custom cert in the returned view (data.certPem is nulled when it was dropped).
     const certCleared = data.certPem === null ? { certPem: null, certKeyEnc: null, certDomains: [], certNotAfter: null } : {};
-    return this.view({ ...app, ...e, ...certCleared }, perms?.has("apps:config") ?? false, perms?.has("apps:deploy") ?? false, ctx, server.publicIp ?? server.publicIpv6 ?? null, { health: await this.loadHealth(app) });
+    return this.view({ ...app, ...e, ...certCleared }, perms?.has("apps:config") ?? false, perms?.has("apps:deploy") ?? false, ctx, server.publicIp ?? server.publicIpv6 ?? null, { health: await this.loadHealth(app), imageLive: await this.loadImageLive(app) });
   }
 
   async setDomainOptions(
@@ -5116,6 +5158,27 @@ export class ApplicationsService {
     return out;
   }
 
+  /** The live deploy digest of one app for the image-update view. Best-effort (a DB blip must not break the
+   *  app view); only queried for an enabled IMAGE app, otherwise the view is null / disabled anyway. */
+  private async loadImageLive(app: Application): Promise<LiveImage | null> {
+    if (!isImageCheckSubject(app) || !app.imageUpdateCheck) return null;
+    try {
+      return (await loadLiveImageMany(this.prisma, [app.id])).get(app.id) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Batched live digests for a list page: ONE query for every enabled IMAGE app (none when there are none). */
+  private async loadImageLiveMany(apps: Application[]): Promise<Map<string, LiveImage>> {
+    const ids = apps.filter((a) => isImageCheckSubject(a) && a.imageUpdateCheck).map((a) => a.id);
+    try {
+      return await loadLiveImageMany(this.prisma, ids);
+    } catch {
+      return new Map();
+    }
+  }
+
   /** Best reachable IP for one server (IPv4 preferred), or null. Best-effort:
    *  a DB blip just yields null (a domainless app's url falls back to null), never
    *  breaking the view. */
@@ -5182,6 +5245,7 @@ export class ApplicationsService {
       baseDirectory: app.baseDirectory,
       watchPaths: app.watchPaths ?? [],
       autoDeploy: app.autoDeploy ?? true,
+      imageUpdate: computeImageUpdateView(app, extras?.imageLive, canWrite),
       outputDir: app.outputDir,
       composeFile: canWrite ? app.composeFile : null,
       composePath: app.composePath,

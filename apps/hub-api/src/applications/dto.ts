@@ -604,6 +604,10 @@ export type SetWatchPathsInput = z.infer<typeof SetWatchPathsSchema>;
 export const SetAutoDeploySchema = z.object({ enabled: z.boolean() }).strict();
 export type SetAutoDeployInput = z.infer<typeof SetAutoDeploySchema>;
 
+// Per-app "image update available" check switch (IMAGE apps): off stops the scheduled probes for this app.
+export const SetImageUpdateCheckSchema = z.object({ enabled: z.boolean() }).strict();
+export type SetImageUpdateCheckInput = z.infer<typeof SetImageUpdateCheckSchema>;
+
 // Extra published ports beyond the ingress one (raw host:container TCP/UDP maps). Capped at 20; a host
 // port + protocol can't repeat (two maps can't bind the same one). An empty array clears them.
 export const SetExtraPortsSchema = z.object({

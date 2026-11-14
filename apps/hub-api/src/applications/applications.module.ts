@@ -20,6 +20,8 @@ import { DeploymentReconcileService } from "./deployment-reconcile.service";
 import { DeployLeaseService } from "./deploy-lease.service";
 import { DeployRecoveryService } from "./deploy-recovery.service";
 import { DeployQueueSweepSchedulerService } from "./deploy-queue-sweep.scheduler.service";
+import { ImageUpdateService } from "./image-update.service";
+import { ImageUpdateSchedulerService } from "./image-update.scheduler.service";
 import { ProxyService } from "./proxy.service";
 import { PanelTlsService } from "./panel-tls.service";
 import { PanelTlsController } from "./panel-tls.controller";
@@ -40,6 +42,8 @@ import { APPLICATIONS_SERVICE } from "./applications.tokens";
     DeployLeaseService,
     DeployRecoveryService,
     DeployQueueSweepSchedulerService,
+    ImageUpdateService,
+    ImageUpdateSchedulerService,
     ProxyService,
     PanelTlsService,
     AiService,

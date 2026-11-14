@@ -95,6 +95,7 @@ function make(
   panelDomain: string | null = null, // when set, the reserved control-panel hostname (collision guard)
   secretRefs: { resolveSecretEnv?: jest.Mock } = {},
   lease: { bootId: string; bootAt: Date } = { bootId: TEST_BOOT_ID, bootAt: new Date() },
+  imageUpdate: { checkApp?: jest.Mock } = {},
 ) {
   // createFromTemplate v2 probes listening ports (outside the tx) before allocating.
   portAlloc.probeUsedPorts = portAlloc.probeUsedPorts ?? jest.fn().mockResolvedValue(new Set());
@@ -221,6 +222,7 @@ function make(
       }),
     } as unknown as import("@nestjs/core").ModuleRef,
     lease as unknown as import("./deploy-lease.service").DeployLeaseService,
+    { checkApp: imageUpdate.checkApp ?? jest.fn() } as unknown as import("./image-update.service").ImageUpdateService,
   );
 }
 
@@ -6747,5 +6749,171 @@ describe("ApplicationsService.remove — pruneNetworks / pruneBuildCache", () =>
       await expect(svc.streamContainerLogs("u1", "app1", { container: "ignored-for-classic" })).resolves.toBe("observable");
       expect(logStream.stream).toHaveBeenCalledWith("s1", "tugra_app1", expect.objectContaining({ follow: true }));
     });
+  });
+});
+
+describe("ApplicationsService — image update available (IMAGE apps)", () => {
+  const D = (c: string) => "sha256:" + c.repeat(64);
+  const t0 = new Date("2026-11-01T10:00:00Z");
+  const imgApp = {
+    ...app,
+    id: "app1",
+    source: "IMAGE",
+    image: "nginx",
+    status: "RUNNING",
+    isPreview: false,
+    environmentId: "env1",
+    imageUpdateCheck: true,
+    imageUpstreamDigest: D("b"),
+    imageUpstreamCheckedAt: new Date("2026-11-02T10:00:00Z"),
+    imageUpstreamChangedAt: new Date("2026-11-02T10:00:00Z"),
+    imageCheckError: null,
+    registryAuthEnc: null,
+  };
+  const liveRow = (appId: string, digest = `nginx@${D("a")}`) => ({ appId, imageDigest: digest, createdAt: t0, startedAt: t0, durationMs: 5000 });
+  const prismaFor = (rows: unknown[], extra: Record<string, unknown> = {}) => {
+    const queryRaw = jest.fn().mockResolvedValue(rows);
+    return {
+      queryRaw,
+      prisma: {
+        application: { findUnique: jest.fn().mockResolvedValue(imgApp), findMany: jest.fn().mockResolvedValue([imgApp, { ...imgApp, id: "app2" }, { ...app, id: "git1", source: "GIT", image: null, status: "RUNNING" }]), update: jest.fn().mockResolvedValue({}) },
+        environment: { findUnique: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
+        $queryRaw: queryRaw,
+        ...extra,
+      } as unknown as PrismaService,
+    };
+  };
+  const access = (over: Record<string, unknown> = {}) =>
+    ({
+      accessByTeam: jest.fn().mockResolvedValue(new Map([["t1", { role: "OWNER", teamRoleId: null, restrictedAccess: false, accessedResources: [], accessedProjects: [] }]])),
+      permissionsByTeam: jest.fn().mockResolvedValue(new Map([["t1", new Set(["apps:config", "apps:deploy"])]])),
+      membershipPermissions: jest.fn().mockResolvedValue(new Set(["apps:config", "apps:deploy"])),
+      ...over,
+    }) as unknown as TeamAccessService;
+
+  it("get() includes imageUpdate (update_available) with digests for a writer", async () => {
+    const { prisma } = prismaFor([liveRow("app1")]);
+    const v = await make(prisma, access(), {} as AgentWsServer).get("u1", "app1");
+    expect(v.imageUpdate).toMatchObject({ state: "update_available", updateAvailable: true, upstreamDigest: D("b"), deployedDigest: D("a") });
+  });
+
+  it("get() redacts the digests for a read-only member (state and timestamps stay visible)", async () => {
+    const { prisma } = prismaFor([liveRow("app1")]);
+    const v = await make(prisma, access({ membershipPermissions: jest.fn().mockResolvedValue(new Set()) }), {} as AgentWsServer).get("u1", "app1");
+    expect(v.imageUpdate).toMatchObject({ state: "update_available", upstreamDigest: null, deployedDigest: null });
+    expect(v.imageUpdate?.checkedAt).not.toBeNull();
+  });
+
+  it("get() is null for GIT and COMPOSE apps and never queries the live digest for them", async () => {
+    for (const source of ["GIT", "COMPOSE"]) {
+      const { prisma, queryRaw } = prismaFor([]);
+      (prisma.application.findUnique as jest.Mock).mockResolvedValue({ ...imgApp, source, image: null, composeFile: source === "COMPOSE" ? "services: {}" : null });
+      const v = await make(prisma, access(), {} as AgentWsServer).get("u1", "app1");
+      expect(v.imageUpdate).toBeNull();
+      expect(queryRaw).not.toHaveBeenCalled();
+    }
+  });
+
+  it("list() issues exactly ONE live-digest query for N image apps and skips GIT apps", async () => {
+    const { prisma, queryRaw } = prismaFor([liveRow("app1"), liveRow("app2", `nginx@${D("b")}`)]);
+    const views = await make(prisma, access(), {} as AgentWsServer).list("u1");
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+    const byId = new Map(views.map((v) => [v.id, v]));
+    expect(byId.get("app1")?.imageUpdate?.state).toBe("update_available");
+    expect(byId.get("app2")?.imageUpdate?.state).toBe("up_to_date");
+    expect(byId.get("git1")?.imageUpdate).toBeNull();
+  });
+
+  it("list() survives a failing live-digest query (state degrades to no_baseline, list still renders)", async () => {
+    const { prisma, queryRaw } = prismaFor([]);
+    queryRaw.mockRejectedValue(new Error("db blip"));
+    const views = await make(prisma, access(), {} as AgentWsServer).list("u1");
+    expect(views.find((v) => v.id === "app1")?.imageUpdate?.state).toBe("no_baseline");
+  });
+
+  describe("setImageUpdateCheck", () => {
+    it("a writer toggles the flag and it is audited", async () => {
+      const { prisma } = prismaFor([]);
+      await make(prisma, access(), {} as AgentWsServer).setImageUpdateCheck("u1", "app1", false);
+      expect(prisma.application.update).toHaveBeenCalledWith({ where: { id: "app1" }, data: { imageUpdateCheck: false } });
+      expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "app.image_update_check.update", meta: { enabled: false } }));
+    });
+    it("a viewer is denied (403) and nothing is written", async () => {
+      const { prisma } = prismaFor([]);
+      const a = access({ requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("nope")) });
+      await expect(make(prisma, a, {} as AgentWsServer).setImageUpdateCheck("u1", "app1", false)).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.application.update).not.toHaveBeenCalled();
+    });
+    it("a GIT app is rejected (400)", async () => {
+      const { prisma } = prismaFor([]);
+      (prisma.application.findUnique as jest.Mock).mockResolvedValue({ ...imgApp, source: "GIT" });
+      await expect(make(prisma, access(), {} as AgentWsServer).setImageUpdateCheck("u1", "app1", false)).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.application.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("checkImageUpdate", () => {
+    it("requires apps:deploy (viewer 403 and a config-only member 403), never reaching the probe", async () => {
+      const checkApp = jest.fn();
+      const { prisma } = prismaFor([]);
+      const viewer = access({ requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("nope")) });
+      await expect(make(prisma, viewer, {} as AgentWsServer, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, { checkApp }).checkImageUpdate("u1", "app1")).rejects.toBeInstanceOf(ForbiddenException);
+      const configOnly = access({ requirePermission: jest.fn().mockImplementation((_u: string, _t: string, perm: string) => (perm === "apps:deploy" ? Promise.reject(new ForbiddenException("nope")) : Promise.resolve())) });
+      await expect(make(prisma, configOnly, {} as AgentWsServer, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, { checkApp }).checkImageUpdate("u1", "app1")).rejects.toBeInstanceOf(ForbiddenException);
+      expect(checkApp).not.toHaveBeenCalled();
+    });
+    it("a deployer delegates to the runner (digest visibility follows apps:config) and audits the state", async () => {
+      const checkApp = jest.fn().mockResolvedValue({ imageUpdate: { state: "up_to_date" } });
+      const requirePermission = jest.fn().mockResolvedValue(undefined);
+      const { prisma } = prismaFor([]);
+      const svc = make(prisma, access({ requirePermission, membershipPermissions: jest.fn().mockResolvedValue(new Set(["apps:deploy"])) }), {} as AgentWsServer, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, { checkApp });
+      const res = await svc.checkImageUpdate("u1", "app1");
+      expect(requirePermission).toHaveBeenCalledWith("u1", "t1", "apps:deploy");
+      expect(checkApp).toHaveBeenCalledWith(expect.objectContaining({ id: "app1" }), false);
+      expect(res).toEqual({ imageUpdate: { state: "up_to_date" } });
+      expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "app.image_update_check.run", meta: { state: "up_to_date" } }));
+    });
+  });
+
+  it("setSource resets the probe state only when the image actually changes", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(imgApp), update }, deployment: { findFirst: jest.fn().mockResolvedValue(null) } } as unknown as PrismaService;
+    const svc = make(prisma, access(), {} as AgentWsServer);
+    await svc.setSource("u1", "app1", { image: "nginx:1.27" });
+    expect(update).toHaveBeenLastCalledWith({
+      where: { id: "app1" },
+      data: expect.objectContaining({ image: "nginx:1.27", imageUpstreamDigest: null, imageUpstreamCheckedAt: null, imageUpstreamChangedAt: null, imageCheckError: null, imageUpdateNotifiedDigest: null, imageCheckFailures: 0 }),
+    });
+    await svc.setSource("u1", "app1", { image: "nginx" }); // unchanged ref: state is kept
+    const data = update.mock.calls[1][0].data as Record<string, unknown>;
+    expect(data).toEqual({ image: "nginx" });
+  });
+
+  it("setCredentials (registry) clears a stale error, forces a re-probe and keeps the good digest", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(imgApp), update } } as unknown as PrismaService;
+    const svc = make(prisma, access(), {} as AgentWsServer);
+    await svc.setCredentials("u1", "app1", { registry: { user: "u", token: "t" } });
+    const data = update.mock.calls[0][0].data as Record<string, unknown>;
+    expect(data).toMatchObject({ imageCheckError: null, imageUpstreamCheckedAt: null, imageCheckFailures: 0 });
+    expect(data).not.toHaveProperty("imageUpstreamDigest");
+    await svc.setCredentials("u1", "app1", { gitToken: "x" }); // not a registry change
+    expect(update.mock.calls[1][0].data).not.toHaveProperty("imageCheckError");
+  });
+
+  it("clone copies the opt-out flag but not the probe state", async () => {
+    const server = { id: "s1", teamId: "t1", publicIp: null, publicIpv6: null, wildcardDomain: null, magicSuffix: null, certMode: "http", proxyBind: "public" };
+    const create = jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ ...data, id: "clone1", status: "NEW", createdAt: new Date() }));
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...imgApp, imageUpdateCheck: false, exposeMode: "none", domainKind: "none", hostPort: null, volumes: [], tags: [] }), create },
+      server: { findUnique: jest.fn().mockResolvedValue(server) },
+      appIcon: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
+      scheduledTask: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
+    } as unknown as PrismaService;
+    const res = await make(prisma, {}, {} as AgentWsServer).clone("u1", "app1", {});
+    const data = create.mock.calls[0][0].data as Record<string, unknown>;
+    expect(data.imageUpdateCheck).toBe(false);
+    for (const k of ["imageUpstreamDigest", "imageUpstreamCheckedAt", "imageUpstreamChangedAt", "imageCheckError", "imageCheckFailures", "imageUpdateNotifiedDigest"]) expect(data).not.toHaveProperty(k);
+    expect(res.app.imageUpdate).toBeNull(); // never deployed (status NEW)
   });
 });

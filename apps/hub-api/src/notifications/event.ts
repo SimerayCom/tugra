@@ -19,6 +19,7 @@ import { scheduledTaskTemplate } from "./templates/scheduled-task";
 import { dockerCleanupTemplate } from "./templates/docker-cleanup";
 import { containerTemplate } from "./templates/container";
 import { rolloutTemplate } from "./templates/rollout";
+import { imageUpdateTemplate } from "./templates/image-update";
 import { genericTemplate, testTemplate } from "./templates/generic";
 
 /** A locale-bound translator: resolves a dotted key with `{param}` interpolation (NotifI18nService). */
@@ -132,6 +133,7 @@ const REGISTRY: Record<string, EventTemplate> = {
   rollout_completed: rolloutTemplate,
   rollout_rolled_back: rolloutTemplate,
   rollout_rollback_failed: rolloutTemplate,
+  image_update_available: imageUpdateTemplate,
   test: testTemplate,
 };
 

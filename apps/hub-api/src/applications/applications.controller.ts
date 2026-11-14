@@ -32,6 +32,7 @@ import { SetTagsSchema, type SetTagsInput } from "../common/tags";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
 import { DeploymentDetailSchema, DeploymentRowSchema } from "./deployment-view";
 import { ApplicationsService, AppViewSchema, CloneAppResultSchema, GitSshKeyResultSchema, DomainViewSchema } from "./applications.service";
+import { ImageUpdateCheckResultSchema } from "./image-update";
 import { AppDatabaseLinksService } from "./app-database-links.service";
 import { AppSecretRefsService } from "./app-secret-refs.service";
 import { CreateSecretRefInput, CreateSecretRefSchema } from "../secret-providers/dto";
@@ -68,6 +69,8 @@ import {
   SetWatchPathsSchema,
   SetAutoDeployInput,
   SetAutoDeploySchema,
+  SetImageUpdateCheckInput,
+  SetImageUpdateCheckSchema,
   SetContainerPortInput,
   SetContainerPortSchema,
   SetExtraPortsInput,
@@ -606,6 +609,27 @@ export class ApplicationsController {
   ) {
     await this.apps.setAutoDeploy(user.userId, id, body.enabled);
     return { ok: true };
+  }
+
+  @Put(":id/image-update-check")
+  @HttpCode(200)
+  @ApiZodBody(SetImageUpdateCheckSchema)
+  async setImageUpdateCheck(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetImageUpdateCheckSchema)) body: SetImageUpdateCheckInput,
+  ) {
+    await this.apps.setImageUpdateCheck(user.userId, id, body.enabled);
+    return { ok: true };
+  }
+
+  /** Check now: probe the upstream registry from the app's own server (apps:deploy, 30 s throttle). */
+  @Post(":id/image-update-check")
+  @RequireScopes("deploy")
+  @HttpCode(200)
+  @ApiZodResponse(ImageUpdateCheckResultSchema)
+  checkImageUpdate(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.apps.checkImageUpdate(user.userId, id);
   }
 
   @Put(":id/extra-ports")

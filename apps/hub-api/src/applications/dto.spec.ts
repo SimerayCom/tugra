@@ -1,4 +1,4 @@
-import { CreateAppSchema, SetAutoDeploySchema, SetContainerPortSchema, SetDeploySettingsSchema, SetExtraPortsSchema, SetBasicAuthSchema, SetBuildSchema, SetConfigMountContentSchema, SetContainerCommandSchema, SetDeployHooksSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetHealthCheckSchema, SetLimitsSchema, SetRedirectsSchema, SetNetworksSchema, SetRestartPolicySchema, SetServiceDomainsSchema, SetSourceSchema, SetWatchPathsSchema } from "./dto";
+import { CreateAppSchema, SetAutoDeploySchema, SetImageUpdateCheckSchema, SetContainerPortSchema, SetDeploySettingsSchema, SetExtraPortsSchema, SetBasicAuthSchema, SetBuildSchema, SetConfigMountContentSchema, SetContainerCommandSchema, SetDeployHooksSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetHealthCheckSchema, SetLimitsSchema, SetRedirectsSchema, SetNetworksSchema, SetRestartPolicySchema, SetServiceDomainsSchema, SetSourceSchema, SetWatchPathsSchema } from "./dto";
 
 describe("SetDeploySettingsSchema — post-cutover soak", () => {
   it("accepts a soak window in 0..600 (0 = off), on its own or with other fields", () => {
@@ -512,5 +512,15 @@ describe("SetNetworksSchema", () => {
     expect(SetNetworksSchema.safeParse({}).success).toBe(false);
     expect(SetNetworksSchema.safeParse({ containerAlias: "tugra-x" }).success).toBe(false);
     expect(SetNetworksSchema.safeParse({ networks: ["a"], foo: 1 }).success).toBe(false);
+  });
+});
+
+describe("SetImageUpdateCheckSchema", () => {
+  it("requires a strict boolean `enabled` and rejects extra keys", () => {
+    expect(SetImageUpdateCheckSchema.safeParse({ enabled: true }).success).toBe(true);
+    expect(SetImageUpdateCheckSchema.safeParse({ enabled: false }).success).toBe(true);
+    expect(SetImageUpdateCheckSchema.safeParse({}).success).toBe(false);
+    expect(SetImageUpdateCheckSchema.safeParse({ enabled: "yes" }).success).toBe(false);
+    expect(SetImageUpdateCheckSchema.safeParse({ enabled: true, extra: 1 }).success).toBe(false);
   });
 });

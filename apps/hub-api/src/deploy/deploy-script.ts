@@ -466,7 +466,7 @@ export function buildRegistryPushSteps(localTag: string, pushTag: string, auth: 
   ];
 }
 
-function shq(v: string): string {
+export function shq(v: string): string {
   return `'${v.replaceAll("'", "'\\''")}'`;
 }
 

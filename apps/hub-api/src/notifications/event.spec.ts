@@ -1,6 +1,7 @@
 import { renderEvent, type NotificationEvent, type RenderEnv } from "./event";
 import type { RenderedMessage } from "./rendered-message";
 import { NotifI18nService } from "./notif-i18n.service";
+import { EVENT_TYPES } from "@tugra/shared";
 
 // A real en translator — the en.json values equal the old hardcoded strings, so every assertion below
 // (e.g. "Deploy failed — blog") holds unchanged while the strings now flow through i18n.
@@ -125,6 +126,24 @@ describe("renderEvent — typed per-event templates", () => {
     expect(fieldVal(m, "Expiry")).toBe("2026-08-01 10:30 UTC");
     expect(fieldVal(m, "Issuer")).toBe("Let's Encrypt");
     expect(linkUrl(m, "Open app")).toBe("https://web.test/apps/app1");
+  });
+
+  it("image_update_available: info, short digests, app link, not critical", () => {
+    const m = render("image_update_available", {
+      appId: "app1", appName: "blog", image: "ghcr.io/o/blog:latest", projectName: "web", environmentName: "prod",
+      deployedDigest: "sha256:" + "a".repeat(64), upstreamDigest: "sha256:" + "b".repeat(64),
+    });
+    expect(m.event).toBe("image_update_available");
+    expect(m.level).toBe("info");
+    expect(m.critical).toBeFalsy();
+    expect(m.title).toBe("Image update available for blog");
+    expect(m.summary).toBe("A newer image for ghcr.io/o/blog:latest is available upstream than the one deployed.");
+    expect(fieldVal(m, "Deployed")).toBe("a".repeat(12));
+    expect(fieldVal(m, "Upstream")).toBe("b".repeat(12));
+    expect(fieldVal(m, "Project")).toBe("web");
+    expect(fieldVal(m, "Environment")).toBe("prod");
+    expect(linkUrl(m, "Open app")).toBe("https://web.test/apps/app1");
+    expect(EVENT_TYPES).toContain("image_update_available");
   });
 
   it("token_expiring: warning, token name, settings link", () => {
@@ -306,7 +325,7 @@ describe("renderEvent — typed per-event templates", () => {
       "backup_missing", "backup_recovered", "verify_missing", "verify_recovered",
       "backup_restore_failed", "ssl_expiring", "token_expiring", "server_offline", "server_online", "swarm_degraded",
       "volume_backup_success", "volume_backup_failed", "scheduled_task_success", "scheduled_task_failed",
-      "docker_cleanup_success", "docker_cleanup_failed", "monitor_up", "monitor_down",
+      "docker_cleanup_success", "docker_cleanup_failed", "monitor_up", "monitor_down", "image_update_available",
     ]) {
       const m = render(type, {});
       const blob = JSON.stringify(m);
@@ -336,7 +355,7 @@ describe("renderEvent — typed per-event templates", () => {
       "backup_missing", "backup_recovered", "verify_missing", "verify_recovered",
       "backup_restore_failed", "ssl_expiring", "token_expiring", "server_offline", "server_online", "swarm_degraded",
       "volume_backup_success", "volume_backup_failed", "scheduled_task_success", "scheduled_task_failed",
-      "docker_cleanup_success", "docker_cleanup_failed", "monitor_up", "monitor_down",
+      "docker_cleanup_success", "docker_cleanup_failed", "monitor_up", "monitor_down", "image_update_available",
     ];
     for (const type of all) {
       expect(!!render(type, {}).critical).toBe(critical.has(type));

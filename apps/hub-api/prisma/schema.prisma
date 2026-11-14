@@ -1136,6 +1136,15 @@ model Application {
   iconUpdatedAt                DateTime?
   source                       AppSource          @default(IMAGE)
   image                        String?
+  // Image-update check (IMAGE apps only; scheduled digest probe run by the app's own agent). Operational state,
+  // NOT deploy config: never enters ConfigSnapshot (snapV stays 2), never produces a drift diff.
+  imageUpdateCheck             Boolean            @default(true)
+  imageUpstreamDigest          String?            // last good upstream digest, "sha256:<64hex>"; kept across failed probes
+  imageUpstreamCheckedAt       DateTime?          // last probe attempt that produced a verdict (ok OR classified error)
+  imageUpstreamChangedAt       DateTime?          // when the CURRENT upstream digest was first observed
+  imageCheckError              String?            // closed code: auth|notfound|unsupported|timeout|failed. Never raw output.
+  imageCheckFailures           Int                @default(0) // consecutive failed probes (backoff)
+  imageUpdateNotifiedDigest    String?            // upstream digest last notified or silently seeded (notify-once dedupe)
   gitUrl                       String?
   gitBranch                    String?            @default("main")
   // Pin deploys to a specific commit SHA (must be reachable from gitBranch). Null = deploy the branch HEAD

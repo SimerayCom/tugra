@@ -196,6 +196,9 @@ export const envSchema = z
     .optional(),
   UPDATE_CHECK_INTERVAL_MIN: z.coerce.number().int().positive().default(1440), // daily
   UPDATE_CHANGELOG_URL: z.string().url().optional(),
+  // Per-app "image update available" check for IMAGE apps: how often (minutes) each app's own server probes the
+  // upstream registry for a moved tag. 0 = the whole feature is off (operator kill switch, no probing at all).
+  IMAGE_UPDATE_CHECK_INTERVAL_MIN: z.coerce.number().int().min(0).default(360),
   // Signed-license entitlement. TUGRA_LICENSE is an optional signed license (EdDSA JWT) that unlocks the
   // Pro/Cloud edition — verified against Tugra's license public key, which is COMPILED IN (see
   // license/license-key.ts), NOT taken from the environment (an env-sourced trust anchor would let an
