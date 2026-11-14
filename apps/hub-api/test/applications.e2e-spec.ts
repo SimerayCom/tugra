@@ -1161,6 +1161,12 @@ describe("Applications / deploy (e2e)", () => {
       .send({ name: "logstream", serverId, image: "nginx:alpine", hostPort: 8141 })
       .expect(201);
     const appId = appRes.body.id;
+    // Container logs exist only once the app has been deployed (a NEW app answers 409).
+    await request(app.getHttpServer())
+      .get(`/apps/${appId}/logs/stream?follow=0`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(409);
+    await prisma.application.update({ where: { id: appId }, data: { status: "RUNNING" } });
 
     logStarts.length = 0;
     // follow=0 → the mock agent emits one line then exits, so the SSE completes and buffers cleanly.
@@ -1185,6 +1191,7 @@ describe("Applications / deploy (e2e)", () => {
       .set("Authorization", `Bearer ${token}`)
       .send({ name: "logtail", serverId, image: "nginx:alpine", hostPort: 8144 })
       .expect(201);
+    await prisma.application.update({ where: { id: appRes.body.id }, data: { status: "RUNNING" } });
     logStarts.length = 0;
     const stream = await request(app.getHttpServer())
       .get(`/apps/${appRes.body.id}/logs/stream?follow=0&tail=abc`)
@@ -1205,6 +1212,7 @@ describe("Applications / deploy (e2e)", () => {
       .send({ name: "logdl", serverId, image: "nginx:alpine", hostPort: 8146 })
       .expect(201);
     const appId = appRes.body.id;
+    await prisma.application.update({ where: { id: appId }, data: { status: "RUNNING" } });
     commands.length = 0;
     const res = await request(app.getHttpServer())
       .get(`/apps/${appId}/logs/download?tail=500&since=1h`)
@@ -1349,6 +1357,7 @@ describe("Applications / deploy (e2e)", () => {
       .set("Authorization", `Bearer ${token}`)
       .send({ name: "logoffline", serverId: srv.body.server.id, image: "nginx:alpine", hostPort: 8143 })
       .expect(201);
+    await prisma.application.update({ where: { id: appRes.body.id }, data: { status: "RUNNING" } });
     await request(app.getHttpServer())
       .get(`/apps/${appRes.body.id}/logs/stream?follow=0`)
       .set("Authorization", `Bearer ${token}`)
