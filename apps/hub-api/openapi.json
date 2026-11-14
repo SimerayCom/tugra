@@ -11276,6 +11276,26 @@
                         "type": "number",
                         "nullable": true
                       },
+                      "memorySwapMb": {
+                        "type": "integer",
+                        "nullable": true
+                      },
+                      "pidsLimit": {
+                        "type": "integer",
+                        "nullable": true
+                      },
+                      "shmSizeMb": {
+                        "type": "integer",
+                        "nullable": true
+                      },
+                      "cpuShares": {
+                        "type": "integer",
+                        "nullable": true
+                      },
+                      "cpusetCpus": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "gpus": {
                         "type": "string",
                         "nullable": true
@@ -12049,6 +12069,11 @@
                       "cpus",
                       "reserveMemoryMb",
                       "reserveCpus",
+                      "memorySwapMb",
+                      "pidsLimit",
+                      "shmSizeMb",
+                      "cpuShares",
+                      "cpusetCpus",
                       "gpus",
                       "deployTimeoutSec",
                       "dockerOptions",
@@ -12534,6 +12559,26 @@
                     },
                     "reserveCpus": {
                       "type": "number",
+                      "nullable": true
+                    },
+                    "memorySwapMb": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "pidsLimit": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "shmSizeMb": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "cpuShares": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "cpusetCpus": {
+                      "type": "string",
                       "nullable": true
                     },
                     "gpus": {
@@ -13309,6 +13354,11 @@
                     "cpus",
                     "reserveMemoryMb",
                     "reserveCpus",
+                    "memorySwapMb",
+                    "pidsLimit",
+                    "shmSizeMb",
+                    "cpuShares",
+                    "cpusetCpus",
                     "gpus",
                     "deployTimeoutSec",
                     "dockerOptions",
@@ -13863,6 +13913,26 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "memorySwapMb": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "pidsLimit": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "shmSizeMb": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "cpuShares": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "cpusetCpus": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "gpus": {
                       "type": "string",
                       "nullable": true
@@ -14636,6 +14706,11 @@
                     "cpus",
                     "reserveMemoryMb",
                     "reserveCpus",
+                    "memorySwapMb",
+                    "pidsLimit",
+                    "shmSizeMb",
+                    "cpuShares",
+                    "cpusetCpus",
                     "gpus",
                     "deployTimeoutSec",
                     "dockerOptions",
@@ -15194,6 +15269,26 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "memorySwapMb": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "pidsLimit": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "shmSizeMb": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "cpuShares": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "cpusetCpus": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "gpus": {
                       "type": "string",
                       "nullable": true
@@ -15967,6 +16062,11 @@
                     "cpus",
                     "reserveMemoryMb",
                     "reserveCpus",
+                    "memorySwapMb",
+                    "pidsLimit",
+                    "shmSizeMb",
+                    "cpuShares",
+                    "cpusetCpus",
                     "gpus",
                     "deployTimeoutSec",
                     "dockerOptions",
@@ -21312,6 +21412,66 @@
                     "minimum": 30,
                     "maximum": 3600,
                     "nullable": true
+                  },
+                  "memorySwapMb": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "enum": [
+                          -1
+                        ]
+                      },
+                      {
+                        "type": "integer",
+                        "minimum": 16,
+                        "maximum": 1048576
+                      }
+                    ],
+                    "nullable": true
+                  },
+                  "pidsLimit": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "enum": [
+                          -1
+                        ]
+                      },
+                      {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 4194304
+                      }
+                    ],
+                    "nullable": true
+                  },
+                  "shmSizeMb": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1048576,
+                    "nullable": true
+                  },
+                  "cpuShares": {
+                    "type": "integer",
+                    "minimum": 2,
+                    "maximum": 262144,
+                    "nullable": true
+                  },
+                  "cpusetCpus": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 64,
+                        "pattern": "^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$"
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          ""
+                        ]
+                      }
+                    ],
+                    "nullable": true
                   }
                 },
                 "additionalProperties": false
@@ -24747,6 +24907,26 @@
                           "type": "number",
                           "nullable": true
                         },
+                        "memorySwapMb": {
+                          "type": "integer",
+                          "nullable": true
+                        },
+                        "pidsLimit": {
+                          "type": "integer",
+                          "nullable": true
+                        },
+                        "shmSizeMb": {
+                          "type": "integer",
+                          "nullable": true
+                        },
+                        "cpuShares": {
+                          "type": "integer",
+                          "nullable": true
+                        },
+                        "cpusetCpus": {
+                          "type": "string",
+                          "nullable": true
+                        },
                         "gpus": {
                           "type": "string",
                           "nullable": true
@@ -25520,6 +25700,11 @@
                         "cpus",
                         "reserveMemoryMb",
                         "reserveCpus",
+                        "memorySwapMb",
+                        "pidsLimit",
+                        "shmSizeMb",
+                        "cpuShares",
+                        "cpusetCpus",
                         "gpus",
                         "deployTimeoutSec",
                         "dockerOptions",
@@ -25935,6 +26120,26 @@
                     },
                     "reserveCpus": {
                       "type": "number",
+                      "nullable": true
+                    },
+                    "memorySwapMb": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "pidsLimit": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "shmSizeMb": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "cpuShares": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "cpusetCpus": {
+                      "type": "string",
                       "nullable": true
                     },
                     "gpus": {
@@ -26710,6 +26915,11 @@
                     "cpus",
                     "reserveMemoryMb",
                     "reserveCpus",
+                    "memorySwapMb",
+                    "pidsLimit",
+                    "shmSizeMb",
+                    "cpuShares",
+                    "cpusetCpus",
                     "gpus",
                     "deployTimeoutSec",
                     "dockerOptions",
@@ -27195,6 +27405,26 @@
                       },
                       "reserveCpus": {
                         "type": "number",
+                        "nullable": true
+                      },
+                      "memorySwapMb": {
+                        "type": "integer",
+                        "nullable": true
+                      },
+                      "pidsLimit": {
+                        "type": "integer",
+                        "nullable": true
+                      },
+                      "shmSizeMb": {
+                        "type": "integer",
+                        "nullable": true
+                      },
+                      "cpuShares": {
+                        "type": "integer",
+                        "nullable": true
+                      },
+                      "cpusetCpus": {
+                        "type": "string",
                         "nullable": true
                       },
                       "gpus": {
@@ -27970,6 +28200,11 @@
                       "cpus",
                       "reserveMemoryMb",
                       "reserveCpus",
+                      "memorySwapMb",
+                      "pidsLimit",
+                      "shmSizeMb",
+                      "cpuShares",
+                      "cpusetCpus",
                       "gpus",
                       "deployTimeoutSec",
                       "dockerOptions",
@@ -28540,6 +28775,26 @@
                     },
                     "reserveCpus": {
                       "type": "number",
+                      "nullable": true
+                    },
+                    "memorySwapMb": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "pidsLimit": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "shmSizeMb": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "cpuShares": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "cpusetCpus": {
+                      "type": "string",
                       "nullable": true
                     },
                     "gpus": {
@@ -29315,6 +29570,11 @@
                     "cpus",
                     "reserveMemoryMb",
                     "reserveCpus",
+                    "memorySwapMb",
+                    "pidsLimit",
+                    "shmSizeMb",
+                    "cpuShares",
+                    "cpusetCpus",
                     "gpus",
                     "deployTimeoutSec",
                     "dockerOptions",
@@ -31130,6 +31390,26 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "memorySwapMb": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "pidsLimit": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "shmSizeMb": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "cpuShares": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "cpusetCpus": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "gpus": {
                       "type": "string",
                       "nullable": true
@@ -31903,6 +32183,11 @@
                     "cpus",
                     "reserveMemoryMb",
                     "reserveCpus",
+                    "memorySwapMb",
+                    "pidsLimit",
+                    "shmSizeMb",
+                    "cpuShares",
+                    "cpusetCpus",
                     "gpus",
                     "deployTimeoutSec",
                     "dockerOptions",

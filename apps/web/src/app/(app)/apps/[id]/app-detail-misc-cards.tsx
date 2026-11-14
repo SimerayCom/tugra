@@ -31,6 +31,8 @@ export function AppOverview({ app, deployments }: { app: Application; deployment
   const resourceParts: string[] = [];
   if (app.memoryMb) resourceParts.push(`${app.memoryMb} MB`);
   if (app.cpus) resourceParts.push(`${app.cpus} CPU`);
+  if (app.memorySwapMb != null) resourceParts.push(app.memorySwapMb === -1 ? t("apps.ovSwapUnlimited") : t("apps.ovSwap", { n: app.memorySwapMb }));
+  if (app.pidsLimit != null) resourceParts.push(app.pidsLimit === -1 ? t("apps.ovPidsUnlimited") : t("apps.ovPids", { n: app.pidsLimit }));
   const stats: { label: string; node: ReactNode }[] = [
     { label: t("apps.status"), node: <span style={{ color: appStatusDisplay(app).color, fontWeight: 600 }}>{statusLabel(t, appStatusDisplay(app).key)}</span> },
     { label: t("apps.source"), node: <span className="mono">{appSourceSummary(app) || "—"}</span> },

@@ -11,12 +11,17 @@ import { ConfigCard, Field, NumberInput, TextInput, useSaveFeedback } from "./fo
  * carries a visible label — the inputs used to be placeholder-only, so they had no accessible name
  * at all — and Save is gated until something actually changes.
  */
-export function LimitsCard({ id, memoryMb, cpus, reserveMemoryMb, reserveCpus, gpus, deployTimeoutSec, clusterId }: {
+export function LimitsCard({ id, memoryMb, cpus, reserveMemoryMb, reserveCpus, memorySwapMb, pidsLimit, shmSizeMb, cpuShares, cpusetCpus, gpus, deployTimeoutSec, clusterId }: {
   id: string;
   memoryMb: number | null;
   cpus: number | null;
   reserveMemoryMb: number | null;
   reserveCpus: number | null;
+  memorySwapMb: number | null;
+  pidsLimit: number | null;
+  shmSizeMb: number | null;
+  cpuShares: number | null;
+  cpusetCpus: string | null;
   gpus: string | null;
   deployTimeoutSec: number | null;
   clusterId: string | null;
@@ -29,6 +34,11 @@ export function LimitsCard({ id, memoryMb, cpus, reserveMemoryMb, reserveCpus, g
   const [cpu, setCpu] = useState(numStr(cpus));
   const [reserveMem, setReserveMem] = useState(numStr(reserveMemoryMb));
   const [reserveCpu, setReserveCpu] = useState(numStr(reserveCpus));
+  const [swap, setSwap] = useState(numStr(memorySwapMb));
+  const [pids, setPids] = useState(numStr(pidsLimit));
+  const [shm, setShm] = useState(numStr(shmSizeMb));
+  const [shares, setShares] = useState(numStr(cpuShares));
+  const [cpuset, setCpuset] = useState(cpusetCpus ?? "");
   const [gpu, setGpu] = useState(gpus ?? "");
   const [timeout, setTimeoutS] = useState(numStr(deployTimeoutSec));
 
@@ -38,7 +48,17 @@ export function LimitsCard({ id, memoryMb, cpus, reserveMemoryMb, reserveCpus, g
     cpu !== numStr(cpus) ||
     gpu.trim() !== (gpus ?? "") ||
     timeout !== numStr(deployTimeoutSec) ||
-    (!!clusterId && (reserveMem !== numStr(reserveMemoryMb) || reserveCpu !== numStr(reserveCpus)));
+    (!!clusterId && (reserveMem !== numStr(reserveMemoryMb) || reserveCpu !== numStr(reserveCpus))) ||
+    (!clusterId && (swap !== numStr(memorySwapMb) || pids !== numStr(pidsLimit) || shm !== numStr(shmSizeMb) || shares !== numStr(cpuShares) || cpuset.trim() !== (cpusetCpus ?? "")));
+
+  // Client-side mirrors of the hub's checks (the hub stays authoritative): swap needs a memory limit and must not
+  // be below it (-1 = unlimited), and the cpuset must be indices/ranges with ordered ranges.
+  const cpusetTrim = cpuset.trim();
+  const cpusetOk = !cpusetTrim || (/^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$/.test(cpusetTrim) && cpusetTrim.split(",").every((p) => { const [lo, hi] = p.split("-").map(Number); return hi === undefined || hi >= lo; }));
+  const swapN = swap ? Number(swap) : null;
+  const swapNeedsMemory = !clusterId && swapN != null && !mem;
+  const swapBelowMemory = !clusterId && swapN != null && swapN > 0 && !!mem && swapN < Number(mem);
+  const invalid = !clusterId && (swapNeedsMemory || swapBelowMemory || !cpusetOk);
 
   const save = useMutation({
     mutationFn: () =>
@@ -48,6 +68,12 @@ export function LimitsCard({ id, memoryMb, cpus, reserveMemoryMb, reserveCpus, g
         // Swarm-only reservation hints; only sent for a clustered app (fields are hidden otherwise).
         reserveMemoryMb: clusterId && reserveMem ? Number(reserveMem) : null,
         reserveCpus: clusterId && reserveCpu ? Number(reserveCpu) : null,
+        // Classic-only docker-run limits; a clustered app sends null so a stale value is cleared (always allowed).
+        memorySwapMb: !clusterId && swap ? Number(swap) : null,
+        pidsLimit: !clusterId && pids ? Number(pids) : null,
+        shmSizeMb: !clusterId && shm ? Number(shm) : null,
+        cpuShares: !clusterId && shares ? Number(shares) : null,
+        cpusetCpus: !clusterId && cpusetTrim ? cpusetTrim : null,
         gpus: gpu.trim() || null,
         deployTimeoutSec: timeout ? Number(timeout) : null,
       }),
@@ -58,7 +84,7 @@ export function LimitsCard({ id, memoryMb, cpus, reserveMemoryMb, reserveCpus, g
   const item = { flex: "1 1 160px", minWidth: 0 } as const;
 
   return (
-    <ConfigCard title={t("apps.limits")} desc={t("apps.limitsDesc")} dirty={dirty} saving={save.isPending} onSave={() => save.mutate()}>
+    <ConfigCard title={t("apps.limits")} desc={t("apps.limitsDesc")} dirty={dirty} saving={save.isPending} onSave={() => save.mutate()} saveDisabled={invalid}>
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
         <Field label={t("apps.memoryMb")} style={item}>
           <NumberInput min={0} value={mem} onChange={(e) => setMem(e.target.value)} />
@@ -83,6 +109,29 @@ export function LimitsCard({ id, memoryMb, cpus, reserveMemoryMb, reserveCpus, g
           <NumberInput min={0} value={timeout} onChange={(e) => setTimeoutS(e.target.value)} />
         </Field>
       </div>
+      {!clusterId && (
+        <>
+          <div style={{ margin: "16px 0 8px", fontSize: 12, fontWeight: 600, color: "var(--c-tx3)" }}>{t("apps.limitsAdvanced")}</div>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            <Field label={t("apps.memorySwapMb")} hint={t("apps.memorySwapHint")} error={swapNeedsMemory ? t("apps.limitSwapNeedsMemory") : swapBelowMemory ? t("apps.limitSwapBelowMemory") : undefined} style={item}>
+              <NumberInput min={-1} value={swap} onChange={(e) => setSwap(e.target.value)} />
+            </Field>
+            <Field label={t("apps.pidsLimit")} hint={t("apps.pidsLimitHint")} style={item}>
+              <NumberInput min={-1} value={pids} onChange={(e) => setPids(e.target.value)} />
+            </Field>
+            <Field label={t("apps.shmSizeMb")} hint={t("apps.shmSizeHint")} style={item}>
+              <NumberInput min={1} value={shm} onChange={(e) => setShm(e.target.value)} />
+            </Field>
+            <Field label={t("apps.cpuShares")} hint={t("apps.cpuSharesHint")} style={item}>
+              <NumberInput min={2} value={shares} onChange={(e) => setShares(e.target.value)} />
+            </Field>
+            <Field label={t("apps.cpusetCpus")} hint={t("apps.cpusetHint")} error={cpusetOk ? undefined : t("apps.limitCpusetInvalid")} style={item}>
+              <TextInput value={cpuset} onChange={(e) => setCpuset(e.target.value)} spellCheck={false} autoComplete="off" />
+            </Field>
+          </div>
+          <p style={{ margin: "12px 0 0", fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.limitsPrecedenceHint")}</p>
+        </>
+      )}
     </ConfigCard>
   );
 }

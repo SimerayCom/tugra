@@ -1439,7 +1439,7 @@ export const api = {
   setAppPlacement(id: string, body: { constraints: PlacementConstraint[]; spreadLabelKey: string | null }) {
     return apiFetch<{ ok: boolean }>(`/apps/${id}/placement`, { method: "PUT", body: JSON.stringify(body) });
   },
-  setAppLimits(id: string, limits: { memoryMb?: number | null; cpus?: number | null; reserveMemoryMb?: number | null; reserveCpus?: number | null; gpus?: string | null; deployTimeoutSec?: number | null }) {
+  setAppLimits(id: string, limits: { memoryMb?: number | null; cpus?: number | null; reserveMemoryMb?: number | null; reserveCpus?: number | null; memorySwapMb?: number | null; pidsLimit?: number | null; shmSizeMb?: number | null; cpuShares?: number | null; cpusetCpus?: string | null; gpus?: string | null; deployTimeoutSec?: number | null }) {
     return apiFetch<{ ok: true }>(`/apps/${id}/limits`, {
       method: "PUT",
       body: JSON.stringify(limits),

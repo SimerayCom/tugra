@@ -34,6 +34,13 @@ export interface ConfigSnapshot {
   memoryMb?: number | null;
   cpus?: number | null;
   gpus?: string | null;
+  // Extra classic-app limits. Emitted only when set (like the container-ops fields below) so a snapshot from before
+  // they existed and one with them unset both read "—" and produce no spurious diff.
+  memorySwapMb?: number | null;
+  pidsLimit?: number | null;
+  shmSizeMb?: number | null;
+  cpuShares?: number | null;
+  cpusetCpus?: string | null;
   replicas?: number | null;
   hostPort?: number | null;
   containerPort?: number | null;
@@ -93,6 +100,11 @@ const SCALAR_FIELDS = [
   "memoryMb",
   "cpus",
   "gpus",
+  "memorySwapMb",
+  "pidsLimit",
+  "shmSizeMb",
+  "cpuShares",
+  "cpusetCpus",
   "replicas",
   "hostPort",
   "containerPort",
@@ -158,6 +170,11 @@ export function buildConfigSnapshot(spec: AppSpec): ConfigSnapshot {
     memoryMb: spec.memoryMb ?? null,
     cpus: spec.cpus ?? null,
     gpus: spec.gpus ?? null,
+    ...(spec.memorySwapMb != null ? { memorySwapMb: spec.memorySwapMb } : {}),
+    ...(spec.pidsLimit != null ? { pidsLimit: spec.pidsLimit } : {}),
+    ...(spec.shmSizeMb != null ? { shmSizeMb: spec.shmSizeMb } : {}),
+    ...(spec.cpuShares != null ? { cpuShares: spec.cpuShares } : {}),
+    ...(spec.cpusetCpus ? { cpusetCpus: spec.cpusetCpus } : {}),
     replicas: spec.replicas ?? null,
     hostPort: spec.hostPort ?? null,
     containerPort: spec.containerPort ?? null,

@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **More resource limits for Image and Git apps.** Memory plus swap, a maximum process count, shared-memory
+  size, CPU weight and CPU pinning, next to the existing memory and CPU limits. They are `docker run` flags, so
+  Compose and Swarm apps refuse to set them (clearing is always allowed); the Resources card shows them for
+  single-server apps. Unset, the run line is unchanged. A flag you also set in Docker options takes precedence.
+  A rollback re-renders from the current settings, so it applies today's limits, not the ones from the deploy
+  being restored.
+
 - **Honest app status.** The app header, list and Overview now read from the container-health poll: Running,
   Running (unhealthy), Running (no healthcheck) or Starting, instead of the lifecycle status alone. A
   crash-looping container shows as unhealthy; missing or stale data never raises an alarm. HTTP and auto health

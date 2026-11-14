@@ -2612,3 +2612,48 @@ describe("container ops + networking", () => {
     });
   });
 });
+
+describe("extra resource limits (swap, cpu shares, cpuset, pids, shm)", () => {
+  const runLine = (s: string) => s.split("\n").find((l) => l.includes("docker run -d"))!;
+  const withLimits = (extra: Partial<AppSpec>) => runLine(buildRunScript({ ...base, ...extra }, "v1"));
+
+  it("defaults are byte-identical: unset, null and a memory/cpus-only spec emit no new flag", () => {
+    const plain = buildRunScript(base, "v1");
+    const nulls = buildRunScript({ ...base, memorySwapMb: null, pidsLimit: null, shmSizeMb: null, cpuShares: null, cpusetCpus: null }, "v1");
+    expect(nulls).toBe(plain);
+    expect(buildRunScript({ ...base, cpusetCpus: "" }, "v1")).toBe(plain);
+    expect(runLine(plain)).not.toMatch(/--memory-swap|--cpu-shares|--cpuset-cpus|--pids-limit|--shm-size/);
+    // the pre-existing pair stays contiguous and in its original place
+    expect(withLimits({ memoryMb: 256, cpus: 0.5 })).toContain("--log-opt max-file=3 --memory 256m --cpus 0.5 --network tugra-apps 'tugra_abc:v1'");
+  });
+
+  it("emits every flag, in a fixed order, right after --memory/--cpus", () => {
+    const l = withLimits({ memoryMb: 256, memorySwapMb: 512, cpus: 0.5, cpuShares: 512, cpusetCpus: "0-1,3", pidsLimit: 200, shmSizeMb: 128 });
+    expect(l).toContain("--memory 256m --memory-swap 512m --cpus 0.5 --cpu-shares 512 --cpuset-cpus '0-1,3' --pids-limit 200 --shm-size 128m --network tugra-apps 'tugra_abc:v1'");
+  });
+
+  it("-1 is unlimited for swap and pids (tested with != null, not truthiness)", () => {
+    const l = withLimits({ memoryMb: 256, memorySwapMb: -1, pidsLimit: -1 });
+    expect(l).toContain("--memory 256m --memory-swap -1 ");
+    expect(l).toContain("--pids-limit -1 ");
+  });
+
+  it("drops swap when there is no memory limit (Docker rejects --memory-swap alone)", () => {
+    expect(withLimits({ memorySwapMb: 512 })).not.toContain("--memory-swap");
+  });
+
+  it("drops out-of-range or malformed values instead of interpolating them", () => {
+    const l = withLimits({ memoryMb: 256, memorySwapMb: 8, pidsLimit: 0, shmSizeMb: 0, cpuShares: 1, cpusetCpus: "0-1; rm -rf /" });
+    expect(l).not.toMatch(/--memory-swap|--pids-limit|--shm-size|--cpu-shares|--cpuset-cpus|rm -rf/);
+  });
+
+  it("the cpuset is single-quoted", () => {
+    expect(withLimits({ cpusetCpus: "0,2" })).toContain("--cpuset-cpus '0,2'");
+  });
+
+  it("limit flags come before dockerOptions, so a raw flag the operator sets wins", () => {
+    const l = withLimits({ memoryMb: 256, shmSizeMb: 64, dockerOptions: "--shm-size 1g" });
+    expect(l.indexOf("--shm-size 64m")).toBeGreaterThan(-1);
+    expect(l.indexOf("--shm-size 64m")).toBeLessThan(l.indexOf("'--shm-size' '1g'"));
+  });
+});

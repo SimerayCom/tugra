@@ -444,6 +444,37 @@ describe("Applications / deploy (e2e)", () => {
     expect(sent).toContain("--health-cmd");
   });
 
+  it("extra limits: PUT/GET round-trip sets and clears each field, reaches the docker run line, and is refused for compose / swap without memory", async () => {
+    const created = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "xlimapp", serverId, image: "nginx:alpine", hostPort: 8147 })
+      .expect(201);
+    const lid = created.body.id;
+    const put = (body: Record<string, unknown>) => request(app.getHttpServer()).put(`/apps/${lid}/limits`).set("Authorization", `Bearer ${token}`).send(body);
+    const get = async () => (await request(app.getHttpServer()).get(`/apps/${lid}`).set("Authorization", `Bearer ${token}`).expect(200)).body;
+
+    await put({ memorySwapMb: 512 }).expect(400); // swap without a memory limit
+    await put({ memoryMb: 256, memorySwapMb: 128 }).expect(400); // swap below memory
+    await put({ pidsLimit: 0 }).expect(400);
+    await put({ memoryMb: 256, memorySwapMb: 512, pidsLimit: 100, shmSizeMb: 64, cpuShares: 512, cpusetCpus: "0-1" }).expect(200);
+    expect(await get()).toMatchObject({ memoryMb: 256, memorySwapMb: 512, pidsLimit: 100, shmSizeMb: 64, cpuShares: 512, cpusetCpus: "0-1" });
+    await put({ memoryMb: null }).expect(400); // would leave a stored swap without memory
+
+    commands.length = 0;
+    await request(app.getHttpServer()).post(`/apps/${lid}/deploy`).set("Authorization", `Bearer ${token}`).expect(200);
+    await waitForCommand(commands, "--memory-swap 512m");
+    const sent = commands.join("\n");
+    expect(sent).toContain("--cpu-shares 512 --cpuset-cpus '0-1' --pids-limit 100 --shm-size 64m");
+
+    await put({ memorySwapMb: null, pidsLimit: null, shmSizeMb: null, cpuShares: null, cpusetCpus: "" }).expect(200);
+    expect(await get()).toMatchObject({ memoryMb: 256, memorySwapMb: null, pidsLimit: null, shmSizeMb: null, cpuShares: null, cpusetCpus: null });
+
+    await prisma.application.update({ where: { id: lid }, data: { source: "COMPOSE" } });
+    await put({ pidsLimit: 10 }).expect(400); // a compose file owns these
+    await put({ pidsLimit: null }).expect(200); // clearing is always allowed
+  });
+
   it("edits the container port after create and re-emits it on the next deploy; rejects COMPOSE", async () => {
     const appRes = await request(app.getHttpServer())
       .post("/apps")

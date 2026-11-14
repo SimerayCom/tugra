@@ -108,6 +108,13 @@ export interface AppSpec {
    *  the classic single-container path (which has no reservation flag). See ServiceDeployOpts in service-script.ts. */
   reserveMemoryMb?: number | null;
   reserveCpus?: number | null;
+  /** Classic single-container extras (ignored by compose and swarm): `--memory-swap` MB (-1 = unlimited; only
+   *  emitted together with memoryMb), `--pids-limit` (-1 = unlimited), `--shm-size` MB, `--cpu-shares`, `--cpuset-cpus`. */
+  memorySwapMb?: number | null;
+  pidsLimit?: number | null;
+  shmSizeMb?: number | null;
+  cpuShares?: number | null;
+  cpusetCpus?: string | null;
   /** docker `--gpus` value (e.g. "all", "1", "device=0,1"); requires the NVIDIA container runtime on the host. */
   gpus?: string | null;
   /** Swarm service replica count (only meaningful when deployed to a cluster). null = classic single container. */
@@ -308,6 +315,9 @@ export interface AppConfigMount {
 export function containerName(app: { id: string }): string {
   return `tugra_${app.id}`;
 }
+
+/** docker --cpuset-cpus charset (indices / ranges); validated at the DTO and again here before it reaches bash. */
+const CPUSET_RE = /^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$/;
 
 /** Integer in [lo, hi] or null. Guards every numeric setting that is interpolated into a bash command. */
 const boundedInt = (v: number | null | undefined, lo: number, hi: number): number | null =>
@@ -1352,7 +1362,17 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
   // Optional resource limits + container health check.
   const limitArgs: string[] = [];
   if (app.memoryMb) limitArgs.push(`--memory ${app.memoryMb}m`);
+  // Swap needs a memory limit (Docker rejects --memory-swap alone). -1 is valid, so test != null, never truthiness.
+  const swap = app.memorySwapMb === -1 ? -1 : boundedInt(app.memorySwapMb, 16, 1048576);
+  if (app.memoryMb && swap != null) limitArgs.push(`--memory-swap ${swap === -1 ? "-1" : `${swap}m`}`);
   if (app.cpus) limitArgs.push(`--cpus ${app.cpus}`);
+  const shares = boundedInt(app.cpuShares, 2, 262144);
+  if (shares != null) limitArgs.push(`--cpu-shares ${shares}`);
+  if (app.cpusetCpus && CPUSET_RE.test(app.cpusetCpus)) limitArgs.push(`--cpuset-cpus ${shq(app.cpusetCpus)}`);
+  const pids = app.pidsLimit === -1 ? -1 : boundedInt(app.pidsLimit, 1, 4194304);
+  if (pids != null) limitArgs.push(`--pids-limit ${pids}`);
+  const shm = boundedInt(app.shmSizeMb, 1, 1048576);
+  if (shm != null) limitArgs.push(`--shm-size ${shm}m`);
   // GPU passthrough — the value is validated at the DTO (all | count | device=…) and shell-quoted here.
   if (app.gpus) limitArgs.push(`--gpus ${shq(app.gpus)}`);
   // Graceful-stop window baked into the container so a plain stop/restart/remove honours it. Bounded int.

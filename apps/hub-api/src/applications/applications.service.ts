@@ -133,7 +133,8 @@ import { appLinks, appUrl, primaryHostPort } from "../common/app-url";
 import { magicDomain } from "./magic-domain";
 import { inferComposeWeb } from "../deploy/compose-web";
 import { appIdOfContainer, liveContainerOf, reduceHealth, UNKNOWN_HEALTH, CONTAINER_STATE_MAX_AGE_MS, type AppContainerHealth } from "./container-health";
-import type { CreateAppInput, SetSourceInput, SetBuildInput, SetContainerCommandInput, AppRuntimeState } from "./dto";
+import { cpusetMax } from "./dto";
+import type { CreateAppInput, SetLimitsInput, SetSourceInput, SetBuildInput, SetContainerCommandInput, AppRuntimeState } from "./dto";
 
 const DEPLOY_TIMEOUT_MS = 300_000; // builds can be slow
 // stop/start/restart (non-swarm) run no build but a compose restart of several services with a stop grace
@@ -208,6 +209,11 @@ export const AppViewSchema = z.object({
   cpus: z.number().nullable(),
   reserveMemoryMb: z.number().nullable(),
   reserveCpus: z.number().nullable(),
+  memorySwapMb: z.number().int().nullable(),
+  pidsLimit: z.number().int().nullable(),
+  shmSizeMb: z.number().int().nullable(),
+  cpuShares: z.number().int().nullable(),
+  cpusetCpus: z.string().nullable(),
   gpus: z.string().nullable(),
   deployTimeoutSec: z.number().nullable(),
   dockerOptions: z.string().nullable(),
@@ -874,6 +880,11 @@ export class ApplicationsService {
           cpus: src.cpus,
           reserveMemoryMb: src.reserveMemoryMb,
           reserveCpus: src.reserveCpus,
+          memorySwapMb: src.memorySwapMb,
+          pidsLimit: src.pidsLimit,
+          shmSizeMb: src.shmSizeMb,
+          cpuShares: src.cpuShares,
+          cpusetCpus: src.cpusetCpus,
           gpus: src.gpus,
           deployTimeoutSec: src.deployTimeoutSec,
           preDeployCommand: src.preDeployCommand,
@@ -1335,6 +1346,11 @@ export class ApplicationsService {
           cpus: parent.cpus,
           reserveMemoryMb: parent.reserveMemoryMb,
           reserveCpus: parent.reserveCpus,
+          memorySwapMb: parent.memorySwapMb,
+          pidsLimit: parent.pidsLimit,
+          shmSizeMb: parent.shmSizeMb,
+          cpuShares: parent.cpuShares,
+          cpusetCpus: parent.cpusetCpus,
           gpus: parent.gpus,
           volumes: (parent.volumes ?? Prisma.JsonNull) as Prisma.InputJsonValue,
           gitTokenEnc: parent.gitTokenEnc,
@@ -3679,19 +3695,28 @@ export class ApplicationsService {
     return (soakRetries(soak) * (soak.intervalSec + probeSec) + 30) * 1000;
   }
 
-  async setLimits(
-    userId: string,
-    id: string,
-    limits: {
-      memoryMb?: number | null;
-      cpus?: number | null;
-      reserveMemoryMb?: number | null;
-      reserveCpus?: number | null;
-      gpus?: string | null;
-      deployTimeoutSec?: number | null;
-    },
-  ): Promise<void> {
-    await this.requireWrite(userId, id);
+  async setLimits(userId: string, id: string, limits: SetLimitsInput): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    const cpuset = limits.cpusetCpus === undefined ? undefined : limits.cpusetCpus || null; // "" (cleared) → null
+    const extraSet = [limits.memorySwapMb, limits.pidsLimit, limits.shmSizeMb, limits.cpuShares, cpuset].some((v) => v != null);
+    // These map to `docker run` flags on the classic single-container path only. Compose ignores them (it even
+    // ignores memoryMb) and a swarm service maps just memory/cpu/reserve, so a value there would be a silent no-op
+    // — refuse (clearing with null is always allowed).
+    if (extraSet && app.source === "COMPOSE") throw new BadRequestException("set these limits in the compose file instead");
+    if (extraSet && app.clusterId) throw new BadRequestException("swap, PID, shm, CPU weight and CPU pinning limits aren't supported for swarm apps");
+    // Validate the MERGED state: Docker rejects --memory-swap without --memory, and a swap below the memory limit.
+    const effMem = limits.memoryMb !== undefined ? limits.memoryMb : app.memoryMb;
+    const effSwap = limits.memorySwapMb !== undefined ? limits.memorySwapMb : app.memorySwapMb;
+    if (effSwap != null && effMem == null) throw new BadRequestException("a swap limit needs a memory limit (Docker rejects --memory-swap without --memory)");
+    if (effSwap != null && effSwap > 0 && effMem != null && effSwap < effMem) throw new BadRequestException("memory + swap must not be below the memory limit");
+    if (cpuset) {
+      const cores = (await this.prisma.server.findUnique({ where: { id: app.serverId }, select: { cpuCores: true } }))?.cpuCores ?? null;
+      // Unknown core count (agent hasn't reported): skip — Docker rejects an unavailable cpu at deploy instead.
+      if (cores != null) {
+        const max = cpusetMax(cpuset);
+        if (max >= cores) throw new BadRequestException(`cpu ${max} isn't available on this server (${cores} cores)`);
+      }
+    }
     await this.prisma.application.update({
       where: { id },
       data: {
@@ -3701,6 +3726,11 @@ export class ApplicationsService {
         ...(limits.cpus !== undefined ? { cpus: limits.cpus } : {}),
         ...(limits.reserveMemoryMb !== undefined ? { reserveMemoryMb: limits.reserveMemoryMb } : {}),
         ...(limits.reserveCpus !== undefined ? { reserveCpus: limits.reserveCpus } : {}),
+        ...(limits.memorySwapMb !== undefined ? { memorySwapMb: limits.memorySwapMb } : {}),
+        ...(limits.pidsLimit !== undefined ? { pidsLimit: limits.pidsLimit } : {}),
+        ...(limits.shmSizeMb !== undefined ? { shmSizeMb: limits.shmSizeMb } : {}),
+        ...(limits.cpuShares !== undefined ? { cpuShares: limits.cpuShares } : {}),
+        ...(cpuset !== undefined ? { cpusetCpus: cpuset } : {}),
         ...(limits.gpus !== undefined ? { gpus: limits.gpus || null } : {}), // "" (cleared) → null
         ...(limits.deployTimeoutSec !== undefined ? { deployTimeoutSec: limits.deployTimeoutSec } : {}),
       },
@@ -4697,6 +4727,11 @@ export class ApplicationsService {
       cpus: app.cpus,
       reserveMemoryMb: app.reserveMemoryMb,
       reserveCpus: app.reserveCpus,
+      // Classic docker-run flags only: compose ignores them and swarm doesn't map them, so a stale value left
+      // from before a move to compose/swarm can't leak into the spec (or a config snapshot).
+      ...(classic
+        ? { memorySwapMb: app.memorySwapMb, pidsLimit: app.pidsLimit, shmSizeMb: app.shmSizeMb, cpuShares: app.cpuShares, cpusetCpus: app.cpusetCpus }
+        : {}),
       gpus: app.gpus,
       postCutoverSoakSec: app.postCutoverSoakSec,
       replicas: app.replicas,
@@ -5015,6 +5050,11 @@ export class ApplicationsService {
       cpus: app.cpus,
       reserveMemoryMb: app.reserveMemoryMb,
       reserveCpus: app.reserveCpus,
+      memorySwapMb: app.memorySwapMb,
+      pidsLimit: app.pidsLimit,
+      shmSizeMb: app.shmSizeMb,
+      cpuShares: app.cpuShares,
+      cpusetCpus: app.cpusetCpus,
       gpus: app.gpus,
       deployTimeoutSec: app.deployTimeoutSec,
       dockerOptions: app.dockerOptions,

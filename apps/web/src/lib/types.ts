@@ -1267,6 +1267,11 @@ export interface Application {
   cpus: number | null;
   reserveMemoryMb: number | null;
   reserveCpus: number | null;
+  memorySwapMb: number | null;
+  pidsLimit: number | null;
+  shmSizeMb: number | null;
+  cpuShares: number | null;
+  cpusetCpus: string | null;
   gpus: string | null;
   deployTimeoutSec: number | null;
   dockerOptions: string | null;

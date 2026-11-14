@@ -291,7 +291,7 @@ export default function AppDetailPage() {
       <HealthCheckCard id={id} healthCheckType={appData.healthCheckType} healthCheckPath={appData.healthCheckPath} healthCheckPort={appData.healthCheckPort} healthCheckMethod={appData.healthCheckMethod} healthCheckScheme={appData.healthCheckScheme} healthCheckResponseText={appData.healthCheckResponseText} healthCmd={appData.healthCmd} timings={{ interval: appData.healthInterval, timeout: appData.healthTimeout, retries: appData.healthRetries, startPeriod: appData.healthStartPeriod, expectedStatus: appData.healthExpectedStatus }} />
     ),
     limits: () => (
-      <LimitsCard id={id} memoryMb={appData.memoryMb} cpus={appData.cpus} reserveMemoryMb={appData.reserveMemoryMb} reserveCpus={appData.reserveCpus} gpus={appData.gpus} deployTimeoutSec={appData.deployTimeoutSec} clusterId={appData.clusterId} />
+      <LimitsCard id={id} memoryMb={appData.memoryMb} cpus={appData.cpus} reserveMemoryMb={appData.reserveMemoryMb} reserveCpus={appData.reserveCpus} memorySwapMb={appData.memorySwapMb} pidsLimit={appData.pidsLimit} shmSizeMb={appData.shmSizeMb} cpuShares={appData.cpuShares} cpusetCpus={appData.cpusetCpus} gpus={appData.gpus} deployTimeoutSec={appData.deployTimeoutSec} clusterId={appData.clusterId} />
     ),
     scheduledTasks: () => <ScheduledTasksCard id={id} />,
     webhooks: () =>

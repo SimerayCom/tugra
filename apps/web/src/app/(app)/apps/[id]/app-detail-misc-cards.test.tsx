@@ -56,4 +56,9 @@ describe("AppOverview status stat", () => {
     wrap(<AppOverview app={mk({ source: "COMPOSE", containerHealth: { state: "none", checkType: "HTTP", containers: 2, observedAt: null } })} deployments={[]} />);
     expect(screen.getByText("Running (no healthcheck)")).toBeTruthy();
   });
+
+  it("lists swap and PID limits in the resources stat when set", () => {
+    wrap(<AppOverview app={mk({ memoryMb: 256, memorySwapMb: -1, pidsLimit: 100 })} deployments={[]} />);
+    expect(screen.getByText(/256 MB · unlimited swap · 100 PIDs max/)).toBeTruthy();
+  });
 });

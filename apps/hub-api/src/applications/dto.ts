@@ -260,6 +260,21 @@ export type SetDeploySettingsInput = z.infer<typeof SetDeploySettingsSchema>;
 // Conservative charset (validated here, shell-quoted at deploy) so it can never inject into `docker run`.
 const GPU_RE = /^(all|[1-9][0-9]*|device=[A-Za-z0-9,_.:-]+)$/;
 
+// docker --cpuset-cpus value: cpu indices / ranges ("0-3", "0,2", "0-1,4"). "" clears it. Charset-restricted here and
+// shell-quoted at deploy; range ordering is checked below.
+const CPUSET_RE = /^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$/;
+/** Highest cpu index named by a (regex-valid) cpuset, or -1 when a range is reversed. */
+export function cpusetMax(v: string): number {
+  let max = 0;
+  for (const part of v.split(",")) {
+    const [lo, hi] = part.split("-").map(Number);
+    const top = hi ?? lo;
+    if (top < lo) return -1;
+    max = Math.max(max, top);
+  }
+  return max;
+}
+
 export const SetLimitsSchema = z
   .object({
     memoryMb: z.number().int().min(16).max(1024 * 1024).nullable().optional(),
@@ -269,6 +284,14 @@ export const SetLimitsSchema = z
     reserveCpus: z.number().min(0.1).max(64).nullable().optional(),
     gpus: z.union([z.string().regex(GPU_RE), z.literal("")]).nullable().optional(),
     deployTimeoutSec: z.number().int().min(30).max(3600).nullable().optional(),
+    // Classic (Image/Git) apps only — the service refuses non-null values for compose/swarm apps.
+    // -1 = unlimited swap; otherwise total memory+swap in MB (>= memoryMb, checked against the stored value too).
+    memorySwapMb: z.union([z.literal(-1), z.number().int().min(16).max(1024 * 1024)]).nullable().optional(),
+    // -1 = unlimited; 0 is rejected (Docker treats it as "no limit" inconsistently).
+    pidsLimit: z.union([z.literal(-1), z.number().int().min(1).max(4194304)]).nullable().optional(),
+    shmSizeMb: z.number().int().min(1).max(1024 * 1024).nullable().optional(),
+    cpuShares: z.number().int().min(2).max(262144).nullable().optional(),
+    cpusetCpus: z.union([z.string().max(64).regex(CPUSET_RE), z.literal("")]).nullable().optional(),
   })
   // healthCmd moved to PUT /health-check; reject (not silently drop) a stale client still
   // sending it so a lost edit surfaces as an error instead of vanishing.
@@ -282,6 +305,15 @@ export const SetLimitsSchema = z
   .refine((v) => v.reserveCpus == null || v.cpus == null || v.reserveCpus <= v.cpus, {
     message: "reserveCpus must not exceed cpus",
     path: ["reserveCpus"],
+  })
+  // Same-payload checks only; the service re-validates against the stored values (authoritative).
+  .refine((v) => v.memorySwapMb == null || v.memorySwapMb === -1 || v.memoryMb == null || v.memorySwapMb >= v.memoryMb, {
+    message: "memorySwapMb must not be below memoryMb",
+    path: ["memorySwapMb"],
+  })
+  .refine((v) => !v.cpusetCpus || cpusetMax(v.cpusetCpus) >= 0, {
+    message: "cpusetCpus has a reversed range",
+    path: ["cpusetCpus"],
   });
 export type SetLimitsInput = z.infer<typeof SetLimitsSchema>;
 

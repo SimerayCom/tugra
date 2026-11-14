@@ -76,6 +76,20 @@ describe("buildConfigSnapshot", () => {
     expect(changes).toContainEqual(expect.objectContaining({ field: "containerAlias", after: "api" }));
   });
 
+  it("records the extra limits only when set; an old snapshot does not diff against an all-unset new one", () => {
+    const plain = buildConfigSnapshot(spec());
+    for (const k of ["memorySwapMb", "pidsLimit", "shmSizeMb", "cpuShares", "cpusetCpus"]) expect(plain).not.toHaveProperty(k);
+    expect(diffSnapshots(plain, buildConfigSnapshot(spec({ memorySwapMb: null, pidsLimit: null, shmSizeMb: null, cpuShares: null, cpusetCpus: "" })))).toEqual([]);
+    const set = buildConfigSnapshot(spec({ memorySwapMb: -1, pidsLimit: 100, shmSizeMb: 64, cpuShares: 512, cpusetCpus: "0-1" }));
+    expect(set).toMatchObject({ memorySwapMb: -1, pidsLimit: 100, shmSizeMb: 64, cpuShares: 512, cpusetCpus: "0-1" });
+    const changes = diffSnapshots(plain, set);
+    expect(changes).toContainEqual(expect.objectContaining({ field: "memorySwapMb", kind: "changed", before: "—", after: "-1" }));
+    expect(changes).toContainEqual(expect.objectContaining({ field: "cpusetCpus", before: "—", after: "0-1" }));
+    expect(diffSnapshots(set, buildConfigSnapshot(spec({ memorySwapMb: -1, pidsLimit: 200, shmSizeMb: 64, cpuShares: 512, cpusetCpus: "0-1" })))).toEqual([
+      expect.objectContaining({ field: "pidsLimit", before: "100", after: "200" }),
+    ]);
+  });
+
   it("restartPolicy: an old snapshot without snapV never diffs it; two v2 snapshots do", () => {
     const { snapV: _v, ...old } = buildConfigSnapshot(spec()); // a snapshot from before restartPolicy was recorded
     expect(old).not.toHaveProperty("snapV");

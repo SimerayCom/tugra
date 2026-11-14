@@ -6300,3 +6300,105 @@ describe("ApplicationsService container health (status honesty)", () => {
     expect(view.containerHealth).toMatchObject({ state: "unknown", containers: 0 });
   });
 });
+
+describe("ApplicationsService.setLimits — extra limits", () => {
+  const classic = { ...app, source: "IMAGE", clusterId: null, memoryMb: null, memorySwapMb: null };
+  const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+  const setup = (stored: Record<string, unknown> = {}, cpuCores: number | null = 8) => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...classic, ...stored }), update },
+      server: { findUnique: jest.fn().mockResolvedValue({ cpuCores }) },
+    } as unknown as PrismaService;
+    return { update, svc: make(prisma, access, {} as AgentWsServer) };
+  };
+
+  it("a classic app accepts all five and persists them (empty cpuset stored as null)", async () => {
+    const { svc, update } = setup();
+    await svc.setLimits("u1", "app1", { memoryMb: 256, memorySwapMb: 512, pidsLimit: 100, shmSizeMb: 64, cpuShares: 512, cpusetCpus: "0-3" });
+    expect(update.mock.calls[0][0].data).toEqual({ memoryMb: 256, memorySwapMb: 512, pidsLimit: 100, shmSizeMb: 64, cpuShares: 512, cpusetCpus: "0-3" });
+    await svc.setLimits("u1", "app1", { cpusetCpus: "" });
+    expect(update.mock.calls[1][0].data).toEqual({ cpusetCpus: null });
+  });
+
+  it("partial updates keep untouched fields (nothing nulled)", async () => {
+    const { svc, update } = setup();
+    await svc.setLimits("u1", "app1", { pidsLimit: 50 });
+    expect(update.mock.calls[0][0].data).toEqual({ pidsLimit: 50 });
+  });
+
+  it.each([["COMPOSE", {}], ["IMAGE", { clusterId: "c1" }]])("a %s/cluster app refuses non-null values with 400 but accepts null", async (source, extra) => {
+    const { svc, update } = setup({ source, ...extra });
+    await expect(svc.setLimits("u1", "app1", { pidsLimit: 10 })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.setLimits("u1", "app1", { cpusetCpus: "0" })).rejects.toBeInstanceOf(BadRequestException);
+    expect(update).not.toHaveBeenCalled();
+    await svc.setLimits("u1", "app1", { memorySwapMb: null, pidsLimit: null, shmSizeMb: null, cpuShares: null, cpusetCpus: null });
+    expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses swap without a memory limit: in the payload, against the stored value, and when memory is cleared later", async () => {
+    const a = setup();
+    await expect(a.svc.setLimits("u1", "app1", { memorySwapMb: 512 })).rejects.toThrow(/needs a memory limit/);
+    const b = setup({ memoryMb: 256 });
+    await b.svc.setLimits("u1", "app1", { memorySwapMb: 512 }); // stored memory satisfies it
+    expect(b.update).toHaveBeenCalledTimes(1);
+    const c = setup({ memoryMb: 256, memorySwapMb: 512 });
+    await expect(c.svc.setLimits("u1", "app1", { memoryMb: null })).rejects.toThrow(/needs a memory limit/);
+    expect(c.update).not.toHaveBeenCalled();
+  });
+
+  it("refuses a swap below the memory limit (stored or sent) but allows -1", async () => {
+    const a = setup({ memoryMb: 512 });
+    await expect(a.svc.setLimits("u1", "app1", { memorySwapMb: 256 })).rejects.toThrow(/below the memory limit/);
+    const b = setup({ memorySwapMb: 512, memoryMb: 512 });
+    await expect(b.svc.setLimits("u1", "app1", { memoryMb: 1024 })).rejects.toThrow(/below the memory limit/);
+    const c = setup({ memoryMb: 512 });
+    await c.svc.setLimits("u1", "app1", { memorySwapMb: -1 });
+    expect(c.update).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a cpuset index at or beyond the server's core count; an unknown core count skips the check", async () => {
+    const a = setup({}, 4);
+    await expect(a.svc.setLimits("u1", "app1", { cpusetCpus: "0-4" })).rejects.toThrow(/cpu 4 isn't available on this server \(4 cores\)/);
+    await a.svc.setLimits("u1", "app1", { cpusetCpus: "0-3" });
+    expect(a.update).toHaveBeenCalledTimes(1);
+    const b = setup({}, null);
+    await b.svc.setLimits("u1", "app1", { cpusetCpus: "0-63" });
+    expect(b.update).toHaveBeenCalledTimes(1);
+  });
+
+  it("toSpec carries the five for a classic app and masks them for compose and cluster", () => {
+    const svc = make({} as PrismaService, {}, {} as AgentWsServer);
+    const toSpec = (a: unknown) => (svc as unknown as { toSpec: (a: unknown) => Record<string, unknown> }).toSpec(a);
+    const five = { memorySwapMb: 512, pidsLimit: 100, shmSizeMb: 64, cpuShares: 512, cpusetCpus: "0-1" };
+    expect(toSpec({ ...classic, ...five })).toMatchObject(five);
+    for (const mask of [{ source: "COMPOSE" }, { clusterId: "c1" }]) {
+      const spec = toSpec({ ...classic, ...five, ...mask });
+      for (const k of Object.keys(five)) expect(spec[k]).toBeUndefined();
+    }
+  });
+
+  it("clone and preview copy all five limits", async () => {
+    const five = { memorySwapMb: 512, pidsLimit: 100, shmSizeMb: 64, cpuShares: 512, cpusetCpus: "0-1" };
+    const create = jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ ...data, id: "clone1", teamId: "t1", serverId: "s1", createdAt: new Date() }));
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...classic, ...five, id: "src1", name: "shop", isPreview: false, envEnc: null, volumes: null, tags: [], webhookToken: "t" }), findFirst: jest.fn().mockResolvedValue(null), create },
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1", certMode: "http", proxyBind: "public" }) },
+      appIcon: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
+      scheduledTask: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
+    } as unknown as PrismaService;
+    const svc = make(prisma, {}, {} as AgentWsServer);
+    await svc.clone("u1", "src1", {});
+    expect(create.mock.calls[0][0].data).toMatchObject(five);
+    jest.spyOn(svc as unknown as { submitDeploy: (...a: unknown[]) => Promise<unknown> }, "submitDeploy").mockResolvedValue(undefined);
+    const parent = { ...classic, ...five, source: "GIT", name: "web", environmentId: "e1", previewEnabled: true, domain: "app.example.com", envEnc: "{}", previewExcludeKeys: [] } as unknown as Parameters<typeof svc.upsertPreview>[0];
+    await svc.upsertPreview(parent, 7, "feature-7");
+    expect(create.mock.calls[1][0].data).toMatchObject(five);
+  });
+
+  it("view exposes the five limits", async () => {
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...classic, memorySwapMb: 512, pidsLimit: 100, shmSizeMb: 64, cpuShares: 512, cpusetCpus: "0-1", environmentId: null }) } } as unknown as PrismaService;
+    const v = await make(prisma, { membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()) } as unknown as TeamAccessService, {} as AgentWsServer).get("u1", "app1");
+    expect(v).toMatchObject({ memorySwapMb: 512, pidsLimit: 100, shmSizeMb: 64, cpuShares: 512, cpusetCpus: "0-1" });
+  });
+});

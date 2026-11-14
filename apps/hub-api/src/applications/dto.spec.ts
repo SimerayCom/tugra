@@ -247,6 +247,43 @@ describe("SetLimitsSchema — resource reservations", () => {
   });
 });
 
+describe("SetLimitsSchema — extra limits (swap, pids, shm, cpu shares, cpuset)", () => {
+  const ok = (v: unknown) => SetLimitsSchema.safeParse(v);
+
+  it("accepts -1 for swap and pids, valid cpusets, and clears with null or an empty cpuset", () => {
+    expect(ok({ memoryMb: 256, memorySwapMb: -1, pidsLimit: -1 }).success).toBe(true);
+    expect(ok({ memoryMb: 256, memorySwapMb: 512, pidsLimit: 100, shmSizeMb: 64, cpuShares: 2, cpusetCpus: "0-3,5" }).success).toBe(true);
+    expect(ok({ cpusetCpus: "2" }).success).toBe(true);
+    expect(ok({ memorySwapMb: null, pidsLimit: null, shmSizeMb: null, cpuShares: null, cpusetCpus: null }).success).toBe(true);
+    expect(ok({ cpusetCpus: "" }).success).toBe(true);
+  });
+
+  it("rejects out-of-range and malformed values", () => {
+    expect(ok({ pidsLimit: 0 }).success).toBe(false);
+    expect(ok({ pidsLimit: -2 }).success).toBe(false);
+    expect(ok({ memorySwapMb: 8 }).success).toBe(false);
+    expect(ok({ memorySwapMb: -2 }).success).toBe(false);
+    expect(ok({ shmSizeMb: 0 }).success).toBe(false);
+    expect(ok({ cpuShares: 1 }).success).toBe(false);
+    expect(ok({ cpuShares: 262145 }).success).toBe(false);
+    expect(ok({ cpusetCpus: "3-1" }).success).toBe(false); // reversed range
+    expect(ok({ cpusetCpus: "a" }).success).toBe(false);
+    expect(ok({ cpusetCpus: "0,1," }).success).toBe(false); // trailing comma
+    expect(ok({ cpusetCpus: "0;rm" }).success).toBe(false);
+    expect(ok({ cpusetCpus: Array.from({ length: 33 }, (_, i) => i).join(",") }).success).toBe(false); // > 64 chars
+  });
+
+  it("rejects a swap below the memory limit in the same payload (-1 is exempt)", () => {
+    expect(ok({ memoryMb: 512, memorySwapMb: 256 }).success).toBe(false);
+    expect(ok({ memoryMb: 512, memorySwapMb: 512 }).success).toBe(true);
+    expect(ok({ memoryMb: 512, memorySwapMb: -1 }).success).toBe(true);
+  });
+
+  it("stays strict (unknown keys are rejected)", () => {
+    expect(ok({ memoryMb: 256, memoryReservationMb: 128 }).success).toBe(false);
+  });
+});
+
 describe("SetSourceSchema — edit source after create", () => {
   it("accepts a git URL / branch / image and rejects bad shapes", () => {
     expect(SetSourceSchema.safeParse({ gitUrl: "https://github.com/acme/app.git", gitBranch: "main" }).success).toBe(true);

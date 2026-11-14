@@ -1192,6 +1192,11 @@ model Application {
   cpus                         Float?
   reserveMemoryMb              Int? // soft swarm scheduling hint (--reserve-memory); swarm-only, advisory
   reserveCpus                  Float? // soft swarm scheduling hint (--reserve-cpu); swarm-only, advisory
+  memorySwapMb                 Int? // docker --memory-swap (total memory+swap, MB); -1 = unlimited swap; needs memoryMb; classic apps only
+  pidsLimit                    Int? // docker --pids-limit; -1 = unlimited; classic apps only
+  shmSizeMb                    Int? // docker --shm-size (MB); classic apps only
+  cpuShares                    Int? // docker --cpu-shares (relative weight); classic apps only
+  cpusetCpus                   String? // docker --cpuset-cpus (e.g. "0-3" or "0,2"); classic apps only
   gpus                         String? // docker --gpus value (e.g. "all", "1", "device=0,1"); null = no GPU
   deployTimeoutSec             Int?
   preDeployCommand             String? // shell command run (in a one-shot container of the new image) before the swap — e.g. DB migrations
