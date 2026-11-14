@@ -41,7 +41,11 @@
     "DOWN": "Down",
     "QUEUED": "Queued",
     "SUCCESS": "Success",
-    "CANCELLED": "Cancelled"
+    "CANCELLED": "Cancelled",
+    "RUNNING_UNHEALTHY": "Running (unhealthy)",
+    "RUNNING_NO_HEALTHCHECK": "Running (no healthcheck)",
+    "STARTING": "Starting",
+    "DEPLOYING": "Deploying"
   },
   "noResults": "No results",
   "noResultsHint": "Nothing matches your search or filters.",

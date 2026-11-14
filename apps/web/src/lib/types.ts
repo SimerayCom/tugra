@@ -1199,6 +1199,13 @@ export interface AppConfigMount {
   content: string;
 }
 
+export interface AppContainerHealth {
+  state: "healthy" | "unhealthy" | "starting" | "none" | "unknown";
+  checkType: "CMD" | "HTTP" | "NONE";
+  containers: number;
+  observedAt: string | null;
+}
+
 export interface Application {
   id: string;
   name: string;
@@ -1302,6 +1309,8 @@ export interface Application {
   serverId: string;
   teamId: string;
   status: AppStatus;
+  /** Aggregated Docker container health from the hub's poll. `unknown` = no fresh data. */
+  containerHealth: AppContainerHealth;
   hostPort: number | null;
   containerPort: number | null;
   domain: string | null;

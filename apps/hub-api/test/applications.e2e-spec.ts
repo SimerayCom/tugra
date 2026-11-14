@@ -1213,6 +1213,48 @@ describe("Applications / deploy (e2e)", () => {
     await prisma.user.deleteMany({ where: { email: email3 } }).catch(() => undefined);
   });
 
+  it("status honesty: GET /apps/:id and GET /apps expose container health from fresh ContainerState rows only", async () => {
+    const appRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "healthapp", serverId, image: "nginx:alpine", hostPort: 8146 })
+      .expect(201);
+    const appId = appRes.body.id;
+    expect(appRes.body.containerHealth).toMatchObject({ state: "unknown", containers: 0 });
+    const row = { serverId, containerId: "c1", exitCode: 0, oomKilled: false, restartCount: 0 };
+    await prisma.containerState.createMany({
+      data: [
+        { ...row, containerName: `tugra_${appId}`, status: "running", health: "healthy" },
+        { ...row, containerName: `tugra_${appId}__rollout`, status: "running", health: "unhealthy" }, // not live: ignored
+        { ...row, containerName: "tugra_someotherapp", status: "running", health: "unhealthy" }, // another app: ignored
+      ],
+    });
+    const one = await request(app.getHttpServer()).get(`/apps/${appId}`).set("Authorization", `Bearer ${token}`).expect(200);
+    expect(one.body.containerHealth).toMatchObject({ state: "healthy", checkType: "NONE", containers: 1 });
+    const list = await request(app.getHttpServer()).get("/apps").set("Authorization", `Bearer ${token}`).expect(200);
+    expect(list.body.find((a: { id: string }) => a.id === appId).containerHealth.state).toBe("healthy");
+
+    // A crash-looping container no longer reads as plain running.
+    await prisma.containerState.update({ where: { serverId_containerName: { serverId, containerName: `tugra_${appId}` } }, data: { status: "restarting", health: null } });
+    const loop = await request(app.getHttpServer()).get(`/apps/${appId}`).set("Authorization", `Bearer ${token}`).expect(200);
+    expect(loop.body.containerHealth.state).toBe("unhealthy");
+
+    // Stale data (agent offline / lagging) never alarms: it reads unknown.
+    await prisma.$executeRaw`UPDATE "ContainerState" SET "updatedAt" = (now() at time zone 'utc') - interval '10 minutes' WHERE "serverId" = ${serverId}`;
+    const stale = await request(app.getHttpServer()).get(`/apps/${appId}`).set("Authorization", `Bearer ${token}`).expect(200);
+    expect(stale.body.containerHealth.state).toBe("unknown");
+
+    // Another team cannot read it.
+    const email4 = `app-h-${Date.now()}-${Math.floor(Math.random() * 1e6)}@tugra.test`;
+    const reg4 = await request(app.getHttpServer()).post("/auth/register").send({ email: email4, password, name: "Hout" }).expect(201);
+    const other = await request(app.getHttpServer()).get(`/apps/${appId}`).set("Authorization", `Bearer ${reg4.body.tokens.accessToken}`);
+    expect([403, 404]).toContain(other.status);
+    const m4 = await prisma.membership.findFirst({ where: { userId: reg4.body.user.id } });
+    await prisma.membership.deleteMany({ where: { userId: reg4.body.user.id } }).catch(() => undefined);
+    if (m4) await prisma.team.deleteMany({ where: { id: m4.teamId } }).catch(() => undefined);
+    await prisma.user.deleteMany({ where: { email: email4 } }).catch(() => undefined);
+  });
+
   it("returns 503 for container-log streaming when the agent is offline", async () => {
     const srv = await request(app.getHttpServer())
       .post("/servers")

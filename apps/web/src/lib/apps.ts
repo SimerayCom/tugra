@@ -1,4 +1,4 @@
-import type { AppStatus, DeploymentStatus } from "./types";
+import type { AppContainerHealth, AppStatus, DeploymentStatus } from "./types";
 import { hubPublicUrl } from "./api";
 
 export function appColor(s: AppStatus): string {
@@ -6,6 +6,18 @@ export function appColor(s: AppStatus): string {
   if (s === "FAILED") return "var(--c-r)";
   if (s === "STOPPED") return "var(--c-am)";
   return "var(--c-tx3)";
+}
+
+/** What to show for an app's status: the raw lifecycle status, refined by Docker container health when the app
+ *  is RUNNING. Returns a `common.status.*` key (render it with statusLabel) and a colour. Missing or `unknown`
+ *  health never alarms; an HTTP/CMD check with no Docker HEALTHCHECK is deploy-gated, so it reads plain Running. */
+export function appStatusDisplay(app: { status: AppStatus; containerHealth: AppContainerHealth; source: "IMAGE" | "GIT" | "COMPOSE" }): { key: string; color: string } {
+  if (app.status !== "RUNNING") return { key: app.status, color: appColor(app.status) };
+  const h = app.containerHealth;
+  if (h.state === "unhealthy") return { key: "RUNNING_UNHEALTHY", color: "var(--c-r)" };
+  if (h.state === "starting") return { key: "STARTING", color: "var(--c-am)" };
+  if (h.state === "none" && (app.source === "COMPOSE" || h.checkType === "NONE")) return { key: "RUNNING_NO_HEALTHCHECK", color: "var(--c-g)" };
+  return { key: "RUNNING", color: "var(--c-g)" };
 }
 
 export function deploymentColor(s: DeploymentStatus): string {

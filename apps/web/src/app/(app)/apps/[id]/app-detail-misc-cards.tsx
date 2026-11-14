@@ -12,7 +12,8 @@ import { Badge, Btn, Card, SectionCard, Spinner } from "../../../../components/u
 import { useUnsavedChanges } from "../../../../hooks/useUnsavedChanges";
 import { useT } from "../../../../i18n/provider";
 import { api, appIconUrl } from "../../../../lib/api";
-import { appColor, appSourceSummary, deploymentColor } from "../../../../lib/apps";
+import { appStatusDisplay, appSourceSummary, deploymentColor } from "../../../../lib/apps";
+import { statusLabel } from "../../../../lib/status";
 import { relativeTime } from "../../../../lib/fleet";
 import { safeExternalUrl } from "../../../../lib/external-link";
 import { cropToPngBase64 } from "../../../../lib/icon";
@@ -31,7 +32,7 @@ export function AppOverview({ app, deployments }: { app: Application; deployment
   if (app.memoryMb) resourceParts.push(`${app.memoryMb} MB`);
   if (app.cpus) resourceParts.push(`${app.cpus} CPU`);
   const stats: { label: string; node: ReactNode }[] = [
-    { label: t("apps.status"), node: <span style={{ color: appColor(app.status), fontWeight: 600 }}>{app.status}</span> },
+    { label: t("apps.status"), node: <span style={{ color: appStatusDisplay(app).color, fontWeight: 600 }}>{statusLabel(t, appStatusDisplay(app).key)}</span> },
     { label: t("apps.source"), node: <span className="mono">{appSourceSummary(app) || "—"}</span> },
     { label: t("apps.exposeTitle"), node: t(`apps.exposeMode_${app.exposeMode}`) },
     { label: t("apps.placementTitle"), node: app.clusterId ? t("apps.ovSwarm", { n: app.replicas ?? 1 }) : t("apps.ovSingleServer") },

@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import { I18nProvider } from "../../../../i18n/provider";
 import type { Application, AppLink } from "../../../../lib/types";
@@ -7,8 +8,9 @@ import { AppOverview } from "./app-detail-misc-cards";
 
 afterEach(cleanup);
 
+const health = { state: "healthy", checkType: "CMD", containers: 1, observedAt: null } as const;
 const app = (links: AppLink[], url: string | null) =>
-  ({ id: "a1", status: "RUNNING", source: "COMPOSE", exposeMode: "custom", clusterId: null, replicas: null, containerPort: null, memoryMb: null, cpus: null, canWrite: true, url, links }) as unknown as Application;
+  ({ id: "a1", status: "RUNNING", containerHealth: health, source: "COMPOSE", exposeMode: "custom", clusterId: null, replicas: null, containerPort: null, memoryMb: null, cpus: null, canWrite: true, url, links }) as unknown as Application;
 const show = (a: Application) => render(<I18nProvider><AppOverview app={a} deployments={[]} /></I18nProvider>);
 
 describe("AppOverview — Live URL row", () => {
@@ -31,5 +33,27 @@ describe("AppOverview — Live URL row", () => {
   it("says the app is not exposed when there are no links", () => {
     show(app([], null));
     expect(screen.queryAllByRole("link")).toHaveLength(0);
+  });
+});
+
+describe("AppOverview status stat", () => {
+  const wrap = (ui: React.ReactElement) =>
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <I18nProvider>{ui}</I18nProvider>
+      </QueryClientProvider>,
+    );
+  const mk = (over: Partial<Application>): Application =>
+    ({ id: "a1", name: "web", source: "IMAGE", image: "nginx", gitBranch: null, status: "RUNNING", containerHealth: health, exposeMode: "none", clusterId: null, replicas: 1, containerPort: 80, envCount: 0, links: [], url: null, ...over }) as unknown as Application;
+
+  it("renders the localised health-aware label, never the raw enum", () => {
+    wrap(<AppOverview app={mk({ containerHealth: { state: "unhealthy", checkType: "CMD", containers: 1, observedAt: null } })} deployments={[]} />);
+    expect(screen.getByText("Running (unhealthy)")).toBeTruthy();
+    expect(screen.queryByText("RUNNING")).toBeNull();
+  });
+
+  it("a RUNNING compose app with no Docker healthcheck reads 'Running (no healthcheck)'", () => {
+    wrap(<AppOverview app={mk({ source: "COMPOSE", containerHealth: { state: "none", checkType: "HTTP", containers: 2, observedAt: null } })} deployments={[]} />);
+    expect(screen.getByText("Running (no healthcheck)")).toBeTruthy();
   });
 });

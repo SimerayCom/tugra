@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { appColor, appSourceSummary, appUrl, deploymentColor, shortDigest, webhookUrl } from "./apps";
+import { appColor, appStatusDisplay, appSourceSummary, appUrl, deploymentColor, shortDigest, webhookUrl } from "./apps";
 
 describe("app helpers", () => {
   it("maps app status to a color", () => {
@@ -36,5 +36,33 @@ describe("app helpers", () => {
   it("shortens a pinned image digest ref for display", () => {
     expect(shortDigest("nginx@sha256:abc123def4567890")).toBe("sha256:abc123def4…");
     expect(shortDigest("no-digest-here")).toBe("no-digest-here"); // graceful passthrough
+  });
+});
+
+describe("appStatusDisplay", () => {
+  const h = (state: "healthy" | "unhealthy" | "starting" | "none" | "unknown", checkType: "CMD" | "HTTP" | "NONE" = "NONE") => ({ state, checkType, containers: 1, observedAt: null });
+  const d = (status: "NEW" | "RUNNING" | "STOPPED" | "FAILED", containerHealth: ReturnType<typeof h>, source: "IMAGE" | "GIT" | "COMPOSE" = "IMAGE") => appStatusDisplay({ status, containerHealth, source });
+
+  it("passes a non-running status through unchanged, whatever the health", () => {
+    expect(d("FAILED", h("healthy"))).toEqual({ key: "FAILED", color: appColor("FAILED") });
+    expect(d("STOPPED", h("unhealthy"))).toEqual({ key: "STOPPED", color: appColor("STOPPED") });
+    expect(d("NEW", h("unknown"))).toEqual({ key: "NEW", color: appColor("NEW") });
+  });
+
+  it("refines RUNNING by container health", () => {
+    expect(d("RUNNING", h("unhealthy", "CMD"))).toEqual({ key: "RUNNING_UNHEALTHY", color: "var(--c-r)" });
+    expect(d("RUNNING", h("starting", "CMD"))).toEqual({ key: "STARTING", color: "var(--c-am)" });
+    expect(d("RUNNING", h("healthy", "CMD"))).toEqual({ key: "RUNNING", color: "var(--c-g)" });
+  });
+
+  it("none: no-healthcheck for compose or checkType NONE; HTTP/CMD-gated apps read plain Running", () => {
+    expect(d("RUNNING", h("none", "NONE")).key).toBe("RUNNING_NO_HEALTHCHECK");
+    expect(d("RUNNING", h("none", "HTTP"), "COMPOSE").key).toBe("RUNNING_NO_HEALTHCHECK");
+    expect(d("RUNNING", h("none", "HTTP")).key).toBe("RUNNING");
+    expect(d("RUNNING", h("none", "CMD")).key).toBe("RUNNING");
+  });
+
+  it("never alarms on missing data", () => {
+    expect(d("RUNNING", h("unknown", "CMD"))).toEqual({ key: "RUNNING", color: "var(--c-g)" });
   });
 });

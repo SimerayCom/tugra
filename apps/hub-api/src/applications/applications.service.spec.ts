@@ -4587,6 +4587,12 @@ describe("ApplicationsService.clone", () => {
     return { prisma, create };
   };
 
+  it("emits unknown container health for a fresh clone (no containers yet)", async () => {
+    const { prisma } = clonePrisma();
+    const res = await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", {});
+    expect(res.app.containerHealth).toMatchObject({ state: "unknown", containers: 0, observedAt: null });
+  });
+
   it("copies config + secrets verbatim, resets domain/cert/webhook/host-port, leaves status NEW", async () => {
     const { prisma, create } = clonePrisma();
     const res = await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", {});
@@ -6228,5 +6234,69 @@ describe("ApplicationsService — container ops + networking", () => {
       const data = create.mock.calls[0][0].data;
       expect(data).toMatchObject({ stopGracePeriodSec: 30, drainSec: 4, restartMaxRetries: 2, networks: ["a"], containerAlias: null });
     });
+  });
+});
+
+describe("ApplicationsService container health (status honesty)", () => {
+  const happ = { ...app, id: "a1", clusterId: null, environmentId: null, domain: null, healthCmd: null, healthCheckType: null };
+  const access = () => ({ membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()), accessByTeam: jest.fn().mockResolvedValue(new Map([["t1", { role: Role.OWNER, restrictedAccess: false, accessedProjects: [], accessedResources: [] }]])) }) as unknown as TeamAccessService;
+  const fresh = () => new Date();
+
+  it("get() maps health from the app's own ContainerState rows (worst-of, rollout excluded by the filter)", async () => {
+    const findMany = jest.fn().mockResolvedValue([
+      { status: "running", health: "healthy", updatedAt: fresh() },
+      { status: "running", health: "unhealthy", updatedAt: fresh() },
+    ]);
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(happ) }, containerState: { findMany } } as unknown as PrismaService;
+    const view = await make(prisma, access(), {} as AgentWsServer).get("u1", "a1");
+    expect(view.containerHealth).toMatchObject({ state: "unhealthy", checkType: "NONE", containers: 2 });
+    const where = findMany.mock.calls[0][0].where;
+    expect(where.serverId).toEqual({ in: ["s1"] });
+    expect(JSON.stringify(where.OR)).not.toContain("__rollout"); // the not-yet-live rollout container never drives health
+    expect(findMany.mock.calls[0][0].select).toEqual({ status: true, health: true, updatedAt: true }); // derived enum only
+  });
+
+  it("get() resolves the check type from the deploy config (HTTP when a domain is set)", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...happ, domain: "a.example.com" }) },
+      containerState: { findMany: jest.fn().mockResolvedValue([{ status: "running", health: null, updatedAt: fresh() }]) },
+    } as unknown as PrismaService;
+    const view = await make(prisma, access(), {} as AgentWsServer).get("u1", "a1");
+    expect(view.containerHealth).toMatchObject({ state: "none", checkType: "HTTP" });
+  });
+
+  it("list() over N apps issues exactly one containerState query and buckets rows by app and server", async () => {
+    const findMany = jest.fn().mockResolvedValue([
+      { serverId: "s1", containerName: "tugra_a1", status: "running", health: "healthy", updatedAt: fresh() },
+      { serverId: "s1", containerName: "tugra_a2", status: "restarting", health: null, updatedAt: fresh() },
+      { serverId: "s1", containerName: "tugra_a2__rollout", status: "running", health: "healthy", updatedAt: fresh() },
+      { serverId: "s9", containerName: "tugra_a3", status: "running", health: "unhealthy", updatedAt: fresh() }, // another server: not a3's
+      { serverId: "s1", containerName: "tugra_db_x", status: "running", health: "unhealthy", updatedAt: fresh() },
+    ]);
+    const apps = [happ, { ...happ, id: "a2" }, { ...happ, id: "a3" }, { ...happ, id: "a4" }];
+    const prisma = { application: { findMany: jest.fn().mockResolvedValue(apps) }, containerState: { findMany } } as unknown as PrismaService;
+    const out = await make(prisma, access(), {} as AgentWsServer).list("u1");
+    expect(findMany).toHaveBeenCalledTimes(1);
+    const by = Object.fromEntries(out.map((v) => [v.id, v.containerHealth.state]));
+    expect(by).toEqual({ a1: "healthy", a2: "unhealthy", a3: "unknown", a4: "unknown" });
+  });
+
+  it("a rejected health lookup still returns the views, with unknown health", async () => {
+    const prisma = {
+      application: { findMany: jest.fn().mockResolvedValue([happ]), findUnique: jest.fn().mockResolvedValue(happ) },
+      containerState: { findMany: jest.fn().mockRejectedValue(new Error("db down")) },
+    } as unknown as PrismaService;
+    const svc = make(prisma, access(), {} as AgentWsServer);
+    expect((await svc.list("u1"))[0].containerHealth.state).toBe("unknown");
+    expect((await svc.get("u1", "a1")).containerHealth.state).toBe("unknown");
+  });
+
+  it("create() emits unknown health (no containers yet)", async () => {
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) },
+      application: { create: jest.fn().mockResolvedValue({ ...happ, source: "IMAGE" }) },
+    } as unknown as PrismaService;
+    const view = await make(prisma, access(), {} as AgentWsServer).create("u1", { name: "web", serverId: "s1", image: "nginx" });
+    expect(view.containerHealth).toMatchObject({ state: "unknown", containers: 0 });
   });
 });

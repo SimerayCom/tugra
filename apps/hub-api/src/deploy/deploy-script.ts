@@ -1603,8 +1603,12 @@ export function soakRetries(s: SoakWindow): number {
  * container name over tugra-proxy, or a host-port app via localhost on the host network;
  * with neither reachable it degrades to a liveness wait.
  */
+export function resolveHealthCheckType(a: Pick<AppSpec, "healthCheckType" | "healthCmd" | "domain">): "CMD" | "HTTP" | "NONE" {
+  return (a.healthCheckType ?? (a.healthCmd ? "CMD" : a.domain ? "HTTP" : "NONE")) as "CMD" | "HTTP" | "NONE";
+}
+
 export function resolveHealthProbe(app: AppSpec): HealthProbe {
-  const type = app.healthCheckType ?? (app.healthCmd ? "CMD" : app.domain ? "HTTP" : "NONE");
+  const type = resolveHealthCheckType(app);
   if (type === "CMD") return { kind: "native" };
   if (type === "HTTP") {
     const path = app.healthCheckPath || "/";

@@ -77,6 +77,7 @@ import {
   containerName,
   appVolumeName,
   hasNetworkOpt,
+  resolveHealthCheckType,
   internalHostFor,
   tokenizeDockerOptions,
   type AppSpec,
@@ -131,6 +132,7 @@ import { normalizeTags } from "../common/tags";
 import { appLinks, appUrl, primaryHostPort } from "../common/app-url";
 import { magicDomain } from "./magic-domain";
 import { inferComposeWeb } from "../deploy/compose-web";
+import { appIdOfContainer, liveContainerOf, reduceHealth, UNKNOWN_HEALTH, CONTAINER_STATE_MAX_AGE_MS, type AppContainerHealth } from "./container-health";
 import type { CreateAppInput, SetSourceInput, SetBuildInput, SetContainerCommandInput, AppRuntimeState } from "./dto";
 
 const DEPLOY_TIMEOUT_MS = 300_000; // builds can be slow
@@ -157,6 +159,8 @@ export const AppLinkSchema = z.object({
 /** Per-call extras `view()` can fold in when the caller already loaded them (list/get batch the service-domain read). */
 interface ViewExtras {
   serviceDomains?: { service: string; hostname: string; port: number }[];
+  /** Aggregated container health (list/get batch the ContainerState read); absent = `unknown`. */
+  health?: AppContainerHealth;
 }
 
 export const AppViewSchema = z.object({
@@ -254,6 +258,13 @@ export const AppViewSchema = z.object({
   serverId: z.string(),
   teamId: z.string(),
   status: z.nativeEnum(AppStatus),
+  // Aggregated Docker container health (from the container-health poll). `unknown` = no fresh data (never alarms).
+  containerHealth: z.object({
+    state: z.enum(["healthy", "unhealthy", "starting", "none", "unknown"]),
+    checkType: z.enum(["CMD", "HTTP", "NONE"]),
+    containers: z.number().int(),
+    observedAt: z.string().nullable(),
+  }),
   hostPort: z.number().nullable(),
   containerPort: z.number().nullable(),
   extraPorts: z.array(z.object({ hostPort: z.number(), containerPort: z.number(), protocol: z.enum(["tcp", "udp"]) })),
@@ -1147,12 +1158,13 @@ export class ApplicationsService {
     });
     const ctxByEnv = await loadProjectCtxMany(this.prisma, apps.map((a) => a.environmentId));
     const ipByServer = await this.serverIpMap(apps.map((a) => a.serverId));
+    const healthById = await this.loadHealthMany(apps);
     // Per-resource scoping: a restricted member only sees apps in projects they're granted.
     const visible = apps.filter((a) => canAccessResource(access.get(a.teamId), a.id, ctxByEnv.get(a.environmentId)?.projectId ?? null));
     // Per-service domains feed the `links` field: one batched read for the visible compose apps, none otherwise.
     const domainsByApp = await this.loadServiceDomainsMany(visible.filter((a) => a.source === "COMPOSE").map((a) => a.id));
     const views = visible.map((a) =>
-      this.view(a, perms.get(a.teamId)?.has("apps:config") ?? false, perms.get(a.teamId)?.has("apps:deploy") ?? false, ctxByEnv.get(a.environmentId), ipByServer.get(a.serverId) ?? null, { serviceDomains: domainsByApp.get(a.id) ?? [] }),
+      this.view(a, perms.get(a.teamId)?.has("apps:config") ?? false, perms.get(a.teamId)?.has("apps:deploy") ?? false, ctxByEnv.get(a.environmentId), ipByServer.get(a.serverId) ?? null, { serviceDomains: domainsByApp.get(a.id) ?? [], health: healthById.get(a.id) }),
     );
     // `?q`: in-memory substring filter over non-secret fields of the already-authorized views.
     return filterByQuery(views, q, (a) => [a.name, a.domain, a.image, a.gitUrl, a.templateSlug]);
@@ -1165,7 +1177,7 @@ export class ApplicationsService {
     // Per-service domains are non-secret routing facts every viewer sees as links; reading them is not write-gated
     // (only the dedicated service-domains endpoint is). Only a compose app can have any.
     const serviceDomains = app.source === "COMPOSE" ? await this.loadServiceDomains(app.id) : [];
-    return this.view(app, perms?.has("apps:config") ?? false, perms?.has("apps:deploy") ?? false, ctx, await this.serverIp(app.serverId), { serviceDomains });
+    return this.view(app, perms?.has("apps:config") ?? false, perms?.has("apps:deploy") ?? false, ctx, await this.serverIp(app.serverId), { serviceDomains, health: await this.loadHealth(app) });
   }
 
   async deploy(userId: string, id: string, opts?: { noCache?: boolean }, idempotencyKey?: string) {
@@ -1377,8 +1389,9 @@ export class ApplicationsService {
       orderBy: { createdAt: "desc" },
     });
     const ipByServer = await this.serverIpMap(previews.map((p) => p.serverId));
+    const healthById = await this.loadHealthMany(previews);
     return previews.map((p) =>
-      this.view(p, parentPerms?.has("apps:config") ?? false, parentPerms?.has("apps:deploy") ?? false, undefined, ipByServer.get(p.serverId) ?? null),
+      this.view(p, parentPerms?.has("apps:config") ?? false, parentPerms?.has("apps:deploy") ?? false, undefined, ipByServer.get(p.serverId) ?? null, { health: healthById.get(p.id) }),
     );
   }
 
@@ -3020,13 +3033,7 @@ export class ApplicationsService {
     // whose id merely starts with this one's from leaking in; swarm task containers carry a `.` suffix.
     // The `__rollout` candidate is the rolling-deploy's not-yet-live container — its crash/OOM is exactly
     // the "why did my new version fail to come up" case, so match it too (exact, so still sibling-safe).
-    const prefix = composeProject(app);
-    const nameMatch = [
-      { containerName: prefix },
-      { containerName: `${prefix}__rollout` },
-      { containerName: { startsWith: `${prefix}-` } },
-      ...(app.clusterId ? [{ containerName: { startsWith: `${prefix}.` } }] : []),
-    ];
+    const nameMatch = this.containerNameFilter(app, { withRollout: true });
     const canLog = includeLog && ((await this.access.membershipPermissions(userId, app.teamId))?.has("apps:config") ?? false);
 
     const [states, events] = await Promise.all([
@@ -4205,7 +4212,7 @@ export class ApplicationsService {
     const ctx = await loadProjectCtx(this.prisma, app.environmentId);
     // Reflect a cleared custom cert in the returned view (data.certPem is nulled when it was dropped).
     const certCleared = data.certPem === null ? { certPem: null, certKeyEnc: null, certDomains: [], certNotAfter: null } : {};
-    return this.view({ ...app, ...e, ...certCleared }, perms?.has("apps:config") ?? false, perms?.has("apps:deploy") ?? false, ctx, server.publicIp ?? server.publicIpv6 ?? null);
+    return this.view({ ...app, ...e, ...certCleared }, perms?.has("apps:config") ?? false, perms?.has("apps:deploy") ?? false, ctx, server.publicIp ?? server.publicIpv6 ?? null, { health: await this.loadHealth(app) });
   }
 
   async setDomainOptions(
@@ -4852,6 +4859,76 @@ export class ApplicationsService {
     });
   }
 
+  /** The airtight container-name match for one app (shared by the runtime view and the health loader so the
+   *  prefix rules cannot drift). `withRollout` adds the rolling deploy's not-yet-live `__rollout` container. */
+  private containerNameFilter(app: Pick<Application, "id" | "clusterId">, opts: { withRollout: boolean }) {
+    const prefix = composeProject(app);
+    return [
+      { containerName: prefix },
+      ...(opts.withRollout ? [{ containerName: `${prefix}__rollout` }] : []),
+      { containerName: { startsWith: `${prefix}-` } },
+      ...(app.clusterId ? [{ containerName: { startsWith: `${prefix}.` } }] : []),
+    ];
+  }
+
+  /** Aggregated container health for one app, from the container-health poll's ContainerState rows (DB only).
+   *  Best-effort: a lookup failure yields `unknown`, never a failed view. */
+  private async loadHealth(app: Application): Promise<AppContainerHealth> {
+    const checkType = resolveHealthCheckType(app);
+    try {
+      const serverIds = app.clusterId
+        ? (await this.prisma.server.findMany({ where: { clusterId: app.clusterId }, select: { id: true } })).map((s) => s.id)
+        : [app.serverId];
+      const rows = await this.prisma.containerState.findMany({
+        where: { serverId: { in: serverIds }, OR: this.containerNameFilter(app, { withRollout: false }) },
+        select: { status: true, health: true, updatedAt: true },
+      });
+      return reduceHealth(rows, checkType, Date.now());
+    } catch {
+      return UNKNOWN_HEALTH(checkType);
+    }
+  }
+
+  /** Batched health for list views: one ContainerState query for every app (no N+1) plus one server lookup only
+   *  when a clustered app is present. Same best-effort contract as `loadHealth`. */
+  private async loadHealthMany(apps: Application[]): Promise<Map<string, AppContainerHealth>> {
+    const out = new Map<string, AppContainerHealth>();
+    for (const a of apps) out.set(a.id, UNKNOWN_HEALTH(resolveHealthCheckType(a)));
+    if (!apps.length) return out;
+    try {
+      const clusterIds = [...new Set(apps.map((a) => a.clusterId).filter((c): c is string => !!c))];
+      const clusterServers = clusterIds.length
+        ? await this.prisma.server.findMany({ where: { clusterId: { in: clusterIds } }, select: { id: true, clusterId: true } })
+        : [];
+      const serversOf = (a: Application): Set<string> =>
+        a.clusterId ? new Set(clusterServers.filter((s) => s.clusterId === a.clusterId).map((s) => s.id)) : new Set([a.serverId]);
+      const allServers = new Set<string>();
+      for (const a of apps) for (const id of serversOf(a)) allServers.add(id);
+      const rows = await this.prisma.containerState.findMany({
+        where: {
+          serverId: { in: [...allServers] },
+          containerName: { startsWith: "tugra_" },
+          updatedAt: { gte: new Date(Date.now() - CONTAINER_STATE_MAX_AGE_MS) },
+        },
+        select: { serverId: true, containerName: true, status: true, health: true, updatedAt: true },
+      });
+      const byApp = new Map<string, typeof rows>();
+      for (const r of rows) {
+        const id = appIdOfContainer(r.containerName);
+        if (id) byApp.set(id, [...(byApp.get(id) ?? []), r]);
+      }
+      const now = Date.now();
+      for (const a of apps) {
+        const servers = serversOf(a);
+        const mine = (byApp.get(a.id) ?? []).filter((r) => servers.has(r.serverId) && liveContainerOf(a.id, !!a.clusterId, r.containerName));
+        out.set(a.id, reduceHealth(mine, resolveHealthCheckType(a), now));
+      }
+    } catch {
+      /* best-effort: keep the `unknown` defaults */
+    }
+    return out;
+  }
+
   /** Best reachable IP for one server (IPv4 preferred), or null. Best-effort:
    *  a DB blip just yields null (a domainless app's url falls back to null), never
    *  breaking the view. */
@@ -4990,6 +5067,7 @@ export class ApplicationsService {
       serverId: app.serverId,
       teamId: app.teamId,
       status: app.status,
+      containerHealth: extras?.health ?? UNKNOWN_HEALTH(resolveHealthCheckType(app)),
       hostPort: app.hostPort,
       containerPort: app.containerPort,
       extraPorts: parseExtraPorts(app.extraPorts),

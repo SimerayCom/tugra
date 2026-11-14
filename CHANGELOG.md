@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Honest app status.** The app header, list and Overview now read from the container-health poll: Running,
+  Running (unhealthy), Running (no healthcheck) or Starting, instead of the lifecycle status alone. A
+  crash-looping container shows as unhealthy; missing or stale data never raises an alarm. HTTP and auto health
+  checks still gate deploys only, so an app that relies on one reads plain Running. The app API gains
+  `containerHealth`.
+
 - **Per-app container operations and networking.** Set a graceful stop window (`--stop-timeout`, also used by
   deploy swaps, Stop and Restart), a drain pause for zero-downtime deploys (both versions keep serving for N
   seconds before the old one stops), a cap on `on-failure` restart retries, a stable container name that

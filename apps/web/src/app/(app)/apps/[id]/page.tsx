@@ -4,7 +4,8 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, appIconUrl } from "../../../../lib/api";
-import { appColor, appSourceSummary, webhookUrl } from "../../../../lib/apps";
+import { appStatusDisplay, appSourceSummary, webhookUrl } from "../../../../lib/apps";
+import { statusLabel } from "../../../../lib/status";
 import { useDeployLogStream } from "../../../../hooks/useDeployLogStream";
 import { type ChartEvent } from "../../../../components/charts";
 import { ConfigMountsCard } from "../../../../components/config-mounts-card";
@@ -222,7 +223,8 @@ export default function AppDetailPage() {
   const onDeploy = (opts?: { noCache?: boolean }) => guardLeave(() => { setOptimisticDeploy(true); deploy.mutate(opts); setTab("logs"); });
   const deployingNow = deploy.isPending || optimisticDeploy;
   const isRunning = appData.status === "RUNNING";
-  const headerStatus = deployingNow && appData.status !== "RUNNING" ? { label: "DEPLOYING", color: "var(--c-am)" } : { label: appData.status, color: appColor(appData.status) };
+  const statusDisplay = appStatusDisplay(appData);
+  const headerStatus = deployingNow && appData.status !== "RUNNING" ? { label: statusLabel(t, "DEPLOYING"), color: "var(--c-am)" } : { label: statusLabel(t, statusDisplay.key), color: statusDisplay.color };
   const primary: "deploy" | "restart" | "start" = appData.status === "RUNNING" ? "restart" : appData.status === "STOPPED" ? "start" : "deploy";
 
   // Configuration tab is a Coolify-style left sub-nav: group gating lives in config-groups.ts,

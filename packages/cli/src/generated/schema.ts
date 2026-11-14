@@ -11895,6 +11895,14 @@ export interface operations {
                         teamId: string;
                         /** @enum {string} */
                         status: "NEW" | "RUNNING" | "STOPPED" | "FAILED";
+                        containerHealth: {
+                            /** @enum {string} */
+                            state: "healthy" | "unhealthy" | "starting" | "none" | "unknown";
+                            /** @enum {string} */
+                            checkType: "CMD" | "HTTP" | "NONE";
+                            containers: number;
+                            observedAt: string | null;
+                        };
                         hostPort: number | null;
                         containerPort: number | null;
                         extraPorts: {
@@ -12207,6 +12215,14 @@ export interface operations {
                         teamId: string;
                         /** @enum {string} */
                         status: "NEW" | "RUNNING" | "STOPPED" | "FAILED";
+                        containerHealth: {
+                            /** @enum {string} */
+                            state: "healthy" | "unhealthy" | "starting" | "none" | "unknown";
+                            /** @enum {string} */
+                            checkType: "CMD" | "HTTP" | "NONE";
+                            containers: number;
+                            observedAt: string | null;
+                        };
                         hostPort: number | null;
                         containerPort: number | null;
                         extraPorts: {
@@ -12630,6 +12646,14 @@ export interface operations {
                         teamId: string;
                         /** @enum {string} */
                         status: "NEW" | "RUNNING" | "STOPPED" | "FAILED";
+                        containerHealth: {
+                            /** @enum {string} */
+                            state: "healthy" | "unhealthy" | "starting" | "none" | "unknown";
+                            /** @enum {string} */
+                            checkType: "CMD" | "HTTP" | "NONE";
+                            containers: number;
+                            observedAt: string | null;
+                        };
                         hostPort: number | null;
                         containerPort: number | null;
                         extraPorts: {
@@ -13008,6 +13032,14 @@ export interface operations {
                         teamId: string;
                         /** @enum {string} */
                         status: "NEW" | "RUNNING" | "STOPPED" | "FAILED";
+                        containerHealth: {
+                            /** @enum {string} */
+                            state: "healthy" | "unhealthy" | "starting" | "none" | "unknown";
+                            /** @enum {string} */
+                            checkType: "CMD" | "HTTP" | "NONE";
+                            containers: number;
+                            observedAt: string | null;
+                        };
                         hostPort: number | null;
                         containerPort: number | null;
                         extraPorts: {
@@ -18904,6 +18936,14 @@ export interface operations {
                             teamId: string;
                             /** @enum {string} */
                             status: "NEW" | "RUNNING" | "STOPPED" | "FAILED";
+                            containerHealth: {
+                                /** @enum {string} */
+                                state: "healthy" | "unhealthy" | "starting" | "none" | "unknown";
+                                /** @enum {string} */
+                                checkType: "CMD" | "HTTP" | "NONE";
+                                containers: number;
+                                observedAt: string | null;
+                            };
                             hostPort: number | null;
                             containerPort: number | null;
                             extraPorts: {
@@ -19211,6 +19251,14 @@ export interface operations {
                         teamId: string;
                         /** @enum {string} */
                         status: "NEW" | "RUNNING" | "STOPPED" | "FAILED";
+                        containerHealth: {
+                            /** @enum {string} */
+                            state: "healthy" | "unhealthy" | "starting" | "none" | "unknown";
+                            /** @enum {string} */
+                            checkType: "CMD" | "HTTP" | "NONE";
+                            containers: number;
+                            observedAt: string | null;
+                        };
                         hostPort: number | null;
                         containerPort: number | null;
                         extraPorts: {
@@ -19587,6 +19635,14 @@ export interface operations {
                         teamId: string;
                         /** @enum {string} */
                         status: "NEW" | "RUNNING" | "STOPPED" | "FAILED";
+                        containerHealth: {
+                            /** @enum {string} */
+                            state: "healthy" | "unhealthy" | "starting" | "none" | "unknown";
+                            /** @enum {string} */
+                            checkType: "CMD" | "HTTP" | "NONE";
+                            containers: number;
+                            observedAt: string | null;
+                        };
                         hostPort: number | null;
                         containerPort: number | null;
                         extraPorts: {
@@ -20021,6 +20077,14 @@ export interface operations {
                         teamId: string;
                         /** @enum {string} */
                         status: "NEW" | "RUNNING" | "STOPPED" | "FAILED";
+                        containerHealth: {
+                            /** @enum {string} */
+                            state: "healthy" | "unhealthy" | "starting" | "none" | "unknown";
+                            /** @enum {string} */
+                            checkType: "CMD" | "HTTP" | "NONE";
+                            containers: number;
+                            observedAt: string | null;
+                        };
                         hostPort: number | null;
                         containerPort: number | null;
                         extraPorts: {
@@ -21276,6 +21340,14 @@ export interface operations {
                         teamId: string;
                         /** @enum {string} */
                         status: "NEW" | "RUNNING" | "STOPPED" | "FAILED";
+                        containerHealth: {
+                            /** @enum {string} */
+                            state: "healthy" | "unhealthy" | "starting" | "none" | "unknown";
+                            /** @enum {string} */
+                            checkType: "CMD" | "HTTP" | "NONE";
+                            containers: number;
+                            observedAt: string | null;
+                        };
                         hostPort: number | null;
                         containerPort: number | null;
                         extraPorts: {

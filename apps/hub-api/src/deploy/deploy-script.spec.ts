@@ -26,6 +26,7 @@ import {
   buildHealthGateFragment,
   buildSoakWatchFragment,
   resolveHealthProbe,
+  resolveHealthCheckType,
   resolveHealthGate,
   resolveSoak,
   soakRetries,
@@ -659,6 +660,17 @@ describe("deploy-script", () => {
       });
       expect(s).toContain("docker inspect --format '{{json .State.Health.Status}}' tugra_abc__rollout");
       expect(s).toContain("--health-cmd 'curl -f http://localhost/ || exit 1'"); // container carries the health-cmd
+    });
+
+    it("resolveHealthCheckType truth table (explicit type wins; else healthCmd -> CMD, domain -> HTTP, else NONE)", () => {
+      expect(resolveHealthCheckType({})).toBe("NONE");
+      expect(resolveHealthCheckType({ healthCmd: "x" })).toBe("CMD");
+      expect(resolveHealthCheckType({ domain: "a.com" })).toBe("HTTP");
+      expect(resolveHealthCheckType({ healthCmd: "x", domain: "a.com" })).toBe("CMD");
+      expect(resolveHealthCheckType({ healthCheckType: "NONE", healthCmd: "x", domain: "a.com" })).toBe("NONE");
+      expect(resolveHealthCheckType({ healthCheckType: "HTTP", healthCmd: "x" })).toBe("HTTP");
+      expect(resolveHealthCheckType({ healthCheckType: "CMD" })).toBe("CMD");
+      expect(resolveHealthCheckType({ healthCheckType: null, healthCmd: null, domain: null })).toBe("NONE");
     });
 
     it("resolveHealthProbe auto (type unset): healthCmd→native, domain→httpExternal, else stableWait", () => {

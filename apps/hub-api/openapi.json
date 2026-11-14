@@ -11642,6 +11642,43 @@
                           "FAILED"
                         ]
                       },
+                      "containerHealth": {
+                        "type": "object",
+                        "properties": {
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "healthy",
+                              "unhealthy",
+                              "starting",
+                              "none",
+                              "unknown"
+                            ]
+                          },
+                          "checkType": {
+                            "type": "string",
+                            "enum": [
+                              "CMD",
+                              "HTTP",
+                              "NONE"
+                            ]
+                          },
+                          "containers": {
+                            "type": "integer"
+                          },
+                          "observedAt": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "state",
+                          "checkType",
+                          "containers",
+                          "observedAt"
+                        ],
+                        "additionalProperties": false
+                      },
                       "hostPort": {
                         "type": "number",
                         "nullable": true
@@ -12052,6 +12089,7 @@
                       "serverId",
                       "teamId",
                       "status",
+                      "containerHealth",
                       "hostPort",
                       "containerPort",
                       "extraPorts",
@@ -12864,6 +12902,43 @@
                         "FAILED"
                       ]
                     },
+                    "containerHealth": {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "healthy",
+                            "unhealthy",
+                            "starting",
+                            "none",
+                            "unknown"
+                          ]
+                        },
+                        "checkType": {
+                          "type": "string",
+                          "enum": [
+                            "CMD",
+                            "HTTP",
+                            "NONE"
+                          ]
+                        },
+                        "containers": {
+                          "type": "integer"
+                        },
+                        "observedAt": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "checkType",
+                        "containers",
+                        "observedAt"
+                      ],
+                      "additionalProperties": false
+                    },
                     "hostPort": {
                       "type": "number",
                       "nullable": true
@@ -13274,6 +13349,7 @@
                     "serverId",
                     "teamId",
                     "status",
+                    "containerHealth",
                     "hostPort",
                     "containerPort",
                     "extraPorts",
@@ -14153,6 +14229,43 @@
                         "FAILED"
                       ]
                     },
+                    "containerHealth": {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "healthy",
+                            "unhealthy",
+                            "starting",
+                            "none",
+                            "unknown"
+                          ]
+                        },
+                        "checkType": {
+                          "type": "string",
+                          "enum": [
+                            "CMD",
+                            "HTTP",
+                            "NONE"
+                          ]
+                        },
+                        "containers": {
+                          "type": "integer"
+                        },
+                        "observedAt": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "checkType",
+                        "containers",
+                        "observedAt"
+                      ],
+                      "additionalProperties": false
+                    },
                     "hostPort": {
                       "type": "number",
                       "nullable": true
@@ -14563,6 +14676,7 @@
                     "serverId",
                     "teamId",
                     "status",
+                    "containerHealth",
                     "hostPort",
                     "containerPort",
                     "extraPorts",
@@ -15446,6 +15560,43 @@
                         "FAILED"
                       ]
                     },
+                    "containerHealth": {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "healthy",
+                            "unhealthy",
+                            "starting",
+                            "none",
+                            "unknown"
+                          ]
+                        },
+                        "checkType": {
+                          "type": "string",
+                          "enum": [
+                            "CMD",
+                            "HTTP",
+                            "NONE"
+                          ]
+                        },
+                        "containers": {
+                          "type": "integer"
+                        },
+                        "observedAt": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "checkType",
+                        "containers",
+                        "observedAt"
+                      ],
+                      "additionalProperties": false
+                    },
                     "hostPort": {
                       "type": "number",
                       "nullable": true
@@ -15856,6 +16007,7 @@
                     "serverId",
                     "teamId",
                     "status",
+                    "containerHealth",
                     "hostPort",
                     "containerPort",
                     "extraPorts",
@@ -24961,6 +25113,43 @@
                             "FAILED"
                           ]
                         },
+                        "containerHealth": {
+                          "type": "object",
+                          "properties": {
+                            "state": {
+                              "type": "string",
+                              "enum": [
+                                "healthy",
+                                "unhealthy",
+                                "starting",
+                                "none",
+                                "unknown"
+                              ]
+                            },
+                            "checkType": {
+                              "type": "string",
+                              "enum": [
+                                "CMD",
+                                "HTTP",
+                                "NONE"
+                              ]
+                            },
+                            "containers": {
+                              "type": "integer"
+                            },
+                            "observedAt": {
+                              "type": "string",
+                              "nullable": true
+                            }
+                          },
+                          "required": [
+                            "state",
+                            "checkType",
+                            "containers",
+                            "observedAt"
+                          ],
+                          "additionalProperties": false
+                        },
                         "hostPort": {
                           "type": "number",
                           "nullable": true
@@ -25371,6 +25560,7 @@
                         "serverId",
                         "teamId",
                         "status",
+                        "containerHealth",
                         "hostPort",
                         "containerPort",
                         "extraPorts",
@@ -26113,6 +26303,43 @@
                         "FAILED"
                       ]
                     },
+                    "containerHealth": {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "healthy",
+                            "unhealthy",
+                            "starting",
+                            "none",
+                            "unknown"
+                          ]
+                        },
+                        "checkType": {
+                          "type": "string",
+                          "enum": [
+                            "CMD",
+                            "HTTP",
+                            "NONE"
+                          ]
+                        },
+                        "containers": {
+                          "type": "integer"
+                        },
+                        "observedAt": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "checkType",
+                        "containers",
+                        "observedAt"
+                      ],
+                      "additionalProperties": false
+                    },
                     "hostPort": {
                       "type": "number",
                       "nullable": true
@@ -26523,6 +26750,7 @@
                     "serverId",
                     "teamId",
                     "status",
+                    "containerHealth",
                     "hostPort",
                     "containerPort",
                     "extraPorts",
@@ -27335,6 +27563,43 @@
                           "FAILED"
                         ]
                       },
+                      "containerHealth": {
+                        "type": "object",
+                        "properties": {
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "healthy",
+                              "unhealthy",
+                              "starting",
+                              "none",
+                              "unknown"
+                            ]
+                          },
+                          "checkType": {
+                            "type": "string",
+                            "enum": [
+                              "CMD",
+                              "HTTP",
+                              "NONE"
+                            ]
+                          },
+                          "containers": {
+                            "type": "integer"
+                          },
+                          "observedAt": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "state",
+                          "checkType",
+                          "containers",
+                          "observedAt"
+                        ],
+                        "additionalProperties": false
+                      },
                       "hostPort": {
                         "type": "number",
                         "nullable": true
@@ -27745,6 +28010,7 @@
                       "serverId",
                       "teamId",
                       "status",
+                      "containerHealth",
                       "hostPort",
                       "containerPort",
                       "extraPorts",
@@ -28642,6 +28908,43 @@
                         "FAILED"
                       ]
                     },
+                    "containerHealth": {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "healthy",
+                            "unhealthy",
+                            "starting",
+                            "none",
+                            "unknown"
+                          ]
+                        },
+                        "checkType": {
+                          "type": "string",
+                          "enum": [
+                            "CMD",
+                            "HTTP",
+                            "NONE"
+                          ]
+                        },
+                        "containers": {
+                          "type": "integer"
+                        },
+                        "observedAt": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "checkType",
+                        "containers",
+                        "observedAt"
+                      ],
+                      "additionalProperties": false
+                    },
                     "hostPort": {
                       "type": "number",
                       "nullable": true
@@ -29052,6 +29355,7 @@
                     "serverId",
                     "teamId",
                     "status",
+                    "containerHealth",
                     "hostPort",
                     "containerPort",
                     "extraPorts",
@@ -31192,6 +31496,43 @@
                         "FAILED"
                       ]
                     },
+                    "containerHealth": {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "healthy",
+                            "unhealthy",
+                            "starting",
+                            "none",
+                            "unknown"
+                          ]
+                        },
+                        "checkType": {
+                          "type": "string",
+                          "enum": [
+                            "CMD",
+                            "HTTP",
+                            "NONE"
+                          ]
+                        },
+                        "containers": {
+                          "type": "integer"
+                        },
+                        "observedAt": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "checkType",
+                        "containers",
+                        "observedAt"
+                      ],
+                      "additionalProperties": false
+                    },
                     "hostPort": {
                       "type": "number",
                       "nullable": true
@@ -31602,6 +31943,7 @@
                     "serverId",
                     "teamId",
                     "status",
+                    "containerHealth",
                     "hostPort",
                     "containerPort",
                     "extraPorts",

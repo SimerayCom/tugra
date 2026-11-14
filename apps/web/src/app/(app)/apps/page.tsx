@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Box, SearchX } from "lucide-react";
 import { api, appIconUrl } from "../../../lib/api";
-import { appColor, appSourceSummary } from "../../../lib/apps";
+import { appStatusDisplay, appSourceSummary } from "../../../lib/apps";
 import { useT } from "../../../i18n/provider";
 import { Btn, EmptyState, LinkBtn, StatusPill } from "../../../components/ui";
 import { ListCard, ListRow } from "../../../components/list";
@@ -72,7 +72,7 @@ export default function AppsPage() {
                     {a.projectName} / {a.environmentName}
                   </span>
                 )}
-                <StatusPill label={statusLabel(t, a.status)} color={appColor(a.status)} />
+                <StatusPill label={statusLabel(t, appStatusDisplay(a).key)} color={appStatusDisplay(a).color} />
               </ListRow>
             ))}
             {visibleApps.length === 0 &&
