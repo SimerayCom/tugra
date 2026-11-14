@@ -443,6 +443,10 @@ case "$1" in
   version) echo 27.0.0; exit 0 ;;
   volume) echo "$SHIM_VOLUMES"; exit 0 ;;
   inspect) echo "$SHIM_INSPECT"; exit 0 ;;
+  rm) exit 0 ;;
+  ps) # plain docker ps (the compose branch handles 'docker compose ps'): an unmanaged agent exists only without the label filter
+      case "$*" in *tugra-agent-1*) case "$*" in *label=*) : ;; *) [ -n "$SHIM_UNMANAGED_AGENT" ] && echo stalecid ;; esac ;; esac
+      exit 0 ;;
   compose)
     shift
     while [ $# -gt 0 ]; do case "$1" in --profile|--env-file|-f) shift 2 ;; *) break ;; esac; done
@@ -505,6 +509,22 @@ exit 0
     };
     const HTTP = ["--hub-url", "http://10.0.0.5:3000", "--web-url", "http://10.0.0.5:3001"];
     const readEnv = (p: string) => parseEnv(readFileSync(p, "utf8"));
+
+    describe("compose take-over of a self-updated agent", () => {
+      it("removes a tugra-agent-1 container that exists WITHOUT compose labels before `compose up`, and leaves a managed one alone", () => {
+        const p = join(work, "stale-agent.env"); reset();
+        const r = install(p, HTTP, { env: { SHIM_UNMANAGED_AGENT: "1" } });
+        expect(r.code).toBe(0);
+        expect(r.out).toContain("exists outside docker compose");
+        expect(calls()).toMatch(/docker rm -f tugra-agent-1/);
+        // the removal happens BEFORE compose up, so compose can create the managed container on the same volume
+        const log = calls();
+        expect(log.indexOf("docker rm -f tugra-agent-1")).toBeLessThan(log.indexOf("up -d"));
+        const q = join(work, "managed-agent.env"); reset();
+        install(q, HTTP, {});
+        expect(calls()).not.toMatch(/docker rm -f/);
+      });
+    });
 
     describe("health check (H3)", () => {
       it("exits 1 and never claims 'up' when the hub never becomes healthy", () => {

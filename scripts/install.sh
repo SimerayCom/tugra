@@ -734,20 +734,48 @@ fi
 # on an UNPINNED install falls back to building this checkout. Any other failure (rate limit, network, auth),
 # or any pinned TUGRA_VERSION, stops here — it must never silently turn into un-released checkout code.
 pull_image_missing() { grep -qiE 'manifest unknown|not found|no matching manifest|manifest for .* not found' "$LOGDIR/pull.log" 2>/dev/null; }
+
+# A container that compose will (re)create but that exists WITHOUT compose labels cannot be adopted: `compose up`
+# aborts half-way ("container name already in use") and leaves the stack partly recreated — hub/postgres/redis
+# created but never started. The agent self-update recreates itself with a plain `docker run` (not compose), so a
+# server that ever clicked "Update agent" hits exactly this on its next installer run. The agent's identity and
+# journal live in the tugra-agent-data volume, so removing the stale container is safe; compose then creates the
+# managed one on the same volume.
+reclaim_unmanaged_containers() {
+  local svc name all managed
+  for svc in agent; do
+    name="tugra-${svc}-1"
+    all="$(docker ps -a -q --filter "name=^/${name}\$" 2>/dev/null || true)"
+    [ -n "$all" ] || continue
+    managed="$(docker ps -a -q --filter "name=^/${name}\$" --filter "label=com.docker.compose.project" 2>/dev/null || true)"
+    [ -z "$managed" ] || continue
+    note "Container $name exists outside docker compose (an agent self-update recreated it) — removing it so compose can take over; its data stays in the tugra-agent-data volume."
+    docker rm -f "$name" >/dev/null 2>&1 || warn "could not remove $name — if 'compose up' fails with a name conflict, remove it by hand and re-run."
+  done
+}
+# Called by every `compose up` branch below. On a failure the stack may be PARTLY recreated: say so instead of exiting silently.
+compose_up() {
+  reclaim_unmanaged_containers
+  if ! compose up -d "$@"; then
+    err "docker compose up failed — the stack may be partly recreated (some containers 'Created' but not started)."
+    err "Fix the cause above, then run: docker compose --env-file $ENV_FILE -f $COMPOSE_FILE up -d"
+    exit 1
+  fi
+}
 if [ "$FORCE_BUILD" -eq 1 ]; then
-  log "Building images from source…"; compose up -d --build
+  log "Building images from source…"; compose_up --build
 elif [ "$FORCE_PULL" -eq 1 ]; then
   compose pull || abort_untouched "Could not pull the published images (--pull)."
-  compose up -d --no-build
+  compose_up --no-build
 elif compose pull >"$LOGDIR/pull.log" 2>&1; then
-  log "Using published images."; compose up -d --no-build
+  log "Using published images."; compose_up --no-build
 elif [ -z "$(env_get TUGRA_VERSION)" ] && pull_image_missing && [ -f "$REPO_DIR/deploy/Dockerfile.hub" ]; then
   # No published image for this arch/tag (see $LOGDIR/pull.log). Build from this checkout. This is a full pnpm +
   # Next build and can take several minutes (and wants ~2 GB free RAM); it is NOT a hang.
   note "No published image available (see $LOGDIR/pull.log) — building from source instead."
   drop_digest_pins
   log "Building images from this checkout (several minutes; needs ~2 GB RAM)…"
-  compose up -d --build
+  compose_up --build
 else
   err "Could not pull the published images:"
   tail -n 5 "$LOGDIR/pull.log" >&2 2>/dev/null || true
