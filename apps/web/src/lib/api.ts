@@ -278,12 +278,13 @@ export async function apiFetch<T>(
 
 // ── typed endpoints ────────────────────────────────────────────────
 
-/** `?range=&teamId=&domain=&limit=` for the /traffic endpoints; unset/empty params are omitted. */
-function trafficQuery(p: { range?: string; teamId?: string | null; domain?: string | null; limit?: number }): string {
+/** `?range=&teamId=&domain=&appId=&limit=` for the /traffic endpoints; unset/empty params are omitted. */
+function trafficQuery(p: { range?: string; teamId?: string | null; domain?: string | null; appId?: string | null; limit?: number }): string {
   const q = new URLSearchParams();
   if (p.range) q.set("range", p.range);
   if (p.teamId) q.set("teamId", p.teamId);
   if (p.domain) q.set("domain", p.domain);
+  if (p.appId) q.set("appId", p.appId);
   if (p.limit) q.set("limit", String(p.limit));
   const s = q.toString();
   return s ? `?${s}` : "";
@@ -653,16 +654,16 @@ export const api = {
     return apiFetch<AppContainerMetrics>(`/databases/${id}/metrics/containers?range=${range}`);
   },
   // Traffic Analytics (read-level): team-scoped aggregates of the proxy access log.
-  getTrafficSummary(p: { range?: MetricsRange; teamId?: string | null; domain?: string | null } = {}) {
+  getTrafficSummary(p: { range?: MetricsRange; teamId?: string | null; domain?: string | null; appId?: string | null } = {}) {
     return apiFetch<TrafficSummary>(`/traffic/summary${trafficQuery(p)}`);
   },
-  getTrafficPaths(p: { range?: MetricsRange; teamId?: string | null; domain?: string | null; limit?: number } = {}) {
+  getTrafficPaths(p: { range?: MetricsRange; teamId?: string | null; domain?: string | null; appId?: string | null; limit?: number } = {}) {
     return apiFetch<TrafficPaths>(`/traffic/paths${trafficQuery(p)}`);
   },
-  getTrafficCountries(p: { range?: MetricsRange; teamId?: string | null; domain?: string | null; limit?: number } = {}) {
+  getTrafficCountries(p: { range?: MetricsRange; teamId?: string | null; domain?: string | null; appId?: string | null; limit?: number } = {}) {
     return apiFetch<TrafficCountries>(`/traffic/countries${trafficQuery(p)}`);
   },
-  getTrafficBreakdown(dim: TrafficBreakdownDim, p: { range?: MetricsRange; teamId?: string | null; domain?: string | null; limit?: number } = {}) {
+  getTrafficBreakdown(dim: TrafficBreakdownDim, p: { range?: MetricsRange; teamId?: string | null; domain?: string | null; appId?: string | null; limit?: number } = {}) {
     const q = trafficQuery(p);
     return apiFetch<TrafficBreakdown>(`/traffic/breakdown${q ? `${q}&` : "?"}dim=${encodeURIComponent(dim)}`);
   },

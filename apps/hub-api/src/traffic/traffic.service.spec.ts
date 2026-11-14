@@ -1,4 +1,4 @@
-import { TrafficService, p95FromHistogram } from "./traffic.service";
+import { TrafficService, hostFilter, p95FromHistogram } from "./traffic.service";
 import { addString, estimate, mergeInto, newSketch } from "./hll";
 
 const NOW = Date.UTC(2026, 10, 9, 12, 30, 0);
@@ -37,7 +37,7 @@ const breakdownRows = [
   { serverId: "other-team", domain: "secret.com", bucket: new Date(NOW - 60_000), dim: "browser", key: "SecretBrowser", requests: 500 },
 ];
 const inScope = (r: any, where: any) =>
-  where.serverId.in.includes(r.serverId) && r.bucket >= where.bucket.gte && (!where.domain || r.domain === where.domain);
+  where.serverId.in.includes(r.serverId) && r.bucket >= where.bucket.gte && (!where.domain || (typeof where.domain === "string" ? r.domain === where.domain : where.domain.in.includes(r.domain)));
 
 // honours where (bucket gte/lt, id gt) / orderBy id / take, like Prisma
 const uniqueFindMany = (uniqueRows: any[]) => {
@@ -444,6 +444,27 @@ describe("TrafficService", () => {
       expect(Math.abs(host.totals.uniqueVisitors - 150)).toBeLessThanOrEqual(4);
     });
 
+    it("a multi-host filter merges sketches across the hosts (union, not sum) and the cache key differs per host set", async () => {
+      const rows = [
+        uRow("a", "mine", "a.com", m1, ipsOf(0, 100)),
+        uRow("b", "mine", "z.com", m1, ipsOf(50, 150)), // overlaps 50..99
+        uRow("c", "mine", "other.com", m1, ipsOf(1000, 1500)), // not in the set
+      ];
+      const { svc, prisma } = make([], [], rows);
+      const both = await svc.summary(["mine"], "1h", ["A.com:443", "z.com"]);
+      expect(Math.abs(both.totals.uniqueVisitors - 150)).toBeLessThanOrEqual(4); // union of a+z, never 100+100, never other.com
+      const sql = prisma.$queryRaw.mock.calls[0][0];
+      expect(sql.sql).toContain(`"domain" IN (`);
+      expect(sql.values).toEqual(expect.arrayContaining(["a.com", "z.com"]));
+      // same server scope, range and window but a different host set must NOT reuse the cached merge
+      const one = await svc.summary(["mine"], "1h", ["a.com"]);
+      expect(Math.abs(one.totals.uniqueVisitors - 100)).toBeLessThanOrEqual(3);
+      // the same set in another order IS the same key (one read)
+      const reads = prisma.trafficUnique.findMany.mock.calls.length;
+      await svc.summary(["mine"], "1h", ["z.com", "a.com"]);
+      expect(prisma.trafficUnique.findMany.mock.calls.length).toBe(reads);
+    });
+
     it("7d/30d read the hourly rollup table (not the minute table); <= 24h read the minute table", async () => {
       const hour = Math.floor((NOW - 3 * 3_600_000) / 3_600_000) * 3_600_000;
       const hourRows = [uRow("a", "mine", "a.com", hour, ipsOf(0, 60)), uRow("b", "mine", "z.com", hour, ipsOf(30, 90))]; // two hosts, same hour
@@ -527,5 +548,34 @@ describe("TrafficService", () => {
       mergeInto(a, b);
       expect(estimate(a)).toBe(15);
     });
+  });
+});
+
+describe("hostFilter", () => {
+  it("normalises, dedupes and drops unusable hosts; empty means no filter", () => {
+    expect(hostFilter(undefined)).toEqual([]);
+    expect(hostFilter("")).toEqual([]);
+    expect(hostFilter("A.com:443")).toEqual(["a.com"]);
+    expect(hostFilter(["a.com", "A.COM", "b.com.", "", "  "])).toEqual(["a.com", "b.com"]);
+    expect(hostFilter([])).toEqual([]);
+  });
+  it("caps the number of hosts", () => {
+    expect(hostFilter(Array.from({ length: 300 }, (_, i) => `h${i}.com`))).toHaveLength(100);
+  });
+});
+
+describe("TrafficService multi-host reads", () => {
+  beforeEach(() => jest.spyOn(Date, "now").mockReturnValue(NOW));
+  afterEach(() => jest.restoreAllMocks());
+
+  it("paths/countries/breakdown filter by a host set and a single host keeps plain equality", async () => {
+    const { svc, prisma } = make();
+    const countries = await svc.countries(["mine"], "24h", ["a.com", "z.com"]);
+    expect(prisma.trafficCountry.groupBy.mock.calls[0][0].where.domain).toEqual({ in: ["a.com", "z.com"] });
+    expect(countries.countries.find((c) => c.country === "US")?.requests).toBe(20); // z.com included
+    await svc.paths(["mine"], "24h", ["a.com"]);
+    expect(prisma.trafficPath.groupBy.mock.calls[0][0].where.domain).toBe("a.com");
+    await svc.breakdown(["mine"], "browser", "24h", ["z.com", "a.com"]);
+    expect(prisma.trafficBreakdown.groupBy.mock.calls[0][0].where.domain).toEqual({ in: ["z.com", "a.com"] });
   });
 });

@@ -40,6 +40,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   compose app, published compose ports) get a "Links (n)" menu that opens each one in a new tab, visible to every
   viewer; the Overview's Live URL row lists them all. Apps and `GET /apps` responses gain a `links` array (primary
   first); per-service domains are included on `GET /apps` and `GET /apps/:id` only.
+- **Analytics tab on every app.** The same visitor analytics as the Traffic page (requests, status classes,
+  bandwidth, latency, unique visitors, countries, paths, browsers), scoped to the app's own primary, alias and
+  per-service domains, with a domain picker and clear empty states (no domain, analytics off on the server, no data
+  yet). `GET /traffic/*` gains an `appId` filter that needs access to that app and can only narrow, never widen,
+  what a caller sees. A clustered app shows traffic recorded on its own server only.
 
 ## [0.1.0-beta.12] - 2026-11-14
 

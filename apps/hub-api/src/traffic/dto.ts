@@ -3,10 +3,13 @@ import { z } from "zod";
 const RANGES = ["1h", "6h", "24h", "7d", "30d"] as const;
 
 // Shared query shape: unknown/missing range falls back to the service default; domain is a free-form host.
+// `appId` narrows to one app's own hosts (primary, aliases, per-service domains) and needs access to that app;
+// combined with `domain` it can only narrow further within the app's hosts.
 export const TrafficQuerySchema = z.object({
   range: z.enum(RANGES).optional(),
   teamId: z.string().min(1).max(64).optional(),
   domain: z.string().min(1).max(253).optional(),
+  appId: z.string().min(1).max(64).optional(),
 });
 export type TrafficQuery = z.infer<typeof TrafficQuerySchema>;
 

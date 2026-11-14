@@ -88,6 +88,29 @@ export interface TrafficSummary {
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
+/** Prisma `domain` predicate for a host set: nothing for no filter, plain equality for one host (the common case). */
+function domainWhere(hosts: string[]): { domain?: string | { in: string[] } } {
+  return hosts.length === 0 ? {} : hosts.length === 1 ? { domain: hosts[0] } : { domain: { in: hosts } };
+}
+
+const MAX_HOSTS = 100; // hosts one query may filter by (an app's primary + aliases + service domains)
+
+/**
+ * Normalised, deduped host filter from a single host or a set of hosts. An empty result means "no host filter"
+ * (all hosts of the scoped servers), so a caller that must narrow to a host set has to short-circuit an empty set
+ * itself rather than pass it through (the controller does: an unresolvable app scope returns no servers at all).
+ */
+export function hostFilter(domain?: string | string[]): string[] {
+  const list = domain === undefined ? [] : Array.isArray(domain) ? domain : [domain];
+  const out = new Set<string>();
+  for (const d of list) {
+    const h = d ? normalizeHost(d) : "";
+    if (h) out.add(h);
+    if (out.size >= MAX_HOSTS) break;
+  }
+  return [...out];
+}
+
 /**
  * Read side of visitor traffic. EVERY query is constrained to `serverIds` — the caller must pass only the
  * ids the requester may see (ServersService.listForUser); this service performs no authorization itself,
@@ -135,7 +158,7 @@ export class TrafficService {
       .slice(0, MAX_DOMAINS);
   }
 
-  async summary(serverIds: string[], range?: string, domain?: string): Promise<TrafficSummary> {
+  async summary(serverIds: string[], range?: string, domain?: string | string[]): Promise<TrafficSummary> {
     const ids = serverIds.slice(0, MAX_SERVERS);
     const r = rangeToMs(range ?? "24h");
     const step = STEP_SEC[r.range];
@@ -161,7 +184,7 @@ export class TrafficService {
     };
     if (ids.length === 0) return out;
 
-    const host = domain ? normalizeHost(domain) : "";
+    const hosts = hostFilter(domain);
     const rows = await this.prisma.$queryRaw<
       { t: bigint | number; requests: bigint | number; s2xx: bigint | number; s3xx: bigint | number; s4xx: bigint | number; s5xx: bigint | number; bytes: bigint | number; bot?: bigint | number | null; human?: bigint | number | null }[]
     >(Prisma.sql`
@@ -171,7 +194,7 @@ export class TrafficService {
              SUM("botRequests")::bigint AS bot, SUM("humanRequests")::bigint AS human
       FROM "TrafficMetric"
       WHERE "serverId" IN (${Prisma.join(ids)}) AND "bucket" >= ${new Date(start)}
-        ${host ? Prisma.sql`AND "domain" = ${host}` : Prisma.empty}
+        ${hosts.length ? Prisma.sql`AND "domain" IN (${Prisma.join(hosts)})` : Prisma.empty}
       GROUP BY 1 ORDER BY 1 ASC`);
     const idx = new Map(times.map((t, i) => [t, i]));
     for (const row of rows) {
@@ -200,7 +223,7 @@ export class TrafficService {
              "idx", SUM("requests")::bigint AS n
       FROM "TrafficLatency"
       WHERE "serverId" IN (${Prisma.join(ids)}) AND "bucket" >= ${new Date(start)}
-        ${host ? Prisma.sql`AND "domain" = ${host}` : Prisma.empty}
+        ${hosts.length ? Prisma.sql`AND "domain" IN (${Prisma.join(hosts)})` : Prisma.empty}
       GROUP BY 1, 2`);
     const perBucket = new Map<number, number[]>();
     const overall = new Array<number>(LATENCY_BINS).fill(0);
@@ -218,7 +241,7 @@ export class TrafficService {
     for (const [i, h] of perBucket) out.p95Ms[i] = round1(p95FromHistogram(h));
     out.totals.p95Ms = round1(p95FromHistogram(overall));
 
-    await this.fillUnique(out, ids, host, start, stepMs, idx);
+    await this.fillUnique(out, ids, hosts, start, stepMs, idx);
     return out;
   }
 
@@ -231,13 +254,13 @@ export class TrafficService {
    * cross-window sort) and the row cap, if ever hit, drops only the oldest windows (logged), never recent data.
    * Memory is bounded by (buckets + 1) sketches. The merged result is cached for a short TTL.
    */
-  private async fillUnique(out: TrafficSummary, ids: string[], host: string, start: number, stepMs: number, idx: Map<number, number>) {
+  private async fillUnique(out: TrafficSummary, ids: string[], hosts: string[], start: number, stepMs: number, idx: Map<number, number>) {
     const hourly = stepMs >= 3_600_000;
-    const key = [createHash("sha1").update([...new Set(ids)].sort().join("\n")).digest("hex"), out.range, host, start].join("|");
+    const key = [createHash("sha1").update([...new Set(ids)].sort().join("\n")).digest("hex"), out.range, [...hosts].sort().join(","), start].join("|");
     const now = Date.now();
     let hit = this.uniqueCache.get(key);
     if (!hit || now - hit.at > UNIQUE_CACHE_TTL_MS) {
-      const value = this.mergeUnique(ids, host, start, stepMs, idx, hourly);
+      const value = this.mergeUnique(ids, hosts, start, stepMs, idx, hourly);
       hit = { at: now, value };
       this.uniqueCache.delete(key);
       this.uniqueCache.set(key, hit);
@@ -251,7 +274,7 @@ export class TrafficService {
     out.totals.uniqueVisitors = total;
   }
 
-  private async mergeUnique(ids: string[], host: string, start: number, stepMs: number, idx: Map<number, number>, hourly: boolean) {
+  private async mergeUnique(ids: string[], hosts: string[], start: number, stepMs: number, idx: Map<number, number>, hourly: boolean) {
     const windowMs = hourly ? UNIQUE_WINDOW_HOUR_MS : UNIQUE_WINDOW_MIN_MS;
     const total = newSketch();
     const perBucket = new Map<number, Uint8Array>();
@@ -270,7 +293,7 @@ export class TrafficService {
           where: {
             serverId: { in: ids },
             bucket: { gte: new Date(lo), lt: new Date(hi) },
-            ...(host ? { domain: host } : {}),
+            ...domainWhere(hosts),
             ...(lastId ? { id: { gt: lastId } } : {}),
           },
           orderBy: { id: "asc" },
@@ -298,17 +321,17 @@ export class TrafficService {
     return { per, total: perBucket.size > 0 ? estimate(total) : 0 };
   }
 
-  async paths(serverIds: string[], range?: string, domain?: string, limit?: number) {
+  async paths(serverIds: string[], range?: string, domain?: string | string[], limit?: number) {
     const ids = serverIds.slice(0, MAX_SERVERS);
     const r = rangeToMs(range ?? "24h");
     const take = limit !== undefined && Number.isFinite(limit) ? Math.min(MAX_PATH_LIMIT, Math.max(1, Math.floor(limit))) : DEFAULT_PATH_LIMIT;
     const empty = { range: r.range, paths: [] as { path: string; requests: number; bytes: number }[], other: { requests: 0, bytes: 0 } };
     if (ids.length === 0) return empty;
-    const host = domain ? normalizeHost(domain) : "";
+    const hosts = hostFilter(domain);
     const where = {
       serverId: { in: ids },
       bucket: { gte: new Date(r.sinceMs) },
-      ...(host ? { domain: host } : {}),
+      ...domainWhere(hosts),
     };
     const [rows, other] = await Promise.all([
       this.prisma.trafficPath.groupBy({
@@ -328,18 +351,18 @@ export class TrafficService {
   }
 
   /** Requests per visitor country over the range, highest first ("ZZ" = unknown/overflow). */
-  async countries(serverIds: string[], range?: string, domain?: string, limit?: number) {
+  async countries(serverIds: string[], range?: string, domain?: string | string[], limit?: number) {
     const ids = serverIds.slice(0, MAX_SERVERS);
     const r = rangeToMs(range ?? "24h");
     const take = limit !== undefined && Number.isFinite(limit) ? Math.min(MAX_COUNTRY_LIMIT, Math.max(1, Math.floor(limit))) : DEFAULT_COUNTRY_LIMIT;
     if (ids.length === 0) return { range: r.range, countries: [] as { country: string; requests: number }[] };
-    const host = domain ? normalizeHost(domain) : "";
+    const hosts = hostFilter(domain);
     const rows = await this.prisma.trafficCountry.groupBy({
       by: ["country"],
       where: {
         serverId: { in: ids },
         bucket: { gte: new Date(r.sinceMs) },
-        ...(host ? { domain: host } : {}),
+        ...domainWhere(hosts),
       },
       _sum: { requests: true },
       orderBy: [{ _sum: { requests: "desc" } }, { country: "asc" }],
@@ -349,18 +372,18 @@ export class TrafficService {
   }
 
   /** Top keys of ONE visitor dimension (browser/os/device/referrer/city/network) over the range, highest first. */
-  async breakdown(serverIds: string[], dim: BreakdownDim, range?: string, domain?: string, limit?: number) {
+  async breakdown(serverIds: string[], dim: BreakdownDim, range?: string, domain?: string | string[], limit?: number) {
     const ids = serverIds.slice(0, MAX_SERVERS);
     const r = rangeToMs(range ?? "24h");
     const take = limit !== undefined && Number.isFinite(limit) ? Math.min(MAX_BREAKDOWN_LIMIT, Math.max(1, Math.floor(limit))) : DEFAULT_BREAKDOWN_LIMIT;
     const empty = { range: r.range, dim, items: [] as { key: string; requests: number }[], other: { requests: 0 } };
     if (ids.length === 0 || !(BREAKDOWN_DIM_NAMES as readonly string[]).includes(dim)) return empty;
-    const host = domain ? normalizeHost(domain) : "";
+    const hosts = hostFilter(domain);
     const where = {
       serverId: { in: ids },
       dim,
       bucket: { gte: new Date(r.sinceMs) },
-      ...(host ? { domain: host } : {}),
+      ...domainWhere(hosts),
     };
     const [rows, other, named] = await Promise.all([
       this.prisma.trafficBreakdown.groupBy({

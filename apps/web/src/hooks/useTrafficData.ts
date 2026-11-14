@@ -9,22 +9,26 @@ import { COUNTRY_LIMIT, POLL_MS, TOP_LIMIT } from "../components/traffic/traffic
 /**
  * The three queries behind the traffic panels (summary, top paths, countries), polled together, plus the derived
  * `loading` / `failed` / `empty` states. Shared by the global Traffic page and the per-app Analytics tab.
+ * `enabled: false` skips every request (the Analytics tab does while it shows an empty state instead).
  */
-export function useTrafficData({ range, teamId, domain }: { range: MetricsRange; teamId: string | null | undefined; domain?: string }) {
+export function useTrafficData({ range, teamId, domain, appId, enabled = true }: { range: MetricsRange; teamId: string | null | undefined; domain?: string; appId?: string; enabled?: boolean }) {
   const summary = useQuery({
-    queryKey: ["trafficSummary", teamId, range, domain],
-    queryFn: () => api.getTrafficSummary({ range, teamId, domain }),
+    queryKey: ["trafficSummary", teamId, range, domain, appId],
+    queryFn: () => api.getTrafficSummary({ range, teamId, domain, appId }),
     refetchInterval: POLL_MS,
+    enabled,
   });
   const paths = useQuery({
-    queryKey: ["trafficPaths", teamId, range, domain],
-    queryFn: () => api.getTrafficPaths({ range, teamId, domain, limit: TOP_LIMIT }),
+    queryKey: ["trafficPaths", teamId, range, domain, appId],
+    queryFn: () => api.getTrafficPaths({ range, teamId, domain, appId, limit: TOP_LIMIT }),
     refetchInterval: POLL_MS,
+    enabled,
   });
   const countries = useQuery({
-    queryKey: ["trafficCountries", teamId, range, domain],
-    queryFn: () => api.getTrafficCountries({ range, teamId, domain, limit: COUNTRY_LIMIT }),
+    queryKey: ["trafficCountries", teamId, range, domain, appId],
+    queryFn: () => api.getTrafficCountries({ range, teamId, domain, appId, limit: COUNTRY_LIMIT }),
     refetchInterval: POLL_MS,
+    enabled,
   });
   const loading = summary.isLoading || paths.isLoading || countries.isLoading;
   const failed = summary.isError && paths.isError && countries.isError;

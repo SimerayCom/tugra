@@ -163,7 +163,7 @@ function build() {
     }),
   };
   const serversSvc = new ServersService(prisma, {} as any, {} as any, {} as any, {} as any, access as any);
-  const ctrl = new TrafficController(serversSvc, new TrafficService(prisma));
+  const ctrl = new TrafficController(serversSvc, new TrafficService(prisma), {} as any, prisma, {} as any);
   return { ctrl, prisma };
 }
 const as = (userId: string) => ({ userId }) as any;

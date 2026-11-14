@@ -40,8 +40,9 @@ import { Tabs } from "../../../../components/tabs-nav";
 import { ConfigLayout } from "../../../../components/config-layout";
 import { CONFIG_GROUP_KEYS, visibleConfigGroups, type ConfigCardId } from "../../../../lib/config-groups";
 import { resolveTab } from "../../../../lib/tab-param";
-import { LayoutDashboard, Settings2, Rocket, Activity, ScrollText, FolderOpen, Hammer, RotateCw, Play, Square, Terminal, CloudDownload, CloudUpload, Pencil, Trash2, Copy } from "lucide-react";
+import { LayoutDashboard, Settings2, Rocket, Activity, BarChart3, ScrollText, FolderOpen, Hammer, RotateCw, Play, Square, Terminal, CloudDownload, CloudUpload, Pencil, Trash2, Copy } from "lucide-react";
 import { CONFIG_GROUP_ICONS, actionGroup, actionGroupSep } from "./app-detail-shared";
+import { AnalyticsTab } from "./app-detail-analytics-tab";
 import { AppLinksMenu } from "./app-links-menu";
 import { SourceCard, BuildSettingsCard, BuildArgsCard, BuildSecretsCard, DeploySettingsCard, BuildConfigCard, ContainerCommandCard, RestartPolicyCard, ContainerPortCard, DeployHooksCard, CredentialsCard, WatchPathsCard } from "./app-detail-build-cards";
 import { ExtraDomainsCard, ServiceDomainsCard, DomainOptionsCard, CustomCertCard, RedirectsCard, BasicAuthCard, NetworkAliasesCard, NetworkingCard } from "./app-detail-domain-cards";
@@ -183,6 +184,8 @@ export default function AppDetailPage() {
     { key: "overview", label: t("apps.tabOverview"), icon: LayoutDashboard },
     { key: "deployments", label: t("apps.tabDeployments"), badge: deployments.length, icon: Rocket },
     { key: "metrics", label: t("apps.tabMetrics"), icon: Activity },
+    // Visitor analytics are read-level (like /traffic), so every viewer sees the tab.
+    { key: "analytics", label: t("apps.tabAnalytics"), icon: BarChart3 },
     { key: "logs", label: t("apps.tabLogs"), icon: ScrollText },
     // Files listing is writer-only (the hub endpoint requires write permission), like logs/config.
     ...(appData?.canWrite ? [{ key: "files", label: t("apps.tabFiles"), icon: FolderOpen }] : []),
@@ -520,6 +523,8 @@ export default function AppDetailPage() {
       )}
 
       {tab === "metrics" && <MetricsTab id={id} events={deployEvents} />}
+
+      {tab === "analytics" && <AnalyticsTab app={appData} />}
 
       {tab === "logs" && (
         <LogsTab id={id} canWrite={appData.canWrite} isCompose={appData.source === "COMPOSE"} streamActive={streamActive} liveLines={live.lines} lastDeployLog={lastDep?.logs} />

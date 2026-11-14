@@ -310,11 +310,11 @@ export function CountriesList({ rows, totalRequests, lang }: { rows: { country: 
 
 /** Visitor breakdown: a segmented control picks ONE dimension (browser/os/device/referrer/city/network) and only that
  *  dimension is fetched; rows are ranked with a proportional bar. */
-export function BreakdownCard({ dim, onDim, range, teamId, domain }: { dim: TrafficBreakdownDim; onDim: (d: TrafficBreakdownDim) => void; range: MetricsRange; teamId: string | null | undefined; domain: string | undefined }) {
+export function BreakdownCard({ dim, onDim, range, teamId, domain, appId }: { dim: TrafficBreakdownDim; onDim: (d: TrafficBreakdownDim) => void; range: MetricsRange; teamId: string | null | undefined; domain: string | undefined; appId?: string }) {
   const { t } = useI18n();
   const q = useQuery({
-    queryKey: ["trafficBreakdown", teamId, range, domain, dim],
-    queryFn: () => api.getTrafficBreakdown(dim, { range, teamId, domain, limit: BREAKDOWN_LIMIT }),
+    queryKey: ["trafficBreakdown", teamId, range, domain, appId, dim],
+    queryFn: () => api.getTrafficBreakdown(dim, { range, teamId, domain, appId, limit: BREAKDOWN_LIMIT }),
     refetchInterval: POLL_MS,
   });
   // Shares: out of the returned items PLUS the folded "(other)" overflow, see breakdownShares().
