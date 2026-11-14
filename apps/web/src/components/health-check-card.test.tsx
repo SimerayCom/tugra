@@ -94,4 +94,13 @@ describe("HealthCheckCard", () => {
     fireEvent.click(save);
     await waitFor(() => expect(set).toHaveBeenCalledWith("a1", expect.objectContaining({ type: "HTTP", path: "/health", interval: 15 })));
   });
+
+  it("selecting CMD then back to Automatic PUTs type null and a null command (so the leftover command clears)", async () => {
+    const set = vi.spyOn(api, "setAppHealthCheck").mockResolvedValue({ ok: true });
+    wrap(<HealthCheckCard {...base} healthCheckType="CMD" healthCmd="pg_isready" />);
+    const typeSel = screen.getByLabelText("Check type") as HTMLSelectElement;
+    fireEvent.change(typeSel, { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(set).toHaveBeenCalledWith("a1", expect.objectContaining({ type: null, command: null, path: null, port: null })));
+  });
 });

@@ -193,7 +193,7 @@ export class TrafficService {
              SUM("s4xx")::bigint AS s4xx, SUM("s5xx")::bigint AS s5xx, SUM("bytes")::bigint AS bytes,
              SUM("botRequests")::bigint AS bot, SUM("humanRequests")::bigint AS human
       FROM "TrafficMetric"
-      WHERE "serverId" IN (${Prisma.join(ids)}) AND "bucket" >= ${new Date(start)}
+      WHERE "serverId" IN (${Prisma.join(ids)}) AND "bucket" >= (${new Date(start)}::timestamptz AT TIME ZONE 'UTC')
         ${hosts.length ? Prisma.sql`AND "domain" IN (${Prisma.join(hosts)})` : Prisma.empty}
       GROUP BY 1 ORDER BY 1 ASC`);
     const idx = new Map(times.map((t, i) => [t, i]));
@@ -222,7 +222,7 @@ export class TrafficService {
       SELECT (floor(extract(epoch FROM "bucket") / ${step}::int) * ${step}::int)::bigint * 1000 AS t,
              "idx", SUM("requests")::bigint AS n
       FROM "TrafficLatency"
-      WHERE "serverId" IN (${Prisma.join(ids)}) AND "bucket" >= ${new Date(start)}
+      WHERE "serverId" IN (${Prisma.join(ids)}) AND "bucket" >= (${new Date(start)}::timestamptz AT TIME ZONE 'UTC')
         ${hosts.length ? Prisma.sql`AND "domain" IN (${Prisma.join(hosts)})` : Prisma.empty}
       GROUP BY 1, 2`);
     const perBucket = new Map<number, number[]>();

@@ -21,6 +21,8 @@ const CLONE_WARNINGS = new Set([
   "host_port_reset",
   "port_mappings_copied",
   "tasks_disabled",
+  "cpuset_reset",
+  "privileged_options_dropped",
 ]);
 
 /**

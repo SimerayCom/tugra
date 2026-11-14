@@ -766,7 +766,9 @@ describe("Applications / deploy (e2e)", () => {
     const sent = commands.join("\n");
     expect(sent).toContain(`docker network inspect -f '{{index .Labels "tugra.managed"}}' 'e2e-own'`);
     expect(sent).toContain("docker network rm 'e2e-own'");
-    expect(sent).toContain("docker builder prune -f");
+    // The build-cache prune is dispatched DETACHED after the delete returns, so it reaches the agent a moment later.
+    for (let i = 0; i < 50 && !commands.some((c) => c.includes("docker builder prune -f")); i++) await new Promise((r) => setTimeout(r, 40));
+    expect(commands.join("\n")).toContain("docker builder prune -f");
   });
 
   it("delete cleanup: a network another app still lists is kept, and refused combinations return 400 with nothing sent", async () => {

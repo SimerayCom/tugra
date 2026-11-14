@@ -102,4 +102,25 @@ describe("LimitsCard", () => {
     expect(screen.getByText("Use CPU numbers or ranges, like 0-3 or 0,2.")).toBeTruthy();
     expect(save()).toHaveProperty("disabled", true);
   });
+
+  it("mirrors the hub ranges for swap and PIDs: Save stays disabled with an inline error instead of a 400", () => {
+    wrap(<LimitsCard {...base} memoryMb={4} />);
+    const saveBtn = () => screen.getByRole("button", { name: "Save" });
+    const swap = screen.getByLabelText("Memory + swap (MB)");
+    const pids = screen.getByLabelText("Max processes");
+    fireEvent.change(swap, { target: { value: "8" } }); // below 16
+    expect(saveBtn()).toHaveProperty("disabled", true);
+    expect(screen.getByText("Use -1 (unlimited) or 16 to 1048576 MB.")).toBeTruthy();
+    fireEvent.change(swap, { target: { value: "-1" } });
+    expect(saveBtn()).toHaveProperty("disabled", false);
+    fireEvent.change(pids, { target: { value: "0" } }); // 0 is invalid on the hub
+    expect(saveBtn()).toHaveProperty("disabled", true);
+    expect(screen.getByText("Use -1 (unlimited) or 1 to 4194304.")).toBeTruthy();
+    fireEvent.change(pids, { target: { value: "4194305" } });
+    expect(saveBtn()).toHaveProperty("disabled", true);
+    fireEvent.change(pids, { target: { value: "-1" } });
+    expect(saveBtn()).toHaveProperty("disabled", false);
+    fireEvent.change(pids, { target: { value: "100" } });
+    expect(saveBtn()).toHaveProperty("disabled", false);
+  });
 });

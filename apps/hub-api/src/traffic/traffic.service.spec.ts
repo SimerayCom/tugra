@@ -190,6 +190,15 @@ describe("TrafficService", () => {
       expect(prisma.trafficBreakdown.groupBy).toHaveBeenCalledTimes(1);
     });
 
+    it("summary: the bucket bound is a UTC wall-clock (timestamp(3) column vs timestamptz bind is session-TZ independent)", async () => {
+      const { svc, prisma } = make();
+      await svc.summary(["mine"], "24h", "a.com");
+      for (const i of [0, 1]) {
+        expect(prisma.$queryRaw.mock.calls[i][0].sql).toContain(`"bucket" >= (`);
+        expect(prisma.$queryRaw.mock.calls[i][0].sql).toContain(`::timestamptz AT TIME ZONE 'UTC')`);
+      }
+    });
+
     it("summary latency query is bound to exactly the visible ids", async () => {
       const { svc, prisma } = make();
       await svc.summary(["mine"], "24h", "a.com");

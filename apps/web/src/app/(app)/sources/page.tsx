@@ -6,6 +6,7 @@ import { GitBranch, Trash2 } from "lucide-react";
 import { api } from "../../../lib/api";
 import type { GitSource, SourceRepo } from "../../../lib/types";
 import { useT } from "../../../i18n/provider";
+import { sourceKindLabel } from "../../../lib/source-kind";
 import { Badge, Btn, Card, EmptyState, Spinner } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
 import { IconBtn } from "../../../components/icon-btn";
@@ -129,7 +130,7 @@ function SourceRow({ source, onDelete }: { source: GitSource; onDelete: () => vo
   const { id, name, appId, installationId, canWrite, kind, apiUrl, hasToken } = source;
   const [repos, setRepos] = useState<SourceRepo[] | null>(null);
   const load = useMutation({ mutationFn: () => api.listSourceRepos(id), onSuccess: (r) => setRepos(r) });
-  const kindLabel = kind === "github" ? t("sources.githubApp") : kind === "gitea" ? "Gitea" : kind === "forgejo" ? "Forgejo" : "Codeberg";
+  const kindLabel = sourceKindLabel(kind, t);
   return (
     <Card style={{ padding: 14 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>

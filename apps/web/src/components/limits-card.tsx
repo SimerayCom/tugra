@@ -58,7 +58,15 @@ export function LimitsCard({ id, memoryMb, cpus, reserveMemoryMb, reserveCpus, m
   const swapN = swap ? Number(swap) : null;
   const swapNeedsMemory = !clusterId && swapN != null && !mem;
   const swapBelowMemory = !clusterId && swapN != null && swapN > 0 && !!mem && swapN < Number(mem);
-  const invalid = !clusterId && (swapNeedsMemory || swapBelowMemory || !cpusetOk);
+  // Hub ranges: swap is -1 or 16..1048576 MB; PIDs is -1 or 1..4194304 (0 is invalid). Integers only.
+  const inRange = (raw: string, min: number, max: number) => {
+    if (!raw) return true; // empty = unset
+    const n = Number(raw);
+    return Number.isInteger(n) && (n === -1 || (n >= min && n <= max));
+  };
+  const swapRangeBad = !clusterId && !inRange(swap, 16, 1024 * 1024);
+  const pidsRangeBad = !clusterId && !inRange(pids, 1, 4194304);
+  const invalid = !clusterId && (swapNeedsMemory || swapBelowMemory || swapRangeBad || pidsRangeBad || !cpusetOk);
 
   const save = useMutation({
     mutationFn: () =>
@@ -113,10 +121,10 @@ export function LimitsCard({ id, memoryMb, cpus, reserveMemoryMb, reserveCpus, m
         <>
           <div style={{ margin: "16px 0 8px", fontSize: 12, fontWeight: 600, color: "var(--c-tx3)" }}>{t("apps.limitsAdvanced")}</div>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-            <Field label={t("apps.memorySwapMb")} hint={t("apps.memorySwapHint")} error={swapNeedsMemory ? t("apps.limitSwapNeedsMemory") : swapBelowMemory ? t("apps.limitSwapBelowMemory") : undefined} style={item}>
+            <Field label={t("apps.memorySwapMb")} hint={t("apps.memorySwapHint")} error={swapRangeBad ? t("apps.limitSwapRange") : swapNeedsMemory ? t("apps.limitSwapNeedsMemory") : swapBelowMemory ? t("apps.limitSwapBelowMemory") : undefined} style={item}>
               <NumberInput min={-1} value={swap} onChange={(e) => setSwap(e.target.value)} />
             </Field>
-            <Field label={t("apps.pidsLimit")} hint={t("apps.pidsLimitHint")} style={item}>
+            <Field label={t("apps.pidsLimit")} hint={t("apps.pidsLimitHint")} error={pidsRangeBad ? t("apps.limitPidsRange") : undefined} style={item}>
               <NumberInput min={-1} value={pids} onChange={(e) => setPids(e.target.value)} />
             </Field>
             <Field label={t("apps.shmSizeMb")} hint={t("apps.shmSizeHint")} style={item}>

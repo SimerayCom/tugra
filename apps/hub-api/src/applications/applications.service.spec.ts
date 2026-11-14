@@ -2193,16 +2193,16 @@ describe("ApplicationsService", () => {
     );
   });
 
-  it("an Automatic (type null) save preserves a legacy healthCmd", async () => {
+  it("an explicit Automatic (type null) save writes null and clears a leftover healthCmd (else auto resolves back to CMD)", async () => {
     const update = jest.fn().mockResolvedValue({});
     const prisma = {
-      application: { findUnique: jest.fn().mockResolvedValue(app), update },
+      application: { findUnique: jest.fn().mockResolvedValue({ ...app, healthCheckType: "CMD", healthCmd: "pg_isready" }), update },
     } as unknown as PrismaService;
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).setHealthCheck("u1", "app1", { type: null, command: null });
     const data = update.mock.calls[0][0].data;
-    expect("healthCmd" in data).toBe(false); // untouched → a pre-existing native check survives
     expect(data.healthCheckType).toBeNull();
+    expect(data.healthCmd).toBeNull();
   });
 
   it("setBuildConfig rejects a registry from another team (no cross-team credential use)", async () => {
@@ -4663,6 +4663,40 @@ describe("ApplicationsService.clone", () => {
     expect(res.warnings).toEqual(expect.arrayContaining(["cloned_to_server", "cluster_config_reset", "host_mounts_copied"]));
   });
 
+  it("a cross-server clone resets a cpuset the target can't satisfy (warning), keeps it when it fits or the core count is unknown, and never touches a same-server clone", async () => {
+    const run = async (cores: number | null, target: string | undefined, cpuset = "0-5") => {
+      const create = jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ ...data, id: "clone1", createdAt: new Date() }));
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue({ ...src, cpusetCpus: cpuset }), create },
+        server: { findUnique: jest.fn().mockResolvedValue(target ? { ...server, id: target, teamId: "t1", cpuCores: cores } : { ...server, cpuCores: cores }) },
+        appIcon: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
+        scheduledTask: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
+      } as unknown as PrismaService;
+      const res = await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", target ? { serverId: target } : {});
+      return { cpuset: create.mock.calls[0][0].data.cpusetCpus, warnings: res.warnings };
+    };
+    expect(await run(4, "s2")).toEqual({ cpuset: null, warnings: expect.arrayContaining(["cpuset_reset"]) });
+    const fits = await run(8, "s2");
+    expect(fits.cpuset).toBe("0-5");
+    expect(fits.warnings).not.toContain("cpuset_reset");
+    expect((await run(null, "s2")).cpuset).toBe("0-5"); // unknown core count: Docker decides at deploy
+    const same = await run(4, undefined);
+    expect(same.cpuset).toBe("0-5");
+    expect(same.warnings).not.toContain("cpuset_reset");
+  });
+
+  it("flags dropped privileged options with the machine key (not prose)", async () => {
+    const create = jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ ...data, id: "clone1", createdAt: new Date() }));
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...src, allowPrivilegedDockerOptions: true, dockerOptions: "--privileged" }), create },
+      server: { findUnique: jest.fn().mockResolvedValue(server) },
+      appIcon: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
+      scheduledTask: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
+    } as unknown as PrismaService;
+    const res = await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", {});
+    expect(res.warnings).toContain("privileged_options_dropped");
+  });
+
   it("keeps the cluster pin on a same-server clone (no target given)", async () => {
     const clustered = { ...src, clusterId: "c1", replicas: 3, constraintServerId: "s1" };
     const create = jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ ...data, id: "clone1", createdAt: new Date() }));
@@ -6489,11 +6523,44 @@ describe("ApplicationsService.remove — pruneNetworks / pruneBuildCache", () =>
     expect((t.prisma.application.delete as jest.Mock)).toHaveBeenCalled();
   });
 
-  it("records the pruned networks and the build-cache flag in the audit entry only when set", async () => {
+  it("dispatches the build-cache prune AFTER the row delete with a 300s timeout, and never awaits it", async () => {
+    const t = mk({ buildServerId: "build1" });
+    const order: string[] = [];
+    (t.prisma.application.delete as jest.Mock).mockImplementation(() => { order.push("delete"); return Promise.resolve({}); });
+    (t.agentWs.sendCommand as jest.Mock).mockImplementation((_h: string, cmd: string) => {
+      if (cmd.includes("builder")) { order.push("prune"); return new Promise(() => undefined); } // never settles
+      return Promise.resolve({ exitCode: 0, output: "" });
+    });
+    await expect(t.svc.remove("u1", "app1", { pruneBuildCache: true })).resolves.toBeUndefined(); // not held open by the prune
+    expect(order).toEqual(["delete", "prune"]);
+    const pruneCall = (t.agentWs.sendCommand as jest.Mock).mock.calls.find((c) => String(c[1]).includes("builder"));
+    expect(pruneCall?.[3]).toBe(300_000);
+  });
+
+  it("audit records intent apart from outcome, only when a cleanup was requested", async () => {
     (audit.log as jest.Mock).mockClear();
     const t = mk({ networks: ["backend"] });
     await t.svc.remove("u1", "app1", { pruneNetworks: true, pruneBuildCache: true });
-    expect(audit.log).toHaveBeenCalledWith({ actor: "u1", action: "app.remove", target: "app1", meta: { pruneNetworks: ["backend"], pruneBuildCache: true } });
+    expect(audit.log).toHaveBeenCalledWith({
+      actor: "u1", action: "app.remove", target: "app1",
+      meta: { networksPlanned: ["backend"], networksDispatched: true, pruneBuildCacheRequested: true, buildCacheDispatched: true },
+    });
+    // offline host + failing remove script: planned/requested, but nothing dispatched
+    (audit.log as jest.Mock).mockClear();
+    const off = mk({ networks: ["backend"] }, [], false);
+    (off.agentWs.sendCommand as jest.Mock).mockResolvedValue({ exitCode: 1, output: "" });
+    await off.svc.remove("u1", "app1", { pruneNetworks: true, pruneBuildCache: true });
+    expect(audit.log).toHaveBeenCalledWith({
+      actor: "u1", action: "app.remove", target: "app1",
+      meta: { networksPlanned: ["backend"], networksDispatched: false, pruneBuildCacheRequested: true, buildCacheDispatched: false },
+    });
+    // nothing removable -> not "dispatched" even though the script ran
+    (audit.log as jest.Mock).mockClear();
+    await mk({ networks: [] }).svc.remove("u1", "app1", { pruneNetworks: true });
+    expect(audit.log).toHaveBeenCalledWith({
+      actor: "u1", action: "app.remove", target: "app1",
+      meta: { networksPlanned: [], networksDispatched: false, pruneBuildCacheRequested: false, buildCacheDispatched: false },
+    });
     (audit.log as jest.Mock).mockClear();
     await mk().svc.remove("u1", "app1");
     expect(audit.log).toHaveBeenCalledWith({ actor: "u1", action: "app.remove", target: "app1" });

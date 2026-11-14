@@ -270,13 +270,13 @@ describe("SourceCard — Git provider link", () => {
 
   it("offers only this team's sources for the repo host", async () => {
     wrap(<SourceCard {...base} />);
-    await waitFor(() => expect(optionLabels()).toContain("GitHub App · github"));
-    expect(optionLabels()).toEqual(["None (public repo or personal access token)", "GitHub App · github"]);
+    await waitFor(() => expect(optionLabels()).toContain("GitHub App · GitHub App"));
+    expect(optionLabels()).toEqual(["None (public repo or personal access token)", "GitHub App · GitHub App"]);
   });
 
   it("keeps the linked source in the list even when its host no longer matches the repo", async () => {
     wrap(<SourceCard {...base} gitSourceId="gt" />);
-    await waitFor(() => expect(optionLabels()).toContain("Company Gitea · gitea"));
+    await waitFor(() => expect(optionLabels()).toContain("Company Gitea · Gitea"));
     expect(select().value).toBe("gt");
     expect(screen.getByText("Cloning with Company Gitea")).toBeTruthy();
     expect(screen.getByText("Takes precedence over a stored personal access token.")).toBeTruthy();
@@ -292,7 +292,7 @@ describe("SourceCard — Git provider link", () => {
   it("selecting a provider sends exactly the source id, and None / Unlink send null", async () => {
     const set = vi.spyOn(api, "setAppSource").mockResolvedValue({ warnings: [] });
     wrap(<SourceCard {...base} />);
-    await waitFor(() => expect(optionLabels()).toContain("GitHub App · github"));
+    await waitFor(() => expect(optionLabels()).toContain("GitHub App · GitHub App"));
     fireEvent.change(select(), { target: { value: "gh" } });
     await waitFor(() => expect(set).toHaveBeenCalledWith("a1", { gitSourceId: "gh" }));
     await waitFor(() => expect(toasts.some((x) => x.type === "success")).toBe(true));
@@ -315,7 +315,7 @@ describe("SourceCard — Git provider link", () => {
   it("never touches the URL/branch form's save state", async () => {
     vi.spyOn(api, "setAppSource").mockResolvedValue({ warnings: [] });
     wrap(<SourceCard {...base} />);
-    await waitFor(() => expect(optionLabels()).toContain("GitHub App · github"));
+    await waitFor(() => expect(optionLabels()).toContain("GitHub App · GitHub App"));
     expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(select(), { target: { value: "gh" } });
     expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
@@ -331,7 +331,7 @@ describe("SourceCard — Git provider link", () => {
   it("a hub error toasts its message verbatim and reverts the select", async () => {
     vi.spyOn(api, "setAppSource").mockRejectedValue(new Error("the linked github source only authenticates github.com repositories"));
     wrap(<SourceCard {...base} />);
-    await waitFor(() => expect(optionLabels()).toContain("GitHub App · github"));
+    await waitFor(() => expect(optionLabels()).toContain("GitHub App · GitHub App"));
     fireEvent.change(select(), { target: { value: "gh" } });
     await waitFor(() => expect(toasts.some((x) => x.type === "error" && x.message.includes("only authenticates github.com"))).toBe(true));
     await waitFor(() => expect(select().value).toBe("__none__"));

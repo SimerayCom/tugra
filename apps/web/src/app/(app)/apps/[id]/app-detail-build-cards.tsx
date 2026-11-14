@@ -12,6 +12,7 @@ import { api } from "../../../../lib/api";
 import { duplicateKeys, invalidKeys } from "../../../../lib/dotenv";
 import { gitUrlHost, isSshGitUrl } from "../../../../lib/git-host";
 import { gitWebUrls } from "../../../../lib/git-web-url";
+import { sourceKindLabel } from "../../../../lib/source-kind";
 import { type AppSource, type BuildType, type SourceCommitMode } from "../../../../lib/types";
 import { BUILD_TYPE_LABEL, envField, normalizeBaseDir } from "./app-detail-shared";
 
@@ -135,7 +136,7 @@ export function SourceCard({ id, source, gitUrl, gitBranch, gitCommit, image, co
         const linked = gitSourceId ? teamSources.find((s) => s.id === gitSourceId) ?? null : null;
         const options = [
           { value: NO_SOURCE, label: t("apps.sourceProviderNone") },
-          ...teamSources.filter((s) => s.id === gitSourceId || (host != null && s.cloneHost === host)).map((s) => ({ value: s.id, label: `${s.name} · ${s.kind}` })),
+          ...teamSources.filter((s) => s.id === gitSourceId || (host != null && s.cloneHost === host)).map((s) => ({ value: s.id, label: `${s.name} · ${sourceKindLabel(s.kind, t)}` })),
           ...(gitSourceId && !linked && allSources ? [{ value: gitSourceId, label: t("apps.sourceProviderMissing") }] : []),
         ];
         const value = pickedSource ?? gitSourceId ?? NO_SOURCE;
@@ -147,7 +148,7 @@ export function SourceCard({ id, source, gitUrl, gitBranch, gitCommit, image, co
             </label>
             {gitSourceId ? (
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 8, fontSize: 12, color: "var(--c-tx3)" }}>
-                {linked && <><span>{t("apps.sourceProviderLinked", { name: linked.name })}</span><Badge tone="lapis">{linked.kind}</Badge></>}
+                {linked && <><span>{t("apps.sourceProviderLinked", { name: linked.name })}</span><Badge tone="lapis">{sourceKindLabel(linked.kind, t)}</Badge></>}
                 <span>{t("apps.sourceProviderPrecedence")}</span>
                 <Btn variant="ghost" onClick={() => pickSource(NO_SOURCE)} disabled={link.isPending}>{t("apps.sourceProviderUnlink")}</Btn>
               </div>

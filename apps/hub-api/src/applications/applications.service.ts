@@ -808,8 +808,12 @@ export class ApplicationsService {
     // different data) on the target — docker would create an empty dir. Flag it so the operator checks.
     if (crossServer && Array.isArray(src.hostMounts) && src.hostMounts.length > 0) warnings.push("host_mounts_copied");
     if (src.allowPrivilegedDockerOptions && src.dockerOptions) {
-      warnings.push("Privileged Docker options were not copied — the clone starts non-privileged; an owner can re-enable it.");
+      warnings.push("privileged_options_dropped");
     }
+    // CPU pinning is host-specific: a cpuset naming a core the target doesn't have would fail the first deploy.
+    // Reset it only when the target's core count is known and the set doesn't fit (unknown → Docker decides).
+    const cpusetReset = crossServer && !!src.cpusetCpus && server.cpuCores != null && cpusetMax(src.cpusetCpus) >= server.cpuCores;
+    if (cpusetReset) warnings.push("cpuset_reset");
     const name = this.cloneName(src.name, input.name);
     const composeWebService = src.source === "COMPOSE" ? (this.composeWeb(src)?.service ?? null) : null;
     // Fresh exposure — the domain is NEVER copied (two apps on one host = a Traefik router clash); a custom
@@ -885,7 +889,7 @@ export class ApplicationsService {
           pidsLimit: src.pidsLimit,
           shmSizeMb: src.shmSizeMb,
           cpuShares: src.cpuShares,
-          cpusetCpus: src.cpusetCpus,
+          cpusetCpus: cpusetReset ? null : src.cpusetCpus,
           gpus: src.gpus,
           deployTimeoutSec: src.deployTimeoutSec,
           preDeployCommand: src.preDeployCommand,
@@ -978,7 +982,7 @@ export class ApplicationsService {
 
     await this.access.grantResourceAccess(userId, src.teamId, created.id);
     await this.monitors.createForApp(created).catch(() => undefined);
-    await this.audit.log({ actor: userId, action: "app.clone", target: created.id, meta: { sourceId: src.id } });
+    await this.audit.log({ actor: userId, action: "app.clone", target: created.id, meta: { sourceId: src.id, environmentId } });
     const perms = await this.access.membershipPermissions(userId, src.teamId);
     const app = this.view(created, perms?.has("apps:config") ?? false, perms?.has("apps:deploy") ?? false, undefined, server.publicIp ?? server.publicIpv6);
     return { app, warnings };
@@ -2755,6 +2759,9 @@ export class ApplicationsService {
       throw new BadRequestException(app.clusterId ? "build cache cleanup isn't supported for swarm apps" : "only apps built on this host have a build cache to prune");
     }
     const prunedNetworks = opts.pruneNetworks ? await this.removableNetworks(app) : [];
+    // Outcome of the remove script (the only thing that carries the network cleanup) — recorded in the audit
+    // as fact, separately from what was merely planned.
+    let removeScriptOk = false;
     if (app.clusterId) {
       // Swarm: remove the service cluster-wide (Swarm tears down every task on every node). Per-node image
       // cleanup isn't wired for swarm, so removeImages is a classic-only option (ignored here).
@@ -2772,17 +2779,14 @@ export class ApplicationsService {
       if (opts.removeImages && app.source !== "COMPOSE") {
         cmd += "\n" + buildAppImagesRemoveScript(app);
       }
-      await this.agentWs.sendCommand(app.serverId, cmd, "deploy").catch(() => undefined);
+      const res = await this.agentWs.sendCommand(app.serverId, cmd, "deploy").catch(() => undefined);
+      removeScriptOk = res?.exitCode === 0;
     }
     // Build cache is host-global (no per-app purge): prune dangling records on the host that actually builds this
-    // app — its build server for a non-compose app, else the run server. Sent after the removal so layers just
-    // orphaned by deleting the app are included. Best-effort: an offline host never blocks the delete.
-    if (opts.pruneBuildCache) {
-      const host = app.source !== "COMPOSE" && app.buildServerId ? app.buildServerId : app.serverId;
-      if (this.agentWs.isOnline(host)) {
-        await this.agentWs.sendCommand(host, buildBuildCachePruneScript(), "deploy").catch(() => undefined);
-      }
-    }
+    // app — its build server for a non-compose app, else the run server. Dispatched AFTER the row is deleted
+    // (so layers just orphaned by the app are included) and DETACHED: a prune can take minutes and must never
+    // hold the DELETE open. Best-effort: an offline host never blocks the delete.
+    const pruneHost = opts.pruneBuildCache ? (app.source !== "COMPOSE" && app.buildServerId ? app.buildServerId : app.serverId) : null;
     // Drop the app's uploaded custom cert from the proxy's /dynamic (best-effort; classic apps only — a
     // clustered app's cert lives on the manager's swarm proxy, a separate path).
     if (app.certPem && !app.clusterId) {
@@ -2793,13 +2797,34 @@ export class ApplicationsService {
     // away (otherwise they'd dangle at the provider). Never blocks deletion — the user already passed requireWrite.
     await this.dns.purgeDomains(userId, id).catch(() => undefined);
     await this.prisma.application.delete({ where: { id } });
+    let buildCacheDispatched = false;
+    if (pruneHost && this.agentWs.isOnline(pruneHost)) {
+      buildCacheDispatched = true;
+      void this.agentWs
+        .sendCommand(pruneHost, buildBuildCachePruneScript(), "deploy", 300_000)
+        .then((r) => {
+          if (r.exitCode !== 0) this.logger.warn(`build-cache prune after deleting app ${id} exited ${r.exitCode}`);
+        })
+        .catch((e: unknown) => this.logger.warn(`build-cache prune after deleting app ${id} failed: ${e instanceof Error ? e.message : String(e)}`));
+    }
     // Drop the deleted app's stale rule from its server's tunnel ingress (recomputed from DB truth).
     if (app.tunnelExposed) await this.syncTunnelIngress(app.serverId);
+    // Intent (planned / requested) is recorded apart from outcome (dispatched) — a command that never ran or
+    // an offline host must not read as done.
     await this.audit.log({
       actor: userId,
       action: "app.remove",
       target: id,
-      ...(opts.pruneNetworks || opts.pruneBuildCache ? { meta: { pruneNetworks: prunedNetworks, pruneBuildCache: !!opts.pruneBuildCache } } : {}),
+      ...(opts.pruneNetworks || opts.pruneBuildCache
+        ? {
+            meta: {
+              networksPlanned: prunedNetworks,
+              networksDispatched: removeScriptOk && prunedNetworks.length > 0,
+              pruneBuildCacheRequested: !!opts.pruneBuildCache,
+              buildCacheDispatched,
+            },
+          }
+        : {}),
     });
   }
 
@@ -3816,10 +3841,11 @@ export class ApplicationsService {
         ...(hc.retries !== undefined ? { healthRetries: hc.retries } : {}),
         ...(hc.startPeriod !== undefined ? { healthStartPeriod: hc.startPeriod } : {}),
         ...(hc.expectedStatus !== undefined ? { healthExpectedStatus: hc.expectedStatus } : {}),
-        // Only a CMD check owns healthCmd; other types leave any existing command intact
-        // (resolveHealthProbe ignores it when the type isn't CMD/auto) so a save under
-        // Auto/HTTP/None never silently wipes a previously-configured command.
-        ...(hc.type === "CMD" ? { healthCmd: hc.command ?? null } : {}),
+        // Only a CMD check owns healthCmd; HTTP/NONE leave any existing command intact
+        // (resolveHealthProbe ignores it for those types) so a save under HTTP/None never silently wipes it.
+        // Explicit Automatic (type null) is the exception: Automatic resolves a stored command to a CMD check
+        // and the card would re-display it as CMD, so a leftover command must be cleared for "auto" to stick.
+        ...(hc.type === "CMD" ? { healthCmd: hc.command ?? null } : hc.type === null ? { healthCmd: null } : {}),
       },
     });
     await this.audit.log({ actor: userId, action: "app.healthcheck.update", target: id });
