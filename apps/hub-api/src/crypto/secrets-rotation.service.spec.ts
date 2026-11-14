@@ -114,18 +114,19 @@ describe("SecretsRotationService", () => {
       current: NEW,
       previous: OLD,
       seed: (old) => ({
-        application: [{ id: "a1", envEnc: old.encrypt('{"K":"v"}'), gitTokenEnc: legacy(old, "ghs_x"), buildArgsEnc: null, buildSecretsEnc: null, gitSshKeyEnc: null, registryAuthEnc: null, certKeyEnc: null, webhookSecret: null }],
+        application: [{ id: "a1", envEnc: old.encrypt('{"K":"v"}'), envMetaEnc: old.encrypt('{"v":1,"flags":{"K":{"multiline":true}}}'), gitTokenEnc: legacy(old, "ghs_x"), buildArgsEnc: null, buildSecretsEnc: null, gitSshKeyEnc: null, registryAuthEnc: null, certKeyEnc: null, webhookSecret: null }],
         registry: [{ id: "r1", passwordEnc: "tk1.ffffffffffffffff.AAAA" }],
         instanceSettings: [{ id: "singleton", oidcClientSecretEnc: null, mailPassEnc: legacy(old, "pw"), mailResendKeyEnc: null }],
       }),
     });
     const run = await m.svc.runNow("owner1");
-    expect(run).toMatchObject({ rewritten: 3, alreadyCurrent: 0, unreadable: 1, skipped: 0, errors: 0, error: null });
+    expect(run).toMatchObject({ rewritten: 4, alreadyCurrent: 0, unreadable: 1, skipped: 0, errors: 0, error: null });
     expect(run.unreadableRefs).toEqual(["registry:r1:passwordEnc"]);
     expect(run.finishedAt).not.toBeNull();
     // values readable under the NEW key alone, plaintext intact
     const fresh = await crypto(NEW);
     expect(fresh.decrypt(m.tables.application[0].envEnc as string)).toBe('{"K":"v"}');
+    expect(fresh.decrypt(m.tables.application[0].envMetaEnc as string)).toBe('{"v":1,"flags":{"K":{"multiline":true}}}');
     expect(fresh.decrypt(m.tables.application[0].gitTokenEnc as string)).toBe("ghs_x");
     expect(fresh.decrypt(m.tables.instanceSettings[0].mailPassEnc as string)).toBe("pw");
     expect(m.tables.registry[0].passwordEnc).toBe("tk1.ffffffffffffffff.AAAA"); // untouched
@@ -135,13 +136,13 @@ describe("SecretsRotationService", () => {
     expect(call.where.gitTokenEnc).toMatch(/^[A-Za-z0-9+/=]+$/); // the legacy value it read
     expect(call.data.gitTokenEnc).toMatch(/^tk1\./);
     // audit carries counts, never a value
-    expect(m.audit).toHaveBeenCalledWith(expect.objectContaining({ action: "instance.secrets_key.reencrypt", actor: "owner1", meta: expect.objectContaining({ rewritten: 3, unreadable: 1 }) }));
+    expect(m.audit).toHaveBeenCalledWith(expect.objectContaining({ action: "instance.secrets_key.reencrypt", actor: "owner1", meta: expect.objectContaining({ rewritten: 4, unreadable: 1 }) }));
     expect(JSON.stringify(m.audit.mock.calls)).not.toContain("ghs_x");
     // second run: nothing left to rewrite
     const again = await m.svc.runNow("owner1");
-    expect(again).toMatchObject({ rewritten: 0, alreadyCurrent: 3, unreadable: 1 });
+    expect(again).toMatchObject({ rewritten: 0, alreadyCurrent: 4, unreadable: 1 });
     const s = await m.svc.status();
-    expect(s.totals).toMatchObject({ current: 3, stale: 0, unreadable: 1 });
+    expect(s.totals).toMatchObject({ current: 4, stale: 0, unreadable: 1 });
     expect(s.previousKeyRemovable).toBe(false); // the unreadable one still needs its key
   });
 

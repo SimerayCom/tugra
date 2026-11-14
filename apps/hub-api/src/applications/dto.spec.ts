@@ -1,4 +1,4 @@
-import { CreateAppSchema, SetAutoDeploySchema, SetImageUpdateCheckSchema, SetContainerPortSchema, SetDeploySettingsSchema, SetExtraPortsSchema, SetBasicAuthSchema, SetBuildSchema, SetConfigMountContentSchema, SetContainerCommandSchema, SetDeployHooksSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetHealthCheckSchema, SetLimitsSchema, SetRedirectsSchema, SetNetworksSchema, SetRestartPolicySchema, SetServiceDomainsSchema, SetSourceSchema, SetWatchPathsSchema } from "./dto";
+import { CreateAppSchema, EnvRecordSchema, SetEnvSchema, SetAutoDeploySchema, SetImageUpdateCheckSchema, SetContainerPortSchema, SetDeploySettingsSchema, SetExtraPortsSchema, SetBasicAuthSchema, SetBuildSchema, SetConfigMountContentSchema, SetContainerCommandSchema, SetDeployHooksSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetHealthCheckSchema, SetLimitsSchema, SetRedirectsSchema, SetNetworksSchema, SetRestartPolicySchema, SetServiceDomainsSchema, SetSourceSchema, SetWatchPathsSchema } from "./dto";
 
 describe("SetDeploySettingsSchema — post-cutover soak", () => {
   it("accepts a soak window in 0..600 (0 = off), on its own or with other fields", () => {
@@ -522,5 +522,52 @@ describe("SetImageUpdateCheckSchema", () => {
     expect(SetImageUpdateCheckSchema.safeParse({}).success).toBe(false);
     expect(SetImageUpdateCheckSchema.safeParse({ enabled: "yes" }).success).toBe(false);
     expect(SetImageUpdateCheckSchema.safeParse({ enabled: true, extra: 1 }).success).toBe(false);
+  });
+});
+
+describe("SetEnvSchema — per-variable flags", () => {
+  const ok = (b: unknown) => SetEnvSchema.safeParse(b);
+  const msg = (b: unknown) => {
+    const r = SetEnvSchema.safeParse(b);
+    return r.success ? "" : r.error.issues.map((i) => i.message).join("|");
+  };
+  it("accepts the legacy { env } body and { env, flags }", () => {
+    expect(ok({ env: { A: "1" } }).success).toBe(true);
+    expect(ok({ env: { A: "1" }, flags: { A: { buildTime: true } } }).success).toBe(true);
+    expect(ok({ env: { A: "1" }, flags: {} }).success).toBe(true);
+  });
+  it("rejects unknown flag fields (strict) and unknown body fields", () => {
+    expect(ok({ env: { A: "1" }, flags: { A: { bogus: true } } }).success).toBe(false);
+    expect(ok({ env: { A: "1" }, extra: 1 }).success).toBe(false);
+  });
+  it("rejects a flagged key that is not in env", () => {
+    expect(ok({ env: { A: "1" }, flags: { B: { multiline: true } } }).success).toBe(false);
+  });
+  it("a newline without multiline is rejected with the exact legacy message; with multiline it is accepted", () => {
+    expect(msg({ env: { A: "a\nb" } })).toBe("environment value must not contain a newline");
+    expect(ok({ env: { A: "a\nb" }, flags: { A: { multiline: false } } }).success).toBe(false);
+    expect(ok({ env: { A: "a\nb" }, flags: { A: { multiline: true } } }).success).toBe(true);
+  });
+  it("multiline on a reserved name is rejected; NUL is always rejected", () => {
+    expect(ok({ env: { LD_PRELOAD: "a\nb" }, flags: { LD_PRELOAD: { multiline: true } } }).success).toBe(false);
+    expect(ok({ env: { A: "a\u0000b" }, flags: { A: { multiline: true } } }).success).toBe(false);
+  });
+  it("still rejects bad key names", () => {
+    expect(ok({ env: { "a=b": "1" } }).success).toBe(false);
+  });
+  it("template envOverride (EnvRecordSchema) still rejects any newline", () => {
+    expect(EnvRecordSchema.safeParse({ A: "a\nb" }).success).toBe(false);
+    expect(EnvRecordSchema.safeParse({ A: "ab" }).success).toBe(true);
+  });
+});
+
+describe("CreateAppSchema — envFlags", () => {
+  const base = { name: "x", serverId: "s1", image: "nginx" };
+  it("accepts env + envFlags and a multiline value flagged multiline", () => {
+    expect(CreateAppSchema.safeParse({ ...base, env: { PEM: "a\nb" }, envFlags: { PEM: { multiline: true } } }).success).toBe(true);
+  });
+  it("rejects a newline without the flag and a flag without its variable", () => {
+    expect(CreateAppSchema.safeParse({ ...base, env: { PEM: "a\nb" } }).success).toBe(false);
+    expect(CreateAppSchema.safeParse({ ...base, env: { A: "1" }, envFlags: { B: { literal: true } } }).success).toBe(false);
   });
 });

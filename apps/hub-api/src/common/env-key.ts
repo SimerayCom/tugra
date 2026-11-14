@@ -56,3 +56,38 @@ export function isLinkEnvKeyAllowed(k: string): boolean {
   if (LINK_DENY_EXACT.has(k)) return false;
   return !LINK_DENY_PREFIX.some((p) => k.startsWith(p));
 }
+
+/** Max utf8 size of ONE multiline value (the deploy script carries it base64-encoded inside one `bash -c` argument). */
+export const ML_VALUE_MAX_BYTES = 16 * 1024;
+
+/** Exact (upper-cased) names that must never be placed in the environment of the root `docker` / `docker compose` process. */
+const HOST_DENY_EXACT = new Set([
+  "ENV", "BASH_ENV", "BASHOPTS", "SHELLOPTS", "PS1", "PS2", "PS3", "PS4", "PROMPT_COMMAND", "CDPATH", "GLOBIGNORE",
+  "TMPDIR", "LANG", "LANGUAGE", "TZ", "MAIL", "OPTIND", "POSIXLY_CORRECT", "SHLVL", "OLDPWD", "_", "GODEBUG", "NODE_OPTIONS",
+]);
+
+/** Upper-cased prefixes with the same meaning (shell internals, locale, BuildKit/buildx, XDG, git/ssh/ssl/curl/sudo tooling). */
+const HOST_DENY_PREFIX = ["BASH", "LC_", "BUILDKIT_", "BUILDX_", "XDG_", "GIT_", "SSH_", "SSL_", "CURL_", "SUDO_"];
+
+/**
+ * A name that may be placed in the environment of the root `docker` / `docker compose` process (multiline and
+ * compose-literal transport: `KEY="$TUGRA_ML_0" docker run ... -e KEY`). SECURITY-CRITICAL: a name that changes how
+ * bash, docker, git, ssh, curl or the dynamic linker behave must never pass, because the value would then steer the
+ * host-side command instead of the container. Case-insensitive. Strict POSIX on top of the link deny list.
+ */
+export function isHostExportSafeKey(k: string): boolean {
+  if (!ENV_KEY_RE.test(k) || !isLinkEnvKeyAllowed(k)) return false;
+  const u = k.toUpperCase();
+  if (HOST_DENY_EXACT.has(u)) return false;
+  if (HOST_DENY_PREFIX.some((p) => u.startsWith(p))) return false;
+  if (/_PROXY$/i.test(k)) return false;
+  // link-deny is case-sensitive on purpose for legacy callers; for host export the lower-case spellings matter too.
+  if (["PATH", "HOME", "SHELL", "PORT", "HOSTNAME", "IFS", "USER", "PWD"].includes(u)) return false;
+  if (["LD_", "DYLD_", "COMPOSE_", "DOCKER_", "TUGRA_"].some((p) => u.startsWith(p))) return false;
+  return true;
+}
+
+/** A multiline-eligible VALUE: no NUL, at most ML_VALUE_MAX_BYTES of utf8. LF and CR are allowed. */
+export function isSafeMultilineValue(v: string): boolean {
+  return !v.includes("\u0000") && Buffer.byteLength(v, "utf8") <= ML_VALUE_MAX_BYTES;
+}

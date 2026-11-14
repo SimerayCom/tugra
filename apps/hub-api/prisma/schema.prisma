@@ -1231,6 +1231,9 @@ model Application {
   pushToRegistry               Boolean            @default(false)
   env                          Json
   envEnc                       String?
+  /// AES-GCM(JSON {"v":1,"flags":{"KEY":{"buildTime":true,"runtime":false,"literal":true,"multiline":true}}}).
+  /// Sparse: only non-default flags. null = no flags (every variable runtime, single-line, default interpolation).
+  envMetaEnc                   String?
   buildArgsEnc                 String?
   // Build-time SECRETS (encrypted JSON): mounted into `docker build` as BuildKit secrets (`--secret id=K,src=…`,
   // read in the Dockerfile via `RUN --mount=type=secret,id=K`), so unlike build args they never enter image

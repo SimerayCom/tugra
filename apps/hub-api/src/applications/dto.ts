@@ -4,16 +4,44 @@ import { isIP as netIsIP } from "node:net";
 // labels validate identically (dto files don't usually import each other — kept intentional + documented).
 import { LABEL_KEY_RE, LABEL_VALUE_RE } from "../clusters/dto";
 import { isValidUserEnvKey, isSafeEnvValue } from "../common/env-key";
+import { normalizeFlags, validateEnvFlags } from "../common/env-flags";
 import { isUserNetworkNameAllowed } from "../deploy/network-names";
 
 // Every ingress for user-supplied env goes through this: it closes the `--env-file` line-injection
 // boundary (a key with '=', whitespace or a newline, or a value with a newline, would define an extra
 // variable) WITHOUT imposing the strict POSIX name regex, which would reject legitimate dotted/dashed
 // keys that migrated apps already use (see common/env-key).
-export const EnvRecordSchema = z
+export const EnvRecordStrictSchema = z
   .record(z.string())
   .refine((env) => Object.keys(env).every(isValidUserEnvKey), { message: "invalid environment variable name" })
   .refine((env) => Object.values(env).every(isSafeEnvValue), { message: "environment value must not contain a newline" });
+// Template envOverride has no flags, so it keeps the strict (no line break at all) schema under the old name.
+export const EnvRecordSchema = EnvRecordStrictSchema;
+// Writers that can carry per-variable flags: line breaks are checked by the flag-aware validator (a value may
+// contain them only when its variable is marked multiline), so no newline refine here.
+export const EnvRecordLooseSchema = z
+  .record(z.string())
+  .refine((env) => Object.keys(env).every(isValidUserEnvKey), { message: "invalid environment variable name" });
+
+export const EnvFlagInputSchema = z
+  .object({
+    buildTime: z.boolean().optional(),
+    runtime: z.boolean().optional(),
+    literal: z.boolean().optional(),
+    multiline: z.boolean().optional(),
+  })
+  .strict();
+export const EnvFlagsInputSchema = z.record(EnvFlagInputSchema);
+
+/** Context-free (no app source) flag validation shared by the SetEnv and CreateApp bodies. */
+function envFlagsSuperRefine(b: { env?: Record<string, string>; flags?: Record<string, unknown> }, ctx: z.RefinementCtx): void {
+  const env = b.env ?? {};
+  const raw = b.flags ?? {};
+  for (const k of Object.keys(raw)) {
+    if (!Object.prototype.hasOwnProperty.call(env, k)) ctx.addIssue({ code: "custom", message: `variable ${k} has flags but is not in the environment`, path: ["flags"] });
+  }
+  for (const i of validateEnvFlags(env, normalizeFlags(raw, Object.keys(env)), {})) ctx.addIssue({ code: "custom", message: i.message, path: ["env"] });
+}
 
 // A relative path inside the repo (dockerfile location / static output dir / monorepo build root): no
 // absolute path, no ".." traversal, no shell metacharacters (the charset bars spaces/quotes/$/;/|/&).
@@ -62,7 +90,9 @@ export const CreateAppSchema = z
     // COMPOSE-from-git: with source=COMPOSE + gitUrl, the compose file lives in the repo at this path
     // (default docker-compose.yml) instead of being pasted into composeFile. The two are exclusive.
     composePath: COMPOSE_PATH.optional(),
-    env: EnvRecordSchema.optional(),
+    env: EnvRecordLooseSchema.optional(),
+    // Per-variable flags (build-time / runtime / literal / multiline), keyed by variable name; sparse.
+    envFlags: EnvFlagsInputSchema.optional(),
     environmentId: z.string().min(1).optional(),
     deploy: z.boolean().optional(), // kick off a best-effort first deploy after create
     hostPort: z.number().int().min(1).max(65535).optional(),
@@ -89,15 +119,22 @@ export const CreateAppSchema = z
   .refine((d) => !d.composePath || (d.source === "COMPOSE" && !!d.gitUrl), {
     message: "composePath is only valid for a COMPOSE app sourced from git (gitUrl)",
     path: ["composePath"],
-  });
+  })
+  .superRefine((d, ctx) => envFlagsSuperRefine({ env: d.env, flags: d.envFlags }, ctx));
 export type CreateAppInput = z.infer<typeof CreateAppSchema>;
 
-export const SetEnvSchema = z.object({
-  // Reject only what actually corrupts the env file (key with '=', whitespace or newline; value with a
-  // newline) — not the strict POSIX name regex, which would lock a user out of editing env on any app that
-  // already holds a dotted/dashed key (common/env-key explains why that must not be retrofit).
-  env: EnvRecordSchema,
-});
+export const SetEnvSchema = z
+  .object({
+    // Reject only what actually corrupts the env file (key with '=', whitespace or newline) — not the strict POSIX
+    // name regex, which would lock a user out of editing env on any app that already holds a dotted/dashed key
+    // (common/env-key explains why that must not be retrofit). Line breaks in values are policed by the flag-aware
+    // validator: allowed only on a variable marked multiline.
+    env: EnvRecordLooseSchema,
+    // OMITTED = keep the stored flags (pruned to surviving keys); PRESENT = authoritative replace ({} clears all).
+    flags: EnvFlagsInputSchema.optional(),
+  })
+  .strict()
+  .superRefine((b, ctx) => envFlagsSuperRefine(b, ctx));
 export type SetEnvInput = z.infer<typeof SetEnvSchema>;
 
 // Attach a managed database to this app (auto-inject its connection URI into the app's env at deploy).

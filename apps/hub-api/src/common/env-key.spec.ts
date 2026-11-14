@@ -1,4 +1,6 @@
-import { isValidEnvKey, isLinkEnvKeyAllowed, isValidUserEnvKey, isSafeEnvValue, ENV_KEY_MAX } from "./env-key";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { isValidEnvKey, isLinkEnvKeyAllowed, isValidUserEnvKey, isSafeEnvValue, isHostExportSafeKey, isSafeMultilineValue, ML_VALUE_MAX_BYTES, ENV_KEY_MAX } from "./env-key";
 
 describe("isValidEnvKey", () => {
   it("accepts POSIX-ish names", () => {
@@ -54,5 +56,26 @@ describe("isSafeEnvValue", () => {
 
   it("rejects values that would inject a second env-file line (newline, CR, NUL)", () => {
     for (const v of ["x\nTUGRA_FOO=bar", "x\rY=1", "nul\u0000"]) expect(isSafeEnvValue(v)).toBe(false);
+  });
+});
+
+describe("isHostExportSafeKey (SECURITY-CRITICAL policy fixture)", () => {
+  const fixture = JSON.parse(readFileSync(join(__dirname, "../../test/fixtures/env-key-policy.json"), "utf8")) as { key: string; safe: boolean }[];
+  it.each(fixture.map((f) => [f.key, f.safe] as const))("%j -> %s", (key, safe) => {
+    expect(isHostExportSafeKey(key)).toBe(safe);
+  });
+});
+
+describe("isSafeMultilineValue", () => {
+  it("allows LF/CR/empty and rejects NUL", () => {
+    expect(isSafeMultilineValue("a\nb\r\nc\n")).toBe(true);
+    expect(isSafeMultilineValue("")).toBe(true);
+    expect(isSafeMultilineValue("a\u0000b")).toBe(false);
+  });
+  it("counts utf8 bytes at the 16 KiB boundary", () => {
+    expect(isSafeMultilineValue("a".repeat(ML_VALUE_MAX_BYTES))).toBe(true);
+    expect(isSafeMultilineValue("a".repeat(ML_VALUE_MAX_BYTES + 1))).toBe(false);
+    expect(isSafeMultilineValue("\u00e9".repeat(ML_VALUE_MAX_BYTES / 2))).toBe(true); // 2 bytes each
+    expect(isSafeMultilineValue("\u00e9".repeat(ML_VALUE_MAX_BYTES / 2 + 1))).toBe(false);
   });
 });
