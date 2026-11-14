@@ -1232,6 +1232,7 @@ describe("Applications / deploy (e2e)", () => {
       .send({ name: "logstack", serverId, source: "COMPOSE", composeFile: "services:\n  web:\n    image: nginx" })
       .expect(201);
     const cid = composeApp.body.id;
+    await prisma.application.update({ where: { id: cid }, data: { status: "RUNNING" } });
     commands.length = 0;
     // Belongs to the tugra_<id> project by prefix, but carries shell metacharacters → must 400.
     await request(app.getHttpServer())
