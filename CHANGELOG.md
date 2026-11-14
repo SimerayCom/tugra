@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.13] - 2026-11-15
+
+- **No container-log stream before the first deploy.** The Logs tab of a never-deployed app no longer opens a
+  `docker logs --follow` on a container that does not exist yet (it used to print "No such container" on every
+  reconnect). The card says that container logs appear after the first deploy; `GET /apps/{id}/logs/stream` and
+  `/logs/download` answer 409 for an app in the NEW state.
+
 - **Cleanup options when deleting an app.** The delete dialog can also remove the app's custom Docker networks
   and prune dangling build cache. Networks are removed only if Tugra created them (they now carry a
   `tugra.managed=true` label), no other app on the server lists them and nothing is still attached; `tugra-proxy`,
