@@ -22,7 +22,7 @@
 
 ---
 
-> **Status:** Beta. Under active development; APIs may change between minor releases. Stars, issues and feedback are very welcome.
+> **Status:** Beta. Under active development; APIs may change between minor releases. Stars, issues and feedback are very welcome — see the [beta tester guide](docs/beta-testing.md) for what to try and how to report.
 
 <div align="center">
 
@@ -64,7 +64,8 @@ Tugra is a self-hostable, open-core control plane for deploying, monitoring and 
 - **Agent-native too** — a built-in MCP server exposes 53 tools (read + PAT-scoped mutate/fleet ops) over `POST /api/v1/mcp`, scoped by the same personal-access tokens as the REST API.
 - **9 database engines, one workflow** — PostgreSQL, MySQL, MariaDB, MongoDB, Redis, KeyDB, Dragonfly, ClickHouse and LibSQL, all provisioned the same way; eight have built-in logical dump/restore backups (LibSQL, which has no dump tool, is covered only by file-level volume backups — stop the app first for a consistent copy).
 - **Real TLS, real wildcards** — automatic Let's Encrypt per app via Traefik, plus DNS-01 wildcard certificates (`*.yourdomain.com`) for clustered/Swarm ingress — not just single-domain HTTP-01.
-- **Backups that leave the building** — scheduled dumps to local disk or S3-compatible storage (S3/R2/MinIO), encrypted, with one-click restore.
+- **Backups that leave the building** — scheduled dumps to local disk or S3-compatible storage (S3/R2/MinIO), encrypted, with one-click restore; scheduled **restore-verify drills** prove a backup actually restores, and PostgreSQL gets **point-in-time recovery** (WAL shipping + base backups, restore to any second from the panel).
+- **Deploys you can trust** — rolling deploys with a health gate and a post-cutover soak that auto-reverts, fleet rollouts (canary → waves → halt/rollback), build secrets that never land in the image, and deploys that survive a control-plane restart.
 - **Open-core, not open-washed** — everything above ships free under AGPL-3.0 in *this* repository. Pro/Cloud (SSO, audit-log export, whitelabel, multi-tenant billing) is a separately-licensed add-on — nothing here nags you to upgrade or silently caps what you can do. Tugra sends anonymous usage stats, on by default — aggregate counts (servers, apps, databases, deploys) plus your version, edition and OS, under a random id; no names, IPs, domains or secrets, and the receiver doesn't store your IP — and you can turn them off anytime with `--no-telemetry` / `TUGRA_TELEMETRY=0` or in Settings. Update checks and public-IP detection are opt-in and off by default.
 
 ## How Tugra compares
@@ -92,6 +93,10 @@ A side-by-side with the self-hostable PaaS tools people actually evaluate (compe
 | Multi-manager Raft HA + ingress HA | ✅ | — | — | — | — | — |
 | Fleet-wide bulk ops (one call) | ✅ | — | — | — | — | — |
 | OS patching (per-server + fleet) | ✅ | — | — | — | — | — |
+| Point-in-time recovery (PostgreSQL WAL) | ✅¹⁰ | — | — | — | — | — |
+| Scheduled restore-verify drills | ✅ | — | — | — | — | — |
+| Fleet rollouts (canary → waves → auto-halt/rollback) | ✅ | — | — | — | — | — |
+| Post-cutover auto-rollback (soak window) | ✅ | — | — | — | — | — |
 | **Observability** | | | | | | |
 | Built-in metrics (CPU/RAM/disk) | ✅ | ~ | ✅ | ~ | — | — |
 | Uptime monitors + notifications | ✅ | ~ | ✅ | — | — | — |
@@ -106,7 +111,7 @@ A side-by-side with the self-hostable PaaS tools people actually evaluate (compe
 | Migrate in (import from Coolify) | ✅⁹ | — | — | — | — | — |
 | Core license | AGPL-3.0 | Apache-2.0 | Apache-2.0³ | zlib + BE⁷ | Apache-2.0 + terms⁴ | MIT |
 
-<sub>¹ Coolify v4 manages servers individually (no built-in clustering). ² A third-party, early-stage Dokku MCP project, not an official release. ³ Dokploy's core is Apache-2.0; a separate Source-Available license covers its enterprise `proprietary/` directory (SSO, audit logs, whitelabel) — the same open-core shape Tugra uses. ⁴ CapRover's `LICENSE` is Apache-2.0 with an appendix restricting modification/redistribution of paid features. ⁵ Tugra, Coolify and Dokploy all ship MCP servers with read and write tools, so agent control is at parity; Tugra adds fleet-wide actions (one call across a cluster), name-confirmation on destructive tools, and secret redaction. ⁶ Dokku has no Docker Swarm support; its multi-node option is the `scheduler-k3s` plugin (k3s/Kubernetes), a different architecture. ⁷ Portainer's RBAC, SSO and audit logs are part of its paid Business Edition. ⁸ Tugra's core is free and full-featured (teams/RBAC, audit log, backups, monitoring, MCP, migrator, multi-node HA); SSO/OIDC is a Pro feature. ⁹ Imports Coolify apps + their config/env as new Tugra resources (copy-mode); a separate local-Docker adopter takes over same-host containers in place (keeping their named volumes). Database **data** for Postgres, MySQL, MariaDB, Redis, KeyDB and Dragonfly moves cross-host with a one-command migrator you paste on the Coolify host; MongoDB data moves by a guided dump-and-restore (import-from-url), LibSQL and app **volume** data by `tar`/`rsync`, and ClickHouse has no migration tool yet ([docs/coolify-migration.md](docs/coolify-migration.md)). Product names are trademarks of their respective owners; Tugra is not affiliated with or endorsed by them.</sub>
+<sub>¹ Coolify v4 manages servers individually (no built-in clustering). ² A third-party, early-stage Dokku MCP project, not an official release. ³ Dokploy's core is Apache-2.0; a separate Source-Available license covers its enterprise `proprietary/` directory (SSO, audit logs, whitelabel) — the same open-core shape Tugra uses. ⁴ CapRover's `LICENSE` is Apache-2.0 with an appendix restricting modification/redistribution of paid features. ⁵ Tugra, Coolify and Dokploy all ship MCP servers with read and write tools, so agent control is at parity; Tugra adds fleet-wide actions (one call across a cluster), name-confirmation on destructive tools, and secret redaction. ⁶ Dokku has no Docker Swarm support; its multi-node option is the `scheduler-k3s` plugin (k3s/Kubernetes), a different architecture. ⁷ Portainer's RBAC, SSO and audit logs are part of its paid Business Edition. ⁸ Tugra's core is free and full-featured (teams/RBAC, audit log, backups, monitoring, MCP, migrator, multi-node HA); SSO/OIDC is a Pro feature. ⁹ Imports Coolify apps + their config/env as new Tugra resources (copy-mode); a separate local-Docker adopter takes over same-host containers in place (keeping their named volumes). Database **data** for Postgres, MySQL, MariaDB, Redis, KeyDB and Dragonfly moves cross-host with a one-command migrator you paste on the Coolify host; MongoDB data moves by a guided dump-and-restore (import-from-url), LibSQL and app **volume** data by `tar`/`rsync`, and ClickHouse has no migration tool yet ([docs/coolify-migration.md](docs/coolify-migration.md)). ¹⁰ PostgreSQL only; other engines keep scheduled logical dumps. Product names are trademarks of their respective owners; Tugra is not affiliated with or endorsed by them.</sub>
 
 ## Quick start
 
@@ -150,7 +155,7 @@ Notes:
 - **Lock down the raw ports.** With `HUB_TRUSTED_PROXY=true` the hub honors `X-Forwarded-For` (only from private/loopback/docker peers, or `HUB_TRUSTED_PROXY_CIDRS`), and the raw `:3000`/`:3001` ports should reach **only** the proxy. A fresh `--domain` install binds them to `127.0.0.1` (same-host proxy), and an existing install turning https is moved there too (`--keep-raw-ports` opts out). If the proxy runs on another host, set `HUB_BIND`/`WEB_BIND` to this box's private-interface IP and firewall the ports — Docker-published ports bypass `ufw`.
 - **"Sign in with GitHub"** works only in this single-origin proxy deployment (the hub and web share a public origin so the session cookie is visible to the SPA); it isn't available in the plain two-port quick start.
 
-> Published images (`ghcr.io/simeraycom/tugra-*`) arrive with the first tagged release. Until then the installer automatically builds from your checkout — same command, no changes needed.
+> Published images (`ghcr.io/simeraycom/tugra-*`) are pulled automatically; on a host without a published image for its architecture (arm64 today) the installer builds from your checkout — same command, no changes needed. Every release is digest-pinned and ships signed provenance; see [docs/upgrade.md](docs/upgrade.md).
 
 **MCP quick start.** Once Tugra is up, mint a personal access token (**Settings → API tokens**) and point any MCP client at it:
 
@@ -198,6 +203,10 @@ Live logs, metrics and the terminal stream over WebSockets. Full breakdown in [d
 - [x] Server patching (OS package updates)
 - [x] Self-update (signed releases) + guided onboarding
 - [x] Migrator — adopt local Docker containers + import from Coolify (connect · plan · apply · rollback) + one-command cross-host DB-data migration (Postgres · MySQL · MariaDB · Redis · KeyDB · Dragonfly)
+- [x] Restore-verify drills (scheduled, with a liveness watchdog) · PostgreSQL point-in-time recovery (WAL shipping · base backups · restore to any second)
+- [x] Rolling deploys with a health gate + post-cutover soak and auto-revert · fleet rollouts (canary → waves → health gate → halt/resume/rollback)
+- [x] Deploys survive a hub restart (agent command journal + outcome adoption) · per-deployment detail page (timeline · live log · config diff)
+- [x] Build secrets via BuildKit `--secret` · master-key rotation without downtime · digest-pinned, signed self-updates with a pre-update restore point
 
 **Next**
 

@@ -6,6 +6,7 @@ control plane for your servers. New here? Start with the [project overview](../R
 ## Getting started
 
 - [Install](install.md) — prerequisites, the one-line installer, and a production TLS setup.
+- [Testing the beta](beta-testing.md) — a ten-minute first pass, what to try, known limitations, and how to report a bug with logs.
 - [Upgrade](upgrade.md) — in-app updates, manual upgrades, and how the signed update flow works.
 - [Email](email.md) — optional SMTP for password reset, verification and invites (Resend/any SMTP) and what happens without it.
 - [Disaster recovery](disaster-recovery.md) — backing up + restoring the Tugra hub's own state (control plane).

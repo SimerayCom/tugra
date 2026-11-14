@@ -22,7 +22,7 @@
 
 ---
 
-> **Durum:** Beta. Aktif olarak geliştiriliyor; API'ler ara sürümler arasında değişebilir. Yıldızlar, issue'lar ve geri bildirimler memnuniyetle karşılanır.
+> **Durum:** Beta. Aktif olarak geliştiriliyor; API'ler ara sürümler arasında değişebilir. Yıldızlar, issue'lar ve geri bildirimler memnuniyetle karşılanır — neleri deneyeceğinizi ve nasıl bildireceğinizi [beta test rehberinde](docs/beta-testing.md) bulabilirsiniz.
 
 <div align="center">
 
@@ -52,7 +52,7 @@ curl -s https://your-tugra-host/api/v1/mcp \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_applications","arguments":{}}}'
 ```
 
-Bu, altta yatan REST API ile aynı `POST /api/v1/mcp` endpoint'idir; aynı kişisel erişim token'ıyla kimlik doğrulama, aynı scope'lar ve aynı IP allowlist geçerlidir — yönetmeniz gereken ayrı bir kimlik bilgisi yoktur ve şifresi çözülmüş hiçbir secret değeri modele döndürülmez. Katalogda **48 tool** vardır: 26'sı salt okunurdur (tek çağrıda fleet durumu / sağlık / uygulama listesi özetleri ve sandbox içinde çalışan bir volume dosya tarayıcısı dahil), 22'si ise PAT scope'lu, değişiklik yapan (mutate/ops) tool'lardır (deploy · kuyruktaki deploy'u iptal etme · yeniden başlatma · canlı ölçekleme · rollback · env ayarlama · Swarm kurma/büyütme · bir cluster genelinde fleet çapında eylemler · tek tıkla alan adı DNS kurulumu). Değişiklik yapan her tool, REST API'nin ekip izin kontrollerini ve audit trail'ini birebir yeniden kullanır; geri alınamayan işlemler (Swarm'ı sonlandırma, uygulamayı silme) ise adı yazarak açık onay vermeyi gerektirir. Üçüncü taraf client'lar için OAuth henüz yol haritasındadır.
+Bu, altta yatan REST API ile aynı `POST /api/v1/mcp` endpoint'idir; aynı kişisel erişim token'ıyla kimlik doğrulama, aynı scope'lar ve aynı IP allowlist geçerlidir — yönetmeniz gereken ayrı bir kimlik bilgisi yoktur ve şifresi çözülmüş hiçbir secret değeri modele döndürülmez. Katalogda **53 tool** vardır: 31'i salt okunurdur (tek çağrıda fleet durumu / sağlık / uygulama listesi özetleri ve sandbox içinde çalışan bir volume dosya tarayıcısı dahil), 22'si ise PAT scope'lu, değişiklik yapan (mutate/ops) tool'lardır (deploy · kuyruktaki deploy'u iptal etme · yeniden başlatma · canlı ölçekleme · rollback · env ayarlama · Swarm kurma/büyütme · bir cluster genelinde fleet çapında eylemler · tek tıkla alan adı DNS kurulumu). Değişiklik yapan her tool, REST API'nin ekip izin kontrollerini ve audit trail'ini birebir yeniden kullanır; geri alınamayan işlemler (Swarm'ı sonlandırma, uygulamayı silme) ise adı yazarak açık onay vermeyi gerektirir. Üçüncü taraf client'lar için OAuth henüz yol haritasındadır.
 
 ## Tuğra nedir?
 
@@ -61,10 +61,11 @@ Tuğra; uygulamaları ve veritabanlarını kendi sunucularınızda deploy etmek,
 ## Neden Tuğra
 
 - **Tek sunucu değil, fleet öncelikli** — sunucuları cluster'lar halinde gruplayın, aralarında gerçek bir Docker Swarm kurun ve her sunucuya tek tek SSH ile bağlanmak yerine tüm fleet'inizde tek bir toplu işlem çağrısıyla aynı komutu çalıştırın.
-- **Yapay zekâ ajanlarına da yerel destek** — yerleşik MCP sunucusu, `POST /api/v1/mcp` üzerinden 48 tool (okuma + PAT scope'lu değişiklik yapan/fleet operasyonları) sunar; erişim REST API ile aynı kişisel erişim token'larıyla scope'lanır.
-- **9 veritabanı motoru, tek iş akışı** — PostgreSQL, MySQL, MariaDB, MongoDB, Redis, KeyDB, Dragonfly, ClickHouse ve LibSQL; hepsi aynı şekilde kurulur. Sekizinde yerleşik mantıksal dump/restore backup'ı vardır (dump aracı olmayan LibSQL, volume backup'larıyla kapsanır).
+- **Yapay zekâ ajanlarına da yerel destek** — yerleşik MCP sunucusu, `POST /api/v1/mcp` üzerinden 53 tool (okuma + PAT scope'lu değişiklik yapan/fleet operasyonları) sunar; erişim REST API ile aynı kişisel erişim token'larıyla scope'lanır.
+- **9 veritabanı motoru, tek iş akışı** — PostgreSQL, MySQL, MariaDB, MongoDB, Redis, KeyDB, Dragonfly, ClickHouse ve LibSQL; hepsi aynı şekilde kurulur. Sekizinde yerleşik mantıksal dump/restore backup'ı vardır (dump aracı olmayan LibSQL yalnızca dosya düzeyindeki volume backup'larıyla kapsanır — tutarlı bir kopya için önce uygulamayı durdurun).
 - **Gerçek TLS, gerçek wildcard'lar** — Traefik üzerinden uygulama başına otomatik Let's Encrypt ve cluster'lı/Swarm ingress için DNS-01 wildcard sertifikaları (`*.yourdomain.com`) — yalnızca tek alan adlı HTTP-01 değil.
-- **Sunucu dışı (off-site) backup'lar** — yerel diske ya da S3 uyumlu depolamaya (S3/R2/MinIO) zamanlanmış, şifreli dump'lar ve tek tıkla restore.
+- **Sunucu dışı (off-site) backup'lar** — yerel diske ya da S3 uyumlu depolamaya (S3/R2/MinIO) zamanlanmış, şifreli dump'lar ve tek tıkla restore; zamanlanmış **restore-verify tatbikatları** bir backup'ın gerçekten geri yüklendiğini kanıtlar, PostgreSQL ise **belirli bir ana geri dönüş (point-in-time recovery)** sunar (WAL shipping + base backup'lar, panelden istediğiniz saniyeye restore).
+- **Güvenebileceğiniz deploy'lar** — health gate'li rolling deploy'lar ve otomatik geri alan cutover sonrası soak süreci, fleet rollout'ları (canary → dalgalar → durdurma/rollback), image'a asla girmeyen build secret'ları ve control plane yeniden başlatmasından sağ çıkan deploy'lar.
 - **Açık çekirdek, sahte açıklık değil** — yukarıdakilerin hepsi *bu* repoda AGPL-3.0 altında ücretsiz gelir. Pro/Cloud (SSO, audit log dışa aktarma, whitelabel, multi-tenant faturalama) ayrı lisanslı bir eklentidir — buradaki hiçbir şey sizi durmadan yükseltmeye itmez ya da yapabileceklerinizi sessizce kısıtlamaz. Tuğra, varsayılan olarak açık olan anonim kullanım istatistikleri gönderir. Bunlar toplu/özet sayılar (sunucu, uygulama, veritabanı, deploy) ile sürüm, edition ve işletim sistemi bilgisinden oluşur; rastgele bir kimlikle iletilir, ad, IP, alan adı ya da secret içermez ve alıcı IP adresinizi saklamaz. İstediğiniz zaman `--no-telemetry` / `TUGRA_TELEMETRY=0` ile ya da Settings'ten kapatabilirsiniz. Güncelleme kontrolleri ve genel IP tespiti opt-in'dir, varsayılan olarak kapalıdır.
 
 ## Tuğra rakipleriyle nasıl kıyaslanıyor?
@@ -83,7 +84,7 @@ Tuğra; uygulamaları ve veritabanlarını kendi sunucularınızda deploy etmek,
 | **Veri** | | | | | | |
 | Yönetilen veritabanı motorları | **9** | 8 | 6 | — | — | — |
 | Zamanlanmış S3 backup'ları + restore | ✅ | ✅ | ✅ | — | — | ~ |
-| Uygulama Docker volume backup'ları | ✅ | — | ✅ | — | — | — |
+| Uygulama Docker volume backup'ları (dosya düzeyinde, snapshot değil) | ✅ | — | ✅ | — | — | — |
 | **Alan adları ve TLS** | | | | | | |
 | Özel alan adları + otomatik SSL | ✅ | ✅ | ✅ | — | ✅ | ✅ |
 | DNS-01 wildcard sertifikaları | ✅ | ~ | — | — | — | ~ |
@@ -92,6 +93,10 @@ Tuğra; uygulamaları ve veritabanlarını kendi sunucularınızda deploy etmek,
 | Multi-manager Raft HA + ingress HA | ✅ | — | — | — | — | — |
 | Fleet çapında toplu işlemler (tek çağrı) | ✅ | — | — | — | — | — |
 | İşletim sistemi yamalama (sunucu başına + fleet) | ✅ | — | — | — | — | — |
+| Belirli bir ana geri yükleme — point-in-time (PostgreSQL WAL) | ✅¹⁰ | — | — | — | — | — |
+| Zamanlanmış restore-verify tatbikatları | ✅ | — | — | — | — | — |
+| Fleet rollout'ları (canary → dalgalar → otomatik durdurma/rollback) | ✅ | — | — | — | — | — |
+| Cutover sonrası otomatik rollback (soak penceresi) | ✅ | — | — | — | — | — |
 | **Gözlemlenebilirlik** | | | | | | |
 | Yerleşik metrikler (CPU/RAM/disk) | ✅ | ~ | ✅ | ~ | — | — |
 | Uptime izleme + bildirimler | ✅ | ~ | ✅ | — | — | — |
@@ -100,13 +105,13 @@ Tuğra; uygulamaları ve veritabanlarını kendi sunucularınızda deploy etmek,
 | Ekipler / RBAC | ✅ | ~ | ✅ | ~⁷ | — | — |
 | SSO / OIDC | ✅ (Pro)⁸ | ✅ | ✅ | ~⁷ | — | — |
 | Audit log | ✅ | ✅ | ✅ | ~⁷ | — | — |
-| MCP / ajan kontrolü | ✅ 48 tool⁵ | ✅ | ✅ | — | — | ~² |
+| MCP / ajan kontrolü | ✅ 53 tool⁵ | ✅ | ✅ | — | — | ~² |
 | **Güven ve lisans** | | | | | | |
 | Telemetri | Anonim, opt-out (yalnızca sayılar) | n/a | n/a | n/a | n/a | n/a |
 | Migrasyon (Coolify'dan import) | ✅⁹ | — | — | — | — | — |
 | Çekirdek lisans | AGPL-3.0 | Apache-2.0 | Apache-2.0³ | zlib + BE⁷ | Apache-2.0 + ek şartlar⁴ | MIT |
 
-<sub>¹ Coolify v4 sunucuları tek tek yönetir (yerleşik cluster desteği yoktur). ² Üçüncü taraf, erken aşamadaki bir Dokku MCP projesi; resmî bir sürüm değildir. ³ Dokploy'un çekirdeği Apache-2.0'dır; kurumsal `proprietary/` dizinini (SSO, audit log'lar, whitelabel) ayrı bir Source-Available lisansı kapsar — Tuğra'nın kullandığı açık çekirdek modelinin aynısı. ⁴ CapRover'ın `LICENSE` dosyası Apache-2.0'dır; ancak ücretli özelliklerin değiştirilmesini/yeniden dağıtılmasını kısıtlayan bir ek içerir. ⁵ Tuğra, Coolify ve Dokploy'un üçü de read ve write tool'lu MCP sunucuları sunar; yani ajan kontrolünde eşit düzeydedir. Tuğra buna fleet çapında eylemleri (bir cluster'da tek çağrı), yıkıcı tool'larda isim onayını ve secret redaction'ı ekler. ⁶ Dokku'nun Docker Swarm desteği yoktur; multi-node seçeneği, farklı bir mimari olan `scheduler-k3s` eklentisidir (k3s/Kubernetes). ⁷ Portainer'ın RBAC, SSO ve audit log özellikleri ücretli Business Edition'ın parçasıdır. ⁸ Tuğra'nın çekirdeği ücretsiz ve tam özellikli (ekipler/RBAC, audit log, backup'lar, izleme, MCP, migrator, multi-node HA); SSO/OIDC ise bir Pro özelliğidir. ⁹ Coolify uygulamalarını, yapılandırma/env değerleriyle birlikte yeni Tuğra kaynakları olarak import eder (kopyalama modu); ayrı bir yerel Docker devralma aracı, aynı host'taki container'ları yerinde devralır (adlandırılmış volume'larını koruyarak). Postgres, MySQL, MariaDB, Redis, KeyDB ve Dragonfly için veritabanı **verisi**, Coolify host'una yapıştırdığınız tek komutluk bir migrator ile host'lar arasında taşınır; MongoDB verisi rehberli bir dump-ve-restore ile (import-from-url), LibSQL ve uygulama **volume** verisi ise `tar`/`rsync` ile taşınır; ClickHouse için henüz bir migrasyon aracı yoktur ([docs/coolify-migration.md](docs/coolify-migration.md)). Ürün adları ilgili sahiplerinin ticari markalarıdır; Tuğra bu ürünlerle bağlantılı değildir ve onlar tarafından onaylanmamıştır.</sub>
+<sub>¹ Coolify v4 sunucuları tek tek yönetir (yerleşik cluster desteği yoktur). ² Üçüncü taraf, erken aşamadaki bir Dokku MCP projesi; resmî bir sürüm değildir. ³ Dokploy'un çekirdeği Apache-2.0'dır; kurumsal `proprietary/` dizinini (SSO, audit log'lar, whitelabel) ayrı bir Source-Available lisansı kapsar — Tuğra'nın kullandığı açık çekirdek modelinin aynısı. ⁴ CapRover'ın `LICENSE` dosyası Apache-2.0'dır; ancak ücretli özelliklerin değiştirilmesini/yeniden dağıtılmasını kısıtlayan bir ek içerir. ⁵ Tuğra, Coolify ve Dokploy'un üçü de read ve write tool'lu MCP sunucuları sunar; yani ajan kontrolünde eşit düzeydedir. Tuğra buna fleet çapında eylemleri (bir cluster'da tek çağrı), yıkıcı tool'larda isim onayını ve secret redaction'ı ekler. ⁶ Dokku'nun Docker Swarm desteği yoktur; multi-node seçeneği, farklı bir mimari olan `scheduler-k3s` eklentisidir (k3s/Kubernetes). ⁷ Portainer'ın RBAC, SSO ve audit log özellikleri ücretli Business Edition'ın parçasıdır. ⁸ Tuğra'nın çekirdeği ücretsiz ve tam özellikli (ekipler/RBAC, audit log, backup'lar, izleme, MCP, migrator, multi-node HA); SSO/OIDC ise bir Pro özelliğidir. ⁹ Coolify uygulamalarını, yapılandırma/env değerleriyle birlikte yeni Tuğra kaynakları olarak import eder (kopyalama modu); ayrı bir yerel Docker devralma aracı, aynı host'taki container'ları yerinde devralır (adlandırılmış volume'larını koruyarak). Postgres, MySQL, MariaDB, Redis, KeyDB ve Dragonfly için veritabanı **verisi**, Coolify host'una yapıştırdığınız tek komutluk bir migrator ile host'lar arasında taşınır; MongoDB verisi rehberli bir dump-ve-restore ile (import-from-url), LibSQL ve uygulama **volume** verisi ise `tar`/`rsync` ile taşınır; ClickHouse için henüz bir migrasyon aracı yoktur ([docs/coolify-migration.md](docs/coolify-migration.md)). ¹⁰ Yalnızca PostgreSQL; diğer motorlar zamanlanmış mantıksal dump'ları korur. Ürün adları ilgili sahiplerinin ticari markalarıdır; Tuğra bu ürünlerle bağlantılı değildir ve onlar tarafından onaylanmamıştır.</sub>
 
 ## Hızlı başlangıç
 
@@ -146,11 +151,11 @@ Trafiğin çoğunu **web**'e (`:3001`) yönlendirin — REST API'yi ve OAuth ba�
 
 Notlar:
 
-- **TLS pakete dahil değildir** — kendi reverse proxy'nizi getirin (Caddy, Traefik, nginx, …). `--domain`, bu kurulum için `COOKIE_SECURE=true` + `HUB_TRUSTED_PROXY=true` ayarlar.
-- **Ham portları kilitleyin.** `HUB_TRUSTED_PROXY=true` iken hub `X-Forwarded-For` başlığına güvenir; bu yüzden ham `:3000`/`:3001` portlarına **yalnızca** proxy erişebilmelidir. Yeni bir `--domain` kurulumu bunları `127.0.0.1`'e bağlar (aynı host'taki proxy için). Proxy başka bir host'ta çalışıyorsa `HUB_BIND`/`WEB_BIND` değerini bu makinenin private arayüz IP'sine ayarlayın ve portları firewall ile koruyun — Docker'ın publish ettiği portlar `ufw`'yi atlar.
+- **TLS:** kendi reverse proxy'nizi getirin (Caddy, Traefik, nginx, …) ya da panelin HTTPS'ini Tugra'nın kurmasını sağlamak için `--auto-tls --acme-email you@domain` ekleyin (yerleşik Traefik + Let's Encrypt). `--domain`, `COOKIE_SECURE=true` + `HUB_TRUSTED_PROXY=true` ayarlar.
+- **Ham portları kilitleyin.** `HUB_TRUSTED_PROXY=true` iken hub `X-Forwarded-For` başlığına güvenir (yalnızca private/loopback/docker eşlerinden veya `HUB_TRUSTED_PROXY_CIDRS` ile belirtilenlerden) ve ham `:3000`/`:3001` portlarına **yalnızca** proxy erişebilmelidir. Yeni bir `--domain` kurulumu bunları `127.0.0.1`'e bağlar (aynı host'taki proxy için); https'e geçen mevcut bir kurulum da buraya taşınır (`--keep-raw-ports` bunu devre dışı bırakır). Proxy başka bir host'ta çalışıyorsa `HUB_BIND`/`WEB_BIND` değerini bu makinenin private arayüz IP'sine ayarlayın ve portları firewall ile koruyun — Docker'ın publish ettiği portlar `ufw`'yi atlar.
 - **"Sign in with GitHub"** yalnızca bu single-origin proxy kurulumunda çalışır (session cookie'sinin SPA tarafından görülebilmesi için hub ve web ortak bir public origin'i paylaşır); düz iki portlu hızlı başlangıçta kullanılamaz.
 
-> Yayımlanmış image'lar (`ghcr.io/simeraycom/tugra-*`) ilk etiketli sürümle birlikte gelecektir. O zamana kadar kurulum script'i, checkout'unuzdan otomatik olarak build eder — aynı komut, hiçbir değişiklik gerekmez.
+> Yayımlanmış image'lar (`ghcr.io/simeraycom/tugra-*`) otomatik olarak çekilir; mimarisi için yayımlanmış image bulunmayan bir host'ta (bugün arm64) kurulum script'i checkout'unuzdan build eder — aynı komut, hiçbir değişiklik gerekmez. Her sürüm digest'e sabitlenir ve imzalı provenance ile gelir; bkz. [docs/upgrade.md](docs/upgrade.md).
 
 **MCP hızlı başlangıç.** Tuğra ayağa kalktıktan sonra bir kişisel erişim token'ı oluşturun (**Settings → API tokens**) ve herhangi bir MCP client'ını ona yönlendirin:
 
@@ -187,7 +192,7 @@ Canlı log'lar, metrikler ve terminal WebSocket'ler üzerinden akar. Tüm ayrın
 - [x] Canlı metrikler, build log'ları ve web terminal (WebSocket akışları)
 - [x] Backup ve restore destekli veritabanları (9 motor; yerel + S3/R2 off-site)
 - [x] Multi-server cluster'lar + Docker Swarm kurulumu, fleet genelinde toplu işlemler
-- [x] Yerleşik MCP sunucusu — 48 tool (okuma + PAT scope'lu değişiklik yapan/fleet operasyonları) + yönlendirmeli prompt'lar
+- [x] Yerleşik MCP sunucusu — 53 tool (okuma + PAT scope'lu değişiklik yapan/fleet operasyonları) + yönlendirmeli prompt'lar
 - [x] App store — tek tıkla şablon kataloğu + Home modu launcher'ı
 - [x] Uygulama volume'ları için salt okunur dosya tarayıcısı (Web UI + MCP `list_files`)
 - [x] Preview deploy'lar (pull request başına)
@@ -198,6 +203,10 @@ Canlı log'lar, metrikler ve terminal WebSocket'ler üzerinden akar. Tüm ayrın
 - [x] Sunucu yamalama (işletim sistemi paket güncellemeleri)
 - [x] Self-update (imzalı sürümler) + yönlendirmeli onboarding
 - [x] Migrator — yerel Docker container'larını devralma + Coolify'dan import (bağlan · planla · uygula · rollback) + tek komutla host'lar arası veritabanı verisi migrasyonu (Postgres · MySQL · MariaDB · Redis · KeyDB · Dragonfly)
+- [x] Restore-verify tatbikatları (zamanlanmış, liveness watchdog ile) · PostgreSQL point-in-time recovery (WAL shipping · base backup'lar · istediğiniz saniyeye restore)
+- [x] Health gate'li rolling deploy'lar + cutover sonrası soak ve otomatik geri alma · fleet rollout'ları (canary → dalgalar → health gate → durdur/devam et/rollback)
+- [x] Deploy'lar hub yeniden başlatmasından sağ çıkar (agent command journal + sonuç devralma) · deploy başına ayrıntı sayfası (zaman çizelgesi · canlı log · config diff)
+- [x] BuildKit `--secret` ile build secret'ları · kesintisiz master-key rotation · digest'e sabitlenmiş, imzalı self-update'ler ve güncelleme öncesi restore noktası
 
 **Sırada**
 

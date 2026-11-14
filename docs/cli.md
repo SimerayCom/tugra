@@ -5,12 +5,11 @@ MIT-licensed client you can use from your terminal or CI.
 
 ## Quick start
 
-> **Note:** `tugra-cli` is published to npm with the first tagged release. Until then, build it from a
-> checkout — `pnpm --filter tugra-cli build` — and run `node packages/cli/dist/index.js` in place of the
-> `tugra` command below.
+> `tugra-cli` is published to npm (`npm i -g tugra-cli`). To run it from a checkout instead, build it with
+> `pnpm --filter tugra-cli build` and use `node packages/cli/dist/index.js` in place of the `tugra` command.
 
 ```bash
-npm i -g tugra-cli                            # once published (see note above)
+npm i -g tugra-cli
 tugra login --hub https://tugra.example.com   # paste a PAT from Settings → API tokens
 tugra servers ls
 ```

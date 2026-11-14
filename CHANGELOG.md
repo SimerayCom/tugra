@@ -7,6 +7,37 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Per-deployment detail page.** Every deployment row opens its own page: a queued → started → finished
+  timeline with queue wait and run time, who or what triggered it, the deployed commit (linked to the
+  repository), image tag and digest, the configuration diff against the previous deployment, the full build
+  log (following live while the deploy runs), and cancel / roll back / analyze actions — with honest notes
+  when a deploy was interrupted, recovered, auto-rolled-back or cancelled. The deployments list no longer
+  carries every build log, so the app page polls far less data.
+- **PostgreSQL point-in-time recovery.** Enable PITR per database: WAL archiving is turned on with a verified
+  restart, segments are shipped to the database's backup destination, physical base backups run on demand or
+  on a schedule, and the panel shows the recoverable window with a picker to restore to any second into a new
+  database. Retention is WAL-aware so a restorable base is never left without its WAL.
+- **Restore-verify drills.** Prove a backup restores: on demand or on a schedule, the latest backup is
+  restored into a disposable database and the result is recorded on the source; a watchdog alerts when the
+  drill stops running or starts failing.
+- **Fleet rollouts.** Deploy a release across many apps as canary → waves with a per-app health gate, a bake
+  window, fail-fast halt, resume, and a one-click fleet rollback to each app's previous version, with
+  notifications for halted / completed / rolled-back rollouts.
+- **Post-cutover auto-rollback.** Rolling deploys keep the previous container through a soak window after
+  traffic switches and revert automatically if the new version fails its health checks early.
+- **Build secrets.** Dockerfile builds can mount secrets via BuildKit `--secret` so tokens never land in the
+  image or its history (unlike build args).
+- **Secrets key rotation.** Rotate `SECRETS_ENCRYPTION_KEY` without downtime: keep the old key as a previous
+  key, re-encrypt every stored secret from Settings → Instance, then drop the old key once the panel says it
+  is safe.
+- **Digest-pinned updates.** The signed release manifest now records each image's digest; the self-updater
+  pulls hub and web by digest and refuses an image whose version label does not match the release. Older
+  manifests keep updating by tag.
+- **Safer installer and updater.** A mandatory pre-update restore point (database dump + `.env` copy) before
+  any update; `X-Forwarded-For` is trusted only from private, loopback or explicitly listed proxy peers; an
+  existing install turning HTTPS moves its raw ports to loopback (`--keep-raw-ports` opts out); atomic `.env`
+  writes; the updater also refreshes the bundled agent; `bootstrap.sh` fetches by branch, tag or commit and
+  leaves a checkout that `git pull` can update; abort paths restore the pre-run `.env`.
 - **Deploys survive a hub restart.** A deploy that is running when the hub restarts (or when the agent's
   connection drops) is no longer marked failed blind. The agent keeps running it and keeps a local command
   journal; when it reconnects the hub picks the deploy back up and records the real outcome — success,
@@ -14,6 +45,37 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   genuinely cannot be known (the agent itself restarted, or it never reports back before the deadline) does
   the deploy show as interrupted, and the app's status is never changed on a guess. Requires the updated
   agent (older agents keep the previous behaviour until they are updated via *Update agent*).
+
+## [0.1.0-beta.11] - 2026-11-12
+
+- **Resumable queued deploys.** Single-server deploys still queued when the hub restarts are no longer dropped;
+  they run when the server's agent reconnects. Deploys get a durable idempotency key so a retried request can
+  never enqueue twice.
+- **Agent reconnect fixes.** A reconnecting agent supersedes its stale socket instead of flipping offline; an
+  agent self-update re-attaches its Docker networks so a single-box agent keeps reaching its hub.
+- **Proxy churn fix.** Traefik is recreated only when its configuration actually changes, and per-server
+  reconciles are coalesced, so a deploy no longer causes a brief edge outage for every app on the server.
+- **Supply chain.** Postgres and Redis images are digest-pinned; every release ships Sigstore-signed SLSA
+  provenance and an SBOM.
+- **Server patching** returns a clean 503 when the agent is offline, self-heals an interrupted `dpkg`, and
+  outwaits the host's patch backstop.
+
+## [0.1.0-beta.7] – [0.1.0-beta.10] - 2026-11-11 / 2026-11-12
+
+- **Protocol gate.** The hub refuses agents that are protocol-incompatible or older than an operator-set
+  minimum, at enroll and at auth, with a clear reason.
+- **Failed-update recovery.** A failed self-update actively restores and verifies the previous version; when
+  that is impossible the panel shows a `recovery_required` state with the exact manual steps.
+- **Idempotency leases.** Long requests hold their idempotency claim with a heartbeat so a retry never re-runs
+  them.
+- **Monitors.** A just-created metric monitor stays UP until its first sample; recovery is gated on sample
+  freshness.
+- **Volume backups** are labelled honestly as file-level copies, and volume restores are validated and
+  snapshotted before anything is wiped.
+- **MCP** grows to 53 tools (31 read, 22 mutate).
+- **UI.** Deploy markers on metric charts, resizable live-log panel with tinted error lines, dismiss-safe
+  toasts, a system theme option, accessible menus and confirmation dialogs, an opt-in feedback flow that
+  prefills a GitHub issue, and an update badge in the top bar.
 
 ## [0.1.0-beta.6] - 2026-11-10
 

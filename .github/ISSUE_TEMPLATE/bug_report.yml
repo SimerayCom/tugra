@@ -25,7 +25,7 @@ body:
     id: version
     attributes:
       label: Tugra version
-      description: From the dashboard footer or `GET /version` (e.g. v0.1.0). Put "unknown" if unsure.
+      description: From Settings → Instance (Updates card) or `GET /api/v1/version` (e.g. v0.1.0-beta.11). Put "unknown" if unsure.
     validations:
       required: true
   - type: textarea
