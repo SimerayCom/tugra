@@ -41,6 +41,36 @@ export function verifyGiteaSignature(secret: string, rawBody: Buffer | string, h
   return safeEqual(expected, header);
 }
 
+export type WebhookHeaders = Record<string, string | string[] | undefined>;
+
+/** Case-insensitive single-value header read (Node lowercases incoming header names). */
+export function header(headers: WebhookHeaders, name: string): string | undefined {
+  const v = headers[name.toLowerCase()];
+  return Array.isArray(v) ? v[0] : v;
+}
+
+/**
+ * Authenticate a git webhook delivery against the per-app secret: accepted when ANY present scheme verifies.
+ * Every scheme is keyed by the SAME secret, so accepting any one is not weaker than first-header-wins — and it
+ * removes false 401s when Gitea sends a legacy sha1 `X-Hub-Signature` next to a valid `X-Gitea-Signature`.
+ * Bitbucket (Cloud + Server) signs with `X-Hub-Signature: sha256=<hex>`, the same format as GitHub's
+ * `X-Hub-Signature-256`. NOTE: GitLab's `X-Gitlab-Token` is a shared secret echoed back — it carries NO body
+ * integrity. There is deliberately no unsigned acceptance path. All schemes are evaluated (no short-circuit).
+ */
+export function verifyWebhookRequest(secret: string, headers: WebhookHeaders, rawBody: Buffer | string): boolean {
+  const ghSig256 = header(headers, "x-hub-signature-256");
+  const ghSig = header(headers, "x-hub-signature"); // Bitbucket: sha256=<hex>; legacy GitHub/Gitea sha1= never verifies
+  const glToken = header(headers, "x-gitlab-token");
+  const giteaSig = header(headers, "x-gitea-signature") ?? header(headers, "x-forgejo-signature");
+  const results = [
+    ghSig256 != null && verifyGithubSignature(secret, rawBody, ghSig256),
+    ghSig != null && verifyGithubSignature(secret, rawBody, ghSig),
+    glToken != null && verifyGitlabToken(secret, glToken),
+    giteaSig != null && verifyGiteaSignature(secret, rawBody, giteaSig),
+  ];
+  return results.some(Boolean);
+}
+
 /** Extract the git ref (e.g. "refs/heads/main") from a push payload. GitHub/GitLab/Gitea send
  *  `ref: "refs/heads/<branch>"`; Bitbucket sends `push.changes[].new.{type:"branch", name}` — normalize the
  *  latter to the same `refs/heads/<branch>` shape so refMatchesBranch works across providers. */

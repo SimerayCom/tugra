@@ -12006,6 +12006,9 @@ export interface operations {
                         previewExcludeKeys: string[];
                         previewLimit: number | null;
                         prNumber: number | null;
+                        /** @enum {string|null} */
+                        prProvider: "github" | "gitlab" | "gitea" | "forgejo" | "bitbucket" | "bitbucket-server" | null;
+                        prHeadSha: string | null;
                         parentAppId: string | null;
                         tags: string[];
                         volumeBackupEnabled: boolean;
@@ -12331,6 +12334,9 @@ export interface operations {
                         previewExcludeKeys: string[];
                         previewLimit: number | null;
                         prNumber: number | null;
+                        /** @enum {string|null} */
+                        prProvider: "github" | "gitlab" | "gitea" | "forgejo" | "bitbucket" | "bitbucket-server" | null;
+                        prHeadSha: string | null;
                         parentAppId: string | null;
                         tags: string[];
                         volumeBackupEnabled: boolean;
@@ -12767,6 +12773,9 @@ export interface operations {
                         previewExcludeKeys: string[];
                         previewLimit: number | null;
                         prNumber: number | null;
+                        /** @enum {string|null} */
+                        prProvider: "github" | "gitlab" | "gitea" | "forgejo" | "bitbucket" | "bitbucket-server" | null;
+                        prHeadSha: string | null;
                         parentAppId: string | null;
                         tags: string[];
                         volumeBackupEnabled: boolean;
@@ -13158,6 +13167,9 @@ export interface operations {
                         previewExcludeKeys: string[];
                         previewLimit: number | null;
                         prNumber: number | null;
+                        /** @enum {string|null} */
+                        prProvider: "github" | "gitlab" | "gitea" | "forgejo" | "bitbucket" | "bitbucket-server" | null;
+                        prHeadSha: string | null;
                         parentAppId: string | null;
                         tags: string[];
                         volumeBackupEnabled: boolean;
@@ -19078,6 +19090,9 @@ export interface operations {
                             previewExcludeKeys: string[];
                             previewLimit: number | null;
                             prNumber: number | null;
+                            /** @enum {string|null} */
+                            prProvider: "github" | "gitlab" | "gitea" | "forgejo" | "bitbucket" | "bitbucket-server" | null;
+                            prHeadSha: string | null;
                             parentAppId: string | null;
                             tags: string[];
                             volumeBackupEnabled: boolean;
@@ -19398,6 +19413,9 @@ export interface operations {
                         previewExcludeKeys: string[];
                         previewLimit: number | null;
                         prNumber: number | null;
+                        /** @enum {string|null} */
+                        prProvider: "github" | "gitlab" | "gitea" | "forgejo" | "bitbucket" | "bitbucket-server" | null;
+                        prHeadSha: string | null;
                         parentAppId: string | null;
                         tags: string[];
                         volumeBackupEnabled: boolean;
@@ -19787,6 +19805,9 @@ export interface operations {
                         previewExcludeKeys: string[];
                         previewLimit: number | null;
                         prNumber: number | null;
+                        /** @enum {string|null} */
+                        prProvider: "github" | "gitlab" | "gitea" | "forgejo" | "bitbucket" | "bitbucket-server" | null;
+                        prHeadSha: string | null;
                         parentAppId: string | null;
                         tags: string[];
                         volumeBackupEnabled: boolean;
@@ -20234,6 +20255,9 @@ export interface operations {
                         previewExcludeKeys: string[];
                         previewLimit: number | null;
                         prNumber: number | null;
+                        /** @enum {string|null} */
+                        prProvider: "github" | "gitlab" | "gitea" | "forgejo" | "bitbucket" | "bitbucket-server" | null;
+                        prHeadSha: string | null;
                         parentAppId: string | null;
                         tags: string[];
                         volumeBackupEnabled: boolean;
@@ -21502,6 +21526,9 @@ export interface operations {
                         previewExcludeKeys: string[];
                         previewLimit: number | null;
                         prNumber: number | null;
+                        /** @enum {string|null} */
+                        prProvider: "github" | "gitlab" | "gitea" | "forgejo" | "bitbucket" | "bitbucket-server" | null;
+                        prHeadSha: string | null;
                         parentAppId: string | null;
                         tags: string[];
                         volumeBackupEnabled: boolean;

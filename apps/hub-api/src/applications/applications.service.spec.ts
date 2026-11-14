@@ -156,6 +156,9 @@ function make(
       }),
     };
   }
+  // upsertPreview takes a pg advisory xact lock (`$executeRaw`) inside the same $transaction: default it to a no-op spy.
+  (withServerDefaults as { $executeRaw?: unknown }).$executeRaw =
+    (prisma as { $executeRaw?: unknown }).$executeRaw ?? jest.fn().mockResolvedValue(0);
   (withServerDefaults as { $queryRaw?: unknown }).$queryRaw =
     (prisma as { $queryRaw?: unknown }).$queryRaw ?? jest.fn().mockResolvedValue([]);
   // createFromTemplate v2 runs allocate+insert in a $transaction; default it to run the callback
@@ -1759,7 +1762,7 @@ describe("ApplicationsService", () => {
     // crypto mock: encrypt(s)=`enc(${s})`, decrypt=identity → parent.envEnc is readable as JSON.
     jest.spyOn(svc as unknown as { submitDeploy: (...a: unknown[]) => Promise<unknown> }, "submitDeploy").mockResolvedValue(undefined);
     const parent = {
-      id: "app1", name: "web", teamId: "t1", serverId: "s1", environmentId: "e1", source: "GIT",
+      id: "app1", name: "web", teamId: "t1", serverId: "s1", environmentId: "e1", source: "GIT", gitUrl: "https://github.com/u/r.git",
       previewEnabled: true, domain: "app.example.com",
       envEnc: JSON.stringify({ SECRET: "prod", API_URL: "https://x" }),
       previewExcludeKeys: ["SECRET"],
@@ -1776,7 +1779,7 @@ describe("ApplicationsService", () => {
     const svc = make(prisma, {} as TeamAccessService, {} as AgentWsServer);
     jest.spyOn(svc as unknown as { submitDeploy: (...a: unknown[]) => Promise<unknown> }, "submitDeploy").mockResolvedValue(undefined);
     const parent = {
-      id: "app1", name: "web", teamId: "t1", serverId: "s1", environmentId: "e1", source: "GIT",
+      id: "app1", name: "web", teamId: "t1", serverId: "s1", environmentId: "e1", source: "GIT", gitUrl: "https://github.com/u/r.git",
       previewEnabled: true, domain: "app.example.com", containerPort: 8080, envEnc: JSON.stringify({}),
     } as unknown as Parameters<typeof svc.upsertPreview>[0];
     await svc.upsertPreview(parent, 7, "feature-7");
@@ -1802,7 +1805,7 @@ describe("ApplicationsService", () => {
     jest.spyOn(svc as unknown as { submitDeploy: (...a: unknown[]) => Promise<unknown> }, "submitDeploy").mockResolvedValue(undefined);
     const removed: number[] = [];
     jest.spyOn(svc, "removePreviewByPr").mockImplementation(async (_pid: string, pr: number) => { removed.push(pr); });
-    const parent = { id: "app1", name: "web", teamId: "t1", serverId: "s1", environmentId: "e1", source: "GIT", previewEnabled: true, domain: "app.example.com", previewLimit: 2, previewExcludeKeys: [] } as unknown as Parameters<typeof svc.upsertPreview>[0];
+    const parent = { id: "app1", name: "web", teamId: "t1", serverId: "s1", environmentId: "e1", source: "GIT", gitUrl: "https://github.com/u/r.git", previewEnabled: true, domain: "app.example.com", previewLimit: 2, previewExcludeKeys: [] } as unknown as Parameters<typeof svc.upsertPreview>[0];
     await svc.upsertPreview(parent, 9, "feature-9");
     expect(removed).toEqual([1, 2]); // the two oldest evicted; newest (pr3) + the new pr9 remain = 2 (the cap)
     expect(create).toHaveBeenCalled();
@@ -3635,7 +3638,7 @@ describe("ApplicationsService", () => {
     await svc.upsertPreview(parentApp as never, 5, "feat-v2");
     expect(create).not.toHaveBeenCalled();
     expect(appUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: "prev1" }, data: { gitBranch: "feat-v2", gitCommit: null, containerPort: 80 } }),
+      expect.objectContaining({ where: { id: "prev1" }, data: { gitBranch: "feat-v2", gitCommit: null, containerPort: 80, prHeadSha: null } }),
     );
   });
 
@@ -3698,6 +3701,117 @@ describe("ApplicationsService", () => {
     await expect(
       make(prisma, access, {} as AgentWsServer).setPreviewEnabled("u1", "parent1", true),
     ).rejects.toThrow(/domain/);
+  });
+
+  describe("preview providers (GitLab / Gitea / Bitbucket)", () => {
+    function previewSvc(existing: Record<string, unknown> | null) {
+      const create = jest.fn().mockImplementation(({ data }) => Promise.resolve({ ...parentApp, ...data, id: "prev1" }));
+      const update = jest.fn().mockImplementation(({ data }) => Promise.resolve({ ...parentApp, ...(existing ?? {}), ...data, id: "prev1" }));
+      const executeRaw = jest.fn().mockResolvedValue(0);
+      const prisma = {
+        application: { create, update, findFirst: jest.fn().mockResolvedValue(existing) },
+        $executeRaw: executeRaw,
+      } as unknown as PrismaService;
+      const svc = make(prisma, {} as TeamAccessService, {} as AgentWsServer);
+      const submit = jest.spyOn(svc as unknown as { submitDeploy: (...a: unknown[]) => Promise<unknown> }, "submitDeploy").mockResolvedValue({ id: "d1" });
+      return { svc, create, update, executeRaw, submit };
+    }
+
+    it("create stores prProvider / prHeadSha; the name says MR !n for gitlab and PR #n otherwise; the host stays pr<n>", async () => {
+      const gl = previewSvc(null);
+      await gl.svc.upsertPreview(parentApp as never, 7, "feat", { provider: "gitlab", headSha: "abc1234" });
+      expect(gl.create.mock.calls[0][0].data).toMatchObject({ prProvider: "gitlab", prHeadSha: "abc1234", name: expect.stringContaining("MR !7"), domain: "pr7.x.com" });
+      const gt = previewSvc(null);
+      await gt.svc.upsertPreview(parentApp as never, 7, "feat", { provider: "gitea", headSha: null });
+      expect(gt.create.mock.calls[0][0].data).toMatchObject({ prProvider: "gitea", prHeadSha: null, name: expect.stringContaining("PR #7"), domain: "pr7.x.com" });
+      const legacy = previewSvc(null);
+      await legacy.svc.upsertPreview(parentApp as never, 7, "feat");
+      expect(legacy.create.mock.calls[0][0].data).toMatchObject({ prProvider: null, prHeadSha: null, domain: "pr7.x.com" });
+    });
+
+    it("onlyIfHeadChanged with an equal stored sha neither updates nor deploys", async () => {
+      const t = previewSvc({ id: "prev1", prHeadSha: "abc1234", prProvider: "bitbucket" });
+      const r = await t.svc.upsertPreview(parentApp as never, 5, "feat", { provider: "bitbucket", headSha: "abc1234", onlyIfHeadChanged: true });
+      expect(r).toBeUndefined();
+      expect(t.update).not.toHaveBeenCalled();
+      expect(t.create).not.toHaveBeenCalled();
+      expect(t.submit).not.toHaveBeenCalled();
+      expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "preview.skipped", meta: expect.objectContaining({ reason: "head-unchanged" }) }));
+    });
+
+    it("onlyIfHeadChanged with a different sha redeploys and stores the new sha; with no existing preview it creates", async () => {
+      const t = previewSvc({ id: "prev1", prHeadSha: "abc1234", prProvider: "bitbucket" });
+      await t.svc.upsertPreview(parentApp as never, 5, "feat", { provider: "bitbucket", headSha: "def5678", onlyIfHeadChanged: true });
+      expect(t.update.mock.calls[0][0].data).toMatchObject({ prHeadSha: "def5678", prProvider: "bitbucket" });
+      expect(t.submit).toHaveBeenCalledTimes(1);
+      const n = previewSvc(null);
+      await n.svc.upsertPreview(parentApp as never, 5, "feat", { provider: "bitbucket", headSha: "def5678", onlyIfHeadChanged: true });
+      expect(n.create).toHaveBeenCalledTimes(1);
+      expect(n.submit).toHaveBeenCalledTimes(1);
+    });
+
+    it("an update without a provider never overwrites the stored provider", async () => {
+      const t = previewSvc({ id: "prev1", prProvider: "gitlab" });
+      await t.svc.upsertPreview(parentApp as never, 5, "feat");
+      expect("prProvider" in t.update.mock.calls[0][0].data).toBe(false);
+    });
+
+    it("takes a per-(parent, PR) advisory xact lock before re-finding the preview", async () => {
+      const t = previewSvc(null);
+      await t.svc.upsertPreview(parentApp as never, 5, "feat", { provider: "gitlab" });
+      expect(t.executeRaw).toHaveBeenCalledTimes(1);
+      const strings = (t.executeRaw.mock.calls[0][0] as TemplateStringsArray).join("?");
+      expect(strings).toContain("pg_advisory_xact_lock");
+      expect(t.executeRaw.mock.calls[0][1]).toBe("preview:parent1:5");
+    });
+
+    it("skips (and audits) a COMPOSE or IMAGE parent instead of building a broken preview", async () => {
+      for (const src of [{ source: "COMPOSE" }, { source: "IMAGE" }, { gitUrl: null }]) {
+        const t = previewSvc(null);
+        await t.svc.upsertPreview({ ...parentApp, ...src } as never, 5, "feat", { provider: "gitlab" });
+        expect(t.create).not.toHaveBeenCalled();
+        expect(t.submit).not.toHaveBeenCalled();
+        expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "preview.skipped", meta: expect.objectContaining({ reason: "unsupported-source" }) }));
+      }
+    });
+
+    it("setPreviewEnabled(true) refuses a non-GIT app, keeps the domain 400 on GIT, and always allows disabling", async () => {
+      const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+      const mk = (a: Record<string, unknown>) =>
+        make({ application: { findUnique: jest.fn().mockResolvedValue(a), update: jest.fn().mockResolvedValue({}) } } as unknown as PrismaService, access, {} as AgentWsServer);
+      await expect(mk({ ...parentApp, source: "COMPOSE" }).setPreviewEnabled("u1", "parent1", true)).rejects.toThrow(/Git-built/);
+      await expect(mk({ ...parentApp, source: "IMAGE" }).setPreviewEnabled("u1", "parent1", true)).rejects.toThrow(BadRequestException);
+      await expect(mk({ ...parentApp, domain: null }).setPreviewEnabled("u1", "parent1", true)).rejects.toThrow(/domain/);
+      await expect(mk({ ...parentApp, source: "COMPOSE" }).setPreviewEnabled("u1", "parent1", false)).resolves.toBeUndefined();
+      await expect(mk(parentApp).setPreviewEnabled("u1", "parent1", true)).resolves.toBeUndefined();
+    });
+
+    it("a new preview submit cancels older QUEUED preview rows of that app (and nothing else); manual rows are untouched", async () => {
+      const supersede = jest.fn().mockResolvedValue({ count: 1 });
+      const mkPrisma = () =>
+        ({
+          application: { findUnique: jest.fn().mockResolvedValue(parentApp), update: jest.fn().mockResolvedValue({}) },
+          deployment: {
+            count: jest.fn().mockResolvedValue(0),
+            create: jest.fn().mockResolvedValue({ id: "d9", createdAt: new Date() }),
+            update: jest.fn().mockResolvedValue({}),
+            updateMany: supersede,
+            findUnique: jest.fn().mockResolvedValue({ id: "d9", status: "SUCCESS" }),
+            findFirst: jest.fn().mockResolvedValue(null),
+          },
+          sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+        }) as unknown as PrismaService;
+      const agentWs = { sendCommand: jest.fn().mockResolvedValue({ exitCode: 0, output: "ok" }) } as unknown as AgentWsServer;
+      const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+      const svc = make(mkPrisma(), access, agentWs);
+      await (svc as unknown as { submitDeploy: (a: unknown, actor: string) => Promise<unknown> }).submitDeploy(parentApp, "webhook:pr");
+      const supersedeCalls = supersede.mock.calls.filter((c) => c[0].data?.logs === "Superseded by a newer push");
+      expect(supersedeCalls).toHaveLength(1);
+      expect(supersedeCalls[0][0].where).toMatchObject({ appId: "parent1", status: "QUEUED", trigger: "preview", id: { not: "d9" } });
+      supersede.mockClear();
+      await (make(mkPrisma(), access, agentWs) as unknown as { submitDeploy: (a: unknown, actor: string) => Promise<unknown> }).submitDeploy(parentApp, "u1");
+      expect(supersede.mock.calls.filter((c) => c[0].data?.logs === "Superseded by a newer push")).toHaveLength(0);
+    });
   });
 
   it("auto-creates an uptime monitor when a domained app is created", async () => {
@@ -5979,7 +6093,7 @@ describe("ApplicationsService — git/build settings", () => {
     const prisma = { application: { findFirst: jest.fn().mockResolvedValue(null), create } } as unknown as PrismaService;
     const svc = make(prisma, {} as TeamAccessService, {} as AgentWsServer);
     jest.spyOn(svc as unknown as { submitDeploy: (...a: unknown[]) => Promise<unknown> }, "submitDeploy").mockResolvedValue(undefined);
-    const parent = { ...gitApp, ...allSix, name: "web", environmentId: "e1", previewEnabled: true, domain: "app.example.com", envEnc: "{}", previewExcludeKeys: [] } as unknown as Parameters<typeof svc.upsertPreview>[0];
+    const parent = { ...gitApp, gitUrl: "https://github.com/u/r.git", ...allSix, name: "web", environmentId: "e1", previewEnabled: true, domain: "app.example.com", envEnc: "{}", previewExcludeKeys: [] } as unknown as Parameters<typeof svc.upsertPreview>[0];
     await svc.upsertPreview(parent, 7, "feature-7");
     const { gitSubmodules: _s, gitLfs: _l, ...rest } = allSix;
     expect(create.mock.calls[0][0].data).toMatchObject(rest); // shallow / no-cache / build-args / source-commit copy
@@ -6282,7 +6396,7 @@ describe("ApplicationsService — container ops + networking", () => {
       const svc = make(prisma, {} as TeamAccessService, {} as AgentWsServer);
       jest.spyOn(svc as unknown as { submitDeploy: (...a: unknown[]) => Promise<unknown> }, "submitDeploy").mockResolvedValue(undefined);
       const parent = {
-        id: "app1", name: "web", teamId: "t1", serverId: "s1", environmentId: "e1", source: "GIT", previewEnabled: true, domain: "app.example.com",
+        id: "app1", name: "web", teamId: "t1", serverId: "s1", environmentId: "e1", source: "GIT", gitUrl: "https://github.com/u/r.git", previewEnabled: true, domain: "app.example.com",
         envEnc: JSON.stringify({}), restartPolicy: "on-failure", restartMaxRetries: 3, stopGracePeriodSec: 25, drainSec: 9, containerAlias: "stable", networks: ["a"],
       } as unknown as Parameters<typeof svc.upsertPreview>[0];
       await svc.upsertPreview(parent, 7, "feature-7");
@@ -6466,7 +6580,7 @@ describe("ApplicationsService.setLimits — extra limits", () => {
     await svc.clone("u1", "src1", {});
     expect(create.mock.calls[0][0].data).toMatchObject(five);
     jest.spyOn(svc as unknown as { submitDeploy: (...a: unknown[]) => Promise<unknown> }, "submitDeploy").mockResolvedValue(undefined);
-    const parent = { ...classic, ...five, source: "GIT", name: "web", environmentId: "e1", previewEnabled: true, domain: "app.example.com", envEnc: "{}", previewExcludeKeys: [] } as unknown as Parameters<typeof svc.upsertPreview>[0];
+    const parent = { ...classic, ...five, source: "GIT", gitUrl: "https://github.com/u/r.git", name: "web", environmentId: "e1", previewEnabled: true, domain: "app.example.com", envEnc: "{}", previewExcludeKeys: [] } as unknown as Parameters<typeof svc.upsertPreview>[0];
     await svc.upsertPreview(parent, 7, "feature-7");
     expect(create.mock.calls[1][0].data).toMatchObject(five);
   });

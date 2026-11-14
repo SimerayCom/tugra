@@ -184,7 +184,10 @@ describe("Webhooks / auto-deploy (e2e)", () => {
     let pvSecret = "";
     const auth = () => ["Authorization", `Bearer ${token}`] as const;
     const prBody = (action: string, number: number, ref: string) =>
-      JSON.stringify({ action, pull_request: { number, head: { ref } } });
+      JSON.stringify({
+        action,
+        pull_request: { number, head: { ref, sha: "e59094b8de0f2f91abbe4760a52d9137260252d8", repo: { full_name: "u/r" } }, base: { repo: { full_name: "u/r" } } },
+      });
     const ghSig = (secret: string, body: string) =>
       "sha256=" + createHmac("sha256", secret).update(body).digest("hex");
 
@@ -257,6 +260,130 @@ describe("Webhooks / auto-deploy (e2e)", () => {
         .set(...auth())
         .expect(200);
       expect(previews.body).toHaveLength(0);
+    });
+
+    // Waits for the preview row for `n` to exist / vanish (the webhook answers 202 before its fire-and-forget work).
+    const previewsOf = async () =>
+      (await request(app.getHttpServer()).get(`/apps/${pvId}/previews`).set(...auth()).expect(200)).body as { prNumber: number; prProvider: string | null; prHeadSha: string | null; name: string }[];
+    const SHA = "e59094b8de0f2f91abbe4760a52d9137260252d8";
+
+    it("GitLab: an MR open creates a preview (prProvider gitlab) and a merge removes it", async () => {
+      commands.length = 0;
+      const mr = (action: string) =>
+        JSON.stringify({
+          object_kind: "merge_request",
+          project: { path_with_namespace: "u/r" },
+          object_attributes: {
+            iid: 21, action, source_branch: "feature/mr", target_branch: "main", source_project_id: 5, target_project_id: 5,
+            last_commit: { id: SHA }, target: { path_with_namespace: "u/r" },
+          },
+        });
+      const post = (action: string) =>
+        request(app.getHttpServer())
+          .post(`/webhooks/deploy/${pvToken}`)
+          .set("X-Gitlab-Event", "Merge Request Hook")
+          .set("X-Gitlab-Token", pvSecret)
+          .set("Content-Type", "application/json")
+          .send(mr(action))
+          .expect(202);
+      expect((await post("open")).body.deployed).toBe(true);
+      await waitFor(async () => (await previewsOf()).some((p) => p.prNumber === 21));
+      const pv = (await previewsOf()).find((p) => p.prNumber === 21)!;
+      expect(pv.prProvider).toBe("gitlab");
+      expect(pv.prHeadSha).toBe(SHA);
+      expect(pv.name).toContain("MR !21");
+      await waitForCommand(commands, "git clone");
+      await post("merge");
+      await waitFor(async () => !(await previewsOf()).some((p) => p.prNumber === 21));
+    });
+
+    it("Gitea: a synchronized event redeploys the existing preview (still one row)", async () => {
+      const ev = (action: string) =>
+        JSON.stringify({
+          action, number: 31,
+          pull_request: {
+            number: 31,
+            head: { ref: "feat-gitea", sha: SHA, repo: { id: 8, full_name: "u/r" } },
+            base: { ref: "main", repo: { id: 8, full_name: "u/r" } },
+          },
+        });
+      const post = (action: string) => {
+        const b = ev(action);
+        return request(app.getHttpServer())
+          .post(`/webhooks/deploy/${pvToken}`)
+          .set("X-Gitea-Event", "pull_request")
+          .set("X-Gitea-Signature", createHmac("sha256", pvSecret).update(b).digest("hex"))
+          .set("Content-Type", "application/json")
+          .send(b)
+          .expect(202);
+      };
+      await post("opened");
+      await waitFor(async () => (await previewsOf()).some((p) => p.prNumber === 31));
+      expect((await post("synchronized")).body.deployed).toBe(true);
+      await sleep(400);
+      const rows = (await previewsOf()).filter((p) => p.prNumber === 31);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].prProvider).toBe("gitea");
+      await post("closed");
+      await waitFor(async () => !(await previewsOf()).some((p) => p.prNumber === 31));
+    });
+
+    it("Bitbucket Cloud: pullrequest:created (X-Hub-Signature sha256) creates a preview and fulfilled removes it", async () => {
+      const ev = (state: string) =>
+        JSON.stringify({
+          pullrequest: {
+            id: 41, state,
+            source: { branch: { name: "feature/bb" }, commit: { hash: SHA }, repository: { full_name: "u/r", uuid: "{x}" } },
+            destination: { branch: { name: "main" }, repository: { full_name: "u/r", uuid: "{x}" } },
+          },
+        });
+      const post = (key: string, state: string) => {
+        const b = ev(state);
+        return request(app.getHttpServer())
+          .post(`/webhooks/deploy/${pvToken}`)
+          .set("X-Event-Key", key)
+          .set("X-Hub-Signature", ghSig(pvSecret, b))
+          .set("Content-Type", "application/json")
+          .send(b)
+          .expect(202);
+      };
+      expect((await post("pullrequest:created", "OPEN")).body.deployed).toBe(true);
+      await waitFor(async () => (await previewsOf()).some((p) => p.prNumber === 41));
+      expect((await previewsOf()).find((p) => p.prNumber === 41)!.prProvider).toBe("bitbucket");
+      await post("pullrequest:fulfilled", "MERGED");
+      await waitFor(async () => !(await previewsOf()).some((p) => p.prNumber === 41));
+    });
+
+    it("a fork PR answers 202 deployed:false and creates nothing", async () => {
+      const b = JSON.stringify({
+        action: "opened", number: 51,
+        pull_request: {
+          number: 51,
+          head: { ref: "evil", sha: SHA, repo: { id: 99, full_name: "fork/r" } },
+          base: { ref: "main", repo: { id: 8, full_name: "u/r" } },
+        },
+      });
+      const res = await request(app.getHttpServer())
+        .post(`/webhooks/deploy/${pvToken}`)
+        .set("X-Gitea-Event", "pull_request")
+        .set("X-Gitea-Signature", createHmac("sha256", pvSecret).update(b).digest("hex"))
+        .set("Content-Type", "application/json")
+        .send(b)
+        .expect(202);
+      expect(res.body).toEqual({ deployed: false, reason: "fork pull request (ignored)" });
+      await sleep(300);
+      expect((await previewsOf()).some((p) => p.prNumber === 51)).toBe(false);
+    });
+
+    it("a PR event with a bad signature is rejected (401)", async () => {
+      const b = prBody("opened", 61, "feature-61");
+      await request(app.getHttpServer())
+        .post(`/webhooks/deploy/${pvToken}`)
+        .set("X-Gitea-Event", "pull_request")
+        .set("X-Gitea-Signature", "0".repeat(64))
+        .set("Content-Type", "application/json")
+        .send(b)
+        .expect(401);
     });
 
     it("ignores PR events when previews are disabled on the app", async () => {

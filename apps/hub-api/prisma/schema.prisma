@@ -1301,6 +1301,10 @@ model Application {
   isPreview                    Boolean            @default(false)
   previewEnabled               Boolean            @default(false)
   prNumber                     Int?
+  // Preview provenance: which git host's event created this preview (null = legacy/GitHub-era row) and the head commit
+  // it last built (display + dedupe of metadata-only "updated" events). Metadata only: never used to build, never in a shell.
+  prProvider                   String? // github | gitlab | gitea | forgejo | bitbucket | bitbucket-server
+  prHeadSha                    String? // lowercase hex 7..64, else null
   parentAppId                  String?
   tags                         String[]           @default([])
   // Volume backups (Dokploy parity): back up the app's named volumes to a destination.

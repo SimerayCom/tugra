@@ -9,24 +9,19 @@ import { AuditService } from "../audit/audit.service";
 import { ApplicationsService } from "../applications/applications.service";
 import {
   hasSkipMarker,
+  header,
   parseHeadCommitMessage,
-  parsePullRequest,
   parseRef,
   refMatchesBranch,
   repoFullName,
   verifyGithubSignature,
-  verifyGitlabToken,
-  verifyGiteaSignature,
+  verifyWebhookRequest,
 } from "./webhook-verify";
+import { detectGitEvent, isSafePreviewBranch, normalizePullRequest, type NormalizedPr, type PrProvider } from "./pr-events";
 import { parseChangedFiles, pushMatchesWatchPaths } from "./watch-paths";
 import type { Application } from "@prisma/client";
 
 type Headers = Record<string, string | string[] | undefined>;
-
-function header(headers: Headers, name: string): string | undefined {
-  const v = headers[name.toLowerCase()];
-  return Array.isArray(v) ? v[0] : v;
-}
 
 export interface WebhookResult {
   deployed: boolean;
@@ -44,8 +39,9 @@ export class WebhooksService {
 
   /**
    * Entry point for the public webhook receiver. Authenticates the request,
-   * then dispatches on the git event type: GitHub `pull_request` events drive
-   * preview deployments, everything else is treated as a push → deploy.
+   * then dispatches on the git event type (detected from the provider's own headers): GitHub / GitLab / Gitea /
+   * Forgejo / Bitbucket pull- or merge-request events drive preview deployments, everything else is treated as a
+   * push → deploy.
    */
   async handle(
     token: string,
@@ -53,9 +49,10 @@ export class WebhooksService {
     rawBody: Buffer | string,
   ): Promise<WebhookResult> {
     const app = await this.authenticate(token, headers, rawBody);
-    if (header(headers, "x-github-event") === "pull_request") {
-      return this.handlePullRequest(app, rawBody);
-    }
+    const ev = detectGitEvent(headers);
+    if (ev.kind === "pr" && ev.provider) return this.handlePullRequest(app, ev.provider, ev.name, rawBody);
+    // Gitea/Forgejo pull_request_* siblings (review, comment, label …) must not fall into handlePush.
+    if (ev.kind === "ignore") return { deployed: false, reason: `${ev.name} (ignored)` };
     return this.handlePush(app, rawBody);
   }
 
@@ -80,7 +77,9 @@ export class WebhooksService {
     const fullName = body.repository?.full_name?.toLowerCase();
     if (!fullName) return { deployed: false, reason: "no repository (ignored)" };
 
-    const apps = await this.prisma.application.findMany({ where: { gitSourceId: sourceId } });
+    // Preview apps copy gitSourceId and default autoDeploy on, and track the PR head branch: fanning a push out to
+    // them would redeploy the preview via handlePush AND via the PR `synchronize` event (a double build).
+    const apps = await this.prisma.application.findMany({ where: { gitSourceId: sourceId, isPreview: false } });
     // Exact owner/repo match — NOT a substring (a push to acme/app must not redeploy acme/app-2).
     const matched = apps.filter((a) => repoFullName(a.gitUrl) === fullName);
     if (!matched.length) return { deployed: false, reason: "no matching app (ignored)" };
@@ -88,7 +87,7 @@ export class WebhooksService {
     const isPr = header(headers, "x-github-event") === "pull_request";
     let deployed = false;
     for (const app of matched) {
-      const r = isPr ? await this.handlePullRequest(app, rawBody) : await this.handlePush(app, rawBody);
+      const r = isPr ? await this.handlePullRequest(app, "github", "pull_request", rawBody) : await this.handlePush(app, rawBody);
       deployed = deployed || r.deployed;
     }
     return { deployed };
@@ -110,44 +109,100 @@ export class WebhooksService {
     }
     const secret = this.crypto.decrypt(app.webhookSecret);
 
-    // Bitbucket (Cloud + Server) signs with X-Hub-Signature using the SAME sha256= HMAC format as GitHub's
-    // X-Hub-Signature-256, so verifyGithubSignature (which requires the sha256= prefix) validates it too — a
-    // legacy GitHub sha1 X-Hub-Signature lacks that prefix and is correctly rejected.
-    const ghSig = header(headers, "x-hub-signature-256") ?? header(headers, "x-hub-signature");
-    const glToken = header(headers, "x-gitlab-token");
-    const giteaSig = header(headers, "x-gitea-signature") ?? header(headers, "x-forgejo-signature");
-    const ok =
-      ghSig != null
-        ? verifyGithubSignature(secret, rawBody, ghSig)
-        : glToken != null
-          ? verifyGitlabToken(secret, glToken)
-          : giteaSig != null
-            ? verifyGiteaSignature(secret, rawBody, giteaSig)
-            : false;
+    // Any present scheme that verifies is accepted (see verifyWebhookRequest) — no unsigned path exists.
+    const ok = verifyWebhookRequest(secret, headers, rawBody);
     if (!ok) throw new UnauthorizedException("invalid webhook signature");
     return app;
   }
 
-  /** GitHub pull_request event → create/update or tear down a PR preview. */
+  /**
+   * PR / MR event (any provider) → create/update or tear down a preview. Every early return is a 202 with a
+   * `reason` — providers show the response body in their delivery UI, which is the "why no preview" diagnostic.
+   *
+   * Fail closed: the preview clone is a BRANCH clone of the PARENT repo by name — never a PR ref, never SHA-pinned.
+   * A fork's head.ref therefore either 404s or silently builds a same-named branch of the base repo (wrong code), and
+   * building fork code would hand an outside author's code the parent's copied env, gitTokenEnc, deploy key and
+   * registryAuthEnc. So fork / unknown-head-repo PRs are ignored. Same-repo PR authors have write access;
+   * `previewExcludeKeys` stays the only mitigation for them.
+   */
   private async handlePullRequest(
     app: Application,
+    provider: PrProvider,
+    eventName: string | null,
     rawBody: Buffer | string,
   ): Promise<WebhookResult> {
     if (!app.previewEnabled) {
       return { deployed: false, reason: "previews disabled (ignored)" };
     }
-    const ev = parsePullRequest(this.parseBody(rawBody));
+    const ev = normalizePullRequest(provider, this.parseBody(rawBody), eventName);
     if (!ev) return { deployed: false, reason: "not a usable PR event (ignored)" };
+    if (ev.action === "ignore") {
+      return {
+        deployed: false,
+        reason: ev.ignoreReason ?? (provider === "github" ? `PR action ${ev.rawAction} (ignored)` : `${provider} ${ev.rawAction} (ignored)`),
+      };
+    }
+    const label = provider === "gitlab" ? "MR" : "PR";
 
-    if (ev.action === "closed") {
-      void this.apps.removePreviewByPr(app.id, ev.prNumber).catch(() => undefined);
-      return { deployed: false, reason: "PR closed → preview removed" };
+    // Close events still tear down whatever exists; only upserts need a Git-built app.
+    if (ev.action !== "close" && (app.source !== "GIT" || !app.gitUrl)) {
+      return { deployed: false, reason: "previews need a Git-built app (ignored)" };
     }
-    if (["opened", "synchronize", "reopened"].includes(ev.action)) {
-      void this.apps.upsertPreview(app, ev.prNumber, ev.headRef).catch(() => undefined);
-      return { deployed: true, reason: `PR #${ev.prNumber} preview` };
+
+    // Repo binding for non-GitHub providers (the GitHub per-app path keeps today's behaviour): a hook pointed at a
+    // different repository must not clone a same-named branch of the wrong repo. Unknown on either side → skipped
+    // (the fork gate below still applies to upserts).
+    if (provider !== "github") {
+      const mine = repoFullName(app.gitUrl);
+      if (mine && ev.baseRepo && mine !== ev.baseRepo) {
+        return { deployed: false, reason: "repository mismatch (ignored)" };
+      }
     }
-    return { deployed: false, reason: `PR action ${ev.action} (ignored)` };
+
+    if (ev.action === "close") {
+      void this.apps.removePreviewByPr(app.id, ev.prNumber).catch((e) => this.auditPreviewFailure(app, ev, "remove", e));
+      return { deployed: false, reason: `${label} closed → preview removed` };
+    }
+
+    if (!ev.sameRepo) {
+      try {
+        await this.audit.log({
+          actor: "webhook:pr",
+          action: "preview.skipped",
+          target: app.id,
+          meta: { provider, prNumber: ev.prNumber, reason: "fork-or-unknown-head-repo" },
+        });
+      } catch {
+        /* an audit-write failure must not turn a safe ignore into a 500 */
+      }
+      return { deployed: false, reason: "fork pull request (ignored)" };
+    }
+    if (!ev.headRef || !isSafePreviewBranch(ev.headRef)) {
+      return { deployed: false, reason: "unsupported branch name (ignored)" };
+    }
+    void this.apps
+      .upsertPreview(app, ev.prNumber, ev.headRef, {
+        provider,
+        headSha: ev.headSha,
+        onlyIfHeadChanged: ev.action === "upsert-if-head-changed",
+      })
+      .catch((e) => this.auditPreviewFailure(app, ev, "upsert", e));
+    return { deployed: true, reason: `${label} #${ev.prNumber} preview` };
+  }
+
+  /** Audit a failed fire-and-forget preview op. Never throws (it is the last line of a detached promise). */
+  private async auditPreviewFailure(app: Application, ev: NormalizedPr, op: "upsert" | "remove", err: unknown): Promise<void> {
+    try {
+      const msg = err instanceof Error ? err.message : String(err);
+      await this.audit.log({
+        actor: "webhook:pr",
+        action: "preview.failed",
+        target: app.id,
+        meta: { provider: ev.provider, prNumber: ev.prNumber, op, error: String(msg).slice(0, 300) },
+      });
+    } catch {
+      /* the audit trail itself failing must never become an unhandled rejection */
+    }
   }
 
   private async handlePush(

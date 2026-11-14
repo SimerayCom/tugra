@@ -10,8 +10,9 @@ interface WebhookRequest {
 
 /**
  * Public (unauthenticated) git webhook receiver. Authorization is the per-app
- * webhook secret (HMAC for GitHub, token header for GitLab), verified in the
- * service. Throttled to blunt brute-force attempts against the token.
+ * webhook secret (HMAC for GitHub / Gitea / Forgejo / Bitbucket, token header for GitLab), verified in the
+ * service. The provider and event type (push vs pull / merge request) are dispatched from the provider's own
+ * headers AFTER authentication. Throttled to blunt brute-force attempts against the token.
  */
 @Controller("webhooks")
 export class WebhooksController {

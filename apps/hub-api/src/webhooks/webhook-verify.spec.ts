@@ -11,6 +11,7 @@ import {
   verifyGithubSignature,
   verifyGitlabToken,
   verifyGiteaSignature,
+  verifyWebhookRequest,
 } from "./webhook-verify";
 
 describe("webhook-verify", () => {
@@ -96,6 +97,29 @@ describe("webhook-verify", () => {
 
     it("does not match a null ref (e.g. a ping event)", () => {
       expect(refMatchesBranch(null, "main")).toBe(false);
+    });
+  });
+
+  describe("verifyWebhookRequest", () => {
+    const hex = createHmac("sha256", secret).update(body).digest("hex");
+    it("accepts each single valid scheme", () => {
+      expect(verifyWebhookRequest(secret, { "x-hub-signature-256": `sha256=${hex}` }, body)).toBe(true);
+      expect(verifyWebhookRequest(secret, { "x-hub-signature": `sha256=${hex}` }, body)).toBe(true); // Bitbucket
+      expect(verifyWebhookRequest(secret, { "x-gitlab-token": secret }, body)).toBe(true);
+      expect(verifyWebhookRequest(secret, { "x-gitea-signature": hex }, body)).toBe(true);
+      expect(verifyWebhookRequest(secret, { "x-forgejo-signature": hex }, body)).toBe(true);
+    });
+    it("accepts a bad sha1-only X-Hub-Signature next to a valid X-Gitea-Signature", () => {
+      expect(verifyWebhookRequest(secret, { "x-hub-signature": "sha1=deadbeef", "x-gitea-signature": hex }, body)).toBe(true);
+    });
+    it("accepts a valid GitLab token next to a bad signature header", () => {
+      expect(verifyWebhookRequest(secret, { "x-gitlab-token": secret, "x-hub-signature-256": "sha256=00" }, body)).toBe(true);
+    });
+    it("rejects a bad GitHub-style header only, a tampered body and no headers", () => {
+      expect(verifyWebhookRequest(secret, { "x-hub-signature-256": "sha256=00" }, body)).toBe(false);
+      expect(verifyWebhookRequest(secret, { "x-hub-signature": "sha1=deadbeef" }, body)).toBe(false);
+      expect(verifyWebhookRequest(secret, { "x-gitea-signature": hex }, body + " ")).toBe(false);
+      expect(verifyWebhookRequest(secret, {}, body)).toBe(false);
     });
   });
 

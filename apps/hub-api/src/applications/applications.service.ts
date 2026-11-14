@@ -1,3 +1,4 @@
+import type { PrProvider } from "../webhooks/pr-events";
 import {
   BadRequestException,
   ConflictException,
@@ -319,6 +320,8 @@ export const AppViewSchema = z.object({
   previewExcludeKeys: z.array(z.string()),
   previewLimit: z.number().nullable(),
   prNumber: z.number().nullable(),
+  prProvider: z.enum(["github", "gitlab", "gitea", "forgejo", "bitbucket", "bitbucket-server"]).nullable(),
+  prHeadSha: z.string().nullable(),
   parentAppId: z.string().nullable(),
   tags: z.array(z.string()),
   volumeBackupEnabled: z.boolean(),
@@ -1270,8 +1273,19 @@ export class ApplicationsService {
    * subdomain (`pr<n>.<parentDomain>`). No-op unless the parent opted in
    * (previewEnabled) and has a domain to derive the subdomain from. Fire-and-forget.
    */
-  async upsertPreview(parent: Application, prNumber: number, headRef: string) {
+  async upsertPreview(
+    parent: Application,
+    prNumber: number,
+    headRef: string,
+    opts?: { provider?: PrProvider; headSha?: string | null; onlyIfHeadChanged?: boolean },
+  ) {
     if (!parent.previewEnabled || !parent.domain) return;
+    // Previews clone the parent's git repo by branch; a COMPOSE / IMAGE parent would produce a broken preview
+    // (composePath is not copied, an image has no branch). The API refuses enabling them, this guards old rows.
+    if (parent.source !== "GIT" || !parent.gitUrl) {
+      await this.audit.log({ actor: "webhook:pr", action: "preview.skipped", target: parent.id, meta: { prNumber, reason: "unsupported-source" } });
+      return;
+    }
     const existing = await this.prisma.application.findFirst({
       where: { parentAppId: parent.id, prNumber },
     });
@@ -1286,19 +1300,51 @@ export class ApplicationsService {
       });
       const evict = current.slice(0, Math.max(0, current.length - (parent.previewLimit - 1)));
       for (const e of evict) {
-        if (e.prNumber != null) await this.removePreviewByPr(parent.id, e.prNumber).catch(() => undefined);
+        if (e.prNumber != null) {
+          await this.removePreviewByPr(parent.id, e.prNumber).catch(async (err: unknown) => {
+            // An eviction that fails (agent offline) keeps its row and so keeps counting toward the cap — surface it.
+            try {
+              await this.audit.log({
+                actor: "webhook:pr",
+                action: "preview.evict_failed",
+                target: parent.id,
+                meta: { parentAppId: parent.id, prNumber: e.prNumber, error: String(err instanceof Error ? err.message : err).slice(0, 300) },
+              });
+            } catch {
+              /* never let the audit trail turn an eviction failure into a rejection */
+            }
+          });
+        }
       }
     }
     const previewDomain = `pr${prNumber}.${this.baseDomain(parent.domain)}`;
-    let preview: Application;
-    if (existing) {
-      // Re-sync the head branch (a PR can be retargeted) and the ingress container port (the parent's may
-      // have been edited after this preview was created) before redeploying — a preview tracks its parent.
-      preview = await this.prisma.application.update({
-        where: { id: existing.id },
-        data: { gitBranch: headRef, gitCommit: null, containerPort: parent.containerPort }, // a preview tracks the PR head, never a pinned commit
+    const headSha = opts?.headSha ?? null;
+    const refLabel = opts?.provider === "gitlab" ? "MR !" : "PR #";
+    // Two near-simultaneous deliveries for the SAME PR would both miss `existing` and both create. A per-(parent, PR)
+    // advisory xact lock serialises just that pair (unrelated PRs don't wait): the loser re-finds the winner's row.
+    const { preview, skip } = await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`preview:${parent.id}:${prNumber}`}))`;
+      const found = await tx.application.findFirst({
+        where: { parentAppId: parent.id, prNumber, isPreview: true },
       });
-    } else {
+      if (found && opts?.onlyIfHeadChanged && headSha && found.prHeadSha === headSha) {
+        return { preview: found, skip: true };
+      }
+      if (found) {
+        // Re-sync the head branch (a PR can be retargeted) and the ingress container port (the parent's may
+        // have been edited after this preview was created) before redeploying — a preview tracks its parent.
+        const updated = await tx.application.update({
+          where: { id: found.id },
+          data: {
+            gitBranch: headRef,
+            gitCommit: null, // a preview tracks the PR head, never a pinned commit
+            containerPort: parent.containerPort,
+            ...(opts?.provider ? { prProvider: opts.provider } : {}),
+            prHeadSha: headSha,
+          },
+        });
+        return { preview: updated, skip: false };
+      }
       // Copy the parent's env MINUS any keys it marks preview-excluded, so prod secrets never land in an
       // ephemeral preview. No exclusions → reuse the parent blob verbatim (byte-identical to before).
       const exclude = parent.previewExcludeKeys ?? [];
@@ -1306,9 +1352,9 @@ export class ApplicationsService {
         exclude.length && parent.envEnc
           ? this.crypto.encrypt(JSON.stringify(Object.fromEntries(Object.entries(this.appEnv(parent)).filter(([k]) => !exclude.includes(k)))))
           : parent.envEnc;
-      preview = await this.prisma.application.create({
+      const created = await tx.application.create({
         data: {
-          name: `${parent.name} · PR #${prNumber}`,
+          name: `${parent.name} · ${refLabel}${prNumber}`,
           teamId: parent.teamId,
           serverId: parent.serverId,
           environmentId: parent.environmentId,
@@ -1387,14 +1433,26 @@ export class ApplicationsService {
           isPreview: true,
           parentAppId: parent.id,
           prNumber,
+          prProvider: opts?.provider ?? null,
+          prHeadSha: headSha,
         },
       });
+      return { preview: created, skip: false };
+    });
+    if (skip) {
+      await this.audit.log({
+        actor: "webhook:pr",
+        action: "preview.skipped",
+        target: preview.id,
+        meta: { parentAppId: parent.id, prNumber, reason: "head-unchanged" },
+      });
+      return undefined;
     }
     await this.audit.log({
       actor: "webhook:pr",
       action: "preview.deploy",
       target: preview.id,
-      meta: { parentAppId: parent.id, prNumber, headRef },
+      meta: { parentAppId: parent.id, prNumber, headRef, provider: opts?.provider ?? null, headSha },
     });
     return this.submitDeploy(preview, "webhook:pr");
   }
@@ -1427,6 +1485,9 @@ export class ApplicationsService {
    *  to drop from a preview's copied env (so prod secrets never leak into an ephemeral preview). */
   async setPreviewEnabled(userId: string, id: string, enabled: boolean, excludeEnvKeys?: string[], limit?: number | null): Promise<void> {
     const app = await this.requireWrite(userId, id);
+    if (enabled && app.source !== "GIT") {
+      throw new BadRequestException("previews need a Git-built app");
+    }
     if (enabled && !app.domain) {
       throw new BadRequestException("set a domain on the app before enabling previews");
     }
@@ -1587,9 +1648,9 @@ export class ApplicationsService {
         throw e;
       }
     }
-    if (trigger === "webhook") {
+    if (trigger === "webhook" || trigger === "preview") {
       await this.prisma.deployment.updateMany({
-        where: { appId: app.id, status: "QUEUED", trigger: "webhook", id: { not: dep.id } },
+        where: { appId: app.id, status: "QUEUED", trigger, id: { not: dep.id } },
         data: { status: "CANCELLED", exitCode: -1, logs: "Superseded by a newer push" },
       });
     }
@@ -5250,6 +5311,8 @@ export class ApplicationsService {
       previewExcludeKeys: app.previewExcludeKeys ?? [],
       previewLimit: app.previewLimit,
       prNumber: app.prNumber,
+      prProvider: (app.prProvider as PrProvider | null) ?? null,
+      prHeadSha: app.prHeadSha ?? null,
       parentAppId: app.parentAppId,
       tags: app.tags,
       volumeBackupEnabled: app.volumeBackupEnabled,

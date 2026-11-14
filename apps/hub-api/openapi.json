@@ -11984,6 +11984,22 @@
                         "type": "number",
                         "nullable": true
                       },
+                      "prProvider": {
+                        "type": "string",
+                        "enum": [
+                          "github",
+                          "gitlab",
+                          "gitea",
+                          "forgejo",
+                          "bitbucket",
+                          "bitbucket-server"
+                        ],
+                        "nullable": true
+                      },
+                      "prHeadSha": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "parentAppId": {
                         "type": "string",
                         "nullable": true
@@ -12155,6 +12171,8 @@
                       "previewExcludeKeys",
                       "previewLimit",
                       "prNumber",
+                      "prProvider",
+                      "prHeadSha",
                       "parentAppId",
                       "tags",
                       "volumeBackupEnabled",
@@ -13269,6 +13287,22 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "prProvider": {
+                      "type": "string",
+                      "enum": [
+                        "github",
+                        "gitlab",
+                        "gitea",
+                        "forgejo",
+                        "bitbucket",
+                        "bitbucket-server"
+                      ],
+                      "nullable": true
+                    },
+                    "prHeadSha": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "parentAppId": {
                       "type": "string",
                       "nullable": true
@@ -13440,6 +13474,8 @@
                     "previewExcludeKeys",
                     "previewLimit",
                     "prNumber",
+                    "prProvider",
+                    "prHeadSha",
                     "parentAppId",
                     "tags",
                     "volumeBackupEnabled",
@@ -14621,6 +14657,22 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "prProvider": {
+                      "type": "string",
+                      "enum": [
+                        "github",
+                        "gitlab",
+                        "gitea",
+                        "forgejo",
+                        "bitbucket",
+                        "bitbucket-server"
+                      ],
+                      "nullable": true
+                    },
+                    "prHeadSha": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "parentAppId": {
                       "type": "string",
                       "nullable": true
@@ -14792,6 +14844,8 @@
                     "previewExcludeKeys",
                     "previewLimit",
                     "prNumber",
+                    "prProvider",
+                    "prHeadSha",
                     "parentAppId",
                     "tags",
                     "volumeBackupEnabled",
@@ -15977,6 +16031,22 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "prProvider": {
+                      "type": "string",
+                      "enum": [
+                        "github",
+                        "gitlab",
+                        "gitea",
+                        "forgejo",
+                        "bitbucket",
+                        "bitbucket-server"
+                      ],
+                      "nullable": true
+                    },
+                    "prHeadSha": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "parentAppId": {
                       "type": "string",
                       "nullable": true
@@ -16148,6 +16218,8 @@
                     "previewExcludeKeys",
                     "previewLimit",
                     "prNumber",
+                    "prProvider",
+                    "prHeadSha",
                     "parentAppId",
                     "tags",
                     "volumeBackupEnabled",
@@ -25635,6 +25707,22 @@
                           "type": "number",
                           "nullable": true
                         },
+                        "prProvider": {
+                          "type": "string",
+                          "enum": [
+                            "github",
+                            "gitlab",
+                            "gitea",
+                            "forgejo",
+                            "bitbucket",
+                            "bitbucket-server"
+                          ],
+                          "nullable": true
+                        },
+                        "prHeadSha": {
+                          "type": "string",
+                          "nullable": true
+                        },
                         "parentAppId": {
                           "type": "string",
                           "nullable": true
@@ -25806,6 +25894,8 @@
                         "previewExcludeKeys",
                         "previewLimit",
                         "prNumber",
+                        "prProvider",
+                        "prHeadSha",
                         "parentAppId",
                         "tags",
                         "volumeBackupEnabled",
@@ -26850,6 +26940,22 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "prProvider": {
+                      "type": "string",
+                      "enum": [
+                        "github",
+                        "gitlab",
+                        "gitea",
+                        "forgejo",
+                        "bitbucket",
+                        "bitbucket-server"
+                      ],
+                      "nullable": true
+                    },
+                    "prHeadSha": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "parentAppId": {
                       "type": "string",
                       "nullable": true
@@ -27021,6 +27127,8 @@
                     "previewExcludeKeys",
                     "previewLimit",
                     "prNumber",
+                    "prProvider",
+                    "prHeadSha",
                     "parentAppId",
                     "tags",
                     "volumeBackupEnabled",
@@ -28135,6 +28243,22 @@
                         "type": "number",
                         "nullable": true
                       },
+                      "prProvider": {
+                        "type": "string",
+                        "enum": [
+                          "github",
+                          "gitlab",
+                          "gitea",
+                          "forgejo",
+                          "bitbucket",
+                          "bitbucket-server"
+                        ],
+                        "nullable": true
+                      },
+                      "prHeadSha": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "parentAppId": {
                         "type": "string",
                         "nullable": true
@@ -28306,6 +28430,8 @@
                       "previewExcludeKeys",
                       "previewLimit",
                       "prNumber",
+                      "prProvider",
+                      "prHeadSha",
                       "parentAppId",
                       "tags",
                       "volumeBackupEnabled",
@@ -29505,6 +29631,22 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "prProvider": {
+                      "type": "string",
+                      "enum": [
+                        "github",
+                        "gitlab",
+                        "gitea",
+                        "forgejo",
+                        "bitbucket",
+                        "bitbucket-server"
+                      ],
+                      "nullable": true
+                    },
+                    "prHeadSha": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "parentAppId": {
                       "type": "string",
                       "nullable": true
@@ -29676,6 +29818,8 @@
                     "previewExcludeKeys",
                     "previewLimit",
                     "prNumber",
+                    "prProvider",
+                    "prHeadSha",
                     "parentAppId",
                     "tags",
                     "volumeBackupEnabled",
@@ -32118,6 +32262,22 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "prProvider": {
+                      "type": "string",
+                      "enum": [
+                        "github",
+                        "gitlab",
+                        "gitea",
+                        "forgejo",
+                        "bitbucket",
+                        "bitbucket-server"
+                      ],
+                      "nullable": true
+                    },
+                    "prHeadSha": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "parentAppId": {
                       "type": "string",
                       "nullable": true
@@ -32289,6 +32449,8 @@
                     "previewExcludeKeys",
                     "previewLimit",
                     "prNumber",
+                    "prProvider",
+                    "prHeadSha",
                     "parentAppId",
                     "tags",
                     "volumeBackupEnabled",
