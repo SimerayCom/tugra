@@ -26,6 +26,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   warns when `.gitattributes` uses LFS). Submodules and LFS authenticate with the app's token for any repository
   on the same git host; previews never clone submodules or pull LFS. The agent image now ships `git-lfs`.
 
+- **Breadcrumb shows the environment.** App and database pages now read Projects, project, environment, then the
+  resource, and the environment crumb jumps straight to that environment's card on the project page.
+
 ## [0.1.0-beta.12] - 2026-11-14
 
 - **Per-deployment detail page.** Every deployment row opens its own page: a queued → started → finished

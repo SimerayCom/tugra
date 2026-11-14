@@ -327,7 +327,7 @@ export default function AppDetailPage() {
   return (
     <div style={{ padding: "var(--page-pad)" }}>
       <PageHeader
-        breadcrumb={resourceBreadcrumb({ projectId: appData.projectId, projectName: appData.projectName, environmentName: appData.environmentName, name: appData.name, projectsLabel: t("nav.projects"), fallbackLabel: t("nav.apps"), fallbackHref: "/apps" })}
+        breadcrumb={resourceBreadcrumb({ projectId: appData.projectId, projectName: appData.projectName, environmentId: appData.environmentId, environmentName: appData.environmentName, name: appData.name, projectsLabel: t("nav.projects"), fallbackLabel: t("nav.apps"), fallbackHref: "/apps" })}
         title={appData.name}
         icon={<AppLogo iconUrl={appIconUrl(appData.id, appData.iconUpdatedAt)} templateSlug={appData.templateSlug} templateLogo={appData.templateLogo} source={appData.source} name={appData.name} size={20} />}
         status={headerStatus}

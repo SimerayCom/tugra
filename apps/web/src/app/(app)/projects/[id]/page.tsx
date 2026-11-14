@@ -21,6 +21,7 @@ import { Skeleton, SkeletonCard } from "../../../../components/skeleton";
 import { PageHeader } from "../../../../components/page-header";
 import { TagChips } from "../../../../components/tags";
 import { useConfirm } from "../../../../components/confirm";
+import { useScrollToHash } from "../../../../hooks/useScrollToHash";
 
 const field: React.CSSProperties = {
   padding: "8px 10px",
@@ -57,6 +58,9 @@ export default function ProjectDetailPage() {
     mutationFn: () => api.renameProject(id, rname.trim()),
     onSuccess: () => { setRenaming(false); invalidate(); qc.invalidateQueries({ queryKey: ["projects"] }); },
   });
+
+  // #env-<id> deep link (from an app/database breadcrumb) scrolls to that environment's card.
+  useScrollToHash("env-", !!project);
 
   if (isError && !project) return <div style={{ padding: "var(--page-pad)" }}><ErrorState onRetry={() => refetch()} /></div>;
   if (isLoading || !project) return <ProjectDetailSkeleton />;
@@ -255,7 +259,7 @@ function EnvironmentBlock({ env, projectId, canWrite, onChange }: { env: Environ
   const newHref = (kind: "app" | "service" | "database") => `/resources/new?project=${projectId}&env=${env.id}&kind=${kind}`;
   const chip: React.CSSProperties = { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 600, color: "var(--c-a)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "3px 10px", textDecoration: "none" };
   return (
-    <Card style={{ padding: 16 }}>
+    <Card id={`env-${env.id}`} style={{ padding: 16, scrollMarginTop: 80 }}>
       {renaming && <RenameModal current={env.name} title={t("projects.renameEnvironment")} onClose={() => setRenaming(false)} onSave={(n) => rename.mutate(n)} pending={rename.isPending} />}
       {cloning && <RenameModal current={`${env.name.slice(0, 73)} (copy)`} title={t("projects.cloneEnvironment")} hint={t("projects.cloneEnvironmentHint")} saveLabel={t("projects.cloneEnvironment")} maxLength={80} onClose={() => setCloning(false)} onSave={(n) => cloneEnv.mutate(n)} pending={cloneEnv.isPending} />}
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>

@@ -9,25 +9,36 @@ const base = {
 };
 
 describe("resourceBreadcrumb", () => {
-  it("frames an assigned resource under its project + environment", () => {
+  it("frames an assigned resource as Projects > Project > Environment > resource", () => {
     expect(
-      resourceBreadcrumb({ ...base, projectId: "p1", projectName: "Shop", environmentName: "production" }),
+      resourceBreadcrumb({ ...base, projectId: "p1", projectName: "Shop", environmentId: "e1", environmentName: "production" }),
     ).toEqual([
       { label: "Projects", href: "/projects" },
-      { label: "Shop / production", href: "/projects/p1" },
+      { label: "Shop", href: "/projects/p1" },
+      { label: "production", href: "/projects/p1#env-e1" },
       { label: "web-1" },
     ]);
   });
 
-  it("omits the environment segment-suffix when there is none", () => {
+  it("omits the environment crumb when there is none", () => {
     expect(
-      resourceBreadcrumb({ ...base, projectId: "p1", projectName: "Shop", environmentName: null })[1],
-    ).toEqual({ label: "Shop", href: "/projects/p1" });
+      resourceBreadcrumb({ ...base, projectId: "p1", projectName: "Shop", environmentId: null, environmentName: null }),
+    ).toEqual([
+      { label: "Projects", href: "/projects" },
+      { label: "Shop", href: "/projects/p1" },
+      { label: "web-1" },
+    ]);
+  });
+
+  it("links the environment crumb to the project when it has no id", () => {
+    expect(
+      resourceBreadcrumb({ ...base, projectId: "p1", projectName: "Shop", environmentId: null, environmentName: "production" })[2],
+    ).toEqual({ label: "production", href: "/projects/p1" });
   });
 
   it("falls back to the flat list for an unassigned resource", () => {
     expect(
-      resourceBreadcrumb({ ...base, projectId: null, projectName: null, environmentName: null }),
+      resourceBreadcrumb({ ...base, projectId: null, projectName: null, environmentId: null, environmentName: null }),
     ).toEqual([
       { label: "Apps", href: "/apps" },
       { label: "web-1" },

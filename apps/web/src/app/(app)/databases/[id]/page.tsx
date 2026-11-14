@@ -209,7 +209,7 @@ export default function DatabaseDetailPage() {
   return (
     <div style={{ padding: "var(--page-pad)" }}>
       <PageHeader
-        breadcrumb={resourceBreadcrumb({ projectId: db.projectId, projectName: db.projectName, environmentName: db.environmentName, name: db.name, projectsLabel: t("nav.projects"), fallbackLabel: t("nav.databases"), fallbackHref: "/databases" })}
+        breadcrumb={resourceBreadcrumb({ projectId: db.projectId, projectName: db.projectName, environmentId: db.environmentId, environmentName: db.environmentName, name: db.name, projectsLabel: t("nav.projects"), fallbackLabel: t("nav.databases"), fallbackHref: "/databases" })}
         title={db.name}
         status={{ label: provision.isPending && db.status === "NEW" ? "PROVISIONING" : db.status, color: dbColor(provision.isPending ? "PROVISIONING" : db.status) }}
         actions={
