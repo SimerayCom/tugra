@@ -39,24 +39,24 @@ enum SwarmRole {
 }
 
 model User {
-  id            String                  @id @default(cuid())
-  email         String                  @unique
-  password      String
-  name          String?
-  twoFaSecret   String?
-  twoFaEnabled  Boolean                 @default(false)
-  twoFaEnabledAt DateTime?
-  emailVerified Boolean                 @default(false)
-  emailVerifiedAt DateTime?
-  uiMode        String                  @default("fleet") // "fleet" | "home"
-  isInstanceOwner Boolean               @default(false) // the first user to register; owns instance-level settings
-  memberships   Membership[]
-  apiTokens     ApiToken[]
-  savedViews    SavedView[]
-  recoveryCodes TwoFactorRecoveryCode[]
+  id                 String                  @id @default(cuid())
+  email              String                  @unique
+  password           String
+  name               String?
+  twoFaSecret        String?
+  twoFaEnabled       Boolean                 @default(false)
+  twoFaEnabledAt     DateTime?
+  emailVerified      Boolean                 @default(false)
+  emailVerifiedAt    DateTime?
+  uiMode             String                  @default("fleet") // "fleet" | "home"
+  isInstanceOwner    Boolean                 @default(false) // the first user to register; owns instance-level settings
+  memberships        Membership[]
+  apiTokens          ApiToken[]
+  savedViews         SavedView[]
+  recoveryCodes      TwoFactorRecoveryCode[]
   verificationTokens VerificationToken[]
-  createdAt     DateTime                @default(now())
-  updatedAt     DateTime                @updatedAt
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
 }
 
 // Purpose of an emailed single-use token. EMAIL_VERIFY is reserved for email verification;
@@ -74,7 +74,7 @@ model VerificationToken {
   userId    String
   purpose   VerificationPurpose
   tokenHash String              @unique
-  email     String              // target email (forward-compat for email-change verify; = user.email for reset)
+  email     String // target email (forward-compat for email-change verify; = user.email for reset)
   expiresAt DateTime
   usedAt    DateTime?
   createdAt DateTime            @default(now())
@@ -127,30 +127,30 @@ model ApiToken {
 }
 
 model Team {
-  id          String       @id @default(cuid())
-  name        String
-  iconUpdatedAt DateTime?  // list-view marker so the team list never reads the icon bytes
-  icon         TeamIcon?
-  memberships  Membership[]
-  servers      Server[]
-  monitors     Monitor[]
-  rollouts     Rollout[]
-  channels     NotificationChannel[]
-  applications Application[]
-  databases    Database[]
+  id                 String                @id @default(cuid())
+  name               String
+  iconUpdatedAt      DateTime? // list-view marker so the team list never reads the icon bytes
+  icon               TeamIcon?
+  memberships        Membership[]
+  servers            Server[]
+  monitors           Monitor[]
+  rollouts           Rollout[]
+  channels           NotificationChannel[]
+  applications       Application[]
+  databases          Database[]
   backupDestinations BackupDestination[]
-  sharedVariables SharedVariable[]
-  projects     Project[]
-  invitations  TeamInvitation[]
-  gitSources   GitSource[]
-  registries   Registry[]
-  cloudCredentials CloudCredential[]
-  dnsCredentials   DnsCredential[]
-  secretProviders  SecretProvider[]
-  savedViews   SavedView[]
-  customRoles  TeamRole[]
-  clusters     Cluster[]
-  createdAt    DateTime     @default(now())
+  sharedVariables    SharedVariable[]
+  projects           Project[]
+  invitations        TeamInvitation[]
+  gitSources         GitSource[]
+  registries         Registry[]
+  cloudCredentials   CloudCredential[]
+  dnsCredentials     DnsCredential[]
+  secretProviders    SecretProvider[]
+  savedViews         SavedView[]
+  customRoles        TeamRole[]
+  clusters           Cluster[]
+  createdAt          DateTime              @default(now())
 }
 
 // A team-defined named role with a granular set of resource permissions (see TEAM_PERMISSIONS in
@@ -185,60 +185,60 @@ model TeamInvitation {
 }
 
 model Project {
-  id           String        @id @default(cuid())
-  team         Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  teamId       String
-  name         String
-  description  String?       // carried by the importer from a source project (Dokploy); null for hand-made projects
-  tags         String[]      @default([]) // source project tags (Dokploy projectTags names), informational
-  isDefault    Boolean       @default(false) // the team's default project (exactly one per team)
-  iconUpdatedAt DateTime?    // list-view marker so the project list never reads the icon bytes
-  icon         ProjectIcon?
-  environments Environment[]
-  createdAt    DateTime      @default(now())
+  id            String        @id @default(cuid())
+  team          Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId        String
+  name          String
+  description   String? // carried by the importer from a source project (Dokploy); null for hand-made projects
+  tags          String[]      @default([]) // source project tags (Dokploy projectTags names), informational
+  isDefault     Boolean       @default(false) // the team's default project (exactly one per team)
+  iconUpdatedAt DateTime? // list-view marker so the project list never reads the icon bytes
+  icon          ProjectIcon?
+  environments  Environment[]
+  createdAt     DateTime      @default(now())
 
   @@index([teamId])
 }
 
 // A project's custom icon (square PNG), kept off the Project row (Project.iconUpdatedAt is the marker).
 model ProjectIcon {
-  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  projectId  String   @id
-  mime       String   // always "image/png" (anything else is rejected at upload)
-  data       Bytes
-  sizeBytes  Int
-  updatedAt  DateTime @updatedAt
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String   @id
+  mime      String // always "image/png" (anything else is rejected at upload)
+  data      Bytes
+  sizeBytes Int
+  updatedAt DateTime @updatedAt
 }
 
 // A team's custom icon (square PNG), kept off the Team row (Team.iconUpdatedAt is the marker).
 model TeamIcon {
-  team       Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  teamId     String   @id
-  mime       String   // always "image/png" (anything else is rejected at upload)
-  data       Bytes
-  sizeBytes  Int
-  updatedAt  DateTime @updatedAt
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId    String   @id
+  mime      String // always "image/png" (anything else is rejected at upload)
+  data      Bytes
+  sizeBytes Int
+  updatedAt DateTime @updatedAt
 }
 
 // A database's custom icon (square PNG), kept off the Database row (Database.iconUpdatedAt is the marker).
 model DatabaseIcon {
   database   Database @relation(fields: [databaseId], references: [id], onDelete: Cascade)
   databaseId String   @id
-  mime       String   // always "image/png" (anything else is rejected at upload)
+  mime       String // always "image/png" (anything else is rejected at upload)
   data       Bytes
   sizeBytes  Int
   updatedAt  DateTime @updatedAt
 }
 
 model Environment {
-  id        String   @id @default(cuid())
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  projectId String
-  name      String
-  isDefault Boolean  @default(false) // the project's default environment (exactly one per project)
+  id           String        @id @default(cuid())
+  project      Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId    String
+  name         String
+  isDefault    Boolean       @default(false) // the project's default environment (exactly one per project)
   applications Application[]
   databases    Database[]
-  createdAt DateTime @default(now())
+  createdAt    DateTime      @default(now())
 
   @@index([projectId])
 }
@@ -281,97 +281,97 @@ model Membership {
 }
 
 model Server {
-  id                   String       @id @default(cuid())
-  name                 String
+  id                     String                  @id @default(cuid())
+  name                   String
   // The server seal ("Tugra"): the server's unique signed identity, set at enrollment.
-  seal                 String?      @unique
-  status               ServerStatus @default(PENDING)
-  enrollToken          String       @unique
-  enrollTokenExpiresAt DateTime?
+  seal                   String?                 @unique
+  status                 ServerStatus            @default(PENDING)
+  enrollToken            String                  @unique
+  enrollTokenExpiresAt   DateTime?
   // ed25519 public key the agent generated on-box (private key never leaves it).
-  agentPublicKey       String?
-  agentVersion         String?
-  hostname             String?
-  publicIp             String?      // observed reachable IPv4 (or manual override)
-  publicIpv6           String?      // observed reachable IPv6
-  ipSource             String       @default("observed") // observed | reported | manual
-  reportedIps          String[]     @default([]) // agent-reported candidate interface IPs (reconcile)
-  wildcardDomain       String?      // per-server magic-domain root (e.g. apps.example.com); blank → sslip.io
-  magicSuffix          String?      // override the global magic suffix ("sslip.io" | "nip.io")
-  certMode             String       @default("http") // "http" | "le-dns" | "custom" — wildcard cert policy
-  dnsProvider          String?      // lego/Traefik DNS provider for DNS-01 (cloudflare, route53, ...)
-  dnsCredsEnc          String?      // encrypted JSON of provider env vars ({ CF_DNS_API_TOKEN: "..." })
-  customCertResolver   String?      // Traefik resolver name when certMode = "custom"
-  os                   String?
-  osVersion            String?
-  arch                 String?
-  kernel               String?
-  cpuCores             Int?
-  memTotalBytes        BigInt?
-  bootTime             DateTime?
-  cleanupEnabled       Boolean      @default(false)
-  cleanupIntervalHours Int?
-  cleanupCron          String?      // optional 5-field cron; when set, overrides cleanupIntervalHours
-  cleanupThresholdPct  Int?         // scheduled cleanup only prunes when disk usage % is at/above this (manual always runs)
-  description          String?      // free-text operator note shown on the server page
-  timezone             String?      // IANA tz (e.g. Europe/Istanbul); applied to the cleanup cron schedule
-  cleanupVolumes       Boolean      @default(false)
-  lastCleanupAt        DateTime?
-  lastSeenAt           DateTime?
-  team                 Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  teamId               String
+  agentPublicKey         String?
+  agentVersion           String?
+  hostname               String?
+  publicIp               String? // observed reachable IPv4 (or manual override)
+  publicIpv6             String? // observed reachable IPv6
+  ipSource               String                  @default("observed") // observed | reported | manual
+  reportedIps            String[]                @default([]) // agent-reported candidate interface IPs (reconcile)
+  wildcardDomain         String? // per-server magic-domain root (e.g. apps.example.com); blank → sslip.io
+  magicSuffix            String? // override the global magic suffix ("sslip.io" | "nip.io")
+  certMode               String                  @default("http") // "http" | "le-dns" | "custom" — wildcard cert policy
+  dnsProvider            String? // lego/Traefik DNS provider for DNS-01 (cloudflare, route53, ...)
+  dnsCredsEnc            String? // encrypted JSON of provider env vars ({ CF_DNS_API_TOKEN: "..." })
+  customCertResolver     String? // Traefik resolver name when certMode = "custom"
+  os                     String?
+  osVersion              String?
+  arch                   String?
+  kernel                 String?
+  cpuCores               Int?
+  memTotalBytes          BigInt?
+  bootTime               DateTime?
+  cleanupEnabled         Boolean                 @default(false)
+  cleanupIntervalHours   Int?
+  cleanupCron            String? // optional 5-field cron; when set, overrides cleanupIntervalHours
+  cleanupThresholdPct    Int? // scheduled cleanup only prunes when disk usage % is at/above this (manual always runs)
+  description            String? // free-text operator note shown on the server page
+  timezone               String? // IANA tz (e.g. Europe/Istanbul); applied to the cleanup cron schedule
+  cleanupVolumes         Boolean                 @default(false)
+  lastCleanupAt          DateTime?
+  lastSeenAt             DateTime?
+  team                   Team                    @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId                 String
   // Optional membership in a Cluster (a named group of this team's servers). SetNull: deleting the
   // cluster frees its servers rather than removing them. A server belongs to at most one cluster.
-  cluster              Cluster?     @relation(fields: [clusterId], references: [id], onDelete: SetNull)
-  clusterId            String?
+  cluster                Cluster?                @relation(fields: [clusterId], references: [id], onDelete: SetNull)
+  clusterId              String?
   // Docker Swarm formation. Role in the cluster's swarm (null = not joined); the docker node id
   // (for promote/demote/rm); the last sanitized join/leave error for this node (NEVER raw command output).
   // multiple MANAGER rows per cluster are now expected (multi-manager Raft HA) — the manager SET is
   // derived live from every swarmRole=MANAGER row, NOT just Cluster.swarmManagerId (which is only the PRIMARY).
-  swarmRole            SwarmRole?
-  swarmNodeId          String?
-  swarmError           String?
-  tags                 String[]     @default([])
+  swarmRole              SwarmRole?
+  swarmNodeId            String?
+  swarmError             String?
+  tags                   String[]                @default([])
   // Granted agent capabilities the hub will sign commands for. Enforced verbatim; empty = none
   // (fail-safe). Legacy servers are backfilled to the full set by migration; new servers default
   // to all-except-terminal (least privilege — the interactive shell is opt-in).
-  capabilities         String[]     @default([])
+  capabilities           String[]                @default([])
   // True for the box the hub itself runs on, auto-provisioned at first-owner registration on a turnkey
   // single-box install so the user never pastes an agent command. Drives home-mode
   // reachability heuristics. Manually-enrolled servers are false.
-  isLocal              Boolean      @default(false)
+  isLocal                Boolean                 @default(false)
   // How the server's reverse proxy publishes :80/:443: "public" (default, all interfaces)
   // | "loopback" (127.0.0.1 only, behind a front proxy) | "none" (no host port — tunnel-only, coexists with
   // another web server on the box). Applied when the proxy is (re)started.
-  proxyBind            String       @default("public")
+  proxyBind              String                  @default("public")
   // Traffic Analytics (default ON for new servers — self-hosted: the operator's own visitor data on their
   // own server and hub; per-server toggle to turn off). When true the server's Traefik writes a field-minimal
   // JSON access log to a host file the agent can read; applied whenever the proxy is (re)created.
-  trafficAnalytics     Boolean      @default(true)
+  trafficAnalytics       Boolean                 @default(true)
   // Cloud-provisioned servers only (null for manually-enrolled): the provider that created the VM,
   // its provider-side server id (needed to destroy it), and the credential used (SetNull so deleting
   // the credential leaves the server intact but drops its destroy-VM ability).
-  provider             String?
-  providerServerId     String?
-  cloudCredential      CloudCredential? @relation(fields: [cloudCredentialId], references: [id], onDelete: SetNull)
-  cloudCredentialId    String?
-  metrics              Metric[]
-  containerMetrics     ContainerMetric[]
-  containerStates      ContainerState[]
-  containerEvents      ContainerEvent[]
-  metricRollups        MetricRollup[]
+  provider               String?
+  providerServerId       String?
+  cloudCredential        CloudCredential?        @relation(fields: [cloudCredentialId], references: [id], onDelete: SetNull)
+  cloudCredentialId      String?
+  metrics                Metric[]
+  containerMetrics       ContainerMetric[]
+  containerStates        ContainerState[]
+  containerEvents        ContainerEvent[]
+  metricRollups          MetricRollup[]
   containerMetricRollups ContainerMetricRollup[]
-  trafficMetrics       TrafficMetric[]
-  trafficPaths         TrafficPath[]
-  trafficCountries     TrafficCountry[]
-  trafficBreakdowns    TrafficBreakdown[]
-  trafficLatencies     TrafficLatency[]
-  trafficUniques       TrafficUnique[]
-  trafficUniqueHours   TrafficUniqueHour[]
-  logDrains            LogDrain[]
-  proxyDynamicConfigs  ProxyDynamicConfig[]
-  tunnel               ServerTunnel?
-  createdAt            DateTime     @default(now())
+  trafficMetrics         TrafficMetric[]
+  trafficPaths           TrafficPath[]
+  trafficCountries       TrafficCountry[]
+  trafficBreakdowns      TrafficBreakdown[]
+  trafficLatencies       TrafficLatency[]
+  trafficUniques         TrafficUnique[]
+  trafficUniqueHours     TrafficUniqueHour[]
+  logDrains              LogDrain[]
+  proxyDynamicConfigs    ProxyDynamicConfig[]
+  tunnel                 ServerTunnel?
+  createdAt              DateTime                @default(now())
 
   @@index([clusterId])
 }
@@ -384,8 +384,8 @@ model ProxyDynamicConfig {
   id        String   @id @default(cuid())
   server    Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
   serverId  String
-  name      String   // slug (no extension); the file on disk is `user-<name>.yml`
-  content   String   // Traefik dynamic-config YAML (validated as parseable YAML before write)
+  name      String // slug (no extension); the file on disk is `user-<name>.yml`
+  content   String // Traefik dynamic-config YAML (validated as parseable YAML before write)
   updatedAt DateTime @updatedAt
   createdAt DateTime @default(now())
 
@@ -397,28 +397,28 @@ model ProxyDynamicConfig {
 // foundation: it does not change deploy/networking — deploy is still per-server. A server belongs to at
 // most one cluster (Server.clusterId).
 model Cluster {
-  id          String   @id @default(cuid())
-  team        Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  teamId      String
-  name        String
-  description String?
-  servers     Server[]
-  applications Application[] // apps deployed as swarm services onto this cluster
+  id              String        @id @default(cuid())
+  team            Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId          String
+  name            String
+  description     String?
+  servers         Server[]
+  applications    Application[] // apps deployed as swarm services onto this cluster
   // Docker Swarm formation. swarmManagerId is a loose FK to the PRIMARY manager Server.id — the node
   // the swarm-mode ingress is pinned to (by node label) and the default/fast-path dispatch target. // the FULL manager set is every Server with swarmRole=MANAGER for this cluster, not necessarily just this one
   // row (multi-manager Raft HA); this FK is NOT renamed, for API back-compat (SwarmView.managerServerId keeps
   // its meaning). Resolved in service code (matching Application.serverId convention — no @relation to avoid a
   // second Server↔Cluster relation). swarmLastError is a sanitized last error — NEVER raw command output/tokens.
-  swarmStatus    SwarmStatus @default(NONE)
-  swarmManagerId String?
-  swarmLastError String?
+  swarmStatus     SwarmStatus   @default(NONE)
+  swarmManagerId  String?
+  swarmLastError  String?
   // desired swarm-ingress (Traefik) replica count for HA. 1 = today's single-node routing (default,
   // zero behavior change). 2-3 = routing-mesh multi-replica ingress; requires DNS-01 (le-dns) on the manager
   // and is capped at 3 to stay under Let's Encrypt's duplicate-certificate rate limit. The actual pool is
   // re-derived live on every ensure() (manager first, then online joined members), never snapshotted.
-  ingressReplicas Int @default(1)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  ingressReplicas Int           @default(1)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
 
   @@unique([teamId, name])
   @@index([teamId])
@@ -446,13 +446,13 @@ model ServerTunnel {
   serverId         String   @unique
   provider         String   @default("cloudflare")
   cfAccountId      String
-  zoneName         String   // registrable CF zone owning the wildcard (e.g. "example.com")
+  zoneName         String // registrable CF zone owning the wildcard (e.g. "example.com")
   zoneId           String
-  cfApiTokenEnc    String   // encrypted operator CF API token — NEVER returned/logged
-  tunnelId         String?  // CF tunnel UUID, set once createTunnel succeeds (idempotent resume)
-  tunnelName       String   // deterministic "tugra-<serverId>"
-  cfTunnelTokenEnc String?  // encrypted cloudflared connector run-token
-  dnsRecordId      String?  // CF DNS record id of the wildcard CNAME (exact teardown)
+  cfApiTokenEnc    String // encrypted operator CF API token — NEVER returned/logged
+  tunnelId         String? // CF tunnel UUID, set once createTunnel succeeds (idempotent resume)
+  tunnelName       String // deterministic "tugra-<serverId>"
+  cfTunnelTokenEnc String? // encrypted cloudflared connector run-token
+  dnsRecordId      String? // CF DNS record id of the wildcard CNAME (exact teardown)
   status           String   @default("pending") // pending | connecting | connected | error | disabled
   lastError        String?
   createdAt        DateTime @default(now())
@@ -460,25 +460,25 @@ model ServerTunnel {
 }
 
 model Metric {
-  id        String   @id @default(cuid())
-  server    Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
-  serverId  String
-  ts        DateTime @default(now())
-  cpu       Float
-  memUsed   BigInt
-  memTotal  BigInt
-  diskUsed  BigInt
-  diskTotal BigInt
-  netRx     BigInt
-  netTx     BigInt
-  diskRead  BigInt @default(0) // bytes/s; @default so the additive migration needs no backfill
-  diskWrite BigInt @default(0)
+  id           String   @id @default(cuid())
+  server       Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  serverId     String
+  ts           DateTime @default(now())
+  cpu          Float
+  memUsed      BigInt
+  memTotal     BigInt
+  diskUsed     BigInt
+  diskTotal    BigInt
+  netRx        BigInt
+  netTx        BigInt
+  diskRead     BigInt   @default(0) // bytes/s; @default so the additive migration needs no backfill
+  diskWrite    BigInt   @default(0)
   // Load average + swap — NULL when an older agent / host doesn't report them (no fake 0).
-  load1     Float?
-  load5     Float?
-  load15    Float?
-  swapUsed  BigInt?
-  swapTotal BigInt?
+  load1        Float?
+  load5        Float?
+  load15       Float?
+  swapUsed     BigInt?
+  swapTotal    BigInt?
   // Optional sensor metrics — NULL (not 0) when the host exposes none (most cloud VMs), so the UI can
   // render "—" rather than a fake reading. gpu* are aggregates over all GPUs (max util/temp, summed
   // VRAM); `detail` keeps the per-sensor map + per-GPU list for the detail view.
@@ -626,21 +626,21 @@ model ContainerMetricRollup {
 // client IPs are stored. Rows are upsert-incremented (additive, NOT idempotent): the agent reports disjoint
 // windows, each at most once. Unmatched hosts beyond a small per-bucket cap fold into one "(unmatched)" row.
 model TrafficMetric {
-  id       String   @id @default(cuid())
-  server   Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
-  serverId String
-  domain   String
-  appId    String?
-  bucket   DateTime // minute-floored
-  requests Int
-  s2xx     Int
-  s3xx     Int
-  s4xx     Int
-  s5xx     Int
-  bytes    BigInt
+  id            String   @id @default(cuid())
+  server        Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  serverId      String
+  domain        String
+  appId         String?
+  bucket        DateTime // minute-floored
+  requests      Int
+  s2xx          Int
+  s3xx          Int
+  s4xx          Int
+  s5xx          Int
+  bytes         BigInt
   // Human vs bot request split (agent-side UA classification); older agents leave both at 0.
-  botRequests   Int @default(0)
-  humanRequests Int @default(0)
+  botRequests   Int      @default(0)
+  humanRequests Int      @default(0)
 
   @@unique([serverId, domain, bucket])
   @@index([bucket])
@@ -771,29 +771,29 @@ enum MonitorStatus {
 }
 
 model Monitor {
-  id          String        @id @default(cuid())
-  team        Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  teamId      String
-  name        String
-  type        MonitorType
-  target      String // url (HTTP) or host:port (TCP); a label for METRIC
-  serverId    String?       // METRIC: which server's metrics to watch
-  metric      String?       // METRIC: DISK | CPU | MEM
-  thresholdPct Int?         // METRIC: alarm when usage >= this %
-  intervalSec Int           @default(30)
-  retries     Int           @default(1)
-  timeoutMs   Int           @default(10000)
-  resendEvery Int           @default(0) // re-notify every N consecutive down beats (0 = off)
-  status      MonitorStatus @default(PENDING)
-  failCount   Int           @default(0) // consecutive failures (for retry → DOWN)
-  downCount   Int           @default(0) // consecutive down beats (for resend)
-  enabled     Boolean       @default(true)
+  id           String           @id @default(cuid())
+  team         Team             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId       String
+  name         String
+  type         MonitorType
+  target       String // url (HTTP) or host:port (TCP); a label for METRIC
+  serverId     String? // METRIC: which server's metrics to watch
+  metric       String? // METRIC: DISK | CPU | MEM
+  thresholdPct Int? // METRIC: alarm when usage >= this %
+  intervalSec  Int              @default(30)
+  retries      Int              @default(1)
+  timeoutMs    Int              @default(10000)
+  resendEvery  Int              @default(0) // re-notify every N consecutive down beats (0 = off)
+  status       MonitorStatus    @default(PENDING)
+  failCount    Int              @default(0) // consecutive failures (for retry → DOWN)
+  downCount    Int              @default(0) // consecutive down beats (for resend)
+  enabled      Boolean          @default(true)
   // Auto-created uptime monitor for an app's domain (auto=true, appId set).
-  appId       String?
-  auto        Boolean       @default(false)
-  heartbeats  Heartbeat[]
-  channels    MonitorChannel[]
-  createdAt   DateTime      @default(now())
+  appId        String?
+  auto         Boolean          @default(false)
+  heartbeats   Heartbeat[]
+  channels     MonitorChannel[]
+  createdAt    DateTime         @default(now())
 
   @@index([appId])
 }
@@ -899,10 +899,10 @@ model Registry {
   teamId       String
   name         String
   type         String        @default("generic") // dockerhub | ghcr | gitlab | generic
-  url          String?       // registry host (blank → Docker Hub); e.g. ghcr.io, registry.gitlab.com
+  url          String? // registry host (blank → Docker Hub); e.g. ghcr.io, registry.gitlab.com
   username     String
-  passwordEnc  String        // encrypted registry password / access token
-  imagePrefix  String?       // namespace/org under which images are pushed (e.g. myorg)
+  passwordEnc  String // encrypted registry password / access token
+  imagePrefix  String? // namespace/org under which images are pushed (e.g. myorg)
   applications Application[]
   createdAt    DateTime      @default(now())
 
@@ -916,8 +916,8 @@ model CloudCredential {
   team        Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
   teamId      String
   name        String
-  provider    String   // "hetzner" | "digitalocean" | "vultr" — only "hetzner" has a client in v1
-  apiTokenEnc String   // encrypted cloud API token — never returned/logged
+  provider    String // "hetzner" | "digitalocean" | "vultr" — only "hetzner" has a client in v1
+  apiTokenEnc String // encrypted cloud API token — never returned/logged
   servers     Server[]
   createdAt   DateTime @default(now())
 
@@ -931,11 +931,11 @@ model DnsCredential {
   team           Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
   teamId         String
   name           String
-  provider       String    // "cloudflare" — only provider with a client in v1
-  apiTokenEnc    String    // encrypted DNS-provider API token — never returned/logged
-  cfAccountId    String?   // optional Cloudflare account id (not needed for plain DNS-record writes)
+  provider       String // "cloudflare" — only provider with a client in v1
+  apiTokenEnc    String // encrypted DNS-provider API token — never returned/logged
+  cfAccountId    String? // optional Cloudflare account id (not needed for plain DNS-record writes)
   lastVerifiedAt DateTime?
-  domains        Domain[]  // domains whose auto-setup used this credential (SetNull on delete)
+  domains        Domain[] // domains whose auto-setup used this credential (SetNull on delete)
   createdAt      DateTime  @default(now())
 
   @@index([teamId])
@@ -955,45 +955,45 @@ enum BulkTaskStatus {
 }
 
 model BulkOperation {
-  id      String @id @default(cuid())
-  actorId String
+  id                      String     @id @default(cuid())
+  actorId                 String
   // `command` is the raw fan-out command for kind="command" (the original/only use); orchestrated kinds
   // (e.g. kind="import") leave it empty and describe the work on the tasks instead.
-  command String
+  command                 String
   // Generalization for orchestrated operations. kind="command" is the legacy fan-out path, unchanged.
-  kind      String     @default("command")
-  planId    String? // the ImportPlan (or similar) this operation executes, when applicable
-  meta      Json? // operation-level metadata (secret-free), e.g. the import source + target server
+  kind                    String     @default("command")
+  planId                  String? // the ImportPlan (or similar) this operation executes, when applicable
+  meta                    Json? // operation-level metadata (secret-free), e.g. the import source + target server
   // Cooperative cancel: set by a cancel request; the in-flight fan-out reads it before starting each
   // remaining task and stops launching new ones (a task already RUNNING is left to finish).
-  cancelRequestedAt DateTime?
+  cancelRequestedAt       DateTime?
   // One-time importer MIGRATION token (S2). Source-agnostic: an untrusted source host presents it
   // (Authorization: Bearer tugra_mig_…) to stream migration artifacts to the hub; the guard resolves the
   // opId from the token alone (the host never names the destination). Only the SHA-256 is stored (mirrors
   // ApiToken.tokenHash — the enroll token's plaintext storage is deliberately NOT copied). NULL = no live
   // token; revoke = null both columns, so the unique-hash lookup simply stops matching.
-  migrationTokenHash      String?   @unique
+  migrationTokenHash      String?    @unique
   migrationTokenExpiresAt DateTime?
-  tasks     BulkTask[]
-  createdAt DateTime   @default(now())
+  tasks                   BulkTask[]
+  createdAt               DateTime   @default(now())
 }
 
 model BulkTask {
-  id         String         @id @default(cuid())
-  operation  BulkOperation  @relation(fields: [opId], references: [id], onDelete: Cascade)
-  opId       String
-  serverId   String
-  status     BulkTaskStatus @default(PENDING)
-  exitCode   Int?
-  output     String?
+  id           String         @id @default(cuid())
+  operation    BulkOperation  @relation(fields: [opId], references: [id], onDelete: Cascade)
+  opId         String
+  serverId     String
+  status       BulkTaskStatus @default(PENDING)
+  exitCode     Int?
+  output       String?
   // Generalization: a task can be one typed item of an orchestrated plan rather than a shell command.
-  kind         String   @default("command") // "command" (legacy) | "app" | "database" | "volume" | ...
+  kind         String         @default("command") // "command" (legacy) | "app" | "database" | "volume" | ...
   itemRef      String? // the plan item this task realizes (idempotency key on re-run)
   resourceType String? // the Tugra resource this task created, for rollback (e.g. "database")
   resourceId   String? // its id
   result       Json? // structured result (secret-free)
   steps        Json? // ordered [{ name, status, startedAt?, finishedAt?, detail? }] for multi-step items
-  dependsOn    String[] @default([]) // itemRefs that must finish first (topological ordering)
+  dependsOn    String[]       @default([]) // itemRefs that must finish first (topological ordering)
   compensation Json? // how to undo this task's effect on rollback
   startedAt    DateTime?
   finishedAt   DateTime?
@@ -1103,194 +1103,194 @@ enum DestType {
 }
 
 model Application {
-  id            String       @id @default(cuid())
-  team          Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  teamId        String
-  environment    Environment  @relation(fields: [environmentId], references: [id], onDelete: NoAction)
-  environmentId  String
-  serverId       String
-  buildServerId  String?      // optional separate build server (build+push there, pull+run on serverId)
+  id                           String             @id @default(cuid())
+  team                         Team               @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId                       String
+  environment                  Environment        @relation(fields: [environmentId], references: [id], onDelete: NoAction)
+  environmentId                String
+  serverId                     String
+  buildServerId                String? // optional separate build server (build+push there, pull+run on serverId)
   // Swarm service deploy: when clusterId is set the app deploys as a `docker service --replicas N`
   // onto this cluster's swarm (commands target cluster.swarmManagerId, re-resolved fresh — never snapshotted).
   // serverId stays required as the ingress/monitoring anchor. SetNull: deleting the cluster falls the app
   // back to classic single-server deploy rather than deleting it.
-  cluster        Cluster?     @relation(fields: [clusterId], references: [id], onDelete: SetNull)
-  clusterId      String?
-  replicas       Int?         // swarm service replica count (null = classic single-server deploy)
-  placement      Json?        // { constraints: PlacementConstraint[], spreadLabelKey: string|null } — structured, picker-sourced, never a raw docker expression from the client
-  constraintServerId String?   // system hard-pin for a stateful (named-volume) app — the Server whose swarm node its single replica must run on; loose FK like swarmManagerId, resolved in service code
-  name           String
-  description    String?      // free-text operator note shown on the app page (Coolify parity)
-  templateSlug   String?      // catalog slug when installed from a template (for its logo)
+  cluster                      Cluster?           @relation(fields: [clusterId], references: [id], onDelete: SetNull)
+  clusterId                    String?
+  replicas                     Int? // swarm service replica count (null = classic single-server deploy)
+  placement                    Json? // { constraints: PlacementConstraint[], spreadLabelKey: string|null } — structured, picker-sourced, never a raw docker expression from the client
+  constraintServerId           String? // system hard-pin for a stateful (named-volume) app — the Server whose swarm node its single replica must run on; loose FK like swarmManagerId, resolved in service code
+  name                         String
+  description                  String? // free-text operator note shown on the app page (Coolify parity)
+  templateSlug                 String? // catalog slug when installed from a template (for its logo)
   // A user-uploaded custom icon lives in the sibling AppIcon table (bytes kept out of this hot row). This
   // nullable marker is set to the upload time and cleared on removal: the app list reads it to know whether
   // an icon exists and to cache-bust the icon URL, without ever fetching the image bytes.
-  iconUpdatedAt  DateTime?
-  source         AppSource    @default(IMAGE)
-  image          String?
-  gitUrl         String?
-  gitBranch      String?      @default("main")
+  iconUpdatedAt                DateTime?
+  source                       AppSource          @default(IMAGE)
+  image                        String?
+  gitUrl                       String?
+  gitBranch                    String?            @default("main")
   // Pin deploys to a specific commit SHA (must be reachable from gitBranch). Null = deploy the branch HEAD
   // (byte-identical shallow clone). When set, the clone fetches full branch history + checks out this SHA.
-  gitCommit      String?
-  buildType      BuildType    @default(NIXPACKS)
-  dockerfilePath String?
-  dockerBuildTarget String?   // DOCKERFILE build: multi-stage target stage (docker build --target)
-  baseDirectory  String? // monorepo: repo-relative subdirectory used as the build context/root (GIT apps)
+  gitCommit                    String?
+  buildType                    BuildType          @default(NIXPACKS)
+  dockerfilePath               String?
+  dockerBuildTarget            String? // DOCKERFILE build: multi-stage target stage (docker build --target)
+  baseDirectory                String? // monorepo: repo-relative subdirectory used as the build context/root (GIT apps)
   // Watch paths: glob patterns (repo-relative, leading `!` = exclude). When non-empty, a git push only
   // triggers a deploy if a changed file matches — so a monorepo doesn't rebuild every app on every push.
   // Empty = deploy on every push (the default / backward-compatible behaviour).
-  watchPaths     String[] @default([])
+  watchPaths                   String[]           @default([])
   // Per-app push-to-deploy switch. True (default) = a matching git push auto-deploys; false = the push is
   // acknowledged but ignored (pause auto-deploy without deleting the webhook). Preview deploys are separate.
-  autoDeploy     Boolean  @default(true)
+  autoDeploy                   Boolean            @default(true)
   // Env var names dropped from a PR preview's copied env (so prod secrets never leak into an ephemeral
   // preview). Empty = the preview inherits the full parent env (unchanged default).
-  previewExcludeKeys String[] @default([])
+  previewExcludeKeys           String[]           @default([])
   // Max concurrent PR previews for this app; when a new PR would exceed it, the oldest preview is evicted.
   // Null = unlimited (the default).
-  previewLimit   Int?
-  buildCommand   String?
-  outputDir      String?
+  previewLimit                 Int?
+  buildCommand                 String?
+  outputDir                    String?
   // NIXPACKS build pack: first-class install/build/start command overrides → injected as NIXPACKS_INSTALL_CMD
   // / NIXPACKS_BUILD_CMD / NIXPACKS_START_CMD build env. Null = Nixpacks auto-detection (today's behaviour).
-  nixpacksInstallCmd String?
-  nixpacksBuildCmd   String?
-  nixpacksStartCmd   String?
-  composeFile    String?
+  nixpacksInstallCmd           String?
+  nixpacksBuildCmd             String?
+  nixpacksStartCmd             String?
+  composeFile                  String?
   // COMPOSE-from-git: when set (with source=COMPOSE + gitUrl), the compose file lives in the cloned repo at
   // this repo-relative path instead of being pasted/stored in composeFile. The two are mutually exclusive;
   // composePath != null is the discriminator for a git-sourced compose stack.
-  composePath    String?
-  healthCmd      String?
-  healthCheckType String?                          // null = auto | "NONE" | "HTTP" | "CMD" — deploy-gate health policy
-  healthCheckPath String?                          // HTTP check path (default "/")
-  healthCheckPort Int?                             // HTTP check port (default container/host port)
-  healthCheckMethod String?                        // HTTP check method (null/"GET" = GET); GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS
-  healthCheckScheme String?                        // HTTP check scheme (null/"http" = plain HTTP); "https" probes over TLS (curl -k, self-signed ok)
-  healthCheckResponseText String?                  // HTTP check: require this literal substring in the response body (null = status-only)
+  composePath                  String?
+  healthCmd                    String?
+  healthCheckType              String? // null = auto | "NONE" | "HTTP" | "CMD" — deploy-gate health policy
+  healthCheckPath              String? // HTTP check path (default "/")
+  healthCheckPort              Int? // HTTP check port (default container/host port)
+  healthCheckMethod            String? // HTTP check method (null/"GET" = GET); GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS
+  healthCheckScheme            String? // HTTP check scheme (null/"http" = plain HTTP); "https" probes over TLS (curl -k, self-signed ok)
+  healthCheckResponseText      String? // HTTP check: require this literal substring in the response body (null = status-only)
   // Tunable health-check timings (seconds; null = built-in default). Drive both the deploy health-gate and
   // the container's docker --health-* flags; startPeriod/retries widen the window for a slow-booting app.
-  healthInterval    Int?
-  healthTimeout     Int?
-  healthRetries     Int?
-  healthStartPeriod Int?
-  healthExpectedStatus Int?                        // HTTP check: require this exact status (else any code < 500)
-  memoryMb       Int?
-  cpus           Float?
-  reserveMemoryMb Int?        // soft swarm scheduling hint (--reserve-memory); swarm-only, advisory
-  reserveCpus    Float?       // soft swarm scheduling hint (--reserve-cpu); swarm-only, advisory
-  gpus           String?      // docker --gpus value (e.g. "all", "1", "device=0,1"); null = no GPU
-  deployTimeoutSec Int?
-  preDeployCommand  String?    // shell command run (in a one-shot container of the new image) before the swap — e.g. DB migrations
-  postDeployCommand String?    // shell command run (inside the live container) after the health gate passes
-  volumes        Json?
-  hostMounts     Json?        // [{hostPath, containerPath, readOnly}] — host directory bind-mounts (validated vs the sensitive-path denylist)
-  portMappings   Json?        // [{serviceName, containerPort, hostPort, mode}] — install-time allocated host ports
-  installConfig  Json?        // redacted user field selections captured at template install (never secret values)
-  configMounts   Json?        // [{serviceName, target, content, mode}] — template config files materialized + bound at deploy (${KEY} placeholders, never resolved secrets)
-  gitTokenEnc     String?
+  healthInterval               Int?
+  healthTimeout                Int?
+  healthRetries                Int?
+  healthStartPeriod            Int?
+  healthExpectedStatus         Int? // HTTP check: require this exact status (else any code < 500)
+  memoryMb                     Int?
+  cpus                         Float?
+  reserveMemoryMb              Int? // soft swarm scheduling hint (--reserve-memory); swarm-only, advisory
+  reserveCpus                  Float? // soft swarm scheduling hint (--reserve-cpu); swarm-only, advisory
+  gpus                         String? // docker --gpus value (e.g. "all", "1", "device=0,1"); null = no GPU
+  deployTimeoutSec             Int?
+  preDeployCommand             String? // shell command run (in a one-shot container of the new image) before the swap — e.g. DB migrations
+  postDeployCommand            String? // shell command run (inside the live container) after the health gate passes
+  volumes                      Json?
+  hostMounts                   Json? // [{hostPath, containerPath, readOnly}] — host directory bind-mounts (validated vs the sensitive-path denylist)
+  portMappings                 Json? // [{serviceName, containerPort, hostPort, mode}] — install-time allocated host ports
+  installConfig                Json? // redacted user field selections captured at template install (never secret values)
+  configMounts                 Json? // [{serviceName, target, content, mode}] — template config files materialized + bound at deploy (${KEY} placeholders, never resolved secrets)
+  gitTokenEnc                  String?
   // SSH deploy key for cloning a private repo over git@/ssh:// — a generated ed25519 keypair. gitSshKeyEnc
   // is the encrypted OpenSSH private key (never returned); gitSshPublicKey is the public line the operator
   // adds to the repo as a read-only deploy key.
-  gitSshKeyEnc    String?
-  gitSshPublicKey String?
-  gitSource       GitSource?   @relation(fields: [gitSourceId], references: [id], onDelete: SetNull)
-  gitSourceId     String?
-  registryAuthEnc String?
-  registry        Registry?    @relation(fields: [registryId], references: [id], onDelete: SetNull)
-  registryId      String?      // team registry to push the built image to (when pushToRegistry)
-  pushToRegistry  Boolean      @default(false)
-  env            Json
-  envEnc         String?
-  buildArgsEnc   String?
-  dockerOptions  String?
+  gitSshKeyEnc                 String?
+  gitSshPublicKey              String?
+  gitSource                    GitSource?         @relation(fields: [gitSourceId], references: [id], onDelete: SetNull)
+  gitSourceId                  String?
+  registryAuthEnc              String?
+  registry                     Registry?          @relation(fields: [registryId], references: [id], onDelete: SetNull)
+  registryId                   String? // team registry to push the built image to (when pushToRegistry)
+  pushToRegistry               Boolean            @default(false)
+  env                          Json
+  envEnc                       String?
+  buildArgsEnc                 String?
+  dockerOptions                String?
   // Host-root escalation gate. false (default) = assertSafeDockerOptions blocks --privileged/--device/
   // --cap-add/host-ns/docker.sock/host binds. true = the INSTANCE OWNER opted this app in (self-hosted, own
   // box). Settable ONLY by the instance owner over a session (never a PAT / apps:config member). The
   // Tugra-integrity flags (traefik.* labels, --name, --env-file) stay blocked regardless.
-  allowPrivilegedDockerOptions Boolean @default(false)
+  allowPrivilegedDockerOptions Boolean            @default(false)
   // IMAGE/GIT classic (docker run) container command override, exec-form argv (string[]). Replaces the image
   // ENTRYPOINT / CMD. containerEntrypoint [] clears the image entrypoint; null on either = image default.
-  containerEntrypoint Json?
-  containerCommand    Json?
-  dbNetwork      Boolean      @default(false) // opt-in: also attach this app to the node-local managed-DB network (tugra-net) so it resolves tugra_db_<id> by name
-  hostPort       Int?
-  containerPort  Int?         @default(80)
+  containerEntrypoint          Json?
+  containerCommand             Json?
+  dbNetwork                    Boolean            @default(false) // opt-in: also attach this app to the node-local managed-DB network (tugra-net) so it resolves tugra_db_<id> by name
+  hostPort                     Int?
+  containerPort                Int?               @default(80)
   // Extra published ports beyond the ingress one: [{hostPort, containerPort, protocol: "tcp"|"udp"}].
   // Emitted as additional docker -p flags (classic apps). Null/empty = just the single ingress port.
-  extraPorts     Json?
+  extraPorts                   Json?
   // Docker network aliases → extra `--network-alias` names on the app's user-defined network (tugra-proxy
   // when it has a domain, else tugra-net when db-linked), so OTHER containers resolve it by these names.
   // Empty = none. Reset (NOT copied) on clone/preview — a duplicate alias on the shared network collides.
-  networkAliases String[]     @default([])
-  domain         String?
-  extraDomains   String[]     @default([]) // additional hostnames (aliases) routed to the same container as `domain`
-  domainRedirect  String?
-  securityHeaders Boolean     @default(false)
-  gzip           Boolean      @default(false) // enable a Traefik compress middleware on the routed app (gzip/brotli responses)
-  forwardAuth    String?
+  networkAliases               String[]           @default([])
+  domain                       String?
+  extraDomains                 String[]           @default([]) // additional hostnames (aliases) routed to the same container as `domain`
+  domainRedirect               String?
+  securityHeaders              Boolean            @default(false)
+  gzip                         Boolean            @default(false) // enable a Traefik compress middleware on the routed app (gzip/brotli responses)
+  forwardAuth                  String?
   // IP allowlist (CIDRs/addresses) → a Traefik ipallowlist middleware admitting only these source ranges.
   // Empty = open to all (the default). Applies on the next deploy.
-  ipAllowlist    String[]    @default([])
+  ipAllowlist                  String[]           @default([])
   // HTTP Basic Auth users as [{user, hash}] — hash is a Traefik-compatible bcrypt htpasswd hash (the
   // plaintext password is never stored). Null/empty = no basic auth. Applies on the next deploy.
-  basicAuthUsers Json?
+  basicAuthUsers               Json?
   // Path-prefix routing: serve the app under <domain>/<pathPrefix> (Traefik PathPrefix). Null = host root.
   // stripPrefix (default true) removes the prefix before forwarding to the backend. Applies on next deploy.
-  pathPrefix     String?
-  stripPrefix    Boolean      @default(true)
+  pathPrefix                   String?
+  stripPrefix                  Boolean            @default(true)
   // Per-app rate limit {average, burst, period:'1s'|'1m'|'1h'} → a Traefik ratelimit middleware. Null = off.
-  rateLimit      Json?
+  rateLimit                    Json?
   // Custom redirect rules [{regex, replacement, permanent}] → one Traefik redirectregex middleware each,
   // applied to the router (after the www/root canonical redirect, before security headers). Null/empty = none.
-  redirects      Json?
+  redirects                    Json?
   // Docker restart policy for the app container: no | always | unless-stopped | on-failure. Null = the
   // "unless-stopped" default (byte-identical). A raw dockerOptions `--restart` still overrides it (emitted
   // after this flag; Docker last-wins). Classic docker-run apps only.
-  restartPolicy  String?
-  https          Boolean      @default(true)
-  domainKind     String       @default("none")  // "none" | "magic" | "custom" — is the domain user-set or generated
-  exposeMode     String       @default("magic") // create preference: "magic" | "port" | "none" | "custom"
-  tunnelExposed  Boolean      @default(false)   // per-app opt-in: route this app's hostname through the server's Cloudflare Tunnel
-  certType       String       @default("http")  // "http" | "none" | "le-http" | "le-dns" | "custom"
+  restartPolicy                String?
+  https                        Boolean            @default(true)
+  domainKind                   String             @default("none") // "none" | "magic" | "custom" — is the domain user-set or generated
+  exposeMode                   String             @default("magic") // create preference: "magic" | "port" | "none" | "custom"
+  tunnelExposed                Boolean            @default(false) // per-app opt-in: route this app's hostname through the server's Cloudflare Tunnel
+  certType                     String             @default("http") // "http" | "none" | "le-http" | "le-dns" | "custom"
   // Operator-uploaded custom TLS cert (certType "custom"): Traefik serves it statically by SNI (no ACME).
   // certPem is the public chain; certKeyEnc is the encrypted private key; certDomains/certNotAfter are
   // parsed at upload for display. All null unless a custom cert was uploaded.
-  certPem        String?
-  certKeyEnc     String?
-  certDomains    String[]     @default([])
-  certNotAfter   DateTime?
-  deployStrategy String       @default("ROLLING") // "ROLLING" (zero-downtime) | "RECREATE"
-  rollbackOnFailure Boolean   @default(true)      // auto-rollback to the previous version on a failed health gate
-  imagesToKeep   Int?         // rollback images retained for keep-N pruning (1..20); null → DEFAULT_DEPLOY_IMAGE_KEEP (5)
-  postCutoverSoakSec Int      @default(0) // ROLLING: seconds to keep the previous container after cutover and auto-revert on a sustained failure (0 = off)
-  status         AppStatus    @default(NEW)
-  webhookToken   String?      @unique
-  webhookSecret  String?
+  certPem                      String?
+  certKeyEnc                   String?
+  certDomains                  String[]           @default([])
+  certNotAfter                 DateTime?
+  deployStrategy               String             @default("ROLLING") // "ROLLING" (zero-downtime) | "RECREATE"
+  rollbackOnFailure            Boolean            @default(true) // auto-rollback to the previous version on a failed health gate
+  imagesToKeep                 Int? // rollback images retained for keep-N pruning (1..20); null → DEFAULT_DEPLOY_IMAGE_KEEP (5)
+  postCutoverSoakSec           Int                @default(0) // ROLLING: seconds to keep the previous container after cutover and auto-revert on a sustained failure (0 = off)
+  status                       AppStatus          @default(NEW)
+  webhookToken                 String?            @unique
+  webhookSecret                String?
   // Preview deployments (B6): a preview is a throwaway clone of a parent app
   // created per pull-request; the parent opts in via previewEnabled.
-  isPreview      Boolean      @default(false)
-  previewEnabled Boolean      @default(false)
-  prNumber       Int?
-  parentAppId    String?
-  tags           String[]     @default([])
+  isPreview                    Boolean            @default(false)
+  previewEnabled               Boolean            @default(false)
+  prNumber                     Int?
+  parentAppId                  String?
+  tags                         String[]           @default([])
   // Volume backups (Dokploy parity): back up the app's named volumes to a destination.
-  volumeBackupEnabled       Boolean @default(false)
-  volumeBackupIntervalHours Int?
-  volumeBackupRetention     Int     @default(7)
-  volumeBackupDestinationId String?
-  volumeBackups  VolumeBackup[]
-  parent         Application?  @relation("AppPreviews", fields: [parentAppId], references: [id], onDelete: Cascade)
-  previews       Application[] @relation("AppPreviews")
-  deployments   Deployment[]
-  scheduledTasks ScheduledTask[]
-  domains        Domain[]
-  serviceDomains AppServiceDomain[]
-  databaseLinks AppDatabaseLink[]
-  secretRefs    SecretRef[]
-  icon          AppIcon?
-  createdAt     DateTime     @default(now())
+  volumeBackupEnabled          Boolean            @default(false)
+  volumeBackupIntervalHours    Int?
+  volumeBackupRetention        Int                @default(7)
+  volumeBackupDestinationId    String?
+  volumeBackups                VolumeBackup[]
+  parent                       Application?       @relation("AppPreviews", fields: [parentAppId], references: [id], onDelete: Cascade)
+  previews                     Application[]      @relation("AppPreviews")
+  deployments                  Deployment[]
+  scheduledTasks               ScheduledTask[]
+  domains                      Domain[]
+  serviceDomains               AppServiceDomain[]
+  databaseLinks                AppDatabaseLink[]
+  secretRefs                   SecretRef[]
+  icon                         AppIcon?
+  createdAt                    DateTime           @default(now())
 
   @@index([environmentId])
   @@index([parentAppId])
@@ -1302,12 +1302,12 @@ model Application {
 // deliberately kept out of the hot Application row; Application.iconUpdatedAt is the list-view marker so the
 // app list never has to read these bytes.
 model AppIcon {
-  app        Application @relation(fields: [appId], references: [id], onDelete: Cascade)
-  appId      String      @id
-  mime       String      // always "image/png" (anything else is rejected at upload)
-  data       Bytes
-  sizeBytes  Int
-  updatedAt  DateTime    @updatedAt
+  app       Application @relation(fields: [appId], references: [id], onDelete: Cascade)
+  appId     String      @id
+  mime      String // always "image/png" (anything else is rejected at upload)
+  data      Bytes
+  sizeBytes Int
+  updatedAt DateTime    @updatedAt
 }
 
 // Attach a managed Database to an Application so its connection URI is auto-injected into the app's
@@ -1340,9 +1340,9 @@ model SecretProvider {
   team           Team        @relation(fields: [teamId], references: [id], onDelete: Cascade)
   teamId         String
   name           String
-  kind           String      // "vault" — only kind with a client in v1
-  address        String      // the store's base URL (non-secret), e.g. https://vault.example.com
-  tokenEnc       String      // CryptoService-encrypted access token — never returned/logged
+  kind           String // "vault" — only kind with a client in v1
+  address        String // the store's base URL (non-secret), e.g. https://vault.example.com
+  tokenEnc       String // CryptoService-encrypted access token — never returned/logged
   lastVerifiedAt DateTime?
   refs           SecretRef[]
   createdAt      DateTime    @default(now())
@@ -1393,21 +1393,21 @@ model AppServiceDomain {
 }
 
 model Domain {
-  id              String      @id @default(cuid())
-  application     Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  id              String         @id @default(cuid())
+  application     Application    @relation(fields: [applicationId], references: [id], onDelete: Cascade)
   applicationId   String
-  hostname        String      // the custom domain, e.g. "app.example.com"
-  apex            Boolean     @default(false) // hostname is the zone root (so a www CNAME applies)
-  provider        String      // "cloudflare"
+  hostname        String // the custom domain, e.g. "app.example.com"
+  apex            Boolean        @default(false) // hostname is the zone root (so a www CNAME applies)
+  provider        String // "cloudflare"
   dnsCredential   DnsCredential? @relation(fields: [dnsCredentialId], references: [id], onDelete: SetNull)
-  dnsCredentialId String?     // the DnsCredential used (SetNull: deleting the credential keeps the history)
-  zoneId          String?     // provider zone the records live in
-  recordIds       Json?       // [{ type, name, recordId }] — what was written, for cleanup
-  mode            String      @default("auto") // "auto" | "manual"
-  status          String      @default("pending") // "pending" | "active" | "error"
+  dnsCredentialId String? // the DnsCredential used (SetNull: deleting the credential keeps the history)
+  zoneId          String? // provider zone the records live in
+  recordIds       Json? // [{ type, name, recordId }] — what was written, for cleanup
+  mode            String         @default("auto") // "auto" | "manual"
+  status          String         @default("pending") // "pending" | "active" | "error"
   lastError       String?
   lastCheckedAt   DateTime?
-  createdAt       DateTime    @default(now())
+  createdAt       DateTime       @default(now())
 
   @@unique([applicationId, hostname])
   @@index([applicationId])
@@ -1415,16 +1415,16 @@ model Domain {
 }
 
 model ScheduledTask {
-  id          String      @id @default(cuid())
-  application Application  @relation(fields: [appId], references: [id], onDelete: Cascade)
+  id          String             @id @default(cuid())
+  application Application        @relation(fields: [appId], references: [id], onDelete: Cascade)
   appId       String
   name        String
   schedule    String
   command     String
-  enabled     Boolean      @default(true)
-  timeoutSec  Int?         // per-run timeout (seconds); null = the built-in default (300s). Long jobs raise it.
+  enabled     Boolean            @default(true)
+  timeoutSec  Int? // per-run timeout (seconds); null = the built-in default (300s). Long jobs raise it.
   lastRunAt   DateTime?
-  createdAt   DateTime     @default(now())
+  createdAt   DateTime           @default(now())
   runs        ScheduledTaskRun[]
 
   @@index([appId])
@@ -1438,10 +1438,10 @@ model ScheduledTaskRun {
   task       ScheduledTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
   taskId     String
   status     String        @default("RUNNING") // RUNNING | SUCCESS | FAILED
-  trigger    String        // "schedule" | "manual"
-  exitCode   Int?          // null when the command never ran (transport failure)
-  output     String?       // tail-capped; may contain secrets → never shipped to notifications
-  error      String?       // transport/timeout message when the command never ran
+  trigger    String // "schedule" | "manual"
+  exitCode   Int? // null when the command never ran (transport failure)
+  output     String? // tail-capped; may contain secrets → never shipped to notifications
+  error      String? // transport/timeout message when the command never ran
   startedAt  DateTime      @default(now())
   finishedAt DateTime?
   durationMs Int?
@@ -1450,27 +1450,27 @@ model ScheduledTaskRun {
 }
 
 model Deployment {
-  id          String           @id @default(cuid())
-  application Application      @relation(fields: [appId], references: [id], onDelete: Cascade)
-  appId       String
-  status      DeploymentStatus @default(RUNNING)
-  kind        String           @default("DEPLOY") // "DEPLOY" | "ROLLBACK" | "AUTO_ROLLBACK"
-  logs        String?
-  exitCode    Int?
-  imageTag    String?
-  registryImage String?   // registry ref this deploy pushed to (for portable rollback pull)
-  imageDigest String?     // resolved upstream digest of the pulled IMAGE (nginx@sha256:…) — provenance + byte-exact rollback
+  id             String           @id @default(cuid())
+  application    Application      @relation(fields: [appId], references: [id], onDelete: Cascade)
+  appId          String
+  status         DeploymentStatus @default(RUNNING)
+  kind           String           @default("DEPLOY") // "DEPLOY" | "ROLLBACK" | "AUTO_ROLLBACK"
+  logs           String?
+  exitCode       Int?
+  imageTag       String?
+  registryImage  String? // registry ref this deploy pushed to (for portable rollback pull)
+  imageDigest    String? // resolved upstream digest of the pulled IMAGE (nginx@sha256:…) — provenance + byte-exact rollback
   // Redacted config snapshot this deploy ran with (secrets fingerprinted, not stored).
   configSnapshot Json?
-  durationMs    Int?           // wall-clock ms from start (startedAt) to terminal status; null for legacy/queued/running rows
-  trigger       String?        // what initiated this run: "manual" | "webhook" | "preview" | "rollback"; null for legacy rows
-  noCache       Boolean  @default(false) // queued deploys carry their --no-cache choice until they start
-  requestedBy   String?        // actor that enqueued this deploy (userId | "webhook" | "webhook:pr"); drives trigger + audit
-  startedAt     DateTime?      // when the row moved QUEUED -> RUNNING; null while queued (durationMs measures from here)
-  commitSha     String?        // deployed git commit (GIT source only); null otherwise
-  commitMessage String?        // first line of the deployed commit's message (GIT source only), capped + sanitized
-  idempotencyKey String?       // raw client Idempotency-Key for durable at-most-once ENQUEUE; NULL = no client key (unconstrained)
-  createdAt   DateTime         @default(now())
+  durationMs     Int? // wall-clock ms from start (startedAt) to terminal status; null for legacy/queued/running rows
+  trigger        String? // what initiated this run: "manual" | "webhook" | "preview" | "rollback"; null for legacy rows
+  noCache        Boolean          @default(false) // queued deploys carry their --no-cache choice until they start
+  requestedBy    String? // actor that enqueued this deploy (userId | "webhook" | "webhook:pr"); drives trigger + audit
+  startedAt      DateTime? // when the row moved QUEUED -> RUNNING; null while queued (durationMs measures from here)
+  commitSha      String? // deployed git commit (GIT source only); null otherwise
+  commitMessage  String? // first line of the deployed commit's message (GIT source only), capped + sanitized
+  idempotencyKey String? // raw client Idempotency-Key for durable at-most-once ENQUEUE; NULL = no client key (unconstrained)
+  createdAt      DateTime         @default(now())
 
   // NOTE: a partial unique index `deployment_one_running_per_app ON Deployment(appId) WHERE status='RUNNING'`
   // enforces one RUNNING deploy per app at the DB level (Prisma can't model partial indexes — see the
@@ -1486,66 +1486,66 @@ model Deployment {
 }
 
 model Database {
-  id          String   @id @default(cuid())
-  team        Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  teamId      String
-  environment   Environment @relation(fields: [environmentId], references: [id], onDelete: NoAction)
-  environmentId String
-  serverId    String
-  name        String
-  engine      DbEngine
-  version     String
-  image       String
-  port        Int
-  hostPort    Int?
-  credentials String
+  id                      String            @id @default(cuid())
+  team                    Team              @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId                  String
+  environment             Environment       @relation(fields: [environmentId], references: [id], onDelete: NoAction)
+  environmentId           String
+  serverId                String
+  name                    String
+  engine                  DbEngine
+  version                 String
+  image                   String
+  port                    Int
+  hostPort                Int?
+  credentials             String
   // Encrypted JSON of user-set container env vars ({ KEY: "value" }), injected at provision BEFORE the
   // engine's credential env so a user var can never shadow the managed credentials. Null = none.
-  envEnc      String?
+  envEnc                  String?
   // Extra persistent volumes beyond the managed data volume: JSON [{ name, path }]. The real docker volume
   // name is derived per-database (tugra_dbv_<id>_<name>). Not secret, so stored plain. Null = none.
-  volumes     Json?
-  status      DbStatus @default(NEW)
-  iconUpdatedAt DateTime?    // list-view marker so the database list never reads the icon bytes
-  icon         DatabaseIcon?
-  healthCmd      String?
-  memoryMb       Int?
-  cpus           Float?
-  backupEnabled       Boolean  @default(false)
-  backupIntervalHours Int?
+  volumes                 Json?
+  status                  DbStatus          @default(NEW)
+  iconUpdatedAt           DateTime? // list-view marker so the database list never reads the icon bytes
+  icon                    DatabaseIcon?
+  healthCmd               String?
+  memoryMb                Int?
+  cpus                    Float?
+  backupEnabled           Boolean           @default(false)
+  backupIntervalHours     Int?
   // Optional 5-field cron (e.g. "0 3 * * *" = 03:00 daily); when set it drives the schedule and overrides
   // backupIntervalHours — so "daily at 03:00" instead of "every 24h from whenever".
-  backupCron          String?
-  backupRetention     Int      @default(7)
+  backupCron              String?
+  backupRetention         Int               @default(7)
   // Optional age-based retention: also delete SUCCESS backups older than N days (alongside the keep-N count).
-  backupRetentionDays Int?
-  backupDestinationId String?
+  backupRetentionDays     Int?
+  backupDestinationId     String?
   // Scheduled restore-verify drill (prove a backup actually RESTORES). Independent of the backup schedule:
   // each run provisions a disposable DB, restores the latest SUCCESS backup into it, then tears it down.
-  verifyEnabled       Boolean  @default(false)
-  verifyIntervalHours Int?
+  verifyEnabled           Boolean           @default(false)
+  verifyIntervalHours     Int?
   // Optional 5-field cron; when set it drives the verify schedule and overrides verifyIntervalHours.
-  verifyCron          String?
+  verifyCron              String?
   // Last time a scheduled OR on-demand verify SUCCEEDED — powers the UI "last verified" line and the
   // verify-liveness watchdog's reference point.
-  lastVerifiedAt      DateTime?
+  lastVerifiedAt          DateTime?
   // Scheduled PHYSICAL base backups (pg_basebackup) — the anchors a point-in-time restore replays WAL onto.
   // Independent of the logical schedule; a cron overrides the hours interval. Postgres-only.
-  baseBackupEnabled       Boolean  @default(false)
+  baseBackupEnabled       Boolean           @default(false)
   baseBackupIntervalHours Int?
   baseBackupCron          String?
   // PITR (Postgres only): when on, the container is (re)created with WAL archiving so point-in-time recovery
   // is possible. Additive + default-off — an existing/throwaway DB is untouched and its run script is
   // byte-identical. The enable/disable flow (recreate + verify) and the WAL shipper land in the next slice;
   // this column is the inert anchor those build on. pitrEnabledAt stamps when it was switched on.
-  pitrEnabled         Boolean  @default(false)
-  pitrEnabledAt       DateTime?
-  tags        String[] @default([])
-  backups     Backup[]
-  baseBackups BaseBackup[]
-  restores    Restore[]
-  appLinks    AppDatabaseLink[]
-  createdAt   DateTime @default(now())
+  pitrEnabled             Boolean           @default(false)
+  pitrEnabledAt           DateTime?
+  tags                    String[]          @default([])
+  backups                 Backup[]
+  baseBackups             BaseBackup[]
+  restores                Restore[]
+  appLinks                AppDatabaseLink[]
+  createdAt               DateTime          @default(now())
 
   @@index([teamId])
   @@index([environmentId])
@@ -1589,9 +1589,9 @@ enum RestoreStatus {
 model Restore {
   id               String        @id @default(cuid())
   database         Database      @relation(fields: [databaseId], references: [id], onDelete: Cascade)
-  databaseId       String        // the database restored INTO
-  backupId         String?       // source backup (may be deleted later → no FK)
-  sourceDatabaseId String?       // source DB for a cross-resource restore-to
+  databaseId       String // the database restored INTO
+  backupId         String? // source backup (may be deleted later → no FK)
+  sourceDatabaseId String? // source DB for a cross-resource restore-to
   // PITR replay (kind PITR): the row is homed on the SOURCE (so a failed target's reap never cascades the
   // evidence away) and points at the NEW database it produced, the moment restored to, and the base used.
   targetDatabaseId String?
@@ -1600,7 +1600,7 @@ model Restore {
   kind             RestoreKind
   status           RestoreStatus @default(RUNNING)
   exitCode         Int?
-  errorTail        String?       // last ~2KB of output; writer-only exposure
+  errorTail        String? // last ~2KB of output; writer-only exposure
   createdBy        String
   createdAt        DateTime      @default(now())
   completedAt      DateTime?
@@ -1641,22 +1641,22 @@ model BaseBackup {
 }
 
 model Backup {
-  id          String       @id @default(cuid())
-  database    Database     @relation(fields: [databaseId], references: [id], onDelete: Cascade)
-  databaseId  String
-  status      BackupStatus @default(PENDING)
-  filename    String
-  path        String
+  id            String       @id @default(cuid())
+  database      Database     @relation(fields: [databaseId], references: [id], onDelete: Cascade)
+  databaseId    String
+  status        BackupStatus @default(PENDING)
+  filename      String
+  path          String
   destinationId String?
-  objectKey   String?
-  sizeBytes   BigInt?
-  createdBy   String
-  createdAt   DateTime     @default(now())
-  completedAt DateTime?
+  objectKey     String?
+  sizeBytes     BigInt?
+  createdBy     String
+  createdAt     DateTime     @default(now())
+  completedAt   DateTime?
   // Run outcome (mirrors Restore): a FAILED row records WHY. errorTail is scrubbed + writer-only exposure.
-  exitCode    Int?
-  errorTail   String?
-  durationMs  Int?
+  exitCode      Int?
+  errorTail     String?
+  durationMs    Int?
 
   @@index([databaseId])
 }
@@ -1779,10 +1779,10 @@ model InstanceSettings {
 enum RolloutStatus {
   RUNNING
   HALTED // waiting for the operator: resume (retry the wave's failures) or cancel
-  ROLLING_BACK // reserved for the fleet rollback slice
+  ROLLING_BACK // fleet rollback in progress (targets REVERTING)
   COMPLETED
-  ROLLED_BACK // reserved
-  ROLLBACK_FAILED // reserved
+  ROLLED_BACK // every reverted target restored its baseline
+  ROLLBACK_FAILED // a revert failed, was refused, timed out or had no baseline
   CANCELLED
 }
 
@@ -1793,29 +1793,29 @@ enum RolloutTargetStatus {
   FAILED
   CANCELLED
   SKIPPED
-  REVERTING // reserved
-  ROLLED_BACK // reserved
-  ROLLBACK_FAILED // reserved
+  REVERTING // fleet rollback: revert pending or dispatched
+  ROLLED_BACK // reverted to the baseline
+  ROLLBACK_FAILED // revert failed (outcome carries why: no_baseline / busy_timeout / revert_<verdict> / …)
 }
 
 model Rollout {
-  id            String        @id @default(cuid())
-  team          Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  id            String          @id @default(cuid())
+  team          Team            @relation(fields: [teamId], references: [id], onDelete: Cascade)
   teamId        String
   createdBy     String // the initiator; every dispatch re-checks their access (a demoted initiator halts the rollout)
   name          String?
-  kind          String        @default("app_deploy") // what a target is ("app_deploy" today; agent-update/os-patch later)
-  status        RolloutStatus @default(RUNNING)
+  kind          String          @default("app_deploy") // what a target is ("app_deploy" today; agent-update/os-patch later)
+  status        RolloutStatus   @default(RUNNING)
   haltReason    String? // manual | wave_failed | wave_no_signal | bake_failed | interrupted | initiator_lost
   haltDetail    Json? // secret-free detail for the halt (target ids, counts)
   config        Json // the RolloutConfig frozen at create
-  currentWave   Int           @default(0)
+  currentWave   Int             @default(0)
   waveCount     Int
-  waveStartedAt DateTime      @default(now()) // when the current wave became current (offline wait reference)
+  waveStartedAt DateTime        @default(now()) // when the current wave became current (offline wait reference)
   bakeUntil     DateTime? // the current wave passed; observing until this instant before promoting
-  createdAt     DateTime      @default(now())
+  createdAt     DateTime        @default(now())
   finishedAt    DateTime?
-  updatedAt     DateTime      @updatedAt
+  updatedAt     DateTime        @updatedAt
   targets       RolloutTarget[]
 
   @@index([teamId, createdAt])
@@ -1836,6 +1836,8 @@ model RolloutTarget {
   attempt              Int                 @default(0)
   baselineDeploymentId String? // the last rollbackable SUCCESS deploy before this rollout touched the app
   deploymentId         String? // the Deployment this rollout dispatched (attempt N)
+  rollbackDeploymentId String? // the ROLLBACK Deployment a fleet rollback dispatched for this target
+  rollbackAttempt      Int                 @default(0) // fleet-rollback dispatch attempts (0 = not yet dispatched)
   outcome              String? // passed | rejected_safe | failed | interrupted | cancelled | halted | offline | app_gone | …
   detail               String?
   active               Boolean             @default(true) // true while the rollout is live → one live rollout per app

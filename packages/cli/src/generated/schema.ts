@@ -1204,6 +1204,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/rollouts/{id}/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["RolloutsController_rollback"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/rollouts/{id}/cancel": {
         parameters: {
             query?: never;
@@ -8767,7 +8783,7 @@ export interface operations {
                     config: {
                         [key: string]: unknown;
                     };
-                    eventTypes?: ("deploy_success" | "deploy_failed" | "deploy_rolled_back" | "server_offline" | "server_online" | "swarm_degraded" | "ssl_expiring" | "token_expiring" | "backup_failed" | "backup_success" | "backup_missing" | "backup_recovered" | "backup_restore_failed" | "verify_missing" | "verify_recovered" | "volume_backup_success" | "volume_backup_failed" | "scheduled_task_success" | "scheduled_task_failed" | "docker_cleanup_success" | "docker_cleanup_failed" | "container_crashed" | "container_oom" | "container_unhealthy" | "container_mem_pressure")[];
+                    eventTypes?: ("deploy_success" | "deploy_failed" | "deploy_rolled_back" | "server_offline" | "server_online" | "swarm_degraded" | "ssl_expiring" | "token_expiring" | "backup_failed" | "backup_success" | "backup_missing" | "backup_recovered" | "backup_restore_failed" | "verify_missing" | "verify_recovered" | "volume_backup_success" | "volume_backup_failed" | "scheduled_task_success" | "scheduled_task_failed" | "docker_cleanup_success" | "docker_cleanup_failed" | "container_crashed" | "container_oom" | "container_unhealthy" | "container_mem_pressure" | "rollout_halted" | "rollout_completed" | "rollout_rolled_back" | "rollout_rollback_failed")[];
                     /** @default en */
                     locale?: string;
                 };
@@ -8894,7 +8910,7 @@ export interface operations {
                 "application/json": {
                     name?: string;
                     enabled?: boolean;
-                    eventTypes?: ("deploy_success" | "deploy_failed" | "deploy_rolled_back" | "server_offline" | "server_online" | "swarm_degraded" | "ssl_expiring" | "token_expiring" | "backup_failed" | "backup_success" | "backup_missing" | "backup_recovered" | "backup_restore_failed" | "verify_missing" | "verify_recovered" | "volume_backup_success" | "volume_backup_failed" | "scheduled_task_success" | "scheduled_task_failed" | "docker_cleanup_success" | "docker_cleanup_failed" | "container_crashed" | "container_oom" | "container_unhealthy" | "container_mem_pressure")[];
+                    eventTypes?: ("deploy_success" | "deploy_failed" | "deploy_rolled_back" | "server_offline" | "server_online" | "swarm_degraded" | "ssl_expiring" | "token_expiring" | "backup_failed" | "backup_success" | "backup_missing" | "backup_recovered" | "backup_restore_failed" | "verify_missing" | "verify_recovered" | "volume_backup_success" | "volume_backup_failed" | "scheduled_task_success" | "scheduled_task_failed" | "docker_cleanup_success" | "docker_cleanup_failed" | "container_crashed" | "container_oom" | "container_unhealthy" | "container_mem_pressure" | "rollout_halted" | "rollout_completed" | "rollout_rolled_back" | "rollout_rollback_failed")[];
                     config?: {
                         [key: string]: unknown;
                     };
@@ -10485,6 +10501,7 @@ export interface operations {
                             attempt: number;
                             deploymentId: string | null;
                             baselineDeploymentId: string | null;
+                            rollbackDeploymentId: string | null;
                             outcome: string | null;
                             detail: string | null;
                             /** Format: date-time */
@@ -10649,6 +10666,7 @@ export interface operations {
                             attempt: number;
                             deploymentId: string | null;
                             baselineDeploymentId: string | null;
+                            rollbackDeploymentId: string | null;
                             outcome: string | null;
                             detail: string | null;
                             /** Format: date-time */
@@ -10900,6 +10918,7 @@ export interface operations {
                             attempt: number;
                             deploymentId: string | null;
                             baselineDeploymentId: string | null;
+                            rollbackDeploymentId: string | null;
                             outcome: string | null;
                             detail: string | null;
                             /** Format: date-time */
@@ -11041,6 +11060,7 @@ export interface operations {
                             attempt: number;
                             deploymentId: string | null;
                             baselineDeploymentId: string | null;
+                            rollbackDeploymentId: string | null;
                             outcome: string | null;
                             detail: string | null;
                             /** Format: date-time */
@@ -11182,6 +11202,149 @@ export interface operations {
                             attempt: number;
                             deploymentId: string | null;
                             baselineDeploymentId: string | null;
+                            rollbackDeploymentId: string | null;
+                            outcome: string | null;
+                            detail: string | null;
+                            /** Format: date-time */
+                            dispatchedAt: string | null;
+                            /** Format: date-time */
+                            finishedAt: string | null;
+                        }[];
+                    };
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    RolloutsController_rollback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        id: string;
+                        teamId: string;
+                        createdBy: string;
+                        name: string | null;
+                        kind: string;
+                        /** @enum {string} */
+                        status: "RUNNING" | "HALTED" | "ROLLING_BACK" | "COMPLETED" | "ROLLED_BACK" | "ROLLBACK_FAILED" | "CANCELLED";
+                        haltReason: string | null;
+                        haltDetail: {
+                            [key: string]: unknown;
+                        } | null;
+                        config: {
+                            /** @default 1 */
+                            canary: number;
+                            /**
+                             * @default [
+                             *       25,
+                             *       50,
+                             *       100
+                             *     ]
+                             */
+                            steps: number[];
+                            /** @default 3 */
+                            concurrency: number;
+                            /** @default 0 */
+                            maxFailuresPerWave: number;
+                            /** @default 60 */
+                            bakeSec: number;
+                            /** @default 2700 */
+                            dispatchTimeoutSec: number;
+                            /** @default 300 */
+                            waitOnlineSec: number;
+                            /** @default false */
+                            allowUngated: boolean;
+                            /** @default false */
+                            noCache: boolean;
+                        };
+                        currentWave: number;
+                        waveCount: number;
+                        waveSizes: number[];
+                        /** Format: date-time */
+                        bakeUntil: string | null;
+                        /** Format: date-time */
+                        createdAt: string;
+                        /** Format: date-time */
+                        finishedAt: string | null;
+                        summary: {
+                            total: number;
+                            pending: number;
+                            deploying: number;
+                            succeeded: number;
+                            failed: number;
+                            skipped: number;
+                            cancelled: number;
+                        };
+                        targets: {
+                            id: string;
+                            appId: string;
+                            serverId: string;
+                            label: string;
+                            wave: number;
+                            position: number;
+                            /** @enum {string} */
+                            status: "PENDING" | "DEPLOYING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "SKIPPED" | "REVERTING" | "ROLLED_BACK" | "ROLLBACK_FAILED";
+                            attempt: number;
+                            deploymentId: string | null;
+                            baselineDeploymentId: string | null;
+                            rollbackDeploymentId: string | null;
                             outcome: string | null;
                             detail: string | null;
                             /** Format: date-time */
@@ -11323,6 +11486,7 @@ export interface operations {
                             attempt: number;
                             deploymentId: string | null;
                             baselineDeploymentId: string | null;
+                            rollbackDeploymentId: string | null;
                             outcome: string | null;
                             detail: string | null;
                             /** Format: date-time */

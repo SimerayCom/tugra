@@ -67,6 +67,15 @@ export class RolloutsController {
     return this.rollouts.resume(user.userId, id);
   }
 
+  /** Fleet rollback: revert every app this rollout moved to its pre-rollout baseline (from HALTED or COMPLETED). */
+  @Post(":id/rollback")
+  @RequireScopes("deploy")
+  @HttpCode(200)
+  @ApiZodResponse(RolloutViewSchema)
+  rollback(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.rollouts.rollback(user.userId, id);
+  }
+
   @Post(":id/cancel")
   @RequireScopes("deploy")
   @HttpCode(200)

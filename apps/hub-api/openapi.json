@@ -5373,7 +5373,11 @@
                         "container_crashed",
                         "container_oom",
                         "container_unhealthy",
-                        "container_mem_pressure"
+                        "container_mem_pressure",
+                        "rollout_halted",
+                        "rollout_completed",
+                        "rollout_rolled_back",
+                        "rollout_rollback_failed"
                       ]
                     }
                   },
@@ -5574,7 +5578,11 @@
                         "container_crashed",
                         "container_oom",
                         "container_unhealthy",
-                        "container_mem_pressure"
+                        "container_mem_pressure",
+                        "rollout_halted",
+                        "rollout_completed",
+                        "rollout_rolled_back",
+                        "rollout_rollback_failed"
                       ]
                     }
                   },
@@ -8312,6 +8320,10 @@
                               "type": "string",
                               "nullable": true
                             },
+                            "rollbackDeploymentId": {
+                              "type": "string",
+                              "nullable": true
+                            },
                             "outcome": {
                               "type": "string",
                               "nullable": true
@@ -8342,6 +8354,7 @@
                             "attempt",
                             "deploymentId",
                             "baselineDeploymentId",
+                            "rollbackDeploymentId",
                             "outcome",
                             "detail",
                             "dispatchedAt",
@@ -8745,6 +8758,10 @@
                             "type": "string",
                             "nullable": true
                           },
+                          "rollbackDeploymentId": {
+                            "type": "string",
+                            "nullable": true
+                          },
                           "outcome": {
                             "type": "string",
                             "nullable": true
@@ -8775,6 +8792,7 @@
                           "attempt",
                           "deploymentId",
                           "baselineDeploymentId",
+                          "rollbackDeploymentId",
                           "outcome",
                           "detail",
                           "dispatchedAt",
@@ -9335,6 +9353,10 @@
                             "type": "string",
                             "nullable": true
                           },
+                          "rollbackDeploymentId": {
+                            "type": "string",
+                            "nullable": true
+                          },
                           "outcome": {
                             "type": "string",
                             "nullable": true
@@ -9365,6 +9387,7 @@
                           "attempt",
                           "deploymentId",
                           "baselineDeploymentId",
+                          "rollbackDeploymentId",
                           "outcome",
                           "detail",
                           "dispatchedAt",
@@ -9692,6 +9715,10 @@
                             "type": "string",
                             "nullable": true
                           },
+                          "rollbackDeploymentId": {
+                            "type": "string",
+                            "nullable": true
+                          },
                           "outcome": {
                             "type": "string",
                             "nullable": true
@@ -9722,6 +9749,7 @@
                           "attempt",
                           "deploymentId",
                           "baselineDeploymentId",
+                          "rollbackDeploymentId",
                           "outcome",
                           "detail",
                           "dispatchedAt",
@@ -10049,6 +10077,10 @@
                             "type": "string",
                             "nullable": true
                           },
+                          "rollbackDeploymentId": {
+                            "type": "string",
+                            "nullable": true
+                          },
                           "outcome": {
                             "type": "string",
                             "nullable": true
@@ -10079,6 +10111,369 @@
                           "attempt",
                           "deploymentId",
                           "baselineDeploymentId",
+                          "rollbackDeploymentId",
+                          "outcome",
+                          "detail",
+                          "dispatchedAt",
+                          "finishedAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "teamId",
+                    "createdBy",
+                    "name",
+                    "kind",
+                    "status",
+                    "haltReason",
+                    "haltDetail",
+                    "config",
+                    "currentWave",
+                    "waveCount",
+                    "waveSizes",
+                    "bakeUntil",
+                    "createdAt",
+                    "finishedAt",
+                    "summary",
+                    "targets"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "rollouts"
+        ]
+      }
+    },
+    "/api/v1/rollouts/{id}/rollback": {
+      "post": {
+        "operationId": "RolloutsController_rollback",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "teamId": {
+                      "type": "string"
+                    },
+                    "createdBy": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "RUNNING",
+                        "HALTED",
+                        "ROLLING_BACK",
+                        "COMPLETED",
+                        "ROLLED_BACK",
+                        "ROLLBACK_FAILED",
+                        "CANCELLED"
+                      ]
+                    },
+                    "haltReason": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "haltDetail": {
+                      "type": "object",
+                      "additionalProperties": {},
+                      "nullable": true
+                    },
+                    "config": {
+                      "type": "object",
+                      "properties": {
+                        "canary": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 10,
+                          "default": 1
+                        },
+                        "steps": {
+                          "type": "array",
+                          "items": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 100
+                          },
+                          "minItems": 1,
+                          "maxItems": 9,
+                          "default": [
+                            25,
+                            50,
+                            100
+                          ]
+                        },
+                        "concurrency": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 10,
+                          "default": 3
+                        },
+                        "maxFailuresPerWave": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 50,
+                          "default": 0
+                        },
+                        "bakeSec": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 3600,
+                          "default": 60
+                        },
+                        "dispatchTimeoutSec": {
+                          "type": "integer",
+                          "minimum": 60,
+                          "maximum": 18000,
+                          "default": 2700
+                        },
+                        "waitOnlineSec": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 3600,
+                          "default": 300
+                        },
+                        "allowUngated": {
+                          "type": "boolean",
+                          "default": false
+                        },
+                        "noCache": {
+                          "type": "boolean",
+                          "default": false
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "currentWave": {
+                      "type": "number"
+                    },
+                    "waveCount": {
+                      "type": "number"
+                    },
+                    "waveSizes": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      }
+                    },
+                    "bakeUntil": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "finishedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "summary": {
+                      "type": "object",
+                      "properties": {
+                        "total": {
+                          "type": "number"
+                        },
+                        "pending": {
+                          "type": "number"
+                        },
+                        "deploying": {
+                          "type": "number"
+                        },
+                        "succeeded": {
+                          "type": "number"
+                        },
+                        "failed": {
+                          "type": "number"
+                        },
+                        "skipped": {
+                          "type": "number"
+                        },
+                        "cancelled": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "total",
+                        "pending",
+                        "deploying",
+                        "succeeded",
+                        "failed",
+                        "skipped",
+                        "cancelled"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "targets": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "appId": {
+                            "type": "string"
+                          },
+                          "serverId": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "wave": {
+                            "type": "number"
+                          },
+                          "position": {
+                            "type": "number"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "PENDING",
+                              "DEPLOYING",
+                              "SUCCEEDED",
+                              "FAILED",
+                              "CANCELLED",
+                              "SKIPPED",
+                              "REVERTING",
+                              "ROLLED_BACK",
+                              "ROLLBACK_FAILED"
+                            ]
+                          },
+                          "attempt": {
+                            "type": "number"
+                          },
+                          "deploymentId": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "baselineDeploymentId": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "rollbackDeploymentId": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "detail": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "dispatchedAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "nullable": true
+                          },
+                          "finishedAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "appId",
+                          "serverId",
+                          "label",
+                          "wave",
+                          "position",
+                          "status",
+                          "attempt",
+                          "deploymentId",
+                          "baselineDeploymentId",
+                          "rollbackDeploymentId",
                           "outcome",
                           "detail",
                           "dispatchedAt",
@@ -10406,6 +10801,10 @@
                             "type": "string",
                             "nullable": true
                           },
+                          "rollbackDeploymentId": {
+                            "type": "string",
+                            "nullable": true
+                          },
                           "outcome": {
                             "type": "string",
                             "nullable": true
@@ -10436,6 +10835,7 @@
                           "attempt",
                           "deploymentId",
                           "baselineDeploymentId",
+                          "rollbackDeploymentId",
                           "outcome",
                           "detail",
                           "dispatchedAt",

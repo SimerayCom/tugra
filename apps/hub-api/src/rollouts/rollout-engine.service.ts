@@ -4,12 +4,15 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { AgentOfflineException } from "../agent-gateway/agent-offline.exception";
-import { ApplicationsService } from "../applications/applications.service";
+import { AppBusyException, ApplicationsService } from "../applications/applications.service";
+import { NotificationsService } from "../notifications/notifications.service";
 import { preflightApp, RolloutConfigSchema } from "./rollout-plan";
-import { decide, rolloutKey, type Action, type DeploymentFacts, type HaltReason, type RolloutSnap, type TargetSnap } from "./rollout-decide";
+import { decide, rollbackKey, rolloutKey, type Action, type DeploymentFacts, type HaltReason, type RolloutSnap, type TargetSnap } from "./rollout-decide";
 
-/** A settle only ever lands on an OPEN target (a late result never overwrites a terminal one). */
-const OPEN_TARGET_FILTER: Prisma.RolloutTargetWhereInput = { status: { in: ["PENDING", "DEPLOYING"] } };
+/** A settle only ever lands on an OPEN target of the matching phase (a late result never overwrites a terminal one,
+ *  and a deploy verdict can never land on a REVERTING target or vice versa). */
+const OPEN_DEPLOY_FILTER: Prisma.RolloutTargetWhereInput = { status: { in: ["PENDING", "DEPLOYING"] } };
+const OPEN_REVERT_FILTER: Prisma.RolloutTargetWhereInput = { status: "REVERTING" };
 const TERMINAL_ROLLOUT: RolloutStatusEnum[] = ["COMPLETED", "ROLLED_BACK", "ROLLBACK_FAILED", "CANCELLED"];
 
 /**
@@ -32,6 +35,7 @@ export class RolloutEngineService {
     private readonly audit: AuditService,
     private readonly agentWs: AgentWsServer,
     private readonly apps: ApplicationsService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /** Overridable clock (specs). */
@@ -45,9 +49,10 @@ export class RolloutEngineService {
     await this.prisma.rolloutTarget
       .updateMany({ where: { active: true, rollout: { status: { in: TERMINAL_ROLLOUT } } }, data: { active: false } })
       .catch((e) => this.logger.warn(`rollout slot self-heal failed: ${e instanceof Error ? e.message : e}`));
-    // RUNNING rollouts, plus any rollout (HALTED or even CANCELLED) that still has a deploy in flight to settle.
+    // RUNNING / ROLLING_BACK rollouts, plus any rollout (HALTED or even CANCELLED) that still has a deploy in
+    // flight to settle.
     const live = await this.prisma.rollout.findMany({
-      where: { OR: [{ status: "RUNNING" }, { targets: { some: { status: "DEPLOYING" } } }] },
+      where: { OR: [{ status: { in: ["RUNNING", "ROLLING_BACK"] } }, { targets: { some: { status: { in: ["DEPLOYING", "REVERTING"] } } } }] },
       select: { id: true },
     });
     for (const r of live) {
@@ -100,7 +105,17 @@ export class RolloutEngineService {
         t.deploymentId = found.id;
       }
     }
-    const depIds = deploying.map((t) => t.deploymentId).filter((x): x is string => !!x);
+    // Same recovery for a fleet-rollback dispatch that died between the enqueue and the pin.
+    const reverting = targets.filter((t) => t.status === "REVERTING");
+    for (const t of reverting) {
+      if (t.rollbackDeploymentId || t.rollbackAttempt === 0) continue;
+      const found = await this.prisma.deployment.findUnique({ where: { appId_idempotencyKey: { appId: t.resourceId, idempotencyKey: rollbackKey(rollout.id, t.resourceId, t.rollbackAttempt) } }, select: { id: true } });
+      if (found) {
+        await this.prisma.rolloutTarget.updateMany({ where: { id: t.id, status: "REVERTING", rollbackDeploymentId: null }, data: { rollbackDeploymentId: found.id } });
+        t.rollbackDeploymentId = found.id;
+      }
+    }
+    const depIds = [...deploying.map((t) => t.deploymentId), ...reverting.map((t) => t.rollbackDeploymentId)].filter((x): x is string => !!x);
     const appIds = [...new Set(targets.map((t) => t.resourceId))];
     // "Superseded" matters only during a bake, for the current wave's passed targets: any deploy of that app
     // created after ours was dispatched (and not ours) means a newer version replaced the one we verified.
@@ -126,20 +141,24 @@ export class RolloutEngineService {
     const appById = new Map(apps.map((a) => [a.id, a]));
     const dispatchedByApp = new Map(bakeTargets.map((t) => [t.resourceId, t.dispatchedAt!.getTime()]));
     const supersededApps = new Set(newer.filter((d) => d.createdAt.getTime() > (dispatchedByApp.get(d.appId) ?? Infinity)).map((d) => d.appId));
+    const facts = (id: string | null): DeploymentFacts | null => {
+      const dep = id ? depById.get(id) : undefined;
+      return dep ? { status: dep.status as DeploymentFacts["status"], kind: dep.kind, exitCode: dep.exitCode, logs: dep.logs, startedAt: dep.startedAt, createdAt: dep.createdAt } : null;
+    };
     const snaps: TargetSnap[] = targets.map((t) => {
       const app = appById.get(t.resourceId);
-      const dep = t.deploymentId ? depById.get(t.deploymentId) : undefined;
       const online = !!app && this.agentWs.isOnline(app.serverId) && (!app.buildServerId || app.buildServerId === app.serverId || this.agentWs.isOnline(app.buildServerId));
-      const facts: DeploymentFacts | null = dep
-        ? { status: dep.status as DeploymentFacts["status"], kind: dep.kind, exitCode: dep.exitCode, logs: dep.logs, startedAt: dep.startedAt, createdAt: dep.createdAt }
-        : null;
       return {
         id: t.id,
         wave: t.wave,
         status: t.status,
         attempt: t.attempt,
         deploymentId: t.deploymentId,
-        deployment: facts,
+        deployment: t.status === "DEPLOYING" ? facts(t.deploymentId) : null,
+        rollbackAttempt: t.rollbackAttempt,
+        rollbackDispatchedAt: t.status === "REVERTING" ? t.dispatchedAt : null,
+        rollbackDeploymentId: t.rollbackDeploymentId,
+        rollbackDeployment: t.status === "REVERTING" ? facts(t.rollbackDeploymentId) : null,
         appStatus: app ? app.status : null,
         superseded: supersededApps.has(t.resourceId),
         online,
@@ -175,6 +194,23 @@ export class RolloutEngineService {
         if (t) return (await this.dispatch(rollout, t)) ? null : "halted";
         return null;
       }
+      case "revert": {
+        const t = targets.find((x) => x.id === a.targetId);
+        if (t) await this.revert(rollout, t);
+        return null;
+      }
+      case "finish_rollback": {
+        const { count } = await this.prisma.rollout.updateMany({
+          where: { id: rollout.id, status: "ROLLING_BACK" },
+          data: { status: a.status, finishedAt: new Date(this.now()) },
+        });
+        if (count === 1) {
+          await this.prisma.rolloutTarget.updateMany({ where: { rolloutId: rollout.id }, data: { active: false } });
+          await this.auditLog(a.status === "ROLLED_BACK" ? "rollout.rolled_back" : "rollout.rollback_failed", rollout, { reverted: a.reverted, failed: a.failed });
+          await this.notify(rollout.id, a.status === "ROLLED_BACK" ? "rollout_rolled_back" : "rollout_rollback_failed", { failed: a.failed, reverted: a.reverted });
+        }
+        return null;
+      }
       case "halt":
         await this.halt(rollout.id, a.reason, a.detail, "system");
         return "halted";
@@ -200,15 +236,132 @@ export class RolloutEngineService {
           if (r.count === 1) await tx.rolloutTarget.updateMany({ where: { rolloutId: rollout.id }, data: { active: false } });
           return r.count;
         });
-        if (count === 1) await this.auditLog("rollout.complete", rollout, { waves: rollout.waveCount, targets: targets.length });
+        if (count === 1) {
+          await this.auditLog("rollout.complete", rollout, { waves: rollout.waveCount, targets: targets.length });
+          await this.notify(rollout.id, "rollout_completed", {});
+        }
         return null;
       }
     }
   }
 
-  private async settle(targetId: string, status: "SUCCEEDED" | "FAILED" | "SKIPPED" | "CANCELLED", outcome: string, detail?: string): Promise<void> {
+  /**
+   * Fleet rollback of one target: claim the attempt (CAS on REVERTING + rollbackAttempt), dispatch the detached
+   * per-app rollback to the baseline under the rollout's (current) initiator, pin the ROLLBACK row. A busy app
+   * (409: another deploy RUNNING) is left waiting for the next tick — the attempt counter is rolled back so the
+   * next try mints the same key family without a hole; the decide() deadline bounds the waiting.
+   */
+  private async revert(rollout: Rollout, t: RolloutTarget): Promise<void> {
+    if (!t.baselineDeploymentId) {
+      await this.settle(t.id, "ROLLBACK_FAILED", "no_baseline");
+      return;
+    }
+    const live = await this.prisma.rollout.findUnique({ where: { id: rollout.id }, select: { status: true, createdBy: true } });
+    if (!live || live.status !== "ROLLING_BACK") return;
+    // Superseded re-check at DISPATCH time (not only when the rollback was requested — a target can wait minutes
+    // behind the throttle or a busy app): a deploy of this app newer than ours (success, running or queued; not one
+    // of this rollout's own rollback rows) means the app no longer runs what we put there → leave it untouched.
+    if (t.deploymentId && (await this.supersededSince(rollout.id, t.resourceId, t.deploymentId))) {
+      await this.settle(t.id, "SKIPPED", "superseded", "a newer deploy replaced this rollout's version; left untouched", "revert");
+      return;
+    }
+    const prev = t.rollbackAttempt; // captured before the CAS (never read the row object after it may have changed)
+    const attempt = prev + 1;
+    const { count } = await this.prisma.rolloutTarget.updateMany({
+      where: { id: t.id, status: "REVERTING", rollbackAttempt: prev },
+      // dispatchedAt = the FIRST try (the busy clock); a retry after a busy refusal keeps it.
+      data: { rollbackAttempt: attempt, ...(t.dispatchedAt ? {} : { dispatchedAt: new Date(this.now()) }) },
+    });
+    if (count !== 1) return;
+    const key = rollbackKey(rollout.id, t.resourceId, attempt);
+    try {
+      const dep = await this.apps.rollbackDetached(live.createdBy, t.resourceId, t.baselineDeploymentId, { key });
+      await this.prisma.rolloutTarget.updateMany({ where: { id: t.id, status: "REVERTING" }, data: { rollbackDeploymentId: dep.id } });
+    } catch (e) {
+      const existing = await this.prisma.deployment
+        .findUnique({ where: { appId_idempotencyKey: { appId: t.resourceId, idempotencyKey: key } }, select: { id: true } })
+        .catch(() => null);
+      if (existing) {
+        await this.prisma.rolloutTarget.updateMany({ where: { id: t.id, status: "REVERTING" }, data: { rollbackDeploymentId: existing.id } });
+        return;
+      }
+      if (e instanceof AppBusyException) {
+        // Another deploy is RUNNING on the app: wait and retry next tick (decide() bounds the wait).
+        await this.prisma.rolloutTarget.updateMany({ where: { id: t.id, status: "REVERTING", rollbackAttempt: attempt }, data: { rollbackAttempt: prev } });
+        return;
+      }
+      if (e instanceof ConflictException) {
+        // Refused for good (swarm app, idempotency-key collision): never retried.
+        await this.settle(t.id, "ROLLBACK_FAILED", "revert_refused", e.message);
+        return;
+      }
+      if (e instanceof NotFoundException) {
+        // App gone, or the baseline artifact is no longer rollbackable (image pruned, no registry copy).
+        await this.settle(t.id, "ROLLBACK_FAILED", "baseline_unavailable", e.message);
+        return;
+      }
+      if (e instanceof ForbiddenException) {
+        await this.settle(t.id, "ROLLBACK_FAILED", "forbidden", "the rollout's operator no longer has deploy access to this app");
+        return;
+      }
+      this.logger.warn(`rollout ${rollout.id}: revert dispatch for ${t.resourceId} failed: ${e instanceof Error ? e.message : e}`);
+      await this.settle(t.id, "ROLLBACK_FAILED", "revert_dispatch_failed");
+    }
+  }
+
+  /** True when a deploy of `appId` newer than `ourDeploymentId` exists that is not one of this rollout's own
+   *  rollback rows. Null/unknown when our deploy row is gone (pruned) → treated as superseded (never revert blind). */
+  async supersededSince(rolloutId: string, appId: string, ourDeploymentId: string): Promise<boolean> {
+    const ours = await this.prisma.deployment.findUnique({ where: { id: ourDeploymentId }, select: { createdAt: true } });
+    if (!ours) return true;
+    const newer = await this.prisma.deployment.findFirst({
+      where: {
+        appId,
+        id: { not: ourDeploymentId },
+        createdAt: { gt: ours.createdAt },
+        status: { in: ["SUCCESS", "RUNNING", "QUEUED"] },
+        NOT: { idempotencyKey: { startsWith: `rollout:rb:${rolloutId}:` } },
+      },
+      select: { id: true },
+    });
+    return !!newer;
+  }
+
+  /** Fire a rollout notification to the team's channels (best-effort). ctx is rebuilt from the current row so
+   *  the counts are the final ones. Public so the service can fire it for the transitions it commits itself. */
+  async notify(rolloutId: string, event: string, extra: Record<string, unknown>): Promise<void> {
+    try {
+      const r = await this.prisma.rollout.findUnique({ where: { id: rolloutId }, include: { targets: { select: { status: true } } } });
+      if (!r) return;
+      const count = (s: RolloutTarget["status"]) => r.targets.filter((t) => t.status === s).length;
+      await this.notifications.fireForEvent(r.teamId, event, {
+        rolloutId: r.id,
+        name: r.name ?? "",
+        wave: Math.min(r.currentWave + 1, r.waveCount),
+        waves: r.waveCount,
+        total: r.targets.length,
+        passed: count("SUCCEEDED"),
+        failed: count("FAILED") + count("ROLLBACK_FAILED"),
+        reverted: count("ROLLED_BACK"),
+        skipped: count("SKIPPED"),
+        reason: r.haltReason ?? "",
+        ...extra,
+      });
+    } catch (e) {
+      this.logger.warn(`rollout ${rolloutId}: notification ${event} failed: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+
+  private async settle(
+    targetId: string,
+    status: "SUCCEEDED" | "FAILED" | "SKIPPED" | "CANCELLED" | "ROLLED_BACK" | "ROLLBACK_FAILED",
+    outcome: string,
+    detail?: string,
+    phase: "deploy" | "revert" = status === "ROLLED_BACK" || status === "ROLLBACK_FAILED" ? "revert" : "deploy",
+  ): Promise<void> {
+    const from = phase === "revert" ? OPEN_REVERT_FILTER : OPEN_DEPLOY_FILTER;
     await this.prisma.rolloutTarget.updateMany({
-      where: { id: targetId, ...OPEN_TARGET_FILTER },
+      where: { id: targetId, ...from },
       data: { status, outcome, detail: detail?.slice(0, 500) ?? null, finishedAt: new Date(this.now()) },
     });
   }
@@ -305,6 +458,7 @@ export class RolloutEngineService {
     }
     const rollout = await this.prisma.rollout.findUnique({ where: { id: rolloutId } });
     if (rollout) await this.auditLog("rollout.halt", rollout, { reason, ...(detail ?? {}) }, actor);
+    await this.notify(rolloutId, "rollout_halted", { reason });
     return true;
   }
 

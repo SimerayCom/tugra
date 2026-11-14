@@ -13,6 +13,7 @@ import { canAccessResource, isScoped, TeamAccessService, type MembershipAccess }
 import { AuditService } from "../audit/audit.service";
 import { loadProjectCtx, loadProjectCtxMany } from "../common/resource-project";
 import { RolloutEngineService } from "./rollout-engine.service";
+import { rollbackTargets } from "./rollout-decide";
 import {
   assignWaves,
   planWaves,
@@ -42,6 +43,7 @@ export const RolloutTargetViewSchema = z.object({
   attempt: z.number(),
   deploymentId: z.string().nullable(),
   baselineDeploymentId: z.string().nullable(),
+  rollbackDeploymentId: z.string().nullable(),
   outcome: z.string().nullable(),
   detail: z.string().nullable(),
   dispatchedAt: z.date().nullable(),
@@ -342,6 +344,11 @@ export class RolloutsService {
       target: id,
       meta: { teamId: r.teamId, wave: r.currentWave, takeover: r.createdBy !== userId, ...(promote ? { promotedPastBake: true } : {}) },
     });
+    if (promote && lastWave) {
+      // This path completes the rollout itself (the engine never sees the transition) → same audit + notification.
+      await this.audit.log({ actor: userId, action: "rollout.complete", target: id, meta: { teamId: r.teamId, waves: r.waveCount, targets: r.targets.length, pastBake: true } });
+      await this.engine.notify(id, "rollout_completed", {});
+    }
     void this.engine.advance(id).catch(() => undefined);
     return this.get(userId, id);
   }
@@ -375,6 +382,103 @@ export class RolloutsService {
       }
     }
     await this.audit.log({ actor: userId, action: "rollout.cancel", target: id, meta: { teamId: r.teamId } });
+    return this.get(userId, id);
+  }
+
+  /**
+   * Fleet ROLLBACK: revert every app this rollout moved (SUCCEEDED, or left on a failed deploy) to the baseline
+   * recorded at its dispatch, through the per-app rollback pipeline, detached and health-gated per app. Allowed
+   * from HALTED or COMPLETED, never while a deploy of this rollout is still in flight (its result would race the
+   * revert). The requester takes over as operator (every revert runs under their access, re-checked here).
+   * Targets without a baseline (never deployed before the rollout) cannot be reverted → ROLLBACK_FAILED/no_baseline.
+   */
+  async rollback(userId: string, id: string): Promise<RolloutView> {
+    const r = await this.requireDeploy(userId, id);
+    if (r.status !== "HALTED" && r.status !== "COMPLETED") throw new ConflictException(`rollout is ${r.status}; rollback is possible from HALTED or COMPLETED`);
+    if (r.targets.some((t) => t.status === "DEPLOYING")) throw new ConflictException("a deploy of this rollout is still running; wait for it to finish");
+    const liveApps = await this.prisma.application.findMany({ where: { id: { in: r.targets.map((t) => t.resourceId) } }, select: { id: true, environmentId: true } });
+    for (const a of liveApps) {
+      await this.access.requireResourceAccess(userId, r.teamId, {
+        resourceId: a.id,
+        resolveProjectId: () => loadProjectCtx(this.prisma, a.environmentId).then((c) => c.projectId),
+      });
+    }
+    const picked = rollbackTargets(r.targets);
+    // Superseded guard: an app that has since been deployed again (a webhook, a manual deploy, another rollout) is
+    // no longer running what THIS rollout put there — reverting it would clobber someone else's newer release.
+    // Such targets are left untouched (SKIPPED/superseded) instead of reverted.
+    const byId = new Map(r.targets.map((t) => [t.id, t]));
+    const ours = picked.revert.map((tid) => byId.get(tid)!).filter((t) => t.deploymentId);
+    const ourDeps = ours.length
+      ? await this.prisma.deployment.findMany({ where: { id: { in: ours.map((t) => t.deploymentId!) } }, select: { id: true, appId: true, createdAt: true } })
+      : [];
+    const createdByDep = new Map(ourDeps.map((d) => [d.id, d.createdAt]));
+    const newer = ourDeps.length
+      ? await this.prisma.deployment.findMany({
+          where: {
+            appId: { in: ours.map((t) => t.resourceId) },
+            id: { notIn: ours.map((t) => t.deploymentId!) },
+            status: { in: ["SUCCESS", "RUNNING", "QUEUED"] },
+            createdAt: { gt: new Date(Math.min(...ourDeps.map((d) => d.createdAt.getTime()))) },
+          },
+          select: { appId: true, createdAt: true },
+        })
+      : [];
+    const supersededApps = new Set(
+      newer.filter((d) => ours.some((t) => t.resourceId === d.appId && createdByDep.has(t.deploymentId!) && d.createdAt > createdByDep.get(t.deploymentId!)!)).map((d) => d.appId),
+    );
+    // A target whose own deploy row is gone (pruned by retention) cannot be compared → never reverted blind.
+    const superseded = ours.filter((t) => supersededApps.has(t.resourceId) || !createdByDep.has(t.deploymentId!)).map((t) => t.id);
+    const revert = picked.revert.filter((tid) => !superseded.includes(tid));
+    const noBaseline = picked.noBaseline;
+    if (revert.length + noBaseline.length === 0) {
+      throw new ConflictException(
+        superseded.length
+          ? "nothing to roll back: every app this rollout moved has since been deployed again"
+          : "nothing to roll back: this rollout moved no app onto a new version",
+      );
+    }
+    const now = new Date();
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        const { count } = await tx.rollout.updateMany({
+          where: { id, status: { in: ["HALTED", "COMPLETED"] } },
+          data: { status: "ROLLING_BACK", createdBy: userId, bakeUntil: null, waveStartedAt: now, finishedAt: null },
+        });
+        if (count !== 1) throw new ConflictException("rollout changed state meanwhile; reload and retry");
+        if (revert.length) {
+          // Re-claims the apps' live-rollout slots (a COMPLETED rollout had released them) — P2002 = another live rollout.
+          await tx.rolloutTarget.updateMany({
+            where: { id: { in: revert } },
+            data: { status: "REVERTING", rollbackAttempt: 0, rollbackDeploymentId: null, outcome: null, detail: null, finishedAt: null, active: true },
+          });
+        }
+        if (superseded.length) {
+          await tx.rolloutTarget.updateMany({
+            where: { id: { in: superseded } },
+            data: { status: "SKIPPED", outcome: "superseded", detail: "a newer deploy replaced this rollout's version; left untouched", finishedAt: now },
+          });
+        }
+        if (noBaseline.length) {
+          await tx.rolloutTarget.updateMany({
+            where: { id: { in: noBaseline } },
+            data: { status: "ROLLBACK_FAILED", outcome: "no_baseline", detail: "the app had no rollbackable deploy before this rollout", finishedAt: now },
+          });
+        }
+      });
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+        throw new ConflictException("one or more of these apps are now in another live rollout");
+      }
+      throw e;
+    }
+    await this.audit.log({
+      actor: userId,
+      action: "rollout.rollback",
+      target: id,
+      meta: { teamId: r.teamId, revert: revert.length, superseded: superseded.length, noBaseline: noBaseline.length, takeover: r.createdBy !== userId },
+    });
+    void this.engine.advance(id).catch(() => undefined);
     return this.get(userId, id);
   }
 
@@ -435,6 +539,7 @@ export class RolloutsService {
         attempt: t.attempt,
         deploymentId: t.deploymentId,
         baselineDeploymentId: t.baselineDeploymentId,
+        rollbackDeploymentId: t.rollbackDeploymentId,
         outcome: t.outcome,
         detail: t.detail,
         dispatchedAt: t.dispatchedAt,

@@ -9,6 +9,22 @@
     "field": { "project": "Project", "environment": "Environment", "duration": "Duration" },
     "link": { "openApp": "Open app", "viewInTugra": "View in Tugra" }
   },
+  "rollout": {
+    "halted": { "title": "Rollout halted — {name}", "summary": "The fleet rollout {name} halted in wave {wave} of {waves}: {reason}." },
+    "completed": { "title": "Rollout completed — {name}", "summary": "The fleet rollout {name} reached all {waves} waves; {passed} of {total} apps are on the new version." },
+    "rolledBack": { "title": "Rollout rolled back — {name}", "summary": "The fleet rollback of {name} reverted {reverted} app(s) to their previous version; {skipped} left untouched (never moved, or deployed again since)." },
+    "rollbackFailed": { "title": "Rollout rollback FAILED — {name}", "summary": "The fleet rollback of {name} could not revert {failed} app(s); check them now." },
+    "reason": {
+      "manual": "halted by an operator",
+      "wave_failed": "a wave had more failures than allowed",
+      "wave_no_signal": "a wave produced no successful deploy",
+      "bake_failed": "an app failed its observation window",
+      "interrupted": "the hub restarted during a deploy",
+      "initiator_lost": "the initiator lost deploy access"
+    },
+    "field": { "wave": "Wave", "passed": "Passed", "failed": "Failed", "reverted": "Reverted", "skipped": "Untouched", "total": "Apps" },
+    "link": { "open": "Open rollout" }
+  },
   "backup": {
     "failed": { "title": "Backup failed — {db}", "summary": "A backup of {db} failed." },
     "succeeded": { "title": "Backup succeeded — {db}", "summary": "A backup of {db} completed." },

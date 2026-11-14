@@ -70,6 +70,10 @@ const EVENT_LABEL: Record<string, string> = {
   container_oom: "eventContainerOom",
   container_unhealthy: "eventContainerUnhealthy",
   container_mem_pressure: "eventContainerMemPressure",
+  rollout_halted: "eventRolloutHalted",
+  rollout_completed: "eventRolloutCompleted",
+  rollout_rolled_back: "eventRolloutRolledBack",
+  rollout_rollback_failed: "eventRolloutRollbackFailed",
 };
 
 export default function NotificationsPage() {

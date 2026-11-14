@@ -46,6 +46,10 @@ export const EVENT_TYPES = [
   "container_oom",
   "container_unhealthy",
   "container_mem_pressure",
+  "rollout_halted",
+  "rollout_completed",
+  "rollout_rolled_back",
+  "rollout_rollback_failed",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

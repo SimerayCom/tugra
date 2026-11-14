@@ -27,7 +27,7 @@ const app = (id: string, over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-function make(opts: { apps?: ReturnType<typeof app>[]; busy?: string[]; rollout?: Record<string, unknown>; perms?: string[]; member?: boolean; scoped?: { projects: string[] }; createThrows?: unknown } = {}) {
+function make(opts: { apps?: ReturnType<typeof app>[]; busy?: string[]; rollout?: Record<string, unknown>; perms?: string[]; member?: boolean; scoped?: { projects: string[] }; createThrows?: unknown; newerDeploys?: Array<{ appId: string; createdAt: Date; status?: string }>; ourDeployTimes?: Record<string, Date>; prunedDeploys?: string[]; updateThrows?: unknown } = {}) {
   const apps = opts.apps ?? [app("app1"), app("app2"), app("app3")];
   const rolloutRow = {
     id: "r1",
@@ -49,8 +49,8 @@ function make(opts: { apps?: ReturnType<typeof app>[]; busy?: string[]; rollout?
     ...opts.rollout,
   };
   const targetRows: Array<Record<string, unknown>> = [
-    { id: "ta", rolloutId: "r1", wave: 0, position: 0, kind: "app_deploy", resourceId: "app1", serverId: "s1", label: "app1", status: "FAILED", attempt: 1, baselineDeploymentId: null, deploymentId: "d1", outcome: "failed", detail: null, active: true, dispatchedAt: null, finishedAt: null },
-    { id: "tb", rolloutId: "r1", wave: 1, position: 1, kind: "app_deploy", resourceId: "app2", serverId: "s1", label: "app2", status: "PENDING", attempt: 0, baselineDeploymentId: null, deploymentId: null, outcome: null, detail: null, active: true, dispatchedAt: null, finishedAt: null },
+    { id: "ta", rolloutId: "r1", wave: 0, position: 0, kind: "app_deploy", resourceId: "app1", serverId: "s1", label: "app1", status: "FAILED", attempt: 1, baselineDeploymentId: null, deploymentId: "d1", rollbackDeploymentId: null, rollbackAttempt: 0, outcome: "failed", detail: null, active: true, dispatchedAt: null, finishedAt: null },
+    { id: "tb", rolloutId: "r1", wave: 1, position: 1, kind: "app_deploy", resourceId: "app2", serverId: "s1", label: "app2", status: "PENDING", attempt: 0, baselineDeploymentId: null, deploymentId: null, rollbackDeploymentId: null, rollbackAttempt: 0, outcome: null, detail: null, active: true, dispatchedAt: null, finishedAt: null },
   ];
   const created: Array<Record<string, unknown>> = [];
   const rollout = {
@@ -63,6 +63,7 @@ function make(opts: { apps?: ReturnType<typeof app>[]; busy?: string[]; rollout?
     findUnique: jest.fn(async () => ({ ...rolloutRow, targets: targetRows })),
     findMany: jest.fn(async () => [{ ...rolloutRow, targets: targetRows }]),
     updateMany: jest.fn(async (args: { where: { status: unknown }; data: Record<string, unknown> }) => {
+      if (opts.updateThrows) throw opts.updateThrows;
       const want = args.where.status as string | { in: string[] };
       const ok = typeof want === "string" ? rolloutRow.status === want : want.in.includes(rolloutRow.status as string);
       if (ok) Object.assign(rolloutRow, args.data);
@@ -77,8 +78,16 @@ function make(opts: { apps?: ReturnType<typeof app>[]; busy?: string[]; rollout?
     }),
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
   };
+  const newerDeploys = opts.newerDeploys ?? [];
   const base = {
     application: { findMany: jest.fn(async (args: { where: { id: { in: string[] } } }) => apps.filter((a) => args.where.id.in.includes(a.id))) },
+    deployment: {
+      findMany: jest.fn(async (args: { where: { id?: { in?: string[]; notIn?: string[] }; appId?: { in: string[] }; createdAt?: { gt: Date }; status?: { in: string[] } } }) => {
+        if (args.where.id?.in) return args.where.id.in.filter((id) => !(opts.prunedDeploys ?? []).includes(id)).map((id) => ({ id, appId: `app-of-${id}`, createdAt: opts.ourDeployTimes?.[id] ?? new Date("2026-11-15T09:00:00Z") }));
+        // the "newer" query: honour appId.in / id.notIn / createdAt.gt / status.in like Postgres would
+        return newerDeploys.filter((d) => (!args.where.appId || args.where.appId.in.includes(d.appId)) && (!args.where.createdAt || d.createdAt > args.where.createdAt.gt) && (!args.where.status || args.where.status.in.includes(d.status ?? "SUCCESS")));
+      }),
+    },
     rolloutTarget,
     rollout,
   };
@@ -98,7 +107,7 @@ function make(opts: { apps?: ReturnType<typeof app>[]; busy?: string[]; rollout?
     teamRole: jest.fn().mockResolvedValue(opts.member === false ? null : "MEMBER"),
   } as unknown as TeamAccessService;
   const audit = jest.fn().mockResolvedValue(undefined);
-  const engine = { advance: jest.fn().mockResolvedValue(undefined), halt: jest.fn().mockResolvedValue(true), cancelQueued: jest.fn().mockResolvedValue(true) } as unknown as RolloutEngineService;
+  const engine = { advance: jest.fn().mockResolvedValue(undefined), halt: jest.fn().mockResolvedValue(true), cancelQueued: jest.fn().mockResolvedValue(true), notify: jest.fn().mockResolvedValue(undefined) } as unknown as RolloutEngineService;
   const svc = new RolloutsService(prisma, access, { log: audit } as unknown as AuditService, engine);
   return { svc, prisma, access, audit, engine, tx: base, created, rolloutRow, targetRows };
 }
@@ -227,6 +236,79 @@ describe("RolloutsService — read + transitions", () => {
     expect(c.rolloutRow.status).toBe("CANCELLED");
     await expect(make({ rollout: { status: "COMPLETED" } }).svc.cancel("u1", "r1")).rejects.toBeInstanceOf(ConflictException);
   });
+  it("rollback: from HALTED/COMPLETED only, never with a deploy in flight; flips REVERTING for moved targets with a baseline and fails the rest, takeover + audit", async () => {
+    const m = make({ rollout: { status: "HALTED", haltReason: "wave_failed" } });
+    m.targetRows[0] = { ...m.targetRows[0], status: "SUCCEEDED", outcome: "passed", baselineDeploymentId: "base-a" };
+    m.targetRows.push({ id: "tc", rolloutId: "r1", wave: 0, position: 2, kind: "app_deploy", resourceId: "app3", serverId: "s1", label: "app3", status: "SUCCEEDED", attempt: 1, baselineDeploymentId: null, deploymentId: "d3", outcome: "passed", detail: null, active: true, dispatchedAt: null, finishedAt: null });
+    await m.svc.rollback("u2", "r1");
+    expect(m.rolloutRow).toMatchObject({ status: "ROLLING_BACK", createdBy: "u2" });
+    const calls = (m.tx.rolloutTarget.updateMany as jest.Mock).mock.calls.map((x) => x[0]);
+    expect(calls[0]).toMatchObject({ where: { id: { in: ["ta"] } }, data: { status: "REVERTING", rollbackAttempt: 0, active: true } });
+    expect(calls[1]).toMatchObject({ where: { id: { in: ["tc"] } }, data: { status: "ROLLBACK_FAILED", outcome: "no_baseline" } });
+    expect(m.access.requireResourceAccess).toHaveBeenCalledTimes(3);
+    expect(m.audit).toHaveBeenCalledWith(expect.objectContaining({ action: "rollout.rollback", meta: expect.objectContaining({ revert: 1, noBaseline: 1, takeover: true }) }));
+    expect(m.engine.advance).toHaveBeenCalledWith("r1");
+    await expect(make({ rollout: { status: "RUNNING" } }).svc.rollback("u1", "r1")).rejects.toBeInstanceOf(ConflictException);
+    // superseded guard: an app deployed again after our deploy is left untouched (SKIPPED/superseded), never reverted
+    const sup = make({ rollout: { status: "COMPLETED" }, newerDeploys: [{ appId: "app-of-d1", createdAt: new Date("2026-11-15T12:00:00Z") }] });
+    sup.targetRows[0] = { ...sup.targetRows[0], status: "SUCCEEDED", outcome: "passed", baselineDeploymentId: "base-a", deploymentId: "d1", resourceId: "app-of-d1" };
+    sup.targetRows[1] = { ...sup.targetRows[1], status: "SUCCEEDED", outcome: "passed", baselineDeploymentId: "base-b", deploymentId: "d2", resourceId: "app-of-d2" };
+    await sup.svc.rollback("u1", "r1");
+    const supCalls = (sup.tx.rolloutTarget.updateMany as jest.Mock).mock.calls.map((x) => x[0]);
+    expect(supCalls[0]).toMatchObject({ where: { id: { in: ["tb"] } }, data: { status: "REVERTING" } });
+    expect(supCalls[1]).toMatchObject({ where: { id: { in: ["ta"] } }, data: { status: "SKIPPED", outcome: "superseded" } });
+    expect(sup.audit).toHaveBeenCalledWith(expect.objectContaining({ meta: expect.objectContaining({ revert: 1, superseded: 1 }) }));
+    const inflight = make({ rollout: { status: "HALTED" } });
+    inflight.targetRows.push({ id: "tx", rolloutId: "r1", wave: 0, position: 2, kind: "app_deploy", resourceId: "app3", serverId: "s1", label: "app3", status: "DEPLOYING", attempt: 1, baselineDeploymentId: null, deploymentId: "dx", outcome: null, detail: null, active: true, dispatchedAt: null, finishedAt: null });
+    await expect(inflight.svc.rollback("u1", "r1")).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it("rollback refuses (409) when nothing is left to revert, and the superseded comparison is per app (a newer deploy of ANOTHER app does not skip this one; a pruned deploy row is never reverted blind)", async () => {
+    const none = make({ rollout: { status: "COMPLETED" } }); // targets: ta FAILED/failed with no baseline?? → ta has baseline null → noBaseline → allowed; make it rejected_safe instead
+    none.targetRows[0] = { ...none.targetRows[0], status: "FAILED", outcome: "rejected_safe", baselineDeploymentId: null };
+    await expect(none.svc.rollback("u1", "r1")).rejects.toBeInstanceOf(ConflictException);
+    expect(none.rolloutRow.status).toBe("COMPLETED");
+    const allSup = make({ rollout: { status: "COMPLETED" }, newerDeploys: [{ appId: "app1", createdAt: new Date("2026-11-15T12:00:00Z") }] });
+    allSup.targetRows[0] = { ...allSup.targetRows[0], status: "SUCCEEDED", outcome: "passed", baselineDeploymentId: "base-a" };
+    await expect(allSup.svc.rollback("u1", "r1")).rejects.toThrow(/deployed again/);
+    // per-app boundary: app1 deployed at 09:00 (ta), app2 at 12:00 (tb); a 10:00 deploy of app2 is OLDER than ours → not superseded
+    const two = make({
+      rollout: { status: "COMPLETED" },
+      ourDeployTimes: { d1: new Date("2026-11-15T09:00:00Z"), d2: new Date("2026-11-15T12:00:00Z") },
+      newerDeploys: [{ appId: "app-of-d2", createdAt: new Date("2026-11-15T10:00:00Z") }],
+    });
+    two.targetRows[0] = { ...two.targetRows[0], status: "SUCCEEDED", outcome: "passed", baselineDeploymentId: "base-a", deploymentId: "d1", resourceId: "app-of-d1" };
+    two.targetRows[1] = { ...two.targetRows[1], status: "SUCCEEDED", outcome: "passed", baselineDeploymentId: "base-b", deploymentId: "d2", resourceId: "app-of-d2" };
+    await two.svc.rollback("u1", "r1");
+    const twoCalls = (two.tx.rolloutTarget.updateMany as jest.Mock).mock.calls.map((x) => x[0]);
+    expect(twoCalls[0]).toMatchObject({ where: { id: { in: ["ta", "tb"] } }, data: { status: "REVERTING" } });
+    // pruned deploy row → skipped, not reverted
+    const pruned = make({ rollout: { status: "COMPLETED" }, prunedDeploys: ["d1"] });
+    pruned.targetRows[0] = { ...pruned.targetRows[0], status: "SUCCEEDED", outcome: "passed", baselineDeploymentId: "base-a" };
+    await expect(pruned.svc.rollback("u1", "r1")).rejects.toThrow(/deployed again/);
+  });
+
+  it("rollback: a resource-access denial, a lost slot race (P2002) and a CAS miss leave the rollout untouched", async () => {
+    const denied = make({ rollout: { status: "HALTED" } });
+    denied.targetRows[0] = { ...denied.targetRows[0], status: "SUCCEEDED", outcome: "passed", baselineDeploymentId: "base-a" };
+    (denied.access.requireResourceAccess as jest.Mock).mockRejectedValueOnce(new ForbiddenException("no access"));
+    await expect(denied.svc.rollback("u2", "r1")).rejects.toBeInstanceOf(ForbiddenException);
+    expect(denied.rolloutRow).toMatchObject({ status: "HALTED", createdBy: "u1" });
+    expect(denied.tx.rollout.updateMany).not.toHaveBeenCalled();
+    const raced = make({ rollout: { status: "COMPLETED" }, updateThrows: new Prisma.PrismaClientKnownRequestError("dup", { code: "P2002", clientVersion: "x" }) });
+    raced.targetRows[0] = { ...raced.targetRows[0], status: "SUCCEEDED", outcome: "passed", baselineDeploymentId: "base-a" };
+    await expect(raced.svc.rollback("u1", "r1")).rejects.toThrow(/another live rollout/);
+  });
+
+  it("resume past a failed bake on the LAST wave completes the rollout and fires rollout_completed itself", async () => {
+    const last = make({ rollout: { status: "HALTED", haltReason: "bake_failed", currentWave: 1, waveCount: 2 } });
+    (last.engine as unknown as { notify: jest.Mock }).notify = jest.fn().mockResolvedValue(undefined);
+    await last.svc.resume("u1", "r1");
+    expect(last.rolloutRow.status).toBe("COMPLETED");
+    expect((last.engine as unknown as { notify: jest.Mock }).notify).toHaveBeenCalledWith("r1", "rollout_completed", {});
+    expect(last.audit).toHaveBeenCalledWith(expect.objectContaining({ action: "rollout.complete" }));
+  });
+
   it("transitions require apps:deploy", async () => {
     const m = make({ perms: [] });
     await expect(m.svc.halt("u1", "r1")).rejects.toBeInstanceOf(ForbiddenException);

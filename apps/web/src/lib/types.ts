@@ -1669,6 +1669,7 @@ export interface RolloutTarget {
   attempt: number;
   deploymentId: string | null;
   baselineDeploymentId: string | null;
+  rollbackDeploymentId: string | null;
   outcome: string | null;
   detail: string | null;
   dispatchedAt: string | null;

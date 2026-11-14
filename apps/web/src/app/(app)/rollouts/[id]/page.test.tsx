@@ -37,6 +37,7 @@ const target = (id: string, wave: number, status: RolloutTarget["status"], over:
   attempt: 1,
   deploymentId: status === "PENDING" ? null : `dep-${id}`,
   baselineDeploymentId: null,
+  rollbackDeploymentId: null,
   outcome: status === "FAILED" ? "rejected_safe" : status === "SUCCEEDED" ? "passed" : null,
   detail: null,
   dispatchedAt: null,
@@ -98,12 +99,29 @@ describe("RolloutDetailPage", () => {
     expect(screen.queryByRole("button", { name: "Resume" })).toBeNull();
   });
 
-  it("a completed rollout offers no actions", async () => {
-    vi.spyOn(api, "getRollout").mockResolvedValue(rollout({ status: "COMPLETED", haltReason: null, finishedAt: new Date().toISOString() }));
+  it("a completed rollout offers only the fleet rollback; Roll back fleet confirms, calls the API and shows ROLLING_BACK", async () => {
+    vi.spyOn(api, "getRollout").mockResolvedValue(rollout({ status: "COMPLETED", haltReason: null, finishedAt: new Date().toISOString(), summary: { total: 3, pending: 0, deploying: 0, succeeded: 2, failed: 1, skipped: 0, cancelled: 0 } }));
+    const rb = vi.spyOn(api, "rollbackRollout").mockResolvedValue(rollout({ status: "ROLLING_BACK", haltReason: null, targets: [target("a", 0, "REVERTING"), target("b", 1, "REVERTING"), target("c", 1, "SKIPPED", { outcome: "superseded" })] }));
     wrap();
     await waitFor(() => expect(screen.getByText("Completed")).toBeTruthy());
     expect(screen.queryByRole("button", { name: "Halt" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Resume" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Cancel rollout" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Roll back fleet" }));
+    await waitFor(() => expect(screen.getByText(/Roll back this rollout\?/)).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(rb).toHaveBeenCalledWith("r1"));
+    await waitFor(() => expect(screen.getByText("Rolling back")).toBeTruthy());
+    expect(screen.getAllByText("Reverting")).toHaveLength(2);
+    expect(screen.getByText(/left untouched/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Roll back fleet" })).toBeNull();
+  });
+
+  it("a running rollout never offers the fleet rollback", async () => {
+    vi.spyOn(api, "getRollout").mockResolvedValue(rollout({ status: "RUNNING", haltReason: null }));
+    wrap();
+    await waitFor(() => expect(screen.getByText("Running")).toBeTruthy());
+    expect(screen.queryByRole("button", { name: "Roll back fleet" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Halt" })).toBeTruthy();
   });
 });

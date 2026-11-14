@@ -51,6 +51,12 @@ export interface TargetSnap {
   attempt: number;
   deploymentId: string | null;
   deployment: DeploymentFacts | null;
+  /** Fleet rollback: dispatch attempts so far (0 = not yet dispatched), when the first dispatch was tried (the
+   *  "busy since" clock for an app that keeps another deploy running), and the ROLLBACK deployment's facts. */
+  rollbackAttempt: number;
+  rollbackDispatchedAt: Date | null;
+  rollbackDeploymentId: string | null;
+  rollbackDeployment: DeploymentFacts | null;
   /** The app's current status, or null when the app no longer exists. */
   appStatus: string | null;
   /** True when a deploy NEWER than this target's dispatched one exists for the app (bake: superseded). */
@@ -70,8 +76,12 @@ export interface RolloutSnap {
 export type HaltReason = "manual" | "wave_failed" | "wave_no_signal" | "bake_failed" | "interrupted" | "initiator_lost";
 
 export type Action =
-  | { type: "settle"; targetId: string; status: "SUCCEEDED" | "FAILED" | "SKIPPED" | "CANCELLED"; outcome: string; detail?: string }
+  | { type: "settle"; targetId: string; status: "SUCCEEDED" | "FAILED" | "SKIPPED" | "CANCELLED" | "ROLLED_BACK" | "ROLLBACK_FAILED"; outcome: string; detail?: string }
   | { type: "enqueue"; targetId: string }
+  /** Fleet rollback: dispatch the detached per-app rollback of this REVERTING target to its baseline. */
+  | { type: "revert"; targetId: string }
+  /** Fleet rollback finished: every REVERTING target settled. */
+  | { type: "finish_rollback"; status: "ROLLED_BACK" | "ROLLBACK_FAILED"; reverted: number; failed: number }
   /** The dispatched deploy sat QUEUED past the dispatch timeout: cancel it if it has STILL not started; only then
    *  settle the target (a deploy that started meanwhile keeps running and is judged later). */
   | { type: "queue_timeout"; targetId: string; deploymentId: string | null }
@@ -80,20 +90,14 @@ export type Action =
   | { type: "advance_wave" }
   | { type: "complete" };
 
-/** Statuses that count as "this wave did not get that app onto the new version". */
-const FAILURE_STATUSES: ReadonlySet<TargetStatus> = new Set(["FAILED", "CANCELLED"]);
-
-/** Decide the next actions for one rollout. Settles are emitted first; at most one of halt / start_bake /
- *  advance_wave / complete follows, and never together with an enqueue. In HALTED and CANCELLED only settles
- *  are emitted (late results are recorded, nothing new is dispatched). */
-export function decide(r: RolloutSnap, targets: ReadonlyArray<TargetSnap>, now: number, bootAt: number): Action[] {
-  if (r.status !== "RUNNING" && r.status !== "HALTED" && r.status !== "CANCELLED") return [];
-  const actions: Action[] = [];
-  const dispatchTimeoutMs = r.config.dispatchTimeoutSec * 1000;
-  // In-memory view of the statuses AFTER this tick's settles, so the wave verdict below is consistent.
-  const effective = new Map<string, TargetStatus>(targets.map((t) => [t.id, t.status]));
+/** Judge every DEPLOYING target's deploy row and emit its settle; returns the ids whose deploy was interrupted. */
+function settleDeploying(
+  targets: ReadonlyArray<TargetSnap>,
+  effective: Map<string, TargetStatus>,
+  actions: Action[],
+  ctx: { now: number; bootAt: number; dispatchTimeoutMs: number },
+): string[] {
   const interrupted: string[] = [];
-
   for (const t of targets) {
     if (t.status !== "DEPLOYING") continue;
     if (!t.deployment) {
@@ -101,7 +105,7 @@ export function decide(r: RolloutSnap, targets: ReadonlyArray<TargetSnap>, now: 
       effective.set(t.id, "FAILED");
       continue;
     }
-    const v = classifyDeployment(t.deployment, { now, bootAt, dispatchTimeoutMs });
+    const v = classifyDeployment(t.deployment, ctx);
     switch (v) {
       case "running":
         break;
@@ -134,6 +138,25 @@ export function decide(r: RolloutSnap, targets: ReadonlyArray<TargetSnap>, now: 
         break;
     }
   }
+
+  return interrupted;
+}
+
+/** Statuses that count as "this wave did not get that app onto the new version". */
+const FAILURE_STATUSES: ReadonlySet<TargetStatus> = new Set(["FAILED", "CANCELLED"]);
+
+/** Decide the next actions for one rollout. Settles are emitted first; at most one of halt / start_bake /
+ *  advance_wave / complete follows, and never together with an enqueue. In HALTED and CANCELLED only settles
+ *  are emitted (late results are recorded, nothing new is dispatched). */
+export function decide(r: RolloutSnap, targets: ReadonlyArray<TargetSnap>, now: number, bootAt: number): Action[] {
+  if (r.status === "ROLLING_BACK") return decideRollback(r, targets, now, bootAt);
+  if (r.status !== "RUNNING" && r.status !== "HALTED" && r.status !== "CANCELLED") return [];
+  const actions: Action[] = [];
+  const dispatchTimeoutMs = r.config.dispatchTimeoutSec * 1000;
+  // In-memory view of the statuses AFTER this tick's settles, so the wave verdict below is consistent.
+  const effective = new Map<string, TargetStatus>(targets.map((t) => [t.id, t.status]));
+
+  const interrupted = settleDeploying(targets, effective, actions, { now, bootAt, dispatchTimeoutMs });
 
   if (r.status !== "RUNNING") return actions;
 
@@ -206,8 +229,103 @@ export function decide(r: RolloutSnap, targets: ReadonlyArray<TargetSnap>, now: 
   return actions;
 }
 
+/**
+ * Fleet rollback (status ROLLING_BACK). Every REVERTING target is reverted to its baseline through the per-app
+ * rollback pipeline: not yet dispatched (rollbackAttempt 0, or a dispatch that left no row) → `revert`, bounded
+ * by `concurrency`; dispatched → judged by its ROLLBACK deployment row (SUCCESS → ROLLED_BACK, anything terminal
+ * else → ROLLBACK_FAILED; an orphaned RUNNING row from a previous hub process is a failure too — a half-run
+ * rollback is never retried blindly). A target that could not even be dispatched before `dispatchTimeoutSec`
+ * (its app kept a RUNNING deploy) fails with `busy_timeout`. Once nothing is REVERTING the rollout finishes:
+ * ROLLED_BACK when every revert passed, ROLLBACK_FAILED otherwise.
+ */
+function decideRollback(r: RolloutSnap, targets: ReadonlyArray<TargetSnap>, now: number, bootAt: number): Action[] {
+  const actions: Action[] = [];
+  const effective = new Map<string, TargetStatus>(targets.map((t) => [t.id, t.status]));
+  // A deploy of the original rollout that was still running when the rollback was requested (it cannot be —
+  // the service refuses then — but a late row is still recorded, never left DEPLOYING forever).
+  settleDeploying(targets, effective, actions, { now, bootAt, dispatchTimeoutMs: r.config.dispatchTimeoutSec * 1000 });
+  const reverting = targets.filter((t) => t.status === "REVERTING");
+  let inflight = 0;
+  const waiting: TargetSnap[] = [];
+  for (const t of reverting) {
+    if (!t.rollbackDeployment) {
+      waiting.push(t);
+      continue;
+    }
+    const v = classifyDeployment(t.rollbackDeployment, { now, bootAt, dispatchTimeoutMs: Number.MAX_SAFE_INTEGER });
+    if (v === "running") {
+      inflight++;
+      continue;
+    }
+    if (v === "passed") {
+      actions.push({ type: "settle", targetId: t.id, status: "ROLLED_BACK", outcome: "reverted" });
+      effective.set(t.id, "ROLLED_BACK");
+    } else {
+      const detail = v === "interrupted" ? INTERRUPTED_DEPLOY_NOTE : t.rollbackDeployment.exitCode != null ? `exit ${t.rollbackDeployment.exitCode}` : undefined;
+      actions.push({ type: "settle", targetId: t.id, status: "ROLLBACK_FAILED", outcome: `revert_${v}`, detail });
+      effective.set(t.id, "ROLLBACK_FAILED");
+    }
+  }
+  // Dispatch the waiting ones. Two bounded waits, each judged by its own clock and never by mere queueing behind
+  // the concurrency throttle: an app that keeps ANOTHER deploy running is retried from its first refusal
+  // (rollbackDispatchedAt) for dispatchTimeoutSec → busy_timeout; an offline agent is waited for waitOnlineSec
+  // from the rollback request → offline.
+  const busyMs = r.config.dispatchTimeoutSec * 1000;
+  const offlineDeadline = r.waveStartedAt.getTime() + r.config.waitOnlineSec * 1000;
+  for (const t of waiting) {
+    if (t.appStatus == null) {
+      actions.push({ type: "settle", targetId: t.id, status: "ROLLBACK_FAILED", outcome: "app_gone" });
+      effective.set(t.id, "ROLLBACK_FAILED");
+      continue;
+    }
+    if (t.rollbackDispatchedAt && now > t.rollbackDispatchedAt.getTime() + busyMs) {
+      actions.push({ type: "settle", targetId: t.id, status: "ROLLBACK_FAILED", outcome: "busy_timeout", detail: "the app kept another deploy running until the rollback window closed" });
+      effective.set(t.id, "ROLLBACK_FAILED");
+      continue;
+    }
+    if (!t.online) {
+      if (now > offlineDeadline) {
+        actions.push({ type: "settle", targetId: t.id, status: "ROLLBACK_FAILED", outcome: "offline", detail: "the server's agent stayed offline" });
+        effective.set(t.id, "ROLLBACK_FAILED");
+      }
+      continue; // wait for the agent
+    }
+    if (inflight >= r.config.concurrency) continue;
+    actions.push({ type: "revert", targetId: t.id });
+    inflight++;
+  }
+  const open = targets.some((t) => effective.get(t.id) === "REVERTING");
+  if (open) return actions;
+  const reverted = targets.filter((t) => effective.get(t.id) === "ROLLED_BACK").length;
+  const failed = targets.filter((t) => effective.get(t.id) === "ROLLBACK_FAILED").length;
+  actions.push({ type: "finish_rollback", status: failed > 0 ? "ROLLBACK_FAILED" : "ROLLED_BACK", reverted, failed });
+  return actions;
+}
+
+/** Which targets a fleet rollback reverts: the ones this rollout moved onto the new version (SUCCEEDED) or left
+ *  on a failed deploy of it (FAILED/failed — the app may be down). Not: rejected_safe (the previous version is
+ *  already live), interrupted (unknown state — the operator looks first), skipped/cancelled/pending (never
+ *  touched). Returns the target ids to flip to REVERTING and the ones that cannot be reverted (no baseline). */
+export function rollbackTargets(targets: ReadonlyArray<{ id: string; status: TargetStatus; outcome: string | null; baselineDeploymentId: string | null }>): {
+  revert: string[];
+  noBaseline: string[];
+} {
+  const revert: string[] = [];
+  const noBaseline: string[] = [];
+  for (const t of targets) {
+    const moved = t.status === "SUCCEEDED" || (t.status === "FAILED" && t.outcome === "failed");
+    if (!moved) continue;
+    (t.baselineDeploymentId ? revert : noBaseline).push(t.id);
+  }
+  return { revert, noBaseline };
+}
+
 export function rolloutKey(rolloutId: string, appId: string, attempt: number): string {
   return `rollout:${rolloutId}:${appId}:${attempt}`;
+}
+
+export function rollbackKey(rolloutId: string, appId: string, attempt: number): string {
+  return `rollout:rb:${rolloutId}:${appId}:${attempt}`;
 }
 
 /** The reserved idempotency-key prefix: a user-supplied Idempotency-Key may never start with it (it would let a

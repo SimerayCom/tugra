@@ -427,3 +427,34 @@ describe("renderEvent — backup health (backup_missing / backup_recovered)", ()
     expect(EVENT_TYPES).toContain("backup_recovered");
   });
 });
+
+describe("renderEvent — fleet rollout events", () => {
+  const ctx = { rolloutId: "r1abcdef", name: "release 42", wave: 2, waves: 4, passed: 3, failed: 1, total: 12, reason: "wave_failed" };
+  it("rollout_halted: warning, reason text + wave field + rollout link", () => {
+    const m = render("rollout_halted", ctx);
+    expect(m.level).toBe("warning");
+    expect(m.critical).toBe(true); // a system halt needs a human…
+    expect(render("rollout_halted", { ...ctx, reason: "manual" }).critical).toBe(false); // …an operator's own halt does not
+    expect(m.title).toBe("Rollout halted — release 42");
+    expect(m.summary).toBe("The fleet rollout release 42 halted in wave 2 of 4: a wave had more failures than allowed.");
+    expect(fieldVal(m, "Wave")).toBe("2/4");
+    expect(fieldVal(m, "Failed")).toBe("1");
+    expect(linkUrl(m, "Open rollout")).toBe("https://web.test/rollouts/r1abcdef");
+  });
+  it("rollout_completed / rolled_back: success; rollback_failed: failure + critical; unnamed rollouts fall back to the id prefix", () => {
+    expect(render("rollout_completed", { ...ctx, reason: "" }).summary).toBe("The fleet rollout release 42 reached all 4 waves; 3 of 12 apps are on the new version.");
+    const rb = render("rollout_rolled_back", { ...ctx, reverted: 5, skipped: 2 });
+    expect(rb.level).toBe("success");
+    expect(rb.summary).toBe("The fleet rollback of release 42 reverted 5 app(s) to their previous version; 2 left untouched (never moved, or deployed again since).");
+    expect(fieldVal(rb, "Reverted")).toBe("5");
+    expect(fieldVal(rb, "Untouched")).toBe("2");
+    const f = render("rollout_rollback_failed", { ...ctx, name: "" });
+    expect(f.level).toBe("failure");
+    expect(f.critical).toBe(true);
+    expect(f.title).toBe("Rollout rollback FAILED — r1abcd");
+  });
+  it("all four are subscribable event ids", () => {
+    const { EVENT_TYPES } = jest.requireActual("@tugra/shared") as { EVENT_TYPES: readonly string[] };
+    for (const e of ["rollout_halted", "rollout_completed", "rollout_rolled_back", "rollout_rollback_failed"]) expect(EVENT_TYPES).toContain(e);
+  });
+});

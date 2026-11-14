@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
 import { useT } from "../../../../i18n/provider";
-import { canCancel, canHalt, canResume, rolloutRefetchInterval, rolloutStatusColor, targetStatusColor, targetsByWave } from "../../../../lib/rollouts";
+import { canCancel, canHalt, canResume, canRollback, rolloutRefetchInterval, rolloutStatusColor, targetStatusColor, targetsByWave } from "../../../../lib/rollouts";
 import type { Rollout, RolloutTarget } from "../../../../lib/types";
 import { BackLink, Btn, Card, SectionCard, StatusPill } from "../../../../components/ui";
 import { ErrorState } from "../../../../components/error-state";
@@ -26,7 +26,7 @@ export default function RolloutDetailPage() {
     refetchInterval: (q) => rolloutRefetchInterval(q.state.data),
   });
   const errMsg = (e: unknown) => (e instanceof Error && e.message ? e.message : t("rollouts.actionFailed"));
-  // Three identical hooks, always called in the same order (a named custom hook keeps the rules-of-hooks intent explicit).
+  // Identical hooks, always called in the same order (a named custom hook keeps the rules-of-hooks intent explicit).
   const useRolloutAction = (fn: () => Promise<Rollout>, done: string) =>
     useMutation({
       mutationFn: fn,
@@ -40,7 +40,8 @@ export default function RolloutDetailPage() {
   const halt = useRolloutAction(() => api.haltRollout(id), "rollouts.halted");
   const resume = useRolloutAction(() => api.resumeRollout(id), "rollouts.resumed");
   const cancel = useRolloutAction(() => api.cancelRollout(id), "rollouts.cancelled");
-  const busy = halt.isPending || resume.isPending || cancel.isPending;
+  const rollback = useRolloutAction(() => api.rollbackRollout(id), "rollouts.rolledBack");
+  const busy = halt.isPending || resume.isPending || cancel.isPending || rollback.isPending;
 
   const ask = async (key: string, danger: boolean, run: () => void) => {
     if (await confirm({ body: t(key), danger })) run();
@@ -73,6 +74,11 @@ export default function RolloutDetailPage() {
                     {t("rollouts.resume")}
                   </Btn>
                 )}
+                {canRollback(r) && (
+                  <Btn variant="dangerGhost" onClick={() => ask("rollouts.rollbackConfirm", true, () => rollback.mutate())} loading={rollback.isPending} disabled={busy}>
+                    {t("rollouts.rollback")}
+                  </Btn>
+                )}
                 {canCancel(r.status) && (
                   <Btn variant="dangerGhost" onClick={() => ask("rollouts.cancelConfirm", true, () => cancel.mutate())} loading={cancel.isPending} disabled={busy}>
                     {t("rollouts.cancel")}
@@ -86,6 +92,7 @@ export default function RolloutDetailPage() {
               <div role="status" style={{ color: "var(--c-am)", fontSize: 13 }}>{t(`rollouts.halt_${r.haltReason}`)}</div>
             </Card>
           )}
+          {r.status === "ROLLING_BACK" && <div role="status" style={{ color: "var(--c-tx3)", fontSize: 12, marginBottom: 12 }}>{t("rollouts.rollingBack")}</div>}
           {r.status === "RUNNING" && r.bakeUntil && (
             <div role="status" style={{ color: "var(--c-tx3)", fontSize: 12, marginBottom: 12 }}>{t("rollouts.baking", { time: new Date(r.bakeUntil).toLocaleTimeString() })}</div>
           )}
@@ -124,9 +131,14 @@ function WaveCard({ r, index, targets }: { r: Rollout; index: number; targets: R
                   {t("rollouts.openDeploy")}
                 </Link>
               )}
+              {tg.rollbackDeploymentId && (
+                <Link href={`/apps/${tg.appId}?tab=deployments`} className="tg-link" style={{ fontSize: 11 }}>
+                  {t("rollouts.openRollback")}
+                </Link>
+              )}
             </div>
             {tg.outcome && tg.status !== "SUCCEEDED" && (
-              <div style={{ fontSize: 12, color: tg.status === "FAILED" ? "var(--c-r)" : "var(--c-tx3)" }} title={tg.detail ?? undefined}>
+              <div style={{ fontSize: 12, color: tg.status === "FAILED" || tg.status === "ROLLBACK_FAILED" ? "var(--c-r)" : "var(--c-tx3)" }} title={tg.detail ?? undefined}>
                 {t(`rollouts.outcome_${tg.outcome}`)}
               </div>
             )}

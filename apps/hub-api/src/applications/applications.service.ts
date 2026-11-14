@@ -365,6 +365,14 @@ function parseRedirects(raw: unknown): { regex: string; replacement: string; per
     .map((rd) => ({ regex: rd.regex, replacement: rd.replacement, permanent: rd.permanent === true }));
 }
 
+/** 409 "a deployment is already running" — a distinct class so a programmatic caller (the fleet rollout engine)
+ *  can tell "retry later" apart from every other conflict. Same HTTP shape as before for interactive callers. */
+export class AppBusyException extends ConflictException {
+  constructor() {
+    super("a deployment is already running");
+  }
+}
+
 @Injectable()
 export class ApplicationsService {
   // In-flight deploy commands by deployment id → the agent server + reqId currently running, so a RUNNING
@@ -1099,20 +1107,29 @@ export class ApplicationsService {
     const running = await this.prisma.deployment.findFirst({
       where: { appId, status: "RUNNING" },
     });
-    if (running) throw new ConflictException("a deployment is already running");
+    if (running) throw new AppBusyException();
   }
 
   /** Create the RUNNING row for a rollback. Rollback doesn't go through the deploy queue, so it relies on the
    *  one-running-per-app partial unique index as the backstop — map its violation (a deploy claimed RUNNING
    *  in the race after ensureNoActiveDeploy) to a clean 409 instead of a raw Prisma error. */
-  private async createRollbackDeployment(appId: string): Promise<Deployment> {
+  private async createRollbackDeployment(appId: string, extra: { idempotencyKey?: string; trigger?: string; requestedBy?: string } = {}): Promise<Deployment> {
     try {
       return await this.prisma.deployment.create({
-        data: { appId, status: "RUNNING", kind: "ROLLBACK", trigger: "rollback", startedAt: new Date() },
+        data: {
+          appId,
+          status: "RUNNING",
+          kind: "ROLLBACK",
+          trigger: extra.trigger ?? "rollback",
+          startedAt: new Date(),
+          ...(extra.idempotencyKey ? { idempotencyKey: extra.idempotencyKey } : {}),
+          ...(extra.requestedBy ? { requestedBy: extra.requestedBy } : {}),
+        },
       });
     } catch (e) {
-      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
-        throw new ConflictException("a deployment is already running");
+      // The idempotency-key violation is the detached caller's to handle (it adopts the existing row).
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002" && !String(e.meta?.target ?? "").includes("idempotencyKey")) {
+        throw new AppBusyException();
       }
       throw e;
     }
@@ -2017,14 +2034,61 @@ export class ApplicationsService {
     // re-validate them against the app's CURRENT privileged flag (covers the classic AND swarm paths, since
     // the clusterId branch below is reached only after this). A revoked override can never run here.
     assertSafeDockerOptions(app.dockerOptions, { allowPrivileged: app.allowPrivilegedDockerOptions });
-    const isCompose = app.source === "COMPOSE";
     const target = await this.prisma.deployment.findFirst({
       where: { id: targetDeploymentId, appId: id, status: "SUCCESS" },
     });
     // Swarm app: roll the service back to the target deployment's image ref (no rebuild), not a classic run.
     if (app.clusterId) return this.rollbackSwarm(userId, app, target);
-    // Resolve the rollback SOURCE up front (before creating the deployment / touching app status) so a
-    // still-running app is never flipped to FAILED for an impossible rollback.
+    const plan = await this.resolveRollbackSource(app, target);
+    const dep = await this.createRollbackDeployment(app.id);
+    await this.executeRollback(dep, app, plan, userId, targetDeploymentId);
+    return this.prisma.deployment.findUnique({ where: { id: dep.id } });
+  }
+
+  /**
+   * Fleet-rollout seam: the same classic rollback, but DETACHED — the RUNNING rollback row is returned at once
+   * and the agent command runs in the background (the rollout engine judges the row later). Authorized like an
+   * interactive rollback on every call (membership + per-resource scoping + apps:deploy). `key` makes the
+   * dispatch at-most-once via the (appId, idempotencyKey) index: a retry after a crash finds the existing row.
+   * A busy app (one RUNNING deploy per app) is a 409 the caller retries later. Swarm apps are refused (they are
+   * never rollout targets).
+   */
+  async rollbackDetached(userId: string, appId: string, targetDeploymentId: string, opts: { key: string }): Promise<Deployment> {
+    await this.require(userId, appId);
+    const app = await this.requireWrite(userId, appId, "apps:deploy");
+    if (app.clusterId) throw new ConflictException("swarm apps cannot be rolled back by a rollout");
+    const prior = await this.prisma.deployment.findUnique({ where: { appId_idempotencyKey: { appId, idempotencyKey: opts.key } } });
+    if (prior) {
+      if (prior.trigger !== "rollout" || prior.requestedBy !== userId) throw new ConflictException("idempotency key collision: that rollback was not started by this rollout");
+      return prior;
+    }
+    await this.ensureNoActiveDeploy(appId);
+    assertSafeDockerOptions(app.dockerOptions, { allowPrivileged: app.allowPrivilegedDockerOptions });
+    const target = await this.prisma.deployment.findFirst({ where: { id: targetDeploymentId, appId, status: "SUCCESS" } });
+    const plan = await this.resolveRollbackSource(app, target);
+    let dep: Deployment;
+    try {
+      dep = await this.createRollbackDeployment(app.id, { idempotencyKey: opts.key, trigger: "rollout", requestedBy: userId });
+    } catch (e) {
+      // Lost the key race (a concurrent identical dispatch) → adopt its row; the one-RUNNING-per-app 409 propagates.
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002" && String(e.meta?.target ?? "").includes("idempotencyKey")) {
+        const existing = await this.prisma.deployment.findUnique({ where: { appId_idempotencyKey: { appId, idempotencyKey: opts.key } } });
+        if (existing) return existing;
+      }
+      throw e;
+    }
+    void this.executeRollback(dep, app, plan, userId, targetDeploymentId).catch(() => undefined);
+    return dep;
+  }
+
+  /** How a classic (non-swarm) rollback re-materializes the target: the compose snapshot, or the retained local
+   *  tag / a registry pull / the recorded digest. Resolved BEFORE any row is written, so an impossible rollback
+   *  never touches the app's status. */
+  private async resolveRollbackSource(
+    app: Application,
+    target: Deployment | null,
+  ): Promise<{ isCompose: boolean; composeFile: string | null; registryPull: { auth: RegistryAuth; ref: string } | null; target: Deployment }> {
+    const isCompose = app.source === "COMPOSE";
     let registryPull: { auth: RegistryAuth; ref: string } | null = null;
     let composeFile: string | null = null;
     if (isCompose) {
@@ -2053,7 +2117,23 @@ export class ApplicationsService {
         throw new NotFoundException("the image for this deployment is no longer available locally and cannot be pulled from a registry");
       }
     }
-    const dep = await this.createRollbackDeployment(app.id);
+    return { isCompose, composeFile, registryPull, target: target! };
+  }
+
+  /** Run a prepared classic rollback against its already-created RUNNING row: agent command → terminal row →
+   *  app status → drain. Shared by the interactive (awaited) and the detached (rollout) paths. */
+  private async executeRollback(
+    dep: Deployment,
+    app: Application,
+    plan: { isCompose: boolean; composeFile: string | null; registryPull: { auth: RegistryAuth; ref: string } | null; target: Deployment },
+    userId: string,
+    targetDeploymentId: string,
+  ): Promise<void> {
+    const { isCompose, composeFile, registryPull, target } = plan;
+    // A throw BEFORE the agent command (proxy, spec, env, offline agent) never touched the live container: a still-
+    // serving app must not be flipped to FAILED for it (mirrors executeDeploy's swapAttempted/wasRunning guard).
+    const wasRunning = app.status === AppStatus.RUNNING;
+    let dispatched = false;
     this.deployLogs.begin(app.id);
     try {
       if (app.domain) await this.proxy.ensureProxy(app.serverId);
@@ -2077,11 +2157,12 @@ export class ApplicationsService {
         if (registryPull) spec.registryPull = registryPull;
         // IMAGE app whose local tag was pruned + no registry push: reconstruct byte-exact by pulling
         // the recorded upstream digest (spec.registryAuth carries any private-registry credentials).
-        else if (!target!.imageTag && target!.imageDigest) {
-          spec.registryPull = { auth: spec.registryAuth, ref: target!.imageDigest };
+        else if (!target.imageTag && target.imageDigest) {
+          spec.registryPull = { auth: spec.registryAuth, ref: target.imageDigest };
         }
-        command = buildRunScript(spec, target!.id, !!spec.registryPull);
+        command = buildRunScript(spec, target.id, !!spec.registryPull);
       }
+      dispatched = true;
       const r = await this.agentWs.sendCommand(
         app.serverId,
         command,
@@ -2104,17 +2185,17 @@ export class ApplicationsService {
         where: { id: dep.id },
         data: {
           status: ok ? "SUCCESS" : "FAILED",
-          logs: `rolled back to ${target!.id}\n${r.output.slice(0, 65000)}`,
+          logs: `rolled back to ${target.id}\n${r.output.slice(0, 65000)}`,
           exitCode: r.exitCode,
           // Compose has no single rollback tag; record a snapshot so the rollback is itself a future
           // rollback target (mirrors the imageTag an IMAGE rollback records).
-          imageTag: ok && !isCompose ? runTag(app, target!.id) : null,
-          registryImage: ok && !isCompose ? target!.registryImage : null,
+          imageTag: ok && !isCompose ? runTag(app, target.id) : null,
+          registryImage: ok && !isCompose ? target.registryImage : null,
           // Carry the digest forward so the rollback deploy is itself a byte-exact rollback target.
-          imageDigest: ok && !isCompose ? target!.imageDigest : null,
+          imageDigest: ok && !isCompose ? target.imageDigest : null,
           // Rollback re-runs a prior image (no clone) → show the commit that is now live, carried from the target.
-          commitSha: ok && !isCompose ? target!.commitSha : null,
-          commitMessage: ok && !isCompose ? target!.commitMessage : null,
+          commitSha: ok && !isCompose ? target.commitSha : null,
+          commitMessage: ok && !isCompose ? target.commitMessage : null,
           ...(ok && isCompose ? { configSnapshot: buildConfigSnapshot(spec) as object } : {}),
           ...this.finishStamp(dep),
         },
@@ -2133,10 +2214,12 @@ export class ApplicationsService {
         where: { id: dep.id },
         data: { status: "FAILED", logs: e instanceof Error ? e.message : "failed", ...this.finishStamp(dep) },
       });
-      await this.prisma.application.update({
-        where: { id: app.id },
-        data: { status: AppStatus.FAILED },
-      });
+      if (dispatched || !wasRunning) {
+        await this.prisma.application.update({
+          where: { id: app.id },
+          data: { status: AppStatus.FAILED },
+        });
+      }
       this.deployLogs.finish(app.id, { status: "FAILED", exitCode: -1, deploymentId: dep.id });
     } finally {
       // Rollback occupied the single RUNNING slot; resume any deploys that queued behind it.
@@ -2145,10 +2228,9 @@ export class ApplicationsService {
     await this.audit.log({
       actor: userId,
       action: "app.rollback",
-      target: id,
+      target: app.id,
       meta: { targetDeploymentId },
     });
-    return this.prisma.deployment.findUnique({ where: { id: dep.id } });
   }
 
   /** Swarm-app rollback: `docker service update --image <target ref>` with the app's CURRENT config (no

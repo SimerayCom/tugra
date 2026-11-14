@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Prisma, Role } from "@prisma/client";
-import { ApplicationsService } from "./applications.service";
+import { AppBusyException, ApplicationsService } from "./applications.service";
 import { SetEnvironmentSchema } from "./dto";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
@@ -5170,5 +5170,94 @@ describe("ApplicationsService — rollout seams", () => {
     expect(updateMany.mock.calls[0][0]).toMatchObject({ where: { id: "dep1", status: "QUEUED" }, data: { status: "CANCELLED", exitCode: -1 } });
     expect(await svc.cancelQueuedDeploymentSystem("dep1", "x")).toBe(false);
     expect(await svc.rolloutBaseline("app1")).toBe("old");
+  });
+});
+
+describe("ApplicationsService — rollbackDetached (fleet rollback seam)", () => {
+  const target = { id: "base", appId: "app1", status: "SUCCESS", imageTag: "tugra_app1:base", registryImage: null, imageDigest: null, commitSha: null, commitMessage: null };
+  function deps(opts: { prior?: Record<string, unknown> | null; running?: boolean } = {}) {
+    const create = jest.fn(async (args: { data: Record<string, unknown> }) => ({ id: "rb1", createdAt: new Date(), ...args.data }));
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...app, status: "RUNNING", source: "IMAGE" }), update: jest.fn().mockResolvedValue({}) },
+      deployment: {
+        findUnique: jest.fn(async (args: { where: Record<string, unknown> }) => ("appId_idempotencyKey" in args.where ? (opts.prior ?? null) : { id: "rb1", status: "SUCCESS" })),
+        findFirst: jest.fn(async ({ where }: { where: { status: string } }) => (where.status === "RUNNING" ? (opts.running ? { id: "busy" } : null) : target)),
+        create,
+        update: jest.fn().mockResolvedValue({}),
+      },
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1", certMode: "http" }) },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = {
+      requirePermission: jest.fn().mockResolvedValue(undefined),
+      teamRole: jest.fn().mockResolvedValue("MEMBER"),
+      requireResourceAccess: jest.fn().mockResolvedValue(undefined),
+    } as unknown as TeamAccessService;
+    let release!: (v: { exitCode: number; output: string }) => void;
+    const sendCommand = jest.fn().mockReturnValue(new Promise<{ exitCode: number; output: string }>((r) => (release = r)));
+    const agentWs = { sendCommand } as unknown as AgentWsServer;
+    return { prisma, access, agentWs, create, sendCommand, release: () => release({ exitCode: 0, output: "up" }) };
+  }
+
+  it("returns the RUNNING rollback row at once (agent command still in flight), keyed + marked as a rollout dispatch, then finishes in the background", async () => {
+    const d = deps();
+    const svc = make(d.prisma, d.access, d.agentWs);
+    const dep = await svc.rollbackDetached("u1", "app1", "base", { key: "rollout:rb:r1:app1:1" });
+    expect(dep).toMatchObject({ status: "RUNNING", kind: "ROLLBACK", trigger: "rollout", requestedBy: "u1", idempotencyKey: "rollout:rb:r1:app1:1" });
+    expect(d.access.requireResourceAccess).toHaveBeenCalled();
+    expect(d.access.requirePermission).toHaveBeenCalledWith("u1", "t1", "apps:deploy");
+    await new Promise((r) => setImmediate(r)); // the detached execute reaches the agent command on its own
+    expect(d.sendCommand).toHaveBeenCalledTimes(1); // dispatched, not awaited by the caller
+    d.release();
+    await new Promise((r) => setImmediate(r));
+    expect((d.prisma.deployment.update as jest.Mock).mock.calls.at(-1)![0].data).toMatchObject({ status: "SUCCESS", imageTag: "tugra_app1:base" });
+  });
+
+  it("swarm apps are refused; a lost one-RUNNING race is AppBusy, a lost KEY race adopts the winner's row", async () => {
+    const p2002 = (target: string[]) => new Prisma.PrismaClientKnownRequestError("dup", { code: "P2002", clientVersion: "x", meta: { target } });
+    const swarm = deps();
+    (swarm.prisma.application.findUnique as jest.Mock).mockResolvedValue({ ...app, status: "RUNNING", source: "IMAGE", clusterId: "c1" });
+    await expect(make(swarm.prisma, swarm.access, swarm.agentWs).rollbackDetached("u1", "app1", "base", { key: "k" })).rejects.toThrow(/swarm/);
+    const busyRace = deps();
+    busyRace.create.mockRejectedValueOnce(p2002(["appId"]));
+    await expect(make(busyRace.prisma, busyRace.access, busyRace.agentWs).rollbackDetached("u1", "app1", "base", { key: "k" })).rejects.toBeInstanceOf(AppBusyException);
+    const keyRace = deps();
+    keyRace.create.mockRejectedValueOnce(p2002(["appId", "idempotencyKey"]));
+    (keyRace.prisma.deployment.findUnique as jest.Mock).mockImplementation(async (args: { where: Record<string, unknown> }) =>
+      "appId_idempotencyKey" in args.where ? { id: "winner", status: "RUNNING", trigger: "rollout", requestedBy: "u1" } : null,
+    );
+    // first lookup (pre-check) must see nothing, the post-P2002 lookup the winner
+    (keyRace.prisma.deployment.findUnique as jest.Mock).mockResolvedValueOnce(null);
+    expect((await make(keyRace.prisma, keyRace.access, keyRace.agentWs).rollbackDetached("u1", "app1", "base", { key: "k" })).id).toBe("winner");
+  });
+
+  it("a throw BEFORE the agent command (e.g. proxy/offline) fails the rollback row but never flips a still-serving app to FAILED", async () => {
+    const d = deps();
+    d.sendCommand.mockRejectedValue(new ServiceUnavailableException("agent offline")); // the throw happens at dispatch → app FAILED is legitimate…
+    const svc = make(d.prisma, d.access, d.agentWs);
+    await svc.rollbackDetached("u1", "app1", "base", { key: "k1" });
+    await new Promise((r) => setImmediate(r));
+    expect((d.prisma.deployment.update as jest.Mock).mock.calls.at(-1)![0].data).toMatchObject({ status: "FAILED" });
+    // …but a pre-dispatch failure (ensureProxy for a domained app) leaves the app's status alone
+    const pre = deps();
+    (pre.prisma.application.findUnique as jest.Mock).mockResolvedValue({ ...app, status: "RUNNING", source: "IMAGE", domain: "a.example.com" });
+    const svc2 = make(pre.prisma, pre.access, pre.agentWs);
+    (svc2 as unknown as { proxy: { ensureProxy: jest.Mock } }).proxy.ensureProxy.mockRejectedValue(new Error("proxy down"));
+    await svc2.rollbackDetached("u1", "app1", "base", { key: "k2" });
+    await new Promise((r) => setImmediate(r));
+    expect(pre.sendCommand).not.toHaveBeenCalled();
+    expect((pre.prisma.deployment.update as jest.Mock).mock.calls.at(-1)![0].data).toMatchObject({ status: "FAILED" });
+    expect(pre.prisma.application.update).not.toHaveBeenCalledWith(expect.objectContaining({ data: { status: "FAILED" } }));
+  });
+
+  it("is at-most-once per key: a prior row with the key is returned (ours) or refused (foreign); a busy app is a 409 before any row is written", async () => {
+    const ours = deps({ prior: { id: "rbPrior", status: "RUNNING", trigger: "rollout", requestedBy: "u1" } });
+    expect((await make(ours.prisma, ours.access, ours.agentWs).rollbackDetached("u1", "app1", "base", { key: "k" })).id).toBe("rbPrior");
+    expect(ours.create).not.toHaveBeenCalled();
+    const foreign = deps({ prior: { id: "x", status: "SUCCESS", trigger: "rollback", requestedBy: "someone" } });
+    await expect(make(foreign.prisma, foreign.access, foreign.agentWs).rollbackDetached("u1", "app1", "base", { key: "k" })).rejects.toBeInstanceOf(ConflictException);
+    const busy = deps({ running: true });
+    await expect(make(busy.prisma, busy.access, busy.agentWs).rollbackDetached("u1", "app1", "base", { key: "k" })).rejects.toBeInstanceOf(AppBusyException);
+    expect(busy.create).not.toHaveBeenCalled();
   });
 });

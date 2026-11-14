@@ -1,5 +1,5 @@
 import { INTERRUPTED_DEPLOY_NOTE } from "../applications/deployment-reconcile.service";
-import { classifyDeployment, decide, rolloutKey, type Action, type DeploymentFacts, type RolloutSnap, type TargetSnap } from "./rollout-decide";
+import { classifyDeployment, decide, rollbackKey, rollbackTargets, rolloutKey, type Action, type DeploymentFacts, type RolloutSnap, type TargetSnap } from "./rollout-decide";
 import { RolloutConfigSchema } from "./rollout-plan";
 
 const NOW = Date.parse("2026-11-15T10:00:00Z");
@@ -23,6 +23,10 @@ const target = (id: string, wave: number, over: Partial<TargetSnap> = {}): Targe
   attempt: 0,
   deploymentId: null,
   deployment: null,
+  rollbackAttempt: 0,
+  rollbackDispatchedAt: null,
+  rollbackDeploymentId: null,
+  rollbackDeployment: null,
   appStatus: "RUNNING",
   superseded: false,
   online: true,
@@ -198,5 +202,71 @@ describe("rolloutKey", () => {
   it("is unique per rollout × app × attempt (a retry can never collide with the attempt it replaces)", () => {
     expect(rolloutKey("r1", "app1", 1)).toBe("rollout:r1:app1:1");
     expect(rolloutKey("r1", "app1", 2)).not.toBe(rolloutKey("r1", "app1", 1));
+  });
+});
+
+describe("decide — fleet rollback (ROLLING_BACK)", () => {
+  const rb = (over: Partial<RolloutSnap> = {}) => rollout({ status: "ROLLING_BACK", config: RolloutConfigSchema.parse({ bakeSec: 0, concurrency: 2 }), ...over });
+  const reverting = (id: string, over: Partial<TargetSnap> = {}) => target(id, 0, { status: "REVERTING", deploymentId: `d-${id}`, ...over });
+  it("dispatches reverts for waiting targets up to the concurrency; in-flight rollbacks occupy slots; offline agents wait", () => {
+    const a = decide(rb(), [reverting("a"), reverting("b", { rollbackAttempt: 1, rollbackDeploymentId: "rb-b", rollbackDeployment: dep({ kind: "ROLLBACK" }) }), reverting("c"), reverting("d", { online: false }), target("z", 1, { status: "SKIPPED" })], NOW, BOOT);
+    expect(types(a)).toEqual(["revert"]);
+    expect((a[0] as Extract<Action, { type: "revert" }>).targetId).toBe("a");
+  });
+  it("judges each ROLLBACK row: SUCCESS → ROLLED_BACK/reverted; FAILED/CANCELLED/orphaned-RUNNING → ROLLBACK_FAILED; a gone app or a busy app past the window fails too", () => {
+    const ts = [
+      reverting("ok", { rollbackAttempt: 1, rollbackDeploymentId: "r1", rollbackDeployment: dep({ status: "SUCCESS", kind: "ROLLBACK" }) }),
+      reverting("bad", { rollbackAttempt: 1, rollbackDeploymentId: "r2", rollbackDeployment: dep({ status: "FAILED", kind: "ROLLBACK", exitCode: 7 }) }),
+      reverting("orphan", { rollbackAttempt: 1, rollbackDeploymentId: "r3", rollbackDeployment: dep({ kind: "ROLLBACK", startedAt: new Date(BOOT - 1) }) }),
+      reverting("gone", { appStatus: null }),
+      // refused as busy at its FIRST try 2701s ago → the busy clock ran out
+      reverting("busy", { rollbackDispatchedAt: new Date(NOW - 2701_000) }),
+      // offline since the rollback was requested (301s ago) → the offline wait ran out
+      reverting("off", { online: false }),
+    ];
+    const a = decide(rb({ waveStartedAt: new Date(NOW - 301_000) }), ts, NOW, BOOT);
+    expect(settles(a)).toEqual([
+      ["ok", "ROLLED_BACK", "reverted"],
+      ["bad", "ROLLBACK_FAILED", "revert_failed"],
+      ["orphan", "ROLLBACK_FAILED", "revert_interrupted"],
+      ["gone", "ROLLBACK_FAILED", "app_gone"],
+      ["busy", "ROLLBACK_FAILED", "busy_timeout"],
+      ["off", "ROLLBACK_FAILED", "offline"],
+    ]);
+    expect(a.at(-1)).toEqual({ type: "finish_rollback", status: "ROLLBACK_FAILED", reverted: 1, failed: 5 });
+  });
+  it("a target merely queued behind the throttle never times out; the busy clock starts at its first refusal, not at the request", () => {
+    // requested long ago, never tried (throttled) → still dispatched when a slot frees, never busy_timeout
+    const late = rb({ waveStartedAt: new Date(NOW - 10 * 3600_000), config: RolloutConfigSchema.parse({ bakeSec: 0, concurrency: 1 }) });
+    const a = decide(late, [reverting("a")], NOW, BOOT);
+    expect(types(a)).toEqual(["revert"]);
+    // first refusal 10 min ago with a 45 min window → keep retrying
+    const b = decide(late, [reverting("a", { rollbackDispatchedAt: new Date(NOW - 600_000) })], NOW, BOOT);
+    expect(types(b)).toEqual(["revert"]);
+  });
+  it("an offline target neither takes a slot nor blocks an online one, and waits (no settle) inside waitOnlineSec", () => {
+    const r = rb({ config: RolloutConfigSchema.parse({ bakeSec: 0, concurrency: 1 }) });
+    expect(decide(r, [reverting("x", { online: false })], NOW, BOOT)).toEqual([]);
+    const a = decide(r, [reverting("x", { online: false }), reverting("y")], NOW, BOOT);
+    expect(a).toEqual([{ type: "revert", targetId: "y" }]);
+  });
+  it("finishes ROLLED_BACK only when every revert passed; stays open while any target is still REVERTING", () => {
+    const done = decide(rb(), [target("a", 0, { status: "ROLLED_BACK" }), target("b", 0, { status: "SKIPPED" })], NOW, BOOT);
+    expect(done).toEqual([{ type: "finish_rollback", status: "ROLLED_BACK", reverted: 1, failed: 0 }]);
+    const open = decide(rb(), [target("a", 0, { status: "ROLLED_BACK" }), reverting("b", { rollbackAttempt: 1, rollbackDeploymentId: "r", rollbackDeployment: dep({ kind: "ROLLBACK" }) })], NOW, BOOT);
+    expect(open).toEqual([]);
+  });
+  it("rollbackTargets picks what the rollout moved (SUCCEEDED, hard-FAILED) and separates the ones with no baseline", () => {
+    const r = rollbackTargets([
+      { id: "a", status: "SUCCEEDED", outcome: "passed", baselineDeploymentId: "b1" },
+      { id: "b", status: "FAILED", outcome: "failed", baselineDeploymentId: "b2" },
+      { id: "c", status: "FAILED", outcome: "rejected_safe", baselineDeploymentId: "b3" }, // previous version already live
+      { id: "d", status: "FAILED", outcome: "interrupted", baselineDeploymentId: "b4" }, // unknown state → operator first
+      { id: "e", status: "SUCCEEDED", outcome: "passed", baselineDeploymentId: null },
+      { id: "f", status: "PENDING", outcome: null, baselineDeploymentId: null },
+      { id: "g", status: "SKIPPED", outcome: "offline", baselineDeploymentId: "b7" },
+    ]);
+    expect(r).toEqual({ revert: ["a", "b"], noBaseline: ["e"] });
+    expect(rollbackKey("r1", "app1", 2)).toBe("rollout:rb:r1:app1:2");
   });
 });

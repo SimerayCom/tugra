@@ -45,6 +45,9 @@ export function targetStatusColor(status: RolloutTargetStatus): string {
 export const canHalt = (s: RolloutStatus) => s === "RUNNING";
 export const canResume = (s: RolloutStatus) => s === "HALTED";
 export const canCancel = (s: RolloutStatus) => s === "RUNNING" || s === "HALTED";
+/** Fleet rollback is offered once the rollout is at rest (halted or done) and no deploy of it is still in flight. */
+export const canRollback = (r: Pick<Rollout, "status" | "summary" | "targets">) =>
+  (r.status === "HALTED" || r.status === "COMPLETED") && r.summary.deploying === 0 && r.targets.some((t) => t.status === "SUCCEEDED" || (t.status === "FAILED" && t.outcome === "failed"));
 
 /** Percent of targets that reached a terminal status (SUCCEEDED/FAILED/SKIPPED/CANCELLED), for the progress bar. */
 export function rolloutProgressPct(r: Pick<Rollout, "summary">): number {

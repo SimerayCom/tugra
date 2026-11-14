@@ -1720,6 +1720,9 @@ export const api = {
   cancelRollout(id: string) {
     return apiFetch<Rollout>(`/rollouts/${id}/cancel`, { method: "POST" });
   },
+  rollbackRollout(id: string) {
+    return apiFetch<Rollout>(`/rollouts/${id}/rollback`, { method: "POST" });
+  },
   bulkSetBackupConfig(databaseIds: string[], cfg: { enabled: boolean; intervalHours?: number; retention?: number }) {
     return apiFetch<{ applied: string[]; skipped: string[] }>(`/fleet/backup-config`, {
       method: "POST",

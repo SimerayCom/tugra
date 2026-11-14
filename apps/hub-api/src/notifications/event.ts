@@ -18,6 +18,7 @@ import { volumeBackupTemplate } from "./templates/volume-backup";
 import { scheduledTaskTemplate } from "./templates/scheduled-task";
 import { dockerCleanupTemplate } from "./templates/docker-cleanup";
 import { containerTemplate } from "./templates/container";
+import { rolloutTemplate } from "./templates/rollout";
 import { genericTemplate, testTemplate } from "./templates/generic";
 
 /** A locale-bound translator: resolves a dotted key with `{param}` interpolation (NotifI18nService). */
@@ -127,6 +128,10 @@ const REGISTRY: Record<string, EventTemplate> = {
   container_mem_pressure: containerTemplate,
   monitor_up: monitorTemplate,
   monitor_down: monitorTemplate,
+  rollout_halted: rolloutTemplate,
+  rollout_completed: rolloutTemplate,
+  rollout_rolled_back: rolloutTemplate,
+  rollout_rollback_failed: rolloutTemplate,
   test: testTemplate,
 };
 

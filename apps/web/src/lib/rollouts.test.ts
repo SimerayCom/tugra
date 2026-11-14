@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { canCancel, canHalt, canResume, isRolloutActive, parseSteps, rolloutProgressPct, rolloutRefetchInterval, targetsByWave } from "./rollouts";
+import { canCancel, canHalt, canResume, canRollback, isRolloutActive, parseSteps, rolloutProgressPct, rolloutRefetchInterval, targetsByWave } from "./rollouts";
+import type { Rollout, RolloutTarget } from "./types";
 
 describe("rollouts helpers", () => {
   it("active vs terminal + allowed transitions", () => {
@@ -15,6 +16,19 @@ describe("rollouts helpers", () => {
     expect(canCancel("HALTED")).toBe(true);
     expect(canCancel("COMPLETED")).toBe(false);
   });
+  it("canRollback: at rest (HALTED/COMPLETED), nothing deploying, and something this rollout moved", () => {
+    const tg = (status: RolloutTarget["status"], outcome: string | null = null) => ({ status, outcome }) as RolloutTarget;
+    const sum = (deploying = 0) => ({ total: 1, pending: 0, deploying, succeeded: 0, failed: 0, skipped: 0, cancelled: 0 });
+    const r = (status: Rollout["status"], targets: RolloutTarget[], deploying = 0) => ({ status, summary: sum(deploying), targets });
+    expect(canRollback(r("HALTED", [tg("SUCCEEDED", "passed")]))).toBe(true);
+    expect(canRollback(r("COMPLETED", [tg("SUCCEEDED", "passed")]))).toBe(true);
+    expect(canRollback(r("HALTED", [tg("FAILED", "failed")]))).toBe(true);
+    expect(canRollback(r("HALTED", [tg("FAILED", "rejected_safe")]))).toBe(false); // previous version already live
+    expect(canRollback(r("HALTED", [tg("SUCCEEDED", "passed")], 1))).toBe(false); // a deploy still in flight
+    expect(canRollback(r("HALTED", []))).toBe(false);
+    for (const s of ["RUNNING", "CANCELLED", "ROLLING_BACK", "ROLLED_BACK"] as const) expect(canRollback(r(s, [tg("SUCCEEDED", "passed")]))).toBe(false);
+  });
+
   it("progress counts every terminal target; empty = 0", () => {
     expect(rolloutProgressPct({ summary: { total: 4, pending: 1, deploying: 1, succeeded: 1, failed: 1, skipped: 0, cancelled: 0 } })).toBe(50);
     expect(rolloutProgressPct({ summary: { total: 0, pending: 0, deploying: 0, succeeded: 0, failed: 0, skipped: 0, cancelled: 0 } })).toBe(0);
