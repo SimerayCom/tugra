@@ -97,6 +97,7 @@ import {
   SetCredentialsSchema,
   SetEnvInput,
   SetEnvSchema,
+  EnvFlagsResponseSchema,
   SetDomainInput,
   SetDomainSchema,
   SetExtraDomainsInput,
@@ -388,8 +389,15 @@ export class ApplicationsController {
     @Param("id") id: string,
     @Body(new ZodValidationPipe(SetEnvSchema)) body: SetEnvInput,
   ) {
-    await this.apps.setEnv(user.userId, id, body.env);
+    await this.apps.setEnv(user.userId, id, body.env, body.flags);
     return { ok: true };
+  }
+
+  @Get(":id/env-flags")
+  @RequireScopes("read:secrets")
+  @ApiZodResponse(EnvFlagsResponseSchema)
+  getEnvFlags(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.apps.getEnvFlags(user.userId, id);
   }
 
   @Get(":id/build-args")

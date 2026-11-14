@@ -321,6 +321,15 @@ describe("MCP_TOOLS catalog", () => {
       expect(JSON.stringify(res)).not.toContain("sk_new_secret"); // value never echoed back
     });
 
+    it("set_env_var / delete_env_var call setEnv WITHOUT a flags argument, so per-variable flags are kept (and a delete prunes them) by the service", async () => {
+      const getEnv = jest.fn().mockResolvedValue({ PEM: "l1\nl2", A: "1" });
+      const setEnv = jest.fn().mockResolvedValue(undefined);
+      const deps = { apps: { getEnv, setEnv } } as unknown as McpDeps;
+      await tool("set_env_var").execute(deps, "u1", { id: "app1", key: "B", value: "2" });
+      await tool("delete_env_var").execute(deps, "u1", { id: "app1", key: "A" });
+      for (const call of setEnv.mock.calls) expect(call).toHaveLength(3);
+    });
+
     it("set_env_var allows an empty value but rejects an invalid/reserved env key name (agent-supplied)", async () => {
       const getEnv = jest.fn().mockResolvedValue({});
       const setEnv = jest.fn().mockResolvedValue(undefined);

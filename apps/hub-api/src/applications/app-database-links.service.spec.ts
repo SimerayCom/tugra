@@ -103,3 +103,41 @@ describe("AppDatabaseLinksService.resolveLinkedEnv", () => {
     await expect(svc.resolveLinkedEnv(app, new Set())).rejects.toThrow(/^(?!.*(postgresql:\/\/|:p@)).*$/);
   });
 });
+
+describe("AppDatabaseLinksService.create — adoptEnv keeps the flag column in step", () => {
+  const meta = (flags: Record<string, unknown>) => JSON.stringify({ v: 1, flags });
+  function adoptDeps(row: Record<string, unknown>) {
+    const txUpdate = jest.fn().mockResolvedValue({});
+    const tx = { application: { update: txUpdate }, appDatabaseLink: { create: jest.fn().mockResolvedValue({}) } };
+    const prisma = {
+      database: { findFirst: jest.fn().mockResolvedValue(dbRow()) },
+      appDatabaseLink: {
+        findUnique: jest.fn().mockResolvedValueOnce(null).mockResolvedValue({ id: "l1", envVar: "DATABASE_URL", createdAt: new Date() }),
+        findMany: jest.fn().mockResolvedValue([]),
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ id: "l1", envVar: "DATABASE_URL", createdAt: new Date() }),
+      },
+      $transaction: jest.fn(async (fn: (t: unknown) => Promise<unknown>) => fn(tx)),
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined), requireResourceAccess: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const audit = { log: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService;
+    const svc = new AppDatabaseLinksService(prisma, access, audit, { internalConnectionUri: jest.fn() } as unknown as DatabasesService, { encrypt: (s: string) => `enc(${s})`, decrypt: (s: string) => s } as unknown as CryptoService);
+    const full = { ...app, environmentId: "e1", dbNetwork: true, ...row } as unknown as Application;
+    jest.spyOn(svc as unknown as { loadApp: () => Promise<Application> }, "loadApp").mockResolvedValue(full);
+    jest.spyOn(svc as unknown as { requireDbAccess: () => Promise<void> }, "requireDbAccess").mockResolvedValue(undefined);
+    return { svc, txUpdate };
+  }
+
+  it("prunes the adopted key's flags in the SAME update", async () => {
+    const d = adoptDeps({ envEnc: JSON.stringify({ DATABASE_URL: "x\ny", KEEP: "1" }), envMetaEnc: meta({ DATABASE_URL: { multiline: true }, KEEP: { literal: true } }) });
+    await d.svc.create("u1", "app1", { databaseId: "db1", envVar: "DATABASE_URL", adoptEnv: true });
+    expect(d.txUpdate).toHaveBeenCalledWith({ where: { id: "app1" }, data: { envEnc: 'enc({"KEEP":"1"})', envMetaEnc: 'enc({"v":1,"flags":{"KEEP":{"literal":true}}})' } });
+  });
+
+  it("leaves a null flag column null, and aborts (409) on an unreadable blob", async () => {
+    const plain = adoptDeps({ envEnc: JSON.stringify({ DATABASE_URL: "x" }), envMetaEnc: null });
+    await plain.svc.create("u1", "app1", { databaseId: "db1", envVar: "DATABASE_URL", adoptEnv: true });
+    expect(plain.txUpdate.mock.calls[0][0].data.envMetaEnc).toBeNull();
+    const bad = adoptDeps({ envEnc: JSON.stringify({ DATABASE_URL: "x" }), envMetaEnc: "garbage" });
+    await expect(bad.svc.create("u1", "app1", { databaseId: "db1", envVar: "DATABASE_URL", adoptEnv: true })).rejects.toThrow(/unreadable/);
+  });
+});

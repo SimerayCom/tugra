@@ -323,6 +323,46 @@ describe("Applications / deploy (e2e)", () => {
     expect(Buffer.from(m![1], "base64").toString()).toContain("SECRET=s3cr3t");
   });
 
+  it("per-variable env flags: PUT {env,flags} then GET env-flags round-trips; a newline needs the multiline flag", async () => {
+    const appRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "envflagsapp", serverId, image: "nginx:alpine", hostPort: 8091 })
+      .expect(201);
+    const appId = appRes.body.id;
+    const pem = "-----BEGIN KEY-----\nabc\n-----END KEY-----\n";
+
+    // a line break without the flag is rejected with the legacy message
+    const bad = await request(app.getHttpServer())
+      .put(`/apps/${appId}/env`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ env: { PEM_KEY: pem } })
+      .expect(400);
+    expect(JSON.stringify(bad.body)).toContain("environment value must not contain a newline");
+
+    await request(app.getHttpServer())
+      .put(`/apps/${appId}/env`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ env: { PEM_KEY: pem, A: "1" }, flags: { PEM_KEY: { multiline: true } } })
+      .expect(200);
+
+    // GET /env still returns the newline value; GET /env-flags returns the typed flag view
+    const env = await request(app.getHttpServer()).get(`/apps/${appId}/env`).set("Authorization", `Bearer ${token}`).expect(200);
+    expect(env.body.PEM_KEY).toBe(pem);
+    const flags = await request(app.getHttpServer()).get(`/apps/${appId}/env-flags`).set("Authorization", `Bearer ${token}`).expect(200);
+    expect(flags.body.flags).toEqual({ PEM_KEY: { buildTime: false, runtime: true, literal: false, multiline: true } });
+    expect(flags.body.applicable).toEqual({ buildTime: false, literal: false });
+
+    // an old client that sends only {env} keeps the flags (pruned to surviving keys)
+    await request(app.getHttpServer())
+      .put(`/apps/${appId}/env`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ env: { PEM_KEY: pem, A: "2" } })
+      .expect(200);
+    const kept = await request(app.getHttpServer()).get(`/apps/${appId}/env-flags`).set("Authorization", `Bearer ${token}`).expect(200);
+    expect(Object.keys(kept.body.flags)).toEqual(["PEM_KEY"]);
+  });
+
   it("rolls back to a previous deployment's image without rebuilding", async () => {
     const appRes = await request(app.getHttpServer())
       .post("/apps")

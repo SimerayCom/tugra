@@ -31,6 +31,10 @@ import type { TunnelService } from "../tunnel/tunnel.service";
 import { TUNNEL_SERVICE } from "../tunnel/tunnel.tokens";
 import { loadProjectCtx, loadProjectCtxMany, type ResourceProjectCtx } from "../common/resource-project";
 import { filterByQuery } from "../common/query-filter";
+import {
+  applyEnvFlags, BUILD_FLAG_TOTAL_MAX_BYTES, encodeEnvMeta, EnvMetaCorruptError, ML_KEYS_MAX, ML_TOTAL_MAX_BYTES, ML_VALUE_MAX_BYTES,
+  normalizeFlags, parseEnvMeta, pruneMeta, validateEnvFlags, type EnvMeta, type FlagInput,
+} from "../common/env-flags";
 import { validatePngIcon } from "../common/png-icon";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { DeployLogHub } from "../agent-gateway/deploy-log.hub";
@@ -692,6 +696,10 @@ export class ApplicationsService {
     }
 
     const source = dto.source ?? "IMAGE";
+    // Per-variable flags + the line-break/NUL invariant, validated against the real source (zod ran context-free).
+    const createMeta = normalizeFlags(dto.envFlags ?? {}, Object.keys(dto.env ?? {}));
+    const createIssues = validateEnvFlags(dto.env ?? {}, createMeta, { source, mode: "write" });
+    if (createIssues.length) throw new BadRequestException(createIssues[0].message);
     // COMPOSE is either pasted (composeFile) or sourced from git (gitUrl + composePath) — the DTO guarantees
     // exactly one. A git-compose stack has no stored YAML to validate here; it is cloned, rendered and
     // validated (assertSafeCompose over the rendered config) at deploy time instead.
@@ -732,6 +740,7 @@ export class ApplicationsService {
         teamId: server.teamId,
         env: {} as Prisma.InputJsonValue,
         envEnc: this.crypto.encrypt(JSON.stringify(dto.env ?? {})),
+        envMetaEnc: this.encryptMeta(createMeta),
         gitTokenEnc: dto.gitToken ? this.crypto.encrypt(dto.gitToken) : null,
         gitSshKeyEnc: sshKey ? this.crypto.encrypt(sshKey.privateKeyOpenSsh) : null,
         gitSshPublicKey: sshKey?.publicKey ?? null,
@@ -934,6 +943,7 @@ export class ApplicationsService {
           pushToRegistry: src.pushToRegistry,
           env: {} as Prisma.InputJsonValue,
           envEnc: src.envEnc,
+          envMetaEnc: src.envMetaEnc,
           buildArgsEnc: src.buildArgsEnc,
           buildSecretsEnc: src.buildSecretsEnc,
           // The clone resets to non-privileged (allowPrivilegedDockerOptions defaults false), so NEVER copy
@@ -1357,10 +1367,11 @@ export class ApplicationsService {
       // Copy the parent's env MINUS any keys it marks preview-excluded, so prod secrets never land in an
       // ephemeral preview. No exclusions → reuse the parent blob verbatim (byte-identical to before).
       const exclude = parent.previewExcludeKeys ?? [];
-      const previewEnvEnc =
-        exclude.length && parent.envEnc
-          ? this.crypto.encrypt(JSON.stringify(Object.fromEntries(Object.entries(this.appEnv(parent)).filter(([k]) => !exclude.includes(k)))))
-          : parent.envEnc;
+      const previewEnv =
+        exclude.length && parent.envEnc ? Object.fromEntries(Object.entries(this.appEnv(parent)).filter(([k]) => !exclude.includes(k))) : null;
+      const previewEnvEnc = previewEnv ? this.crypto.encrypt(JSON.stringify(previewEnv)) : parent.envEnc;
+      // The flags follow the surviving keys; no exclusions -> the parent's blob verbatim (byte-identical to the env).
+      const previewEnvMetaEnc = previewEnv ? this.encryptMeta(pruneMeta(this.loadMetaOrConflict(parent), Object.keys(previewEnv))) : parent.envMetaEnc;
       const created = await tx.application.create({
         data: {
           name: `${parent.name} · ${refLabel}${prNumber}`,
@@ -1426,6 +1437,7 @@ export class ApplicationsService {
           registryAuthEnc: parent.registryAuthEnc,
           env: {} as Prisma.InputJsonValue,
           envEnc: previewEnvEnc,
+          envMetaEnc: previewEnvMetaEnc,
           containerPort: parent.containerPort,
           domain: previewDomain,
           https: parent.https,
@@ -1914,8 +1926,7 @@ export class ApplicationsService {
       if ((app.domain || serviceDomains.length > 0) && !app.clusterId && (!isCompose || composeRoutable)) await this.proxy.ensureProxy(app.serverId);
       const spec = this.toSpec(app);
       if (isCompose && serviceDomains.length > 0) spec.serviceDomains = serviceDomains;
-      spec.env = await this.resolvedEnv(app); // team shared vars + app env (app wins)
-      spec.buildArgs = this.appBuildArgs(app); // build-time vars (app-specific only)
+      await this.attachResolvedEnv(app, spec, { withBuild: true }); // shared vars + app env (app wins) + flags; build-time vars
       spec.buildSecrets = this.appBuildSecrets(app); // BuildKit secret mounts (DOCKERFILE builds)
       // injectEnvAsBuildArgs: fail early (pre-swap, any path) if the env cannot ride argv; prepSteps recomputes the same pure result.
       if (app.source === "GIT" && app.buildType === "DOCKERFILE" && app.injectEnvAsBuildArgs) injectableBuildArgs(spec);
@@ -2522,7 +2533,7 @@ export class ApplicationsService {
       // point at the CURRENT version's service/port against the old container (silent 502 / phantom service).
       const spec = this.toSpec(isCompose ? { ...app, composeFile: composeFile! } : app);
       if (isCompose) spec.serviceDomains = await this.loadServiceDomains(app.id); // keep per-service routes on rollback
-      spec.env = await this.resolvedEnv(app);
+      await this.attachResolvedEnv(app, spec, { withBuild: false });
       await this.hydrateCertSpec(app, spec); // le-dns wildcard labels must match a normal deploy
       // A rollback re-runs a PRIOR image; never re-run deploy hooks (e.g. a migration) against it — a
       // registry/digest rollback is build=true, which would otherwise emit the pre-deploy step.
@@ -2646,7 +2657,7 @@ export class ApplicationsService {
     this.deployLogs.begin(app.id);
     try {
       const spec = this.toSpec(app);
-      spec.env = await this.resolvedEnv(app);
+      await this.attachResolvedEnv(app, spec, { withBuild: false });
       const sd = await this.swarmDeploy.rollbackTo(app, spec, ref, auth, {
         onChunk: (chunk) => this.deployLogs.push(app.id, chunk),
       });
@@ -3270,13 +3281,58 @@ export class ApplicationsService {
     return this.appEnv(app);
   }
 
-  async setEnv(userId: string, id: string, env: Record<string, string>): Promise<void> {
-    await this.requireWrite(userId, id);
+  /**
+   * Replace the app's env. `flags` OMITTED keeps the stored per-variable flags (pruned to the keys that survive,
+   * so an old client that only knows `env` never loses them); PRESENT is an authoritative replace (`{}` clears).
+   * Both columns are written in ONE update so they can never drift. The line-break / NUL / flag invariants are
+   * enforced here (not just in zod) so MCP, the importer and every other writer get them too.
+   */
+  async setEnv(userId: string, id: string, env: Record<string, string>, flags?: Record<string, FlagInput>): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    const keys = Object.keys(env);
+    let oldMeta: EnvMeta | null = null;
+    try {
+      oldMeta = this.loadMeta(app);
+    } catch (e) {
+      if (!(e instanceof EnvMetaCorruptError)) throw e;
+    }
+    let meta: EnvMeta;
+    if (flags === undefined) {
+      if (!oldMeta) throw new ConflictException("stored variable flags are unreadable; resend the full set with an explicit flags object");
+      meta = pruneMeta(oldMeta, keys);
+    } else {
+      meta = normalizeFlags(flags, keys);
+    }
+    const issues = validateEnvFlags(env, meta, { source: app.source, buildSecretKeys: new Set(Object.keys(this.appBuildSecrets(app))), mode: "write" });
+    if (issues.length) throw new BadRequestException(issues[0].message);
     await this.prisma.application.update({
       where: { id },
-      data: { envEnc: this.crypto.encrypt(JSON.stringify(env)) },
+      data: { envEnc: this.crypto.encrypt(JSON.stringify(env)), envMetaEnc: this.encryptMeta(meta) },
     });
-    await this.audit.log({ actor: userId, action: "app.env.update", target: id });
+    const hadFlags = !!oldMeta && Object.keys(oldMeta).length > 0;
+    const hasFlags = Object.keys(meta).length > 0;
+    await this.audit.log({
+      actor: userId,
+      action: "app.env.update",
+      target: id,
+      ...(hadFlags || hasFlags ? { meta: { keys: keys.length, flagged: Object.keys(meta).length } } : {}), // COUNTS ONLY: no names, no values
+    });
+  }
+
+  /** Per-variable flags (writer-only: names and usage are not shown to read-only roles). Full booleans per entry. */
+  async getEnvFlags(userId: string, id: string) {
+    const app = await this.requireWrite(userId, id);
+    const meta = this.loadMetaOrConflict(app);
+    const flags: Record<string, { buildTime: boolean; runtime: boolean; literal: boolean; multiline: boolean }> = {};
+    for (const k of Object.keys(meta)) {
+      const f = meta[k];
+      flags[k] = { buildTime: f.buildTime === true, runtime: f.runtime !== false, literal: f.literal === true, multiline: f.multiline === true };
+    }
+    return {
+      flags,
+      applicable: { buildTime: app.source === "GIT", literal: app.source === "COMPOSE" },
+      limits: { multilineValueBytes: ML_VALUE_MAX_BYTES, multilineKeys: ML_KEYS_MAX, multilineTotalBytes: ML_TOTAL_MAX_BYTES, buildTotalBytes: BUILD_FLAG_TOTAL_MAX_BYTES },
+    };
   }
 
   /**
@@ -4796,7 +4852,7 @@ export class ApplicationsService {
    * (the explicit value wins); any other unresolvable link fails the deploy loudly. Computed fresh so a
    * changed DB host/credential propagates on the next deploy without re-saving env.
    */
-  private async resolvedEnv(app: Application): Promise<Record<string, string>> {
+  private async resolveEnvLayers(app: Application): Promise<{ merged: Record<string, string>; appEnv: Record<string, string>; secretRefKeys: Set<string> }> {
     const shared = await this.prisma.sharedVariable.findMany({
       where: { teamId: app.teamId },
     });
@@ -4813,7 +4869,61 @@ export class ApplicationsService {
     // External secret-store refs are fetched fresh and take the HIGHEST precedence: a managed secret wins
     // over a possibly-stale literal left in the app's plain env. A ref that can't be fetched fails the deploy.
     const secrets = await this.secretRefs.resolveSecretEnv(app);
-    return { ...merged, ...linked, ...appEnv, ...secrets }; // shared < linked DB < app-env < external secret
+    return { merged: { ...merged, ...linked, ...appEnv, ...secrets }, appEnv, secretRefKeys: new Set(Object.keys(secrets)) }; // shared < linked DB < app-env < external secret
+  }
+
+  /**
+   * Resolve the env layers ONCE, then apply the per-variable flags: `spec.env` is the runtime-eligible env
+   * (runtime:false keys removed), `spec.envMeta` carries the render flags, and with `withBuild` the build-time
+   * flagged values (the app's OWN env only) are merged into `spec.buildArgs` under the explicit build args.
+   * A corrupt/unreadable flag blob FAILS CLOSED: defaulting could expose a build-only variable at runtime.
+   */
+  private async attachResolvedEnv(app: Application, spec: AppSpec, opts: { withBuild: boolean }): Promise<void> {
+    const { merged, appEnv, secretRefKeys } = await this.resolveEnvLayers(app);
+    let meta: EnvMeta;
+    try {
+      meta = pruneMeta(this.loadMeta(app), Object.keys(appEnv)); // DB is never trusted: re-normalised on every read
+    } catch (e) {
+      if (e instanceof EnvMetaCorruptError) throw new Error(`TUGRA: env flags unreadable for app ${app.id}`);
+      throw e;
+    }
+    const buildSecretKeys = new Set(Object.keys(this.appBuildSecrets(app)));
+    const issues = validateEnvFlags(appEnv, meta, { source: app.source, buildSecretKeys, mode: "deploy" });
+    if (issues.length) throw new Error(`TUGRA: invalid environment flags${issues[0].key ? ` (${issues[0].key})` : ""}: ${issues[0].message}`); // names keys only
+    const r = applyEnvFlags({ merged, appEnv, meta, secretRefKeys, buildSecretKeys, builds: opts.withBuild && app.source === "GIT" });
+    spec.env = r.env;
+    spec.envMeta = Object.keys(meta).length ? meta : undefined;
+    if (opts.withBuild) {
+      spec.buildArgs = { ...r.buildArgs, ...this.appBuildArgs(app) }; // explicit build args win
+      if (r.buildFlagKeys.length) spec.buildFlagKeys = r.buildFlagKeys;
+      if (r.droppedForBuildSecret.length) spec.buildFlagDropped = r.droppedForBuildSecret;
+    }
+  }
+
+  /** Decrypt + parse the stored flag blob. Throws EnvMetaCorruptError on any decrypt/parse failure (fail closed). */
+  private loadMeta(app: Application): EnvMeta {
+    if (!app.envMetaEnc) return parseEnvMeta(null);
+    let plain: string;
+    try {
+      plain = this.crypto.decrypt(app.envMetaEnc);
+    } catch {
+      throw new EnvMetaCorruptError();
+    }
+    return parseEnvMeta(plain);
+  }
+
+  private loadMetaOrConflict(app: Application): EnvMeta {
+    try {
+      return this.loadMeta(app);
+    } catch (e) {
+      if (e instanceof EnvMetaCorruptError) throw new ConflictException("stored variable flags are unreadable; resend the full set with an explicit flags object");
+      throw e;
+    }
+  }
+
+  private encryptMeta(meta: EnvMeta): string | null {
+    const enc = encodeEnvMeta(meta);
+    return enc === null ? null : this.crypto.encrypt(enc);
   }
 
   /**

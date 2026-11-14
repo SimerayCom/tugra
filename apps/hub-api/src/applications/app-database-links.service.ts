@@ -8,6 +8,7 @@ import { DatabasesService } from "../databases/databases.service";
 import { loadProjectCtx } from "../common/resource-project";
 import { hasNetworkOpt } from "../deploy/deploy-script";
 import { isLinkEnvKeyAllowed } from "../common/env-key";
+import { encodeEnvMeta, parseEnvMeta, pruneMeta } from "../common/env-flags";
 import type { DbEngine } from "../databases/database-script";
 import { linkRoute, linkRouteReasonText, defaultEnvVar, derivedEnvVar } from "./db-link";
 
@@ -169,7 +170,8 @@ export class AppDatabaseLinksService {
       if (adopt) {
         const env = this.appEnv(app);
         delete env[envVar];
-        await tx.application.update({ where: { id: appId }, data: { envEnc: this.crypto.encrypt(JSON.stringify(env)) } });
+        // The flags follow the surviving keys, in the SAME update, so the two columns never drift.
+        await tx.application.update({ where: { id: appId }, data: { envEnc: this.crypto.encrypt(JSON.stringify(env)), envMetaEnc: this.prunedMetaEnc(app, Object.keys(env)) } });
       }
       await tx.appDatabaseLink.create({ data: { appId, databaseId: db.id, envVar, createdBy: userId } });
     });
@@ -232,6 +234,18 @@ export class AppDatabaseLinksService {
       dbStatus: db.status,
       createdAt: link.createdAt.toISOString(),
     };
+  }
+
+  /** The app's flag blob pruned to `keys`, re-encrypted (null when nothing is left). An unreadable blob aborts
+   *  (409): whether the adopted key carried flags is not knowable, and a guess could drift the two columns. */
+  private prunedMetaEnc(app: Application, keys: string[]): string | null {
+    if (!app.envMetaEnc) return null;
+    try {
+      const enc = encodeEnvMeta(pruneMeta(parseEnvMeta(this.crypto.decrypt(app.envMetaEnc)), keys));
+      return enc === null ? null : this.crypto.encrypt(enc);
+    } catch {
+      throw new ConflictException("stored variable flags are unreadable; resend the full set with an explicit flags object");
+    }
   }
 
   private appEnv(app: Application): Record<string, string> {

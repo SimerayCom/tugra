@@ -137,6 +137,13 @@ export const SetEnvSchema = z
   .superRefine((b, ctx) => envFlagsSuperRefine(b, ctx));
 export type SetEnvInput = z.infer<typeof SetEnvSchema>;
 
+// GET /apps/:id/env-flags: sparse by key, FULL booleans per entry; `applicable` says which flags mean something for this app type.
+export const EnvFlagsResponseSchema = z.object({
+  flags: z.record(z.object({ buildTime: z.boolean(), runtime: z.boolean(), literal: z.boolean(), multiline: z.boolean() })),
+  applicable: z.object({ buildTime: z.boolean(), literal: z.boolean() }),
+  limits: z.object({ multilineValueBytes: z.number(), multilineKeys: z.number(), multilineTotalBytes: z.number(), buildTotalBytes: z.number() }),
+});
+
 // Attach a managed database to this app (auto-inject its connection URI into the app's env at deploy).
 export const LinkDatabaseSchema = z
   .object({

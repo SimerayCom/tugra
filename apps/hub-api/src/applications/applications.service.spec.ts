@@ -1295,7 +1295,7 @@ describe("ApplicationsService", () => {
     const svc = make(prisma, access, {} as AgentWsServer);
     await svc.setEnv("u1", "app1", { FOO: "bar" });
     expect(update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { envEnc: 'enc({"FOO":"bar"})' } }),
+      expect.objectContaining({ data: { envEnc: 'enc({"FOO":"bar"})', envMetaEnc: null } }),
     );
   });
 
@@ -6156,7 +6156,9 @@ describe("ApplicationsService — git/build settings", () => {
 
   it("an environment too large to ride argv fails the injecting deploy before anything runs", async () => {
     const d = deployDeps({ ...gitApp, injectEnvAsBuildArgs: true });
-    jest.spyOn(d.svc as unknown as { resolvedEnv: () => Promise<Record<string, string>> }, "resolvedEnv").mockResolvedValue({ BIG: "x".repeat(60 * 1024) });
+    jest
+      .spyOn(d.svc as unknown as { resolveEnvLayers: () => Promise<unknown> }, "resolveEnvLayers")
+      .mockResolvedValue({ merged: { BIG: "x".repeat(60 * 1024) }, appEnv: { BIG: "x".repeat(60 * 1024) }, secretRefKeys: new Set<string>() });
     await d.svc.deploy("u1", "app1");
     expect(d.calls).toHaveLength(0);
     expect(d.depUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED" }) }));
@@ -6915,5 +6917,227 @@ describe("ApplicationsService — image update available (IMAGE apps)", () => {
     expect(data.imageUpdateCheck).toBe(false);
     for (const k of ["imageUpstreamDigest", "imageUpstreamCheckedAt", "imageUpstreamChangedAt", "imageCheckError", "imageCheckFailures", "imageUpdateNotifiedDigest"]) expect(data).not.toHaveProperty(k);
     expect(res.app.imageUpdate).toBeNull(); // never deployed (status NEW)
+  });
+});
+
+describe("ApplicationsService — per-variable env flags", () => {
+  // The module-level crypto mock is encrypt=enc(x) / decrypt=identity, so a fixture "ciphertext" is just the plaintext.
+  const meta = (flags: Record<string, unknown>) => JSON.stringify({ v: 1, flags });
+  const baseApp = { ...app, source: "IMAGE", image: "nginx", status: "RUNNING", envEnc: '{"A":"1"}', envMetaEnc: null as string | null, buildSecretsEnc: null };
+  const flaggedApp = { ...baseApp, envEnc: JSON.stringify({ PEM: "l1\nl2\n", A: "1" }), envMetaEnc: meta({ PEM: { multiline: true } }) };
+
+  function setEnvDeps(row: Record<string, unknown>) {
+    const update = jest.fn().mockResolvedValue({});
+    const auditLog = jest.fn().mockResolvedValue(undefined);
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(row), update } } as unknown as PrismaService;
+    const svc = make(prisma, accessWith({}), {} as AgentWsServer);
+    (svc as unknown as { audit: { log: jest.Mock } }).audit = { log: auditLog };
+    return { svc, update, auditLog };
+  }
+
+  describe("setEnv", () => {
+    it("writes envEnc and envMetaEnc in ONE update; flags present = authoritative replace", async () => {
+      const d = setEnvDeps(baseApp);
+      await d.svc.setEnv("u1", "app1", { PEM: "a\nb", A: "1" }, { PEM: { multiline: true }, A: { literal: true } });
+      expect(d.update).toHaveBeenCalledTimes(1);
+      const data = d.update.mock.calls[0][0].data;
+      expect(data.envEnc).toBe('enc({"PEM":"a\\nb","A":"1"})');
+      expect(data.envMetaEnc).toBe('enc({"v":1,"flags":{"A":{"literal":true},"PEM":{"multiline":true}}})');
+    });
+
+    it("flags omitted keeps the stored flags, pruned to the surviving keys", async () => {
+      const d = setEnvDeps({ ...flaggedApp, envMetaEnc: meta({ PEM: { multiline: true }, GONE: { literal: true } }) });
+      await d.svc.setEnv("u1", "app1", { PEM: "x\ny", A: "2" });
+      expect(d.update.mock.calls[0][0].data.envMetaEnc).toBe('enc({"v":1,"flags":{"PEM":{"multiline":true}}})');
+      await d.svc.setEnv("u1", "app1", { A: "2" }); // PEM deleted -> its flags go with it
+      expect(d.update.mock.calls[1][0].data.envMetaEnc).toBeNull();
+    });
+
+    it("flags {} clears every flag", async () => {
+      const d = setEnvDeps(flaggedApp);
+      await d.svc.setEnv("u1", "app1", { A: "2" }, {});
+      expect(d.update.mock.calls[0][0].data.envMetaEnc).toBeNull();
+    });
+
+    it("a validation failure writes nothing; the legacy newline message is unchanged (service-level, MCP/importer path)", async () => {
+      const d = setEnvDeps(baseApp);
+      await expect(d.svc.setEnv("u1", "app1", { A: "a\nb" })).rejects.toThrow(new BadRequestException("environment value must not contain a newline"));
+      await expect(d.svc.setEnv("u1", "app1", { LD_PRELOAD: "a\nb" }, { LD_PRELOAD: { multiline: true } })).rejects.toBeInstanceOf(BadRequestException);
+      await expect(d.svc.setEnv("u1", "app1", { K: "v" }, { K: { buildTime: true } })).rejects.toThrow(/Git-built apps only/); // IMAGE app
+      expect(d.update).not.toHaveBeenCalled();
+    });
+
+    it("a flagged multiline key survives an MCP-style read-modify-write (flags omitted)", async () => {
+      const d = setEnvDeps(flaggedApp);
+      const env = await d.svc.getEnv("u1", "app1");
+      expect(env.PEM).toBe("l1\nl2\n"); // GET /env still returns the newline value
+      await d.svc.setEnv("u1", "app1", { ...env, EXTRA: "z" });
+      expect(d.update.mock.calls[0][0].data.envMetaEnc).toBe('enc({"v":1,"flags":{"PEM":{"multiline":true}}})');
+    });
+
+    it("corrupt stored meta: 409 when flags are omitted, fine with explicit flags", async () => {
+      const d = setEnvDeps({ ...baseApp, envMetaEnc: "garbage" });
+      await expect(d.svc.setEnv("u1", "app1", { A: "1" })).rejects.toBeInstanceOf(ConflictException);
+      expect(d.update).not.toHaveBeenCalled();
+      await d.svc.setEnv("u1", "app1", { A: "1" }, {});
+      expect(d.update).toHaveBeenCalledTimes(1);
+    });
+
+    it("audit is untouched with no flags anywhere, and COUNTS ONLY otherwise", async () => {
+      const plain = setEnvDeps(baseApp);
+      await plain.svc.setEnv("u1", "app1", { A: "1" });
+      expect(plain.auditLog).toHaveBeenCalledWith({ actor: "u1", action: "app.env.update", target: "app1" });
+      const flagged = setEnvDeps(flaggedApp);
+      await flagged.svc.setEnv("u1", "app1", { PEM: "a\nb", A: "1" }, { PEM: { multiline: true } });
+      const entry = flagged.auditLog.mock.calls[0][0];
+      expect(entry.meta).toEqual({ keys: 2, flagged: 1 });
+      expect(JSON.stringify(entry)).not.toContain("PEM");
+    });
+  });
+
+  describe("getEnvFlags", () => {
+    it("returns full booleans per entry, applicable and limits", async () => {
+      const d = setEnvDeps({ ...baseApp, source: "GIT", envMetaEnc: meta({ B: { buildTime: true, runtime: false }, PEM: { multiline: true } }) });
+      const r = await d.svc.getEnvFlags("u1", "app1");
+      expect(r.flags).toEqual({ B: { buildTime: true, runtime: false, literal: false, multiline: false }, PEM: { buildTime: false, runtime: true, literal: false, multiline: true } });
+      expect(r.applicable).toEqual({ buildTime: true, literal: false });
+      expect(r.limits).toMatchObject({ multilineValueBytes: 16384, multilineKeys: 32, multilineTotalBytes: 49152, buildTotalBytes: 49152 });
+    });
+    it("is empty without flags and 409 on a corrupt blob", async () => {
+      expect((await setEnvDeps(baseApp).svc.getEnvFlags("u1", "app1")).flags).toEqual({});
+      await expect(setEnvDeps({ ...baseApp, envMetaEnc: "{" }).svc.getEnvFlags("u1", "app1")).rejects.toBeInstanceOf(ConflictException);
+    });
+  });
+
+  describe("create with envFlags", () => {
+    function createDeps() {
+      const create = jest.fn().mockImplementation(async (a: { data: Record<string, unknown> }) => ({ ...app, ...a.data, id: "n1", createdAt: new Date() }));
+      const prisma = { application: { create, findFirst: jest.fn().mockResolvedValue(null) }, server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) } } as unknown as PrismaService;
+      return { create, svc: make(prisma, accessWith({}), {} as AgentWsServer) };
+    }
+    it("persists envMetaEnc next to envEnc", async () => {
+      const d = createDeps();
+      await d.svc.create("u1", { name: "x", serverId: "s1", image: "nginx", env: { PEM: "a\nb" }, envFlags: { PEM: { multiline: true } } } as never);
+      expect(d.create.mock.calls[0][0].data.envMetaEnc).toBe('enc({"v":1,"flags":{"PEM":{"multiline":true}}})');
+    });
+    it("a flag-free create writes a null envMetaEnc; build flags on an IMAGE app are rejected", async () => {
+      const d = createDeps();
+      await d.svc.create("u1", { name: "x", serverId: "s1", image: "nginx", env: { A: "1" } } as never);
+      expect(d.create.mock.calls[0][0].data.envMetaEnc).toBeNull();
+      await expect(d.svc.create("u1", { name: "x", serverId: "s1", image: "nginx", env: { A: "1" }, envFlags: { A: { buildTime: true } } } as never)).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe("clone / preview copy the flags", () => {
+    it("preview without exclusions reuses the parent blob verbatim; with exclusions the flags follow the surviving keys", async () => {
+      const mk = () => {
+        const create = jest.fn().mockResolvedValue({ id: "pv1", teamId: "t1", serverId: "s1", source: "IMAGE", isPreview: true });
+        const prisma = { application: { findFirst: jest.fn().mockResolvedValue(null), create } } as unknown as PrismaService;
+        const svc = make(prisma, {} as TeamAccessService, {} as AgentWsServer);
+        jest.spyOn(svc as unknown as { submitDeploy: (...a: unknown[]) => Promise<unknown> }, "submitDeploy").mockResolvedValue(undefined);
+        return { create, svc };
+      };
+      const parent = { ...baseApp, name: "web", environmentId: "e1", previewEnabled: true, domain: "app.example.com", envEnc: '{"PEM":"a\\nb","SECRET":"x"}', envMetaEnc: meta({ PEM: { multiline: true }, SECRET: { literal: true } }) };
+      const a = mk();
+      await a.svc.upsertPreview({ ...parent, previewExcludeKeys: [] } as never, 7, "f");
+      expect(a.create.mock.calls[0][0].data.envMetaEnc).toBe(parent.envMetaEnc);
+      const b = mk();
+      await b.svc.upsertPreview({ ...parent, previewExcludeKeys: ["SECRET"] } as never, 7, "f");
+      expect(b.create.mock.calls[0][0].data.envMetaEnc).toBe('enc({"v":1,"flags":{"PEM":{"multiline":true}}})');
+    });
+  });
+
+  describe("deploy-time resolution (attachResolvedEnv)", () => {
+    function deployDeps(row: Record<string, unknown>, shared: { key: string; valueEnc: string }[] = [], secrets: Record<string, string> = {}) {
+      const depUpdate = jest.fn().mockResolvedValue({});
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue(row), update: jest.fn().mockResolvedValue({}) },
+        deployment: {
+          create: jest.fn().mockResolvedValue({ id: "d1", createdAt: new Date() }),
+          update: depUpdate,
+          findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "SUCCESS" }),
+          findFirst: jest.fn().mockResolvedValue(null),
+          findMany: jest.fn().mockResolvedValue([]),
+        },
+        sharedVariable: { findMany: jest.fn().mockResolvedValue(shared) },
+      } as unknown as PrismaService;
+      const calls: string[] = [];
+      const agentWs = { sendCommand: jest.fn().mockImplementation((_s: string, cmd: string, cap: string) => { if (cap === "deploy") calls.push(cmd); return Promise.resolve({ exitCode: 0, output: "ok" }); }) } as unknown as AgentWsServer;
+      const svc = make(prisma, accessWith({}), agentWs, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, { resolveSecretEnv: jest.fn().mockResolvedValue(secrets) });
+      return { svc, calls, depUpdate };
+    }
+    const git = { ...baseApp, source: "GIT", image: null, gitUrl: "https://github.com/acme/app.git", gitBranch: "main", buildType: "DOCKERFILE", gitTokenEnc: null, gitSshKeyEnc: null };
+    const failed = (d: ReturnType<typeof deployDeps>) => d.depUpdate.mock.calls.some((c) => c[0].data?.status === "FAILED");
+
+    it("an unflagged app: spec.env is the merged env, spec.buildArgs equals appBuildArgs, no envMeta", async () => {
+      const d = deployDeps({ ...git, envEnc: '{"A":"1"}', buildArgsEnc: '{"B":"2"}' });
+      const spec = { env: {} } as Record<string, unknown>;
+      await (d.svc as unknown as { attachResolvedEnv: (...a: unknown[]) => Promise<void> }).attachResolvedEnv({ ...git, envEnc: '{"A":"1"}', buildArgsEnc: '{"B":"2"}' }, spec, { withBuild: true });
+      expect(spec).toEqual({ env: { A: "1" }, buildArgs: { B: "2" } });
+    });
+
+    it("a build-only variable reaches the build but not the container; explicit build args win", async () => {
+      const row = { ...git, envEnc: '{"TOKEN_X":"s","KEEP":"k"}', envMetaEnc: meta({ TOKEN_X: { buildTime: true, runtime: false } }), buildArgsEnc: '{"TOKEN_X":"explicit"}' };
+      const d = deployDeps(row);
+      const spec = { env: {} } as Record<string, unknown>;
+      await (d.svc as unknown as { attachResolvedEnv: (...a: unknown[]) => Promise<void> }).attachResolvedEnv(row, spec, { withBuild: true });
+      expect(spec.env).toEqual({ KEEP: "k" });
+      expect(spec.buildArgs).toEqual({ TOKEN_X: "explicit" });
+      expect(spec.buildFlagKeys).toEqual(["TOKEN_X"]);
+      expect(spec.envMeta).toEqual({ TOKEN_X: { buildTime: true, runtime: false } });
+      // and a full deploy actually passes it to docker build
+      const full = deployDeps({ ...row, buildArgsEnc: null });
+      await full.svc.deploy("u1", "app1");
+      expect(full.calls[0]).toContain("--build-arg 'TOKEN_X=s'");
+      expect(full.calls[0]).not.toContain("TOKEN_X=s\n");
+    });
+
+    it("withBuild:false (rollback) does not set buildArgs", async () => {
+      const row = { ...git, envEnc: '{"K":"v"}', envMetaEnc: meta({ K: { buildTime: true } }) };
+      const d = deployDeps(row);
+      const spec = { env: {} } as Record<string, unknown>;
+      await (d.svc as unknown as { attachResolvedEnv: (...a: unknown[]) => Promise<void> }).attachResolvedEnv(row, spec, { withBuild: false });
+      expect(spec.buildArgs).toBeUndefined();
+      expect(spec.env).toEqual({ K: "v" });
+    });
+
+    it("a shared variable never becomes a build arg through flags", async () => {
+      const row = { ...git, envEnc: "{}", envMetaEnc: null };
+      const d = deployDeps(row, [{ key: "SHARED", valueEnc: "sv" }]);
+      const spec = { env: {} } as Record<string, unknown>;
+      await (d.svc as unknown as { attachResolvedEnv: (...a: unknown[]) => Promise<void> }).attachResolvedEnv(row, spec, { withBuild: true });
+      expect(spec.env).toEqual({ SHARED: "sv" });
+      expect(spec.buildArgs).toEqual({});
+    });
+
+    it("corrupt meta fails the deploy closed with a message that names the app, not any variable or value", async () => {
+      const row = { ...git, envEnc: '{"TOPSECRET_NAME":"v"}', envMetaEnc: "garbage" };
+      const d = deployDeps(row);
+      await d.svc.deploy("u1", "app1");
+      expect(failed(d)).toBe(true);
+      expect(d.calls).toHaveLength(0);
+      const err = JSON.stringify(d.depUpdate.mock.calls) + JSON.stringify((d.svc as unknown as { deployLogs: { push: jest.Mock } }).deployLogs.push.mock?.calls ?? []);
+      expect(err).not.toContain("TOPSECRET_NAME");
+    });
+
+    it("a Vault-ref key carrying buildTime fails the deploy; runtime:false on an IMAGE app fails the deploy", async () => {
+      const refRow = { ...git, envEnc: '{"V":"x"}', envMetaEnc: meta({ V: { buildTime: true } }) };
+      const a = deployDeps(refRow, [], { V: "from-vault" });
+      await a.svc.deploy("u1", "app1");
+      expect(failed(a)).toBe(true);
+      expect(a.calls).toHaveLength(0);
+      const imgRow = { ...baseApp, envEnc: '{"K":"v"}', envMetaEnc: meta({ K: { buildTime: true, runtime: false } }) };
+      const b = deployDeps(imgRow);
+      await b.svc.deploy("u1", "app1");
+      expect(failed(b)).toBe(true);
+    });
+
+    it("an IMAGE app with a lone stale buildTime flag still deploys (ignored; never rewrites user data)", async () => {
+      const row = { ...baseApp, envEnc: '{"K":"v"}', envMetaEnc: meta({ K: { buildTime: true } }) };
+      const d = deployDeps(row);
+      await d.svc.deploy("u1", "app1");
+      expect(failed(d)).toBe(false);
+      expect(d.calls).toHaveLength(1);
+    });
   });
 });

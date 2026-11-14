@@ -6,7 +6,9 @@
 
 import { createHash } from "node:crypto";
 import { DB_NET } from "../databases/database-script"; // single source for the managed-DB network name
-import { injectableBuildArgs } from "./build-args";
+import { injectableBuildArgs, looksSensitiveKey } from "./build-args";
+import type { EnvMeta } from "../common/env-flags";
+import { assertScriptFits, mlEnvFlags, mlPrefix, mlPrelude, planEnv } from "./env-render";
 import { APPS_NETWORK, isUserNetworkNameAllowed } from "./network-names";
 import {
   buildPanelRouterYaml,
@@ -131,8 +133,14 @@ export interface AppSpec {
   gitSshKey?: string | null;
   registryAuth?: RegistryAuth | null;
   env: Record<string, string>;
+  /** Per-variable flags (sparse); undefined = none, scripts byte-identical to a flag-free app. */
+  envMeta?: EnvMeta;
   /** Build-time variables injected during image build (separate from runtime env). */
   buildArgs?: Record<string, string>;
+  /** Sorted names of the build args that came from the per-variable Build time flag (build-log note only). */
+  buildFlagKeys?: string[];
+  /** Build-time flagged names ignored because a build secret with the same name exists (build-log note only). */
+  buildFlagDropped?: string[];
   /** Snapshot-only: the OR with the per-deploy noCache happens in executeDeploy. */
   disableBuildCache?: boolean;
   /** DOCKERFILE only: pass the runtime env as `--build-arg` (baked into image history; the build log says so). */
