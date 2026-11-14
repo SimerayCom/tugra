@@ -2134,6 +2134,16 @@ describe("ApplicationsService", () => {
     );
   });
 
+  it("setLimits accepts gpus on a server whose inventory says no GPU, with no server lookup (advisory UI only)", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const serverFind = jest.fn();
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app), update }, server: { findUnique: serverFind } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).setLimits("u1", "app1", { gpus: "all" });
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { gpus: "all" } }));
+    expect(serverFind).not.toHaveBeenCalled();
+  });
+
   it("setLimits leaves omitted limits untouched (partial update can't wipe)", async () => {
     const update = jest.fn().mockResolvedValue({});
     const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app), update } } as unknown as PrismaService;
@@ -4683,6 +4693,37 @@ describe("ApplicationsService.clone", () => {
     const same = await run(4, undefined);
     expect(same.cpuset).toBe("0-5");
     expect(same.warnings).not.toContain("cpuset_reset");
+  });
+
+  it("a cross-server clone keeps gpus and warns only when the target is KNOWN to have no usable NVIDIA GPU", async () => {
+    const mkInv = (gpus: Array<Record<string, unknown>>, extra: Record<string, unknown> = {}) => ({
+      v: 1, gpus, runtimes: [], defaultRuntime: null, nvidiaRuntime: false, nvidiaDriverLoaded: false, nvidiaModuleVersion: null, error: null, ...extra,
+    });
+    const dev = (o: Record<string, unknown>) => ({ index: null, uuid: null, name: "X", vendor: "amd", kind: "gpu", memoryMb: null, driver: null, pci: "0000:03:00.0", source: "pci", ...o });
+    const smi = dev({ index: 0, vendor: "nvidia", source: "nvidia-smi", pci: null, memoryMb: 1, driver: "1.0" });
+    const run = async (srcOver: Record<string, unknown>, target: string | undefined, gpuInventory: unknown) => {
+      const create = jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ ...data, id: "clone1", createdAt: new Date() }));
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue({ ...src, gpus: "all", ...srcOver }), create },
+        server: { findUnique: jest.fn().mockResolvedValue(target ? { ...server, id: target, teamId: "t1", gpuInventory } : { ...server, gpuInventory }) },
+        appIcon: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
+        scheduledTask: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
+      } as unknown as PrismaService;
+      const res = await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", target ? { serverId: target } : {});
+      return { gpus: create.mock.calls[0][0].data.gpus, warnings: res.warnings };
+    };
+    const W = "gpus_unavailable_on_target";
+    const none = await run({}, "s2", mkInv([]));
+    expect(none.gpus).toBe("all"); // kept, never reset
+    expect(none.warnings).toContain(W);
+    expect((await run({}, "s2", mkInv([dev({})]))).warnings).toContain(W); // non_nvidia
+    expect((await run({}, "s2", mkInv([dev({ vendor: "other", kind: "virtual" })]))).warnings).toContain(W); // virtual-only = none
+    expect((await run({}, "s2", null)).warnings).not.toContain(W); // never probed = unknown, never nags
+    expect((await run({}, "s2", { corrupt: true })).warnings).not.toContain(W); // malformed row = unknown
+    expect((await run({}, "s2", mkInv([smi], { nvidiaRuntime: true }))).warnings).not.toContain(W); // ready
+    expect((await run({}, undefined, mkInv([]))).warnings).not.toContain(W); // same-server clone
+    expect((await run({ gpus: null }, "s2", mkInv([]))).warnings).not.toContain(W); // no GPU requested
+    expect((await run({ clusterId: "c1" }, "s2", mkInv([]))).warnings).not.toContain(W); // cluster source
   });
 
   it("flags dropped privileged options with the machine key (not prose)", async () => {

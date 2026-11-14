@@ -134,6 +134,7 @@ import { appLinks, appUrl, primaryHostPort } from "../common/app-url";
 import { magicDomain } from "./magic-domain";
 import { inferComposeWeb } from "../deploy/compose-web";
 import { appIdOfContainer, liveContainerOf, reduceHealth, UNKNOWN_HEALTH, CONTAINER_STATE_MAX_AGE_MS, type AppContainerHealth } from "./container-health";
+import { classifyReadiness, parseStoredInventory } from "../server-ops/gpu-inventory";
 import { cpusetMax } from "./dto";
 import type { CreateAppInput, SetLimitsInput, SetSourceInput, SetBuildInput, SetContainerCommandInput, AppRuntimeState } from "./dto";
 
@@ -814,6 +815,12 @@ export class ApplicationsService {
     // Reset it only when the target's core count is known and the set doesn't fit (unknown → Docker decides).
     const cpusetReset = crossServer && !!src.cpusetCpus && server.cpuCores != null && cpusetMax(src.cpusetCpus) >= server.cpuCores;
     if (cpusetReset) warnings.push("cpuset_reset");
+    // GPUs are host hardware: a GPU request is KEPT (never reset) but flagged when the target is known to have no
+    // usable NVIDIA GPU. An unprobed target (NULL inventory) is unknown and never warns.
+    if (crossServer && !!src.gpus && !src.clusterId) {
+      const gpuReadiness = classifyReadiness(parseStoredInventory(server.gpuInventory));
+      if (gpuReadiness === "none" || gpuReadiness === "non_nvidia") warnings.push("gpus_unavailable_on_target");
+    }
     const name = this.cloneName(src.name, input.name);
     const composeWebService = src.source === "COMPOSE" ? (this.composeWeb(src)?.service ?? null) : null;
     // Fresh exposure — the domain is NEVER copied (two apps on one host = a Traefik router clash); a custom

@@ -23,6 +23,8 @@ import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { CleanupService } from "./cleanup.service";
+import { GpuInventoryService } from "./gpu-inventory.service";
+import { GpuReportSchema } from "./gpu-inventory";
 import { PatchService } from "./patch.service";
 import { LogDrainService } from "./log-drain.service";
 import { ProxyOpsService } from "./proxy-ops.service";
@@ -51,6 +53,7 @@ import {
 export class ServerOpsController {
   constructor(
     private readonly cleanup: CleanupService,
+    private readonly gpus: GpuInventoryService,
     private readonly patch: PatchService,
     private readonly logDrains: LogDrainService,
     private readonly proxy: ProxyOpsService,
@@ -273,6 +276,22 @@ export class ServerOpsController {
   @Get("disk-usage")
   diskUsage(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.cleanup.diskUsage(user.userId, id);
+  }
+
+  // Persisted GPU detection snapshot (membership only, no agent traffic) — like disk-usage. NULL inventory = unknown.
+  @Get("gpus")
+  @ApiZodResponse(GpuReportSchema)
+  getGpus(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.gpus.getReport(user.userId, id);
+  }
+
+  // Re-run the GPU probe on the host (writers; starts a short-lived unprivileged helper container).
+  @Post("gpus/refresh")
+  @RequireScopes("deploy")
+  @HttpCode(200)
+  @ApiZodResponse(GpuReportSchema)
+  refreshGpus(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.gpus.refresh(user.userId, id);
   }
 
   @Put("cleanup-config")

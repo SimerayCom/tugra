@@ -309,6 +309,8 @@ model Server {
   cpuCores               Int?
   memTotalBytes          BigInt?
   bootTime               DateTime?
+  gpuInventory           Json? // sanitized GPU probe snapshot (GpuInventory, server-ops/gpu-inventory.ts). NULL = never probed = UNKNOWN, never "no GPU"
+  gpuCheckedAt           DateTime? // when gpuInventory was last written
   cleanupEnabled         Boolean                 @default(false)
   cleanupIntervalHours   Int?
   cleanupCron            String? // optional 5-field cron; when set, overrides cleanupIntervalHours

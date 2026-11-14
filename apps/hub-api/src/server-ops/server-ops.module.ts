@@ -9,6 +9,7 @@ import { ClustersModule } from "../clusters/clusters.module";
 import { ServerOpsController } from "./server-ops.controller";
 import { FleetController } from "./fleet.controller";
 import { CleanupService } from "./cleanup.service";
+import { GpuInventoryService } from "./gpu-inventory.service";
 import { CleanupRunnerService } from "./cleanup-runner.service";
 import { CleanupSchedulerService } from "./cleanup.scheduler.service";
 import { PatchService } from "./patch.service";
@@ -22,7 +23,7 @@ import { ContainerHealthSchedulerService } from "./container-health.scheduler.se
 @Module({
   imports: [AgentGatewayModule, MetricsModule, CryptoModule, NotificationsModule, ServersModule, ClustersModule],
   controllers: [ServerOpsController, FleetController],
-  providers: [CleanupService, CleanupRunnerService, CleanupSchedulerService, PatchService, LogDrainService, ProxyOpsService, ContainerOpsService, ContainerLogStreamGuard, ContainerHealthRunnerService, ContainerHealthSchedulerService],
+  providers: [CleanupService, GpuInventoryService, CleanupRunnerService, CleanupSchedulerService, PatchService, LogDrainService, ProxyOpsService, ContainerOpsService, ContainerLogStreamGuard, ContainerHealthRunnerService, ContainerHealthSchedulerService],
 })
 export class ServerOpsModule implements OnModuleInit {
   constructor(

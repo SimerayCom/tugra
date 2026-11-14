@@ -46083,6 +46083,518 @@
         ]
       }
     },
+    "/api/v1/servers/{id}/gpus": {
+      "get": {
+        "operationId": "ServerOpsController_getGpus",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "inventory": {
+                      "type": "object",
+                      "properties": {
+                        "v": {
+                          "type": "number",
+                          "enum": [
+                            1
+                          ]
+                        },
+                        "gpus": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "index": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 63,
+                                "nullable": true
+                              },
+                              "uuid": {
+                                "type": "string",
+                                "pattern": "^(GPU|MIG)-[0-9A-Za-z-]{8,80}$",
+                                "nullable": true
+                              },
+                              "name": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              },
+                              "vendor": {
+                                "type": "string",
+                                "enum": [
+                                  "nvidia",
+                                  "amd",
+                                  "intel",
+                                  "other"
+                                ]
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "gpu",
+                                  "virtual"
+                                ]
+                              },
+                              "memoryMb": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 4194304,
+                                "nullable": true
+                              },
+                              "driver": {
+                                "type": "string",
+                                "pattern": "^[0-9][0-9A-Za-z._-]{0,31}$",
+                                "nullable": true
+                              },
+                              "pci": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\\.[0-7]$",
+                                "nullable": true
+                              },
+                              "source": {
+                                "type": "string",
+                                "enum": [
+                                  "nvidia-smi",
+                                  "pci"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "index",
+                              "uuid",
+                              "name",
+                              "vendor",
+                              "kind",
+                              "memoryMb",
+                              "driver",
+                              "pci",
+                              "source"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "maxItems": 16
+                        },
+                        "runtimes": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z0-9._-]{1,40}$"
+                          },
+                          "maxItems": 16
+                        },
+                        "defaultRuntime": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9._-]{1,40}$",
+                          "nullable": true
+                        },
+                        "nvidiaRuntime": {
+                          "type": "boolean"
+                        },
+                        "nvidiaDriverLoaded": {
+                          "type": "boolean"
+                        },
+                        "nvidiaModuleVersion": {
+                          "type": "string",
+                          "pattern": "^[0-9][0-9A-Za-z._-]{0,31}$",
+                          "nullable": true
+                        },
+                        "error": {
+                          "type": "string",
+                          "maxLength": 200,
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "v",
+                        "gpus",
+                        "runtimes",
+                        "defaultRuntime",
+                        "nvidiaRuntime",
+                        "nvidiaDriverLoaded",
+                        "nvidiaModuleVersion",
+                        "error"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
+                    "readiness": {
+                      "type": "string",
+                      "enum": [
+                        "unknown",
+                        "none",
+                        "driver_missing",
+                        "runtime_missing",
+                        "ready",
+                        "non_nvidia",
+                        "probe_failed"
+                      ]
+                    },
+                    "checkedAt": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "ageSeconds": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "stale": {
+                      "type": "boolean"
+                    },
+                    "ttlSeconds": {
+                      "type": "integer"
+                    },
+                    "throttled": {
+                      "type": "boolean"
+                    },
+                    "busy": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "inventory",
+                    "readiness",
+                    "checkedAt",
+                    "ageSeconds",
+                    "stale",
+                    "ttlSeconds"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "servers"
+        ]
+      }
+    },
+    "/api/v1/servers/{id}/gpus/refresh": {
+      "post": {
+        "operationId": "ServerOpsController_refreshGpus",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "inventory": {
+                      "type": "object",
+                      "properties": {
+                        "v": {
+                          "type": "number",
+                          "enum": [
+                            1
+                          ]
+                        },
+                        "gpus": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "index": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 63,
+                                "nullable": true
+                              },
+                              "uuid": {
+                                "type": "string",
+                                "pattern": "^(GPU|MIG)-[0-9A-Za-z-]{8,80}$",
+                                "nullable": true
+                              },
+                              "name": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              },
+                              "vendor": {
+                                "type": "string",
+                                "enum": [
+                                  "nvidia",
+                                  "amd",
+                                  "intel",
+                                  "other"
+                                ]
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "gpu",
+                                  "virtual"
+                                ]
+                              },
+                              "memoryMb": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 4194304,
+                                "nullable": true
+                              },
+                              "driver": {
+                                "type": "string",
+                                "pattern": "^[0-9][0-9A-Za-z._-]{0,31}$",
+                                "nullable": true
+                              },
+                              "pci": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\\.[0-7]$",
+                                "nullable": true
+                              },
+                              "source": {
+                                "type": "string",
+                                "enum": [
+                                  "nvidia-smi",
+                                  "pci"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "index",
+                              "uuid",
+                              "name",
+                              "vendor",
+                              "kind",
+                              "memoryMb",
+                              "driver",
+                              "pci",
+                              "source"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "maxItems": 16
+                        },
+                        "runtimes": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z0-9._-]{1,40}$"
+                          },
+                          "maxItems": 16
+                        },
+                        "defaultRuntime": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9._-]{1,40}$",
+                          "nullable": true
+                        },
+                        "nvidiaRuntime": {
+                          "type": "boolean"
+                        },
+                        "nvidiaDriverLoaded": {
+                          "type": "boolean"
+                        },
+                        "nvidiaModuleVersion": {
+                          "type": "string",
+                          "pattern": "^[0-9][0-9A-Za-z._-]{0,31}$",
+                          "nullable": true
+                        },
+                        "error": {
+                          "type": "string",
+                          "maxLength": 200,
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "v",
+                        "gpus",
+                        "runtimes",
+                        "defaultRuntime",
+                        "nvidiaRuntime",
+                        "nvidiaDriverLoaded",
+                        "nvidiaModuleVersion",
+                        "error"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
+                    "readiness": {
+                      "type": "string",
+                      "enum": [
+                        "unknown",
+                        "none",
+                        "driver_missing",
+                        "runtime_missing",
+                        "ready",
+                        "non_nvidia",
+                        "probe_failed"
+                      ]
+                    },
+                    "checkedAt": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "ageSeconds": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "stale": {
+                      "type": "boolean"
+                    },
+                    "ttlSeconds": {
+                      "type": "integer"
+                    },
+                    "throttled": {
+                      "type": "boolean"
+                    },
+                    "busy": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "inventory",
+                    "readiness",
+                    "checkedAt",
+                    "ageSeconds",
+                    "stale",
+                    "ttlSeconds"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "servers"
+        ]
+      }
+    },
     "/api/v1/servers/{id}/cleanup-config": {
       "put": {
         "operationId": "ServerOpsController_setConfig",

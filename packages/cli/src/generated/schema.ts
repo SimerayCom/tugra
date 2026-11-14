@@ -4100,6 +4100,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/servers/{id}/gpus": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["ServerOpsController_getGpus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/servers/{id}/gpus/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["ServerOpsController_refreshGpus"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/servers/{id}/cleanup-config": {
         parameters: {
             query?: never;
@@ -30234,6 +30266,204 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    ServerOpsController_getGpus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        inventory: {
+                            /** @enum {number} */
+                            v: 1;
+                            gpus: {
+                                index: number | null;
+                                uuid: string | null;
+                                name: string;
+                                /** @enum {string} */
+                                vendor: "nvidia" | "amd" | "intel" | "other";
+                                /** @enum {string} */
+                                kind: "gpu" | "virtual";
+                                memoryMb: number | null;
+                                driver: string | null;
+                                pci: string | null;
+                                /** @enum {string} */
+                                source: "nvidia-smi" | "pci";
+                            }[];
+                            runtimes: string[];
+                            defaultRuntime: string | null;
+                            nvidiaRuntime: boolean;
+                            nvidiaDriverLoaded: boolean;
+                            nvidiaModuleVersion: string | null;
+                            error: string | null;
+                        } | null;
+                        /** @enum {string} */
+                        readiness: "unknown" | "none" | "driver_missing" | "runtime_missing" | "ready" | "non_nvidia" | "probe_failed";
+                        checkedAt: string | null;
+                        ageSeconds: number | null;
+                        stale: boolean;
+                        ttlSeconds: number;
+                        throttled?: boolean;
+                        busy?: boolean;
+                    };
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    ServerOpsController_refreshGpus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        inventory: {
+                            /** @enum {number} */
+                            v: 1;
+                            gpus: {
+                                index: number | null;
+                                uuid: string | null;
+                                name: string;
+                                /** @enum {string} */
+                                vendor: "nvidia" | "amd" | "intel" | "other";
+                                /** @enum {string} */
+                                kind: "gpu" | "virtual";
+                                memoryMb: number | null;
+                                driver: string | null;
+                                pci: string | null;
+                                /** @enum {string} */
+                                source: "nvidia-smi" | "pci";
+                            }[];
+                            runtimes: string[];
+                            defaultRuntime: string | null;
+                            nvidiaRuntime: boolean;
+                            nvidiaDriverLoaded: boolean;
+                            nvidiaModuleVersion: string | null;
+                            error: string | null;
+                        } | null;
+                        /** @enum {string} */
+                        readiness: "unknown" | "none" | "driver_missing" | "runtime_missing" | "ready" | "non_nvidia" | "probe_failed";
+                        checkedAt: string | null;
+                        ageSeconds: number | null;
+                        stale: boolean;
+                        ttlSeconds: number;
+                        throttled?: boolean;
+                        busy?: boolean;
+                    };
+                };
             };
             /** @description Missing or invalid authentication. */
             401: {
