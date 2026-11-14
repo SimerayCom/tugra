@@ -20,6 +20,10 @@ export interface DeploymentFacts {
   logs: string | null;
   startedAt: Date | null;
   createdAt: Date;
+  /** A RUNNING row whose durable main command is being (or can be) ADOPTED from the agent's journal after a hub
+   *  restart (phase DISPATCHED/RECOVERING, agentReqId set, deadline ahead): still a live deploy to wait on, even
+   *  though it started before this hub process did. Absent/false = legacy semantics. */
+  recoverable?: boolean;
 }
 
 export function classifyDeployment(dep: DeploymentFacts, ctx: { now: number; bootAt: number; dispatchTimeoutMs: number }): DeployVerdict {
@@ -34,7 +38,10 @@ export function classifyDeployment(dep: DeploymentFacts, ctx: { now: number; boo
       return "cancelled";
     case "RUNNING":
       // A RUNNING row that started before THIS hub process did is an orphan of the previous process (the boot
-      // reconcile marks it FAILED moments later) — never a live deploy we could wait on.
+      // reconcile marks it FAILED moments later) — never a live deploy we could wait on. EXCEPT a recoverable one:
+      // its outcome is being adopted from the agent's command journal, so it is still a real deploy to wait on
+      // (it settles to SUCCESS / FAILED+note / AUTO_ROLLBACK / CANCELLED, which this classifier already handles).
+      if (dep.recoverable) return "running";
       return dep.startedAt && dep.startedAt.getTime() < ctx.bootAt ? "interrupted" : "running";
     case "QUEUED":
       return dep.createdAt.getTime() + ctx.dispatchTimeoutMs < ctx.now ? "queue_timeout" : "running";

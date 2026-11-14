@@ -17,6 +17,14 @@ func TestCanonicalStrings(t *testing.T) {
 	if got := CanonicalCommandCancel("r1"); got != "ccancel\nr1" {
 		t.Fatalf("CanonicalCommandCancel mismatch: %q", got)
 	}
+	// Must be byte-identical to @tugra/shared canonicalCommandStatus (and distinct from cancel).
+	if got := CanonicalCommandStatus("r1"); got != "cstat\nr1" {
+		t.Fatalf("CanonicalCommandStatus mismatch: %q", got)
+	}
+	// The durable flag must NOT change the signed input (an old agent ignores it and runs the same command).
+	if Version != 2 {
+		t.Fatalf("protocol version must stay 2 (features are additive): %d", Version)
+	}
 	if got := CanonicalTermStart("s1", "tugra_app1", 80, 24, "terminal"); got != "term\ns1\ntugra_app1\n80\n24\nterminal" {
 		t.Fatalf("CanonicalTermStart mismatch: %q", got)
 	}

@@ -48,6 +48,11 @@ describe("classifyDeployment", () => {
   });
   it("a RUNNING row that started before this hub process is an orphan (interrupted); a QUEUED row past the dispatch timeout is queue_timeout", () => {
     expect(classifyDeployment(dep({ startedAt: new Date(BOOT - 1) }), ctx)).toBe("interrupted");
+    // a RECOVERABLE pre-boot RUNNING row (durable command being adopted from the agent's journal) is still live
+    expect(classifyDeployment(dep({ startedAt: new Date(BOOT - 1), recoverable: true }), ctx)).toBe("running");
+    expect(classifyDeployment(dep({ startedAt: new Date(BOOT - 1), recoverable: false }), ctx)).toBe("interrupted");
+    // ...and once adoption settles it, the usual terminal rules apply (the interrupted note may carry a detail suffix)
+    expect(classifyDeployment(dep({ status: "FAILED", exitCode: -1, logs: `${INTERRUPTED_DEPLOY_NOTE}\nthe agent restarted` }), ctx)).toBe("interrupted");
     expect(classifyDeployment(dep({ status: "QUEUED", startedAt: null, createdAt: new Date(NOW - 600_001) }), ctx)).toBe("queue_timeout");
     expect(classifyDeployment(dep({ status: "QUEUED", startedAt: null, createdAt: new Date(NOW - 10_000) }), ctx)).toBe("running");
   });

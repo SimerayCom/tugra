@@ -53,6 +53,20 @@ signed with the hub's key (which the agent pins on connect) and scoped to a gran
 compromised network path can neither forge commands nor exceed the server's granted capabilities. The
 [security overview](security.md) covers this in context.
 
+**Durable deploy commands and hub-restart recovery.** A deploy is one long shell command the hub sends and
+awaits. Agents that advertise the `cmd_journal_v1` feature keep an on-disk *command journal*: the hub marks the
+main deploy command `durable`, the agent records its start and its result (exit code, output head and tail,
+whether it was cancelled), keeps running it if the WebSocket drops, never runs a re-sent request id twice, and
+answers a signed `command_status` query from the journal. On the hub side every running deploy carries a
+*lease* (the owning hub process, the agent request id, a recovery deadline and a frozen outcome plan). If the hub
+restarts — or the agent's socket drops — mid-deploy, the deploy is **not** failed blind: it is kept running
+and re-adopted when that agent reconnects, and settled from the journaled result exactly as the live path would
+have settled it (success, failure, auto-rollback, cancelled). Only when the outcome genuinely cannot be known
+(the agent process itself restarted, has no record, never answers, or the deadline passes) does the row settle
+as "interrupted", and the application's status is left untouched. Agents without the feature — and the swarm,
+build-server and rollback paths — keep the previous behaviour: a deploy still running at hub boot is marked
+failed and must be re-deployed.
+
 ## Deployment
 
 The [`deploy/docker-compose.yml`](../deploy/docker-compose.yml) stack is hub + web + PostgreSQL + Redis +

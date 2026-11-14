@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
   ServiceUnavailableException,
 } from "@nestjs/common";
@@ -13,6 +14,11 @@ import { ModuleRef } from "@nestjs/core";
 import { z } from "zod";
 import { Application, AppStatus, Deployment, Prisma, Role } from "@prisma/client";
 import type { FsEntry, TeamPermission } from "@tugra/shared";
+import { AGENT_FEATURE_CMD_JOURNAL } from "@tugra/shared";
+import { AgentDisconnectedException, AgentOfflineException } from "../agent-gateway/agent-offline.exception";
+import { DeployLeaseService } from "./deploy-lease.service";
+import { INTERRUPTED_DEPLOY_NOTE } from "./deployment-reconcile.service";
+import { decideDeployOutcome, isDispatchPlan, type DispatchPlan } from "./deploy-outcome";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService, type AuditFilters } from "../audit/audit.service";
 import { TeamAccessService, canAccessResource } from "../common/team-access.service";
@@ -373,6 +379,12 @@ export class AppBusyException extends ConflictException {
   }
 }
 
+/** Added to the agent timeout (+ soak budget) for a durable deploy's recovery deadline: an unadopted row past it
+ *  settles as interrupted. Generous — the agent itself kills the command at ITS timeout, long before. */
+export const DISPATCH_DEADLINE_SLACK_MS = 120_000;
+/** Build-server phase output kept in the dispatch plan (head: the commit marker is printed right after the clone). */
+const BUILD_LOG_HEAD_BYTES = 16 * 1024;
+
 @Injectable()
 export class ApplicationsService {
   // In-flight deploy commands by deployment id → the agent server + reqId currently running, so a RUNNING
@@ -383,6 +395,11 @@ export class ApplicationsService {
   // Deployment ids for which a cancel was requested — executeDeploy records the result as CANCELLED (not
   // FAILED) and skips auto-rollback classification + the failure notification.
   private readonly cancelRequested = new Set<string>();
+  private readonly logger = new Logger(ApplicationsService.name);
+  // Registered by DeployRecoveryService: fired when a dispatched deploy's lease is released because the agent's
+  // socket dropped mid-command, so adoption can start at once if the agent is already back (the reconnect hook
+  // alone can miss it: adoptSocket rejects our pending BEFORE the hook fires).
+  private leaseReleasedHook?: (serverId: string) => void;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -407,7 +424,13 @@ export class ApplicationsService {
     private readonly dbLinks: AppDatabaseLinksService,
     private readonly secretRefs: AppSecretRefsService,
     private readonly moduleRef: ModuleRef,
+    private readonly lease: DeployLeaseService,
   ) {}
+
+  /** DeployRecoveryService registers here (see leaseReleasedHook). */
+  setLeaseReleasedHook(fn: (serverId: string) => void): void {
+    this.leaseReleasedHook = fn;
+  }
 
   /** Rebuild the app's server tunnel ingress from DB truth (lazy token avoids a static tunnel cycle).
    *  Best-effort — a Cloudflare hiccup must not fail the domain/expose mutation that triggered it. */
@@ -1123,6 +1146,9 @@ export class ApplicationsService {
           kind: "ROLLBACK",
           trigger: extra.trigger ?? "rollback",
           startedAt: new Date(),
+          ownerId: this.lease.bootId,
+          heartbeatAt: new Date(),
+          phase: "CLAIMED",
           ...(extra.idempotencyKey ? { idempotencyKey: extra.idempotencyKey } : {}),
           ...(extra.requestedBy ? { requestedBy: extra.requestedBy } : {}),
         },
@@ -1542,7 +1568,9 @@ export class ApplicationsService {
         if (!next) return null;
         const { count } = await tx.deployment.updateMany({
           where: { id: next.id, status: "QUEUED" },
-          data: { status: "RUNNING", startedAt: new Date() },
+          // The lease stamp: THIS process owns the row from here (DeployLeaseService.bootId). A restarted hub has
+          // a different bootId, so it can tell its own live rows from a dead process's orphans.
+          data: { status: "RUNNING", startedAt: new Date(), ownerId: this.lease.bootId, heartbeatAt: new Date(), phase: "CLAIMED" },
         });
         if (count === 1) return tx.deployment.findUnique({ where: { id: next.id } });
         tried.push(next.id); // count 0 → a cancel won the race for this row; try the next-oldest QUEUED row
@@ -1655,12 +1683,22 @@ export class ApplicationsService {
     const row = await this.prisma.deployment.findFirst({ where: { id: depId, appId } });
     if (!row) throw new NotFoundException("deployment not found");
     if (row.status === "RUNNING") {
-      const active = this.activeDeployCommands.get(depId);
+      // In-memory handle for a command this process dispatched; else the row's persisted handle for a durable
+      // command owned by a dead process / being adopted (the agent kills it and journals `killed`, so adoption
+      // settles it CANCELLED).
+      const live = this.activeDeployCommands.get(depId);
+      const active =
+        live ??
+        (row.agentReqId && row.agentServerId && (row.phase === "DISPATCHED" || row.phase === "RECOVERING") ? { serverId: row.agentServerId, reqId: row.agentReqId } : null);
       if (!active) throw new ConflictException("this running deployment can't be cancelled (no cancellable step is in flight)");
-      // Mark intent BEFORE sending the kill so executeDeploy's result handler sees CANCELLED, then kill the
-      // command's process group on the agent. The deployment flips to CANCELLED when the command returns.
-      this.cancelRequested.add(depId);
-      this.agentWs.cancelCommand(active.serverId, active.reqId);
+      // Live command: mark intent BEFORE sending the kill so executeDeploy's result handler sees CANCELLED, then
+      // kill the command's process group on the agent. The deployment flips to CANCELLED when the command returns.
+      // Row handle (a durable deploy owned by a dead hub / being adopted): the agent journals the kill and adoption
+      // settles it CANCELLED — but only if the signed kill actually reaches the agent, so an offline agent is a 503
+      // (retry when it is back), never a silent "cancelled" that the deploy then outlives.
+      if (live) this.cancelRequested.add(depId);
+      const delivered = this.agentWs.cancelCommand(active.serverId, active.reqId);
+      if (!live && !delivered) throw new AgentOfflineException("The agent is offline — the running deploy can be cancelled once it reconnects.");
       await this.audit.log({ actor: userId, action: "app.deploy.cancel", target: appId });
       return row;
     }
@@ -1678,6 +1716,9 @@ export class ApplicationsService {
     // touched) leaves a still-serving app RUNNING instead of flipping it to FAILED.
     const wasRunning = app.status === AppStatus.RUNNING;
     let swapAttempted = false;
+    // True once the main deploy command's reqId is persisted on the row (durable dispatch) — the catch may then
+    // release the lease for adoption instead of writing FAILED on a mere socket drop.
+    let dispatched = false;
     try {
       // Fail-closed: re-validate the STORED dockerOptions against the app's CURRENT privileged flag on every
       // deploy. If the owner revoked the override (or a path stored privileged options without the flag), the
@@ -1852,14 +1893,54 @@ export class ApplicationsService {
       // the agent timeout by the soak budget (window + probe time + margin) or the agent would SIGKILL the
       // watch mid-soak → ambiguous state (new live, __prev stopped, no revert decision). Zero for every other
       // path, so their timeout is unchanged.
-      const r = await this.agentWs.sendCommand(
-        app.serverId,
-        command,
-        "deploy",
-        this.deployTimeoutMs(app) + (rolling ? this.soakBudgetMs(spec) : 0),
-        (chunk) => this.deployLogs.push(app.id, chunk),
-        (reqId) => this.activeDeployCommands.set(dep.id, { serverId: app.serverId, reqId }),
-      );
+      const mainTimeoutMs = this.deployTimeoutMs(app) + (rolling ? this.soakBudgetMs(spec) : 0);
+      // DURABLE dispatch (hub-crash recovery): when the agent journals commands (cmd_journal_v1), persist the
+      // command's reqId + a frozen outcome plan on the row with a compare-and-set BEFORE the frame goes out, so a
+      // hub that dies mid-deploy can re-adopt this exact command (DeployRecoveryService) instead of failing it
+      // blind. An old agent takes the legacy path untouched (no reqId → boot reaps as before).
+      const durable = this.agentWs.agentSupports(app.serverId, AGENT_FEATURE_CMD_JOURNAL);
+      const onChunk = (chunk: string) => this.deployLogs.push(app.id, chunk);
+      const onStart = (reqId: string) => this.activeDeployCommands.set(dep.id, { serverId: app.serverId, reqId });
+      const r = !durable
+        ? await this.agentWs.sendCommand(app.serverId, command, "deploy", mainTimeoutMs, onChunk, onStart) // legacy call shape, unchanged
+        : await this.agentWs.sendCommand(app.serverId, command, "deploy", mainTimeoutMs, onChunk, onStart, {
+              reqId: `dep-${dep.id}`,
+              durable: true,
+              beforeSend: async (reqId) => {
+                // rolling only consults the DB on exit 3 in the live path; the plan needs the answer up front.
+                const hadPrev = recreate
+                  ? !!prev
+                  : rolling
+                    ? !!(await this.prisma.deployment.findFirst({ where: { appId: app.id, status: "SUCCESS", imageTag: { not: null }, id: { not: dep.id } }, select: { id: true } }))
+                    : false;
+                const plan: DispatchPlan = {
+                  v: 1,
+                  rolling,
+                  recreate,
+                  isCompose,
+                  isGitCompose,
+                  hadPrev,
+                  gitSourced: app.source === "GIT" || isGitCompose,
+                  runTag: isCompose ? null : runTag(app, dep.id),
+                  registryRef,
+                  wasRunning,
+                  postDeploy: !isCompose && !!spec.postDeployCommand?.trim(),
+                  buildLogHead: buildLog ? buildLog.slice(0, BUILD_LOG_HEAD_BYTES) : null,
+                };
+                const { count } = await this.prisma.deployment.updateMany({
+                  where: { id: dep.id, status: "RUNNING", ownerId: this.lease.bootId },
+                  data: {
+                    phase: "DISPATCHED",
+                    agentReqId: reqId,
+                    agentServerId: app.serverId,
+                    deadlineAt: new Date(Date.now() + mainTimeoutMs + DISPATCH_DEADLINE_SLACK_MS),
+                    dispatchPlan: plan as unknown as Prisma.InputJsonValue,
+                  },
+                });
+                if (count !== 1) throw new Error("deploy lease lost before dispatch");
+                dispatched = true;
+              },
+            });
       // Cancelled mid-flight: the agent SIGKILLed the build (its process group), so record CANCELLED — not
       // FAILED — and skip auto-rollback + the failure notification. The previous container (if any) was
       // never swapped out, so the app's running state is untouched; leave its status as-is.
@@ -1885,23 +1966,22 @@ export class ApplicationsService {
       // deploy that merely happens to exit 3 is a hard fail (not a false "kept the previous
       // version" that would leave the app wrongly marked RUNNING).
       const code = r.exitCode;
-      const ok = code === 0;
-      let rolledBack = false;
-      if (code === 3 && !isCompose) {
-        if (recreate) {
-          rolledBack = !!prev; // recreate only exits 3 when it had a previous image to restore
-        } else if (rolling) {
-          const p = await this.prisma.deployment.findFirst({
-            where: { appId: app.id, status: "SUCCESS", imageTag: { not: null }, id: { not: dep.id } },
-          });
-          rolledBack = !!p;
-        }
-      }
+      // hadPrev: recreate only exits 3 when it had a previous image to restore; rolling consults the DB (only on
+      // exit 3, as before — the lookup is not paid on the common path).
+      const hadPrev =
+        code === 3 && !isCompose
+          ? recreate
+            ? !!prev
+            : rolling
+              ? !!(await this.prisma.deployment.findFirst({ where: { appId: app.id, status: "SUCCESS", imageTag: { not: null }, id: { not: dep.id } } }))
+              : false
+          : false;
       // exit 4 = POST-CUTOVER auto-revert: the rolling soak switched traffic, the new version then failed its
       // soak, and the script already `docker start`-ed __prev — so the previous version is PROVABLY live. No
       // DB re-derivation needed (that is exactly why the code is distinct from the pre-cutover exit 3, whose
       // old container was merely left untouched). Rolling-only; a compose/hard-cutover build never emits it.
-      if (code === 4 && rolling && !isCompose) rolledBack = true;
+      // decideDeployOutcome is the ONE exit-code contract, shared with the hub-restart adoption path.
+      const { ok, rolledBack } = decideDeployOutcome(code, { rolling, recreate, isCompose, hadPrev });
       // The IMAGE prep steps echo the digest marker; for a build-server deploy those steps run on the
       // BUILD server (buildLog), not the deploy server (r.output), so parse the COMBINED output.
       const combinedOutput = buildLog ? `${buildLog}\n${r.output}` : r.output;
@@ -1972,6 +2052,25 @@ export class ApplicationsService {
           .catch(() => undefined);
       }
     } catch (e) {
+      // The agent's socket dropped while our DURABLE main command was running there. The command keeps running
+      // on the agent (its journal has it), so this is NOT a failure: release the lease (ownerId → null, phase
+      // RECOVERING) and write nothing else — no FAILED row, no Application.status — and let DeployRecoveryService
+      // adopt the exact command when the agent is back (now, if it already reconnected; else on its reconnect
+      // hook / the ticker; past deadlineAt it settles as interrupted). A requested cancel is NOT excluded: the
+      // signed kill may never have reached the agent (the socket was already gone), and a durable command outlives
+      // the drop — so the journal, not our intent, decides: killed → CANCELLED on adoption, else the real outcome.
+      if (e instanceof AgentDisconnectedException && dispatched) {
+        const released = await this.prisma.deployment
+          .updateMany({ where: { id: dep.id, status: "RUNNING", ownerId: this.lease.bootId }, data: { ownerId: null, phase: "RECOVERING" } })
+          .catch(() => ({ count: 0 }));
+        if (released.count === 1) {
+          this.logger.warn(`deploy ${dep.id} (app ${app.id}): agent ${app.serverId} disconnected mid-command — lease released for adoption`);
+          this.deployLogs.push(app.id, "TUGRA: connection to the agent dropped; the deploy keeps running there and is re-adopted when it reconnects\n");
+          this.leaseReleasedHook?.(app.serverId);
+          // finally still runs (clears the cancel registry; drain is a no-op while this row stays RUNNING).
+          return this.prisma.deployment.findUnique({ where: { id: dep.id } });
+        }
+      }
       // Best-effort: a build-server / git-compose failure throws with output that may still carry the commit
       // marker. GIT or git-compose only, so a pasted-IMAGE/COMPOSE failure message can't forge one. (isGitCompose
       // lives in the try scope, so the discriminator is inlined here.)
@@ -2026,6 +2125,99 @@ export class ApplicationsService {
     }
     await this.audit.log({ actor, action: "app.deploy", target: app.id });
     return this.prisma.deployment.findUnique({ where: { id: dep.id } });
+  }
+
+  /**
+   * Settle a deploy this process ADOPTED after a hub restart / socket drop, from the agent's journaled result of
+   * the exact command that was dispatched — judged by the plan frozen at dispatch, never by today's config.
+   * Mirrors executeDeploy's terminal block (status, kind, tags, digest/commit markers, app status, live-log
+   * finish, notification, image prune/cleanup, queue drain). Every write is a CAS on (RUNNING, ownerId = us),
+   * so a row somebody else settled meanwhile is left alone. No-op when the app is gone (row cascaded).
+   */
+  async finalizeAdopted(dep: Deployment, result: { exitCode: number; output: string; killed: boolean }): Promise<void> {
+    const app = await this.prisma.application.findUnique({ where: { id: dep.appId } });
+    if (!app) return;
+    const plan = isDispatchPlan(dep.dispatchPlan) ? dep.dispatchPlan : null;
+    if (!plan) {
+      await this.settleInterrupted(dep, "the dispatch plan recorded for this deploy is unreadable");
+      return;
+    }
+    // A build-server deploy's commit marker + build log live in the build phase (buildLogHead), as on the live path.
+    const output = (plan.buildLogHead ? `${plan.buildLogHead}\n${result.output}` : result.output).slice(0, 65536);
+    this.cancelRequested.delete(dep.id);
+    const ownerGuard = { id: dep.id, status: "RUNNING" as const, ownerId: this.lease.bootId };
+    const clear = { ownerId: null, phase: null };
+    const tagsToReap = plan.isCompose ? [] : [plan.runTag, plan.registryRef].filter((x): x is string => !!x);
+    if (result.killed) {
+      // A command_cancel killed it (requested before the hub died, or via the row's handle afterwards): CANCELLED,
+      // never FAILED, no auto-rollback bookkeeping, app status untouched — the live path's exact semantics.
+      const { count } = await this.prisma.deployment.updateMany({
+        where: ownerGuard,
+        data: { status: "CANCELLED", logs: `${output}\nCancelled by user`.slice(0, 65536), exitCode: result.exitCode, ...this.finishStamp(dep), ...clear },
+      });
+      if (count !== 1) return;
+      this.deployLogs.finish(app.id, { status: "FAILED", exitCode: result.exitCode, deploymentId: dep.id });
+      if (tagsToReap.length) await this.agentWs.sendCommand(app.serverId, buildImageRemoveScriptForTags(app.id, tagsToReap), "cleanup").catch(() => undefined);
+      await this.audit.log({ actor: dep.requestedBy ?? "system", action: "app.deploy.cancel", target: app.id });
+      void this.drain(app.id);
+      return;
+    }
+    const { ok, rolledBack } = decideDeployOutcome(result.exitCode, plan);
+    const cc = plan.gitSourced ? parseCommit(output) : null;
+    const { count } = await this.prisma.deployment.updateMany({
+      where: ownerGuard,
+      data: {
+        status: ok ? "SUCCESS" : "FAILED",
+        kind: rolledBack ? "AUTO_ROLLBACK" : "DEPLOY",
+        logs: output,
+        exitCode: result.exitCode,
+        imageTag: ok && !plan.isCompose ? plan.runTag : null,
+        registryImage: ok ? plan.registryRef : null,
+        imageDigest: ok && !plan.isCompose ? parseImageDigest(output) : null,
+        commitSha: cc?.sha ?? null,
+        commitMessage: cc?.message ?? null,
+        ...this.finishStamp(dep),
+        ...clear,
+      },
+    });
+    if (count !== 1) return;
+    // The main command always ran on the live server (swapAttempted), so — exactly like the live path — the app
+    // reflects the verdict: ok or rolled back → RUNNING, else FAILED.
+    await this.prisma.application.update({ where: { id: app.id }, data: { status: ok || rolledBack ? AppStatus.RUNNING : AppStatus.FAILED } }).catch(() => undefined);
+    // Post-deploy hook (classic path): the live path runs it after the status write; an adopted SUCCESS must too, or
+    // e.g. migrations silently never run. Best-effort, never changes the verdict; output appended like the live path.
+    if (ok && !plan.isCompose && plan.postDeploy && app.postDeployCommand?.trim()) {
+      const pr = await this.agentWs
+        .sendCommand(app.serverId, buildPostDeployScript(this.toSpec(app)), "deploy", this.deployTimeoutMs(app), (chunk) => this.deployLogs.push(app.id, chunk))
+        .catch((e) => ({ output: e instanceof Error ? e.message : "post-deploy hook failed to run", exitCode: -1 }));
+      if (pr?.output) await this.prisma.deployment.update({ where: { id: dep.id }, data: { logs: `${output}\n${pr.output}`.slice(0, 65536) } }).catch(() => undefined);
+    }
+    this.deployLogs.finish(app.id, { status: ok ? "SUCCESS" : "FAILED", exitCode: result.exitCode, deploymentId: dep.id });
+    this.notifyDeploy(app, dep, ok ? "deploy_success" : rolledBack ? "deploy_rolled_back" : "deploy_failed").catch(() => {});
+    if (ok && !plan.isCompose) void this.pruneImages(app).catch(() => undefined);
+    else if (tagsToReap.length) await this.agentWs.sendCommand(app.serverId, buildImageRemoveScriptForTags(app.id, tagsToReap), "cleanup").catch(() => undefined);
+    await this.audit.log({ actor: dep.requestedBy ?? "system", action: "app.deploy", target: app.id });
+    void this.drain(app.id);
+  }
+
+  /**
+   * A dispatched deploy whose outcome can NOT be recovered (the agent restarted mid-command, has no journal of it,
+   * never answered, or the deadline passed): the SAME terminal shape the boot reap writes (FAILED, exit -1, the
+   * interrupted note) plus a one-line detail, so every consumer (rollouts: "interrupted → halt", the UI note)
+   * keeps working. Application.status is deliberately NOT written — the live state is unknown and a serving app
+   * must never be flipped to FAILED on hub-side uncertainty. Drains the app's queue so later QUEUED rows proceed.
+   */
+  async settleInterrupted(dep: { id: string; appId: string }, detail: string): Promise<boolean> {
+    const { count } = await this.prisma.deployment.updateMany({
+      where: { id: dep.id, status: "RUNNING" },
+      data: { status: "FAILED", exitCode: -1, logs: `${INTERRUPTED_DEPLOY_NOTE}\n${detail}`, ownerId: null, phase: null },
+    });
+    if (count !== 1) return false;
+    this.cancelRequested.delete(dep.id);
+    this.logger.warn(`deploy ${dep.id} (app ${dep.appId}) settled as interrupted: ${detail}`);
+    this.deployLogs.finish(dep.appId, { status: "FAILED", exitCode: -1, deploymentId: dep.id });
+    void this.drain(dep.appId);
+    return true;
   }
 
   /** Re-run a previous successful deployment's image without rebuilding/pulling. */
@@ -2484,7 +2676,7 @@ export class ApplicationsService {
     return rows.map((d, i) => {
       const next = (d.configSnapshot as ConfigSnapshot | null) ?? null;
       const prev = (rows[i + 1]?.configSnapshot as ConfigSnapshot | null) ?? null;
-      const { configSnapshot: _snap, ...rest } = d;
+      const { configSnapshot: _snap, ownerId: _o, heartbeatAt: _h, phase: _p, agentReqId: _r, agentServerId: _s, deadlineAt: _dl, dispatchPlan: _dp, ...rest } = d;
       // A SUCCESS deploy is a rollback target if its artifact is retained: for compose that's the
       // compose YAML in its snapshot (recorded at deploy START, so it exists on FAILED rows too →
       // the status gate is essential); otherwise the local image tag or a portable registry image.

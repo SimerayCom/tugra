@@ -7,6 +7,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Deploys survive a hub restart.** A deploy that is running when the hub restarts (or when the agent's
+  connection drops) is no longer marked failed blind. The agent keeps running it and keeps a local command
+  journal; when it reconnects the hub picks the deploy back up and records the real outcome — success,
+  failure, auto-rollback or cancelled — with the live log continuing in the panel. Only when the result
+  genuinely cannot be known (the agent itself restarted, or it never reports back before the deadline) does
+  the deploy show as interrupted, and the app's status is never changed on a guess. Requires the updated
+  agent (older agents keep the previous behaviour until they are updated via *Update agent*).
+
 ## [0.1.0-beta.6] - 2026-11-10
 
 - **Traffic analytics.** A new Traffic page (under Monitor) with privacy-preserving, self-hosted visitor

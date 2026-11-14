@@ -18,6 +18,7 @@ import (
 	"github.com/SimerayCom/tugra/agent/internal/client"
 	"github.com/SimerayCom/tugra/agent/internal/config"
 	"github.com/SimerayCom/tugra/agent/internal/fsd"
+	"github.com/SimerayCom/tugra/agent/internal/journal"
 	"github.com/SimerayCom/tugra/agent/internal/keys"
 	"github.com/SimerayCom/tugra/agent/internal/migrate"
 	"github.com/SimerayCom/tugra/agent/internal/protocol"
@@ -74,6 +75,9 @@ func main() {
 		// The agent's own image, re-invoked as the sandboxed fsd helper. Learned locally
 		// (install/compose sets it), never from the hub. Empty ⇒ file ops stay unavailable (fail-closed).
 		AgentImage: envOr("TUGRA_AGENT_IMAGE", ""),
+		// Durable command journal next to the identity files (same persisted volume): deploys dispatched as
+		// `durable` survive a hub restart / socket drop and the hub can recover their outcome.
+		Journal: journal.New(filepath.Join(home, ".tugra", "journal")),
 	}
 
 	kp, err := keys.LoadOrCreate(cfg.KeyPath)

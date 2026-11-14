@@ -11,11 +11,12 @@ import { WebSocket, WebSocketServer } from "ws";
 import type {
   AgentCapability,
   AgentMessage,
+  CommandStateMsg,
   FsEntry,
   TermExitMsg,
   TermOutputMsg,
 } from "@tugra/shared";
-import { PROTOCOL_VERSION, checkAgentCompat, canonicalCommand, canonicalCommandCancel, canonicalTermStart, canonicalLogStart, canonicalAgentUpdate, canonicalFs } from "@tugra/shared";
+import { PROTOCOL_VERSION, checkAgentCompat, canonicalCommand, canonicalCommandCancel, canonicalCommandStatus, canonicalTermStart, canonicalLogStart, canonicalAgentUpdate, canonicalFs } from "@tugra/shared";
 import { HubSigningService } from "./hub-signing.service";
 import { AgentCommandTimeoutException, AgentDisconnectedException, AgentOfflineException } from "./agent-offline.exception";
 
@@ -38,6 +39,13 @@ import { ContainerMetricsService } from "../metrics/container-metrics.service";
 import { TrafficMetricsService } from "../traffic/traffic-metrics.service";
 import { ServersService } from "../servers/servers.service";
 import { observedIp } from "../common/observed-ip";
+
+/** Normalize an agent's advertised feature list (bounded, strings only). */
+function featureSet(raw: unknown): Set<string> {
+  const out = new Set<string>();
+  if (Array.isArray(raw)) for (const f of raw.slice(0, 32)) if (typeof f === "string" && f.length <= 64) out.add(f);
+  return out;
+}
 
 // Trust X-Forwarded-For only when the hub is explicitly behind a reverse proxy;
 // otherwise the raw TCP peer address (which an agent cannot spoof) is used.
@@ -63,7 +71,38 @@ interface ConnState {
   remoteIp?: string | null;
   isAlive: boolean; // ws keepalive: pong flips it true; the ping sweep terminates a socket that missed one
   authTimer?: ReturnType<typeof setTimeout>; // pre-auth deadline; cleared on auth/enroll/close
+  /** Per-feature flags the agent advertised in enroll/auth (e.g. cmd_journal_v1). Empty for older agents. */
+  features: Set<string>;
 }
+
+/** Options for sendCommand beyond the positional parameters (all optional; the legacy call shape is unchanged). */
+export interface SendCommandOptions {
+  /** Caller-chosen reqId (must be unique per hub; used as the agent's journal key). Default: a fresh UUID. */
+  reqId?: string;
+  /** Mark the command `durable` so a cmd_journal_v1 agent journals it (survives a socket drop, never re-run). */
+  durable?: boolean;
+  /** Awaited AFTER the online + capability checks and BEFORE the frame is written; a throw aborts the send (nothing
+   *  reaches the agent). Lets a caller persist the reqId with a compare-and-set so a crash can never leave a
+   *  dispatched command the DB does not know about. */
+  beforeSend?: (reqId: string) => Promise<void>;
+}
+
+/** What adoptCommand resolved to. */
+export type AdoptedCommand =
+  | { kind: "result"; exitCode: number; output: string; killed: boolean }
+  | { kind: "interrupted"; output: string }
+  | { kind: "unknown" }
+  | { kind: "no_reply" };
+
+interface StatePending {
+  serverId: string;
+  resolve: (r: CommandStateMsg | null) => void;
+  timer: NodeJS.Timeout;
+}
+
+/** Extra hub-side slack over the agent's own timeout for a durable command, so the agent's timeout result (a
+ *  real exit code + output) arrives before the hub gives up on its own. */
+export const DURABLE_TIMEOUT_SLACK_MS = 15_000;
 
 interface Pending {
   serverId: string;
@@ -99,6 +138,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly sockets = new Map<string, WebSocket>(); // serverId → socket
   private readonly pending = new Map<string, Pending>(); // reqId → resolver
   private readonly fsPending = new Map<string, FsPending>(); // reqId → file-op resolver
+  private readonly statePending = new Map<string, StatePending>(); // reqId → command_status resolver
   private readonly chunkListeners = new Map<string, (chunk: string) => void>(); // reqId → live log sink
   private readonly logListeners = new Map<string, LogListener>(); // streamId → live container-log sink
   private readonly logStreamsByServer = new Map<string, Set<string>>(); // serverId → streamIds (disconnect teardown)
@@ -203,7 +243,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
     // hold a connection open indefinitely). Cleared on successful enroll/auth and on close.
     const authTimer = setTimeout(() => this.closeIfUnauthed(socket), AUTH_DEADLINE_MS);
     authTimer.unref?.();
-    this.state.set(socket, { nonce, authed: false, remoteIp, isAlive: true, authTimer });
+    this.state.set(socket, { nonce, authed: false, remoteIp, isAlive: true, authTimer, features: new Set() });
     this.send(socket, { type: "challenge", nonce });
 
     // ws keepalive: a pong marks the socket alive again for the next sweep (see startKeepalive).
@@ -255,6 +295,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           });
           st.serverId = serverId;
           st.authed = true;
+          st.features = featureSet(msg.features);
           this.clearAuthTimer(st);
           this.adoptSocket(serverId, socket);
           // Re-assert ONLINE on the live socket: if a prior socket closed during the enroll/auth await, its
@@ -295,6 +336,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           }
           st.serverId = msg.serverId;
           st.authed = true;
+          st.features = featureSet(msg.features);
           this.clearAuthTimer(st);
           this.adoptSocket(msg.serverId, socket);
           // Re-assert ONLINE on the live socket (see the enroll path): a prior socket closing during the auth
@@ -345,6 +387,12 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           return;
         }
         case "command_log": {
+          // Bound like command_result: only the authed socket of the server the command was sent to may feed its
+          // live log (deploy reqIds are now predictable `dep-<id>`, so an unbound sink would let any socket inject
+          // lines — including fake TUGRA markers — into another server's deploy stream).
+          if (!st.authed || !st.serverId) return;
+          const p = this.pending.get(msg.reqId);
+          if (!p || p.serverId !== st.serverId) return;
           this.chunkListeners.get(msg.reqId)?.(msg.chunk);
           return;
         }
@@ -364,13 +412,25 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           return;
         }
         case "command_result": {
+          // Only the authed socket of the server the command was sent to may resolve it (fs_result isolation):
+          // a reply relayed by a different agent must never settle another server's command.
+          if (!st.authed || !st.serverId) return;
           const p = this.pending.get(msg.reqId);
-          if (p) {
+          if (p && p.serverId === st.serverId) {
             clearTimeout(p.timer);
             this.pending.delete(msg.reqId);
             this.chunkListeners.delete(msg.reqId);
             p.resolve({ exitCode: msg.exitCode, output: msg.output });
           }
+          return;
+        }
+        case "command_state": {
+          if (!st.authed || !st.serverId) return;
+          const p = this.statePending.get(msg.reqId);
+          if (!p || p.serverId !== st.serverId) return;
+          clearTimeout(p.timer);
+          this.statePending.delete(msg.reqId);
+          p.resolve(msg);
           return;
         }
         case "agent_update_result": {
@@ -418,6 +478,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
     timeoutMs = 20_000,
     onChunk?: (chunk: string) => void,
     onStart?: (reqId: string) => void,
+    opts: SendCommandOptions = {},
   ): Promise<{ exitCode: number; output: string }> {
     const socket = this.sockets.get(serverId);
     if (!socket || socket.readyState !== WebSocket.OPEN) {
@@ -430,30 +491,172 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
     if (!(await this.isCapabilityGranted(serverId, capability))) {
       throw new ForbiddenException(`capability "${capability}" is not granted for this server`);
     }
-    const reqId = randomUUID();
+    const reqId = opts.reqId ?? randomUUID();
+    if (this.pending.has(reqId)) throw new Error(`a command with reqId ${reqId} is already in flight`);
+    // Persist-before-send hook (durable deploys): a throw here aborts BEFORE anything reaches the agent, so a
+    // crash can never leave a dispatched command the DB does not know about.
+    if (opts.beforeSend) await opts.beforeSend(reqId);
+    // Re-check the socket: the await above may have outlived the connection.
+    const live = this.sockets.get(serverId);
+    if (!live || live.readyState !== WebSocket.OPEN) throw new AgentOfflineException();
+    const durable = opts.durable === true;
+    const hubTimeoutMs = durable ? timeoutMs + DURABLE_TIMEOUT_SLACK_MS : timeoutMs;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(reqId);
         this.chunkListeners.delete(reqId);
         reject(new AgentCommandTimeoutException("command timed out"));
-      }, timeoutMs);
+      }, hubTimeoutMs);
       // Don't let a stray command timer keep the process alive (clean teardown).
       timer.unref?.();
       this.pending.set(reqId, { serverId, resolve, reject, timer });
       if (onChunk) this.chunkListeners.set(reqId, onChunk);
-      this.send(socket, this.signOutbound({ type: "command", reqId, command, timeoutMs, capability }));
+      this.send(live, this.signOutbound({ type: "command", reqId, command, timeoutMs, capability, ...(durable ? { durable: true } : {}) }));
       // Expose the reqId to the caller AFTER the command is on the wire, so a cancel can target it.
       onStart?.(reqId);
     });
   }
 
+  /** Does the connected agent for this server advertise a feature flag (e.g. cmd_journal_v1)? False when offline
+   *  or for an older agent that sent none — callers then take the legacy path. */
+  agentSupports(serverId: string, feature: string): boolean {
+    const socket = this.sockets.get(serverId);
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    return this.state.get(socket)?.features.has(feature) ?? false;
+  }
+
+  /**
+   * Ask a cmd_journal_v1 agent what happened to a durable command (signed command_status → command_state). Resolves
+   * null when the agent does not answer within timeoutMs (an old agent ignores the unknown type) and rejects with
+   * AgentDisconnectedException if its socket drops meanwhile. Read-only: the agent never re-runs anything.
+   */
+  queryCommand(serverId: string, reqId: string, timeoutMs = 10_000): Promise<CommandStateMsg | null> {
+    const socket = this.sockets.get(serverId);
+    if (!socket || socket.readyState !== WebSocket.OPEN) throw new AgentOfflineException();
+    return new Promise<CommandStateMsg | null>((resolve) => {
+      const timer = setTimeout(() => {
+        this.statePending.delete(reqId);
+        resolve(null);
+      }, timeoutMs);
+      timer.unref?.();
+      this.statePending.set(reqId, { serverId, resolve, timer });
+      this.send(socket, this.signOutbound({ type: "command_status", reqId }));
+    });
+  }
+
+  /**
+   * Adopt a durable command another hub process dispatched: register the result/chunk listeners FIRST (so a
+   * command_result racing the status query is never lost), ask the agent for its state, then either return the
+   * journaled result (done), await the live command_result until `deadlineMs` (running), or report that the
+   * outcome cannot be known (interrupted / unknown / no reply from an old agent). Rejects with
+   * AgentDisconnectedException if the agent drops while we wait, so the caller can release the lease again.
+   */
+  async adoptCommand(serverId: string, reqId: string, onChunk: (chunk: string) => void, deadlineMs: number): Promise<AdoptedCommand> {
+    const socket = this.sockets.get(serverId);
+    if (!socket || socket.readyState !== WebSocket.OPEN) throw new AgentOfflineException();
+    if (this.pending.has(reqId)) throw new Error(`a command with reqId ${reqId} is already in flight`);
+    let settle!: (r: AdoptedCommand) => void;
+    let fail!: (e: Error) => void;
+    const outcome = new Promise<AdoptedCommand>((res, rej) => {
+      settle = res;
+      fail = rej;
+    });
+    const timer = setTimeout(() => {
+      this.pending.delete(reqId);
+      this.chunkListeners.delete(reqId);
+      settle({ kind: "no_reply" });
+    }, Math.max(1_000, deadlineMs));
+    timer.unref?.();
+    // The pending entry resolves on the LIVE command_result (running case). Its killed flag is unknown on that
+    // path (the live frame has none), so a follow-up status query fills it in below.
+    this.pending.set(reqId, {
+      serverId,
+      resolve: ({ exitCode, output }) => void this.finishAdopted(serverId, reqId, exitCode, output).then(settle, fail),
+      reject: fail,
+      timer,
+    });
+    this.chunkListeners.set(reqId, onChunk);
+    // Race the status query against the live outcome: a command_result (or a drop / the deadline) that lands
+    // while we ask must win immediately rather than wait out the query timer.
+    type Step = { t: "state"; s: CommandStateMsg | null } | { t: "out"; o: AdoptedCommand } | { t: "err"; e: unknown };
+    const step: Step = await Promise.race([
+      this.queryCommand(serverId, reqId).then(
+        (s): Step => ({ t: "state", s }),
+        (e): Step => ({ t: "err", e }),
+      ),
+      outcome.then(
+        (o): Step => ({ t: "out", o }),
+        (e): Step => ({ t: "err", e }),
+      ),
+    ]);
+    if (step.t === "out") {
+      this.dropStatePending(reqId);
+      return step.o;
+    }
+    if (step.t === "err") {
+      this.dropPending(reqId);
+      this.dropStatePending(reqId);
+      throw step.e;
+    }
+    const state = step.s;
+    if (!this.pending.has(reqId)) return outcome; // the live result already landed while we asked
+    if (!state) {
+      this.dropPending(reqId);
+      return { kind: "no_reply" };
+    }
+    switch (state.state) {
+      case "done":
+        this.dropPending(reqId);
+        return { kind: "result", exitCode: state.exitCode ?? -1, output: state.output ?? "", killed: state.killed === true };
+      case "running":
+        // Seed the live stream with what ran so far, then wait for command_result (or the deadline / a drop).
+        if (state.output) onChunk(state.output);
+        return outcome;
+      case "interrupted":
+        this.dropPending(reqId);
+        return { kind: "interrupted", output: state.output ?? "" };
+      default:
+        this.dropPending(reqId);
+        return { kind: "unknown" };
+    }
+  }
+
+  /** After a live command_result during adoption, ask the journal whether it was a cancel kill (best-effort). */
+  private async finishAdopted(serverId: string, reqId: string, exitCode: number, output: string): Promise<AdoptedCommand> {
+    let killed = false;
+    if (exitCode !== 0) {
+      try {
+        const st = await this.queryCommand(serverId, reqId, 5_000);
+        killed = st?.state === "done" && st.killed === true;
+      } catch {
+        /* best-effort: a drop here leaves killed=false (FAILED, never a false CANCELLED) */
+      }
+    }
+    return { kind: "result", exitCode, output, killed };
+  }
+
+  private dropStatePending(reqId: string): void {
+    const p = this.statePending.get(reqId);
+    if (p) clearTimeout(p.timer);
+    this.statePending.delete(reqId);
+  }
+
+  private dropPending(reqId: string): void {
+    const p = this.pending.get(reqId);
+    if (p) clearTimeout(p.timer);
+    this.pending.delete(reqId);
+    this.chunkListeners.delete(reqId);
+  }
+
   /** Cancel an in-flight command by reqId — signs a `command_cancel` the agent verifies, then kills that
    *  command's process group. Best-effort + fire-and-forget: the original command's `command_result` still
-   *  arrives (with a non-zero exit) and resolves its sendCommand promise. A no-op if the agent is offline. */
-  cancelCommand(serverId: string, reqId: string): void {
+   *  arrives (with a non-zero exit) and resolves its sendCommand promise. Returns false (no-op) if the agent is
+   *  offline, so a caller that needs the kill to have been delivered can refuse instead of pretending. */
+  cancelCommand(serverId: string, reqId: string): boolean {
     const socket = this.sockets.get(serverId);
-    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
     this.send(socket, this.signOutbound({ type: "command_cancel", reqId }));
+    return true;
   }
 
   /**
@@ -495,6 +698,8 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
       );
     } else if (msg.type === "command_cancel") {
       msg.sig = this.hubSign.sign(canonicalCommandCancel(msg.reqId as string));
+    } else if (msg.type === "command_status") {
+      msg.sig = this.hubSign.sign(canonicalCommandStatus(msg.reqId as string));
     } else if (msg.type === "term_start") {
       msg.sig = this.hubSign.sign(
         canonicalTermStart(
@@ -693,6 +898,12 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
       clearTimeout(p.timer);
       this.fsPending.delete(reqId);
       p.reject(new AgentDisconnectedException("agent disconnected"));
+    }
+    for (const [reqId, p] of this.statePending) {
+      if (p.serverId !== serverId) continue;
+      clearTimeout(p.timer);
+      this.statePending.delete(reqId);
+      p.resolve(null); // no answer from a connection that is gone; adoptCommand's own pending reject carries the drop
     }
   }
 

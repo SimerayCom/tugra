@@ -18,6 +18,7 @@ import (
 	"github.com/SimerayCom/tugra/agent/internal/exec"
 	"github.com/SimerayCom/tugra/agent/internal/fsd"
 	"github.com/SimerayCom/tugra/agent/internal/hostinfo"
+	"github.com/SimerayCom/tugra/agent/internal/journal"
 	"github.com/SimerayCom/tugra/agent/internal/keys"
 	"github.com/SimerayCom/tugra/agent/internal/logs"
 	"github.com/SimerayCom/tugra/agent/internal/metrics"
@@ -106,6 +107,13 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 		return fmt.Errorf("expected challenge, got %q", challenge.Type)
 	}
 
+	// The durable command journal is process-level (shared across reconnects) when main.go provides it; a nil
+	// one (tests) degrades to a per-connection memory-only registry with the same semantics.
+	reg := cfg.Journal
+	if reg == nil {
+		reg = journal.New("")
+	}
+
 	usedAuth := store.ServerID != "" && !forceEnroll
 	if usedAuth {
 		if err := send(protocol.Auth{
@@ -114,6 +122,7 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 			ServerID:     store.ServerID,
 			Signature:    kp.SignBase64(challenge.Nonce),
 			AgentVersion: cfg.Version, // refresh the hub's stored version on reconnect (e.g. after self-update)
+			Features:     protocol.Features,
 		}); err != nil {
 			return err
 		}
@@ -131,6 +140,7 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 			AgentVersion: cfg.Version,
 			Hostname:     host,
 			Fingerprint:  host,
+			Features:     protocol.Features,
 		}); err != nil {
 			return err
 		}
@@ -163,6 +173,11 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 	if onReady != nil {
 		onReady()
 	}
+	// From here this connection is the one journaled commands report on: a command started on an earlier
+	// connection emits its command_log/command_result through the registry's sink, which now points at us.
+	// Detached on exit so a dead socket is never written to (the journal keeps the result for command_status).
+	reg.SetSink(send)
+	defer reg.ClearSink()
 
 	// Pin the hub's signing key (TOFU, per connection). Commands/term_start must
 	// carry a valid signature from this key or the agent rejects them.
@@ -199,13 +214,16 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 	// Reader: handle commands + terminal + log-follow sessions from the hub.
 	sessions := map[string]*terminal.Session{}
 	logStreams := map[string]*logs.Session{}
-	// Running commands by reqId → cancel func, so a signed `command_cancel` can kill one mid-flight
-	// (cancelling its context fires exec's Setpgid SIGKILL on the whole process group).
-	running := map[string]context.CancelFunc{}
-	var runMu sync.Mutex
+	// Running commands (by reqId → cancel func) live in the process-level registry, so a signed `command_cancel`
+	// can kill one mid-flight — also on a LATER connection than the one it started on (cancelling its context
+	// fires exec's Setpgid SIGKILL on the whole process group).
 	var sessMu sync.Mutex
 	var updating atomic.Bool // single-flight: ignore duplicate agent_update messages once one is in flight
+	// Closed when the reader exits (socket gone), so the session returns and reconnects immediately instead of
+	// waiting for the next 5s heartbeat write to fail — a hub restart is noticed within milliseconds.
+	readerDone := make(chan struct{})
 	go func() {
+		defer close(readerDone)
 		// On disconnect, tear down every live terminal + log stream (no zombie shells / `docker logs -f`).
 		defer func() {
 			sessMu.Lock()
@@ -232,36 +250,68 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 					fmt.Fprintln(os.Stderr, "rejected command: capability not allowed:", m.Capability)
 					continue
 				}
-				go func(reqID, command string, timeoutMs int) {
+				// Durable (journaled) command: never run the same reqId twice. A still-running duplicate is
+				// ignored (its result will arrive), a finished one gets its stored result re-sent, and one that
+				// was running when this agent PROCESS last died is reported with the interruption marker.
+				if m.Durable {
+					switch disp, e := reg.Begin(m.ReqID, m.Command); disp {
+					case journal.Running:
+						continue
+					case journal.Done:
+						_ = reg.Send(protocol.CommandResult{Type: "command_result", ReqID: m.ReqID, ExitCode: e.ExitCode, Output: e.Output})
+						continue
+					case journal.Interrupted:
+						_ = reg.Send(protocol.CommandResult{Type: "command_result", ReqID: m.ReqID, ExitCode: -1, Output: e.Output + "\n" + interruptedMarker})
+						continue
+					}
+				}
+				go func(reqID, command string, timeoutMs int, durable bool) {
 					to := commandTimeout
 					if timeoutMs > 0 {
 						to = time.Duration(timeoutMs) * time.Millisecond
 					}
-					// Per-command cancellable context so a `command_cancel` can SIGKILL its process group.
+					// Per-command cancellable context so a `command_cancel` can SIGKILL its process group. The
+					// parent is the PROCESS context (not this connection's): a socket drop must not kill a deploy
+					// that is half-way through swapping containers — it finishes and reports on the next connection.
 					cmdCtx, cancel := context.WithCancel(ctx)
-					runMu.Lock()
-					running[reqID] = cancel
-					runMu.Unlock()
+					var userCancelled atomic.Bool // set ONLY by a signed command_cancel (reg.Cancel), never by shutdown
+					reg.Track(reqID, func() {
+						userCancelled.Store(true)
+						cancel()
+					})
 					defer func() {
-						runMu.Lock()
-						delete(running, reqID)
-						runMu.Unlock()
+						reg.Untrack(reqID)
 						cancel()
 					}()
 					r := exec.RunStreaming(cmdCtx, command, to, func(chunk string) {
-						_ = send(protocol.CommandLog{
+						if durable {
+							reg.Chunk(reqID, chunk)
+						}
+						_ = reg.Send(protocol.CommandLog{
 							Type:  "command_log",
 							ReqID: reqID,
 							Chunk: chunk,
 						})
 					})
-					_ = send(protocol.CommandResult{
+					// Agent shutdown (the PROCESS ctx was cancelled: SIGTERM, restart, self-update): the kill was not a
+					// user cancel and the outcome is unknowable — journal NO verdict, so the persisted running entry
+					// reloads as "interrupted" on the next start, and send nothing (the hub settles it honestly).
+					if ctx.Err() != nil {
+						return
+					}
+					// killed = a signed command_cancel reached us — distinct from the command's own timeout (exec's inner
+					// deadline leaves cmdCtx intact) and, per the check above, from shutdown.
+					killed := userCancelled.Load()
+					if durable {
+						reg.Finish(reqID, r.ExitCode, killed)
+					}
+					_ = reg.Send(protocol.CommandResult{
 						Type:     "command_result",
 						ReqID:    reqID,
 						ExitCode: r.ExitCode,
 						Output:   r.Output,
 					})
-				}(m.ReqID, m.Command, m.TimeoutMs)
+				}(m.ReqID, m.Command, m.TimeoutMs, m.Durable)
 			case "command_cancel":
 				// Kill a running command's process group. Verified by the hub signature over the reqId; the
 				// command was already capability-gated when it started, so cancelling needs no extra grant.
@@ -269,11 +319,25 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 					fmt.Fprintln(os.Stderr, "rejected command_cancel: invalid or missing hub signature")
 					continue
 				}
-				runMu.Lock()
-				if cancel := running[m.ReqID]; cancel != nil {
-					cancel()
+				reg.Cancel(m.ReqID)
+			case "command_status":
+				// Read-only journal lookup (cmd_journal_v1). Verified by the hub signature over the reqId; nothing is
+				// executed in response, so no capability check is needed. Answers on THIS connection.
+				if !protocol.VerifySig(hubPub, protocol.CanonicalCommandStatus(m.ReqID), m.Sig) {
+					fmt.Fprintln(os.Stderr, "rejected command_status: invalid or missing hub signature")
+					continue
 				}
-				runMu.Unlock()
+				e, disp := reg.Status(m.ReqID)
+				st := protocol.CommandState{Type: "command_state", ReqID: m.ReqID, State: disp.String(), StartedAt: e.StartedAt}
+				switch disp {
+				case journal.Done:
+					st.ExitCode, st.Output, st.Killed, st.FinishedAt = e.ExitCode, e.Output, e.Killed, e.FinishedAt
+				case journal.Running:
+					st.Output = e.Output
+				case journal.Interrupted:
+					st.Output = e.Output
+				}
+				_ = send(st)
 			case "term_start":
 				if !protocol.VerifySig(hubPub, protocol.CanonicalTermStart(m.SessionID, m.Target, m.Cols, m.Rows, m.Capability), m.Sig) {
 					fmt.Fprintln(os.Stderr, "rejected term_start: invalid or missing hub signature")
@@ -488,6 +552,8 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-readerDone:
+			return errors.New("connection closed by hub")
 		case <-hostTicker.C:
 			sendHostInfo()
 		case <-ticker.C:
@@ -502,6 +568,10 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 		}
 	}
 }
+
+// interruptedMarker is appended to the re-sent result of a durable command that was running when the agent
+// process itself died (its real outcome is unknown; the hub treats it like a hub-restart interruption).
+const interruptedMarker = "TUGRA_INTERRUPTED: the agent restarted while this command was running; its result is unknown"
 
 // allowsCapability reports whether the allowlist permits a capability. FAIL-CLOSED: an empty
 // allowlist denies everything (deny-by-default). The bypass escape hatch lives in capState.

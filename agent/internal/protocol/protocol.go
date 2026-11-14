@@ -64,6 +64,8 @@ type Enroll struct {
 	AgentVersion string `json:"agentVersion"`
 	Hostname     string `json:"hostname"`
 	Fingerprint  string `json:"fingerprint"`
+	// Features are optional per-feature flags (e.g. FeatureCmdJournal). Additive: an older hub ignores them.
+	Features []string `json:"features,omitempty"`
 }
 
 type Auth struct {
@@ -73,6 +75,28 @@ type Auth struct {
 	Signature string `json:"signature"`
 	// AgentVersion refreshes the hub's stored version on reconnect (e.g. after a self-update).
 	AgentVersion string `json:"agentVersion,omitempty"`
+	// Features are optional per-feature flags (e.g. FeatureCmdJournal). Additive: an older hub ignores them.
+	Features []string `json:"features,omitempty"`
+}
+
+// FeatureCmdJournal: this agent journals `durable` commands on disk, keeps them running across a WebSocket drop,
+// never re-runs a re-sent reqId, and answers command_status with command_state. Mirrors
+// AGENT_FEATURE_CMD_JOURNAL in packages/shared.
+const FeatureCmdJournal = "cmd_journal_v1"
+
+// Features is the list this agent advertises in enroll/auth.
+var Features = []string{FeatureCmdJournal}
+
+// CommandState: Agent -> Hub, reply to command_status (what happened to a durable command).
+type CommandState struct {
+	Type       string `json:"type"` // "command_state"
+	ReqID      string `json:"reqId"`
+	State      string `json:"state"`    // running | done | interrupted | unknown
+	ExitCode   int    `json:"exitCode"` // never omitted: a journaled exit 0 must reach the hub as 0, not as "absent"
+	Output     string `json:"output,omitempty"`
+	Killed     bool   `json:"killed,omitempty"`
+	StartedAt  int64  `json:"startedAt,omitempty"`
+	FinishedAt int64  `json:"finishedAt,omitempty"`
 }
 
 type Metrics struct {
@@ -255,6 +279,9 @@ type ServerMsg struct {
 	ReqID     string `json:"reqId"`
 	Command   string `json:"command"`
 	TimeoutMs int    `json:"timeoutMs"`
+	// Durable (type "command"): journal this command (see FeatureCmdJournal). NOT part of CanonicalCommand — the
+	// signed fields are unchanged; it only toggles bookkeeping around the same command (LogStart.Service precedent).
+	Durable bool `json:"durable,omitempty"`
 	// Terminal session fields (term_start / term_input / term_resize / term_close)
 	SessionID string `json:"sessionId"`
 	Target    string `json:"target"`
@@ -329,6 +356,12 @@ func CanonicalCommand(reqID, command string, timeoutMs int, capability string) s
 // running command to kill.
 func CanonicalCommandCancel(reqID string) string {
 	return "ccancel\n" + reqID
+}
+
+// CanonicalCommandStatus mirrors @tugra/shared canonicalCommandStatus — signs just the reqId whose journaled
+// state the hub asks for (read-only; nothing is ever re-run in response).
+func CanonicalCommandStatus(reqID string) string {
+	return "cstat\n" + reqID
 }
 
 // CanonicalTermStart mirrors @tugra/shared canonicalTermStart.

@@ -123,7 +123,7 @@ export class RolloutEngineService {
     const bakeTargets = baking ? targets.filter((t) => t.wave === rollout.currentWave && t.status === "SUCCEEDED" && t.dispatchedAt) : [];
     const [deps, apps, newer] = await Promise.all([
       depIds.length
-        ? this.prisma.deployment.findMany({ where: { id: { in: depIds } }, select: { id: true, status: true, kind: true, exitCode: true, logs: true, startedAt: true, createdAt: true } })
+        ? this.prisma.deployment.findMany({ where: { id: { in: depIds } }, select: { id: true, status: true, kind: true, exitCode: true, logs: true, startedAt: true, createdAt: true, phase: true, agentReqId: true, deadlineAt: true } })
         : Promise.resolve([]),
       this.prisma.application.findMany({ where: { id: { in: appIds } }, select: { id: true, status: true, serverId: true, buildServerId: true } }),
       bakeTargets.length
@@ -143,7 +143,10 @@ export class RolloutEngineService {
     const supersededApps = new Set(newer.filter((d) => d.createdAt.getTime() > (dispatchedByApp.get(d.appId) ?? Infinity)).map((d) => d.appId));
     const facts = (id: string | null): DeploymentFacts | null => {
       const dep = id ? depById.get(id) : undefined;
-      return dep ? { status: dep.status as DeploymentFacts["status"], kind: dep.kind, exitCode: dep.exitCode, logs: dep.logs, startedAt: dep.startedAt, createdAt: dep.createdAt } : null;
+      if (!dep) return null;
+      // Recoverable = a durable command the recovery service can still adopt (see DeploymentFacts.recoverable).
+      const recoverable = (dep.phase === "DISPATCHED" || dep.phase === "RECOVERING") && !!dep.agentReqId && !!dep.deadlineAt && dep.deadlineAt.getTime() > Date.now();
+      return { status: dep.status as DeploymentFacts["status"], kind: dep.kind, exitCode: dep.exitCode, logs: dep.logs, startedAt: dep.startedAt, createdAt: dep.createdAt, recoverable };
     };
     const snaps: TargetSnap[] = targets.map((t) => {
       const app = appById.get(t.resourceId);

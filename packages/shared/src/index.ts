@@ -94,6 +94,22 @@ export function canonicalCommand(
 export function canonicalCommandCancel(reqId: string): string {
   return `ccancel\n${reqId}`;
 }
+/** Signed payload to ask an agent what happened to a (durable) command by reqId. Read-only: the agent answers
+ *  from its on-disk command journal (running / done + result / interrupted / unknown) and never re-runs
+ *  anything. Lets a restarted hub recover the outcome of a deploy it dispatched before it died. */
+export function canonicalCommandStatus(reqId: string): string {
+  return `cstat\n${reqId}`;
+}
+
+/**
+ * Optional per-feature capabilities an agent advertises in enroll/auth (`features`). Additive and independent of
+ * PROTOCOL_VERSION: an old agent sends none and the hub falls back to the legacy behaviour per feature.
+ *
+ * - `cmd_journal_v1`: the agent journals `durable` commands on disk (begin/finish/exit/output tail), keeps them
+ *   running across a WebSocket drop, de-duplicates a re-sent reqId (never re-runs it), and answers
+ *   `command_status` with `command_state`. Deploys dispatched to such an agent can be adopted after a hub restart.
+ */
+export const AGENT_FEATURE_CMD_JOURNAL = "cmd_journal_v1";
 export function canonicalTermStart(
   sessionId: string,
   target: string,
@@ -289,6 +305,8 @@ export interface EnrollMsg {
   agentVersion: string;
   hostname: string;
   fingerprint: string;
+  /** Optional feature flags (see AGENT_FEATURE_*). Absent on older agents. */
+  features?: string[];
 }
 
 /** Reconnect of an already-enrolled agent: signs the challenge nonce. */
@@ -300,6 +318,8 @@ export interface AuthMsg {
   /** The reconnecting agent's version — refreshes the stored value (e.g. after a self-update). Optional
    *  for back-compat with older agents that don't send it. */
   agentVersion?: string;
+  /** Optional feature flags (see AGENT_FEATURE_*). Absent on older agents. */
+  features?: string[];
 }
 
 /** Periodic host metrics. */
@@ -419,6 +439,36 @@ export interface CommandMsg {
   capability?: AgentCapability;
   /** base64(ed25519 signature over canonicalCommand) — agent rejects if invalid. */
   sig?: string;
+  /** Journal this command on the agent (cmd_journal_v1): it survives a WebSocket drop, a re-sent reqId is never
+   *  re-run, and `command_status` can recover its outcome later. NOT part of canonicalCommand (like
+   *  LogStartMsg.service): the signed reqId/command/timeout/capability are unchanged, and an old agent simply
+   *  ignores the flag and runs the command exactly as before. */
+  durable?: boolean;
+}
+
+/** Hub -> Agent: what happened to command `reqId`? (cmd_journal_v1; signed with canonicalCommandStatus). The
+ *  agent never re-runs anything in response — it only reports from its journal. */
+export interface CommandStatusMsg {
+  type: "command_status";
+  reqId: string;
+  /** base64(ed25519 signature over canonicalCommandStatus) — agent rejects if invalid. */
+  sig?: string;
+}
+
+/** Agent -> Hub: reply to command_status. `running` = still executing on this agent (its command_result will
+ *  follow on this connection); `done` = finished, exitCode/output carry the journaled result; `interrupted` = the
+ *  agent process itself restarted while the command ran, so the outcome is unknown; `unknown` = no journal
+ *  entry (never received, or pruned). `killed` = the process group was killed by a command_cancel. */
+export interface CommandStateMsg {
+  type: "command_state";
+  reqId: string;
+  state: "running" | "done" | "interrupted" | "unknown";
+  exitCode?: number;
+  /** Journaled combined output (head + tail of the stream; the end is kept so trailing markers survive). */
+  output?: string;
+  killed?: boolean;
+  startedAt?: number; // unix ms
+  finishedAt?: number; // unix ms
 }
 
 /** Agent -> Hub: a chunk of a running command's combined stdout+stderr. */
@@ -586,7 +636,8 @@ export type AgentMessage =
   | TermExitMsg
   | LogChunkMsg
   | LogExitMsg
-  | FsResultMsg;
+  | FsResultMsg
+  | CommandStateMsg;
 export type HubMessage =
   | ChallengeMsg
   | EnrolledMsg
@@ -602,4 +653,5 @@ export type HubMessage =
   | LogStopMsg
   | LogDrainsMsg
   | CapabilitiesMsg
-  | FsReqMsg;
+  | FsReqMsg
+  | CommandStatusMsg;

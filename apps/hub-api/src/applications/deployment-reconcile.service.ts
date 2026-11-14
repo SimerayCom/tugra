@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnApplicationBootstrap } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { DeployLeaseService } from "./deploy-lease.service";
 
 export const INTERRUPTED_DEPLOY_NOTE =
   "Deployment interrupted: the hub restarted while this deploy was in progress, so its result is unknown. Re-deploy to continue.";
@@ -8,12 +9,21 @@ export const CLUSTERED_QUEUED_DROP_NOTE =
   "Queued deploy dropped: the hub restarted before it started. Swarm/cluster deploys don't yet resume across a restart — re-deploy.";
 
 /**
- * On hub startup, fail any Deployment still marked RUNNING. A deploy is driven synchronously by the hub
- * process (runDeploy awaits the agent), so a RUNNING row at boot is orphaned — the process that owned it
- * died with the previous hub. Left as-is it wedges the app: the in-progress guard
- * (`a deployment is already running`) throws 409 on every future deploy. Marking it FAILED unblocks the app
- * and the operator re-deploys. Safe because the hub is a single process with no replicas, so at boot nothing
- * else can legitimately be driving a deploy (mirrors the importer's stale-RUNNING reap).
+ * On hub startup, deal with every Deployment still marked RUNNING by a dead hub process. A deploy is driven
+ * synchronously by the hub process (executeDeploy awaits the agent), so a RUNNING row at boot is orphaned — the
+ * process that owned it died with the previous hub. Left as-is it wedges the app: the in-progress guard
+ * (`a deployment is already running`) throws 409 on every future deploy.
+ *
+ * Two kinds of orphan:
+ *  - RECOVERABLE: the main deploy command was dispatched as `durable` to a cmd_journal_v1 agent (agentReqId set).
+ *    The agent kept running it and journaled the result (kept for days), so the row is NOT failed: it is
+ *    marked phase RECOVERING with no owner and stays RUNNING, and DeployRecoveryService adopts it when that agent
+ *    (re)connects — the real outcome (SUCCESS / FAILED / auto-rollback / cancelled) lands instead of a guess.
+ *  - EVERYTHING ELSE (no journaled command: pre-dispatch, build-server/render phase, swarm, rollback, an old agent,
+ *    a pre-migration row with phase NULL): reaped to FAILED exactly as before,
+ *    so the app is unblocked and the operator re-deploys.
+ * Rows owned by THIS process (ownerId = our bootId) are excluded: an agent reconnect hook can legitimately claim a
+ * deploy in the same bootstrap phase this runs in.
  *
  * durationMs is intentionally left null — the true wall-clock of an interrupted run is unknown (the hub may
  * have been down for hours), and a stamped value would be misleading.
@@ -39,12 +49,29 @@ export const CLUSTERED_QUEUED_DROP_NOTE =
 export class DeploymentReconcileService implements OnApplicationBootstrap {
   private readonly logger = new Logger(DeploymentReconcileService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly lease: DeployLeaseService,
+  ) {}
 
   async onApplicationBootstrap(): Promise<void> {
+    const notOurs = { OR: [{ ownerId: null }, { ownerId: { not: this.lease.bootId } }] };
+    // (1) Recoverable rows (a journaled command exists): keep RUNNING, release for adoption. No deadline cut here —
+    // the agent's journal keeps results for days, so even after a long hub outage the real outcome is asked for
+    // first; DeployRecoveryService settles a row as interrupted only when its agent is not there to ask.
+    const { count: recoverable } = await this.prisma.deployment.updateMany({
+      where: { status: "RUNNING", agentReqId: { not: null }, ...notOurs },
+      data: { ownerId: null, phase: "RECOVERING" },
+    });
+    if (recoverable > 0) {
+      this.logger.warn(`${recoverable} deployment(s) left RUNNING by a hub restart are recoverable — awaiting their agent to adopt the outcome`);
+    }
+    // (2) Everything else still RUNNING and not ours: the legacy reap. NULL-safe on purpose: Prisma's `not` on a
+    // nullable column compiles to `<> value`, which never matches NULL — and every row written before this
+    // migration (or by a legacy path) has phase NULL. Those are exactly the orphans this reap exists for.
     const { count } = await this.prisma.deployment.updateMany({
-      where: { status: "RUNNING" },
-      data: { status: "FAILED", exitCode: -1, logs: INTERRUPTED_DEPLOY_NOTE },
+      where: { status: "RUNNING", AND: [{ OR: [{ phase: null }, { phase: { not: "RECOVERING" } }] }, notOurs] },
+      data: { status: "FAILED", exitCode: -1, logs: INTERRUPTED_DEPLOY_NOTE, ownerId: null, phase: null },
     });
     if (count > 0) {
       this.logger.warn(`reaped ${count} deployment(s) left RUNNING by a hub restart (marked FAILED)`);

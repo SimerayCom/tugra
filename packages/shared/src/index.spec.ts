@@ -1,4 +1,9 @@
-import { PROTOCOL_VERSION, TRAFFIC_LATENCY_BUCKETS_MS, canonicalLogStart, canonicalAgentUpdate, canonicalFs } from "./index";
+import {
+  canonicalCommand,
+  canonicalCommandCancel,
+  canonicalCommandStatus,
+  AGENT_FEATURE_CMD_JOURNAL,
+  PROTOCOL_VERSION, TRAFFIC_LATENCY_BUCKETS_MS, canonicalLogStart, canonicalAgentUpdate, canonicalFs } from "./index";
 import type {
   MetricsSample,
   EnrollMsg,
@@ -155,5 +160,13 @@ describe("shared protocol", () => {
     expect(msg.domains[0].latency).toHaveLength(14);
     expect(msg.domains[0].unique).toBeUndefined(); // optional HyperLogLog sketch (base64, 4096 bytes)
     expect(PROTOCOL_VERSION).toBe(2);
+  });
+
+  it("canonicalCommandStatus is byte-identical to the Go agent's CanonicalCommandStatus and distinct from cancel", () => {
+    expect(canonicalCommandStatus("r1")).toBe("cstat\nr1");
+    expect(canonicalCommandStatus("r1")).not.toBe(canonicalCommandCancel("r1"));
+    expect(AGENT_FEATURE_CMD_JOURNAL).toBe("cmd_journal_v1");
+    // the durable flag is NOT signed: canonicalCommand's input is unchanged by it
+    expect(canonicalCommand("r1", "echo hi", 5000, "deploy")).toBe("cmd\nr1\necho hi\n5000\ndeploy");
   });
 });

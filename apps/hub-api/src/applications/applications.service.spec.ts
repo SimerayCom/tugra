@@ -94,9 +94,16 @@ function make(
   dbLinks: { resolveLinkedEnv?: jest.Mock } = {},
   panelDomain: string | null = null, // when set, the reserved control-panel hostname (collision guard)
   secretRefs: { resolveSecretEnv?: jest.Mock } = {},
+  lease: { bootId: string; bootAt: Date } = { bootId: TEST_BOOT_ID, bootAt: new Date() },
 ) {
   // createFromTemplate v2 probes listening ports (outside the tx) before allocating.
   portAlloc.probeUsedPorts = portAlloc.probeUsedPorts ?? jest.fn().mockResolvedValue(new Set());
+  // Durable-dispatch gate: existing deploy tests stub only sendCommand and model an OLD agent (no cmd_journal_v1),
+  // so they keep exercising the legacy path byte-for-byte. Mutated in place (not spread) so a test's later
+  // assertions on its own agentWs object still see the same jest.fn()s.
+  const aw = agentWs as Partial<AgentWsServer> & Record<string, unknown>;
+  if (typeof aw.agentSupports !== "function") aw.agentSupports = jest.fn().mockReturnValue(false);
+  if (typeof aw.isOnline !== "function") aw.isOnline = jest.fn().mockReturnValue(true);
   // view() now resolves a server's public IP to synthesize a domainless app's
   // http://<ip>:<hostPort> URL; every test path through get()/list()/listPreviews()
   // hits server.findUnique/findMany. Default to "no IP" so unrelated tests stay
@@ -139,9 +146,12 @@ function make(
         if (args?.where?.status === "QUEUED") return pending;
         return providedDep.findFirst ? await providedDep.findFirst(args) : null;
       }),
-      updateMany: jest.fn(async (args: { where?: { id?: string }; data?: { status?: string } }) => {
-        if (providedDep.updateMany) await providedDep.updateMany(args);
+      updateMany: jest.fn(async (args: { where?: { id?: string }; data?: { status?: string; phase?: string } }) => {
+        const r = providedDep.updateMany ? ((await providedDep.updateMany(args)) as { count?: number } | undefined) : undefined;
         if (args?.data?.status === "RUNNING" && pending && args?.where?.id === pending.id) pending = null; // claimed
+        // A test's own count is honoured for the lease CAS writes (dispatch / release) so it can model a lost
+        // lease; the queue claim itself always succeeds here (the 1-row model above owns that).
+        if (args?.data?.phase && r && typeof r.count === "number") return r;
         return { count: 1 };
       }),
     };
@@ -207,8 +217,12 @@ function make(
           key === "PANEL_DOMAIN" ? (panelDomain ?? undefined) : key === "PANEL_TLS" ? (panelDomain ? "1" : undefined) : undefined,
       }),
     } as unknown as import("@nestjs/core").ModuleRef,
+    lease as unknown as import("./deploy-lease.service").DeployLeaseService,
   );
 }
+
+/** The bootId every test service runs under (claimNext / rollback rows are stamped with it). */
+const TEST_BOOT_ID = "boot-test";
 
 const app = {
   id: "app1",
@@ -5317,5 +5331,265 @@ describe("ApplicationsService — rollbackDetached (fleet rollback seam)", () =>
     const busy = deps({ running: true });
     await expect(make(busy.prisma, busy.access, busy.agentWs).rollbackDetached("u1", "app1", "base", { key: "k" })).rejects.toBeInstanceOf(AppBusyException);
     expect(busy.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("ApplicationsService — durable dispatch + hub-crash adoption (ACTION-LIST #2)", () => {
+  const { AgentDisconnectedException: Disconnected } = jest.requireActual("../agent-gateway/agent-offline.exception") as typeof import("../agent-gateway/agent-offline.exception");
+
+  /** A queue-model prisma for one deploy of `app`, recording every deployment.updateMany call. */
+  function deps(appOver: Record<string, unknown> = {}) {
+    const updateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const depUpdate = jest.fn().mockResolvedValue({});
+    const appUpdate = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...app, ...appOver }), update: appUpdate },
+      deployment: {
+        create: jest.fn().mockResolvedValue({ id: "d1", createdAt: new Date(), startedAt: new Date() }),
+        update: depUpdate,
+        updateMany,
+        findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "RUNNING" }),
+        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined), membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()) } as unknown as TeamAccessService;
+    return { prisma, access, updateMany, depUpdate, appUpdate };
+  }
+  const dispatchCalls = (updateMany: jest.Mock) => updateMany.mock.calls.map((c) => c[0]).filter((a) => a.data?.phase === "DISPATCHED");
+
+  it("OLD agent (no cmd_journal_v1): the legacy call shape — no reqId/durable/beforeSend, no lease columns written at dispatch", async () => {
+    const d = deps();
+    const sendCommand = jest.fn().mockResolvedValue({ exitCode: 0, output: "ok" });
+    await make(d.prisma, d.access, { sendCommand, agentSupports: jest.fn().mockReturnValue(false) }).deploy("u1", "app1");
+    expect(sendCommand).toHaveBeenCalledWith("s1", expect.any(String), "deploy", 300000, expect.any(Function), expect.any(Function));
+    expect(sendCommand.mock.calls[0]).toHaveLength(6);
+    expect(dispatchCalls(d.updateMany)).toEqual([]);
+  });
+
+  it("journaling agent: the row is CAS-stamped (phase DISPATCHED, reqId dep-<id>, server, deadline, frozen plan) BEFORE the frame goes out, and the command is sent durable", async () => {
+    const d = deps();
+    const order: string[] = [];
+    d.updateMany.mockImplementation(async (args: { data?: { phase?: string } }) => {
+      if (args.data?.phase === "DISPATCHED") order.push("cas");
+      return { count: 1 };
+    });
+    const sendCommand = jest.fn().mockImplementation(async (_s: string, _c: string, _cap: string, _t: number, _chunk: unknown, _start: unknown, opts?: { reqId?: string; durable?: boolean; beforeSend?: (r: string) => Promise<void> }) => {
+      if (opts?.beforeSend) await opts.beforeSend(opts.reqId ?? "x");
+      order.push("send");
+      return { exitCode: 0, output: "deployed" };
+    });
+    await make(d.prisma, d.access, { sendCommand, agentSupports: jest.fn().mockReturnValue(true) }).deploy("u1", "app1");
+    expect(order).toEqual(["cas", "send"]);
+    const opts = sendCommand.mock.calls[0][6];
+    expect(opts).toMatchObject({ reqId: "dep-d1", durable: true });
+    const cas = dispatchCalls(d.updateMany)[0];
+    expect(cas.where).toEqual({ id: "d1", status: "RUNNING", ownerId: TEST_BOOT_ID });
+    expect(cas.data).toMatchObject({ phase: "DISPATCHED", agentReqId: "dep-d1", agentServerId: "s1", deadlineAt: expect.any(Date) });
+    expect(cas.data.deadlineAt.getTime()).toBeGreaterThan(Date.now() + 300_000); // agent timeout + slack
+    expect(cas.data.dispatchPlan).toMatchObject({ v: 1, isCompose: false, rolling: false, gitSourced: false, runTag: "tugra_app1:d1", wasRunning: false });
+    // the live result is still settled exactly as before
+    expect(d.depUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "SUCCESS", exitCode: 0 }) }));
+  });
+
+  it("a lost lease (CAS count 0) aborts BEFORE anything reaches the agent", async () => {
+    const d = deps();
+    d.updateMany.mockImplementation(async (args: { data?: { phase?: string } }) => ({ count: args.data?.phase === "DISPATCHED" ? 0 : 1 }));
+    let sent = false;
+    const sendCommand = jest.fn().mockImplementation(async (_s: string, _c: string, _cap: string, _t: number, _chunk: unknown, _start: unknown, opts?: { beforeSend?: (r: string) => Promise<void> }) => {
+      await opts?.beforeSend?.("dep-d1"); // throws → the gateway never writes the frame
+      sent = true;
+      return { exitCode: 0, output: "" };
+    });
+    await make(d.prisma, d.access, { sendCommand, agentSupports: jest.fn().mockReturnValue(true) }).deploy("u1", "app1");
+    expect(sent).toBe(false);
+    expect(d.depUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED", logs: expect.stringContaining("lease lost") }) }));
+  });
+
+  it("agent socket drops mid-command: the lease is RELEASED (ownerId null, phase RECOVERING), NO FAILED row, NO app status write, and the recovery hook fires", async () => {
+    const d = deps({ status: "RUNNING" });
+    const sendCommand = jest.fn().mockImplementation(async (_s: string, _c: string, _cap: string, _t: number, _chunk: unknown, _start: unknown, opts?: { beforeSend?: (r: string) => Promise<void> }) => {
+      await opts?.beforeSend?.("dep-d1");
+      throw new Disconnected();
+    });
+    const svc = make(d.prisma, d.access, { sendCommand, agentSupports: jest.fn().mockReturnValue(true) });
+    const hook = jest.fn();
+    svc.setLeaseReleasedHook(hook);
+    await svc.deploy("u1", "app1");
+    expect(d.updateMany).toHaveBeenCalledWith({ where: { id: "d1", status: "RUNNING", ownerId: TEST_BOOT_ID }, data: { ownerId: null, phase: "RECOVERING" } });
+    expect(d.depUpdate.mock.calls.map((c) => c[0].data?.status).filter(Boolean)).toEqual([]);
+    expect(d.appUpdate).not.toHaveBeenCalled();
+    expect(hook).toHaveBeenCalledWith("s1");
+  });
+
+  it("a socket drop on an OLD agent (nothing journaled) keeps today's behaviour: FAILED + app FAILED (live state unknown)", async () => {
+    const d = deps({ status: "RUNNING" });
+    const sendCommand = jest.fn().mockRejectedValue(new Disconnected());
+    await make(d.prisma, d.access, { sendCommand, agentSupports: jest.fn().mockReturnValue(false) }).deploy("u1", "app1");
+    expect(d.depUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED" }) }));
+    expect(d.appUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: { status: "FAILED" } }));
+  });
+
+  describe("finalizeAdopted / settleInterrupted", () => {
+    const plan = { v: 1, rolling: false, recreate: true, isCompose: false, hadPrev: true, isGitCompose: false, gitSourced: true, runTag: "tugra_app1:d1", registryRef: null, wasRunning: true, postDeploy: false, buildLogHead: null };
+    const row = (over: Record<string, unknown> = {}) => ({ id: "d1", appId: "app1", status: "RUNNING", kind: "DEPLOY", requestedBy: "u1", startedAt: new Date(Date.now() - 5000), createdAt: new Date(Date.now() - 6000), dispatchPlan: plan, ownerId: TEST_BOOT_ID, phase: "DISPATCHED", agentReqId: "dep-d1", agentServerId: "s1", ...over }) as never;
+    function fx(count = 1) {
+      const updateMany = jest.fn().mockResolvedValue({ count });
+      const appUpdate = jest.fn().mockResolvedValue({});
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue(app), update: appUpdate },
+        deployment: { updateMany, count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn().mockResolvedValue(null), findUnique: jest.fn().mockResolvedValue(null) },
+        sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+        server: { findUnique: jest.fn().mockResolvedValue(null) },
+      } as unknown as PrismaService;
+      const deployLogs = makeDeployLogs();
+      const sendCommand = jest.fn().mockResolvedValue({ exitCode: 0, output: "" });
+      const svc = make(prisma, {}, { sendCommand }, deployLogs);
+      return { svc, updateMany, appUpdate, deployLogs, sendCommand };
+    }
+    const guard = { id: "d1", status: "RUNNING", ownerId: TEST_BOOT_ID };
+
+    it("exit 0 → SUCCESS with the plan's tag, digest/commit parsed from the journaled output, app RUNNING, log finished, lease cleared", async () => {
+      const f = fx();
+      await f.svc.finalizeAdopted(row(), { exitCode: 0, output: "TUGRA_COMMIT=abc1234\nTUGRA_DIGEST=nginx@sha256:aaaa\nok", killed: false });
+      expect(f.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: guard, data: expect.objectContaining({ status: "SUCCESS", kind: "DEPLOY", exitCode: 0, imageTag: "tugra_app1:d1", imageDigest: "nginx@sha256:aaaa", commitSha: "abc1234", ownerId: null, phase: null, durationMs: expect.any(Number) }) }));
+      expect(f.appUpdate).toHaveBeenCalledWith({ where: { id: "app1" }, data: { status: "RUNNING" } });
+      expect(f.deployLogs.finish).toHaveBeenCalledWith("app1", expect.objectContaining({ status: "SUCCESS", deploymentId: "d1" }));
+    });
+
+    it("exit 3 with a previous image (frozen in the plan) → FAILED + AUTO_ROLLBACK, app stays RUNNING; exit 1 → FAILED and app FAILED", async () => {
+      const a = fx();
+      await a.svc.finalizeAdopted(row(), { exitCode: 3, output: "gate failed", killed: false });
+      expect(a.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED", kind: "AUTO_ROLLBACK", imageTag: null }) }));
+      expect(a.appUpdate).toHaveBeenCalledWith({ where: { id: "app1" }, data: { status: "RUNNING" } });
+      const b = fx();
+      await b.svc.finalizeAdopted(row(), { exitCode: 1, output: "boom", killed: false });
+      expect(b.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED", kind: "DEPLOY" }) }));
+      expect(b.appUpdate).toHaveBeenCalledWith({ where: { id: "app1" }, data: { status: "FAILED" } });
+      // the failed image tag is reaped, as on the live path
+      expect(b.sendCommand).toHaveBeenCalledWith("s1", expect.stringContaining("tugra_app1:d1"), "cleanup");
+    });
+
+    it("killed (command_cancel) → CANCELLED, never FAILED, app status untouched", async () => {
+      const f = fx();
+      await f.svc.finalizeAdopted(row(), { exitCode: 137, output: "killed", killed: true });
+      expect(f.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: guard, data: expect.objectContaining({ status: "CANCELLED", logs: expect.stringContaining("Cancelled by user"), ownerId: null, phase: null }) }));
+      expect(f.appUpdate).not.toHaveBeenCalled();
+    });
+
+    it("judges by the FROZEN plan, not today's config: a plan without a previous image makes exit 3 a hard failure even though the app now has rollbackOnFailure", async () => {
+      const f = fx();
+      await f.svc.finalizeAdopted(row({ dispatchPlan: { ...plan, hadPrev: false } }), { exitCode: 3, output: "", killed: false });
+      expect(f.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED", kind: "DEPLOY" }) }));
+      expect(f.appUpdate).toHaveBeenCalledWith({ where: { id: "app1" }, data: { status: "FAILED" } });
+    });
+
+    it("CAS miss (someone else settled it) writes nothing more; an unreadable plan settles as interrupted; a gone app is a no-op", async () => {
+      const f = fx(0);
+      await f.svc.finalizeAdopted(row(), { exitCode: 0, output: "", killed: false });
+      expect(f.appUpdate).not.toHaveBeenCalled();
+      expect(f.deployLogs.finish).not.toHaveBeenCalled();
+      const g = fx();
+      await g.svc.finalizeAdopted(row({ dispatchPlan: { nope: true } }), { exitCode: 0, output: "", killed: false });
+      expect(g.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED", exitCode: -1, logs: expect.stringContaining("Deployment interrupted") }) }));
+      expect(g.appUpdate).not.toHaveBeenCalled();
+      const h = fx();
+      (h.svc as unknown as { prisma: { application: { findUnique: jest.Mock } } }).prisma.application.findUnique.mockResolvedValue(null);
+      await h.svc.finalizeAdopted(row(), { exitCode: 0, output: "", killed: false });
+      expect(h.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("settleInterrupted writes the legacy boot-reap shape (FAILED, -1, note + detail), clears the lease, never touches the app, and drains", async () => {
+      const f = fx();
+      await expect(f.svc.settleInterrupted({ id: "d1", appId: "app1" }, "the agent restarted")).resolves.toBe(true);
+      expect(f.updateMany).toHaveBeenCalledWith({ where: { id: "d1", status: "RUNNING" }, data: { status: "FAILED", exitCode: -1, logs: expect.stringMatching(/^Deployment interrupted:.*\nthe agent restarted$/s), ownerId: null, phase: null } });
+      expect(f.appUpdate).not.toHaveBeenCalled();
+      expect(f.deployLogs.finish).toHaveBeenCalledWith("app1", { status: "FAILED", exitCode: -1, deploymentId: "d1" });
+    });
+  });
+
+  it("cancelDeployment falls back to the row's persisted command handle for a durable deploy no in-memory command tracks (owned by a dead hub / being adopted)", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ id: "app1", teamId: "t1" }) },
+      deployment: {
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        findFirst: jest.fn().mockResolvedValue({ id: "d1", status: "RUNNING", phase: "RECOVERING", agentReqId: "dep-d1", agentServerId: "s7" }),
+        findUnique: jest.fn(),
+      },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const agentWs = { cancelCommand: jest.fn().mockReturnValue(true), sendCommand: jest.fn() } as unknown as AgentWsServer;
+    const svc = make(prisma, access, agentWs);
+    const row = await svc.cancelDeployment("u1", "app1", "d1");
+    expect((row as { status: string }).status).toBe("RUNNING");
+    expect(agentWs.cancelCommand).toHaveBeenCalledWith("s7", "dep-d1");
+    // not driven by this process → no in-memory intent is recorded (the agent's journal `killed` flag decides)
+    expect((svc as unknown as { cancelRequested: Set<string> }).cancelRequested.has("d1")).toBe(false);
+    // the agent is offline → the kill cannot be delivered → 503, never a silent "cancelled" the deploy then outlives
+    (agentWs.cancelCommand as jest.Mock).mockReturnValue(false);
+    await expect(make(prisma, access, agentWs).cancelDeployment("u1", "app1", "d1")).rejects.toBeInstanceOf(ServiceUnavailableException);
+    // a pre-dispatch (CLAIMED) orphan still 409s: nothing is running on any agent for it
+    (prisma.deployment.findFirst as jest.Mock).mockResolvedValue({ id: "d1", status: "RUNNING", phase: "CLAIMED", agentReqId: null, agentServerId: null });
+    await expect(make(prisma, access, agentWs).cancelDeployment("u1", "app1", "d1")).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it("cancel requested + socket drop: the lease is STILL released (the kill may never have reached the agent) — the journal's killed flag decides on adoption", async () => {
+    const d = deps({ status: "RUNNING" });
+    const ref: { svc?: ApplicationsService } = {};
+    const sendCommand = jest.fn().mockImplementation(async (_s: string, _c: string, _cap: string, _t: number, _chunk: unknown, onStart: (r: string) => void, opts?: { beforeSend?: (r: string) => Promise<void> }) => {
+      await opts?.beforeSend?.("dep-d1");
+      onStart("dep-d1");
+      (ref.svc as unknown as { cancelRequested: Set<string> }).cancelRequested.add("d1"); // a cancel landed while the command ran
+      throw new Disconnected();
+    });
+    ref.svc = make(d.prisma, d.access, { sendCommand, agentSupports: jest.fn().mockReturnValue(true), cancelCommand: jest.fn().mockReturnValue(true) });
+    await ref.svc.deploy("u1", "app1");
+    expect(d.updateMany).toHaveBeenCalledWith({ where: { id: "d1", status: "RUNNING", ownerId: TEST_BOOT_ID }, data: { ownerId: null, phase: "RECOVERING" } });
+    expect(d.depUpdate.mock.calls.map((c) => c[0].data?.status).filter(Boolean)).toEqual([]); // no CANCELLED/FAILED guess
+  });
+
+  it("the frozen plan records a configured post-deploy hook and the build-server phase output head", async () => {
+    const d = deps({ postDeployCommand: "npm run migrate", buildServerId: "b1", registryId: "reg1", pushToRegistry: true, source: "GIT", gitUrl: "https://x/y.git" });
+    (d.prisma as unknown as { registry: unknown }).registry = { findFirst: jest.fn().mockResolvedValue({ id: "reg1", teamId: "t1", url: "ghcr.io", username: "bot", passwordEnc: "tok", imagePrefix: "org" }) };
+    const sendCommand = jest.fn().mockImplementation(async (server: string, _c: string, _cap: string, _t: number, _chunk: unknown, _start: unknown, opts?: { beforeSend?: (r: string) => Promise<void> }) => {
+      if (server === "b1") return { exitCode: 0, output: "TUGRA_COMMIT=abc1234\nbuilt" };
+      await opts?.beforeSend?.("dep-d1");
+      return { exitCode: 0, output: "deployed" };
+    });
+    await make(d.prisma, d.access, { sendCommand, agentSupports: jest.fn().mockReturnValue(true) }).deploy("u1", "app1");
+    const plan = dispatchCalls(d.updateMany)[0].data.dispatchPlan;
+    expect(plan).toMatchObject({ postDeploy: true, gitSourced: true, buildLogHead: expect.stringContaining("TUGRA_COMMIT=abc1234") });
+  });
+
+  it("finalizeAdopted of a SUCCESS runs the post-deploy hook (never changing the verdict) and prepends the build-server log so the commit is recorded", async () => {
+    const updateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const depUpdate = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...app, postDeployCommand: "npm run migrate" }), update: jest.fn().mockResolvedValue({}) },
+      deployment: { updateMany, update: depUpdate, count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn().mockResolvedValue(null), findUnique: jest.fn().mockResolvedValue(null) },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+      server: { findUnique: jest.fn().mockResolvedValue(null) },
+    } as unknown as PrismaService;
+    const sendCommand = jest.fn().mockResolvedValue({ exitCode: 0, output: "TUGRA_POSTDEPLOY: ok" });
+    const svc = make(prisma, {}, { sendCommand });
+    const plan = { v: 1, rolling: false, recreate: false, isCompose: false, hadPrev: false, isGitCompose: false, gitSourced: true, runTag: "tugra_app1:d1", registryRef: "ghcr.io/org/tugra_app1:d1", wasRunning: true, postDeploy: true, buildLogHead: "TUGRA_COMMIT=abc1234\nbuilt" };
+    const dep = { id: "d1", appId: "app1", status: "RUNNING", kind: "DEPLOY", requestedBy: "u1", startedAt: new Date(), createdAt: new Date(), dispatchPlan: plan } as never;
+    await svc.finalizeAdopted(dep, { exitCode: 0, output: "deployed", killed: false });
+    expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "SUCCESS", commitSha: "abc1234", logs: "TUGRA_COMMIT=abc1234\nbuilt\ndeployed", registryImage: "ghcr.io/org/tugra_app1:d1" }) }));
+    expect(sendCommand).toHaveBeenCalledWith("s1", expect.stringContaining("TUGRA_POSTDEPLOY"), "deploy", expect.any(Number), expect.any(Function));
+    expect(depUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: { logs: expect.stringContaining("TUGRA_POSTDEPLOY: ok") } }));
+    // a FAILED adoption never runs the hook
+    sendCommand.mockClear();
+    await svc.finalizeAdopted(dep, { exitCode: 1, output: "boom", killed: false });
+    expect(sendCommand.mock.calls.some((c) => String(c[1]).includes("TUGRA_POSTDEPLOY"))).toBe(false);
+  });
+
+  it("claimNext and rollback rows carry the lease stamp (ownerId = this process, phase CLAIMED)", async () => {
+    const d = deps();
+    const sendCommand = jest.fn().mockResolvedValue({ exitCode: 0, output: "ok" });
+    await make(d.prisma, d.access, { sendCommand }).deploy("u1", "app1");
+    const claim = d.updateMany.mock.calls.map((c) => c[0]).find((a) => a.data?.status === "RUNNING");
+    expect(claim.data).toMatchObject({ status: "RUNNING", ownerId: TEST_BOOT_ID, phase: "CLAIMED", heartbeatAt: expect.any(Date), startedAt: expect.any(Date) });
   });
 });

@@ -17,6 +17,8 @@ import { ApplicationsService } from "./applications.service";
 import { AppDatabaseLinksService } from "./app-database-links.service";
 import { AppSecretRefsService } from "./app-secret-refs.service";
 import { DeploymentReconcileService } from "./deployment-reconcile.service";
+import { DeployLeaseService } from "./deploy-lease.service";
+import { DeployRecoveryService } from "./deploy-recovery.service";
 import { DeployQueueSweepSchedulerService } from "./deploy-queue-sweep.scheduler.service";
 import { ProxyService } from "./proxy.service";
 import { PanelTlsService } from "./panel-tls.service";
@@ -35,6 +37,8 @@ import { APPLICATIONS_SERVICE } from "./applications.tokens";
     AppDatabaseLinksService,
     AppSecretRefsService,
     DeploymentReconcileService,
+    DeployLeaseService,
+    DeployRecoveryService,
     DeployQueueSweepSchedulerService,
     ProxyService,
     PanelTlsService,
@@ -51,14 +55,19 @@ export class ApplicationsModule implements OnModuleInit {
   constructor(
     private readonly agentWs: AgentWsServer,
     private readonly apps: ApplicationsService,
+    private readonly recovery: DeployRecoveryService,
   ) {}
 
   onModuleInit(): void {
-    // Re-drive a server's QUEUED deploys whenever its agent (re)connects — the SAFE HALF of surviving a hub
-    // restart (never-started QUEUED rows are re-driven as normal deploys, strictly gated on the agent being
-    // online, which holds by construction since the hook fires after the socket is registered). Mirrors
-    // ServerOpsModule's log-drain on-online piggyback.
+    // Whenever a server's agent (re)connects: adopt its interrupted RUNNING deploys (the RISKY half of surviving a
+    // hub restart — settled from the agent's command journal, never re-run) AND re-drive its QUEUED deploys (the
+    // SAFE half: never-started rows run as normal deploys). Both are strictly gated on the agent being online, which
+    // holds by construction since the hook fires after the socket is registered. They run INDEPENDENTLY: an
+    // adoption may wait minutes for a live result and must not hold other apps' queues hostage; a still-RUNNING
+    // recoverable row is never mistaken for a free slot because drain/claimNext skip an app with a RUNNING row
+    // (one RUNNING per app, partial unique index). Mirrors ServerOpsModule's log-drain on-online piggyback.
     this.agentWs.setDeployReDriveProvider((serverId) => {
+      void this.recovery.adoptForServer(serverId).catch(() => undefined);
       void this.apps.redriveQueuedForServer(serverId).catch(() => undefined);
     });
   }

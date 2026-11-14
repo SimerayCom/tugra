@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+
+	"github.com/SimerayCom/tugra/agent/internal/journal"
 )
 
 type Config struct {
@@ -25,6 +27,10 @@ type Config struct {
 	// cannot substitute a malicious image. Empty ⇒ file operations are UNAVAILABLE (fail-closed); the
 	// install/compose layer (INSTALL-1) sets it. Only ever used when the "files" capability is granted.
 	AgentImage string
+	// Journal is the process-level durable command journal (protocol feature cmd_journal_v1). nil = a
+	// per-connection memory-only registry (tests); main.go passes one rooted at ~/.tugra/journal so journaled
+	// commands and their results survive a hub restart or a WebSocket drop.
+	Journal *journal.Registry
 }
 
 // Store persists what we learn at enrollment so reconnects use key auth.

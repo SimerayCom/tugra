@@ -770,3 +770,170 @@ describe("AgentWsServer typed mid-flight errors (C2: clean 503/504, not a masked
     expect((err as Error).message).toBe("agent disconnected");
   });
 });
+
+describe("AgentWsServer durable commands + adoption (cmd_journal_v1)", () => {
+  const { AgentDisconnectedException: Disconnected } = jest.requireActual("./agent-offline.exception") as typeof import("./agent-offline.exception");
+  function harness2(features: string[] = ["cmd_journal_v1"]) {
+    const servers = { markOffline: jest.fn(), markOnline: jest.fn(), healOnline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue(ALL_CAPS), touch: jest.fn() } as any;
+    const server = new AgentWsServer({} as any, servers, { ingest: jest.fn() } as any, { ingest: jest.fn() } as any, hubSign, {} as any);
+    const socket = { readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn() } as any;
+    (server as any).state.set(socket, { nonce: "n", serverId: "s1", authed: true, features: new Set(features) });
+    (server as any).sockets.set("s1", socket);
+    const sent = () => socket.send.mock.calls.map((c: any[]) => JSON.parse(c[0]));
+    const lastSent = () => sent().at(-1);
+    const deliver = (msg: object) => (server as any).onMessage(socket, JSON.stringify(msg));
+    return { server, socket, sent, lastSent, deliver };
+  }
+
+  it("agentSupports reflects the features the agent advertised; offline or legacy agents → false", () => {
+    const { server } = harness2();
+    expect(server.agentSupports("s1", "cmd_journal_v1")).toBe(true);
+    expect(server.agentSupports("s1", "other")).toBe(false);
+    expect(server.agentSupports("ghost", "cmd_journal_v1")).toBe(false);
+    expect(harness2([]).server.agentSupports("s1", "cmd_journal_v1")).toBe(false);
+  });
+
+  it("auth records the advertised features (bounded, strings only)", async () => {
+    const { server } = harness2([]);
+    const servers = (server as any).servers;
+    servers.authenticate = jest.fn().mockResolvedValue("ok");
+    servers.grantedCapabilities = jest.fn().mockResolvedValue(["deploy"]);
+    const sock = { readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn() } as any;
+    (server as any).state.set(sock, { nonce: "n2", authed: false, isAlive: true, features: new Set() });
+    await (server as any).onMessage(sock, JSON.stringify({ type: "auth", protocol: 2, serverId: "s2", signature: "x", features: ["cmd_journal_v1", 42, "x".repeat(100)] }));
+    expect(server.agentSupports("s2", "cmd_journal_v1")).toBe(true);
+    expect((server as any).state.get(sock).features.size).toBe(1);
+  });
+
+  it("sendCommand opts: caller reqId + durable flag on the wire, beforeSend awaited BEFORE the frame, a throw there sends nothing", async () => {
+    const { server, socket, lastSent } = harness2();
+    const order: string[] = [];
+    const p = server.sendCommand("s1", "deploy.sh", "deploy", 5000, undefined, (r) => order.push(`start:${r}`), {
+      reqId: "dep-d1",
+      durable: true,
+      beforeSend: async (r) => {
+        order.push(`before:${r}:sent=${socket.send.mock.calls.length}`);
+      },
+    });
+    await flush();
+    expect(order).toEqual(["before:dep-d1:sent=0", "start:dep-d1"]);
+    const frame = lastSent();
+    expect(frame).toMatchObject({ type: "command", reqId: "dep-d1", durable: true, timeoutMs: 5000, capability: "deploy", sig: "SIG" });
+    // a legacy call has no durable key at all
+    server.sendCommand("s1", "x", "deploy", 1000).catch(() => undefined);
+    await flush();
+    expect(lastSent()).not.toHaveProperty("durable");
+    // abort path
+    const before = socket.send.mock.calls.length;
+    await expect(server.sendCommand("s1", "y", "deploy", 1000, undefined, undefined, { reqId: "dep-d2", beforeSend: async () => { throw new Error("lease lost"); } })).rejects.toThrow(/lease lost/);
+    expect(socket.send.mock.calls.length).toBe(before);
+    expect((server as any).pending.has("dep-d2")).toBe(false);
+    // duplicate in-flight reqId is refused
+    await expect(server.sendCommand("s1", "z", "deploy", 1000, undefined, undefined, { reqId: "dep-d1" })).rejects.toThrow(/already in flight/);
+    (server as any).rejectPendingFor("s1");
+    await expect(p).rejects.toThrow(/disconnected/);
+  });
+
+  it("command_result / command_state are bound to the authed socket's server: another server's agent cannot settle them", async () => {
+    const { server, deliver } = harness2();
+    const other = { readyState: 1, send: jest.fn(), on: jest.fn() } as any;
+    (server as any).state.set(other, { nonce: "n", serverId: "s2", authed: true, features: new Set() });
+    const p = server.sendCommand("s1", "x", "deploy", 5000, undefined, undefined, { reqId: "r1" });
+    await flush();
+    await (server as any).onMessage(other, JSON.stringify({ type: "command_result", reqId: "r1", exitCode: 0, output: "spoof" }));
+    expect((server as any).pending.has("r1")).toBe(true); // still pending
+    await deliver({ type: "command_result", reqId: "r1", exitCode: 0, output: "real" });
+    await expect(p).resolves.toEqual({ exitCode: 0, output: "real" });
+  });
+
+  it("command_log is bound too: a pre-auth socket or another server's agent cannot inject lines into a deploy's live log (deploy reqIds are predictable now)", async () => {
+    const { server, deliver } = harness2();
+    const chunks: string[] = [];
+    const p = server.sendCommand("s1", "x", "deploy", 5000, (c) => chunks.push(c), undefined, { reqId: "dep-d1" });
+    await flush();
+    const preAuth = { readyState: 1, send: jest.fn(), on: jest.fn() } as any;
+    (server as any).state.set(preAuth, { nonce: "n", authed: false, isAlive: true, features: new Set() });
+    await (server as any).onMessage(preAuth, JSON.stringify({ type: "command_log", reqId: "dep-d1", chunk: "TUGRA_COMMIT=deadbeef\n" }));
+    const other = { readyState: 1, send: jest.fn(), on: jest.fn() } as any;
+    (server as any).state.set(other, { nonce: "n", serverId: "s2", authed: true, features: new Set() });
+    await (server as any).onMessage(other, JSON.stringify({ type: "command_log", reqId: "dep-d1", chunk: "forged\n" }));
+    await deliver({ type: "command_log", reqId: "dep-d1", chunk: "real\n" });
+    expect(chunks).toEqual(["real\n"]);
+    await deliver({ type: "command_result", reqId: "dep-d1", exitCode: 0, output: "" });
+    await p;
+  });
+
+  it("cancelCommand reports whether the kill was delivered (false when the agent is offline)", () => {
+    const { server, lastSent } = harness2();
+    expect(server.cancelCommand("s1", "r1")).toBe(true);
+    expect(lastSent()).toMatchObject({ type: "command_cancel", reqId: "r1" });
+    expect(server.cancelCommand("ghost", "r1")).toBe(false);
+  });
+
+  it("queryCommand sends a signed command_status and resolves the command_state; null when nobody answers (old agent)", async () => {
+    const { server, lastSent, deliver } = harness2();
+    const q = server.queryCommand("s1", "dep-d1");
+    expect(lastSent()).toMatchObject({ type: "command_status", reqId: "dep-d1", sig: "SIG" });
+    await deliver({ type: "command_state", reqId: "dep-d1", state: "done", exitCode: 0, output: "ok" });
+    await expect(q).resolves.toMatchObject({ state: "done", exitCode: 0 });
+    await expect(server.queryCommand("s1", "dep-d9", 30)).resolves.toBeNull();
+    expect(() => server.queryCommand("ghost", "x")).toThrow(/offline/i);
+  });
+
+  it("adoptCommand: done → the journaled result (exit 0 stays 0; killed carried)", async () => {
+    const { server, deliver } = harness2();
+    const a = server.adoptCommand("s1", "dep-d1", () => undefined, 60_000);
+    await flush();
+    await deliver({ type: "command_state", reqId: "dep-d1", state: "done", exitCode: 0, output: "all good", killed: false });
+    await expect(a).resolves.toEqual({ kind: "result", exitCode: 0, output: "all good", killed: false });
+    expect((server as any).pending.size).toBe(0);
+    expect((server as any).chunkListeners.size).toBe(0);
+  });
+
+  it("adoptCommand: running → seeds the live stream with the journaled tail, streams chunks, awaits command_result, then asks whether a non-zero exit was a kill", async () => {
+    const { server, deliver, sent } = harness2();
+    const chunks: string[] = [];
+    const a = server.adoptCommand("s1", "dep-d1", (c) => chunks.push(c), 60_000);
+    await flush();
+    await deliver({ type: "command_state", reqId: "dep-d1", state: "running", output: "so far\n" });
+    await flush(); // the seed is pushed by adoptCommand's continuation after the state resolves
+    await deliver({ type: "command_log", reqId: "dep-d1", chunk: "more\n" });
+    await deliver({ type: "command_result", reqId: "dep-d1", exitCode: 137, output: "so far\nmore\n" });
+    await flush();
+    // the follow-up status query asks the journal for the killed flag
+    expect(sent().filter((m: any) => m.type === "command_status")).toHaveLength(2);
+    await deliver({ type: "command_state", reqId: "dep-d1", state: "done", exitCode: 137, output: "so far\nmore\n", killed: true });
+    await expect(a).resolves.toEqual({ kind: "result", exitCode: 137, output: "so far\nmore\n", killed: true });
+    expect(chunks).toEqual(["so far\n", "more\n"]);
+  });
+
+  it("adoptCommand: a command_result that lands while the status query is in flight is not lost", async () => {
+    const { server, deliver } = harness2();
+    const a = server.adoptCommand("s1", "dep-d1", () => undefined, 60_000);
+    await flush();
+    await deliver({ type: "command_result", reqId: "dep-d1", exitCode: 0, output: "fast" }); // before any command_state
+    await expect(a).resolves.toEqual({ kind: "result", exitCode: 0, output: "fast", killed: false });
+  });
+
+  it("adoptCommand: interrupted / unknown / no reply are reported, never a fabricated result; a drop while waiting rejects with AgentDisconnectedException", async () => {
+    const h1 = harness2();
+    const a = h1.server.adoptCommand("s1", "r", () => undefined, 60_000);
+    await flush();
+    await h1.deliver({ type: "command_state", reqId: "r", state: "interrupted", exitCode: 0, output: "partial" });
+    await expect(a).resolves.toEqual({ kind: "interrupted", output: "partial" });
+    const h2 = harness2();
+    const b = h2.server.adoptCommand("s1", "r", () => undefined, 60_000);
+    await flush();
+    await h2.deliver({ type: "command_state", reqId: "r", state: "unknown", exitCode: 0 });
+    await expect(b).resolves.toEqual({ kind: "unknown" });
+    const h3 = harness2();
+    await expect(h3.server.adoptCommand("s1", "r", () => undefined, 1_000)).resolves.toEqual({ kind: "no_reply" }); // queryCommand default 10s > but statePending... see below
+    const h4 = harness2();
+    const d = h4.server.adoptCommand("s1", "r", () => undefined, 60_000);
+    await flush();
+    await h4.deliver({ type: "command_state", reqId: "r", state: "running" });
+    (h4.server as any).rejectPendingFor("s1");
+    await expect(d).rejects.toBeInstanceOf(Disconnected);
+    expect((h4.server as any).pending.size).toBe(0);
+  }, 20_000);
+});
