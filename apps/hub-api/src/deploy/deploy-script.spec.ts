@@ -2737,3 +2737,116 @@ describe("envFileContent — fail-closed render guard", () => {
     expect(Buffer.from(envFileB64({ PEM: "x\ny" }, new Set(["PEM"])), "base64").toString()).toBe(`PEM:b64=${Buffer.from("x\ny").toString("base64")}`);
   });
 });
+
+describe("per-variable env flags — docker run transport", () => {
+  const PEM = "-----BEGIN KEY-----\nRAWPEMBODY\n-----END KEY-----\n";
+  const mlApp: AppSpec = { ...base, env: { A: "1", PEM_KEY: PEM }, envMeta: { PEM_KEY: { multiline: true } } };
+  const gate = { retries: 1, intervalSec: 1, startPeriodSec: 0 };
+  const probe = { kind: "stableWait" as const };
+  const dockerRuns = (s: string) => s.split("\n").flatMap((l) => l.match(/(?:\S+="\$TUGRA_ML_\d+" )*docker run -d[^\n]*/g) ?? []);
+
+  it("flag-free apps are byte-identical (golden)", () => {
+    const flagFree: AppSpec = { ...base, env: { A: "1", B: "two" } };
+    const withEmptyMeta: AppSpec = { ...flagFree, envMeta: {} };
+    expect(buildRunScript(withEmptyMeta, "v1", true)).toBe(buildRunScript(flagFree, "v1", true));
+    expect(buildRunScript(flagFree, "v1", true)).toContain("--env-file /etc/tugra/env/abc.env");
+    expect(buildRunScript(flagFree, "v1", true)).not.toContain("TUGRA_ML");
+  });
+
+  it("a multiline var is absent from the env file, passed by name, and prefixed on the docker run", () => {
+    const s = buildRunScript(mlApp, "v1", true);
+    const filePayload = s.match(/printf %s '([A-Za-z0-9+/=]+)' \| base64 -d > \/etc\/tugra\/env\/abc\.env/)!;
+    expect(Buffer.from(filePayload[1], "base64").toString()).toBe("A=1"); // PEM_KEY is NOT in the env file
+    expect(s).toContain("--env-file /etc/tugra/env/abc.env");
+    expect(s).toContain("-e PEM_KEY");
+    expect(s).toContain('PEM_KEY="$TUGRA_ML_0" docker run -d --name tugra_abc');
+    expect(s).not.toContain("RAWPEMBODY"); // only base64 ever appears
+    expect(s).toContain("TUGRA_ENV_ML: 1 multiline variable(s)");
+    expect(s).not.toMatch(/export /); // never exported script-wide
+  });
+
+  it("when EVERY variable is multiline there is no env file and no --env-file flag", () => {
+    const s = buildRunScript({ ...base, env: { PEM_KEY: PEM }, envMeta: { PEM_KEY: { multiline: true } } }, "v1", true);
+    expect(s).not.toContain("--env-file");
+    expect(s).not.toContain("mkdir -p /etc/tugra/env");
+    expect(s).toContain('PEM_KEY="$TUGRA_ML_0" docker run -d');
+  });
+
+  it("EVERY docker run -d carries the prefix: normal, rolling (incl. relabel), recreate (incl. rollback)", () => {
+    const check = (s: string) => {
+      const runs = s.match(/docker run -d/g) ?? [];
+      const prefixed = s.match(/PEM_KEY="\$TUGRA_ML_0" docker run -d/g) ?? [];
+      expect(runs.length).toBeGreaterThan(0);
+      expect(prefixed).toHaveLength(runs.length);
+    };
+    check(buildRunScript(mlApp, "v1", true));
+    check(buildRunScript(mlApp, "v1", false)); // rollback
+    const domained = { ...mlApp, domain: "app.example.com" };
+    check(buildRollingDeployScript(domained, "v2", { probe: { kind: "httpExternal", port: 80, path: "/" }, ...gate }));
+    check(buildRollingDeployScript(domained, "v2", { probe: { kind: "httpExternal", port: 80, path: "/" }, soak: { windowSec: 30, intervalSec: 5, failThreshold: 2 } as never, ...gate }));
+    check(buildRecreateDeployScript({ ...mlApp, hostPort: 8080 }, "v2", { prevVersion: "v1", probe, ...gate }));
+    expect(dockerRuns(buildRecreateDeployScript({ ...mlApp, hostPort: 8080 }, "v2", { prevVersion: "v1", probe, ...gate })).length).toBe(2);
+  });
+
+  it("the pre-deploy hook container sees the multiline var too (prefix + -e on its docker run)", () => {
+    const s = buildRunScript({ ...mlApp, source: "GIT", gitUrl: "https://github.com/a/b.git", buildType: "NIXPACKS", preDeployCommand: "migrate" }, "v1", true);
+    expect(s).toMatch(/if PEM_KEY="\$TUGRA_ML_0" docker run --rm --env-file \/etc\/tugra\/env\/abc\.env -e PEM_KEY /);
+  });
+
+  it("two multiline vars are indexed by sorted key", () => {
+    const s = buildRunScript({ ...base, env: { ZED: "z\n", ALPHA: "a\n" }, envMeta: { ZED: { multiline: true }, ALPHA: { multiline: true } } }, "v1", true);
+    expect(s).toContain('ALPHA="$TUGRA_ML_0" ZED="$TUGRA_ML_1" docker run -d');
+    expect(s).toContain("-e ALPHA -e ZED");
+  });
+
+  it("an unflagged value with a line break throws (the shared-variable injection regression), naming the key only", () => {
+    expect(() => buildRunScript({ ...base, env: { SHARED_K: "x\nINJECTED=1" } }, "v1", true)).toThrow(/"SHARED_K" contains a line break but is not marked multiline/);
+  });
+
+  it("a host-affecting key can never be multiline, even if stored flags say so", () => {
+    expect(() => buildRunScript({ ...base, env: { LD_PRELOAD: "a\nb" }, envMeta: { LD_PRELOAD: { multiline: true } } }, "v1", true)).toThrow(/cannot be a multiline/);
+  });
+
+  it("preflight: fails above 120 KiB, only when multiline transport is in use", () => {
+    const huge = { ...base, env: { PEM_KEY: "x".repeat(16 * 1024), A: "y".repeat(110 * 1024) }, envMeta: { PEM_KEY: { multiline: true } } } as AppSpec;
+    expect(() => buildRunScript(huge, "v1", true)).toThrow(/deploy script is \d+ bytes; limit 122880/);
+    // the same oversize env WITHOUT multiline keeps today's behaviour (no new cap)
+    expect(() => buildRunScript({ ...huge, envMeta: undefined, env: { A: "y".repeat(110 * 1024) } }, "v1", true)).not.toThrow();
+  });
+
+  describe("build flags", () => {
+    const git: AppSpec = { ...base, image: undefined, source: "GIT", gitUrl: "https://github.com/a/b.git", gitBranch: "main", buildType: "DOCKERFILE", env: {} } as AppSpec;
+    it("a flagged value rides --build-arg on DOCKERFILE and STATIC, --env on nixpacks/railpack/heroku", () => {
+      const f = { buildArgs: { NEXT_PUBLIC_X: "v 1" }, buildFlagKeys: ["NEXT_PUBLIC_X"] };
+      expect(buildRunScript({ ...git, ...f }, "v1", true)).toContain("--build-arg 'NEXT_PUBLIC_X=v 1'");
+      expect(buildRunScript({ ...git, ...f, buildType: "STATIC" }, "v1", true)).toContain("--build-arg 'NEXT_PUBLIC_X=v 1'");
+      for (const bt of ["NIXPACKS", "RAILPACK", "HEROKU"] as const) {
+        expect(buildRunScript({ ...git, ...f, buildType: bt }, "v1", true)).toContain("--env 'NEXT_PUBLIC_X=v 1'");
+      }
+    });
+    it("the TUGRA_BUILD_ENV marker names keys only; the sensitive warning is DOCKERFILE/STATIC only", () => {
+      const f = { buildArgs: { API_TOKEN: "TOPSECRETVALUE", PLAIN: "p" }, buildFlagKeys: ["API_TOKEN", "PLAIN"] };
+      const d = buildRunScript({ ...git, ...f }, "v1", true);
+      expect(d).toContain("TUGRA_BUILD_ENV: 2 variable(s) passed to the build (Build time flag): API_TOKEN, PLAIN");
+      expect(d).toContain("WARNING - build variables are baked into the image history (docker history); use Build secrets for secrets: API_TOKEN");
+      expect(d.match(/echo [^\n]*/g)!.filter((l) => l.includes("TUGRA_BUILD_ENV") || l.includes("WARNING")).join("")).not.toContain("TOPSECRETVALUE");
+      expect(buildRunScript({ ...git, ...f, buildType: "NIXPACKS" }, "v1", true)).not.toContain("WARNING - build variables");
+    });
+    it("a build-secret collision is echoed by key name", () => {
+      const s = buildRunScript({ ...git, buildFlagDropped: ["NPM_TOKEN"] }, "v1", true);
+      expect(s).toContain("TUGRA: build variable NPM_TOKEN ignored - a build secret with the same name exists");
+    });
+    it("no flagged build keys: no note at all (byte-identical)", () => {
+      expect(buildRunScript(git, "v1", true)).not.toContain("TUGRA_BUILD_ENV");
+      expect(buildRunScript({ ...git, buildFlagKeys: [] }, "v1", true)).toBe(buildRunScript(git, "v1", true));
+    });
+    it("rollback (build=false) skips all build notes", () => {
+      expect(buildRunScript({ ...git, buildFlagKeys: ["A"], buildArgs: { A: "1" } }, "v1", false)).not.toContain("TUGRA_BUILD_ENV");
+    });
+    it("an explicit SOURCE_COMMIT build arg still wins over the commit injection", () => {
+      const s = buildRunScript({ ...git, sourceCommitMode: "BUILD", buildArgs: { SOURCE_COMMIT: "mine" }, buildFlagKeys: ["SOURCE_COMMIT"] }, "v1", true);
+      expect(s).toContain("--build-arg 'SOURCE_COMMIT=mine'");
+      expect(s).not.toContain('--build-arg "SOURCE_COMMIT=$TUGRA_C"');
+    });
+  });
+});

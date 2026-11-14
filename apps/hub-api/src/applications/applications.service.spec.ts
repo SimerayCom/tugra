@@ -7139,5 +7139,33 @@ describe("ApplicationsService — per-variable env flags", () => {
       expect(failed(d)).toBe(false);
       expect(d.calls).toHaveLength(1);
     });
+
+    it("a multiline variable rides the deploy script as base64 in an unexported prefix assignment, never the raw value", async () => {
+      const d = deployDeps({ ...baseApp, envEnc: JSON.stringify({ PEM: "RAWSECRET\nLINE2", A: "1" }), envMetaEnc: meta({ PEM: { multiline: true } }) });
+      await d.svc.deploy("u1", "app1");
+      expect(d.calls[0]).toContain('PEM="$TUGRA_ML_0"');
+      expect(d.calls[0]).toContain("-e PEM");
+      expect(d.calls[0]).not.toContain("RAWSECRET");
+    });
+  });
+
+  it("rollback applies the flags too (a multiline variable is delivered by name)", async () => {
+    let sentCmd = "";
+    const row = { ...baseApp, source: "IMAGE", envEnc: JSON.stringify({ A: "1", B: "2" }), envMetaEnc: meta({ B: { multiline: true } }) };
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(row), update: jest.fn().mockResolvedValue({}) },
+      deployment: {
+        findFirst: jest.fn().mockImplementation(({ where }: { where: { status: string } }) => Promise.resolve(where.status === "RUNNING" ? null : { id: "target", status: "SUCCESS", imageTag: "tugra_app1:target", registryImage: null, imageDigest: null })),
+        create: jest.fn().mockResolvedValue({ id: "roll1", createdAt: new Date() }),
+        update: jest.fn().mockResolvedValue({}),
+        findUnique: jest.fn().mockResolvedValue({ id: "roll1", status: "SUCCESS" }),
+      },
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1", certMode: "http" }) },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const agentWs = { sendCommand: jest.fn().mockImplementation((_s: string, cmd: string) => { sentCmd = cmd; return Promise.resolve({ exitCode: 0, output: "up" }); }) } as unknown as AgentWsServer;
+    await make(prisma, accessWith({}), agentWs).rollback("u1", "app1", "target");
+    expect(sentCmd).toContain('B="$TUGRA_ML_0"');
+  
   });
 });
