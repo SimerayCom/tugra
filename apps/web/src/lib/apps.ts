@@ -1,4 +1,4 @@
-import type { AppContainerHealth, AppStatus, DeploymentStatus } from "./types";
+import type { AppContainerHealth, AppStatus, DeploymentStatus, PrProvider } from "./types";
 import { hubPublicUrl } from "./api";
 
 export function appColor(s: AppStatus): string {
@@ -63,4 +63,15 @@ export function shortDigest(ref: string): string {
  *  SPA's same-origin "/api" proxy path. */
 export function webhookUrl(token: string): string {
   return `${hubPublicUrl()}/webhooks/deploy/${token}`;
+}
+
+/** i18n keys for how a preview's pull / merge request is named: GitLab calls them merge requests ("MR !n"), every
+ *  other host (and a legacy row with no provider) says "PR #n". */
+export function previewRefLabelKey(provider: PrProvider | null | undefined): "apps.previewItemMr" | "apps.previewItemPr" {
+  return provider === "gitlab" ? "apps.previewItemMr" : "apps.previewItemPr";
+}
+
+/** Same split for the page-header badge of a preview app. */
+export function previewBadgeKey(provider: PrProvider | null | undefined): "apps.previewBadgeMr" | "apps.previewBadge" {
+  return provider === "gitlab" ? "apps.previewBadgeMr" : "apps.previewBadge";
 }

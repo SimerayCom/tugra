@@ -12,13 +12,13 @@ import { Badge, Btn, Card, SectionCard, Spinner } from "../../../../components/u
 import { useUnsavedChanges } from "../../../../hooks/useUnsavedChanges";
 import { useT } from "../../../../i18n/provider";
 import { api, appIconUrl } from "../../../../lib/api";
-import { appStatusDisplay, appSourceSummary, deploymentColor } from "../../../../lib/apps";
+import { appStatusDisplay, appSourceSummary, deploymentColor, previewBadgeKey, previewRefLabelKey } from "../../../../lib/apps";
 import { statusLabel } from "../../../../lib/status";
 import { relativeTime } from "../../../../lib/fleet";
 import { safeExternalUrl } from "../../../../lib/external-link";
 import { cropToPngBase64 } from "../../../../lib/icon";
 import { TERMINAL_PRE_STYLE } from "../../../../lib/terminal-theme";
-import { type Application, type Deployment, type ScheduledTask } from "../../../../lib/types";
+import { type Application, type Deployment, type PrProvider, type ScheduledTask } from "../../../../lib/types";
 import { linkKindText } from "./app-links-menu";
 import { envField, taskRunColor } from "./app-detail-shared";
 
@@ -425,9 +425,10 @@ export function PreviewCard({ id, previewEnabled, domain, excludeKeys, limit }: 
             />
             {t("apps.previewEnable")}
           </label>
-          <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "0 0 12px" }}>
+          <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "0 0 4px" }}>
             {t("apps.previewWildcardHint", { domain })}
           </p>
+          <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "0 0 12px" }}>{t("apps.previewForkNote")}</p>
           {previewEnabled && (
             <div style={{ marginBottom: 12 }}>
               <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.previewExcludeEnv")}</div>
@@ -456,9 +457,10 @@ export function PreviewCard({ id, previewEnabled, domain, excludeKeys, limit }: 
                 <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.previewNone")}</div>
               )}
               {previews.map((p) => (
-                <div key={p.id} style={{ display: "flex", gap: 8, alignItems: "center", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "6px 10px" }}>
-                  <span style={{ fontSize: 12, fontWeight: 600 }}>PR #{p.prNumber}</span>
+                <div key={p.id} style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "6px 10px" }}>
+                  <span style={{ fontSize: 12, fontWeight: 600 }}>{t(previewRefLabelKey(p.prProvider), { n: p.prNumber ?? "?" })}</span>
                   <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{p.gitBranch}</span>
+                  {p.prHeadSha && <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{p.prHeadSha.slice(0, 7)}</span>}
                   <span style={{ flex: 1 }} />
                   {p.url && (
                     <a href={p.url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: "var(--c-lapis)" }}>
@@ -474,6 +476,29 @@ export function PreviewCard({ id, previewEnabled, domain, excludeKeys, limit }: 
       )}
       {toggle.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(toggle.error as Error).message}</div>}
     </SectionCard>
+  );
+}
+
+/** Header badge of a preview app: "Preview · MR !n" for GitLab, "Preview · PR #n" otherwise. */
+export function PreviewBadge({ provider, n }: { provider: PrProvider | null; n: number | null }) {
+  const t = useT();
+  return <Badge tone="lapis">{t(previewBadgeKey(provider), { n: n ?? "?" })}</Badge>;
+}
+
+/** Which events to enable per git host, plus where to look when no preview appears. Shown under the webhook
+ *  URL + secret, which are the same for every provider. */
+export function WebhookEventHelp() {
+  const t = useT();
+  const line = { fontSize: 11, color: "var(--c-tx3)", margin: "0 0 4px" } as const;
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: "var(--c-tx2)", marginBottom: 4 }}>{t("apps.webhookHelpTitle")}</div>
+      <p style={line}>{t("apps.webhookHelpGithub")}</p>
+      <p style={line}>{t("apps.webhookHelpGitlab")}</p>
+      <p style={line}>{t("apps.webhookHelpGitea")}</p>
+      <p style={line}>{t("apps.webhookHelpBitbucket")}</p>
+      <p style={{ ...line, marginTop: 6 }}>{t("apps.webhookDeliveryHint")}</p>
+    </div>
   );
 }
 

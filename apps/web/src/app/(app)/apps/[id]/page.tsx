@@ -28,7 +28,7 @@ import { ClusterDeployCard } from "../../../../components/cluster-deploy-card";
 import { TagsCard } from "../../../../components/tags";
 import { useT } from "../../../../i18n/provider";
 import { useToast } from "../../../../components/toast";
-import { Badge, Btn, Card, SectionCard, Spinner } from "../../../../components/ui";
+import { Btn, Card, SectionCard, Spinner } from "../../../../components/ui";
 import { PageHeader } from "../../../../components/page-header";
 import { AppLogo } from "../../../../components/app-logo";
 import { ErrorState } from "../../../../components/error-state";
@@ -48,7 +48,7 @@ import { AppLinksMenu } from "./app-links-menu";
 import { SourceCard, BuildSettingsCard, BuildArgsCard, BuildSecretsCard, DeploySettingsCard, BuildConfigCard, ContainerCommandCard, RestartPolicyCard, ContainerPortCard, DeployHooksCard, CredentialsCard, WatchPathsCard } from "./app-detail-build-cards";
 import { ExtraDomainsCard, ServiceDomainsCard, DomainOptionsCard, CustomCertCard, RedirectsCard, BasicAuthCard, NetworkAliasesCard, NetworkingCard } from "./app-detail-domain-cards";
 import { VolumesCard, HostMountsCard, VolumeBackupsCard } from "./app-detail-storage-cards";
-import { ScheduledTasksCard, PreviewCard, AppDescriptionCard, ComposeEditorCard, GitComposeSourceCard, AppIconCard, AppOverview, ContainerPickerModal } from "./app-detail-misc-cards";
+import { ScheduledTasksCard, PreviewCard, AppDescriptionCard, ComposeEditorCard, GitComposeSourceCard, AppIconCard, AppOverview, ContainerPickerModal, PreviewBadge, WebhookEventHelp } from "./app-detail-misc-cards";
 import { DeploymentsTab, MetricsTab, LogsTab, FilesTab } from "./app-detail-tabs";
 
 export default function AppDetailPage() {
@@ -312,6 +312,7 @@ export default function AppDetailPage() {
               <CopyRow label={t("apps.webhookSecret")} value={appData.webhookSecret} copy={t("apps.copy")} secret />
             )}
           </div>
+          <WebhookEventHelp />
           <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--c-tx2)", marginTop: 12 }}>
             <input type="checkbox" checked={appData.autoDeploy} disabled={autoDeployMut.isPending} onChange={(e) => autoDeployMut.mutate(e.target.checked)} />
             {t("apps.autoDeploy")}
@@ -346,7 +347,7 @@ export default function AppDetailPage() {
         title={appData.name}
         icon={<AppLogo iconUrl={appIconUrl(appData.id, appData.iconUpdatedAt)} templateSlug={appData.templateSlug} templateLogo={appData.templateLogo} source={appData.source} name={appData.name} size={20} />}
         status={headerStatus}
-        badge={appData.isPreview ? <Badge tone="lapis">{t("apps.previewBadge", { n: appData.prNumber ?? "?" })}</Badge> : undefined}
+        badge={appData.isPreview ? <PreviewBadge provider={appData.prProvider} n={appData.prNumber} /> : undefined}
         actions={
           appData.canWrite ? (
             <>

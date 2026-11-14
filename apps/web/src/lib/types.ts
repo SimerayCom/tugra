@@ -1206,6 +1206,8 @@ export interface AppContainerHealth {
   observedAt: string | null;
 }
 
+export type PrProvider = "github" | "gitlab" | "gitea" | "forgejo" | "bitbucket" | "bitbucket-server";
+
 export interface Application {
   id: string;
   name: string;
@@ -1346,6 +1348,10 @@ export interface Application {
   isPreview: boolean;
   previewEnabled: boolean;
   prNumber: number | null;
+  /** Which git host's event created this preview (null = legacy / GitHub-era row). */
+  prProvider: PrProvider | null;
+  /** The head commit the preview last built (lowercase hex), for display only. */
+  prHeadSha: string | null;
   parentAppId: string | null;
   tags: string[];
   volumeBackupEnabled: boolean;

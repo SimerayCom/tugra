@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { appColor, appStatusDisplay, deleteCleanupOptions, appSourceSummary, appUrl, deploymentColor, shortDigest, webhookUrl } from "./apps";
+import { appColor, appStatusDisplay, deleteCleanupOptions, appSourceSummary, appUrl, deploymentColor, shortDigest, webhookUrl, previewBadgeKey, previewRefLabelKey } from "./apps";
 
 describe("app helpers", () => {
   it("maps app status to a color", () => {
@@ -81,5 +81,16 @@ describe("deleteCleanupOptions", () => {
   });
   it("a clustered app offers neither", () => {
     expect(deleteCleanupOptions({ source: "GIT", clusterId: "c1", networks: ["x"] })).toEqual({ networks: [], buildCache: false });
+  });
+});
+
+describe("preview labels", () => {
+  it("names a GitLab preview a merge request and every other host (or a legacy row) a pull request", () => {
+    expect(previewRefLabelKey("gitlab")).toBe("apps.previewItemMr");
+    for (const p of ["github", "gitea", "forgejo", "bitbucket", "bitbucket-server", null, undefined] as const) {
+      expect(previewRefLabelKey(p)).toBe("apps.previewItemPr");
+    }
+    expect(previewBadgeKey("gitlab")).toBe("apps.previewBadgeMr");
+    expect(previewBadgeKey(null)).toBe("apps.previewBadge");
   });
 });
