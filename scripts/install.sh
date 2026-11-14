@@ -19,7 +19,12 @@
 #   --acme-email <addr> Contact email for Let's Encrypt (required by --auto-tls; providing it implies it).
 #   --acme-dns-cloudflare <token>  DNS-01 with a Cloudflare API token: a REAL panel cert while the record
 #                       stays Cloudflare-proxied (IP hidden). Implies --auto-tls. (HTTP-01 can't validate
-#                       through the proxy.)
+#                       through the proxy.) The token on the command line is visible in `ps` and shell
+#                       history — prefer --acme-dns-cloudflare-file or TUGRA_ACME_DNS_TOKEN.
+#   --acme-dns-cloudflare-file <path>  Same as above, reading the token from a file (first line).
+#   --keep-raw-ports    Do NOT move the published hub/web ports to 127.0.0.1 when the install turns https /
+#                       bundled-TLS (also: TUGRA_KEEP_RAW_PORTS=1). Default: a 0.0.0.0 bind is rebound to
+#                       loopback on that transition, since only the proxy needs to reach the raw ports.
 #   --hub-url <url>     Explicit public hub URL (agents dial <url>/agent). Overrides --domain.
 #   --web-url <url>     Explicit public web URL (the browser origin).
 #   --build             Force build-from-source (skip pulling published images).
@@ -65,8 +70,13 @@ AUTO_TLS="${TUGRA_AUTO_TLS:-}"
 ACME_EMAIL_ARG="${TUGRA_ACME_EMAIL:-}"
 ACME_DNS_PROVIDER_ARG="${TUGRA_ACME_DNS_PROVIDER:-}"
 ACME_DNS_TOKEN_ARG="${TUGRA_ACME_DNS_TOKEN:-}"
-HUB_PORT="${HUB_PORT:-3000}"
-WEB_PORT="${WEB_PORT:-3001}"
+ACME_DNS_TOKEN_ARGV=0
+TUGRA_SNAPSHOT_DRY=0   # lib/snapshot.sh dry switch: install.sh never dry-runs it (an inherited DRY must not skip the snapshot)
+KEEP_RAW_PORTS="${TUGRA_KEEP_RAW_PORTS:-0}"
+# HUB_PORT/WEB_PORT: env wins, else the value stored in .env (resolved after flag parsing), else 3000/3001.
+HUB_PORT="${HUB_PORT:-}"
+WEB_PORT="${WEB_PORT:-}"
+LOGDIR=""   # private (0700) scratch dir for installer logs; created for a real (non-dry-run) install
 
 log()  { printf '\033[38;5;179m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[33mwarning:\033[0m %s\n' "$*" >&2; }
@@ -84,14 +94,18 @@ PKG_UPDATED=0
 ensure_pkg() {
   _cmd="$1"; _pkg="${2:-$1}"
   command -v "$_cmd" >/dev/null 2>&1 && return 0
-  if   command -v apt-get >/dev/null 2>&1; then [ "$PKG_UPDATED" = 1 ] || { apt-get update -y >/dev/null 2>&1 || true; PKG_UPDATED=1; }; apt-get install -y "$_pkg" >/dev/null 2>&1 || true
-  elif command -v dnf     >/dev/null 2>&1; then dnf install -y "$_pkg" >/dev/null 2>&1 || true
-  elif command -v yum     >/dev/null 2>&1; then yum install -y "$_pkg" >/dev/null 2>&1 || true
-  elif command -v apk     >/dev/null 2>&1; then apk add --no-cache "$_pkg" >/dev/null 2>&1 || true
-  elif command -v pacman  >/dev/null 2>&1; then pacman -Sy --noconfirm "$_pkg" >/dev/null 2>&1 || true
-  elif command -v zypper  >/dev/null 2>&1; then zypper -n install "$_pkg" >/dev/null 2>&1 || true
+  # Package-manager output goes to the private log dir (not /dev/null) so a failed install is diagnosable.
+  _plog=/dev/null; [ -n "${LOGDIR:-}" ] && _plog="$LOGDIR/pkg.log"
+  if   command -v apt-get >/dev/null 2>&1; then [ "$PKG_UPDATED" = 1 ] || { apt-get update -y >>"$_plog" 2>&1 || true; PKG_UPDATED=1; }; apt-get install -y "$_pkg" >>"$_plog" 2>&1 || true
+  elif command -v dnf     >/dev/null 2>&1; then dnf install -y "$_pkg" >>"$_plog" 2>&1 || true
+  elif command -v yum     >/dev/null 2>&1; then yum install -y "$_pkg" >>"$_plog" 2>&1 || true
+  elif command -v apk     >/dev/null 2>&1; then apk add --no-cache "$_pkg" >>"$_plog" 2>&1 || true
+  elif command -v pacman  >/dev/null 2>&1; then pacman -Sy --noconfirm "$_pkg" >>"$_plog" 2>&1 || true
+  elif command -v zypper  >/dev/null 2>&1; then zypper -n install "$_pkg" >>"$_plog" 2>&1 || true
   fi
-  command -v "$_cmd" >/dev/null 2>&1
+  if command -v "$_cmd" >/dev/null 2>&1; then return 0; fi
+  if [ "$_plog" != /dev/null ] && [ -s "$_plog" ]; then note "could not install $_pkg; last package-manager output ($_plog): $(tail -n 2 "$_plog" | tr '\n' ' ')"; fi
+  return 1
 }
 
 banner() {
@@ -129,15 +143,32 @@ while [ $# -gt 0 ]; do
     --auto-tls)             AUTO_TLS=1; shift ;;
     --no-auto-tls)          AUTO_TLS=0; shift ;;
     --acme-email)           ACME_EMAIL_ARG="${2:-}"; shift 2 ;;
-    --acme-dns-cloudflare)  ACME_DNS_PROVIDER_ARG="cloudflare"; ACME_DNS_TOKEN_ARG="${2:-}"; shift 2 ;;
+    --acme-dns-cloudflare)  ACME_DNS_PROVIDER_ARG="cloudflare"; ACME_DNS_TOKEN_ARG="${2:-}"; ACME_DNS_TOKEN_ARGV=1; shift 2 ;;
+    --acme-dns-cloudflare-file)
+      [ -n "${2:-}" ] && [ -r "$2" ] || { err "--acme-dns-cloudflare-file needs a readable file path"; exit 1; }
+      ACME_DNS_PROVIDER_ARG="cloudflare"; ACME_DNS_TOKEN_ARG="$(head -n1 "$2" | tr -d '[:space:]')"
+      [ -n "$ACME_DNS_TOKEN_ARG" ] || { err "--acme-dns-cloudflare-file: $2 is empty"; exit 1; }
+      shift 2 ;;
+    --keep-raw-ports)       KEEP_RAW_PORTS=1; shift ;;
     --public-ip) MANUAL_PUBLIC_IP="${2:-}"; shift 2 ;;
     --dry-run|--no-start) DRY_RUN=1; shift ;;
     --restore-from) RESTORE_FROM="${2:-}"; RESTORE_SET=1; shift 2 ;;
     --yes|-y) ASSUME_YES=1; shift ;;
-    -h|--help)  sed -n '2,28p' "$SCRIPT_PATH" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)  sed -n '2,/^set -euo/p' "$SCRIPT_PATH" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) err "unknown option: $1"; exit 1 ;;
   esac
 done
+
+if [ "$ACME_DNS_TOKEN_ARGV" = "1" ]; then
+  warn "the Cloudflare token was passed on the command line (visible in ps / shell history); prefer --acme-dns-cloudflare-file <path> or TUGRA_ACME_DNS_TOKEN."
+fi
+# Private (0700) scratch dir for logs + the generated panel-setup script (no fixed, predictable /tmp names).
+# Skipped for --dry-run, which must stay free of side effects.
+if [ "$DRY_RUN" -eq 0 ] && [ "$RESTORE_SET" -eq 0 ]; then
+  LOGDIR="$(umask 077; mktemp -d "${TMPDIR:-/tmp}/tugra-install.XXXXXX")" || { err "could not create a private log directory"; exit 1; }
+fi
+_setup=""; ENV_BEFORE=""
+trap '[ -n "$_setup" ] && rm -f "$_setup"; [ -n "${ENV_BEFORE:-}" ] && rm -f "$ENV_BEFORE"; true' EXIT
 
 # --restore-from: this install is a hub MOVE, not a fresh setup. Hand the whole job to hub-migrate.sh, which
 # validates the bundle (arch/PG-major/checksums) BEFORE anything destructive, backs up the old .env, restores
@@ -157,17 +188,57 @@ rand_hex() { openssl rand -hex "$1" 2>/dev/null || { od -An -tx1 -N"$1" /dev/ura
 
 # --- idempotent .env helpers (grep-based; never `source` a file with secrets) -----------------------
 env_has() { [ -f "$ENV_FILE" ] && grep -q "^$1=" "$ENV_FILE"; }
-env_get() { grep "^$1=" "$ENV_FILE" 2>/dev/null | head -n1 | cut -d= -f2-; }
+# Never fails (a missing file / missing key prints nothing) so `$(env_get X)` is safe under `set -euo pipefail`.
+env_get() { { grep "^$1=" "$ENV_FILE" 2>/dev/null || true; } | head -n1 | cut -d= -f2-; }
+# A hand-edited .env may lack a trailing newline; appending to it would glue the new KEY=VALUE onto the last
+# line (corrupting e.g. MAIL_HOST and dropping the next secret). Add the missing newline first.
+_env_nl_guard() {
+  if [ -s "$ENV_FILE" ] && [ -n "$(tail -c1 "$ENV_FILE" 2>/dev/null)" ]; then printf '\n' >> "$ENV_FILE"; fi
+  return 0
+}
 # Generate-once: keep an existing value on re-run (regenerating would invalidate sessions / orphan
 # encrypted data / change the signing identity / break the already-initialised Postgres volume).
-ensure_env() { env_has "$1" || printf '%s=%s\n' "$1" "$2" >> "$ENV_FILE"; }
+ensure_env() {
+  if env_has "$1"; then return 0; fi
+  _env_nl_guard
+  printf '%s=%s\n' "$1" "$2" >> "$ENV_FILE"
+}
+# Atomically rewrite .env without the lines matching `$1` (plus, optionally, one appended `$1=$2`): build the
+# new file in a SAME-DIR temp and rename it over the old one, preserving mode/owner, so a crash mid-write can
+# never leave a truncated .env (= every secret lost).
+_env_rewrite() {
+  local key="$1" val="$2" add="$3" tmp
+  tmp="$(mktemp "${ENV_FILE}.XXXXXX")" || return 1
+  { grep -v "^${key}=" "$ENV_FILE" 2>/dev/null || true; } > "$tmp" || { rm -f "$tmp"; return 1; }
+  if [ "$add" = "1" ]; then printf '%s=%s\n' "$key" "$val" >> "$tmp" || { rm -f "$tmp"; return 1; }; fi
+  chmod "$(stat -c '%a' "$ENV_FILE" 2>/dev/null || echo 600)" "$tmp" 2>/dev/null || chmod 600 "$tmp" 2>/dev/null || true
+  chown "$(stat -c '%u:%g' "$ENV_FILE" 2>/dev/null || echo 0:0)" "$tmp" 2>/dev/null || true
+  mv "$tmp" "$ENV_FILE" || { rm -f "$tmp"; return 1; }
+}
 # Upsert: refresh derived/URL values every run (so a re-run with a new --domain updates them).
 set_env() {
   if env_has "$1"; then
-    local tmp; tmp="$(mktemp)"; grep -v "^$1=" "$ENV_FILE" > "$tmp"; cat "$tmp" > "$ENV_FILE"; rm -f "$tmp"
+    _env_rewrite "$1" "$2" 1
+  else
+    _env_nl_guard
+    printf '%s=%s\n' "$1" "$2" >> "$ENV_FILE"
   fi
-  printf '%s=%s\n' "$1" "$2" >> "$ENV_FILE"
 }
+unset_env() { if env_has "$1"; then _env_rewrite "$1" "" 0; fi; }
+
+# Resolve the ports: env var > stored .env value > default. A flag-less re-run (the upgrade path) must keep a
+# custom HUB_PORT/WEB_PORT instead of resetting it to 3000/3001 while HUB_PUBLIC_URL still points at the old one.
+# (stored values are stripped of quotes/whitespace/CR: a hand-edited HUB_PORT="3000" must not trip the guard below)
+[ -n "$HUB_PORT" ] || HUB_PORT="$(env_get HUB_PORT | tr -d "\"' \r")"
+[ -n "$WEB_PORT" ] || WEB_PORT="$(env_get WEB_PORT | tr -d "\"' \r")"
+HUB_PORT="${HUB_PORT:-3000}"; WEB_PORT="${WEB_PORT:-3001}"
+case "$HUB_PORT$WEB_PORT" in *[!0-9]*) err "HUB_PORT/WEB_PORT must be numeric (got HUB_PORT=$HUB_PORT WEB_PORT=$WEB_PORT)"; exit 1 ;; esac
+# Remember the trust mode this .env had BEFORE this run rewrites it (drives the http->https bind transition).
+PREV_TRUSTED="$(env_get HUB_TRUSTED_PROXY)"
+PREV_VERSION="$(env_get TUGRA_VERSION)"; PREV_VERSION="${PREV_VERSION:-latest}"
+# Pre-run copy of an existing .env (kept in the private log dir, removed on exit) — the restore point's .env.
+ENV_BEFORE=""
+if [ -n "$LOGDIR" ] && [ -s "$ENV_FILE" ]; then ENV_BEFORE="$LOGDIR/env.before"; cp -p "$ENV_FILE" "$ENV_BEFORE" && chmod 600 "$ENV_BEFORE" || ENV_BEFORE=""; fi
 
 # A real ACME contact email: format check + reject the placeholder domains Let's Encrypt won't accept
 # (mirrors panel-router.validateAcmeEmail so the installer fails fast before touching anything).
@@ -223,7 +294,8 @@ panel_dns_preflight() {
     if command -v curl >/dev/null 2>&1 && [ -n "${ACME_DNS_TOKEN_ARG:-}" ]; then
       # No -f here: an invalid token returns HTTP 400 with a JSON error body we WANT to read (so we can say
       # "rejected" vs. "couldn't reach"). -f would discard that body and make both look like a network miss.
-      _vr="$(curl -sS --max-time 6 -H "Authorization: Bearer ${ACME_DNS_TOKEN_ARG}" \
+      # The bearer header goes through a curl config on stdin (-K -), so the token never appears in argv / ps.
+      _vr="$(printf 'header = "Authorization: Bearer %s"\n' "${ACME_DNS_TOKEN_ARG}" | curl -sS --max-time 6 -K - \
              https://api.cloudflare.com/client/v4/user/tokens/verify 2>/dev/null || true)"
       case "$_vr" in
         *'"status":"active"'*) ok "Cloudflare API token verified (DNS-01 — a real cert while $_dom stays proxied, IP hidden)." ;;
@@ -269,10 +341,10 @@ preflight() {
     bad "Docker not found — install it: https://get.docker.com (auto-install skipped via TUGRA_SKIP_DOCKER_INSTALL)"; fail=1
   else
     note "Docker not found — installing it now via get.docker.com (set TUGRA_SKIP_DOCKER_INSTALL=1 to skip)…"
-    if command -v curl >/dev/null 2>&1 && curl -fsSL https://get.docker.com | sh >/tmp/tugra-docker-install.log 2>&1 && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    if command -v curl >/dev/null 2>&1 && curl -fsSL https://get.docker.com | sh >"$LOGDIR/docker-install.log" 2>&1 && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
       ok "Docker installed ($(docker version --format '{{.Server.Version}}' 2>/dev/null || echo present))"
     else
-      bad "Automatic Docker install failed — install it manually: https://get.docker.com (log: /tmp/tugra-docker-install.log)"; fail=1
+      bad "Automatic Docker install failed — install it manually: https://get.docker.com (log: $LOGDIR/docker-install.log)"; fail=1
     fi
   fi
   if docker compose version >/dev/null 2>&1; then ok "Docker Compose v2 plugin"; else bad "Docker Compose v2 plugin is required (docker compose)"; fail=1; fi
@@ -348,9 +420,11 @@ fi
 # Flag-less re-run on an existing install = the documented upgrade path (README / docs/upgrade.md): it
 # must PRESERVE the configured origin, not silently revert a --domain deployment back to the http quick
 # start. Explicit flags still override; a deliberate downgrade passes --hub-url/--web-url (http://…).
-if [ -z "$DOMAIN" ] && [ -z "$HUB_URL" ] && [ -z "$WEB_URL" ] && env_has HUB_PUBLIC_URL && env_has WEB_PUBLIC_URL; then
-  HUB_URL="$(env_get HUB_PUBLIC_URL)"
-  WEB_URL="$(env_get WEB_PUBLIC_URL)"
+# Each half is preserved independently: passing only --hub-url (or only --web-url) keeps the stored other
+# half rather than recomputing it from the host IP (which would leave an https hub with an http web origin).
+if [ -z "$DOMAIN" ]; then
+  if [ -z "$HUB_URL" ] && env_has HUB_PUBLIC_URL; then HUB_URL="$(env_get HUB_PUBLIC_URL)"; fi
+  if [ -z "$WEB_URL" ] && env_has WEB_PUBLIC_URL; then WEB_URL="$(env_get WEB_PUBLIC_URL)"; fi
 fi
 if [ -n "$DOMAIN" ]; then
   # Single public origin behind the user's TLS reverse proxy (see README for the path-routing rules).
@@ -380,10 +454,12 @@ case "$HUB_URL" in
   https://*) COOKIE_SECURE="true";  HUB_TRUSTED_PROXY="true" ;;
   *)         COOKIE_SECURE="false"; HUB_TRUSTED_PROXY="false" ;;
 esac
-# Host bind for the published hub/web ports. A trusted-proxy (https) hub honors X-Forwarded-For, so its raw
-# port must not be internet-exposed. A FRESH --domain install binds to loopback (same-host proxy). The http
-# quick start and existing installs keep 0.0.0.0 (agents dial host:3000; and an upgrade must not silently
-# break a working cross-host proxy). Override anytime with HUB_BIND/WEB_BIND (e.g. a private-interface IP).
+# Host bind for the published hub/web ports. A trusted-proxy (https) hub honors X-Forwarded-For (and only from
+# private/loopback/docker peers, see HUB_TRUSTED_PROXY_CIDRS), so its raw port should not be internet-exposed.
+# A FRESH --domain install binds to loopback (same-host proxy). The http quick start keeps 0.0.0.0 (agents dial
+# host:3000). An EXISTING install turning https is moved to loopback below at the .env write (opt out:
+# --keep-raw-ports), and bundled TLS moves it once the panel router is live. Override anytime with
+# HUB_BIND/WEB_BIND (e.g. a private-interface IP for a proxy on another host).
 if [ "$HUB_TRUSTED_PROXY" = "true" ] && ! env_has HUB_PUBLIC_URL; then
   PORT_BIND_DEFAULT="127.0.0.1"
 else
@@ -449,6 +525,7 @@ fi
 # --- write the .env (create with 0600, preserve secrets on re-run) ----------------------------------
 [ "$DRY_RUN" -eq 1 ] || step "Writing configuration (.env with fresh secrets)…"
 [ -f "$ENV_FILE" ] || (umask 077; : > "$ENV_FILE")
+chmod 600 "$ENV_FILE"   # BEFORE any secret is appended (a pre-existing 0644 .env must not leak them in the interim)
 
 ensure_env JWT_ACCESS_SECRET     "$(rand_b64 24)"
 ensure_env JWT_REFRESH_SECRET    "$(rand_b64 24)"
@@ -485,9 +562,18 @@ if ! env_has LOCAL_SERVER_PUBLIC_IP; then
     esac
   fi
 fi
-# Agent image ref (the agent re-invokes itself as the sandboxed file helper; hub uses AGENT_IMAGE for installs).
-ensure_env TUGRA_AGENT_IMAGE "ghcr.io/simeraycom/tugra-agent:${TUGRA_VERSION:-latest}"
-ensure_env AGENT_IMAGE       "ghcr.io/simeraycom/tugra-agent:${TUGRA_VERSION:-latest}"
+# Agent image: the installer no longer writes TUGRA_AGENT_IMAGE / AGENT_IMAGE. Compose derives the local
+# agent's image from TUGRA_VERSION, and an unset AGENT_IMAGE lets the hub default to its own version AND keep
+# the signed-manifest digest pin (any AGENT_IMAGE disables it). Older installers froze both at the first
+# install's tag: drop those stale installer-default values, but never touch a custom/mirror override.
+for _k in AGENT_IMAGE TUGRA_AGENT_IMAGE; do
+  if env_has "$_k"; then
+    case "$(env_get "$_k" | tr -d "\"'")" in
+      ghcr.io/simeraycom/tugra-agent:latest|ghcr.io/simeraycom/tugra-agent:[0-9]*) unset_env "$_k"; note "removed stale $_k (installer default, frozen at the first install's tag)" ;;
+      "") unset_env "$_k" ;;
+    esac
+  fi
+done
 # Pin hub/web/agent to a specific release when TUGRA_VERSION is set (e.g. a beta:
 # TUGRA_VERSION=0.1.0-beta.1 ./scripts/install.sh). Persist it so later `compose up`/reboots keep the pinned
 # tag instead of drifting back to :latest (compose reads ${TUGRA_VERSION:-latest}). set_env (override), not
@@ -534,6 +620,19 @@ set_env WEB_PORT       "$WEB_PORT"
 # Preserve on re-run (ensure_env, not set_env): never clobber an operator's deliberate bind lock-down.
 ensure_env HUB_BIND    "${HUB_BIND:-$PORT_BIND_DEFAULT}"
 ensure_env WEB_BIND    "${WEB_BIND:-$PORT_BIND_DEFAULT}"
+# http -> https TRANSITION (this run turns HUB_TRUSTED_PROXY on): the hub now honors X-Forwarded-For, so a
+# raw 0.0.0.0 port is no longer appropriate. Move a still-default 0.0.0.0 bind to loopback, unless the operator
+# opted out (--keep-raw-ports) or passed an explicit HUB_BIND/WEB_BIND on this run. A non-0.0.0.0 bind and a
+# flag-less re-run of an already-trusted install are never touched (the hub's peer check protects those).
+REBOUND=0
+if [ "$HUB_TRUSTED_PROXY" = "true" ] && [ "$PREV_TRUSTED" != "true" ] && [ "$KEEP_RAW_PORTS" != "1" ]; then
+  if [ -z "${HUB_BIND:-}" ] && [ "$(env_get HUB_BIND)" = "0.0.0.0" ]; then set_env HUB_BIND 127.0.0.1; REBOUND=1; fi
+  if [ -z "${WEB_BIND:-}" ] && [ "$(env_get WEB_BIND)" = "0.0.0.0" ]; then set_env WEB_BIND 127.0.0.1; REBOUND=1; fi
+  if [ "$REBOUND" = "1" ]; then
+    note "Switching to https: the raw hub/web ports (:$HUB_PORT/:$WEB_PORT) are now bound to 127.0.0.1 — only your reverse proxy should reach them."
+    note "Agents still dialing the old plain-http URL need the new https URL (re-run their install command); pass --keep-raw-ports to keep 0.0.0.0."
+  fi
+fi
 set_env HUB_PUBLIC_URL "$HUB_URL"
 set_env WEB_PUBLIC_URL "$WEB_URL"
 set_env COOKIE_SECURE  "$COOKIE_SECURE"
@@ -552,6 +651,10 @@ if [ -n "$PANEL_TLS_DECISION" ]; then
       set_env ACME_DNS_TOKEN "$ACME_DNS_TOKEN_ARG"
     fi
   fi
+elif [ -n "$DOMAIN" ] && [ "$(env_get PANEL_TLS)" = "1" ]; then
+  # Bundled TLS already on and no TLS decision this run, but the domain changed: the panel router must follow
+  # it, else it keeps provisioning the OLD host.
+  set_env PANEL_DOMAIN "$DOMAIN"
 fi
 
 chmod 600 "$ENV_FILE"
@@ -567,46 +670,151 @@ fi
 # for both "Update now" and auto-update; it's a fixed-command docker.sock sidecar — see SECURITY.md).
 compose() { docker compose --profile updater --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"; }
 step "Fetching images & starting the stack (first run can take a few minutes)…"
+
+# Abort AFTER the .env was rewritten and BEFORE any container was touched: put the pre-run .env back so the file
+# on disk matches the (unchanged) running stack, and say so truthfully. A fresh install has no pre-run file, so
+# its freshly generated .env is kept. Usage: abort_untouched <reason lines…> ; exits 1.
+abort_untouched() {
+  for _m in "$@"; do err "$_m"; done
+  if [ -n "${ENV_BEFORE:-}" ] && [ -f "$ENV_BEFORE" ] && cp -p "$ENV_BEFORE" "$ENV_FILE"; then
+    err "No application containers were touched, and $ENV_FILE was restored to its pre-run state."
+  else
+    err "No application containers were touched. ($ENV_FILE keeps the configuration written by this run — it is a fresh install.)"
+  fi
+  exit 1
+}
+
+# Upgrade path (`git pull && ./scripts/install.sh`): a re-run against an EXISTING stack — running, stopped
+# (`compose down` for maintenance) or just a populated tugra_pg volume — takes the same mandatory pre-update
+# restore point as the in-app updater BEFORE any image is pulled or any container recreated (the new hub runs
+# migrations on boot, and they are not reversible). No existing postgres/volume = fresh install = nothing to
+# protect. A failure aborts with the stack untouched; PRE_UPDATE_BACKUP=0 (in .env or env) is the only opt-out.
+# shellcheck source=lib/snapshot.sh
+. "$SCRIPT_DIR/lib/snapshot.sh"
+pg_running() { [ -n "$(compose ps -q postgres 2>/dev/null | head -n1)" ]; }
+pg_exists() {
+  [ -n "$(compose ps -aq postgres 2>/dev/null | head -n1)" ] && return 0
+  docker volume ls -q 2>/dev/null | grep -Eq '(^|_)tugra_pg$'
+}
+# Start ONLY postgres (--no-deps) and wait, bounded, until its docker healthcheck passes.
+start_postgres() {
+  compose up -d --no-deps postgres >"$LOGDIR/pg-start.log" 2>&1 || return 1
+  _n=0
+  while [ "$_n" -lt "${TUGRA_PG_TRIES:-30}" ]; do
+    _pc="$(compose ps -q postgres 2>/dev/null | head -n1 || true)"
+    if [ -n "$_pc" ]; then
+      _ps="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$_pc" 2>/dev/null || true)"
+      case "$_ps" in healthy|running) return 0 ;; esac
+    fi
+    _n=$((_n + 1)); sleep "${TUGRA_HEALTH_INTERVAL:-2}"
+  done
+  return 1
+}
+if pg_exists; then
+  if snapshot_disabled; then
+    warn "PRE_UPDATE_BACKUP=0 — upgrading WITHOUT a pre-update restore point."
+  else
+    if ! pg_running; then
+      log "Existing database found but not running — starting only postgres to take the restore point…"
+      start_postgres || abort_untouched "Could not start postgres to take the pre-update backup (see $LOGDIR/pg-start.log)." \
+        "Fix the cause (disk space? corrupt volume?) and re-run, or set PRE_UPDATE_BACKUP=0 in $ENV_FILE to skip it (NOT recommended)."
+    fi
+    log "Taking a pre-update backup (database dump + .env copy)…"
+    TUGRA_SNAPSHOT_ENV_SRC="${ENV_BEFORE:-$ENV_FILE}"
+    if tugra_snapshot "$PREV_VERSION" "${TUGRA_VERSION:-${PREV_VERSION}}"; then
+      ok "Restore point: $SNAPSHOT_PATH"
+    else
+      abort_untouched "Pre-update backup failed — no images pulled, no containers recreated." \
+        "Fix the cause above (disk space? postgres unhealthy?) and re-run, or set PRE_UPDATE_BACKUP=0 in $ENV_FILE to skip it (NOT recommended)."
+    fi
+  fi
+fi
+
+# Pull failure policy: only a genuinely MISSING image (no arch/tag match — the hub/web images are amd64-only)
+# on an UNPINNED install falls back to building this checkout. Any other failure (rate limit, network, auth),
+# or any pinned TUGRA_VERSION, stops here — it must never silently turn into un-released checkout code.
+pull_image_missing() { grep -qiE 'manifest unknown|not found|no matching manifest|manifest for .* not found' "$LOGDIR/pull.log" 2>/dev/null; }
 if [ "$FORCE_BUILD" -eq 1 ]; then
   log "Building images from source…"; compose up -d --build
 elif [ "$FORCE_PULL" -eq 1 ]; then
-  compose pull; compose up -d --no-build
-elif compose pull >/tmp/tugra-pull.log 2>&1; then
+  compose pull || abort_untouched "Could not pull the published images (--pull)."
+  compose up -d --no-build
+elif compose pull >"$LOGDIR/pull.log" 2>&1; then
   log "Using published images."; compose up -d --no-build
-elif [ -f "$REPO_DIR/deploy/Dockerfile.hub" ]; then
-  # Pull failed (no image for this arch — the images are amd64-only — or an offline/registry hiccup; see
-  # /tmp/tugra-pull.log). Fall back to building from this checkout. This is a full pnpm + Next build and can
-  # take several minutes (and wants ~2 GB free RAM); it is NOT a hang.
-  note "Couldn't pull published images (see /tmp/tugra-pull.log) — building from source instead."
+elif [ -z "$(env_get TUGRA_VERSION)" ] && pull_image_missing && [ -f "$REPO_DIR/deploy/Dockerfile.hub" ]; then
+  # No published image for this arch/tag (see $LOGDIR/pull.log). Build from this checkout. This is a full pnpm +
+  # Next build and can take several minutes (and wants ~2 GB free RAM); it is NOT a hang.
+  note "No published image available (see $LOGDIR/pull.log) — building from source instead."
   drop_digest_pins
   log "Building images from this checkout (several minutes; needs ~2 GB RAM)…"
   compose up -d --build
 else
-  err "Could not pull published images, and no source is available to build from."
-  err "Clone the repository and run scripts/install.sh from it, or wait for a published release."
-  exit 1
+  err "Could not pull the published images:"
+  tail -n 5 "$LOGDIR/pull.log" >&2 2>/dev/null || true
+  _pin="$(env_get TUGRA_VERSION)"   # read BEFORE abort_untouched restores the pre-run .env
+  if [ -n "$_pin" ]; then
+    abort_untouched "TUGRA_VERSION is pinned ($_pin), so the installer will not build unreleased code from this checkout. Retry once the registry is reachable, or pass --build to build deliberately."
+  else
+    abort_untouched "This looks like a registry/network problem, not a missing image. Retry, or pass --build to build from this checkout."
+  fi
 fi
 
 # --- wait for health + print next steps -------------------------------------------------------------
-# HEALTHY: 1 = passed, 0 = still failing after the timeout, 2 = could not check (no curl). The final exit
-# code reflects it so automation (and `curl … | sh`) can tell a failed install from a good one.
-HEALTHY=2
-if command -v curl >/dev/null 2>&1; then
-  step "Waiting for the hub to become healthy…"
-  HEALTHY=1; i=0
-  until curl -fsS "http://localhost:${HUB_PORT}/health" >/dev/null 2>&1; do
-    i=$((i + 1))
-    [ "$i" -ge 120 ] && { printf '\r\033[K'; HEALTHY=0; warn "hub not healthy after ~4 min — check: docker compose --env-file $ENV_FILE -f $COMPOSE_FILE logs hub-api"; break; }
-    case $((i % 4)) in 0) c='|' ;; 1) c='/' ;; 2) c='-' ;; 3) c='\' ;; esac
-    printf '\r  \033[38;5;179m%s\033[0m still starting… (%ss)' "$c" "$((i * 2))"
-    sleep 2
+# HEALTHY: 1 = passed, 0 = still failing after the timeout, 2 = could not verify (no curl AND no docker
+# health to read). The final exit code reflects it so automation (and `curl … | sh`) can tell a failed install
+# from a good one; 2 is NOT reported as "up" — it prints an explicit "could not verify" and exits 0.
+#
+# The probe targets the address the hub is actually published on: 127.0.0.1 for the default/wildcard bind, or
+# the operator's specific HUB_BIND (a private-interface bind is unreachable via localhost, which used to make a
+# healthy hub time out for 4 minutes and exit 1). Without curl it reads the container's docker healthcheck.
+TUGRA_HEALTH_TRIES="${TUGRA_HEALTH_TRIES:-120}"
+TUGRA_HEALTH_INTERVAL="${TUGRA_HEALTH_INTERVAL:-2}"
+hub_probe_url() {
+  _hb="$(env_get HUB_BIND)"
+  case "$_hb" in
+    ""|0.0.0.0|"::"|"[::]") _ph="127.0.0.1" ;;
+    *:*) _ph="[${_hb#[}"; _ph="${_ph%]}]" ;;   # a specific IPv6 bind needs brackets in a URL
+    *) _ph="$_hb" ;;
+  esac
+  printf 'http://%s:%s/health' "$_ph" "${HUB_PORT}"
+}
+# 0 = healthy, 1 = not (yet) healthy, 2 = cannot tell.
+hub_healthy_once() {
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsS "$(hub_probe_url)" >/dev/null 2>&1 && return 0
+    return 1
+  fi
+  if command -v docker >/dev/null 2>&1; then
+    _cid="$(compose ps -q hub-api 2>/dev/null | head -n1 || true)"
+    [ -n "$_cid" ] || return 2
+    _hs="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$_cid" 2>/dev/null || true)"
+    case "$_hs" in healthy|running) return 0 ;; "") return 2 ;; *) return 1 ;; esac
+  fi
+  return 2
+}
+# Wait loop shared by the initial start and the post-rebind re-check. Sets HEALTHY (1/0/2).
+wait_hub_healthy() {
+  HEALTHY=1; _i=0
+  until hub_healthy_once; do
+    _rc=$?
+    if [ "$_rc" = "2" ]; then HEALTHY=2; break; fi
+    _i=$((_i + 1))
+    if [ "$_i" -ge "$TUGRA_HEALTH_TRIES" ]; then printf '\r\033[K'; HEALTHY=0; warn "hub not healthy after ~$((TUGRA_HEALTH_TRIES * TUGRA_HEALTH_INTERVAL))s — check: docker compose --env-file $ENV_FILE -f $COMPOSE_FILE logs hub-api"; break; fi
+    case $((_i % 4)) in 0) _c='|' ;; 1) _c='/' ;; 2) _c='-' ;; 3) _c='\' ;; esac
+    printf '\r  \033[38;5;179m%s\033[0m still starting… (%ss)' "$_c" "$((_i * TUGRA_HEALTH_INTERVAL))"
+    sleep "$TUGRA_HEALTH_INTERVAL"
   done
   printf '\r\033[K'
-fi
+}
+step "Waiting for the hub to become healthy…"
+HEALTHY=2
+wait_hub_healthy
 
 printf '\n'
 if [ "$HEALTHY" = "0" ]; then
   warn "Tugra started, but the hub did not pass its health check yet (see the log hint above)."
+elif [ "$HEALTHY" = "2" ]; then
+  warn "Could not verify the hub's health (no curl, and no readable docker health status). Check: docker compose --env-file $ENV_FILE -f $COMPOSE_FILE ps"
 else
   log "Tugra is up."
 fi
@@ -621,11 +829,14 @@ if [ "$(env_get PANEL_TLS)" = "1" ] && [ "$HEALTHY" != "0" ]; then
   _pdp="$(env_has ACME_DNS_PROVIDER && env_get ACME_DNS_PROVIDER || true)"; _pdt="$(env_has ACME_DNS_TOKEN && env_get ACME_DNS_TOKEN || true)"
   if [ -n "$_pd" ] && [ -n "$_pe" ]; then
     step "Provisioning HTTPS for the panel ($_pd)…"
-    _setup="$(mktemp)"
+    # The generated script embeds the DNS-01 token: keep it in the private 0700 dir at 0600 and delete it on
+    # exit (the EXIT trap above), never a leftover default-permission file in /tmp.
+    _setup="$(umask 077; mktemp "$LOGDIR/panel-setup.XXXXXX")"
     # Single source of truth: the hub image prints the Traefik setup script (panel router); we run it as root.
-    if compose run --rm --no-deps -T -e PANEL_DOMAIN="$_pd" -e ACME_EMAIL="$_pe" -e ACME_DNS_PROVIDER="$_pdp" -e ACME_DNS_TOKEN="$_pdt" \
-        --entrypoint node hub-api dist/deploy/print-proxy-setup.js >"$_setup" 2>/tmp/tugra-panel-setup.log && [ -s "$_setup" ]; then
-      if sh "$_setup" >/tmp/tugra-panel-run.log 2>&1; then
+    # The DNS token travels in the environment (`-e ACME_DNS_TOKEN` with no value forwards it), never in argv.
+    if ACME_DNS_TOKEN="$_pdt" compose run --rm --no-deps -T -e PANEL_DOMAIN="$_pd" -e ACME_EMAIL="$_pe" -e ACME_DNS_PROVIDER="$_pdp" -e ACME_DNS_TOKEN \
+        --entrypoint node hub-api dist/deploy/print-proxy-setup.js >"$_setup" 2>"$LOGDIR/panel-setup.log" && [ -s "$_setup" ]; then
+      if sh "$_setup" >"$LOGDIR/panel-run.log" 2>&1; then
         # The router is up immediately (self-signed until Let's Encrypt issues over :80). Resolve the panel
         # host to loopback so we test the local Traefik regardless of external DNS; -k since the cert may be
         # the interim self-signed one until DNS + :80 let ACME complete.
@@ -636,11 +847,32 @@ if [ "$(env_get PANEL_TLS)" = "1" ] && [ "$HEALTHY" != "0" ]; then
         done
       fi
     fi
+    rm -f "$_setup"; _setup=""
     if [ "$PANEL_UP" = "1" ]; then
       ok "Panel HTTPS router is live (cert issues once $_pd resolves here and :80/:443 are reachable)."
+      # Traefik reaches the hub/web over the tugra-panel docker network, so the raw host ports do not need to be
+      # internet-exposed. Move a still-0.0.0.0 bind to loopback (opt out: --keep-raw-ports / an explicit
+      # HUB_BIND/WEB_BIND). Only after the router is verified live; on ANY failure here the old bind is restored
+      # and the install stays successful (the panel is reachable either way).
+      if [ "$KEEP_RAW_PORTS" != "1" ] && [ -z "${HUB_BIND:-}" ] && [ -z "${WEB_BIND:-}" ] \
+         && { [ "$(env_get HUB_BIND)" = "0.0.0.0" ] || [ "$(env_get WEB_BIND)" = "0.0.0.0" ]; }; then
+        _ohb="$(env_get HUB_BIND)"; _owb="$(env_get WEB_BIND)"; _hprev="$HEALTHY"
+        log "Binding the raw hub/web ports to 127.0.0.1 (the bundled TLS proxy reaches them privately)…"
+        [ "$_ohb" = "0.0.0.0" ] && set_env HUB_BIND 127.0.0.1
+        [ "$_owb" = "0.0.0.0" ] && set_env WEB_BIND 127.0.0.1
+        if compose up -d --no-deps hub-api web >"$LOGDIR/rebind.log" 2>&1 && { wait_hub_healthy; [ "$HEALTHY" = "1" ]; }; then
+          ok "Raw ports are now loopback-only."
+        else
+          warn "Could not re-bind the raw ports to loopback — restoring the previous bind (the install is otherwise fine)."
+          [ "$_ohb" = "0.0.0.0" ] && set_env HUB_BIND "$_ohb"
+          [ "$_owb" = "0.0.0.0" ] && set_env WEB_BIND "$_owb"
+          compose up -d --no-deps hub-api web >>"$LOGDIR/rebind.log" 2>&1 || true
+          HEALTHY="$_hprev"   # the hub was verified before the rebind attempt; do not flip a good install to failed
+        fi
+      fi
     else
       warn "Panel HTTPS didn't come up yet — the install is fine; the panel is still reachable on the host port."
-      note "Check: docker logs tugra-proxy  ·  DNS for $_pd -> this host  ·  :80/:443 reachable (setup log: /tmp/tugra-panel-run.log)"
+      note "Check: docker logs tugra-proxy  ·  DNS for $_pd -> this host  ·  :80/:443 reachable (setup log: $LOGDIR/panel-run.log)"
       note "Reach it meanwhile:  ssh -L 3001:127.0.0.1:3001 <this-host>  then open http://localhost:3001"
       note "Disable auto-TLS anytime:  re-run with --no-auto-tls  (nothing else is changed on failure)."
     fi
@@ -651,8 +883,12 @@ printf '  Web UI:  %s\n' "$WEB_URL"
 printf '  Hub API: %s\n' "$HUB_URL"
 if [ "$(env_get PANEL_TLS)" = "1" ]; then
   [ "$PANEL_UP" = "1" ] && printf "  HTTPS is provisioned automatically (Let's Encrypt). Point %s's DNS at this host; the cert issues on the first reachable request.\n" "$(env_get PANEL_DOMAIN)"
-  _hb="$(env_get HUB_BIND)"
-  printf '  Raw hub/web ports bound to %s (behind the bundled TLS proxy). Keep :80/:443 reachable; the raw ports need not be internet-exposed.\n' "${_hb:-127.0.0.1}"
+  _hb="$(env_get HUB_BIND)"; _wb="$(env_get WEB_BIND)"
+  if [ "$PANEL_UP" = "1" ] && [ "${_hb:-0.0.0.0}" = "0.0.0.0" ]; then
+    printf '  Raw hub/web ports are still bound to 0.0.0.0 (--keep-raw-ports / explicit HUB_BIND). Keep :80/:443 reachable; firewall :%s/:%s (Docker-published ports bypass ufw).\n' "$HUB_PORT" "$WEB_PORT"
+  else
+    printf '  Raw hub/web ports bound to %s/%s. Keep :80/:443 reachable; the raw ports are not needed from outside.\n' "${_hb:-127.0.0.1}" "${_wb:-127.0.0.1}"
+  fi
 elif [ "$HUB_TRUSTED_PROXY" = "true" ]; then
   _hb="$(env_get HUB_BIND)"
   printf '  Ports bound to %s. With a trusted proxy the hub honors X-Forwarded-For, so the raw ports must\n' "${_hb:-127.0.0.1}"

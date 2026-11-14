@@ -2,7 +2,10 @@
 #
 # Tugra self-update sidecar. Runs inside the `tugra-updater` container (docker.sock + the repo mounted).
 # It drains a Redis job queue that the hub LPUSHes to when the owner clicks "Update now" (or auto-update
-# fires), then pulls the target images and recreates ONLY hub-api + web — never itself, postgres, or redis.
+# fires). BEFORE anything is swapped it takes a mandatory restore point (pg_dump + .env copy, see
+# lib/snapshot.sh), then pulls the target images and recreates hub-api + web (--no-deps) — never postgres,
+# redis or itself. Once those are healthy it also refreshes the local `agent` (non-fatal) and pre-pulls the
+# updater image for the next installer re-run (the updater cannot recreate itself).
 # The hub cannot do this: recreating hub-api kills the process running the command. This container survives.
 #
 #   scripts/update.sh --watch                 # the sidecar loop (BLPOP the queue forever)
@@ -68,6 +71,30 @@ set_env() {
 set_status() { redis SET "$STATUS_KEY" "{\"phase\":\"$1\",\"targetVersion\":\"$2\",\"error\":${3:-null}}" EX "$STATUS_TTL"; }
 release_lock() { redis DEL "$LOCK_KEY"; }
 
+# Dry-run switch for the snapshot library: a dedicated variable owned by THIS script (plain assignment, from our
+# own flag), so an inherited generic DRY in some other environment can never change snapshot behaviour.
+TUGRA_SNAPSHOT_DRY="$DRY"
+# shellcheck source=lib/snapshot.sh
+. "$SCRIPT_DIR/lib/snapshot.sh"
+
+# The sidecar only has the checkout (/repo) mounted. A TUGRA_BACKUP_DIR outside it would be written into the
+# container's ephemeral filesystem and vanish while the log claims success — so refuse it up front.
+# Returns 0 when unset or an absolute path inside $REPO_DIR (symlinks resolved on the existing part).
+backup_dir_ok() {
+  local bk root p rest
+  bk="$(_snap_cfg TUGRA_BACKUP_DIR "")"
+  [ -n "$bk" ] || return 0
+  case "$bk" in /*) ;; *) return 1 ;; esac
+  case "/$bk/" in */../*) return 1 ;; esac
+  root="$(cd "$REPO_DIR" && pwd -P)" || return 1
+  p="$bk"; rest=""
+  while [ ! -d "$p" ] && [ "$p" != "/" ]; do rest="/$(basename "$p")$rest"; p="$(dirname "$p")"; done
+  p="$(cd "$p" && pwd -P)${rest}" || return 1
+  case "$p/" in "$root"/*) return 0 ;; *) return 1 ;; esac
+}
+# " (DB restore point: <path>)" when a snapshot exists — appended to operator-facing failure text.
+snap_note() { if [ -n "$SNAPSHOT_PATH" ]; then printf '; pre-update backup: %s' "$SNAPSHOT_PATH"; fi; }
+
 # A bare lowercase 64-hex sha256 (the only digest form the manifest, the queue job and .env carry).
 is_hex64() { [[ "${1:-}" =~ ^[0-9a-f]{64}$ ]]; }
 
@@ -120,7 +147,7 @@ set_recovery_required() {
   log "RECOVERY REQUIRED — restore manually: set TUGRA_VERSION=$prev${pins} in $ENV_FILE then run: docker compose --env-file $ENV_FILE -f $COMPOSE_FILE up -d --no-deps hub-api web"
   # Write the status WITHOUT a TTL (unlike set_status, which EXpires after STATUS_TTL) so the recovery state
   # can't silently lapse back to idle, plus a durable marker the hub gates new updates on until it is cleared.
-  redis SET "$STATUS_KEY" "{\"phase\":\"recovery_required\",\"targetVersion\":\"$target\",\"error\":\"update to $target failed and the previous version could not be restored and verified — manual recovery required (set TUGRA_VERSION=$prev${pins} and recreate hub-api + web)\"}"
+  redis SET "$STATUS_KEY" "{\"phase\":\"recovery_required\",\"targetVersion\":\"$target\",\"error\":\"update to $target failed and the previous version could not be restored and verified — manual recovery required (set TUGRA_VERSION=$prev${pins} and recreate hub-api + web)$(snap_note)\"}"
   redis SET "instance:update:recovery_required" "{\"targetVersion\":\"$target\",\"previousVersion\":\"$prev\"}"
 }
 
@@ -270,7 +297,25 @@ do_update() {
   else
     log "updating $current -> $target"
   fi
-  set_status pulling "$target"
+  set_status pulling "$target"   # the hub knows no separate "snapshotting" phase; the snapshot runs under "pulling"
+
+  # MANDATORY restore point BEFORE anything changes: the new hub runs `prisma migrate deploy` on boot and
+  # migrations are not reversible, so a failed update needs a dump to go back to. If it cannot be taken we
+  # abort with NOTHING changed (no .env edit, no pull). PRE_UPDATE_BACKUP=0 is the only (unsafe) opt-out.
+  SNAPSHOT_PATH=""
+  if snapshot_disabled; then
+    log "WARNING: PRE_UPDATE_BACKUP=0 — updating WITHOUT a pre-update restore point"
+  elif ! backup_dir_ok; then
+    log "TUGRA_BACKUP_DIR must be an absolute path inside the checkout ($REPO_DIR) for the in-app updater — aborting, nothing was changed"
+    set_status failed "$target" "\"pre-update backup failed: TUGRA_BACKUP_DIR must be inside the checkout for the in-app updater\""
+    release_lock
+    return 0
+  elif ! tugra_snapshot "$current" "$target"; then
+    log "pre-update backup failed — aborting, nothing was changed"
+    set_status failed "$target" "\"pre-update backup failed; nothing was changed\""
+    release_lock
+    return 0
+  fi
   # Tag-only -> tag-only keeps today's exact behaviour (only TUGRA_VERSION is written). Otherwise the digests are
   # written too: pinned target = the new digests; legacy target on a pinned stack = cleared (an old pin would
   # otherwise override the new tag and pull the OLD image).
@@ -321,7 +366,7 @@ do_update() {
     # them to the new image. Actively bring the previous version back and VERIFY it, rather than only
     # rewriting the .env tag (which left a broken old/new mix running).
     if recover_previous "$current" "$prevHub" "$prevWeb" "$hubDigest" "$webDigest"; then
-      set_status failed "$target" "\"recreate failed; restored $current\""
+      set_status failed "$target" "\"recreate failed; restored $current$(snap_note)\""
     else
       set_recovery_required "$target" "$current" "$prevHub" "$prevWeb" "$hubDigest" "$webDigest"
     fi
@@ -337,13 +382,26 @@ do_update() {
     # Restore AND verify the previous version. The old code re-ran `up` without re-checking health and still
     # reported "rolled back" even when that recreate failed — a false reassurance to the operator.
     if recover_previous "$current" "$prevHub" "$prevWeb" "$hubDigest" "$webDigest"; then
-      set_status failed "$target" "\"update to $target failed health check; restored $current and verified healthy\""
+      set_status failed "$target" "\"update to $target failed health check; restored $current and verified healthy$(snap_note)\""
     else
       set_recovery_required "$target" "$current" "$prevHub" "$prevWeb" "$hubDigest" "$webDigest"
     fi
     release_lock
     return 0
   fi
+
+  # hub-api + web are verified healthy: now bring the bundled local agent along (the hub's protocol gate keeps
+  # an old agent working meanwhile) and pre-pull the updater image. Both are best-effort — a failure here must
+  # never fail an otherwise good update. `--no-deps` + an explicit service name: postgres/redis/updater are
+  # never recreated (the updater can't recreate itself; it moves on the next installer re-run).
+  if [ -n "$(compose ps -q agent 2>/dev/null | head -n1)" ]; then
+    if compose pull agent && compose up -d --no-deps agent; then
+      log "local agent refreshed to $target"
+    else
+      log "warning: could not refresh the local agent (update itself is fine; re-run scripts/install.sh to refresh it)"
+    fi
+  fi
+  compose pull tugra-updater || log "warning: could not pre-pull the updater image"
 
   set_status done "$target"
   redis DEL "instance:update:recovery_required" # a verified update clears any stale recovery marker

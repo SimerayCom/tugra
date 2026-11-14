@@ -46,6 +46,18 @@ verify a signature on the image itself. The sidecar runs `update.sh` and the com
 (they are bind-mounted), so the digest path takes effect after a `git pull` + installer re-run; a checkout
 without digest support in its compose file safely keeps pulling by tag.
 
+Before anything changes, the sidecar takes a **pre-update restore point** — a `pg_dump -Fc` of the hub database
+plus a copy of your `.env` — into `backups/` in the install directory (directory `0700`, files `0600`, the newest 5
+sets kept; secret-bearing, gitignored). If it cannot be taken the update aborts with nothing changed (status
+`failed`, "pre-update backup failed"). `PRE_UPDATE_BACKUP=0` in `.env` disables it (not recommended); tune with
+`PRE_UPDATE_KEEP` and `TUGRA_BACKUP_DIR`. For the in-app updater `TUGRA_BACKUP_DIR` must be an absolute path
+**inside the checkout** (that is the only directory the sidecar has mounted); otherwise the update is refused
+with "pre-update backup failed". The installer (`install.sh`) accepts any path. After hub-api and web are healthy the sidecar also refreshes the bundled
+local agent and pre-pulls the updater image. It still does **not** update the repo checkout, the compose file or
+the updater container itself, so a release that changes those needs `git pull && ./scripts/install.sh` (below).
+The sidecar runs `scripts/update.sh` from the mounted checkout, so an install only gains the snapshot after that
+checkout is updated once.
+
 Applying an update recreates the hub and web containers, so the hub can't do it itself — a small
 [`tugra-updater`](../SECURITY.md) sidecar drains a Redis queue and performs the recreate, then the
 UI reconnects to the new version. Its security surface is documented in [SECURITY.md](../SECURITY.md).
@@ -60,10 +72,15 @@ git pull
 ./scripts/install.sh
 ```
 
-This pulls (or rebuilds) the images referenced by your checkout and recreates the stack. A digest pin left
-by the self-updater is kept on a plain re-run, and cleared when you re-pin with `TUGRA_VERSION=…` or build
-from source with `--build`. Use it when
-you prefer git-driven upgrades or haven't configured the signed-manifest source.
+This pulls (or rebuilds) the images referenced by your checkout and recreates the stack. A digest pin left by the
+self-updater is kept on a plain re-run, and cleared when you re-pin with `TUGRA_VERSION=…` or build from source with
+`--build`. When the stack is
+already running, first takes the same pre-update restore point as above (aborting if it fails). A failed pull on a
+pinned `TUGRA_VERSION`, or any pull failure other than "no such image for this architecture", stops instead of
+silently building unreleased code from the checkout (use `--build` to build deliberately). Use it when you prefer
+git-driven upgrades or haven't configured the signed-manifest source. (A checkout made by `bootstrap.sh` with a
+branch `TUGRA_REF` tracks that branch, so `git pull` works. A tag- or SHA-pinned install is detached by design:
+upgrade it by re-running bootstrap with a new `TUGRA_REF`, not with `git pull`.)
 
 ## Configuring update checks
 
@@ -94,8 +111,10 @@ docker compose --env-file .env -f deploy/docker-compose.yml up -d --no-deps hub-
 
 **Database migrations are NOT rolled back.** A newer image runs `prisma migrate deploy` at boot, so its
 schema changes persist even after the image tag is restored, and the old image may be incompatible with the
-migrated schema (this is often why a failed health check ends in `recovery_required`). **Take a database
-backup before updating a production instance** so you have a restore point.
+migrated schema (this is often why a failed health check ends in `recovery_required`). The automatic
+pre-update snapshot is your restore point: see
+[Restoring a pre-update snapshot](disaster-recovery.md#restoring-a-pre-update-snapshot). Keep an additional
+offsite copy for production instances.
 
 ## Publishing releases (maintainers)
 

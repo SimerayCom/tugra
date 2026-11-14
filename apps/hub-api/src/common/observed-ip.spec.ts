@@ -9,6 +9,9 @@ import {
   isAlwaysBlockedIp,
   isPrivateNetworkIp,
   observedPublicIpFromUrl,
+  isTrustedProxyPeer,
+  parseTrustedProxyCidrs,
+  trustProxyFn,
 } from "./observed-ip";
 
 describe("observedPublicIpFromUrl", () => {
@@ -260,5 +263,63 @@ describe("reconcileReportedIp", () => {
   });
   it("returns null when there is no usable reported candidate", () => {
     expect(reconcileReportedIp({ publicIp: null, ipSource: "observed" }, ["127.0.0.1"])).toBeNull();
+  });
+});
+
+describe("observedIp — X-Forwarded-For only from a trusted proxy peer", () => {
+  const prev = process.env.HUB_TRUSTED_PROXY_CIDRS;
+  afterEach(() => {
+    if (prev === undefined) delete process.env.HUB_TRUSTED_PROXY_CIDRS;
+    else process.env.HUB_TRUSTED_PROXY_CIDRS = prev;
+  });
+
+  it("ignores a forged X-Forwarded-For from a PUBLIC peer even with trust on (direct hit on a raw port)", () => {
+    delete process.env.HUB_TRUSTED_PROXY_CIDRS;
+    expect(observedIp("203.0.113.7", "1.2.3.4", true)).toBe("203.0.113.7");
+    expect(observedIp("::ffff:203.0.113.7", "1.2.3.4", true)).toBe("203.0.113.7");
+    expect(observedIp("2001:db8::5", "1.2.3.4", true)).toBe("2001:db8::5");
+  });
+
+  it("honors the rightmost entry from loopback / RFC1918 / docker bridge / CGNAT / ULA / link-local peers", () => {
+    delete process.env.HUB_TRUSTED_PROXY_CIDRS;
+    for (const peer of ["127.0.0.1", "::1", "10.1.2.3", "192.168.1.5", "172.18.0.2", "100.64.1.1", "fd00::1", "::ffff:172.18.0.2"]) {
+      expect(observedIp(peer, "9.9.9.9, 198.51.100.9", true)).toBe("198.51.100.9");
+    }
+  });
+
+  it("honors X-Forwarded-For from a public peer listed in HUB_TRUSTED_PROXY_CIDRS", () => {
+    process.env.HUB_TRUSTED_PROXY_CIDRS = "198.51.100.0/24, 2001:db8::/32";
+    expect(observedIp("198.51.100.9", "1.2.3.4", true)).toBe("1.2.3.4");
+    expect(observedIp("2001:db8::7", "1.2.3.4", true)).toBe("1.2.3.4");
+    expect(observedIp("203.0.113.7", "1.2.3.4", true)).toBe("203.0.113.7"); // not listed
+  });
+
+  it("0.0.0.0/0 + ::/0 is the explicit trust-any escape", () => {
+    process.env.HUB_TRUSTED_PROXY_CIDRS = "0.0.0.0/0,::/0";
+    expect(observedIp("203.0.113.7", "1.2.3.4", true)).toBe("1.2.3.4");
+    expect(observedIp("2001:db8::5", "1.2.3.4", true)).toBe("1.2.3.4");
+  });
+
+  it("a garbage or missing peer never gets to speak for a client", () => {
+    process.env.HUB_TRUSTED_PROXY_CIDRS = "0.0.0.0/0";
+    expect(observedIp("not-an-ip", "1.2.3.4", true)).toBe("not-an-ip"); // peer used verbatim, XFF ignored
+    expect(observedIp(undefined, "1.2.3.4", true)).toBeNull();
+    expect(observedIp(null, "1.2.3.4", true)).toBeNull();
+    expect(isTrustedProxyPeer("1.2.3.4\n10.0.0.1")).toBe(false);
+  });
+
+  it("parseTrustedProxyCidrs drops malformed entries (never widens trust) and memoizes", () => {
+    expect(parseTrustedProxyCidrs("198.51.100.0/24, junk, 10.0.0.0/99, ,2001:db8::/32")).toEqual([
+      "198.51.100.0/24",
+      "2001:db8::/32",
+    ]);
+    expect(parseTrustedProxyCidrs(undefined)).toEqual([]);
+  });
+
+  it("trustProxyFn trusts exactly one hop, only from a trusted peer", () => {
+    delete process.env.HUB_TRUSTED_PROXY_CIDRS;
+    expect(trustProxyFn("172.18.0.2", 0)).toBe(true);
+    expect(trustProxyFn("172.18.0.2", 1)).toBe(false);
+    expect(trustProxyFn("203.0.113.7", 0)).toBe(false);
   });
 });

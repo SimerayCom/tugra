@@ -146,8 +146,8 @@ Route most traffic to the **web** (`:3001`) — it proxies the REST API and OAut
 
 Notes:
 
-- **TLS is not bundled** — bring your own reverse proxy (Caddy, Traefik, nginx, …). `--domain` sets `COOKIE_SECURE=true` + `HUB_TRUSTED_PROXY=true` for that setup.
-- **Lock down the raw ports.** With `HUB_TRUSTED_PROXY=true` the hub honors `X-Forwarded-For`, so the raw `:3000`/`:3001` ports must reach **only** the proxy. A fresh `--domain` install binds them to `127.0.0.1` (same-host proxy). If the proxy runs on another host, set `HUB_BIND`/`WEB_BIND` to this box's private-interface IP and firewall the ports — Docker-published ports bypass `ufw`.
+- **TLS:** bring your own reverse proxy (Caddy, Traefik, nginx, …) or add `--auto-tls --acme-email you@domain` to let Tugra provision the panel's HTTPS (bundled Traefik + Let's Encrypt). `--domain` sets `COOKIE_SECURE=true` + `HUB_TRUSTED_PROXY=true`.
+- **Lock down the raw ports.** With `HUB_TRUSTED_PROXY=true` the hub honors `X-Forwarded-For` (only from private/loopback/docker peers, or `HUB_TRUSTED_PROXY_CIDRS`), and the raw `:3000`/`:3001` ports should reach **only** the proxy. A fresh `--domain` install binds them to `127.0.0.1` (same-host proxy), and an existing install turning https is moved there too (`--keep-raw-ports` opts out). If the proxy runs on another host, set `HUB_BIND`/`WEB_BIND` to this box's private-interface IP and firewall the ports — Docker-published ports bypass `ufw`.
 - **"Sign in with GitHub"** works only in this single-origin proxy deployment (the hub and web share a public origin so the session cookie is visible to the SPA); it isn't available in the plain two-port quick start.
 
 > Published images (`ghcr.io/simeraycom/tugra-*`) arrive with the first tagged release. Until then the installer automatically builds from your checkout — same command, no changes needed.

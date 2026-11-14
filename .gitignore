@@ -16,6 +16,8 @@
 tugra-hub-*.tar
 tugra-hub-*.tar.enc
 secrets/
+# pre-update restore points (scripts/lib/snapshot.sh): DB dumps + .env copies — secret-bearing, never commit
+backups/
 
 # Node
 node_modules/

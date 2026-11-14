@@ -75,8 +75,10 @@ IP stays hidden:
   --acme-dns-cloudflare <cf-dns-api-token>
 ```
 
-(The token is stored only in the `0600` `.env` and handed to Traefik via a `0600` env-file, never on the
-command line.) Alternatives without a token: keep the record **DNS-only (grey)** so HTTP-01 issues directly,
+(The token is stored only in the `0600` `.env` and handed to Traefik via a `0600` env-file. The installer
+itself never puts it in a process argument, but a token typed after `--acme-dns-cloudflare` is visible in your
+shell history and in `ps` for that command — prefer `--acme-dns-cloudflare-file <path>` (first line of the file)
+or `TUGRA_ACME_DNS_TOKEN`; the installer warns when the token comes from the command line.) Alternatives without a token: keep the record **DNS-only (grey)** so HTTP-01 issues directly,
 or set Cloudflare SSL/TLS to **Full** (Cloudflare serves its own edge cert; the origin serves Traefik's).
 Flip the panel on/off or re-apply anytime from **Settings → Panel HTTPS** (`GET`/`POST /instance/panel-tls`).
 
@@ -103,14 +105,40 @@ public origin so the session cookie is visible to the SPA); it isn't available i
 | `--auto-tls` | With `--domain`: auto-provision the panel's HTTPS (bundled Traefik + Let's Encrypt). Needs `--acme-email`. Opt-in. |
 | `--no-auto-tls` | With `--domain`: keep bring-your-own-proxy (no bundled TLS). |
 | `--acme-email <addr>` | Let's Encrypt contact email (required by `--auto-tls`; providing it implies `--auto-tls`). |
-| `--acme-dns-cloudflare <token>` | DNS-01 via a Cloudflare API token — a real panel cert while the record stays proxied (IP hidden). Implies `--auto-tls`. |
+| `--acme-dns-cloudflare <token>` | DNS-01 via a Cloudflare API token — a real panel cert while the record stays proxied (IP hidden). Implies `--auto-tls`. The token is visible in `ps`/history; prefer the file form. |
+| `--acme-dns-cloudflare-file <path>` | Same, reading the token from a file (first line) — keeps it out of argv and shell history. Env form: `TUGRA_ACME_DNS_TOKEN`. |
+| `--keep-raw-ports` | Don't move the published hub/web ports from `0.0.0.0` to `127.0.0.1` when the install turns https / bundled TLS (also `TUGRA_KEEP_RAW_PORTS=1`). |
 | `--hub-url <url>` | Explicit public hub URL (overrides `--domain`). |
 | `--web-url <url>` | Explicit public web (browser) origin. |
 | `--build` | Force building images from your checkout (skip pulling published images). |
 | `--pull` | Force pulling published images (no source fallback). |
 | `--env-file <path>` | Write the env file elsewhere (default `<repo>/.env`). |
+| `--home` | Start the owner in the simple Home launcher instead of the full Fleet control plane. |
+| `--no-telemetry` / `--enable-telemetry` | Opt out of / explicitly accept the anonymous usage stats (also `TUGRA_TELEMETRY=0\|1`). |
+| `--enable-update-checks` | Opt in to the signed self-update version check (off by default). |
+| `--public-ip <ip>` / `--detect-public-ip` | Pin this host's public IP (or opt in to a best-effort probe) so deployed-app URLs resolve from outside. |
+| `--restore-from <bundle>` | Restore a hub bundle made by `scripts/hub-migrate.sh pack` onto this host (see [Disaster recovery](disaster-recovery.md)). |
+| `--yes`, `-y` | Assume yes for confirmation prompts. |
 | `--dry-run` | Generate `.env` and exit — touch no Docker. |
 | `-h`, `--help` | Print usage. |
+
+### Published ports, binds and re-runs
+
+The hub (`HUB_PORT`, default 3000) and web (`WEB_PORT`, default 3001) are published on `HUB_BIND`/`WEB_BIND`
+(default `0.0.0.0` for the http quick start, where agents dial `host:3000`). With `HUB_TRUSTED_PROXY=true` the raw
+ports only need to be reachable by your proxy, so a fresh `--domain` install binds them to `127.0.0.1`, and a
+re-run that turns an http install into https (or brings the bundled TLS proxy live) moves a `0.0.0.0` bind to
+`127.0.0.1` too (agents still dialing the old `http://host:3000` URL need the new https URL; opt out with
+`--keep-raw-ports`). A bind you set yourself (e.g. a private-interface IP for a proxy on another host) is never
+changed. Re-runs keep custom `HUB_PORT`/`WEB_PORT`, `--hub-url`/`--web-url` halves and the panel domain, and
+upgrading with `git pull && ./scripts/install.sh` takes a pre-update backup first (see [Upgrade](upgrade.md)).
+
+### Pinning what you run (curl | sh)
+
+`bootstrap.sh` clones `TUGRA_REF` (default `main`) — a branch, a tag or a full commit SHA — and fails loudly if it
+cannot fetch it. For a pinned install: `curl -fsSL …/bootstrap.sh | TUGRA_REF=<tag-or-sha> TUGRA_SHA256=<sha256 of
+scripts/install.sh at that ref> sh`. Reading the script first (clone, `less scripts/install.sh`, run it) is still the
+most conservative path.
 
 ## Configuration
 

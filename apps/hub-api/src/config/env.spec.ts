@@ -177,3 +177,17 @@ describe("validateEnv — SECRETS_ENCRYPTION_KEY_PREVIOUS", () => {
     expect(() => validateEnv({ ...env, SECRETS_ENCRYPTION_KEY_PREVIOUS: "short" })).toThrow(/SECRETS_ENCRYPTION_KEY_PREVIOUS/);
   });
 });
+
+describe("validateEnv — HUB_TRUSTED_PROXY_CIDRS", () => {
+  const env = { ...base, NODE_ENV: "development" };
+  it("accepts a valid IP/CIDR list (incl. trust-any) and unset/empty", () => {
+    expect(() => validateEnv({ ...env, HUB_TRUSTED_PROXY_CIDRS: "198.51.100.0/24, 2001:db8::/32, 203.0.113.9" })).not.toThrow();
+    expect(() => validateEnv({ ...env, HUB_TRUSTED_PROXY_CIDRS: "0.0.0.0/0,::/0" })).not.toThrow();
+    expect(() => validateEnv({ ...env, HUB_TRUSTED_PROXY_CIDRS: "" })).not.toThrow();
+    expect(() => validateEnv({ ...env })).not.toThrow();
+  });
+  it("fails boot on an invalid entry", () => {
+    expect(() => validateEnv({ ...env, HUB_TRUSTED_PROXY_CIDRS: "198.51.100.0/24, nonsense" })).toThrow(/HUB_TRUSTED_PROXY_CIDRS/);
+    expect(() => validateEnv({ ...env, HUB_TRUSTED_PROXY_CIDRS: "10.0.0.0/40" })).toThrow(/HUB_TRUSTED_PROXY_CIDRS/);
+  });
+});

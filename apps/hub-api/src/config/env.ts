@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isValidIpOrCidr } from "../common/ip-allowlist";
 
 /**
  * Environment schema. The hub FAILS CLOSED — it will not boot with missing or
@@ -105,6 +106,16 @@ export const envSchema = z
   // observed agent source IP is read from X-Forwarded-For instead of the (proxy)
   // TCP peer. Off by default — the raw peer address cannot be spoofed by agents.
   HUB_TRUSTED_PROXY: z.enum(["true", "false"]).optional(),
+  // With HUB_TRUSTED_PROXY=true, X-Forwarded-For is honored only when the TCP peer is a private/loopback/docker
+  // address. A reverse proxy with a PUBLIC egress IP (cross-host setups) must be listed here: comma-separated
+  // IPs/CIDRs. "0.0.0.0/0,::/0" trusts any peer (only safe when the hub port is reachable by the proxy alone).
+  HUB_TRUSTED_PROXY_CIDRS: z
+    .string()
+    .optional()
+    .refine(
+      (v) => !v || v.split(",").every((p) => !p.trim() || isValidIpOrCidr(p.trim())),
+      "every HUB_TRUSTED_PROXY_CIDRS entry must be a valid IP or CIDR (comma-separated)",
+    ),
   // Product edition (open-core): "community" (OSS, default) | "pro" | "cloud". Build/license-injected,
   // not owner-settable. Validated here for fail-fast boot; @tugra/shared also normalises it defensively.
   TUGRA_EDITION: z.enum(["community", "pro", "cloud"]).default("community"),

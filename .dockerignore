@@ -12,3 +12,8 @@ agent/tugra-agent
 .env
 .env.*
 !.env.example
+# Pre-update restore points (scripts/lib/snapshot.sh): DB dumps + .env copies. Never into a build context/image.
+backups/
+**/backups
+**/pre-update-*.dump
+**/pre-update-*.env

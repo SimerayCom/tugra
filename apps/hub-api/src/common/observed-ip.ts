@@ -1,4 +1,5 @@
 import { isIP } from "node:net";
+import { ipMatchesAllowlist, isValidIpOrCidr } from "./ip-allowlist";
 
 /** A normalized IP address is IPv6 when it contains a colon. */
 export function isIpv6(ip: string): boolean {
@@ -182,13 +183,46 @@ export function reconcileReportedIp(
   return isIpv6(pick) ? { publicIpv6: pick } : { publicIp: pick, ipSource: "reported" };
 }
 
+let cidrCacheRaw: string | undefined;
+let cidrCache: string[] = [];
+
+/** Parse HUB_TRUSTED_PROXY_CIDRS (comma list of IP/CIDR; malformed entries are dropped, never widen trust).
+ *  Memoized by the raw string so the per-request hot path does not re-split. */
+export function parseTrustedProxyCidrs(raw: string | undefined = process.env.HUB_TRUSTED_PROXY_CIDRS): string[] {
+  if (raw === cidrCacheRaw) return cidrCache;
+  cidrCacheRaw = raw;
+  cidrCache = (raw ?? "")
+    .split(",")
+    .map((e) => e.trim())
+    .filter((e) => e && isValidIpOrCidr(e));
+  return cidrCache;
+}
+
+/**
+ * May this TCP peer speak for a client via X-Forwarded-For? Only a well-formed address that is NOT publicly
+ * routable (loopback, RFC1918/docker bridge, CGNAT, link-local, ULA) or that is listed in
+ * HUB_TRUSTED_PROXY_CIDRS (a remote proxy with a public egress IP; 0.0.0.0/0 + ::/0 = trust any). A direct
+ * hit from the public internet therefore can never forge its own source IP, even with HUB_TRUSTED_PROXY=true.
+ */
+export function isTrustedProxyPeer(remote: string | null | undefined): boolean {
+  if (!remote) return false;
+  const addr = normalizeIp(remote);
+  if (isIP(addr) === 0) return false;
+  return !isPublicIp(addr) || ipMatchesAllowlist(addr, parseTrustedProxyCidrs());
+}
+
+/** Express `trust proxy` predicate: trust exactly ONE hop, and only when that hop is a trusted proxy peer. */
+export const trustProxyFn = (addr: string, hop: number): boolean => hop === 0 && isTrustedProxyPeer(addr);
+
 /**
  * The reachable source IP of an inbound connection.
  *
  * Default: the raw TCP peer address (`socket.remoteAddress`) — this is the
  * connection's real origin and cannot be spoofed by the peer. X-Forwarded-For is
- * honored ONLY when the hub is explicitly told it sits behind a trusted proxy;
- * otherwise a connecting agent could forge its own IP via that header.
+ * honored ONLY when the hub is explicitly told it sits behind a trusted proxy
+ * (HUB_TRUSTED_PROXY=true) AND the TCP peer itself is a trusted proxy address
+ * (see isTrustedProxyPeer); otherwise a connecting client could forge its own IP
+ * via that header — e.g. by hitting a raw published port directly.
  *
  * With a trusted proxy we take the RIGHTMOST X-Forwarded-For entry — the peer the
  * proxy itself observed and appended. The leftmost entries are client-supplied
@@ -204,7 +238,7 @@ export function observedIp(
   trustProxy: boolean,
 ): string | null {
   let raw: string;
-  if (trustProxy && forwardedFor) {
+  if (trustProxy && forwardedFor && isTrustedProxyPeer(remoteAddress)) {
     const parts = forwardedFor.split(",");
     raw = parts[parts.length - 1]?.trim() ?? "";
   } else {

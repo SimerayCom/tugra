@@ -117,6 +117,22 @@ Automate with cron (daily, keep 14 days) and **copy each dump + your `.env` offs
    forward automatically.
 4. Cut over DNS / agents as in the move checklist above.
 
+### Restoring a pre-update snapshot
+
+Every update (the in-app **Update now** and `git pull && ./scripts/install.sh` on a running stack) first writes
+`backups/pre-update-<from>-to-<to>-<UTC>.dump` and a matching `.env` copy (see [Upgrade](upgrade.md)). To go back:
+
+1. Stop the app containers and put the **old `TUGRA_VERSION`** (the `<from>` in the file name) back in `.env`; the
+   `.env` copy next to the dump is the pre-update file if you need its other values.
+2. `docker compose --env-file .env -f deploy/docker-compose.yml stop hub-api web agent`
+3. Restore the database, then start the stack on the old images:
+
+   ```sh
+   docker compose --env-file .env -f deploy/docker-compose.yml exec -T postgres \
+     pg_restore -U tugra -d tugra --clean --if-exists < backups/pre-update-<from>-to-<to>-<stamp>.dump
+   docker compose --env-file .env -f deploy/docker-compose.yml up -d
+   ```
+
 **Restoring an in-app (gpg-encrypted) backup.** The in-app backups are `tugra-hub-<ts>.dump.gz.gpg`. Decrypt
 and decompress them into `pg_restore`, deriving the passphrase from the same `.env`:
 

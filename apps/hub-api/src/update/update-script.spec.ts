@@ -1,5 +1,5 @@
-import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -11,10 +11,17 @@ describe("scripts/update.sh", () => {
     expect(() => execFileSync("bash", ["-n", UPDATE_SH], { stdio: "pipe" })).not.toThrow();
   });
 
-  it("only ever recreates hub-api + web (never itself, postgres, or redis)", () => {
+  it("only ever recreates hub-api + web + the local agent (never itself, postgres, or redis)", () => {
     expect(source).toContain("pull hub-api web");
     expect(source).toContain("up -d --no-deps hub-api web");
+    expect(source).toContain("up -d --no-deps agent"); // refreshed only AFTER hub-api + web are healthy
     expect(source).not.toMatch(/up -d\s*$/m); // never a bare `up -d`
+    // every `compose up` carries --no-deps and names one of the allowed services
+    const ups = source.split("\n").filter((l) => /compose up -d/.test(l) && !l.trim().startsWith("#"));
+    expect(ups.length).toBeGreaterThan(0);
+    for (const l of ups) expect(l).toMatch(/up -d --no-deps (hub-api web|agent)\b/);
+    const mutating = source.split("\n").filter((l) => /compose (up|restart|down|stop|rm|kill|run)\b/.test(l) && !l.trim().startsWith("#"));
+    for (const l of mutating) expect(l).not.toMatch(/postgres|redis|tugra-updater/);
   });
 
   it("drains the Redis job queue with a blocking pop", () => {
@@ -67,6 +74,207 @@ describe("scripts/update.sh", () => {
       // grep found no key → the "latest" fallback runs → the guard is skipped → we reach the plan preview.
       expect(out).toContain("pull hub-api web");
       expect(out).toContain("SET_ENV: TUGRA_VERSION=1.2.4");
+    });
+  });
+
+  describe("pre-update snapshot + agent refresh (H4/H6) — --dry-run", () => {
+    const dir = mkdtempSync(join(tmpdir(), "update-sh-snap-"));
+    const envFile = join(dir, ".env");
+    afterAll(() => rmSync(dir, { recursive: true, force: true }));
+    const dry = (target: string, envText: string, extra: Record<string, string> = {}): string => {
+      writeFileSync(envFile, envText);
+      return execFileSync("bash", [UPDATE_SH, "--dry-run", "--target", target], {
+        stdio: "pipe",
+        env: { PATH: process.env.PATH, ENV_FILE: envFile, ...extra } as NodeJS.ProcessEnv,
+      }).toString();
+    };
+
+    it("takes the pg_dump snapshot BEFORE the .env bump and the image pull", () => {
+      const out = dry("0.2.0", "TUGRA_VERSION=0.1.0\n");
+      const dump = out.indexOf("exec -T postgres pg_dump -U tugra -Fc tugra");
+      expect(dump).toBeGreaterThan(-1);
+      expect(out).toMatch(/SNAPSHOT: .*backups\/pre-update-0\.1\.0-to-0\.2\.0-\d{8}T\d{6}Z\.dump/);
+      expect(dump).toBeLessThan(out.indexOf("SET_ENV: TUGRA_VERSION=0.2.0"));
+      expect(dump).toBeLessThan(out.indexOf("pull hub-api web"));
+    });
+
+    it("refreshes the local agent only after the hub/web health wait, and pre-pulls the updater (never recreates it)", () => {
+      const out = dry("0.2.0", "TUGRA_VERSION=0.1.0\n");
+      const wait = out.indexOf("wait up to");
+      const pullAgent = out.indexOf("pull agent");
+      const upAgent = out.indexOf("up -d --no-deps agent");
+      const done = out.indexOf('"phase":"done"');
+      expect(wait).toBeGreaterThan(-1);
+      expect(pullAgent).toBeGreaterThan(wait);
+      expect(upAgent).toBeGreaterThan(pullAgent);
+      expect(done).toBeGreaterThan(upAgent);
+      expect(out).toContain("pull tugra-updater");
+      expect(out).not.toMatch(/up -d[^\n]*(postgres|redis|tugra-updater)/);
+      expect(out).not.toMatch(/up -d\s*$/m);
+    });
+
+    it("PRE_UPDATE_BACKUP=0 (in .env or the env) skips the dump and says so; nothing else changes", () => {
+      for (const out of [dry("0.2.0", "TUGRA_VERSION=0.1.0\nPRE_UPDATE_BACKUP=0\n"), dry("0.2.0", "TUGRA_VERSION=0.1.0\n", { PRE_UPDATE_BACKUP: "0" })]) {
+        expect(out).not.toContain("pg_dump");
+        expect(out).toContain("WITHOUT a pre-update restore point");
+        expect(out).toContain("pull hub-api web");
+        expect(out).toContain('"phase":"done"');
+      }
+    });
+
+    it("a refused downgrade / no-op takes NO snapshot", () => {
+      const out = dry("0.0.9", "TUGRA_VERSION=0.1.0\n");
+      expect(out).toContain("refusing non-newer target");
+      expect(out).not.toContain("pg_dump");
+      expect(out).not.toContain("SNAPSHOT:");
+    });
+  });
+
+  describe("pre-update snapshot (non-dry, PATH shims for docker + redis-cli)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "update-sh-shim-"));
+    const bin = join(dir, "bin");
+    afterAll(() => rmSync(dir, { recursive: true, force: true }));
+    const LOG = join(dir, "calls.log");
+    const BASH = execFileSync("sh", ["-c", "command -v bash"]).toString().trim();
+    execFileSync("mkdir", ["-p", bin]);
+    // The sidecar's REPO_DIR is derived from the script location, and a TUGRA_BACKUP_DIR must live inside it, so
+    // run a COPY of the scripts from a throwaway "checkout" and keep the backup dirs inside that.
+    const repo = join(dir, "repo");
+    execFileSync("mkdir", ["-p", join(repo, "scripts", "lib")]);
+    writeFileSync(join(repo, "scripts", "update.sh"), readFileSync(UPDATE_SH));
+    writeFileSync(join(repo, "scripts", "lib", "snapshot.sh"), readFileSync(join(UPDATE_SH, "..", "lib", "snapshot.sh")));
+    const SH = join(repo, "scripts", "update.sh");
+    // docker: logs; pg_dump fails when SHIM_DUMP_FAIL is set; ps -q yields an id; inspect says healthy.
+    writeFileSync(
+      join(bin, "docker"),
+      `#!/bin/bash
+echo "docker $*" >> "$SHIM_LOG"
+case "$1" in
+  inspect) echo healthy; exit 0 ;;
+  compose)
+    case "$*" in
+      *pg_dump*) [ -n "$SHIM_DUMP_FAIL" ] && exit 1; printf 'PGDMP-fake-dump'; exit 0 ;;
+      *" ps -q "*) echo "cid-\${@: -1}"; exit 0 ;;
+    esac ;;
+esac
+exit 0
+`,
+    );
+    // redis-cli: logs; the FIRST BLPOP yields one job, the second exits non-zero (set -e ends the watch loop).
+    writeFileSync(
+      join(bin, "redis-cli"),
+      `#!/bin/bash
+echo "redis-cli $*" >> "$SHIM_LOG"
+case "$*" in
+  *BLPOP*) if [ -e "$SHIM_STATE" ]; then exit 1; fi; : > "$SHIM_STATE"; printf 'instance:update:queue\n{"targetVersion":"0.2.0"}\n'; exit 0 ;;
+esac
+exit 0
+`,
+    );
+    chmodSync(join(bin, "docker"), 0o755);
+    chmodSync(join(bin, "redis-cli"), 0o755);
+
+    let n = 0;
+    const watchOnce = (envText: string, extra: Record<string, string> = {}) => {
+      n += 1;
+      const envFile = join(dir, `.env${n}`);
+      const backups = join(repo, `backups${n}`);
+      writeFileSync(envFile, envText);
+      writeFileSync(LOG, "");
+      const r = spawnSync(BASH, [SH, "--watch"], {
+        encoding: "utf8",
+        env: {
+          PATH: `${bin}:${process.env.PATH}`,
+          ENV_FILE: envFile,
+          TUGRA_BACKUP_DIR: backups,
+          SHIM_LOG: LOG,
+          SHIM_STATE: join(dir, `state${n}`),
+          ...extra,
+        } as NodeJS.ProcessEnv,
+      });
+      return { r, envFile, backups, log: readFileSync(LOG, "utf8") };
+    };
+
+    it("a TUGRA_BACKUP_DIR OUTSIDE the checkout (not mounted in the sidecar) aborts: failed, nothing changed", () => {
+      const { envFile, log } = watchOnce("TUGRA_VERSION=0.1.0\n", { TUGRA_BACKUP_DIR: join(dir, "elsewhere") });
+      expect(log).toMatch(/SET instance:update:status .*"phase":"failed".*TUGRA_BACKUP_DIR must be inside the checkout/);
+      expect(log).not.toContain("pg_dump");
+      expect(log).not.toMatch(/docker compose .* pull /);
+      expect(log).toContain("DEL instance:update:lock");
+      expect(readFileSync(envFile, "utf8")).toContain("TUGRA_VERSION=0.1.0");
+    });
+
+    it("a relative / `..`-escaping TUGRA_BACKUP_DIR is refused too, and one inside the checkout is accepted", () => {
+      for (const bad of ["relative/backups", join(repo, "..", "escape")]) {
+        const { log } = watchOnce("TUGRA_VERSION=0.1.0\n", { TUGRA_BACKUP_DIR: bad });
+        expect(log).toContain("TUGRA_BACKUP_DIR must be inside the checkout");
+      }
+      const ok = watchOnce("TUGRA_VERSION=0.1.0\n", { TUGRA_BACKUP_DIR: join(repo, "deep", "snaps") });
+      expect(ok.log).toContain('"phase":"done"');
+      expect(readdirSync(join(repo, "deep", "snaps")).some((f) => f.endsWith(".dump"))).toBe(true);
+    });
+
+    it("an inherited DRY=1 cannot turn the real snapshot into a dry run (the lib uses its own TUGRA_SNAPSHOT_DRY)", () => {
+      const { backups, log } = watchOnce("TUGRA_VERSION=0.1.0\n", { DRY: "1", TUGRA_SNAPSHOT_DRY: "1" });
+      expect(log).toContain("pg_dump");
+      expect(readdirSync(backups).some((f) => f.endsWith(".dump"))).toBe(true);
+    });
+
+    it("a FAILED dump aborts the update: status failed, lock released, NO pull, .env untouched", () => {
+      const { envFile, log } = watchOnce("TUGRA_VERSION=0.1.0\nOTHER=1\n", { SHIM_DUMP_FAIL: "1" });
+      expect(log).not.toMatch(/docker compose .* pull /);
+      expect(log).not.toContain("up -d");
+      expect(log).toMatch(/SET instance:update:status .*"phase":"failed".*pre-update backup failed; nothing was changed/);
+      expect(log).toContain("DEL instance:update:lock");
+      expect(readFileSync(envFile, "utf8")).toContain("TUGRA_VERSION=0.1.0");
+      expect(readFileSync(envFile, "utf8")).not.toContain("0.2.0");
+    });
+
+    it("a successful run writes a 0700 dir / 0600 dump + .env copy, bumps the version, refreshes the agent, ends done", () => {
+      const { envFile, backups, log } = watchOnce("TUGRA_VERSION=0.1.0\nJWT_ACCESS_SECRET=abc\n");
+      const files = readdirSync(backups);
+      const dump = files.find((f) => f.endsWith(".dump"));
+      expect(dump).toMatch(/^pre-update-0\.1\.0-to-0\.2\.0-\d{8}T\d{6}Z\.dump$/);
+      expect(statSync(backups).mode & 0o777).toBe(0o700);
+      expect(statSync(join(backups, dump as string)).mode & 0o777).toBe(0o600);
+      expect(readFileSync(join(backups, dump as string), "utf8").startsWith("PGDMP")).toBe(true);
+      const envCopy = files.find((f) => f.endsWith(".env")) as string;
+      expect(statSync(join(backups, envCopy)).mode & 0o777).toBe(0o600);
+      expect(readFileSync(join(backups, envCopy), "utf8")).toContain("TUGRA_VERSION=0.1.0"); // the PRE-update .env
+      expect(files.some((f) => f.endsWith(".part"))).toBe(false);
+      expect(readFileSync(envFile, "utf8")).toContain("TUGRA_VERSION=0.2.0");
+      expect(log.indexOf("pg_dump")).toBeLessThan(log.indexOf(" pull hub-api web"));
+      expect(log).toContain("up -d --no-deps agent");
+      expect(log).toContain('"phase":"done"');
+    });
+
+    it("keeps only the newest 5 snapshot sets (PRE_UPDATE_KEEP), oldest pruned first", () => {
+      n += 1;
+      const backups = join(repo, `backups-keep`);
+      execFileSync("mkdir", ["-p", backups]);
+      for (let i = 1; i <= 6; i++) {
+        const base = join(backups, `pre-update-0.0.${i}-to-0.0.${i + 1}-2020010${i}T000000Z`);
+        writeFileSync(`${base}.dump`, "PGDMP-old");
+        writeFileSync(`${base}.env`, "A=1\n");
+        const t = new Date(`2020-01-0${i}T00:00:00Z`);
+        utimesSync(`${base}.dump`, t, t);
+        utimesSync(`${base}.env`, t, t);
+      }
+      const envFile = join(dir, ".env-keep");
+      writeFileSync(envFile, "TUGRA_VERSION=0.1.0\n");
+      writeFileSync(LOG, "");
+      spawnSync(BASH, [SH, "--watch"], {
+        encoding: "utf8",
+        env: { PATH: `${bin}:${process.env.PATH}`, ENV_FILE: envFile, TUGRA_BACKUP_DIR: backups, SHIM_LOG: LOG, SHIM_STATE: join(dir, "state-keep") } as NodeJS.ProcessEnv,
+      });
+      const dumps = readdirSync(backups).filter((f) => f.endsWith(".dump"));
+      expect(dumps.length).toBe(5);
+      expect(dumps.some((f) => f.includes("0.1.0-to-0.2.0"))).toBe(true); // the new one is kept
+      expect(dumps.some((f) => f.includes("0.0.1-to-"))).toBe(false); // oldest two gone…
+      expect(dumps.some((f) => f.includes("0.0.2-to-"))).toBe(false);
+      expect(dumps.some((f) => f.includes("0.0.6-to-"))).toBe(true); // …newest old ones kept
+      expect(readdirSync(backups).filter((f) => f.endsWith(".env")).length).toBe(5); // each dump's .env goes with it
+      expect(existsSync(join(backups, "pre-update-0.0.1-to-0.0.2-20200101T000000Z.env"))).toBe(false);
     });
   });
 
@@ -253,9 +461,10 @@ describe("scripts/update.sh", () => {
 
     it("an OLD compose file (no digest vars) with the NEW update.sh ignores the job's digests and pulls by tag — never writes pins the stack cannot honour", () => {
       const tmp = mkdtempSync(join(tmpdir(), "tugra-oldcompose-"));
-      mkdirSync(join(tmp, "scripts"));
+      mkdirSync(join(tmp, "scripts", "lib"), { recursive: true });
       mkdirSync(join(tmp, "deploy"));
       writeFileSync(join(tmp, "scripts", "update.sh"), readFileSync(UPDATE_SH, "utf8"), { mode: 0o755 });
+      writeFileSync(join(tmp, "scripts", "lib", "snapshot.sh"), readFileSync(join(UPDATE_SH, "..", "lib", "snapshot.sh")));
       writeFileSync(join(tmp, "deploy", "docker-compose.yml"), "services:\n  hub-api:\n    image: ghcr.io/simeraycom/tugra-hub:${TUGRA_VERSION:-latest}\n");
       writeFileSync(join(tmp, ".env"), "TUGRA_VERSION=0.1.0\n");
       const out = execFileSync("bash", [join(tmp, "scripts", "update.sh"), "--dry-run", "--job", job("0.2.0", H, W)], {

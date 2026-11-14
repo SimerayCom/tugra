@@ -15,6 +15,15 @@ vulnerability**, see the [security policy](../SECURITY.md) — please don't open
 - **API access control.** Personal access tokens are scoped; secret values are gated behind `read:secrets`.
   The instance owner can disable PAT access entirely (`apiEnabled`) or restrict it to an IP allowlist
   (`apiAllowedIps`). Details in the [API docs](api.md).
+- **Source IP trust (`HUB_TRUSTED_PROXY`).** Off by default: the raw TCP peer is the source IP and cannot be
+  forged. With `HUB_TRUSTED_PROXY=true` the hub reads the rightmost `X-Forwarded-For` entry **only when the TCP peer
+  is a loopback / private (RFC1918, Docker bridge, CGNAT, ULA) address**, so a direct hit from the public internet
+  on a raw published port cannot forge its own IP past the PAT allowlist, throttling or the observed server IP. A
+  reverse proxy with a **public** egress IP (a proxy on another host) must be listed in `HUB_TRUSTED_PROXY_CIDRS`
+  (comma-separated IPs/CIDRs; `0.0.0.0/0,::/0` trusts any peer — only when the proxy alone can reach the port).
+  This is defense in depth next to the loopback bind the installer applies; a spoof from inside the same
+  LAN/VPN is not covered (private peers stay trusted). Not yet handled: Cloudflare's orange-cloud proxy in front
+  of the bundled Traefik (Traefik sees a Cloudflare edge address); allowlists are not meaningful in that mode.
 - **Two-factor auth & sessions.** TOTP 2FA with recovery codes; httpOnly session cookies with CSRF
   protection; `COOKIE_SECURE` + `HUB_TRUSTED_PROXY` for correct handling behind a TLS reverse proxy.
 - **SSRF protection.** Outbound targets (notifications, registries, git sources, monitors, update checks)
