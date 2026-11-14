@@ -1,5 +1,6 @@
 import { generateKeyPairSync } from "node:crypto";
 import {
+  assertRequiredDigests,
   buildChannelEntry,
   buildNotice,
   canonicalizeManifest,
@@ -175,5 +176,67 @@ describe("manifest-merge", () => {
     });
     const body = canonicalizeManifest(m);
     expect(body.indexOf('"notice"')).toBeLessThan(body.indexOf('"tugra"'));
+  });
+});
+
+describe("manifest-merge imageDigests (supply chain: digest-pinned updates)", () => {
+  const H = "a".repeat(64);
+  const W = "b".repeat(64);
+  const U = "c".repeat(64);
+  const A = "d".repeat(64);
+
+  it("buildChannelEntry strips sha256:, lowercases, and keeps hub/web/updater/agent", () => {
+    const e = buildChannelEntry({
+      version: "0.2.0",
+      imageDigests: { hub: `sha256:${H.toUpperCase()}`, web: W, updater: ` sha256:${U} `, agent: A },
+    });
+    expect(e.imageDigests).toEqual({ hub: H, web: W, updater: U, agent: A });
+  });
+
+  it("omits imageDigests when none/empty are given (old-shape entry, no stray key)", () => {
+    expect("imageDigests" in buildChannelEntry({ version: "1.0.0" })).toBe(false);
+    expect("imageDigests" in buildChannelEntry({ version: "1.0.0", imageDigests: {} })).toBe(false);
+    expect("imageDigests" in buildChannelEntry({ version: "1.0.0", imageDigests: { hub: "", web: undefined } })).toBe(false);
+  });
+
+  it("THROWS at sign time on a non-64-hex digest (fail closed)", () => {
+    expect(() => buildChannelEntry({ version: "1.0.0", imageDigests: { hub: "a".repeat(63) } })).toThrow(/imageDigests\.hub/);
+    expect(() => buildChannelEntry({ version: "1.0.0", imageDigests: { web: "g".repeat(64) } })).toThrow(/imageDigests\.web/);
+    expect(() => buildChannelEntry({ version: "1.0.0", imageDigests: { updater: `sha256:${"a".repeat(65)}` } })).toThrow();
+  });
+
+  it("round-trips through the REAL consumer verifier; canonical bytes are sorted-key stable", () => {
+    const { seedB64, publicKeyB64 } = keypair();
+    const entry = buildChannelEntry({ version: "0.2.0", imageDigests: { web: W, hub: H, agent: A, updater: U } });
+    const a = signAndSelfVerify({ current: null, channel: "stable", entry, seedB64 });
+    const b = signAndSelfVerify({ current: null, channel: "stable", entry, seedB64 });
+    expect(a.body).toBe(b.body);
+    expect(a.body).toContain(`"imageDigests":{"agent":"${A}","hub":"${H}","updater":"${U}","web":"${W}"}`);
+    expect(verifyUpdateManifest(a.body, a.sig, publicKeyB64).tugra.stable.imageDigests).toEqual({ hub: H, web: W, updater: U, agent: A });
+  });
+
+  it("an old-shape manifest (no imageDigests) still verifies and carries none", () => {
+    const { seedB64, publicKeyB64 } = keypair();
+    const { body, sig } = signAndSelfVerify({ current: null, channel: "stable", entry: buildChannelEntry({ version: "0.1.0" }), seedB64 });
+    expect(verifyUpdateManifest(body, sig, publicKeyB64).tugra.stable.imageDigests).toBeUndefined();
+  });
+
+  it("CONSUME-time: validateManifest rejects an uppercase / short / prefixed digest that bypassed the builder", () => {
+    for (const bad of [H.toUpperCase(), "a".repeat(63), `sha256:${H}`]) {
+      expect(() => validateManifest({ tugra: { stable: { version: "1.0.0", imageDigests: { hub: bad } } } })).toThrow(/schema validation/);
+    }
+    expect(validateManifest({ tugra: { stable: { version: "1.0.0", imageDigests: { hub: H } } } }).tugra.stable.imageDigests).toEqual({ hub: H });
+  });
+
+  it("merge preserves another channel's digests byte-for-byte", () => {
+    const betaEntry = buildChannelEntry({ version: "0.9.0-beta.1", imageDigests: { hub: H, web: W } });
+    const merged = mergeManifest({ tugra: { beta: betaEntry } }, "stable", buildChannelEntry({ version: "1.0.0" }));
+    expect(merged.tugra.beta.imageDigests).toEqual({ hub: H, web: W });
+  });
+
+  it("assertRequiredDigests demands BOTH hub and web (the pair the updater pins)", () => {
+    expect(() => assertRequiredDigests(buildChannelEntry({ version: "1.0.0" }))).toThrow(/hub, web/);
+    expect(() => assertRequiredDigests(buildChannelEntry({ version: "1.0.0", imageDigests: { hub: H } }))).toThrow(/web/);
+    expect(() => assertRequiredDigests(buildChannelEntry({ version: "1.0.0", imageDigests: { hub: H, web: W } }))).not.toThrow();
   });
 });

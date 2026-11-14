@@ -493,9 +493,20 @@ ensure_env AGENT_IMAGE       "ghcr.io/simeraycom/tugra-agent:${TUGRA_VERSION:-la
 # tag instead of drifting back to :latest (compose reads ${TUGRA_VERSION:-latest}). set_env (override), not
 # ensure_env: an explicit TUGRA_VERSION on this run is a deliberate repin. A plain install leaves it unset
 # (:latest); the self-updater rewrites this line on each applied update.
+# The self-updater also pins hub/web by digest (TUGRA_HUB_DIGEST / TUGRA_WEB_DIGEST → `repo:tag@sha256:…` in
+# compose). A pin belongs to the version it was written for: it would override a deliberate repin and cannot be
+# used as the tag of a locally BUILT image, so drop it whenever this run repins or builds (empty = tag-only).
+drop_digest_pins() {
+  local k
+  for k in TUGRA_HUB_DIGEST TUGRA_WEB_DIGEST; do
+    if env_has "$k" && [ -n "$(env_get "$k")" ]; then set_env "$k" ""; fi
+  done
+}
 if [ -n "${TUGRA_VERSION:-}" ]; then
   set_env TUGRA_VERSION "$TUGRA_VERSION"
+  drop_digest_pins
 fi
+if [ "$FORCE_BUILD" -eq 1 ]; then drop_digest_pins; fi
 # Signed self-update channel — OPT-IN (off by default). Enable with --enable-update-checks
 # (or TUGRA_ENABLE_UPDATE_CHECKS=1): the hub then fetches ONE ed25519-signed manifest (no identifiers, no
 # version, no payload). Left unset, the update scheduler + agent digest-pin stay inert (env.ts fail-closed)
@@ -567,6 +578,7 @@ elif [ -f "$REPO_DIR/deploy/Dockerfile.hub" ]; then
   # /tmp/tugra-pull.log). Fall back to building from this checkout. This is a full pnpm + Next build and can
   # take several minutes (and wants ~2 GB free RAM); it is NOT a hang.
   note "Couldn't pull published images (see /tmp/tugra-pull.log) — building from source instead."
+  drop_digest_pins
   log "Building images from this checkout (several minutes; needs ~2 GB RAM)…"
   compose up -d --build
 else

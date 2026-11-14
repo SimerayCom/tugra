@@ -51,9 +51,15 @@ applying an update. The pipeline lives in [`.github/workflows/release.yml`](../.
      - a **Sigstore-signed, Rekor-logged SLSA provenance attestation** (keyless, via
        `actions/attest-build-provenance`), pushed as an OCI referrer — publicly verifiable with
        `gh attestation verify` (no key to distribute).
+   - stamps every image with an `org.opencontainers.image.version=<version>` label and records each image's
+     **OCI index digest** (the `docker/build-push-action` `digest` output, the same value the provenance
+     attestation signs) as a per-image `image-digest-<name>` artifact;
    - signs a merged `versions.json` (updating only the released channel, preserving the other) and pushes
-     it + its `.sig` to `gh-pages`. The signer self-verifies against the real consumer verifier and refuses
-     to publish anything that wouldn't validate.
+     it + its `.sig` to `gh-pages`. The entry carries `imageDigests` (`hub`, `web`, `updater`, `agent`; bare
+     64-hex **index** digests — not the agent's per-arch `agentSha256`) and the workflow passes
+     `--require-digests true`, so a release without the hub + web digests is refused. The signer validates the
+     digests as 64-hex, self-verifies against the real consumer verifier and refuses to publish anything that
+     wouldn't validate.
 
 ## First-release checklist
 
@@ -121,8 +127,16 @@ curl -fsSI -H "Authorization: Bearer $TOKEN" \
 rewrites the `@sha256:` digest when the pinned tag is re-pushed and opens a PR. A **major** bump
 (`16 → 17`, `7 → 8`) is a deliberate, manual on-disk data-migration event and is **ignored** by Dependabot
 (`version-update:semver-major`), so an auto-refresh can never break an existing install's data volume. The
-first-party `ghcr.io/…:${TUGRA_VERSION}` images are intentionally **not** pinned here (Dependabot skips them —
-it can't parse the `${…}` interpolation); they are threaded from the signed update manifest instead.
+first-party `ghcr.io/…:${TUGRA_VERSION}` images are intentionally **not** pinned with a literal digest here
+(Dependabot skips them — it can't parse the `${…}` interpolation). Instead `hub-api` and `web` accept an
+**optional** digest suffix: `TUGRA_HUB_DIGEST` / `TUGRA_WEB_DIGEST` (bare 64-hex) turn the ref into
+`ghcr.io/…:<version>@sha256:<hex>` (the registry enforces the content hash; the tag is informational). Unset or
+empty is exactly the old tag-only ref. The self-update sidecar sets them from the signed manifest's
+`imageDigests` (see [Upgrade](upgrade.md)); the `agent` and `updater` services are unchanged.
+
+> **Status:** digests are recorded in the signed manifest and used to pin updates by content hash. Verifying
+> *who built* a digest (cosign / attestation checks inside the updater) is a later step — until then the
+> provenance attestation above stays a manual `gh attestation verify`.
 
 ## Notes & caveats
 

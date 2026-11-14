@@ -138,3 +138,26 @@ describe("notice (signed operator banner)", () => {
     expect(verifyUpdateManifest(raw, detachedSig(priv, raw), pubB64).notice).toBeUndefined();
   });
 });
+
+describe("verifyUpdateManifest imageDigests (consume-time validation)", () => {
+  const { priv, pubB64 } = keypair();
+  const HEX = "0123456789abcdef".repeat(4);
+
+  it("accepts a signed manifest carrying imageDigests", () => {
+    const raw = manifest({ imageDigests: { hub: HEX, web: HEX, updater: HEX, agent: HEX } });
+    const out = verifyUpdateManifest(raw, detachedSig(priv, raw), pubB64);
+    expect(out.tugra.stable.imageDigests).toEqual({ hub: HEX, web: HEX, updater: HEX, agent: HEX });
+  });
+
+  it("still accepts an old manifest with no imageDigests", () => {
+    const raw = manifest();
+    expect(verifyUpdateManifest(raw, detachedSig(priv, raw), pubB64).tugra.stable.imageDigests).toBeUndefined();
+  });
+
+  it("rejects (even when correctly signed) a malformed digest — never reaches the updater", () => {
+    for (const bad of ["sha256:" + HEX, HEX.toUpperCase(), HEX.slice(1), "not-hex"]) {
+      const raw = manifest({ imageDigests: { hub: bad } });
+      expect(() => verifyUpdateManifest(raw, detachedSig(priv, raw), pubB64)).toThrow(/invalid manifest shape/);
+    }
+  });
+});

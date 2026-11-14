@@ -34,6 +34,18 @@ The publisher side of this — how releases and the signed manifest are produced
    own published key instead.
 3. Click **Update now** (or enable patch-only auto-update).
 
+When the signed manifest carries image digests (`imageDigests`, published by releases that include them), the
+update is **digest-pinned**: the hub queues the release's `hub`/`web` OCI index digests, the sidecar writes them
+to `.env` as `TUGRA_HUB_DIGEST` / `TUGRA_WEB_DIGEST` (compose then pulls `repo:<version>@sha256:…`, so a
+moved or re-pushed tag can't change what is pulled), and after the pull it checks the image's
+`org.opencontainers.image.version` label equals the target before recreating anything. For a digest-pinned
+update this check fails closed: an image without the label, or one that cannot be inspected, is rolled back
+(every release that publishes digests also carries the label, so an unlabelled image is an older release). Older manifests without digests keep updating by tag, exactly as before, and any previous
+digest pin is cleared so it can't override the new tag. This pins *which bytes* are pulled; it does not yet
+verify a signature on the image itself. The sidecar runs `update.sh` and the compose file from your checkout
+(they are bind-mounted), so the digest path takes effect after a `git pull` + installer re-run; a checkout
+without digest support in its compose file safely keeps pulling by tag.
+
 Applying an update recreates the hub and web containers, so the hub can't do it itself — a small
 [`tugra-updater`](../SECURITY.md) sidecar drains a Redis queue and performs the recreate, then the
 UI reconnects to the new version. Its security surface is documented in [SECURITY.md](../SECURITY.md).
@@ -48,7 +60,9 @@ git pull
 ./scripts/install.sh
 ```
 
-This pulls (or rebuilds) the images referenced by your checkout and recreates the stack. Use it when
+This pulls (or rebuilds) the images referenced by your checkout and recreates the stack. A digest pin left
+by the self-updater is kept on a plain re-run, and cleared when you re-pin with `TUGRA_VERSION=…` or build
+from source with `--build`. Use it when
 you prefer git-driven upgrades or haven't configured the signed-manifest source.
 
 ## Configuring update checks
@@ -67,12 +81,14 @@ unsigned manifest is never trusted). Leave both empty to disable update checks.
 
 If an image **pull** fails nothing has been recreated, so the running stack is untouched. If a **recreate or
 health check** fails after the pull, the sidecar actively restores the previous version — it rewrites
-`TUGRA_VERSION`, recreates hub-api + web, and verifies both become healthy — then marks the update `failed`.
+`TUGRA_VERSION` (and the previous `TUGRA_HUB_DIGEST` / `TUGRA_WEB_DIGEST`, or clears them if the stack was
+not pinned), recreates hub-api + web, and verifies both become healthy — then marks the update `failed`.
 If that restore cannot be completed and verified, the status becomes **`recovery_required`**: the stack may
 be partly updated and needs manual recovery. The sidecar logs the exact command, which is:
 
 ```sh
-# set TUGRA_VERSION=<previous version> in .env, then:
+# set TUGRA_VERSION=<previous version> in .env (and the previous TUGRA_HUB_DIGEST / TUGRA_WEB_DIGEST if it
+# was digest-pinned, or leave them empty), then:
 docker compose --env-file .env -f deploy/docker-compose.yml up -d --no-deps hub-api web
 ```
 

@@ -79,4 +79,44 @@ describe("scripts/*.mjs (manifest signer + keygen)", () => {
       execFileSync("node", [SIGN, "--version", "0.2.0", "--channel", "stable"], { stdio: "pipe", env }),
     ).toThrow();
   });
+  e2e("sign-manifest.mjs records imageDigests (sha256: stripped) and --require-digests gates hub+web", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sign-manifest-dg-"));
+    try {
+      const { seedB64, publicKeyB64 } = seedKeypair();
+      const env = { ...process.env, UPDATE_SIGNING_KEY: seedB64 };
+      const H = "a".repeat(64);
+      const W = "b".repeat(64);
+      const base = ["--version", "0.3.0", "--channel", "beta", "--out-dir", dir];
+
+      execFileSync(
+        "node",
+        [SIGN, ...base, "--hub-digest", `sha256:${H}`, "--web-digest", W, "--updater-digest", "c".repeat(64), "--agent-index-digest", `sha256:${"d".repeat(64)}`, "--require-digests", "true"],
+        { stdio: "pipe", env },
+      );
+      const v = verifyUpdateManifest(readFileSync(join(dir, "versions.json"), "utf8"), readFileSync(join(dir, "versions.json.sig"), "utf8"), publicKeyB64);
+      expect(v.tugra.beta.imageDigests).toEqual({ hub: H, web: W, updater: "c".repeat(64), agent: "d".repeat(64) });
+
+      const fails = (extra: string[]) => {
+        try {
+          execFileSync("node", [SIGN, ...base, ...extra], { stdio: "pipe", env });
+          return null;
+        } catch (e) {
+          return (e as { status: number; stderr: Buffer });
+        }
+      };
+      // --require-digests without hub+web → exit 1, nothing new written
+      const missing = fails(["--hub-digest", H, "--require-digests", "true"]);
+      expect(missing?.status).toBe(1);
+      expect(String(missing?.stderr)).toMatch(/missing imageDigests for web/);
+      // malformed digest → exit 1 at sign time
+      const malformed = fails(["--hub-digest", "a".repeat(63), "--web-digest", W]);
+      expect(malformed?.status).toBe(1);
+      expect(String(malformed?.stderr)).toMatch(/imageDigests\.hub/);
+      // a bare `--require-digests` with a non-`true` value must not silently disable the guard
+      const sloppy = fails(["--require-digests", "yes"]);
+      expect(sloppy?.status).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

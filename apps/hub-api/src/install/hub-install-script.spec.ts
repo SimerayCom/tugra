@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -119,6 +119,30 @@ describe("scripts/install.sh", () => {
       expect(env.HUB_TRUSTED_PROXY).toBe("true");
     });
 
+    it("a flag-less re-run KEEPS the updater's digest pins; an explicit TUGRA_VERSION repin or --build clears them", () => {
+      const hex = "ab".repeat(32);
+      const withPins = (name: string): string => {
+        const envPath = join(dir, name);
+        run([], envPath);
+        writeFileSync(envPath, readFileSync(envPath, "utf8") + `TUGRA_VERSION=0.2.0\nTUGRA_HUB_DIGEST=${hex}\nTUGRA_WEB_DIGEST=${hex}\n`);
+        return envPath;
+      };
+      const keep = withPins("pins-keep.env");
+      run([], keep);
+      expect(parseEnv(readFileSync(keep, "utf8")).TUGRA_HUB_DIGEST).toBe(hex);
+
+      const repin = withPins("pins-repin.env");
+      execFileSync("bash", [INSTALL_SH, "--dry-run", "--env-file", repin], { stdio: "pipe", env: { ...cleanEnv, TUGRA_VERSION: "0.3.0" } });
+      const repinned = parseEnv(readFileSync(repin, "utf8"));
+      expect(repinned.TUGRA_VERSION).toBe("0.3.0");
+      expect(repinned.TUGRA_HUB_DIGEST).toBe(""); // a stale pin would override the new tag
+      expect(repinned.TUGRA_WEB_DIGEST).toBe("");
+
+      const built = withPins("pins-build.env");
+      run(["--build"], built);
+      expect(parseEnv(readFileSync(built, "utf8")).TUGRA_HUB_DIGEST).toBe(""); // a built image can't carry a digest tag
+    });
+
     it("the http quick-start binds the published ports to 0.0.0.0 (agents dial host:3000)", () => {
       const envPath = join(dir, "bind-quick.env");
       run([], envPath);
@@ -221,14 +245,80 @@ describe("scripts/install.sh", () => {
       expect(compose.services["redis"].image).toMatch(/^redis:7-alpine@sha256:[0-9a-f]{64}$/);
     });
 
-    it("leaves the first-party images floating on ${TUGRA_VERSION} (NOT digest-pinned here)", () => {
-      // First-party images are threaded from the signed update manifest, not pinned in compose — so they
-      // must stay on the interpolated tag and must NOT be accidentally caught by the digest-pin guard above.
+    it("leaves the first-party images on ${TUGRA_VERSION} with NO hard-coded digest (pin is an opt-in env suffix)", () => {
+      // First-party images are threaded from the signed update manifest by the updater sidecar (env, not a
+      // literal in compose) — so they must stay on the interpolated tag and never carry a literal @sha256:hex
+      // that the digest-pin guard above (third-party) would otherwise treat as a Dependabot-managed pin.
       for (const s of ["hub-api", "web", "agent", "tugra-updater"]) {
         expect(compose.services[s].image).toContain("ghcr.io/simeraycom/tugra-");
         expect(compose.services[s].image).toContain("${TUGRA_VERSION");
-        expect(compose.services[s].image).not.toContain("@sha256:");
+        expect(compose.services[s].image).not.toMatch(/@sha256:[0-9a-f]{64}/);
       }
+    });
+
+    it("hub-api and web gain the OPTIONAL digest suffix (TUGRA_HUB_DIGEST / TUGRA_WEB_DIGEST), tag still first", () => {
+      expect(compose.services["hub-api"].image).toBe(
+        "ghcr.io/simeraycom/tugra-hub:${TUGRA_VERSION:-latest}${TUGRA_HUB_DIGEST:+@sha256:}${TUGRA_HUB_DIGEST:-}",
+      );
+      expect(compose.services["web"].image).toBe(
+        "ghcr.io/simeraycom/tugra-web:${TUGRA_VERSION:-latest}${TUGRA_WEB_DIGEST:+@sha256:}${TUGRA_WEB_DIGEST:-}",
+      );
+      // The agent + updater services are NOT part of the digest-pinned update path (update.sh recreates hub-api/web only).
+      for (const s of ["agent", "tugra-updater"]) expect(compose.services[s].image).not.toContain("_DIGEST");
+    });
+
+    // Minimal emulation of compose's `${VAR:-default}` / `${VAR:+alt}` (unset OR empty counts as unset), enough to
+    // prove the two flat (NON-nested) substitutions resolve to the legacy tag ref when unset and `repo:tag@sha256:hex`
+    // when set. The real interpolator is exercised by the docker-gated test below.
+    const interpolate = (tpl: string, env: Record<string, string>): string =>
+      tpl.replace(/\$\{([A-Z_]+)(?::([-+]))?([^}]*)\}/g, (_m, name: string, op: string | undefined, word: string) => {
+        const v = env[name] ?? "";
+        if (op === "-") return v !== "" ? v : word;
+        if (op === "+") return v !== "" ? word : "";
+        return v;
+      });
+
+    it("resolves to exactly the legacy tag ref when the digest var is unset or empty", () => {
+      const hub = compose.services["hub-api"].image!;
+      expect(interpolate(hub, { TUGRA_VERSION: "0.1.0" })).toBe("ghcr.io/simeraycom/tugra-hub:0.1.0");
+      expect(interpolate(hub, {})).toBe("ghcr.io/simeraycom/tugra-hub:latest");
+      expect(interpolate(hub, { TUGRA_VERSION: "0.1.0", TUGRA_HUB_DIGEST: "" })).toBe("ghcr.io/simeraycom/tugra-hub:0.1.0");
+    });
+
+    it("resolves to repo:tag@sha256:<hex> when the digest var is set (what the agent pull already uses)", () => {
+      const hex = "ab".repeat(32);
+      expect(interpolate(compose.services["hub-api"].image!, { TUGRA_VERSION: "0.2.0", TUGRA_HUB_DIGEST: hex })).toBe(
+        `ghcr.io/simeraycom/tugra-hub:0.2.0@sha256:${hex}`,
+      );
+      expect(interpolate(compose.services["web"].image!, { TUGRA_WEB_DIGEST: hex })).toBe(`ghcr.io/simeraycom/tugra-web:latest@sha256:${hex}`);
+      // the hub var never leaks into web
+      expect(interpolate(compose.services["web"].image!, { TUGRA_HUB_DIGEST: hex })).toBe("ghcr.io/simeraycom/tugra-web:latest");
+    });
+
+    // Real compose interpolation, only where a Docker CLI with the compose plugin is present (CI runners have it).
+    const hasCompose = (() => {
+      try {
+        execFileSync("docker", ["compose", "version"], { stdio: "pipe" });
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+    (hasCompose ? it : it.skip)("docker compose config resolves the suffix with and without the digest vars", () => {
+      const hex = "cd".repeat(32);
+      const images = (env: Record<string, string>): string[] =>
+        execFileSync("docker", ["compose", "-f", COMPOSE, "config", "--images"], {
+          stdio: "pipe",
+          env: { PATH: process.env.PATH, HOME: process.env.HOME, ...env } as NodeJS.ProcessEnv,
+        })
+          .toString()
+          .split("\n");
+      const plain = images({ TUGRA_VERSION: "0.2.0" });
+      expect(plain).toContain("ghcr.io/simeraycom/tugra-hub:0.2.0");
+      expect(plain).toContain("ghcr.io/simeraycom/tugra-web:0.2.0");
+      const pinned = images({ TUGRA_VERSION: "0.2.0", TUGRA_HUB_DIGEST: hex, TUGRA_WEB_DIGEST: hex });
+      expect(pinned).toContain(`ghcr.io/simeraycom/tugra-hub:0.2.0@sha256:${hex}`);
+      expect(pinned).toContain(`ghcr.io/simeraycom/tugra-web:0.2.0@sha256:${hex}`);
     });
   });
 });

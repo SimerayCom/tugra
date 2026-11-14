@@ -147,6 +147,11 @@ jobs:
             GIT_SHA=${{ github.sha }}
             TUGRA_EDITION=community
           tags: ${{ steps.tags.outputs.tags }}
+          # The release version stamped into the image config. The updater reads it back after a
+          # digest-pinned pull and refuses an image whose label != the requested target (defeats a swapped
+          # digest of an older release). The hub/agent images additionally bake TUGRA_VERSION via build-args.
+          labels: |
+            org.opencontainers.image.version=${{ steps.ver.outputs.version }}
       # Sigstore-signed, Rekor-logged SLSA provenance (the deferred "Option B"). This COMPLEMENTS the
       # unsigned BuildKit provenance/SBOM above: it adds a keyless-signed (Fulcio cert) attestation, stored
       # in GitHub's attestation store AND as an OCI referrer on the image (push-to-registry). Runs once per
@@ -174,6 +179,28 @@ jobs:
         with:
           name: agent-digests
           path: agent-digests.json
+      # The pushed INDEX digest of THIS image (the same value the attest step above uses as its subject).
+      # Matrix job outputs are last-writer-wins, so each leg hands its digest over as its own artifact
+      # (image-digest-<name>), exactly like agent-digests. publish-manifest records all four in versions.json
+      # (imageDigests) so the updater can pull hub/web by digest. The value is passed through env (never
+      # interpolated into the script) and must be a well-formed sha256 — a malformed/empty digest fails the leg,
+      # so a manifest can never advertise a digest the build step did not produce.
+      - name: Record image index digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          NAME: ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+            echo "::error::build step produced no valid index digest for $NAME: '$DIGEST'" >&2
+            exit 1
+          fi
+          printf '%s\n' "$DIGEST" > "$NAME.digest"
+          cat "$NAME.digest"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-digest-${{ matrix.name }}
+          path: ${{ matrix.name }}.digest
 
   # Generate + sign versions.json and publish it (with the detached .sig) to the gh-pages branch, the
   # single stable URL the self-update chain reads. The signer self-verifies against the real consumer
@@ -204,6 +231,12 @@ jobs:
         with:
           name: agent-digests
           path: digests
+      # One artifact per matrix leg (hub/web/updater/agent .digest files) holding that image's INDEX digest.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: image-digest-*
+          path: digests
+          merge-multiple: true
       - name: Sign the merged manifest
         env:
           UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
@@ -220,12 +253,22 @@ jobs:
           else
             current_arg=""
           fi
+          # Per-image INDEX digests (set -e: a missing/empty file aborts the publish). The signer additionally
+          # validates 64-hex and, with --require-digests, refuses a release without the hub + web digests.
+          read_digest() { [ -s "digests/$1.digest" ] || { echo "::error::missing digest file for $1" >&2; return 1; }; tr -d '[:space:]' < "digests/$1.digest"; }
+          hub_digest=$(read_digest hub)
+          web_digest=$(read_digest web)
+          updater_digest=$(read_digest updater)
+          agent_index_digest=$(read_digest agent)
           amd64=$(jq -r '.amd64 // empty' digests/agent-digests.json)
           arm64=$(jq -r '.arm64 // empty' digests/agent-digests.json)
           node scripts/sign-manifest.mjs \
             --version "$VERSION" --channel "$CHANNEL" \
             --hub-image "ghcr.io/simeraycom/tugra-hub:$VERSION" \
             --web-image "ghcr.io/simeraycom/tugra-web:$VERSION" \
+            --hub-digest "$hub_digest" --web-digest "$web_digest" \
+            --updater-digest "$updater_digest" --agent-index-digest "$agent_index_digest" \
+            --require-digests true \
             ${amd64:+--agent-amd64 "$amd64"} ${arm64:+--agent-arm64 "$arm64"} \
             --changelog-url "https://github.com/SimerayCom/tugra/releases/tag/v$VERSION" \
             --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \

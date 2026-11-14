@@ -38,6 +38,20 @@ export function mapStatus(raw: string | null): UpdateProgress {
 }
 
 /**
+ * The job the sidecar drains. When the freshly verified manifest entry carries BOTH the hub and web INDEX
+ * digests the job pins them (`{targetVersion, hubDigest, webDigest}`, flat strings — the sidecar parses with
+ * grep, no jq); a missing or partial pair degrades to the legacy tag-only `{targetVersion}` so old manifests
+ * keep updating exactly as before. The digests are bare 64-hex (schema-validated at consume time). Pure.
+ */
+export function buildUpdateJob(
+  targetVersion: string,
+  digests?: { hub?: string; web?: string },
+): { targetVersion: string; hubDigest?: string; webDigest?: string } {
+  if (digests?.hub && digests.web) return { targetVersion, hubDigest: digests.hub, webDigest: digests.web };
+  return { targetVersion };
+}
+
+/**
  * The APPLY half of self-update. `requestUpdate` is the single gate choke-point: it re-verifies the signed
  * manifest fresh (never applies from a stale/unverified cache), refuses any downgrade / channel-skip, limits
  * AUTO updates to patch bumps, and serializes concurrent updates with a Redis lock — only then does it queue
@@ -81,7 +95,7 @@ export class UpdaterService {
       JSON.stringify({ phase: "queued", targetVersion: latest, error: null, actor, startedAt: new Date().toISOString() }),
       STATUS_TTL_S,
     );
-    await this.redis.client.lpush(QUEUE_KEY, JSON.stringify({ targetVersion: latest }));
+    await this.redis.client.lpush(QUEUE_KEY, JSON.stringify(buildUpdateJob(latest, verified.entry.imageDigests)));
     this.logger.log(`update requested by ${actor} (auto=${auto}): ${current} → ${latest}`);
     return { status: "started", targetVersion: latest };
   }

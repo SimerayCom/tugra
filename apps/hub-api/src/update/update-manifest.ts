@@ -7,15 +7,33 @@ import { verifyEd25519 } from "../servers/agent-auth";
 export const MAX_MANIFEST_BYTES = 256 * 1024;
 export const MAX_SIG_BYTES = 512;
 
+/** A bare lowercase 64-hex sha256 (no `sha256:` prefix) — the only digest form the manifest carries. */
+export const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+/**
+ * Per-image OCI INDEX (manifest-list) digests of the published release, bare 64-hex. These are the digests
+ * the registry resolves `repo@sha256:…` against (and the subject of the Sigstore provenance attestation) —
+ * NOT the per-arch manifest digests that `agentSha256` carries. All optional so old manifests keep working;
+ * the hub's updater queues hub+web digests only when BOTH are present.
+ */
+export const imageDigestsSchema = z.object({
+  hub: z.string().regex(SHA256_HEX).optional(),
+  web: z.string().regex(SHA256_HEX).optional(),
+  updater: z.string().regex(SHA256_HEX).optional(),
+  agent: z.string().regex(SHA256_HEX).optional(), // INDEX digest (agentSha256 stays per-arch)
+});
+
 /**
  * One published release for a channel. `version` + `changelogUrl` are all the version CHECK reads today;
  * the image refs / agent digests / minUpgradeFrom / publishedAt are carried for a later updater
  * (Dilim 11 pull→migrate→recreate) and are validated-but-unused here (forward-compat, reserved).
+ * `imageDigests` is consumed by the updater to pin hub/web by digest (old hubs strip the unknown key).
  */
 export const channelEntrySchema = z.object({
   version: z.string().min(1),
   hubImage: z.string().optional(), // reserved (updater)
   webImage: z.string().optional(), // reserved (updater)
+  imageDigests: imageDigestsSchema.optional(), // INDEX digests → digest-pinned hub/web updates
   agentSha256: z.record(z.string(), z.string()).optional(), // reserved (updater): arch → sha256
   minUpgradeFrom: z.string().optional(), // reserved (updater): refuse to skip past this
   publishedAt: z.string().optional(), // reserved (updater/freshness)

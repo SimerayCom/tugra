@@ -1,4 +1,4 @@
-import { UpdaterService, mapStatus, isTerminalPhase } from "./updater.service";
+import { UpdaterService, buildUpdateJob, mapStatus, isTerminalPhase } from "./updater.service";
 import type { RedisService } from "../redis/redis.service";
 import type { LatestEntryResult, UpdateService } from "./update.service";
 
@@ -86,6 +86,44 @@ describe("UpdaterService.requestUpdate", () => {
     const svc = new UpdaterService(r.svc, updateStub({ status: "ok", channel: "stable", entry: { version: "1.3.0" } }));
     expect(await svc.requestUpdate({ actor: "u1", auto: false })).toEqual({ status: "started", targetVersion: "1.3.0" });
     expect(r.lpush).toHaveBeenCalled();
+  });
+
+  describe("queue job shape (digest-pinned updates)", () => {
+    const H = "a".repeat(64);
+    const W = "b".repeat(64);
+    const queued = (r: ReturnType<typeof redisStub>) => JSON.parse(r.lpush.mock.calls[0][1] as string) as Record<string, unknown>;
+
+    it("queues {targetVersion, hubDigest, webDigest} when the verified entry carries BOTH digests", async () => {
+      const r = redisStub();
+      const entry = { version: "1.2.4", imageDigests: { hub: H, web: W, updater: "c".repeat(64), agent: "d".repeat(64) } };
+      const svc = new UpdaterService(r.svc, updateStub({ status: "ok", channel: "stable", entry }));
+      expect(await svc.requestUpdate({ actor: "u1", auto: false })).toEqual({ status: "started", targetVersion: "1.2.4" });
+      expect(r.lpush).toHaveBeenCalledWith("instance:update:queue", expect.any(String));
+      // exactly the three flat string fields the grep-based sidecar parser reads (no updater/agent digests)
+      expect(queued(r)).toEqual({ targetVersion: "1.2.4", hubDigest: H, webDigest: W });
+    });
+
+    it("queues the legacy {targetVersion} when the entry has no imageDigests (old manifest)", async () => {
+      const r = redisStub();
+      const svc = new UpdaterService(r.svc, updateStub({ status: "ok", channel: "stable", entry: { version: "1.2.4" } }));
+      await svc.requestUpdate({ actor: "u1", auto: false });
+      expect(queued(r)).toEqual({ targetVersion: "1.2.4" });
+    });
+
+    it("queues the legacy job for a PARTIAL digest pair (never half-pins)", async () => {
+      for (const imageDigests of [{ hub: H }, { web: W }, { updater: H, agent: W }]) {
+        const r = redisStub();
+        const svc = new UpdaterService(r.svc, updateStub({ status: "ok", channel: "stable", entry: { version: "1.2.4", imageDigests } }));
+        await svc.requestUpdate({ actor: "u1", auto: false });
+        expect(queued(r)).toEqual({ targetVersion: "1.2.4" });
+      }
+    });
+
+    it("buildUpdateJob is pure and does not add digest keys for an absent pair", () => {
+      expect(buildUpdateJob("1.0.0")).toEqual({ targetVersion: "1.0.0" });
+      expect("hubDigest" in buildUpdateJob("1.0.0", { hub: H })).toBe(false);
+      expect(buildUpdateJob("1.0.0", { hub: H, web: W })).toEqual({ targetVersion: "1.0.0", hubDigest: H, webDigest: W });
+    });
   });
 
   it("returns in-progress and does NOT queue a second job when the lock is held", async () => {

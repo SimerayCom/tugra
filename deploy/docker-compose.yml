@@ -47,7 +47,11 @@ services:
       retries: 20
 
   hub-api:
-    image: "ghcr.io/simeraycom/tugra-hub:${TUGRA_VERSION:-latest}"
+    # Optional digest pin (set by the updater sidecar / installer as BARE 64-hex): `repo:tag@sha256:hex` — the registry
+    # enforces the content hash and ignores the tag. Written as two NON-nested substitutions so it works on every
+    # compose v2: ${TUGRA_HUB_DIGEST:+@sha256:} yields the prefix only when set, ${TUGRA_HUB_DIGEST:-} appends the hex (empty
+    # when unset). Unset/empty = exactly the tag-only ref (legacy). Unpin = set the var to an empty value.
+    image: "ghcr.io/simeraycom/tugra-hub:${TUGRA_VERSION:-latest}${TUGRA_HUB_DIGEST:+@sha256:}${TUGRA_HUB_DIGEST:-}"
     build:
       context: ..
       dockerfile: deploy/Dockerfile.hub
@@ -108,7 +112,11 @@ services:
           - tugra-panel-hub
 
   web:
-    image: "ghcr.io/simeraycom/tugra-web:${TUGRA_VERSION:-latest}"
+    # Optional digest pin (set by the updater sidecar / installer as BARE 64-hex): `repo:tag@sha256:hex` — the registry
+    # enforces the content hash and ignores the tag. Written as two NON-nested substitutions so it works on every
+    # compose v2: ${TUGRA_WEB_DIGEST:+@sha256:} yields the prefix only when set, ${TUGRA_WEB_DIGEST:-} appends the hex (empty
+    # when unset). Unset/empty = exactly the tag-only ref (legacy). Unpin = set the var to an empty value.
+    image: "ghcr.io/simeraycom/tugra-web:${TUGRA_VERSION:-latest}${TUGRA_WEB_DIGEST:+@sha256:}${TUGRA_WEB_DIGEST:-}"
     build:
       context: ..
       dockerfile: deploy/Dockerfile.web

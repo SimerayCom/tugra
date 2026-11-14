@@ -122,6 +122,59 @@ describe(".github/workflows/release.yml", () => {
     expect(String(attest.with?.["subject-name"])).toContain("matrix.image");
   });
 
+  it("stamps the OCI image.version label on every image build", () => {
+    const steps = doc.jobs["build-push"].steps as Array<{ uses?: string; with?: Record<string, unknown> }>;
+    const build = steps.find((s) => s.uses?.startsWith("docker/build-push-action"))!;
+    expect(String(build.with?.labels)).toContain("org.opencontainers.image.version=${{ steps.ver.outputs.version }}");
+  });
+
+  it("every matrix leg records its INDEX digest from the build step and uploads it as image-digest-<name>", () => {
+    const steps = doc.jobs["build-push"].steps as Array<{
+      name?: string;
+      run?: string;
+      uses?: string;
+      if?: string;
+      env?: Record<string, string>;
+      with?: { name?: string; path?: string };
+    }>;
+    const record = steps.find((s) => s.name === "Record image index digest")!;
+    expect(record).toBeTruthy();
+    expect(record.if).toBeUndefined(); // ALL four legs (hub/web/updater/agent), not just the agent
+    // The digest reaches the script through env (no expression injection) and is the build step's index digest.
+    expect(record.env?.DIGEST).toBe("${{ steps.build.outputs.digest }}");
+    expect(record.run).not.toContain("steps.build.outputs.digest");
+    expect(record.run).toContain("sha256:[0-9a-f]{64}"); // malformed/empty digest fails the leg
+    expect(record.run).toContain("$NAME.digest");
+    const upload = steps.find((s) => s.uses?.startsWith("actions/upload-artifact") && s.with?.name === "image-digest-${{ matrix.name }}")!;
+    expect(upload).toBeTruthy();
+    expect(upload.if).toBeUndefined();
+    expect(upload.with?.path).toBe("${{ matrix.name }}.digest");
+    // Ordered AFTER the (untouched) attest step, so a failed attestation never leaves a recorded digest behind.
+    const order = (pred: (s: (typeof steps)[number]) => boolean) => steps.findIndex(pred);
+    expect(order((s) => s.name === "Record image index digest")).toBeGreaterThan(
+      order((s) => !!s.uses?.startsWith("actions/attest-build-provenance")),
+    );
+  });
+
+  it("publish-manifest downloads all image digests and signs them in with --require-digests", () => {
+    const steps = doc.jobs["publish-manifest"].steps as Array<{
+      run?: string;
+      uses?: string;
+      with?: { name?: string; pattern?: string; path?: string; "merge-multiple"?: boolean };
+    }>;
+    const dl = steps.find((s) => s.uses?.startsWith("actions/download-artifact") && s.with?.pattern === "image-digest-*")!;
+    expect(dl).toBeTruthy();
+    expect(dl.with?.["merge-multiple"]).toBe(true);
+    // the existing agent per-arch digest download is untouched
+    expect(steps.some((s) => s.uses?.startsWith("actions/download-artifact") && s.with?.name === "agent-digests")).toBe(true);
+    const sign = steps.find((s) => s.run?.includes("scripts/sign-manifest.mjs"))!.run!;
+    for (const flag of ["--hub-digest", "--web-digest", "--updater-digest", "--agent-index-digest", "--require-digests true"]) {
+      expect(sign).toContain(flag);
+    }
+    // every digest file is read through the fail-closed reader (set -e + non-empty check)
+    for (const n of ["hub", "web", "updater", "agent"]) expect(sign).toContain(`read_digest ${n}`);
+  });
+
   it("has a publish-manifest job that signs + publishes to gh-pages after the images build", () => {
     const job = doc.jobs["publish-manifest"];
     expect(job).toBeTruthy();

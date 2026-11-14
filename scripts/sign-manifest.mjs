@@ -9,6 +9,8 @@
 //     --version 0.2.0 --channel stable \
 //     --hub-image ghcr.io/simeraycom/tugra-hub:0.2.0 --web-image ghcr.io/simeraycom/tugra-web:0.2.0 \
 //     --agent-amd64 sha256:… --agent-arm64 sha256:… \
+//     --hub-digest sha256:… --web-digest sha256:… --updater-digest sha256:… --agent-index-digest sha256:… \
+//     --require-digests true \
 //     --changelog-url https://github.com/SimerayCom/tugra/releases/tag/v0.2.0 \
 //     --published-at 2026-07-18T00:00:00Z [--min-upgrade-from 1.9.0] \
 //     [--current ./gh-pages/versions.json] --out-dir ./out
@@ -23,7 +25,12 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { resolve, join } from "node:path";
-import { buildChannelEntry, buildNotice, signAndSelfVerify } from "../apps/hub-api/dist/update/manifest-merge.js";
+import {
+  assertRequiredDigests,
+  buildChannelEntry,
+  buildNotice,
+  signAndSelfVerify,
+} from "../apps/hub-api/dist/update/manifest-merge.js";
 
 function parseArgs(argv) {
   const out = {};
@@ -72,20 +79,41 @@ if (noticeOnly && notice === undefined) {
   process.exit(1);
 }
 
+// Fail-closed flag parsing: `--require-digests` must be spelled `--require-digests true` (the parser is
+// strictly `--flag value`); anything else would silently disable the guard, so refuse instead.
+if ("require-digests" in args && args["require-digests"] !== "true") {
+  console.error("sign-manifest: --require-digests takes the value `true` (--require-digests true)");
+  process.exit(1);
+}
+
 let entry = null;
 if (!noticeOnly) {
   const agentSha256 = {};
   if (args["agent-amd64"]) agentSha256.amd64 = args["agent-amd64"];
   if (args["agent-arm64"]) agentSha256.arm64 = args["agent-arm64"];
-  entry = buildChannelEntry({
-    version: args.version,
-    hubImage: args["hub-image"],
-    webImage: args["web-image"],
-    agentSha256: Object.keys(agentSha256).length ? agentSha256 : undefined,
-    minUpgradeFrom: args["min-upgrade-from"],
-    publishedAt: args["published-at"],
-    changelogUrl: args["changelog-url"],
-  });
+  // Per-image OCI INDEX digests (bare 64-hex or sha256:…). buildChannelEntry normalises them and THROWS on a
+  // malformed value; --require-digests additionally refuses a release without the hub + web digests.
+  try {
+    entry = buildChannelEntry({
+      version: args.version,
+      hubImage: args["hub-image"],
+      webImage: args["web-image"],
+      imageDigests: {
+        hub: args["hub-digest"],
+        web: args["web-digest"],
+        updater: args["updater-digest"],
+        agent: args["agent-index-digest"],
+      },
+      agentSha256: Object.keys(agentSha256).length ? agentSha256 : undefined,
+      minUpgradeFrom: args["min-upgrade-from"],
+      publishedAt: args["published-at"],
+      changelogUrl: args["changelog-url"],
+    });
+    if (args["require-digests"] === "true") assertRequiredDigests(entry);
+  } catch (e) {
+    console.error(`sign-manifest: refusing to publish — ${e.message}`);
+    process.exit(1);
+  }
 }
 
 let current = null;

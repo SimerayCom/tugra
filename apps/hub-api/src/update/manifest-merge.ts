@@ -3,6 +3,7 @@ import {
   channelEntrySchema,
   manifestSchema,
   noticeSchema,
+  SHA256_HEX,
   verifyUpdateManifest,
   type ChannelEntry,
   type Notice,
@@ -24,15 +25,51 @@ export interface ChannelEntryInput {
   hubImage?: string;
   webImage?: string;
   agentSha256?: Record<string, string>; // arch → digest ("sha256:…" or bare hex)
+  imageDigests?: ImageDigestsInput; // per-image INDEX digests ("sha256:…" or bare hex); hub/web/updater/agent
   minUpgradeFrom?: string;
   publishedAt?: string;
   changelogUrl?: string;
   notes?: string;
 }
 
+export type ImageDigestName = "hub" | "web" | "updater" | "agent";
+export type ImageDigestsInput = Partial<Record<ImageDigestName, string | undefined>>;
+const IMAGE_DIGEST_NAMES: readonly ImageDigestName[] = ["hub", "web", "updater", "agent"];
+
 /** Strip a leading `sha256:` → bare lowercase hex (what the manifest's agentSha256 field stores). */
 function bareHex(digest: string): string {
   return digest.replace(/^sha256:/i, "").toLowerCase();
+}
+
+/**
+ * Normalise + FAIL CLOSED on the per-image INDEX digests: each present value is trimmed, `sha256:`-stripped,
+ * lowercased and must then be exactly 64 hex chars — anything else THROWS so a garbage digest can never be
+ * signed (the sidecar would otherwise pin a ref that can't resolve). Empty/undefined values are omitted.
+ * Returns undefined when nothing remains.
+ */
+function normalizeImageDigests(input: ImageDigestsInput | undefined): ImageDigestsInput | undefined {
+  if (!input) return undefined;
+  const out: ImageDigestsInput = {};
+  for (const name of IMAGE_DIGEST_NAMES) {
+    const raw = input[name];
+    if (raw === undefined || raw === null || raw.trim() === "") continue;
+    const hex = bareHex(raw.trim());
+    if (!SHA256_HEX.test(hex)) {
+      throw new Error(`imageDigests.${name} is not a 64-hex sha256 digest`);
+    }
+    out[name] = hex;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * Release-time guard behind `sign-manifest --require-digests`: a release entry MUST carry the hub and web
+ * INDEX digests (what the updater pins). Throws otherwise so the runner publishes nothing.
+ */
+export function assertRequiredDigests(entry: ChannelEntry): void {
+  const d = entry.imageDigests;
+  const missing = (["hub", "web"] as const).filter((n) => !d?.[n]);
+  if (missing.length > 0) throw new Error(`--require-digests: missing imageDigests for ${missing.join(", ")}`);
 }
 
 /**
@@ -49,6 +86,8 @@ export function buildChannelEntry(input: ChannelEntryInput): ChannelEntry {
       Object.entries(input.agentSha256).map(([arch, digest]) => [arch, bareHex(digest)]),
     );
   }
+  const imageDigests = normalizeImageDigests(input.imageDigests);
+  if (imageDigests) entry.imageDigests = imageDigests;
   if (input.minUpgradeFrom && input.minUpgradeFrom.trim()) entry.minUpgradeFrom = input.minUpgradeFrom.trim();
   if (input.publishedAt) entry.publishedAt = input.publishedAt;
   if (input.changelogUrl) entry.changelogUrl = input.changelogUrl;
