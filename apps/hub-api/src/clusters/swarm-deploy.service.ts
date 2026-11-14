@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { SwarmProxyService } from "./swarm-proxy.service";
 import { createHash } from "node:crypto";
+import { planEnv } from "../deploy/env-render";
 import { appVolumeName, buildBuildOnlyScript, constraintExpr, envFileB64, imageRef, spreadPrefExpr, traefikLabels, type AppSpec, type RegistryAuth } from "../deploy/deploy-script";
 import {
   SWARM_OVERLAY,
@@ -26,10 +27,12 @@ import {
 
 /** Order-independent short hash of an app's env (sorted-by-key), so a no-op resave that only reorders keys does
  *  NOT rotate the secret. Mirrors swarm-proxy.service.ts's confighash convention. */
-export function appEnvConfigHash(env: Record<string, string>): string {
+export function appEnvConfigHash(env: Record<string, string>, b64Keys?: ReadonlySet<string>): string {
+  // `b64Keys` (multiline variables) are tagged `KEY:b64=`: a single-line <-> multiline toggle changes the hash and
+  // rolls the secret + service. Without it the body is IDENTICAL to what shipped before.
   const body = Object.keys(env)
     .sort()
-    .map((k) => `${k}=${env[k]}`)
+    .map((k) => `${k}${b64Keys?.has(k) ? ":b64" : ""}=${env[k]}`)
     .join("\n");
   return createHash("sha256").update(body).digest("hex").slice(0, 12);
 }
@@ -188,22 +191,35 @@ export class SwarmDeployService {
     // Entrypoint/Cmd (the wrapper must re-supply them) and whether it has a shell; a shell-less image
     // (distroless/scratch) falls back to the classic plaintext env path so it is never silently broken.
     const env = spec.env && typeof spec.env === "object" ? spec.env : {};
+    // Multiline variables travel as `KEY:b64=<base64>` lines decoded by an in-container wrapper. They are NEVER
+    // downgraded to plaintext `--env-add` (a PEM key would land in the Raft store): no shell+base64 => fail closed.
+    const plan = planEnv(env, spec.envMeta, "swarm");
+    const mlKeys = [...plan.b64Keys].sort();
+    if (mlKeys.length > 0) {
+      const clash = Object.keys(env).find((k) => k.endsWith(":b64"));
+      if (clash !== undefined) throw new Error(`TUGRA: env var ${JSON.stringify(clash.slice(0, 40))} cannot end in ":b64" when multiline variables are used`);
+    }
     let envSecret: AppEnvSecret | null = null;
     let imageEntrypoint: string[] = [];
     let imageCmd: string[] = [];
     let envFallbackNoShell = false;
     if (Object.keys(env).length > 0) {
-      const insp = await this.agentWs.sendCommand(managerId, buildInspectEntrypointScript(ref, auth), "swarm", 120_000);
+      const insp = await this.agentWs.sendCommand(managerId, buildInspectEntrypointScript(ref, auth, mlKeys.length > 0 ? { probeBase64: true } : {}), "swarm", 120_000);
       if (insp.exitCode !== 0) throw new Error(`could not pull/inspect ${ref} to protect its env vars:\n${insp.output}`);
       const parsed = parseImageEntrypointCmd(insp.output);
       // Use a secret only when the image has a shell AND a real command to re-exec — an image with neither
       // entrypoint nor cmd can't be wrapped (`exec "$@"` would be a no-op → silent crash loop), so fall back.
       if (parsed.hasShell && (parsed.entrypoint.length > 0 || parsed.cmd.length > 0)) {
-        const confighash = appEnvConfigHash(env);
-        envSecret = { name: `${appEnvSecretPrefix(serviceName(app))}-${confighash}`, confighash, credsB64: envFileB64(env) };
+        if (mlKeys.length > 0 && !parsed.hasBase64) {
+          throw new Error(`TUGRA: multiline variables (${mlKeys.join(", ")}) need a shell and base64 in the image; ${ref} lacks them`);
+        }
+        const ml = mlKeys.length > 0;
+        const confighash = appEnvConfigHash(plan.fileEnv, ml ? plan.b64Keys : undefined);
+        envSecret = { name: `${appEnvSecretPrefix(serviceName(app))}-${confighash}`, confighash, credsB64: envFileB64(plan.fileEnv, plan.b64Keys), ...(ml ? { ml: true } : {}) };
         imageEntrypoint = parsed.entrypoint;
         imageCmd = parsed.cmd;
       } else {
+        if (mlKeys.length > 0) throw new Error(`TUGRA: multiline variables (${mlKeys.join(", ")}) need a shell and base64 in the image; ${ref} lacks them`);
         // shell-less/command-less image → keep env plaintext; flag it so a previously-WRAPPED service is
         // recreated (its stale sh-wrapper entrypoint can't be reset by `docker service update`).
         envFallbackNoShell = true;

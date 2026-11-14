@@ -1,3 +1,8 @@
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { envFileB64 } from "./deploy-script";
 import {
   serviceName,
   updateMonitorSec,
@@ -13,6 +18,7 @@ import {
   appEnvSecretPrefix,
   buildInspectEntrypointScript,
   parseImageEntrypointCmd,
+  appEnvWrapper,
   type ServiceDeployOpts,
 } from "./service-script";
 
@@ -328,5 +334,78 @@ describe("service-script builders", () => {
     expect(parseImageEntrypointCmd('TUGRA_ENTRYPOINT=null\nTUGRA_CMD=["node","server.js"]\nTUGRA_HAS_SHELL=yes')).toEqual({ entrypoint: [], cmd: ["node", "server.js"], hasShell: true });
     expect(parseImageEntrypointCmd('TUGRA_ENTRYPOINT=["/bin/tini","--"]\nTUGRA_CMD=["sh -c echo"]\nTUGRA_HAS_SHELL=no')).toEqual({ entrypoint: ["/bin/tini", "--"], cmd: ["sh -c echo"], hasShell: false });
     expect(parseImageEntrypointCmd("garbage")).toEqual({ entrypoint: [], cmd: [], hasShell: false });
+  });
+});
+
+describe("swarm env secret — multiline wrapper (APP_ENV_WRAPPER_ML)", () => {
+  const es = { name: "tugra-appenv-tugra_abc-abc123def456", confighash: "abc123def456", credsB64: "Rk9PPWJhcg==" };
+  const ml = { ...es, ml: true };
+
+  it("the non-ML wrapper is byte-pinned (no existing service rolls)", () => {
+    expect(appEnvWrapper({})).toBe(
+      'if [ -f /run/secrets/app_env ]; then while IFS="=" read -r k v || [ -n "$k" ]; do [ -n "$k" ] && export "$k=$v"; done < /run/secrets/app_env; fi; exec "$@"',
+    );
+  });
+
+  it("the ML wrapper has no single quote (the update path nests it in two shq layers)", () => {
+    expect(appEnvWrapper(ml)).not.toContain("'");
+    expect(appEnvWrapper(ml)).toContain("base64 -d");
+  });
+
+  it("create and update both pick the ML wrapper when es.ml, the classic one otherwise", () => {
+    const o = (e: typeof es) => buildServiceDeployScript(opts({ envSecret: e, imageEntrypoint: [], imageCmd: ["node", "server.js"] }));
+    const withMl = o(ml);
+    expect(withMl).toContain(`-c '${appEnvWrapper(ml)}' app 'node' 'server.js'`);
+    expect(withMl).toContain("--entrypoint " + `'sh -c '\\''${appEnvWrapper(ml)}'\\'' _'`);
+    expect(withMl).not.toContain('IFS="=" read -r k v');
+    expect(o(es)).toContain('IFS="=" read -r k v');
+    expect(o(es)).not.toContain("printf x");
+  });
+
+  it("probes base64 only on request and parses it (shape unchanged without the probe)", () => {
+    expect(buildInspectEntrypointScript("img:1")).not.toContain("base64");
+    const s = buildInspectEntrypointScript("img:1", null, { probeBase64: true });
+    expect(s).toContain("command -v base64");
+    expect(s).toContain("TUGRA_HAS_BASE64=yes");
+    expect(parseImageEntrypointCmd('TUGRA_ENTRYPOINT=null\nTUGRA_CMD=["a"]\nTUGRA_HAS_SHELL=yes\nTUGRA_HAS_BASE64=yes')).toMatchObject({ hasShell: true, hasBase64: true });
+    expect(parseImageEntrypointCmd('TUGRA_ENTRYPOINT=null\nTUGRA_CMD=["a"]\nTUGRA_HAS_SHELL=yes\nTUGRA_HAS_BASE64=no').hasBase64).toBe(false);
+    expect(parseImageEntrypointCmd('TUGRA_HAS_SHELL=yes').hasBase64).toBeUndefined();
+  });
+
+  describe("real shells", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tugra-wrap-"));
+    afterAll(() => rmSync(dir, { recursive: true, force: true }));
+    const values: Record<string, string> = {
+      EQ: "a=b==c",
+      DOLLAR: "$HOME `id` $(touch /tmp/pwned_wrapper)",
+      QUOTES: `it's "q" back\\slash`,
+      CRLF: "l1\r\nl2\r\n",
+      TRAIL: "pem\nbody\n\n\n",
+      UNI: "\u00e9\u4e2d\ud83d\ude80\nx",
+      EMPTYML: "",
+      SPACES: "  lead and trail  \nx",
+      PAD: "a",
+      PLAIN: "plain value=with=equals",
+    };
+    const ml = new Set(Object.keys(values).filter((k) => k !== "PLAIN"));
+    const body = Buffer.from(envFileB64(values, ml), "base64").toString();
+    const secretFile = join(dir, "app_env");
+    writeFileSync(secretFile, body + "\n");
+    const wrapper = appEnvWrapper({ ml: true }).replaceAll("/run/secrets/app_env", secretFile);
+    const probe = ['for k in ' + Object.keys(values).join(" "), 'do eval "v=\\$$k"; printf "VAL %s %s\\n" "$k" "$(printf %s "$v" | od -An -v -tx1 | tr -d " \\n")"; done'].join("; ");
+    const shells = ["sh", "bash", ...(spawnSync("dash", ["-c", ":"]).status === 0 ? ["dash"] : [])];
+    it.each(shells)("%s: every value round-trips exactly (=, $, backticks, quotes, CRLF, trailing newlines, unicode, empty, padding)", (shell) => {
+      const r = spawnSync(shell, ["-c", wrapper, "app", "sh", "-c", probe], { encoding: "utf8", env: { PATH: process.env.PATH ?? "" } });
+      expect(r.status).toBe(0);
+      for (const [k, v] of Object.entries(values)) {
+        expect(r.stdout).toContain(`VAL ${k} ${Buffer.from(v, "utf8").toString("hex")}\n`);
+      }
+      expect(r.stdout).not.toContain("pwned");
+    });
+    it("a missing secret file just execs the command", () => {
+      const w = appEnvWrapper({ ml: true }).replaceAll("/run/secrets/app_env", join(dir, "nope"));
+      const r = spawnSync("sh", ["-c", w, "app", "echo", "hi"], { encoding: "utf8" });
+      expect(r.stdout.trim()).toBe("hi");
+    });
   });
 });

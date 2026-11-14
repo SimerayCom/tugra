@@ -291,3 +291,64 @@ describe("SwarmDeployService env secrets", () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("SwarmDeployService — multiline env variables", () => {
+  const mlSpec = () => spec({ env: { A: "1", PEM_KEY: "RAWPEM\nBODY\n" }, envMeta: { PEM_KEY: { multiline: true } } });
+  const sendWith = (inspectOut: string) =>
+    jest.fn(async (_s: string, cmd: string) => (cmd.includes("TUGRA_ENTRYPOINT") ? { exitCode: 0, output: inspectOut } : { exitCode: 0, output: "TUGRA_ROLLOUT: converged" }));
+  const IMG = 'TUGRA_ENTRYPOINT=null\nTUGRA_CMD=["node","server.js"]\nTUGRA_HAS_SHELL=yes';
+
+  it("appEnvConfigHash: identical without b64Keys, changes on a multiline toggle", () => {
+    const env = { A: "1", PEM_KEY: "x" };
+    expect(appEnvConfigHash(env, undefined)).toBe(appEnvConfigHash(env));
+    expect(appEnvConfigHash(env, new Set())).toBe(appEnvConfigHash(env));
+    expect(appEnvConfigHash(env, new Set(["PEM_KEY"]))).not.toBe(appEnvConfigHash(env));
+  });
+
+  it("shell + base64 image: probes base64, mints a secret with a KEY:b64= line, ML wrapper, never the raw value or plaintext", async () => {
+    const send = sendWith(IMG + "\nTUGRA_HAS_BASE64=yes");
+    const { svc } = make({ sendImpl: send });
+    await svc.deploy(app(), mlSpec(), "dep1", { timeoutMs: 1000 });
+    expect(send.mock.calls[0][1]).toContain("command -v base64");
+    const script = send.mock.calls[1][1] as string;
+    expect(script).toContain("base64 -d; printf x"); // the ML wrapper
+    expect(script).not.toContain("RAWPEM");
+    expect(script).not.toContain("--env-add");
+    const b64 = (script.match(/printf %s '([A-Za-z0-9+/=]+)' \| base64 -d \| docker secret create/) ?? [])[1];
+    const body = Buffer.from(b64, "base64").toString();
+    expect(body).toBe(`A=1\nPEM_KEY:b64=${Buffer.from("RAWPEM\nBODY\n").toString("base64")}`);
+  });
+
+  it("image WITHOUT base64, or without a shell: throws a clear error and NEVER emits plaintext env", async () => {
+    for (const out of [IMG + "\nTUGRA_HAS_BASE64=no", "TUGRA_ENTRYPOINT=null\nTUGRA_CMD=null\nTUGRA_HAS_SHELL=no\nTUGRA_HAS_BASE64=no"]) {
+      const send = sendWith(out);
+      const { svc } = make({ sendImpl: send });
+      await expect(svc.deploy(app(), mlSpec(), "dep1", { timeoutMs: 1000 })).rejects.toThrow(/multiline variables \(PEM_KEY\) need a shell and base64 in the image; ghcr\.io\/org\/app:1 lacks them/);
+      expect(send).toHaveBeenCalledTimes(1); // the deploy script was never dispatched
+    }
+  });
+
+  it("an unflagged env keeps the classic path and never probes base64", async () => {
+    const send = sendWith(IMG);
+    const { svc } = make({ sendImpl: send });
+    await svc.deploy(app(), spec({ env: { FOO: "bar" } }), "dep1", { timeoutMs: 1000 });
+    expect(send.mock.calls[0][1]).not.toContain("base64");
+    expect(send.mock.calls[1][1]).not.toContain("base64 -d; printf x");
+  });
+
+  it("a key ending in :b64 is refused when multiline variables are used", async () => {
+    const { svc } = make({ sendImpl: sendWith(IMG + "\nTUGRA_HAS_BASE64=yes") });
+    await expect(svc.deploy(app(), spec({ env: { "x:b64": "1", PEM: "a\nb" }, envMeta: { PEM: { multiline: true } } }), "dep1", { timeoutMs: 1000 })).rejects.toThrow(/:b64/);
+  });
+
+  it("literal and buildTime do not change the secret (inert on swarm)", async () => {
+    const hashOf = async (meta: AppSpec["envMeta"]) => {
+      const send = sendWith(IMG);
+      const { svc } = make({ sendImpl: send });
+      await svc.deploy(app(), spec({ env: { FOO: "bar" }, envMeta: meta }), "dep1", { timeoutMs: 1000 });
+      return (send.mock.calls[1][1] as string).match(/tugra\.app\.envhash='([0-9a-f]+)'/)![1];
+    };
+    expect(await hashOf({ FOO: { literal: true } })).toBe(await hashOf(undefined));
+    expect(await hashOf({ FOO: { buildTime: true } })).toBe(await hashOf(undefined));
+  });
+});

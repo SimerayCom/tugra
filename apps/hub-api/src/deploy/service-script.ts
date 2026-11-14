@@ -57,8 +57,20 @@ const APP_ENV_MOUNT = "app_env";
 // secret isn't mounted (no env, or a legacy service on its first migrating update) it just execs the app.
 const APP_ENV_WRAPPER = `if [ -f /run/secrets/${APP_ENV_MOUNT} ]; then while IFS="=" read -r k v || [ -n "$k" ]; do [ -n "$k" ] && export "$k=$v"; done < /run/secrets/${APP_ENV_MOUNT}; fi; exec "$@"`;
 
+// Multiline-capable variant (a SEPARATE constant: the one above is byte-pinned so no existing service rolls). Reads
+// whole lines (IFS empty, so spaces survive), splits at the FIRST `=`, and decodes `KEY:b64=<base64>` lines;
+// `printf x` + `${v%x}` keeps trailing newlines (PEM). ZERO single quotes: the update path nests it in two shq layers.
+const APP_ENV_WRAPPER_ML = `if [ -f /run/secrets/${APP_ENV_MOUNT} ]; then while IFS= read -r l || [ -n "$l" ]; do k=\${l%%=*}; v=\${l#*=}; case "$k" in *:b64) k=\${k%:b64}; v=$(printf %s "$v" | base64 -d; printf x); v=\${v%x};; esac; [ -n "$k" ] && export "$k=$v"; done < /run/secrets/${APP_ENV_MOUNT}; fi; exec "$@"`;
+
+/** The wrapper source for an env secret (exported for the real-shell spec). */
+export function appEnvWrapper(es: { ml?: boolean }): string {
+  return es.ml ? APP_ENV_WRAPPER_ML : APP_ENV_WRAPPER;
+}
+
 export interface AppEnvSecret {
   name: string; // tugra-appenv-<serviceName>-<confighash>, minted by the caller (hub-side sha256)
+  /** Body carries `KEY:b64=<base64>` lines (multiline variables): use the decoding wrapper. */
+  ml?: boolean;
   confighash: string; // order-independent (sorted-by-key) short hash of the env
   credsB64: string; // envFileB64(env) — the KEY=VALUE body used to mint the secret when absent
 }
@@ -275,7 +287,7 @@ export function buildServiceDeployScript(o: ServiceDeployOpts): string {
     // Secret path only: after the ref, `sh -c <wrapper> $0 $1...` — "app" is the $0 process-name placeholder,
     // the image's real Entrypoint+Cmd are $1.. which the wrapper execs. (--entrypoint is just ["sh"] here, so it
     // adds no $0 of its own — unlike the UPDATE path whose --entrypoint string carries its own trailing "_".)
-    ...(es ? [`-c ${shq(APP_ENV_WRAPPER)}`, `app`, ...ep.map(shq), ...cmd.map(shq)] : []),
+    ...(es ? [`-c ${shq(appEnvWrapper(es))}`, `app`, ...ep.map(shq), ...cmd.map(shq)] : []),
   ].join(" ");
 
   // Update RE-APPLIES the full desired state (`docker service update` only mutates the fields you name), so
@@ -293,7 +305,7 @@ export function buildServiceDeployScript(o: ServiceDeployOpts): string {
     ...mounts.map((m) => `--mount-add ${shq(`type=volume,source=${m.source},destination=${m.target}`)}`),
     `"$@"`, // accumulated below: plaintext --env-add (classic), OR --env-rm scrub + --secret-* (secret), + placement
     ...(es
-      ? [`--entrypoint ${shq(`sh -c ${shq(APP_ENV_WRAPPER)} _`)}`, `--args ${shq([...ep, ...cmd].map(shq).join(" "))}`]
+      ? [`--entrypoint ${shq(`sh -c ${shq(appEnvWrapper(es))} _`)}`, `--args ${shq([...ep, ...cmd].map(shq).join(" "))}`]
       : []),
     q,
   ].join(" ");
@@ -415,7 +427,7 @@ export function buildServiceRemoveScript(name: string): string {
 /** Pull an image on the manager and read its OWN Entrypoint/Cmd + whether it has a shell. Needed
  *  because overriding --entrypoint for the env-secret wrapper DISCARDS the image's baked-in CMD, so the wrapper
  *  must re-supply the real command; and a shell-less image can't run the wrapper at all (caller falls back). */
-export function buildInspectEntrypointScript(ref: string, auth?: RegistryAuth | null): string {
+export function buildInspectEntrypointScript(ref: string, auth?: RegistryAuth | null, opts: { probeBase64?: boolean } = {}): string {
   const q = shq(ref);
   return [
     "set -e",
@@ -427,11 +439,15 @@ export function buildInspectEntrypointScript(ref: string, auth?: RegistryAuth | 
     // Definitive shell test (the `if` swallows the non-zero so `set -e` doesn't abort). No shell → the caller
     // keeps env as plaintext instead of a wrapper that would never exec.
     `if docker run --rm --entrypoint /bin/sh ${q} -c ':' >/dev/null 2>&1; then echo "TUGRA_HAS_SHELL=yes"; else echo "TUGRA_HAS_SHELL=no"; fi`,
+    // Multiline variables are decoded in-container, so the image also needs `base64` (only probed when needed).
+    ...(opts.probeBase64
+      ? [`if docker run --rm --entrypoint /bin/sh ${q} -c 'command -v base64' >/dev/null 2>&1; then echo "TUGRA_HAS_BASE64=yes"; else echo "TUGRA_HAS_BASE64=no"; fi`]
+      : []),
   ].join("\n");
 }
 
 /** Parse buildInspectEntrypointScript's output (structured, in TS — never in shell, per this file's convention). */
-export function parseImageEntrypointCmd(output: string): { entrypoint: string[]; cmd: string[]; hasShell: boolean } {
+export function parseImageEntrypointCmd(output: string): { entrypoint: string[]; cmd: string[]; hasShell: boolean; hasBase64?: boolean } {
   const grab = (marker: string): string[] => {
     for (const line of output.split("\n")) {
       const t = line.trim();
@@ -447,7 +463,10 @@ export function parseImageEntrypointCmd(output: string): { entrypoint: string[];
     return [];
   };
   const hasShell = output.split("\n").some((l) => l.trim() === "TUGRA_HAS_SHELL=yes");
-  return { entrypoint: grab("TUGRA_ENTRYPOINT"), cmd: grab("TUGRA_CMD"), hasShell };
+  // hasBase64 is only present when the probe ran (so the pre-flag shape is unchanged).
+  const probed = output.split("\n").some((l) => l.trim().startsWith("TUGRA_HAS_BASE64="));
+  const hasBase64 = probed ? output.split("\n").some((l) => l.trim() === "TUGRA_HAS_BASE64=yes") : undefined;
+  return { entrypoint: grab("TUGRA_ENTRYPOINT"), cmd: grab("TUGRA_CMD"), hasShell, ...(probed ? { hasBase64 } : {}) };
 }
 
 /** Task status across all nodes — one JSON object per task (for the status/containers view). */
