@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import { I18nProvider } from "../../../../i18n/provider";
 import { api } from "../../../../lib/api";
-import { BuildSecretsCard, looksSensitiveKey } from "./app-detail-build-cards";
+import { BuildSecretsCard, BuildSettingsCard, looksSensitiveKey } from "./app-detail-build-cards";
 
 afterEach(cleanup);
 let qc: QueryClient;
@@ -66,5 +66,96 @@ describe("BuildSecretsCard", () => {
     fireEvent.change(screen.getByLabelText("Key"), { target: { value: "bad-key" } });
     expect(screen.getByText(/Secret ids must be identifiers/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Save" })).toHaveProperty("disabled", true);
+  });
+});
+
+describe("BuildSettingsCard — git/build behaviour toggles", () => {
+  const props = {
+    id: "a1",
+    buildType: "DOCKERFILE" as const,
+    dockerfilePath: null,
+    dockerBuildTarget: null,
+    baseDirectory: null,
+    buildCommand: null,
+    outputDir: null,
+    nixpacksInstallCmd: null,
+    nixpacksBuildCmd: null,
+    nixpacksStartCmd: null,
+    gitSubmodules: false,
+    gitLfs: false,
+    gitShallowClone: true,
+    disableBuildCache: false,
+    injectEnvAsBuildArgs: false,
+    sourceCommitMode: "RUNTIME" as const,
+  };
+  const box = (name: RegExp) => screen.getByRole("checkbox", { name }) as HTMLInputElement;
+
+  it("renders the stored values", () => {
+    wrap(<BuildSettingsCard {...props} gitSubmodules gitLfs disableBuildCache sourceCommitMode="BUILD" />);
+    expect(box(/Shallow clone/).checked).toBe(true);
+    expect(box(/Git submodules/).checked).toBe(true);
+    expect(box(/Git LFS/).checked).toBe(true);
+    expect(box(/Disable build cache/).checked).toBe(true);
+    expect((screen.getByLabelText("SOURCE_COMMIT variable") as HTMLSelectElement).value).toBe("BUILD");
+  });
+
+  it("sends all six settings on save", async () => {
+    const set = vi.spyOn(api, "setAppBuild").mockResolvedValue({ ok: true });
+    wrap(<BuildSettingsCard {...props} />);
+    fireEvent.click(box(/Shallow clone/));
+    fireEvent.click(box(/Git submodules/));
+    fireEvent.click(box(/Git LFS/));
+    fireEvent.click(box(/Disable build cache/));
+    fireEvent.click(box(/Inject environment variables/));
+    fireEvent.change(screen.getByLabelText("SOURCE_COMMIT variable"), { target: { value: "OFF" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(set).toHaveBeenCalled());
+    expect(set.mock.calls[0][1]).toMatchObject({
+      buildType: "DOCKERFILE",
+      gitShallowClone: false,
+      gitSubmodules: true,
+      gitLfs: true,
+      disableBuildCache: true,
+      injectEnvAsBuildArgs: true,
+      sourceCommitMode: "OFF",
+    });
+  });
+
+  it("shows the image-history warning only while env injection is checked", () => {
+    wrap(<BuildSettingsCard {...props} />);
+    expect(screen.queryByText(/visible in the image history/)).toBeNull();
+    fireEvent.click(box(/Inject environment variables/));
+    expect(screen.getByText(/visible in the image history/)).toBeTruthy();
+  });
+
+  it("disables env injection for a non-Dockerfile pack and always sends it as false", async () => {
+    const set = vi.spyOn(api, "setAppBuild").mockResolvedValue({ ok: true });
+    wrap(<BuildSettingsCard {...props} buildType="NIXPACKS" injectEnvAsBuildArgs />);
+    const inject = box(/Inject environment variables/);
+    expect(inject.disabled).toBe(true);
+    expect(inject.checked).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(set).toHaveBeenCalled());
+    expect(set.mock.calls[0][1]).toMatchObject({ injectEnvAsBuildArgs: false });
+  });
+
+  it("disables 'Disable build cache' for Railpack and sends it as false even when stored on", async () => {
+    const set = vi.spyOn(api, "setAppBuild").mockResolvedValue({ ok: true });
+    wrap(<BuildSettingsCard {...props} buildType="RAILPACK" disableBuildCache />);
+    const cache = box(/Disable build cache/);
+    expect(cache.disabled).toBe(true);
+    expect(cache.checked).toBe(false);
+    expect(screen.getByText(/Not available for the Railpack build pack/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(set).toHaveBeenCalled());
+    expect(set.mock.calls[0][1]).toMatchObject({ disableBuildCache: false });
+  });
+
+  it("explains the Build mode cost, and says it is runtime-only for Static", () => {
+    const { unmount } = wrap(<BuildSettingsCard {...props} sourceCommitMode="BUILD" />);
+    expect(screen.getByText(/needs ARG SOURCE_COMMIT/)).toBeTruthy();
+    unmount();
+    wrap(<BuildSettingsCard {...props} buildType="STATIC" sourceCommitMode="BUILD" />);
+    expect(screen.getByText(/Static builds have no build arguments/)).toBeTruthy();
   });
 });

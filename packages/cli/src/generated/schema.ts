@@ -11745,6 +11745,13 @@ export interface operations {
                         gitUrl: string | null;
                         gitBranch: string | null;
                         gitCommit: string | null;
+                        gitSubmodules: boolean;
+                        gitLfs: boolean;
+                        gitShallowClone: boolean;
+                        disableBuildCache: boolean;
+                        injectEnvAsBuildArgs: boolean;
+                        /** @enum {string} */
+                        sourceCommitMode: "OFF" | "RUNTIME" | "BUILD";
                         gitSourceId: string | null;
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
@@ -12031,6 +12038,13 @@ export interface operations {
                         gitUrl: string | null;
                         gitBranch: string | null;
                         gitCommit: string | null;
+                        gitSubmodules: boolean;
+                        gitLfs: boolean;
+                        gitShallowClone: boolean;
+                        disableBuildCache: boolean;
+                        injectEnvAsBuildArgs: boolean;
+                        /** @enum {string} */
+                        sourceCommitMode: "OFF" | "RUNTIME" | "BUILD";
                         gitSourceId: string | null;
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
@@ -12428,6 +12442,13 @@ export interface operations {
                         gitUrl: string | null;
                         gitBranch: string | null;
                         gitCommit: string | null;
+                        gitSubmodules: boolean;
+                        gitLfs: boolean;
+                        gitShallowClone: boolean;
+                        disableBuildCache: boolean;
+                        injectEnvAsBuildArgs: boolean;
+                        /** @enum {string} */
+                        sourceCommitMode: "OFF" | "RUNTIME" | "BUILD";
                         gitSourceId: string | null;
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
@@ -12780,6 +12801,13 @@ export interface operations {
                         gitUrl: string | null;
                         gitBranch: string | null;
                         gitCommit: string | null;
+                        gitSubmodules: boolean;
+                        gitLfs: boolean;
+                        gitShallowClone: boolean;
+                        disableBuildCache: boolean;
+                        injectEnvAsBuildArgs: boolean;
+                        /** @enum {string} */
+                        sourceCommitMode: "OFF" | "RUNTIME" | "BUILD";
                         gitSourceId: string | null;
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
@@ -15774,6 +15802,13 @@ export interface operations {
                     nixpacksBuildCmd?: string | null;
                     nixpacksStartCmd?: string | null;
                     baseDirectory?: string | null;
+                    gitSubmodules?: boolean;
+                    gitLfs?: boolean;
+                    gitShallowClone?: boolean;
+                    disableBuildCache?: boolean;
+                    injectEnvAsBuildArgs?: boolean;
+                    /** @enum {string} */
+                    sourceCommitMode?: "OFF" | "RUNTIME" | "BUILD";
                 };
             };
         };
@@ -18560,6 +18595,13 @@ export interface operations {
                             gitUrl: string | null;
                             gitBranch: string | null;
                             gitCommit: string | null;
+                            gitSubmodules: boolean;
+                            gitLfs: boolean;
+                            gitShallowClone: boolean;
+                            disableBuildCache: boolean;
+                            injectEnvAsBuildArgs: boolean;
+                            /** @enum {string} */
+                            sourceCommitMode: "OFF" | "RUNTIME" | "BUILD";
                             gitSourceId: string | null;
                             /** @enum {string} */
                             buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
@@ -18841,6 +18883,13 @@ export interface operations {
                         gitUrl: string | null;
                         gitBranch: string | null;
                         gitCommit: string | null;
+                        gitSubmodules: boolean;
+                        gitLfs: boolean;
+                        gitShallowClone: boolean;
+                        disableBuildCache: boolean;
+                        injectEnvAsBuildArgs: boolean;
+                        /** @enum {string} */
+                        sourceCommitMode: "OFF" | "RUNTIME" | "BUILD";
                         gitSourceId: string | null;
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
@@ -19191,6 +19240,13 @@ export interface operations {
                         gitUrl: string | null;
                         gitBranch: string | null;
                         gitCommit: string | null;
+                        gitSubmodules: boolean;
+                        gitLfs: boolean;
+                        gitShallowClone: boolean;
+                        disableBuildCache: boolean;
+                        injectEnvAsBuildArgs: boolean;
+                        /** @enum {string} */
+                        sourceCommitMode: "OFF" | "RUNTIME" | "BUILD";
                         gitSourceId: string | null;
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
@@ -19599,6 +19655,13 @@ export interface operations {
                         gitUrl: string | null;
                         gitBranch: string | null;
                         gitCommit: string | null;
+                        gitSubmodules: boolean;
+                        gitLfs: boolean;
+                        gitShallowClone: boolean;
+                        disableBuildCache: boolean;
+                        injectEnvAsBuildArgs: boolean;
+                        /** @enum {string} */
+                        sourceCommitMode: "OFF" | "RUNTIME" | "BUILD";
                         gitSourceId: string | null;
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
@@ -20828,6 +20891,13 @@ export interface operations {
                         gitUrl: string | null;
                         gitBranch: string | null;
                         gitCommit: string | null;
+                        gitSubmodules: boolean;
+                        gitLfs: boolean;
+                        gitShallowClone: boolean;
+                        disableBuildCache: boolean;
+                        injectEnvAsBuildArgs: boolean;
+                        /** @enum {string} */
+                        sourceCommitMode: "OFF" | "RUNTIME" | "BUILD";
                         gitSourceId: string | null;
                         /** @enum {string} */
                         buildType: "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";

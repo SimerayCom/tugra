@@ -1021,6 +1021,7 @@ export interface ImportRemapResult {
 export type AppStatus = "NEW" | "RUNNING" | "STOPPED" | "FAILED";
 
 export type AppSource = "IMAGE" | "GIT" | "COMPOSE";
+export type SourceCommitMode = "OFF" | "RUNTIME" | "BUILD";
 export type BuildType = "NIXPACKS" | "DOCKERFILE" | "STATIC" | "RAILPACK" | "HEROKU";
 
 export interface AppVolume {
@@ -1197,6 +1198,12 @@ export interface Application {
   gitUrl: string | null;
   gitBranch: string | null;
   gitCommit: string | null; // pinned commit SHA; null = deploy the branch HEAD
+  gitSubmodules: boolean;
+  gitLfs: boolean;
+  gitShallowClone: boolean;
+  disableBuildCache: boolean;
+  injectEnvAsBuildArgs: boolean;
+  sourceCommitMode: SourceCommitMode;
   gitSourceId: string | null;
   buildType: BuildType;
   buildCommand: string | null;

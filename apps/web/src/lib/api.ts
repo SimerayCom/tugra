@@ -21,6 +21,7 @@ import type {
   SavedView,
   Application,
   BuildType,
+  SourceCommitMode,
   AppConfigMount,
   AppVolume,
   HostMount,
@@ -1129,7 +1130,7 @@ export const api = {
   setAppSource(id: string, body: { gitUrl?: string; gitBranch?: string; gitCommit?: string | null; gitSourceId?: string | null; image?: string; composePath?: string }) {
     return apiFetch<{ warnings: string[] }>(`/apps/${id}/source`, { method: "PUT", body: JSON.stringify(body) });
   },
-  setAppBuild(id: string, body: { buildType: BuildType; dockerfilePath?: string | null; dockerBuildTarget?: string | null; buildCommand?: string | null; outputDir?: string | null; baseDirectory?: string | null; nixpacksInstallCmd?: string | null; nixpacksBuildCmd?: string | null; nixpacksStartCmd?: string | null }) {
+  setAppBuild(id: string, body: { buildType: BuildType; dockerfilePath?: string | null; dockerBuildTarget?: string | null; buildCommand?: string | null; outputDir?: string | null; baseDirectory?: string | null; nixpacksInstallCmd?: string | null; nixpacksBuildCmd?: string | null; nixpacksStartCmd?: string | null; gitSubmodules?: boolean; gitLfs?: boolean; gitShallowClone?: boolean; disableBuildCache?: boolean; injectEnvAsBuildArgs?: boolean; sourceCommitMode?: SourceCommitMode }) {
     return apiFetch<{ ok: true }>(`/apps/${id}/build`, { method: "PUT", body: JSON.stringify(body) });
   },
   setAppWatchPaths(id: string, watchPaths: string[]) {

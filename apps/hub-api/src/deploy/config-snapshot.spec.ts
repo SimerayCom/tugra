@@ -137,3 +137,27 @@ describe("diffSnapshots", () => {
     expect(diffSnapshots(buildConfigSnapshot(spec({ extraDomains: ["a.com"] })), buildConfigSnapshot(spec({ extraDomains: ["a.com"] })))).toEqual([]);
   });
 });
+
+describe("git/build settings in the snapshot", () => {
+  const git = (over: Partial<AppSpec> = {}) => spec({ source: "GIT", gitUrl: "https://x/y.git", ...over });
+  it("captures the six settings for a GIT spec", () => {
+    const snap = buildConfigSnapshot(git({ gitSubmodules: true, gitLfs: false, gitShallowClone: true, disableBuildCache: true, injectEnvAsBuildArgs: false, sourceCommitMode: "BUILD" }));
+    expect(snap).toMatchObject({ gitSubmodules: true, gitLfs: false, gitShallowClone: true, disableBuildCache: true, injectEnvAsBuildArgs: false, sourceCommitMode: "BUILD" });
+  });
+  it("a pre-upgrade snapshot (keys absent) vs a default-valued new one is not a change", () => {
+    const before = buildConfigSnapshot(git());
+    const after = buildConfigSnapshot(git({ gitSubmodules: false, gitLfs: false, gitShallowClone: true, disableBuildCache: false, injectEnvAsBuildArgs: false, sourceCommitMode: "RUNTIME" }));
+    expect(diffSnapshots(before, after)).toEqual([]);
+  });
+  it("non-GIT snapshots (all undefined) never diff", () => {
+    expect(diffSnapshots(buildConfigSnapshot(spec()), buildConfigSnapshot(spec()))).toEqual([]);
+  });
+  it("a real toggle shows up", () => {
+    const d = diffSnapshots(buildConfigSnapshot(git({ gitLfs: false })), buildConfigSnapshot(git({ gitLfs: true, gitShallowClone: false })));
+    expect(d).toContainEqual({ field: "gitLfs", kind: "changed", before: "false", after: "true" });
+    expect(d).toContainEqual({ field: "gitShallowClone", kind: "changed", before: "true", after: "false" });
+  });
+  it("never records injected env as build args (no buildArgs in the snapshot)", () => {
+    expect(JSON.stringify(buildConfigSnapshot(git({ injectEnvAsBuildArgs: true, buildArgs: { LEAK: "zzz" } })))).not.toContain("zzz");
+  });
+});

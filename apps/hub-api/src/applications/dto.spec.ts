@@ -392,3 +392,35 @@ describe("SetBuildSecretsSchema", () => {
     expect(p({ A: "é".repeat(30 * 1024) })).toBe(false);
   });
 });
+
+describe("SetBuildSchema — git/build behaviour toggles", () => {
+  const six = { gitSubmodules: true, gitLfs: true, gitShallowClone: false, disableBuildCache: true, injectEnvAsBuildArgs: true, sourceCommitMode: "BUILD" as const };
+  it("accepts every toggle on a Dockerfile build, and none is required (omitted = keep)", () => {
+    expect(SetBuildSchema.safeParse({ buildType: "DOCKERFILE", ...six }).success).toBe(true);
+    expect(SetBuildSchema.safeParse({ buildType: "DOCKERFILE" }).success).toBe(true);
+  });
+  it("accepts each toggle individually, including false", () => {
+    for (const k of ["gitSubmodules", "gitLfs", "gitShallowClone", "disableBuildCache", "injectEnvAsBuildArgs"]) {
+      expect(SetBuildSchema.safeParse({ buildType: "DOCKERFILE", [k]: false }).success).toBe(true);
+      expect(SetBuildSchema.safeParse({ buildType: "DOCKERFILE", [k]: "yes" }).success).toBe(false);
+    }
+  });
+  it("sourceCommitMode is OFF | RUNTIME | BUILD", () => {
+    for (const m of ["OFF", "RUNTIME", "BUILD"]) expect(SetBuildSchema.safeParse({ buildType: "NIXPACKS", sourceCommitMode: m }).success).toBe(true);
+    expect(SetBuildSchema.safeParse({ buildType: "NIXPACKS", sourceCommitMode: "ALWAYS" }).success).toBe(false);
+  });
+  it("injectEnvAsBuildArgs=true is Dockerfile-only (false always round-trips)", () => {
+    for (const t of ["NIXPACKS", "STATIC", "RAILPACK", "HEROKU"]) {
+      expect(SetBuildSchema.safeParse({ buildType: t, injectEnvAsBuildArgs: true }).success).toBe(false);
+      expect(SetBuildSchema.safeParse({ buildType: t, injectEnvAsBuildArgs: false }).success).toBe(true);
+    }
+  });
+  it("disableBuildCache=true is refused for Railpack only", () => {
+    expect(SetBuildSchema.safeParse({ buildType: "RAILPACK", disableBuildCache: true }).success).toBe(false);
+    expect(SetBuildSchema.safeParse({ buildType: "RAILPACK", disableBuildCache: false }).success).toBe(true);
+    for (const t of ["NIXPACKS", "DOCKERFILE", "STATIC", "HEROKU"]) expect(SetBuildSchema.safeParse({ buildType: t, disableBuildCache: true }).success).toBe(true);
+  });
+  it("stays strict about unknown keys", () => {
+    expect(SetBuildSchema.safeParse({ buildType: "NIXPACKS", gitSubmodule: true }).success).toBe(false);
+  });
+});

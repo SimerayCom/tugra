@@ -10,7 +10,7 @@ import { useT } from "../../../../i18n/provider";
 import { api } from "../../../../lib/api";
 import { duplicateKeys, invalidKeys } from "../../../../lib/dotenv";
 import { gitWebUrls } from "../../../../lib/git-web-url";
-import { type AppSource, type BuildType } from "../../../../lib/types";
+import { type AppSource, type BuildType, type SourceCommitMode } from "../../../../lib/types";
 import { BUILD_TYPE_LABEL, envField, normalizeBaseDir } from "./app-detail-shared";
 
 /** Edit a git-sourced app's watch paths: one glob per line (leading `!` = exclude). Empty = deploy on every
@@ -125,7 +125,7 @@ export function SourceCard({ id, source, gitUrl, gitBranch, gitCommit, image, co
   );
 }
 
-export function BuildSettingsCard({ id, buildType, dockerfilePath, dockerBuildTarget, baseDirectory, buildCommand, outputDir, nixpacksInstallCmd, nixpacksBuildCmd, nixpacksStartCmd }: { id: string; buildType: BuildType; dockerfilePath: string | null; dockerBuildTarget: string | null; baseDirectory: string | null; buildCommand: string | null; outputDir: string | null; nixpacksInstallCmd: string | null; nixpacksBuildCmd: string | null; nixpacksStartCmd: string | null }) {
+export function BuildSettingsCard({ id, buildType, dockerfilePath, dockerBuildTarget, baseDirectory, buildCommand, outputDir, nixpacksInstallCmd, nixpacksBuildCmd, nixpacksStartCmd, gitSubmodules, gitLfs, gitShallowClone, disableBuildCache, injectEnvAsBuildArgs, sourceCommitMode }: { id: string; buildType: BuildType; dockerfilePath: string | null; dockerBuildTarget: string | null; baseDirectory: string | null; buildCommand: string | null; outputDir: string | null; nixpacksInstallCmd: string | null; nixpacksBuildCmd: string | null; nixpacksStartCmd: string | null; gitSubmodules: boolean; gitLfs: boolean; gitShallowClone: boolean; disableBuildCache: boolean; injectEnvAsBuildArgs: boolean; sourceCommitMode: SourceCommitMode }) {
   const t = useT();
   const qc = useQueryClient();
   const toast = useToast();
@@ -138,6 +138,12 @@ export function BuildSettingsCard({ id, buildType, dockerfilePath, dockerBuildTa
   const [nixInstall, setNixInstall] = useState(nixpacksInstallCmd ?? "");
   const [nixBuild, setNixBuild] = useState(nixpacksBuildCmd ?? "");
   const [nixStart, setNixStart] = useState(nixpacksStartCmd ?? "");
+  const [submodules, setSubmodules] = useState(gitSubmodules);
+  const [lfs, setLfs] = useState(gitLfs);
+  const [shallow, setShallow] = useState(gitShallowClone);
+  const [noCache, setNoCache] = useState(disableBuildCache);
+  const [inject, setInject] = useState(injectEnvAsBuildArgs);
+  const [commitMode, setCommitMode] = useState<SourceCommitMode>(sourceCommitMode);
   const save = useMutation({
     mutationFn: () =>
       api.setAppBuild(id, {
@@ -147,6 +153,14 @@ export function BuildSettingsCard({ id, buildType, dockerfilePath, dockerBuildTa
         ...(type === "DOCKERFILE" ? { dockerfilePath: dockerfile.trim() || null, dockerBuildTarget: target.trim() || null } : {}),
         ...(type === "STATIC" ? { buildCommand: cmd.trim() || null, outputDir: out.trim() || null } : {}),
         ...(type === "NIXPACKS" ? { nixpacksInstallCmd: nixInstall.trim() || null, nixpacksBuildCmd: nixBuild.trim() || null, nixpacksStartCmd: nixStart.trim() || null } : {}),
+        // Git/build behaviour: always sent. Railpack has no cache-bypass and env build-args are Dockerfile-only,
+        // so those two are forced off for a type that cannot honour them (the server refuses `true` there).
+        gitSubmodules: submodules,
+        gitLfs: lfs,
+        gitShallowClone: shallow,
+        sourceCommitMode: commitMode,
+        disableBuildCache: type === "RAILPACK" ? false : noCache,
+        injectEnvAsBuildArgs: type === "DOCKERFILE" && inject,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
     meta: { successMessage: t("apps.saved") },
@@ -185,8 +199,59 @@ export function BuildSettingsCard({ id, buildType, dockerfilePath, dockerBuildTa
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>
       {type === "NIXPACKS" && <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "8px 0 0" }}>{t("apps.nixpacksCmdHint")}</p>}
+      {/* Git group — how the repository is fetched. */}
+      <div style={{ fontSize: 12, fontWeight: 600, color: "var(--c-tx2)", margin: "16px 0 6px" }}>{t("apps.buildGitSection")}</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <BuildToggle checked={shallow} onChange={setShallow} label={t("apps.buildGitShallow")} hint={t("apps.buildGitShallowHint")} />
+        <BuildToggle checked={submodules} onChange={setSubmodules} label={t("apps.buildGitSubmodules")} hint={t("apps.buildGitSubmodulesHint")} />
+        <BuildToggle checked={lfs} onChange={setLfs} label={t("apps.buildGitLfs")} hint={t("apps.buildGitLfsHint")} />
+      </div>
+      {/* Build group — cache, env injection, deployed-commit variable. */}
+      <div style={{ fontSize: 12, fontWeight: 600, color: "var(--c-tx2)", margin: "16px 0 6px" }}>{t("apps.buildOptionsSection")}</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <BuildToggle
+          checked={type === "RAILPACK" ? false : noCache}
+          onChange={setNoCache}
+          disabled={type === "RAILPACK"}
+          label={t("apps.buildDisableCache")}
+          hint={t(type === "RAILPACK" ? "apps.buildDisableCacheRailpack" : "apps.buildDisableCacheHint")}
+        />
+        <BuildToggle
+          checked={type === "DOCKERFILE" && inject}
+          onChange={setInject}
+          disabled={type !== "DOCKERFILE"}
+          label={t("apps.buildInjectEnv")}
+          hint={t("apps.buildInjectEnvHint")}
+        />
+        {type === "DOCKERFILE" && inject && <div role="alert" style={{ fontSize: 12, color: "var(--c-am)" }}>{t("apps.buildInjectEnvWarn")}</div>}
+        <label style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 13, color: "var(--c-tx)" }}>
+          {t("apps.buildSourceCommit")}
+          <select style={{ ...envField, width: 160 }} value={commitMode} onChange={(e) => setCommitMode(e.target.value as SourceCommitMode)} aria-label={t("apps.buildSourceCommit")}>
+            <option value="OFF">{t("apps.buildSourceCommitOff")}</option>
+            <option value="RUNTIME">{t("apps.buildSourceCommitRuntime")}</option>
+            <option value="BUILD">{t("apps.buildSourceCommitBuild")}</option>
+          </select>
+        </label>
+        <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: 0 }}>{t("apps.buildSourceCommitHint")}</p>
+        {commitMode === "BUILD" && (
+          <div role="note" style={{ fontSize: 12, color: "var(--c-am)" }}>{t(type === "STATIC" ? "apps.buildSourceCommitStaticNote" : "apps.buildSourceCommitBuildNote")}</div>
+        )}
+      </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.sourceRedeploy")}</div>}
     </SectionCard>
+  );
+}
+
+/** One labelled checkbox with a one-line hint underneath (Build settings: git + build behaviour toggles). */
+function BuildToggle({ checked, onChange, disabled, label, hint }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean; label: string; hint: string }) {
+  return (
+    <div>
+      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: disabled ? "var(--c-tx3)" : "var(--c-tx)" }}>
+        <input type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
+        {label}
+      </label>
+      <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "2px 0 0 22px" }}>{hint}</p>
+    </div>
   );
 }
 

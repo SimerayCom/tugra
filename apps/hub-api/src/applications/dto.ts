@@ -528,11 +528,20 @@ export const SetBuildSchema = z
     nixpacksStartCmd: BUILD_CMD.nullable().optional(),
     // Monorepo build root — valid for every build type, so no type-gated refine (unlike the fields above).
     baseDirectory: BASE_DIR.nullable().optional(),
+    // Git clone + build behaviour. All optional: omitted = keep the stored value (importer / old clients).
+    gitSubmodules: z.boolean().optional(),
+    gitLfs: z.boolean().optional(),
+    gitShallowClone: z.boolean().optional(),
+    disableBuildCache: z.boolean().optional(),
+    injectEnvAsBuildArgs: z.boolean().optional(),
+    sourceCommitMode: z.enum(["OFF", "RUNTIME", "BUILD"]).optional(),
   })
   .strict()
   .refine((d) => d.buildType === "DOCKERFILE" || (d.dockerfilePath == null && d.dockerBuildTarget == null), { message: "dockerfilePath/dockerBuildTarget apply only to the DOCKERFILE build type" })
   .refine((d) => d.buildType === "STATIC" || (d.buildCommand == null && d.outputDir == null), { message: "buildCommand/outputDir apply only to the STATIC build type" })
-  .refine((d) => d.buildType === "NIXPACKS" || (d.nixpacksInstallCmd == null && d.nixpacksBuildCmd == null && d.nixpacksStartCmd == null), { message: "nixpacks command overrides apply only to the NIXPACKS build type" });
+  .refine((d) => d.buildType === "NIXPACKS" || (d.nixpacksInstallCmd == null && d.nixpacksBuildCmd == null && d.nixpacksStartCmd == null), { message: "nixpacks command overrides apply only to the NIXPACKS build type" })
+  .refine((d) => d.buildType === "DOCKERFILE" || d.injectEnvAsBuildArgs !== true, { message: "injectEnvAsBuildArgs applies only to the DOCKERFILE build type" })
+  .refine((d) => d.buildType !== "RAILPACK" || d.disableBuildCache !== true, { message: "disableBuildCache is not supported for the Railpack build pack" });
 export type SetBuildInput = z.infer<typeof SetBuildSchema>;
 
 // Watch paths: repo-relative glob patterns (leading `!` = exclude) gating whether a push deploys. The charset

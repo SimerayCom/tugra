@@ -6,6 +6,7 @@
 
 import { createHash } from "node:crypto";
 import { DB_NET } from "../databases/database-script"; // single source for the managed-DB network name
+import { injectableBuildArgs } from "./build-args";
 import {
   buildPanelRouterYaml,
   validateAcmeEmail,
@@ -60,6 +61,12 @@ export interface AppSpec {
    *  HEAD (shallow clone, byte-identical). When set, the clone drops `--depth 1` (full branch history) and
    *  checks out this SHA. DTO-validated as 7–40 hex, and shell-quoted here, so it can't inject. */
   gitCommit?: string | null;
+  /** Init + update git submodules after clone/pin. undefined/false -> none (byte-identical). */
+  gitSubmodules?: boolean;
+  /** true -> install-check + `git lfs pull`; false -> GIT_LFS_SKIP_SMUDGE=1 (deterministic); undefined -> untouched. */
+  gitLfs?: boolean;
+  /** false -> full-history clone. undefined/true -> `--depth 1` (as today). */
+  gitShallowClone?: boolean;
   buildType?: BuildKind;
   dockerfilePath?: string | null;
   /** DOCKERFILE build only: the multi-stage build stage to target (`docker build --target <stage>`). */
@@ -117,6 +124,14 @@ export interface AppSpec {
   env: Record<string, string>;
   /** Build-time variables injected during image build (separate from runtime env). */
   buildArgs?: Record<string, string>;
+  /** Snapshot-only: the OR with the per-deploy noCache happens in executeDeploy. */
+  disableBuildCache?: boolean;
+  /** DOCKERFILE only: pass the runtime env as `--build-arg` (baked into image history; the build log says so). */
+  injectEnvAsBuildArgs?: boolean;
+  /** undefined = nothing emitted. RUNTIME = SOURCE_COMMIT env at runtime; BUILD = also a build arg / builder env. */
+  sourceCommitMode?: "OFF" | "RUNTIME" | "BUILD";
+  /** Hub-injected, hex-validated SHA for scripts that never run the clone (rollback, build-server pull). */
+  sourceCommit?: string | null;
   /** Build-time SECRETS for DOCKERFILE builds: each key is mounted as a BuildKit secret (`--secret id=KEY,src=file`,
    *  read via `RUN --mount=type=secret,id=KEY`), so the value never enters a layer, `docker history` or a pushed
    *  image — unlike a build arg. Keys are identifiers (DTO-validated); values are written to a 0600 file in the
@@ -795,35 +810,69 @@ export function gitCloneSteps(app: AppSpec, dir: string): string[] {
   const branch = app.gitBranch || "main";
   const url = app.gitUrl ?? "";
   // Pin to a commit → full branch history (drop --depth 1) so the SHA is reachable for checkout; else shallow.
-  const depthFlag = app.gitCommit ? "" : "--depth 1 ";
+  const depthFlag = app.gitCommit || app.gitShallowClone === false ? "" : "--depth 1 ";
+  const shallow = depthFlag !== "";
+  const lfsManaged = typeof app.gitLfs === "boolean"; // toSpec always sets it for GIT; raw specs leave it undefined
+  const wantLfs = app.gitLfs === true;
+  const wantSub = app.gitSubmodules === true;
   const ssh = isSshGitUrl(url);
   const useSsh = !!app.gitSshKey && ssh;
   const useToken = !!app.gitToken && /^https:\/\//i.test(url);
   const steps = [`rm -rf ${dir} && mkdir -p ${dir}`];
+  if (lfsManaged) {
+    // Never let a host-global smudge filter pull LFS during clone/checkout/submodule update; deterministic across hosts.
+    steps.push("export GIT_LFS_SKIP_SMUDGE=1");
+    if (wantLfs) steps.push(`command -v git-lfs >/dev/null 2>&1 || { echo "TUGRA: git-lfs is not installed on this server - install it or turn LFS off"; exit 1; }`);
+  }
+  let authEnv = "GIT_TERMINAL_PROMPT=0"; // env for the follow-up git commands (submodules / lfs); replaced per branch below
   if (useSsh) {
     // Private SSH clone: the deploy key is written to a 0600 temp file (base64-piped, never in argv),
     // and host keys are learned/pinned in a persistent known_hosts (accept-new TOFU).
+    const sshEnv = `GIT_SSH_COMMAND="ssh -F /dev/null -i $sd/id -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=30 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=${SSH_DIR}/known_hosts" GIT_TERMINAL_PROMPT=0`;
+    authEnv = sshEnv;
     steps.push(
       ...secretsDirPrelude(),
       `command -v ssh >/dev/null 2>&1 || { echo "TUGRA: this agent image has no ssh client — update the agent to clone over SSH"; exit 1; }`,
       `printf %s ${shq(b64(app.gitSshKey!))} | base64 -d > "$sd/id"`,
       'chmod 600 "$sd/id"',
       `mkdir -p ${SSH_DIR}`,
-      `GIT_SSH_COMMAND="ssh -F /dev/null -i $sd/id -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=30 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=${SSH_DIR}/known_hosts" GIT_TERMINAL_PROMPT=0 git clone ${depthFlag}--branch ${shq(branch)} -- ${shq(url)} ${dir}`,
+      `${sshEnv} git clone ${depthFlag}--branch ${shq(branch)} -- ${shq(url)} ${dir}`,
     );
   } else if (ssh) {
     // An SSH repo URL but no deploy key configured — fail clearly instead of prompting / hanging.
     steps.push(`echo "TUGRA: this is an SSH repo but no deploy key is set — generate one and add it to the repo"; exit 1`);
   } else if (useToken) {
     // Private clone: token via GIT_ASKPASS (never in argv / URL / .git/config).
+    const tokEnv = `GIT_ASKPASS="$sd/askpass" GIT_TERMINAL_PROMPT=0`;
+    authEnv = tokEnv;
     steps.push(
       ...secretsDirPrelude(),
       `printf %s ${shq(b64(app.gitToken!))} | base64 -d > "$sd/token"`,
       'chmod 600 "$sd/token"',
-      `printf '%s\\n' '#!/bin/sh' 'cat "$(dirname "$0")/token"' > "$sd/askpass"`,
-      'chmod 700 "$sd/askpass"',
-      `GIT_ASKPASS="$sd/askpass" GIT_TERMINAL_PROMPT=0 git clone ${depthFlag}--branch ${shq(branch)} -- ${shq(gitAuthUrl(url))} ${dir}`,
     );
+    if (wantSub || wantLfs) {
+      // Submodules / LFS can reach OTHER hosts (a PR author controls .gitmodules): the askpass answers only for the
+      // repo's own host, so the token is never handed to a different server. Host charset is regex-restricted, so
+      // the case pattern cannot be injected into. Without either feature the original two-line askpass is kept.
+      const hostM = /^https:\/\/([A-Za-z0-9.-]+(?::[0-9]{1,5})?)(?:\/|$)/i.exec(url);
+      if (!hostM) steps.push(`echo "TUGRA: cannot derive the repo host to pin git credentials to"; exit 1`);
+      else {
+        const askpass = `#!/bin/sh
+case "$1" in
+  *"//${hostM[1]}'"*|*"@${hostM[1]}'"*) ;;
+  *) exit 1 ;;
+esac
+case "$1" in
+  Username*) echo x-access-token ;;
+  *) cat "$(dirname "$0")/token" ;;
+esac
+`;
+        steps.push(`printf %s ${shq(b64(askpass))} | base64 -d > "$sd/askpass"`);
+      }
+    } else {
+      steps.push(`printf '%s\\n' '#!/bin/sh' 'cat "$(dirname "$0")/token"' > "$sd/askpass"`);
+    }
+    steps.push('chmod 700 "$sd/askpass"', `${tokEnv} git clone ${depthFlag}--branch ${shq(branch)} -- ${shq(gitAuthUrl(url))} ${dir}`);
   } else {
     steps.push(`git clone ${depthFlag}--branch ${shq(branch)} -- ${shq(url)} ${dir}`);
   }
@@ -834,6 +883,24 @@ export function gitCloneSteps(app: AppSpec, dir: string): string[] {
       `git -C ${dir} -c advice.detachedHead=false checkout ${shq(app.gitCommit)} || { echo "TUGRA: pinned commit not found on branch ${shq(branch)}"; exit 1; }`,
     );
   }
+  // Submodules / LFS run AFTER the pin so a pinned SHA is checked out before submodules sync (which is why
+  // --recurse-submodules on the clone is not used). file/ext transports are refused: a hostile .gitmodules must not
+  // reach local paths or run commands.
+  if (wantSub) {
+    const sub = `${authEnv} git -C ${dir} -c protocol.file.allow=never -c protocol.ext.allow=never submodule update --init --recursive`;
+    steps.push(
+      shallow
+        ? `${sub} --depth 1 || ${sub} || { echo "TUGRA: submodule clone failed"; exit 1; }` // some servers refuse a shallow fetch of an unadvertised SHA
+        : `${sub} || { echo "TUGRA: submodule clone failed"; exit 1; }`,
+    );
+  }
+  if (wantLfs) {
+    steps.push(`${authEnv} git -C ${dir} lfs pull || { echo "TUGRA: git lfs pull failed"; exit 1; }`);
+    if (wantSub) steps.push(`${authEnv} git -C ${dir} submodule foreach --recursive 'git lfs pull' || { echo "TUGRA: git lfs pull failed in a submodule"; exit 1; }`);
+  } else if (lfsManaged) {
+    steps.push(`grep -qs 'filter=lfs' ${dir}/.gitattributes && echo "TUGRA: this repository uses Git LFS but LFS is off - large files are pointer stubs; enable Git LFS in Build settings" || true`);
+  }
+  if (lfsManaged) steps.push("unset GIT_LFS_SKIP_SMUDGE"); // scope it to the clone phase; do not leak into the build
   // Record the deployed commit right after the clone and BEFORE any build output — build/user output is
   // noisy (could push a late marker past the agent's 64KB head-capped buffer) and could print a fake
   // `TUGRA_COMMIT=` line (parseCommit takes the first anchored, hex-validated match, so earliest wins).
@@ -872,6 +939,14 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
   const buildEnvFlags = ba
     ? " " + Object.entries(ba).map(([k, v]) => `--env ${shq(`${k}=${v}`)}`).join(" ")
     : "";
+  // sourceCommitMode BUILD: also hand the deployed SHA to the build (Dockerfile `ARG SOURCE_COMMIT`, or the
+  // builder's env). TUGRA_C is hex from `git rev-parse`, set by gitCloneSteps earlier in this same script. A value
+  // the user set themselves (build arg or env) always wins. BUILD busts the layer cache from the ARG onward.
+  const userKey = (k: string) => !!(app.buildArgs && k in app.buildArgs) || !!(app.env && k in app.env);
+  const commitBuild = app.source === "GIT" && app.sourceCommitMode === "BUILD" && !userKey("SOURCE_COMMIT");
+  const commitArg = commitBuild ? `--build-arg "SOURCE_COMMIT=$TUGRA_C" ` : "";
+  const commitEnv = commitBuild ? ` --env "SOURCE_COMMIT=$TUGRA_C"` : "";
+  const buildEnvFlagsC = buildEnvFlags + commitEnv; // railpack / pack / nixpacks only; STATIC + DOCKERFILE use buildArgFlags
   // Build SECRETS (DOCKERFILE only): one 0600 file per secret inside the wiped secrets dir, mounted with BuildKit
   // `--secret id=K,src=$sd/bs_K`. The Dockerfile reads it at `/run/secrets/K` inside `RUN --mount=type=secret,
   // id=K …` — the image, its history and a pushed copy keep no trace of it, and the docker argv carries only the
@@ -925,13 +1000,27 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
       // `--target <stage>` builds a specific multi-stage Dockerfile stage (e.g. a lean "production" stage).
       // DTO-validated charset (no metachars) + shq, so it can't inject into the build command.
       const targetFlag = app.dockerBuildTarget ? `--target ${shq(app.dockerBuildTarget)} ` : "";
-      steps.push(...secretSteps, `${buildKit}docker build ${nc}${targetFlag}${buildArgFlags}${secretFlags}-t ${tag} -f ${shq(`${base}/${df}`)} ${base}`);
+      // injectEnvAsBuildArgs: the runtime env rides `--build-arg` (explicit build args win, secrets + non-identifier
+      // keys are skipped). Flag off -> the original string, byte-identical. Messages carry key NAMES only.
+      const inj = app.injectEnvAsBuildArgs ? injectableBuildArgs(app) : null;
+      const dfArgFlags = inj
+        ? Object.entries(inj.args).map(([k, v]) => `--build-arg ${shq(`${k}=${v}`)}`).join(" ") + (Object.keys(inj.args).length ? " " : "")
+        : buildArgFlags;
+      const injNote = inj && inj.keys.length
+        ? [
+            `echo ${shq(`TUGRA: injectEnvAsBuildArgs is on - ${inj.keys.length} variable(s) are baked into the image history (docker history): ${inj.keys.join(", ")}`)}`,
+            ...(inj.sensitive.length ? [`echo ${shq(`TUGRA: WARNING - secret-looking variables are being baked into the image: ${inj.sensitive.join(", ")}`)}`] : []),
+            ...(inj.skipped ? [`echo ${shq(`TUGRA: injectEnvAsBuildArgs skipped ${inj.skipped} variable(s) (not valid build-arg names, or build secrets)`)}`] : []),
+          ]
+        : [];
+      steps.push(...secretSteps, ...injNote, `${buildKit}docker build ${nc}${targetFlag}${dfArgFlags}${commitArg}${secretFlags}-t ${tag} -f ${shq(`${base}/${df}`)} ${base}`);
       // The secret files are needed only by the build: shred them at once rather than at script exit (the rest of
       // the deploy — push, health gate, soak — can run for minutes). The EXIT trap remains the backstop.
       if (secretKeys.length) steps.push('rm -f "$sd"/bs_*');
     } else if (app.buildType === "STATIC") {
       // Generate an nginx (+ optional node build stage) Dockerfile and config.
       steps.push(...secretsIgnoredNote);
+      if (commitBuild) steps.push(`echo "TUGRA: sourceCommitMode BUILD has no effect on Static builds (no ARG in the generated Dockerfile); SOURCE_COMMIT is set at runtime only"`);
       steps.push(
         `printf %s ${shq(b64(staticDockerfile(app.buildCommand, app.outputDir)))} | base64 -d > ${base}/Dockerfile.tugra`,
         `printf %s ${shq(b64(staticNginxConf()))} | base64 -d > ${base}/tugra-nginx.conf`,
@@ -942,14 +1031,14 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
       steps.push(...secretsIgnoredNote);
       steps.push(
         "command -v railpack >/dev/null 2>&1 || curl -sSL https://railpack.com/install.sh | sh",
-        `railpack build ${base} --name ${tag}${buildEnvFlags}`,
+        `railpack build ${base} --name ${tag}${buildEnvFlagsC}`,
       );
     } else if (app.buildType === "HEROKU") {
       // Heroku / Cloud Native Buildpacks via the pack CLI.
       steps.push(...secretsIgnoredNote);
       steps.push(
         "command -v pack >/dev/null 2>&1 || { curl -sSL https://github.com/buildpacks/pack/releases/download/v0.36.0/pack-v0.36.0-linux.tgz | tar -C /usr/local/bin -xz pack; }",
-        `pack build ${tag} --path ${base} --builder heroku/builder:24 --pull-policy if-not-present${buildEnvFlags}`,
+        `pack build ${tag} --path ${base} --builder heroku/builder:24 --pull-policy if-not-present${noCache ? " --clear-cache" : ""}${buildEnvFlagsC}`,
       );
     } else {
       // Nixpacks: materialise the build plan first so we can (a) inject curl/wget into the
@@ -974,7 +1063,7 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
         .filter(([, v]) => v)
         .map(([k, v]) => `--env ${shq(`${k}=${v}`)}`)
         .join(" ");
-      const nixEnv = nixpacksCmdEnv ? `${buildEnvFlags} ${nixpacksCmdEnv}` : buildEnvFlags;
+      const nixEnv = nixpacksCmdEnv ? `${buildEnvFlagsC} ${nixpacksCmdEnv}` : buildEnvFlagsC;
       steps.push(
         "command -v nixpacks >/dev/null 2>&1 || curl -sSL https://nixpacks.com/install.sh | bash",
         `nixpacks plan -f json${nixEnv} ${base} > ${plan}`,
@@ -983,7 +1072,7 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
         "else",
         '  echo "TUGRA: jq not found — skipping curl/wget health-tool injection into the Nixpacks plan" >&2',
         "fi",
-        `nixpacks build -c ${plan} --cache-key ${shq(app.id)} --name ${tag}${nixEnv} ${base}`,
+        `nixpacks build -c ${plan} --cache-key ${shq(app.id)} --name ${tag}${noCache ? " --no-cache" : ""}${nixEnv} ${base}`,
         `rm -f ${plan} ${plan}.tmp`,
       );
     }
@@ -1162,6 +1251,19 @@ export function logRotationArgs(dockerOptions?: string | null): string {
 /** The `docker run -d --name <name> ...` line shared by every deploy strategy —
  *  identical flags (net/labels/env/limits/volumes/image) regardless of the container
  *  name, so a rolling container gets the exact same routing as the canonical one. */
+/**
+ * Runtime `SOURCE_COMMIT` for a GIT app (sourceCommitMode RUNTIME or BUILD). A hub-injected hex SHA (rollback /
+ * build-server pull, where this script never clones) is emitted literally; otherwise the self-guarding
+ * `${TUGRA_C:+…}` expansion reads the SHA the clone step recorded and emits nothing when it is unset/empty. A value
+ * the user set in env wins (nothing emitted). Word-splits unquoted into `-e` + `SOURCE_COMMIT=<sha>`.
+ */
+function sourceCommitRunToken(app: AppSpec): string {
+  if (app.source !== "GIT" || !app.sourceCommitMode || app.sourceCommitMode === "OFF") return "";
+  if (app.env && Object.prototype.hasOwnProperty.call(app.env, "SOURCE_COMMIT")) return "";
+  if (app.sourceCommit && /^[0-9a-f]{7,64}$/.test(app.sourceCommit)) return `-e SOURCE_COMMIT=${app.sourceCommit}`;
+  return "${TUGRA_C:+-e SOURCE_COMMIT=$TUGRA_C}";
+}
+
 function runContainerArgs(app: AppSpec, version: string, name: string): string {
   const ref = runTag(app, version);
   const env = app.env && typeof app.env === "object" ? app.env : {};
@@ -1254,6 +1356,7 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
     // shell into the `sh -c` deploy command (host-root RCE); see dockerOptionsArgs.
     dockerOptionsArgs(app.dockerOptions),
     envArg,
+    sourceCommitRunToken(app),
     netExpose.trim(),
     aliasArgs,
     volArgs,

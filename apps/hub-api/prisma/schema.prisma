@@ -1032,6 +1032,12 @@ enum AppSource {
   COMPOSE
 }
 
+enum SourceCommitMode {
+  OFF
+  RUNTIME // SOURCE_COMMIT env in the running container
+  BUILD // RUNTIME + a --build-arg at build time
+}
+
 enum BuildType {
   NIXPACKS
   DOCKERFILE
@@ -1133,6 +1139,12 @@ model Application {
   // Pin deploys to a specific commit SHA (must be reachable from gitBranch). Null = deploy the branch HEAD
   // (byte-identical shallow clone). When set, the clone fetches full branch history + checks out this SHA.
   gitCommit                    String?
+  gitSubmodules                Boolean            @default(false)
+  gitLfs                       Boolean            @default(false)
+  gitShallowClone              Boolean            @default(true)
+  disableBuildCache            Boolean            @default(false)
+  injectEnvAsBuildArgs         Boolean            @default(false)
+  sourceCommitMode             SourceCommitMode   @default(RUNTIME)
   buildType                    BuildType          @default(NIXPACKS)
   dockerfilePath               String?
   dockerBuildTarget            String? // DOCKERFILE build: multi-stage target stage (docker build --target)

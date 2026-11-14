@@ -1892,7 +1892,7 @@ describe("ApplicationsService", () => {
     const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...gitApp, buildType: "DOCKERFILE", dockerfilePath: "Dockerfile" }), update }, deployment: noActiveDeploy } as unknown as PrismaService;
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).setBuild("u1", "app1", { buildType: "STATIC", buildCommand: "npm run build", outputDir: "build" });
-    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { buildType: "STATIC", dockerfilePath: null, dockerBuildTarget: null, buildCommand: "npm run build", outputDir: "build", nixpacksInstallCmd: null, nixpacksBuildCmd: null, nixpacksStartCmd: null, baseDirectory: null, buildSecretsEnc: null } })); // leaving Dockerfile drops the build secrets
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { buildType: "STATIC", dockerfilePath: null, dockerBuildTarget: null, buildCommand: "npm run build", outputDir: "build", nixpacksInstallCmd: null, nixpacksBuildCmd: null, nixpacksStartCmd: null, baseDirectory: null, buildSecretsEnc: null, injectEnvAsBuildArgs: false } })); // leaving Dockerfile drops the build secrets
   });
 
   it("setBuild NIXPACKS persists the command overrides (and a non-nixpacks type clears them)", async () => {
@@ -5657,5 +5657,178 @@ describe("ApplicationsService.deploymentDetail", () => {
     const list = await make(prisma, access, {} as AgentWsServer).deployments("u1", "app1", { slim: true });
     expect(list[0]).toMatchObject({ id: "d2", logs: null, rollout: "healthy", hasLogs: true });
     expect(list[1]).toMatchObject({ id: "d1", logs: null, rollout: null, hasLogs: true });
+  });
+});
+
+describe("ApplicationsService — git/build settings", () => {
+  const gitApp = {
+    ...app,
+    source: "GIT",
+    image: null,
+    gitUrl: "https://github.com/acme/app.git",
+    gitBranch: "main",
+    gitSourceId: null,
+    gitTokenEnc: null,
+    gitSshKeyEnc: null,
+    buildType: "DOCKERFILE",
+    dockerfilePath: null,
+    gitSubmodules: false,
+    gitLfs: false,
+    gitShallowClone: true,
+    disableBuildCache: false,
+    injectEnvAsBuildArgs: false,
+    sourceCommitMode: "RUNTIME",
+  };
+  const noActiveDeploy = { findFirst: jest.fn().mockResolvedValue(null) };
+  const allSix = { gitSubmodules: true, gitLfs: true, gitShallowClone: false, disableBuildCache: true, injectEnvAsBuildArgs: true, sourceCommitMode: "BUILD" as const };
+
+  function setBuildDeps(row: Record<string, unknown> = gitApp) {
+    const update = jest.fn().mockResolvedValue({});
+    const audit = jest.fn().mockResolvedValue(undefined);
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(row), update }, deployment: noActiveDeploy } as unknown as PrismaService;
+    const svc = make(prisma, {}, {} as AgentWsServer);
+    (svc as unknown as { audit: { log: jest.Mock } }).audit = { log: audit };
+    return { svc, update, audit };
+  }
+
+  it("setBuild writes the six toggles when given, and the audit meta names them", async () => {
+    const { svc, update, audit } = setBuildDeps();
+    await svc.setBuild("u1", "app1", { buildType: "DOCKERFILE", ...allSix });
+    expect(update.mock.calls[0][0].data).toMatchObject(allSix);
+    expect(audit.mock.calls[0][0].meta).toMatchObject({ buildType: "DOCKERFILE", ...allSix });
+  });
+
+  it("setBuild keeps the stored toggles when omitted (importer / old client)", async () => {
+    const { svc, update, audit } = setBuildDeps();
+    await svc.setBuild("u1", "app1", { buildType: "DOCKERFILE" });
+    const data = update.mock.calls[0][0].data;
+    for (const k of ["gitSubmodules", "gitLfs", "gitShallowClone", "disableBuildCache", "sourceCommitMode", "injectEnvAsBuildArgs"]) expect(data[k]).toBeUndefined();
+    expect(Object.keys(audit.mock.calls[0][0].meta).sort()).toEqual(["baseDirectory", "buildType"]);
+  });
+
+  it("setBuild clears injectEnvAsBuildArgs when the type leaves DOCKERFILE", async () => {
+    const { svc, update } = setBuildDeps({ ...gitApp, injectEnvAsBuildArgs: true });
+    await svc.setBuild("u1", "app1", { buildType: "NIXPACKS" });
+    expect(update.mock.calls[0][0].data.injectEnvAsBuildArgs).toBe(false);
+  });
+
+  it("setBuild refuses Railpack while disableBuildCache is persisted, but allows turning it off in the same save", async () => {
+    const { svc, update } = setBuildDeps({ ...gitApp, disableBuildCache: true });
+    await expect(svc.setBuild("u1", "app1", { buildType: "RAILPACK" })).rejects.toBeInstanceOf(BadRequestException);
+    expect(update).not.toHaveBeenCalled();
+    await svc.setBuild("u1", "app1", { buildType: "RAILPACK", disableBuildCache: false });
+    expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  it("clone copies all six git/build settings", async () => {
+    const create = jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ ...data, id: "clone1", createdAt: new Date() }));
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...gitApp, ...allSix, id: "src1", name: "shop", isPreview: false, envEnc: null, volumes: null, tags: [], webhookToken: "t" }), create },
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1", certMode: "http", proxyBind: "public" }) },
+      appIcon: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
+      scheduledTask: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
+    } as unknown as PrismaService;
+    await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", {});
+    expect(create.mock.calls[0][0].data).toMatchObject(allSix);
+  });
+
+  it("upsertPreview builds the same way as its parent", async () => {
+    const create = jest.fn().mockResolvedValue({ id: "pv1", teamId: "t1", serverId: "s1", source: "GIT", isPreview: true });
+    const prisma = { application: { findFirst: jest.fn().mockResolvedValue(null), create } } as unknown as PrismaService;
+    const svc = make(prisma, {} as TeamAccessService, {} as AgentWsServer);
+    jest.spyOn(svc as unknown as { submitDeploy: (...a: unknown[]) => Promise<unknown> }, "submitDeploy").mockResolvedValue(undefined);
+    const parent = { ...gitApp, ...allSix, name: "web", environmentId: "e1", previewEnabled: true, domain: "app.example.com", envEnc: "{}", previewExcludeKeys: [] } as unknown as Parameters<typeof svc.upsertPreview>[0];
+    await svc.upsertPreview(parent, 7, "feature-7");
+    expect(create.mock.calls[0][0].data).toMatchObject(allSix);
+  });
+
+  it("toSpec maps the settings for GIT apps only; inject is DOCKERFILE-gated", () => {
+    const svc = make({} as PrismaService, {}, {} as AgentWsServer);
+    const toSpec = (a: unknown) => (svc as unknown as { toSpec: (a: unknown) => Record<string, unknown> }).toSpec(a);
+    expect(toSpec({ ...gitApp, ...allSix })).toMatchObject({ gitSubmodules: true, gitLfs: true, gitShallowClone: false, disableBuildCache: true, injectEnvAsBuildArgs: true, sourceCommitMode: "BUILD" });
+    expect(toSpec({ ...gitApp, ...allSix, buildType: "NIXPACKS" }).injectEnvAsBuildArgs).toBe(false);
+    const img = toSpec({ ...app, source: "IMAGE", ...allSix });
+    expect(img.gitSubmodules).toBeUndefined();
+    expect(img.sourceCommitMode).toBeUndefined();
+    const compose = toSpec({ ...app, source: "COMPOSE", composeFile: "services: {}", ...allSix });
+    expect(compose.gitLfs).toBeUndefined();
+  });
+
+  function deployDeps(row: Record<string, unknown>, output = "ok") {
+    const depUpdate = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(row), update: jest.fn().mockResolvedValue({}) },
+      deployment: {
+        create: jest.fn().mockResolvedValue({ id: "d1", createdAt: new Date() }),
+        update: depUpdate,
+        findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "SUCCESS" }),
+        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      registry: { findFirst: jest.fn().mockResolvedValue({ id: "reg1", teamId: "t1", url: "ghcr.io", username: "bot", passwordEnc: "tok", imagePrefix: "org" }) },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const calls: { server: string; cmd: string }[] = [];
+    const agentWs = {
+      sendCommand: jest.fn().mockImplementation((server: string, cmd: string, cap: string) => {
+        if (cap === "deploy") calls.push({ server, cmd });
+        return Promise.resolve({ exitCode: 0, output });
+      }),
+    } as unknown as AgentWsServer;
+    return { svc: make(prisma, accessWith({}), agentWs), calls, depUpdate };
+  }
+
+  it("a persistent disableBuildCache ORs into the deploy's noCache and is recorded on the deployment", async () => {
+    const d = deployDeps({ ...gitApp, buildType: "NIXPACKS", disableBuildCache: true });
+    await d.svc.deploy("u1", "app1");
+    expect(d.calls[0].cmd).toContain("--no-cache");
+    expect(d.depUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ noCache: true }) }));
+  });
+
+  it("without the setting the deployment's noCache is not rewritten", async () => {
+    const d = deployDeps({ ...gitApp, buildType: "NIXPACKS" });
+    await d.svc.deploy("u1", "app1");
+    expect(d.calls[0].cmd).not.toContain("--no-cache");
+    const withNoCache = d.depUpdate.mock.calls.filter((c) => c[0].data && "noCache" in c[0].data);
+    expect(withNoCache).toHaveLength(0);
+  });
+
+  it("an environment too large to ride argv fails the injecting deploy before anything runs", async () => {
+    const d = deployDeps({ ...gitApp, injectEnvAsBuildArgs: true });
+    jest.spyOn(d.svc as unknown as { resolvedEnv: () => Promise<Record<string, string>> }, "resolvedEnv").mockResolvedValue({ BIG: "x".repeat(60 * 1024) });
+    await d.svc.deploy("u1", "app1");
+    expect(d.calls).toHaveLength(0);
+    expect(d.depUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED" }) }));
+  });
+
+  it("a build-server deploy hands the built SHA to the pull+run script as the runtime SOURCE_COMMIT", async () => {
+    const sha = "b".repeat(40);
+    const d = deployDeps({ ...gitApp, registryId: "reg1", pushToRegistry: true, buildServerId: "bs1" }, `TUGRA_COMMIT=${sha}\nok`);
+    await d.svc.deploy("u1", "app1");
+    expect(d.calls[0].server).toBe("bs1");
+    expect(d.calls[1].server).toBe("s1");
+    expect(d.calls[1].cmd).toContain(`-e SOURCE_COMMIT=${sha}`);
+  });
+
+  it("a rollback re-runs the prior image with that deployment's commit as SOURCE_COMMIT", async () => {
+    const sha = "c".repeat(40);
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(gitApp), update: jest.fn().mockResolvedValue({}) },
+      deployment: {
+        findFirst: jest.fn().mockImplementation(({ where }: { where: { status: string } }) =>
+          Promise.resolve(where.status === "RUNNING" ? null : { id: "target", status: "SUCCESS", imageTag: "tugra_app1:target", registryImage: null, imageDigest: null, commitSha: sha, commitMessage: null }),
+        ),
+        create: jest.fn().mockResolvedValue({ id: "roll1", createdAt: new Date() }),
+        update: jest.fn().mockResolvedValue({}),
+        findUnique: jest.fn().mockResolvedValue({ id: "roll1", status: "SUCCESS" }),
+      },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    let sentCmd = "";
+    const agentWs = {
+      sendCommand: jest.fn().mockImplementation((_s: string, c: string) => { sentCmd = c; return Promise.resolve({ exitCode: 0, output: "ok" }); }),
+    } as unknown as AgentWsServer;
+    await make(prisma, accessWith({}), agentWs).rollback("u1", "app1", "target");
+    expect(sentCmd).toContain(`-e SOURCE_COMMIT=${sha}`);
   });
 });

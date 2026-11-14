@@ -11126,6 +11126,29 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "gitSubmodules": {
+                        "type": "boolean"
+                      },
+                      "gitLfs": {
+                        "type": "boolean"
+                      },
+                      "gitShallowClone": {
+                        "type": "boolean"
+                      },
+                      "disableBuildCache": {
+                        "type": "boolean"
+                      },
+                      "injectEnvAsBuildArgs": {
+                        "type": "boolean"
+                      },
+                      "sourceCommitMode": {
+                        "type": "string",
+                        "enum": [
+                          "OFF",
+                          "RUNTIME",
+                          "BUILD"
+                        ]
+                      },
                       "gitSourceId": {
                         "type": "string",
                         "nullable": true
@@ -11862,6 +11885,12 @@
                       "gitUrl",
                       "gitBranch",
                       "gitCommit",
+                      "gitSubmodules",
+                      "gitLfs",
+                      "gitShallowClone",
+                      "disableBuildCache",
+                      "injectEnvAsBuildArgs",
+                      "sourceCommitMode",
                       "gitSourceId",
                       "buildType",
                       "buildCommand",
@@ -12219,6 +12248,29 @@
                     "gitCommit": {
                       "type": "string",
                       "nullable": true
+                    },
+                    "gitSubmodules": {
+                      "type": "boolean"
+                    },
+                    "gitLfs": {
+                      "type": "boolean"
+                    },
+                    "gitShallowClone": {
+                      "type": "boolean"
+                    },
+                    "disableBuildCache": {
+                      "type": "boolean"
+                    },
+                    "injectEnvAsBuildArgs": {
+                      "type": "boolean"
+                    },
+                    "sourceCommitMode": {
+                      "type": "string",
+                      "enum": [
+                        "OFF",
+                        "RUNTIME",
+                        "BUILD"
+                      ]
                     },
                     "gitSourceId": {
                       "type": "string",
@@ -12956,6 +13008,12 @@
                     "gitUrl",
                     "gitBranch",
                     "gitCommit",
+                    "gitSubmodules",
+                    "gitLfs",
+                    "gitShallowClone",
+                    "disableBuildCache",
+                    "injectEnvAsBuildArgs",
+                    "sourceCommitMode",
                     "gitSourceId",
                     "buildType",
                     "buildCommand",
@@ -13381,6 +13439,29 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "gitSubmodules": {
+                      "type": "boolean"
+                    },
+                    "gitLfs": {
+                      "type": "boolean"
+                    },
+                    "gitShallowClone": {
+                      "type": "boolean"
+                    },
+                    "disableBuildCache": {
+                      "type": "boolean"
+                    },
+                    "injectEnvAsBuildArgs": {
+                      "type": "boolean"
+                    },
+                    "sourceCommitMode": {
+                      "type": "string",
+                      "enum": [
+                        "OFF",
+                        "RUNTIME",
+                        "BUILD"
+                      ]
+                    },
                     "gitSourceId": {
                       "type": "string",
                       "nullable": true
@@ -14117,6 +14198,12 @@
                     "gitUrl",
                     "gitBranch",
                     "gitCommit",
+                    "gitSubmodules",
+                    "gitLfs",
+                    "gitShallowClone",
+                    "disableBuildCache",
+                    "injectEnvAsBuildArgs",
+                    "sourceCommitMode",
                     "gitSourceId",
                     "buildType",
                     "buildCommand",
@@ -14546,6 +14633,29 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "gitSubmodules": {
+                      "type": "boolean"
+                    },
+                    "gitLfs": {
+                      "type": "boolean"
+                    },
+                    "gitShallowClone": {
+                      "type": "boolean"
+                    },
+                    "disableBuildCache": {
+                      "type": "boolean"
+                    },
+                    "injectEnvAsBuildArgs": {
+                      "type": "boolean"
+                    },
+                    "sourceCommitMode": {
+                      "type": "string",
+                      "enum": [
+                        "OFF",
+                        "RUNTIME",
+                        "BUILD"
+                      ]
+                    },
                     "gitSourceId": {
                       "type": "string",
                       "nullable": true
@@ -15282,6 +15392,12 @@
                     "gitUrl",
                     "gitBranch",
                     "gitCommit",
+                    "gitSubmodules",
+                    "gitLfs",
+                    "gitShallowClone",
+                    "disableBuildCache",
+                    "injectEnvAsBuildArgs",
+                    "sourceCommitMode",
                     "gitSourceId",
                     "buildType",
                     "buildCommand",
@@ -19574,6 +19690,29 @@
                     "maxLength": 512,
                     "pattern": "^(?!\\/)(?!.*\\.\\.)[A-Za-z0-9._][A-Za-z0-9._/-]*$",
                     "nullable": true
+                  },
+                  "gitSubmodules": {
+                    "type": "boolean"
+                  },
+                  "gitLfs": {
+                    "type": "boolean"
+                  },
+                  "gitShallowClone": {
+                    "type": "boolean"
+                  },
+                  "disableBuildCache": {
+                    "type": "boolean"
+                  },
+                  "injectEnvAsBuildArgs": {
+                    "type": "boolean"
+                  },
+                  "sourceCommitMode": {
+                    "type": "string",
+                    "enum": [
+                      "OFF",
+                      "RUNTIME",
+                      "BUILD"
+                    ]
                   }
                 },
                 "required": [
@@ -23767,6 +23906,29 @@
                           "type": "string",
                           "nullable": true
                         },
+                        "gitSubmodules": {
+                          "type": "boolean"
+                        },
+                        "gitLfs": {
+                          "type": "boolean"
+                        },
+                        "gitShallowClone": {
+                          "type": "boolean"
+                        },
+                        "disableBuildCache": {
+                          "type": "boolean"
+                        },
+                        "injectEnvAsBuildArgs": {
+                          "type": "boolean"
+                        },
+                        "sourceCommitMode": {
+                          "type": "string",
+                          "enum": [
+                            "OFF",
+                            "RUNTIME",
+                            "BUILD"
+                          ]
+                        },
                         "gitSourceId": {
                           "type": "string",
                           "nullable": true
@@ -24503,6 +24665,12 @@
                         "gitUrl",
                         "gitBranch",
                         "gitCommit",
+                        "gitSubmodules",
+                        "gitLfs",
+                        "gitShallowClone",
+                        "disableBuildCache",
+                        "injectEnvAsBuildArgs",
+                        "sourceCommitMode",
                         "gitSourceId",
                         "buildType",
                         "buildCommand",
@@ -24790,6 +24958,29 @@
                     "gitCommit": {
                       "type": "string",
                       "nullable": true
+                    },
+                    "gitSubmodules": {
+                      "type": "boolean"
+                    },
+                    "gitLfs": {
+                      "type": "boolean"
+                    },
+                    "gitShallowClone": {
+                      "type": "boolean"
+                    },
+                    "disableBuildCache": {
+                      "type": "boolean"
+                    },
+                    "injectEnvAsBuildArgs": {
+                      "type": "boolean"
+                    },
+                    "sourceCommitMode": {
+                      "type": "string",
+                      "enum": [
+                        "OFF",
+                        "RUNTIME",
+                        "BUILD"
+                      ]
                     },
                     "gitSourceId": {
                       "type": "string",
@@ -25527,6 +25718,12 @@
                     "gitUrl",
                     "gitBranch",
                     "gitCommit",
+                    "gitSubmodules",
+                    "gitLfs",
+                    "gitShallowClone",
+                    "disableBuildCache",
+                    "injectEnvAsBuildArgs",
+                    "sourceCommitMode",
                     "gitSourceId",
                     "buildType",
                     "buildCommand",
@@ -25884,6 +26081,29 @@
                       "gitCommit": {
                         "type": "string",
                         "nullable": true
+                      },
+                      "gitSubmodules": {
+                        "type": "boolean"
+                      },
+                      "gitLfs": {
+                        "type": "boolean"
+                      },
+                      "gitShallowClone": {
+                        "type": "boolean"
+                      },
+                      "disableBuildCache": {
+                        "type": "boolean"
+                      },
+                      "injectEnvAsBuildArgs": {
+                        "type": "boolean"
+                      },
+                      "sourceCommitMode": {
+                        "type": "string",
+                        "enum": [
+                          "OFF",
+                          "RUNTIME",
+                          "BUILD"
+                        ]
                       },
                       "gitSourceId": {
                         "type": "string",
@@ -26621,6 +26841,12 @@
                       "gitUrl",
                       "gitBranch",
                       "gitCommit",
+                      "gitSubmodules",
+                      "gitLfs",
+                      "gitShallowClone",
+                      "disableBuildCache",
+                      "injectEnvAsBuildArgs",
+                      "sourceCommitMode",
                       "gitSourceId",
                       "buildType",
                       "buildCommand",
@@ -27063,6 +27289,29 @@
                     "gitCommit": {
                       "type": "string",
                       "nullable": true
+                    },
+                    "gitSubmodules": {
+                      "type": "boolean"
+                    },
+                    "gitLfs": {
+                      "type": "boolean"
+                    },
+                    "gitShallowClone": {
+                      "type": "boolean"
+                    },
+                    "disableBuildCache": {
+                      "type": "boolean"
+                    },
+                    "injectEnvAsBuildArgs": {
+                      "type": "boolean"
+                    },
+                    "sourceCommitMode": {
+                      "type": "string",
+                      "enum": [
+                        "OFF",
+                        "RUNTIME",
+                        "BUILD"
+                      ]
                     },
                     "gitSourceId": {
                       "type": "string",
@@ -27800,6 +28049,12 @@
                     "gitUrl",
                     "gitBranch",
                     "gitCommit",
+                    "gitSubmodules",
+                    "gitLfs",
+                    "gitShallowClone",
+                    "disableBuildCache",
+                    "injectEnvAsBuildArgs",
+                    "sourceCommitMode",
                     "gitSourceId",
                     "buildType",
                     "buildCommand",
@@ -29486,6 +29741,29 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "gitSubmodules": {
+                      "type": "boolean"
+                    },
+                    "gitLfs": {
+                      "type": "boolean"
+                    },
+                    "gitShallowClone": {
+                      "type": "boolean"
+                    },
+                    "disableBuildCache": {
+                      "type": "boolean"
+                    },
+                    "injectEnvAsBuildArgs": {
+                      "type": "boolean"
+                    },
+                    "sourceCommitMode": {
+                      "type": "string",
+                      "enum": [
+                        "OFF",
+                        "RUNTIME",
+                        "BUILD"
+                      ]
+                    },
                     "gitSourceId": {
                       "type": "string",
                       "nullable": true
@@ -30222,6 +30500,12 @@
                     "gitUrl",
                     "gitBranch",
                     "gitCommit",
+                    "gitSubmodules",
+                    "gitLfs",
+                    "gitShallowClone",
+                    "disableBuildCache",
+                    "injectEnvAsBuildArgs",
+                    "sourceCommitMode",
                     "gitSourceId",
                     "buildType",
                     "buildCommand",

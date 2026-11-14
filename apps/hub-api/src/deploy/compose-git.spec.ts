@@ -131,3 +131,12 @@ describe("parseRenderedCompose", () => {
     expect(parseRenderedCompose(tampered)).toBeNull();
   });
 });
+
+describe("compose-git — git/build toggles (raw specs only)", () => {
+  it("propagate through the shared clone steps when a spec carries them (toSpec never sets them for COMPOSE)", () => {
+    const s = buildComposeGitRenderScript({ ...base, gitShallowClone: false, gitSubmodules: true, gitLfs: false });
+    expect(s).toContain(`git clone --branch 'main' -- 'https://github.com/u/r.git' ${CLONE}`);
+    expect(s).toContain("submodule update --init --recursive");
+    expect(s).toContain("export GIT_LFS_SKIP_SMUDGE=1");
+  });
+});

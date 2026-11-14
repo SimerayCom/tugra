@@ -12,6 +12,12 @@ export interface ConfigSnapshot {
   image?: string | null;
   gitUrl?: string | null;
   gitBranch?: string | null;
+  gitSubmodules?: boolean;
+  gitLfs?: boolean;
+  gitShallowClone?: boolean;
+  disableBuildCache?: boolean;
+  injectEnvAsBuildArgs?: boolean;
+  sourceCommitMode?: string;
   buildType?: string;
   dockerfilePath?: string | null;
   baseDirectory?: string | null;
@@ -83,7 +89,24 @@ const SCALAR_FIELDS = [
   "domainRedirect",
   "securityHeaders",
   "gzip",
+  "gitSubmodules",
+  "gitLfs",
+  "gitShallowClone",
+  "disableBuildCache",
+  "injectEnvAsBuildArgs",
+  "sourceCommitMode",
 ] as const;
+
+/** Defaults of the git/build toggles: a snapshot taken before they existed (undefined) must not diff as a change
+ *  against a new default-valued one. Non-GIT snapshots have both sides undefined, which normalise equal. */
+const SNAPSHOT_DEFAULTS: Record<string, unknown> = {
+  gitSubmodules: false,
+  gitLfs: false,
+  gitShallowClone: true,
+  disableBuildCache: false,
+  injectEnvAsBuildArgs: false,
+  sourceCommitMode: "RUNTIME",
+};
 
 function fingerprint(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 12);
@@ -98,6 +121,12 @@ export function buildConfigSnapshot(spec: AppSpec): ConfigSnapshot {
     image: spec.image ?? null,
     gitUrl: spec.gitUrl ?? null,
     gitBranch: spec.gitBranch ?? null,
+    gitSubmodules: spec.gitSubmodules,
+    gitLfs: spec.gitLfs,
+    gitShallowClone: spec.gitShallowClone,
+    disableBuildCache: spec.disableBuildCache,
+    injectEnvAsBuildArgs: spec.injectEnvAsBuildArgs,
+    sourceCommitMode: spec.sourceCommitMode,
     buildType: spec.buildType,
     dockerfilePath: spec.dockerfilePath ?? null,
     baseDirectory: spec.baseDirectory ?? null,
@@ -151,8 +180,8 @@ export function diffSnapshots(
   const changes: ConfigChange[] = [];
 
   for (const f of SCALAR_FIELDS) {
-    const a = (prev as unknown as Record<string, unknown>)[f];
-    const b = (next as unknown as Record<string, unknown>)[f];
+    const a = (prev as unknown as Record<string, unknown>)[f] ?? SNAPSHOT_DEFAULTS[f];
+    const b = (next as unknown as Record<string, unknown>)[f] ?? SNAPSHOT_DEFAULTS[f];
     if (show(a) !== show(b)) {
       changes.push({ field: f, kind: "changed", before: show(a), after: show(b) });
     }

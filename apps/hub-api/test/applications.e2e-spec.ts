@@ -614,6 +614,51 @@ describe("Applications / deploy (e2e)", () => {
     expect(detail.body.zeroDowntime).toBe(false);
   });
 
+  it("PUT /apps/:id/build stores the git/build toggles, exposes them on the app view, keeps them when omitted, and refuses invalid combinations", async () => {
+    const created = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "gbsettings", serverId, source: "GIT", gitUrl: "https://github.com/u/gb.git", buildType: "DOCKERFILE" })
+      .expect(201);
+    const rid = created.body.id;
+    // defaults
+    expect(created.body).toMatchObject({ gitSubmodules: false, gitLfs: false, gitShallowClone: true, disableBuildCache: false, injectEnvAsBuildArgs: false, sourceCommitMode: "RUNTIME" });
+
+    const all = { gitSubmodules: true, gitLfs: true, gitShallowClone: false, disableBuildCache: true, injectEnvAsBuildArgs: true, sourceCommitMode: "BUILD" };
+    await request(app.getHttpServer()).put(`/apps/${rid}/build`).set("Authorization", `Bearer ${token}`).send({ buildType: "DOCKERFILE", ...all }).expect(200);
+    let detail = await request(app.getHttpServer()).get(`/apps/${rid}`).set("Authorization", `Bearer ${token}`).expect(200);
+    expect(detail.body).toMatchObject(all);
+
+    // omitted = keep (old client / importer)
+    await request(app.getHttpServer()).put(`/apps/${rid}/build`).set("Authorization", `Bearer ${token}`).send({ buildType: "DOCKERFILE" }).expect(200);
+    detail = await request(app.getHttpServer()).get(`/apps/${rid}`).set("Authorization", `Bearer ${token}`).expect(200);
+    expect(detail.body).toMatchObject(all);
+
+    // injectEnvAsBuildArgs=true is Dockerfile-only; disableBuildCache=true is refused for Railpack
+    await request(app.getHttpServer()).put(`/apps/${rid}/build`).set("Authorization", `Bearer ${token}`).send({ buildType: "NIXPACKS", injectEnvAsBuildArgs: true }).expect(400);
+    await request(app.getHttpServer()).put(`/apps/${rid}/build`).set("Authorization", `Bearer ${token}`).send({ buildType: "RAILPACK", disableBuildCache: true }).expect(400);
+    // persisted disableBuildCache blocks a switch to Railpack
+    await request(app.getHttpServer()).put(`/apps/${rid}/build`).set("Authorization", `Bearer ${token}`).send({ buildType: "RAILPACK" }).expect(400);
+
+    // leaving Dockerfile clears injectEnvAsBuildArgs
+    await request(app.getHttpServer()).put(`/apps/${rid}/build`).set("Authorization", `Bearer ${token}`).send({ buildType: "NIXPACKS" }).expect(200);
+    detail = await request(app.getHttpServer()).get(`/apps/${rid}`).set("Authorization", `Bearer ${token}`).expect(200);
+    expect(detail.body.injectEnvAsBuildArgs).toBe(false);
+    expect(detail.body.gitLfs).toBe(true);
+
+    // a user outside the team cannot change them
+    const email2 = `app-gb-${Date.now()}-${Math.floor(Math.random() * 1e6)}@tugra.test`;
+    const reg2 = await request(app.getHttpServer()).post("/auth/register").send({ email: email2, password, name: "Outsider" }).expect(201);
+    const denied = await request(app.getHttpServer()).put(`/apps/${rid}/build`).set("Authorization", `Bearer ${reg2.body.tokens.accessToken}`).send({ buildType: "NIXPACKS", gitLfs: false });
+    expect([403, 404]).toContain(denied.status);
+    detail = await request(app.getHttpServer()).get(`/apps/${rid}`).set("Authorization", `Bearer ${token}`).expect(200);
+    expect(detail.body.gitLfs).toBe(true);
+    const m2 = await prisma.membership.findFirst({ where: { userId: reg2.body.user.id } });
+    await prisma.membership.deleteMany({ where: { userId: reg2.body.user.id } }).catch(() => undefined);
+    if (m2) await prisma.team.deleteMany({ where: { id: m2.teamId } }).catch(() => undefined);
+    await prisma.user.deleteMany({ where: { email: email2 } }).catch(() => undefined);
+  });
+
   it("configures a build server (registry required, push forced on) and rejects it without a registry", async () => {
     const regRes = await request(app.getHttpServer())
       .post("/registries")

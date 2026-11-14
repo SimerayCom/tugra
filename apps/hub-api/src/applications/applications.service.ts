@@ -43,6 +43,7 @@ import { SwarmDeployService } from "../clusters/swarm-deploy.service";
 import { SwarmService } from "../clusters/swarm.service";
 import { DnsAutomationService } from "../dns/dns-automation.service";
 import type { PlacementConstraint } from "../deploy/deploy-script";
+import { injectableBuildArgs } from "../deploy/build-args";
 import type { SetPlacementInput } from "./dto";
 import { PlacementConstraintSchema } from "./dto";
 import { serviceName, parseServiceTasks, parseSwarmTasks, type SwarmTask } from "../deploy/service-script";
@@ -150,6 +151,12 @@ export const AppViewSchema = z.object({
   gitUrl: z.string().nullable(),
   gitBranch: z.string().nullable(),
   gitCommit: z.string().nullable(), // pinned commit SHA; null = deploy the branch HEAD
+  gitSubmodules: z.boolean(),
+  gitLfs: z.boolean(),
+  gitShallowClone: z.boolean(),
+  disableBuildCache: z.boolean(),
+  injectEnvAsBuildArgs: z.boolean(),
+  sourceCommitMode: z.enum(["OFF", "RUNTIME", "BUILD"]),
   gitSourceId: z.string().nullable(), // linked GitHub App installation (private-repo token minting), if any
   buildType: z.enum(["NIXPACKS", "DOCKERFILE", "STATIC", "RAILPACK", "HEROKU"]),
   buildCommand: z.string().nullable(),
@@ -796,6 +803,12 @@ export class ApplicationsService {
           dockerfilePath: src.dockerfilePath,
           dockerBuildTarget: src.dockerBuildTarget,
           baseDirectory: src.baseDirectory,
+          gitSubmodules: src.gitSubmodules,
+          gitLfs: src.gitLfs,
+          gitShallowClone: src.gitShallowClone,
+          disableBuildCache: src.disableBuildCache,
+          injectEnvAsBuildArgs: src.injectEnvAsBuildArgs,
+          sourceCommitMode: src.sourceCommitMode,
           buildCommand: src.buildCommand,
           outputDir: src.outputDir,
           nixpacksInstallCmd: src.nixpacksInstallCmd,
@@ -1234,6 +1247,14 @@ export class ApplicationsService {
           dockerfilePath: parent.dockerfilePath,
           dockerBuildTarget: parent.dockerBuildTarget,
           baseDirectory: parent.baseDirectory, // a monorepo preview must build the same subdirectory as its parent
+          // a preview must build the same way as its parent (clone + build behaviour). Safe for previews: with
+          // submodules/LFS on, the token askpass is host-pinned, so a PR author's .gitmodules can't exfiltrate it.
+          gitSubmodules: parent.gitSubmodules,
+          gitLfs: parent.gitLfs,
+          gitShallowClone: parent.gitShallowClone,
+          disableBuildCache: parent.disableBuildCache,
+          injectEnvAsBuildArgs: parent.injectEnvAsBuildArgs,
+          sourceCommitMode: parent.sourceCommitMode,
           buildCommand: parent.buildCommand,
           outputDir: parent.outputDir,
           // A preview must build the same way as its parent — carry the Nixpacks command overrides too
@@ -1709,7 +1730,8 @@ export class ApplicationsService {
    *  supplies a FRESH app (submitDeploy passes the just-fetched one for the inline path; drain reloads it, so
    *  config edited while the deploy sat QUEUED is picked up). On EVERY exit path it drains the app's queue
    *  (starts the next QUEUED deploy), so deploys for one app run one-at-a-time, FIFO. */
-  private async executeDeploy(dep: Deployment, app: Application, actor: string, noCache: boolean) {
+  private async executeDeploy(dep: Deployment, app: Application, actor: string, noCacheRequested: boolean) {
+    const noCache = noCacheRequested || app.disableBuildCache; // the persistent setting ORs with the per-deploy rebuild
     this.deployLogs.begin(app.id);
     // Was the app live before this deploy, and did we get as far as sending the deploy command? Used so a
     // failure BEFORE the container swap (a build/render/validate step — the live container/stack was never
@@ -1739,6 +1761,8 @@ export class ApplicationsService {
       spec.env = await this.resolvedEnv(app); // team shared vars + app env (app wins)
       spec.buildArgs = this.appBuildArgs(app); // build-time vars (app-specific only)
       spec.buildSecrets = this.appBuildSecrets(app); // BuildKit secret mounts (DOCKERFILE builds)
+      // injectEnvAsBuildArgs: fail early (pre-swap, any path) if the env cannot ride argv; prepSteps recomputes the same pure result.
+      if (app.source === "GIT" && app.buildType === "DOCKERFILE" && app.injectEnvAsBuildArgs) injectableBuildArgs(spec);
       await this.hydrateCertSpec(app, spec);
       // Private repo via a connected git source: a GitHub App mints a fresh installation token, a Gitea/Forgejo/
       // Codeberg source supplies its stored access token (GIT build or git-compose). The credential is pinned to
@@ -1760,7 +1784,7 @@ export class ApplicationsService {
       // Record a redacted config snapshot so the Deployments view can diff it.
       await this.prisma.deployment.update({
         where: { id: dep.id },
-        data: { configSnapshot: buildConfigSnapshot(spec) as object },
+        data: { configSnapshot: buildConfigSnapshot(spec) as object, ...(noCache !== noCacheRequested ? { noCache } : {}) },
       });
       // ── Swarm service deploy: the app targets a cluster's swarm, not a single server. Delegate
       // the command build + dispatch (to the manager) + async-rollout classification to SwarmDeployService,
@@ -1834,6 +1858,9 @@ export class ApplicationsService {
         buildLog = br.output;
         // Surface the real build error in the persisted record, not just a generic message.
         if (br.exitCode !== 0) throw new Error(`image build failed on the build server\n${br.output}`);
+        // The deploy server only pulls (no clone there), so hand it the built SHA for the runtime SOURCE_COMMIT env.
+        const bc = app.source === "GIT" ? parseCommit(br.output) : null; // marker is hex-validated; gated on GIT so output can't forge one
+        if (bc) spec.sourceCommit = bc.sha;
         // The deploy server pulls the just-pushed image instead of building it.
         spec.registryPull = { auth: spec.registryPush.auth, ref: spec.registryPush.tag };
         spec.registryPush = null;
@@ -2354,6 +2381,7 @@ export class ApplicationsService {
         else if (!target.imageTag && target.imageDigest) {
           spec.registryPull = { auth: spec.registryAuth, ref: target.imageDigest };
         }
+        if (app.source === "GIT") spec.sourceCommit = target.commitSha ?? null; // no clone in this script: hub-injected, hex-validated at emission
         command = buildRunScript(spec, target.id, !!spec.registryPull);
       }
       dispatched = true;
@@ -3339,9 +3367,11 @@ export class ApplicationsService {
 
   /**
    * Edit HOW a Git app is built, after create (day-2): the build type, the one set of fields that applies
-   * to it, and the monorepo base directory. Replace semantics — the fields that don't apply to the chosen
-   * type are cleared (so a stale dockerfilePath/buildCommand can't leak into a Nixpacks build) and an
-   * omitted baseDirectory clears it (back to the repo root). GIT apps only (IMAGE deploys a prebuilt image;
+   * to it, and the monorepo base directory. Replace semantics for the per-type fields — the ones that don't
+   * apply to the chosen type are cleared (so a stale dockerfilePath/buildCommand can't leak into a Nixpacks
+   * build) and an omitted baseDirectory clears it (back to the repo root). The git/build behaviour toggles
+   * (submodules, LFS, shallow, no-cache, env build-args, SOURCE_COMMIT) keep their stored value when omitted
+   * (importer / older clients). GIT apps only (IMAGE deploys a prebuilt image;
    * COMPOSE builds from its compose file). Applies on the next deploy.
    */
   async setBuild(userId: string, id: string, input: SetBuildInput): Promise<void> {
@@ -3349,6 +3379,11 @@ export class ApplicationsService {
     if (app.isPreview) throw new BadRequestException("a preview app's build is controlled by its parent");
     if (app.source !== "GIT") throw new BadRequestException("build settings apply only to Git apps");
     await this.ensureNoActiveDeploy(id);
+    // Persisted-state guard: Railpack has no cache-bypass flag wired, so a stored disableBuildCache must be turned off first.
+    const effNoCache = input.disableBuildCache ?? app.disableBuildCache;
+    if (input.buildType === "RAILPACK" && effNoCache) {
+      throw new BadRequestException("turn off 'Disable build cache' before switching to Railpack (it has no cache-bypass flag wired)");
+    }
     await this.prisma.application.update({
       where: { id },
       data: {
@@ -3366,9 +3401,21 @@ export class ApplicationsService {
         // Build secrets are a Dockerfile-only contract (RUN --mount=type=secret): leaving Dockerfile drops them, so
         // a value never lingers encrypted-but-invisible (and never comes back silently on a later switch back).
         buildSecretsEnc: input.buildType === "DOCKERFILE" ? undefined : null,
+        // Git/build behaviour toggles: omitted = keep (Prisma ignores undefined).
+        gitSubmodules: input.gitSubmodules,
+        gitLfs: input.gitLfs,
+        gitShallowClone: input.gitShallowClone,
+        disableBuildCache: input.disableBuildCache,
+        sourceCommitMode: input.sourceCommitMode,
+        // Dockerfile-only contract (mirrors buildSecretsEnc): leaving DOCKERFILE clears it so it never lingers invisibly.
+        injectEnvAsBuildArgs: input.buildType === "DOCKERFILE" ? input.injectEnvAsBuildArgs : false,
       },
     });
-    await this.audit.log({ actor: userId, action: "app.build.update", target: id, meta: { buildType: input.buildType, baseDirectory: input.baseDirectory ?? null } });
+    const toggles: Record<string, unknown> = {};
+    for (const k of ["gitSubmodules", "gitLfs", "gitShallowClone", "disableBuildCache", "injectEnvAsBuildArgs", "sourceCommitMode"] as const) {
+      if (input[k] !== undefined) toggles[k] = input[k];
+    }
+    await this.audit.log({ actor: userId, action: "app.build.update", target: id, meta: { buildType: input.buildType, baseDirectory: input.baseDirectory ?? null, ...toggles } });
   }
 
   /** Toggle the per-app push-to-deploy switch (a matching git push auto-deploys). Off acknowledges the push
@@ -4396,6 +4443,17 @@ export class ApplicationsService {
       gitUrl: app.gitUrl,
       gitBranch: app.gitBranch,
       gitCommit: app.gitCommit,
+      // Clone/build behaviour: GIT only (COMPOSE / IMAGE stay undefined, so their scripts are byte-identical).
+      ...(app.source === "GIT"
+        ? {
+            gitSubmodules: app.gitSubmodules,
+            gitLfs: app.gitLfs,
+            gitShallowClone: app.gitShallowClone,
+            sourceCommitMode: app.sourceCommitMode,
+            disableBuildCache: app.disableBuildCache,
+            injectEnvAsBuildArgs: app.injectEnvAsBuildArgs && app.buildType === "DOCKERFILE",
+          }
+        : {}),
       buildType: app.buildType,
       dockerfilePath: app.dockerfilePath,
       dockerBuildTarget: app.dockerBuildTarget,
@@ -4616,6 +4674,12 @@ export class ApplicationsService {
       gitUrl: app.gitUrl,
       gitBranch: app.gitBranch,
       gitCommit: app.gitCommit,
+      gitSubmodules: app.gitSubmodules,
+      gitLfs: app.gitLfs,
+      gitShallowClone: app.gitShallowClone,
+      disableBuildCache: app.disableBuildCache,
+      injectEnvAsBuildArgs: app.injectEnvAsBuildArgs,
+      sourceCommitMode: app.sourceCommitMode,
       gitSourceId: app.gitSourceId,
       buildType: app.buildType,
       buildCommand: app.buildCommand,
