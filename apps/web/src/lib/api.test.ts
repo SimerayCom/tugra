@@ -127,3 +127,22 @@ describe("api.deleteApp (cleanup query)", () => {
     expect(await urlFor({ pruneBuildCache: true })).toMatch(/\/apps\/a1\?pruneBuildCache=1$/);
   });
 });
+
+describe("api image-update calls", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it("setImageUpdateCheck PUTs {enabled} and checkImageUpdate POSTs with no body", async () => {
+    const fetchMock = vi.fn(async (_u: string, _i?: RequestInit) => jsonRes(200, { ok: true, imageUpdate: { state: "up_to_date" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    await api.setImageUpdateCheck("a1", false);
+    const [u1, i1] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(u1).toBe("/api/v1/apps/a1/image-update-check");
+    expect(i1.method).toBe("PUT");
+    expect(JSON.parse(String(i1.body))).toEqual({ enabled: false });
+    const r = await api.checkImageUpdate("a1");
+    const [u2, i2] = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
+    expect(u2).toBe("/api/v1/apps/a1/image-update-check");
+    expect(i2.method).toBe("POST");
+    expect(i2.body).toBeUndefined();
+    expect(r.imageUpdate.state).toBe("up_to_date");
+  });
+});

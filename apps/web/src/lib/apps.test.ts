@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { appColor, appStatusDisplay, deleteCleanupOptions, appSourceSummary, appUrl, deploymentColor, shortDigest, webhookUrl, previewBadgeKey, previewRefLabelKey } from "./apps";
+import { appColor, appStatusDisplay, deleteCleanupOptions, appSourceSummary, appUrl, deploymentColor, shortDigest, webhookUrl, previewBadgeKey, previewRefLabelKey, imageUpdateChip, imageUpdateErrorKey } from "./apps";
 
 describe("app helpers", () => {
   it("maps app status to a color", () => {
@@ -36,6 +36,22 @@ describe("app helpers", () => {
   it("shortens a pinned image digest ref for display", () => {
     expect(shortDigest("nginx@sha256:abc123def4567890")).toBe("sha256:abc123def4…");
     expect(shortDigest("no-digest-here")).toBe("no-digest-here"); // graceful passthrough
+    expect(shortDigest("sha256:" + "a".repeat(64))).toBe("sha256:aaaaaaaaaa…"); // a bare digest too
+  });
+});
+
+describe("image update helpers", () => {
+  const iu = (state: string) => ({ imageUpdate: { state } as never });
+  it("imageUpdateChip is a warn chip only for update_available", () => {
+    expect(imageUpdateChip(iu("update_available"))).toEqual({ key: "apps.iuBadge", tone: "warn" });
+    for (const s of ["up_to_date", "pending", "error", "pinned", "disabled", "no_baseline"]) expect(imageUpdateChip(iu(s))).toBeNull();
+    expect(imageUpdateChip({ imageUpdate: null })).toBeNull();
+    expect(imageUpdateChip({})).toBeNull();
+  });
+  it("imageUpdateErrorKey maps the closed codes and falls back to failed", () => {
+    for (const c of ["auth", "notfound", "unsupported", "timeout", "failed"]) expect(imageUpdateErrorKey(c)).toBe(`apps.iuErr_${c}`);
+    expect(imageUpdateErrorKey("surprise")).toBe("apps.iuErr_failed");
+    expect(imageUpdateErrorKey(null)).toBe("apps.iuErr_failed");
   });
 });
 

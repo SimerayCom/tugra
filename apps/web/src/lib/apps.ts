@@ -1,4 +1,4 @@
-import type { AppContainerHealth, AppStatus, DeploymentStatus, PrProvider } from "./types";
+import type { AppContainerHealth, AppStatus, DeploymentStatus, PrProvider, ImageUpdate, ImageUpdateError } from "./types";
 import { hubPublicUrl } from "./api";
 
 export function appColor(s: AppStatus): string {
@@ -52,10 +52,21 @@ export function appSourceSummary(app: {
   return app.source === "GIT" ? `git:${app.gitBranch ?? "main"}` : (app.image ?? "");
 }
 
-/** Short display form of a pinned image digest ref (`nginx@sha256:abc123…`) → `sha256:abc123def4…`. */
+/** Short display form of a pinned image digest ref (`nginx@sha256:abc123…`) or a bare digest (`sha256:abc123…`)
+ *  → `sha256:abc123def4…`. */
 export function shortDigest(ref: string): string {
-  const hex = ref.split("@sha256:")[1] ?? "";
+  const hex = ref.split("@sha256:")[1] ?? /^sha256:([0-9a-f]+)$/.exec(ref)?.[1] ?? "";
   return hex ? `sha256:${hex.slice(0, 10)}…` : ref;
+}
+
+/** The "Update available" chip for an app header / list row; null unless an upstream image update is known. */
+export function imageUpdateChip(app: { imageUpdate?: ImageUpdate | null }): { key: "apps.iuBadge"; tone: "warn" } | null {
+  return app.imageUpdate?.state === "update_available" ? { key: "apps.iuBadge", tone: "warn" } : null;
+}
+
+/** i18n key for a closed probe error code (an unknown code reads as the generic "failed"). */
+export function imageUpdateErrorKey(code: ImageUpdateError | string | null | undefined): string {
+  return code === "auth" || code === "notfound" || code === "unsupported" || code === "timeout" ? `apps.iuErr_${code}` : "apps.iuErr_failed";
 }
 
 /** The public webhook URL a user pastes into GitHub/GitLab for auto-deploy. This is called by an

@@ -20,6 +20,7 @@ import type {
   IngressView,
   SavedView,
   Application,
+  ImageUpdate,
   BuildType,
   SourceCommitMode,
   AppConfigMount,
@@ -1143,6 +1144,13 @@ export const api = {
   },
   setAppWatchPaths(id: string, watchPaths: string[]) {
     return apiFetch<{ ok: true }>(`/apps/${id}/watch-paths`, { method: "PUT", body: JSON.stringify({ watchPaths }) });
+  },
+  setImageUpdateCheck(id: string, enabled: boolean) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/image-update-check`, { method: "PUT", body: JSON.stringify({ enabled }) });
+  },
+  /** "Check now": probe the upstream registry from the app's own server (apps:deploy, throttled by the hub). */
+  checkImageUpdate(id: string) {
+    return apiFetch<{ imageUpdate: ImageUpdate }>(`/apps/${id}/image-update-check`, { method: "POST" });
   },
   setAppAutoDeploy(id: string, enabled: boolean) {
     return apiFetch<{ ok: true }>(`/apps/${id}/auto-deploy`, { method: "PUT", body: JSON.stringify({ enabled }) });

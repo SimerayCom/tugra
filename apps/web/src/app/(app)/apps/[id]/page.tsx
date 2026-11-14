@@ -48,6 +48,7 @@ import { AppLinksMenu } from "./app-links-menu";
 import { SourceCard, BuildSettingsCard, BuildArgsCard, BuildSecretsCard, DeploySettingsCard, BuildConfigCard, ContainerCommandCard, RestartPolicyCard, ContainerPortCard, DeployHooksCard, CredentialsCard, WatchPathsCard } from "./app-detail-build-cards";
 import { ExtraDomainsCard, ServiceDomainsCard, DomainOptionsCard, CustomCertCard, RedirectsCard, BasicAuthCard, NetworkAliasesCard, NetworkingCard } from "./app-detail-domain-cards";
 import { VolumesCard, HostMountsCard, VolumeBackupsCard } from "./app-detail-storage-cards";
+import { ImageUpdateBadge, ImageUpdateCard } from "./image-update-card";
 import { ScheduledTasksCard, PreviewCard, AppDescriptionCard, ComposeEditorCard, GitComposeSourceCard, AppIconCard, AppOverview, ContainerPickerModal, PreviewBadge, WebhookEventHelp } from "./app-detail-misc-cards";
 import { DeploymentsTab, MetricsTab, LogsTab, FilesTab } from "./app-detail-tabs";
 
@@ -427,6 +428,7 @@ export default function AppDetailPage() {
               {appData.zeroDowntime ? t("apps.zeroDowntime") : t("apps.recreateStrategy")}
             </span>
           )}
+          <ImageUpdateBadge app={appData} />
         </p>
         {(appData.url || appData.links.length > 1) && (
           <p style={{ margin: "6px 0 0", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
@@ -497,7 +499,12 @@ export default function AppDetailPage() {
             // Build group's source card instead (and get the normal overview).
             <GitComposeSourceCard app={appData} />
           ) : (
-            <AppOverview app={appData} deployments={deployments} />
+            <>
+              <AppOverview app={appData} deployments={deployments} />
+              {appData.imageUpdate && (
+                <ImageUpdateCard app={appData} canWrite={appData.canWrite} canDeploy={appData.canWrite} onRedeploy={() => onDeploy({ noCache: true })} />
+              )}
+            </>
           );
         if (!appData.canWrite) return overviewPanel;
         return (

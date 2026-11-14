@@ -74,6 +74,7 @@ const EVENT_LABEL: Record<string, string> = {
   rollout_completed: "eventRolloutCompleted",
   rollout_rolled_back: "eventRolloutRolledBack",
   rollout_rollback_failed: "eventRolloutRollbackFailed",
+  image_update_available: "eventImageUpdateAvailable",
 };
 
 export default function NotificationsPage() {

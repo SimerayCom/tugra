@@ -24,6 +24,7 @@
   "eventRolloutCompleted": "Fleet rollout completed",
   "eventRolloutRolledBack": "Fleet rollout rolled back",
   "eventRolloutRollbackFailed": "Fleet rollout rollback failed",
+  "eventImageUpdateAvailable": "Image update available",
   "eventServerOffline": "Server offline",
   "eventServerOnline": "Server back online",
   "eventSwarmDegraded": "Swarm degraded",

@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Box, SearchX } from "lucide-react";
 import { api, appIconUrl } from "../../../lib/api";
 import { appStatusDisplay, appSourceSummary } from "../../../lib/apps";
+import { ImageUpdateBadge } from "./[id]/image-update-card";
 import { useT } from "../../../i18n/provider";
 import { Btn, EmptyState, LinkBtn, StatusPill } from "../../../components/ui";
 import { ListCard, ListRow } from "../../../components/list";
@@ -65,7 +66,10 @@ export default function AppsPage() {
                     {a.name}
                     <TagChips tags={a.tags} />
                   </div>
-                  <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{appSourceSummary(a)}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                    <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{appSourceSummary(a)}</div>
+                    <ImageUpdateBadge app={a} />
+                  </div>
                 </div>
                 {a.projectName && (
                   <span style={{ fontSize: 12, color: "var(--c-tx3)", whiteSpace: "nowrap", flexShrink: 0 }}>

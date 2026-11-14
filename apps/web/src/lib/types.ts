@@ -1207,6 +1207,19 @@ export interface AppContainerHealth {
 }
 
 export type PrProvider = "github" | "gitlab" | "gitea" | "forgejo" | "bitbucket" | "bitbucket-server";
+/** Per-app "image update available" verdict (IMAGE apps; null for every other app). Digests are writer-only. */
+export type ImageUpdateState = "disabled" | "pinned" | "no_baseline" | "pending" | "up_to_date" | "update_available" | "error";
+export type ImageUpdateError = "auth" | "notfound" | "unsupported" | "timeout" | "failed";
+export interface ImageUpdate {
+  enabled: boolean;
+  state: ImageUpdateState;
+  updateAvailable: boolean;
+  checkedAt: string | null;
+  changedAt: string | null; // when the current upstream digest was first seen
+  error: ImageUpdateError | null; // only when state === "error"
+  upstreamDigest: string | null; // writer-only
+  deployedDigest: string | null; // writer-only
+}
 
 export interface Application {
   id: string;
@@ -1238,6 +1251,7 @@ export interface Application {
   baseDirectory: string | null;
   watchPaths: string[];
   autoDeploy: boolean;
+  imageUpdate?: ImageUpdate | null; // optional so older fixtures/clients still type-check; the hub always sends it
   previewExcludeKeys: string[];
   previewLimit: number | null;
   extraPorts: { hostPort: number; containerPort: number; protocol: "tcp" | "udp" }[];
