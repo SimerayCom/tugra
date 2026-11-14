@@ -1416,4 +1416,46 @@ describe("Applications / deploy (e2e)", () => {
     expect(restored.body.capabilities).toContain("terminal");
     expect(restored.body.capabilities).toHaveLength(8);
   });
+  it("clones into another environment of the same team, and refuses an environment from another team", async () => {
+    const srcRes = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "clone-src", serverId, image: "nginx:alpine" })
+      .expect(201);
+    const srcEnvId = (await prisma.application.findUnique({ where: { id: srcRes.body.id }, select: { environmentId: true } }))!.environmentId!;
+    const project = await prisma.project.findFirstOrThrow({ where: { teamId, isDefault: true } });
+    const added = await request(app.getHttpServer())
+      .post(`/projects/${project.id}/environments`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "staging" })
+      .expect(201);
+    const stagingId = (added.body.environments as { id: string; name: string }[]).find((e) => e.name === "staging")!.id;
+    expect(stagingId).not.toBe(srcEnvId);
+
+    const cloned = await request(app.getHttpServer())
+      .post(`/apps/${srcRes.body.id}/clone`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "clone-staging", environmentId: stagingId })
+      .expect(201);
+    const landed = await prisma.application.findUnique({ where: { id: cloned.body.app.id }, select: { environmentId: true } });
+    expect(landed?.environmentId).toBe(stagingId);
+
+    // another team's environment is refused with a 4xx and creates nothing
+    const otherEmail = `app-other-${Date.now()}-${Math.floor(Math.random() * 1e6)}@tugra.test`;
+    const other = await request(app.getHttpServer()).post("/auth/register").send({ email: otherEmail, password, name: "Other" }).expect(201);
+    const otherTeamId = (await prisma.membership.findFirst({ where: { userId: other.body.user.id } }))!.teamId;
+    try {
+      const foreignEnv = await prisma.environment.findFirstOrThrow({ where: { project: { teamId: otherTeamId } } });
+      const refused = await request(app.getHttpServer())
+        .post(`/apps/${srcRes.body.id}/clone`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({ name: "clone-foreign", environmentId: foreignEnv.id });
+      expect(refused.status).toBeGreaterThanOrEqual(400);
+      expect(refused.status).toBeLessThan(500);
+      expect(await prisma.application.count({ where: { name: "clone-foreign" } })).toBe(0);
+    } finally {
+      await prisma.team.deleteMany({ where: { id: otherTeamId } }).catch(() => undefined);
+      await prisma.user.deleteMany({ where: { email: otherEmail } }).catch(() => undefined);
+    }
+  });
 });

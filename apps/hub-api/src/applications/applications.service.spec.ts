@@ -3210,6 +3210,31 @@ describe("ApplicationsService", () => {
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { environmentId: "e1" } }));
   });
 
+  it("setEnvironment refuses an environment whose project the member has no grant for", async () => {
+    const update = jest.fn();
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app), update },
+      environment: { findUnique: jest.fn().mockResolvedValue({ id: "e1", project: { id: "p9", teamId: "t1" } }) },
+    } as unknown as PrismaService;
+    const access = {
+      requirePermission: jest.fn().mockResolvedValue(undefined),
+      requireProjectAccess: jest.fn().mockRejectedValue(new ForbiddenException("no access to this project")),
+    } as unknown as TeamAccessService;
+    await expect(make(prisma, access, {} as AgentWsServer).setEnvironment("u1", "app1", "e1")).rejects.toBeInstanceOf(ForbiddenException);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("setEnvironment checks project access with the destination project id", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app), update: jest.fn().mockResolvedValue({}) },
+      environment: { findUnique: jest.fn().mockResolvedValue({ id: "e1", project: { id: "p9", teamId: "t1" } }) },
+    } as unknown as PrismaService;
+    const requireProjectAccess = jest.fn().mockResolvedValue(undefined);
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined), requireProjectAccess } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).setEnvironment("u1", "app1", "e1");
+    expect(requireProjectAccess).toHaveBeenCalledWith("u1", "t1", "p9");
+  });
+
   it("rejects a null environment at the schema (an app always belongs to an env)", () => {
     expect(SetEnvironmentSchema.safeParse({ environmentId: null }).success).toBe(false);
     expect(SetEnvironmentSchema.safeParse({ environmentId: "" }).success).toBe(false);
@@ -4562,6 +4587,39 @@ describe("ApplicationsService.clone", () => {
       environment: { findUnique: jest.fn().mockResolvedValue({ id: "e2", project: { teamId: "t2" } }) },
     });
     await expect(make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", { environmentId: "e2" })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("clone into another environment checks the caller's access to the destination project", async () => {
+    const { prisma, create } = clonePrisma({
+      environment: { findUnique: jest.fn().mockResolvedValue({ id: "e2", project: { id: "p2", teamId: "t1" } }) },
+    });
+    const requireProjectAccess = jest.fn().mockResolvedValue(undefined);
+    await make(prisma, { requireProjectAccess }, {} as AgentWsServer).clone("u1", "src1", { environmentId: "e2" });
+    expect(requireProjectAccess).toHaveBeenCalledWith("u1", "t1", "p2");
+    expect(create.mock.calls[0][0].data.environmentId).toBe("e2");
+  });
+
+  it("clone into a project the member has no grant for is refused (403) and creates nothing", async () => {
+    const { prisma, create } = clonePrisma({
+      environment: { findUnique: jest.fn().mockResolvedValue({ id: "e2", project: { id: "p2", teamId: "t1" } }) },
+    });
+    const requireProjectAccess = jest.fn().mockRejectedValue(new ForbiddenException("no access to this project"));
+    await expect(
+      make(prisma, { requireProjectAccess }, {} as AgentWsServer).clone("u1", "src1", { environmentId: "e2" }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("clone into the source's own environment never runs the destination checks", async () => {
+    const envFind = jest.fn();
+    const { prisma } = clonePrisma({
+      environment: { findUnique: envFind },
+      application: { findUnique: jest.fn().mockResolvedValue({ ...src, environmentId: "e1" }), create: jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ ...data, id: "clone1", createdAt: new Date() })) },
+    });
+    const requireProjectAccess = jest.fn();
+    await make(prisma, { requireProjectAccess }, {} as AgentWsServer).clone("u1", "src1", { environmentId: "e1" });
+    expect(envFind).not.toHaveBeenCalled();
+    expect(requireProjectAccess).not.toHaveBeenCalled();
   });
 });
 

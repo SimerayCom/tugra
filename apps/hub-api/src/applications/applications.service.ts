@@ -754,7 +754,7 @@ export class ApplicationsService {
     // (environment clone places the copy in a new environment).
     const environmentId = input.environmentId ?? src.environmentId;
     if (input.environmentId && input.environmentId !== src.environmentId) {
-      await this.assertEnvInTeam(input.environmentId, src.teamId);
+      await this.assertEnvAccess(userId, input.environmentId, src.teamId);
     }
     // Target server: the source's own by default, or a chosen one that MUST be in the same team (no
     // cross-team clone). A different target resets the server-bound topology (cluster/placement/host ports).
@@ -4014,7 +4014,7 @@ export class ApplicationsService {
 
   async setEnvironment(userId: string, id: string, environmentId: string): Promise<void> {
     const app = await this.requireWrite(userId, id);
-    await this.assertEnvInTeam(environmentId, app.teamId);
+    await this.assertEnvAccess(userId, environmentId, app.teamId);
     await this.prisma.application.update({ where: { id }, data: { environmentId } });
     await this.audit.log({ actor: userId, action: "app.environment.update", target: id });
   }
@@ -4401,6 +4401,22 @@ export class ApplicationsService {
     if (!env || env.project.teamId !== teamId) {
       throw new BadRequestException("environment not found in this team");
     }
+  }
+
+  /**
+   * assertEnvInTeam plus the caller's access to the destination project. A new/moved resource has no id
+   * yet, so this is the project-level check (`requireProjectAccess`); defence in depth for members whose
+   * access is limited to specific projects.
+   */
+  private async assertEnvAccess(userId: string, environmentId: string, teamId: string): Promise<void> {
+    const env = await this.prisma.environment.findUnique({
+      where: { id: environmentId },
+      include: { project: true },
+    });
+    if (!env || env.project.teamId !== teamId) {
+      throw new BadRequestException("environment not found in this team");
+    }
+    await this.access.requireProjectAccess(userId, teamId, env.project.id);
   }
 
   // ── helpers ──

@@ -1105,7 +1105,7 @@ export const api = {
   clearAppCert(id: string) {
     return apiFetch<{ ok: true }>(`/apps/${id}/cert`, { method: "DELETE" });
   },
-  cloneApp(id: string, body: { name?: string; serverId?: string }) {
+  cloneApp(id: string, body: { name?: string; serverId?: string; environmentId?: string }) {
     return apiFetch<{ app: Application; warnings: string[] }>(`/apps/${id}/clone`, { method: "POST", body: JSON.stringify(body) });
   },
   cancelDeployment(id: string, deploymentId: string) {
