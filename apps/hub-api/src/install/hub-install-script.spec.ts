@@ -395,7 +395,10 @@ describe("scripts/install.sh", () => {
     const src = readFileSync(INSTALL_SH, "utf8");
     it("keeps pre-update snapshots (DB dumps + .env copies) out of Docker build contexts and git", () => {
       const lines = readFileSync(join(REPO_ROOT, ".dockerignore"), "utf8").split("\n").map((l) => l.trim());
-      expect(lines.some((l) => /^(\*\*\/)?backups\/?$/.test(l))).toBe(true);
+      expect(lines).toContain("/backups/"); // root-anchored: the repo-root snapshot dir only
+      // NEVER an unanchored `backups` / `**/backups`: it would also exclude apps/hub-api/src/backups (source code)
+      // from the build context and break the hub image (this happened in the v0.1.0-beta.12 release run).
+      expect(lines.filter((l) => /^(\*\*\/)?backups\/?$/.test(l))).toEqual([]);
       expect(lines).toContain("**/pre-update-*.dump");
       expect(lines).toContain("**/pre-update-*.env");
       expect(readFileSync(join(REPO_ROOT, ".gitignore"), "utf8").split("\n")).toContain("backups/");

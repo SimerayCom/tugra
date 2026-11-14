@@ -13,7 +13,8 @@ agent/tugra-agent
 .env.*
 !.env.example
 # Pre-update restore points (scripts/lib/snapshot.sh): DB dumps + .env copies. Never into a build context/image.
-backups/
-**/backups
+# ROOT-anchored on purpose: `**/backups` would also drop source directories named backups
+# (apps/hub-api/src/backups) and break the hub image build.
+/backups/
 **/pre-update-*.dump
 **/pre-update-*.env

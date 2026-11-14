@@ -64,13 +64,13 @@ Tugra es un plano de control open-core y autoalojable para hacer deploy, monitor
 - **También nativo para agentes** — un servidor MCP integrado expone 53 herramientas (lectura + operaciones de mutación/fleet con scope de PAT) mediante `POST /api/v1/mcp`, con los mismos tokens de acceso personal y scopes que la API REST.
 - **9 motores de bases de datos, un único flujo de trabajo** — PostgreSQL, MySQL, MariaDB, MongoDB, Redis, KeyDB, Dragonfly, ClickHouse y LibSQL, todos aprovisionados de la misma forma; ocho incluyen backups lógicos con dump/restore (LibSQL, que no tiene herramienta de dump, queda cubierto únicamente por backups de volumes a nivel de archivo: detenga primero la app para obtener una copia consistente).
 - **TLS de verdad, comodines de verdad** — Let's Encrypt automático por app mediante Traefik, además de certificados comodín DNS-01 (`*.yourdomain.com`) para el ingress de cluster/Swarm, y no solo HTTP-01 para un único dominio.
-- **Backups fuera del servidor** — dumps programados a disco local o a almacenamiento compatible con S3 (S3/R2/MinIO), cifrados y con restore con un clic; los **simulacros de restore-verify** programados demuestran que un backup realmente se restaura, y PostgreSQL cuenta con **recuperación a un punto en el tiempo** (envío de WAL + base backups, restore a cualquier segundo desde el panel).
-- **Deploys en los que puede confiar** — deploys progresivos con health gate y un periodo de soak posterior al cutover que revierte automáticamente, rollouts de fleet (canary → oleadas → detención/rollback), build secrets que nunca acaban en la image y deploys que sobreviven a un reinicio del control plane.
-- **Open-core, no open-washed** — todo lo anterior se distribuye gratis bajo AGPL-3.0 en *este* repositorio. Pro/Cloud (SSO, exportación del log de auditoría, marca blanca, facturación multi-tenant) es un complemento con licencia aparte: nada aquí le presiona para que pase a un plan de pago ni limita en silencio lo que puede hacer. Tugra envía estadísticas de uso anónimas, activadas por defecto: conteos agregados (servidores, apps, bases de datos, deploys) junto con su versión, edición y sistema operativo, bajo un id aleatorio; sin nombres, IP, dominios ni secretos, y el receptor no almacena su IP. Puede desactivarlas en cualquier momento con `--no-telemetry` / `TUGRA_TELEMETRY=0` o en Settings. La comprobación de actualizaciones y la detección de la IP pública son opt-in y están desactivadas por defecto.
+- **Backups fuera del servidor** — dumps programados a disco local o a almacenamiento compatible con S3 (S3/R2/MinIO), opcionalmente cifrados (gpg AES-256) y con restore con un clic; los **simulacros de restore-verify** programados demuestran que un backup realmente se restaura, y PostgreSQL cuenta con **recuperación a un punto en el tiempo** (envío de WAL + base backups, restore a cualquier segundo desde el panel).
+- **Deploys en los que puede confiar** — deploys progresivos con health gate y rollback automático si el gate falla (más un periodo de soak posterior al cutover, opt-in, que revierte automáticamente), rollouts de fleet (canary → oleadas → detención/rollback), build secrets que nunca acaban en la image y deploys que sobreviven a un reinicio del control plane.
+- **Open-core, no open-washed** — todo lo anterior se distribuye gratis bajo AGPL-3.0 en *este* repositorio. Las funciones Pro/Cloud (SSO, exportación del log de auditoría, marca blanca) se desbloquean con una clave firmada con licencia aparte: nada aquí le presiona para que pase a un plan de pago ni limita en silencio lo que puede hacer. Tugra envía estadísticas de uso anónimas, activadas por defecto: conteos agregados (servidores, apps, bases de datos, deploys, equipos, usuarios, clusters, monitores) junto con su versión, canal de releases, edición, sistema operativo, arquitectura de CPU y versión mayor de Node.js, bajo un id aleatorio; sin nombres, IP, dominios ni secretos, y el receptor no almacena su IP. Puede desactivarlas en cualquier momento con `--no-telemetry` / `TUGRA_TELEMETRY=0` o en Settings. La comprobación de actualizaciones y la detección de la IP pública son opt-in y están desactivadas por defecto.
 
 ## Cómo se compara Tugra
 
-Una comparación directa con las herramientas PaaS autoalojables que la gente evalúa de verdad (datos de la competencia verificados en 2026-10). `✅` integrado · `~` parcial / limitado · `—` sin equivalente integrado documentado · `🔜` en la hoja de ruta de Tugra. ¿Ha detectado algún error? [Abra un issue](https://github.com/SimerayCom/tugra/issues).
+Una comparación directa con las herramientas PaaS autoalojables que la gente evalúa de verdad (datos de la competencia verificados en 2026-11). `✅` integrado · `~` parcial / limitado · `—` sin equivalente integrado documentado · `🔜` en la hoja de ruta de Tugra. ¿Ha detectado algún error? [Abra un issue](https://github.com/SimerayCom/tugra/issues).
 
 | | **Tugra** | Coolify | Dokploy | Portainer | CapRover | Dokku |
 |---|---|---|---|---|---|---|
@@ -78,40 +78,40 @@ Una comparación directa con las herramientas PaaS autoalojables que la gente ev
 | Dashboard de la Web UI | ✅ | ✅ | ✅ | ✅ | ✅ | — |
 | Deploy desde Git | ✅ | ✅ | ✅ | ~ | ~ | ✅ |
 | Deploy con Docker Compose | ✅ | ✅ | ✅ | ✅ | ~ | ~ |
-| Deploys de vista previa (apps de PR) | ✅ | ✅ | ✅ | — | — | ~ |
-| Rollbacks | ✅ | ✅ | ✅ | — | ✅ | ~ |
+| Deploys de vista previa (apps de PR) | ✅¹¹ | ✅ | ✅ | — | — | ~ |
+| Rollbacks | ✅ | ✅ | ✅ | ~¹² | ✅ | ~ |
 | App Store / plantillas con un clic | ✅ | ✅ | ✅ | ✅ | ✅ | — |
 | **Datos** | | | | | | |
-| Motores de bases de datos gestionados | **9** | 8 | 6 | — | — | — |
+| Motores de bases de datos gestionados | **9** | 9 (SQLite experimental)¹² | 6 | — | — | ~¹² |
 | Backups programados en S3 + restore | ✅ | ✅ | ✅ | — | — | ~ |
-| Backups de volumes Docker de apps (a nivel de archivo, no un snapshot) | ✅ | — | ✅ | — | — | — |
+| Backups de volumes Docker de apps (a nivel de archivo, no un snapshot) | ✅ | ~¹² | ✅ | — | — | — |
 | **Dominios y TLS** | | | | | | |
 | Dominios personalizados + SSL automático | ✅ | ✅ | ✅ | — | ✅ | ✅ |
-| Certificados comodín DNS-01 | ✅ | ~ | — | — | — | ~ |
+| Certificados comodín DNS-01 | ✅ | ~ | — | — | ~¹² | ~ |
 | **Fleet y alta disponibilidad** | | | | | | |
 | Clustering multi-node | ✅ Swarm | Individual¹ | ✅ Swarm | ✅ | ✅ | ~ k3s⁶ |
 | HA Raft multi-manager + HA de ingress | ✅ | — | — | — | — | — |
 | Operaciones masivas sobre toda la fleet (una llamada) | ✅ | — | — | — | — | — |
-| Parcheo del SO (por servidor + fleet) | ✅ | — | — | — | — | — |
+| Parcheo del SO (por servidor + fleet) | ✅ | ~¹² | — | — | — | — |
 | Recuperación a un punto en el tiempo (WAL de PostgreSQL) | ✅¹⁰ | — | — | — | — | — |
 | Simulacros programados de restore-verify | ✅ | — | — | — | — | — |
-| Rollouts de fleet (canary → oleadas → detención/rollback automáticos) | ✅ | — | — | — | — | — |
-| Rollback automático tras el cutover (ventana de soak) | ✅ | — | — | — | — | — |
+| Rollouts de fleet (canary → oleadas → detención/rollback automáticos) | ✅ | — | — | ~¹² | — | — |
+| Rollback automático tras el cutover (ventana de soak, opt-in por app) | ✅ | — | ~¹² | — | — | — |
 | **Observabilidad** | | | | | | |
-| Métricas integradas (CPU/RAM/disco) | ✅ | ~ | ✅ | ~ | — | — |
-| Monitores de disponibilidad + notificaciones | ✅ | ~ | ✅ | — | — | — |
-| Visor de logs de apps / containers | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| Métricas integradas (CPU/RAM/disco) | ✅ | ~ | ✅ | ~ | ~¹² | — |
+| Monitores de disponibilidad + notificaciones | ✅ | ~ | ~¹² | — | — | — |
+| Visor de logs de apps / containers | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Acceso y agentes** | | | | | | |
-| Equipos / RBAC | ✅ | ~ | ✅ | ~⁷ | — | — |
+| Equipos / RBAC | ✅ | ✅ | ✅ | ~⁷ | — | — |
 | SSO / OIDC | ✅ (Pro)⁸ | ✅ | ✅ | ~⁷ | — | — |
 | Log de auditoría | ✅ | ✅ | ✅ | ~⁷ | — | — |
-| MCP / control por agentes | ✅ 53 herramientas⁵ | ✅ | ✅ | — | — | ~² |
+| MCP / control por agentes | ✅ 53 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
 | **Confianza y licencia** | | | | | | |
 | Telemetría | Anónima, opt-out (solo conteos) | n/a | n/a | n/a | n/a | n/a |
 | Migrar a Tugra (importar desde Coolify) | ✅⁹ | — | — | — | — | — |
 | Licencia del núcleo | AGPL-3.0 | Apache-2.0 | Apache-2.0³ | zlib + BE⁷ | Apache-2.0 + condiciones⁴ | MIT |
 
-<sub>¹ Coolify v4 gestiona los servidores de forma individual (sin clustering integrado). ² Un proyecto MCP de Dokku de terceros, en fase temprana, que no es una versión oficial. ³ El núcleo de Dokploy es Apache-2.0; una licencia Source-Available aparte cubre su directorio empresarial `proprietary/` (SSO, logs de auditoría, marca blanca), el mismo esquema open-core que usa Tugra. ⁴ El `LICENSE` de CapRover es Apache-2.0 con un apéndice que restringe la modificación y la redistribución de las funciones de pago. ⁵ Tugra, Coolify y Dokploy incluyen servidores MCP con herramientas de lectura y escritura, así que el control por agentes está en paridad; Tugra añade acciones sobre toda la fleet (una llamada sobre un cluster), confirmación por nombre en las herramientas destructivas y ocultación de secretos. ⁶ Dokku no es compatible con Docker Swarm; su opción multi-node es el plugin `scheduler-k3s` (k3s/Kubernetes), una arquitectura distinta. ⁷ El RBAC, el SSO y los logs de auditoría de Portainer forman parte de su Business Edition de pago. ⁸ El núcleo de Tugra es gratuito y completo (equipos/RBAC, log de auditoría, backups, monitoreo, MCP, migrador, HA multi-node); el SSO/OIDC es una función Pro. ⁹ Importa las apps de Coolify junto con su configuración y variables de entorno como recursos nuevos de Tugra (modo copia); un adoptador local de Docker aparte toma el control de los containers del mismo host sin moverlos (conservando sus volumes con nombre). Los **datos** de las bases de datos Postgres, MySQL, MariaDB, Redis, KeyDB y Dragonfly se trasladan entre hosts con un migrador de un solo comando que usted pega en el host de Coolify; los datos de MongoDB se trasladan mediante un dump y restore guiados (import-from-url), los de LibSQL y los datos de **volumes** de las apps con `tar`/`rsync`, y ClickHouse todavía no tiene herramienta de migración ([docs/coolify-migration.md](docs/coolify-migration.md)). ¹⁰ Solo PostgreSQL; los demás motores conservan dumps lógicos programados. Los nombres de productos son marcas comerciales de sus respectivos propietarios; Tugra no está afiliado a ellos ni cuenta con su aval.</sub>
+<sub>¹ Coolify v4 gestiona los servidores de forma individual (sin clustering integrado); su soporte de Docker Swarm está obsoleto (eliminación prevista en v5), y desplegar una image en varios servidores requiere su propio balanceador de carga. ² Un proyecto MCP de Dokku de terceros, en fase temprana, que no es una versión oficial. ³ El núcleo de Dokploy es Apache-2.0; una licencia Source-Available aparte cubre su directorio empresarial `proprietary/` (SSO, logs de auditoría, marca blanca), el mismo esquema open-core que usa Tugra. ⁴ El `LICENSE` de CapRover es Apache-2.0 con un apéndice que restringe la modificación y la redistribución de las funciones de pago. ⁵ Tugra, Coolify y Dokploy incluyen servidores MCP con herramientas de lectura y escritura, así que el control por agentes está en paridad; Tugra añade acciones sobre toda la fleet (una llamada sobre un cluster), confirmación por nombre en las herramientas destructivas y ocultación de secretos. ⁶ Dokku no es compatible con Docker Swarm; su opción multi-node es el plugin `scheduler-k3s` (k3s/Kubernetes), una arquitectura distinta. ⁷ El RBAC completo, las plantillas de SSO AD/OIDC y los logs de auditoría de Portainer son Business Edition (gratis hasta 3 nodos); Community incluye usuarios básicos y LDAP/OAuth limitado. Su repositorio oficial de servidor MCP no tiene soporte; la vía de IA con soporte (Portainer Command) es Business Edition. ⁸ El núcleo de Tugra es gratuito y completo (equipos/RBAC, log de auditoría, backups, monitoreo, MCP, migrador, HA multi-node); el SSO/OIDC es una función Pro. ⁹ Importa las apps de Coolify junto con su configuración y variables de entorno como recursos nuevos de Tugra (modo copia; los proyectos de Dokploy también se pueden importar, hoy por API / MCP / CLI, aún no en el asistente web); un adoptador local de Docker aparte toma el control de los containers del mismo host sin moverlos (conservando sus volumes con nombre). Los **datos** de las bases de datos Postgres, MySQL, MariaDB, Redis, KeyDB y Dragonfly se trasladan entre hosts con un migrador de un solo comando que usted pega en el host de Coolify; los datos de MongoDB se trasladan mediante un dump y restore guiados (import-from-url), los de LibSQL y los datos de **volumes** de las apps con `tar`/`rsync`, y ClickHouse todavía no tiene herramienta de migración ([docs/coolify-migration.md](docs/coolify-migration.md)). ¹⁰ Solo PostgreSQL; los demás motores conservan dumps lógicos programados. ¹¹ Por ahora solo eventos de pull request de GitHub; los webhooks de GitLab/Gitea/Bitbucket disparan deploys por push. ¹² Notas sobre la competencia tomadas de la documentación oficial, 2026-11: Coolify Server Patching es por servidor y está en Beta, sus backups de storage no tienen restore desde la UI, y documenta 9 motores de BD pero backups programados solo para 6; los umbrales de monitoreo de Dokploy están marcados como solo Cloud y su rollback es el rollback de actualización nativo de Docker Swarm que usted mismo configura; el rollout de grupo estilo canary de Portainer es Business Edition y solo para Edge Stacks; DNS-01 de CapRover y el monitoreo con Netdata son configuraciones manuales/opt-in; los motores de base de datos de Dokku son plugins oficiales de CLI sin UI. Los nombres de productos son marcas comerciales de sus respectivos propietarios; Tugra no está afiliado a ellos ni cuenta con su aval.</sub>
 
 ## Inicio rápido
 
@@ -187,33 +187,34 @@ Los logs en vivo, las métricas y la terminal se transmiten por WebSockets. Desg
 **Completado**
 
 - [x] Protocolo Hub ↔ Agente + alta de servidores (WSS saliente · ed25519 · comandos firmados + scope de capacidades)
-- [x] Deploy desde Git / Docker Compose / image (Nixpacks · Dockerfile · sitio estático)
+- [x] Deploy desde Git / Docker Compose / image (Nixpacks · Railpack · buildpacks de Heroku · Dockerfile · sitio estático)
 - [x] Reverse proxy + SSL automático (Traefik · Let's Encrypt, incl. comodín DNS-01)
-- [x] Métricas en vivo, logs de build y terminal web (flujos WebSocket)
+- [x] Métricas en vivo, logs de build y terminal web (flujos WebSocket; la terminal está protegida por capability y desactivada por defecto)
 - [x] Bases de datos (9 motores) con backups y restore (local + fuera del servidor en S3/R2)
 - [x] Clusters multiservidor + formación de Docker Swarm, operaciones masivas sobre toda la fleet
 - [x] Servidor MCP nativo — 53 herramientas (lectura + operaciones de mutación/fleet con scope de PAT) + prompts guiados
-- [x] App Store — catálogo de plantillas con un clic + lanzador en modo Home
+- [x] App Store — más de 280 plantillas con un clic + lanzador en modo Home
 - [x] Explorador de archivos de solo lectura para volumes de apps (Web UI + MCP `list_files`)
 - [x] Deploys de vista previa (por pull request)
-- [x] Monitoreo de disponibilidad (HTTP/TCP/métricas) + canales de notificación
+- [x] Monitoreo de disponibilidad (HTTP/TCP/métricas) + 12 canales de notificación (webhook · Telegram · ntfy · Discord · Slack · Gotify · SMTP · Pushover · Teams · Mattermost · Lark · Resend)
 - [x] Tareas programadas (cron) · rollbacks · límites de recursos y health checks
 - [x] Proyectos / entornos · equipos, roles e invitaciones · etiquetas · variables compartidas
 - [x] API pública (OpenAPI) + CLI (`tugra`)
 - [x] Parcheo de servidores (actualizaciones de paquetes del SO)
 - [x] Self-update (versiones firmadas) + onboarding guiado
-- [x] Migrador — adopta containers Docker locales + importa desde Coolify (conectar · planificar · aplicar · rollback) + migración de datos de bases de datos entre hosts con un solo comando (Postgres · MySQL · MariaDB · Redis · KeyDB · Dragonfly)
+- [x] Migrador — adopta containers Docker locales + importa desde Coolify (asistente web) y Dokploy (API / MCP / CLI) (conectar · planificar · aplicar · rollback) + migración de datos de bases de datos entre hosts con un solo comando (Postgres · MySQL · MariaDB · Redis · KeyDB · Dragonfly)
 - [x] Simulacros de restore-verify (programados, con un watchdog de liveness) · recuperación a un punto en el tiempo de PostgreSQL (envío de WAL · base backups · restore a cualquier segundo)
-- [x] Deploys progresivos con health gate + soak posterior al cutover y reversión automática · rollouts de fleet (canary → oleadas → health gate → detener/reanudar/rollback)
+- [x] Deploys progresivos con health gate + soak posterior al cutover opt-in y reversión automática · rollouts de fleet (canary → oleadas → health gate → detener/reanudar/rollback)
 - [x] Los deploys sobreviven a un reinicio del hub (journal de comandos del agent + adopción del resultado) · página de detalle por deploy (línea de tiempo · log en vivo · diff de configuración)
-- [x] Build secrets con `--secret` de BuildKit · rotación de la master key sin downtime · self-updates firmados y fijados por digest, con un punto de restore previo a la actualización
+- [x] Build secrets con `--secret` de BuildKit (builds con Dockerfile) · rotación de la master key (job de re-cifrado reanudable, no hay que volver a introducir nada, las apps no se tocan; el hub se reinicia dos veces) · self-updates firmados y fijados por digest, con un punto de restore previo a la actualización
+- [x] Aprovisionamiento de servidores cloud (Hetzner · DigitalOcean · Vultr) · Cloudflare Tunnel · analítica de tráfico integrada (GeoIP local, sin phone-home) · log drains · registries privados · proveedor de secretos Vault (Pro)
 
 **Próximamente**
 
 - [ ] OAuth para MCP en clientes de terceros (registro dinámico de clientes, PKCE)
 - [ ] Gestor de archivos — soporte de escritura (subir / renombrar / eliminar)
 - [ ] Migración con un clic de los datos de ClickHouse y MongoDB, y de los datos de volumes de apps
-- [ ] Más fuentes de migración (Dokploy, CapRover)
+- [ ] Más fuentes de migración (Dokploy en el asistente web de importación, CapRover)
 - [ ] App móvil
 
 ## Comunidad y documentación

@@ -25,13 +25,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Fleet rollouts.** Deploy a release across many apps as canary → waves with a per-app health gate, a bake
   window, fail-fast halt, resume, and a one-click fleet rollback to each app's previous version, with
   notifications for halted / completed / rolled-back rollouts.
-- **Post-cutover auto-rollback.** Rolling deploys keep the previous container through a soak window after
-  traffic switches and revert automatically if the new version fails its health checks early.
+- **Post-cutover auto-rollback (opt-in per app).** Rolling deploys can keep the previous container through a
+  soak window after traffic switches and revert automatically if the new version fails its health checks early.
 - **Build secrets.** Dockerfile builds can mount secrets via BuildKit `--secret` so tokens never land in the
   image or its history (unlike build args).
-- **Secrets key rotation.** Rotate `SECRETS_ENCRYPTION_KEY` without downtime: keep the old key as a previous
-  key, re-encrypt every stored secret from Settings → Instance, then drop the old key once the panel says it
-  is safe.
+- **Secrets key rotation.** Rotate `SECRETS_ENCRYPTION_KEY` without re-entering any secret or touching your
+  apps (the hub restarts twice): keep the old key as a previous key, re-encrypt every stored secret from
+  Settings → Instance, then drop the old key once the panel says it is safe.
 - **Digest-pinned updates.** The signed release manifest now records each image's digest; the self-updater
   pulls hub and web by digest and refuses an image whose version label does not match the release. Older
   manifests keep updating by tag.
