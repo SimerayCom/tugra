@@ -122,3 +122,79 @@ describe("Menu", () => {
     expect(screen.queryByRole("button")).toBeNull();
   });
 });
+
+describe("Menu — link items and labelled trigger", () => {
+  const linkItems = (): MenuItem[] => [
+    { key: "p", label: "app.example.com", href: "https://app.example.com", title: "Primary" },
+    { key: "a", label: "alias.example.com", href: "https://alias.example.com" },
+    { key: "bad", label: "evil", href: "javascript:alert(1)", onSelect: () => {} },
+  ];
+
+  it("an item with an http(s) href is a real new-tab anchor", () => {
+    render(<Menu items={linkItems()} label="Links" />);
+    fireEvent.click(screen.getByRole("button", { name: "Links" }));
+    const a = screen.getByRole("menuitem", { name: "app.example.com" }) as HTMLAnchorElement;
+    expect(a.tagName).toBe("A");
+    expect(a.getAttribute("href")).toBe("https://app.example.com");
+    expect(a.getAttribute("target")).toBe("_blank");
+    expect(a.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(a.getAttribute("title")).toBe("Primary");
+  });
+
+  it("a non-http href falls back to a plain button and is never linked", () => {
+    const onSelect = vi.fn();
+    render(<Menu items={[{ key: "bad", label: "evil", href: "javascript:alert(1)", onSelect }]} label="Links" />);
+    fireEvent.click(screen.getByRole("button", { name: "Links" }));
+    const el = screen.getByRole("menuitem", { name: "evil" });
+    expect(el.tagName).toBe("BUTTON");
+    expect(el.getAttribute("href")).toBeNull();
+    fireEvent.click(el);
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it("arrow keys traverse anchors and Home/End jump", () => {
+    render(<Menu items={linkItems()} label="Links" />);
+    fireEvent.click(screen.getByRole("button", { name: "Links" }));
+    const menu = screen.getByRole("menu");
+    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "app.example.com" }));
+    fireEvent.keyDown(menu, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "alias.example.com" }));
+    fireEvent.keyDown(menu, { key: "End" });
+    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "evil" }));
+  });
+
+  it("Space activates a focused anchor, and clicking it closes the menu", () => {
+    render(<Menu items={linkItems()} label="Links" />);
+    const trigger = screen.getByRole("button", { name: "Links" });
+    fireEvent.click(trigger);
+    const a = screen.getByRole("menuitem", { name: "app.example.com" }) as HTMLAnchorElement;
+    const click = vi.spyOn(a, "click").mockImplementation(() => {});
+    fireEvent.keyDown(a, { key: " " });
+    expect(click).toHaveBeenCalledTimes(1);
+    fireEvent.click(a);
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("Escape from an anchor returns focus to the trigger", () => {
+    render(<Menu items={linkItems()} label="Links" />);
+    const trigger = screen.getByRole("button", { name: "Links" });
+    fireEvent.click(trigger);
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("a labelled trigger shows its text, keeps the menu-button ARIA, and the default trigger is unchanged", () => {
+    render(<Menu items={linkItems()} label="Links" trigger={{ label: "Links (3)" }} />);
+    const t = screen.getByRole("button", { name: "Links (3)" });
+    expect(t.className).toContain("tg-btn");
+    expect(t.getAttribute("aria-haspopup")).toBe("menu");
+    expect(t.getAttribute("aria-expanded")).toBe("false");
+    cleanup();
+    render(<Menu items={items()} label="More actions" />);
+    const d = screen.getByRole("button", { name: "More actions" });
+    expect(d.className).toBe("tg-iconbtn");
+    expect(d.textContent).toBe("");
+  });
+});

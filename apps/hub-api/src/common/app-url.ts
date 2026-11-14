@@ -42,3 +42,64 @@ export function primaryHostPort(
   const hp = (match ?? maps[0])?.hostPort;
   return typeof hp === "number" ? hp : null;
 }
+
+export type AppLinkKind = "primary" | "alias" | "service" | "port";
+
+/** One externally-openable address of an app. `url` is always http(s). `host` is the hostname for a domain-backed
+ *  link (null for a raw IP:port); `label` is the compose service (`service`) or `service:containerPort` (`port`). */
+export interface AppLink {
+  kind: AppLinkKind;
+  url: string;
+  host: string | null;
+  label: string | null;
+}
+
+/** Upper bound on links per app (a runaway alias/service list must not bloat every list response). */
+export const MAX_APP_LINKS = 50;
+
+/**
+ * Every externally-openable address of an app, primary first: the primary URL, multi-domain aliases, per-service
+ * compose domains, then the published host ports of a compose app. Deduped by URL (first wins) and capped.
+ *
+ * - `primaryUrl` is the already-computed `appUrl(...)` so `links[0].url === url` always holds.
+ * - Aliases and per-service domains are always `https://` (their Traefik routers are hard-wired to `websecure`).
+ * - Only `hostPort`-mode compose mappings are published on the host; a `domain`-mode mapping is reached through
+ *   its domain, so it never becomes a port link. Needs a known public IP, like the primary's IP:port fallback.
+ */
+export function appLinks(
+  app: { domain: string | null; extraDomains?: string[] | null; source?: string | null; portMappings?: unknown },
+  o: { publicIp: string | null | undefined; primaryUrl: string | null; serviceDomains: { service: string; hostname: string }[] },
+): AppLink[] {
+  const out: AppLink[] = [];
+  const seen = new Set<string>();
+  const add = (link: AppLink) => {
+    if (out.length >= MAX_APP_LINKS || seen.has(link.url)) return;
+    seen.add(link.url);
+    out.push(link);
+  };
+
+  if (o.primaryUrl) add({ kind: "primary", url: o.primaryUrl, host: app.domain ?? null, label: null });
+
+  const base = app.domain ? app.domain.replace(/^www\./i, "").toLowerCase() : null;
+  for (const raw of app.extraDomains ?? []) {
+    const h = (raw ?? "").trim();
+    if (!h || h === app.domain) continue;
+    if (base && (h.toLowerCase() === base || h.toLowerCase() === `www.${base}`)) continue; // the canonical www/bare twin is a redirect, not an alias
+    add({ kind: "alias", url: `https://${h}`, host: h, label: null });
+  }
+
+  for (const row of o.serviceDomains) {
+    if (!row.hostname) continue;
+    add({ kind: "service", url: `https://${row.hostname}`, host: row.hostname, label: row.service });
+  }
+
+  if (app.source === "COMPOSE" && o.publicIp && Array.isArray(app.portMappings)) {
+    const ip = isIpv6(o.publicIp) ? `[${o.publicIp}]` : o.publicIp;
+    for (const m of app.portMappings as { serviceName?: unknown; containerPort?: unknown; hostPort?: unknown; mode?: unknown }[]) {
+      if (m?.mode !== "hostPort" || typeof m.hostPort !== "number") continue;
+      const label = typeof m.serviceName === "string" && typeof m.containerPort === "number" ? `${m.serviceName}:${m.containerPort}` : null;
+      add({ kind: "port", url: `http://${ip}:${m.hostPort}`, host: null, label });
+    }
+  }
+  return out;
+}

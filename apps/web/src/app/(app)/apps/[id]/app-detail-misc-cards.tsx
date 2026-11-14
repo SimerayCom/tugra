@@ -14,9 +14,11 @@ import { useT } from "../../../../i18n/provider";
 import { api, appIconUrl } from "../../../../lib/api";
 import { appColor, appSourceSummary, deploymentColor } from "../../../../lib/apps";
 import { relativeTime } from "../../../../lib/fleet";
+import { safeExternalUrl } from "../../../../lib/external-link";
 import { cropToPngBase64 } from "../../../../lib/icon";
 import { TERMINAL_PRE_STYLE } from "../../../../lib/terminal-theme";
 import { type Application, type Deployment, type ScheduledTask } from "../../../../lib/types";
+import { linkKindText } from "./app-links-menu";
 import { envField, taskRunColor } from "./app-detail-shared";
 
 /** At-a-glance summary for a non-compose app's Overview tab: the live URL plus a compact stat grid
@@ -53,10 +55,21 @@ export function AppOverview({ app, deployments }: { app: Application; deployment
     <Card style={{ padding: 16, marginBottom: 16 }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", paddingBottom: 14, marginBottom: 14, borderBottom: "1px solid var(--c-bd)" }}>
         <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--c-tx3)" }}>{t("apps.ovLiveUrl")}</span>
-        {app.url ? (
-          <a href={app.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--c-lapis)", fontSize: 14, wordBreak: "break-all" }}>
-            {app.url}<ExternalLink size={13} aria-hidden style={{ marginLeft: 4, verticalAlign: "middle" }} />
-          </a>
+        {app.links.length > 0 ? (
+          <span style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {app.links.map((l, i) => {
+              const href = safeExternalUrl(l.url);
+              if (!href) return null;
+              return (
+                <span key={`${l.kind}-${i}`} style={{ display: "inline-flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                  <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: "var(--c-lapis)", fontSize: 14, wordBreak: "break-all" }}>
+                    {l.url}<ExternalLink size={13} aria-hidden style={{ marginLeft: 4, verticalAlign: "middle" }} />
+                  </a>
+                  {l.kind !== "primary" && <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{linkKindText(t, l)}</span>}
+                </span>
+              );
+            })}
+          </span>
         ) : (
           <span style={{ fontSize: 13, color: "var(--c-tx3)" }}>{t("apps.ovNotExposed")}</span>
         )}

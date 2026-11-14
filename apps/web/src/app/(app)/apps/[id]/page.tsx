@@ -42,6 +42,7 @@ import { CONFIG_GROUP_KEYS, visibleConfigGroups, type ConfigCardId } from "../..
 import { resolveTab } from "../../../../lib/tab-param";
 import { LayoutDashboard, Settings2, Rocket, Activity, ScrollText, FolderOpen, Hammer, RotateCw, Play, Square, Terminal, CloudDownload, CloudUpload, Pencil, Trash2, Copy } from "lucide-react";
 import { CONFIG_GROUP_ICONS, actionGroup, actionGroupSep } from "./app-detail-shared";
+import { AppLinksMenu } from "./app-links-menu";
 import { SourceCard, BuildSettingsCard, BuildArgsCard, BuildSecretsCard, DeploySettingsCard, BuildConfigCard, ContainerCommandCard, RestartPolicyCard, ContainerPortCard, DeployHooksCard, CredentialsCard, WatchPathsCard } from "./app-detail-build-cards";
 import { ExtraDomainsCard, ServiceDomainsCard, DomainOptionsCard, CustomCertCard, RedirectsCard, BasicAuthCard, NetworkAliasesCard, NetworkingCard } from "./app-detail-domain-cards";
 import { VolumesCard, HostMountsCard, VolumeBackupsCard } from "./app-detail-storage-cards";
@@ -412,11 +413,15 @@ export default function AppDetailPage() {
             </span>
           )}
         </p>
-        {appData.url && (
-          <p style={{ margin: "6px 0 0" }}>
-            <a href={appData.url} target="_blank" rel="noreferrer" style={{ color: "var(--c-lapis)", fontSize: 13 }}>
-              {appData.url} {t("apps.open")}
-            </a>
+        {(appData.url || appData.links.length > 1) && (
+          <p style={{ margin: "6px 0 0", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            {appData.url && (
+              <a href={appData.url} target="_blank" rel="noreferrer" style={{ color: "var(--c-lapis)", fontSize: 13 }}>
+                {appData.url} {t("apps.open")}
+              </a>
+            )}
+            {/* Every address (aliases, per-service domains, published ports) for every viewer; one address keeps the plain link above. */}
+            <AppLinksMenu links={appData.links} />
           </p>
         )}
       </PageHeader>

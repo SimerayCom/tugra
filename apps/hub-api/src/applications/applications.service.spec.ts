@@ -3065,6 +3065,74 @@ describe("ApplicationsService", () => {
     expect(view.url).toBe("http://203.0.113.7:20500");
   });
 
+  describe("view().links", () => {
+    const composeApp = { ...app, source: "COMPOSE", templateSlug: null, domain: "app.example.com", https: true, extraDomains: ["alias.example.com"], composeFile: "services:\n  web:\n    image: x\n", portMappings: null };
+    const sd = (applicationId: string, service: string, hostname: string) => ({ applicationId, service, hostname, port: 80, createdAt: new Date() });
+
+    it("get() lists primary, alias and per-service links for a compose app, for a viewer without apps:config", async () => {
+      const findMany = jest.fn().mockResolvedValue([sd("app1", "api", "api.example.com")]);
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue(composeApp) },
+        appServiceDomain: { findMany },
+      } as unknown as PrismaService;
+      const access = { membershipPermissions: jest.fn().mockResolvedValue(new Set()) } as unknown as TeamAccessService;
+      const view = await make(prisma, access, {} as AgentWsServer).get("u1", "app1");
+      expect(view.links.map((l) => [l.kind, l.url])).toEqual([
+        ["primary", "https://app.example.com"],
+        ["alias", "https://alias.example.com"],
+        ["service", "https://api.example.com"],
+      ]);
+      expect(view.links[0].url).toBe(view.url);
+      expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { applicationId: "app1" } }));
+    });
+
+    it("get() never queries service domains for a non-compose app", async () => {
+      const findMany = jest.fn().mockResolvedValue([]);
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue({ ...app, domain: "app.example.com" }) },
+        appServiceDomain: { findMany },
+      } as unknown as PrismaService;
+      const access = { membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()) } as unknown as TeamAccessService;
+      const view = await make(prisma, access, {} as AgentWsServer).get("u1", "app1");
+      expect(findMany).not.toHaveBeenCalled();
+      expect(view.links.map((l) => l.kind)).toEqual(["primary"]);
+    });
+
+    const listAccess = () =>
+      ({
+        accessByTeam: jest.fn().mockResolvedValue(new Map([["t1", { role: Role.OWNER, restrictedAccess: false, accessedProjects: [], accessedResources: [] }]])),
+      }) as unknown as TeamAccessService;
+
+    it("list() reads service domains ONCE for N compose apps (batched) and groups them per app", async () => {
+      const findMany = jest.fn().mockResolvedValue([sd("c1", "api", "api1.example.com"), sd("c2", "api", "api2.example.com")]);
+      const prisma = {
+        application: { findMany: jest.fn().mockResolvedValue([
+          { ...composeApp, id: "c1", extraDomains: [] },
+          { ...composeApp, id: "c2", extraDomains: [] },
+          { ...app, id: "g1", domain: "git.example.com" },
+        ]) },
+        appServiceDomain: { findMany },
+      } as unknown as PrismaService;
+      const out = await make(prisma, listAccess(), {} as AgentWsServer).list("u1");
+      expect(findMany).toHaveBeenCalledTimes(1);
+      expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { applicationId: { in: ["c1", "c2"] } } }));
+      const urls = (id: string) => out.find((a) => a.id === id)!.links.map((l) => l.url);
+      expect(urls("c1")).toEqual(["https://app.example.com", "https://api1.example.com"]); // never c2's host
+      expect(urls("c2")).toEqual(["https://app.example.com", "https://api2.example.com"]);
+      expect(urls("g1")).toEqual(["http://git.example.com"]); // the base fixture has https off
+    });
+
+    it("list() skips the service-domain query entirely when no compose app is visible", async () => {
+      const findMany = jest.fn().mockResolvedValue([]);
+      const prisma = {
+        application: { findMany: jest.fn().mockResolvedValue([{ ...app, id: "g1" }]) },
+        appServiceDomain: { findMany },
+      } as unknown as PrismaService;
+      await make(prisma, listAccess(), {} as AgentWsServer).list("u1");
+      expect(findMany).not.toHaveBeenCalled();
+    });
+  });
+
   it("uses the domain for a domained app regardless of the server IP", async () => {
     const domained = { ...app, domain: "app.example.com", https: true, hostPort: 8080 };
     const prisma = {

@@ -1458,4 +1458,42 @@ describe("Applications / deploy (e2e)", () => {
       await prisma.user.deleteMany({ where: { email: otherEmail } }).catch(() => undefined);
     }
   });
+  it("a read-only member sees a compose app's per-service links on GET, while the service-domains endpoint stays forbidden", async () => {
+    const compose = "services:\n  web:\n    image: nginx:alpine\n  api:\n    image: nginx:alpine\n";
+    const created = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "links-stack", serverId, source: "COMPOSE", composeFile: compose })
+      .expect(201);
+    const appId = created.body.id as string;
+    await request(app.getHttpServer())
+      .put(`/apps/${appId}/service-domains`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ domains: [{ service: "api", hostname: "api.links-e2e.example.com", port: 80 }] })
+      .expect(200);
+
+    // invite a second user to the team as a VIEWER
+    const viewerEmail = `app-viewer-${Date.now()}-${Math.floor(Math.random() * 1e6)}@tugra.test`;
+    const reg = await request(app.getHttpServer()).post("/auth/register").send({ email: viewerEmail, password, name: "Viewer" }).expect(201);
+    const viewerToken = reg.body.tokens.accessToken as string;
+    try {
+      const inv = await request(app.getHttpServer())
+        .post(`/teams/${teamId}/members/invite`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({ email: viewerEmail, role: "VIEWER" })
+        .expect(201);
+      await request(app.getHttpServer()).post(`/teams/invitations/${inv.body.token}/accept`).set("Authorization", `Bearer ${viewerToken}`).expect(200);
+
+      const view = await request(app.getHttpServer()).get(`/apps/${appId}`).set("Authorization", `Bearer ${viewerToken}`).expect(200);
+      expect(view.body.canWrite).toBe(false);
+      expect(view.body.links).toEqual(expect.arrayContaining([{ kind: "service", url: "https://api.links-e2e.example.com", host: "api.links-e2e.example.com", label: "api" }]));
+      const list = await request(app.getHttpServer()).get("/apps").set("Authorization", `Bearer ${viewerToken}`).expect(200);
+      const listed = (list.body as { id: string; links: { kind: string }[] }[]).find((a) => a.id === appId);
+      expect(listed?.links.some((l) => l.kind === "service")).toBe(true);
+
+      await request(app.getHttpServer()).get(`/apps/${appId}/service-domains`).set("Authorization", `Bearer ${viewerToken}`).expect(403);
+    } finally {
+      await prisma.user.deleteMany({ where: { email: viewerEmail } }).catch(() => undefined);
+    }
+  });
 });

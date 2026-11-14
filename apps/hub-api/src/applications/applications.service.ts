@@ -128,7 +128,7 @@ import { probeSsl } from "./ssl-probe";
 import { AiService } from "./ai.service";
 import { TeamDefaultsService } from "../teams/team-defaults.service";
 import { normalizeTags } from "../common/tags";
-import { appUrl, primaryHostPort } from "../common/app-url";
+import { appLinks, appUrl, primaryHostPort } from "../common/app-url";
 import { magicDomain } from "./magic-domain";
 import { inferComposeWeb } from "../deploy/compose-web";
 import type { CreateAppInput, SetSourceInput, SetBuildInput, SetContainerCommandInput, AppRuntimeState } from "./dto";
@@ -144,6 +144,21 @@ const DEFAULT_DEPLOY_IMAGE_KEEP = 5; // versioned images retained for rollback w
 // -v/--volume/--mount: an adopted container carries its named volume this way; two containers writing
 // one volume during a rolling overlap would corrupt it, so such apps must hard-cutover.
 const RISKY_DOCKER_OPTS = /(^|\s)(--ip6?|-p|--publish|--network|--name|-v|--volume|--mount)(\s|=|$)/;
+/** One externally-openable address of an app (always http or https). */
+export const AppLinkSchema = z.object({
+  kind: z.enum(["primary", "alias", "service", "port"]),
+  url: z.string(),
+  /** Hostname of a domain-backed link; null for a raw IP:port link. */
+  host: z.string().nullable(),
+  /** The compose service (`service` links) or `service:containerPort` (`port` links); null otherwise. */
+  label: z.string().nullable(),
+});
+
+/** Per-call extras `view()` can fold in when the caller already loaded them (list/get batch the service-domain read). */
+interface ViewExtras {
+  serviceDomains?: { service: string; hostname: string; port: number }[];
+}
+
 export const AppViewSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -274,6 +289,10 @@ export const AppViewSchema = z.object({
   certNotAfter: z.date().nullable(),
   hasCustomCert: z.boolean(),
   url: z.string().nullable(),
+  /** Every openable address, primary first: the primary URL, multi-domain aliases, per-service compose domains and
+   *  published compose host ports. Per-service domains are included on `GET /apps` and `GET /apps/:id` only; other
+   *  responses carry the primary and aliases. Never secret. */
+  links: z.array(AppLinkSchema),
   webhookToken: z.string().nullable(),
   webhookSecret: z.string().nullable(),
   isPreview: z.boolean(),
@@ -1129,11 +1148,12 @@ export class ApplicationsService {
     const ctxByEnv = await loadProjectCtxMany(this.prisma, apps.map((a) => a.environmentId));
     const ipByServer = await this.serverIpMap(apps.map((a) => a.serverId));
     // Per-resource scoping: a restricted member only sees apps in projects they're granted.
-    const views = apps
-      .filter((a) => canAccessResource(access.get(a.teamId), a.id, ctxByEnv.get(a.environmentId)?.projectId ?? null))
-      .map((a) =>
-        this.view(a, perms.get(a.teamId)?.has("apps:config") ?? false, perms.get(a.teamId)?.has("apps:deploy") ?? false, ctxByEnv.get(a.environmentId), ipByServer.get(a.serverId) ?? null),
-      );
+    const visible = apps.filter((a) => canAccessResource(access.get(a.teamId), a.id, ctxByEnv.get(a.environmentId)?.projectId ?? null));
+    // Per-service domains feed the `links` field: one batched read for the visible compose apps, none otherwise.
+    const domainsByApp = await this.loadServiceDomainsMany(visible.filter((a) => a.source === "COMPOSE").map((a) => a.id));
+    const views = visible.map((a) =>
+      this.view(a, perms.get(a.teamId)?.has("apps:config") ?? false, perms.get(a.teamId)?.has("apps:deploy") ?? false, ctxByEnv.get(a.environmentId), ipByServer.get(a.serverId) ?? null, { serviceDomains: domainsByApp.get(a.id) ?? [] }),
+    );
     // `?q`: in-memory substring filter over non-secret fields of the already-authorized views.
     return filterByQuery(views, q, (a) => [a.name, a.domain, a.image, a.gitUrl, a.templateSlug]);
   }
@@ -1142,7 +1162,10 @@ export class ApplicationsService {
     const app = await this.require(userId, id);
     const perms = await this.access.membershipPermissions(userId, app.teamId);
     const ctx = await loadProjectCtx(this.prisma, app.environmentId);
-    return this.view(app, perms?.has("apps:config") ?? false, perms?.has("apps:deploy") ?? false, ctx, await this.serverIp(app.serverId));
+    // Per-service domains are non-secret routing facts every viewer sees as links; reading them is not write-gated
+    // (only the dedicated service-domains endpoint is). Only a compose app can have any.
+    const serviceDomains = app.source === "COMPOSE" ? await this.loadServiceDomains(app.id) : [];
+    return this.view(app, perms?.has("apps:config") ?? false, perms?.has("apps:deploy") ?? false, ctx, await this.serverIp(app.serverId), { serviceDomains });
   }
 
   async deploy(userId: string, id: string, opts?: { noCache?: boolean }, idempotencyKey?: string) {
@@ -4093,6 +4116,19 @@ export class ApplicationsService {
     return rows.map((r) => ({ service: r.service, hostname: r.hostname, port: r.port }));
   }
 
+  /** Batched per-service domains for several compose apps (one query, grouped by app); empty input → no query. */
+  private async loadServiceDomainsMany(appIds: string[]): Promise<Map<string, { service: string; hostname: string; port: number }[]>> {
+    const byApp = new Map<string, { service: string; hostname: string; port: number }[]>();
+    if (!appIds.length) return byApp;
+    const rows = await this.prisma.appServiceDomain.findMany({ where: { applicationId: { in: appIds } }, orderBy: { createdAt: "asc" } });
+    for (const r of rows) {
+      const list = byApp.get(r.applicationId) ?? [];
+      list.push({ service: r.service, hostname: r.hostname, port: r.port });
+      byApp.set(r.applicationId, list);
+    }
+    return byApp;
+  }
+
   /**
    * Replace a COMPOSE app's per-service domains — each routes a named compose service (on a port) to its own
    * hostname, applied on the next deploy. Validated like extra domains (panel/primary/cross-app/cert), plus
@@ -4842,7 +4878,20 @@ export class ApplicationsService {
     canDeploy: boolean, // apps:deploy — see/rotate the webhook secret (it triggers a deploy)
     ctx?: ResourceProjectCtx,
     serverIp?: string | null,
+    extras?: ViewExtras,
   ): AppView {
+    // A domainless COMPOSE app is reachable via its portMappings, not the always-null scalar hostPort — derive the
+    // effective port (only when needed) so the URL is never null.
+    const url = appUrl(
+      {
+        domain: app.domain,
+        https: app.https,
+        hostPort:
+          app.hostPort ??
+          (app.domain == null && app.source === "COMPOSE" ? primaryHostPort(app, this.composeWeb(app)) : null),
+      },
+      serverIp ?? null,
+    );
     return {
       id: app.id,
       name: app.name,
@@ -4980,18 +5029,8 @@ export class ApplicationsService {
       certDomains: app.certDomains,
       certNotAfter: app.certNotAfter,
       hasCustomCert: !!app.certPem,
-      // A domainless COMPOSE app is reachable via its portMappings, not the always-null scalar
-      // hostPort — derive the effective port (only when needed) so the URL is never null.
-      url: appUrl(
-        {
-          domain: app.domain,
-          https: app.https,
-          hostPort:
-            app.hostPort ??
-            (app.domain == null && app.source === "COMPOSE" ? primaryHostPort(app, this.composeWeb(app)) : null),
-        },
-        serverIp ?? null,
-      ),
+      url,
+      links: appLinks(app, { publicIp: serverIp ?? null, primaryUrl: url, serviceDomains: extras?.serviceDomains ?? [] }),
       // Webhook credentials are a deploy trigger → only exposed to members who can deploy (NOT to
       // apps:config-only members, who could otherwise self-trigger a deploy via the public webhook).
       webhookToken: canDeploy ? app.webhookToken : null,

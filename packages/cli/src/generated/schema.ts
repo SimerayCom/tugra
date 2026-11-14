@@ -11947,6 +11947,13 @@ export interface operations {
                         certNotAfter: string | null;
                         hasCustomCert: boolean;
                         url: string | null;
+                        links: {
+                            /** @enum {string} */
+                            kind: "primary" | "alias" | "service" | "port";
+                            url: string;
+                            host: string | null;
+                            label: string | null;
+                        }[];
                         webhookToken: string | null;
                         webhookSecret: string | null;
                         isPreview: boolean;
@@ -12252,6 +12259,13 @@ export interface operations {
                         certNotAfter: string | null;
                         hasCustomCert: boolean;
                         url: string | null;
+                        links: {
+                            /** @enum {string} */
+                            kind: "primary" | "alias" | "service" | "port";
+                            url: string;
+                            host: string | null;
+                            label: string | null;
+                        }[];
                         webhookToken: string | null;
                         webhookSecret: string | null;
                         isPreview: boolean;
@@ -12668,6 +12682,13 @@ export interface operations {
                         certNotAfter: string | null;
                         hasCustomCert: boolean;
                         url: string | null;
+                        links: {
+                            /** @enum {string} */
+                            kind: "primary" | "alias" | "service" | "port";
+                            url: string;
+                            host: string | null;
+                            label: string | null;
+                        }[];
                         webhookToken: string | null;
                         webhookSecret: string | null;
                         isPreview: boolean;
@@ -13039,6 +13060,13 @@ export interface operations {
                         certNotAfter: string | null;
                         hasCustomCert: boolean;
                         url: string | null;
+                        links: {
+                            /** @enum {string} */
+                            kind: "primary" | "alias" | "service" | "port";
+                            url: string;
+                            host: string | null;
+                            label: string | null;
+                        }[];
                         webhookToken: string | null;
                         webhookSecret: string | null;
                         isPreview: boolean;
@@ -18928,6 +18956,13 @@ export interface operations {
                             certNotAfter: string | null;
                             hasCustomCert: boolean;
                             url: string | null;
+                            links: {
+                                /** @enum {string} */
+                                kind: "primary" | "alias" | "service" | "port";
+                                url: string;
+                                host: string | null;
+                                label: string | null;
+                            }[];
                             webhookToken: string | null;
                             webhookSecret: string | null;
                             isPreview: boolean;
@@ -19228,6 +19263,13 @@ export interface operations {
                         certNotAfter: string | null;
                         hasCustomCert: boolean;
                         url: string | null;
+                        links: {
+                            /** @enum {string} */
+                            kind: "primary" | "alias" | "service" | "port";
+                            url: string;
+                            host: string | null;
+                            label: string | null;
+                        }[];
                         webhookToken: string | null;
                         webhookSecret: string | null;
                         isPreview: boolean;
@@ -19597,6 +19639,13 @@ export interface operations {
                         certNotAfter: string | null;
                         hasCustomCert: boolean;
                         url: string | null;
+                        links: {
+                            /** @enum {string} */
+                            kind: "primary" | "alias" | "service" | "port";
+                            url: string;
+                            host: string | null;
+                            label: string | null;
+                        }[];
                         webhookToken: string | null;
                         webhookSecret: string | null;
                         isPreview: boolean;
@@ -20024,6 +20073,13 @@ export interface operations {
                         certNotAfter: string | null;
                         hasCustomCert: boolean;
                         url: string | null;
+                        links: {
+                            /** @enum {string} */
+                            kind: "primary" | "alias" | "service" | "port";
+                            url: string;
+                            host: string | null;
+                            label: string | null;
+                        }[];
                         webhookToken: string | null;
                         webhookSecret: string | null;
                         isPreview: boolean;
@@ -21272,6 +21328,13 @@ export interface operations {
                         certNotAfter: string | null;
                         hasCustomCert: boolean;
                         url: string | null;
+                        links: {
+                            /** @enum {string} */
+                            kind: "primary" | "alias" | "service" | "port";
+                            url: string;
+                            host: string | null;
+                            label: string | null;
+                        }[];
                         webhookToken: string | null;
                         webhookSecret: string | null;
                         isPreview: boolean;

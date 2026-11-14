@@ -11864,6 +11864,41 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "links": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "primary",
+                                "alias",
+                                "service",
+                                "port"
+                              ]
+                            },
+                            "url": {
+                              "type": "string"
+                            },
+                            "host": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "label": {
+                              "type": "string",
+                              "nullable": true
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "url",
+                            "host",
+                            "label"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
                       "webhookToken": {
                         "type": "string",
                         "nullable": true
@@ -12049,6 +12084,7 @@
                       "certNotAfter",
                       "hasCustomCert",
                       "url",
+                      "links",
                       "webhookToken",
                       "webhookSecret",
                       "isPreview",
@@ -13050,6 +13086,41 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "links": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "primary",
+                              "alias",
+                              "service",
+                              "port"
+                            ]
+                          },
+                          "url": {
+                            "type": "string"
+                          },
+                          "host": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "label": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "url",
+                          "host",
+                          "label"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "webhookToken": {
                       "type": "string",
                       "nullable": true
@@ -13235,6 +13306,7 @@
                     "certNotAfter",
                     "hasCustomCert",
                     "url",
+                    "links",
                     "webhookToken",
                     "webhookSecret",
                     "isPreview",
@@ -14303,6 +14375,41 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "links": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "primary",
+                              "alias",
+                              "service",
+                              "port"
+                            ]
+                          },
+                          "url": {
+                            "type": "string"
+                          },
+                          "host": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "label": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "url",
+                          "host",
+                          "label"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "webhookToken": {
                       "type": "string",
                       "nullable": true
@@ -14488,6 +14595,7 @@
                     "certNotAfter",
                     "hasCustomCert",
                     "url",
+                    "links",
                     "webhookToken",
                     "webhookSecret",
                     "isPreview",
@@ -15560,6 +15668,41 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "links": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "primary",
+                              "alias",
+                              "service",
+                              "port"
+                            ]
+                          },
+                          "url": {
+                            "type": "string"
+                          },
+                          "host": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "label": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "url",
+                          "host",
+                          "label"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "webhookToken": {
                       "type": "string",
                       "nullable": true
@@ -15745,6 +15888,7 @@
                     "certNotAfter",
                     "hasCustomCert",
                     "url",
+                    "links",
                     "webhookToken",
                     "webhookSecret",
                     "isPreview",
@@ -25039,6 +25183,41 @@
                           "type": "string",
                           "nullable": true
                         },
+                        "links": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "primary",
+                                  "alias",
+                                  "service",
+                                  "port"
+                                ]
+                              },
+                              "url": {
+                                "type": "string"
+                              },
+                              "host": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "label": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "url",
+                              "host",
+                              "label"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
                         "webhookToken": {
                           "type": "string",
                           "nullable": true
@@ -25224,6 +25403,7 @@
                         "certNotAfter",
                         "hasCustomCert",
                         "url",
+                        "links",
                         "webhookToken",
                         "webhookSecret",
                         "isPreview",
@@ -26155,6 +26335,41 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "links": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "primary",
+                              "alias",
+                              "service",
+                              "port"
+                            ]
+                          },
+                          "url": {
+                            "type": "string"
+                          },
+                          "host": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "label": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "url",
+                          "host",
+                          "label"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "webhookToken": {
                       "type": "string",
                       "nullable": true
@@ -26340,6 +26555,7 @@
                     "certNotAfter",
                     "hasCustomCert",
                     "url",
+                    "links",
                     "webhookToken",
                     "webhookSecret",
                     "isPreview",
@@ -27341,6 +27557,41 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "links": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "primary",
+                                "alias",
+                                "service",
+                                "port"
+                              ]
+                            },
+                            "url": {
+                              "type": "string"
+                            },
+                            "host": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "label": {
+                              "type": "string",
+                              "nullable": true
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "url",
+                            "host",
+                            "label"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
                       "webhookToken": {
                         "type": "string",
                         "nullable": true
@@ -27526,6 +27777,7 @@
                       "certNotAfter",
                       "hasCustomCert",
                       "url",
+                      "links",
                       "webhookToken",
                       "webhookSecret",
                       "isPreview",
@@ -28612,6 +28864,41 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "links": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "primary",
+                              "alias",
+                              "service",
+                              "port"
+                            ]
+                          },
+                          "url": {
+                            "type": "string"
+                          },
+                          "host": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "label": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "url",
+                          "host",
+                          "label"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "webhookToken": {
                       "type": "string",
                       "nullable": true
@@ -28797,6 +29084,7 @@
                     "certNotAfter",
                     "hasCustomCert",
                     "url",
+                    "links",
                     "webhookToken",
                     "webhookSecret",
                     "isPreview",
@@ -31126,6 +31414,41 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "links": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "primary",
+                              "alias",
+                              "service",
+                              "port"
+                            ]
+                          },
+                          "url": {
+                            "type": "string"
+                          },
+                          "host": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "label": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "url",
+                          "host",
+                          "label"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "webhookToken": {
                       "type": "string",
                       "nullable": true
@@ -31311,6 +31634,7 @@
                     "certNotAfter",
                     "hasCustomCert",
                     "url",
+                    "links",
                     "webhookToken",
                     "webhookSecret",
                     "isPreview",

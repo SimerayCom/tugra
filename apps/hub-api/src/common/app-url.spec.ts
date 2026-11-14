@@ -1,4 +1,4 @@
-import { appUrl, primaryHostPort } from "./app-url";
+import { appLinks, appUrl, primaryHostPort, MAX_APP_LINKS } from "./app-url";
 
 describe("appUrl", () => {
   it("uses the domain with https when https is on", () => {
@@ -70,5 +70,86 @@ describe("primaryHostPort", () => {
 
   it("returns null for a non-COMPOSE domainless app with no scalar hostPort", () => {
     expect(primaryHostPort({ hostPort: null, source: "IMAGE", portMappings: maps }, null)).toBeNull();
+  });
+});
+
+describe("appLinks", () => {
+  const none = { serviceDomains: [] as { service: string; hostname: string }[] };
+  const mk = (over: Partial<Parameters<typeof appLinks>[0]> = {}) => ({ domain: null, extraDomains: [], source: "IMAGE", portMappings: null, ...over });
+
+  it("a domained app's primary link carries its host and keeps links[0].url === url", () => {
+    const url = appUrl({ domain: "app.example.com", https: true, hostPort: null }, null);
+    expect(appLinks(mk({ domain: "app.example.com" }), { ...none, publicIp: null, primaryUrl: url })).toEqual([
+      { kind: "primary", url: "https://app.example.com", host: "app.example.com", label: null },
+    ]);
+    const http = appUrl({ domain: "app.example.com", https: false, hostPort: null }, null);
+    expect(appLinks(mk({ domain: "app.example.com" }), { ...none, publicIp: null, primaryUrl: http })[0].url).toBe("http://app.example.com");
+  });
+
+  it("a domainless app with a host port links to ip:port with no host; without an IP it has no links", () => {
+    const url = appUrl({ domain: null, https: true, hostPort: 8080 }, "203.0.113.7");
+    expect(appLinks(mk(), { ...none, publicIp: "203.0.113.7", primaryUrl: url })).toEqual([
+      { kind: "primary", url: "http://203.0.113.7:8080", host: null, label: null },
+    ]);
+    expect(appLinks(mk(), { ...none, publicIp: null, primaryUrl: null })).toEqual([]);
+  });
+
+  it("brackets an IPv6 literal on a compose port link", () => {
+    const links = appLinks(
+      mk({ source: "COMPOSE", portMappings: [{ serviceName: "db", containerPort: 5432, hostPort: 15432, mode: "hostPort" }] }),
+      { ...none, publicIp: "2001:db8::1", primaryUrl: null },
+    );
+    expect(links).toEqual([{ kind: "port", url: "http://[2001:db8::1]:15432", host: null, label: "db:5432" }]);
+  });
+
+  it("aliases and service domains are https even when the primary is plain http", () => {
+    const links = appLinks(mk({ domain: "app.example.com", extraDomains: ["alias.example.com"] }), {
+      publicIp: null,
+      primaryUrl: "http://app.example.com",
+      serviceDomains: [{ service: "api", hostname: "api.example.com" }],
+    });
+    expect(links.map((l) => [l.kind, l.url, l.host, l.label])).toEqual([
+      ["primary", "http://app.example.com", "app.example.com", null],
+      ["alias", "https://alias.example.com", "alias.example.com", null],
+      ["service", "https://api.example.com", "api.example.com", "api"],
+    ]);
+  });
+
+  it("dedupes by url (first wins) and skips an alias equal to the primary or its www/bare twin", () => {
+    const links = appLinks(mk({ domain: "www.example.com", extraDomains: ["www.example.com", "example.com", "WWW.example.com", "b.example.com", "b.example.com"] }), {
+      publicIp: null,
+      primaryUrl: "https://www.example.com",
+      serviceDomains: [{ service: "web", hostname: "b.example.com" }],
+    });
+    expect(links.map((l) => l.url)).toEqual(["https://www.example.com", "https://b.example.com"]);
+    expect(links[1].kind).toBe("alias"); // first writer wins over the service row
+  });
+
+  it("only hostPort-mode compose mappings become port links", () => {
+    const links = appLinks(
+      mk({
+        source: "COMPOSE",
+        domain: "app.example.com",
+        portMappings: [
+          { serviceName: "web", containerPort: 80, hostPort: 8081, mode: "domain" },
+          { serviceName: "db", containerPort: 5432, hostPort: 15432, mode: "hostPort" },
+        ],
+      }),
+      { ...none, publicIp: "203.0.113.7", primaryUrl: "https://app.example.com" },
+    );
+    expect(links.map((l) => l.url)).toEqual(["https://app.example.com", "http://203.0.113.7:15432"]);
+    // a non-compose app never gets port links from stale mappings, nor does a compose app with no IP
+    expect(appLinks(mk({ source: "GIT", portMappings: [{ serviceName: "x", containerPort: 1, hostPort: 2, mode: "hostPort" }] }), { ...none, publicIp: "1.1.1.1", primaryUrl: null })).toEqual([]);
+    expect(appLinks(mk({ source: "COMPOSE", portMappings: [{ serviceName: "x", containerPort: 1, hostPort: 2, mode: "hostPort" }] }), { ...none, publicIp: null, primaryUrl: null })).toEqual([]);
+  });
+
+  it("caps the list", () => {
+    const extra = Array.from({ length: 80 }, (_, i) => `a${i}.example.com`);
+    expect(appLinks(mk({ domain: "app.example.com", extraDomains: extra }), { ...none, publicIp: null, primaryUrl: "https://app.example.com" })).toHaveLength(MAX_APP_LINKS);
+  });
+
+  it("every emitted url is http(s)", () => {
+    const links = appLinks(mk({ domain: "app.example.com", extraDomains: ["x.example.com"] }), { publicIp: "1.2.3.4", primaryUrl: "https://app.example.com", serviceDomains: [{ service: "s", hostname: "s.example.com" }] });
+    for (const l of links) expect(l.url).toMatch(/^https?:\/\//);
   });
 });

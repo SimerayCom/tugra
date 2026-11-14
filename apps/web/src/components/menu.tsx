@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type FocusEvent } from "react";
-import { Ellipsis, type LucideIcon } from "lucide-react";
+import { ChevronDown, Ellipsis, type LucideIcon } from "lucide-react";
+import { safeExternalUrl } from "../lib/external-link";
 import { useDismiss } from "../lib/use-dismiss";
 
 export interface MenuItem {
@@ -14,7 +15,10 @@ export interface MenuItem {
   danger?: boolean;
   disabled?: boolean;
   title?: string;
-  onSelect: () => void;
+  /** Render the item as a real link (opens in a new tab) so Ctrl/Cmd-click and "copy link" work. Only http(s)
+   *  URLs are ever linked; anything else falls back to a plain button, and `onSelect` is optional with an href. */
+  href?: string;
+  onSelect?: () => void;
 }
 
 /**
@@ -26,13 +30,15 @@ export interface MenuItem {
  *    disabled flags never drop focus to <body>); activating one is a no-op
  *  - Enter/Space select (native button click); Escape and Tab close and return focus to the trigger
  *  - outside pointer-down (useDismiss) and focus leaving the menu (onBlur) both close it
- * Items carry their own icon/tone/danger; the menu owns only open state and focus.
+ * Items carry their own icon/tone/danger; the menu owns only open state and focus. An item with an `href` is a
+ * real anchor (new tab); a `trigger` renders a labelled button instead of the bare "…" icon.
  */
 export function Menu({
   items,
   label,
   align = "end",
   size = 16,
+  trigger,
 }: {
   items: MenuItem[];
   /** Accessible name for the trigger and the menu. */
@@ -40,12 +46,14 @@ export function Menu({
   /** Which edge the popover aligns to (default: right/end). */
   align?: "start" | "end";
   size?: number;
+  /** Labelled button trigger (icon + text + chevron) instead of the bare "…" icon button. */
+  trigger?: { label: string; icon?: LucideIcon };
 }) {
   const [open, setOpen] = useState(false);
   const [activeIdx, setActiveIdx] = useState(0);
   const wrapRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const itemRefs = useRef<Array<HTMLElement | null>>([]);
   // Latest items/length read without making the open-effect depend on the (new-every-render) array.
   const itemsRef = useRef(items);
   itemsRef.current = items;
@@ -89,6 +97,10 @@ export function Menu({
       case "Escape": e.preventDefault(); e.stopPropagation(); close(true); break;
       // Close and return focus to the trigger, but let the browser's own Tab then move on from there.
       case "Tab": close(true); break;
+      // A focused anchor only activates natively on Enter; give it Space like a button.
+      case " ":
+        if (e.target instanceof HTMLAnchorElement) { e.preventDefault(); e.target.click(); }
+        break;
       default: break;
     }
   };
@@ -109,7 +121,7 @@ export function Menu({
   const select = (it: MenuItem) => {
     if (it.disabled) return;
     close(true);
-    it.onSelect();
+    it.onSelect?.();
   };
 
   const toneColor = (tone?: string) =>
@@ -123,16 +135,28 @@ export function Menu({
       <button
         ref={triggerRef}
         type="button"
-        className="tg-iconbtn"
-        aria-label={label}
+        className={trigger ? "tg-btn" : "tg-iconbtn"}
+        aria-label={trigger ? undefined : label}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
         onClick={() => (open ? close(true) : setOpen(true))}
         onKeyDown={onTriggerKeyDown}
-        style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 6, borderRadius: "var(--r1)", cursor: "pointer", fontFamily: "inherit", fontSize: 14, lineHeight: 1 }}
+        style={
+          trigger
+            ? { display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 10px", borderRadius: "var(--r1)", background: "var(--c-el)", color: "var(--c-tx)", border: "1px solid var(--c-bd)", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 600 }
+            : { display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 6, borderRadius: "var(--r1)", cursor: "pointer", fontFamily: "inherit", fontSize: 14, lineHeight: 1 }
+        }
       >
-        <Ellipsis size={size} aria-hidden />
+        {trigger ? (
+          <>
+            {trigger.icon && <trigger.icon size={14} aria-hidden />}
+            {trigger.label}
+            <ChevronDown size={13} aria-hidden />
+          </>
+        ) : (
+          <Ellipsis size={size} aria-hidden />
+        )}
       </button>
       {open && (
         <div
@@ -157,26 +181,24 @@ export function Menu({
             boxShadow: "0 6px 20px rgba(0,0,0,0.25)",
           }}
         >
-          {items.map((it, i) => (
-            <button
-              key={it.key}
-              ref={(el) => {
+          {items.map((it, i) => {
+            const href = safeExternalUrl(it.href);
+            const common = {
+              ref: (el: HTMLElement | null) => {
                 itemRefs.current[i] = el;
-              }}
-              type="button"
-              role="menuitem"
-              tabIndex={i === activeIdx ? 0 : -1}
-              aria-disabled={it.disabled || undefined}
-              title={it.title}
-              onClick={() => select(it)}
-              onFocus={() => setActiveIdx(i)}
-              className="tg-menuitem"
-              style={{
+              },
+              role: "menuitem" as const,
+              tabIndex: i === activeIdx ? 0 : -1,
+              "aria-disabled": it.disabled || undefined,
+              title: it.title,
+              onFocus: () => setActiveIdx(i),
+              className: "tg-menuitem",
+              style: {
                 display: "inline-flex",
                 alignItems: "center",
                 gap: 8,
                 width: "100%",
-                textAlign: "left",
+                textAlign: "left" as const,
                 padding: "7px 10px",
                 border: "1px solid transparent",
                 borderRadius: "var(--r1)",
@@ -186,12 +208,27 @@ export function Menu({
                 fontWeight: 500,
                 cursor: it.disabled ? "default" : "pointer",
                 opacity: it.disabled ? 0.5 : 1,
-              }}
-            >
-              {it.icon && <it.icon size={14} aria-hidden style={{ flexShrink: 0, color: it.danger ? "var(--c-r)" : toneColor(it.tone) }} />}
-              {it.label}
-            </button>
-          ))}
+                textDecoration: "none",
+                boxSizing: "border-box" as const,
+              },
+            };
+            const content = (
+              <>
+                {it.icon && <it.icon size={14} aria-hidden style={{ flexShrink: 0, color: it.danger ? "var(--c-r)" : toneColor(it.tone) }} />}
+                {it.label}
+              </>
+            );
+            // A link item navigates natively (so Ctrl/Cmd-click and copy-link work); clicking just closes the menu.
+            return href && !it.disabled ? (
+              <a key={it.key} {...common} href={href} target="_blank" rel="noopener noreferrer" onClick={() => { close(true); it.onSelect?.(); }}>
+                {content}
+              </a>
+            ) : (
+              <button key={it.key} {...common} type="button" onClick={() => select(it)}>
+                {content}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>

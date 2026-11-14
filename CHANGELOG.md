@@ -36,6 +36,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Codeberg) for a Git or Git-compose app, or unlink it, without leaving the app. Only this team's providers for
   the repository's host are offered, and a linked provider takes precedence over a stored personal access token.
   `GET /git-sources` now also returns each source's `cloneHost`.
+- **"Links" menu in the app header.** Apps with more than one address (alias domains, per-service domains on a
+  compose app, published compose ports) get a "Links (n)" menu that opens each one in a new tab, visible to every
+  viewer; the Overview's Live URL row lists them all. Apps and `GET /apps` responses gain a `links` array (primary
+  first); per-service domains are included on `GET /apps` and `GET /apps/:id` only.
 
 ## [0.1.0-beta.12] - 2026-11-14
 

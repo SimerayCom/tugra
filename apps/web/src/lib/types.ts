@@ -1097,6 +1097,18 @@ export interface Environment {
   createdAt: string;
 }
 
+export type AppLinkKind = "primary" | "alias" | "service" | "port";
+
+/** One externally-openable address of an app (always http or https). */
+export interface AppLink {
+  kind: AppLinkKind;
+  url: string;
+  /** Hostname of a domain-backed link; null for a raw IP:port. */
+  host: string | null;
+  /** The compose service (`service`) or `service:containerPort` (`port`); null otherwise. */
+  label: string | null;
+}
+
 export interface Project {
   id: string;
   teamId: string;
@@ -1294,6 +1306,8 @@ export interface Application {
   containerPort: number | null;
   domain: string | null;
   extraDomains: string[];
+  /** Every openable address, primary first (aliases, per-service domains, published compose ports follow). */
+  links: AppLink[];
   domainRedirect: "www" | "root" | null;
   securityHeaders: boolean;
   gzip: boolean;
