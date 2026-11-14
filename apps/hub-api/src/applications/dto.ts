@@ -116,6 +116,22 @@ export const SetBuildArgsSchema = z.object({
 });
 export type SetBuildArgsInput = z.infer<typeof SetBuildArgsSchema>;
 
+// Build-time SECRETS: BuildKit `--secret id=<KEY>,src=<file>` mounts for DOCKERFILE builds. The key is the mount
+// id, interpolated into the build command unquoted → strict identifier charset (shell-safe by construction).
+export const BUILD_SECRET_KEY = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
+// The whole deploy script (secrets included, base64 → ×4/3) travels as ONE `bash -c` argument, whose limit is
+// 128KiB on Linux — so the aggregate is capped well under it rather than per value only.
+export const BUILD_SECRETS_MAX_TOTAL_BYTES = 48 * 1024;
+export const SetBuildSecretsSchema = z.object({
+  buildSecrets: z
+    .record(z.string().regex(BUILD_SECRET_KEY, "secret ids must be identifiers (letters, digits, _)"), z.string().max(BUILD_SECRETS_MAX_TOTAL_BYTES))
+    .refine((r) => Object.keys(r).length <= 64, { message: "at most 64 build secrets" })
+    .refine((r) => Object.values(r).reduce((n, v) => n + Buffer.byteLength(v, "utf8"), 0) <= BUILD_SECRETS_MAX_TOTAL_BYTES, {
+      message: `build secrets total at most ${BUILD_SECRETS_MAX_TOTAL_BYTES / 1024}KB`,
+    }),
+});
+export type SetBuildSecretsInput = z.infer<typeof SetBuildSecretsSchema>;
+
 export const RenameSchema = z.object({
   name: z.string().min(1).max(100),
 });

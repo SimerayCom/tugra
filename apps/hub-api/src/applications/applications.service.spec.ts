@@ -1878,7 +1878,7 @@ describe("ApplicationsService", () => {
     const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...gitApp, buildType: "DOCKERFILE", dockerfilePath: "Dockerfile" }), update }, deployment: noActiveDeploy } as unknown as PrismaService;
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     await make(prisma, access, {} as AgentWsServer).setBuild("u1", "app1", { buildType: "STATIC", buildCommand: "npm run build", outputDir: "build" });
-    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { buildType: "STATIC", dockerfilePath: null, dockerBuildTarget: null, buildCommand: "npm run build", outputDir: "build", nixpacksInstallCmd: null, nixpacksBuildCmd: null, nixpacksStartCmd: null, baseDirectory: null } }));
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { buildType: "STATIC", dockerfilePath: null, dockerBuildTarget: null, buildCommand: "npm run build", outputDir: "build", nixpacksInstallCmd: null, nixpacksBuildCmd: null, nixpacksStartCmd: null, baseDirectory: null, buildSecretsEnc: null } })); // leaving Dockerfile drops the build secrets
   });
 
   it("setBuild NIXPACKS persists the command overrides (and a non-nixpacks type clears them)", async () => {
@@ -2003,6 +2003,62 @@ describe("ApplicationsService", () => {
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { buildArgsEnc: 'enc({"API_URL":"x"})' } }),
     );
+  });
+
+  it("build secrets: stored encrypted (null when emptied), Dockerfile-GIT only, audited by KEY only", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const mk = (over: Record<string, unknown>) =>
+      make(
+        { application: { findUnique: jest.fn().mockResolvedValue({ ...app, source: "GIT", buildType: "DOCKERFILE", ...over }), update } } as unknown as PrismaService,
+        { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService,
+        {} as AgentWsServer,
+      );
+    await mk({}).setBuildSecrets("u1", "app1", { NPM_TOKEN: "npm_x" });
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { buildSecretsEnc: 'enc({"NPM_TOKEN":"npm_x"})' } }));
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "app.build_secrets.update", meta: { keys: ["NPM_TOKEN"] } }));
+    expect(JSON.stringify((audit.log as jest.Mock).mock.calls.at(-1))).not.toContain("npm_x");
+    await mk({}).setBuildSecrets("u1", "app1", {});
+    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ data: { buildSecretsEnc: null } }));
+    await expect(mk({ buildType: "NIXPACKS" }).setBuildSecrets("u1", "app1", { A: "b" })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(mk({ source: "IMAGE" }).setBuildSecrets("u1", "app1", { A: "b" })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(mk({ buildType: "NIXPACKS" }).setBuildSecrets("u1", "app1", {})).resolves.toBeUndefined(); // clearing is always allowed
+  });
+
+  it("getBuildSecrets is writer-only and decrypts the stored map ({} when none / undecryptable)", async () => {
+    const mk = (row: Record<string, unknown>, perm = jest.fn().mockResolvedValue(undefined)) =>
+      make({ application: { findUnique: jest.fn().mockResolvedValue({ ...app, ...row }) } } as unknown as PrismaService, { requirePermission: perm } as unknown as TeamAccessService, {} as AgentWsServer);
+    expect(await mk({ buildSecretsEnc: '{"A":"b"}' }).getBuildSecrets("u1", "app1")).toEqual({ A: "b" });
+    expect(await mk({ buildSecretsEnc: null }).getBuildSecrets("u1", "app1")).toEqual({});
+    expect(await mk({ buildSecretsEnc: "not-json" }).getBuildSecrets("u1", "app1")).toEqual({});
+    await expect(mk({}, jest.fn().mockRejectedValue(new ForbiddenException("nope"))).getBuildSecrets("u1", "app1")).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it("a deploy hydrates the stored build secrets into the Dockerfile build (mount flags, never the plaintext as a build arg)", async () => {
+    const dockerApp = { ...app, source: "GIT", gitUrl: "https://github.com/acme/app.git", gitBranch: "main", buildType: "DOCKERFILE", image: null, buildSecretsEnc: '{"NPM_TOKEN":"npm_x"}' };
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(dockerApp), update: jest.fn().mockResolvedValue({}) },
+      deployment: {
+        create: jest.fn().mockResolvedValue({ id: "d1", createdAt: new Date() }),
+        update: jest.fn().mockResolvedValue({}),
+        findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "SUCCESS" }),
+        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    let sentCmd = "";
+    const agentWs = {
+      sendCommand: jest.fn().mockImplementation((_s: string, cmd: string, cap: string) => {
+        if (cap === "deploy") sentCmd = cmd;
+        return Promise.resolve({ exitCode: 0, output: "ok" });
+      }),
+    } as unknown as AgentWsServer;
+    await make(prisma, access, agentWs).deploy("u1", "app1");
+    expect(sentCmd).toContain('--secret id=NPM_TOKEN,src="$sd/bs_NPM_TOKEN"');
+    expect(sentCmd).toContain("DOCKER_BUILDKIT=1 docker build");
+    expect(sentCmd).not.toContain("--build-arg 'NPM_TOKEN");
+    expect(sentCmd).not.toContain("npm_x");
   });
 
   it("forbids a non-writer from setting resource limits", async () => {
@@ -4367,6 +4423,7 @@ describe("ApplicationsService.clone", () => {
     gitTokenEnc: "GITENC",
     registryAuthEnc: null,
     buildArgsEnc: null,
+    buildSecretsEnc: "BSENC",
     volumes: [{ name: "data", path: "/data" }],
     hostMounts: null,
     portMappings: null,
@@ -4396,6 +4453,7 @@ describe("ApplicationsService.clone", () => {
     expect(data.name).toBe("shop (copy)");
     expect(data.envEnc).toBe("ENVENC"); // encrypted blob copied verbatim
     expect(data.gitTokenEnc).toBe("GITENC");
+    expect(data.buildSecretsEnc).toBe("BSENC");
     expect(data.webhookToken).toBeDefined();
     expect(data.webhookToken).not.toBe("srctok"); // fresh webhook
     expect(data.certPem).toBeUndefined(); // custom cert NOT copied (DB default null)

@@ -1071,6 +1071,44 @@ describe("deploy-script", () => {
     expect(railpack).toContain("--env 'API_URL=https://api.x'");
   });
 
+  it("build SECRETS: Dockerfile builds mount each as a BuildKit secret from a 0600 file in the wiped secrets dir — the value never appears in the command, the image gets no --build-arg for it", () => {
+    const git = { ...base, source: "GIT" as const, gitUrl: "https://x/y.git", buildType: "DOCKERFILE" as const, buildSecrets: { NPM_TOKEN: "npm_s3cr3t", "bad-key": "x" } };
+    const s = buildRunScript(git, "v1");
+    expect(s).toContain("DOCKER_BUILDKIT=1 docker build ");
+    expect(s).toContain('--secret id=NPM_TOKEN,src="$sd/bs_NPM_TOKEN" ');
+    expect(s).toContain(`printf %s '${Buffer.from("npm_s3cr3t").toString("base64")}' | base64 -d > "$sd/bs_NPM_TOKEN"`);
+    expect(s).toContain('chmod 600 "$sd/bs_NPM_TOKEN"');
+    expect(s).toContain("trap 'rm -rf $TUGRA_SEC_DIRS' EXIT INT TERM HUP"); // the secrets dir is wiped with the script
+    // a SIGKILLed run (timeout/cancel) can't run its trap: every run sweeps stale dirs first, age-gated past any live build
+    const sweepIdx = s.indexOf("find /etc/tugra/builds -maxdepth 1 -type d -name '.sec.*' -mmin +1440 -exec rm -rf {} +");
+    expect(sweepIdx).toBeGreaterThan(-1);
+    expect(sweepIdx).toBeLessThan(s.indexOf("sd=$(mktemp -d /etc/tugra/builds/.sec.XXXXXX)"));
+    // the secret files die right after the build, before push/health/soak (order: files written → build → rm)
+    const lines = s.split("\n");
+    const wrote = lines.findIndex((l) => l.includes('> "$sd/bs_NPM_TOKEN"'));
+    const built = lines.findIndex((l) => l.startsWith("DOCKER_BUILDKIT=1 docker build "));
+    const shredded = lines.findIndex((l) => l === 'rm -f "$sd"/bs_*');
+    expect(wrote).toBeGreaterThan(-1);
+    expect(wrote).toBeLessThan(built);
+    expect(built).toBeLessThan(shredded);
+    expect(s).not.toContain("npm_s3cr3t"); // plaintext never in the script text
+    expect(s).not.toContain("--build-arg 'NPM_TOKEN"); // a secret is never also a (history-visible) build arg
+    expect(s).not.toContain("bad-key"); // a non-identifier id is dropped, never interpolated into the command
+    // a build without secrets is byte-identical to before (no BuildKit prefix, no secrets dir)
+    const plain = buildRunScript({ ...git, buildSecrets: {} }, "v1");
+    expect(plain).not.toContain("DOCKER_BUILDKIT");
+    expect(plain).not.toContain("--secret");
+    // non-Dockerfile builders have no mount contract → the secrets are ignored (never --env'd into the image)
+    const nix = buildRunScript({ ...git, buildType: "NIXPACKS" }, "v1");
+    expect(nix).not.toContain("--secret");
+    expect(nix).not.toContain("npm_s3cr3t");
+    expect(nix).toContain("TUGRA: 1 build secret(s) are set but this build pack cannot mount them"); // said in the build log, never silent
+    // the build-server variant shares the same steps, so secrets reach a separate build server too
+    const buildOnly = buildBuildOnlyScript(git, "v1");
+    expect(buildOnly).toContain('--secret id=NPM_TOKEN,src="$sd/bs_NPM_TOKEN" ');
+    expect(buildOnly).not.toContain("npm_s3cr3t");
+  });
+
   it("adds no build-arg/env flags when there are no build args", () => {
     const s = buildRunScript({ ...base, source: "GIT", gitUrl: "https://x/y.git", buildType: "DOCKERFILE" }, "v1");
     expect(s).not.toContain("--build-arg");

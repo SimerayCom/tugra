@@ -55,6 +55,8 @@ import {
   SetIconSchema,
   SetBuildArgsInput,
   SetBuildArgsSchema,
+  SetBuildSecretsInput,
+  SetBuildSecretsSchema,
   SetComposeFileInput,
   SetComposeFileSchema,
   SetSourceInput,
@@ -377,6 +379,12 @@ export class ApplicationsController {
     return this.apps.getBuildArgs(user.userId, id);
   }
 
+  @Get(":id/build-secrets")
+  @RequireScopes("read:secrets")
+  getBuildSecrets(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.apps.getBuildSecrets(user.userId, id);
+  }
+
   // Database links: attach a managed DB so its connection URI is auto-injected into the app's env at
   // deploy. The list carries NO secrets (never the URI/host/password), so it needs no read:secrets scope.
   @Get(":id/database-links")
@@ -647,6 +655,19 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetBuildArgsSchema)) body: SetBuildArgsInput,
   ) {
     await this.apps.setBuildArgs(user.userId, id, body.buildArgs);
+    return { ok: true };
+  }
+
+  // Build-time SECRETS: BuildKit `--secret` mounts for Dockerfile builds (never in layers / history / pushed image).
+  @Put(":id/build-secrets")
+  @HttpCode(200)
+  @ApiZodBody(SetBuildSecretsSchema)
+  async setBuildSecrets(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetBuildSecretsSchema)) body: SetBuildSecretsInput,
+  ) {
+    await this.apps.setBuildSecrets(user.userId, id, body.buildSecrets);
     return { ok: true };
   }
 

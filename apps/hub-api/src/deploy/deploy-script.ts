@@ -117,6 +117,12 @@ export interface AppSpec {
   env: Record<string, string>;
   /** Build-time variables injected during image build (separate from runtime env). */
   buildArgs?: Record<string, string>;
+  /** Build-time SECRETS for DOCKERFILE builds: each key is mounted as a BuildKit secret (`--secret id=KEY,src=file`,
+   *  read via `RUN --mount=type=secret,id=KEY`), so the value never enters a layer, `docker history` or a pushed
+   *  image — unlike a build arg. Keys are identifiers (DTO-validated); values are written to a 0600 file in the
+   *  wiped secrets dir (the docker argv sees only the path; the script text itself does carry the base64 while
+   *  the build runs). Ignored for non-Dockerfile builders (no mount contract there; the build log says so). */
+  buildSecrets?: Record<string, string>;
   /** Raw extra flags appended to `docker run` (advanced; passed through verbatim). */
   dockerOptions?: string | null;
   /** Exec-form argv overriding the image ENTRYPOINT (IMAGE/GIT classic). `[]` clears the image entrypoint
@@ -493,13 +499,20 @@ export function gitAuthUrl(gitUrl: string): string {
  * `trap … "$sd"` would be replaced by the second call and orphan the first dir on disk.
  * mktemp paths under /etc/tugra/builds contain no spaces, so the unquoted expansion is safe.
  */
+/** Minutes after which a leftover secrets dir is certainly orphaned: well past the longest deploy (3600s max
+ *  deployTimeoutSec + soak budget), so a sweep can never remove a dir a still-running build is using. */
+const SECRETS_DIR_STALE_MIN = 24 * 60;
+
 function secretsDirPrelude(): string[] {
   return [
     "mkdir -p /etc/tugra/builds",
+    // The EXIT trap below cannot run when the agent SIGKILLs a timed-out / cancelled script, so every run first
+    // sweeps dirs that an earlier killed run left behind (age-gated far beyond any live build). Best-effort.
+    `find /etc/tugra/builds -maxdepth 1 -type d -name '.sec.*' -mmin +${SECRETS_DIR_STALE_MIN} -exec rm -rf {} + 2>/dev/null || true`,
     "sd=$(mktemp -d /etc/tugra/builds/.sec.XXXXXX)",
     'chmod 700 "$sd"',
     'TUGRA_SEC_DIRS="${TUGRA_SEC_DIRS:+$TUGRA_SEC_DIRS }$sd"',
-    "trap 'rm -rf $TUGRA_SEC_DIRS' EXIT",
+    "trap 'rm -rf $TUGRA_SEC_DIRS' EXIT INT TERM HUP",
   ];
 }
 
@@ -859,6 +872,30 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
   const buildEnvFlags = ba
     ? " " + Object.entries(ba).map(([k, v]) => `--env ${shq(`${k}=${v}`)}`).join(" ")
     : "";
+  // Build SECRETS (DOCKERFILE only): one 0600 file per secret inside the wiped secrets dir, mounted with BuildKit
+  // `--secret id=K,src=$sd/bs_K`. The Dockerfile reads it at `/run/secrets/K` inside `RUN --mount=type=secret,
+  // id=K …` — the image, its history and a pushed copy keep no trace of it, and the docker argv carries only the
+  // file path. HONEST LIMIT: the value (base64) is part of this script, i.e. of the agent shell's command line
+  // on the build host while the build runs (root-readable there, like the git/registry tokens already are); a
+  // protocol-level side channel is the stronger fix. The file is removed right after the build and the dir with
+  // the EXIT trap (+ the stale sweep for killed runs). DOCKER_BUILDKIT=1 is set explicitly so an older daemon
+  // default can't silently fall back to the legacy builder (which would reject --secret and fail loudly).
+  const bs = app.buildSecrets && Object.keys(app.buildSecrets).length ? app.buildSecrets : null;
+  const secretKeys = bs ? Object.keys(bs).filter((k) => /^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(k)) : [];
+  const secretSteps = secretKeys.length
+    ? [
+        ...secretsDirPrelude(),
+        ...secretKeys.flatMap((k) => [`printf %s ${shq(b64(bs![k]))} | base64 -d > "$sd/bs_${k}"`, `chmod 600 "$sd/bs_${k}"`]),
+      ]
+    : [];
+  const secretFlags = secretKeys.map((k) => `--secret id=${k},src="$sd/bs_${k}" `).join("");
+  const buildKit = secretKeys.length ? "DOCKER_BUILDKIT=1 " : "";
+  // Secrets stored while the app was a Dockerfile build, then the build pack changed: say so in the build log
+  // instead of silently building without them (never fall back to --build-arg/--env — that would bake them in).
+  const secretsIgnoredNote =
+    secretKeys.length && !(app.source === "GIT" && app.buildType === "DOCKERFILE")
+      ? [`echo "TUGRA: ${secretKeys.length} build secret(s) are set but this build pack cannot mount them (Dockerfile builds only) — they were NOT passed to the build"`]
+      : [];
   if (app.source === "GIT") {
     const bd = `/etc/tugra/builds/${app.id}`;
     // Monorepo: the repo is still cloned WHOLE into `bd` (clone / rm / commit-markers stay on the repo root);
@@ -888,9 +925,13 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
       // `--target <stage>` builds a specific multi-stage Dockerfile stage (e.g. a lean "production" stage).
       // DTO-validated charset (no metachars) + shq, so it can't inject into the build command.
       const targetFlag = app.dockerBuildTarget ? `--target ${shq(app.dockerBuildTarget)} ` : "";
-      steps.push(`docker build ${nc}${targetFlag}${buildArgFlags}-t ${tag} -f ${shq(`${base}/${df}`)} ${base}`);
+      steps.push(...secretSteps, `${buildKit}docker build ${nc}${targetFlag}${buildArgFlags}${secretFlags}-t ${tag} -f ${shq(`${base}/${df}`)} ${base}`);
+      // The secret files are needed only by the build: shred them at once rather than at script exit (the rest of
+      // the deploy — push, health gate, soak — can run for minutes). The EXIT trap remains the backstop.
+      if (secretKeys.length) steps.push('rm -f "$sd"/bs_*');
     } else if (app.buildType === "STATIC") {
       // Generate an nginx (+ optional node build stage) Dockerfile and config.
+      steps.push(...secretsIgnoredNote);
       steps.push(
         `printf %s ${shq(b64(staticDockerfile(app.buildCommand, app.outputDir)))} | base64 -d > ${base}/Dockerfile.tugra`,
         `printf %s ${shq(b64(staticNginxConf()))} | base64 -d > ${base}/tugra-nginx.conf`,
@@ -898,12 +939,14 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
       );
     } else if (app.buildType === "RAILPACK") {
       // Railpack (Railway's modern builder) — builds an OCI image via BuildKit.
+      steps.push(...secretsIgnoredNote);
       steps.push(
         "command -v railpack >/dev/null 2>&1 || curl -sSL https://railpack.com/install.sh | sh",
         `railpack build ${base} --name ${tag}${buildEnvFlags}`,
       );
     } else if (app.buildType === "HEROKU") {
       // Heroku / Cloud Native Buildpacks via the pack CLI.
+      steps.push(...secretsIgnoredNote);
       steps.push(
         "command -v pack >/dev/null 2>&1 || { curl -sSL https://github.com/buildpacks/pack/releases/download/v0.36.0/pack-v0.36.0-linux.tgz | tar -C /usr/local/bin -xz pack; }",
         `pack build ${tag} --path ${base} --builder heroku/builder:24 --pull-policy if-not-present${buildEnvFlags}`,
@@ -916,6 +959,7 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
       // external HTTP probe still works) rather than install arbitrary packages on the host.
       // The plan lives OUTSIDE bd (a sibling path) so Nixpacks' `COPY . /app` never bakes it
       // into the image; it's removed after the build.
+      steps.push(...secretsIgnoredNote);
       const plan = `/etc/tugra/builds/${app.id}.plan.json`;
       // First-class command overrides → NIXPACKS_*_CMD env, passed to BOTH plan and build (alongside the
       // user's build args). shq makes each `K=V` one shell word; the command runs inside Nixpacks' build

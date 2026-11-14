@@ -1204,6 +1204,10 @@ model Application {
   env                          Json
   envEnc                       String?
   buildArgsEnc                 String?
+  // Build-time SECRETS (encrypted JSON): mounted into `docker build` as BuildKit secrets (`--secret id=K,src=…`,
+  // read in the Dockerfile via `RUN --mount=type=secret,id=K`), so unlike build args they never enter image
+  // layers / `docker history` / a pushed image. DOCKERFILE builds only.
+  buildSecretsEnc              String?
   dockerOptions                String?
   // Host-root escalation gate. false (default) = assertSafeDockerOptions blocks --privileged/--device/
   // --cap-add/host-ns/docker.sock/host binds. true = the INSTANCE OWNER opted this app in (self-hosted, own

@@ -822,6 +822,7 @@ export class ApplicationsService {
           env: {} as Prisma.InputJsonValue,
           envEnc: src.envEnc,
           buildArgsEnc: src.buildArgsEnc,
+          buildSecretsEnc: src.buildSecretsEnc,
           // The clone resets to non-privileged (allowPrivilegedDockerOptions defaults false), so NEVER copy
           // host-privileged options into it — they'd be unrunnable (deploy re-validates) and a silent escalation.
           dockerOptions: src.allowPrivilegedDockerOptions ? null : src.dockerOptions,
@@ -1696,6 +1697,7 @@ export class ApplicationsService {
       if (isCompose && serviceDomains.length > 0) spec.serviceDomains = serviceDomains;
       spec.env = await this.resolvedEnv(app); // team shared vars + app env (app wins)
       spec.buildArgs = this.appBuildArgs(app); // build-time vars (app-specific only)
+      spec.buildSecrets = this.appBuildSecrets(app); // BuildKit secret mounts (DOCKERFILE builds)
       await this.hydrateCertSpec(app, spec);
       // Private repo via a connected git source: a GitHub App mints a fresh installation token, a Gitea/Forgejo/
       // Codeberg source supplies its stored access token (GIT build or git-compose). The credential is pinned to
@@ -2840,6 +2842,27 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.build_args.update", target: id });
   }
 
+  /** Build-time SECRETS (BuildKit --secret mounts). Writer-only like the raw env/build args. */
+  async getBuildSecrets(userId: string, id: string): Promise<Record<string, string>> {
+    const app = await this.requireWrite(userId, id);
+    return this.appBuildSecrets(app);
+  }
+
+  /** Only a DOCKERFILE build can consume a secret mount (`RUN --mount=type=secret`); refuse elsewhere so a value
+   *  is never stored believing it is protected when the builder would silently ignore it. */
+  async setBuildSecrets(userId: string, id: string, buildSecrets: Record<string, string>): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    if (Object.keys(buildSecrets).length && (app.source !== "GIT" || app.buildType !== "DOCKERFILE")) {
+      throw new BadRequestException("build secrets are mounted by Dockerfile builds only (RUN --mount=type=secret); this app's builder cannot consume them");
+    }
+    await this.prisma.application.update({
+      where: { id },
+      data: { buildSecretsEnc: Object.keys(buildSecrets).length ? this.crypto.encrypt(JSON.stringify(buildSecrets)) : null },
+    });
+    // Keys only — never the values.
+    await this.audit.log({ actor: userId, action: "app.build_secrets.update", target: id, meta: { keys: Object.keys(buildSecrets) } });
+  }
+
   async rename(userId: string, id: string, name: string): Promise<void> {
     await this.requireWrite(userId, id);
     await this.prisma.application.update({ where: { id }, data: { name } });
@@ -3119,6 +3142,9 @@ export class ApplicationsService {
         nixpacksStartCmd: input.buildType === "NIXPACKS" ? input.nixpacksStartCmd ?? null : null,
         // The monorepo base directory applies to every build type, so it sits outside the per-type ternaries.
         baseDirectory: input.baseDirectory ?? null,
+        // Build secrets are a Dockerfile-only contract (RUN --mount=type=secret): leaving Dockerfile drops them, so
+        // a value never lingers encrypted-but-invisible (and never comes back silently on a later switch back).
+        buildSecretsEnc: input.buildType === "DOCKERFILE" ? undefined : null,
       },
     });
     await this.audit.log({ actor: userId, action: "app.build.update", target: id, meta: { buildType: input.buildType, baseDirectory: input.baseDirectory ?? null } });
@@ -4045,6 +4071,15 @@ export class ApplicationsService {
     if (!app.buildArgsEnc) return {};
     try {
       return JSON.parse(this.crypto.decrypt(app.buildArgsEnc)) as Record<string, string>;
+    } catch {
+      return {};
+    }
+  }
+
+  private appBuildSecrets(app: Application): Record<string, string> {
+    if (!app.buildSecretsEnc) return {};
+    try {
+      return JSON.parse(this.crypto.decrypt(app.buildSecretsEnc)) as Record<string, string>;
     } catch {
       return {};
     }

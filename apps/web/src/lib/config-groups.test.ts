@@ -121,6 +121,8 @@ describe("visibleConfigGroups", () => {
   it("buildArgs is GIT-only", () => {
     expect(group(facts(), "build")!.cardIds).toContain("buildArgs");
     expect(group(facts({ source: "DOCKERFILE" }), "build")?.cardIds ?? []).not.toContain("buildArgs");
+    expect(group(facts(), "build")!.cardIds).toContain("buildSecrets");
+    expect(group(facts({ source: "IMAGE" }), "build")?.cardIds ?? []).not.toContain("buildSecrets");
   });
 
   it("source card edits non-compose apps and needs write + non-preview", () => {

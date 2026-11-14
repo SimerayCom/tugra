@@ -369,3 +369,26 @@ describe("SetContainerCommandSchema — container ENTRYPOINT/CMD override", () =
     expect(SetContainerCommandSchema.safeParse({ containerEntrypoint: null, containerCommand: ["a".repeat(4096), "b".repeat(4096), "c".repeat(4096), "d".repeat(4096)] }).success).toBe(false);
   });
 });
+
+describe("SetBuildSecretsSchema", () => {
+  const { SetBuildSecretsSchema } = jest.requireActual("./dto") as typeof import("./dto");
+  it("accepts identifier ids, refuses shell-unsafe ids, caps the count", () => {
+    expect(SetBuildSecretsSchema.safeParse({ buildSecrets: { NPM_TOKEN: "x", _k9: "" } }).success).toBe(true);
+    for (const bad of ["bad-key", "9abc", "a b", "k;rm -rf /", "k,src=/etc/passwd", "a".repeat(129)]) {
+      expect(SetBuildSecretsSchema.safeParse({ buildSecrets: { [bad]: "x" } }).success).toBe(false);
+    }
+    const many = Object.fromEntries(Array.from({ length: 65 }, (_, i) => [`K${i}`, "v"]));
+    expect(SetBuildSecretsSchema.safeParse({ buildSecrets: many }).success).toBe(false);
+    const p = (b: Record<string, unknown>) => SetBuildSecretsSchema.safeParse({ buildSecrets: b }).success;
+    expect(p(Object.fromEntries(Array.from({ length: 64 }, (_, i) => [`K${i}`, "v"])))).toBe(true);
+    expect(p({ ["a".repeat(128)]: "x" })).toBe(true);
+    expect(p({})).toBe(true);
+    expect(p({ A: 1 })).toBe(false);
+    // aggregate byte cap (the script is one bash -c argument): 48KiB in one value is fine, 48KiB+1 is not,
+    // two 30KiB values are not, and multi-byte content is counted in BYTES
+    expect(p({ A: "x".repeat(48 * 1024) })).toBe(true);
+    expect(p({ A: "x".repeat(48 * 1024 + 1) })).toBe(false);
+    expect(p({ A: "x".repeat(30 * 1024), B: "y".repeat(30 * 1024) })).toBe(false);
+    expect(p({ A: "é".repeat(30 * 1024) })).toBe(false);
+  });
+});

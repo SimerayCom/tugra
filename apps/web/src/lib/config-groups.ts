@@ -33,6 +33,7 @@ export type ConfigCardId =
   | "build"
   | "buildConfig"
   | "buildArgs"
+  | "buildSecrets"
   | "dockerOptions"
   | "containerCommand"
   | "restartPolicy"
@@ -102,6 +103,8 @@ export const CONFIG_CARDS: { id: ConfigCardId; group: ConfigGroupKey; visible: (
   { id: "build", group: "build", visible: (a) => a.source === "GIT" && a.canWrite && !a.isPreview },
   { id: "buildConfig", group: "build", visible: notCompose },
   { id: "buildArgs", group: "build", visible: (a) => a.source === "GIT" },
+  // BuildKit secret mounts — the card itself explains when the build pack (non-Dockerfile) cannot consume them.
+  { id: "buildSecrets", group: "build", visible: (a) => a.source === "GIT" },
   { id: "dockerOptions", group: "build", visible: notCompose },
   // Classic docker-run concept only: single-server Image/Git apps (not compose, not clustered, not a preview).
   { id: "containerCommand", group: "build", visible: (a) => notCompose(a) && a.canWrite && !a.isPreview && !a.clusterId },

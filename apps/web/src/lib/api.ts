@@ -1368,6 +1368,16 @@ export const api = {
       body: JSON.stringify({ buildArgs }),
     });
   },
+  // Build-time SECRETS (BuildKit --secret mounts, Dockerfile builds): never in image layers / history.
+  getAppBuildSecrets(id: string) {
+    return apiFetch<Record<string, string>>(`/apps/${id}/build-secrets`);
+  },
+  setAppBuildSecrets(id: string, buildSecrets: Record<string, string>) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/build-secrets`, {
+      method: "PUT",
+      body: JSON.stringify({ buildSecrets }),
+    });
+  },
   setAppDockerOptions(id: string, dockerOptions: string | null) {
     return apiFetch<{ ok: true }>(`/apps/${id}/docker-options`, {
       method: "PUT",

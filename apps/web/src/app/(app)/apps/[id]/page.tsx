@@ -42,7 +42,7 @@ import { CONFIG_GROUP_KEYS, visibleConfigGroups, type ConfigCardId } from "../..
 import { resolveTab } from "../../../../lib/tab-param";
 import { LayoutDashboard, Settings2, Rocket, Activity, ScrollText, FolderOpen, Hammer, RotateCw, Play, Square, Terminal, CloudDownload, CloudUpload, Pencil, Trash2, Copy } from "lucide-react";
 import { CONFIG_GROUP_ICONS, actionGroup, actionGroupSep } from "./app-detail-shared";
-import { SourceCard, BuildSettingsCard, BuildArgsCard, DeploySettingsCard, BuildConfigCard, ContainerCommandCard, RestartPolicyCard, ContainerPortCard, DeployHooksCard, CredentialsCard, WatchPathsCard } from "./app-detail-build-cards";
+import { SourceCard, BuildSettingsCard, BuildArgsCard, BuildSecretsCard, DeploySettingsCard, BuildConfigCard, ContainerCommandCard, RestartPolicyCard, ContainerPortCard, DeployHooksCard, CredentialsCard, WatchPathsCard } from "./app-detail-build-cards";
 import { ExtraDomainsCard, ServiceDomainsCard, DomainOptionsCard, CustomCertCard, RedirectsCard, BasicAuthCard, NetworkAliasesCard } from "./app-detail-domain-cards";
 import { VolumesCard, HostMountsCard, VolumeBackupsCard } from "./app-detail-storage-cards";
 import { ScheduledTasksCard, PreviewCard, AppDescriptionCard, ComposeEditorCard, GitComposeSourceCard, AppIconCard, AppOverview, ContainerPickerModal } from "./app-detail-misc-cards";
@@ -247,6 +247,7 @@ export default function AppDetailPage() {
       <BuildConfigCard id={id} teamId={appData.teamId} registryId={appData.registryId} pushToRegistry={appData.pushToRegistry} buildServerId={appData.buildServerId} />
     ),
     buildArgs: () => <BuildArgsCard id={id} />,
+    buildSecrets: () => <BuildSecretsCard id={id} buildType={appData.buildType} source={appData.source} />,
     dockerOptions: () => <DockerOptionsCard id={id} dockerOptions={appData.dockerOptions} allowPrivileged={appData.allowPrivilegedDockerOptions} />,
     containerCommand: () => <ContainerCommandCard id={id} entrypoint={appData.containerEntrypoint} command={appData.containerCommand} />,
     restartPolicy: () => <RestartPolicyCard id={id} restartPolicy={appData.restartPolicy} />,

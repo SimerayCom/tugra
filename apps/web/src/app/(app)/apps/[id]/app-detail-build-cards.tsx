@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, X } from "lucide-react";
+import { Eye, EyeOff, ExternalLink, X } from "lucide-react";
 import { useToast } from "../../../../components/toast";
 import { Btn, SectionCard } from "../../../../components/ui";
 import { useUnsavedChanges } from "../../../../hooks/useUnsavedChanges";
@@ -215,6 +215,8 @@ export function BuildArgsCard({ id }: { id: string }) {
   const dups = duplicateKeys(rows);
   const dupSet = new Set(dups);
   const invalid = invalidKeys(rows);
+  // A build ARG lands in `docker history`; a key that looks like a credential belongs in Build secrets instead.
+  const sensitive = rows.map((r) => r.key.trim()).filter((k) => k && looksSensitiveKey(k));
 
   return (
     <SectionCard title={t("apps.buildArgs")} desc={t("apps.buildArgsDesc")}>
@@ -232,6 +234,7 @@ export function BuildArgsCard({ id }: { id: string }) {
       </div>
       {dups.length > 0 && <div style={{ fontSize: 12, color: "var(--c-r)", marginTop: 8 }}>{t("apps.envDupWarning", { keys: dups.join(", ") })}</div>}
       {invalid.length > 0 && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envInvalidWarning", { keys: invalid.join(", ") })}</div>}
+      {sensitive.length > 0 && <div role="status" style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.buildArgsSensitive", { keys: sensitive.join(", ") })}</div>}
       <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
         <Btn variant="ghost" onClick={() => setRows((rs) => [...rs, { key: "", value: "" }])}>{t("apps.buildArgsAdd")}</Btn>
         <div style={{ flex: 1 }} />
@@ -557,6 +560,105 @@ export function CredentialsCard({
         </div>
       )}
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
+    </SectionCard>
+  );
+}
+
+/** Heuristic for a build-arg key that is probably a credential (the value would be baked into the image). */
+export function looksSensitiveKey(key: string): boolean {
+  // Token-boundary match: NPM_TOKEN / DB_PASSWORD / API_KEY / AWS_SECRET_ACCESS_KEY / NEXTAUTH_SECRET flag;
+  // NEXTAUTH_URL / AUTHOR / PRIVATE_REGISTRY_URL / KEYCLOAK_URL do not.
+  return /(^|[_-])(secret|token|passw(or)?d|private[_-]?key|api[_-]?key|access[_-]?key|credential|auth[_-]?(key|token|secret))s?($|[_-])/i.test(key);
+}
+
+/** Valid BuildKit secret id (mirrors the hub's BUILD_SECRET_KEY). */
+export const BUILD_SECRET_KEY = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
+
+/**
+ * Build-time SECRETS: BuildKit `--secret` mounts for Dockerfile builds. Unlike build args they never reach an
+ * image layer / `docker history` / a pushed image. Values are shown masked once saved (the API returns them to
+ * writers, but the card never prints a stored value back into a text field unless the user reveals it).
+ */
+export function BuildSecretsCard({ id, buildType, source }: { id: string; buildType: BuildType; source: AppSource }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const eligible = source === "GIT" && buildType === "DOCKERFILE";
+  const { data: secrets, isSuccess, isError } = useQuery({ queryKey: ["appBuildSecrets", id], queryFn: () => api.getAppBuildSecrets(id), enabled: eligible });
+  const [rows, setRows] = useState<{ key: string; value: string; stored: boolean; reveal: boolean }[]>([]);
+  useEffect(() => {
+    if (secrets) setRows(Object.entries(secrets).map(([key, value]) => ({ key, value, stored: true, reveal: false })));
+  }, [secrets]);
+  const save = useMutation({
+    mutationFn: () => {
+      const map: Record<string, string> = {};
+      for (const r of rows) if (r.key.trim()) map[r.key.trim()] = r.value;
+      return api.setAppBuildSecrets(id, map);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["appBuildSecrets", id] });
+      toast(t("apps.buildSecretsRedeploy"), "success");
+    },
+    onError: (e) => toast(e instanceof Error && e.message ? e.message : t("apps.actionFailed"), "error"),
+  });
+  const setRow = (i: number, patch: Partial<{ key: string; value: string; reveal: boolean }>) =>
+    setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch, stored: patch.value !== undefined ? false : r.stored } : r)));
+  const dups = duplicateKeys(rows);
+  const dupSet = new Set(dups);
+  const badKeys = rows.map((r) => r.key.trim()).filter((k) => k && !BUILD_SECRET_KEY.test(k));
+  const example = rows.find((r) => r.key.trim())?.key.trim() || "NPM_TOKEN";
+  // Saving before the stored map has loaded would replace it with an empty one — never offer Save until then.
+  const canSave = isSuccess && !save.isPending && dups.length === 0 && badKeys.length === 0;
+
+  return (
+    <SectionCard title={t("apps.buildSecrets")} desc={t("apps.buildSecretsDesc")}>
+      {!eligible ? (
+        <div role="status" style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.buildSecretsNotDockerfile")}</div>
+      ) : (
+        <>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {rows.map((r, i) => {
+              const isDup = !!r.key.trim() && dupSet.has(r.key.trim());
+              const masked = r.stored && !r.reveal;
+              return (
+                <div key={i} style={{ display: "flex", gap: 6 }}>
+                  <input style={{ ...envField, width: 200, ...(isDup ? { borderColor: "var(--c-r)" } : {}) }} placeholder={t("apps.envKey")} value={r.key} onChange={(e) => setRow(i, { key: e.target.value })} aria-invalid={isDup} aria-label={t("apps.envKey")} />
+                  <input
+                    style={{ ...envField, flex: 1 }}
+                    type="text"
+                    placeholder={masked ? t("apps.buildSecretsValueHidden") : t("apps.envValue")}
+                    value={masked ? "" : r.value}
+                    readOnly={masked}
+                    onChange={(e) => setRow(i, { value: e.target.value })}
+                    aria-label={t("apps.envValue")}
+                  />
+                  {r.stored && (
+                    <button
+                      type="button"
+                      aria-label={r.reveal ? t("apps.buildSecretsHide") : t("apps.buildSecretsReveal")}
+                      aria-pressed={r.reveal}
+                      onClick={() => setRow(i, { reveal: !r.reveal })}
+                      style={{ ...envField, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+                    >
+                      {r.reveal ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  )}
+                  <button aria-label={t("common.remove")} onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} style={{ ...envField, cursor: "pointer", color: "var(--c-r)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}><X size={14} /></button>
+                </div>
+              );
+            })}
+          </div>
+          {isError && <div role="alert" style={{ fontSize: 12, color: "var(--c-r)", marginTop: 8 }}>{t("apps.buildSecretsLoadFailed")}</div>}
+          {dups.length > 0 && <div style={{ fontSize: 12, color: "var(--c-r)", marginTop: 8 }}>{t("apps.envDupWarning", { keys: dups.join(", ") })}</div>}
+          {badKeys.length > 0 && <div style={{ fontSize: 12, color: "var(--c-r)", marginTop: 8 }}>{t("apps.buildSecretsInvalidKey", { keys: badKeys.join(", ") })}</div>}
+          <p className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", margin: "10px 0 0" }}>{t("apps.buildSecretsHow", { key: example })}</p>
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <Btn variant="ghost" onClick={() => setRows((rs) => [...rs, { key: "", value: "", stored: false, reveal: true }])} disabled={!isSuccess}>{t("apps.buildSecretsAdd")}</Btn>
+            <div style={{ flex: 1 }} />
+            <Btn onClick={() => save.mutate()} disabled={!canSave}>{t("apps.save")}</Btn>
+          </div>
+        </>
+      )}
     </SectionCard>
   );
 }
