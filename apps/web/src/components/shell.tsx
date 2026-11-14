@@ -44,6 +44,7 @@ import {
   Search,
   Server,
   Boxes,
+  Rocket,
   Settings,
   Store,
   Sun,
@@ -90,6 +91,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
     items: [
       { key: "servers", href: "/servers", icon: Server },
       { key: "clusters", href: "/clusters", icon: Boxes },
+      { key: "rollouts", href: "/rollouts", icon: Rocket },
       { key: "terminal", href: "/shell", icon: Terminal },
       { key: "destinations", href: "/destinations", icon: HardDrive },
       { key: "domains", href: "/domains", icon: Globe },

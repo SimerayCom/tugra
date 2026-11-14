@@ -1643,3 +1643,64 @@ export interface PitrWindow {
   reason: "not_enabled" | "no_base" | "agent_offline" | "capability" | "list_failed" | "no_wal" | null;
   bases: { id: string; from: string; to: string; startLsn: string; timeline: number }[];
 }
+
+// ── Fleet rollouts (GET/POST /rollouts) ──
+export type RolloutStatus = "RUNNING" | "HALTED" | "ROLLING_BACK" | "COMPLETED" | "ROLLED_BACK" | "ROLLBACK_FAILED" | "CANCELLED";
+export type RolloutTargetStatus = "PENDING" | "DEPLOYING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "SKIPPED" | "REVERTING" | "ROLLED_BACK" | "ROLLBACK_FAILED";
+export interface RolloutConfig {
+  canary: number;
+  steps: number[];
+  concurrency: number;
+  maxFailuresPerWave: number;
+  bakeSec: number;
+  dispatchTimeoutSec: number;
+  waitOnlineSec: number;
+  allowUngated: boolean;
+  noCache: boolean;
+}
+export interface RolloutTarget {
+  id: string;
+  appId: string;
+  serverId: string;
+  label: string;
+  wave: number;
+  position: number;
+  status: RolloutTargetStatus;
+  attempt: number;
+  deploymentId: string | null;
+  baselineDeploymentId: string | null;
+  outcome: string | null;
+  detail: string | null;
+  dispatchedAt: string | null;
+  finishedAt: string | null;
+}
+export interface Rollout {
+  id: string;
+  teamId: string;
+  createdBy: string;
+  name: string | null;
+  kind: string;
+  status: RolloutStatus;
+  haltReason: string | null;
+  haltDetail: Record<string, unknown> | null;
+  config: RolloutConfig;
+  currentWave: number;
+  waveCount: number;
+  waveSizes: number[];
+  bakeUntil: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+  summary: { total: number; pending: number; deploying: number; succeeded: number; failed: number; skipped: number; cancelled: number };
+  targets: RolloutTarget[];
+}
+export interface RolloutPlan {
+  teamId: string;
+  waveSizes: number[];
+  targets: { appId: string; name: string; serverId: string; wave: number | null; blocked: string | null; warnings: string[] }[];
+  blocked: number;
+}
+export interface RolloutCreateInput {
+  name?: string;
+  appIds: string[];
+  config: Partial<RolloutConfig>;
+}

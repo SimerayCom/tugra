@@ -1088,6 +1088,8 @@ export class ApplicationsService {
     // No 409 on a busy app any more: submitDeploy queues it and runs it when the current deploy finishes.
     // idempotencyKey (the client's Idempotency-Key header) is the DURABLE at-most-once enqueue backstop; it is
     // null for every non-interactive caller (webhook/preview/first-deploy/MCP) → no constraint → unchanged.
+    // The `rollout:` namespace is reserved for the fleet rollout engine's dispatch keys (same (appId, key) index).
+    if (idempotencyKey?.trim().startsWith("rollout:")) throw new BadRequestException("Idempotency-Key values starting with 'rollout:' are reserved");
     return this.submitDeploy(app, userId, opts?.noCache ?? false, idempotencyKey ?? null);
   }
 
@@ -1378,9 +1380,17 @@ export class ApplicationsService {
    * the backstop that still dedupes after a Redis flush / outage / hub crash. A null key stores NULL, which
    * Postgres treats as DISTINCT from every other NULL, so the keyless path is byte-identical to before.
    */
-  private async submitDeploy(app: Application, actor: string, noCache = false, idempotencyKey: string | null = null) {
+  private async submitDeploy(
+    app: Application,
+    actor: string,
+    noCache = false,
+    idempotencyKey: string | null = null,
+    // detach: when our row is claimed, run it in the background and return the RUNNING row at once (fleet
+    // rollouts never await a build). trigger: override the derived origin label (e.g. "rollout").
+    opts: { detach?: boolean; trigger?: string } = {},
+  ) {
     const QUEUE_CAP = 10; // max QUEUED deploys per app (Coolify caps per server at 25)
-    const trigger = this.triggerOf(actor);
+    const trigger = opts.trigger ?? this.triggerOf(actor);
     // Normalize: a blank/whitespace/non-string header behaves as absent (keyless fail-open), never throws.
     const key = typeof idempotencyKey === "string" && idempotencyKey.trim() ? idempotencyKey.trim() : null;
 
@@ -1436,8 +1446,63 @@ export class ApplicationsService {
     // We own the claim only if OUR row was promoted to RUNNING — run it inline + await so the idle-path
     // contract (caller gets the finished deployment) holds. The app we were handed is freshly fetched, so
     // pass it straight through. Otherwise our row stays QUEUED and drains later (with a reloaded app).
-    if (claimed?.id === dep.id) return this.executeDeploy(claimed, app, actor, noCache);
+    if (claimed?.id === dep.id) {
+      if (opts.detach) {
+        // Same fire-and-forget shape as drain(): executeDeploy records its own terminal status and chains the
+        // next drain in its finally, so nothing is lost by not awaiting it.
+        void this.executeDeploy(claimed, app, actor, noCache).catch(() => undefined);
+        return claimed;
+      }
+      return this.executeDeploy(claimed, app, actor, noCache);
+    }
     return this.prisma.deployment.findUnique({ where: { id: dep.id } });
+  }
+
+  // ── fleet rollout seams (rollouts/rollout-engine.service.ts) ──
+
+  /**
+   * Enqueue a deploy on behalf of `userId` WITHOUT awaiting the build: returns the QUEUED or RUNNING row at
+   * once. Authorized like an interactive deploy — team permission apps:deploy AND the caller's per-resource
+   * scoping (require) — on EVERY call, so a rollout whose initiator lost access fails closed at the next
+   * dispatch. `key` is the durable at-most-once enqueue key (rollout:<id>:<app>:<attempt>).
+   */
+  async deployDetached(userId: string, appId: string, opts: { key: string; noCache?: boolean }): Promise<Deployment> {
+    await this.require(userId, appId);
+    const app = await this.requireWrite(userId, appId, "apps:deploy");
+    const dep = await this.submitDeploy(app, userId, opts.noCache ?? false, opts.key, { detach: true, trigger: "rollout" });
+    if (!dep) throw new NotFoundException("deployment not found");
+    // The key dedupes against ANY prior row with that key. Interactive clients cannot mint a reserved key (see
+    // deploy()), but refuse to adopt a foreign row regardless: a rollout must only ever judge its own deploy.
+    if (dep.trigger !== "rollout" || dep.requestedBy !== userId) throw new ConflictException("idempotency key collision: that deploy was not started by this rollout");
+    return dep;
+  }
+
+  /** System-side cancel of a still-QUEUED deploy (the caller's authority is the rollout row that dispatched it).
+   *  Compare-and-set on QUEUED: a row that already started is left alone and false is returned. */
+  async cancelQueuedDeploymentSystem(depId: string, note: string): Promise<boolean> {
+    const { count } = await this.prisma.deployment.updateMany({
+      where: { id: depId, status: "QUEUED" },
+      data: { status: "CANCELLED", exitCode: -1, logs: note },
+    });
+    return count === 1;
+  }
+
+  /** The newest SUCCESS deployment whose artifact is still rollbackable (same predicate as deployments()) — the
+   *  baseline a rollout records before it touches the app. Null when none. */
+  async rolloutBaseline(appId: string): Promise<string | null> {
+    const app = await this.prisma.application.findUnique({ where: { id: appId }, select: { source: true } });
+    if (!app) return null;
+    const isCompose = app.source === "COMPOSE";
+    const rows = await this.prisma.deployment.findMany({
+      where: { appId, status: "SUCCESS" },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+      select: { id: true, imageTag: true, registryImage: true, imageDigest: true, configSnapshot: true },
+    });
+    const hit = rows.find((d) =>
+      isCompose ? !!(d.configSnapshot as ConfigSnapshot | null)?.composeFile : !!(d.imageTag || d.registryImage || d.imageDigest),
+    );
+    return hit?.id ?? null;
   }
 
   /**

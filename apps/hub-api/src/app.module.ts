@@ -23,6 +23,7 @@ import { AgentGatewayModule } from "./agent-gateway/agent-gateway.module";
 import { NotificationsModule } from "./notifications/notifications.module";
 import { MonitorsModule } from "./monitors/monitors.module";
 import { BulkModule } from "./bulk/bulk.module";
+import { RolloutsModule } from "./rollouts/rollouts.module";
 import { AgentUpdateModule } from "./agent-update/agent-update.module";
 import { ApplicationsModule } from "./applications/applications.module";
 import { DatabasesModule } from "./databases/databases.module";
@@ -90,6 +91,7 @@ import { ApiExceptionFilter } from "./common/api-exception.filter";
     NotificationsModule,
     MonitorsModule,
     BulkModule,
+    RolloutsModule,
     AgentUpdateModule,
     ApplicationsModule,
     DatabasesModule,

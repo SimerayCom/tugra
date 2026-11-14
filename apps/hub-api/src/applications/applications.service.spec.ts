@@ -5084,3 +5084,91 @@ describe("Deployment.idempotencyKey migration SQL", () => {
     expect(ddl).not.toMatch(/NULLS NOT DISTINCT/i);
   });
 });
+
+// ── fleet rollout seams (rollouts/rollout-engine.service.ts drives these) ──
+describe("ApplicationsService — rollout seams", () => {
+  type Priv = {
+    submitDeploy: (...a: unknown[]) => Promise<unknown>;
+    executeDeploy: (...a: unknown[]) => Promise<unknown>;
+    require: (...a: unknown[]) => Promise<unknown>;
+    requireWrite: (...a: unknown[]) => Promise<unknown>;
+  };
+  const queued = { id: "dep1", appId: "app1", status: "QUEUED", trigger: "rollout", requestedBy: "u1", createdAt: new Date() };
+
+  function deps() {
+    const create = jest.fn().mockResolvedValue(queued);
+    const findUnique = jest.fn(async (args: { where: Record<string, unknown> }) =>
+      "id" in args.where ? { ...queued, status: "RUNNING", startedAt: new Date() } : null, // the claimed row; no prior keyed row
+    );
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...app, source: "IMAGE" }) },
+      deployment: { create, findUnique, update: jest.fn().mockResolvedValue({}), findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = {
+      requirePermission: jest.fn().mockResolvedValue(undefined),
+      teamRole: jest.fn().mockResolvedValue("MEMBER"),
+      requireResourceAccess: jest.fn().mockResolvedValue(undefined),
+    } as unknown as TeamAccessService;
+    return { prisma, access, create };
+  }
+
+  it("submitDeploy({detach}) returns the claimed RUNNING row at once and runs executeDeploy in the background; trigger is overridable", async () => {
+    const { prisma, access, create } = deps();
+    const svc = make(prisma, access, {} as AgentWsServer);
+    let finish!: () => void;
+    const executeDeploy = jest.spyOn(svc as unknown as Priv, "executeDeploy").mockReturnValue(new Promise<void>((r) => (finish = r)));
+    const row = (await (svc as unknown as Priv).submitDeploy({ ...app, source: "IMAGE" }, "u1", false, "rollout:r1:app1:1", { detach: true, trigger: "rollout" })) as { status: string };
+    expect(row.status).toBe("RUNNING"); // returned without awaiting the build
+    expect(executeDeploy).toHaveBeenCalledTimes(1);
+    expect(create.mock.calls[0][0].data).toMatchObject({ status: "QUEUED", trigger: "rollout", requestedBy: "u1", idempotencyKey: "rollout:r1:app1:1" });
+    finish();
+  });
+
+  it("without detach the same submit awaits executeDeploy (unchanged interactive contract)", async () => {
+    const { prisma, access } = deps();
+    const svc = make(prisma, access, {} as AgentWsServer);
+    const executeDeploy = jest.spyOn(svc as unknown as Priv, "executeDeploy").mockResolvedValue({ id: "dep1", status: "SUCCESS" });
+    const row = (await (svc as unknown as Priv).submitDeploy({ ...app, source: "IMAGE" }, "u1")) as { status: string };
+    expect(row.status).toBe("SUCCESS");
+    expect(executeDeploy).toHaveBeenCalledTimes(1);
+  });
+
+  it("deployDetached re-checks BOTH the per-resource scoping (require) and apps:deploy (requireWrite) on every call, then submits detached as a rollout", async () => {
+    const { prisma, access } = deps();
+    const svc = make(prisma, access, {} as AgentWsServer);
+    const submit = jest.spyOn(svc as unknown as Priv, "submitDeploy").mockResolvedValue(queued);
+    const dep = await svc.deployDetached("u1", "app1", { key: "rollout:r1:app1:2", noCache: true });
+    expect(dep).toEqual(queued);
+    expect(access.requireResourceAccess).toHaveBeenCalledWith("u1", "t1", expect.objectContaining({ resourceId: "app1" }));
+    expect(access.requirePermission).toHaveBeenCalledWith("u1", "t1", "apps:deploy");
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({ id: "app1" }), "u1", true, "rollout:r1:app1:2", { detach: true, trigger: "rollout" });
+    // a demoted initiator fails closed
+    (access.requirePermission as jest.Mock).mockRejectedValueOnce(new ForbiddenException("nope"));
+    await expect(svc.deployDetached("u1", "app1", { key: "rollout:r1:app1:3" })).rejects.toBeInstanceOf(ForbiddenException);
+    // the key dedupes against a foreign row → refused, never adopted (and interactive deploys can't mint the namespace)
+    submit.mockResolvedValueOnce({ ...queued, trigger: "manual", requestedBy: "attacker" });
+    await expect(svc.deployDetached("u1", "app1", { key: "rollout:r1:app1:4" })).rejects.toBeInstanceOf(ConflictException);
+    await expect(svc.deploy("u1", "app1", {}, "rollout:r1:app1:1")).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("cancelQueuedDeploymentSystem is a CAS on QUEUED (false once the deploy started); rolloutBaseline picks the newest rollbackable SUCCESS", async () => {
+    const { access } = deps();
+    const updateMany = jest.fn().mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
+    // No deployment.create here, so make() leaves the deployment stub alone (its queue wrapper always answers count 1).
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...app, source: "IMAGE" }) },
+      deployment: {
+        updateMany,
+        findMany: jest.fn().mockResolvedValue([
+          { id: "new", imageTag: null, registryImage: null, imageDigest: null, configSnapshot: null }, // SUCCESS but artifact pruned → not rollbackable
+          { id: "old", imageTag: "tugra_app1:old", registryImage: null, imageDigest: null, configSnapshot: null },
+        ]),
+      },
+    } as unknown as PrismaService;
+    const svc = make(prisma, access, {} as AgentWsServer);
+    expect(await svc.cancelQueuedDeploymentSystem("dep1", "Cancelled: rollout halted")).toBe(true);
+    expect(updateMany.mock.calls[0][0]).toMatchObject({ where: { id: "dep1", status: "QUEUED" }, data: { status: "CANCELLED", exitCode: -1 } });
+    expect(await svc.cancelQueuedDeploymentSystem("dep1", "x")).toBe(false);
+    expect(await svc.rolloutBaseline("app1")).toBe("old");
+  });
+});

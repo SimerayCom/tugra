@@ -21,7 +21,7 @@ export function rolloutColor(state: string): string {
 
 // Deployment origins (Deployment.trigger) that have a translated label; an unknown one shows verbatim, and a
 // null trigger (legacy rows) falls back to the kind label.
-export const TRIGGER_KNOWN = new Set(["manual", "webhook", "preview", "rollback"]);
+export const TRIGGER_KNOWN = new Set(["manual", "webhook", "preview", "rollback", "rollout"]);
 
 /** Human-readable wall-clock duration from a millisecond count (e.g. 1500 → "2s", 83000 → "1m 23s"). */
 export function formatDuration(ms: number): string {

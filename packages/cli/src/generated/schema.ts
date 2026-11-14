@@ -1124,23 +1124,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/servers/{id}/agent-update": {
+    "/api/v1/rollouts": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        get: operations["RolloutsController_list"];
         put?: never;
-        post: operations["AgentUpdateController_updateOne"];
+        post: operations["RolloutsController_create"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/v1/fleet/agent-update": {
+    "/api/v1/rollouts/plan": {
         parameters: {
             query?: never;
             header?: never;
@@ -1149,7 +1149,71 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post: operations["AgentUpdateController_updateFleet"];
+        post: operations["RolloutsController_plan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/rollouts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["RolloutsController_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/rollouts/{id}/halt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["RolloutsController_halt"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/rollouts/{id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["RolloutsController_resume"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/rollouts/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["RolloutsController_cancel"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3070,6 +3134,38 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["SecretProvidersController_test"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/servers/{id}/agent-update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["AgentUpdateController_updateOne"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/fleet/agent-update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["AgentUpdateController_updateFleet"];
         delete?: never;
         options?: never;
         head?: never;
@@ -10304,7 +10400,423 @@ export interface operations {
             };
         };
     };
-    AgentUpdateController_updateOne: {
+    RolloutsController_list: {
+        parameters: {
+            query: {
+                teamId: string;
+                status: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        id: string;
+                        teamId: string;
+                        createdBy: string;
+                        name: string | null;
+                        kind: string;
+                        /** @enum {string} */
+                        status: "RUNNING" | "HALTED" | "ROLLING_BACK" | "COMPLETED" | "ROLLED_BACK" | "ROLLBACK_FAILED" | "CANCELLED";
+                        haltReason: string | null;
+                        haltDetail: {
+                            [key: string]: unknown;
+                        } | null;
+                        config: {
+                            /** @default 1 */
+                            canary: number;
+                            /**
+                             * @default [
+                             *       25,
+                             *       50,
+                             *       100
+                             *     ]
+                             */
+                            steps: number[];
+                            /** @default 3 */
+                            concurrency: number;
+                            /** @default 0 */
+                            maxFailuresPerWave: number;
+                            /** @default 60 */
+                            bakeSec: number;
+                            /** @default 2700 */
+                            dispatchTimeoutSec: number;
+                            /** @default 300 */
+                            waitOnlineSec: number;
+                            /** @default false */
+                            allowUngated: boolean;
+                            /** @default false */
+                            noCache: boolean;
+                        };
+                        currentWave: number;
+                        waveCount: number;
+                        waveSizes: number[];
+                        /** Format: date-time */
+                        bakeUntil: string | null;
+                        /** Format: date-time */
+                        createdAt: string;
+                        /** Format: date-time */
+                        finishedAt: string | null;
+                        summary: {
+                            total: number;
+                            pending: number;
+                            deploying: number;
+                            succeeded: number;
+                            failed: number;
+                            skipped: number;
+                            cancelled: number;
+                        };
+                        targets: {
+                            id: string;
+                            appId: string;
+                            serverId: string;
+                            label: string;
+                            wave: number;
+                            position: number;
+                            /** @enum {string} */
+                            status: "PENDING" | "DEPLOYING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "SKIPPED" | "REVERTING" | "ROLLED_BACK" | "ROLLBACK_FAILED";
+                            attempt: number;
+                            deploymentId: string | null;
+                            baselineDeploymentId: string | null;
+                            outcome: string | null;
+                            detail: string | null;
+                            /** Format: date-time */
+                            dispatchedAt: string | null;
+                            /** Format: date-time */
+                            finishedAt: string | null;
+                        }[];
+                    }[];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    RolloutsController_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    name?: string;
+                    appIds: string[];
+                    /** @default {} */
+                    config?: {
+                        /** @default 1 */
+                        canary?: number;
+                        /**
+                         * @default [
+                         *       25,
+                         *       50,
+                         *       100
+                         *     ]
+                         */
+                        steps?: number[];
+                        /** @default 3 */
+                        concurrency?: number;
+                        /** @default 0 */
+                        maxFailuresPerWave?: number;
+                        /** @default 60 */
+                        bakeSec?: number;
+                        /** @default 2700 */
+                        dispatchTimeoutSec?: number;
+                        /** @default 300 */
+                        waitOnlineSec?: number;
+                        /** @default false */
+                        allowUngated?: boolean;
+                        /** @default false */
+                        noCache?: boolean;
+                    };
+                };
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        id: string;
+                        teamId: string;
+                        createdBy: string;
+                        name: string | null;
+                        kind: string;
+                        /** @enum {string} */
+                        status: "RUNNING" | "HALTED" | "ROLLING_BACK" | "COMPLETED" | "ROLLED_BACK" | "ROLLBACK_FAILED" | "CANCELLED";
+                        haltReason: string | null;
+                        haltDetail: {
+                            [key: string]: unknown;
+                        } | null;
+                        config: {
+                            /** @default 1 */
+                            canary: number;
+                            /**
+                             * @default [
+                             *       25,
+                             *       50,
+                             *       100
+                             *     ]
+                             */
+                            steps: number[];
+                            /** @default 3 */
+                            concurrency: number;
+                            /** @default 0 */
+                            maxFailuresPerWave: number;
+                            /** @default 60 */
+                            bakeSec: number;
+                            /** @default 2700 */
+                            dispatchTimeoutSec: number;
+                            /** @default 300 */
+                            waitOnlineSec: number;
+                            /** @default false */
+                            allowUngated: boolean;
+                            /** @default false */
+                            noCache: boolean;
+                        };
+                        currentWave: number;
+                        waveCount: number;
+                        waveSizes: number[];
+                        /** Format: date-time */
+                        bakeUntil: string | null;
+                        /** Format: date-time */
+                        createdAt: string;
+                        /** Format: date-time */
+                        finishedAt: string | null;
+                        summary: {
+                            total: number;
+                            pending: number;
+                            deploying: number;
+                            succeeded: number;
+                            failed: number;
+                            skipped: number;
+                            cancelled: number;
+                        };
+                        targets: {
+                            id: string;
+                            appId: string;
+                            serverId: string;
+                            label: string;
+                            wave: number;
+                            position: number;
+                            /** @enum {string} */
+                            status: "PENDING" | "DEPLOYING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "SKIPPED" | "REVERTING" | "ROLLED_BACK" | "ROLLBACK_FAILED";
+                            attempt: number;
+                            deploymentId: string | null;
+                            baselineDeploymentId: string | null;
+                            outcome: string | null;
+                            detail: string | null;
+                            /** Format: date-time */
+                            dispatchedAt: string | null;
+                            /** Format: date-time */
+                            finishedAt: string | null;
+                        }[];
+                    };
+                };
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    RolloutsController_plan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    name?: string;
+                    appIds: string[];
+                    /** @default {} */
+                    config?: {
+                        /** @default 1 */
+                        canary?: number;
+                        /**
+                         * @default [
+                         *       25,
+                         *       50,
+                         *       100
+                         *     ]
+                         */
+                        steps?: number[];
+                        /** @default 3 */
+                        concurrency?: number;
+                        /** @default 0 */
+                        maxFailuresPerWave?: number;
+                        /** @default 60 */
+                        bakeSec?: number;
+                        /** @default 2700 */
+                        dispatchTimeoutSec?: number;
+                        /** @default 300 */
+                        waitOnlineSec?: number;
+                        /** @default false */
+                        allowUngated?: boolean;
+                        /** @default false */
+                        noCache?: boolean;
+                    };
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        teamId: string;
+                        waveSizes: number[];
+                        targets: {
+                            appId: string;
+                            name: string;
+                            serverId: string;
+                            wave: number | null;
+                            blocked: string | null;
+                            warnings: string[];
+                        }[];
+                        blocked: number;
+                    };
+                };
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    RolloutsController_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -10321,17 +10833,79 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        id: string;
+                        teamId: string;
+                        createdBy: string;
+                        name: string | null;
+                        kind: string;
                         /** @enum {string} */
-                        status: "ok" | "unconfigured" | "error";
-                        total: number;
-                        sent: number;
-                        offline: number;
-                        skipped: number;
-                        results: {
+                        status: "RUNNING" | "HALTED" | "ROLLING_BACK" | "COMPLETED" | "ROLLED_BACK" | "ROLLBACK_FAILED" | "CANCELLED";
+                        haltReason: string | null;
+                        haltDetail: {
+                            [key: string]: unknown;
+                        } | null;
+                        config: {
+                            /** @default 1 */
+                            canary: number;
+                            /**
+                             * @default [
+                             *       25,
+                             *       50,
+                             *       100
+                             *     ]
+                             */
+                            steps: number[];
+                            /** @default 3 */
+                            concurrency: number;
+                            /** @default 0 */
+                            maxFailuresPerWave: number;
+                            /** @default 60 */
+                            bakeSec: number;
+                            /** @default 2700 */
+                            dispatchTimeoutSec: number;
+                            /** @default 300 */
+                            waitOnlineSec: number;
+                            /** @default false */
+                            allowUngated: boolean;
+                            /** @default false */
+                            noCache: boolean;
+                        };
+                        currentWave: number;
+                        waveCount: number;
+                        waveSizes: number[];
+                        /** Format: date-time */
+                        bakeUntil: string | null;
+                        /** Format: date-time */
+                        createdAt: string;
+                        /** Format: date-time */
+                        finishedAt: string | null;
+                        summary: {
+                            total: number;
+                            pending: number;
+                            deploying: number;
+                            succeeded: number;
+                            failed: number;
+                            skipped: number;
+                            cancelled: number;
+                        };
+                        targets: {
+                            id: string;
+                            appId: string;
                             serverId: string;
+                            label: string;
+                            wave: number;
+                            position: number;
                             /** @enum {string} */
-                            status: "sent" | "offline" | "skipped";
-                            reason?: string;
+                            status: "PENDING" | "DEPLOYING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "SKIPPED" | "REVERTING" | "ROLLED_BACK" | "ROLLBACK_FAILED";
+                            attempt: number;
+                            deploymentId: string | null;
+                            baselineDeploymentId: string | null;
+                            outcome: string | null;
+                            detail: string | null;
+                            /** Format: date-time */
+                            dispatchedAt: string | null;
+                            /** Format: date-time */
+                            finishedAt: string | null;
                         }[];
                     };
                 };
@@ -10383,20 +10957,16 @@ export interface operations {
             };
         };
     };
-    AgentUpdateController_updateFleet: {
+    RolloutsController_halt: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                id: string;
+            };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": {
-                    serverIds: string[];
-                };
-            };
-        };
+        requestBody?: never;
         responses: {
             200: {
                 headers: {
@@ -10404,28 +10974,81 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        id: string;
+                        teamId: string;
+                        createdBy: string;
+                        name: string | null;
+                        kind: string;
                         /** @enum {string} */
-                        status: "ok" | "unconfigured" | "error";
-                        total: number;
-                        sent: number;
-                        offline: number;
-                        skipped: number;
-                        results: {
+                        status: "RUNNING" | "HALTED" | "ROLLING_BACK" | "COMPLETED" | "ROLLED_BACK" | "ROLLBACK_FAILED" | "CANCELLED";
+                        haltReason: string | null;
+                        haltDetail: {
+                            [key: string]: unknown;
+                        } | null;
+                        config: {
+                            /** @default 1 */
+                            canary: number;
+                            /**
+                             * @default [
+                             *       25,
+                             *       50,
+                             *       100
+                             *     ]
+                             */
+                            steps: number[];
+                            /** @default 3 */
+                            concurrency: number;
+                            /** @default 0 */
+                            maxFailuresPerWave: number;
+                            /** @default 60 */
+                            bakeSec: number;
+                            /** @default 2700 */
+                            dispatchTimeoutSec: number;
+                            /** @default 300 */
+                            waitOnlineSec: number;
+                            /** @default false */
+                            allowUngated: boolean;
+                            /** @default false */
+                            noCache: boolean;
+                        };
+                        currentWave: number;
+                        waveCount: number;
+                        waveSizes: number[];
+                        /** Format: date-time */
+                        bakeUntil: string | null;
+                        /** Format: date-time */
+                        createdAt: string;
+                        /** Format: date-time */
+                        finishedAt: string | null;
+                        summary: {
+                            total: number;
+                            pending: number;
+                            deploying: number;
+                            succeeded: number;
+                            failed: number;
+                            skipped: number;
+                            cancelled: number;
+                        };
+                        targets: {
+                            id: string;
+                            appId: string;
                             serverId: string;
+                            label: string;
+                            wave: number;
+                            position: number;
                             /** @enum {string} */
-                            status: "sent" | "offline" | "skipped";
-                            reason?: string;
+                            status: "PENDING" | "DEPLOYING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "SKIPPED" | "REVERTING" | "ROLLED_BACK" | "ROLLBACK_FAILED";
+                            attempt: number;
+                            deploymentId: string | null;
+                            baselineDeploymentId: string | null;
+                            outcome: string | null;
+                            detail: string | null;
+                            /** Format: date-time */
+                            dispatchedAt: string | null;
+                            /** Format: date-time */
+                            finishedAt: string | null;
                         }[];
                     };
-                };
-            };
-            /** @description Invalid or malformed request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiError"];
                 };
             };
             /** @description Missing or invalid authentication. */
@@ -10439,6 +11062,297 @@ export interface operations {
             };
             /** @description Authenticated but not permitted (scope or team permission). */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    RolloutsController_resume: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        id: string;
+                        teamId: string;
+                        createdBy: string;
+                        name: string | null;
+                        kind: string;
+                        /** @enum {string} */
+                        status: "RUNNING" | "HALTED" | "ROLLING_BACK" | "COMPLETED" | "ROLLED_BACK" | "ROLLBACK_FAILED" | "CANCELLED";
+                        haltReason: string | null;
+                        haltDetail: {
+                            [key: string]: unknown;
+                        } | null;
+                        config: {
+                            /** @default 1 */
+                            canary: number;
+                            /**
+                             * @default [
+                             *       25,
+                             *       50,
+                             *       100
+                             *     ]
+                             */
+                            steps: number[];
+                            /** @default 3 */
+                            concurrency: number;
+                            /** @default 0 */
+                            maxFailuresPerWave: number;
+                            /** @default 60 */
+                            bakeSec: number;
+                            /** @default 2700 */
+                            dispatchTimeoutSec: number;
+                            /** @default 300 */
+                            waitOnlineSec: number;
+                            /** @default false */
+                            allowUngated: boolean;
+                            /** @default false */
+                            noCache: boolean;
+                        };
+                        currentWave: number;
+                        waveCount: number;
+                        waveSizes: number[];
+                        /** Format: date-time */
+                        bakeUntil: string | null;
+                        /** Format: date-time */
+                        createdAt: string;
+                        /** Format: date-time */
+                        finishedAt: string | null;
+                        summary: {
+                            total: number;
+                            pending: number;
+                            deploying: number;
+                            succeeded: number;
+                            failed: number;
+                            skipped: number;
+                            cancelled: number;
+                        };
+                        targets: {
+                            id: string;
+                            appId: string;
+                            serverId: string;
+                            label: string;
+                            wave: number;
+                            position: number;
+                            /** @enum {string} */
+                            status: "PENDING" | "DEPLOYING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "SKIPPED" | "REVERTING" | "ROLLED_BACK" | "ROLLBACK_FAILED";
+                            attempt: number;
+                            deploymentId: string | null;
+                            baselineDeploymentId: string | null;
+                            outcome: string | null;
+                            detail: string | null;
+                            /** Format: date-time */
+                            dispatchedAt: string | null;
+                            /** Format: date-time */
+                            finishedAt: string | null;
+                        }[];
+                    };
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    RolloutsController_cancel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        id: string;
+                        teamId: string;
+                        createdBy: string;
+                        name: string | null;
+                        kind: string;
+                        /** @enum {string} */
+                        status: "RUNNING" | "HALTED" | "ROLLING_BACK" | "COMPLETED" | "ROLLED_BACK" | "ROLLBACK_FAILED" | "CANCELLED";
+                        haltReason: string | null;
+                        haltDetail: {
+                            [key: string]: unknown;
+                        } | null;
+                        config: {
+                            /** @default 1 */
+                            canary: number;
+                            /**
+                             * @default [
+                             *       25,
+                             *       50,
+                             *       100
+                             *     ]
+                             */
+                            steps: number[];
+                            /** @default 3 */
+                            concurrency: number;
+                            /** @default 0 */
+                            maxFailuresPerWave: number;
+                            /** @default 60 */
+                            bakeSec: number;
+                            /** @default 2700 */
+                            dispatchTimeoutSec: number;
+                            /** @default 300 */
+                            waitOnlineSec: number;
+                            /** @default false */
+                            allowUngated: boolean;
+                            /** @default false */
+                            noCache: boolean;
+                        };
+                        currentWave: number;
+                        waveCount: number;
+                        waveSizes: number[];
+                        /** Format: date-time */
+                        bakeUntil: string | null;
+                        /** Format: date-time */
+                        createdAt: string;
+                        /** Format: date-time */
+                        finishedAt: string | null;
+                        summary: {
+                            total: number;
+                            pending: number;
+                            deploying: number;
+                            succeeded: number;
+                            failed: number;
+                            skipped: number;
+                            cancelled: number;
+                        };
+                        targets: {
+                            id: string;
+                            appId: string;
+                            serverId: string;
+                            label: string;
+                            wave: number;
+                            position: number;
+                            /** @enum {string} */
+                            status: "PENDING" | "DEPLOYING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "SKIPPED" | "REVERTING" | "ROLLED_BACK" | "ROLLBACK_FAILED";
+                            attempt: number;
+                            deploymentId: string | null;
+                            baselineDeploymentId: string | null;
+                            outcome: string | null;
+                            detail: string | null;
+                            /** Format: date-time */
+                            dispatchedAt: string | null;
+                            /** Format: date-time */
+                            finishedAt: string | null;
+                        }[];
+                    };
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -23445,6 +24359,168 @@ export interface operations {
             };
             /** @description Resource not found. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    AgentUpdateController_updateOne: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        status: "ok" | "unconfigured" | "error";
+                        total: number;
+                        sent: number;
+                        offline: number;
+                        skipped: number;
+                        results: {
+                            serverId: string;
+                            /** @enum {string} */
+                            status: "sent" | "offline" | "skipped";
+                            reason?: string;
+                        }[];
+                    };
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    AgentUpdateController_updateFleet: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    serverIds: string[];
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        status: "ok" | "unconfigured" | "error";
+                        total: number;
+                        sent: number;
+                        offline: number;
+                        skipped: number;
+                        results: {
+                            serverId: string;
+                            /** @enum {string} */
+                            status: "sent" | "offline" | "skipped";
+                            reason?: string;
+                        }[];
+                    };
+                };
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

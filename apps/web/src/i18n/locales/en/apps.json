@@ -299,6 +299,7 @@
   "trigger_webhook": "Webhook",
   "trigger_preview": "Preview",
   "trigger_rollback": "Rollback",
+  "trigger_rollout": "Fleet rollout",
   "deployHooks": "Pre/post-deploy commands",
   "deployHooksDesc": "Run a command in a container of this app's image before the swap (e.g. database migrations) and inside the live container after the health check passes. A failing pre-deploy command aborts the deploy with the current version still serving; a post-deploy command is best-effort. Single-server apps only; applies on the next deploy.",
   "preDeployCommand": "Pre-deploy command",

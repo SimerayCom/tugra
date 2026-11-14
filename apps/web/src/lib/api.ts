@@ -104,6 +104,9 @@ import type {
   TunnelView,
   PitrStatus,
   PitrWindow,
+  Rollout,
+  RolloutCreateInput,
+  RolloutPlan,
 } from "./types";
 
 // Same-origin path the SPA calls; next.config rewrites proxy it to the hub, so the httpOnly session
@@ -1690,6 +1693,32 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input),
     });
+  },
+  // ── fleet rollouts ──
+  listRollouts(filter: { teamId?: string | null; status?: string } = {}) {
+    const qs = new URLSearchParams();
+    if (filter.teamId) qs.set("teamId", filter.teamId);
+    if (filter.status) qs.set("status", filter.status);
+    const q = qs.toString();
+    return apiFetch<Rollout[]>(`/rollouts${q ? `?${q}` : ""}`);
+  },
+  getRollout(id: string) {
+    return apiFetch<Rollout>(`/rollouts/${id}`);
+  },
+  planRollout(input: RolloutCreateInput) {
+    return apiFetch<RolloutPlan>("/rollouts/plan", { method: "POST", body: JSON.stringify(input) });
+  },
+  createRollout(input: RolloutCreateInput) {
+    return apiFetch<Rollout>("/rollouts", { method: "POST", body: JSON.stringify(input) });
+  },
+  haltRollout(id: string) {
+    return apiFetch<Rollout>(`/rollouts/${id}/halt`, { method: "POST" });
+  },
+  resumeRollout(id: string) {
+    return apiFetch<Rollout>(`/rollouts/${id}/resume`, { method: "POST" });
+  },
+  cancelRollout(id: string) {
+    return apiFetch<Rollout>(`/rollouts/${id}/cancel`, { method: "POST" });
   },
   bulkSetBackupConfig(databaseIds: string[], cfg: { enabled: boolean; intervalHours?: number; retention?: number }) {
     return apiFetch<{ applied: string[]; skipped: string[] }>(`/fleet/backup-config`, {

@@ -134,6 +134,7 @@ model Team {
   memberships  Membership[]
   servers      Server[]
   monitors     Monitor[]
+  rollouts     Rollout[]
   channels     NotificationChannel[]
   applications Application[]
   databases    Database[]
@@ -1767,4 +1768,83 @@ model InstanceSettings {
   mailFrom            String?
   mailResendKeyEnc    String? // libsodium-encrypted Resend API key
   updatedAt           DateTime  @updatedAt
+}
+
+// ── Fleet rollouts (canary → waves → health gate → halt/resume) ─────────────────────────────────────────────
+// A Rollout redeploys a SET of apps in ordered waves, each wave gated on the per-app deploy outcome (the
+// existing health gate + post-cutover soak decide per app; the engine only reads the Deployment row). It is a
+// durable state machine driven by a stateless periodic tick, so it survives a hub restart without resuming a
+// build mid-flight (an interrupted deploy halts the rollout; the operator resumes). One LIVE rollout per app.
+
+enum RolloutStatus {
+  RUNNING
+  HALTED // waiting for the operator: resume (retry the wave's failures) or cancel
+  ROLLING_BACK // reserved for the fleet rollback slice
+  COMPLETED
+  ROLLED_BACK // reserved
+  ROLLBACK_FAILED // reserved
+  CANCELLED
+}
+
+enum RolloutTargetStatus {
+  PENDING
+  DEPLOYING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  SKIPPED
+  REVERTING // reserved
+  ROLLED_BACK // reserved
+  ROLLBACK_FAILED // reserved
+}
+
+model Rollout {
+  id            String        @id @default(cuid())
+  team          Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId        String
+  createdBy     String // the initiator; every dispatch re-checks their access (a demoted initiator halts the rollout)
+  name          String?
+  kind          String        @default("app_deploy") // what a target is ("app_deploy" today; agent-update/os-patch later)
+  status        RolloutStatus @default(RUNNING)
+  haltReason    String? // manual | wave_failed | wave_no_signal | bake_failed | interrupted | initiator_lost
+  haltDetail    Json? // secret-free detail for the halt (target ids, counts)
+  config        Json // the RolloutConfig frozen at create
+  currentWave   Int           @default(0)
+  waveCount     Int
+  waveStartedAt DateTime      @default(now()) // when the current wave became current (offline wait reference)
+  bakeUntil     DateTime? // the current wave passed; observing until this instant before promoting
+  createdAt     DateTime      @default(now())
+  finishedAt    DateTime?
+  updatedAt     DateTime      @updatedAt
+  targets       RolloutTarget[]
+
+  @@index([teamId, createdAt])
+  @@index([status])
+}
+
+model RolloutTarget {
+  id                   String              @id @default(cuid())
+  rollout              Rollout             @relation(fields: [rolloutId], references: [id], onDelete: Cascade)
+  rolloutId            String
+  wave                 Int
+  position             Int
+  kind                 String              @default("app_deploy")
+  resourceId           String // the Application id (loose FK: an app deleted mid-rollout is SKIPPED, not cascaded)
+  serverId             String // denormalised for the online check
+  label                String // name snapshot
+  status               RolloutTargetStatus @default(PENDING)
+  attempt              Int                 @default(0)
+  baselineDeploymentId String? // the last rollbackable SUCCESS deploy before this rollout touched the app
+  deploymentId         String? // the Deployment this rollout dispatched (attempt N)
+  outcome              String? // passed | rejected_safe | failed | interrupted | cancelled | halted | offline | app_gone | …
+  detail               String?
+  active               Boolean             @default(true) // true while the rollout is live → one live rollout per app
+  dispatchedAt         DateTime?
+  finishedAt           DateTime?
+
+  // NOTE: a partial unique index `rollout_target_one_active_per_resource ON RolloutTarget(kind, resourceId)
+  // WHERE active` (20261115100000_rollouts migration) enforces one LIVE rollout per app at the DB level;
+  // Prisma can't model partial indexes, so a future `migrate diff` must not drop it.
+  @@unique([rolloutId, resourceId])
+  @@index([rolloutId, wave])
 }

@@ -8069,14 +8069,22 @@
         ]
       }
     },
-    "/api/v1/servers/{id}/agent-update": {
-      "post": {
-        "operationId": "AgentUpdateController_updateOne",
+    "/api/v1/rollouts": {
+      "get": {
+        "operationId": "RolloutsController_list",
         "parameters": [
           {
-            "name": "id",
+            "name": "teamId",
             "required": true,
-            "in": "path",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "required": true,
+            "in": "query",
             "schema": {
               "type": "string"
             }
@@ -8088,65 +8096,282 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "status": {
-                      "type": "string",
-                      "enum": [
-                        "ok",
-                        "unconfigured",
-                        "error"
-                      ]
-                    },
-                    "total": {
-                      "type": "number"
-                    },
-                    "sent": {
-                      "type": "number"
-                    },
-                    "offline": {
-                      "type": "number"
-                    },
-                    "skipped": {
-                      "type": "number"
-                    },
-                    "results": {
-                      "type": "array",
-                      "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "teamId": {
+                        "type": "string"
+                      },
+                      "createdBy": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "kind": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "RUNNING",
+                          "HALTED",
+                          "ROLLING_BACK",
+                          "COMPLETED",
+                          "ROLLED_BACK",
+                          "ROLLBACK_FAILED",
+                          "CANCELLED"
+                        ]
+                      },
+                      "haltReason": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "haltDetail": {
+                        "type": "object",
+                        "additionalProperties": {},
+                        "nullable": true
+                      },
+                      "config": {
                         "type": "object",
                         "properties": {
-                          "serverId": {
-                            "type": "string"
+                          "canary": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 10,
+                            "default": 1
                           },
-                          "status": {
-                            "type": "string",
-                            "enum": [
-                              "sent",
-                              "offline",
-                              "skipped"
+                          "steps": {
+                            "type": "array",
+                            "items": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 100
+                            },
+                            "minItems": 1,
+                            "maxItems": 9,
+                            "default": [
+                              25,
+                              50,
+                              100
                             ]
                           },
-                          "reason": {
-                            "type": "string"
+                          "concurrency": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 10,
+                            "default": 3
+                          },
+                          "maxFailuresPerWave": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 50,
+                            "default": 0
+                          },
+                          "bakeSec": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 3600,
+                            "default": 60
+                          },
+                          "dispatchTimeoutSec": {
+                            "type": "integer",
+                            "minimum": 60,
+                            "maximum": 18000,
+                            "default": 2700
+                          },
+                          "waitOnlineSec": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 3600,
+                            "default": 300
+                          },
+                          "allowUngated": {
+                            "type": "boolean",
+                            "default": false
+                          },
+                          "noCache": {
+                            "type": "boolean",
+                            "default": false
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "currentWave": {
+                        "type": "number"
+                      },
+                      "waveCount": {
+                        "type": "number"
+                      },
+                      "waveSizes": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        }
+                      },
+                      "bakeUntil": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                      },
+                      "createdAt": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "finishedAt": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                      },
+                      "summary": {
+                        "type": "object",
+                        "properties": {
+                          "total": {
+                            "type": "number"
+                          },
+                          "pending": {
+                            "type": "number"
+                          },
+                          "deploying": {
+                            "type": "number"
+                          },
+                          "succeeded": {
+                            "type": "number"
+                          },
+                          "failed": {
+                            "type": "number"
+                          },
+                          "skipped": {
+                            "type": "number"
+                          },
+                          "cancelled": {
+                            "type": "number"
                           }
                         },
                         "required": [
-                          "serverId",
-                          "status"
+                          "total",
+                          "pending",
+                          "deploying",
+                          "succeeded",
+                          "failed",
+                          "skipped",
+                          "cancelled"
                         ],
                         "additionalProperties": false
+                      },
+                      "targets": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "appId": {
+                              "type": "string"
+                            },
+                            "serverId": {
+                              "type": "string"
+                            },
+                            "label": {
+                              "type": "string"
+                            },
+                            "wave": {
+                              "type": "number"
+                            },
+                            "position": {
+                              "type": "number"
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "PENDING",
+                                "DEPLOYING",
+                                "SUCCEEDED",
+                                "FAILED",
+                                "CANCELLED",
+                                "SKIPPED",
+                                "REVERTING",
+                                "ROLLED_BACK",
+                                "ROLLBACK_FAILED"
+                              ]
+                            },
+                            "attempt": {
+                              "type": "number"
+                            },
+                            "deploymentId": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "baselineDeploymentId": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "outcome": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "detail": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "dispatchedAt": {
+                              "type": "string",
+                              "format": "date-time",
+                              "nullable": true
+                            },
+                            "finishedAt": {
+                              "type": "string",
+                              "format": "date-time",
+                              "nullable": true
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "appId",
+                            "serverId",
+                            "label",
+                            "wave",
+                            "position",
+                            "status",
+                            "attempt",
+                            "deploymentId",
+                            "baselineDeploymentId",
+                            "outcome",
+                            "detail",
+                            "dispatchedAt",
+                            "finishedAt"
+                          ],
+                          "additionalProperties": false
+                        }
                       }
-                    }
-                  },
-                  "required": [
-                    "status",
-                    "total",
-                    "sent",
-                    "offline",
-                    "skipped",
-                    "results"
-                  ],
-                  "additionalProperties": false
+                    },
+                    "required": [
+                      "id",
+                      "teamId",
+                      "createdBy",
+                      "name",
+                      "kind",
+                      "status",
+                      "haltReason",
+                      "haltDetail",
+                      "config",
+                      "currentWave",
+                      "waveCount",
+                      "waveSizes",
+                      "bakeUntil",
+                      "createdAt",
+                      "finishedAt",
+                      "summary",
+                      "targets"
+                    ],
+                    "additionalProperties": false
+                  }
                 }
               }
             }
@@ -8163,16 +8388,6 @@
           },
           "403": {
             "description": "Authenticated but not permitted (scope or team permission).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Resource not found.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8208,13 +8423,11 @@
           }
         ],
         "tags": [
-          "agent-update"
+          "rollouts"
         ]
-      }
-    },
-    "/api/v1/fleet/agent-update": {
+      },
       "post": {
-        "operationId": "AgentUpdateController_updateFleet",
+        "operationId": "RolloutsController_create",
         "parameters": [],
         "requestBody": {
           "required": true,
@@ -8223,16 +8436,89 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "serverIds": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  },
+                  "appIds": {
                     "type": "array",
                     "items": {
-                      "type": "string"
+                      "type": "string",
+                      "minLength": 1
                     },
-                    "minItems": 1
+                    "minItems": 1,
+                    "maxItems": 200
+                  },
+                  "config": {
+                    "type": "object",
+                    "properties": {
+                      "canary": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 10,
+                        "default": 1
+                      },
+                      "steps": {
+                        "type": "array",
+                        "items": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 100
+                        },
+                        "minItems": 1,
+                        "maxItems": 9,
+                        "default": [
+                          25,
+                          50,
+                          100
+                        ]
+                      },
+                      "concurrency": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 10,
+                        "default": 3
+                      },
+                      "maxFailuresPerWave": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 50,
+                        "default": 0
+                      },
+                      "bakeSec": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 3600,
+                        "default": 60
+                      },
+                      "dispatchTimeoutSec": {
+                        "type": "integer",
+                        "minimum": 60,
+                        "maximum": 18000,
+                        "default": 2700
+                      },
+                      "waitOnlineSec": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 3600,
+                        "default": 300
+                      },
+                      "allowUngated": {
+                        "type": "boolean",
+                        "default": false
+                      },
+                      "noCache": {
+                        "type": "boolean",
+                        "default": false
+                      }
+                    },
+                    "additionalProperties": false,
+                    "default": {}
                   }
                 },
                 "required": [
-                  "serverIds"
+                  "appIds"
                 ],
                 "additionalProperties": false
               }
@@ -8240,68 +8526,282 @@
           }
         },
         "responses": {
-          "200": {
+          "201": {
             "description": "",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "teamId": {
+                      "type": "string"
+                    },
+                    "createdBy": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
                     "status": {
                       "type": "string",
                       "enum": [
-                        "ok",
-                        "unconfigured",
-                        "error"
+                        "RUNNING",
+                        "HALTED",
+                        "ROLLING_BACK",
+                        "COMPLETED",
+                        "ROLLED_BACK",
+                        "ROLLBACK_FAILED",
+                        "CANCELLED"
                       ]
                     },
-                    "total": {
+                    "haltReason": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "haltDetail": {
+                      "type": "object",
+                      "additionalProperties": {},
+                      "nullable": true
+                    },
+                    "config": {
+                      "type": "object",
+                      "properties": {
+                        "canary": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 10,
+                          "default": 1
+                        },
+                        "steps": {
+                          "type": "array",
+                          "items": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 100
+                          },
+                          "minItems": 1,
+                          "maxItems": 9,
+                          "default": [
+                            25,
+                            50,
+                            100
+                          ]
+                        },
+                        "concurrency": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 10,
+                          "default": 3
+                        },
+                        "maxFailuresPerWave": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 50,
+                          "default": 0
+                        },
+                        "bakeSec": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 3600,
+                          "default": 60
+                        },
+                        "dispatchTimeoutSec": {
+                          "type": "integer",
+                          "minimum": 60,
+                          "maximum": 18000,
+                          "default": 2700
+                        },
+                        "waitOnlineSec": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 3600,
+                          "default": 300
+                        },
+                        "allowUngated": {
+                          "type": "boolean",
+                          "default": false
+                        },
+                        "noCache": {
+                          "type": "boolean",
+                          "default": false
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "currentWave": {
                       "type": "number"
                     },
-                    "sent": {
+                    "waveCount": {
                       "type": "number"
                     },
-                    "offline": {
-                      "type": "number"
+                    "waveSizes": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      }
                     },
-                    "skipped": {
-                      "type": "number"
+                    "bakeUntil": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
                     },
-                    "results": {
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "finishedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "summary": {
+                      "type": "object",
+                      "properties": {
+                        "total": {
+                          "type": "number"
+                        },
+                        "pending": {
+                          "type": "number"
+                        },
+                        "deploying": {
+                          "type": "number"
+                        },
+                        "succeeded": {
+                          "type": "number"
+                        },
+                        "failed": {
+                          "type": "number"
+                        },
+                        "skipped": {
+                          "type": "number"
+                        },
+                        "cancelled": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "total",
+                        "pending",
+                        "deploying",
+                        "succeeded",
+                        "failed",
+                        "skipped",
+                        "cancelled"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "targets": {
                       "type": "array",
                       "items": {
                         "type": "object",
                         "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "appId": {
+                            "type": "string"
+                          },
                           "serverId": {
                             "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "wave": {
+                            "type": "number"
+                          },
+                          "position": {
+                            "type": "number"
                           },
                           "status": {
                             "type": "string",
                             "enum": [
-                              "sent",
-                              "offline",
-                              "skipped"
+                              "PENDING",
+                              "DEPLOYING",
+                              "SUCCEEDED",
+                              "FAILED",
+                              "CANCELLED",
+                              "SKIPPED",
+                              "REVERTING",
+                              "ROLLED_BACK",
+                              "ROLLBACK_FAILED"
                             ]
                           },
-                          "reason": {
-                            "type": "string"
+                          "attempt": {
+                            "type": "number"
+                          },
+                          "deploymentId": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "baselineDeploymentId": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "detail": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "dispatchedAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "nullable": true
+                          },
+                          "finishedAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "nullable": true
                           }
                         },
                         "required": [
+                          "id",
+                          "appId",
                           "serverId",
-                          "status"
+                          "label",
+                          "wave",
+                          "position",
+                          "status",
+                          "attempt",
+                          "deploymentId",
+                          "baselineDeploymentId",
+                          "outcome",
+                          "detail",
+                          "dispatchedAt",
+                          "finishedAt"
                         ],
                         "additionalProperties": false
                       }
                     }
                   },
                   "required": [
+                    "id",
+                    "teamId",
+                    "createdBy",
+                    "name",
+                    "kind",
                     "status",
-                    "total",
-                    "sent",
-                    "offline",
-                    "skipped",
-                    "results"
+                    "haltReason",
+                    "haltDetail",
+                    "config",
+                    "currentWave",
+                    "waveCount",
+                    "waveSizes",
+                    "bakeUntil",
+                    "createdAt",
+                    "finishedAt",
+                    "summary",
+                    "targets"
                   ],
                   "additionalProperties": false
                 }
@@ -8365,7 +8865,1668 @@
           }
         ],
         "tags": [
-          "agent-update"
+          "rollouts"
+        ]
+      }
+    },
+    "/api/v1/rollouts/plan": {
+      "post": {
+        "operationId": "RolloutsController_plan",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  },
+                  "appIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "minItems": 1,
+                    "maxItems": 200
+                  },
+                  "config": {
+                    "type": "object",
+                    "properties": {
+                      "canary": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 10,
+                        "default": 1
+                      },
+                      "steps": {
+                        "type": "array",
+                        "items": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 100
+                        },
+                        "minItems": 1,
+                        "maxItems": 9,
+                        "default": [
+                          25,
+                          50,
+                          100
+                        ]
+                      },
+                      "concurrency": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 10,
+                        "default": 3
+                      },
+                      "maxFailuresPerWave": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 50,
+                        "default": 0
+                      },
+                      "bakeSec": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 3600,
+                        "default": 60
+                      },
+                      "dispatchTimeoutSec": {
+                        "type": "integer",
+                        "minimum": 60,
+                        "maximum": 18000,
+                        "default": 2700
+                      },
+                      "waitOnlineSec": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 3600,
+                        "default": 300
+                      },
+                      "allowUngated": {
+                        "type": "boolean",
+                        "default": false
+                      },
+                      "noCache": {
+                        "type": "boolean",
+                        "default": false
+                      }
+                    },
+                    "additionalProperties": false,
+                    "default": {}
+                  }
+                },
+                "required": [
+                  "appIds"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "teamId": {
+                      "type": "string"
+                    },
+                    "waveSizes": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      }
+                    },
+                    "targets": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "appId": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "serverId": {
+                            "type": "string"
+                          },
+                          "wave": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "blocked": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "warnings": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "appId",
+                          "name",
+                          "serverId",
+                          "wave",
+                          "blocked",
+                          "warnings"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "blocked": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "teamId",
+                    "waveSizes",
+                    "targets",
+                    "blocked"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "rollouts"
+        ]
+      }
+    },
+    "/api/v1/rollouts/{id}": {
+      "get": {
+        "operationId": "RolloutsController_get",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "teamId": {
+                      "type": "string"
+                    },
+                    "createdBy": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "RUNNING",
+                        "HALTED",
+                        "ROLLING_BACK",
+                        "COMPLETED",
+                        "ROLLED_BACK",
+                        "ROLLBACK_FAILED",
+                        "CANCELLED"
+                      ]
+                    },
+                    "haltReason": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "haltDetail": {
+                      "type": "object",
+                      "additionalProperties": {},
+                      "nullable": true
+                    },
+                    "config": {
+                      "type": "object",
+                      "properties": {
+                        "canary": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 10,
+                          "default": 1
+                        },
+                        "steps": {
+                          "type": "array",
+                          "items": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 100
+                          },
+                          "minItems": 1,
+                          "maxItems": 9,
+                          "default": [
+                            25,
+                            50,
+                            100
+                          ]
+                        },
+                        "concurrency": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 10,
+                          "default": 3
+                        },
+                        "maxFailuresPerWave": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 50,
+                          "default": 0
+                        },
+                        "bakeSec": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 3600,
+                          "default": 60
+                        },
+                        "dispatchTimeoutSec": {
+                          "type": "integer",
+                          "minimum": 60,
+                          "maximum": 18000,
+                          "default": 2700
+                        },
+                        "waitOnlineSec": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 3600,
+                          "default": 300
+                        },
+                        "allowUngated": {
+                          "type": "boolean",
+                          "default": false
+                        },
+                        "noCache": {
+                          "type": "boolean",
+                          "default": false
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "currentWave": {
+                      "type": "number"
+                    },
+                    "waveCount": {
+                      "type": "number"
+                    },
+                    "waveSizes": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      }
+                    },
+                    "bakeUntil": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "finishedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "summary": {
+                      "type": "object",
+                      "properties": {
+                        "total": {
+                          "type": "number"
+                        },
+                        "pending": {
+                          "type": "number"
+                        },
+                        "deploying": {
+                          "type": "number"
+                        },
+                        "succeeded": {
+                          "type": "number"
+                        },
+                        "failed": {
+                          "type": "number"
+                        },
+                        "skipped": {
+                          "type": "number"
+                        },
+                        "cancelled": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "total",
+                        "pending",
+                        "deploying",
+                        "succeeded",
+                        "failed",
+                        "skipped",
+                        "cancelled"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "targets": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "appId": {
+                            "type": "string"
+                          },
+                          "serverId": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "wave": {
+                            "type": "number"
+                          },
+                          "position": {
+                            "type": "number"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "PENDING",
+                              "DEPLOYING",
+                              "SUCCEEDED",
+                              "FAILED",
+                              "CANCELLED",
+                              "SKIPPED",
+                              "REVERTING",
+                              "ROLLED_BACK",
+                              "ROLLBACK_FAILED"
+                            ]
+                          },
+                          "attempt": {
+                            "type": "number"
+                          },
+                          "deploymentId": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "baselineDeploymentId": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "detail": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "dispatchedAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "nullable": true
+                          },
+                          "finishedAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "appId",
+                          "serverId",
+                          "label",
+                          "wave",
+                          "position",
+                          "status",
+                          "attempt",
+                          "deploymentId",
+                          "baselineDeploymentId",
+                          "outcome",
+                          "detail",
+                          "dispatchedAt",
+                          "finishedAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "teamId",
+                    "createdBy",
+                    "name",
+                    "kind",
+                    "status",
+                    "haltReason",
+                    "haltDetail",
+                    "config",
+                    "currentWave",
+                    "waveCount",
+                    "waveSizes",
+                    "bakeUntil",
+                    "createdAt",
+                    "finishedAt",
+                    "summary",
+                    "targets"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "rollouts"
+        ]
+      }
+    },
+    "/api/v1/rollouts/{id}/halt": {
+      "post": {
+        "operationId": "RolloutsController_halt",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "teamId": {
+                      "type": "string"
+                    },
+                    "createdBy": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "RUNNING",
+                        "HALTED",
+                        "ROLLING_BACK",
+                        "COMPLETED",
+                        "ROLLED_BACK",
+                        "ROLLBACK_FAILED",
+                        "CANCELLED"
+                      ]
+                    },
+                    "haltReason": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "haltDetail": {
+                      "type": "object",
+                      "additionalProperties": {},
+                      "nullable": true
+                    },
+                    "config": {
+                      "type": "object",
+                      "properties": {
+                        "canary": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 10,
+                          "default": 1
+                        },
+                        "steps": {
+                          "type": "array",
+                          "items": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 100
+                          },
+                          "minItems": 1,
+                          "maxItems": 9,
+                          "default": [
+                            25,
+                            50,
+                            100
+                          ]
+                        },
+                        "concurrency": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 10,
+                          "default": 3
+                        },
+                        "maxFailuresPerWave": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 50,
+                          "default": 0
+                        },
+                        "bakeSec": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 3600,
+                          "default": 60
+                        },
+                        "dispatchTimeoutSec": {
+                          "type": "integer",
+                          "minimum": 60,
+                          "maximum": 18000,
+                          "default": 2700
+                        },
+                        "waitOnlineSec": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 3600,
+                          "default": 300
+                        },
+                        "allowUngated": {
+                          "type": "boolean",
+                          "default": false
+                        },
+                        "noCache": {
+                          "type": "boolean",
+                          "default": false
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "currentWave": {
+                      "type": "number"
+                    },
+                    "waveCount": {
+                      "type": "number"
+                    },
+                    "waveSizes": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      }
+                    },
+                    "bakeUntil": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "finishedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "summary": {
+                      "type": "object",
+                      "properties": {
+                        "total": {
+                          "type": "number"
+                        },
+                        "pending": {
+                          "type": "number"
+                        },
+                        "deploying": {
+                          "type": "number"
+                        },
+                        "succeeded": {
+                          "type": "number"
+                        },
+                        "failed": {
+                          "type": "number"
+                        },
+                        "skipped": {
+                          "type": "number"
+                        },
+                        "cancelled": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "total",
+                        "pending",
+                        "deploying",
+                        "succeeded",
+                        "failed",
+                        "skipped",
+                        "cancelled"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "targets": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "appId": {
+                            "type": "string"
+                          },
+                          "serverId": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "wave": {
+                            "type": "number"
+                          },
+                          "position": {
+                            "type": "number"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "PENDING",
+                              "DEPLOYING",
+                              "SUCCEEDED",
+                              "FAILED",
+                              "CANCELLED",
+                              "SKIPPED",
+                              "REVERTING",
+                              "ROLLED_BACK",
+                              "ROLLBACK_FAILED"
+                            ]
+                          },
+                          "attempt": {
+                            "type": "number"
+                          },
+                          "deploymentId": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "baselineDeploymentId": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "detail": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "dispatchedAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "nullable": true
+                          },
+                          "finishedAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "appId",
+                          "serverId",
+                          "label",
+                          "wave",
+                          "position",
+                          "status",
+                          "attempt",
+                          "deploymentId",
+                          "baselineDeploymentId",
+                          "outcome",
+                          "detail",
+                          "dispatchedAt",
+                          "finishedAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "teamId",
+                    "createdBy",
+                    "name",
+                    "kind",
+                    "status",
+                    "haltReason",
+                    "haltDetail",
+                    "config",
+                    "currentWave",
+                    "waveCount",
+                    "waveSizes",
+                    "bakeUntil",
+                    "createdAt",
+                    "finishedAt",
+                    "summary",
+                    "targets"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "rollouts"
+        ]
+      }
+    },
+    "/api/v1/rollouts/{id}/resume": {
+      "post": {
+        "operationId": "RolloutsController_resume",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "teamId": {
+                      "type": "string"
+                    },
+                    "createdBy": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "RUNNING",
+                        "HALTED",
+                        "ROLLING_BACK",
+                        "COMPLETED",
+                        "ROLLED_BACK",
+                        "ROLLBACK_FAILED",
+                        "CANCELLED"
+                      ]
+                    },
+                    "haltReason": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "haltDetail": {
+                      "type": "object",
+                      "additionalProperties": {},
+                      "nullable": true
+                    },
+                    "config": {
+                      "type": "object",
+                      "properties": {
+                        "canary": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 10,
+                          "default": 1
+                        },
+                        "steps": {
+                          "type": "array",
+                          "items": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 100
+                          },
+                          "minItems": 1,
+                          "maxItems": 9,
+                          "default": [
+                            25,
+                            50,
+                            100
+                          ]
+                        },
+                        "concurrency": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 10,
+                          "default": 3
+                        },
+                        "maxFailuresPerWave": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 50,
+                          "default": 0
+                        },
+                        "bakeSec": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 3600,
+                          "default": 60
+                        },
+                        "dispatchTimeoutSec": {
+                          "type": "integer",
+                          "minimum": 60,
+                          "maximum": 18000,
+                          "default": 2700
+                        },
+                        "waitOnlineSec": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 3600,
+                          "default": 300
+                        },
+                        "allowUngated": {
+                          "type": "boolean",
+                          "default": false
+                        },
+                        "noCache": {
+                          "type": "boolean",
+                          "default": false
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "currentWave": {
+                      "type": "number"
+                    },
+                    "waveCount": {
+                      "type": "number"
+                    },
+                    "waveSizes": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      }
+                    },
+                    "bakeUntil": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "finishedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "summary": {
+                      "type": "object",
+                      "properties": {
+                        "total": {
+                          "type": "number"
+                        },
+                        "pending": {
+                          "type": "number"
+                        },
+                        "deploying": {
+                          "type": "number"
+                        },
+                        "succeeded": {
+                          "type": "number"
+                        },
+                        "failed": {
+                          "type": "number"
+                        },
+                        "skipped": {
+                          "type": "number"
+                        },
+                        "cancelled": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "total",
+                        "pending",
+                        "deploying",
+                        "succeeded",
+                        "failed",
+                        "skipped",
+                        "cancelled"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "targets": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "appId": {
+                            "type": "string"
+                          },
+                          "serverId": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "wave": {
+                            "type": "number"
+                          },
+                          "position": {
+                            "type": "number"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "PENDING",
+                              "DEPLOYING",
+                              "SUCCEEDED",
+                              "FAILED",
+                              "CANCELLED",
+                              "SKIPPED",
+                              "REVERTING",
+                              "ROLLED_BACK",
+                              "ROLLBACK_FAILED"
+                            ]
+                          },
+                          "attempt": {
+                            "type": "number"
+                          },
+                          "deploymentId": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "baselineDeploymentId": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "detail": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "dispatchedAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "nullable": true
+                          },
+                          "finishedAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "appId",
+                          "serverId",
+                          "label",
+                          "wave",
+                          "position",
+                          "status",
+                          "attempt",
+                          "deploymentId",
+                          "baselineDeploymentId",
+                          "outcome",
+                          "detail",
+                          "dispatchedAt",
+                          "finishedAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "teamId",
+                    "createdBy",
+                    "name",
+                    "kind",
+                    "status",
+                    "haltReason",
+                    "haltDetail",
+                    "config",
+                    "currentWave",
+                    "waveCount",
+                    "waveSizes",
+                    "bakeUntil",
+                    "createdAt",
+                    "finishedAt",
+                    "summary",
+                    "targets"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "rollouts"
+        ]
+      }
+    },
+    "/api/v1/rollouts/{id}/cancel": {
+      "post": {
+        "operationId": "RolloutsController_cancel",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "teamId": {
+                      "type": "string"
+                    },
+                    "createdBy": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "RUNNING",
+                        "HALTED",
+                        "ROLLING_BACK",
+                        "COMPLETED",
+                        "ROLLED_BACK",
+                        "ROLLBACK_FAILED",
+                        "CANCELLED"
+                      ]
+                    },
+                    "haltReason": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "haltDetail": {
+                      "type": "object",
+                      "additionalProperties": {},
+                      "nullable": true
+                    },
+                    "config": {
+                      "type": "object",
+                      "properties": {
+                        "canary": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 10,
+                          "default": 1
+                        },
+                        "steps": {
+                          "type": "array",
+                          "items": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 100
+                          },
+                          "minItems": 1,
+                          "maxItems": 9,
+                          "default": [
+                            25,
+                            50,
+                            100
+                          ]
+                        },
+                        "concurrency": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 10,
+                          "default": 3
+                        },
+                        "maxFailuresPerWave": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 50,
+                          "default": 0
+                        },
+                        "bakeSec": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 3600,
+                          "default": 60
+                        },
+                        "dispatchTimeoutSec": {
+                          "type": "integer",
+                          "minimum": 60,
+                          "maximum": 18000,
+                          "default": 2700
+                        },
+                        "waitOnlineSec": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 3600,
+                          "default": 300
+                        },
+                        "allowUngated": {
+                          "type": "boolean",
+                          "default": false
+                        },
+                        "noCache": {
+                          "type": "boolean",
+                          "default": false
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "currentWave": {
+                      "type": "number"
+                    },
+                    "waveCount": {
+                      "type": "number"
+                    },
+                    "waveSizes": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      }
+                    },
+                    "bakeUntil": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "finishedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "summary": {
+                      "type": "object",
+                      "properties": {
+                        "total": {
+                          "type": "number"
+                        },
+                        "pending": {
+                          "type": "number"
+                        },
+                        "deploying": {
+                          "type": "number"
+                        },
+                        "succeeded": {
+                          "type": "number"
+                        },
+                        "failed": {
+                          "type": "number"
+                        },
+                        "skipped": {
+                          "type": "number"
+                        },
+                        "cancelled": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "total",
+                        "pending",
+                        "deploying",
+                        "succeeded",
+                        "failed",
+                        "skipped",
+                        "cancelled"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "targets": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "appId": {
+                            "type": "string"
+                          },
+                          "serverId": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "wave": {
+                            "type": "number"
+                          },
+                          "position": {
+                            "type": "number"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "PENDING",
+                              "DEPLOYING",
+                              "SUCCEEDED",
+                              "FAILED",
+                              "CANCELLED",
+                              "SKIPPED",
+                              "REVERTING",
+                              "ROLLED_BACK",
+                              "ROLLBACK_FAILED"
+                            ]
+                          },
+                          "attempt": {
+                            "type": "number"
+                          },
+                          "deploymentId": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "baselineDeploymentId": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "detail": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "dispatchedAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "nullable": true
+                          },
+                          "finishedAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "appId",
+                          "serverId",
+                          "label",
+                          "wave",
+                          "position",
+                          "status",
+                          "attempt",
+                          "deploymentId",
+                          "baselineDeploymentId",
+                          "outcome",
+                          "detail",
+                          "dispatchedAt",
+                          "finishedAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "teamId",
+                    "createdBy",
+                    "name",
+                    "kind",
+                    "status",
+                    "haltReason",
+                    "haltDetail",
+                    "config",
+                    "currentWave",
+                    "waveCount",
+                    "waveSizes",
+                    "bakeUntil",
+                    "createdAt",
+                    "finishedAt",
+                    "summary",
+                    "targets"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "rollouts"
         ]
       }
     },
@@ -33476,6 +35637,306 @@
         ],
         "tags": [
           "secret-providers"
+        ]
+      }
+    },
+    "/api/v1/servers/{id}/agent-update": {
+      "post": {
+        "operationId": "AgentUpdateController_updateOne",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok",
+                        "unconfigured",
+                        "error"
+                      ]
+                    },
+                    "total": {
+                      "type": "number"
+                    },
+                    "sent": {
+                      "type": "number"
+                    },
+                    "offline": {
+                      "type": "number"
+                    },
+                    "skipped": {
+                      "type": "number"
+                    },
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "serverId": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "sent",
+                              "offline",
+                              "skipped"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "serverId",
+                          "status"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "total",
+                    "sent",
+                    "offline",
+                    "skipped",
+                    "results"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "agent-update"
+        ]
+      }
+    },
+    "/api/v1/fleet/agent-update": {
+      "post": {
+        "operationId": "AgentUpdateController_updateFleet",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "serverIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "minItems": 1
+                  }
+                },
+                "required": [
+                  "serverIds"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok",
+                        "unconfigured",
+                        "error"
+                      ]
+                    },
+                    "total": {
+                      "type": "number"
+                    },
+                    "sent": {
+                      "type": "number"
+                    },
+                    "offline": {
+                      "type": "number"
+                    },
+                    "skipped": {
+                      "type": "number"
+                    },
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "serverId": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "sent",
+                              "offline",
+                              "skipped"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "serverId",
+                          "status"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "total",
+                    "sent",
+                    "offline",
+                    "skipped",
+                    "results"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "agent-update"
         ]
       }
     },
