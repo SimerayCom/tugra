@@ -10,6 +10,9 @@ export interface DeployLogState {
   done: boolean;
   status?: "SUCCESS" | "FAILED";
   exitCode?: number;
+  /** The stream closed WITHOUT a done event (nothing to follow: no live deploy in this hub process, a rejected
+   *  fetch, a network error) — the UI must not claim it is "following". */
+  ended?: boolean;
 }
 
 const EMPTY: DeployLogState = { lines: "", done: false };
@@ -20,7 +23,7 @@ const EMPTY: DeployLogState = { lines: "", done: false };
  * On completion it refetches deployments so the persisted log/status take over.
  */
 /** Shared SSE log consumer for any DeployLogHub-backed stream path. */
-function useLogStream(path: string, active: boolean, onDone?: () => void): DeployLogState {
+export function useLogStream(path: string, active: boolean, onDone?: () => void): DeployLogState {
   const [state, setState] = useState<DeployLogState>(EMPTY);
 
   useEffect(() => {
@@ -37,7 +40,10 @@ function useLogStream(path: string, active: boolean, onDone?: () => void): Deplo
           credentials: "include", // same-origin session cookie authenticates the stream
           signal: controller.signal,
         });
-        if (res.ok === false || !res.body) return; // non-2xx (e.g. expired cookie) → bail; the UI falls back to polling
+        if (res.ok === false || !res.body) {
+          setState((s) => ({ ...s, ended: true })); // non-2xx (e.g. expired cookie) → bail; the UI falls back to polling
+          return;
+        }
         await consumeDeployLogStream(res.body, (event) => {
           if (event.type === "chunk") {
             setState((s) => ({ ...s, lines: s.lines + event.data }));
@@ -46,8 +52,11 @@ function useLogStream(path: string, active: boolean, onDone?: () => void): Deplo
             onDone?.();
           }
         });
+        // The hub closes the stream at once when it has nothing live for this app (e.g. a deploy being adopted
+        // after a hub restart): mark it ended so the UI shows "no live log" instead of "following".
+        setState((s) => (s.done ? s : { ...s, ended: true }));
       } catch {
-        // aborted or network error — UI falls back to polling
+        if (!controller.signal.aborted) setState((s) => (s.done ? s : { ...s, ended: true })); // network error — UI falls back to polling
       }
     })();
     return () => controller.abort();
@@ -77,3 +86,19 @@ export function usePatchLogStream(serverId: string, active: boolean): DeployLogS
     void qc.invalidateQueries({ queryKey: ["server", serverId] });
   });
 }
+
+/**
+ * Live build log for ONE deployment's detail page. The hub streams per APP (one RUNNING deploy per app), so the
+ * caller must pass `active` from the viewed ROW's own status (RUNNING), never from "the newest row" — a QUEUED
+ * row above a RUNNING one would otherwise hide a live deploy. On completion the detail, list and app refetch so
+ * the persisted log takes over.
+ */
+export function useDeploymentLogStream(appId: string, depId: string, active: boolean): DeployLogState {
+  const qc = useQueryClient();
+  return useLogStream(`/apps/${appId}/deployments/stream`, active, () => {
+    void qc.invalidateQueries({ queryKey: ["deployment", appId, depId] });
+    void qc.invalidateQueries({ queryKey: ["deployments", appId] });
+    void qc.invalidateQueries({ queryKey: ["app", appId] });
+  });
+}
+

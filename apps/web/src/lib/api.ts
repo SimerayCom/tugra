@@ -108,6 +108,7 @@ import type {
   RolloutCreateInput,
   RolloutPlan,
   SecretsKeyStatus,
+  DeploymentDetail,
 } from "./types";
 
 // Same-origin path the SPA calls; next.config rewrites proxy it to the hub, so the httpOnly session
@@ -1261,8 +1262,12 @@ export const api = {
     const q = [keepVolumes ? "keepVolumes=1" : "", removeImages ? "removeImages=1" : ""].filter(Boolean).join("&");
     return apiFetch<{ ok: true }>(`/apps/${id}${q ? `?${q}` : ""}`, { method: "DELETE" });
   },
-  getDeployments(id: string) {
-    return apiFetch<Deployment[]>(`/apps/${id}/deployments`);
+  getDeployments(id: string, opts?: { slim?: boolean }) {
+    return apiFetch<Deployment[]>(`/apps/${id}/deployments${opts?.slim ? "?slim=1" : ""}`);
+  },
+  /** One deployment with its full log + derived facts (detail page). */
+  getDeployment(id: string, deploymentId: string) {
+    return apiFetch<DeploymentDetail>(`/apps/${id}/deployments/${deploymentId}`);
   },
   rollbackApp(id: string, deploymentId: string) {
     return apiFetch<Deployment>(`/apps/${id}/rollback/${deploymentId}`, { method: "POST" });

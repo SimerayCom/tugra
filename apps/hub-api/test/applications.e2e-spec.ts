@@ -129,6 +129,27 @@ describe("Applications / deploy (e2e)", () => {
       .expect(200);
     expect(deployments.body[0].status).toBe("SUCCESS");
     expect(deployments.body[0].logs).toContain("Up");
+    expect(deployments.body[0].hasLogs).toBe(true);
+
+    // The detail endpoint: the same row with derived facts; ?slim=1 keeps the list light; the SSE stream
+    // route is NOT shadowed by the new :depId route (declared after it).
+    const one = await request(app.getHttpServer())
+      .get(`/apps/${appId}/deployments/${deployments.body[0].id}`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(one.body).toMatchObject({ id: deployments.body[0].id, status: "SUCCESS", isCurrent: true, cancellable: false, note: null, actor: { kind: "user" } });
+    expect(one.body.logs).toContain("Up");
+    expect(one.body.finishedAt).toBeTruthy();
+    const slim = await request(app.getHttpServer())
+      .get(`/apps/${appId}/deployments?slim=1`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(slim.body[0].logs).toBeNull();
+    expect(slim.body[0].hasLogs).toBe(true);
+    await request(app.getHttpServer())
+      .get(`/apps/${appId}/deployments/does-not-exist`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(404);
 
     const detail = await request(app.getHttpServer())
       .get(`/apps/${appId}`)

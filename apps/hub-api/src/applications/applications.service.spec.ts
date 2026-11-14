@@ -5593,3 +5593,69 @@ describe("ApplicationsService — durable dispatch + hub-crash adoption (ACTION-
     expect(claim.data).toMatchObject({ status: "RUNNING", ownerId: TEST_BOOT_ID, phase: "CLAIMED", heartbeatAt: expect.any(Date), startedAt: expect.any(Date) });
   });
 });
+
+describe("ApplicationsService.deploymentDetail", () => {
+  const rows = [
+    { id: "d3", appId: "app1", status: "RUNNING", kind: "DEPLOY", logs: null, exitCode: null, createdAt: new Date(3), startedAt: new Date(3), durationMs: null, requestedBy: "u1", trigger: "manual", phase: "RECOVERING", agentReqId: "dep-d3", agentServerId: "s1", configSnapshot: null },
+    { id: "d2", appId: "app1", status: "SUCCESS", kind: "DEPLOY", logs: "ok\nTUGRA_ROLLOUT: healthy", exitCode: 0, createdAt: new Date(2), startedAt: new Date(2), durationMs: 1000, requestedBy: "webhook", trigger: "webhook", imageTag: "tugra_app1:d2", configSnapshot: { env: {}, volumes: [], memoryMb: 512 } },
+    { id: "d1", appId: "app1", status: "SUCCESS", kind: "DEPLOY", logs: "first", exitCode: 0, createdAt: new Date(1), startedAt: new Date(1), durationMs: 500, requestedBy: "u1", trigger: "manual", imageTag: "tugra_app1:d1", configSnapshot: { env: {}, volumes: [], memoryMb: 256 } },
+  ];
+  function fx() {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app) },
+      deployment: {
+        findFirst: jest.fn(async (a: { where: Record<string, unknown>; orderBy?: unknown; select?: unknown }) => {
+          const w = a.where as { id?: string; appId?: string; status?: string; createdAt?: { lt: Date }; configSnapshot?: unknown };
+          let c = rows.filter((r) => r.appId === (w.appId ?? r.appId));
+          if (w.id) c = c.filter((r) => r.id === w.id);
+          if (w.status) c = c.filter((r) => r.status === w.status);
+          if (w.createdAt?.lt) c = c.filter((r) => r.createdAt < w.createdAt!.lt);
+          if (w.configSnapshot) c = c.filter((r) => r.configSnapshot != null);
+          return c.sort((x, y) => y.createdAt.getTime() - x.createdAt.getTime())[0] ?? null;
+        }),
+      },
+      user: { findUnique: jest.fn().mockResolvedValue({ name: "Ömer", email: "o@x" }) },
+    } as unknown as PrismaService;
+    const access = { membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()) } as unknown as TeamAccessService;
+    return { svc: make(prisma, access, {} as AgentWsServer), prisma };
+  }
+
+  it("returns the row with full log, a diff against the nearest OLDER snapshot, isCurrent, finishedAt, actor name and no note", async () => {
+    const d = await fx().svc.deploymentDetail("u1", "app1", "d2");
+    expect(d).toMatchObject({ id: "d2", logs: "ok\nTUGRA_ROLLOUT: healthy", rollout: "healthy", hasLogs: true, isCurrent: true, cancellable: false, note: null, rollbackable: true });
+    expect(d.configChanges).toContainEqual(expect.objectContaining({ field: "memoryMb", before: "256", after: "512" }));
+    expect(d.diffBase).toEqual({ id: "d1", createdAt: new Date(1) });
+    expect(d.finishedAt?.getTime()).toBe(2 + 1000);
+    expect(d.actor).toEqual({ kind: "webhook", name: null });
+    expect(d).not.toHaveProperty("configSnapshot");
+    expect(d).not.toHaveProperty("agentReqId");
+  });
+
+  it("a RECOVERING durable row is cancellable via its persisted handle and carries the recovering note; the user actor resolves to a display name", async () => {
+    const d = await fx().svc.deploymentDetail("u1", "app1", "d3");
+    expect(d).toMatchObject({ status: "RUNNING", cancellable: true, note: "recovering", isCurrent: false, finishedAt: null, diffBase: null });
+    expect(d.actor).toEqual({ kind: "user", name: "Ömer" });
+    // the oldest row has no older snapshot → diffBase null, isCurrent false (d2 is current)
+    const first = await fx().svc.deploymentDetail("u1", "app1", "d1");
+    expect(first).toMatchObject({ diffBase: null, isCurrent: false, configChanges: [] });
+    expect(first.actor).toEqual({ kind: "user", name: "Ömer" });
+  });
+
+  it("404s a deployment that belongs to another app (no cross-app reads) and is writer-only", async () => {
+    const f = fx();
+    await expect(f.svc.deploymentDetail("u1", "app1", "nope")).rejects.toBeInstanceOf(NotFoundException);
+    const denied = make(f.prisma, { requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("nope")) }, {} as AgentWsServer);
+    await expect(denied.deploymentDetail("u1", "app1", "d2")).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it("deployments(…, { slim: true }) drops logs but keeps rollout/hasLogs so the list needs no log text", async () => {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app) },
+      deployment: { findMany: jest.fn().mockResolvedValue(rows.slice(1)) },
+    } as unknown as PrismaService;
+    const access = { membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()) } as unknown as TeamAccessService;
+    const list = await make(prisma, access, {} as AgentWsServer).deployments("u1", "app1", { slim: true });
+    expect(list[0]).toMatchObject({ id: "d2", logs: null, rollout: "healthy", hasLogs: true });
+    expect(list[1]).toMatchObject({ id: "d1", logs: null, rollout: null, hasLogs: true });
+  });
+});

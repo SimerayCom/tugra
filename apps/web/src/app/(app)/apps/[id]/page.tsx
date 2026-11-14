@@ -63,9 +63,10 @@ export default function AppDetailPage() {
     queryFn: () => api.getApp(id),
     refetchInterval: 5000,
   });
+  // Slim list (no per-row logs: up to 20 × 64 KiB per poll otherwise); a row's full log lives on its own page.
   const { data: deployments = [] } = useQuery({
     queryKey: ["deployments", id],
-    queryFn: () => api.getDeployments(id),
+    queryFn: () => api.getDeployments(id, { slim: true }),
     refetchInterval: 5000,
   });
   // Deploy markers for the Metrics charts — "did this deploy cause the spike?". Only events that actually
@@ -131,10 +132,6 @@ export default function AppDetailPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
     meta: { successMessage: t("apps.saved") },
   });
-  const rollback = useMutation({
-    mutationFn: (deploymentId: string) => api.rollbackApp(id, deploymentId),
-    onSuccess: invalidate,
-  });
   const cancelDeploy = useMutation({
     mutationFn: (deploymentId: string) => api.cancelDeployment(id, deploymentId),
     onSuccess: invalidate,
@@ -144,13 +141,6 @@ export default function AppDetailPage() {
     mutationFn: (next: string[]) => api.setAppTags(id, next),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
     meta: { successMessage: t("apps.saved") },
-  });
-  const [aiResults, setAiResults] = useState<Record<string, string>>({});
-  const analyze = useMutation({
-    mutationFn: (deploymentId: string) => api.analyzeDeployment(id, deploymentId),
-    onSuccess: (r, deploymentId) => setAiResults((m) => ({ ...m, [deploymentId]: r.analysis })),
-    onError: (e, deploymentId) =>
-      setAiResults((m) => ({ ...m, [deploymentId]: (e as Error).message || t("apps.aiFailed") })),
   });
 
   // Deployments come newest-first; a leading RUNNING one means a live deploy.
@@ -181,8 +171,6 @@ export default function AppDetailPage() {
   const [exposeOpen, setExposeOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [cloneOpen, setCloneOpen] = useState(false);
-  // Which deployment the Deployments tab has drilled into (Coolify-style). null ⇒ show the list.
-  const [selDep, setSelDep] = useState<string | null>(null);
   const rename = useMutation({
     mutationFn: (name: string) => api.renameApp(id, name),
     onSuccess: () => { setRenameOpen(false); qc.invalidateQueries({ queryKey: ["app", id] }); },
@@ -214,8 +202,14 @@ export default function AppDetailPage() {
     const qs = params.toString();
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   };
-  // Leaving the Deployments tab clears the drilled-in deployment so returning starts at the list.
-  useEffect(() => { if (tab !== "deployments") setSelDep(null); }, [tab]);
+  // The Logs tab shows the last deploy's log when nothing is streaming; the slim list has no logs, so load that
+  // one row lazily (only while the Logs tab is open and no deploy is live).
+  const lastDepId = deployments[0]?.id;
+  const { data: lastDep } = useQuery({
+    queryKey: ["deployment", id, lastDepId ?? ""],
+    queryFn: () => api.getDeployment(id, lastDepId!),
+    enabled: tab === "logs" && !!lastDepId && !streamActive,
+  });
 
   if (isError && !appData) return <div style={{ padding: "var(--page-pad)" }}><ErrorState onRetry={() => refetch()} /></div>;
   if (isLoading || !appData) return <div style={{ padding: "var(--page-pad)" }}><Spinner /></div>;
@@ -512,16 +506,9 @@ export default function AppDetailPage() {
         <DeploymentsTab
           app={appData}
           deployments={deployments}
-          selDep={selDep}
-          setSelDep={setSelDep}
-          aiResults={aiResults}
-          analyzePendingFor={analyze.isPending ? analyze.variables : undefined}
-          rollbackPending={rollback.isPending}
           cancelPending={cancelDeploy.isPending}
           deployPending={deploy.isPending}
           onDeploy={() => onDeploy()}
-          onRollback={async (did) => { if (await confirm({ body: t("apps.rollbackConfirm"), danger: true })) rollback.mutate(did); }}
-          onAnalyze={(did) => analyze.mutate(did)}
           onCancel={(did) => cancelDeploy.mutate(did)}
         />
       )}
@@ -529,7 +516,7 @@ export default function AppDetailPage() {
       {tab === "metrics" && <MetricsTab id={id} events={deployEvents} />}
 
       {tab === "logs" && (
-        <LogsTab id={id} canWrite={appData.canWrite} isCompose={appData.source === "COMPOSE"} streamActive={streamActive} liveLines={live.lines} lastDeployLog={deployments[0]?.logs} />
+        <LogsTab id={id} canWrite={appData.canWrite} isCompose={appData.source === "COMPOSE"} streamActive={streamActive} liveLines={live.lines} lastDeployLog={lastDep?.logs} />
       )}
 
       {tab === "files" && appData.canWrite && <FilesTab id={id} app={appData} />}

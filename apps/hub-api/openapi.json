@@ -15564,11 +15564,178 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "slim",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "0",
+                "1",
+                "true",
+                "false"
+              ]
+            },
+            "description": "1/true omits each row's logs (the panel's list view)."
           }
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "appId": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "QUEUED",
+                          "RUNNING",
+                          "SUCCESS",
+                          "FAILED",
+                          "CANCELLED"
+                        ]
+                      },
+                      "kind": {
+                        "type": "string"
+                      },
+                      "logs": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "exitCode": {
+                        "type": "integer",
+                        "nullable": true
+                      },
+                      "imageTag": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "registryImage": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "imageDigest": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "durationMs": {
+                        "type": "integer",
+                        "nullable": true
+                      },
+                      "trigger": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "noCache": {
+                        "type": "boolean"
+                      },
+                      "requestedBy": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "startedAt": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                      },
+                      "commitSha": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "commitMessage": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "idempotencyKey": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "createdAt": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "configChanges": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "field": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "added",
+                                "removed",
+                                "changed"
+                              ]
+                            },
+                            "before": {
+                              "type": "string"
+                            },
+                            "after": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "field",
+                            "kind"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "rollbackable": {
+                        "type": "boolean"
+                      },
+                      "rollout": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "hasLogs": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "appId",
+                      "status",
+                      "kind",
+                      "logs",
+                      "exitCode",
+                      "imageTag",
+                      "registryImage",
+                      "imageDigest",
+                      "durationMs",
+                      "trigger",
+                      "noCache",
+                      "requestedBy",
+                      "startedAt",
+                      "commitSha",
+                      "commitMessage",
+                      "idempotencyKey",
+                      "createdAt",
+                      "configChanges",
+                      "rollbackable",
+                      "rollout",
+                      "hasLogs"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            }
           },
           "401": {
             "description": "Missing or invalid authentication.",
@@ -16350,6 +16517,311 @@
         "responses": {
           "200": {
             "description": ""
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
+    "/api/v1/apps/{id}/deployments/{depId}": {
+      "get": {
+        "operationId": "ApplicationsController_deploymentDetail",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "depId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "appId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "QUEUED",
+                        "RUNNING",
+                        "SUCCESS",
+                        "FAILED",
+                        "CANCELLED"
+                      ]
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "logs": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "exitCode": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "imageTag": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "registryImage": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "imageDigest": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "durationMs": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "trigger": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "noCache": {
+                      "type": "boolean"
+                    },
+                    "requestedBy": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "startedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "commitSha": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "commitMessage": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "idempotencyKey": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "configChanges": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "field": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "added",
+                              "removed",
+                              "changed"
+                            ]
+                          },
+                          "before": {
+                            "type": "string"
+                          },
+                          "after": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "field",
+                          "kind"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "rollbackable": {
+                      "type": "boolean"
+                    },
+                    "rollout": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "hasLogs": {
+                      "type": "boolean"
+                    },
+                    "diffBase": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "createdAt"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
+                    "isCurrent": {
+                      "type": "boolean"
+                    },
+                    "cancellable": {
+                      "type": "boolean"
+                    },
+                    "finishedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "actor": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "user",
+                            "webhook",
+                            "preview",
+                            "rollout",
+                            "system",
+                            "unknown"
+                          ]
+                        },
+                        "name": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "name"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "note": {
+                      "type": "string",
+                      "enum": [
+                        "interrupted",
+                        "recovering",
+                        "auto_rollback",
+                        "cancelled"
+                      ],
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "appId",
+                    "status",
+                    "kind",
+                    "logs",
+                    "exitCode",
+                    "imageTag",
+                    "registryImage",
+                    "imageDigest",
+                    "durationMs",
+                    "trigger",
+                    "noCache",
+                    "requestedBy",
+                    "startedAt",
+                    "commitSha",
+                    "commitMessage",
+                    "idempotencyKey",
+                    "createdAt",
+                    "configChanges",
+                    "rollbackable",
+                    "rollout",
+                    "hasLogs",
+                    "diffBase",
+                    "isCurrent",
+                    "cancellable",
+                    "finishedAt",
+                    "actor",
+                    "note"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
           },
           "401": {
             "description": "Missing or invalid authentication.",

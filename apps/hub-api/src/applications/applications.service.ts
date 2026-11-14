@@ -19,6 +19,7 @@ import { AgentDisconnectedException, AgentOfflineException } from "../agent-gate
 import { DeployLeaseService } from "./deploy-lease.service";
 import { INTERRUPTED_DEPLOY_NOTE } from "./deployment-reconcile.service";
 import { decideDeployOutcome, isDispatchPlan, type DispatchPlan } from "./deploy-outcome";
+import { classifyActor, classifyNote, finishedAtOf, toDeploymentRow } from "./deployment-view";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService, type AuditFilters } from "../audit/audit.service";
 import { TeamAccessService, canAccessResource } from "../common/team-access.service";
@@ -88,7 +89,6 @@ import { AppDatabaseLinksService } from "./app-database-links.service";
 import { AppSecretRefsService } from "./app-secret-refs.service";
 import {
   buildConfigSnapshot,
-  diffSnapshots,
   type ConfigSnapshot,
 } from "../deploy/config-snapshot";
 import {
@@ -2661,7 +2661,7 @@ export class ApplicationsService {
     await this.prisma.application.delete({ where: { id: appId } }).catch(() => undefined);
   }
 
-  async deployments(userId: string, id: string) {
+  async deployments(userId: string, id: string, opts: { slim?: boolean } = {}) {
     // Writer-only: each row carries the raw build/deploy `logs`, which can contain secrets (DSN, tokens,
     // .env dumps in build output) — same rationale as appLogs/listContainers. A VIEWER must not read them.
     const app = await this.requireWrite(userId, id);
@@ -2671,20 +2671,49 @@ export class ApplicationsService {
       orderBy: { createdAt: "desc" },
       take: 20,
     });
-    // Diff each deploy's config against the immediately older one (rows are
-    // newest-first, so the previous deploy is the next index).
-    return rows.map((d, i) => {
-      const next = (d.configSnapshot as ConfigSnapshot | null) ?? null;
-      const prev = (rows[i + 1]?.configSnapshot as ConfigSnapshot | null) ?? null;
-      const { configSnapshot: _snap, ownerId: _o, heartbeatAt: _h, phase: _p, agentReqId: _r, agentServerId: _s, deadlineAt: _dl, dispatchPlan: _dp, ...rest } = d;
-      // A SUCCESS deploy is a rollback target if its artifact is retained: for compose that's the
-      // compose YAML in its snapshot (recorded at deploy START, so it exists on FAILED rows too →
-      // the status gate is essential); otherwise the local image tag or a portable registry image.
-      const rollbackable =
-        d.status === "SUCCESS" &&
-        (isCompose ? !!next?.composeFile : !!(d.imageTag || d.registryImage || d.imageDigest));
-      return { ...rest, configChanges: next ? diffSnapshots(prev, next) : [], rollbackable };
-    });
+    // Diff each deploy's config against the immediately older one (rows are newest-first, so the previous
+    // deploy is the next index). `slim` drops the heavy `logs` column for the list view (rollout/hasLogs are
+    // computed first); the detail endpoint serves the full log of one row.
+    return rows.map((d, i) => toDeploymentRow(d, { isCompose, prevSnapshot: (rows[i + 1]?.configSnapshot as ConfigSnapshot | null) ?? null, slim: opts.slim }));
+  }
+
+  /**
+   * ONE deployment with everything the detail page shows: the shared row (full log, diff, rollbackable) plus
+   * derived facts — the diff base (nearest OLDER row with a snapshot, not just the list's neighbour), whether it
+   * is the current version, whether it can be cancelled right now, the derived finish time, who asked for it
+   * (display name, never a raw id) and an honest note (interrupted / recovering / auto-rollback / cancelled).
+   * Writer-only like the list; 404 for a depId that does not belong to this app (no cross-app reads).
+   */
+  async deploymentDetail(userId: string, id: string, depId: string) {
+    const app = await this.requireWrite(userId, id);
+    const d = await this.prisma.deployment.findFirst({ where: { id: depId, appId: id } });
+    if (!d) throw new NotFoundException("deployment not found");
+    const [base, latestSuccess, user] = await Promise.all([
+      this.prisma.deployment.findFirst({
+        where: { appId: id, createdAt: { lt: d.createdAt }, configSnapshot: { not: Prisma.DbNull } },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, createdAt: true, configSnapshot: true },
+      }),
+      this.prisma.deployment.findFirst({ where: { appId: id, status: "SUCCESS" }, orderBy: { createdAt: "desc" }, select: { id: true } }),
+      d.requestedBy && !["webhook", "webhook:pr", "system"].includes(d.requestedBy)
+        ? this.prisma.user.findUnique({ where: { id: d.requestedBy }, select: { name: true, email: true } }).catch(() => null)
+        : Promise.resolve(null),
+    ]);
+    const row = toDeploymentRow(d, { isCompose: app.source === "COMPOSE", prevSnapshot: (base?.configSnapshot as ConfigSnapshot | null) ?? null });
+    const cancellable =
+      d.status === "QUEUED" ||
+      (d.status === "RUNNING" && (this.activeDeployCommands.has(d.id) || (!!d.agentReqId && !!d.agentServerId && (d.phase === "DISPATCHED" || d.phase === "RECOVERING"))));
+    const finishedAt = finishedAtOf(d);
+    return {
+      ...row,
+      // The base is meaningful only when THIS row has a snapshot to diff (a QUEUED/legacy row without one shows no diff).
+      diffBase: base && d.configSnapshot ? { id: base.id, createdAt: base.createdAt } : null,
+      isCurrent: latestSuccess?.id === d.id,
+      cancellable,
+      finishedAt,
+      actor: classifyActor(d, user ? (user.name?.trim() || user.email || null) : null),
+      note: classifyNote(d),
+    };
   }
 
   /** AI-powered diagnosis of a deployment's logs (opt-in; writer-only). */

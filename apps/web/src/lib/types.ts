@@ -1359,18 +1359,39 @@ export interface Deployment {
   id: string;
   status: DeploymentStatus;
   kind: string; // "DEPLOY" | "ROLLBACK" | "AUTO_ROLLBACK"
+  /** Full build/deploy log. null for a RUNNING row and for a `slim` list row (use hasLogs + the detail endpoint). */
   logs: string | null;
   exitCode: number | null;
   imageTag: string | null;
   registryImage: string | null;
   imageDigest: string | null; // resolved upstream digest of the pulled image (nginx@sha256:…) — provenance
   rollbackable: boolean; // artifact retained → can be a rollback target (image tag/registry, or compose snapshot)
-  durationMs?: number | null; // wall-clock ms (creation → terminal status); null for legacy/RUNNING rows
-  trigger?: string | null; // origin: "manual" | "webhook" | "preview" | "rollback"; null for legacy rows
+  durationMs?: number | null; // wall-clock ms (start → terminal status); null for legacy/RUNNING rows
+  trigger?: string | null; // origin: "manual" | "webhook" | "preview" | "rollback" | "rollout"; null for legacy rows
   commitSha?: string | null; // deployed git commit (GIT source); null otherwise
   commitMessage?: string | null; // first line of the deployed commit message (GIT source)
   configChanges?: ConfigChange[];
   createdAt: string;
+  startedAt?: string | null; // QUEUED → RUNNING moment; null while queued
+  noCache?: boolean;
+  /** Rollout state the deploy script reported (healthy | converged | rolled_back | rollback_failed | failed), hub-parsed. */
+  rollout?: string | null;
+  /** The row has a persisted log (a slim list row carries logs: null even when true). */
+  hasLogs?: boolean;
+}
+
+export type DeploymentNote = "interrupted" | "recovering" | "auto_rollback" | "cancelled";
+export type DeploymentActorKind = "user" | "webhook" | "preview" | "rollout" | "system" | "unknown";
+
+/** GET /apps/:id/deployments/:depId — one deployment with the derived facts the detail page shows. */
+export interface DeploymentDetail extends Deployment {
+  appId: string;
+  diffBase: { id: string; createdAt: string } | null;
+  isCurrent: boolean;
+  cancellable: boolean;
+  finishedAt: string | null;
+  actor: { kind: DeploymentActorKind; name: string | null };
+  note: DeploymentNote | null;
 }
 
 export type DbEngine =

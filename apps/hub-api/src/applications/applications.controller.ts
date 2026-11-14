@@ -17,7 +17,7 @@ import {
   UseInterceptors,
 } from "@nestjs/common";
 import { concat, EMPTY, from, map, mergeMap, type Observable } from "rxjs";
-import { ApiTags, ApiSecurity, ApiHeader } from "@nestjs/swagger";
+import { ApiTags, ApiSecurity, ApiHeader, ApiQuery } from "@nestjs/swagger";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { Paginated } from "../common/pagination.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
@@ -30,6 +30,7 @@ import { RedactSecretsInterceptor } from "../api-tokens/redact-secrets.intercept
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { SetTagsSchema, type SetTagsInput } from "../common/tags";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
+import { DeploymentDetailSchema, DeploymentRowSchema } from "./deployment-view";
 import { ApplicationsService, AppViewSchema, CloneAppResultSchema, GitSshKeyResultSchema, DomainViewSchema } from "./applications.service";
 import { AppDatabaseLinksService } from "./app-database-links.service";
 import { AppSecretRefsService } from "./app-secret-refs.service";
@@ -203,12 +204,16 @@ export class ApplicationsController {
 
   @Get(":id/deployments")
   @RequireScopes("read:secrets") // rows carry raw build/deploy logs (may contain secrets)
-  deployments(@CurrentUser() user: AuthUser, @Param("id") id: string) {
-    return this.apps.deployments(user.userId, id);
+  @ApiZodResponse(DeploymentRowSchema, { isArray: true })
+  @ApiQuery({ name: "slim", required: false, schema: { type: "string", enum: ["0", "1", "true", "false"] }, description: "1/true omits each row's logs (the panel's list view)." })
+  deployments(@CurrentUser() user: AuthUser, @Param("id") id: string, @Query("slim") slim?: string) {
+    // ?slim=1 omits each row's `logs` (the panel's list view; the detail endpoint serves one row's full log).
+    return this.apps.deployments(user.userId, id, { slim: slim === "1" || slim === "true" });
   }
 
   @Post(":id/deployments/:depId/analyze")
   @HttpCode(200)
+  @RequireScopes("write", "read:secrets") // the AI summary is derived from the raw log, which may contain secrets
   analyzeDeployment(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -278,6 +283,15 @@ export class ApplicationsController {
       mergeMap((sub) => (sub ? concat(from(sub.replay), sub.live) : EMPTY)),
       map((event) => ({ data: JSON.stringify(event) }) as MessageEvent),
     );
+  }
+
+  /** One deployment with its full log, diff and derived facts (detail page). Declared AFTER the SSE route
+   *  above on purpose: an earlier `:depId` would capture "stream" and silently break live logs. */
+  @Get(":id/deployments/:depId")
+  @RequireScopes("read:secrets") // the full build/deploy log may contain secrets
+  @ApiZodResponse(DeploymentDetailSchema)
+  deploymentDetail(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("depId") depId: string) {
+    return this.apps.deploymentDetail(user.userId, id, depId);
   }
 
   /**

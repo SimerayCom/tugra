@@ -1492,6 +1492,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/apps/{id}/deployments/{depId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["ApplicationsController_deploymentDetail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/apps/{id}/logs/stream": {
         parameters: {
             query?: never;
@@ -13069,7 +13085,10 @@ export interface operations {
     };
     ApplicationsController_deployments: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description 1/true omits each row's logs (the panel's list view). */
+                slim?: "0" | "1" | "true" | "false";
+            };
             header?: never;
             path: {
                 id: string;
@@ -13082,7 +13101,41 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        id: string;
+                        appId: string;
+                        /** @enum {string} */
+                        status: "QUEUED" | "RUNNING" | "SUCCESS" | "FAILED" | "CANCELLED";
+                        kind: string;
+                        logs: string | null;
+                        exitCode: number | null;
+                        imageTag: string | null;
+                        registryImage: string | null;
+                        imageDigest: string | null;
+                        durationMs: number | null;
+                        trigger: string | null;
+                        noCache: boolean;
+                        requestedBy: string | null;
+                        /** Format: date-time */
+                        startedAt: string | null;
+                        commitSha: string | null;
+                        commitMessage: string | null;
+                        idempotencyKey: string | null;
+                        /** Format: date-time */
+                        createdAt: string;
+                        configChanges: {
+                            field: string;
+                            /** @enum {string} */
+                            kind: "added" | "removed" | "changed";
+                            before?: string;
+                            after?: string;
+                        }[];
+                        rollbackable: boolean;
+                        rollout: string | null;
+                        hasLogs: boolean;
+                    }[];
+                };
             };
             /** @description Missing or invalid authentication. */
             401: {
@@ -13629,6 +13682,121 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    ApplicationsController_deploymentDetail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                depId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        id: string;
+                        appId: string;
+                        /** @enum {string} */
+                        status: "QUEUED" | "RUNNING" | "SUCCESS" | "FAILED" | "CANCELLED";
+                        kind: string;
+                        logs: string | null;
+                        exitCode: number | null;
+                        imageTag: string | null;
+                        registryImage: string | null;
+                        imageDigest: string | null;
+                        durationMs: number | null;
+                        trigger: string | null;
+                        noCache: boolean;
+                        requestedBy: string | null;
+                        /** Format: date-time */
+                        startedAt: string | null;
+                        commitSha: string | null;
+                        commitMessage: string | null;
+                        idempotencyKey: string | null;
+                        /** Format: date-time */
+                        createdAt: string;
+                        configChanges: {
+                            field: string;
+                            /** @enum {string} */
+                            kind: "added" | "removed" | "changed";
+                            before?: string;
+                            after?: string;
+                        }[];
+                        rollbackable: boolean;
+                        rollout: string | null;
+                        hasLogs: boolean;
+                        diffBase: {
+                            id: string;
+                            /** Format: date-time */
+                            createdAt: string;
+                        } | null;
+                        isCurrent: boolean;
+                        cancellable: boolean;
+                        /** Format: date-time */
+                        finishedAt: string | null;
+                        actor: {
+                            /** @enum {string} */
+                            kind: "user" | "webhook" | "preview" | "rollout" | "system" | "unknown";
+                            name: string | null;
+                        };
+                        /** @enum {string|null} */
+                        note: "interrupted" | "recovering" | "auto_rollback" | "cancelled" | null;
+                    };
+                };
             };
             /** @description Missing or invalid authentication. */
             401: {

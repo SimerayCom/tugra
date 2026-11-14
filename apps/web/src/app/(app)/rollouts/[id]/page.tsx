@@ -127,12 +127,12 @@ function WaveCard({ r, index, targets }: { r: Rollout; index: number; targets: R
               <StatusPill label={t(`rollouts.target_${tg.status}`)} color={targetStatusColor(tg.status)} />
               {tg.attempt > 1 && <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("rollouts.attempt", { n: tg.attempt })}</span>}
               {tg.deploymentId && (
-                <Link href={`/apps/${tg.appId}?tab=deployments`} className="tg-link" style={{ fontSize: 11 }}>
+                <Link href={`/apps/${tg.appId}/deployments/${tg.deploymentId}`} className="tg-link" style={{ fontSize: 11 }}>
                   {t("rollouts.openDeploy")}
                 </Link>
               )}
               {tg.rollbackDeploymentId && (
-                <Link href={`/apps/${tg.appId}?tab=deployments`} className="tg-link" style={{ fontSize: 11 }}>
+                <Link href={`/apps/${tg.appId}/deployments/${tg.rollbackDeploymentId}`} className="tg-link" style={{ fontSize: 11 }}>
                   {t("rollouts.openRollback")}
                 </Link>
               )}
