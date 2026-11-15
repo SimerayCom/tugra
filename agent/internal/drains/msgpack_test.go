@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/hex"
+	"errors"
 	"math"
 	"reflect"
 	"strings"
@@ -135,5 +136,35 @@ func TestMsgpackRoundTripThroughOwnEncoder(t *testing.T) {
 	want := map[string]any{"n": int64(70000), "s": strings.Repeat("é", 40), "a": []any{[]byte("raw"), nil}}
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("round trip: %#v %v", got, err)
+	}
+}
+
+func TestMsgpackDecodeBudgetStopsNilAmplification(t *testing.T) {
+	// outer array16(4096) of 4096 x array16(4096 x nil): ~16.8 MB on the wire, ~270 MB decoded without a total budget.
+	var e mpEnc
+	e.b = append(e.b, 0xdc, 0x10, 0x00)
+	inner := append([]byte{0xdc, 0x10, 0x00}, bytes.Repeat([]byte{0xc0}, 4096)...)
+	for i := 0; i < 4096; i++ {
+		e.b = append(e.b, inner...)
+	}
+	if _, err := mpDecode(bufio.NewReader(bytes.NewReader(e.b))); !errors.Is(err, errMsgpack) {
+		t.Fatalf("amplification payload must fail with errMsgpack, got %v", err)
+	}
+	// a single flat array of nils over the element budget is refused too, without allocating by the declared count
+	flat := append([]byte{0xdc, 0x10, 0x00}, bytes.Repeat([]byte{0xc0}, 4096)...)
+	if _, err := mpDecode(bufio.NewReader(bytes.NewReader(flat))); !errors.Is(err, errMsgpack) {
+		t.Fatalf("flat nil array over the element budget must fail, got %v", err)
+	}
+	// a normal ack / HELO shaped value still decodes under the default budget
+	var ok mpEnc
+	ok.mapHeader(1)
+	ok.str("ack")
+	ok.str(strings.Repeat("a", 24))
+	if v, err := mpDecode(bufio.NewReader(bytes.NewReader(ok.b))); err != nil || v.(map[string]any)["ack"] == nil {
+		t.Fatalf("normal ack: %v %v", v, err)
+	}
+	// the explicit limit is honoured
+	if _, err := mpDecodeLimited(bufio.NewReader(bytes.NewReader(ok.b)), 8, 8); !errors.Is(err, errMsgpack) {
+		t.Fatalf("tiny budget must refuse an ack, got %v", err)
 	}
 }
