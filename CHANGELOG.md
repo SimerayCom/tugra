@@ -14,6 +14,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   card records when it last checked and why a check failed, and auto-update now applies the next beta of the same
   series as well as stable patch releases. Beta → stable and minor/major still wait for you. Hubs on beta.16 or
   older take this one upgrade manually (`git pull && ./scripts/install.sh`).
+- **Settings → Updates follows the build and shows when it last checked.** The release channel gains an
+  "Automatic" choice (the default): a beta build tracks Beta, a release build tracks Stable, and pinning Stable or
+  Beta still overrides it. The card shows "Last checked 4m ago" (or why the last check failed), how often checks
+  run, and disables "Check for updates" with an explanation when checks are turned off for the deployment.
 - **Restart, Start and Stop now say what they did.** A restart finishes with the app still "Running", so the
   click looked like nothing happened; each lifecycle action now ends in a named toast ("Gitea restarted.") or an
   error toast, never silence.

@@ -574,7 +574,7 @@ export const api = {
   getInstanceUpdate() {
     return apiFetch<InstanceUpdateStatus>("/instance/update");
   },
-  updateInstanceUpdate(patch: { autoUpdate?: boolean; updateChannel?: string }) {
+  updateInstanceUpdate(patch: { autoUpdate?: boolean; updateChannel?: "stable" | "beta" | null }) {
     return apiFetch<InstanceUpdateStatus>("/instance/update", { method: "PATCH", body: JSON.stringify(patch) });
   },
   // Trigger a manual re-check of the signed release manifest now.

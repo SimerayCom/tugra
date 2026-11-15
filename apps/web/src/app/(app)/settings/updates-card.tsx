@@ -7,6 +7,7 @@ import { useAuth } from "../../../lib/auth";
 import { useT } from "../../../i18n/provider";
 import { Badge, Btn, Card } from "../../../components/ui";
 import { Field, Select } from "../../../components/form";
+import { relativeTime } from "../../../lib/fleet";
 import { useUpdateStream, type UpdatePhase } from "../../../hooks/useUpdateStream";
 
 const WORKING: UpdatePhase[] = ["starting", "queued", "pulling", "recreating"];
@@ -36,7 +37,7 @@ export function UpdatesCard() {
     refetchOnWindowFocus: false,
   });
 
-  const [channel, setChannel] = useState("stable");
+  const [channel, setChannel] = useState("auto");
   const [autoUpdate, setAutoUpdate] = useState(false);
   // Seed the form ONCE from the first load. A "Check for updates" invalidates + refetches this query, so
   // re-seeding on every `data` change would silently discard the owner's unsaved channel/toggle edits.
@@ -45,7 +46,7 @@ export function UpdatesCard() {
   useEffect(() => {
     if (data && !seeded.current) {
       seeded.current = true;
-      setChannel(data.channel);
+      setChannel(data.channelSource === "auto" ? "auto" : data.channel);
       setAutoUpdate(data.autoUpdate);
     }
   }, [data]);
@@ -56,9 +57,9 @@ export function UpdatesCard() {
   });
 
   const save = useMutation({
-    mutationFn: () => api.updateInstanceUpdate({ autoUpdate, updateChannel: channel }),
+    mutationFn: () => api.updateInstanceUpdate({ autoUpdate, updateChannel: channel === "auto" ? null : channel === "beta" ? "beta" : "stable" }),
     onSuccess: (res) => {
-      setChannel(res.channel);
+      setChannel(res.channelSource === "auto" ? "auto" : res.channel);
       setAutoUpdate(res.autoUpdate);
       qc.invalidateQueries({ queryKey: ["instanceUpdate"] });
       // A changed channel means the cached "latest" is for the old channel — refresh it.
@@ -93,6 +94,21 @@ export function UpdatesCard() {
         )}
       </div>
 
+      {data && (
+        <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "-6px 0 14px", overflowWrap: "anywhere" }}>
+          {data.checksEnabled === false ? (
+            t("settings.updateChecksDisabled")
+          ) : (
+            <>
+              {data.lastCheckedAt ? t("settings.updateLastChecked", { when: relativeTime(data.lastCheckedAt) }) : t("settings.updateUnknown")}
+              {data.lastCheckError && (
+                <span style={{ color: "var(--c-r)" }}> · {t("settings.updateLastCheckFailed", { reason: data.lastCheckError })}</span>
+              )}
+            </>
+          )}
+        </p>
+      )}
+
       {(data?.updateAvailable || working || upd.phase === "done" || upd.phase === "failed" || upd.messageKey) && (
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", margin: "0 0 14px" }}>
           {working ? (
@@ -109,12 +125,18 @@ export function UpdatesCard() {
         </div>
       )}
 
-      <Field label={t("settings.updateChannel")} htmlFor="upd-channel">
+      <Field label={t("settings.updateChannel")} htmlFor="upd-channel" hint={t("settings.channelAutoHint")}>
         <Select
           id="upd-channel"
           value={channel}
           onChange={setChannel}
           options={[
+            {
+              value: "auto",
+              label: t("settings.channelAuto", {
+                channel: t(data?.channel === "beta" ? "settings.channelBeta" : "settings.channelStable"),
+              }),
+            },
             { value: "stable", label: t("settings.channelStable") },
             { value: "beta", label: t("settings.channelBeta") },
           ]}
@@ -126,6 +148,7 @@ export function UpdatesCard() {
         <span>
           <span style={{ fontWeight: 600 }}>{t("settings.updateAuto")}</span>
           <span style={{ display: "block", fontSize: 11, color: "var(--c-tx3)" }}>{t("settings.updateAutoHint")}</span>
+          {data && <span style={{ display: "block", fontSize: 11, color: "var(--c-tx3)", marginTop: 2 }}>{t("settings.updateChecksEvery", { minutes: data.checkIntervalMin })}</span>}
         </span>
       </label>
 
@@ -135,9 +158,14 @@ export function UpdatesCard() {
         </div>
       )}
 
-      <div style={{ display: "flex", gap: 10 }}>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("settings.updateSave")}</Btn>
-        <Btn variant="ghost" onClick={() => check.mutate()} disabled={check.isPending}>
+        <Btn
+          variant="ghost"
+          onClick={() => check.mutate()}
+          disabled={check.isPending || data?.checksEnabled === false}
+          title={data?.checksEnabled === false ? t("settings.updateChecksDisabled") : undefined}
+        >
           {check.isPending ? t("settings.updateChecking") : t("settings.updateCheck")}
         </Btn>
       </div>

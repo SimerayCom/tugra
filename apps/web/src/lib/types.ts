@@ -278,6 +278,8 @@ export interface InstanceUpdateStatus {
   latest: string | null;
   /** The release channel being tracked ("stable" | "beta" | …). */
   channel: string;
+  /** "auto" = no channel pinned, derived from the running build; "explicit" = the owner pinned one. */
+  channelSource: "auto" | "explicit";
   /** Whether `latest` is strictly newer than `current` (never a downgrade). */
   updateAvailable: boolean;
   /** Link to the release notes, or null. */
@@ -286,6 +288,14 @@ export interface InstanceUpdateStatus {
   autoUpdate: boolean;
   /** Signed remote operator notice for the tracked channel, or null. */
   notice: InstanceUpdateNotice | null;
+  /** False when update checks are switched off (TUGRA_UPDATE_CHECKS=0) or the manifest is unconfigured. */
+  checksEnabled: boolean;
+  /** Minutes between background checks. */
+  checkIntervalMin: number;
+  /** ISO time of the last successful signed check; null = never. */
+  lastCheckedAt: string | null;
+  /** Short reason the most recent check attempt failed, else null. */
+  lastCheckError: string | null;
 }
 
 /** Result of POST /instance/update (starting the updater). `started` = queued for the sidecar. */

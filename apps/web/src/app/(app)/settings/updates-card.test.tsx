@@ -14,11 +14,16 @@ import { UpdatesCard } from "./updates-card";
 const STATUS: InstanceUpdateStatus = {
   current: "0.1.0",
   latest: "0.2.0",
-  channel: "stable",
+  channel: "beta",
+  channelSource: "auto",
   updateAvailable: true,
   changelogUrl: "https://get.tugra.io/changelog",
   autoUpdate: false,
   notice: null,
+  checksEnabled: true,
+  checkIntervalMin: 60,
+  lastCheckedAt: new Date(Date.now() - 4 * 60_000).toISOString(),
+  lastCheckError: null,
 };
 
 function sseResponse(frames: string[]): Response {
@@ -71,16 +76,77 @@ describe("UpdatesCard", () => {
     expect(screen.getByRole("button", { name: "Update now" })).toBeTruthy(); // in-app updater available
   });
 
-  it("saves the channel + auto-update toggle", async () => {
+  it("auto channel: shows 'Automatic (Beta)' selected and Save sends updateChannel null", async () => {
     h.user = { isInstanceOwner: true };
     wrap();
     await screen.findByText("Updates");
+    const select = screen.getByRole("combobox") as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe("auto"));
+    expect(screen.getByRole("option", { name: "Automatic (Beta)" })).toBeTruthy();
+    expect(screen.getByText(/Automatic follows the running build/)).toBeTruthy();
     await waitFor(() => expect(screen.getByRole("checkbox")).not.toBeChecked());
     fireEvent.click(screen.getByRole("checkbox")); // enable auto-update
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() =>
-      expect(api.updateInstanceUpdate).toHaveBeenCalledWith({ autoUpdate: true, updateChannel: "stable" }),
+      expect(api.updateInstanceUpdate).toHaveBeenCalledWith({ autoUpdate: true, updateChannel: null }),
     );
+  });
+
+  it("selecting Stable sends updateChannel 'stable'", async () => {
+    h.user = { isInstanceOwner: true };
+    wrap();
+    await screen.findByText("Updates");
+    const select = screen.getByRole("combobox") as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe("auto"));
+    fireEvent.change(select, { target: { value: "stable" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(api.updateInstanceUpdate).toHaveBeenCalledWith({ autoUpdate: false, updateChannel: "stable" }),
+    );
+  });
+
+  it("explicit pin seeds the pinned channel; switching to Automatic sends null", async () => {
+    h.user = { isInstanceOwner: true };
+    vi.mocked(api.getInstanceUpdate).mockResolvedValue({ ...STATUS, channel: "stable", channelSource: "explicit" });
+    wrap();
+    await screen.findByText("Updates");
+    const select = screen.getByRole("combobox") as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe("stable"));
+    fireEvent.change(select, { target: { value: "auto" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(api.updateInstanceUpdate).toHaveBeenCalledWith({ autoUpdate: false, updateChannel: null }),
+    );
+  });
+
+  it("renders the last-checked line, the never-checked state and a failed-check reason", async () => {
+    h.user = { isInstanceOwner: true };
+    wrap();
+    expect(await screen.findByText(/Last checked 4m ago/)).toBeTruthy();
+    expect(screen.getByText(/Checks run every 60 minutes/)).toBeTruthy();
+    cleanup();
+
+    qc.clear();
+    vi.mocked(api.getInstanceUpdate).mockResolvedValue({ ...STATUS, latest: null, updateAvailable: false, lastCheckedAt: null });
+    wrap();
+    await waitFor(() => expect(screen.getAllByText("Not checked yet").length).toBe(2)); // badge + status line
+    cleanup();
+
+    qc.clear();
+    vi.mocked(api.getInstanceUpdate).mockResolvedValue({ ...STATUS, lastCheckError: "fetch" });
+    wrap();
+    expect(await screen.findByText(/Last check failed: fetch/)).toBeTruthy();
+  });
+
+  it("checksEnabled false: shows the disabled text and disables Check for updates", async () => {
+    h.user = { isInstanceOwner: true };
+    vi.mocked(api.getInstanceUpdate).mockResolvedValue({ ...STATUS, checksEnabled: false });
+    wrap();
+    const msg = "Update checks are turned off for this deployment (TUGRA_UPDATE_CHECKS=0).";
+    expect(await screen.findByText(msg)).toBeTruthy();
+    const btn = screen.getByRole("button", { name: "Check for updates" }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    expect(btn.title).toBe(msg);
   });
 
   it("triggers a manual check", async () => {
@@ -96,13 +162,13 @@ describe("UpdatesCard", () => {
     wrap();
     await screen.findByText("Updates");
     const select = screen.getByRole("combobox") as HTMLSelectElement;
-    await waitFor(() => expect(select.value).toBe("stable"));
-    fireEvent.change(select, { target: { value: "beta" } }); // unsaved edit
+    await waitFor(() => expect(select.value).toBe("auto"));
+    fireEvent.change(select, { target: { value: "stable" } }); // unsaved edit
     // the check discovers a newer version → refetch changes `data` identity
     vi.mocked(api.getInstanceUpdate).mockResolvedValue({ ...STATUS, latest: "0.9.0" });
     fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
     await waitFor(() => expect(screen.getByText(/0\.9\.0/)).toBeTruthy()); // display refreshed
-    expect(select.value).toBe("beta"); // ...but the unsaved edit survives
+    expect(select.value).toBe("stable"); // ...but the unsaved edit survives
   });
 
   it("Update now: POST → SSE progress → reconcile on the new version → 'Updated to X'", async () => {
