@@ -362,9 +362,10 @@ export class ImportExecutorService {
     try {
       const { values, unresolved, flags } = await source.fetchSecrets(app.sourceRef); // real env values (server-side only)
       const gitSourceId = await this.resolveGitSourceId(targetServerId, app, gitSourceByRef);
-      const createInput = foreignAppToCreateInput(app, values, { serverId: targetServerId, environmentId, sourceTag: sourceKind, gitSourceId }, flags);
-      // Flags that could not be carried are reported by key name (never silently dropped).
-      const flagWarnings = mapSourceEnvFlags(values, flags, mapBuildPack(app).source).warnings;
+      // Flags that could not be carried are reported by key name (never silently dropped); mapped once, used for both.
+      const mappedFlags = mapSourceEnvFlags(values, flags, mapBuildPack(app).source);
+      const createInput = foreignAppToCreateInput(app, values, { serverId: targetServerId, environmentId, sourceTag: sourceKind, gitSourceId }, flags, mappedFlags);
+      const flagWarnings = mappedFlags.warnings;
       const created = await this.apps.create(userId, createInput); // re-checks apps:config on the TARGET team; deploy:false
       // Declare the app's volumes as EMPTY named mounts (their DATA is copied by a later slice). Best-effort,
       // mirroring resolveGitSourceId: a failure here must NEVER reach the outer catch, or it would leave an

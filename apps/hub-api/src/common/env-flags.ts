@@ -6,7 +6,7 @@
  * multiline?: true }`. Defaults: buildTime off, runtime on, literal off, multiline off. An empty meta means "no flags
  * anywhere", which must behave byte-identically to an app that never had the feature.
  */
-import { ENV_KEY_DENY, ML_VALUE_MAX_BYTES, isHostExportSafeKey } from "./env-key";
+import { BUILD_KEY_RE, ENV_KEY_DENY, ML_VALUE_MAX_BYTES, isHostExportSafeKey, isSafeMultilineValue } from "./env-key";
 
 export { ML_VALUE_MAX_BYTES };
 
@@ -24,8 +24,6 @@ export const ML_KEYS_MAX = 32;
 export const ML_TOTAL_MAX_BYTES = 48 * 1024;
 /** Equal to BUILD_SECRETS_MAX_TOTAL_BYTES (applications/dto.ts); duplicated here to keep this module import-free. */
 export const BUILD_FLAG_TOTAL_MAX_BYTES = 48 * 1024;
-/** Same pattern as BUILD_ARG_KEY in deploy/build-args.ts (kept local: build-args imports applications/dto which imports this). */
-const BUILD_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 
 export type FlagInput = Partial<{ buildTime: boolean; runtime: boolean; literal: boolean; multiline: boolean }>;
 
@@ -214,7 +212,7 @@ export function autoMultilineLegacy(merged: Record<string, string>, meta: EnvMet
   for (const k of Object.keys(merged).sort()) {
     const v = merged[k];
     if (!/[\r\n]/.test(v) || meta[k]?.multiline || meta[k]?.runtime === false) continue;
-    if (v.includes("\u0000") || b(v) > ML_VALUE_MAX_BYTES || !isHostExportSafeKey(k)) {
+    if (!isSafeMultilineValue(v) || !isHostExportSafeKey(k)) {
       return {
         meta,
         keys: [],

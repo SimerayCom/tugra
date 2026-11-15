@@ -9,6 +9,7 @@ import { DB_NET } from "../databases/database-script"; // single source for the 
 import { injectableBuildArgs, looksSensitiveKey } from "./build-args";
 import type { EnvMeta } from "../common/env-flags";
 import { trimDnsCreds } from "../common/dns-creds";
+import { BUILD_KEY_RE } from "../common/env-key";
 import { assertScriptFits, mlEnvFlags, mlPrefix, mlPrelude, planEnv } from "./env-render";
 import { APPS_NETWORK, isUserNetworkNameAllowed } from "./network-names";
 import {
@@ -1027,7 +1028,7 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
   // the EXIT trap (+ the stale sweep for killed runs). DOCKER_BUILDKIT=1 is set explicitly so an older daemon
   // default can't silently fall back to the legacy builder (which would reject --secret and fail loudly).
   const bs = app.buildSecrets && Object.keys(app.buildSecrets).length ? app.buildSecrets : null;
-  const secretKeys = bs ? Object.keys(bs).filter((k) => /^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(k)) : [];
+  const secretKeys = bs ? Object.keys(bs).filter((k) => BUILD_KEY_RE.test(k)) : [];
   const secretSteps = secretKeys.length
     ? [
         ...secretsDirPrelude(),
@@ -1286,11 +1287,11 @@ function envPreludeFor(app: AppSpec): string[] {
 
 /** `--env-file <path>` for the file-borne env plus `-e KEY` (by name; the value comes from the docker CLI's own
  *  process environment) for each multiline variable; '' when there is no env at all. */
-function envRunFlags(app: AppSpec): { flags: string; prefix: string; shell: boolean } {
+function envRunFlags(app: AppSpec): { flags: string; prefix: string } {
   const env = app.env && typeof app.env === "object" ? app.env : {};
   const plan = planEnv(env, app.envMeta, "docker");
   const flags = [Object.keys(plan.fileEnv).length > 0 ? `--env-file ${envFilePath(app)}` : "", mlEnvFlags(plan.shell)].filter(Boolean).join(" ");
-  return { flags, prefix: mlPrefix(plan.shell), shell: plan.shell.length > 0 };
+  return { flags, prefix: mlPrefix(plan.shell) };
 }
 
 /** The script travels as ONE `bash -c` argument; a multiline value is base64-embedded in it and a build-time value

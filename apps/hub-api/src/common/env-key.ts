@@ -8,6 +8,9 @@
 /** A POSIX-ish env var name: a letter/underscore, then word characters. */
 export const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+/** A build-time variable / build-arg / build-secret name: POSIX identifier of at most 128 characters. The single definition. */
+export const BUILD_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
+
 /** Env names are generous but not unbounded. */
 export const ENV_KEY_MAX = 128;
 

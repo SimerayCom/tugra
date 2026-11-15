@@ -35,7 +35,14 @@ const relPath = (v: string | undefined): string | undefined => {
   return s && s !== "." ? s : undefined;
 };
 
-export function foreignAppToCreateInput(app: ForeignApp, env: Record<string, string>, opts: AppCreateOptions, flags?: Record<string, SourceEnvFlags>): CreateAppInput {
+export function foreignAppToCreateInput(
+  app: ForeignApp,
+  env: Record<string, string>,
+  opts: AppCreateOptions,
+  flags?: Record<string, SourceEnvFlags>,
+  /** The result of `mapSourceEnvFlags` when the caller already computed it (it also needs the warnings): not recomputed. */
+  mappedFlags?: ReturnType<typeof mapSourceEnvFlags>,
+): CreateAppInput {
   const build = mapBuildPack(app); // { source: IMAGE|GIT|COMPOSE, buildType? }
   const domain = (app.domains ?? []).find((d) => d.primary) ?? (app.domains ?? [])[0];
 
@@ -84,7 +91,7 @@ export function foreignAppToCreateInput(app: ForeignApp, env: Record<string, str
   // Per-variable flags: the source's own (Coolify) mapped onto this app, plus Multiline auto-marked on any value with a
   // line break (a line break on an unflaggable name throws: that used to silently corrupt the env file). Only set when
   // non-empty so an unflagged import keeps its exact input shape.
-  const mapped = mapSourceEnvFlags(env, flags, build.source);
+  const mapped = mappedFlags ?? mapSourceEnvFlags(env, flags, build.source);
   if (Object.keys(mapped.flags).length) input.envFlags = mapped.flags;
   return input;
 }

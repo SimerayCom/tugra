@@ -3,7 +3,7 @@ import { isIP as netIsIP } from "node:net";
 // Cross-module dto import: reuse the label charset from the clusters domain so app placement rules and node
 // labels validate identically (dto files don't usually import each other — kept intentional + documented).
 import { LABEL_KEY_RE, LABEL_VALUE_RE } from "../clusters/dto";
-import { isValidUserEnvKey, isSafeEnvValue } from "../common/env-key";
+import { BUILD_KEY_RE, isValidUserEnvKey, isSafeEnvValue } from "../common/env-key";
 import { normalizeFlags, validateEnvFlags } from "../common/env-flags";
 import { isUserNetworkNameAllowed } from "../deploy/network-names";
 
@@ -169,7 +169,7 @@ export type SetBuildArgsInput = z.infer<typeof SetBuildArgsSchema>;
 
 // Build-time SECRETS: BuildKit `--secret id=<KEY>,src=<file>` mounts for DOCKERFILE builds. The key is the mount
 // id, interpolated into the build command unquoted → strict identifier charset (shell-safe by construction).
-export const BUILD_SECRET_KEY = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
+export const BUILD_SECRET_KEY = BUILD_KEY_RE;
 // The whole deploy script (secrets included, base64 → ×4/3) travels as ONE `bash -c` argument, whose limit is
 // 128KiB on Linux — so the aggregate is capped well under it rather than per value only.
 export const BUILD_SECRETS_MAX_TOTAL_BYTES = 48 * 1024;

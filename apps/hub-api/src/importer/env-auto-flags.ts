@@ -5,7 +5,7 @@
  * Nothing silently disappears: a flag Tugra cannot carry for this app is DROPPED and reported by key name; a line
  * break on a name that cannot be a multiline variable FAILS the task loudly (it used to corrupt the env file).
  */
-import { isHostExportSafeKey } from "../common/env-key";
+import { BUILD_KEY_RE, isHostExportSafeKey } from "../common/env-key";
 
 export interface SourceEnvFlags {
   buildTime?: boolean;
@@ -15,7 +15,6 @@ export interface SourceEnvFlags {
 }
 export type EnvFlagsInput = Record<string, { buildTime?: boolean; runtime?: boolean; literal?: boolean; multiline?: boolean }>;
 
-const BUILD_KEY = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const own = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o, k);
 
 /** Any value with CR/LF gets `multiline: true` when its name can carry it; otherwise throws (key name only). */
@@ -48,7 +47,7 @@ export function mapSourceEnvFlags(
     const kept: { buildTime?: boolean; runtime?: boolean; literal?: boolean; multiline?: boolean } = {};
     if (f.buildTime === true) {
       if (source !== "GIT") drop(k, "build time", "only Git-built apps have a build step");
-      else if (!BUILD_KEY.test(k)) drop(k, "build time", "name is not a valid build argument name");
+      else if (!BUILD_KEY_RE.test(k)) drop(k, "build time", "name is not a valid build argument name");
       else kept.buildTime = true;
     }
     if (f.runtime === false) {
