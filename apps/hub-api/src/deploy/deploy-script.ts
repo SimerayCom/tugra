@@ -1173,13 +1173,17 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
 }
 
 /** Login to a private registry into an isolated DOCKER_CONFIG ($sd), password via stdin. */
-export function registryLoginPrelude(auth?: RegistryAuth | null): string[] {
+export function registryLoginPrelude(auth?: RegistryAuth | null, timeoutSec?: number): string[] {
   if (!auth) return [];
   const host = auth.url ? ` ${shq(auth.url)}` : "";
+  // Optional bound for callers that must not hang on a tarpit login endpoint (the update-check probe). The `timeout`
+  // binary is optional on the host: without it the login runs unbounded exactly like a deploy's.
+  const bounded = Number.isInteger(timeoutSec) && (timeoutSec as number) > 0;
   return [
     ...secretsDirPrelude(),
     'export DOCKER_CONFIG="$sd"',
-    `printf %s ${shq(b64(auth.token))} | base64 -d | docker --config "$sd" login${host} -u ${shq(auth.user)} --password-stdin`,
+    ...(bounded ? [`TUGRA_LT=""; command -v timeout >/dev/null 2>&1 && TUGRA_LT="timeout ${timeoutSec}"`] : []),
+    `printf %s ${shq(b64(auth.token))} | base64 -d | ${bounded ? "$TUGRA_LT " : ""}docker --config "$sd" login${host} -u ${shq(auth.user)} --password-stdin`,
   ];
 }
 

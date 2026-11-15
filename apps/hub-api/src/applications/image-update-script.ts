@@ -18,6 +18,10 @@ export type ImageProbeVerdict = { ok: true; digest: string } | { ok: false; code
 const NONCE_RE = /^[0-9a-f]{16}$/;
 export const IMAGE_PROBE_MAX_ITEMS = 25;
 export const IMAGE_PROBE_PER_ITEM_TIMEOUT_SEC = 20;
+/** Worst case of ONE ref: the --format inspect, then (only when it failed fast, never after a timeout) one --raw call. */
+export const IMAGE_PROBE_PER_ITEM_WORST_SEC = 2 * IMAGE_PROBE_PER_ITEM_TIMEOUT_SEC;
+/** The registry login is bounded too (a tarpit login endpoint must not hold the whole batch). */
+export const IMAGE_PROBE_LOGIN_TIMEOUT_SEC = 20;
 
 export function buildImageUpdateScript(items: { idx: number; ref: string }[], auth: RegistryAuth | null, nonce: string): string {
   if (!NONCE_RE.test(nonce)) throw new Error("invalid probe nonce");
@@ -28,7 +32,7 @@ export function buildImageUpdateScript(items: { idx: number; ref: string }[], au
   }
   const lines: string[] = [
     "set +e",
-    ...registryLoginPrelude(auth), // [] when anonymous (the agent's ambient docker config, exactly like a deploy pull)
+    ...registryLoginPrelude(auth, IMAGE_PROBE_LOGIN_TIMEOUT_SEC), // [] when anonymous (the agent's ambient docker config, exactly like a deploy pull)
     auth ? "TUGRA_LOGIN_RC=$?" : "TUGRA_LOGIN_RC=0",
     "TD=$(mktemp -d)",
     'TUGRA_SEC_DIRS="${TUGRA_SEC_DIRS:+$TUGRA_SEC_DIRS }$TD"',
@@ -42,7 +46,9 @@ export function buildImageUpdateScript(items: { idx: number; ref: string }[], au
     '  if [ "${TUGRA_LOGIN_RC:-0}" -ne 0 ]; then emit "$1" "err auth"; return; fi',
     `  $T docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "$2" >"$TD/o" 2>"$TD/e" </dev/null; rc=$?`,
     `  d=$(head -c 200 "$TD/o" | tr -d '[:space:]')`,
-    `  if [ $rc -ne 0 ] || ! printf '%s' "$d" | grep -Eqx 'sha256:[0-9a-f]{64}'; then`,
+    // A timeout means the registry is unresponsive: a second call would only burn another full window, so the
+    // --raw fallback runs for fast failures / malformed output only (rc 124 goes straight to `err timeout`).
+    `  if [ $rc -ne 124 ] && { [ $rc -ne 0 ] || ! printf '%s' "$d" | grep -Eqx 'sha256:[0-9a-f]{64}'; }; then`,
     '    $T docker buildx imagetools inspect --raw "$2" >"$TD/raw" 2>"$TD/e" </dev/null; rc=$?',
     '    d=""; [ $rc -eq 0 ] && d="sha256:$($SHA <"$TD/raw" | cut -d\' \' -f1)"',
     "  fi",

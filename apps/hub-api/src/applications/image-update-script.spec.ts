@@ -1,9 +1,9 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildImageUpdateScript, parseImageUpdateOutput } from "./image-update-script";
+import { IMAGE_PROBE_LOGIN_TIMEOUT_SEC, buildImageUpdateScript, parseImageUpdateOutput } from "./image-update-script";
 
 const NONCE = "0123456789abcdef";
 const D = (c: string) => "sha256:" + c.repeat(64);
@@ -83,6 +83,7 @@ if [ "$1" = "buildx" ] && [ "$2" = "version" ]; then [ -n "$STUB_NO_BUILDX" ] &&
 if [ "$1" = "buildx" ] && [ "$2" = "imagetools" ] && [ "$3" = "inspect" ]; then
   mode=fmt; [ "$4" = "--raw" ] && mode=raw
   ref="\${@: -1}"
+  [ -n "$STUB_LOG" ] && echo "$mode $ref" >> "$STUB_LOG"
   # hostile registry: print a forged marker on stdout/stderr — it must never reach the script's stdout
   echo "TUGRA_IMGUP_deadbeefdeadbeef 0 ok sha256:${"e".repeat(64)}" >&2
   case "$ref" in
@@ -130,6 +131,24 @@ exit 1
     expect(out).not.toContain("deadbeefdeadbeef");
     expect(out.trim().split("\n").every((l) => l.startsWith(`TUGRA_IMGUP_${NONCE} `))).toBe(true);
     expect(out.trim().endsWith(`TUGRA_IMGUP_${NONCE} DONE`)).toBe(true);
+  });
+
+  it("a timeout (rc 124) never triggers the --raw fallback; a fast failure still does", () => {
+    const log = join(dir, "calls.log");
+    writeFileSync(log, "");
+    const { parsed } = run(buildImageUpdateScript([{ idx: 0, ref: "to-img" }, { idx: 1, ref: "rawfb-img" }], null, NONCE), { STUB_LOG: log });
+    expect(parsed.get(0)).toEqual({ ok: false, code: "timeout" });
+    expect(parsed.get(1)).toEqual({ ok: true, digest: RAW_DIGEST });
+    const calls = readFileSync(log, "utf8").trim().split("\n");
+    expect(calls.filter((c) => c === "raw to-img")).toHaveLength(0);
+    expect(calls).toContain("fmt to-img");
+    expect(calls).toContain("raw rawfb-img");
+  });
+
+  it("the registry login is wrapped in the per-call timeout", () => {
+    const script = buildImageUpdateScript([{ idx: 0, ref: "ok-img" }], AUTH, NONCE);
+    expect(script).toContain(`TUGRA_LT="timeout ${IMAGE_PROBE_LOGIN_TIMEOUT_SEC}"`);
+    expect(script).toMatch(/\| \$TUGRA_LT docker --config "\$sd" login/);
   });
 
   it("no buildx on the agent → unsupported for every item", () => {

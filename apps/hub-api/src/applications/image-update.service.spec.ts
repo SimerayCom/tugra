@@ -1,12 +1,13 @@
 import { BadRequestException, ConflictException, ForbiddenException } from "@nestjs/common";
 import type { ConfigService } from "@nestjs/config";
-import { ImageUpdateService } from "./image-update.service";
+import { CMD_BASE_TIMEOUT_MS, CMD_PER_ITEM_TIMEOUT_MS, ImageUpdateService, PROBE_CHUNK_SIZE } from "./image-update.service";
+import { IMAGE_PROBE_MAX_ITEMS, IMAGE_PROBE_PER_ITEM_WORST_SEC } from "./image-update-script";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import type { CryptoService } from "../crypto/crypto.service";
 import type { NotificationsService } from "../notifications/notifications.service";
 import type { SwarmDeployService } from "../clusters/swarm-deploy.service";
-import { AgentOfflineException } from "../agent-gateway/agent-offline.exception";
+import { AgentCommandTimeoutException, AgentOfflineException } from "../agent-gateway/agent-offline.exception";
 
 const D = (c: string) => "sha256:" + c.repeat(64);
 const OLD = new Date("2026-01-01T00:00:00Z");
@@ -179,13 +180,13 @@ describe("ImageUpdateService.runTick — grouping", () => {
     await svc.runTick();
     expect(send.mock.calls.map((c) => c[0]).sort()).toEqual(["s1", "s2"]);
   });
-  it("more than 25 distinct refs are chunked (25 + 1)", async () => {
-    const apps = Array.from({ length: 26 }, (_, i) => cand({ id: `a${i}`, image: `img${i}` }));
+  it("more than one chunk of distinct refs is split (10 + 10 + 1)", async () => {
+    const apps = Array.from({ length: 2 * PROBE_CHUNK_SIZE + 1 }, (_, i) => cand({ id: `a${i}`, image: `img${i}` }));
     const live = Object.fromEntries(apps.map((a) => [a.id as string, `img${(a.id as string).slice(1)}@${D("a")}`]));
     const { svc, send } = make({ apps, live });
     await svc.runTick();
-    expect(send).toHaveBeenCalledTimes(2);
-    expect(scriptsOf(send).map((s) => (s.match(/^ {2}chk /gm) ?? []).length).sort()).toEqual([1, 25]);
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(scriptsOf(send).map((s) => (s.match(/^ {2}chk /gm) ?? []).length).sort((x, y) => x - y)).toEqual([1, PROBE_CHUNK_SIZE, PROBE_CHUNK_SIZE]);
   });
   it("a swarm app probes on its resolved manager", async () => {
     const { svc, send, resolveManager } = make({ apps: [cand({ clusterId: "c1" })] });
@@ -197,7 +198,18 @@ describe("ImageUpdateService.runTick — grouping", () => {
     const apps = [cand({ id: "a1", image: "nginx" }), cand({ id: "a2", image: "redis" })];
     const { svc, send } = make({ apps, live: { a1: `nginx@${D("a")}`, a2: `redis@${D("a")}` }, results: {} });
     await svc.runTick();
-    expect(send.mock.calls[0][3]).toBe(30_000 + 22_000 * 2);
+    expect(send.mock.calls[0][3]).toBe(CMD_BASE_TIMEOUT_MS + CMD_PER_ITEM_TIMEOUT_MS * 2);
+  });
+  it("the hub command budget covers the script's real worst case for every chunk size", () => {
+    expect(PROBE_CHUNK_SIZE).toBeLessThanOrEqual(IMAGE_PROBE_MAX_ITEMS);
+    for (let n = 1; n <= IMAGE_PROBE_MAX_ITEMS; n++) {
+      expect(CMD_BASE_TIMEOUT_MS + CMD_PER_ITEM_TIMEOUT_MS * n).toBeGreaterThanOrEqual(n * IMAGE_PROBE_PER_ITEM_WORST_SEC * 1000);
+    }
+  });
+  it("orders due apps never-probed first, then stalest", async () => {
+    const { svc, prisma } = make();
+    await svc.runTick();
+    expect((prisma.application.findMany as jest.Mock).mock.calls[0][0].orderBy).toEqual({ imageUpstreamCheckedAt: { sort: "asc", nulls: "first" } });
   });
 });
 
@@ -467,5 +479,43 @@ describe("ImageUpdateService.checkApp (manual Check now)", () => {
     const res = await m.svc.checkApp(full());
     expect(m.send).not.toHaveBeenCalled();
     expect(res.imageUpdate.state).toBe("no_baseline");
+  });
+});
+
+describe("ImageUpdateService.runTick — hub command timeout isolation (bisect)", () => {
+  const refsIn = (script: string) => [...script.matchAll(/^ {2}chk \d+ '([^']+)'$/gm)].map((m) => m[1]!);
+  const results = { a: `ok ${D("b")}`, b: `ok ${D("b")}`, hung: `ok ${D("b")}`, d: `ok ${D("b")}` };
+  const mkApps = () => ["a", "b", "hung", "d"].map((r, i) => cand({ id: `id${i}`, image: r }));
+  const mkLive = () => Object.fromEntries(["a", "b", "hung", "d"].map((r, i) => [`id${i}`, `${r}@${D("a")}`]));
+
+  it("one hung ref only costs itself: the chunk is bisected and the hung single ref records a timeout verdict", async () => {
+    const send = jest.fn().mockImplementation((_s: string, script: string) => {
+      if (refsIn(script).includes("hung")) return Promise.reject(new AgentCommandTimeoutException("command timed out"));
+      return Promise.resolve({ exitCode: 0, output: answer(script, results) });
+    });
+    const { svc, updateMany } = make({ apps: mkApps(), live: mkLive(), send });
+    await svc.runTick();
+    const okIds = updateMany.mock.calls.filter((c) => c[0].data.imageUpstreamDigest === D("b")).map((c) => c[0].where.id).sort();
+    expect(okIds).toEqual(["id0", "id1", "id3"]);
+    const timeouts = updateMany.mock.calls.filter((c) => c[0].data.imageCheckError === "timeout");
+    expect(timeouts).toHaveLength(1);
+    expect(timeouts[0]![0].where).toEqual({ id: "id2", image: "hung" });
+    expect(timeouts[0]![0].data.imageCheckFailures).toEqual({ increment: 1 });
+  });
+
+  it("an offline agent mid-probe is not penalised (no write, no bisect)", async () => {
+    const send = jest.fn().mockRejectedValue(new AgentOfflineException());
+    const { svc, updateMany } = make({ apps: mkApps(), live: mkLive(), send });
+    await svc.runTick();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(updateMany).not.toHaveBeenCalled();
+  });
+
+  it("a manual check on a ref whose command times out records a timeout verdict through the normal path", async () => {
+    const send = jest.fn().mockRejectedValue(new AgentCommandTimeoutException("command timed out"));
+    const m = make({ send });
+    const res = await m.svc.checkApp({ ...cand(), source: "IMAGE", isPreview: false, imageUpdateCheck: true } as never);
+    expect(m.updateMany.mock.calls.some((c) => c[0].data.imageCheckError === "timeout")).toBe(true);
+    expect(res.imageUpdate.state).toBeDefined();
   });
 });

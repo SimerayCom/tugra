@@ -4,7 +4,7 @@ import { createHash, randomBytes } from "node:crypto";
 import type { Application } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
-import { AgentOfflineException } from "../agent-gateway/agent-offline.exception";
+import { AgentCommandTimeoutException, AgentOfflineException } from "../agent-gateway/agent-offline.exception";
 import { CryptoService } from "../crypto/crypto.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { SwarmDeployService } from "../clusters/swarm-deploy.service";
@@ -20,15 +20,27 @@ import {
   type ImageUpdateView,
   type LiveImage,
 } from "./image-update";
-import { IMAGE_PROBE_MAX_ITEMS, buildImageUpdateScript, parseImageUpdateOutput, type ImageProbeVerdict } from "./image-update-script";
+import {
+  IMAGE_PROBE_LOGIN_TIMEOUT_SEC,
+  IMAGE_PROBE_MAX_ITEMS,
+  IMAGE_PROBE_PER_ITEM_WORST_SEC,
+  buildImageUpdateScript,
+  parseImageUpdateOutput,
+  type ImageProbeVerdict,
+} from "./image-update-script";
 
 const DEFAULT_INTERVAL_MIN = 360;
 const BACKOFF_FAILURES = 3; // after this many consecutive failures an app is re-probed at most daily
 const BACKOFF_MS = 24 * 60 * 60 * 1000;
 const TICK_BUDGET_MS = 8 * 60 * 1000; // stop STARTING new probe batches after this (leftovers stay due)
 const MANUAL_THROTTLE_MS = 30_000;
-const CMD_BASE_TIMEOUT_MS = 30_000;
-const CMD_PER_ITEM_TIMEOUT_MS = 22_000; // the script allows 20s per probe (+ one --raw fallback each is bounded by the same)
+/** Hub-side command deadline = the script's REAL worst case: the bounded login + per ref one --format inspect and
+ *  (only after a fast failure, never after a timeout) one --raw fallback, each capped by the script's own `timeout`. */
+export const CMD_BASE_TIMEOUT_MS = (IMAGE_PROBE_LOGIN_TIMEOUT_SEC + 10) * 1000;
+export const CMD_PER_ITEM_TIMEOUT_MS = (IMAGE_PROBE_PER_ITEM_WORST_SEC + 2) * 1000;
+/** Refs per probe command (the script itself accepts up to IMAGE_PROBE_MAX_ITEMS). Kept small so one command's
+ *  deadline stays well inside TICK_BUDGET_MS and a hung command costs a handful of refs, not 25. */
+export const PROBE_CHUNK_SIZE = 10;
 
 /** The columns the runner reads. A full Application row satisfies it too. */
 export type ImageCheckCandidate = Pick<
@@ -114,6 +126,9 @@ export class ImageUpdateService {
     const apps = (await this.prisma.application.findMany({
       where: { source: "IMAGE", isPreview: false, imageUpdateCheck: true, image: { not: null }, status: { not: "NEW" } },
       select: CANDIDATE_SELECT,
+      // Never-probed apps first, then the stalest: a group that keeps failing (and so keeps its old timestamp) cannot
+      // permanently lead the tick and starve the groups behind it.
+      orderBy: { imageUpstreamCheckedAt: { sort: "asc", nulls: "first" } },
     })) as ImageCheckCandidate[];
     if (!apps.length) return;
     const live = await loadLiveImageMany(this.prisma, apps.map((a) => a.id));
@@ -156,17 +171,17 @@ export class ImageUpdateService {
 
     for (const g of targets.values()) {
       const refs = [...g.byRef.keys()];
-      for (let i = 0; i < refs.length; i += IMAGE_PROBE_MAX_ITEMS) {
+      for (let i = 0; i < refs.length; i += PROBE_CHUNK_SIZE) {
         if (Date.now() - startedAt > TICK_BUDGET_MS) return; // leftovers stay due for the next tick
-        const chunk = refs.slice(i, i + IMAGE_PROBE_MAX_ITEMS);
+        const chunk = refs.slice(i, i + PROBE_CHUNK_SIZE);
         const probedAt = new Date();
-        let verdicts: Map<string, ImageProbeVerdict>;
+        const verdicts = new Map<string, ImageProbeVerdict>();
         try {
-          verdicts = await this.probeChunk(g.serverId, g.auth, chunk);
+          await this.probeResilient(g.serverId, g.auth, chunk, verdicts, startedAt + TICK_BUDGET_MS);
         } catch (e) {
-          // Host-free, output-free warning: serverId + count only.
+          // Host-free, output-free warning: serverId + count only. Whatever verdicts were collected before the
+          // failure are still applied below; the rest write nothing and stay due.
           this.logger.warn(`image-update probe skipped on server ${g.serverId} (${chunk.length} ref(s)): ${e instanceof Error ? e.constructor.name : "error"}`);
-          continue; // other groups still run; nothing written
         }
         for (const [ref, verdict] of verdicts) {
           for (const app of g.byRef.get(ref) ?? []) {
@@ -243,9 +258,9 @@ export class ImageUpdateService {
     if (!server || server.status !== "ONLINE" || !this.agentWs.isOnline(serverId)) throw new ConflictException("server is offline");
     const ref = app.image!;
     const probedAt = new Date();
-    let verdicts: Map<string, ImageProbeVerdict>;
+    const verdicts = new Map<string, ImageProbeVerdict>();
     try {
-      verdicts = await this.probeChunk(serverId, creds.auth, [ref]);
+      await this.probeResilient(serverId, creds.auth, [ref], verdicts, null);
     } catch (e) {
       if (e instanceof AgentOfflineException) throw new ConflictException("server is offline");
       throw new BadRequestException("could not reach the server agent");
@@ -260,6 +275,36 @@ export class ImageUpdateService {
   }
 
   // ---------------------------------------------------------------- probe + persist
+
+  /**
+   * probeChunk with isolation of a slow ref: when the hub's command deadline fires (a hung agent/registry path), the
+   * chunk is bisected so one bad ref only costs itself. A single-ref chunk that still times out records the
+   * `timeout` verdict through the normal path (failure counter + 24 h backoff apply to that ref alone). Verdicts are
+   * collected into `out` as they arrive, so a later failure (offline, budget) keeps what was already learned.
+   * Non-timeout errors (offline, no markers) propagate. `deadlineAt` bounds the bisection by the tick budget.
+   */
+  private async probeResilient(
+    serverId: string,
+    auth: RegistryAuth | null,
+    refs: string[],
+    out: Map<string, ImageProbeVerdict>,
+    deadlineAt: number | null,
+  ): Promise<void> {
+    try {
+      for (const [ref, v] of await this.probeChunk(serverId, auth, refs)) out.set(ref, v);
+    } catch (e) {
+      if (!(e instanceof AgentCommandTimeoutException)) throw e;
+      if (refs.length === 1) {
+        out.set(refs[0]!, { ok: false, code: "timeout" });
+        return;
+      }
+      const mid = Math.ceil(refs.length / 2);
+      for (const half of [refs.slice(0, mid), refs.slice(mid)]) {
+        if (deadlineAt !== null && Date.now() > deadlineAt) return; // leftovers stay due
+        await this.probeResilient(serverId, auth, half, out, deadlineAt);
+      }
+    }
+  }
 
   /** Run the probe script for up to 25 refs on one server. Throws when nothing usable came back (no write). */
   private async probeChunk(serverId: string, auth: RegistryAuth | null, refs: string[]): Promise<Map<string, ImageProbeVerdict>> {
