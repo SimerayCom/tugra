@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { TriangleAlert } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
@@ -9,6 +9,7 @@ import { Card, SectionCard, Btn, EmptyState, Spinner } from "./ui";
 import { useToast } from "./toast";
 import { useConfirm } from "./confirm";
 import { CopyBtn } from "./copy-row";
+import { CutoverPanel } from "./cutover-panel";
 import { planSummary, itemsByKind, riskTone, opProgress, coverageApps, coverageCounts, hasDeferredCoverage, reasonText, ackableItems, buildAcks, runnableAfterAcks, serviceChoicesPayload } from "../lib/import";
 import { EnvBlockers } from "./import/env-blockers";
 import { GitLinksPanel, GitRelinkCard, DeployKeyBlock } from "./import/git-links-panel";
@@ -56,6 +57,20 @@ export function ImportWizard() {
 
   const effectiveTeam = teamId || teams[0]?.id || "";
   const src = SRC[kind];
+
+  // The wizard's state is in-memory, so keep the running op in the URL (?op=<id>): a reload or a shared link
+  // reopens the timeline and the cutover step instead of starting a new import.
+  useEffect(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get("op");
+    if (fromUrl) setOpId(fromUrl);
+  }, []);
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (opId) url.searchParams.set("op", opId);
+    else if (url.searchParams.has("op")) url.searchParams.delete("op");
+    else return;
+    window.history.replaceState(window.history.state, "", url);
+  }, [opId]);
 
   const planM = useMutation({
     mutationFn: (sid: string) => api.importPlan({ sourceKind: kind, sessionId: sid }),
@@ -418,6 +433,7 @@ function Timeline({ opId, onReset }: { opId: string; onReset: () => void }) {
         <MigrateDataCard opId={opId} sourceKind={asRemoteKind(op.sourceKind)} />
         <RemapEnvCard opId={opId} sourceKind={asRemoteKind(op.sourceKind)} />
         {op.tasks.some((task) => task.git && task.git.status !== "linked" && task.git.status !== "public_ok") && <GitRelinkCard opId={opId} />}
+        <CutoverPanel opId={opId} />
       </>
     )}
     </>

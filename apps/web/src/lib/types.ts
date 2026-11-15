@@ -383,6 +383,8 @@ export interface ServerView {
   dnsProvider: string | null;
   customCertResolver: string | null;
   hasDnsCreds: boolean;
+  /** The team DNS credential this server's DNS-01 token was copied from (null/absent = none or typed by hand). */
+  dnsCredentialId?: string | null;
   os: string | null;
   osVersion: string | null;
   arch: string | null;
@@ -1541,6 +1543,8 @@ export interface Application {
   domainRedirect: "www" | "root" | null;
   securityHeaders: boolean;
   gzip: boolean;
+  /** Custom-domain certificate issued with DNS-01 per host (needs DNS-01 credentials on the server). */
+  dnsChallenge: boolean;
   forwardAuth: string | null;
   ipAllowlist: string[];
   basicAuthUsers: string[]; // usernames only (password hashes never returned)

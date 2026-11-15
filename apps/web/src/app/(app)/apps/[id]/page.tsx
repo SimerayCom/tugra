@@ -299,7 +299,7 @@ export default function AppDetailPage() {
     serviceDomains: () => <ServiceDomainsCard id={id} />,
     domainOptions: () =>
       appData.domain ? (
-        <DomainOptionsCard id={id} domain={appData.domain} https={appData.https} domainRedirect={appData.domainRedirect} securityHeaders={appData.securityHeaders} gzip={appData.gzip} forwardAuth={appData.forwardAuth} ipAllowlist={appData.ipAllowlist} pathPrefix={appData.pathPrefix} stripPrefix={appData.stripPrefix} rateLimit={appData.rateLimit} />
+        <DomainOptionsCard id={id} domain={appData.domain} https={appData.https} domainRedirect={appData.domainRedirect} securityHeaders={appData.securityHeaders} gzip={appData.gzip} forwardAuth={appData.forwardAuth} ipAllowlist={appData.ipAllowlist} pathPrefix={appData.pathPrefix} stripPrefix={appData.stripPrefix} rateLimit={appData.rateLimit} serverId={appData.serverId} dnsChallenge={appData.dnsChallenge} />
       ) : null,
     customCert: () =>
       appData.domain ? (

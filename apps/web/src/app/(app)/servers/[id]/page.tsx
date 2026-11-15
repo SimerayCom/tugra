@@ -28,6 +28,8 @@ import { RenameModal } from "../../../../components/rename-modal";
 import { TagsCard } from "../../../../components/tags";
 import { LogDrainCard } from "../../../../components/log-drains/log-drain-card";
 import { CapabilitiesCard } from "../../../../components/server-capabilities-card";
+import { AcmeDnsCredentialPicker } from "../../../../components/acme-dns-credential-picker";
+import { useToast } from "../../../../components/toast";
 import { TrafficAnalyticsCard } from "../../../../components/traffic-analytics-card";
 import { Badge, Btn, Card, EmptyState, SectionCard, Spinner, StatusPill } from "../../../../components/ui";
 import { Skeleton, SkeletonCard } from "../../../../components/skeleton";
@@ -840,6 +842,8 @@ function NetworkCard({ id, server }: { id: string; server: ServerView }) {
   const [certMode, setCertMode] = useState("http");
   const [dnsProvider, setDnsProvider] = useState("");
   const [dnsCreds, setDnsCreds] = useState(""); // write-only: never seeded from the server
+  const [dnsCredId, setDnsCredId] = useState(""); // team DNS credential whose token is copied onto the server
+  const toast = useToast();
   useEffect(() => {
     setWildcard(server.wildcardDomain ?? "");
     setSuffix(server.magicSuffix ?? "");
@@ -847,6 +851,7 @@ function NetworkCard({ id, server }: { id: string; server: ServerView }) {
     setCertMode(server.certMode || "http");
     setDnsProvider(server.dnsProvider ?? "");
     setDnsCreds("");
+    setDnsCredId(server.dnsCredentialId ?? "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [server.id]);
 
@@ -869,10 +874,21 @@ function NetworkCard({ id, server }: { id: string; server: ServerView }) {
       // leaves the stored creds untouched). One KEY=VALUE per line.
       const creds = parseCreds(dnsCreds);
       if (creds) cfg.dnsCreds = creds;
+      // Only send the credential link on a deliberate change (the token is COPIED, so re-sending would re-copy it).
+      if (dnsCredId !== (server.dnsCredentialId ?? "")) cfg.dnsFromCredentialId = dnsCredId || null;
       return api.setServerNetwork(id, cfg);
     },
     onSuccess: () => {
       setDnsCreds("");
+      qc.invalidateQueries({ queryKey: ["server", id] });
+    },
+  });
+
+  // Re-send the SAME credential id: the hub copies the credential's current token onto the server again.
+  const reapply = useMutation({
+    mutationFn: () => api.setServerNetwork(id, { dnsFromCredentialId: server.dnsCredentialId ?? null }),
+    onSuccess: () => {
+      toast(t("servers.acmeDns.reapplied"), "success");
       qc.invalidateQueries({ queryKey: ["server", id] });
     },
   });
@@ -911,6 +927,14 @@ function NetworkCard({ id, server }: { id: string; server: ServerView }) {
               <input style={netField} value={dnsProvider} placeholder="cloudflare" onChange={(e) => setDnsProvider(e.target.value)} />
               <span style={{ fontSize: 11 }}>{t("servers.dnsProviderHint")}</span>
             </label>
+            <AcmeDnsCredentialPicker
+              teamId={server.teamId}
+              value={dnsCredId}
+              onChange={setDnsCredId}
+              linkedId={server.dnsCredentialId ?? null}
+              onReapply={() => reapply.mutate()}
+              reapplying={reapply.isPending}
+            />
             <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", flexDirection: "column", gap: 4 }}>
               <span>
                 {t("servers.dnsCreds")}{" "}

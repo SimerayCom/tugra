@@ -1354,5 +1354,11 @@
   "moveErr_hub_restarted": "The hub restarted during the move.",
   "moveErr_deadline_exceeded": "The move took too long and a server stayed offline.",
   "moveErr_source_restart_failed": "The app could not be restarted on the original server.",
-  "moveErr_internal_error": "An internal error occurred."
+  "moveErr_internal_error": "An internal error occurred.",
+  "domainDnsChallenge": {
+    "label": "Issue the certificate with DNS-01",
+    "desc": "Issues this domain's certificate through a DNS challenge instead of HTTP-01, so it can be ready before the domain points at this server. Applied on the next deploy.",
+    "noCreds": "This server has no DNS-01 credentials. Set them up in the server's network settings first.",
+    "loadingServer": "Checking the server's DNS-01 credentials…"
+  }
 }

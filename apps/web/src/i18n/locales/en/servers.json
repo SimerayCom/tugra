@@ -298,5 +298,17 @@
     "errForbidden": "GPU detection needs the 'bulk' capability and server-ops permission",
     "errUnavailable": "Couldn't reach the server agent",
     "errGeneric": "GPU detection failed"
+  },
+  "acmeDns": {
+    "label": "Use a team DNS credential",
+    "none": "None (use the credentials typed below)",
+    "noCredentials": "This team has no DNS credentials yet. Add one under DNS credentials.",
+    "coverageVerified": "Verified {date}. Make sure its token covers every zone this server serves certificates for.",
+    "coverageUnverified": "Not verified yet. Test the credential first, and make sure its token covers every zone this server serves.",
+    "readOnly": "This credential is read-only, so it cannot create the DNS-01 challenge records.",
+    "tokenCopied": "The token is copied to this server when you save. If you rotate the credential later, the server keeps the old token until you re-apply it.",
+    "reapply": "Re-apply token",
+    "reapplyHint": "Save first to switch credentials; re-apply only refreshes the one already in use.",
+    "reapplied": "Token re-applied"
   }
 }

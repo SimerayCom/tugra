@@ -6,6 +6,7 @@ import { X } from "lucide-react";
 import { useConfirm } from "../../../../components/confirm";
 import { useToast } from "../../../../components/toast";
 import { Btn, SectionCard } from "../../../../components/ui";
+import { DnsChallengeToggle } from "../../../../components/dns-challenge-toggle";
 import { useUnsavedChanges } from "../../../../hooks/useUnsavedChanges";
 import { useT } from "../../../../i18n/provider";
 import { api } from "../../../../lib/api";
@@ -306,10 +307,15 @@ export function DomainOptionsCard({
   pathPrefix,
   stripPrefix,
   rateLimit,
+  serverId,
+  dnsChallenge = false,
 }: {
   id: string;
   domain: string;
   https: boolean;
+  /** The server the app runs on (its DNS-01 credentials decide whether the DNS-01 toggle is available). */
+  serverId?: string;
+  dnsChallenge?: boolean;
   domainRedirect: "www" | "root" | null;
   securityHeaders: boolean;
   gzip: boolean;
@@ -369,6 +375,7 @@ export function DomainOptionsCard({
         </label>
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
       </div>
+      {serverId && <DnsChallengeToggle appId={id} serverId={serverId} dnsChallenge={dnsChallenge} />}
       <div style={{ marginTop: 10 }}>
         <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 4 }}>{t("apps.forwardAuth")}</div>
         <input

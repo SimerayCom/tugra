@@ -5,7 +5,7 @@ import React from "react";
 import { I18nProvider } from "../i18n/provider";
 import { ConfirmProvider } from "./confirm";
 import { ImportWizard } from "./import-wizard";
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
 import type { ImportPlan, ImportOperation } from "../lib/types";
 import importMessages from "../i18n/locales/en/import.json";
 import { readFileSync } from "node:fs";
@@ -50,7 +50,11 @@ const settledOp: ImportOperation = {
 
 describe("ImportWizard", () => {
   beforeEach(() => {
+    window.history.replaceState(null, "", "/"); // the wizard mirrors the running op into ?op=
     qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    // The post-import cutover step reads these on mount once the timeline settles; default to "not set up yet".
+    vi.spyOn(api, "getCutover").mockRejectedValue(new ApiError(404, "not found"));
+    vi.spyOn(api, "listDnsCredentials").mockResolvedValue([]);
     vi.spyOn(api, "listTeams").mockResolvedValue([{ id: "t1", name: "Team One" }] as never);
     vi.spyOn(api, "listServers").mockResolvedValue([{ id: "srv1", name: "Server A", teamId: "t1", status: "ONLINE", clusterId: null, tags: [] }] as never);
     // The post-import MigrateDataCard reads this on mount once the timeline settles — default to "no live token".
@@ -318,6 +322,14 @@ describe("ImportWizard", () => {
     expect(screen.getByText(/in the reserved traefik\.\* namespace \(owned by Tugra's ingress routing/)).toBeTruthy(); // translated by code
     expect(screen.getByText(/Tugra allows at most 20 extra published ports/)).toBeTruthy(); // params substituted
     expect(screen.getAllByText(/^Not carried \(/)).toHaveLength(1); // only the task with something unmapped
+  });
+  it("a settled op with a created app shows the SSL/DNS cutover step, and ?op= reopens the timeline after a reload", async () => {
+    vi.spyOn(api, "getImportOperation").mockResolvedValue(settledOp);
+    window.history.replaceState(null, "", "/?op=op1");
+    wrap(<ImportWizard />);
+    await screen.findByText("web-app");
+    await screen.findByText("SSL & DNS cutover");
+    expect(await screen.findByRole("button", { name: "Set up cutover" })).toBeTruthy(); // getCutover 404 → not set up yet
   });
 });
 

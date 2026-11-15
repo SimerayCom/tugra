@@ -335,6 +335,112 @@ function trafficQuery(p: { range?: string; teamId?: string | null; domain?: stri
   return s ? `?${s}` : "";
 }
 
+// ── SSL/DNS cutover for imported apps (mirrors the hub's cutover.dto.ts; secret-free) ──
+export type CutoverEntryState =
+  | "PLANNED" | "CERT_PENDING" | "CERT_READY" | "READY" | "SWITCHING" | "SWITCHED" | "VERIFIED"
+  | "VERIFY_FAILED" | "REVERTING" | "ROLLED_BACK" | "BLOCKED" | "EXCLUDED" | "CONFLICT";
+
+export interface CutoverEntryView {
+  id: string;
+  applicationId: string;
+  appName: string;
+  hostname: string;
+  role: string;
+  state: CutoverEntryState | (string & {});
+  blockReason: string | null;
+  dnsMode: string;
+  challenge: string;
+  certState: string;
+  certIssuer: string | null;
+  certNotAfter: string | null;
+  certError: string | null;
+  dnsObserved: string;
+  proxied: boolean | null;
+  viaWildcard: boolean;
+  sslMode: string | null;
+  currentTtl: number | null;
+  targetTtl: number | null;
+  ttlWaitUntil: string | null;
+  stateful: boolean;
+  needsDeploy: boolean;
+  warnings: string[];
+  precheckAt: string | null;
+  flippedAt: string | null;
+  verifiedAt: string | null;
+  finalizedAt: string | null;
+  lastError: string | null;
+  sourceName: string | null;
+}
+
+export interface CutoverServerView {
+  serverId: string;
+  name: string;
+  publicIp: string | null;
+  publicIpv6: string | null;
+  proxyBind: string;
+  acmeEmailOk: boolean;
+  dnsReady: boolean;
+  dnsProvider: string | null;
+  dnsCredentialId: string | null;
+  coverage: "verified" | "unverified" | "none";
+  warnings: string[];
+}
+
+export interface CutoverRunView {
+  id: string;
+  status: string;
+  batchesDone: number;
+  total: number;
+  startedAt: string;
+  heartbeatAt: string;
+  lastError: string | null;
+}
+
+export interface CutoverView {
+  opId: string;
+  run: CutoverRunView | null;
+  summary: { total: number; planned: number; certReady: number; ready: number; switched: number; verified: number; blocked: number; conflict: number; failed: number; excluded: number };
+  servers: CutoverServerView[];
+  entries: CutoverEntryView[];
+  certs: { staged: number; applied: number };
+}
+
+export interface CutoverFlipPlanRecord {
+  type: string;
+  name: string;
+  action: "create" | "update" | "delete" | "noop";
+  old: { content: string; ttl: number; proxied: boolean } | null;
+  new: { content: string; ttl: number; proxied: boolean } | null;
+}
+export interface CutoverFlipPlan {
+  opId: string;
+  planHash: string;
+  entries: Array<{ hostname: string; appName: string; challenge: string; records: CutoverFlipPlanRecord[]; warnings: string[] }>;
+  rate: { batchSize: number; intervalSec: number; estimatedSeconds: number };
+  blocked: Array<{ hostname: string; reason: string }>;
+  copyPaste: Array<{ hostname: string; type: string; name: string; content: string; ttl: number; lowerTtlBefore: string | null }>;
+  sourceStop: Array<{ appName: string; sourceName: string | null; hostnames: string[] }>;
+}
+export interface CutoverTtlGuidance { hostname: string; oldTtl: number; lowerBefore: string | null }
+export interface CutoverFlipInput {
+  confirmToken: string;
+  hostnames?: string[];
+  batchSize?: number;
+  intervalSec?: number;
+  targetTtl?: number;
+  stopOnFail?: boolean;
+  autoRevert?: boolean;
+  keepProxied?: boolean;
+  acceptDataRisk?: boolean;
+  acceptHttp01Gap?: boolean;
+  skipTtlWait?: boolean;
+}
+export interface CutoverFlipPlanQuery { hostnames?: string[]; targetTtl?: number; keepProxied?: boolean }
+
+const cutoverBase = (opId: string) => `/import/operations/${encodeURIComponent(opId)}/cutover`;
+const cutoverPost = <T>(opId: string, sub: string, body?: unknown) =>
+  apiFetch<T>(`${cutoverBase(opId)}${sub}`, { method: "POST", ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+
 export const api = {
   async register(email: string, password: string, name?: string, setupCode?: string) {
     // The hub sets the httpOnly session cookies on the response; we only need the user back.
@@ -894,6 +1000,8 @@ export const api = {
       dnsProvider?: string | null;
       dnsCreds?: Record<string, string> | null;
       customCertResolver?: string | null;
+      /** Copy a team DNS credential's token onto the server (a later rotation does NOT propagate until re-applied). null clears the link. */
+      dnsFromCredentialId?: string | null;
     },
   ) {
     return apiFetch<{ ok: true }>(`/servers/${id}/network`, {
@@ -1710,7 +1818,7 @@ export const api = {
   },
   setAppDomainOptions(
     id: string,
-    opts: { domainRedirect?: "www" | "root" | null; securityHeaders?: boolean; gzip?: boolean; forwardAuth?: string | null; ipAllowlist?: string[]; pathPrefix?: string | null; stripPrefix?: boolean; rateLimit?: { average: number; burst: number; period: "1s" | "1m" | "1h" } | null },
+    opts: { domainRedirect?: "www" | "root" | null; securityHeaders?: boolean; gzip?: boolean; forwardAuth?: string | null; ipAllowlist?: string[]; pathPrefix?: string | null; stripPrefix?: boolean; dnsChallenge?: boolean; rateLimit?: { average: number; burst: number; period: "1s" | "1m" | "1h" } | null },
   ) {
     return apiFetch<{ ok: true }>(`/apps/${id}/domain-options`, {
       method: "PUT",
@@ -2017,6 +2125,52 @@ export const api = {
   rollbackImport(opId: string) {
     return apiFetch<ImportOperation>(`/import/operations/${encodeURIComponent(opId)}/rollback`, { method: "POST" });
   },
+  // ── post-import: SSL/DNS cutover (Cloudflare-managed hosts are flipped by the hub; manual DNS gets copy-paste records) ──
+  getCutover(opId: string) {
+    return apiFetch<CutoverView>(`${cutoverBase(opId)}`);
+  },
+  cutoverInit(opId: string, body: { dnsCredentialId?: string } = {}) {
+    return cutoverPost<CutoverView>(opId, "/init", body);
+  },
+  cutoverCertPrepare(opId: string, body: { hostnames?: string[]; challenge: "dns01" | "http01" }) {
+    return cutoverPost<{ blocked: Array<{ hostname: string; reason: string }>; view: CutoverView }>(opId, "/cert-prepare", body);
+  },
+  cutoverCheck(opId: string, body: { hostnames?: string[]; probeVia?: "hub" | "agent"; healthPath?: string } = {}) {
+    return cutoverPost<CutoverView>(opId, "/check", body);
+  },
+  cutoverTtl(opId: string, body: { hostnames?: string[]; ttl?: number } = {}) {
+    return cutoverPost<{ guidance: CutoverTtlGuidance[]; view: CutoverView }>(opId, "/ttl", body);
+  },
+  getCutoverFlipPlan(opId: string, q: CutoverFlipPlanQuery = {}) {
+    const p = new URLSearchParams();
+    if (q.hostnames && q.hostnames.length > 0) p.set("hostnames", q.hostnames.join(","));
+    if (q.targetTtl !== undefined) p.set("targetTtl", String(q.targetTtl));
+    if (q.keepProxied !== undefined) p.set("keepProxied", q.keepProxied ? "true" : "false");
+    const qs = p.toString();
+    return apiFetch<CutoverFlipPlan>(`${cutoverBase(opId)}/flip-plan${qs ? `?${qs}` : ""}`);
+  },
+  cutoverFlip(opId: string, body: CutoverFlipInput) {
+    return cutoverPost<{ runId: string; planHash: string; queued: boolean }>(opId, "/flip", body);
+  },
+  cutoverCancel(opId: string) {
+    return cutoverPost<CutoverView>(opId, "/cancel");
+  },
+  cutoverFinalize(opId: string, body: { hostnames?: string[] } = {}) {
+    return cutoverPost<CutoverView>(opId, "/finalize", body);
+  },
+  cutoverRevert(opId: string, body: { hostnames: string[]; force?: boolean; acknowledgeDataLoss: true }) {
+    return cutoverPost<CutoverView>(opId, "/revert", body);
+  },
+  cutoverFixCounterpart(opId: string, body: { applicationId: string; direction: "root" | "www" }) {
+    return cutoverPost<CutoverView>(opId, "/fix-counterpart", body);
+  },
+  cutoverExclude(opId: string, body: { hostnames: string[]; excluded: boolean }) {
+    return cutoverPost<CutoverView>(opId, "/exclude", body);
+  },
+  cutoverSeedCerts(opId: string, body: { serverId?: string; acknowledgeProxyRestart: boolean }) {
+    return cutoverPost<{ applied: number; view: CutoverView }>(opId, "/seed-certs", body);
+  },
+
   // ── post-import: database-data migration (one-liner pasted on the source host) ──
   // Read-only state + a command TEMPLATE (never the live token); the live command is returned once by mint.
   getMigrateCommand(opId: string) {

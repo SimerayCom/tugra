@@ -751,3 +751,40 @@ body {
     transform: none;
   }
 }
+
+/* SSL/DNS cutover table: a normal table on wide screens; on phones each row becomes a labelled card
+   (cells carry data-label; the header row is hidden visually but stays for assistive tech). */
+@media (max-width: 767px) {
+  .tg-cutover-table thead {
+    position: absolute;
+    left: -9999px;
+  }
+  .tg-cutover-table,
+  .tg-cutover-table tbody,
+  .tg-cutover-table tr,
+  .tg-cutover-table td {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .tg-cutover-table tr {
+    border: 1px solid var(--c-bd) !important;
+    border-radius: var(--r1);
+    margin-bottom: 10px;
+    padding: 6px 10px;
+  }
+  .tg-cutover-table td {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 5px 0 !important;
+    text-align: right;
+  }
+  .tg-cutover-table td::before {
+    content: attr(data-label);
+    color: var(--c-tx3);
+    font-size: 11px;
+    text-align: left;
+    flex-shrink: 0;
+  }
+}
