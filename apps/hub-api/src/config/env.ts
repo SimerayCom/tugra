@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { isValidIpOrCidr } from "../common/ip-allowlist";
+import { DEFAULT_PART_MIB, MAX_PART_MIB, MIN_PART_MIB, clampPartMib } from "../app-moves/part-size";
 
 /**
  * Environment schema. The hub FAILS CLOSED — it will not boot with missing or
@@ -181,8 +182,12 @@ export const envSchema = z
   TUGRA_HOSTPORT_MIN: z.coerce.number().int().positive().default(20000),
   TUGRA_HOSTPORT_MAX: z.coerce.number().int().positive().default(45000),
   // App move (relocate an app + its volumes to another server). Each volume crosses the hub in bounded parts of this
-  // many MiB (clamped 32..1024): lower it when a fronting proxy caps request bodies (e.g. Cloudflare-proxied 100 MB).
-  MOVE_PART_MIB: z.coerce.number().int().min(32).max(1024).default(256),
+  // many MiB: lower it when a fronting proxy caps request bodies (e.g. Cloudflare-proxied 100 MB). An out-of-range number
+  // is CLAMPED to 32..1024 (validateEnv logs a warning) instead of refusing to boot; a non-number still fails closed.
+  MOVE_PART_MIB: z.preprocess((v) => {
+    const n = typeof v === "string" ? Number(v) : v;
+    return typeof n === "number" && Number.isFinite(n) ? clampPartMib(n) : v;
+  }, z.coerce.number().int().min(MIN_PART_MIB).max(MAX_PART_MIB).default(DEFAULT_PART_MIB)),
   // Hub-wide cap on simultaneously relayed parts (memory-only relay); beyond it a part waits for a free seat.
   MOVE_MAX_CONCURRENT_RELAYS: z.coerce.number().int().min(1).max(16).default(2),
   // Optional, opt-in: a signed remote template catalog. When CATALOG_SOURCE_URL is set the hub
@@ -308,6 +313,10 @@ export function validateEnv(config: Record<string, unknown>): Env {
       .map((i) => `  - ${i.path.join(".")}: ${i.message}`)
       .join("\n");
     throw new Error(`Invalid environment configuration:\n${issues}`);
+  }
+  const asked = Number(cleaned.MOVE_PART_MIB);
+  if (cleaned.MOVE_PART_MIB !== undefined && Number.isFinite(asked) && asked !== parsed.data.MOVE_PART_MIB) {
+    console.warn(`MOVE_PART_MIB=${String(cleaned.MOVE_PART_MIB)} is outside ${MIN_PART_MIB}..${MAX_PART_MIB}; using ${parsed.data.MOVE_PART_MIB}`);
   }
   return parsed.data;
 }

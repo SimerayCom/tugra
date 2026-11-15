@@ -234,3 +234,31 @@ describe("validateEnv — HUB_TRUSTED_PROXY_STRICT", () => {
     ).toThrow(/HUB_TRUSTED_PROXY_CIDRS/);
   });
 });
+
+describe("validateEnv — MOVE_PART_MIB (clamped, never a boot failure for a number)", () => {
+  const run = (v: Record<string, unknown>) => validateEnv({ ...base, NODE_ENV: "development", ...v }).MOVE_PART_MIB;
+  let warn: jest.SpyInstance;
+  beforeEach(() => {
+    warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+  });
+  afterEach(() => warn.mockRestore());
+
+  it("defaults to 256 and passes an in-range value through without a warning", () => {
+    expect(run({})).toBe(256);
+    expect(run({ MOVE_PART_MIB: "" })).toBe(256);
+    expect(run({ MOVE_PART_MIB: "64" })).toBe(64);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("clamps an out-of-range number to 32..1024 and warns (the documented advice to lower it must not brick the hub)", () => {
+    expect(run({ MOVE_PART_MIB: "16" })).toBe(32);
+    expect(run({ MOVE_PART_MIB: "2048" })).toBe(1024);
+    expect(run({ MOVE_PART_MIB: 5.9 })).toBe(32);
+    expect(warn).toHaveBeenCalledTimes(3);
+    expect(String(warn.mock.calls[0][0])).toMatch(/MOVE_PART_MIB=16.*32/);
+  });
+
+  it("a non-number still fails closed", () => {
+    expect(() => run({ MOVE_PART_MIB: "abc" })).toThrow(/MOVE_PART_MIB/);
+  });
+});

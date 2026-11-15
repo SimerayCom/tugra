@@ -20,20 +20,18 @@ import {
 } from "./app-move-scripts";
 import { cpusetExceedsTarget, gpuNotReadyOnTarget, hasHostMounts, hasPrivilegedGrant } from "./move-target-fit";
 import { rebaseSelfUrls } from "./rebase-self-urls";
+import { DEFAULT_PART_MIB, MAX_PART_MIB, MIN_PART_MIB, clampPartMib } from "./part-size";
 import type { MoveAppPreflightResult } from "./dto";
 
 const MiB = 1024 * 1024;
 const GiB = 1024 * MiB;
 
-export const DEFAULT_PART_MIB = 256;
-export const MIN_PART_MIB = 32;
-export const MAX_PART_MIB = 1024;
+export { DEFAULT_PART_MIB, MIN_PART_MIB, MAX_PART_MIB };
 
 /** `MOVE_PART_MIB` clamped to 32..1024 (default 256), as bytes. */
 export function partBytesFromEnv(raw: string | undefined): number {
   const n = raw === undefined || raw === "" ? DEFAULT_PART_MIB : Number(raw);
-  const mib = Number.isFinite(n) ? Math.min(MAX_PART_MIB, Math.max(MIN_PART_MIB, Math.floor(n))) : DEFAULT_PART_MIB;
-  return mib * MiB;
+  return clampPartMib(n) * MiB;
 }
 
 export interface MoveAppFacts {
