@@ -107,6 +107,29 @@ The web server streams file bodies through dedicated routes (Next's generic rewr
 bodies above 10 MiB); a hub behind a reverse proxy must also allow large request bodies on `/api/v1/apps/*/files/content`
 and `/api/v1/agent-fs/t/*`, and parts of at most `MOVE_PART_MIB` on `/api/v1/agent-vx/t/*` (the app-move volume relay).
 
+## Volume copies: backup restore, import and app move
+
+A named volume is never read or written through the agent's own filesystem (the agent is a container with only
+`/etc/tugra` and the docker socket bound). Every copy streams through a throwaway container of the pinned helper
+image (`alpine:3.21` by digest, `BACKUP_HELPER_IMAGE`): `tar -cf -` out of the volume for a backup or a move pack,
+and, for a restore, an import or a move apply, a *validate → snapshot → wipe → extract* sequence with a labelled
+rollback volume, so a corrupt archive aborts before the wipe and a failed extract is rolled back (exit codes
+0/72/71/70, `volume-backup-script.ts`). The move pack is gzip-split into fixed parts, checksummed per part, relayed
+through the hub (`/api/v1/agent-vx/t/*`) and streamed twice on the target (validate, then extract), so no decoded
+tar ever sits on disk. The move preflight probes both hosts the same way: free space and device id of the daemon's
+real docker root and of the staging disk are read through a bind of the host path into the helper (or the agent's
+own image when the helper is not on the host yet; the probe never pulls), and the target's listening ports come
+from a `--network host` run of it (netstat, else `/proc/net/tcp{,6}`); if they cannot be listed the preflight fails
+closed rather than assume none.
+
+**Fidelity limit (BusyBox tar).** The extract is BusyBox `tar -xf` (ownership kept for our own archives, dropped with
+`--no-same-owner` for an untrusted import). Content, modes, owners and mtimes of regular files, directory modes and
+owners, hard links and symlink targets survive exactly; what BusyBox does not restore is the owner of a symlink
+itself (`root:root` afterwards) and the mtime of non-empty directories and of symlinks (the unpack time). Extended
+attributes, ACLs and sparse-file holes are not carried either. This is the same for restores, imports and moves and
+is not a data loss, but an mtime-keyed cache may rebuild after one. A helper image with GNU tar would lift the
+symlink/directory part (follow-up); the rollback snapshot uses `cp -a` and keeps all of it.
+
 ## Deployment
 
 The [`deploy/docker-compose.yml`](../deploy/docker-compose.yml) stack is hub + web + PostgreSQL + Redis +

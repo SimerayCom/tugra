@@ -7,6 +7,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Backup destinations: the encryption test no longer fails at random on a fresh agent.** The test's encrypt and
+  decrypt gpg processes run at the same time and both tried to create the gpg home on first use; on an agent that had
+  just started (or self-updated) one of them could die with `can't create directory '/root/.gnupg': File exists` and
+  the destination showed an encryption failure. The gpg home is now created before the pair starts. Backup and
+  restore scripts run a single gpg each, were never affected and are unchanged.
+- **App moves: the preflight now measures the target host, not the agent's container.** Free space and the device id
+  of the docker root (the daemon's real `DockerRootDir`) and of the staging disk are read through a throwaway
+  container with the host path bound (the helper image, or the agent's own image when the helper is not on the host
+  yet), so a target whose staging dir and docker root share one disk is sized with the shared-disk rule instead of the
+  weaker two-disk one. Ports in use on the target are listed from the host's network namespace the same way (netstat,
+  else `/proc/net/tcp`), so host listeners such as sshd, DNS or a host nginx now count in the port-conflict check and
+  host-port reallocation; before, the list was always empty. If the ports cannot be listed the preflight fails with
+  `probe_failed` instead of assuming none are in use. The probe still never pulls an image. Unknown device ids are
+  sized as one shared disk (the stricter rule).
 - **Dependencies.** The glob override moved to 14 (minimatch 11), clearing two dev-tooling advisories (minimatch
   GHSA-g3hv-75wg-m249, glob GHSA-3g3m-2fjr-6pw4). The vite lock was refreshed to 8.3.8. No runtime behaviour change.
 - **Updater.** The pre-update restore point now refuses to start when the backup directory clearly lacks free space for
@@ -118,7 +132,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   until you remove it with that same button. Nothing is on by default: the migration adds one table and two nullable
   columns, existing rows are untouched.
 - **Known limits of app moves.** Downtime equals the copy time (a cold move; no incremental sync). Extended attributes,
-  ACLs and sparse files are not preserved. Host bind-mount data and compose `external:` / `name:` volumes are not
+  ACLs and sparse files are not preserved. The copy is unpacked by the BusyBox `tar` of the pinned helper image
+  (`alpine:3.21`): every regular file's content, mode, owner and modification time, directory modes and owners, hard
+  links and symlink targets are restored exactly, but the owner of a symlink itself (it comes out `root:root`) and the
+  modification times of non-empty directories and of symlinks are not (they read as the unpack time). Exactly the same
+  limit applies to volume backup restores and volume imports, which use the same helper; a database does not care,
+  an mtime-based cache in front of a web root may. Follow-up: a helper with GNU tar would lift it. Host bind-mount data and compose `external:` / `name:` volumes are not
   transferred (each needs an acknowledgement). Metrics and traffic history split at the move. The move deploy uses the
   configured tag or commit, so a mutable `latest` or a branch may resolve to something newer. Managed databases,
   swarm apps, previews and the CLI/MCP surface are out of scope for now. A fronting proxy that caps request bodies below
