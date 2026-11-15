@@ -77,6 +77,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   longer recorded as the client IP or matched against the allowlist). New opt-in `HUB_TRUSTED_PROXY_STRICT=true` trusts
   only `HUB_TRUSTED_PROXY_CIDRS` peers; off by default.
 
+- **Streamed volume copy for the Coolify/Dokploy migration.** The one-click migrator has a volume arm
+  (`--arms volumes|all`) that copies a stopped source container's declared volumes to the target in resumable ~128 MiB
+  parts through the hub's memory relay: no size cap, no hub disk, owner/group/mode preserved, resumable by part (a
+  changed source is `volume-diverged`, never overwritten), `--dry-run` inventory with the target's free space,
+  `--stop-source` (only that container, restarted on failure) and explicit `volume-not-migrated` exclusions. A
+  PostgreSQL database can opt into a physical **Volume copy** data mode behind strict gates (same image and major,
+  credentials carried, data at the volume root, never-started destination); the dry run reports the image, major and
+  mount so the answer is known before any window. New Import wizard panel, `tugra import volumes`, hub env
+  `MIGRATION_VX_*`, `MIGRATION_RELAY_CONCURRENCY` and `MIGRATION_TOKEN_MAX_LIFE_HOURS`. Limits: one hub, device nodes
+  refuse the copy, xattrs/ACLs/capabilities/sockets are not copied, compose/service volumes are out of scope. The
+  existing database dump path, the hub-staged upload and app moves behave as before; the migrator image installer
+  now sets `TUGRA_SELF_IMAGE` and caps a volume run at 768 MiB.
+
 - **Dokploy in the Import wizard.** The wizard has a source picker (Coolify or Dokploy); the URL, key and hint
   wording follow the source, and the same source is used to connect, preview and apply.
 - **The import preview lists what is not carried over.** Per app, a collapsed "What isn't carried over" list names the

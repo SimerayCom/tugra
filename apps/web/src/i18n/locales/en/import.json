@@ -581,5 +581,152 @@
       "info": "Note"
     },
     "itemLink": "Go to {name}"
-  }
+  },
+  "vx": {
+    "title": "Volume data",
+    "subtitle": "Each declared volume is copied by the migrator in resumable parts of about 128 MiB straight from the stopped source to the target. Nothing is staged on the hub's disk.",
+    "empty": "No volume of this import has data to copy.",
+    "notEnabled": "The streamed volume copy is switched off on this hub.",
+    "state": {
+      "none": "Not started",
+      "excluded": "Not migrated",
+      "pending": "Waiting",
+      "copying": "Copying",
+      "copied": "Copied",
+      "applying": "Applying",
+      "done": "Done",
+      "failed": "Failed",
+      "aborted": "Aborted"
+    },
+    "phase": {
+      "verifying": "Checking the source",
+      "skipping": "Re-reading what was already copied",
+      "streaming": "Sending parts",
+      "applying": "Extracting on the target",
+      "provisioning": "Starting the database"
+    },
+    "progress": {
+      "bytes": "{done} of {total}",
+      "parts": "{count} parts",
+      "eta": "about {time} left",
+      "speed": "{rate}/s",
+      "unknownTotal": "{done} copied"
+    },
+    "evidence": {
+      "reportedByMigrator": "reported by the migrator",
+      "note": "The source's state (stopped, size, image) comes from the migrator running on the source host; the hub cannot verify it."
+    },
+    "action": {
+      "abort": "Abort",
+      "reset": "Reset",
+      "retry": "Retry",
+      "dryRun": "Dry run",
+      "copyCommand": "Copy command",
+      "exclude": "Do not migrate",
+      "include": "Migrate again",
+      "check": "Check disk space",
+      "refresh": "Refresh"
+    },
+    "confirm": {
+      "abort": {
+        "title": "Abort this copy?",
+        "body": "The migrator stops at once and the staged parts are kept. You can run the command again to resume, or reset the volume to start over."
+      },
+      "reset": {
+        "title": "Start this volume over?",
+        "body": "Discards every staged part and empties the destination volume. The next run copies the whole volume again."
+      },
+      "exclude": {
+        "title": "Leave this volume out?",
+        "body": "Its data will NOT be migrated. The migrator reports it as not migrated, and the app starts with an empty volume. This is a deliberate choice, not a skip."
+      }
+    },
+    "preflight": {
+      "title": "What the migrator found",
+      "found": "Found on the source",
+      "notFound": "Not found on the source",
+      "size": "{size} in {entries} entries",
+      "running": "Running",
+      "stopped": "Stopped",
+      "exitCode": "exit code {code}",
+      "bind": "Host bind mount: refused unless the migrator runs with --allow-bind",
+      "diskOk": "The target has enough free space ({free} free, about {need} needed)",
+      "diskShort": "The target does not have enough free space ({free} free, about {need} needed)",
+      "diskUnknown": "The target's free space could not be read: run the dry run again once its agent is online",
+      "diskSameDevice": "Staging and Docker share one disk, so both copies must fit together",
+      "downtimeEstimate": "Downtime estimate: about {low} to {high}",
+      "sockets": "{count} socket(s) are not copied",
+      "devices": "{count} device node(s): the copy is refused",
+      "image": "Image {image}",
+      "major": "PostgreSQL {major}",
+      "layout": "Data layout: {layout}",
+      "mount": "Mounted at {path}",
+      "noInventory": "Run the dry run command on the source host to measure this volume."
+    },
+    "mode": {
+      "label": "Data mode",
+      "dump": "Logical dump",
+      "volume": "Volume copy",
+      "volumeLocked": "Volume copy keeps the source image, its PostgreSQL major and the carried database and user names, because a physical copy only works with the same image, major and credentials.",
+      "volumeOnlyPostgres": "Volume copy is only offered for PostgreSQL.",
+      "replanning": "Updating the plan..."
+    },
+    "gate": {
+      "title": "Checks for a physical copy",
+      "credentials": "Credentials carried",
+      "major": "Same PostgreSQL major",
+      "layout": "Data at the volume root",
+      "image": "Same image",
+      "state": "Destination untouched",
+      "quiesced": "Source stopped",
+      "inventory": "Source inspected",
+      "pass": "passed",
+      "fail": "failed",
+      "unknown": "not checked yet"
+    },
+    "error": {
+      "diverged": "The source no longer matches the parts already copied. Reset the volume to start over.",
+      "fingerprint": "The source was restarted or changed since the copy began. Reset the volume to start over.",
+      "busy": "Another migrator run is copying this volume.",
+      "disk": "The target does not have enough free space.",
+      "aborted": "The copy was aborted. Reset the volume to start it again.",
+      "sourceRunning": "The source container is running. Stop it first, or run the migrator with --stop-source.",
+      "tokenExpired": "The migration token expired. Generate a new command and run it to resume.",
+      "specialFiles": "The volume holds device nodes, which cannot be copied."
+    },
+    "warn": {
+      "stopSource": "Stops ONLY the source container of each volume for the whole copy. It is restarted if the copy does not complete; after a complete copy it stays stopped.",
+      "allowBind": "Also copies host bind mounts. System, Docker and Coolify secret paths stay refused.",
+      "fidelity": "Copied: files, directories, symlinks, hard links, numeric owner and group, mode, modification time. Not copied: extended attributes, ACLs, file capabilities, sockets, device nodes (the copy is refused).",
+      "estimate": "An estimate from the link speed the first parts reach, not a promise. Use the dry run to size the window before you stop anything."
+    },
+    "notMigrated": {
+      "confirm": "I understand this volume's data will not be migrated."
+    },
+    "commands": {
+      "title": "Copy the data",
+      "desc": "Run these on the source server, in order: a dry run to measure, then the copy. Re-running the copy resumes where it stopped.",
+      "dryRun": "1. Dry run (changes nothing)",
+      "run": "2. Copy",
+      "resume": "3. Resume after an interruption",
+      "stopSourceLabel": "Stop each source container for me (--stop-source)",
+      "allowBindLabel": "Include host bind mounts (--allow-bind)",
+      "tokenWarn": "Shown once. The token renews itself while a copy runs, up to 72 hours."
+    },
+    "downtime": {
+      "formula": "size divided by the measured link speed, plus about 15 minutes to extract",
+      "unit": {
+        "min": "{n} min",
+        "hour": "{n} h"
+      },
+      "never": "unknown"
+    },
+    "a11y": {
+      "progress": "Copy progress of {name}",
+      "row": "Volume {name}"
+    }
+  },
+  "volumeModeNote": "Volume copy keeps the source image, its PostgreSQL major and the carried names.",
+  "dataVolume": "Volume copy",
+  "streamRow": "streamed"
 }

@@ -2,7 +2,7 @@ import type { Command } from "commander";
 import { activeClient } from "../session";
 import { printJson, printLine, printTable } from "../output";
 import type { Column } from "../output";
-import type { Row } from "../client";
+import type { ImportVolumesView, Row } from "../client";
 
 function emit(rows: Row[], json: boolean | undefined, columns: Column[]): void {
   if (json) printJson(rows);
@@ -28,7 +28,60 @@ function mergeLabels(current: Record<string, string>, wanted: [string, string][]
   return out;
 }
 
+/** One table row per streamed volume: state, progress, speed, ETA and the failure text (pure, for `import volumes`). */
+export function importVolumeRows(view: ImportVolumesView): Row[] {
+  const gib = (n: number): string => (n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GiB` : `${Math.round(n / 1024 ** 2)} MiB`);
+  return view.volumes.map((v) => ({
+    itemRef: v.itemRef,
+    name: v.resourceName ?? "",
+    state: v.state,
+    progress: v.rawBytesTotal ? `${Math.min(100, Math.floor((v.rawBytesDone / v.rawBytesTotal) * 100))}% (${gib(v.rawBytesDone)} of ${gib(v.rawBytesTotal)})` : v.rawBytesDone > 0 ? gib(v.rawBytesDone) : "",
+    parts: v.partsDone,
+    speed: v.bps ? `${gib(v.bps)}/s` : "",
+    eta: v.etaSec != null ? `${Math.ceil(v.etaSec / 60)} min` : "",
+    error: v.error ?? "",
+  }));
+}
+
 export function register(program: Command): void {
+  // ── fleet import follow-ups ──
+  const imp = program.command("import").description("Fleet import (Coolify / Dokploy) follow-ups");
+  imp
+    .command("volumes <opId>")
+    .description("Show the streamed volume copies of an import; abort or reset one (deploy scope for the actions)")
+    .option("--abort <itemRef>", "stop the copy of this volume (the staged parts are kept)")
+    .option("--reset <itemRef>", "discard this volume's staged parts and start it over")
+    .option("--json", "output as JSON")
+    .action(async (opId: string, opts: { abort?: string; reset?: string; json?: boolean }) => {
+      if (opts.abort && opts.reset) throw new Error("use either --abort or --reset, not both");
+      const { client } = activeClient();
+      if (opts.abort || opts.reset) {
+        const ref = (opts.abort ?? opts.reset) as string;
+        const res = opts.abort ? await client.abortImportVolume(opId, ref) : await client.resetImportVolume(opId, ref);
+        if (opts.json) printJson(res);
+        else printLine(`${opts.abort ? "abort" : "reset"} requested for ${ref}: ${String((res as { state?: unknown }).state ?? "ok")}`);
+        return;
+      }
+      const view = await client.getImportVolumes(opId);
+      if (opts.json) {
+        printJson(view);
+        return;
+      }
+      if (!view.enabled) printLine("the streamed volume copy is switched off on this hub");
+      else if (view.volumes.length === 0) printLine("no volume of this import has data to copy");
+      else
+        printTable(importVolumeRows(view), [
+          { key: "itemRef", header: "VOLUME" },
+          { key: "name", header: "NAME" },
+          { key: "state", header: "STATE" },
+          { key: "progress", header: "PROGRESS" },
+          { key: "parts", header: "PARTS" },
+          { key: "speed", header: "SPEED" },
+          { key: "eta", header: "ETA" },
+          { key: "error", header: "ERROR" },
+        ]);
+    });
+
   // ── servers ──
   const servers = program.command("servers").description("Manage servers");
   servers

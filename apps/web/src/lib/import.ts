@@ -1,4 +1,4 @@
-import type { ImportPlan, ImportPlanItem, ImportRisk, ImportRiskLevel, ImportOperation, ImportCoverageApp, ImportAck, ImportServiceChoice, ImportServicePreview, ImportServiceVerdict } from "./types";
+import type { ImportPlan, ImportPlanItem, ImportRisk, ImportRiskLevel, ImportOperation, ImportCoverageApp, ImportAck, ImportServiceChoice, ImportServicePreview, ImportServiceVerdict, VolumeTransferView, VxCommands, VxGate } from "./types";
 
 // Pure view helpers for the import wizard. No network, no React — the data shaping the plan-review and
 // apply-timeline screens render from (and the only part worth unit-testing).
@@ -185,5 +185,166 @@ export function buildAcks(plan: ImportPlan, acked: ReadonlySet<string>): ImportA
     if (!acked.has(it.itemRef)) continue;
     for (const code of ackableCodes(it)) out.push({ code, itemRef: it.itemRef });
   }
+  return out;
+}
+
+// ── streamed volume data (the "Move data" step) ──
+
+
+const GiB = 1024 ** 3;
+const MiB = 1024 ** 2;
+
+/** "1.5 GiB" / "320 MiB" / "12 KiB" / "0 B": binary units, one decimal above 10 only when it adds information. */
+export function formatBytes(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return "0 B";
+  if (n >= GiB) return `${(n / GiB).toFixed(n >= 10 * GiB ? 0 : 1)} GiB`;
+  if (n >= MiB) return `${(n / MiB).toFixed(n >= 10 * MiB ? 0 : 1)} MiB`;
+  if (n >= 1024) return `${Math.round(n / 1024)} KiB`;
+  return `${Math.round(n)} B`;
+}
+
+/** Seconds as "45 s", "12 min", "3 h 05 min"; null/NaN/negative -> null (the caller shows nothing rather than a lie). */
+export function formatDuration(sec: number | null | undefined): string | null {
+  if (sec == null || !Number.isFinite(sec) || sec < 0) return null;
+  if (sec < 90) return `${Math.max(1, Math.round(sec))} s`;
+  const min = Math.round(sec / 60);
+  if (min < 90) return `${min} min`;
+  const h = Math.floor(min / 60);
+  return `${h} h ${String(min % 60).padStart(2, "0")} min`;
+}
+
+/** Copy progress as 0-100 from the raw bytes; falls back to the part count when the total is unknown (no estimate shown). */
+export function volumeProgressPct(v: Pick<VolumeTransferView, "state" | "rawBytesDone" | "rawBytesTotal">): number | null {
+  if (v.state === "DONE") return 100;
+  if (!v.rawBytesTotal || v.rawBytesTotal <= 0) return null;
+  return Math.max(0, Math.min(100, Math.floor((v.rawBytesDone / v.rawBytesTotal) * 100)));
+}
+
+/** A transfer the hub still drives (the panel polls fast while any is live). */
+export function isTransferLive(state: VolumeTransferView["state"]): boolean {
+  return state === "PENDING" || state === "COPYING" || state === "COPIED" || state === "APPLYING";
+}
+
+/** 3 s while any volume is non-terminal, 15 s otherwise (the panel stops entirely on unmount). */
+export function volumePollMs(volumes: ReadonlyArray<Pick<VolumeTransferView, "state">> | undefined): number {
+  return volumes?.some((v) => isTransferLive(v.state)) ? 3000 : 15000;
+}
+
+/** UI tone of a transfer state (a color key, never a display string). */
+export function transferTone(state: VolumeTransferView["state"]): "ok" | "warn" | "bad" | "busy" | "muted" {
+  switch (state) {
+    case "DONE":
+      return "ok";
+    case "FAILED":
+    case "ABORTED":
+      return "bad";
+    case "EXCLUDED":
+      return "warn";
+    case "NONE":
+      return "muted";
+    default:
+      return "busy";
+  }
+}
+
+/** The i18n key of a state / phase (literal keys, so static key-usage checks see them). */
+export const STATE_KEY: Record<VolumeTransferView["state"], string> = {
+  NONE: "import.vx.state.none",
+  EXCLUDED: "import.vx.state.excluded",
+  PENDING: "import.vx.state.pending",
+  COPYING: "import.vx.state.copying",
+  COPIED: "import.vx.state.copied",
+  APPLYING: "import.vx.state.applying",
+  DONE: "import.vx.state.done",
+  FAILED: "import.vx.state.failed",
+  ABORTED: "import.vx.state.aborted",
+};
+export const PHASE_KEY: Record<string, string> = {
+  verifying: "import.vx.phase.verifying",
+  skipping: "import.vx.phase.skipping",
+  streaming: "import.vx.phase.streaming",
+  applying: "import.vx.phase.applying",
+  provisioning: "import.vx.phase.provisioning",
+};
+
+/**
+ * The i18n key explaining a failure, picked from the hub's literal messages (the same `vx-*` literals the migrator keys on).
+ * Unknown text returns null: the UI then shows the hub's own sentence instead of guessing.
+ */
+export function errorKey(message: string | null | undefined): string | null {
+  const m = (message ?? "").toLowerCase();
+  if (!m) return null;
+  if (m.includes("vx-fingerprint-changed")) return "import.vx.error.fingerprint";
+  if (m.includes("vx-diverged")) return "import.vx.error.diverged";
+  if (m.includes("another migrator run")) return "import.vx.error.busy";
+  if (m.includes("vx-disk-insufficient")) return "import.vx.error.disk";
+  if (m.includes("vx-aborted") || m.includes("aborted by the owner")) return "import.vx.error.aborted";
+  if (m.includes("source container is running") || m.includes("stop it first")) return "import.vx.error.sourceRunning";
+  if (m.includes("device nodes")) return "import.vx.error.specialFiles";
+  if (m.includes("token") && m.includes("expire")) return "import.vx.error.tokenExpired";
+  return null;
+}
+
+/** The i18n key of a gate (its label). */
+export const GATE_KEY: Record<VxGate["id"], string> = {
+  inventory: "import.vx.gate.inventory",
+  credentials: "import.vx.gate.credentials",
+  major: "import.vx.gate.major",
+  layout: "import.vx.gate.layout",
+  image: "import.vx.gate.image",
+  state: "import.vx.gate.state",
+  quiesced: "import.vx.gate.quiesced",
+};
+
+/** A physical copy can start only when EVERY gate passes (unknown counts as not passed: fail closed). */
+export function gatesPass(gates: ReadonlyArray<Pick<VxGate, "status">> | null | undefined): boolean {
+  return !!gates && gates.length > 0 && gates.every((g) => g.status === "pass");
+}
+
+/** The first thing keeping a volume from being copied right now, for the one-line summary (null = ready). */
+export function firstBlocker(v: VolumeTransferView): { kind: "gate"; gate: VxGate } | { kind: "disk" } | { kind: "running" } | { kind: "bind" } | { kind: "devices" } | null {
+  if (v.gates) {
+    const g = v.gates.find((x) => x.status !== "pass");
+    if (g) return { kind: "gate", gate: g };
+  }
+  if (v.diskVerdict && !v.diskVerdict.ok) return { kind: "disk" };
+  if (v.inventory?.found) {
+    if (v.inventory.specials.devices > 0) return { kind: "devices" };
+    if (v.inventory.running) return { kind: "running" };
+    if (v.inventory.mountType === "bind") return { kind: "bind" };
+  }
+  return null;
+}
+
+/**
+ * Downtime window from the measured link speed: size / speed + a fixed extraction allowance. With no measured speed there is
+ * no estimate (null): the UI says "unknown" instead of inventing a number. `low`/`high` bracket the speed by +-30 %.
+ */
+export function downtimeEstimate(rawBytes: number, mbps: number | null): { low: number; high: number } | null {
+  if (!mbps || mbps <= 0 || !Number.isFinite(rawBytes) || rawBytes <= 0) return null;
+  const bytesPerSec = (mbps * 1e6) / 8;
+  const extract = 15 * 60;
+  return { low: Math.round(rawBytes / (bytesPerSec * 1.3)) + extract, high: Math.round(rawBytes / (bytesPerSec * 0.7)) + extract };
+}
+
+/** Append the operator's toggles to a streamed-copy command. Flags are appended at the end of the one-liner; the token is never touched. */
+export function withVxFlags(cmd: string, o: { stopSource?: boolean; allowBind?: boolean }): string {
+  return `${cmd}${o.stopSource ? " --stop-source" : ""}${o.allowBind ? " --allow-bind" : ""}`;
+}
+
+/** The three commands with the toggles applied (the dry run keeps --stop-source: it then reports what it WOULD stop). */
+export function vxCommandsWithFlags(cmds: VxCommands, o: { stopSource?: boolean; allowBind?: boolean }): VxCommands {
+  return { dryRun: withVxFlags(cmds.dryRun, o), run: withVxFlags(cmds.run, o), resume: withVxFlags(cmds.resume, o) };
+}
+
+/** The database items of a plan that may use a volume copy (PostgreSQL only). */
+export function volumeCopyCandidates(plan: ImportPlan): ImportPlanItem[] {
+  return plan.items.filter((it) => it.kind === "database" && it.proposed.engine === "POSTGRES" && !hasBlocker(it));
+}
+
+/** `{ itemRef: "volume" }` for each database whose proposed data mode is a volume copy (what the plan/apply requests carry). */
+export function selectedDbModes(plan: ImportPlan): Record<string, "volume"> {
+  const out: Record<string, "volume"> = {};
+  for (const it of plan.items) if (it.kind === "database" && it.proposed.dataMode === "volume") out[it.itemRef] = "volume";
   return out;
 }

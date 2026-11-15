@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import { I18nProvider } from "../i18n/provider";
@@ -59,6 +59,8 @@ describe("ImportWizard", () => {
     vi.spyOn(api, "listServers").mockResolvedValue([{ id: "srv1", name: "Server A", teamId: "t1", status: "ONLINE", clusterId: null, tags: [] }] as never);
     // The post-import MigrateDataCard reads this on mount once the timeline settles — default to "no live token".
     vi.spyOn(api, "getMigrateCommand").mockResolvedValue({ opId: "op1", active: false, expiresAt: null, commandTemplate: "run on the source host" });
+    // The streamed-volume panel polls this once the timeline settles — default to "the hub has the stream off" (renders nothing).
+    vi.spyOn(api, "getOpVolumes").mockResolvedValue({ volumes: [], tokenExpiresAt: null, enabled: false });
   });
   afterEach(() => vi.restoreAllMocks());
 
@@ -147,6 +149,113 @@ describe("ImportWizard", () => {
     await screen.findByText("Apply these env changes?"); // confirm dialog
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
     await waitFor(() => expect(applySpy).toHaveBeenCalledWith("op1", "p".repeat(32)));
+  });
+
+  // ── streamed volume copy: commands, toggles, PostgreSQL data mode ─────────────────────────────────────────
+  const goToTimeline = async () => {
+    vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s1", expiresAt: "2026-01-01T00:00:00.000Z" });
+    vi.spyOn(api, "importPlan").mockResolvedValue(plan);
+    vi.spyOn(api, "importApply").mockResolvedValue({ opId: "op1" });
+    vi.spyOn(api, "getImportOperation").mockResolvedValue(settledOp);
+    wrap(<ImportWizard />);
+    await screen.findByRole("option", { name: "Team One" });
+    fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
+    fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
+    await screen.findByRole("option", { name: "Server A" });
+    fireEvent.click(screen.getByRole("button", { name: "Import to Tugra" }));
+    await screen.findByText("DONE");
+  };
+  const TOKEN = "tugra_mig_" + "x".repeat(43);
+  const base = `curl -fsSL https://hub.example.com/install/migrator.sh | TUGRA_MIGRATION_TOKEN=${TOKEN} sh -s -- --hub https://hub.example.com`;
+
+  it("move data: shows the dry-run, copy and resume commands; the toggles append their flags and warn plainly", async () => {
+    vi.spyOn(api, "mintMigrationToken").mockResolvedValue({
+      opId: "op1", token: TOKEN, command: base, expiresAt: "2026-02-01T00:00:00.000Z",
+      commands: { dryRun: `${base} --arms all --dry-run`, run: `${base} --arms all`, resume: `${base} --arms all --hub-outage-wait 30m` },
+    });
+    await goToTimeline();
+    fireEvent.click(screen.getByRole("button", { name: "Generate migration command" }));
+    await screen.findByText("1. Dry run (changes nothing)");
+    expect(screen.getByText("2. Copy")).toBeTruthy();
+    expect(screen.getByText("3. Resume after an interruption")).toBeTruthy();
+    expect(screen.getByText(`${base} --arms all --dry-run`)).toBeTruthy();
+    // toggles: off by default, flags appear on ALL three commands when on
+    expect(screen.queryByText(/--stop-source$/)).toBeNull();
+    fireEvent.click(screen.getByLabelText(/Stop each source container for me/));
+    expect(screen.getByText(`${base} --arms all --stop-source`)).toBeTruthy();
+    expect(screen.getByText(`${base} --arms all --hub-outage-wait 30m --stop-source`)).toBeTruthy();
+    expect(screen.getByText(/Stops ONLY the source container of each volume/)).toBeTruthy();
+    fireEvent.click(screen.getByLabelText(/Include host bind mounts/));
+    expect(screen.getByText(`${base} --arms all --stop-source --allow-bind`)).toBeTruthy();
+    expect(screen.getByText(/System, Docker and Coolify secret paths stay refused/)).toBeTruthy();
+    // the token never rides an argv flag
+    expect(document.body.textContent).not.toContain("--token");
+  });
+
+  it("move data: an already-minted token shows the placeholder commands, never a credential", async () => {
+    vi.spyOn(api, "getMigrateCommand").mockResolvedValue({
+      opId: "op1", active: true, expiresAt: "2026-02-01T00:00:00.000Z", commandTemplate: "legacy template <TOKEN>",
+      commandsTemplate: { dryRun: "tpl <TOKEN> --arms all --dry-run", run: "tpl <TOKEN> --arms all", resume: "tpl <TOKEN> --arms all --hub-outage-wait 30m" },
+    });
+    await goToTimeline();
+    await screen.findByText("tpl <TOKEN> --arms all --dry-run");
+    expect(document.body.textContent).not.toContain("tugra_mig_");
+  });
+
+  describe("PostgreSQL data mode (Logical dump | Volume copy)", () => {
+    const pgPlan: ImportPlan = {
+      ...plan,
+      totals: { apps: 1, databases: 1, volumes: 0, blockers: 0 },
+      items: [
+        plan.items[0],
+        { itemRef: "database:srv:pg", kind: "database", name: "orders-db", proposed: { engine: "POSTGRES", version: "16", image: "postgres:16-alpine" }, risks: [], dependsOn: [] },
+        { itemRef: "database:srv:my", kind: "database", name: "shop-db", proposed: { engine: "MYSQL" }, risks: [], dependsOn: [] },
+      ],
+    };
+    const volPlan: ImportPlan = {
+      ...pgPlan,
+      planHash: "b".repeat(32),
+      items: pgPlan.items.map((it) => (it.itemRef === "database:srv:pg" ? { ...it, proposed: { ...it.proposed, dataMode: "volume" } } : it)),
+    };
+
+    it("offers it for PostgreSQL only; choosing Volume copy re-plans with the choice, explains the locked values, and apply carries it", async () => {
+      vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s1", expiresAt: "2026-01-01T00:00:00.000Z" });
+      const planSpy = vi.spyOn(api, "importPlan").mockResolvedValueOnce(pgPlan).mockResolvedValue(volPlan);
+      const applySpy = vi.spyOn(api, "importApply").mockResolvedValue({ opId: "op1" });
+      vi.spyOn(api, "getImportOperation").mockResolvedValue(settledOp);
+      wrap(<ImportWizard />);
+      await screen.findByRole("option", { name: "Team One" });
+      fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
+      fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
+      fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
+      const group = await screen.findByRole("radiogroup", { name: "Data mode: orders-db" });
+      expect(screen.queryByRole("radiogroup", { name: "Data mode: shop-db" })).toBeNull(); // MySQL stays logical
+      expect(within(group).getByRole("radio", { name: "Logical dump" }).getAttribute("aria-checked")).toBe("true");
+
+      fireEvent.click(within(group).getByRole("radio", { name: "Volume copy" }));
+      await waitFor(() => expect(planSpy).toHaveBeenLastCalledWith({ sourceKind: "coolify", sessionId: "s1", dbDataModes: { "database:srv:pg": "volume" } }));
+      await screen.findByText(/Volume copy keeps the source image, its PostgreSQL major and the carried database and user names/);
+      expect(screen.getByRole("radio", { name: "Volume copy" }).getAttribute("aria-checked")).toBe("true");
+
+      fireEvent.click(screen.getByRole("button", { name: "Import to Tugra" }));
+      await waitFor(() => expect(applySpy).toHaveBeenCalledWith({ sourceKind: "coolify", sessionId: "s1", targetServerId: "srv1", planHash: "b".repeat(32), dbDataModes: { "database:srv:pg": "volume" } }));
+    });
+
+    it("switching back to the logical dump drops the choice from the next plan request", async () => {
+      vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s1", expiresAt: "2026-01-01T00:00:00.000Z" });
+      const planSpy = vi.spyOn(api, "importPlan").mockResolvedValueOnce(pgPlan).mockResolvedValueOnce(volPlan).mockResolvedValue(pgPlan);
+      wrap(<ImportWizard />);
+      await screen.findByRole("option", { name: "Team One" });
+      fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
+      fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
+      fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
+      const group = await screen.findByRole("radiogroup", { name: "Data mode: orders-db" });
+      fireEvent.click(within(group).getByRole("radio", { name: "Volume copy" }));
+      await screen.findByText(/Volume copy keeps the source image/);
+      fireEvent.click(screen.getByRole("radio", { name: "Logical dump" }));
+      await waitFor(() => expect(planSpy).toHaveBeenLastCalledWith({ sourceKind: "coolify", sessionId: "s1" }));
+    });
   });
 
   it("keeps the connect button disabled until url + token are filled", async () => {

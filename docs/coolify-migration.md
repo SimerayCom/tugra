@@ -26,7 +26,7 @@ Two paths, used **together**:
 | **ClickHouse** data | **Manual** dump by hand (no tool yet) |
 | **LibSQL** data | **Manual** — it's a single SQLite file; copy the volume (`tar`/`rsync`) |
 | Coolify **services** (Meilisearch, MinIO, Gotenberg, SigNoz, Beszel, cloudflared, your own compose stacks) | **Import** creates ONE **stopped** compose app per service from the service's own compose file (nothing is deployed). Secrets are carried, never regenerated; named volumes are declared (a host folder bind becomes a named volume); `container_name`, published ports and `coolify.*` / `traefik.*` labels are stripped (reported); members that need the Docker socket, privileged mode or host namespaces are dropped (a standalone Beszel agent is skipped; SigNoz imports without its ClickHouse data); config files kept next to the compose (SigNoz) become config mounts when the token can read them. An internal-only service joins a private network under a stable alias instead of a public domain. A floating `:latest` can be pinned to the version the source runs in the review screen. cloudflared is always created stopped: stop the source connector and repoint the Cloudflare routes by hand first. Service **data** is copied by hand (stop the source first); the review screen and the post-import checklist say what is left to do. |
-| App **volume** data | **Hub-staged upload** — before the first deploy, `tar` one declared app volume on the source and `curl -T` it to the migration volume endpoint (up to ~256 MiB gzip per volume; file ownership is **not** preserved; stop the source app first for a consistent copy). Larger volumes: manual `tar`/`rsync`. The automated one-click volume step is not shipped yet. |
+| App **volume** data | **Streamed volume copy** — the migrator (run on the source server) copies each declared app volume of a **stopped** container to the target in resumable parts through the hub's memory relay: no size cap, owner/group/mode kept, no hub disk, resumable after an interruption ([details below](#streamed-volume-copy)). A small volume can still be uploaded by hand to the hub (`tar` + `curl -T`, up to ~256 MiB gzip, ownership **not** preserved). |
 | `DATABASE_URL` rewrite (apps → new Tugra DB) | **Env remap** step — a preview then a confirm-gated apply (API/CLI: `GET/POST /import/operations/:opId/remap-env`), since the migrated DB gets **fresh** Tugra credentials. Compose/swarm/cross-host apps are flagged needs-manual. |
 | Environment variables | Strict: a variable the import cannot carry (unresolved shared, magic, invalid name, or an API token without `read:sensitive`) is a plan blocker; acknowledge it to create the app without it (see "Strict environment variables" below) |
 | Private git repositories | Linked at apply to the connected GitHub/Gitea source that can see the repo (see "Git links" below) |
@@ -46,11 +46,12 @@ live replication — so the cutover discipline at the end of this page still app
 
 - **Moves:** the data of Postgres, MySQL, MariaDB, Redis, KeyDB and Dragonfly databases.
 - **Does not move:** DNS, or **MongoDB / ClickHouse / LibSQL** data — use the manual runbook for those. App
-  **volume** data is moved by a separate **hub-staged upload** (tar the declared volume on the source and
-  `curl -T` it to `PUT /import/migration/artifacts/:itemRef/volumes/:name`, then `POST …/restore`), done
-  before the first deploy and gated so a started app's volume is never wiped; the automated one-click volume
-  step is not shipped yet. The app's `DATABASE_URL` (the Tugra DB gets new credentials) is rewritten by the
-  separate **env remap** step (preview + confirm-gated apply), not by this data migrator.
+  **volume** data is moved by the migrator's **volume arm** ([Streamed volume copy](#streamed-volume-copy)),
+  done before the first deploy and gated so a started app's volume is never wiped; a tiny volume can still use
+  the hub-staged upload (tar the declared volume and `curl -T` it to
+  `PUT /import/migration/artifacts/:itemRef/volumes/:name`, then `POST …/restore`). The app's `DATABASE_URL`
+  (the Tugra DB gets new credentials) is rewritten by the separate **env remap** step (preview +
+  confirm-gated apply), not by this data migrator.
 - **Dumps one database per container** (MySQL/MariaDB need `MYSQL_DATABASE`/`MARIADB_DATABASE`; no
   `--all-databases`). Redis/KeyDB run a synchronous `SAVE`, which **blocks** the source for the whole
   snapshot (longer for bigger datasets) and rewrites its `/data/dump.rdb`; Dragonfly uses `SAVE RDB` to a
@@ -59,7 +60,9 @@ live replication — so the cutover discipline at the end of this page still app
   `docker inspect`) and used only inside the source container; only the dump bytes (and their hub-computed
   sha256 + size) reach the hub.
 - **Size cap:** each dump is gzip-compressed and must fit the hub's per-artifact cap (default **256 MiB**,
-  `MIGRATION_MAX_ARTIFACT_BYTES`). Larger databases fail (`dump-too-big`/`too-large`) — use the manual path.
+  `MIGRATION_MAX_ARTIFACT_BYTES`). Larger databases fail (`dump-too-big`/`too-large`) — use the manual path, or,
+  for a PostgreSQL database, the **volume copy** data mode of the [streamed volume
+  copy](#streamed-volume-copy) (a physical copy with no size cap, under strict conditions).
 
 ### Prerequisites
 
@@ -212,6 +215,111 @@ fresh dump).
 
 ---
 
+# Streamed volume copy
+
+The migrator has a second arm, **`--arms volumes`** (the Move data step's commands use **`--arms all`**: databases
+first, then volumes). It copies the declared volumes of **stopped** source containers straight to the Tugra
+target in **resumable parts**, so a 30 GB volume is not blocked by the hub's 256 MiB staging cap. There is no
+hub-side disk use: every part crosses the hub in memory only.
+
+### How it works
+
+1. The migrator inspects each volume (size, entries, running state, special files; for PostgreSQL the image, the
+   major version, the data layout and the mount) and tells the hub. **`--dry-run` does only this** and asks the
+   hub to check the **target's free space**: run it first, before you choose a window. Nothing is stopped or
+   moved.
+2. The **source container must be stopped.** The migrator refuses a running one (`volume-skipped-running`) unless
+   you pass **`--stop-source`**, which stops **only that container** (`docker stop`, never `docker rm`) and
+   **restarts it if the copy does not complete**; after a complete copy it stays stopped, because the target now
+   owns the cutover. Quiescence is checked before the first byte and again after the last (the container did
+   not start again, no other container uses the volume); the hub stores the begin-time state and refuses to apply
+   a copy whose source changed. The UI labels this evidence **"reported by the migrator"**: the hub cannot verify
+   it.
+3. The migrator runs GNU `tar` with its **own image** as the helper (**nothing is ever pulled onto your source
+   host**), read-only on the volume, with no network and only `DAC_READ_SEARCH` added (to read files other users
+   own). The archive is cut into independent gzip parts of about **128 MiB raw** (`--part-mib`, 32 to 512, must
+   equal the hub's `MIGRATION_VX_PART_MIB`) and each part goes **register → PUT → commit**: the hub verifies the
+   part's sha256 and exact length in its memory relay, the target verifies them again before it stores the part.
+4. After the last part the hub checks totals and the source state, re-checks the destination and the target's
+   free space, and the **target applies** the parts: it empties the (never-started) destination volume,
+   extracts with a rollback snapshot (a failed extract restores the old content), keeps **numeric owner and
+   group, mode and times**, and compares the entry count with the source's.
+5. **Resume:** run the same command again. Parts the hub already holds are re-read from the source and compared
+   by **raw hash** (no network), then sending continues. A mismatch (`volume-diverged`) means the source changed;
+   it is never overwritten automatically: use **`--reset-volume <itemRef>`** (or the UI's Reset) to start over.
+   A hub restart mid-part is waited out (`--hub-outage-wait`, default 15 min).
+
+### Flags
+
+| Flag | Meaning |
+|---|---|
+| `--arms databases\|volumes\|all` | what to migrate; default `databases` (today's behaviour) |
+| `--dry-run` | inventory + the target's free-space check only |
+| `--stop-source`, `--stop-timeout S` | stop each running source container for the copy (default wait 120 s) |
+| `--allow-bind` | also stream host bind mounts (system, Docker and Coolify-secret paths stay refused) |
+| `--part-mib N` | raw MiB per part, 32..512, must equal the hub policy |
+| `--reset-volume <itemRef>` | discard a volume's staged parts and start it over (repeatable) |
+| `--hub-outage-wait D` | how long to wait for a restarting hub (default 15m, up to 1h) |
+| `--restart-on-failure=false` | leave a container this run stopped stopped when the copy fails |
+
+Result states per volume: `volume-applied`, `volume-copied` (copied, apply not confirmed), `volume-skipped-running`,
+`volume-diverged`, `volume-source-missing`, `volume-bind-refused`, `volume-special-files`,
+`volume-disk-insufficient`, `volume-aborted`, and **`volume-not-migrated`** (a volume you explicitly excluded in
+the UI after a confirmation: never skipped silently). Anything but `volume-applied` makes the exit code 1.
+
+### PostgreSQL volume copy (physical)
+
+A PostgreSQL database can opt into **Volume copy** in the plan review (data mode *Logical dump | Volume copy*).
+It copies the data **directory**, so there is no dump to size and no replay. It is offered only when every gate
+passes, each shown in the UI with its evidence: the credentials were carried from the source (the copied cluster
+holds the source's passwords), the same image runs on both sides (`postgres:16-alpine` is **not** replaced by a
+Debian image), the same major, PGDATA at the volume root mounted at `/var/lib/postgresql/data` (the PostgreSQL 18
+image keeps it one level down and is refused: *PostgreSQL 18 data layout is not supported by Tugra database
+volumes yet*), the destination was never started, and the source is stopped. If any gate fails you get the exact
+reason, and the database stays on the logical dump. After the extract the hub starts the database through the
+normal start path and waits for it (crash recovery of an unclean stop can take minutes). MariaDB/MySQL and
+Redis-family databases stay logical. If the source was stopped uncleanly (exit code 137), expect WAL replay on
+the first start.
+
+### What is and is not copied
+
+Copied: files, directories, symlinks, hard links, **numeric owner and group, mode, modification time** (whole
+seconds). **Not** copied: extended attributes, ACLs, file capabilities, sockets (counted per volume), sub-second
+times; **device nodes refuse the copy**. A mounted volume of another container stays untouched. Setuid bits and
+numeric ids are preserved on purpose; the source is your own host.
+
+### Downtime, space and limits (read before choosing a window)
+
+- **Downtime** is source stop → end of copy → apply → target start (DNS is yours). For about 30 GB expect 20 to 60
+  minutes depending on the link; **that is an estimate, not a promise**: the dry run measures size and space, and
+  the first parts give the real rate. A block-level pre-seed (near-zero downtime) is a separate, later feature.
+- **Target disk:** the compressed parts are staged on the target (about 1x) and the apply needs about 1.05x the
+  data again; with staging and Docker on one filesystem both add up, so a 30 GB volume wants about **65 GB free**.
+  The hub checks this (`vx-disk-insufficient` names the numbers) before and after the copy.
+- **One hub.** The relay is in-process memory, so a streamed copy needs the single-hub topology; every byte
+  crosses the hub's network twice. Migration parts use their **own relay seats** (`MIGRATION_RELAY_CONCURRENCY`,
+  default 2), separate from app moves. The migrator container is capped at **768 MiB**.
+- **The token renews itself** while a copy runs (1 hour at a time, **72 hours** in total, `MIGRATION_TOKEN_MAX_LIFE_HOURS`).
+- Each hub-side limit is an env var: `MIGRATION_VX_ENABLED` (kill switch), `MIGRATION_VX_PART_MIB`,
+  `MIGRATION_VX_MAX_BYTES` (256 GiB per volume by default), `MIGRATION_VX_STALE_MS`.
+- A rollback of the import is refused while a copy runs (abort it first), and never removes an app or database
+  whose streamed data was applied.
+- Not part of this path: compose/service volumes (MinIO data, Meilisearch), SSH pivot servers, the Coolify
+  control plane.
+
+### Commands
+
+The Move data step shows three commands (dry run, copy, resume) with toggles for `--stop-source` and
+`--allow-bind`; the same data is on the API (`GET /import/operations/<opId>/volumes`) and the CLI:
+
+```bash
+tugra import volumes <opId>                       # progress of every volume
+tugra import volumes <opId> --abort <itemRef>     # stop one copy (staged parts are kept)
+tugra import volumes <opId> --reset <itemRef>     # discard its parts and start over
+```
+
+---
+
 # Manual migration (apps, volumes, and other databases)
 
 This is the hand-driven path: recreate each app on Tugra and move data with a dump-and-restore. Use it for
@@ -222,9 +330,10 @@ documented dump procedure here yet; LibSQL is a plain volume copy.)
 
 - **Covers:** recreating apps (Git repo or container image), their env vars and domains, and moving
   **Postgres, MySQL, MariaDB and MongoDB** databases by logical dump + restore.
-- **You do by hand:** app **volume** data (no automated Coolify→Tugra volume copy yet — use `rsync`/`tar`,
-  or a tarball + the volume `import-from-url` endpoint), and the app's `DATABASE_URL` rewrite (Tugra
-  generates its own DB credentials). These are manual in **both** paths.
+- **You do by hand:** the app's `DATABASE_URL` rewrite (Tugra generates its own DB credentials — or use the
+  **env remap** step), and any volume the streamed copy does not cover (compose-managed volumes, services such
+  as a 58 GB ClickHouse — those you copy with `rsync`/`tar`, or a tarball + the volume `import-from-url`
+  endpoint). **App volume data** has an automated path: the [streamed volume copy](#streamed-volume-copy).
 - **Prefer the one-click migrator** for Postgres, MySQL, MariaDB, Redis, KeyDB and Dragonfly data; the manual
   Redis/KeyDB `BGSAVE`/`dump.rdb` dance below is only needed when the one-click path can't be used.
 - **Not covered by either path yet:** ClickHouse and LibSQL data (ClickHouse + MongoDB are one-click-deferred;
@@ -329,8 +438,9 @@ migrator too — read its JSON result **and** compare counts.
    ```
 
    If `connectionUri`/`password` come back `null`, your token is missing `read:secrets`.
-3. **App volumes:** copy by hand while the app is stopped on both sides (`docker run --rm -v <vol>:/data alpine
-   tar czf - -C /data .` on the source, untar into the Tugra volume).
+3. **App volumes:** use the [streamed volume copy](#streamed-volume-copy) (the migrator's volume arm). Only a
+   volume it cannot reach (compose-managed, a service volume) is copied by hand while the app is stopped on both
+   sides (`docker run --rm -v <vol>:/data alpine tar czf - -C /data .` on the source, untar into the Tugra volume).
 4. **Deploy** on Tugra and smoke-test through the Tugra proxy before touching DNS. An imported app has no
    temporary `sslip.io` hostname (it is created with its real domain), so use the cutover panel's check (it
    handshakes with the Tugra server's IP using your hostname as SNI and fetches the health path with your

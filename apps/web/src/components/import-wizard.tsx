@@ -11,12 +11,13 @@ import { useConfirm } from "./confirm";
 import { CopyBtn } from "./copy-row";
 import { ImportReviewStep } from "./import-review-step";
 import { CutoverPanel } from "./cutover-panel";
-import { planSummary, itemsByKind, riskTone, opProgress, coverageApps, coverageCounts, hasDeferredCoverage, reasonText, ackableItems, buildAcks, runnableAfterAcks, serviceChoicesPayload } from "../lib/import";
+import { planSummary, itemsByKind, riskTone, opProgress, coverageApps, coverageCounts, hasDeferredCoverage, reasonText, ackableItems, buildAcks, runnableAfterAcks, serviceChoicesPayload, volumeCopyCandidates, selectedDbModes, vxCommandsWithFlags } from "../lib/import";
+import { ImportVolumeTransfers } from "./import-volume-transfers";
 import { EnvBlockers } from "./import/env-blockers";
 import { GitLinksPanel, GitRelinkCard, DeployKeyBlock } from "./import/git-links-panel";
 import { ImportServicesPanel } from "./import-services-panel";
 import { ImportChecklist } from "./import-checklist";
-import type { Team, ImportPlan, ImportPlanItem, ImportRiskLevel, ImportOperation, ImportOpTask, ImportRemoteKind, ImportServiceChoice, ImportTaskStatus, MintedMigrationToken, ImportRemapPlan, ImportRemapResult } from "../lib/types";
+import type { Team, ImportPlan, ImportPlanItem, ImportRiskLevel, ImportOperation, ImportOpTask, ImportRemoteKind, ImportServiceChoice, ImportTaskStatus, MintedMigrationToken, ImportRemapPlan, ImportRemapResult, VxCommands } from "../lib/types";
 
 const toneColor: Record<"danger" | "warning" | "info", string> = {
   danger: "var(--c-r)",
@@ -56,6 +57,9 @@ export function ImportWizard() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [plan, setPlan] = useState<ImportPlan | null>(null);
   const [opId, setOpId] = useState<string | null>(null);
+  // Per-database data mode chosen at review (PostgreSQL volume copy). Part of the plan: changing it re-plans, so the
+  // planHash the apply is bound to always reflects what the owner reviewed.
+  const [dbModes, setDbModes] = useState<Record<string, "volume">>({});
 
   const effectiveTeam = teamId || teams[0]?.id || "";
   const src = SRC[kind];
@@ -75,7 +79,8 @@ export function ImportWizard() {
   }, [opId]);
 
   const planM = useMutation({
-    mutationFn: (sid: string) => api.importPlan({ sourceKind: kind, sessionId: sid }),
+    mutationFn: (v: { sid: string; modes?: Record<string, "volume"> }) =>
+      api.importPlan({ sourceKind: kind, sessionId: v.sid, ...(v.modes && Object.keys(v.modes).length ? { dbDataModes: v.modes } : {}) }),
     onSuccess: setPlan,
     onError: (e) => toast((e as Error).message, "error"),
   });
@@ -83,7 +88,7 @@ export function ImportWizard() {
     mutationFn: () => api.importConnect({ sourceKind: kind, teamId: effectiveTeam, baseUrl: baseUrl.trim(), token: token.trim(), ...(scopeLabel.trim() ? { scopeLabel: scopeLabel.trim() } : {}) }),
     onSuccess: (s) => {
       setSessionId(s.sessionId);
-      planM.mutate(s.sessionId);
+      planM.mutate({ sid: s.sessionId });
     },
     onError: (e) => toast((e as Error).message || t(src.fail), "error"),
   });
@@ -100,6 +105,7 @@ export function ImportWizard() {
   };
 
   const reset = () => {
+    setDbModes({});
     setPlan(null);
     setSessionId(null);
     setOpId(null);
@@ -120,6 +126,12 @@ export function ImportWizard() {
         writableServers={servers.filter((s) => s.canWrite).map((s) => ({ id: s.id, name: s.name, teamId: s.teamId }))}
         teams={teams}
         sessionId={sessionId}
+        dbModes={dbModes}
+        replanning={planM.isPending}
+        onDbModes={(next) => {
+          setDbModes(next);
+          planM.mutate({ sid: sessionId, modes: next });
+        }}
         onApplied={setOpId}
         onReset={reset}
       />
@@ -197,6 +209,9 @@ function PlanView({
   writableServers,
   teams,
   sessionId,
+  dbModes,
+  replanning,
+  onDbModes,
   onApplied,
   onReset,
 }: {
@@ -206,6 +221,9 @@ function PlanView({
   writableServers: { id: string; name: string; teamId: string }[];
   teams: Team[];
   sessionId: string;
+  dbModes: Record<string, "volume">;
+  replanning: boolean;
+  onDbModes: (next: Record<string, "volume">) => void;
   onApplied: (opId: string) => void;
   onReset: () => void;
 }) {
@@ -240,7 +258,8 @@ function PlanView({
   const apply = useMutation({
     mutationFn: () => {
       const acks = buildAcks(plan, acked);
-      return api.importApply({ sourceKind: kind, sessionId, targetServerId: target, planHash: plan.planHash, ...(acks.length ? { acks } : {}), ...(serviceChoices ? { serviceChoices } : {}) });
+      const modes = selectedDbModes(plan);
+      return api.importApply({ sourceKind: kind, sessionId, targetServerId: target, planHash: plan.planHash, ...(acks.length ? { acks } : {}), ...(serviceChoices ? { serviceChoices } : {}), ...(Object.keys(modes).length ? { dbDataModes: modes } : {}) });
     },
     onSuccess: (r) => onApplied(r.opId),
     onError: (e) => toast((e as Error).message, "error"),
@@ -285,10 +304,10 @@ function PlanView({
                       style={{
                         fontWeight: 700,
                         minWidth: 76,
-                        color: d.dataPlane === "one-click" ? "var(--c-g)" : d.dataPlane === "manual" ? "var(--c-am)" : "var(--c-r)",
+                        color: d.dataPlane === "one-click" || d.dataPlane === "volume" ? "var(--c-g)" : d.dataPlane === "manual" ? "var(--c-am)" : "var(--c-r)",
                       }}
                     >
-                      {d.dataPlane === "one-click" ? t("import.dataAuto") : d.dataPlane === "manual" ? t("import.dataManual") : t("import.dataBlocked")}
+                      {d.dataPlane === "one-click" ? t("import.dataAuto") : d.dataPlane === "volume" ? t("import.dataVolume") : d.dataPlane === "manual" ? t("import.dataManual") : t("import.dataBlocked")}
                     </span>
                     <span className="mono">{d.name} ({d.engine})</span>
                     <span style={{ color: "var(--c-tx3)" }}>— {d.reason}</span>
@@ -331,8 +350,13 @@ function PlanView({
             {plan.preflight.volumeDataNote && (
               <p style={{ fontSize: 12, color: "var(--c-am)", margin: "10px 0 0" }}>{plan.preflight.volumeDataNote}</p>
             )}
+            {(plan.preflight.volumes ?? []).some((v) => v.dataPlane === "stream") && (
+              <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "8px 0 0" }}>{t("import.vx.warn.fidelity")}</p>
+            )}
           </div>
         )}
+
+        <DbDataModes plan={plan} modes={dbModes} busy={replanning} onChange={onDbModes} />
 
         <div style={{ borderTop: "1px solid var(--c-bd)", margin: "16px 0 14px" }} />
         {mappingSupported ? (
@@ -351,7 +375,7 @@ function PlanView({
         )}
         <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "-4px 0 12px" }}>{t("import.targetHint")}</p>
         {missingTargets > 0 && <p role="alert" style={{ fontSize: 12, color: "var(--c-am)", margin: "0 0 8px" }}>{t("import.services.needsTarget")}</p>}
-        <Btn onClick={() => apply.mutate()} disabled={apply.isPending || !target || runnable === 0 || unackedCount > 0 || missingTargets > 0}>
+        <Btn onClick={() => apply.mutate()} disabled={apply.isPending || replanning || !target || runnable === 0 || unackedCount > 0 || missingTargets > 0}>
           {apply.isPending ? t("import.applying") : t("import.apply")}
         </Btn>
         </>
@@ -408,7 +432,7 @@ function Timeline({ opId, onReset }: { opId: string; onReset: () => void }) {
   const prog = opProgress(op);
   const canRollback = prog.settled && op.tasks.some((task) => task.status === "DONE" && task.resourceType === "application");
   // Post-import steps only make sense once apps have actually landed (same condition as rollback).
-  const showPostSteps = canRollback;
+  const showPostSteps = canRollback || (prog.settled && op.tasks.some((task) => task.status === "DONE" && task.resourceType === "database"));
   return (
     <>
     <Card style={{ padding: 20, maxWidth: 720 }}>
@@ -461,6 +485,7 @@ function Timeline({ opId, onReset }: { opId: string; onReset: () => void }) {
     {showPostSteps && (
       <>
         <MigrateDataCard opId={opId} sourceKind={asRemoteKind(op.sourceKind)} />
+        <ImportVolumeTransfers opId={opId} />
         <RemapEnvCard opId={opId} sourceKind={asRemoteKind(op.sourceKind)} />
         {op.tasks.some((task) => task.git && task.git.status !== "linked" && task.git.status !== "public_ok") && <GitRelinkCard opId={opId} />}
         <CutoverPanel opId={opId} />
@@ -487,6 +512,8 @@ function MigrateDataCard({ opId, sourceKind = "coolify" }: { opId: string; sourc
   const t = useT();
   const toast = useToast();
   const [minted, setMinted] = useState<MintedMigrationToken | null>(null);
+  const [stopSource, setStopSource] = useState(false);
+  const [allowBind, setAllowBind] = useState(false);
   const { data: state } = useQuery({ queryKey: ["migrate-command", opId], queryFn: () => api.getMigrateCommand(opId) });
   const mint = useMutation({
     mutationFn: (reissue: boolean) => (reissue ? api.reissueMigrationToken(opId) : api.mintMigrationToken(opId)),
@@ -494,18 +521,50 @@ function MigrateDataCard({ opId, sourceKind = "coolify" }: { opId: string; sourc
     onError: (e) => toast((e as Error).message, "error"),
   });
   const active = !!state?.active;
+  const vxCmds: VxCommands | undefined = minted ? minted.commands : state?.commandsTemplate;
+  const flags = { stopSource, allowBind };
+  const shown = vxCmds ? vxCommandsWithFlags(vxCmds, flags) : null;
   return (
     <SectionCard title={t("import.migrateTitle")} desc={t("import.migrateDesc", { source: t(SRC[sourceKind].name) })} style={{ padding: 20, maxWidth: 720, marginTop: 16, marginBottom: 0 }}>
+      {shown && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontWeight: 600, fontSize: 13 }}>{t("import.vx.commands.title")}</div>
+          <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "2px 0 10px" }}>{t("import.vx.commands.desc")}</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+            <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12 }}>
+              <input type="checkbox" checked={stopSource} onChange={(e) => setStopSource(e.target.checked)} style={{ marginTop: 2 }} />
+              <span>
+                {t("import.vx.commands.stopSourceLabel")}
+                <span style={{ display: "block", color: stopSource ? "var(--c-am)" : "var(--c-tx3)" }}>{t("import.vx.warn.stopSource")}</span>
+              </span>
+            </label>
+            <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12 }}>
+              <input type="checkbox" checked={allowBind} onChange={(e) => setAllowBind(e.target.checked)} style={{ marginTop: 2 }} />
+              <span>
+                {t("import.vx.commands.allowBindLabel")}
+                <span style={{ display: "block", color: allowBind ? "var(--c-am)" : "var(--c-tx3)" }}>{t("import.vx.warn.allowBind")}</span>
+              </span>
+            </label>
+          </div>
+          {(["dryRun", "run", "resume"] as const).map((k) => (
+            <div key={k} style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>{t(`import.vx.commands.${k}`)}</div>
+              <CommandBox cmd={shown[k]} muted={!minted} />
+            </div>
+          ))}
+          <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: 0 }}>{t("import.vx.commands.tokenWarn")}</p>
+        </div>
+      )}
       {minted ? (
         <>
           <div style={{ fontSize: 12, color: "var(--c-am)", marginBottom: 6 }}>{t("import.migrateTokenOnce")}</div>
-          <CommandBox cmd={minted.command} />
+          {!shown && <CommandBox cmd={minted.command} />}
           <div style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 6 }}>{t("import.migrateExpires", { date: new Date(minted.expiresAt).toLocaleString() })}</div>
         </>
       ) : (
         <>
           {active && <div style={{ fontSize: 12, color: "var(--c-g)", marginBottom: 8 }}>{t("import.migrateActive", { date: state?.expiresAt ? new Date(state.expiresAt).toLocaleString() : "" })}</div>}
-          {state?.commandTemplate && <CommandBox cmd={state.commandTemplate} muted />}
+          {!shown && state?.commandTemplate && <CommandBox cmd={state.commandTemplate} muted />}
           <div style={{ marginTop: 10 }}>
             <Btn onClick={() => mint.mutate(active)} disabled={mint.isPending}>
               {mint.isPending ? "…" : active ? t("import.migrateReissue") : t("import.migrateGenerate")}
@@ -514,6 +573,59 @@ function MigrateDataCard({ opId, sourceKind = "coolify" }: { opId: string; sourc
         </>
       )}
     </SectionCard>
+  );
+}
+
+/** PostgreSQL databases may be copied as a data DIRECTORY (volume copy) instead of a logical dump. Choosing it re-plans (the
+ *  planHash then covers the choice), locks the target to the source image/major/names and says why. */
+function DbDataModes({ plan, modes, busy, onChange }: { plan: ImportPlan; modes: Record<string, "volume">; busy: boolean; onChange: (next: Record<string, "volume">) => void }) {
+  const t = useT();
+  const cands = volumeCopyCandidates(plan);
+  if (cands.length === 0) return null;
+  const set = (ref: string, volume: boolean) => {
+    const next = { ...modes };
+    if (volume) next[ref] = "volume";
+    else delete next[ref];
+    onChange(next);
+  };
+  return (
+    <div style={{ marginTop: 14 }}>
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginBottom: 6 }}>{t("import.vx.mode.label")}</div>
+      <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 8 }}>
+        {cands.map((it) => {
+          const volume = it.proposed.dataMode === "volume";
+          return (
+            <li key={it.itemRef} style={{ fontSize: 12 }}>
+              <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+                <span className="mono" style={{ minWidth: 100 }}>{it.name}</span>
+                <div role="radiogroup" aria-label={`${t("import.vx.mode.label")}: ${it.name}`} style={{ display: "flex", gap: 6 }}>
+                  {([false, true] as const).map((isVol) => (
+                    <button
+                      key={String(isVol)}
+                      type="button"
+                      role="radio"
+                      aria-checked={volume === isVol}
+                      disabled={busy}
+                      onClick={() => volume !== isVol && set(it.itemRef, isVol)}
+                      style={{ fontFamily: "inherit", fontSize: 12, padding: "4px 10px", borderRadius: "var(--r1)", border: "1px solid var(--c-bd)", cursor: busy ? "not-allowed" : "pointer", background: volume === isVol ? "var(--c-a)" : "var(--c-el)", color: volume === isVol ? "var(--c-on-a)" : "var(--c-tx)" }}
+                    >
+                      {isVol ? t("import.vx.mode.volume") : t("import.vx.mode.dump")}
+                    </button>
+                  ))}
+                </div>
+                {busy && <span style={{ color: "var(--c-tx3)" }}>{t("import.vx.mode.replanning")}</span>}
+              </div>
+              {volume && (
+                <p style={{ margin: "4px 0 0", color: "var(--c-am)" }}>
+                  {t("import.vx.mode.volumeLocked")}
+                  {typeof it.proposed.image === "string" && it.proposed.image ? ` ${it.proposed.image}` : ""}
+                </p>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 

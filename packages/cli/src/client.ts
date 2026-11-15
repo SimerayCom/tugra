@@ -20,6 +20,25 @@ export interface AppLabelsView {
   [k: string]: unknown;
 }
 
+/** The subset of GET /import/operations/:opId/volumes the CLI reads (the full object flows through `--json`). */
+export interface ImportVolumesView {
+  enabled: boolean;
+  tokenExpiresAt: string | null;
+  volumes: {
+    itemRef: string;
+    resourceName: string | null;
+    state: string;
+    phase: string | null;
+    partsDone: number;
+    rawBytesDone: number;
+    rawBytesTotal: number | null;
+    bps: number | null;
+    etaSec: number | null;
+    error: string | null;
+    [k: string]: unknown;
+  }[];
+}
+
 /** An error carrying the hub's HTTP status + message. status 0 = the hub was unreachable. */
 export class ApiError extends Error {
   constructor(
@@ -112,6 +131,18 @@ export class TugraClient {
     // Only forward a sane positive line count; a NaN (bad --tail) or 0 falls back to the hub default.
     const q = typeof tail === "number" && Number.isFinite(tail) && tail > 0 ? `?tail=${Math.floor(tail)}` : "";
     return this.request("GET", `/apps/${encodeURIComponent(id)}/logs${q}`);
+  }
+  /** GET /import/operations/:opId/volumes — the streamed volume copies of a fleet import (read-only). */
+  getImportVolumes(opId: string): Promise<ImportVolumesView> {
+    return this.request("GET", `/import/operations/${encodeURIComponent(opId)}/volumes`);
+  }
+  /** POST .../volumes/:itemRef/abort — stop one copy (a live migrator's next call exits). */
+  abortImportVolume(opId: string, itemRef: string): Promise<Row> {
+    return this.request("POST", `/import/operations/${encodeURIComponent(opId)}/volumes/${encodeURIComponent(itemRef)}/abort`);
+  }
+  /** POST .../volumes/:itemRef/reset — discard one volume's staged parts and the partial destination. */
+  resetImportVolume(opId: string, itemRef: string): Promise<Row> {
+    return this.request("POST", `/import/operations/${encodeURIComponent(opId)}/volumes/${encodeURIComponent(itemRef)}/reset`);
   }
   /** GET /apps/:id/labels — every label Tugra applies (read-only) + the custom ones (writer-only). */
   getAppLabels(id: string): Promise<AppLabelsView> {

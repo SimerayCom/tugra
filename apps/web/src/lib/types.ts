@@ -936,7 +936,7 @@ export interface ImportPlanItem {
   risks: ImportRisk[];
   dependsOn: string[];
 }
-export type DbDataPlane = "one-click" | "manual" | "blocked";
+export type DbDataPlane = "one-click" | "manual" | "blocked" | "volume";
 /** How a Coolify service stack imports: ready, imported without some members / data, or not imported at all. */
 export type ImportServiceVerdict = "importable" | "partial" | "skipped";
 /** Per-service operator choices, keyed by plan itemRef (mirrors the hub's ServiceChoice). They can only narrow or rename. */
@@ -1032,7 +1032,7 @@ export interface ImportPreflight {
   services: Array<{ name: string; members: number; note: string; objectStore?: true; verdict?: ImportServiceVerdict; hold?: boolean; volumes?: Array<{ key: string; dataPlane: string }> }>;
   appsWithVolumeData: number;
   volumeDataNote?: string;
-  volumes?: Array<{ app: string; mountPath: string; type?: "named" | "bind"; dataPlane: "hub-staged" | "manual-large" | "manual" | "unknown-size"; reason: string }>;
+  volumes?: Array<{ app: string; mountPath: string; type?: "named" | "bind"; dataPlane: "hub-staged" | "manual-large" | "manual" | "unknown-size" | "stream"; reason: string; fidelity?: string }>;
   /** Per-app "what is not carried over" (advisory; presence-only). */
   coverage?: ImportCoverage;
   /** Coolify: apps whose variables are unreadable because the API token lacks read:sensitive. */
@@ -1210,6 +1210,14 @@ export interface MigrateCommand {
   active: boolean; // a token is currently live
   expiresAt: string | null;
   commandTemplate: string; // the command with a <token> placeholder (shown as guidance)
+  /** Streamed volume copy: dry-run / run / resume with a <TOKEN> placeholder (absent when the stream is off). */
+  commandsTemplate?: VxCommands;
+}
+/** The three commands of the streamed volume copy (the "Move data" step). */
+export interface VxCommands {
+  dryRun: string;
+  run: string;
+  resume: string;
 }
 /** The minted token response — the full `command` is shown ONCE (the token is hashed at rest). */
 export interface MintedMigrationToken {
@@ -1217,6 +1225,65 @@ export interface MintedMigrationToken {
   token: string;
   expiresAt: string;
   command: string; // ready-to-paste one-liner carrying the live token
+  /** Streamed volume copy commands carrying the same live token (absent when the stream is off). */
+  commands?: VxCommands;
+}
+
+// ── post-import: streamed volume data (the migrator streams a stopped source in resumable parts) ──
+export type VxGateStatus = "pass" | "fail" | "unknown";
+export interface VxGate {
+  id: "inventory" | "credentials" | "major" | "layout" | "image" | "state" | "quiesced";
+  status: VxGateStatus;
+  text: string;
+}
+export type VolumeTransferState = "NONE" | "EXCLUDED" | "PENDING" | "COPYING" | "COPIED" | "APPLYING" | "DONE" | "FAILED" | "ABORTED";
+/** The facts the migrator reported about one source volume (untrusted: the UI labels them as reported by it). */
+export interface VxInventoryView {
+  found: boolean;
+  rawBytes: number;
+  entries: number;
+  mountType: "volume" | "bind";
+  running: boolean;
+  exitCode?: number;
+  image?: string;
+  pgMajor?: string;
+  pgLayout?: "root" | "nested" | "none";
+  mountDest?: string;
+  specials: { sockets: number; fifos: number; devices: number };
+}
+export interface VxDiskVerdict {
+  ok: boolean;
+  unknown: boolean;
+  details: Record<string, number | boolean | string | null>;
+}
+export interface VolumeTransferView {
+  itemRef: string;
+  resourceName: string | null;
+  mountPath: string;
+  destType: "app-volume" | "db-data";
+  destVolume: string;
+  state: VolumeTransferState;
+  phase: "verifying" | "skipping" | "streaming" | "applying" | "provisioning" | string | null;
+  partsDone: number;
+  bytesDone: number;
+  rawBytesDone: number;
+  rawBytesTotal: number | null;
+  bps: number | null;
+  etaSec: number | null;
+  inventory: VxInventoryView | null;
+  diskVerdict: VxDiskVerdict | null;
+  gates: VxGate[] | null;
+  evidenceNote: "reported by the migrator";
+  excluded: { reason: string } | null;
+  error: string | null;
+  steps: Array<{ name: string; status: string }>;
+  canAbort: boolean;
+  canReset: boolean;
+}
+export interface OpVolumes {
+  volumes: VolumeTransferView[];
+  tokenExpiresAt: string | null;
+  enabled: boolean;
 }
 
 // ── post-import: env remap (point migrated apps at their new Tugra databases) ──

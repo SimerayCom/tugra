@@ -123,6 +123,8 @@ import type {
   ImportOperation,
   MigrateCommand,
   MintedMigrationToken,
+  OpVolumes,
+  VxDiskVerdict,
   ImportRemapPlan,
   ImportRemapResult,
   Template,
@@ -2096,7 +2098,7 @@ export const api = {
     return apiFetch<ImportSession>("/import/connect", { method: "POST", body: JSON.stringify(input) });
   },
   // Dry-run preview (secret-free) — local server to adopt, or a connected remote session.
-  importPlan(input: { sourceKind: "local-docker"; serverId: string } | { sourceKind: ImportRemoteKind; sessionId: string }) {
+  importPlan(input: { sourceKind: "local-docker"; serverId: string } | { sourceKind: ImportRemoteKind; sessionId: string; dbDataModes?: Record<string, "volume"> }) {
     return apiFetch<ImportPlan>("/import/plan", { method: "POST", body: JSON.stringify(input) });
   },
   // Apply a reviewed plan (planHash binds it to that exact preview). A remote apply may carry an editable mapping
@@ -2118,6 +2120,7 @@ export const api = {
           reconcile?: boolean;
           ignoreStoredMapping?: boolean;
           saveMapping?: boolean;
+          dbDataModes?: Record<string, "volume">;
         },
   ) {
     return apiFetch<{ opId: string; mappingApplied?: boolean }>("/import/apply", { method: "POST", body: JSON.stringify(input) });
@@ -2213,6 +2216,25 @@ export const api = {
   },
   reissueMigrationToken(opId: string) {
     return apiFetch<MintedMigrationToken>(`/import/operations/${encodeURIComponent(opId)}/migration-token/reissue`, { method: "POST" });
+  },
+  // ── post-import: streamed volume data (progress, dry-run inventory, abort / reset / explicit exclusion) ──
+  getOpVolumes(opId: string) {
+    return apiFetch<OpVolumes>(`/import/operations/${encodeURIComponent(opId)}/volumes`);
+  },
+  abortOpVolume(opId: string, itemRef: string) {
+    return apiFetch<{ state: string }>(`/import/operations/${encodeURIComponent(opId)}/volumes/${encodeURIComponent(itemRef)}/abort`, { method: "POST" });
+  },
+  resetOpVolume(opId: string, itemRef: string) {
+    return apiFetch<{ state: string; attempt?: number }>(`/import/operations/${encodeURIComponent(opId)}/volumes/${encodeURIComponent(itemRef)}/reset`, { method: "POST" });
+  },
+  diskCheckOpVolume(opId: string, itemRef: string, rawBytes?: number) {
+    return apiFetch<VxDiskVerdict>(`/import/operations/${encodeURIComponent(opId)}/volumes/${encodeURIComponent(itemRef)}/disk-check`, { method: "POST", body: JSON.stringify(rawBytes === undefined ? {} : { rawBytes }) });
+  },
+  excludeOpVolume(opId: string, itemRef: string, reason?: string) {
+    return apiFetch<{ itemRef: string; excluded: boolean }>(`/import/operations/${encodeURIComponent(opId)}/volumes/${encodeURIComponent(itemRef)}/exclude`, { method: "POST", body: JSON.stringify({ acknowledge: true, ...(reason ? { reason } : {}) }) });
+  },
+  includeOpVolume(opId: string, itemRef: string) {
+    return apiFetch<{ itemRef: string; excluded: boolean }>(`/import/operations/${encodeURIComponent(opId)}/volumes/${encodeURIComponent(itemRef)}/include`, { method: "POST" });
   },
   // ── post-import: env remap (point migrated apps at their new Tugra databases) ──
   remapEnvPlan(opId: string) {
