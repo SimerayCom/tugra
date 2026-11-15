@@ -1,4 +1,4 @@
-import type { ImportPlan, ImportPlanItem, ImportRisk, ImportRiskLevel, ImportOperation, ImportCoverageApp } from "./types";
+import type { ImportPlan, ImportPlanItem, ImportRisk, ImportRiskLevel, ImportOperation, ImportCoverageApp, ImportAck } from "./types";
 
 // Pure view helpers for the import wizard. No network, no React — the data shaping the plan-review and
 // apply-timeline screens render from (and the only part worth unit-testing).
@@ -105,4 +105,46 @@ export function reasonText(t: (k: string, v?: Record<string, string | number>) =
   const key = `import.reason_${e.reasonCode}`;
   const text = t(key, e.reasonParams);
   return text === key ? e.reason : text;
+}
+
+// ── strict env (Coolify): ackable blockers ──
+/** The two blocker codes an operator may acknowledge ("create the app WITHOUT those variables"). The hub enforces the
+ *  same allow-list; `app.env.tokenReadOnly` and every other blocker can never be acknowledged. */
+export const ACKABLE_ENV_CODES = ["app.env.unresolved", "app.env.key.invalid"] as const;
+export const ENV_TOKEN_READ_ONLY_CODE = "app.env.tokenReadOnly";
+const isAckableCode = (c: string): c is (typeof ACKABLE_ENV_CODES)[number] => (ACKABLE_ENV_CODES as readonly string[]).includes(c);
+
+/** The ackable env codes this item carries. */
+export function ackableCodes(item: ImportPlanItem): ImportAck["code"][] {
+  return item.risks.filter((r) => r.level === "blocker" && isAckableCode(r.code)).map((r) => r.code as ImportAck["code"]);
+}
+
+/** Is the item blocked even after the acknowledgements (a non-ackable blocker, or an ackable one not acknowledged)? */
+export function blockedAfterAcks(item: ImportPlanItem, acked: ReadonlySet<string>): boolean {
+  return item.risks.some((r) => r.level === "blocker" && !(isAckableCode(r.code) && acked.has(item.itemRef)));
+}
+
+/** Apps whose plan carries an ackable env blocker (the rows the operator must acknowledge or fix). */
+export function ackableItems(plan: ImportPlan): ImportPlanItem[] {
+  return plan.items.filter((it) => it.kind === "app" && ackableCodes(it).length > 0 && !it.risks.some((r) => r.code === ENV_TOKEN_READ_ONLY_CODE));
+}
+
+/** Apps whose token cannot read variable values (non-ackable: fix the token and reconnect). */
+export function tokenReadOnlyItems(plan: ImportPlan): ImportPlanItem[] {
+  return plan.items.filter((it) => it.kind === "app" && it.risks.some((r) => r.code === ENV_TOKEN_READ_ONLY_CODE));
+}
+
+/** Items that will actually be imported after the acknowledgements. */
+export function runnableAfterAcks(plan: ImportPlan, acked: ReadonlySet<string>): number {
+  return plan.items.filter((it) => !blockedAfterAcks(it, acked)).length;
+}
+
+/** The explicit per-item acks to send with apply (never an ack-all: each acknowledged app lists its own codes). */
+export function buildAcks(plan: ImportPlan, acked: ReadonlySet<string>): ImportAck[] {
+  const out: ImportAck[] = [];
+  for (const it of plan.items) {
+    if (!acked.has(it.itemRef)) continue;
+    for (const code of ackableCodes(it)) out.push({ code, itemRef: it.itemRef });
+  }
+  return out;
 }

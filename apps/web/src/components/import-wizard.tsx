@@ -9,7 +9,8 @@ import { Card, SectionCard, Btn, EmptyState, Spinner } from "./ui";
 import { useToast } from "./toast";
 import { useConfirm } from "./confirm";
 import { CopyBtn } from "./copy-row";
-import { planSummary, itemsByKind, riskTone, opProgress, coverageApps, coverageCounts, hasDeferredCoverage, reasonText } from "../lib/import";
+import { planSummary, itemsByKind, riskTone, opProgress, coverageApps, coverageCounts, hasDeferredCoverage, reasonText, ackableItems, buildAcks, runnableAfterAcks } from "../lib/import";
+import { EnvBlockers } from "./import/env-blockers";
 import type { ImportPlan, ImportPlanItem, ImportRiskLevel, ImportOperation, ImportOpTask, ImportRemoteKind, ImportTaskStatus, MintedMigrationToken, ImportRemapPlan, ImportRemapResult } from "../lib/types";
 
 const toneColor: Record<"danger" | "warning" | "info", string> = {
@@ -183,9 +184,17 @@ function PlanView({
   const groups = itemsByKind(plan);
   const [targetServerId, setTargetServerId] = useState("");
   const target = targetServerId || servers[0]?.id || "";
+  // Strict env (Coolify): apps acknowledged to be created WITHOUT the variables Tugra cannot carry. Apply stays
+  // disabled until every ackable blocker is acknowledged; a non-ackable blocker (token cannot read values) never is.
+  const [acked, setAcked] = useState<ReadonlySet<string>>(new Set());
+  const unackedCount = ackableItems(plan).filter((it) => !acked.has(it.itemRef)).length;
+  const runnable = runnableAfterAcks(plan, acked);
 
   const apply = useMutation({
-    mutationFn: () => api.importApply({ sourceKind: kind, sessionId, targetServerId: target, planHash: plan.planHash }),
+    mutationFn: () => {
+      const acks = buildAcks(plan, acked);
+      return api.importApply({ sourceKind: kind, sessionId, targetServerId: target, planHash: plan.planHash, ...(acks.length ? { acks } : {}) });
+    },
     onSuccess: (r) => onApplied(r.opId),
     onError: (e) => toast((e as Error).message, "error"),
   });
@@ -266,11 +275,12 @@ function PlanView({
           </select>
         )}
         <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "-4px 0 12px" }}>{t("import.targetHint")}</p>
-        <Btn onClick={() => apply.mutate()} disabled={apply.isPending || !target || !s.runnable}>
+        <Btn onClick={() => apply.mutate()} disabled={apply.isPending || !target || runnable === 0 || unackedCount > 0}>
           {apply.isPending ? t("import.applying") : t("import.apply")}
         </Btn>
       </SectionCard>
 
+      <EnvBlockers plan={plan} acked={acked} onChange={setAcked} />
       <CoverageCard plan={plan} />
       <Section title={t("import.appsSection")} items={groups.app} />
       <Section title={t("import.databasesSection")} items={groups.database} />
@@ -351,6 +361,11 @@ function Timeline({ opId, onReset }: { opId: string; onReset: () => void }) {
             <span className="mono" style={{ flex: 1, wordBreak: "break-all" }}>{task.name ?? task.itemRef}</span>
             {typeof task.unresolvedEnv === "number" && task.unresolvedEnv > 0 && (
               <span style={{ color: "var(--c-am)" }}>{t("import.unresolvedEnv", { n: task.unresolvedEnv })}</span>
+            )}
+            {task.unresolvedKeys && task.unresolvedKeys.length > 0 && (
+              <span className="mono" style={{ color: "var(--c-am)", flexBasis: "100%", paddingLeft: 98, wordBreak: "break-all" }}>
+                {t("import.env.taskNote", { keys: task.unresolvedKeys.slice(0, 20).join(", ") + (task.unresolvedKeys.length > 20 ? ` ${t("import.env.keysMore", { n: task.unresolvedKeys.length - 20 })}` : "") })}
+              </span>
             )}
             {task.message && <span style={{ color: "var(--c-tx3)", flexBasis: "100%", paddingLeft: 98 }}>{task.message}</span>}
             <TaskNotCarried task={task} />
@@ -468,7 +483,7 @@ function RemapEnvCard({ opId, sourceKind = "coolify" }: { opId: string; sourceKi
                   </div>
                 ))}
                 {a.needsManual.map((m) => (
-                  <div key={m.key} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--c-am)", marginTop: 4 }}><TriangleAlert size={12} aria-hidden style={{ flexShrink: 0 }} /> <span className="mono">{m.key}</span> — {m.reason}</div>
+                  <div key={m.key} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--c-am)", marginTop: 4 }}><TriangleAlert size={12} aria-hidden style={{ flexShrink: 0 }} /> <span className="mono">{m.key}</span> — {m.reason === "service-link-review" ? t("import.remap.serviceLinkReview") : m.reason}</div>
                 ))}
                 {a.dbNetwork && (
                   <div style={{ fontSize: 11, color: a.dbNetwork.willLink ? "var(--c-g)" : "var(--c-am)", marginTop: 4 }}>

@@ -160,5 +160,32 @@
   "reason_dokploy_registry": "the registry credential is not carried; add the registry in Tugra before deploying a private image",
   "reason_dokploy_build_secrets": "build secret values are not read; re-add them as Tugra build secrets",
   "reason_dokploy_swarm_labels": "Dokploy Swarm service labels are not carried (Tugra custom labels are container labels)",
-  "reason_dokploy_domains": "preview or disabled domains are not carried"
+  "reason_dokploy_domains": "preview or disabled domains are not carried",
+  "env": {
+    "blockers": {
+      "title": "Variables that cannot be carried",
+      "body": "These apps have variables Tugra cannot read or that are not valid environment names. Fix the source (or the token) and re-run the plan, or acknowledge to create the app without them."
+    },
+    "reason": {
+      "noValue": "no value returned",
+      "sharedUnexpanded": "shared variable not expanded",
+      "magic": "Coolify magic variable",
+      "invalidKey": "not a valid variable name"
+    },
+    "tokenReadOnly": {
+      "title": "The API token cannot read variable values",
+      "body": "These apps cannot be imported: create a Coolify token with the read:sensitive ability and reconnect."
+    },
+    "previewSkipped": "{n} preview-environment variable(s) are not imported",
+    "ackItem": "Create {name} without these variables",
+    "ackAll": "Acknowledge all {n}",
+    "ackWarning": "These apps will be created WITHOUT these variables, and a deploy may fail or misbehave.",
+    "taskNote": "Created without: {keys}",
+    "keysMore": "+{n} more",
+    "invalidHeading": "Invalid names (skipped)",
+    "unresolvedHeading": "Missing in the new app"
+  },
+  "remap": {
+    "serviceLinkReview": "points at an old service (e.g. MinIO); set the new endpoint after migrating its data"
+  }
 }

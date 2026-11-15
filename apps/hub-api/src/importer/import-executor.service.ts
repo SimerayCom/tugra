@@ -1492,6 +1492,27 @@ function readApplyReport(v: unknown): { applied: string[]; unmapped: Unmapped[] 
   return { applied, unmapped };
 }
 
+/** Defensively read a persisted list of key NAMES: strings only, capped. Undefined when absent/empty. */
+function readNameList(v: unknown, cap = 50): string[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const out = v.filter((x): x is string => typeof x === "string").slice(0, cap).map((x) => x.slice(0, 128));
+  return out.length ? out : undefined;
+}
+
+const GIT_STATUSES = new Set(["linked", "public_ok", "needs_source", "ambiguous", "ssh_deploy_key", "unsupported_host", "unknown"]);
+/** Defensively read a task's persisted git outcome (status + source NAME + the PUBLIC deploy key only). */
+function readGitResult(v: unknown): { status: string; sourceName?: string; rewritten?: boolean; deployKeyPublic?: string } | undefined {
+  if (!v || typeof v !== "object") return undefined;
+  const r = v as { status?: unknown; sourceName?: unknown; rewritten?: unknown; deployKeyPublic?: unknown };
+  if (typeof r.status !== "string" || !GIT_STATUSES.has(r.status)) return undefined;
+  return {
+    status: r.status,
+    ...(typeof r.sourceName === "string" ? { sourceName: r.sourceName.slice(0, 120) } : {}),
+    ...(r.rewritten === true ? { rewritten: true } : {}),
+    ...(typeof r.deployKeyPublic === "string" && /^ssh-[a-z0-9-]+ [A-Za-z0-9+/=]+/.test(r.deployKeyPublic) ? { deployKeyPublic: r.deployKeyPublic.slice(0, 600) } : {}),
+  };
+}
+
 /** Shape the owned operation into a secret-free status view (internal compensation is not exposed). Includes
  *  the persisted plan snapshot so a failed/partial import's full picture survives for a post-mortem. */
 export function toStatusView(op: {
@@ -1537,7 +1558,7 @@ export function toStatusView(op: {
       rolledBack: count("ROLLED_BACK"),
     },
     tasks: op.tasks.map((t) => {
-      const res = typeof t.result === "object" && t.result ? (t.result as { name?: string; unresolvedEnv?: number; postCreate?: unknown; ingress?: unknown }) : null;
+      const res = typeof t.result === "object" && t.result ? (t.result as { name?: string; unresolvedEnv?: number; unresolvedKeys?: unknown; droppedInvalidKeys?: unknown; git?: unknown; postCreate?: unknown; ingress?: unknown }) : null;
       return {
         itemRef: t.itemRef,
         kind: t.kind,
@@ -1548,6 +1569,11 @@ export function toStatusView(op: {
         message: t.output,
         // Count only (never values): >0 means the app was created with some env vars unresolved — fix before deploy.
         unresolvedEnv: typeof res?.unresolvedEnv === "number" ? res.unresolvedEnv : undefined,
+        // Strict-env (Coolify): the NAMES of the variables the app was created without (acknowledged). Never values.
+        unresolvedKeys: readNameList(res?.unresolvedKeys),
+        droppedInvalidKeys: readNameList(res?.droppedInvalidKeys),
+        // Git link outcome of a git app (status, source name, public deploy key). Undefined for other tasks.
+        git: readGitResult(res?.git),
         // What the app could not carry (field NAMES + fixed reasons only, never values). Undefined for a task without it.
         postCreate: readApplyReport(res?.postCreate),
         ingress: readApplyReport(res?.ingress),

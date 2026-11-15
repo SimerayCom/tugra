@@ -951,8 +951,25 @@ export interface ImportCoverageApp {
   name: string;
   notCarried: ImportCoverageEntry[];
 }
+export type ImportEnvReason = "NO_VALUE" | "SHARED_UNEXPANDED" | "MAGIC";
+/** Strict-env summary (Coolify): variable NAMES + reason codes only, never values. */
+export interface ImportCoverageEnvApp {
+  itemRef: string;
+  name: string;
+  unresolved: Array<{ key: string; reason: ImportEnvReason }>;
+  invalidKeys: string[];
+  previewSkipped: number;
+  tokenReadOnly: boolean;
+}
 export interface ImportCoverage {
   apps: ImportCoverageApp[];
+  env?: { apps: ImportCoverageEnvApp[] };
+  git?: { apps: number; https: number; ssh: number; githubApp: number };
+}
+/** An operator acknowledgement of an ackable plan blocker ("create the app WITHOUT these variables"). */
+export interface ImportAck {
+  code: "app.env.unresolved" | "app.env.key.invalid";
+  itemRef?: string;
 }
 export interface ImportPreflight {
   databases: Array<{ name: string; engine: string; dataPlane: DbDataPlane; reason: string }>;
@@ -962,6 +979,10 @@ export interface ImportPreflight {
   volumes?: Array<{ app: string; mountPath: string; type?: "named" | "bind"; dataPlane: "hub-staged" | "manual-large" | "manual" | "unknown-size"; reason: string }>;
   /** Per-app "what is not carried over" (advisory; presence-only). */
   coverage?: ImportCoverage;
+  /** Coolify: apps whose variables are unreadable because the API token lacks read:sensitive. */
+  env?: { tokenReadOnlyApps: number };
+  /** Git hosts the apps clone from (host + app count). */
+  git?: { hosts: Array<{ host: string; apps: number }> };
 }
 export interface ImportPlan {
   sourceKind: string;
@@ -991,6 +1012,13 @@ export interface ImportUnmapped {
   reasonCode?: string;
   reasonParams?: Record<string, string | number>;
 }
+export type ImportGitStatus = "linked" | "public_ok" | "needs_source" | "ambiguous" | "ssh_deploy_key" | "unsupported_host" | "unknown";
+export interface ImportTaskGit {
+  status: ImportGitStatus;
+  sourceName?: string;
+  rewritten?: boolean;
+  deployKeyPublic?: string;
+}
 export interface ImportOpTask {
   itemRef: string | null;
   kind: string;
@@ -1000,6 +1028,11 @@ export interface ImportOpTask {
   resourceId: string | null;
   message: string | null;
   unresolvedEnv?: number;
+  /** Strict env: the NAMES of the variables the app was created without (acknowledged). */
+  unresolvedKeys?: string[];
+  droppedInvalidKeys?: string[];
+  /** Git link outcome (git apps): status, source name and the PUBLIC deploy key. */
+  git?: ImportTaskGit;
   postCreate?: ImportApplyReport;
   ingress?: ImportApplyReport;
   startedAt: string | null;

@@ -106,6 +106,7 @@ import type {
   TeamInvitation,
   TeamMember,
   TeamRole,
+  ImportAck,
   ImportPlan,
   ImportRemoteKind,
   ImportSession,
@@ -1984,7 +1985,7 @@ export const api = {
   importApply(
     input:
       | { sourceKind: "local-docker"; serverId: string; planHash: string }
-      | { sourceKind: ImportRemoteKind; sessionId: string; targetServerId: string; environmentId?: string; planHash: string },
+      | { sourceKind: ImportRemoteKind; sessionId: string; targetServerId: string; environmentId?: string; planHash: string; acks?: ImportAck[] },
   ) {
     return apiFetch<{ opId: string }>("/import/apply", { method: "POST", body: JSON.stringify(input) });
   },
