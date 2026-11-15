@@ -11,7 +11,10 @@
  *        comes only from $TUGRA_AGENT_IMAGE (the same trusted source as the patch/fsd helpers).
  *  - S3  Deliberately NOT wrapHostExec: that is --privileged --pid=host, needs the "patch" capability and the
  *        fixed `--name tugra-patch` mutex (patch runs last up to 30 min). The probe has its own fixed name
- *        `tugra-gpuprobe`, which is the per-host mutex for the probe only.
+ *        label `tugra.role=gpu-probe` and a UNIQUE per-run name (`tugra-gpuprobe-<pid>-<epoch>`): a fixed name would be
+ *        a mutex that a killed docker CLI (the container keeps running when nvidia-smi hangs) turns into a permanent
+ *        "busy". Instead every run first force-removes any leftover container carrying the label, and nvidia-smi runs
+ *        under an in-container `timeout`, so the helper exits (and --rm fires) on its own; a failed run is removed too.
  *  - S4  Capability "bulk" (DEFAULT_CAPABILITIES, revocable per server). No new capability.
  *  - S5  All output is untrusted and sanitized hub-side (gpu-inventory.ts) before it is stored or relayed.
  */
@@ -39,11 +42,14 @@ rt=$(docker info --format '{{json .Runtimes}}' 2>/dev/null) && printf 'TUGRA_RUN
 dr=$(docker info --format '{{.DefaultRuntime}}' 2>/dev/null) && printf 'TUGRA_DEFRT %s\\n' "$dr" | head -c 100
 [ -r /proc/driver/nvidia/version ] && printf 'TUGRA_NVRM %s\\n' "$(head -n 1 /proc/driver/nvidia/version)" | head -c 300
 if [ -n "$TUGRA_AGENT_IMAGE" ] && printf %s "$rt" | grep -q '"nvidia"'; then
-  out=$(timeout -k 5 30 docker run --rm --pull never --name tugra-gpuprobe --label tugra.role=gpu-probe \\
+  for o in $(timeout 10 docker ps -aq --filter label=tugra.role=gpu-probe 2>/dev/null); do timeout 10 docker rm -f "$o" >/dev/null 2>&1; done
+  pn="tugra-gpuprobe-$$-$(date +%s)"
+  out=$(timeout -k 5 30 docker run --rm --pull never --name "$pn" --label tugra.role=gpu-probe \\
     --network none --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 64 \\
     --gpus all -e NVIDIA_DRIVER_CAPABILITIES=utility \\
-    --entrypoint nvidia-smi "$TUGRA_AGENT_IMAGE" \\
+    --entrypoint timeout "$TUGRA_AGENT_IMAGE" -k 5 25 nvidia-smi \\
     --query-gpu=index,uuid,name,memory.total,driver_version --format=csv,noheader,nounits 2>&1); rc=$?
+  [ $rc -eq 0 ] || timeout 10 docker rm -f "$pn" >/dev/null 2>&1
   if [ $rc -eq 0 ]; then
     printf '%s\\n' "$out" | head -n 20 | sed 's/^/TUGRA_NVSMI /'
   else

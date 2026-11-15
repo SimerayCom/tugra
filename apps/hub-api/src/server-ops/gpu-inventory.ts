@@ -22,8 +22,11 @@ const MAX_NAME = 64;
 const MAX_ERROR = 200;
 const MAX_MEMORY_MB = 4_194_304;
 
-/** Hypervisor / BMC display adapters: they are VGA-class PCI devices but not compute GPUs. */
-const VIRTUAL_VENDORS = new Set(["1a03", "15ad", "1234", "1af4", "1b36", "1414", "80ee"]);
+/** Hypervisor / BMC display adapters: they are VGA-class PCI devices but not compute GPUs. ASPEED 1a03, VMware 15ad,
+ *  QEMU std-vga 1234, virtio 1af4, QXL/Red Hat 1b36, Hyper-V 1414, VirtualBox 80ee, Matrox G200e on Dell iDRAC / HPE iLO
+ *  102b, Cirrus (old KVM guests) 1013, Xen 5853, Parallels 1ab8, Huawei iBMC 19e5. The list is explicit on purpose:
+ *  treating every unknown vendor as virtual would hide genuine non-big-three accelerators. */
+const VIRTUAL_VENDORS = new Set(["1a03", "15ad", "1234", "1af4", "1b36", "1414", "80ee", "102b", "1013", "5853", "1ab8", "19e5"]);
 
 export const GpuDeviceSchema = z.object({
   index: z.number().int().min(0).max(63).nullable(),
@@ -187,7 +190,8 @@ export function parseGpuProbe(output: string): GpuInventory | { busy: true } | n
         break;
       }
       case "TUGRA_NVRM": {
-        const m = /Kernel Module\s+([0-9][0-9A-Za-z._-]{0,31})/.exec(rest);
+        // Proprietary: "NVIDIA UNIX x86_64 Kernel Module  550.54.15"; open modules: "NVIDIA UNIX Open Kernel Module for x86_64  560.35.03".
+        const m = /Kernel Module(?: for \S+)?\s+([0-9][0-9A-Za-z._-]{0,31})/.exec(rest);
         if (m && DRIVER_VERSION_RE.test(m[1])) {
           nvidiaModuleVersion = m[1];
           nvidiaDriverLoaded = true;

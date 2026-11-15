@@ -91,6 +91,38 @@ describe("parseGpuProbe", () => {
     expect(classifyReadiness(inv)).toBe("none");
   });
 
+  it("BMC / legacy VM display adapters (Matrox, Cirrus, Xen, Parallels, Huawei iBMC) are virtual, not a non-NVIDIA GPU", () => {
+    const inv = parse(
+      probe(
+        "TUGRA_PCI 0000:0a:00.1 0x102b 0x0534 0x030000",
+        "TUGRA_PCI 0000:00:02.0 0x1013 0x00b8 0x030000",
+        "TUGRA_PCI 0000:00:02.1 0x5853 0x1234 0x030000",
+        "TUGRA_PCI 0000:00:03.0 0x1ab8 0x4005 0x030000",
+        "TUGRA_PCI 0000:07:00.0 0x19e5 0x1711 0x030000",
+      ),
+    );
+    expect(inv.gpus).toHaveLength(5);
+    expect(inv.gpus.every((g) => g.kind === "virtual")).toBe(true);
+    expect(classifyReadiness(inv)).toBe("none");
+  });
+
+  it("a real GPU next to a Matrox BMC adapter is still judged by the real GPU", () => {
+    const inv = parse(probe("TUGRA_PCI 0000:0a:00.1 0x102b 0x0534 0x030000", "TUGRA_PCI 0000:03:00.0 0x1002 0x73bf 0x030000"));
+    expect(classifyReadiness(inv)).toBe("non_nvidia");
+  });
+
+  it("parses the Open Kernel Module NVRM string (\"for x86_64\" before the version)", () => {
+    const inv = parse(
+      probe(
+        "TUGRA_PCI 0000:01:00.0 0x10de 0x2684 0x030000",
+        "TUGRA_NVRM NVRM version: NVIDIA UNIX Open Kernel Module for x86_64  560.35.03  Release Build  (dvs-builder@U16-I3-D08-1-2)",
+      ),
+    );
+    expect(inv.nvidiaModuleVersion).toBe("560.35.03");
+    expect(inv.nvidiaDriverLoaded).toBe(true);
+    expect(classifyReadiness(inv)).toBe("runtime_missing");
+  });
+
   it("includes class 0x0302 (3D controller)", () => {
     const inv = parse(probe("TUGRA_PCI 0000:01:00.0 0x10de 0x20b0 0x030200"));
     expect(inv.gpus).toHaveLength(1);

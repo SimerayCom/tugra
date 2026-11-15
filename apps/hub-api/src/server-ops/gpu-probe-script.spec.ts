@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { buildGpuProbeScript, GPU_PROBE_BEGIN, GPU_PROBE_END } from "./gpu-probe-script";
 
 describe("gpu-probe-script", () => {
@@ -11,8 +12,27 @@ describe("gpu-probe-script", () => {
   });
 
   it("runs the nvidia-smi helper unprivileged, offline, read-only and pull-never", () => {
-    for (const flag of ["--gpus all", "--network none", "--cap-drop ALL", "--read-only", "--pull never", "--name tugra-gpuprobe", "--security-opt no-new-privileges", "--pids-limit 64", '"$TUGRA_AGENT_IMAGE"', "--entrypoint nvidia-smi"]) {
+    for (const flag of ["--gpus all", "--network none", "--cap-drop ALL", "--read-only", "--pull never", "--label tugra.role=gpu-probe", "--security-opt no-new-privileges", "--pids-limit 64", '"$TUGRA_AGENT_IMAGE"', "--entrypoint timeout", "-k 5 25 nvidia-smi"]) {
       expect(s).toContain(flag);
+    }
+  });
+
+  it("never leaves a permanent busy lock: unique per-run name, stale probe containers reaped, failed run removed", () => {
+    expect(s).not.toContain("--name tugra-gpuprobe ");
+    expect(s).toContain('--name "$pn"');
+    expect(s).toContain('pn="tugra-gpuprobe-$$-$(date +%s)"');
+    expect(s).toContain("docker ps -aq --filter label=tugra.role=gpu-probe");
+    expect(s).toContain('docker rm -f "$o"');
+    expect(s).toContain('docker rm -f "$pn"');
+    // the stale-container sweep runs BEFORE the new container starts
+    expect(s.indexOf("docker ps -aq --filter label=tugra.role=gpu-probe")).toBeLessThan(s.indexOf("docker run --rm"));
+  });
+
+  it("is syntactically valid for both sh and bash", () => {
+    for (const sh of ["sh", "bash"]) {
+      const r = spawnSync(sh, ["-n"], { input: s, encoding: "utf8" });
+      expect(r.stderr).toBe("");
+      expect(r.status).toBe(0);
     }
   });
 
