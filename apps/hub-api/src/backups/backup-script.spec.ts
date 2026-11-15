@@ -9,6 +9,7 @@ import {
   buildRestoreScript,
   buildEncryptionCheckScript,
   gpgMissingTail,
+  GPG_HOME_PRELUDE,
   GPG_PREFLIGHT,
   scrubRestoreOutput,
   scrubRunOutput,
@@ -461,6 +462,27 @@ describe("GPG preflight + encryption check", () => {
     expect(chk).toContain("TUGRA_ENC_OK");
     expect(chk).toContain("exit 5");
     expect(chk).toContain("exit 6");
+  });
+
+  it("golden: the encryption check creates the gpg home BEFORE its two concurrent gpg processes race for it", () => {
+    // Lab-verified on the live agent image: without the prelude 1 of 6 fresh containers failed the canary with
+    // `gpg: Fatal: can't create directory '/root/.gnupg': File exists`; with it 6/6 passed.
+    expect(GPG_HOME_PRELUDE).toBe(`mkdir -p -m 700 "\${GNUPGHOME:-$HOME/.gnupg}" 2>/dev/null || true`);
+    expect(buildEncryptionCheckScript("k")).toBe(
+      [
+        `command -v gpg >/dev/null 2>&1 || { echo TUGRA_GPG_MISSING; exit 5; }`,
+        GPG_HOME_PRELUDE,
+        `[ "$(printf %s tugra-canary | gzip | gpg --batch --yes --passphrase 'k' --symmetric --cipher-algo AES256 | gpg --batch --yes --passphrase 'k' --decrypt | gunzip)" = tugra-canary ] && echo TUGRA_ENC_OK || { echo TUGRA_ENC_FAIL; exit 6; }`,
+      ].join("\n"),
+    );
+  });
+
+  it("single-gpg scripts (one gpg per pipeline) do not carry the prelude: unchanged bytes", () => {
+    const enc: DestinationSpec = { type: "LOCAL", encryption: { enabled: true, key: "secretpass" } };
+    for (const s of [buildDumpUploadScript("DUMP", "db1", "f.gz.gpg", enc), buildDumpUploadScript("DUMP", "db1", "f.gz.gpg", s3Encrypted), buildRestoreScript(spec("POSTGRES"), "f.dump.gz.gpg", enc)]) {
+      expect(s).not.toContain(GPG_HOME_PRELUDE);
+      expect(s).not.toContain(".gnupg");
+    }
   });
 
   it("gpgMissingTail maps the marker (or exit 5 on an encrypted destination) to a one-line scrubbed message", () => {

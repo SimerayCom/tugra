@@ -493,11 +493,21 @@ export function gpgMissingTail(
   return scrubRunOutput((line ?? "TUGRA_GPG_MISSING: gpg not found on this host (install gnupg)").trim(), secrets);
 }
 
+/** Prelude for any script that starts MORE THAN ONE gpg at the same time (a pipe `gpg … | gpg …`): on a host whose
+ *  gpg home does not exist yet (a fresh agent container after every (re)start/self-update), each gpg creates ~/.gnupg
+ *  on first use and the loser of that race dies with `Fatal: can't create directory … File exists`. Creating the
+ *  directory first (gpg's own 0700, GNUPGHOME honoured) removes the race; the mkdir is harmless when it exists.
+ *  Single-gpg scripts (backup, restore, WAL ship) never race and stay byte-identical without it. */
+export const GPG_HOME_PRELUDE = `mkdir -p -m 700 "\${GNUPGHOME:-$HOME/.gnupg}" 2>/dev/null || true`;
+
 /** Round-trips a canary through the destination's gpg stage (encrypt → decrypt) on the agent host, proving gpg is
- *  installed and the stored key works. Exit 5 = no gpg, 6 = round-trip mismatch. The key goes only through shq(). */
+ *  installed and the stored key works. Exit 5 = no gpg, 6 = round-trip mismatch. The key goes only through shq().
+ *  The two gpg processes of the pipe run concurrently, hence {@link GPG_HOME_PRELUDE} (after the gpg check, so a
+ *  gpg-less host still exits 5 before anything is created). */
 export function buildEncryptionCheckScript(key: string): string {
   return [
     `command -v gpg >/dev/null 2>&1 || { echo TUGRA_GPG_MISSING; exit 5; }`,
+    GPG_HOME_PRELUDE,
     `[ "$(printf %s tugra-canary | gzip | gpg --batch --yes --passphrase ${shq(key)} --symmetric --cipher-algo AES256 | gpg --batch --yes --passphrase ${shq(key)} --decrypt | gunzip)" = tugra-canary ] && echo TUGRA_ENC_OK || { echo TUGRA_ENC_FAIL; exit 6; }`,
   ].join("\n");
 }
