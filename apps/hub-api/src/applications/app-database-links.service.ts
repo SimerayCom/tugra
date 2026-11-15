@@ -6,6 +6,7 @@ import { AuditService } from "../audit/audit.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { DatabasesService } from "../databases/databases.service";
 import { loadProjectCtx } from "../common/resource-project";
+import { assertNoActiveMove } from "../common/app-move-guard";
 import { hasNetworkOpt } from "../deploy/deploy-script";
 import { isLinkEnvKeyAllowed } from "../common/env-key";
 import { encodeEnvMeta, parseEnvMeta, pruneMeta } from "../common/env-flags";
@@ -142,7 +143,7 @@ export class AppDatabaseLinksService {
     appId: string,
     input: { databaseId: string; envVar?: string; adoptEnv?: boolean },
   ): Promise<DatabaseLinkView> {
-    const app = await this.requireAppConfig(userId, appId);
+    const app = await this.requireMutate(userId, appId);
     if (app.isPreview) throw new BadRequestException("preview apps can't be linked directly");
 
     // Same-team lookup only — a cross-team / unknown id is 404 (no existence oracle).
@@ -189,7 +190,7 @@ export class AppDatabaseLinksService {
 
   /** Detach a database from an app. apps:config + resource access on the app; a foreign linkId is 404. */
   async remove(userId: string, appId: string, linkId: string): Promise<void> {
-    await this.requireAppConfig(userId, appId);
+    await this.requireMutate(userId, appId);
     const link = await this.prisma.appDatabaseLink.findFirst({ where: { id: linkId, appId } });
     if (!link) throw new NotFoundException("link not found");
     await this.prisma.appDatabaseLink.delete({ where: { id: link.id } });
@@ -268,6 +269,15 @@ export class AppDatabaseLinksService {
       resourceId: app.id,
       resolveProjectId: () => loadProjectCtx(this.prisma, app.environmentId).then((c) => c.projectId),
     });
+    return app;
+  }
+
+  /** requireAppConfig + the app-move lock (409 app_move_in_progress): a link changes the app's network, env and the
+   *  server-local route of its database, which the move preflight blocks on and the cutover does not re-check. Same
+   *  split as ApplicationsService.requireMutate (reads keep requireAppRead / requireAppConfig). */
+  private async requireMutate(userId: string, appId: string): Promise<Application> {
+    const app = await this.requireAppConfig(userId, appId);
+    await assertNoActiveMove(this.prisma, appId);
     return app;
   }
 

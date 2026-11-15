@@ -1,4 +1,4 @@
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import type { Application } from "@prisma/client";
 import { AppDatabaseLinksService } from "./app-database-links.service";
 import type { PrismaService } from "../prisma/prisma.service";
@@ -110,6 +110,7 @@ describe("AppDatabaseLinksService.create — adoptEnv keeps the flag column in s
     const txUpdate = jest.fn().mockResolvedValue({});
     const tx = { application: { update: txUpdate }, appDatabaseLink: { create: jest.fn().mockResolvedValue({}) } };
     const prisma = {
+      appMove: { findFirst: jest.fn().mockResolvedValue(null) },
       database: { findFirst: jest.fn().mockResolvedValue(dbRow()) },
       appDatabaseLink: {
         findUnique: jest.fn().mockResolvedValueOnce(null).mockResolvedValue({ id: "l1", envVar: "DATABASE_URL", createdAt: new Date() }),
@@ -139,5 +140,37 @@ describe("AppDatabaseLinksService.create — adoptEnv keeps the flag column in s
     expect(plain.txUpdate.mock.calls[0][0].data.envMetaEnc).toBeNull();
     const bad = adoptDeps({ envEnc: JSON.stringify({ DATABASE_URL: "x" }), envMetaEnc: "garbage" });
     await expect(bad.svc.create("u1", "app1", { databaseId: "db1", envVar: "DATABASE_URL", adoptEnv: true })).rejects.toThrow(/stored variable flags are unreadable; reset them in the app.s Environment tab before adopting/);
+  });
+});
+
+describe("AppDatabaseLinksService — the app-move lock", () => {
+  function lockedDeps(live: boolean) {
+    const prisma = {
+      appMove: { findFirst: jest.fn().mockResolvedValue(live ? { id: "mv1", phase: "TRANSFERRING" } : null) },
+      database: { findFirst: jest.fn().mockResolvedValue(dbRow()) },
+      appDatabaseLink: { findFirst: jest.fn().mockResolvedValue({ id: "l1", databaseId: "db1", envVar: "DATABASE_URL" }), delete: jest.fn().mockResolvedValue({}), findUnique: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
+      $transaction: jest.fn(),
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined), requireResourceAccess: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const svc = new AppDatabaseLinksService(prisma, access, { log: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService, {} as DatabasesService, {} as CryptoService);
+    jest.spyOn(svc as unknown as { loadApp: () => Promise<Application> }, "loadApp").mockResolvedValue({ ...app, environmentId: "e1" } as unknown as Application);
+    jest.spyOn(svc as unknown as { requireDbAccess: () => Promise<void> }, "requireDbAccess").mockResolvedValue(undefined);
+    return { svc, prisma };
+  }
+
+  it("linking and unlinking are refused with 409 app_move_in_progress while the app is being moved (nothing is written)", async () => {
+    const t = lockedDeps(true);
+    const e1 = await t.svc.create("u1", "app1", { databaseId: "db1" }).catch((x: unknown) => x);
+    expect(e1).toBeInstanceOf(ConflictException);
+    expect((e1 as ConflictException).getResponse()).toMatchObject({ code: "app_move_in_progress" });
+    await expect(t.svc.remove("u1", "app1", "l1")).rejects.toBeInstanceOf(ConflictException);
+    expect(t.prisma.$transaction as jest.Mock).not.toHaveBeenCalled();
+    expect(t.prisma.appDatabaseLink.delete as jest.Mock).not.toHaveBeenCalled();
+  });
+
+  it("with no live move, unlinking proceeds", async () => {
+    const t = lockedDeps(false);
+    await t.svc.remove("u1", "app1", "l1");
+    expect(t.prisma.appDatabaseLink.delete as jest.Mock).toHaveBeenCalled();
   });
 });
