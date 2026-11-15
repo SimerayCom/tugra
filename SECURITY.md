@@ -41,3 +41,18 @@ separate from the app network: a deployed (untrusted) app container can neither 
 (bypassing the API IP-allowlist / the one-hop trusted-proxy `X-Forwarded-For`) nor shadow the panel's route,
 and Postgres/Redis never join it. Panel TLS stays **off** unless the operator opts in; plain `--domain`
 remains bring-your-own-proxy.
+
+## Known dependency advisories
+
+`pnpm audit --prod` currently lists two advisories that we have reviewed and are not reachable in Tugra:
+
+- **zod 3.25.76, GHSA-mrhx-c7xc-m3w5** (high; patched only in zod 4.6.6+). All hub schemas use the zod v3 API; the
+  vulnerable array validator lives in the bundled v4 core, which is never imported. Request bodies are size-capped
+  and the endpoints are authenticated. Revisit with the zod v4 migration.
+- **@nestjs/core 10.4.22, GHSA-36xv-jgw5-4q75** (moderate; patched only in 11.x). Every `@Sse` endpoint in hub-api
+  emits only `{ data: JSON.stringify(event) }`, so the event `type` / `id` fields the advisory depends on are never
+  set. Revisit with the NestJS 10 to 11 migration.
+
+Dependabot's `scope: runtime` label is not authoritative for `pnpm-lock.yaml`: the hub image currently installs dev
+dependencies too (no `--prod`), which is a separate hardening follow-up. Do not enable `jest --coverage` without
+first overriding `test-exclude`, which is broken under glob 9 and later.
