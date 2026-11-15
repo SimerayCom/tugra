@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { BackupRunModal } from "../../../../components/backup-run-modal";
@@ -121,13 +121,18 @@ export function VolumeBackupsCard({ id, volumes }: { id: string; volumes: AppVol
   const [schedule, setSchedule] = useState<ScheduleValue>(scheduleFromFields(null, null));
   const [retention, setRetention] = useState<RetentionValue>(retentionFromFields(null, null, null));
   const [dest, setDest] = useState("");
+  // Hydrate the form ONCE per app. A later refetch (window focus, or a per-volume policy save invalidating this
+  // query) must not overwrite the operator's unsaved schedule/retention/destination edits; the card's own save
+  // leaves the form already holding the saved values.
+  const hydratedFor = useRef<string | null>(null);
   useEffect(() => {
-    if (!cfg) return;
+    if (!cfg || hydratedFor.current === id) return;
+    hydratedFor.current = id;
     setSched(cfg.enabled);
     setSchedule(scheduleFromFields(cfg.intervalHours, cfg.cron));
     setRetention(retentionFromFields(cfg.retention, cfg.retentionDays, cfg.maxSizeGb));
     setDest(cfg.destinationId ?? "");
-  }, [cfg]);
+  }, [cfg, id]);
   const invalidate = () => qc.invalidateQueries({ queryKey: ["volBackups", id] });
   const backupNow = useMutation({ mutationFn: () => api.volumeBackupNow(id), onSuccess: invalidate });
   const restore = useMutation({ mutationFn: (bid: string) => api.restoreVolumeBackup(id, bid) });

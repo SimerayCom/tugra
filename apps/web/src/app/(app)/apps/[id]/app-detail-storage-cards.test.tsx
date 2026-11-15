@@ -50,4 +50,27 @@ describe("VolumeBackupsCard (rebuilt on the shared policy components)", () => {
     await waitFor(() => expect(set).toHaveBeenCalled());
     expect(set).toHaveBeenCalledWith("a1", { enabled: true, intervalHours: null, cron: "0 3 * * *", retention: 7, retentionDays: 30, maxSizeGb: 20, destinationId: null });
   });
+
+  it("a config refetch (e.g. after a per-volume policy save) does NOT overwrite unsaved app-wide edits", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <I18nProvider>
+          <ConfirmProvider>
+            <VolumeBackupsCard id="a1" volumes={[{ name: "data", path: "/data" }]} />
+          </ConfirmProvider>
+        </I18nProvider>
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect((screen.getByLabelText("Every (hours)") as HTMLInputElement).value).toBe("12"));
+    fireEvent.change(screen.getByLabelText("Every (hours)"), { target: { value: "6" } });
+    // the refetch returns a structurally different config (new policy + usage), as after a policy modal save
+    (api.getVolumeBackupConfig as ReturnType<typeof vi.fn>).mockResolvedValue(
+      cfg({ intervalHours: 12, policies: [{ volumeName: "data", enabled: true, intervalHours: null, cron: null, retention: 3, retentionDays: null, maxSizeGb: null }] }),
+    );
+    await qc.invalidateQueries({ queryKey: ["volBackupConfig", "a1"] });
+    await waitFor(() => expect((api.getVolumeBackupConfig as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(1));
+    await new Promise((r) => setTimeout(r, 100)); // let the refetched config render + any hydrate effect run
+    expect((screen.getByLabelText("Every (hours)") as HTMLInputElement).value).toBe("6");
+  });
 });
