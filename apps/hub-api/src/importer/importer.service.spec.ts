@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { ImporterService } from "./importer.service";
 import { CoolifySource } from "./sources/coolify.source";
 import type { AdoptableContainer } from "../migrator/migrator.service";
@@ -234,5 +234,58 @@ describe("ImporterService.previewServices", () => {
   it("enforces session ownership like plan", async () => {
     await expect(make({ session: { ...liveSession, actorId: "u2" }, clientGet: getFrom(routes([])) }).svc.previewServices("u1", { sessionId: "sess-1" })).rejects.toBeInstanceOf(ForbiddenException);
     await expect(make({ session: null }).svc.previewServices("u1", { sessionId: "x" })).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+describe("ImporterService — editable mapping (additive)", () => {
+  const liveSession = { id: "sess-1", sourceKind: "coolify", actorId: "u1", teamId: "t1", baseUrl: "https://c.example.com", tokenEnc: "enc(TOK)", status: "active", scopeKey: "team-3", expiresAt: new Date(Date.now() + 60_000) };
+  const withMappings = (mappings: unknown, session: unknown = liveSession) => {
+    const base = make({ session });
+    const svc = new ImporterService({} as never, { importSession: base.importSession, server: { findUnique: jest.fn().mockResolvedValue({ id: "srv", teamId: "t1" }) } } as never, base.crypto as never, base.access as never, base.audit as never, base.sources as never, mappings as never);
+    return { ...base, svc };
+  };
+
+  it("connect stores the optional scope label as the session scopeKey (absent => not written)", async () => {
+    const { svc, importSession } = make();
+    await svc.connect("u1", { sourceKind: "coolify", teamId: "t1", baseUrl: "https://coolify.example.com", token: "T", scopeLabel: "team-3" });
+    expect(importSession.create.mock.calls[0][0].data.scopeKey).toBe("team-3");
+    await svc.connect("u1", { sourceKind: "coolify", teamId: "t1", baseUrl: "https://coolify.example.com", token: "T" });
+    expect(importSession.create.mock.calls[1][0].data).not.toHaveProperty("scopeKey");
+  });
+
+  it("plan adds ONLY an additive mapping block, outside the planHash", async () => {
+    const block = { features: ["mapping-v1"], stored: { version: 1, items: {} }, storedVersion: 2, scopeKey: "team-3" };
+    const mappings = { planBlock: jest.fn().mockResolvedValue(block) };
+    const { svc } = withMappings(mappings);
+    const withBlock = await svc.plan("u1", { sourceKind: "coolify", sessionId: "sess-1" });
+    expect(withBlock.mapping).toEqual(block);
+    expect(mappings.planBlock).toHaveBeenCalledWith(expect.objectContaining({ id: "sess-1", teamId: "t1", scopeKey: "team-3", baseUrl: "https://c.example.com" }));
+    const plain = await make({ session: liveSession }).svc.plan("u1", { sourceKind: "coolify", sessionId: "sess-1" });
+    expect(plain).not.toHaveProperty("mapping");
+    expect(withBlock.planHash).toBe(plain.planHash); // a stored profile never moves the hash
+    const { mapping: _m, ...rest } = withBlock;
+    void _m;
+    expect(rest).toEqual(plain);
+  });
+
+  it("resolveMapping re-plans, refuses a stale planHash (409) before touching the target, and resolves otherwise", async () => {
+    const resolve = jest.fn().mockResolvedValue({ mappingHash: "m" });
+    const { svc } = withMappings({ planBlock: jest.fn(), resolve });
+    const plain = await make({ session: liveSession }).svc.plan("u1", { sourceKind: "coolify", sessionId: "sess-1" });
+    const body = { sessionId: "sess-1", sourceKind: "coolify" as const, planHash: "f".repeat(32), targetServerId: "srv", mapping: { version: 1 as const, items: {}, projects: {}, gitSources: {}, acks: [] } };
+    await expect(svc.resolveMapping("u1", body)).rejects.toBeInstanceOf(ConflictException);
+    expect(resolve).not.toHaveBeenCalled();
+    const good = { ...body, planHash: plain.planHash };
+    await expect(svc.resolveMapping("u1", good)).resolves.toEqual({ mappingHash: "m" });
+    expect(resolve).toHaveBeenCalledWith("u1", expect.objectContaining({ id: "sess-1", scopeKey: "team-3" }), expect.anything(), expect.objectContaining({ planHash: plain.planHash }), { id: "srv", teamId: "t1" }, good);
+  });
+
+  it("requireSession enforces ownership, kind and expiry exactly like openSession, without building a source client", async () => {
+    const { svc, sources } = withMappings({});
+    await expect(svc.requireSession("u1", "sess-1")).resolves.toMatchObject({ teamId: "t1", scopeKey: "team-3" });
+    expect(sources.create).not.toHaveBeenCalled();
+    await expect(withMappings({}, { ...liveSession, actorId: "u2" }).svc.requireSession("u1", "sess-1")).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(withMappings({}, null).svc.requireSession("u1", "x")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(withMappings({}, { ...liveSession, expiresAt: new Date(0) }).svc.requireSession("u1", "sess-1")).rejects.toBeInstanceOf(BadRequestException);
   });
 });

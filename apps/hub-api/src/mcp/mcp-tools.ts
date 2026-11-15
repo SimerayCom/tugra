@@ -12,7 +12,8 @@ import type { BackupsService } from "../backups/backups.service";
 import type { MonitorsService } from "../monitors/monitors.service";
 import type { ImporterService } from "../importer/importer.service";
 import type { ImportExecutorService } from "../importer/import-executor.service";
-import { REMOTE_SOURCE_KINDS, ServiceChoicesSchema, isRemoteSourceKind } from "../importer/dto";
+import { REMOTE_SOURCE_KINDS, ServiceChoicesSchema, isRemoteSourceKind, ImportMappingResolveSchema, ImportMappingPutSchema } from "../importer/dto";
+import { ImportMappingDocSchema } from "../importer/import-mapping";
 import type { LicenseService } from "../license/license.service";
 import type { MetricsService } from "../metrics/metrics.service";
 import { rangeToMs, type AppContainerMetrics } from "../metrics/container-metrics.service";
@@ -661,14 +662,15 @@ export const MCP_TOOLS: McpTool[] = [
     scope: "write",
     inputSchema: {
       type: "object",
-      properties: { sourceKind: { type: "string", enum: [...REMOTE_SOURCE_KINDS] }, teamId: { type: "string" }, baseUrl: { type: "string" }, token: { type: "string" } },
+      properties: { sourceKind: { type: "string", enum: [...REMOTE_SOURCE_KINDS] }, teamId: { type: "string" }, baseUrl: { type: "string" }, token: { type: "string" }, scopeLabel: { type: "string", description: "optional label for the source team/token; keys the saved import mapping" } },
       required: ["sourceKind", "teamId", "baseUrl", "token"],
     },
     sensitiveArgs: ["token"], // redacted from the audit log's meta.args
     execute: async (d, userId, a) => {
       const k = optStr(a, "sourceKind");
       if (!isRemoteSourceKind(k)) throw new Error(`sourceKind must be one of: ${REMOTE_SOURCE_KINDS.join(", ")}`);
-      return d.importer.connect(userId, { sourceKind: k, teamId: reqStr(a, "teamId"), baseUrl: reqStr(a, "baseUrl"), token: reqStr(a, "token") });
+      const scopeLabel = optStr(a, "scopeLabel");
+      return d.importer.connect(userId, { sourceKind: k, teamId: reqStr(a, "teamId"), baseUrl: reqStr(a, "baseUrl"), token: reqStr(a, "token"), ...(scopeLabel ? { scopeLabel } : {}) });
     },
   },
   {
@@ -691,7 +693,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "import_apply",
     description:
-      "Apply a reviewed import plan. Pass the planHash from import_plan (the apply is refused if the source changed since). local-docker adopts the host's containers in place; a remote source (Coolify/Dokploy) COPIES each app onto targetServerId. Returns an opId to poll with import_status.",
+      "Apply a reviewed import plan. Pass the planHash from import_plan (the apply is refused if the source changed since). local-docker adopts the host's containers in place; a remote source (Coolify/Dokploy) COPIES each app onto targetServerId. Optional mapping (+ the mappingHash from import_mapping_resolve) renames and re-places items; if a saved mapping exists for the source the apply is refused (409) unless you send the mapping or ignoreStoredMapping. Returns an opId to poll with import_status.",
     scope: "deploy",
     inputSchema: {
       type: "object",
@@ -707,6 +709,11 @@ export const MCP_TOOLS: McpTool[] = [
           description:
             "Coolify services only: per-service choices keyed by the plan item's itemRef (skip, name, environmentId, targetServerId, serviceDomains, hostnameMap, volumes {policy copy|empty|skip}, dropMembers, pinImages, pins, privateNetwork, hold). A choice can only narrow or rename what the importer does.",
         },
+        mapping: { type: "object", description: "the mapping document (version 1) — names and placement only" },
+        mappingHash: { type: "string", description: "the hash import_mapping_resolve returned for exactly this mapping" },
+        reconcile: { type: "boolean" },
+        ignoreStoredMapping: { type: "boolean" },
+        saveMapping: { type: "boolean" },
       },
       required: ["sourceKind", "planHash"],
     },
@@ -715,6 +722,9 @@ export const MCP_TOOLS: McpTool[] = [
       const planHash = reqStr(a, "planHash");
       if (k === "local-docker") return d.executor.apply(userId, { sourceKind: "local-docker", serverId: reqStr(a, "serverId"), planHash });
       if (isRemoteSourceKind(k)) {
+        const mapping = a.mapping === undefined ? undefined : ImportMappingDocSchema.parse(a.mapping);
+        const mappingHash = optStr(a, "mappingHash");
+        if ((mapping !== undefined) !== (mappingHash !== undefined)) throw new Error("mapping and mappingHash must be sent together");
         return d.executor.apply(userId, {
           sourceKind: k,
           sessionId: reqStr(a, "sessionId"),
@@ -722,10 +732,53 @@ export const MCP_TOOLS: McpTool[] = [
           environmentId: optStr(a, "environmentId"),
           planHash,
           ...(a.serviceChoices !== undefined ? { serviceChoices: ServiceChoicesSchema.parse(a.serviceChoices) } : {}),
+          ...(mapping !== undefined ? { mapping, mappingHash } : {}),
+          ...(a.reconcile === true ? { reconcile: true } : {}),
+          ...(a.ignoreStoredMapping === true ? { ignoreStoredMapping: true } : {}),
+          ...(a.saveMapping === false ? { saveMapping: false } : {}),
         });
       }
       throw new Error(`sourceKind must be "local-docker" or one of: ${REMOTE_SOURCE_KINDS.join(", ")}`);
     },
+  },
+  {
+    name: "import_mapping_resolve",
+    description:
+      "Preview an import mapping (renames, project/environment placement, container aliases) against a fresh plan and a target server: returns the effective item names/placement, every conflict (errors, needs-acknowledgement, warnings) and the mappingHash to pass to import_apply. Read-only. Names and placement only — never secrets.",
+    scope: "read:secrets",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sourceKind: { type: "string", enum: [...REMOTE_SOURCE_KINDS] },
+        sessionId: { type: "string" },
+        planHash: { type: "string" },
+        targetServerId: { type: "string" },
+        environmentId: { type: "string" },
+        reconcile: { type: "boolean" },
+        mapping: { type: "object" },
+      },
+      required: ["sourceKind", "sessionId", "planHash", "targetServerId", "mapping"],
+    },
+    execute: async (d, userId, a) => d.importer.resolveMapping(userId, ImportMappingResolveSchema.parse(a)),
+  },
+  {
+    name: "import_mapping_get",
+    description: "Read the saved import mapping profile for a connected source session's scope (doc is null when none is saved). Read-only.",
+    scope: "read:secrets",
+    inputSchema: { type: "object", properties: { sessionId: { type: "string" } }, required: ["sessionId"] },
+    execute: async (d, userId, a) => d.importer.getMapping(userId, reqStr(a, "sessionId")),
+  },
+  {
+    name: "import_mapping_put",
+    description:
+      "Save the import mapping profile for a connected source session's scope (shape-validated only). expectedVersion guards against overwriting a newer save (409 on a stale version). Saving does not apply anything.",
+    scope: "deploy",
+    inputSchema: {
+      type: "object",
+      properties: { sessionId: { type: "string" }, mapping: { type: "object" }, label: { type: "string" }, expectedVersion: { type: "number" } },
+      required: ["sessionId", "mapping"],
+    },
+    execute: async (d, userId, a) => d.importer.putMapping(userId, reqStr(a, "sessionId"), ImportMappingPutSchema.parse({ mapping: a.mapping, label: a.label, expectedVersion: a.expectedVersion })),
   },
   {
     name: "import_status",

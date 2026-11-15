@@ -1,5 +1,6 @@
 import { planImport } from "./import-planner";
 import { mapBuildPack } from "./buildpack-map";
+import { ownerFleet } from "./__fixtures__/owner-fleet.scrubbed";
 import type { ForeignFleet, ImportOptions } from "./foreign-fleet";
 
 describe("mapBuildPack", () => {
@@ -290,5 +291,20 @@ describe("planHash golden (G3-C: sourceExtras / notCarried are advisory and neve
     const rich = planImport(gf({ sourceExtras: { labels: true, dockerfile: true }, notCarried: [{ field: "basicAuth", level: "warn", reason: "x" }] }), o);
     expect(rich.planHash).toBe(GOLDEN);
     expect(JSON.stringify(rich.items)).not.toMatch(/sourceExtras|notCarried|basicAuth/);
+  });
+});
+
+describe("planHash is a pure source-drift guard (editable import mapping)", () => {
+  it("pins the scrubbed owner-fleet hash to a literal (any change to plan content or options breaks this on purpose)", () => {
+    const plan = planImport(ownerFleet(), { sourceKind: "coolify" });
+    expect(plan.planHash).toBe("078cbc2394538d02fbd8d9311cc35e13"); // re-pinned after services became plan items (group-4 lane C)
+  });
+  it("options carry no mapping key and the hash does not depend on any stored profile", () => {
+    const f = ownerFleet();
+    const a = planImport(f, { sourceKind: "coolify" });
+    const b = planImport(f, { sourceKind: "coolify" });
+    expect(a.planHash).toBe(b.planHash);
+    expect(Object.keys(a)).not.toContain("mapping");
+    expect(JSON.stringify(a)).not.toMatch(/mapping/i);
   });
 });

@@ -52,7 +52,7 @@ curl -s https://your-tugra-host/api/v1/mcp \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_applications","arguments":{}}}'
 ```
 
-É o mesmo endpoint `POST /api/v1/mcp`, com a mesma autenticação por token de acesso pessoal, os mesmos escopos e a mesma lista de IPs permitidos da API REST por baixo — sem nenhuma credencial extra para gerenciar, e nenhum valor de segredo descriptografado é devolvido ao modelo. O catálogo tem **53 ferramentas**: 31 somente leitura (incluindo visões consolidadas de status, saúde e listagem de apps de toda a frota em uma única chamada, além de um explorador de arquivos de volumes em sandbox) e 22 ferramentas de escrita e operação com escopo de PAT (deploy · cancelar um deploy na fila · restart · escalar em tempo real · rollback · definir variáveis de ambiente · criar/expandir um Swarm · ações em toda a frota de um cluster · configuração de DNS de domínio com um clique). Toda ferramenta de escrita reutiliza exatamente as mesmas verificações de permissão de equipe e a mesma trilha de auditoria da API REST, e as irreversíveis (desfazer um Swarm, remover um app) exigem confirmação explícita pelo nome. O OAuth para clientes de terceiros ainda está no roteiro.
+É o mesmo endpoint `POST /api/v1/mcp`, com a mesma autenticação por token de acesso pessoal, os mesmos escopos e a mesma lista de IPs permitidos da API REST por baixo — sem nenhuma credencial extra para gerenciar, e nenhum valor de segredo descriptografado é devolvido ao modelo. O catálogo tem **56 ferramentas**: 33 somente leitura (incluindo visões consolidadas de status, saúde e listagem de apps de toda a frota em uma única chamada, além de um explorador de arquivos de volumes em sandbox) e 23 ferramentas de escrita e operação com escopo de PAT (deploy · cancelar um deploy na fila · restart · escalar em tempo real · rollback · definir variáveis de ambiente · criar/expandir um Swarm · ações em toda a frota de um cluster · configuração de DNS de domínio com um clique). Toda ferramenta de escrita reutiliza exatamente as mesmas verificações de permissão de equipe e a mesma trilha de auditoria da API REST, e as irreversíveis (desfazer um Swarm, remover um app) exigem confirmação explícita pelo nome. O OAuth para clientes de terceiros ainda está no roteiro.
 
 ## O que é o Tugra?
 
@@ -61,7 +61,7 @@ O Tugra é um plano de controle open-core e auto-hospedável para fazer deploy, 
 ## Por que Tugra
 
 - **Frota em primeiro lugar, não máquina única** — agrupe servidores em clusters, forme um Docker Swarm de verdade entre eles e execute um comando em toda a frota com uma única chamada de operações em massa, em vez de acessar cada máquina via SSH.
-- **Nativo para agentes também** — um servidor MCP integrado expõe 53 ferramentas (leitura + operações de escrita/frota com escopo de PAT) via `POST /api/v1/mcp`, com escopo definido pelos mesmos tokens de acesso pessoal da API REST.
+- **Nativo para agentes também** — um servidor MCP integrado expõe 56 ferramentas (leitura + operações de escrita/frota com escopo de PAT) via `POST /api/v1/mcp`, com escopo definido pelos mesmos tokens de acesso pessoal da API REST.
 - **9 engines de banco de dados, um único fluxo** — PostgreSQL, MySQL, MariaDB, MongoDB, Redis, KeyDB, Dragonfly, ClickHouse e LibSQL, todos provisionados da mesma forma; oito têm backups lógicos de dump/restore integrados (o LibSQL, que não tem ferramenta de dump, é coberto apenas por backups de volume em nível de arquivo — pare o app antes para obter uma cópia consistente).
 - **TLS de verdade, wildcards de verdade** — Let's Encrypt automático por app via Traefik, além de certificados wildcard DNS-01 (`*.yourdomain.com`) para ingress em cluster/Swarm — não apenas HTTP-01 para um único domínio.
 - **Backups fora do servidor** — dumps agendados para disco local ou armazenamento compatível com S3 (S3/R2/MinIO), opcionalmente criptografados (gpg AES-256), com restore com um clique; **simulações de restore-verify** agendadas comprovam que um backup realmente restaura, e o PostgreSQL conta com **recuperação para um ponto no tempo** (envio de WAL + base backups, restore para qualquer segundo a partir do painel).
@@ -105,7 +105,7 @@ Uma comparação lado a lado com as ferramentas de PaaS auto-hospedáveis que as
 | Equipes / RBAC | ✅ | ✅ | ✅ | ~⁷ | — | — |
 | SSO / OIDC | ✅ (Pro)⁸ | ✅ | ✅ | ~⁷ | — | — |
 | Log de auditoria | ✅ | ✅ | ✅ | ~⁷ | — | — |
-| MCP / controle por agentes | ✅ 53 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
+| MCP / controle por agentes | ✅ 56 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
 | **Confiança e licença** | | | | | | |
 | Telemetria | Anônima, opt-out (somente contagens) | n/a | n/a | n/a | n/a | n/a |
 | Migrar para cá (importar do Coolify) | ✅⁹ | — | — | — | — | — |
@@ -192,7 +192,7 @@ Logs em tempo real, métricas e o terminal são transmitidos por WebSockets. Det
 - [x] Métricas em tempo real, logs de build e terminal web (streams WebSocket; o terminal é protegido por capability e vem desativado por padrão)
 - [x] Bancos de dados (9 engines) com backups e restore (local + off-site em S3/R2)
 - [x] Clusters multi-servidor + formação de Docker Swarm, operações em massa em toda a frota
-- [x] Servidor MCP nativo — 53 ferramentas (leitura + operações de escrita/frota com escopo de PAT) + prompts guiados
+- [x] Servidor MCP nativo — 56 ferramentas (leitura + operações de escrita/frota com escopo de PAT) + prompts guiados
 - [x] App store — mais de 280 templates de um clique + launcher do modo Home
 - [x] Explorador de arquivos somente leitura para volumes de apps (UI web + `list_files` do MCP)
 - [x] Deploys de preview (por pull request)

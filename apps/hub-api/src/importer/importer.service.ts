@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { AuditService } from "../audit/audit.service";
@@ -12,10 +12,15 @@ import { buildPreflight } from "./preflight";
 import { buildCoverage } from "./coverage";
 import type { ImportPlan } from "./foreign-fleet";
 import type { ImportSource } from "./import-source";
-import { isRemoteSourceKind, type ImportConnectInput, type ImportPlanRequestInput, type ImportServicesPreviewInput, type RemoteSourceKind } from "./dto";
+import { isRemoteSourceKind, type ImportConnectInput, type ImportMappingPutInput, type ImportMappingResolveInput, type ImportPlanRequestInput, type ImportServicesPreviewInput, type RemoteSourceKind } from "./dto";
 import { mapLimit } from "./sources/map-limit";
 import { validateServiceChoices } from "./service-choices";
 import { buildServicePreview, type ServicePreview } from "./service-preview";
+import { ImportMappingService, type MappingSession } from "./import-mapping.service";
+import type { ResolvedMapping } from "./import-mapping";
+
+/** The plan as returned to a client: the (planHash-covered) plan plus the additive, hash-excluded mapping block. */
+export type ImportPlanResponse = ImportPlan & { mapping?: { features: string[]; stored: unknown; storedVersion: number | null; scopeKey: string } };
 
 const SESSION_TTL_MS = 60 * 60_000; // 1h — long enough to review → apply, short enough to limit a stored token
 
@@ -35,6 +40,8 @@ export class ImporterService {
     private readonly access: TeamAccessService,
     private readonly audit: AuditService,
     private readonly sources: ImportSourceFactory,
+    // Trailing + optional so the mapping-free construction (and every pre-existing spec) is unchanged.
+    private readonly mappings?: ImportMappingService,
   ) {}
 
   /** Verify a remote source is reachable with the given token, then store an encrypted, expiring session. */
@@ -65,6 +72,7 @@ export class ImporterService {
         sourceKind: input.sourceKind,
         baseUrl: input.baseUrl,
         tokenEnc: this.crypto.encrypt(input.token), // never stored or returned in the clear
+        ...(input.scopeLabel ? { scopeKey: input.scopeLabel } : {}),
         status: "active",
         expiresAt,
       },
@@ -73,7 +81,7 @@ export class ImporterService {
     return { sessionId: session.id, expiresAt };
   }
 
-  async plan(userId: string, input: ImportPlanRequestInput): Promise<ImportPlan> {
+  async plan(userId: string, input: ImportPlanRequestInput): Promise<ImportPlanResponse> {
     if (input.sourceKind === "local-docker") {
       const source = new LocalDockerSource(this.migrator, userId, input.serverId);
       try {
@@ -97,10 +105,64 @@ export class ImporterService {
       await this.prisma.importSession.update({ where: { id: session.id }, data: { lastUsedAt: new Date() } });
       const opts = { sourceKind: input.sourceKind };
       const coverage = buildCoverage(fleet, opts);
-      return { ...planImport(fleet, opts), preflight: { ...buildPreflight(fleet, opts), ...(coverage ? { coverage } : {}) } };
+      // The mapping block is additive and OUTSIDE planHash (computed from the plan alone, above).
+      const mapping = this.mappings ? await this.mappings.planBlock(session) : undefined;
+      return { ...planImport(fleet, opts), preflight: { ...buildPreflight(fleet, opts), ...(coverage ? { coverage } : {}) }, ...(mapping ? { mapping } : {}) };
     } finally {
       await source.close();
     }
+  }
+
+  /** Authoritative mapping preview: re-discover + re-plan (no fleet caching — it may hold secrets), refuse a stale
+   *  planHash, then resolve the document against the target server's team. Read-only. */
+  async resolveMapping(userId: string, input: ImportMappingResolveInput): Promise<ResolvedMapping> {
+    if (!this.mappings) throw new Error("mapping service unavailable");
+    const { source, session } = await this.openSession(userId, input.sessionId, input.sourceKind);
+    try {
+      const fleet = await source.discover();
+      const plan = planImport(fleet, { sourceKind: input.sourceKind });
+      if (plan.planHash !== input.planHash) {
+        throw new ConflictException("the plan changed since it was previewed — re-run the plan and review again");
+      }
+      const server = await this.prisma.server.findUnique({ where: { id: input.targetServerId }, select: { id: true, teamId: true } });
+      if (!server) throw new NotFoundException("target server not found");
+      return await this.mappings.resolve(userId, session, fleet, plan, server, input);
+    } finally {
+      await source.close();
+    }
+  }
+
+  /** The saved mapping profile for a session's source scope (`doc` is null when none is saved). */
+  async getMapping(userId: string, sessionId: string) {
+    if (!this.mappings) throw new Error("mapping service unavailable");
+    const p = await this.mappings.getProfile(await this.requireSession(userId, sessionId));
+    return { doc: p?.doc ?? null, version: p?.version ?? null, label: p?.label ?? null, lastAppliedAt: p?.lastAppliedAt ?? null };
+  }
+
+  async putMapping(userId: string, sessionId: string, input: ImportMappingPutInput) {
+    if (!this.mappings) throw new Error("mapping service unavailable");
+    return this.mappings.putProfile(userId, await this.requireSession(userId, sessionId), input);
+  }
+
+  async deleteMapping(userId: string, sessionId: string) {
+    if (!this.mappings) throw new Error("mapping service unavailable");
+    return this.mappings.deleteProfile(userId, await this.requireSession(userId, sessionId));
+  }
+
+  /** The owned, active, unexpired session (ownership + team authz + kind pin) WITHOUT building a source client —
+   *  for the profile CRUD routes, which never talk to the source. */
+  async requireSession(userId: string, sessionId: string, expectedKind?: RemoteSourceKind): Promise<MappingSession> {
+    const session = await this.prisma.importSession.findUnique({ where: { id: sessionId } });
+    const kind = session?.sourceKind;
+    if (!session || !isRemoteSourceKind(kind) || (expectedKind && kind !== expectedKind)) {
+      throw new NotFoundException("import session not found");
+    }
+    if (session.actorId !== userId) throw new ForbiddenException("not your import session");
+    if (session.status !== "active" || session.expiresAt.getTime() < Date.now()) {
+      throw new BadRequestException("import session expired or revoked — reconnect");
+    }
+    await this.access.requirePermission(userId, session.teamId, "apps:config");
+    return { id: session.id, teamId: session.teamId, sourceKind: kind, baseUrl: session.baseUrl, scopeKey: session.scopeKey ?? "" };
   }
 
   /**
@@ -145,7 +207,7 @@ export class ImporterService {
     userId: string,
     sessionId: string,
     expectedKind?: RemoteSourceKind,
-  ): Promise<{ source: ImportSource; session: { id: string; teamId: string; sourceKind: RemoteSourceKind } }> {
+  ): Promise<{ source: ImportSource; session: MappingSession & { sourceKind: RemoteSourceKind } }> {
     const session = await this.prisma.importSession.findUnique({ where: { id: sessionId } });
     const kind = session?.sourceKind;
     if (!session || !isRemoteSourceKind(kind) || (expectedKind && kind !== expectedKind)) {
@@ -157,6 +219,9 @@ export class ImporterService {
     }
     await this.access.requirePermission(userId, session.teamId, "apps:config");
     const token = this.crypto.decrypt(session.tokenEnc);
-    return { source: this.sources.create(kind, session.baseUrl, token), session: { id: session.id, teamId: session.teamId, sourceKind: kind } };
+    return {
+      source: this.sources.create(kind, session.baseUrl, token),
+      session: { id: session.id, teamId: session.teamId, sourceKind: kind, baseUrl: session.baseUrl, scopeKey: session.scopeKey ?? "" },
+    };
   }
 }

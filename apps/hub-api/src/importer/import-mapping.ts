@@ -274,7 +274,7 @@ export function resolveMapping(fleet: ForeignFleet, plan: ImportPlan, doc: Impor
 
   // orphans: mapping keys the FRESH plan no longer has
   const orphans = Object.keys(doc.items)
-    .filter((k) => !planByRef.has(k) || planByRef.get(k)!.kind === "volume")
+    .filter((k) => !planByRef.has(k) || planByRef.get(k)!.kind === "volume" || planByRef.get(k)!.kind === "service")
     .sort();
   for (const k of orphans) add({ code: "key.orphan", level: "error", itemRef: k, params: {} });
   for (const ref of Object.keys(doc.projects)) if (!projectByRef.has(ref)) add({ code: "key.stale_ref", level: "warn", ref, params: { section: "projects" } });
@@ -285,7 +285,8 @@ export function resolveMapping(fleet: ForeignFleet, plan: ImportPlan, doc: Impor
   const bad = (code: string, itemRef: string, field: Conflict["field"], params: Conflict["params"] = {}) => add({ code, level: "error", itemRef, field, params });
 
   for (const item of plan.items) {
-    if (item.kind === "volume") continue;
+    // Services (Coolify stacks → stopped compose apps) take their choices from `serviceChoices`, not the mapping: skipped here.
+    if (item.kind === "volume" || item.kind === "service") continue;
     const kind = item.kind;
     const app = kind === "app" ? appByRef.get(item.itemRef) : undefined;
     const db = kind === "database" ? dbByRef.get(item.itemRef) : undefined;

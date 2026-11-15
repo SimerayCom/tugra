@@ -7,7 +7,7 @@ function tool(name: string) {
 }
 
 const LIFECYCLE_TOOLS = ["deploy_application", "cancel_deployment", "restart_application", "stop_application", "start_application", "rollback_application", "scale_application"];
-const DEPLOY_TOOLS = [...LIFECYCLE_TOOLS, "form_swarm", "join_swarm_node", "add_swarm_manager", "set_ingress_replicas", "fleet_app_action", "setup_app_domain", "import_apply"];
+const DEPLOY_TOOLS = [...LIFECYCLE_TOOLS, "form_swarm", "join_swarm_node", "add_swarm_manager", "set_ingress_replicas", "fleet_app_action", "setup_app_domain", "import_apply", "import_mapping_put"];
 const WRITE_TOOLS = ["set_env_var", "delete_env_var", "import_connect"];
 const ADMIN_TOOLS = ["dissolve_swarm", "remove_application", "remove_swarm_manager", "leave_swarm_node", "import_rollback"];
 
@@ -24,7 +24,7 @@ describe("MCP_TOOLS catalog", () => {
   it("has the expected tool count — keep docs (README/api.md) in sync when this changes", () => {
     // A drift guard: the MCP tool count is referenced in prose in README.md + docs/api.md. When you add or
     // remove a tool, bump this number AND those docs in the same commit.
-    expect(MCP_TOOLS).toHaveLength(53);
+    expect(MCP_TOOLS).toHaveLength(56);
     // Names are unique.
     expect(new Set(MCP_TOOLS.map((t) => t.name)).size).toBe(MCP_TOOLS.length);
   });
@@ -68,7 +68,13 @@ describe("MCP_TOOLS catalog", () => {
 
   describe("mutate: fleet import", () => {
     const mk = () => {
-      const importer = { connect: jest.fn().mockResolvedValue({ sessionId: "s1", expiresAt: new Date(0) }), plan: jest.fn().mockResolvedValue({ planHash: "h" }) };
+      const importer = {
+        connect: jest.fn().mockResolvedValue({ sessionId: "s1", expiresAt: new Date(0) }),
+        plan: jest.fn().mockResolvedValue({ planHash: "h" }),
+        resolveMapping: jest.fn().mockResolvedValue({ mappingHash: "m" }),
+        getMapping: jest.fn().mockResolvedValue({ doc: null, version: null }),
+        putMapping: jest.fn().mockResolvedValue({ ok: true, version: 1 }),
+      };
       const executor = { apply: jest.fn().mockResolvedValue({ opId: "op1" }), status: jest.fn().mockResolvedValue({ id: "op1" }), rollback: jest.fn().mockResolvedValue({ id: "op1" }) };
       return { deps: { importer, executor } as unknown as McpDeps, importer, executor };
     };
@@ -94,6 +100,31 @@ describe("MCP_TOOLS catalog", () => {
       const { deps, executor } = mk();
       await tool("import_apply").execute(deps, "u1", { sourceKind: "coolify", sessionId: "s1", targetServerId: "t-srv", planHash: "h" });
       expect(executor.apply).toHaveBeenCalledWith("u1", { sourceKind: "coolify", sessionId: "s1", targetServerId: "t-srv", environmentId: undefined, planHash: "h" });
+    });
+
+    it("import_apply forwards the mapping fields only when sent, and requires mapping + mappingHash together", async () => {
+      const { deps, executor } = mk();
+      const mapping = { version: 1, items: { "app:srv:a": { name: "renamed" } } };
+      await tool("import_apply").execute(deps, "u1", { sourceKind: "coolify", sessionId: "s1", targetServerId: "t-srv", planHash: "h", mapping, mappingHash: "m".repeat(32), reconcile: true, saveMapping: false });
+      expect(executor.apply).toHaveBeenLastCalledWith("u1", expect.objectContaining({ mapping: expect.objectContaining({ version: 1, items: { "app:srv:a": { name: "renamed" } } }), mappingHash: "m".repeat(32), reconcile: true, saveMapping: false }));
+      await tool("import_apply").execute(deps, "u1", { sourceKind: "coolify", sessionId: "s1", targetServerId: "t-srv", planHash: "h", ignoreStoredMapping: true });
+      expect(executor.apply).toHaveBeenLastCalledWith("u1", { sourceKind: "coolify", sessionId: "s1", targetServerId: "t-srv", environmentId: undefined, planHash: "h", ignoreStoredMapping: true });
+      await expect(Promise.resolve().then(() => tool("import_apply").execute(deps, "u1", { sourceKind: "coolify", sessionId: "s1", targetServerId: "t-srv", planHash: "h", mapping }))).rejects.toThrow(/together/);
+      await expect(Promise.resolve().then(() => tool("import_apply").execute(deps, "u1", { sourceKind: "coolify", sessionId: "s1", targetServerId: "t-srv", planHash: "h", mapping: { version: 1, bogus: 1 }, mappingHash: "m" }))).rejects.toThrow();
+    });
+
+    it("the mapping tools exist with REST-equivalent scopes and delegate", async () => {
+      const { deps, importer } = mk();
+      expect(tool("import_mapping_resolve").scope).toBe("read:secrets");
+      expect(tool("import_mapping_get").scope).toBe("read:secrets");
+      expect(tool("import_mapping_put").scope).toBe("deploy");
+      await tool("import_mapping_resolve").execute(deps, "u1", { sourceKind: "coolify", sessionId: "s1", planHash: "a".repeat(32), targetServerId: "t", mapping: { version: 1 } });
+      expect(importer.resolveMapping).toHaveBeenCalledWith("u1", expect.objectContaining({ sessionId: "s1", mapping: expect.objectContaining({ version: 1 }) }));
+      await tool("import_mapping_get").execute(deps, "u1", { sessionId: "s1" });
+      expect(importer.getMapping).toHaveBeenCalledWith("u1", "s1");
+      await tool("import_mapping_put").execute(deps, "u1", { sessionId: "s1", mapping: { version: 1 }, expectedVersion: 2 });
+      expect(importer.putMapping).toHaveBeenCalledWith("u1", "s1", expect.objectContaining({ expectedVersion: 2 }));
+      expect(tool("import_connect").inputSchema).toMatchObject({ properties: { scopeLabel: expect.anything() } });
     });
 
     it("routes the dokploy source through connect/plan/apply (second remote source)", async () => {

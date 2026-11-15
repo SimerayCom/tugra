@@ -52,7 +52,7 @@ curl -s https://your-tugra-host/api/v1/mcp \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_applications","arguments":{}}}'
 ```
 
-Es el mismo endpoint `POST /api/v1/mcp`, con la misma autenticación por token de acceso personal, los mismos scopes y la misma lista de IP permitidas que la API REST que hay por debajo: no hay ninguna credencial aparte que gestionar, y el modelo nunca recibe valores secretos descifrados. El catálogo consta de **53 herramientas**: 31 de solo lectura (entre ellas, resúmenes de estado / salud / listado de apps de toda la fleet en una sola llamada y un explorador de archivos de volumes en sandbox), más 22 herramientas de mutación y operaciones con scope de PAT (deploy · cancelar un deploy en cola · reiniciar · escalar en vivo · hacer rollback · definir variables de entorno · formar/ampliar un swarm · acciones sobre toda la fleet en un cluster · configuración de DNS de dominios con un clic). Todas las herramientas de mutación reutilizan exactamente las mismas comprobaciones de permisos de equipo y el mismo log de auditoría que la API REST, y las irreversibles (disolver un swarm, eliminar una app) exigen confirmar el nombre de forma explícita. OAuth para clientes de terceros sigue en la hoja de ruta.
+Es el mismo endpoint `POST /api/v1/mcp`, con la misma autenticación por token de acceso personal, los mismos scopes y la misma lista de IP permitidas que la API REST que hay por debajo: no hay ninguna credencial aparte que gestionar, y el modelo nunca recibe valores secretos descifrados. El catálogo consta de **56 herramientas**: 33 de solo lectura (entre ellas, resúmenes de estado / salud / listado de apps de toda la fleet en una sola llamada y un explorador de archivos de volumes en sandbox), más 23 herramientas de mutación y operaciones con scope de PAT (deploy · cancelar un deploy en cola · reiniciar · escalar en vivo · hacer rollback · definir variables de entorno · formar/ampliar un swarm · acciones sobre toda la fleet en un cluster · configuración de DNS de dominios con un clic). Todas las herramientas de mutación reutilizan exactamente las mismas comprobaciones de permisos de equipo y el mismo log de auditoría que la API REST, y las irreversibles (disolver un swarm, eliminar una app) exigen confirmar el nombre de forma explícita. OAuth para clientes de terceros sigue en la hoja de ruta.
 
 ## ¿Qué es Tugra?
 
@@ -61,7 +61,7 @@ Tugra es un plano de control open-core y autoalojable para hacer deploy, monitor
 ## Por qué Tugra
 
 - **Primero la fleet, no un solo servidor** — agrupe servidores en clusters, forme un Docker Swarm real entre ellos y ejecute un comando en toda su fleet con una sola llamada de operaciones masivas, en lugar de entrar por SSH en cada servidor.
-- **También nativo para agentes** — un servidor MCP integrado expone 53 herramientas (lectura + operaciones de mutación/fleet con scope de PAT) mediante `POST /api/v1/mcp`, con los mismos tokens de acceso personal y scopes que la API REST.
+- **También nativo para agentes** — un servidor MCP integrado expone 56 herramientas (lectura + operaciones de mutación/fleet con scope de PAT) mediante `POST /api/v1/mcp`, con los mismos tokens de acceso personal y scopes que la API REST.
 - **9 motores de bases de datos, un único flujo de trabajo** — PostgreSQL, MySQL, MariaDB, MongoDB, Redis, KeyDB, Dragonfly, ClickHouse y LibSQL, todos aprovisionados de la misma forma; ocho incluyen backups lógicos con dump/restore (LibSQL, que no tiene herramienta de dump, queda cubierto únicamente por backups de volumes a nivel de archivo: detenga primero la app para obtener una copia consistente).
 - **TLS de verdad, comodines de verdad** — Let's Encrypt automático por app mediante Traefik, además de certificados comodín DNS-01 (`*.yourdomain.com`) para el ingress de cluster/Swarm, y no solo HTTP-01 para un único dominio.
 - **Backups fuera del servidor** — dumps programados a disco local o a almacenamiento compatible con S3 (S3/R2/MinIO), opcionalmente cifrados (gpg AES-256) y con restore con un clic; los **simulacros de restore-verify** programados demuestran que un backup realmente se restaura, y PostgreSQL cuenta con **recuperación a un punto en el tiempo** (envío de WAL + base backups, restore a cualquier segundo desde el panel).
@@ -105,7 +105,7 @@ Una comparación directa con las herramientas PaaS autoalojables que la gente ev
 | Equipos / RBAC | ✅ | ✅ | ✅ | ~⁷ | — | — |
 | SSO / OIDC | ✅ (Pro)⁸ | ✅ | ✅ | ~⁷ | — | — |
 | Log de auditoría | ✅ | ✅ | ✅ | ~⁷ | — | — |
-| MCP / control por agentes | ✅ 53 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
+| MCP / control por agentes | ✅ 56 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
 | **Confianza y licencia** | | | | | | |
 | Telemetría | Anónima, opt-out (solo conteos) | n/a | n/a | n/a | n/a | n/a |
 | Migrar a Tugra (importar desde Coolify) | ✅⁹ | — | — | — | — | — |
@@ -192,7 +192,7 @@ Los logs en vivo, las métricas y la terminal se transmiten por WebSockets. Desg
 - [x] Métricas en vivo, logs de build y terminal web (flujos WebSocket; la terminal está protegida por capability y desactivada por defecto)
 - [x] Bases de datos (9 motores) con backups y restore (local + fuera del servidor en S3/R2)
 - [x] Clusters multiservidor + formación de Docker Swarm, operaciones masivas sobre toda la fleet
-- [x] Servidor MCP nativo — 53 herramientas (lectura + operaciones de mutación/fleet con scope de PAT) + prompts guiados
+- [x] Servidor MCP nativo — 56 herramientas (lectura + operaciones de mutación/fleet con scope de PAT) + prompts guiados
 - [x] App Store — más de 280 plantillas con un clic + lanzador en modo Home
 - [x] Explorador de archivos de solo lectura para volumes de apps (Web UI + MCP `list_files`)
 - [x] Deploys de vista previa (por pull request)

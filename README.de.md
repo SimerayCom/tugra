@@ -52,7 +52,7 @@ curl -s https://your-tugra-host/api/v1/mcp \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_applications","arguments":{}}}'
 ```
 
-Es ist derselbe `POST /api/v1/mcp`-Endpoint mit derselben Authentifizierung per Personal Access Token, denselben Scopes und derselben IP-Allowlist wie bei der darunterliegenden REST API — es gibt keine separaten Zugangsdaten zu verwalten, und entschlüsselte Secret-Werte werden dem Modell nie zurückgegeben. Der Katalog umfasst **53 Tools**: 31 rein lesende (darunter Flotten-Status-, Health- und App-Listen-Übersichten mit nur einem Aufruf sowie ein sandboxbasierter Datei-Browser für Volumes) plus 22 schreibende und Flotten-Tools mit PAT-Scope (deployen · einen Deploy in der Warteschlange abbrechen · neu starten · live skalieren · Rollback · Umgebungsvariablen setzen · einen Swarm bilden/erweitern · flottenweite Aktionen über einen Cluster · DNS-Einrichtung für Domains mit einem Klick). Jedes dieser Tools nutzt exakt dieselben Team-Berechtigungsprüfungen und denselben Audit-Trail wie die REST API, und unumkehrbare Aktionen (einen Swarm auflösen, eine App entfernen) erfordern eine ausdrückliche Bestätigung durch Eingabe des Namens. OAuth für Drittanbieter-Clients steht noch auf der Roadmap.
+Es ist derselbe `POST /api/v1/mcp`-Endpoint mit derselben Authentifizierung per Personal Access Token, denselben Scopes und derselben IP-Allowlist wie bei der darunterliegenden REST API — es gibt keine separaten Zugangsdaten zu verwalten, und entschlüsselte Secret-Werte werden dem Modell nie zurückgegeben. Der Katalog umfasst **56 Tools**: 33 rein lesende (darunter Flotten-Status-, Health- und App-Listen-Übersichten mit nur einem Aufruf sowie ein sandboxbasierter Datei-Browser für Volumes) plus 23 schreibende und Flotten-Tools mit PAT-Scope (deployen · einen Deploy in der Warteschlange abbrechen · neu starten · live skalieren · Rollback · Umgebungsvariablen setzen · einen Swarm bilden/erweitern · flottenweite Aktionen über einen Cluster · DNS-Einrichtung für Domains mit einem Klick). Jedes dieser Tools nutzt exakt dieselben Team-Berechtigungsprüfungen und denselben Audit-Trail wie die REST API, und unumkehrbare Aktionen (einen Swarm auflösen, eine App entfernen) erfordern eine ausdrückliche Bestätigung durch Eingabe des Namens. OAuth für Drittanbieter-Clients steht noch auf der Roadmap.
 
 ## Was ist Tugra?
 
@@ -61,7 +61,7 @@ Tugra ist eine selbst hostbare Open-Core-Control-Plane zum Deployen, Überwachen
 ## Warum Tugra
 
 - **Flotte zuerst, nicht Einzelmaschine** — fassen Sie Server zu Clustern zusammen, bilden Sie darüber einen echten Docker Swarm und führen Sie mit einem einzigen Bulk-Operations-Aufruf einen Befehl auf Ihrer gesamten Flotte aus, statt sich per SSH auf jeder einzelnen Maschine einzuloggen.
-- **Auch agentennativ** — ein integrierter MCP-Server stellt 53 Tools bereit (lesende sowie schreibende und Flotten-Tools mit PAT-Scope) über `POST /api/v1/mcp`, abgesichert durch dieselben Personal Access Tokens wie die REST API.
+- **Auch agentennativ** — ein integrierter MCP-Server stellt 56 Tools bereit (lesende sowie schreibende und Flotten-Tools mit PAT-Scope) über `POST /api/v1/mcp`, abgesichert durch dieselben Personal Access Tokens wie die REST API.
 - **9 Datenbank-Engines, ein Workflow** — PostgreSQL, MySQL, MariaDB, MongoDB, Redis, KeyDB, Dragonfly, ClickHouse und LibSQL, alle auf dieselbe Weise bereitgestellt; acht davon haben integrierte logische Dump-/Restore-Backups (LibSQL, das kein Dump-Tool hat, wird nur durch dateibasierte Volume-Backups abgedeckt — stoppen Sie die App zuvor, um eine konsistente Kopie zu erhalten).
 - **Echtes TLS, echte Wildcards** — automatische Let's-Encrypt-Zertifikate pro App über Traefik, dazu DNS-01-Wildcard-Zertifikate (`*.yourdomain.com`) für Cluster-/Swarm-Ingress — nicht nur HTTP-01 für einzelne Domains.
 - **Offsite-Backups** — geplante Dumps auf lokalen Speicher oder S3-kompatiblen Objektspeicher (S3/R2/MinIO), optional verschlüsselt (gpg AES-256), mit Restore per Klick; geplante **Restore-Verify-Übungen** belegen, dass sich ein Backup tatsächlich wiederherstellen lässt, und PostgreSQL bietet **Point-in-Time-Recovery** (WAL-Shipping + Base-Backups, Restore auf jede beliebige Sekunde direkt im Panel).
@@ -105,7 +105,7 @@ Ein direkter Vergleich mit den selbst hostbaren PaaS-Tools, die tatsächlich eva
 | Teams / RBAC | ✅ | ✅ | ✅ | ~⁷ | — | — |
 | SSO / OIDC | ✅ (Pro)⁸ | ✅ | ✅ | ~⁷ | — | — |
 | Audit-Log | ✅ | ✅ | ✅ | ~⁷ | — | — |
-| MCP / Agentensteuerung | ✅ 53 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
+| MCP / Agentensteuerung | ✅ 56 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
 | **Vertrauen & Lizenz** | | | | | | |
 | Telemetrie | Anonym, Opt-out (nur Zähler) | n/a | n/a | n/a | n/a | n/a |
 | Migration zu Tugra (Import aus Coolify) | ✅⁹ | — | — | — | — | — |
@@ -192,7 +192,7 @@ Live-Logs, Metriken und das Terminal werden per WebSocket gestreamt. Die vollst�
 - [x] Live-Metriken, Build-Logs & Web-Terminal (WebSocket-Streams; das Terminal ist per Capability abgesichert und standardmäßig deaktiviert)
 - [x] Datenbanken (9 Engines) mit Backups & Restore (lokal + S3/R2 offsite)
 - [x] Multi-Server-Cluster + Aufbau von Docker Swarm, Bulk-Operationen über die Flotte
-- [x] Nativer MCP-Server — 53 Tools (lesende sowie schreibende und Flotten-Tools mit PAT-Scope) + geführte Prompts
+- [x] Nativer MCP-Server — 56 Tools (lesende sowie schreibende und Flotten-Tools mit PAT-Scope) + geführte Prompts
 - [x] App Store — 280+ Ein-Klick-Vorlagen + Home-Mode-Launcher
 - [x] Schreibgeschützter Datei-Browser für App-Volumes (Web-UI + MCP `list_files`)
 - [x] Preview-Deployments (pro Pull Request)

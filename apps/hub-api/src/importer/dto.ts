@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { VOLUME_NAME_RE } from "./migration-volume";
+import { ImportMappingDocSchema } from "./import-mapping";
 
 /**
  * The REMOTE (copy-mode) source PaaS kinds the importer can connect to over an API with a stored session.
@@ -20,6 +21,9 @@ export const ImportConnectSchema = z.object({
   teamId: z.string().min(1),
   baseUrl: z.string().url().max(2048),
   token: z.string().min(1).max(4096),
+  /** Optional label for the source team/token (a Coolify token is team-scoped, so 8 teams = 8 sessions). It keys
+   *  the persisted mapping profile; never sent to the source. */
+  scopeLabel: z.string().regex(/^[a-z0-9._-]{1,64}$/).optional(),
 });
 export type ImportConnectInput = z.infer<typeof ImportConnectSchema>;
 
@@ -85,6 +89,15 @@ export const ServiceChoiceSchema = z
 export type ServiceChoice = z.infer<typeof ServiceChoiceSchema>;
 export const ServiceChoicesSchema = z.record(z.string().min(1).max(256), ServiceChoiceSchema).refine((r) => Object.keys(r).length <= 64, "at most 64 service choices");
 
+const mappingHash = z.string().regex(/^[a-f0-9]{32}$/, "invalid mappingHash");
+/** The editable-mapping fields of a remote apply. `mapping` and `mappingHash` travel together (refined below). */
+const remoteMappingFields = {
+  mapping: ImportMappingDocSchema.optional(),
+  mappingHash: mappingHash.optional(),
+  reconcile: z.boolean().optional(),
+  ignoreStoredMapping: z.boolean().optional(),
+  saveMapping: z.boolean().optional(),
+};
 const remoteApplyFields = {
   sessionId: z.string().min(1),
   targetServerId: z.string().min(1),
@@ -92,12 +105,20 @@ const remoteApplyFields = {
   planHash,
   acks: z.array(ImportAckSchema).max(2000).optional(),
   serviceChoices: ServiceChoicesSchema.optional(),
+  ...remoteMappingFields,
 };
-export const ImportApplySchema = z.discriminatedUnion("sourceKind", [
-  z.object({ sourceKind: z.literal("local-docker"), serverId: z.string().min(1), planHash }),
-  z.object({ sourceKind: z.literal("coolify"), ...remoteApplyFields }),
-  z.object({ sourceKind: z.literal("dokploy"), ...remoteApplyFields }),
-]);
+export const ImportApplySchema = z
+  .discriminatedUnion("sourceKind", [
+    z.object({ sourceKind: z.literal("local-docker"), serverId: z.string().min(1), planHash }),
+    z.object({ sourceKind: z.literal("coolify"), ...remoteApplyFields }),
+    z.object({ sourceKind: z.literal("dokploy"), ...remoteApplyFields }),
+  ])
+  .superRefine((v, ctx) => {
+    if (v.sourceKind === "local-docker") return;
+    if ((v.mapping !== undefined) !== (v.mappingHash !== undefined)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [v.mapping === undefined ? "mapping" : "mappingHash"], message: "mapping and mappingHash must be sent together" });
+    }
+  });
 export type ImportApplyInput = z.infer<typeof ImportApplySchema>;
 
 /** Preview what the service import would do (pure transform against the live source), per service, with NO secret value
@@ -129,3 +150,24 @@ export const ImportGitRelinkSchema = z.object({
   choices: z.record(z.string().min(1).max(300), z.string().min(1).max(100)).optional(),
 });
 export type ImportGitRelinkInput = z.infer<typeof ImportGitRelinkSchema>;
+
+/** Resolve a mapping against a fresh plan + a target server: the authoritative preview (effective names, placement,
+ *  conflicts) bound to a `mappingHash`. Read-only — it creates nothing. */
+export const ImportMappingResolveSchema = z.object({
+  sessionId: z.string().min(1),
+  sourceKind: z.enum(REMOTE_SOURCE_KINDS),
+  planHash,
+  targetServerId: z.string().min(1),
+  environmentId: z.string().min(1).optional(),
+  reconcile: z.boolean().optional(),
+  mapping: ImportMappingDocSchema,
+});
+export type ImportMappingResolveInput = z.infer<typeof ImportMappingResolveSchema>;
+
+/** Save the per-source mapping profile (SHAPE-validated only, so a file can be saved offline). */
+export const ImportMappingPutSchema = z.object({
+  mapping: ImportMappingDocSchema,
+  label: z.string().max(120).optional(),
+  expectedVersion: z.number().int().min(1).optional(),
+});
+export type ImportMappingPutInput = z.infer<typeof ImportMappingPutSchema>;

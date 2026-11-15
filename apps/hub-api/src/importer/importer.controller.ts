@@ -1,4 +1,5 @@
-import { Body, Controller, Get, HttpCode, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Param, Post, Put, Query, Req, UseGuards } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import { ApiTags, ApiSecurity } from "@nestjs/swagger";
 import { ApiZodBody } from "../openapi/openapi";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
@@ -25,6 +26,10 @@ import {
   type ImportGitRelinkInput,
   ImportServicesPreviewSchema,
   type ImportServicesPreviewInput,
+  ImportMappingResolveSchema,
+  type ImportMappingResolveInput,
+  ImportMappingPutSchema,
+  type ImportMappingPutInput,
 } from "./dto";
 import { ImportGitLinksService } from "./import-git-links.service";
 
@@ -118,6 +123,49 @@ export class ImporterController {
     @Body(new ZodValidationPipe(ImportGitRelinkSchema)) body: ImportGitRelinkInput,
   ) {
     return this.gitLinks.relink(user.userId, opId, body);
+  }
+
+  /**
+   * Authoritative mapping preview: re-plans against the source, then resolves the mapping document against the
+   * target server's team — effective names/placement, every conflict, and the `mappingHash` an apply must carry.
+   * Read-only (creates nothing). Reveals env-adjacent plan data like `plan`, so it needs `read:secrets`.
+   */
+  @Post("mapping/resolve")
+  @RequireScopes("read:secrets")
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @ApiZodBody(ImportMappingResolveSchema)
+  resolveMapping(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(ImportMappingResolveSchema)) body: ImportMappingResolveInput,
+  ) {
+    return this.importer.resolveMapping(user.userId, body);
+  }
+
+  /** The saved mapping profile for this session's source scope (`doc` is null when none is saved). */
+  @Get("sessions/:sessionId/mapping")
+  @RequireScopes("read:secrets")
+  getMapping(@CurrentUser() user: AuthUser, @Param("sessionId") sessionId: string) {
+    return this.importer.getMapping(user.userId, sessionId);
+  }
+
+  /** Save the mapping profile (shape-validated only, so a file can be saved offline). A stale `expectedVersion`
+   *  is refused with 409 `import.mapping_version_conflict`. */
+  @Put("sessions/:sessionId/mapping")
+  @RequireScopes("deploy")
+  @ApiZodBody(ImportMappingPutSchema)
+  putMapping(
+    @CurrentUser() user: AuthUser,
+    @Param("sessionId") sessionId: string,
+    @Body(new ZodValidationPipe(ImportMappingPutSchema)) body: ImportMappingPutInput,
+  ) {
+    return this.importer.putMapping(user.userId, sessionId, body);
+  }
+
+  /** Delete the saved mapping profile for this session's source scope. */
+  @Delete("sessions/:sessionId/mapping")
+  @RequireScopes("deploy")
+  deleteMapping(@CurrentUser() user: AuthUser, @Param("sessionId") sessionId: string) {
+    return this.importer.deleteMapping(user.userId, sessionId);
   }
 
   /** Poll an import operation's progress (read-only). */

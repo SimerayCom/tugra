@@ -52,7 +52,7 @@ curl -s https://your-tugra-host/api/v1/mcp \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_applications","arguments":{}}}'
 ```
 
-Bu, altta yatan REST API ile aynı `POST /api/v1/mcp` endpoint'idir; aynı kişisel erişim token'ıyla kimlik doğrulama, aynı scope'lar ve aynı IP allowlist geçerlidir — yönetmeniz gereken ayrı bir kimlik bilgisi yoktur ve şifresi çözülmüş hiçbir secret değeri modele döndürülmez. Katalogda **53 tool** vardır: 31'i salt okunurdur (tek çağrıda fleet durumu / sağlık / uygulama listesi özetleri ve sandbox içinde çalışan bir volume dosya tarayıcısı dahil), 22'si ise PAT scope'lu, değişiklik yapan (mutate/ops) tool'lardır (deploy · kuyruktaki deploy'u iptal etme · yeniden başlatma · canlı ölçekleme · rollback · env ayarlama · Swarm kurma/büyütme · bir cluster genelinde fleet çapında eylemler · tek tıkla alan adı DNS kurulumu). Değişiklik yapan her tool, REST API'nin ekip izin kontrollerini ve audit trail'ini birebir yeniden kullanır; geri alınamayan işlemler (Swarm'ı sonlandırma, uygulamayı silme) ise adı yazarak açık onay vermeyi gerektirir. Üçüncü taraf client'lar için OAuth henüz yol haritasındadır.
+Bu, altta yatan REST API ile aynı `POST /api/v1/mcp` endpoint'idir; aynı kişisel erişim token'ıyla kimlik doğrulama, aynı scope'lar ve aynı IP allowlist geçerlidir — yönetmeniz gereken ayrı bir kimlik bilgisi yoktur ve şifresi çözülmüş hiçbir secret değeri modele döndürülmez. Katalogda **56 tool** vardır: 33'ü salt okunurdur (tek çağrıda fleet durumu / sağlık / uygulama listesi özetleri ve sandbox içinde çalışan bir volume dosya tarayıcısı dahil), 23'ü ise PAT scope'lu, değişiklik yapan (mutate/ops) tool'lardır (deploy · kuyruktaki deploy'u iptal etme · yeniden başlatma · canlı ölçekleme · rollback · env ayarlama · Swarm kurma/büyütme · bir cluster genelinde fleet çapında eylemler · tek tıkla alan adı DNS kurulumu). Değişiklik yapan her tool, REST API'nin ekip izin kontrollerini ve audit trail'ini birebir yeniden kullanır; geri alınamayan işlemler (Swarm'ı sonlandırma, uygulamayı silme) ise adı yazarak açık onay vermeyi gerektirir. Üçüncü taraf client'lar için OAuth henüz yol haritasındadır.
 
 ## Tuğra nedir?
 
@@ -61,7 +61,7 @@ Tuğra; uygulamaları ve veritabanlarını kendi sunucularınızda deploy etmek,
 ## Neden Tuğra
 
 - **Tek sunucu değil, fleet öncelikli** — sunucuları cluster'lar halinde gruplayın, aralarında gerçek bir Docker Swarm kurun ve her sunucuya tek tek SSH ile bağlanmak yerine tüm fleet'inizde tek bir toplu işlem çağrısıyla aynı komutu çalıştırın.
-- **Yapay zekâ ajanlarına da yerel destek** — yerleşik MCP sunucusu, `POST /api/v1/mcp` üzerinden 53 tool (okuma + PAT scope'lu değişiklik yapan/fleet operasyonları) sunar; erişim REST API ile aynı kişisel erişim token'larıyla scope'lanır.
+- **Yapay zekâ ajanlarına da yerel destek** — yerleşik MCP sunucusu, `POST /api/v1/mcp` üzerinden 56 tool (okuma + PAT scope'lu değişiklik yapan/fleet operasyonları) sunar; erişim REST API ile aynı kişisel erişim token'larıyla scope'lanır.
 - **9 veritabanı motoru, tek iş akışı** — PostgreSQL, MySQL, MariaDB, MongoDB, Redis, KeyDB, Dragonfly, ClickHouse ve LibSQL; hepsi aynı şekilde kurulur. Sekizinde yerleşik mantıksal dump/restore backup'ı vardır (dump aracı olmayan LibSQL yalnızca dosya düzeyindeki volume backup'larıyla kapsanır — tutarlı bir kopya için önce uygulamayı durdurun).
 - **Gerçek TLS, gerçek wildcard'lar** — Traefik üzerinden uygulama başına otomatik Let's Encrypt ve cluster'lı/Swarm ingress için DNS-01 wildcard sertifikaları (`*.yourdomain.com`) — yalnızca tek alan adlı HTTP-01 değil.
 - **Sunucu dışı (off-site) backup'lar** — yerel diske ya da S3 uyumlu depolamaya (S3/R2/MinIO) zamanlanmış, isteğe bağlı olarak şifreli (gpg AES-256) dump'lar ve tek tıkla restore; zamanlanmış **restore-verify tatbikatları** bir backup'ın gerçekten geri yüklendiğini kanıtlar, PostgreSQL ise **belirli bir ana geri dönüş (point-in-time recovery)** sunar (WAL shipping + base backup'lar, panelden istediğiniz saniyeye restore).
@@ -105,7 +105,7 @@ Tuğra; uygulamaları ve veritabanlarını kendi sunucularınızda deploy etmek,
 | Ekipler / RBAC | ✅ | ✅ | ✅ | ~⁷ | — | — |
 | SSO / OIDC | ✅ (Pro)⁸ | ✅ | ✅ | ~⁷ | — | — |
 | Audit log | ✅ | ✅ | ✅ | ~⁷ | — | — |
-| MCP / ajan kontrolü | ✅ 53 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
+| MCP / ajan kontrolü | ✅ 56 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
 | **Güven ve lisans** | | | | | | |
 | Telemetri | Anonim, opt-out (yalnızca sayılar) | n/a | n/a | n/a | n/a | n/a |
 | Migrasyon (Coolify'dan import) | ✅⁹ | — | — | — | — | — |
@@ -192,7 +192,7 @@ Canlı log'lar, metrikler ve terminal WebSocket'ler üzerinden akar. Tüm ayrın
 - [x] Canlı metrikler, build log'ları ve web terminal (WebSocket akışları; terminal capability ile korunur ve varsayılan olarak kapalıdır)
 - [x] Backup ve restore destekli veritabanları (9 motor; yerel + S3/R2 off-site)
 - [x] Multi-server cluster'lar + Docker Swarm kurulumu, fleet genelinde toplu işlemler
-- [x] Yerleşik MCP sunucusu — 53 tool (okuma + PAT scope'lu değişiklik yapan/fleet operasyonları) + yönlendirmeli prompt'lar
+- [x] Yerleşik MCP sunucusu — 56 tool (okuma + PAT scope'lu değişiklik yapan/fleet operasyonları) + yönlendirmeli prompt'lar
 - [x] App store — 280+ tek tıkla şablon + Home modu launcher'ı
 - [x] Uygulama volume'ları için salt okunur dosya tarayıcısı (Web UI + MCP `list_files`)
 - [x] Preview deploy'lar (pull request başına)

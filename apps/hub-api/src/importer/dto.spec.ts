@@ -1,4 +1,4 @@
-import { ImportApplySchema, ImportServicesPreviewSchema, ServiceChoiceSchema, ServiceChoicesSchema } from "./dto";
+import { ImportApplySchema, ImportConnectSchema, ImportMappingPutSchema, ImportMappingResolveSchema, ImportServicesPreviewSchema, ServiceChoiceSchema, ServiceChoicesSchema } from "./dto";
 
 describe("ServiceChoiceSchema", () => {
   const ok = (v: unknown) => ServiceChoiceSchema.safeParse(v).success;
@@ -60,5 +60,55 @@ describe("ServiceChoiceSchema", () => {
     expect(ImportServicesPreviewSchema.safeParse({ sessionId: "s" }).success).toBe(true);
     expect(ImportServicesPreviewSchema.safeParse({ sessionId: "s", choices: { "service:s:1": { name: "x" } } }).success).toBe(true);
     expect(ImportServicesPreviewSchema.safeParse({ choices: {} }).success).toBe(false);
+  });
+});
+
+const H = "a".repeat(32);
+const base = { sourceKind: "coolify", sessionId: "s", targetServerId: "t", planHash: H };
+const mapping = { version: 1, items: { "app:srv:a": { name: "x" } } };
+
+describe("ImportApplySchema — editable mapping fields", () => {
+  it("an old call shape (no mapping fields) still parses unchanged", () => {
+    expect(ImportApplySchema.parse(base)).toEqual(base);
+    expect(ImportApplySchema.parse({ sourceKind: "local-docker", serverId: "s", planHash: H })).toEqual({ sourceKind: "local-docker", serverId: "s", planHash: H });
+  });
+  it("mapping and mappingHash travel together (refine)", () => {
+    expect(ImportApplySchema.safeParse({ ...base, mapping }).success).toBe(false);
+    expect(ImportApplySchema.safeParse({ ...base, mappingHash: H }).success).toBe(false);
+    const ok = ImportApplySchema.safeParse({ ...base, mapping, mappingHash: H, reconcile: true, saveMapping: false, ignoreStoredMapping: false });
+    expect(ok.success).toBe(true);
+    if (ok.success && ok.data.sourceKind === "coolify") expect(ok.data.mapping?.items["app:srv:a"]).toEqual({ name: "x" });
+  });
+  it("is strict inside the document and validates the hash shape", () => {
+    expect(ImportApplySchema.safeParse({ ...base, mapping: { version: 1, rules: [] }, mappingHash: H }).success).toBe(false);
+    expect(ImportApplySchema.safeParse({ ...base, mapping, mappingHash: "nope" }).success).toBe(false);
+  });
+  it("local-docker never takes a mapping (stripped, byte-identical behaviour)", () => {
+    const r = ImportApplySchema.parse({ sourceKind: "local-docker", serverId: "s", planHash: H, mapping, mappingHash: H });
+    expect(Object.keys(r)).not.toContain("mapping");
+  });
+});
+
+describe("ImportConnectSchema.scopeLabel", () => {
+  const c = { sourceKind: "coolify", teamId: "t", baseUrl: "https://c.example.com", token: "x" };
+  it("optional, lowercase label charset only", () => {
+    expect(ImportConnectSchema.parse(c)).toEqual(c);
+    expect(ImportConnectSchema.parse({ ...c, scopeLabel: "team-3.prod_a" }).scopeLabel).toBe("team-3.prod_a");
+    expect(ImportConnectSchema.safeParse({ ...c, scopeLabel: "Team 3" }).success).toBe(false);
+    expect(ImportConnectSchema.safeParse({ ...c, scopeLabel: "a".repeat(65) }).success).toBe(false);
+  });
+});
+
+describe("resolve / put bodies", () => {
+  it("resolve requires the mapping document and a planHash", () => {
+    const body = { sessionId: "s", sourceKind: "dokploy", planHash: H, targetServerId: "t", mapping };
+    expect(ImportMappingResolveSchema.safeParse(body).success).toBe(true);
+    expect(ImportMappingResolveSchema.safeParse({ ...body, mapping: undefined }).success).toBe(false);
+    expect(ImportMappingResolveSchema.safeParse({ ...body, sourceKind: "local-docker" }).success).toBe(false);
+  });
+  it("put validates SHAPE only (a name over the cap is a resolve conflict, not a save error)", () => {
+    expect(ImportMappingPutSchema.safeParse({ mapping: { version: 1, items: { "app:s:a": { name: "x".repeat(150) } } } }).success).toBe(true);
+    expect(ImportMappingPutSchema.safeParse({ mapping: { version: 1, items: { "app:s:a": { bogus: 1 } } } }).success).toBe(false);
+    expect(ImportMappingPutSchema.safeParse({ mapping, expectedVersion: 0 }).success).toBe(false);
   });
 });

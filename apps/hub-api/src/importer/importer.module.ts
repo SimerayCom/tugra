@@ -16,6 +16,7 @@ import { ImporterService } from "./importer.service";
 import { ImportExecutorService } from "./import-executor.service";
 import { GitLinkResolverService } from "./git-link-resolver.service";
 import { ImportGitLinksService } from "./import-git-links.service";
+import { ImportMappingService } from "./import-mapping.service";
 import { MigrationTokenService } from "./migration-token.service";
 import { MigrationTokenGuard } from "./migration-token.guard";
 import { MigrationIngestService } from "./migration-ingest.service";
@@ -31,7 +32,7 @@ import { ImportSourceFactory } from "./sources/import-source.factory";
 @Module({
   imports: [MigratorModule, CryptoModule, ApplicationsModule, DatabasesModule, BackupsModule, VolumeBackupsModule, GitSourcesModule, ProjectsModule, AgentGatewayModule],
   controllers: [ImporterController, MigrationIngestController, MigrationArtifactController],
-  providers: [ImporterService, ImportExecutorService, GitLinkResolverService, ImportGitLinksService, MigrationTokenService, MigrationTokenGuard, MigrationIngestService, CoolifyClientFactory, DokployClientFactory, ImportSourceFactory, CutoverCertService],
-  exports: [ImporterService, ImportExecutorService, CutoverCertService], // the MCP server wraps these as import_* tools
+  providers: [ImporterService, ImportExecutorService, GitLinkResolverService, ImportGitLinksService, MigrationTokenService, MigrationTokenGuard, MigrationIngestService, CoolifyClientFactory, DokployClientFactory, ImportSourceFactory, CutoverCertService, ImportMappingService],
+  exports: [ImporterService, ImportExecutorService, CutoverCertService, ImportMappingService], // the MCP server wraps these as import_* tools
 })
 export class ImporterModule {}

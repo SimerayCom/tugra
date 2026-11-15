@@ -20,7 +20,7 @@ import { mapBuildPack } from "./buildpack-map";
 import { IMPORT_REASON_CODES, type ImportReasonCode } from "@tugra/shared";
 import { why, type Reasoned, type Unmapped } from "./reason";
 import { foreignAppToCreateInput, foreignAppToIngressPlan, foreignAppToPostCreateConfig, foreignAppToVolumes } from "./apply-map";
-import { seedTasks, deriveOpStatus, type TaskSeed, type TaskStatus } from "./import-executor.logic";
+import { seedTasks, deriveOpStatus, PROVISIONABLE_ENGINES, type TaskSeed, type TaskStatus } from "./import-executor.logic";
 import { MigrationTokenService } from "./migration-token.service";
 import { assertSafeBase, buildMigrationCommand, buildMigrationCommandTemplate } from "./migration-command";
 import { cleanupOpStaging } from "./migration-staging";
