@@ -59,7 +59,8 @@ describe("renderMigratorInstallScript", () => {
     // `-v` in the script is `command -v docker`, not a mount)
     const mounts = script.match(/--mount \S+|--volume \S+/g) ?? [];
     expect(mounts.length).toBeGreaterThan(0);
-    for (const m of mounts) expect(m).toContain("docker.sock");
+    // the opt-in --certs path adds exactly one more mount: the proxy's acme.json, READ-ONLY, only when the flag is given
+    for (const m of mounts) expect(m.includes("docker.sock") || m.replace(/"$/, "") === "--mount type=bind,src=$ACME,dst=/acme/acme.json,readonly").toBe(true);
     expect(script).not.toMatch(/docker run[\s\S]*?\s-v /); // no short -v volume flag in the run
   });
 
@@ -236,5 +237,19 @@ describe("renderMigratorInstallScript", () => {
       expect(r.code).toBe(6);
       expect(r.log).not.toContain("CMD:run");
     });
+  });
+});
+
+describe("renderMigratorInstallScript --certs", () => {
+  const script = renderMigratorInstallScript({ image: "ghcr.io/simeraycom/tugra-agent:0.1.0" });
+  it("forwards --certs and --proxy-container, validates the container name", () => {
+    expect(script).toContain("--certs) WANT_CERTS=1");
+    expect(script).toContain("--proxy-container)");
+    expect(script).toContain('invalid --proxy-container');
+  });
+  it("mounts acme.json only under --certs, read-only, regular non-symlink file", () => {
+    expect(script).toContain('if [ -n "$WANT_CERTS" ]; then');
+    expect(script).toContain('[ -f "$ACME" ] && [ ! -L "$ACME" ]');
+    expect(script).toContain("dst=/acme/acme.json,readonly");
   });
 });

@@ -1103,25 +1103,25 @@ export class ImportExecutorService {
    * an accidental double-click never invalidates a command the host may already hold. The returned command
    * is shown ONCE: the token is hashed at rest and unrecoverable afterwards.
    */
-  async mintMigrationToken(userId: string, opId: string, base: string) {
+  async mintMigrationToken(userId: string, opId: string, base: string, opts: { certs?: boolean } = {}) {
     const op = await this.loadOwnedOp(userId, opId);
     await this.assertCanMigrate(userId, op);
     assertSafeBase(base); // fail fast on an unsafe hub URL BEFORE a token is minted (none left behind on 400)
     await this.captureHubBase(opId, op.meta, base); // trusted capture (actor's request) for the agent download later
     const { token, expiresAt } = await this.migrationTokens.issue(opId);
     await this.auditTokenOrElseRevoke(userId, opId, "import.migration_token.mint", expiresAt);
-    return { opId, token, expiresAt, command: buildMigrationCommand(token, base) };
+    return { opId, token, expiresAt, command: buildMigrationCommand(token, base, opts) };
   }
 
   /** Rotate the migration token: revoke the old and mint a new one atomically (works with or without a prior token). */
-  async reissueMigrationToken(userId: string, opId: string, base: string) {
+  async reissueMigrationToken(userId: string, opId: string, base: string, opts: { certs?: boolean } = {}) {
     const op = await this.loadOwnedOp(userId, opId);
     await this.assertCanMigrate(userId, op);
     assertSafeBase(base);
     await this.captureHubBase(opId, op.meta, base);
     const { token, expiresAt } = await this.migrationTokens.reissue(opId);
     await this.auditTokenOrElseRevoke(userId, opId, "import.migration_token.reissue", expiresAt);
-    return { opId, token, expiresAt, command: buildMigrationCommand(token, base) };
+    return { opId, token, expiresAt, command: buildMigrationCommand(token, base, opts) };
   }
 
   /** Persist the hub origin the AUTHENTICATED actor reached us on, so the (untrusted) ingest path can later
@@ -1144,12 +1144,12 @@ export class ImportExecutorService {
 
   /** Read-only migration state + a command TEMPLATE. Never returns the live token (hashed at rest): the UI
    *  captures the real command from the mint/reissue response once, then shows active/expiresAt + Reissue. */
-  async migrateCommand(userId: string, opId: string, base: string) {
+  async migrateCommand(userId: string, opId: string, base: string, opts: { certs?: boolean } = {}) {
     const op = await this.loadOwnedOp(userId, opId);
     const meta = typeof op.meta === "object" && op.meta ? (op.meta as { rolledBackAt?: string }) : {};
     const expiresAt = op.migrationTokenExpiresAt;
     const active = !!op.migrationTokenHash && !!expiresAt && expiresAt.getTime() > Date.now() && !op.cancelRequestedAt && !meta.rolledBackAt;
-    return { opId, active, expiresAt: active ? expiresAt : null, commandTemplate: buildMigrationCommandTemplate(base) };
+    return { opId, active, expiresAt: active ? expiresAt : null, commandTemplate: buildMigrationCommandTemplate(base, opts) };
   }
 
   /**
@@ -1618,6 +1618,11 @@ export class ImportExecutorService {
       throw new ConflictException("the import provisioned no resources to migrate data into");
     }
     return op;
+  }
+
+  /** The owned import op for the SSL/DNS cutover module (read-mostly: never reaps an in-flight `data` restore). */
+  async ownedOpForCutover(userId: string, opId: string) {
+    return this.loadOwnedOp(userId, opId, { reapData: false });
   }
 
   private async loadOwnedOp(userId: string, opId: string, opts: { reapData?: boolean } = {}) {

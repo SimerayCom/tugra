@@ -303,6 +303,8 @@ model Server {
   dnsProvider            String? // lego/Traefik DNS provider for DNS-01 (cloudflare, route53, ...)
   dnsCredsEnc            String? // encrypted JSON of provider env vars ({ CF_DNS_API_TOKEN: "..." })
   customCertResolver     String? // Traefik resolver name when certMode = "custom"
+  dnsCredentialId        String? // the team DnsCredential whose token was copied into dnsCredsEnc (coverage checks); SetNull on delete
+  dnsCredential          DnsCredential?          @relation(fields: [dnsCredentialId], references: [id], onDelete: SetNull)
   os                     String?
   osVersion              String?
   arch                   String?
@@ -377,6 +379,7 @@ model Server {
   createdAt              DateTime                @default(now())
 
   @@index([clusterId])
+  @@index([dnsCredentialId])
 }
 
 // Operator-authored Traefik dynamic-config files (Coolify "Proxy > Dynamic Configurations" parity). Each row
@@ -938,8 +941,8 @@ model CloudCredential {
 // Team-scoped DNS-provider API credential (one-click custom-domain DNS auto-setup). Mirrors CloudCredential:
 // the token is verified against the provider BEFORE encrypt+persist and is NEVER returned/logged.
 model DnsCredential {
-  id             String    @id @default(cuid())
-  team           Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  id             String          @id @default(cuid())
+  team           Team            @relation(fields: [teamId], references: [id], onDelete: Cascade)
   teamId         String
   name           String
   provider       String // "cloudflare" — only provider with a client in v1
@@ -947,7 +950,9 @@ model DnsCredential {
   cfAccountId    String? // optional Cloudflare account id (not needed for plain DNS-record writes)
   lastVerifiedAt DateTime?
   domains        Domain[] // domains whose auto-setup used this credential (SetNull on delete)
-  createdAt      DateTime  @default(now())
+  cutoverDomains CutoverDomain[]
+  servers        Server[]
+  createdAt      DateTime        @default(now())
 
   @@index([teamId])
 }
@@ -966,13 +971,13 @@ enum BulkTaskStatus {
 }
 
 model BulkOperation {
-  id                      String     @id @default(cuid())
+  id                      String          @id @default(cuid())
   actorId                 String
   // `command` is the raw fan-out command for kind="command" (the original/only use); orchestrated kinds
   // (e.g. kind="import") leave it empty and describe the work on the tasks instead.
   command                 String
   // Generalization for orchestrated operations. kind="command" is the legacy fan-out path, unchanged.
-  kind                    String     @default("command")
+  kind                    String          @default("command")
   planId                  String? // the ImportPlan (or similar) this operation executes, when applicable
   meta                    Json? // operation-level metadata (secret-free), e.g. the import source + target server
   // Cooperative cancel: set by a cancel request; the in-flight fan-out reads it before starting each
@@ -983,10 +988,13 @@ model BulkOperation {
   // opId from the token alone (the host never names the destination). Only the SHA-256 is stored (mirrors
   // ApiToken.tokenHash — the enroll token's plaintext storage is deliberately NOT copied). NULL = no live
   // token; revoke = null both columns, so the unique-hash lookup simply stops matching.
-  migrationTokenHash      String?    @unique
+  migrationTokenHash      String?         @unique
   migrationTokenExpiresAt DateTime?
   tasks                   BulkTask[]
-  createdAt               DateTime   @default(now())
+  cutoverDomains          CutoverDomain[]
+  cutoverRuns             CutoverRun[]
+  cutoverCerts            CutoverCert[]
+  createdAt               DateTime        @default(now())
 }
 
 model BulkTask {
@@ -1122,10 +1130,10 @@ enum DestType {
 }
 
 model Application {
-  id                           String             @id @default(cuid())
-  team                         Team               @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  id                           String               @id @default(cuid())
+  team                         Team                 @relation(fields: [teamId], references: [id], onDelete: Cascade)
   teamId                       String
-  environment                  Environment        @relation(fields: [environmentId], references: [id], onDelete: NoAction)
+  environment                  Environment          @relation(fields: [environmentId], references: [id], onDelete: NoAction)
   environmentId                String
   serverId                     String
   buildServerId                String? // optional separate build server (build+push there, pull+run on serverId)
@@ -1133,7 +1141,7 @@ model Application {
   // onto this cluster's swarm (commands target cluster.swarmManagerId, re-resolved fresh — never snapshotted).
   // serverId stays required as the ingress/monitoring anchor. SetNull: deleting the cluster falls the app
   // back to classic single-server deploy rather than deleting it.
-  cluster                      Cluster?           @relation(fields: [clusterId], references: [id], onDelete: SetNull)
+  cluster                      Cluster?             @relation(fields: [clusterId], references: [id], onDelete: SetNull)
   clusterId                    String?
   replicas                     Int? // swarm service replica count (null = classic single-server deploy)
   placement                    Json? // { constraints: PlacementConstraint[], spreadLabelKey: string|null } — structured, picker-sourced, never a raw docker expression from the client
@@ -1145,42 +1153,42 @@ model Application {
   // nullable marker is set to the upload time and cleared on removal: the app list reads it to know whether
   // an icon exists and to cache-bust the icon URL, without ever fetching the image bytes.
   iconUpdatedAt                DateTime?
-  source                       AppSource          @default(IMAGE)
+  source                       AppSource            @default(IMAGE)
   image                        String?
   // Image-update check (IMAGE apps only; scheduled digest probe run by the app's own agent). Operational state,
   // NOT deploy config: never enters ConfigSnapshot (snapV stays 2), never produces a drift diff.
-  imageUpdateCheck             Boolean            @default(true)
-  imageUpstreamDigest          String?            // last good upstream digest, "sha256:<64hex>"; kept across failed probes
-  imageUpstreamCheckedAt       DateTime?          // last probe attempt that produced a verdict (ok OR classified error)
-  imageUpstreamChangedAt       DateTime?          // when the CURRENT upstream digest was first observed
-  imageCheckError              String?            // closed code: auth|notfound|unsupported|timeout|failed. Never raw output.
-  imageCheckFailures           Int                @default(0) // consecutive failed probes (backoff)
-  imageUpdateNotifiedDigest    String?            // upstream digest last notified or silently seeded (notify-once dedupe)
+  imageUpdateCheck             Boolean              @default(true)
+  imageUpstreamDigest          String? // last good upstream digest, "sha256:<64hex>"; kept across failed probes
+  imageUpstreamCheckedAt       DateTime? // last probe attempt that produced a verdict (ok OR classified error)
+  imageUpstreamChangedAt       DateTime? // when the CURRENT upstream digest was first observed
+  imageCheckError              String? // closed code: auth|notfound|unsupported|timeout|failed. Never raw output.
+  imageCheckFailures           Int                  @default(0) // consecutive failed probes (backoff)
+  imageUpdateNotifiedDigest    String? // upstream digest last notified or silently seeded (notify-once dedupe)
   gitUrl                       String?
-  gitBranch                    String?            @default("main")
+  gitBranch                    String?              @default("main")
   // Pin deploys to a specific commit SHA (must be reachable from gitBranch). Null = deploy the branch HEAD
   // (byte-identical shallow clone). When set, the clone fetches full branch history + checks out this SHA.
   gitCommit                    String?
-  gitSubmodules                Boolean            @default(false)
-  gitLfs                       Boolean            @default(false)
-  gitShallowClone              Boolean            @default(true)
-  disableBuildCache            Boolean            @default(false)
-  injectEnvAsBuildArgs         Boolean            @default(false)
-  sourceCommitMode             SourceCommitMode   @default(RUNTIME)
-  buildType                    BuildType          @default(NIXPACKS)
+  gitSubmodules                Boolean              @default(false)
+  gitLfs                       Boolean              @default(false)
+  gitShallowClone              Boolean              @default(true)
+  disableBuildCache            Boolean              @default(false)
+  injectEnvAsBuildArgs         Boolean              @default(false)
+  sourceCommitMode             SourceCommitMode     @default(RUNTIME)
+  buildType                    BuildType            @default(NIXPACKS)
   dockerfilePath               String?
   dockerBuildTarget            String? // DOCKERFILE build: multi-stage target stage (docker build --target)
   baseDirectory                String? // monorepo: repo-relative subdirectory used as the build context/root (GIT apps)
   // Watch paths: glob patterns (repo-relative, leading `!` = exclude). When non-empty, a git push only
   // triggers a deploy if a changed file matches — so a monorepo doesn't rebuild every app on every push.
   // Empty = deploy on every push (the default / backward-compatible behaviour).
-  watchPaths                   String[]           @default([])
+  watchPaths                   String[]             @default([])
   // Per-app push-to-deploy switch. True (default) = a matching git push auto-deploys; false = the push is
   // acknowledged but ignored (pause auto-deploy without deleting the webhook). Preview deploys are separate.
-  autoDeploy                   Boolean            @default(true)
+  autoDeploy                   Boolean              @default(true)
   // Env var names dropped from a PR preview's copied env (so prod secrets never leak into an ephemeral
   // preview). Empty = the preview inherits the full parent env (unchanged default).
-  previewExcludeKeys           String[]           @default([])
+  previewExcludeKeys           String[]             @default([])
   // Max concurrent PR previews for this app; when a new PR would exceed it, the oldest preview is evicted.
   // Null = unlimited (the default).
   previewLimit                 Int?
@@ -1235,12 +1243,12 @@ model Application {
   // adds to the repo as a read-only deploy key.
   gitSshKeyEnc                 String?
   gitSshPublicKey              String?
-  gitSource                    GitSource?         @relation(fields: [gitSourceId], references: [id], onDelete: SetNull)
+  gitSource                    GitSource?           @relation(fields: [gitSourceId], references: [id], onDelete: SetNull)
   gitSourceId                  String?
   registryAuthEnc              String?
-  registry                     Registry?          @relation(fields: [registryId], references: [id], onDelete: SetNull)
+  registry                     Registry?            @relation(fields: [registryId], references: [id], onDelete: SetNull)
   registryId                   String? // team registry to push the built image to (when pushToRegistry)
-  pushToRegistry               Boolean            @default(false)
+  pushToRegistry               Boolean              @default(false)
   pushImageName                String? // custom pushed repo path (relative to the registry namespace); null = tugra_<id>
   pushImageTag                 String? // mutable ALIAS tag template ({sha}/{branch}); null = no alias. The immutable :<deploymentId> tag is always pushed
   composeHookService           String? // COMPOSE only: the service the pre/post-deploy hook runs in
@@ -1260,39 +1268,39 @@ model Application {
   // --cap-add/host-ns/docker.sock/host binds. true = the INSTANCE OWNER opted this app in (self-hosted, own
   // box). Settable ONLY by the instance owner over a session (never a PAT / apps:config member). The
   // Tugra-integrity flags (traefik.* labels, --name, --env-file) stay blocked regardless.
-  allowPrivilegedDockerOptions Boolean            @default(false)
+  allowPrivilegedDockerOptions Boolean              @default(false)
   // IMAGE/GIT classic (docker run) container command override, exec-form argv (string[]). Replaces the image
   // ENTRYPOINT / CMD. containerEntrypoint [] clears the image entrypoint; null on either = image default.
   containerEntrypoint          Json?
   containerCommand             Json?
   // Operator custom container labels (classic docker-run + swarm). {key: value}; never holds a reserved-namespace key. null = none.
   customLabels                 Json?
-  dbNetwork                    Boolean            @default(false) // opt-in: also attach this app to the node-local managed-DB network (tugra-net) so it resolves tugra_db_<id> by name
+  dbNetwork                    Boolean              @default(false) // opt-in: also attach this app to the node-local managed-DB network (tugra-net) so it resolves tugra_db_<id> by name
   hostPort                     Int?
-  containerPort                Int?               @default(80)
+  containerPort                Int?                 @default(80)
   // Extra published ports beyond the ingress one: [{hostPort, containerPort, protocol: "tcp"|"udp"}].
   // Emitted as additional docker -p flags (classic apps). Null/empty = just the single ingress port.
   extraPorts                   Json?
   // Docker network aliases → extra `--network-alias` names on the app's user-defined network (tugra-proxy
   // when it has a domain, else tugra-net when db-linked), so OTHER containers resolve it by these names.
   // Empty = none. Reset (NOT copied) on clone/preview — a duplicate alias on the shared network collides.
-  networkAliases               String[]           @default([])
+  networkAliases               String[]             @default([])
   domain                       String?
-  extraDomains                 String[]           @default([]) // additional hostnames (aliases) routed to the same container as `domain`
+  extraDomains                 String[]             @default([]) // additional hostnames (aliases) routed to the same container as `domain`
   domainRedirect               String?
-  securityHeaders              Boolean            @default(false)
-  gzip                         Boolean            @default(false) // enable a Traefik compress middleware on the routed app (gzip/brotli responses)
+  securityHeaders              Boolean              @default(false)
+  gzip                         Boolean              @default(false) // enable a Traefik compress middleware on the routed app (gzip/brotli responses)
   forwardAuth                  String?
   // IP allowlist (CIDRs/addresses) → a Traefik ipallowlist middleware admitting only these source ranges.
   // Empty = open to all (the default). Applies on the next deploy.
-  ipAllowlist                  String[]           @default([])
+  ipAllowlist                  String[]             @default([])
   // HTTP Basic Auth users as [{user, hash}] — hash is a Traefik-compatible bcrypt htpasswd hash (the
   // plaintext password is never stored). Null/empty = no basic auth. Applies on the next deploy.
   basicAuthUsers               Json?
   // Path-prefix routing: serve the app under <domain>/<pathPrefix> (Traefik PathPrefix). Null = host root.
   // stripPrefix (default true) removes the prefix before forwarding to the backend. Applies on next deploy.
   pathPrefix                   String?
-  stripPrefix                  Boolean            @default(true)
+  stripPrefix                  Boolean              @default(true)
   // Per-app rate limit {average, burst, period:'1s'|'1m'|'1h'} → a Traefik ratelimit middleware. Null = off.
   rateLimit                    Json?
   // Custom redirect rules [{regex, replacement, permanent}] → one Traefik redirectregex middleware each,
@@ -1306,41 +1314,41 @@ model Application {
   drainSec                     Int? // ROLLING only: seconds both containers serve before the old is stopped, 0..300
   restartMaxRetries            Int? // 1..1000, only with restartPolicy "on-failure"
   containerAlias               String? // stable DNS label on every network the app joins; reset (NOT copied) on clone
-  networks                     String[]           @default([]) // extra user Docker networks the app joins (created on deploy)
-  https                        Boolean            @default(true)
-  domainKind                   String             @default("none") // "none" | "magic" | "custom" — is the domain user-set or generated
-  exposeMode                   String             @default("magic") // create preference: "magic" | "port" | "none" | "custom"
-  tunnelExposed                Boolean            @default(false) // per-app opt-in: route this app's hostname through the server's Cloudflare Tunnel
-  certType                     String             @default("http") // "http" | "none" | "le-http" | "le-dns" | "custom"
+  networks                     String[]             @default([]) // extra user Docker networks the app joins (created on deploy)
+  https                        Boolean              @default(true)
+  domainKind                   String               @default("none") // "none" | "magic" | "custom" — is the domain user-set or generated
+  exposeMode                   String               @default("magic") // create preference: "magic" | "port" | "none" | "custom"
+  tunnelExposed                Boolean              @default(false) // per-app opt-in: route this app's hostname through the server's Cloudflare Tunnel
+  certType                     String               @default("http") // "http" | "none" | "le-http" | "le-dns" | "custom"
   // Operator-uploaded custom TLS cert (certType "custom"): Traefik serves it statically by SNI (no ACME).
   // certPem is the public chain; certKeyEnc is the encrypted private key; certDomains/certNotAfter are
   // parsed at upload for display. All null unless a custom cert was uploaded.
   certPem                      String?
   certKeyEnc                   String?
-  certDomains                  String[]           @default([])
+  certDomains                  String[]             @default([])
   certNotAfter                 DateTime?
-  deployStrategy               String             @default("ROLLING") // "ROLLING" (zero-downtime) | "RECREATE"
-  rollbackOnFailure            Boolean            @default(true) // auto-rollback to the previous version on a failed health gate
+  deployStrategy               String               @default("ROLLING") // "ROLLING" (zero-downtime) | "RECREATE"
+  rollbackOnFailure            Boolean              @default(true) // auto-rollback to the previous version on a failed health gate
   imagesToKeep                 Int? // rollback images retained for keep-N pruning (1..20); null → DEFAULT_DEPLOY_IMAGE_KEEP (5)
-  postCutoverSoakSec           Int                @default(30) // ROLLING: seconds to keep the previous container after cutover and auto-revert on a sustained failure (new apps default to 30; 0 = off; existing rows were not backfilled)
-  status                       AppStatus          @default(NEW)
-  webhookToken                 String?            @unique
+  postCutoverSoakSec           Int                  @default(30) // ROLLING: seconds to keep the previous container after cutover and auto-revert on a sustained failure (new apps default to 30; 0 = off; existing rows were not backfilled)
+  status                       AppStatus            @default(NEW)
+  webhookToken                 String?              @unique
   webhookSecret                String?
   // Preview deployments (B6): a preview is a throwaway clone of a parent app
   // created per pull-request; the parent opts in via previewEnabled.
-  isPreview                    Boolean            @default(false)
-  previewEnabled               Boolean            @default(false)
+  isPreview                    Boolean              @default(false)
+  previewEnabled               Boolean              @default(false)
   prNumber                     Int?
   // Preview provenance: which git host's event created this preview (null = legacy/GitHub-era row) and the head commit
   // it last built (display + dedupe of metadata-only "updated" events). Metadata only: never used to build, never in a shell.
   prProvider                   String? // github | gitlab | gitea | forgejo | bitbucket | bitbucket-server
   prHeadSha                    String? // lowercase hex 7..64, else null
   parentAppId                  String?
-  tags                         String[]           @default([])
+  tags                         String[]             @default([])
   // Volume backups (Dokploy parity): back up the app's named volumes to a destination.
-  volumeBackupEnabled          Boolean            @default(false)
+  volumeBackupEnabled          Boolean              @default(false)
   volumeBackupIntervalHours    Int?
-  volumeBackupRetention        Int                @default(7)
+  volumeBackupRetention        Int                  @default(7)
   volumeBackupDestinationId    String?
   // Optional 5-field cron (wins over volumeBackupIntervalHours) + age / total-size (GiB) retention.
   volumeBackupCron             String?
@@ -1348,22 +1356,26 @@ model Application {
   volumeBackupMaxSizeGb        Int?
   volumeBackups                VolumeBackup[]
   volumeBackupPolicies         VolumeBackupPolicy[]
-  parent                       Application?       @relation("AppPreviews", fields: [parentAppId], references: [id], onDelete: Cascade)
-  previews                     Application[]      @relation("AppPreviews")
+  parent                       Application?         @relation("AppPreviews", fields: [parentAppId], references: [id], onDelete: Cascade)
+  previews                     Application[]        @relation("AppPreviews")
   deployments                  Deployment[]
   scheduledTasks               ScheduledTask[]
   domains                      Domain[]
+  cutoverDomains               CutoverDomain[]
+  // Issue this custom domain's certificate with DNS-01 (per host, no wildcard) through the server's DNS-01 resolver.
+  // A separate flag (not certType) so a later domain edit that resets certType to le-http never silently drops it.
+  dnsChallenge                 Boolean              @default(false)
   serviceDomains               AppServiceDomain[]
   databaseLinks                AppDatabaseLink[]
   secretRefs                   SecretRef[]
   icon                         AppIcon?
   logDrains                    LogDrain[]
-  createdAt                    DateTime           @default(now())
+  createdAt                    DateTime             @default(now())
 
-  @@index([environmentId])
-  @@index([parentAppId])
   @@unique([serverId, containerAlias])
   @@unique([registryId, pushImageName])
+  @@index([environmentId])
+  @@index([parentAppId])
 }
 
 // A per-app custom icon (user-uploaded PNG), stored inline in Postgres so it rides the normal DB backups —
@@ -2013,27 +2025,27 @@ enum AppMovePhase {
 
 /// A persisted "move this app to another server" job. The app keeps its id; only Application.serverId flips (inside the cutover tx).
 model AppMove {
-  id              String       @id @default(cuid())
+  id              String        @id @default(cuid())
   appId           String // LOOSE ref, NO FK/cascade (like RolloutTarget.resourceId): archive purge + audit survive app deletion
   appName         String // snapshot
   teamId          String
   requestedBy     String
   sourceServerId  String // loose strings like Application.serverId
   targetServerId  String
-  phase           AppMovePhase @default(QUEUED)
+  phase           AppMovePhase  @default(QUEUED)
   prevStatus      AppStatus // app.status at claim time
   plan            Json // frozen preflight result (no secret values, no env values)
-  acks            Json         @default("{}")
-  repointDns      Boolean      @default(false)
-  retainDays      Int          @default(7) // 0 = purge source volumes right after COMPLETED
-  volumes         Json         @default("[]") // [{name,dockerName,kind:"app"|"compose",sizeBytes,state,parts,partsDone,bytesDone,entries,createdOnTarget,archiveOverwritten}]
+  acks            Json          @default("{}")
+  repointDns      Boolean       @default(false)
+  retainDays      Int           @default(7) // 0 = purge source volumes right after COMPLETED
+  volumes         Json          @default("[]") // [{name,dockerName,kind:"app"|"compose",sizeBytes,state,parts,partsDone,bytesDone,entries,createdOnTarget,archiveOverwritten}]
   snapshotBefore  Json? // pre-image of every Application column the cutover changes (+ logDrain ids); NEVER env*/cert key columns
   deploymentId    String?
-  warnings        Json         @default("[]")
+  warnings        Json          @default("[]")
   failureReason   String? // stable machine code (i18n suffix)
   failurePhase    AppMovePhase?
   logTail         String? // scrubbed, <= 16 KiB, writer-only
-  cancelRequested Boolean      @default(false)
+  cancelRequested Boolean       @default(false)
   ownerId         String? // hub bootId driving the job (DeployLeaseService.bootId); NULL = awaiting recovery
   heartbeatAt     DateTime?
   deadlineAt      DateTime?
@@ -2043,7 +2055,7 @@ model AppMove {
   archiveUntil    DateTime?
   sourcePurgedAt  DateTime? // source archive volumes removed (or consumed by a move-back)
   targetPurgedAt  DateTime? // target leftovers of a rolled-back/failed move removed
-  createdAt       DateTime     @default(now())
+  createdAt       DateTime      @default(now())
 
   // NOTE: a partial unique index "AppMove_one_active_per_app" ON AppMove(appId) WHERE phase NOT IN
   // ('COMPLETED','ROLLED_BACK','FAILED') (20261119110000_app_move migration) is the DB backstop for "one live move
@@ -2115,4 +2127,94 @@ model ObjectMigrationBucket {
 
   @@unique([migrationId, srcBucket])
   @@unique([migrationId, idx])
+}
+
+/// One hostname of an imported app on its way from the source PaaS to Tugra (SSL/DNS cutover). The state machine
+/// is PLANNED -> CERT_PENDING -> CERT_READY -> READY -> SWITCHING -> SWITCHED -> VERIFIED (+ side states). The
+/// ledger holds every DNS record write with its before-image (IPs, ids, TTLs only — never a token).
+model CutoverDomain {
+  id              String         @id @default(cuid())
+  operation       BulkOperation  @relation(fields: [opId], references: [id], onDelete: Cascade)
+  opId            String
+  application     Application    @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  applicationId   String
+  hostname        String
+  role            String         @default("primary") // primary | alias | counterpart | service
+  state           String         @default("PLANNED")
+  blockReason     String? // machine code for BLOCKED / CONFLICT / EXCLUDED
+  dnsMode         String         @default("manual") // cloudflare | manual
+  dnsCredential   DnsCredential? @relation(fields: [dnsCredentialId], references: [id], onDelete: SetNull)
+  dnsCredentialId String?
+  zoneId          String?
+  sslMode         String? // Cloudflare zone SSL mode at last read (flexible|full|strict|off|unknown)
+  challenge       String         @default("http01") // dns01 | http01
+  targetIps       Json? // {"v4":[],"v6":[]} snapshot
+  ledger          Json? // LedgerRecord[]
+  viaWildcard     Boolean        @default(false)
+  proxied         Boolean?
+  dnsObserved     String         @default("unknown")
+  originalTtl     Int?
+  targetTtl       Int?
+  ttlLoweredAt    DateTime?
+  earliestFlipAt  DateTime?
+  certState       String         @default("unknown") // unknown|pending|ready|default-cert|untrusted|wrong-host|expired|error
+  certIssuer      String?
+  certNotAfter    DateTime?
+  certError       String?
+  precheck        Json? // {tls,http80,https,probeVia,at}; no key material
+  precheckAt      DateTime?
+  needsDeploy     Boolean        @default(false)
+  stateful        Boolean        @default(false)
+  warnings        String[]       @default([])
+  flippedAt       DateTime?
+  verifiedAt      DateTime?
+  finalizedAt     DateTime?
+  revertedAt      DateTime?
+  lastError       String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@unique([opId, applicationId, hostname])
+  @@index([opId])
+  @@index([applicationId])
+  @@index([dnsCredentialId])
+}
+
+/// One live (or finished) batched flip run for an import op. `activeKey` = opId while running, else NULL, and is
+/// UNIQUE: a second concurrent flip fails the insert (one live run per op).
+model CutoverRun {
+  id          String        @id @default(cuid())
+  operation   BulkOperation @relation(fields: [opId], references: [id], onDelete: Cascade)
+  opId        String
+  activeKey   String?       @unique
+  status      String        @default("running") // running | halted | done | cancelled
+  params      Json
+  total       Int
+  batchesDone Int           @default(0)
+  heartbeatAt DateTime      @default(now())
+  lastError   String?
+  startedAt   DateTime      @default(now())
+  finishedAt  DateTime?
+
+  @@index([opId])
+}
+
+/// A source-host ACME certificate staged by `tugra-agent migrate --certs` until it is merged into the target
+/// proxy's acme.json. keyEnc is CryptoService ciphertext of the private key PEM and is '' once applied/purged.
+model CutoverCert {
+  id              String        @id @default(cuid())
+  operation       BulkOperation @relation(fields: [opId], references: [id], onDelete: Cascade)
+  opId            String
+  hosts           String[]
+  certPem         String
+  keyEnc          String
+  fingerprint     String
+  notBefore       DateTime
+  notAfter        DateTime
+  appliedAt       DateTime?
+  appliedServerId String?
+  createdAt       DateTime      @default(now())
+
+  @@unique([opId, fingerprint])
+  @@index([opId])
 }

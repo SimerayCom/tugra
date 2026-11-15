@@ -48,10 +48,15 @@ export const NetworkSettingsSchema = z
       .nullable()
       .optional(),
     customCertResolver: z.string().trim().max(64).nullable().optional(),
+    // Reuse a team DnsCredential (Cloudflare) as this server's DNS-01 resolver token: the token is COPIED (encrypted)
+    // into the server's DNS-01 creds and the credential id remembered for zone-coverage checks. null forgets the
+    // link only (typed creds are never cleared by it). Mutually exclusive with dnsCreds.
+    dnsFromCredentialId: z.string().trim().min(1).max(64).nullable().optional(),
     // How the reverse proxy publishes :80/:443. Takes effect when the proxy is RECREATED —
     // the next deploy of a domained app, or a proxy Start — NOT on a plain proxy Restart (which keeps the
     // running container's port bindings).
     proxyBind: z.enum(["public", "loopback", "none"]).optional(),
   })
-  .refine((d) => Object.keys(d).length > 0, { message: "provide at least one field" });
+  .refine((d) => Object.keys(d).length > 0, { message: "provide at least one field" })
+  .refine((d) => !(d.dnsFromCredentialId && d.dnsCreds), { message: "dnsFromCredentialId and dnsCreds are mutually exclusive" });
 export type NetworkSettingsInput = z.infer<typeof NetworkSettingsSchema>;

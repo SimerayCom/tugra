@@ -8,6 +8,7 @@ import { SwarmProxyService } from "../clusters/swarm-proxy.service";
 import { isAlwaysBlockedIp, isIpv6, isPublicIp } from "../common/observed-ip";
 import { DnsCredentialsService } from "./dns-credentials.service";
 import { DnsLookupService } from "./dns-lookup.service";
+import { caaAllowsLetsEncrypt, stepAction, type LedgerRecord, type ProviderRec } from "../cutover/cutover.logic";
 
 /**
  * A planned DNS record and what applying it will do:
@@ -271,6 +272,158 @@ export class DnsAutomationService {
         .catch(() => undefined);
     }
     return { removed, failed };
+  }
+
+  // ── cutover primitives (SSL/DNS cutover of imported apps; the existing auto-setup above is untouched) ──
+
+  /** Read-only: the Cloudflare zone (and its SSL mode) a hostname lives in under a team credential, or null when
+   *  the credential cannot see one. Other API errors (bad token, 429) propagate — never reported as "no zone". */
+  async findZoneFor(userId: string, credentialId: string, hostname: string): Promise<{ zoneId: string; zoneName: string; apex: boolean; sslMode: string } | null> {
+    const c = await this.creds.resolveToken(userId, credentialId);
+    if (c.provider !== "cloudflare") throw new BadRequestException("only the cloudflare provider is supported");
+    try {
+      const { zoneId, zoneName } = await this.cf.findZoneForHostname(c.token, this.normalizeHostname(hostname), c.cfAccountId);
+      const sslMode = await this.cf.getZoneSslMode(c.token, zoneId).catch(() => "unknown");
+      return { zoneId, zoneName, apex: hostname.toLowerCase() === zoneName.toLowerCase(), sslMode };
+    } catch (e) {
+      if (e instanceof Error && (e as { status?: number }).status === 404) return null;
+      throw e;
+    }
+  }
+
+  /** Read-only: every record at the exact name (all types), normalised for the cutover planner. */
+  async listRecordsFor(userId: string, credentialId: string, zoneId: string, hostname: string): Promise<ProviderRec[]> {
+    const { token } = await this.creds.resolveToken(userId, credentialId);
+    const recs = await this.cf.listDnsRecords(token, zoneId, { name: this.normalizeHostname(hostname) });
+    return recs.map((r) => ({ id: r.id, type: r.type, name: r.name, content: r.content, ttl: r.ttl ?? 1, proxied: r.proxied === true }));
+  }
+
+  /** Does a CAA policy at `hostname` (or the closest parent up to the zone apex) forbid Let's Encrypt? CAA applies
+   *  at the nearest name that has any CAA record. Read-only; a lookup failure reports false (not blocking). */
+  async caaBlocksLetsEncrypt(userId: string, credentialId: string, zoneId: string, zoneName: string, hostname: string): Promise<boolean> {
+    const { token } = await this.creds.resolveToken(userId, credentialId);
+    const labels = hostname.toLowerCase().split(".");
+    const zoneLabels = zoneName.toLowerCase().split(".").length;
+    for (let i = 0; labels.length - i >= zoneLabels; i++) {
+      const name = labels.slice(i).join(".");
+      const recs = await this.cf.listDnsRecords(token, zoneId, { name, type: "CAA" }).catch(() => [] as DnsRecord[]);
+      if (recs.length > 0) return !caaAllowsLetsEncrypt(recs.map((r) => r.content));
+    }
+    return false;
+  }
+
+  /** The zone's SSL mode ("strict" | "full" | "flexible" | "off"), or "unknown" when the token cannot read it. */
+  async zoneSslMode(userId: string, credentialId: string, zoneId: string): Promise<string> {
+    const { token } = await this.creds.resolveToken(userId, credentialId);
+    return this.cf.getZoneSslMode(token, zoneId).catch(() => "unknown");
+  }
+
+  /** PATCH only the TTL of existing records (ledger-first is the caller's job). Proxied records are skipped. */
+  async setRecordTtls(userId: string, credentialId: string, zoneId: string, recs: Array<{ id: string; ttl: number }>): Promise<void> {
+    const { token } = await this.creds.resolveToken(userId, credentialId);
+    for (const r of recs) await this.cf.patchDnsRecord(token, zoneId, r.id, { ttl: r.ttl });
+  }
+
+  /**
+   * Execute the ledger steps in order. `onStep` is called after EVERY provider write returns (the caller persists
+   * the ledger there, so a crash mid-batch leaves `written` accurate). A created record's id is stored on the step.
+   * Steps already `written` are skipped (resume).
+   */
+  async applyLedger(userId: string, credentialId: string, zoneId: string, steps: LedgerRecord[], onStep?: (steps: LedgerRecord[]) => Promise<void>): Promise<LedgerRecord[]> {
+    const { token } = await this.creds.resolveToken(userId, credentialId);
+    for (const s of steps) {
+      if (s.written) continue;
+      const a = stepAction(s);
+      if (a === "create") {
+        const { recordId } = await this.cf.createDnsRecord(token, zoneId, { type: s.type, name: s.name, content: s.new!.content, proxied: s.new!.proxied, ttl: s.new!.ttl });
+        s.recordId = recordId;
+      } else if (a === "update") {
+        await this.cf.patchDnsRecord(token, zoneId, s.recordId!, { content: s.new!.content, ttl: s.new!.ttl, proxied: s.new!.proxied });
+      } else if (a === "delete") {
+        await this.cf.deleteDnsRecord(token, zoneId, s.recordId!);
+      }
+      s.written = true;
+      s.writtenAt = new Date().toISOString();
+      if (onStep) await onStep(steps);
+    }
+    return steps;
+  }
+
+  /**
+   * Undo written ledger steps in reverse order. TWO-PHASE: first read every touched record; a record that no
+   * longer equals what we wrote (content + proxied; TTL may legitimately have been restored by finalize) is a
+   * conflict, and unless `force` NOTHING is written. Then restore: delete what we created, PATCH back what we
+   * updated, recreate what we deleted.
+   */
+  async restoreLedger(userId: string, credentialId: string, zoneId: string, steps: LedgerRecord[], opts: { force: boolean }): Promise<{ restored: number; conflicts: LedgerRecord[] }> {
+    const { token } = await this.creds.resolveToken(userId, credentialId);
+    const written = steps.filter((s) => s.written && stepAction(s) !== "noop");
+    const names = [...new Set(written.map((s) => s.name))];
+    const current = new Map<string, DnsRecord>();
+    for (const n of names) for (const r of await this.cf.listDnsRecords(token, zoneId, { name: n })) current.set(r.id, r);
+    const same = (cur: DnsRecord | undefined, v: { content: string; proxied: boolean } | null) =>
+      !!cur && !!v && cur.content === v.content && (cur.proxied === true) === v.proxied;
+    const conflicts: LedgerRecord[] = [];
+    for (const s of written) {
+      const a = stepAction(s);
+      if (a === "delete") continue; // a deleted record has nothing to compare; recreate below
+      if (a === "create" && !current.has(s.recordId!)) continue; // already gone: fine
+      if (!same(current.get(s.recordId!), s.new)) conflicts.push(s);
+    }
+    if (conflicts.length && !opts.force) return { restored: 0, conflicts };
+    let restored = 0;
+    for (const s of [...written].reverse()) {
+      const a = stepAction(s);
+      if (a === "create") {
+        if (current.has(s.recordId!)) await this.cf.deleteDnsRecord(token, zoneId, s.recordId!);
+        restored++;
+      } else if (a === "update") {
+        await this.cf.patchDnsRecord(token, zoneId, s.recordId!, { content: s.old!.content, ttl: s.old!.ttl, proxied: s.old!.proxied });
+        restored++;
+      } else if (a === "delete") {
+        const already = [...current.values()].some((r) => r.type === s.type && r.name === s.name && r.content === s.old!.content);
+        if (!already) {
+          const { recordId } = await this.cf.createDnsRecord(token, zoneId, { type: s.type, name: s.name, content: s.old!.content, proxied: s.old!.proxied, ttl: s.old!.ttl });
+          s.recordId = recordId;
+        }
+        restored++;
+      }
+    }
+    return { restored, conflicts: opts.force ? conflicts : [] };
+  }
+
+  /** After a verified flip: put each surviving record's TTL back to what it was (auto stays auto; a record Tugra
+   *  created goes to auto). Proxied records and deleted steps are skipped. */
+  async restoreTtls(userId: string, credentialId: string, zoneId: string, steps: LedgerRecord[], originalTtl?: number | null): Promise<number> {
+    const { token } = await this.creds.resolveToken(userId, credentialId);
+    let n = 0;
+    for (const s of steps) {
+      if (!s.written || !s.new || s.new.proxied || !s.recordId) continue;
+      const want = s.old ? (originalTtl ?? s.old.ttl) : 1; // a created record goes to auto; a pre-existing one back to its pre-cutover TTL
+      if (want === s.new.ttl) continue;
+      await this.cf.patchDnsRecord(token, zoneId, s.recordId, { ttl: want });
+      n++;
+    }
+    return n;
+  }
+
+  /** Make the Domain row exist (so the existing verify() works for a flipped host) and record ownership of the
+   *  records Tugra CREATED (only those are ever cleaned up). Merges with a row from an earlier auto-setup. */
+  async upsertDomainRow(appId: string, hostname: string, credentialId: string, zoneId: string, steps: LedgerRecord[]): Promise<void> {
+    const existing = await this.prisma.domain.findUnique({ where: { applicationId_hostname: { applicationId: appId, hostname } }, select: { recordIds: true } });
+    const prior: OwnedRecord[] = Array.isArray(existing?.recordIds) ? (existing!.recordIds as unknown as OwnedRecord[]) : [];
+    const byId = new Map(prior.map((r) => [r.recordId, r]));
+    for (const s of steps) {
+      if (!s.written || !s.new || !s.recordId) continue;
+      const prev = byId.get(s.recordId);
+      byId.set(s.recordId, { type: s.type, name: s.name, recordId: s.recordId, created: (prev?.created ?? false) || s.old === null });
+    }
+    const common = { dnsCredentialId: credentialId, zoneId, recordIds: [...byId.values()] as unknown as object, mode: "auto", status: "pending", lastError: null };
+    await this.prisma.domain.upsert({
+      where: { applicationId_hostname: { applicationId: appId, hostname } },
+      create: { applicationId: appId, hostname, apex: false, provider: "cloudflare", ...common },
+      update: common,
+    });
   }
 
   // ── internals ──

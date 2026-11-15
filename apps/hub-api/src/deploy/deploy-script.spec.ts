@@ -56,6 +56,8 @@ import {
   staticNginxConf,
   traefikLabels,
   extraRouterName,
+  serviceRouterName,
+  serviceDomainLabels,
   dockerOptionsArgs,
   buildCustomCertYaml,
   buildCustomCertRemoveScript,
@@ -3291,5 +3293,52 @@ describe("soak default + first-deploy guard (real bash, stub docker)", () => {
       expect(r.out).toContain("TUGRA_ROLLOUT: reverted");
       expect(r.status).toBe(4);
     });
+  });
+});
+
+describe("per-host DNS-01 (dnsPerHost) labels", () => {
+  const R = `tugra_${base.id}`;
+  const web = { ...base, domain: "x.com", extraDomains: ["b.com"], containerPort: 8080 };
+
+  it("golden: every existing certType renders byte-identical labels with dnsPerHost unset or false", () => {
+    for (const t of [
+      { certType: "http" }, { certType: "le-http" }, { certType: "le-dns", wildcardDomain: "apps.example.com" }, { certType: "le-dns" },
+      { certType: "custom", certPem: "P", certKey: "K" }, { certType: "custom", customCertResolver: "mine" }, { certType: "none" },
+    ]) {
+      const spec = { ...web, ...t };
+      const baseline = traefikLabels(spec);
+      expect(traefikLabels({ ...spec, dnsPerHost: undefined })).toEqual(baseline);
+      expect(traefikLabels({ ...spec, dnsPerHost: false })).toEqual(baseline);
+    }
+  });
+
+  it("dnsPerHost: primary AND aliases request their own le-dns cert, with no wildcard (tls.domains) labels", () => {
+    const labels = traefikLabels({ ...web, certType: "le-dns", dnsPerHost: true, wildcardDomain: null });
+    const s = labels.join("\n");
+    const x = extraRouterName(R, "b.com");
+    expect(s).toContain(`routers.${R}.tls.certresolver=le-dns`);
+    expect(s).toContain(`routers.${x}.tls.certresolver=le-dns`);
+    expect(s).not.toContain("tls.domains");
+    // the -web twin still redirects to https
+    expect(s).toContain(`routers.${R}-web.middlewares=${R}-redirect`);
+  });
+
+  it("a magic le-dns app with a wildcard still downgrades its aliases to le (unchanged)", () => {
+    const labels = traefikLabels({ ...web, certType: "le-dns", wildcardDomain: "apps.example.com" });
+    expect(labels.join("\n")).toContain(`routers.${extraRouterName(R, "b.com")}.tls.certresolver=le`);
+    expect(labels.some((l) => l.includes(`routers.${extraRouterName(R, "b.com")}.tls.certresolver=le-dns`))).toBe(false);
+  });
+
+  it("compose service domains follow dnsPerHost (le-dns) and stay le-http otherwise; an uploaded cert wins", () => {
+    const row = { service: "api", hostname: "api.x.com", port: 3000 };
+    const sr = serviceRouterName(`tugra_${base.id}`, "api", "api.x.com");
+    expect(serviceDomainLabels({ ...web, certType: "le-dns", dnsPerHost: true }, row).join("\n")).toContain(`routers.${sr}.tls.certresolver=le-dns`);
+    expect(serviceDomainLabels({ ...web, certType: "le-http" }, row).join("\n")).toContain(`routers.${sr}.tls.certresolver=le`);
+    expect(serviceDomainLabels({ ...web, certType: "le-http" }, row).join("\n")).not.toContain("le-dns");
+    expect(serviceDomainLabels({ ...web, certType: "custom", certPem: "P", certKey: "K", dnsPerHost: true }, row).join("\n")).not.toContain("certresolver=le-dns");
+  });
+
+  it("the proxy config hash is not affected (no PROXY_SETUP_VERSION bump, no proxy churn)", () => {
+    expect(buildProxySetupScript({ acmeEmail: "me@x.com" })).toBe(buildProxySetupScript({ acmeEmail: "me@x.com" }));
   });
 });

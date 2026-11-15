@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Param, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
 import { ApiTags, ApiSecurity } from "@nestjs/swagger";
 import { ApiZodBody } from "../openapi/openapi";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
@@ -146,22 +146,22 @@ export class ImporterController {
    *  response carries a credential). Shown ONCE — the token is hashed at rest. */
   @Post("operations/:opId/migration-token")
   @RequireScopes("deploy", "read:secrets")
-  mintMigrationToken(@CurrentUser() user: AuthUser, @Param("opId") opId: string, @Req() req: ReqLike) {
-    return this.executor.mintMigrationToken(user.userId, opId, hubBaseUrl(publicUrlFrom(req)));
+  mintMigrationToken(@CurrentUser() user: AuthUser, @Param("opId") opId: string, @Req() req: ReqLike, @Query("certs") certs?: string) {
+    return this.executor.mintMigrationToken(user.userId, opId, hubBaseUrl(publicUrlFrom(req)), { certs: certs === "1" });
   }
 
   /** Rotate the migration token (revoke the old + mint a new one). Same scope as mint. */
   @Post("operations/:opId/migration-token/reissue")
   @RequireScopes("deploy", "read:secrets")
-  reissueMigrationToken(@CurrentUser() user: AuthUser, @Param("opId") opId: string, @Req() req: ReqLike) {
-    return this.executor.reissueMigrationToken(user.userId, opId, hubBaseUrl(publicUrlFrom(req)));
+  reissueMigrationToken(@CurrentUser() user: AuthUser, @Param("opId") opId: string, @Req() req: ReqLike, @Query("certs") certs?: string) {
+    return this.executor.reissueMigrationToken(user.userId, opId, hubBaseUrl(publicUrlFrom(req)), { certs: certs === "1" });
   }
 
   /** Read-only migration state + a command TEMPLATE (never the live token). Read scope: it cannot return a
    *  credential (the token is unrecoverable after mint). */
   @Get("operations/:opId/migrate-command")
-  migrateCommand(@CurrentUser() user: AuthUser, @Param("opId") opId: string, @Req() req: ReqLike) {
-    return this.executor.migrateCommand(user.userId, opId, hubBaseUrl(publicUrlFrom(req)));
+  migrateCommand(@CurrentUser() user: AuthUser, @Param("opId") opId: string, @Req() req: ReqLike, @Query("certs") certs?: string) {
+    return this.executor.migrateCommand(user.userId, opId, hubBaseUrl(publicUrlFrom(req)), { certs: certs === "1" });
   }
 
   /** READ-ONLY preview of the env rewrites that would point each migrated app at its new Tugra database.

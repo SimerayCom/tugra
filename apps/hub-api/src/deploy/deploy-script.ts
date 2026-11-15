@@ -255,6 +255,10 @@ export interface AppSpec {
   certType?: string;
   /** Server's wildcard root (e.g. apps.example.com) — for a le-dns wildcard cert. */
   wildcardDomain?: string | null;
+  /** Per-host DNS-01 for a CUSTOM domain (Application.dnsChallenge): certType is le-dns but there is NO wildcard, so
+   *  the primary, every alias and every compose service-domain router request their own cert via the le-dns
+   *  resolver. Unset (every existing app) leaves all label output byte-identical. */
+  dnsPerHost?: boolean;
   /** Server's custom Traefik resolver name — for certType "custom" WITHOUT an uploaded cert (legacy
    *  operator-defined resolver). Superseded by an uploaded cert when `certPem` is present. */
   customCertResolver?: string | null;
@@ -355,7 +359,7 @@ export interface AppConfigMount {
  *  presence; the view passes placeholders. */
 export type TraefikLabelInput = Pick<
   AppSpec,
-  | "id" | "source" | "domain" | "domainRedirect" | "pathPrefix" | "stripPrefix" | "certType" | "wildcardDomain"
+  | "id" | "source" | "domain" | "domainRedirect" | "pathPrefix" | "stripPrefix" | "certType" | "wildcardDomain" | "dnsPerHost"
   | "customCertResolver" | "certPem" | "certKey" | "containerPort" | "securityHeaders" | "gzip" | "forwardAuth"
   | "ipAllowlist" | "basicAuthUsers" | "rateLimit" | "redirects" | "extraDomains" | "rollingHealthPath"
   | "dbNetwork" | "networks" | "containerAlias" | "dockerOptions"
@@ -853,7 +857,8 @@ export function traefikLabels(app: TraefikLabelInput, opts: { router?: string; e
     // defined above, so define it once here.
     if (httpOnly) labels.push(`traefik.http.middlewares.${r}-redirect.redirectscheme.scheme=https`);
     // Aliases never use the le-dns wildcard (it doesn't cover them) — fall back to HTTP-01 (le).
-    const aliasResolver = resolver === "le-dns" ? "le" : resolver;
+    // A per-host DNS-01 custom domain (dnsPerHost) has no wildcard: its aliases issue their own le-dns cert.
+    const aliasResolver = app.dnsPerHost ? resolver : resolver === "le-dns" ? "le" : resolver;
     for (const h of extras) {
       const x = extraRouterName(r, h);
       labels.push(
@@ -903,7 +908,7 @@ export function serviceDomainLabels(
     rollingHealthPath: null,
     wildcardDomain: null,
     // le-dns wildcard doesn't cover an arbitrary service host → force per-host HTTP-01 (keep an uploaded cert).
-    certType: app.certType === "custom" ? "custom" : "le-http",
+    certType: app.certType === "custom" ? "custom" : app.dnsPerHost ? "le-dns" : "le-http",
   };
   // serviceDomainLabels is only ever used in the COMPOSE override (compose interpolates the file), so a
   // basic-auth hash's `$` must be escaped to `$$`.

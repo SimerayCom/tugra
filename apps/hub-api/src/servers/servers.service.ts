@@ -21,7 +21,7 @@ import { APP_MOVE_TERMINAL } from "../common/app-move-guard";
 // A value import WOULD create a require cycle: applications.service imports
 // AgentWsServer, which imports ServersService.
 import type { ApplicationsService } from "../applications/applications.service";
-import { APPLICATIONS_SERVICE } from "../applications/applications.tokens";
+import { APPLICATIONS_SERVICE, PROXY_SERVICE } from "../applications/applications.tokens";
 import type { TunnelService } from "../tunnel/tunnel.service";
 import { TUNNEL_SERVICE } from "../tunnel/tunnel.tokens";
 import type { ProvisioningService } from "../cloud/provisioning.service";
@@ -38,6 +38,8 @@ import { hubBaseUrl, agentWsUrl } from "../common/hub-url";
 import { isDockerBridgeV4, isIpv6, isLoopbackIp, isPublicIp, reconcileReportedIp } from "../common/observed-ip";
 import { filterByQuery } from "../common/query-filter";
 import { dnsCredsIssue, trimDnsCreds } from "../common/dns-creds";
+import { dnsProviderEnvCreds } from "../deploy/panel-router";
+import type { ProxyService } from "../applications/proxy.service";
 import type { NetworkSettingsInput } from "./dto/servers.schemas";
 import { MAX_BULK_SERVERS } from "./dto/servers.schemas";
 
@@ -73,6 +75,7 @@ export const ServerViewSchema = z.object({
   certMode: z.string(),
   dnsProvider: z.string().nullable(),
   customCertResolver: z.string().nullable(),
+  dnsCredentialId: z.string().nullable(), // team DnsCredential whose token was copied into the DNS-01 creds (null = typed by hand / none)
   hasDnsCreds: z.boolean(), // whether DNS-01 creds are configured — the creds are NEVER returned
   os: z.string().nullable(),
   osVersion: z.string().nullable(),
@@ -505,12 +508,41 @@ export class ServersService {
       const issue = creds ? dnsCredsIssue(creds) : null;
       if (issue) throw new BadRequestException(issue);
       data.dnsCredsEnc = creds && Object.keys(creds).length > 0 ? this.crypto.encrypt(JSON.stringify(creds)) : null;
+      data.dnsCredential = { disconnect: true }; // typed creds replace the copied token: coverage is no longer knowable
     }
     // Proxy bind mode — persisted here; applied when the proxy is (re)started.
     if (cfg.proxyBind !== undefined) data.proxyBind = cfg.proxyBind;
 
+    // Reuse a team DNS credential as the DNS-01 resolver token (cutover pre-issue). The token is decrypted here,
+    // re-encrypted into dnsCredsEnc and NEVER returned/audited; the credential id is remembered for coverage checks.
+    let fromCredential = false;
+    if (cfg.dnsFromCredentialId && cfg.dnsCreds) throw new BadRequestException("dnsFromCredentialId and dnsCreds are mutually exclusive");
+    if (cfg.dnsFromCredentialId) {
+      const cred = await this.prisma.dnsCredential.findUnique({ where: { id: cfg.dnsFromCredentialId } });
+      if (!cred || cred.teamId !== server.teamId) throw new BadRequestException("that DNS credential does not belong to this server's team");
+      if (cred.provider !== "cloudflare") throw new BadRequestException("only a cloudflare DNS credential can be used for DNS-01");
+      let token: string;
+      try {
+        token = this.crypto.decrypt(cred.apiTokenEnc);
+      } catch {
+        throw new BadRequestException("the DNS credential's token could not be read - re-save the credential");
+      }
+      data.dnsProvider = "cloudflare";
+      data.certMode = "le-dns";
+      data.dnsCredsEnc = this.crypto.encrypt(JSON.stringify(dnsProviderEnvCreds("cloudflare", token)));
+      data.dnsCredential = { connect: { id: cred.id } };
+      fromCredential = true;
+    } else if (cfg.dnsFromCredentialId === null) {
+      data.dnsCredential = { disconnect: true }; // forget the link only; typed creds stay
+    }
+
     await this.prisma.server.update({ where: { id }, data });
-    await this.audit.log({ actor: userId, action: "server.network.update", target: id });
+    await this.audit.log({ actor: userId, action: "server.network.update", target: id, ...(fromCredential ? { meta: { dnsFromCredential: true } } : {}) });
+    // Apply the new resolver to the running proxy (no `force`: the config-hash gate recreates only when the hash
+    // changed). Best-effort - the settings are saved either way and the next deploy reconciles the proxy.
+    if (fromCredential) {
+      await this.moduleRef.get<ProxyService>(PROXY_SERVICE, { strict: false }).ensureProxy(id).catch(() => undefined);
+    }
     // The IP/wildcard drives magic domains — refresh them so live apps follow.
     // Lazy lookup by string token avoids a module/require cycle (see import note).
     await this.moduleRef
@@ -718,6 +750,7 @@ export class ServersService {
       certMode?: string;
       dnsProvider?: string | null;
       customCertResolver?: string | null;
+      dnsCredentialId?: string | null;
       dnsCredsEnc?: string | null;
       os?: string | null;
       osVersion?: string | null;
@@ -765,6 +798,7 @@ export class ServersService {
       certMode: s.certMode ?? "http",
       dnsProvider: s.dnsProvider ?? null,
       customCertResolver: s.customCertResolver ?? null,
+      dnsCredentialId: s.dnsCredentialId ?? null,
       hasDnsCreds: !!s.dnsCredsEnc,
       os: s.os ?? null,
       osVersion: s.osVersion ?? null,

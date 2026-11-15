@@ -360,4 +360,15 @@ export interface ImportPreflight {
   env?: { tokenReadOnlyApps: number };
   /** Git hosts the apps clone from (host + app count), so a non-GitHub host is visible at plan time. */
   git?: { hosts: Array<{ host: string; apps: number }> };
+  /** SSL/DNS cutover facts knowable from the source alone (the target server's own readiness is shown by the
+   *  cutover panel). Additive; NOT part of planHash. */
+  cutover?: ImportCutoverHint;
+}
+
+export interface ImportCutoverHint {
+  hosts: number; // distinct hostnames across all apps
+  /** Coolify-generated hostnames (app-<24 chars>.zone) - excluded from the cutover by default. */
+  generatedHosts: string[];
+  /** Apps whose primary host has a www/bare sibling that the source also served (the importer sets no redirect). */
+  counterpartHosts: string[];
 }

@@ -356,6 +356,9 @@ describe("foreignAppToIngressPlan", () => {
     expect(plan.unmapped.map((u) => u.field).sort()).toEqual(
       ["domain:a.com dns-01", "domain:b.com custom-cert", "domain:c.com https", "domain:e.com redirect", "domain:f.com serviceRef"].sort(),
     );
+    const dns01 = plan.unmapped.find((u) => u.field === "domain:a.com dns-01")!;
+    expect(dns01.reason).toBe("uses a DNS-01 certificate. Tugra imports it as HTTP-01; enable per-host DNS-01 on the app (Domain options) after binding a DNS credential to the server");
+    expect(plan.unmapped.find((u) => u.field === "domain:b.com custom-cert")!.reason).toMatch(/upload it in Tugra/);
     // the hosts themselves are still carried as aliases where Tugra can route them
     expect(plan.extraDomains).toEqual(["b.com", "c.com", "e.com", "f.com"]);
   });

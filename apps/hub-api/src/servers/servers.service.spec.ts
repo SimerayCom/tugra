@@ -5,6 +5,7 @@ jest.mock("./agent-auth", () => ({ ...jest.requireActual("./agent-auth"), verify
 import { DEFAULT_CAPABILITIES, ServersService } from "./servers.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
+import { NetworkSettingsSchema } from "./dto/servers.schemas";
 import { TeamAccessService } from "../common/team-access.service";
 
 const audit = { log: jest.fn() } as unknown as AuditService;
@@ -14,7 +15,8 @@ const regenerateMagicForServer = jest.fn().mockResolvedValue(undefined);
 // resolve MonitorsService lazily (auto disk monitor create/teardown). One object serves every lazy token.
 const createForServer = jest.fn().mockResolvedValue(undefined);
 const removeForServer = jest.fn().mockResolvedValue(undefined);
-const moduleRef = { get: jest.fn().mockReturnValue({ regenerateMagicForServer, createForServer, removeForServer }) } as unknown as import("@nestjs/core").ModuleRef;
+const ensureProxy = jest.fn().mockResolvedValue(undefined);
+const moduleRef = { get: jest.fn().mockReturnValue({ regenerateMagicForServer, createForServer, removeForServer, ensureProxy }) } as unknown as import("@nestjs/core").ModuleRef;
 // Crypto stub: base64 so the plaintext isn't a literal substring — tests can assert
 // the creds were encrypted (not persisted raw).
 const crypto = {
@@ -751,6 +753,55 @@ describe("ServersService.setNetwork", () => {
     } as unknown as PrismaService;
     await svcWith(prisma).setNetwork("u1", "s1", { dnsCreds: null });
     expect(update.mock.calls[0][0].data.dnsCredsEnc).toBeNull();
+  });
+});
+
+describe("ServersService.setNetwork dnsFromCredentialId", () => {
+  beforeEach(() => ensureProxy.mockClear());
+  const cred = (over: Record<string, unknown> = {}) => ({ id: "dc1", teamId: "teamA", provider: "cloudflare", apiTokenEnc: crypto.encrypt("CFTOKEN-xyz"), ...over });
+  const prismaWith = (credRow: unknown) => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue(row("s1", "teamA")), update },
+      dnsCredential: { findUnique: jest.fn().mockResolvedValue(credRow) },
+      ...owner(Role.OWNER),
+    } as unknown as PrismaService;
+    return { prisma, update };
+  };
+
+  it("copies the team credential's token (encrypted) into the DNS-01 creds, remembers the credential and applies the proxy WITHOUT force", async () => {
+    const { prisma, update } = prismaWith(cred());
+    (audit.log as jest.Mock).mockClear();
+    await svcWith(prisma).setNetwork("u1", "s1", { dnsFromCredentialId: "dc1" });
+    const data = update.mock.calls[0][0].data;
+    expect(data).toMatchObject({ certMode: "le-dns", dnsProvider: "cloudflare", dnsCredential: { connect: { id: "dc1" } } });
+    expect(data.dnsCredsEnc).toBe("enc:" + Buffer.from('{"CF_DNS_API_TOKEN":"CFTOKEN-xyz"}').toString("base64"));
+    expect(ensureProxy).toHaveBeenCalledWith("s1"); // no { force: true }
+    expect(JSON.stringify((audit.log as jest.Mock).mock.calls)).not.toContain("CFTOKEN");
+    expect((audit.log as jest.Mock).mock.calls[0][0]).toMatchObject({ action: "server.network.update", meta: { dnsFromCredential: true } });
+  });
+
+  it("refuses another team's credential and a non-cloudflare one", async () => {
+    await expect(svcWith(prismaWith(cred({ teamId: "teamB" })).prisma).setNetwork("u1", "s1", { dnsFromCredentialId: "dc1" })).rejects.toThrow(/does not belong/);
+    await expect(svcWith(prismaWith(cred({ provider: "route53" })).prisma).setNetwork("u1", "s1", { dnsFromCredentialId: "dc1" })).rejects.toThrow(/cloudflare/);
+    await expect(svcWith(prismaWith(null).prisma).setNetwork("u1", "s1", { dnsFromCredentialId: "dc1" })).rejects.toThrow(/does not belong/);
+    expect(ensureProxy).not.toHaveBeenCalled();
+  });
+
+  it("is mutually exclusive with dnsCreds (service and schema)", async () => {
+    await expect(svcWith(prismaWith(cred()).prisma).setNetwork("u1", "s1", { dnsFromCredentialId: "dc1", dnsCreds: { CF_DNS_API_TOKEN: "x" } })).rejects.toThrow(/mutually exclusive/);
+    expect(NetworkSettingsSchema.safeParse({ dnsFromCredentialId: "dc1", dnsCreds: { A: "b" } }).success).toBe(false);
+    expect(NetworkSettingsSchema.safeParse({ dnsFromCredentialId: "dc1" }).success).toBe(true);
+  });
+
+  it("null forgets the link only; typed creds disconnect it; neither clears stored creds by itself", async () => {
+    const { prisma, update } = prismaWith(cred());
+    await svcWith(prisma).setNetwork("u1", "s1", { dnsFromCredentialId: null });
+    expect(update.mock.calls[0][0].data).toEqual({ dnsCredential: { disconnect: true } });
+    const t = prismaWith(cred());
+    await svcWith(t.prisma).setNetwork("u1", "s1", { dnsCreds: { CF_DNS_API_TOKEN: "typed" } });
+    expect(t.update.mock.calls[0][0].data.dnsCredential).toEqual({ disconnect: true });
+    expect(ensureProxy).not.toHaveBeenCalled();
   });
 });
 

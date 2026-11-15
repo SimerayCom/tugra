@@ -14,19 +14,23 @@ export function assertSafeBase(base: string): void {
   }
 }
 
+/** Opt-in: also copy the source proxy's ACME certificates (their PRIVATE KEYS travel to the hub, are encrypted at rest and
+ *  purged after they are applied). Only ever present when the owner asked for it, so the default command is unchanged. */
+export const CERTS_FLAG = " --certs";
+
 /** The one-line migrator bootstrap. The token rides the ENVIRONMENT of the receiving `sh` (the `VAR=val cmd`
  *  prefix binds to `sh` only, so curl never sees it and it is never on any argv — migrator.sh forwards it with
  *  a bare `-e TUGRA_MIGRATION_TOKEN`). `--hub` is the HTTP base (artifacts stream over the REST ingest API,
  *  not the agent ws). The token charset [A-Za-z0-9_-] is shell-safe, so it needs no quoting. */
-export function buildMigrationCommand(token: string, base: string): string {
+export function buildMigrationCommand(token: string, base: string, opts: { certs?: boolean } = {}): string {
   if (!isMigrationToken(token)) throw new BadRequestException("invalid migration token");
   assertSafeBase(base);
-  return `curl -fsSL ${base}/install/migrator.sh | TUGRA_MIGRATION_TOKEN=${token} sh -s -- --hub ${base}`;
+  return `curl -fsSL ${base}/install/migrator.sh | TUGRA_MIGRATION_TOKEN=${token} sh -s -- --hub ${base}${opts.certs ? CERTS_FLAG : ""}`;
 }
 
 /** The same command with a literal <TOKEN> placeholder — for the read-only GET (the raw token is hashed at
  *  rest and unrecoverable after mint, so the live command can only be shown once, from the mint response). */
-export function buildMigrationCommandTemplate(base: string): string {
+export function buildMigrationCommandTemplate(base: string, opts: { certs?: boolean } = {}): string {
   assertSafeBase(base);
-  return `curl -fsSL ${base}/install/migrator.sh | TUGRA_MIGRATION_TOKEN=<TOKEN> sh -s -- --hub ${base}`;
+  return `curl -fsSL ${base}/install/migrator.sh | TUGRA_MIGRATION_TOKEN=<TOKEN> sh -s -- --hub ${base}${opts.certs ? CERTS_FLAG : ""}`;
 }

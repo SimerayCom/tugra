@@ -4,7 +4,8 @@ import { foreignAppToVolumes } from "./apply-map";
 import { gitUrlHost } from "../deploy/deploy-script";
 import { DEFAULT_MAX_ARTIFACT_BYTES } from "./migration-staging";
 import { maxVolumeBytes } from "./migration-volume";
-import type { DbDataPlane, ForeignApp, ForeignFleet, ImportOptions, ImportPreflight, VolumeDataPlane } from "./foreign-fleet";
+import type { DbDataPlane, ForeignApp, ForeignFleet, ImportCutoverHint, ImportOptions, ImportPreflight, VolumeDataPlane } from "./foreign-fleet";
+import { counterpartOf, isGeneratedHost } from "../cutover/cutover.logic";
 
 const DEFAULT_CAP_MIB = Math.round(DEFAULT_MAX_ARTIFACT_BYTES / (1024 * 1024));
 
@@ -95,6 +96,24 @@ function serviceNote(a: ReturnType<typeof analyzeService>): string {
   return "imported as a stopped compose app; volume data is copied separately and you deploy it yourself";
 }
 
+/** Source-only cutover facts: how many hosts, which are Coolify-generated (excluded by default) and which have a
+ *  served www/bare sibling (the importer sets no redirect; Cutover offers to fix it). Pure and secret-free. */
+export function buildCutoverHint(fleet: ForeignFleet): ImportCutoverHint {
+  const hosts = new Set<string>();
+  const generated = new Set<string>();
+  const counterpart = new Set<string>();
+  for (const app of fleet.apps) {
+    const hs = (app.domains ?? []).map((d) => d.host.trim().toLowerCase()).filter(Boolean);
+    for (const h of hs) {
+      hosts.add(h);
+      if (isGeneratedHost(h)) generated.add(h);
+      const c = counterpartOf(h);
+      if (c && hs.includes(c)) counterpart.add(h);
+    }
+  }
+  return { hosts: hosts.size, generatedHosts: [...generated].sort(), counterpartHosts: [...counterpart].sort() };
+}
+
 /**
  * Build the advisory preflight for a discovered fleet: per-DB data-movement class, the services the plan does
  * NOT import (so they are never a silent drop), and the volume-data caveat. Pure and secret-free.
@@ -154,5 +173,6 @@ export function buildPreflight(fleet: ForeignFleet, options: ImportOptions, inve
     // host is visible at plan time (those repos are not linked: "unsupported_host").
     ...(envApps.length ? { env: { tokenReadOnlyApps: envApps.filter((a) => a.envReport!.tokenReadOnly).length } } : {}),
     ...(git.length ? { git: { hosts: git } } : {}),
+    ...(carried ? {} : { cutover: buildCutoverHint(fleet) }),
   };
 }

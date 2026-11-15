@@ -1,5 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
-import { assertSafeBase, buildMigrationCommand, buildMigrationCommandTemplate } from "./migration-command";
+import { assertSafeBase, buildMigrationCommand, buildMigrationCommandTemplate, CERTS_FLAG } from "./migration-command";
 import { generateMigrationToken } from "./migration-token";
 
 const TOK = generateMigrationToken();
@@ -46,5 +46,18 @@ describe("migration-command", () => {
     expect(tpl).toContain("TUGRA_MIGRATION_TOKEN=<TOKEN>");
     expect(tpl).not.toContain("--token");
     expect(tpl).not.toContain("tugra_mig_");
+  });
+});
+
+describe("migration command --certs (opt-in)", () => {
+  it("is absent by default and visible in the command only when the owner asked for it", () => {
+    const base = "https://hub.example.com";
+    const plain = buildMigrationCommand(TOK, base);
+    expect(plain).not.toContain("--certs");
+    expect(buildMigrationCommand(TOK, base, {})).toBe(plain);
+    expect(buildMigrationCommand(TOK, base, { certs: true })).toBe(`${plain}${CERTS_FLAG}`);
+    expect(buildMigrationCommand(TOK, base, { certs: true })).toMatch(/--hub https:\/\/hub\.example\.com --certs$/);
+    expect(buildMigrationCommandTemplate(base)).not.toContain("--certs");
+    expect(buildMigrationCommandTemplate(base, { certs: true })).toMatch(/--certs$/);
   });
 });

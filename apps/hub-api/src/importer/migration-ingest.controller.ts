@@ -8,6 +8,7 @@ import { MigrationTokenGuard } from "./migration-token.guard";
 import { MigrationOp } from "./migration-op.decorator";
 import type { MigrationTokenContext } from "./migration-token.service";
 import { MigrationIngestService } from "./migration-ingest.service";
+import { CutoverCertService } from "../cutover/cutover-cert.service";
 
 type IngestReq = Readable & { headers: Record<string, string | string[] | undefined> };
 
@@ -26,12 +27,30 @@ type IngestReq = Readable & { headers: Record<string, string | string[] | undefi
 @CsrfExempt()
 @AllowUnverified()
 export class MigrationIngestController {
-  constructor(private readonly ingest: MigrationIngestService) {}
+  constructor(
+    private readonly ingest: MigrationIngestService,
+    private readonly certs: CutoverCertService,
+  ) {}
 
   /** Preflight: the migrator checks its token resolves before dumping any data. */
   @Get("probe")
   probe(@MigrationOp() op: MigrationTokenContext) {
     return { ok: true, opId: op.opId, expiresAt: op.expiresAt };
+  }
+
+  /** Opt-in (`migrate --certs`): the hostnames this op's imported apps serve, hub-derived. The source host's own
+   *  claims are never trusted - it only filters its acme.json against this list. */
+  @Get("certs/wanted")
+  certsWanted(@MigrationOp() op: MigrationTokenContext) {
+    return this.certs.wanted(op);
+  }
+
+  /** Opt-in (`migrate --certs`): stage the source's ACME certificates (raw octet-stream JSON body, 2 MiB cap). Staging
+   *  changes nothing live; the response is counts + fixed reason codes only. */
+  @Put("certs")
+  @HttpCode(200)
+  putCerts(@MigrationOp() op: MigrationTokenContext, @Req() req: IngestReq) {
+    return this.certs.stage(op, req);
   }
 
   /** The data destinations this op provisioned (no resource ids / credentials / urls). */

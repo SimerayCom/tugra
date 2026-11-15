@@ -1,4 +1,5 @@
-import { buildPreflight, classifyDbDataPlane } from "./preflight";
+import { buildCutoverHint, buildPreflight, classifyDbDataPlane } from "./preflight";
+import { planImport } from "./import-planner";
 import type { ForeignFleet, ImportOptions } from "./foreign-fleet";
 
 describe("classifyDbDataPlane", () => {
@@ -134,5 +135,30 @@ describe("buildPreflight — MinIO services point at Object migration (everythin
     for (const s of p.services) expect(s.note).not.toMatch(/Object migration/);
     for (const s of p.services) expect(s.note).not.toBe(OTHER); // services are imported now (stopped compose apps), the old "not imported yet" note is gone
     for (const s of p.services) expect(s).not.toHaveProperty("objectStore"); // the key is absent, not false
+  });
+});
+
+describe("buildCutoverHint (source-only cutover facts, advisory)", () => {
+  const app = (name: string, hosts: string[]) => ({ sourceRef: name, name, kind: "image" as const, buildPack: "image" as const, image: "x", domains: hosts.map((host, i) => ({ host, primary: i === 0 })) });
+  it("counts hosts, lists Coolify-generated ones and hosts whose www/bare sibling the source also served", () => {
+    const f = fleet({ apps: [app("a", ["example.com", "www.example.com"]), app("b", ["app-ek8c4gk8s8kwk8go4kwc4skc.sytrase.com", "api.example.com"])] });
+    expect(buildCutoverHint(f)).toEqual({
+      hosts: 4,
+      generatedHosts: ["app-ek8c4gk8s8kwk8go4kwc4skc.sytrase.com"],
+      counterpartHosts: ["example.com", "www.example.com"],
+    });
+  });
+  it("is attached to a copy-mode preflight but not a local-docker one, and never changes the import planHash", () => {
+    const f = fleet({ apps: [app("a", ["example.com"])] });
+    const copy: ImportOptions = { sourceKind: "coolify" };
+    expect(buildPreflight(f, copy).cutover).toMatchObject({ hosts: 1 });
+    expect(buildPreflight(f, { sourceKind: "local-docker" }).cutover).toBeUndefined();
+    // the hint lives only in the (unhashed) preflight: the plan hash is a pure function of items + options
+    expect(planImport(f, copy).planHash).toBe(planImport(f, copy).planHash);
+    expect(JSON.stringify(planImport(f, copy))).not.toContain("generatedHosts");
+  });
+  it("makes no promise about certificates being carried over", () => {
+    const f = fleet({ apps: [app("a", ["example.com"])] });
+    expect(JSON.stringify(buildPreflight(f, { sourceKind: "coolify" }))).not.toMatch(/zero.downtime|certificates? (are|is|will be) (carried|copied|transferred)/i);
   });
 });

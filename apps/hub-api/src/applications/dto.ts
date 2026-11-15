@@ -540,6 +540,9 @@ export const SetDomainOptionsSchema = z
       .nullable()
       .optional(),
     stripPrefix: z.boolean().optional(),
+    // Issue this custom domain's certificate with DNS-01 (per host, no wildcard) through the server's DNS-01
+    // resolver. Enabling is refused unless the server holds usable DNS-01 credentials.
+    dnsChallenge: z.boolean().optional(),
     // Per-app rate limit; null clears it. average/burst are requests, period is the window.
     rateLimit: z
       .object({
@@ -559,8 +562,9 @@ export const SetDomainOptionsSchema = z
       d.ipAllowlist !== undefined ||
       d.pathPrefix !== undefined ||
       d.stripPrefix !== undefined ||
+      d.dnsChallenge !== undefined ||
       d.rateLimit !== undefined,
-    { message: "provide domainRedirect, securityHeaders, gzip, forwardAuth, ipAllowlist, pathPrefix, stripPrefix and/or rateLimit" },
+    { message: "provide domainRedirect, securityHeaders, gzip, forwardAuth, ipAllowlist, pathPrefix, stripPrefix, dnsChallenge and/or rateLimit" },
   );
 export type SetDomainOptionsInput = z.infer<typeof SetDomainOptionsSchema>;
 

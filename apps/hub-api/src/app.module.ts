@@ -37,6 +37,7 @@ import { DestinationsModule } from "./destinations/destinations.module";
 import { ServerOpsModule } from "./server-ops/server-ops.module";
 import { MigratorModule } from "./migrator/migrator.module";
 import { ImporterModule } from "./importer/importer.module";
+import { CutoverModule } from "./cutover/cutover.module";
 import { CloudModule } from "./cloud/cloud.module";
 import { TunnelModule } from "./tunnel/tunnel.module";
 import { DnsModule } from "./dns/dns.module";
@@ -108,6 +109,7 @@ import { ApiExceptionFilter } from "./common/api-exception.filter";
     ServerOpsModule,
     MigratorModule,
     ImporterModule, // fleet importer (Coolify / local Docker)
+    CutoverModule, // SSL/DNS cutover of imported apps
     CloudModule,
     TunnelModule,
     DnsModule,

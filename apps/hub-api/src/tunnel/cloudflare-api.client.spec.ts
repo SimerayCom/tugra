@@ -361,3 +361,28 @@ describe("CloudflareApiClient.upsertCname (post-refactor regression)", () => {
     expect(f).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("CloudflareApiClient.patchDnsRecord", () => {
+  it("PATCHes only the supplied fields (so comment/tags/other fields are preserved)", async () => {
+    const f = mockOnce(200, envelope({ id: "r1", type: "A", name: "a.com", content: "1.2.3.4", ttl: 60, proxied: true }));
+    await expect(cf.patchDnsRecord("tok", "z1", "r1", { content: "1.2.3.4", ttl: 60 })).resolves.toMatchObject({ id: "r1", ttl: 60 });
+    const [url, init] = f.mock.calls[0];
+    expect(url).toBe("https://api.cloudflare.com/client/v4/zones/z1/dns_records/r1");
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(init.body as string)).toEqual({ content: "1.2.3.4", ttl: 60 });
+  });
+  it("can change proxied alone", async () => {
+    const f = mockOnce(200, envelope({ id: "r1" }));
+    await cf.patchDnsRecord("tok", "z1", "r1", { proxied: false });
+    expect(JSON.parse(f.mock.calls[0][1].body as string)).toEqual({ proxied: false });
+  });
+  it("never puts the token in an error", async () => {
+    mockOnce(403, envelope(null, false, [{ message: "forbidden" }]));
+    const e = await cf.patchDnsRecord("SECRET-TOKEN", "z1", "r1", { ttl: 60 }).catch((x) => x);
+    expect(e).toBeInstanceOf(CloudflareApiError);
+    expect(String(e.message)).not.toContain("SECRET-TOKEN");
+    global.fetch = jest.fn().mockRejectedValue(new Error("connect ECONNREFUSED SECRET-TOKEN")) as unknown as typeof fetch;
+    const n = await cf.patchDnsRecord("SECRET-TOKEN", "z1", "r1", { ttl: 60 }).catch((x) => x);
+    expect(String(n.message)).not.toContain("SECRET-TOKEN");
+  });
+});

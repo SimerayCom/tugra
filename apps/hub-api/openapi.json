@@ -3686,6 +3686,10 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "dnsCredentialId": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "hasDnsCreds": {
                         "type": "boolean"
                       },
@@ -3817,6 +3821,7 @@
                       "certMode",
                       "dnsProvider",
                       "customCertResolver",
+                      "dnsCredentialId",
                       "hasDnsCreds",
                       "os",
                       "osVersion",
@@ -4076,6 +4081,10 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "dnsCredentialId": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "hasDnsCreds": {
                       "type": "boolean"
                     },
@@ -4207,6 +4216,7 @@
                     "certMode",
                     "dnsProvider",
                     "customCertResolver",
+                    "dnsCredentialId",
                     "hasDnsCreds",
                     "os",
                     "osVersion",
@@ -5398,6 +5408,12 @@
                   },
                   "customCertResolver": {
                     "type": "string",
+                    "maxLength": 64,
+                    "nullable": true
+                  },
+                  "dnsFromCredentialId": {
+                    "type": "string",
+                    "minLength": 1,
                     "maxLength": 64,
                     "nullable": true
                   },
@@ -12225,6 +12241,9 @@
                       "stripPrefix": {
                         "type": "boolean"
                       },
+                      "dnsChallenge": {
+                        "type": "boolean"
+                      },
                       "rateLimit": {
                         "type": "object",
                         "properties": {
@@ -12550,6 +12569,7 @@
                       "basicAuthUsers",
                       "pathPrefix",
                       "stripPrefix",
+                      "dnsChallenge",
                       "rateLimit",
                       "redirects",
                       "https",
@@ -13674,6 +13694,9 @@
                     "stripPrefix": {
                       "type": "boolean"
                     },
+                    "dnsChallenge": {
+                      "type": "boolean"
+                    },
                     "rateLimit": {
                       "type": "object",
                       "properties": {
@@ -13999,6 +14022,7 @@
                     "basicAuthUsers",
                     "pathPrefix",
                     "stripPrefix",
+                    "dnsChallenge",
                     "rateLimit",
                     "redirects",
                     "https",
@@ -15169,6 +15193,9 @@
                     "stripPrefix": {
                       "type": "boolean"
                     },
+                    "dnsChallenge": {
+                      "type": "boolean"
+                    },
                     "rateLimit": {
                       "type": "object",
                       "properties": {
@@ -15494,6 +15521,7 @@
                     "basicAuthUsers",
                     "pathPrefix",
                     "stripPrefix",
+                    "dnsChallenge",
                     "rateLimit",
                     "redirects",
                     "https",
@@ -16668,6 +16696,9 @@
                     "stripPrefix": {
                       "type": "boolean"
                     },
+                    "dnsChallenge": {
+                      "type": "boolean"
+                    },
                     "rateLimit": {
                       "type": "object",
                       "properties": {
@@ -16993,6 +17024,7 @@
                     "basicAuthUsers",
                     "pathPrefix",
                     "stripPrefix",
+                    "dnsChallenge",
                     "rateLimit",
                     "redirects",
                     "https",
@@ -25818,6 +25850,9 @@
                   "stripPrefix": {
                     "type": "boolean"
                   },
+                  "dnsChallenge": {
+                    "type": "boolean"
+                  },
                   "rateLimit": {
                     "type": "object",
                     "properties": {
@@ -27584,6 +27619,9 @@
                         "stripPrefix": {
                           "type": "boolean"
                         },
+                        "dnsChallenge": {
+                          "type": "boolean"
+                        },
                         "rateLimit": {
                           "type": "object",
                           "properties": {
@@ -27909,6 +27947,7 @@
                         "basicAuthUsers",
                         "pathPrefix",
                         "stripPrefix",
+                        "dnsChallenge",
                         "rateLimit",
                         "redirects",
                         "https",
@@ -28942,6 +28981,9 @@
                     "stripPrefix": {
                       "type": "boolean"
                     },
+                    "dnsChallenge": {
+                      "type": "boolean"
+                    },
                     "rateLimit": {
                       "type": "object",
                       "properties": {
@@ -29267,6 +29309,7 @@
                     "basicAuthUsers",
                     "pathPrefix",
                     "stripPrefix",
+                    "dnsChallenge",
                     "rateLimit",
                     "redirects",
                     "https",
@@ -30370,6 +30413,9 @@
                       "stripPrefix": {
                         "type": "boolean"
                       },
+                      "dnsChallenge": {
+                        "type": "boolean"
+                      },
                       "rateLimit": {
                         "type": "object",
                         "properties": {
@@ -30695,6 +30741,7 @@
                       "basicAuthUsers",
                       "pathPrefix",
                       "stripPrefix",
+                      "dnsChallenge",
                       "rateLimit",
                       "redirects",
                       "https",
@@ -31883,6 +31930,9 @@
                     "stripPrefix": {
                       "type": "boolean"
                     },
+                    "dnsChallenge": {
+                      "type": "boolean"
+                    },
                     "rateLimit": {
                       "type": "object",
                       "properties": {
@@ -32208,6 +32258,7 @@
                     "basicAuthUsers",
                     "pathPrefix",
                     "stripPrefix",
+                    "dnsChallenge",
                     "rateLimit",
                     "redirects",
                     "https",
@@ -34639,6 +34690,9 @@
                     "stripPrefix": {
                       "type": "boolean"
                     },
+                    "dnsChallenge": {
+                      "type": "boolean"
+                    },
                     "rateLimit": {
                       "type": "object",
                       "properties": {
@@ -34964,6 +35018,7 @@
                     "basicAuthUsers",
                     "pathPrefix",
                     "stripPrefix",
+                    "dnsChallenge",
                     "rateLimit",
                     "redirects",
                     "https",
@@ -58494,6 +58549,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "certs",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -58572,6 +58635,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "certs",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -58647,6 +58718,14 @@
             "name": "opId",
             "required": true,
             "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "certs",
+            "required": true,
+            "in": "query",
             "schema": {
               "type": "string"
             }
@@ -60964,6 +61043,1431 @@
         ],
         "tags": [
           "projects"
+        ]
+      }
+    },
+    "/api/v1/import/operations/{opId}/cutover/init": {
+      "post": {
+        "operationId": "CutoverController_init",
+        "parameters": [
+          {
+            "name": "opId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "dnsCredentialId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/import/operations/{opId}/cutover": {
+      "get": {
+        "operationId": "CutoverController_view",
+        "parameters": [
+          {
+            "name": "opId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/import/operations/{opId}/cutover/cert-prepare": {
+      "post": {
+        "operationId": "CutoverController_certPrepare",
+        "parameters": [
+          {
+            "name": "opId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "hostnames": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$"
+                    },
+                    "minItems": 1,
+                    "maxItems": 200
+                  },
+                  "challenge": {
+                    "type": "string",
+                    "enum": [
+                      "dns01",
+                      "http01"
+                    ]
+                  }
+                },
+                "required": [
+                  "challenge"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/import/operations/{opId}/cutover/check": {
+      "post": {
+        "operationId": "CutoverController_check",
+        "parameters": [
+          {
+            "name": "opId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "hostnames": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$"
+                    },
+                    "minItems": 1,
+                    "maxItems": 200
+                  },
+                  "probeVia": {
+                    "type": "string",
+                    "enum": [
+                      "hub",
+                      "agent"
+                    ]
+                  },
+                  "healthPath": {
+                    "type": "string",
+                    "pattern": "^\\/[\\x21-\\x7e]{0,200}$"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/import/operations/{opId}/cutover/ttl": {
+      "post": {
+        "operationId": "CutoverController_ttl",
+        "parameters": [
+          {
+            "name": "opId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "hostnames": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$"
+                    },
+                    "minItems": 1,
+                    "maxItems": 200
+                  },
+                  "ttl": {
+                    "type": "integer",
+                    "minimum": 60,
+                    "maximum": 3600
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/import/operations/{opId}/cutover/flip-plan": {
+      "get": {
+        "operationId": "CutoverController_flipPlan",
+        "parameters": [
+          {
+            "name": "opId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/import/operations/{opId}/cutover/flip": {
+      "post": {
+        "operationId": "CutoverController_flip",
+        "parameters": [
+          {
+            "name": "opId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "confirmToken": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "hostnames": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$"
+                    },
+                    "minItems": 1,
+                    "maxItems": 200
+                  },
+                  "batchSize": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 25
+                  },
+                  "intervalSec": {
+                    "type": "integer",
+                    "minimum": 5,
+                    "maximum": 600
+                  },
+                  "targetTtl": {
+                    "type": "integer",
+                    "minimum": 60,
+                    "maximum": 3600
+                  },
+                  "stopOnFail": {
+                    "type": "boolean"
+                  },
+                  "autoRevert": {
+                    "type": "boolean"
+                  },
+                  "keepProxied": {
+                    "type": "boolean"
+                  },
+                  "acceptDataRisk": {
+                    "type": "boolean"
+                  },
+                  "acceptHttp01Gap": {
+                    "type": "boolean"
+                  },
+                  "skipTtlWait": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "confirmToken"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/import/operations/{opId}/cutover/cancel": {
+      "post": {
+        "operationId": "CutoverController_cancel",
+        "parameters": [
+          {
+            "name": "opId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/import/operations/{opId}/cutover/revert": {
+      "post": {
+        "operationId": "CutoverController_revert",
+        "parameters": [
+          {
+            "name": "opId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "hostnames": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$"
+                    },
+                    "minItems": 1,
+                    "maxItems": 200
+                  },
+                  "force": {
+                    "type": "boolean"
+                  },
+                  "acknowledgeDataLoss": {
+                    "type": "boolean",
+                    "enum": [
+                      true
+                    ]
+                  }
+                },
+                "required": [
+                  "hostnames",
+                  "acknowledgeDataLoss"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/import/operations/{opId}/cutover/finalize": {
+      "post": {
+        "operationId": "CutoverController_finalize",
+        "parameters": [
+          {
+            "name": "opId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "hostnames": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$"
+                    },
+                    "minItems": 1,
+                    "maxItems": 200
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/import/operations/{opId}/cutover/fix-counterpart": {
+      "post": {
+        "operationId": "CutoverController_fixCounterpart",
+        "parameters": [
+          {
+            "name": "opId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "applicationId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "direction": {
+                    "type": "string",
+                    "enum": [
+                      "root",
+                      "www"
+                    ]
+                  }
+                },
+                "required": [
+                  "applicationId",
+                  "direction"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/import/operations/{opId}/cutover/exclude": {
+      "post": {
+        "operationId": "CutoverController_exclude",
+        "parameters": [
+          {
+            "name": "opId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "hostnames": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$"
+                    },
+                    "minItems": 1,
+                    "maxItems": 200
+                  },
+                  "excluded": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "hostnames",
+                  "excluded"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/import/operations/{opId}/cutover/seed-certs": {
+      "post": {
+        "operationId": "CutoverController_seedCerts",
+        "parameters": [
+          {
+            "name": "opId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "serverId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "acknowledgeProxyRestart": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "acknowledgeProxyRestart"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
         ]
       }
     },

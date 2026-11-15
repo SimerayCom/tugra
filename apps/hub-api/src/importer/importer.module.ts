@@ -5,6 +5,8 @@ import { ApplicationsModule } from "../applications/applications.module";
 import { DatabasesModule } from "../databases/databases.module";
 import { GitSourcesModule } from "../git-sources/git-sources.module";
 import { ProjectsModule } from "../projects/projects.module";
+import { AgentGatewayModule } from "../agent-gateway/agent-gateway.module";
+import { CutoverCertService } from "../cutover/cutover-cert.service";
 import { BackupsModule } from "../backups/backups.module";
 import { VolumeBackupsModule } from "../volume-backups/volume-backups.module";
 import { ImporterController } from "./importer.controller";
@@ -27,9 +29,9 @@ import { ImportSourceFactory } from "./sources/import-source.factory";
 // rest. PrismaService, TeamAccessService and AuditService are provided by @Global modules.
 // ImportSourceFactory maps a source kind → its adapter (it depends on CoolifyClientFactory).
 @Module({
-  imports: [MigratorModule, CryptoModule, ApplicationsModule, DatabasesModule, BackupsModule, VolumeBackupsModule, GitSourcesModule, ProjectsModule],
+  imports: [MigratorModule, CryptoModule, ApplicationsModule, DatabasesModule, BackupsModule, VolumeBackupsModule, GitSourcesModule, ProjectsModule, AgentGatewayModule],
   controllers: [ImporterController, MigrationIngestController, MigrationArtifactController],
-  providers: [ImporterService, ImportExecutorService, GitLinkResolverService, ImportGitLinksService, MigrationTokenService, MigrationTokenGuard, MigrationIngestService, CoolifyClientFactory, DokployClientFactory, ImportSourceFactory],
-  exports: [ImporterService, ImportExecutorService], // the MCP server wraps these as import_* tools
+  providers: [ImporterService, ImportExecutorService, GitLinkResolverService, ImportGitLinksService, MigrationTokenService, MigrationTokenGuard, MigrationIngestService, CoolifyClientFactory, DokployClientFactory, ImportSourceFactory, CutoverCertService],
+  exports: [ImporterService, ImportExecutorService, CutoverCertService], // the MCP server wraps these as import_* tools
 })
 export class ImporterModule {}

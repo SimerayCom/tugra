@@ -8750,3 +8750,65 @@ describe("ApplicationsService — app move guards", () => {
     expect(prisma.appMove.findFirst as jest.Mock).toHaveBeenCalled();
   });
 });
+
+describe("ApplicationsService per-host DNS-01 (dnsChallenge)", () => {
+  const custom = { ...app, exposeMode: "custom", https: true, clusterId: null, tunnelExposed: false, certType: "le-http", domainKind: "custom", domain: "x.example.com", dnsChallenge: false };
+  const withCfg = (cfg: unknown, row: object = custom) => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(row), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const deployLogs = makeDeployLogs();
+    const svc = make(prisma, access, {}, deployLogs);
+    (svc as unknown as { moduleRef: unknown }).moduleRef = { get: () => ({ resolveFor: jest.fn().mockResolvedValue(cfg) }) };
+    return { svc, update, deployLogs };
+  };
+  const dnsCfg = { dnsProvider: "cloudflare", dnsCreds: { CF_DNS_API_TOKEN: "x" } };
+
+  it("enabling is stored when the server has usable DNS-01 credentials", async () => {
+    const { svc, update } = withCfg(dnsCfg);
+    await svc.setDomainOptions("u1", "app1", { dnsChallenge: true });
+    expect(update).toHaveBeenCalledWith({ where: { id: "app1" }, data: { dnsChallenge: true } });
+  });
+
+  it.each([
+    ["a server without DNS-01 credentials", {}, custom],
+    ["a server whose creds are empty", { dnsProvider: "cloudflare", dnsCreds: {} }, custom],
+    ["a clustered app", dnsCfg, { ...custom, clusterId: "c1" }],
+    ["a tunnel-exposed app", dnsCfg, { ...custom, tunnelExposed: true }],
+    ["a non-custom domain", dnsCfg, { ...custom, exposeMode: "magic" }],
+    ["an http-only domain", dnsCfg, { ...custom, https: false }],
+    ["an app with an uploaded certificate", dnsCfg, { ...custom, certType: "custom" }],
+  ])("refuses to enable for %s (a dead resolver would leave the host with no certificate)", async (_n, cfg, row) => {
+    const { svc, update } = withCfg(cfg, row);
+    await expect(svc.setDomainOptions("u1", "app1", { dnsChallenge: true })).rejects.toThrow(/DNS-01|HTTPS|cluster|tunnel|certificate/);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("disabling is always allowed", async () => {
+    const { svc, update } = withCfg({}, { ...custom, dnsChallenge: true, clusterId: "c1" });
+    await svc.setDomainOptions("u1", "app1", { dnsChallenge: false });
+    expect(update).toHaveBeenCalledWith({ where: { id: "app1" }, data: { dnsChallenge: false } });
+  });
+
+  it("hydrateDnsChallenge maps the flag to le-dns per host (no wildcard) at deploy time", async () => {
+    const { svc } = withCfg(dnsCfg);
+    const spec: Record<string, unknown> = { certType: "le-http", wildcardDomain: "apps.example.com" };
+    await (svc as unknown as { hydrateDnsChallenge: (a: object, s: object) => Promise<void> }).hydrateDnsChallenge({ ...custom, dnsChallenge: true }, spec);
+    expect(spec).toMatchObject({ certType: "le-dns", dnsPerHost: true, wildcardDomain: null });
+  });
+
+  it("falls back to HTTP-01 with a deploy note when the server lost its DNS-01 credentials; the flag off changes nothing", async () => {
+    const { svc, deployLogs } = withCfg({});
+    const spec: Record<string, unknown> = { certType: "le-http" };
+    await (svc as unknown as { hydrateDnsChallenge: (a: object, s: object) => Promise<void> }).hydrateDnsChallenge({ ...custom, dnsChallenge: true }, spec);
+    expect(spec).toEqual({ certType: "le-http" });
+    expect(deployLogs.push).toHaveBeenCalledWith("app1", expect.stringContaining("using HTTP-01"));
+    const off: Record<string, unknown> = { certType: "le-http" };
+    await (svc as unknown as { hydrateDnsChallenge: (a: object, s: object) => Promise<void> }).hydrateDnsChallenge({ ...custom, dnsChallenge: false }, off);
+    expect(off).toEqual({ certType: "le-http" });
+    // an uploaded cert wins even if the flag is on
+    const up: Record<string, unknown> = { certType: "custom" };
+    await (svc as unknown as { hydrateDnsChallenge: (a: object, s: object) => Promise<void> }).hydrateDnsChallenge({ ...custom, dnsChallenge: true, certType: "custom" }, up);
+    expect(up).toEqual({ certType: "custom" });
+  });
+});

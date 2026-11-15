@@ -173,6 +173,26 @@ export class CloudflareApiClient {
     return { recordId: created.id };
   }
 
+  /** PATCH a DNS record with only the supplied fields (content / ttl / proxied). PATCH — not PUT — so the record's
+   *  comment, tags and any field we do not name are preserved. */
+  async patchDnsRecord(
+    apiToken: string,
+    zoneId: string,
+    recordId: string,
+    partial: { content?: string; ttl?: number; proxied?: boolean },
+  ): Promise<DnsRecord> {
+    const body: Record<string, unknown> = {};
+    if (partial.content !== undefined) body.content = partial.content;
+    if (partial.ttl !== undefined) body.ttl = partial.ttl;
+    if (partial.proxied !== undefined) body.proxied = partial.proxied;
+    return this.request<DnsRecord>(
+      "PATCH",
+      `/zones/${encodeURIComponent(zoneId)}/dns_records/${encodeURIComponent(recordId)}`,
+      apiToken,
+      body,
+    );
+  }
+
   /** The zone's SSL/TLS encryption mode ("off"|"flexible"|"full"|"strict"). The auto-setup reads this to warn
    *  about the Flexible-SSL + :80→:443-redirect infinite-loop trap before creating proxied records. */
   async getZoneSslMode(apiToken: string, zoneId: string): Promise<string> {

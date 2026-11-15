@@ -30,7 +30,7 @@ import { AppPrivilegedController } from "./app-privileged.controller";
 import { AiService } from "./ai.service";
 import { PortAllocatorService } from "./port-allocator.service";
 import { ContainerLogStreamGuard } from "./log-stream.guard";
-import { APPLICATIONS_SERVICE } from "./applications.tokens";
+import { APPLICATIONS_SERVICE, PROXY_SERVICE } from "./applications.tokens";
 
 @Module({
   imports: [AgentGatewayModule, MetricsModule, CryptoModule, MonitorsModule, NotificationsModule, GitSourcesModule, TeamDefaultsModule, CatalogModule, ClustersModule, DnsModule, DatabasesModule, SecretProvidersModule, LogDrainsModule],
@@ -53,8 +53,9 @@ import { APPLICATIONS_SERVICE } from "./applications.tokens";
     // String-token alias so ServersService can resolve this lazily via ModuleRef
     // without a static module import (which would form a dependency cycle).
     { provide: APPLICATIONS_SERVICE, useExisting: ApplicationsService },
+    { provide: PROXY_SERVICE, useExisting: ProxyService },
   ],
-  exports: [ApplicationsService, AppDatabaseLinksService, AppSecretRefsService, APPLICATIONS_SERVICE, PortAllocatorService, DeployLeaseService],
+  exports: [ApplicationsService, ProxyService, AppDatabaseLinksService, AppSecretRefsService, APPLICATIONS_SERVICE, PortAllocatorService, DeployLeaseService],
 })
 export class ApplicationsModule implements OnModuleInit {
   constructor(

@@ -46,6 +46,7 @@ import { normalizeSince, normalizeSearch, clampTail } from "../common/log-filter
 import { assertSafeFsPath } from "../common/fs-path";
 import { CryptoService } from "../crypto/crypto.service";
 import { ProxyService } from "./proxy.service";
+import { ProxyConfigService } from "../proxy-config/proxy-config.service";
 import { SwarmDeployService } from "../clusters/swarm-deploy.service";
 import { SwarmService } from "../clusters/swarm.service";
 import { DnsAutomationService } from "../dns/dns-automation.service";
@@ -336,6 +337,7 @@ export const AppViewSchema = z.object({
   basicAuthUsers: z.array(z.string()), // usernames only — password hashes are never returned
   pathPrefix: z.string().nullable(),
   stripPrefix: z.boolean(),
+  dnsChallenge: z.boolean(), // custom-domain certificate issued with DNS-01 per host (see setDomainOptions)
   rateLimit: z.object({ average: z.number(), burst: z.number(), period: z.enum(["1s", "1m", "1h"]) }).nullable(),
   redirects: z.array(z.object({ regex: z.string(), replacement: z.string(), permanent: z.boolean() })),
   https: z.boolean(),
@@ -2083,6 +2085,7 @@ export class ApplicationsService {
       // injectEnvAsBuildArgs: fail early (pre-swap, any path) if the env cannot ride argv; prepSteps recomputes the same pure result.
       if (app.source === "GIT" && app.buildType === "DOCKERFILE" && app.injectEnvAsBuildArgs) injectableBuildArgs(spec);
       await this.hydrateCertSpec(app, spec);
+      await this.hydrateDnsChallenge(app, spec);
       // Private repo via a connected git source: a GitHub App mints a fresh installation token, a Gitea/Forgejo/
       // Codeberg source supplies its stored access token (GIT build or git-compose). The credential is pinned to
       // the source's own host (cloneToken refuses a repo URL anywhere else) and reaches git via GIT_ASKPASS only.
@@ -2718,6 +2721,7 @@ export class ApplicationsService {
       if (isCompose) spec.serviceDomains = await this.loadServiceDomains(app.id); // keep per-service routes on rollback
       this.logAutoMultiline(app.id, (await this.attachResolvedEnv(app, spec, { withBuild: false })).autoMultiline);
       await this.hydrateCertSpec(app, spec); // le-dns wildcard labels must match a normal deploy
+      await this.hydrateDnsChallenge(app, spec);
       // A rollback re-runs a PRIOR image; never re-run deploy hooks (e.g. a migration) against it — a
       // registry/digest rollback is build=true, which would otherwise emit the pre-deploy step.
       spec.preDeployCommand = null;
@@ -3778,6 +3782,9 @@ export class ApplicationsService {
     // le-dns wildcard / custom resolver come from the server config (hydrateCertSpec); reuse it on a throwaway shell.
     const certCfg: { wildcardDomain?: string | null; customCertResolver?: string | null } = {};
     await this.hydrateCertSpec(app, certCfg as unknown as AppSpec);
+    // Per-host DNS-01 (dnsChallenge): the preview must show the same resolver the deploy will use.
+    const dnsCfg: { certType?: string; dnsPerHost?: boolean; wildcardDomain?: string | null } = {};
+    await this.hydrateDnsChallenge(app, dnsCfg as unknown as AppSpec, true);
     return buildAppliedLabels({
       source: app.source,
       clusterId: app.clusterId,
@@ -3789,8 +3796,9 @@ export class ApplicationsService {
         domainRedirect: (app.domainRedirect as "www" | "root" | null) ?? null,
         pathPrefix: app.pathPrefix ?? null,
         stripPrefix: app.stripPrefix ?? true,
-        certType: app.certType,
-        wildcardDomain: certCfg.wildcardDomain ?? null,
+        certType: dnsCfg.certType ?? app.certType,
+        ...(dnsCfg.dnsPerHost ? { dnsPerHost: true } : {}),
+        wildcardDomain: dnsCfg.dnsPerHost ? null : (certCfg.wildcardDomain ?? null),
         customCertResolver: certCfg.customCertResolver ?? null,
         // Presence only: the PEM/key never enter the view. A clustered app is never given a custom cert (as in toSpec).
         certPem: !app.clusterId && app.certPem ? "present" : null,
@@ -5131,10 +5139,12 @@ export class ApplicationsService {
   async setDomainOptions(
     userId: string,
     id: string,
-    opts: { domainRedirect?: "www" | "root" | null; securityHeaders?: boolean; gzip?: boolean; forwardAuth?: string | null; ipAllowlist?: string[]; pathPrefix?: string | null; stripPrefix?: boolean; rateLimit?: { average: number; burst: number; period: "1s" | "1m" | "1h" } | null },
+    opts: { domainRedirect?: "www" | "root" | null; securityHeaders?: boolean; gzip?: boolean; forwardAuth?: string | null; ipAllowlist?: string[]; pathPrefix?: string | null; stripPrefix?: boolean; dnsChallenge?: boolean; rateLimit?: { average: number; burst: number; period: "1s" | "1m" | "1h" } | null },
   ): Promise<void> {
-    await this.requireMutate(userId, id);
+    const app = await this.requireMutate(userId, id);
     const data: Prisma.ApplicationUncheckedUpdateInput = {};
+    if (opts.dnsChallenge === true) await this.assertCanEnableDnsChallenge(app);
+    if (opts.dnsChallenge !== undefined) data.dnsChallenge = opts.dnsChallenge;
     if (opts.domainRedirect !== undefined) data.domainRedirect = opts.domainRedirect;
     if (opts.securityHeaders !== undefined) data.securityHeaders = opts.securityHeaders;
     if (opts.gzip !== undefined) data.gzip = opts.gzip;
@@ -5144,7 +5154,38 @@ export class ApplicationsService {
     if (opts.stripPrefix !== undefined) data.stripPrefix = opts.stripPrefix;
     if (opts.rateLimit !== undefined) data.rateLimit = opts.rateLimit === null ? Prisma.JsonNull : (opts.rateLimit as unknown as Prisma.InputJsonValue);
     await this.prisma.application.update({ where: { id }, data });
-    await this.audit.log({ actor: userId, action: "app.domainOptions.update", target: id });
+    await this.audit.log({ actor: userId, action: "app.domainOptions.update", target: id, ...(opts.dnsChallenge !== undefined ? { meta: { dnsChallenge: opts.dnsChallenge } } : {}) });
+  }
+
+  /**
+   * Per-host DNS-01 is refused unless it can actually work: a label pointing at a resolver the proxy does not have
+   * would leave the host with NO certificate (silent). Needs an https custom domain on a single-server, non-tunnel
+   * app without an uploaded cert, on a server whose proxy has usable DNS-01 credentials.
+   */
+  private async assertCanEnableDnsChallenge(app: Application): Promise<void> {
+    if (app.exposeMode !== "custom" || !app.https) throw new BadRequestException("DNS-01 applies to an HTTPS custom domain");
+    if (app.clusterId) throw new BadRequestException("DNS-01 per host is not available for a clustered app");
+    if (app.tunnelExposed) throw new BadRequestException("DNS-01 per host is not available for a tunnel-exposed app");
+    if (app.certType === "custom") throw new BadRequestException("an uploaded certificate is in use - remove the uploaded certificate first");
+    const cfg = await this.moduleRef.get(ProxyConfigService, { strict: false }).resolveFor(app.serverId).catch(() => null);
+    if (!cfg?.dnsProvider || !cfg.dnsCreds || Object.keys(cfg.dnsCreds).length === 0) {
+      throw new BadRequestException("the server has no usable DNS-01 credentials - add them in the server's network settings first");
+    }
+  }
+
+  /** At deploy time map the dnsChallenge flag onto the spec: certType le-dns + the per-host label flag, never the
+   *  wildcard. FAIL-SOFT to HTTP-01 (a cert still issues once DNS points here) with a deploy-log note when the
+   *  server lost its DNS-01 credentials - a dead resolver is never emitted. Existing apps (flag off) are untouched. */
+  private async hydrateDnsChallenge(app: Application, spec: AppSpec, quiet = false): Promise<void> {
+    if (!app.dnsChallenge || app.clusterId || app.domainKind !== "custom" || !app.https || app.certType !== "le-http") return;
+    const cfg = await this.moduleRef.get(ProxyConfigService, { strict: false }).resolveFor(app.serverId).catch(() => null);
+    if (!cfg?.dnsProvider || !cfg.dnsCreds || Object.keys(cfg.dnsCreds).length === 0) {
+      if (!quiet) this.deployLogs.push(app.id, "TUGRA: dnsChallenge is on but the server has no usable DNS-01 credentials; using HTTP-01\n");
+      return;
+    }
+    spec.certType = "le-dns";
+    spec.dnsPerHost = true;
+    spec.wildcardDomain = null;
   }
 
   /** Replace the app's HTTP Basic Auth users. Each password is hashed with bcrypt (a Traefik-compatible
@@ -6200,6 +6241,7 @@ export class ApplicationsService {
       basicAuthUsers: (parseBasicAuthUsers(app.basicAuthUsers) ?? []).map((u) => u.user),
       pathPrefix: app.pathPrefix ?? null,
       stripPrefix: app.stripPrefix ?? true,
+      dnsChallenge: app.dnsChallenge ?? false,
       rateLimit: parseRateLimit(app.rateLimit),
       redirects: parseRedirects(app.redirects),
       https: app.https,
