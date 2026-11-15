@@ -8,7 +8,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 - **Dependencies.** The glob override moved to 14 (minimatch 11), clearing two dev-tooling advisories (minimatch
-  GHSA-g3hv-75wg-m249, glob GHSA-3g3m-2fjr-6pw4). No runtime behaviour change.
+  GHSA-g3hv-75wg-m249, glob GHSA-3g3m-2fjr-6pw4). The vite lock was refreshed to 8.3.8. No runtime behaviour change.
 
 ## [0.1.0-beta.14] - 2026-11-15
 
