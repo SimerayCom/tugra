@@ -32,6 +32,7 @@ const stat = { name: "f", type: "file", size: 1, mode: "0644", mtime: 1, mtimeNs
 
 describe("file manager controllers (HTTP level)", () => {
   let app: INestApplication;
+  let baseUrl: string; // ONE listening server for the whole file: supertest on getHttpServer() would bind a fresh ephemeral port per request
   const files = {
     meta: jest.fn(), stat: jest.fn(), download: jest.fn(), upload: jest.fn(), mkdir: jest.fn(),
     rename: jest.fn(), chmod: jest.fn(), remove: jest.fn(), listContainer: jest.fn(),
@@ -55,7 +56,8 @@ describe("file manager controllers (HTTP level)", () => {
       .compile();
     app = mod.createNestApplication();
     configureApp(app);
-    await app.init();
+    await app.listen(0, "127.0.0.1");
+    baseUrl = (await app.getUrl()).replace("[::1]", "127.0.0.1");
   });
   afterAll(async () => app.close());
   beforeEach(() => {
@@ -75,10 +77,10 @@ describe("file manager controllers (HTTP level)", () => {
   });
 
   const api = (scopes: string) => ({
-    get: (u: string) => request(app.getHttpServer()).get(`/api/v1${u}`).set("x-test-scopes", scopes),
-    put: (u: string) => request(app.getHttpServer()).put(`/api/v1${u}`).set("x-test-scopes", scopes),
-    post: (u: string) => request(app.getHttpServer()).post(`/api/v1${u}`).set("x-test-scopes", scopes),
-    del: (u: string) => request(app.getHttpServer()).delete(`/api/v1${u}`).set("x-test-scopes", scopes),
+    get: (u: string) => request(baseUrl).get(`/api/v1${u}`).set("x-test-scopes", scopes),
+    put: (u: string) => request(baseUrl).put(`/api/v1${u}`).set("x-test-scopes", scopes),
+    post: (u: string) => request(baseUrl).post(`/api/v1${u}`).set("x-test-scopes", scopes),
+    del: (u: string) => request(baseUrl).delete(`/api/v1${u}`).set("x-test-scopes", scopes),
   });
 
   // route table: [label, method, url, body?, required scopes]
@@ -102,6 +104,7 @@ describe("file manager controllers (HTTP level)", () => {
     { label: "DELETE container-files", call: (s) => api(s).del("/apps/a1/container-files?path=/app/x"), need: ["admin"], okStatus: 204 },
   ];
 
+  // ~25 sequential requests per route: generous ceiling so a loaded CI worker never trips jest's 5 s default
   it.each(routes)("scope matrix: $label", async ({ call, need, okStatus }) => {
     // satisfied by exactly its required set, by admin, and by a session (*)
     for (const ok of [need.join(","), "admin", "*"]) {
@@ -118,7 +121,7 @@ describe("file manager controllers (HTTP level)", () => {
       expect({ scopes: bad, status: r.status }).toEqual({ scopes: bad, status: 403 });
     }
     expect(files.remove.mock.calls.length + files.upload.mock.calls.length + files.mkdir.mock.calls.length).toBeLessThanOrEqual(3); // only the 3 allowed calls ever reached the service
-  });
+  }, 30_000);
 
   it("declares the scope matrix explicitly on every route (never the method default)", () => {
     for (const [ctrl, methods] of [
@@ -228,27 +231,27 @@ describe("file manager controllers (HTTP level)", () => {
 
   it("CSRF: cookie-authenticated mutations need the double-submit token; bearer callers and reads do not; the agent URLs are exempt", async () => {
     const cookie = "tg_access=a; tg_csrf=tok";
-    const base = (m: "post" | "put" | "delete", u: string) => request(app.getHttpServer())[m](`/api/v1${u}`).set("x-test-scopes", "*").set("Cookie", cookie);
+    const base = (m: "post" | "put" | "delete", u: string) => request(baseUrl)[m](`/api/v1${u}`).set("x-test-scopes", "*").set("Cookie", cookie);
     expect((await base("post", "/apps/a1/files/mkdir").send({ volume: "data", path: "d" })).status).toBe(403);
     expect((await base("put", "/apps/a1/files/content?volume=data&path=d").set("content-type", "application/octet-stream").send(Buffer.from("x"))).status).toBe(403);
     expect((await base("delete", "/apps/a1/files?volume=data&path=d")).status).toBe(403);
     expect((await base("post", "/apps/a1/container-files/mkdir").send({ path: "/app/d" })).status).toBe(403);
     expect((await base("post", "/apps/a1/files/mkdir").set("x-csrf-token", "tok").send({ volume: "data", path: "d" })).status).toBe(201);
     expect((await base("post", "/apps/a1/files/mkdir").set("x-csrf-token", "wrong").send({ volume: "data", path: "d" })).status).toBe(403);
-    expect((await request(app.getHttpServer()).post("/api/v1/apps/a1/files/mkdir").set("Authorization", "Bearer tugra_pat_x").set("x-test-scopes", "*").send({ volume: "data", path: "d" })).status).toBe(201);
-    expect((await request(app.getHttpServer()).get("/api/v1/apps/a1/files/meta").set("Cookie", cookie)).status).toBe(200);
+    expect((await request(baseUrl).post("/api/v1/apps/a1/files/mkdir").set("Authorization", "Bearer tugra_pat_x").set("x-test-scopes", "*").send({ volume: "data", path: "d" })).status).toBe(201);
+    expect((await request(baseUrl).get("/api/v1/apps/a1/files/meta").set("Cookie", cookie)).status).toBe(200);
     // exempt metadata: only the agent transfer controller opts out of CSRF
     expect(Reflect.getMetadata(CSRF_EXEMPT, AgentFsTransferController)).toBe(true);
     expect(Reflect.getMetadata(CSRF_EXEMPT, FilesController)).toBeUndefined();
     expect(Reflect.getMetadata(CSRF_EXEMPT, ContainerFilesController)).toBeUndefined();
-    const agentPut = await request(app.getHttpServer()).put("/api/v1/agent-fs/t/AAAAAAAAAAAAAAAAAAAAAAAA?exp=1&sig=BBBBBBBBBBBBBBBBBBBBBBBB").set("Cookie", cookie).send(Buffer.from("x"));
+    const agentPut = await request(baseUrl).put("/api/v1/agent-fs/t/AAAAAAAAAAAAAAAAAAAAAAAA?exp=1&sig=BBBBBBBBBBBBBBBBBBBBBBBB").set("Cookie", cookie).send(Buffer.from("x"));
     expect(agentPut.status).toBe(404); // not 403: the cookie-CSRF gate does not apply; the HMAC does
   });
 
   it("agent transfer URLs are open to the agent (no user auth) and uniformly 404 on a bad credential", async () => {
-    const g = await request(app.getHttpServer()).get("/api/v1/agent-fs/t/AAAAAAAAAAAAAAAAAAAAAAAA?exp=1&sig=BBBBBBBBBBBBBBBBBBBBBBBB");
+    const g = await request(baseUrl).get("/api/v1/agent-fs/t/AAAAAAAAAAAAAAAAAAAAAAAA?exp=1&sig=BBBBBBBBBBBBBBBBBBBBBBBB");
     expect(g.status).toBe(404);
-    const p = await request(app.getHttpServer()).put("/api/v1/agent-fs/t/AAAAAAAAAAAAAAAAAAAAAAAA?exp=1&sig=BBBBBBBBBBBBBBBBBBBBBBBB").send(Buffer.from("x"));
+    const p = await request(baseUrl).put("/api/v1/agent-fs/t/AAAAAAAAAAAAAAAAAAAAAAAA?exp=1&sig=BBBBBBBBBBBBBBBBBBBBBBBB").send(Buffer.from("x"));
     expect(p.status).toBe(404);
   });
 });
