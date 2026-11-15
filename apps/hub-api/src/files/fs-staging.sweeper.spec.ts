@@ -7,6 +7,13 @@ describe("FilesStagingSweeper", () => {
   const saved = { ...process.env };
   let dir: string;
   const old = new Date(Date.now() - 3 * 3600_000);
+  /** Poll (the sweep is fire-and-forget) instead of sleeping a fixed time, so a loaded machine cannot flake the test. */
+  const untilEmpty = async () => {
+    for (let i = 0; i < 100; i++) {
+      if ((await readdir(dir)).length === 0) return;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+  };
   const orphan = async (name: string) => {
     await writeFile(path.join(dir, name), "x");
     await utimes(path.join(dir, name), old, old);
@@ -32,14 +39,14 @@ describe("FilesStagingSweeper", () => {
 
     const sweeper = new FilesStagingSweeper();
     sweeper.onModuleInit();
-    await new Promise((r) => setTimeout(r, 50));
+    await untilEmpty();
     expect(await readdir(dir)).toEqual([]); // the boot sweep removed the orphan
 
     expect(setIntervalSpy).toHaveBeenCalledTimes(1);
     expect(intervals[0].ms).toBe(60 * 60 * 1000);
     await orphan("22222222-2222-2222-2222-222222222222.part");
     intervals[0].fn(); // the hourly tick
-    await new Promise((r) => setTimeout(r, 50));
+    await untilEmpty();
     expect(await readdir(dir)).toEqual([]);
 
     sweeper.onModuleDestroy();
