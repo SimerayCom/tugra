@@ -156,6 +156,20 @@ describe("VolumeBackupsService.restore", () => {
     }
   });
 
+  it("exit 5 + TUGRA_GPG_MISSING is a clear gpg-missing error, not 'possibly partial', and names no rollback volume", async () => {
+    const t = setup({ send: { exitCode: 5, output: "TUGRA_GPG_MISSING: gpg not found on this host (install gnupg)" } });
+    const err = await t.service.restore("u1", "a1", "vb1").catch((e) => e);
+    expect(err).toBeInstanceOf(BadGatewayException);
+    expect(err.message).toMatch(/gpg is not installed[\s\S]*untouched/);
+    expect(err.message).not.toMatch(/uncertain|tugra_restore_rb_/);
+    expect(t.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "app.volume_restore_failed" }));
+  });
+
+  it("a bare exit 5 without the marker stays an uncertain outcome", async () => {
+    const t = setup({ send: { exitCode: 5, output: "" } });
+    await expect(t.service.restore("u1", "a1", "vb1")).rejects.toThrow(/outcome is uncertain/);
+  });
+
   it("reports an uncertain outcome + the recovery volume on exit 70, and records it in the audit", async () => {
     const t = setup({ send: { exitCode: 70, output: "TUGRA_RESTORE_RECOVERY_REQUIRED" } });
     await expect(t.service.restore("u1", "a1", "vb1")).rejects.toThrow(/outcome is uncertain[\s\S]*tugra_restore_rb_/);

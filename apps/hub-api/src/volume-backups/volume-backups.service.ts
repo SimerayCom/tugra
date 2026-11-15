@@ -171,6 +171,10 @@ export class VolumeBackupsService {
       // CODE — not an end-of-output marker the agent's output cap could truncate away.
       if (r.exitCode !== 0) {
         await this.audit.log({ actor: userId, action: "app.volume_restore_failed", target: appId, meta: { backupId, restoreId, rbVolume, exitCode: r.exitCode } });
+        // 5 + marker = the gpg preflight stopped it before anything was touched (no snapshot volume exists).
+        if (r.exitCode === 5 && r.output.includes("TUGRA_GPG_MISSING")) {
+          throw new BadGatewayException("volume restore failed: gpg is not installed on the host (install gnupg); the existing volume data was untouched");
+        }
         // 72 = aborted before the wipe; 71 = rolled back from the snapshot — both leave the old data intact.
         // Any other code (70 rollback-also-failed, -1/137 SIGKILL, unexpected) means the outcome is uncertain.
         const preserved = r.exitCode === 71 || r.exitCode === 72;
