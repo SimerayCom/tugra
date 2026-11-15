@@ -1050,15 +1050,16 @@ describe("ApplicationsService", () => {
         create: jest.fn().mockResolvedValue(created),
         updateMany: jest.fn().mockResolvedValue({ count: 0 }),
         findFirst: jest.fn().mockResolvedValue(null),
-        findUnique: jest.fn().mockResolvedValue(null),
+        // the idempotency pre-check sees nothing; every later read finds the row we just created
+        findUnique: jest.fn().mockResolvedValueOnce(null).mockResolvedValue(created),
       },
     } as unknown as PrismaService;
     const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
     const svc = make(prisma, access, {} as AgentWsServer);
-    await expect(svc.submitMoveDeploy("app1", "u1", "move:ckmoveabcdefghijklmnopqrs")).resolves.toBeDefined();
+    await expect(svc.submitMoveDeploy("app1", "u1", "move:ckmoveabcdefghijklmnopqrs")).resolves.toMatchObject({ id: "mv1" });
     expect(prisma.deployment.create as jest.Mock).toHaveBeenCalledWith({ data: expect.objectContaining({ idempotencyKey: "move:ckmoveabcdefghijklmnopqrs", status: "QUEUED" }) });
-    (prisma.deployment.create as jest.Mock).mockClear();
-    await expect(svc.submitMoveDeploy("app1", "u1", "move:ckmoveabcdefghijklmnopqrs:rb")).resolves.toBeDefined();
+    (prisma.deployment.findUnique as jest.Mock).mockResolvedValueOnce(null).mockResolvedValue(created);
+    await expect(svc.submitMoveDeploy("app1", "u1", "move:ckmoveabcdefghijklmnopqrs:rb")).resolves.toMatchObject({ id: "mv1" });
     await expect(svc.deploy("u1", "app1")).rejects.toBeInstanceOf(ConflictException);
   });
 

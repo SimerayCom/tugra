@@ -30,11 +30,13 @@ describe("PartTransferService", () => {
     expect(t.register).toHaveBeenCalledWith({ moveId: MOVE_ID, volIdx: 1, part: 4, size: 1000, sha256: SHA, srcServerId: "s1", dstServerId: "s2" });
     const calls = Object.fromEntries(t.sendCommand.mock.calls.map((c) => [c[0], c]));
     expect(calls.s2[1]).toContain("curl -fsS --no-buffer");
-    expect(calls.s2[1]).toContain("DSTSIG"); // the target gets the dst claim...
-    expect(calls.s2[1]).not.toContain("SRCSIG");
+    const b64 = (p: string): string => Buffer.from(p).toString("base64"); // the credential reaches curl through a config file, base64 in the script
+    expect(calls.s2[1]).toContain(b64(DST_PATH)); // the target gets the dst claim...
+    expect(calls.s2[1]).not.toContain(b64(SRC_PATH));
     expect(calls.s1[1]).toContain("-T");
-    expect(calls.s1[1]).toContain("SRCSIG"); // ...the source the src claim
-    expect(calls.s1[1]).not.toContain("DSTSIG");
+    expect(calls.s1[1]).toContain(b64(SRC_PATH)); // ...the source the src claim
+    expect(calls.s1[1]).not.toContain(b64(DST_PATH));
+    expect(calls.s1[1] + calls.s2[1]).not.toMatch(/SRCSIG|DSTSIG/); // never verbatim
     expect(t.sendCommand.mock.calls.every((c) => c[2] === "backup" && c[3] === 900_000)).toBe(true);
   });
 

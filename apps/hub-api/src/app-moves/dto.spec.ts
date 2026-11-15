@@ -29,7 +29,7 @@ describe("app move DTOs", () => {
       volumes: [{ name: "d", state: "APPLIED", sizeBytes: 1, parts: 1, partsDone: 1, bytesDone: 1 }],
       progress: { volumeIndex: 1, volumeCount: 1, bytesDone: 1, bytesTotal: 1 }, warnings: [{ code: "history_splits" }],
       failureReason: null, failurePhase: null, deploymentId: null, cutoverAt: null, finishedAt: null, archiveUntil: null, sourcePurgedAt: null,
-      createdAt: new Date().toISOString(), canCancel: false, needsAttention: false, plan: null, acks: null, logTail: null,
+      createdAt: new Date().toISOString(), canCancel: false, needsAttention: false, snapshotKept: false, plan: null, acks: null, logTail: null,
     };
     expect(AppMoveViewSchema.safeParse(view).success).toBe(true);
     expect(AppMoveViewSchema.safeParse({ ...view, phase: "NOPE" }).success).toBe(false);
