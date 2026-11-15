@@ -574,3 +574,40 @@ func TestFs2TimeoutClamp(t *testing.T) {
 		}
 	}
 }
+
+func TestFs2WritersQueuedBehindAVolumeHoldNoGlobalSlot(t *testing.T) {
+	h := newFs2Harness(t, allFiles, "img")
+	h.g.semWait = 30 * time.Millisecond
+	l := h.g.state.volLock("tugra_appv_c1_data")
+	l <- struct{}{} // a writer already holds the volume
+	var other atomic.Int32
+	h.g.launch = func(ctx context.Context, _, volume string, _ fsd.Req2, _ io.Reader, _ io.Writer) (fsd.Result2, error) {
+		if volume == "other_vol" {
+			other.Add(1)
+		}
+		return fsd.Result2{}, nil
+	}
+	// 5 writes pile up behind the held volume lock (more than the 4 global slots) ...
+	for i := 0; i < 5; i++ {
+		h.g.handle(context.Background(), h.msg("volume", "mkdir", nil))
+	}
+	time.Sleep(60 * time.Millisecond)
+	// ... and ops on ANOTHER volume still run: the queued writers took no slot.
+	for i := 0; i < 4; i++ {
+		h.g.handle(context.Background(), h.msg("volume", "stat", func(m *protocol.ServerMsg) { m.Subject = "other_vol" }))
+	}
+	for i := 0; i < 4; i++ {
+		if r := h.expectReply(); !r.OK {
+			t.Fatalf("an op on another volume was starved: %+v", r)
+		}
+	}
+	if other.Load() != 4 {
+		t.Fatalf("other-volume ops run: %d", other.Load())
+	}
+	<-l // release; the queued writes drain one at a time
+	for i := 0; i < 5; i++ {
+		if r := h.expectReply(); !r.OK {
+			t.Fatalf("%+v", r)
+		}
+	}
+}

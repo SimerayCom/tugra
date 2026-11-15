@@ -85,10 +85,6 @@ func (s *fs2State) volLock(volume string) chan struct{} {
 	return l
 }
 
-// containerFs2 is the container-scope executor; the container-filesystem slice wires it to the ctrfs driver. nil
-// means "not available" and the gate answers `unsupported`.
-var containerFs2 fs2ContainerFn
-
 // fs2ContainerFn executes one container-scope request (set by the container-FS driver). nil = not available.
 type fs2ContainerFn func(ctx context.Context, m protocol.ServerMsg, g *fs2Gate) protocol.Fs2Result
 
@@ -178,7 +174,7 @@ func validateFs2Fields(m protocol.ServerMsg) string {
 	}
 	switch m.Op {
 	case "write":
-		if m.Scope == "volume" && m.Sha256 == "" {
+		if m.Sha256 == "" {
 			return "sha256 is required"
 		}
 		if !xfer.ValidPath(m.Xfer) {
@@ -256,6 +252,19 @@ func (g *fs2Gate) handle(ctx context.Context, m protocol.ServerMsg) {
 }
 
 func (g *fs2Gate) run(ctx context.Context, m protocol.ServerMsg) {
+	// Mutating volume ops are serialized per volume (blocking, bounded by the op deadline). The volume lock is taken
+	// BEFORE the global slot: a write queued behind another write holds no slot, so a burst of uploads to one volume
+	// can never starve ops on other volumes.
+	if m.Scope == "volume" && protocol.Fs2MutatingOp(m.Op) {
+		l := g.state.volLock(m.Subject)
+		select {
+		case l <- struct{}{}:
+			defer func() { <-l }()
+		case <-ctx.Done():
+			g.fail(m.ReqID, fsd.CodeBusy, "volume is busy with another write")
+			return
+		}
+	}
 	// 6. Global concurrency cap (short wait, then busy).
 	wait := time.NewTimer(g.semWait)
 	defer wait.Stop()
@@ -269,20 +278,9 @@ func (g *fs2Gate) run(ctx context.Context, m protocol.ServerMsg) {
 		g.fail(m.ReqID, fsd.CodeFailed, "file operation timed out")
 		return
 	}
-	// Mutating volume ops are serialized per volume (blocking, bounded by the op deadline).
-	if m.Scope == "volume" && protocol.Fs2MutatingOp(m.Op) {
-		l := g.state.volLock(m.Subject)
-		select {
-		case l <- struct{}{}:
-			defer func() { <-l }()
-		case <-ctx.Done():
-			g.fail(m.ReqID, fsd.CodeBusy, "volume is busy with another write")
-			return
-		}
-	}
 	if m.Scope == "container" {
 		if g.container == nil {
-			g.fail(m.ReqID, fsd.CodeUnsupp, "container filesystem is not available in this agent build")
+			g.fail(m.ReqID, fsd.CodeUnsupp, "the container filesystem is not available on this agent")
 			return
 		}
 		res := g.container(ctx, m, g)

@@ -17,6 +17,7 @@ import (
 
 	"github.com/SimerayCom/tugra/agent/internal/client"
 	"github.com/SimerayCom/tugra/agent/internal/config"
+	"github.com/SimerayCom/tugra/agent/internal/ctrfs"
 	"github.com/SimerayCom/tugra/agent/internal/fsd"
 	"github.com/SimerayCom/tugra/agent/internal/journal"
 	"github.com/SimerayCom/tugra/agent/internal/keys"
@@ -85,6 +86,10 @@ func main() {
 		// `durable` survive a hub restart / socket drop and the hub can recover their outcome.
 		Journal: journal.New(filepath.Join(home, ".tugra", "journal")),
 	}
+
+	// Container-filesystem uploads are staged (verified) under ~/.tugra/fsx before the container sees them; drop any a
+	// crash left behind.
+	ctrfs.SweepStage(time.Hour)
 
 	kp, err := keys.LoadOrCreate(cfg.KeyPath)
 	if err != nil {
