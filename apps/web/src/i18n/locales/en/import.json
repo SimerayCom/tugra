@@ -362,5 +362,224 @@
       "configMounts": "{n} config files carried",
       "network": "Private network {network} as {alias}"
     }
+  },
+  "review": {
+    "title": "Review & rename",
+    "subtitle": "Rename and re-place what will be created. This changes names and placement only, nothing about what data or settings are copied.",
+    "continue": "Review & rename",
+    "back": "Back to preview",
+    "targetServer": "Target server",
+    "targetTeam": "Target team: {team} (derived from the server)",
+    "targetTeamHint": "Resources are created on the team that owns the target server.",
+    "noTarget": "No server you can write to. Add a server first, then come back.",
+    "scopeLabel": "Source team label (optional)",
+    "scopeLabelHelp": "A short label for the source team or token (for example team-3). Mappings are saved per label, so several source teams do not overwrite each other.",
+    "search": "Search items",
+    "searchLabel": "Search by name",
+    "reset": "Reset",
+    "resetAll": "Reset all",
+    "undo": "Undo",
+    "wasName": "was: {name}",
+    "recomputing": "Checking the mapping against the target...",
+    "resolveFailed": "Could not check the mapping: {message}",
+    "apply": "Apply",
+    "applyCounts": "Apply {apps} apps, {databases} databases; {excluded} excluded",
+    "applyBlocked": "Fix the errors and acknowledge the conflicts to apply.",
+    "applying": "Applying...",
+    "download": "Download mapping",
+    "upload": "Upload mapping",
+    "uploadDiff": "Uploading this file changes {count} fields. Review the changes, then load it.",
+    "uploadLoad": "Load file",
+    "uploadCancel": "Cancel",
+    "uploadScopeMismatch": "This file was made for another source team or token and cannot be used here.",
+    "uploadFailedJson": "That file is not valid JSON.",
+    "uploadFailedShape": "That file is not an import mapping (version 1).",
+    "saveProfile": "Save profile",
+    "profileSaved": "Mapping saved (version {version}).",
+    "profileLoaded": "Saved mapping loaded (v{version}, last applied {date})",
+    "profileLoadedNever": "Saved mapping loaded (v{version}, never applied)",
+    "profileDiscard": "Discard",
+    "ignoreSaved": "Ignore the saved mapping and import with source names",
+    "reconcile": "Reconcile already-imported items",
+    "reconcileHelp": "Applies the mapped name, environment and alias to items an earlier import already created (in place, never re-created). Off by default.",
+    "reconcileNote": "{count} already-imported items differ from the mapping.",
+    "confirmTitle": "Apply this import?",
+    "confirmBody": "{renamed} renamed, {moved} moved, {excluded} excluded, {aliased} aliases, {projects} new projects, {environments} new environments (not removed by rollback).",
+    "confirmBodyLegacy": "The saved mapping is ignored. Items are imported with their source names.",
+    "notApplied": "The hub did not apply the mapping you reviewed. Check the result before continuing.",
+    "showMore": "Show more ({count} hidden)",
+    "ungrouped": "Ungrouped",
+    "groupProject": "Target project for this group",
+    "createNew": "Type to create a new one",
+    "aliasPlaceholder": "none",
+    "empty": "Nothing matches the filter.",
+    "live": "{apps} apps, {databases} databases, {renamed} renamed, {moved} moved, {excluded} excluded, {errors} errors, {warnings} warnings",
+    "filter": {
+      "all": "All",
+      "changed": "Changed",
+      "conflicts": "Conflicts",
+      "excluded": "Excluded",
+      "label": "Filter items"
+    },
+    "col": {
+      "include": "Include",
+      "source": "Source name",
+      "name": "Name in Tugra",
+      "project": "Project",
+      "environment": "Environment",
+      "alias": "Container alias",
+      "status": "Status",
+      "dbIdentifier": "Internal database name"
+    },
+    "bulk": {
+      "title": "Bulk edit",
+      "open": "Bulk edit",
+      "for": "Applies to {count} rows",
+      "prefix": "Add prefix",
+      "suffix": "Add suffix",
+      "replace": "Find and replace",
+      "lowercase": "Lowercase names",
+      "move": "Move to project / environment",
+      "exclude": "Exclude all",
+      "include": "Include all",
+      "reset": "Reset all",
+      "text": "Text",
+      "find": "Find",
+      "with": "Replace with",
+      "project": "Project",
+      "environment": "Environment",
+      "applyToAll": "Apply to all",
+      "close": "Close",
+      "op": "Action"
+    },
+    "orphans": {
+      "banner": "{count} mapped items no longer exist in the source.",
+      "remove": "Remove",
+      "removeAll": "Remove all"
+    },
+    "counts": {
+      "apps": "Apps",
+      "databases": "Databases",
+      "renamed": "Renamed",
+      "moved": "Moved",
+      "excluded": "Excluded",
+      "aliased": "Aliases",
+      "errors": "Errors",
+      "warnings": "Warnings",
+      "newProjects": "New projects",
+      "newEnvironments": "New environments"
+    },
+    "hint": {
+      "rename": "Renaming changes the name shown in Tugra only. Container, volume and database host names are generated from ids (tugra_<id>).",
+      "envRemap": "Environment variables that point at other apps are rewritten by the env-remap step; renaming does not change them.",
+      "alias": "Adds a stable DNS name on the Tugra network. Compose, swarm and apps with a custom --network cannot take one; you will see a note.",
+      "database": "Databases have no alias; their host is tugra_db_<id>. The internal database name is kept from the source.",
+      "treeKept": "Projects and environments created here are not removed by rollback.",
+      "scopeOnly": "This changes names and placement only. It does not change what data or settings are copied."
+    },
+    "status": {
+      "pending": "Will import",
+      "blocked": "Blocked",
+      "alreadyImported": "Already imported",
+      "excluded": "Excluded"
+    },
+    "origin": {
+      "source": "source",
+      "mapping": "mapping",
+      "default": "team default",
+      "derived": "derived",
+      "tree": "source project",
+      "selected": "selected environment"
+    },
+    "ack": {
+      "name": {
+        "duplicate": "I accept the duplicate name"
+      },
+      "project": {
+        "merge_existing": "Merge into the existing project (tags and description are merged)",
+        "merge_sources": "Merge these source projects into one"
+      },
+      "item": {
+        "imported_elsewhere": "Import again here (creates a duplicate)"
+      }
+    },
+    "err": {
+      "mapping_required": "A saved mapping exists for this source. Review it and apply it, or choose to ignore the saved mapping.",
+      "mapping_changed": "The mapping, the source or the target changed since you reviewed it. It is being checked again.",
+      "mapping_orphans": "The mapping refers to items the source no longer has. Remove them and review again.",
+      "mapping_invalid": "The mapping has errors or unacknowledged conflicts.",
+      "mapping_version_conflict": "The saved mapping was changed elsewhere. Reload before saving."
+    },
+    "kindApp": "App",
+    "kindDatabase": "Database",
+    "rowFor": "Mapping for {name}",
+    "includeFor": "Include {name}",
+    "resetField": "Reset {field}",
+    "groupFor": "Group: {project}"
+  },
+  "conflict": {
+    "panelTitle": "Conflicts and notes",
+    "live": "{errors} errors, {warnings} warnings",
+    "needsAck": "Needs acknowledgement",
+    "none": "No conflicts.",
+    "name": {
+      "invalid": "The name is empty or contains control, bidi or zero-width characters.",
+      "too_long": "The name is longer than {max} characters.",
+      "duplicate": "A resource named \"{name}\" would already exist in this environment.",
+      "case_only": "\"{name}\" matches an existing name except for letter case."
+    },
+    "alias": {
+      "invalid": "The alias must be a lowercase DNS label (a-z, 0-9 and hyphen, 1 to 63 characters).",
+      "reserved": "Aliases starting with tugra- or tugra_ are reserved.",
+      "taken": "The alias \"{alias}\" is already used on the target server.",
+      "unsupported": "This item cannot take a container alias (databases, compose apps and excluded items cannot)."
+    },
+    "db": {
+      "identifier_invalid": "The internal database name must be lowercase letters, digits and underscores (up to 63).",
+      "identifier_on_app": "Only databases have an internal database name.",
+      "identifier_on_imported": "The internal name of an already-imported database cannot be changed.",
+      "identifier_fresh_only": "This name applies only if the source credentials cannot be read; otherwise the source's name is kept.",
+      "rename_identifier_kept": "The display name changes but the internal database name stays the source's."
+    },
+    "key": {
+      "orphan": "This item no longer exists in the source.",
+      "stale_ref": "A {section} entry refers to something the source no longer has."
+    },
+    "scope": {
+      "mismatch": "This mapping belongs to another source team or token ({expected})."
+    },
+    "perm": {
+      "projects": "You need the projects permission on the target team to create projects or environments."
+    },
+    "env": {
+      "not_in_team": "The selected environment does not belong to the target team."
+    },
+    "project": {
+      "merge_existing": "Project \"{name}\" already exists with {existing} resources. Its tags and description will be merged.",
+      "merge_sources": "{sources} source projects map onto \"{name}\"."
+    },
+    "item": {
+      "imported_elsewhere": "Already imported onto \"{server}\". Importing here creates a duplicate.",
+      "already_imported_drift": "Already imported; the mapped {fields} differ from the live resource. Enable reconcile to apply them."
+    },
+    "gitsource": {
+      "exists_not_renamed": "A git source for this GitHub App already exists, so its name is kept (a rename applies on create only)."
+    },
+    "dep": {
+      "excluded": "Depends on \"{dependency}\", which is excluded."
+    },
+    "placement": {
+      "synthetic": "{count} items use the synthetic production environment of an older Dokploy.",
+      "project_required": "An environment needs a project."
+    },
+    "tree": {
+      "not_rolled_back": "{projects} projects and {environments} environments will be created. Rollback does not remove them."
+    },
+    "level": {
+      "error": "Error",
+      "warn": "Warning",
+      "info": "Note"
+    },
+    "itemLink": "Go to {name}"
   }
 }

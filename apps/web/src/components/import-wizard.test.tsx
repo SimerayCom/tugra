@@ -333,6 +333,85 @@ describe("ImportWizard", () => {
   });
 });
 
+describe("ImportWizard — editable mapping", () => {
+  beforeEach(() => {
+    window.history.replaceState(null, "", "/"); // the wizard mirrors the running op into ?op=
+    qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    vi.spyOn(api, "getCutover").mockRejectedValue(new ApiError(404, "not found"));
+    vi.spyOn(api, "listDnsCredentials").mockResolvedValue([]);
+    vi.spyOn(api, "listTeams").mockResolvedValue([{ id: "t1", name: "Team One" }, { id: "t2", name: "Team Two" }] as never);
+    vi.spyOn(api, "listServers").mockResolvedValue([
+      { id: "srv1", name: "Server A", teamId: "t1", status: "ONLINE", clusterId: null, tags: [], canWrite: true },
+      { id: "srv2", name: "Server B", teamId: "t2", status: "ONLINE", clusterId: null, tags: [], canWrite: true },
+      { id: "srv3", name: "Read-only", teamId: "t2", status: "ONLINE", clusterId: null, tags: [], canWrite: false },
+    ] as never);
+    vi.spyOn(api, "getMigrateCommand").mockResolvedValue({ opId: "op1", active: false, expiresAt: null, commandTemplate: "run on the source host" });
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  const withMapping: ImportPlan = { ...plan, mapping: { features: ["mapping-v1"], stored: null, storedVersion: null, scopeKey: "team-3" } };
+
+  it("sends the optional source team label on connect; a hub that offers mapping shows 'Review & rename' (no direct apply)", async () => {
+    const connectSpy = vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s1", expiresAt: "2026-01-01T00:00:00.000Z" });
+    vi.spyOn(api, "importPlan").mockResolvedValue(withMapping);
+    const resolveSpy = vi.spyOn(api, "importResolve").mockResolvedValue({ version: 1, effective: [], projects: [], gitSources: [], conflicts: [], orphans: [], mappingHash: "m".repeat(32), counts: { renamed: 0, moved: 0, excluded: 0, aliased: 0, newProjects: 0, newEnvironments: 0 } });
+    vi.spyOn(api, "importMappingGet").mockResolvedValue({ doc: null, version: null, label: null, lastAppliedAt: null });
+    wrap(<ImportWizard />);
+    await screen.findByRole("option", { name: "Team One" });
+    fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
+    fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
+    fireEvent.change(screen.getByLabelText("Source team label (optional)"), { target: { value: "Team-3" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
+    await screen.findByText("Import preview");
+    expect(connectSpy).toHaveBeenCalledWith({ sourceKind: "coolify", teamId: "t1", baseUrl: "https://coolify.example.com", token: "tok", scopeLabel: "team-3" });
+    expect(screen.queryByRole("button", { name: "Import to Tugra" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Review & rename" }));
+    await screen.findByText("Target team: Team One (derived from the server)");
+    // every writable server on every team, grouped by team; the read-only one is not offered
+    expect(screen.getByRole("option", { name: "Server B" })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "Read-only" })).toBeNull();
+    await waitFor(() => expect(resolveSpy).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "Back to preview" }));
+    await screen.findByText("Import preview");
+  });
+
+  it("an older hub (no mapping feature flag) keeps the legacy one-click apply and never sends mapping fields", async () => {
+    vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s1", expiresAt: "2026-01-01T00:00:00.000Z" });
+    vi.spyOn(api, "importPlan").mockResolvedValue(plan); // no `mapping` block
+    const applySpy = vi.spyOn(api, "importApply").mockResolvedValue({ opId: "op1" });
+    vi.spyOn(api, "getImportOperation").mockResolvedValue(settledOp);
+    const resolveSpy = vi.spyOn(api, "importResolve");
+    wrap(<ImportWizard />);
+    await screen.findByRole("option", { name: "Team One" });
+    fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://c.example.com" } });
+    fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
+    await screen.findByRole("option", { name: "Server A" });
+    expect(screen.queryByRole("button", { name: "Review & rename" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Import to Tugra" }));
+    await screen.findByText("DONE");
+    expect(applySpy).toHaveBeenCalledWith({ sourceKind: "coolify", sessionId: "s1", targetServerId: "srv1", planHash: "a".repeat(32) });
+    expect(resolveSpy).not.toHaveBeenCalled();
+  });
+
+  it("the timeline shows the source name next to a mapped, renamed task", async () => {
+    vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s1", expiresAt: "2026-01-01T00:00:00.000Z" });
+    vi.spyOn(api, "importPlan").mockResolvedValue(plan);
+    vi.spyOn(api, "importApply").mockResolvedValue({ opId: "op1" });
+    vi.spyOn(api, "getImportOperation").mockResolvedValue({ ...settledOp, tasks: [{ ...settledOp.tasks[0], name: "Storefront", sourceName: "web-app", mapped: true }] });
+    wrap(<ImportWizard />);
+    await screen.findByRole("option", { name: "Team One" });
+    fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://c.example.com" } });
+    fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
+    await screen.findByRole("option", { name: "Server A" });
+    fireEvent.click(screen.getByRole("button", { name: "Import to Tugra" }));
+    await screen.findByText("DONE");
+    expect(screen.getByText("Storefront")).toBeTruthy();
+    expect(screen.getByText("was: web-app")).toBeTruthy();
+  });
+});
+
 describe("import wizard i18n", () => {
   const lookup = (k: string): unknown => k.split(".").slice(1).reduce<unknown>((n, p) => (n && typeof n === "object" ? (n as Record<string, unknown>)[p] : undefined), importMessages);
   it("every literal import.* key used by the wizard resolves to a string in en/import.json", () => {

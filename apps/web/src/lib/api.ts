@@ -115,6 +115,9 @@ import type {
   ImportPlan,
   ImportServiceChoice,
   ImportServicePreview,
+  ImportMappingDoc,
+  ImportResolved,
+  ImportStoredMapping,
   ImportRemoteKind,
   ImportSession,
   ImportOperation,
@@ -2089,20 +2092,48 @@ export const api = {
 
   // ── fleet importer (Coolify / Dokploy / local-docker) ──
   // Store an encrypted, short-lived connection to a source PaaS (the token is never returned/logged).
-  importConnect(input: { sourceKind: ImportRemoteKind; teamId: string; baseUrl: string; token: string }) {
+  importConnect(input: { sourceKind: ImportRemoteKind; teamId: string; baseUrl: string; token: string; scopeLabel?: string }) {
     return apiFetch<ImportSession>("/import/connect", { method: "POST", body: JSON.stringify(input) });
   },
   // Dry-run preview (secret-free) — local server to adopt, or a connected remote session.
   importPlan(input: { sourceKind: "local-docker"; serverId: string } | { sourceKind: ImportRemoteKind; sessionId: string }) {
     return apiFetch<ImportPlan>("/import/plan", { method: "POST", body: JSON.stringify(input) });
   },
-  // Apply a reviewed plan (planHash binds it to that exact preview).
+  // Apply a reviewed plan (planHash binds it to that exact preview). A remote apply may carry an editable mapping
+  // (+ the mappingHash resolve returned for exactly it); the hub echoes `mappingApplied`, so a caller can catch a
+  // hub that silently ignored the mapping (the review step does).
   importApply(
     input:
       | { sourceKind: "local-docker"; serverId: string; planHash: string }
-      | { sourceKind: ImportRemoteKind; sessionId: string; targetServerId: string; environmentId?: string; planHash: string; acks?: ImportAck[]; serviceChoices?: Record<string, ImportServiceChoice> },
+      | {
+          sourceKind: ImportRemoteKind;
+          sessionId: string;
+          targetServerId: string;
+          environmentId?: string;
+          planHash: string;
+          acks?: ImportAck[];
+          serviceChoices?: Record<string, ImportServiceChoice>;
+          mapping?: ImportMappingDoc;
+          mappingHash?: string;
+          reconcile?: boolean;
+          ignoreStoredMapping?: boolean;
+          saveMapping?: boolean;
+        },
   ) {
-    return apiFetch<{ opId: string }>("/import/apply", { method: "POST", body: JSON.stringify(input) });
+    return apiFetch<{ opId: string; mappingApplied?: boolean }>("/import/apply", { method: "POST", body: JSON.stringify(input) });
+  },
+  // Authoritative mapping preview: effective names/placement, every conflict, and the mappingHash apply must carry.
+  importResolve(input: { sessionId: string; sourceKind: ImportRemoteKind; planHash: string; targetServerId: string; environmentId?: string; reconcile?: boolean; mapping: ImportMappingDoc }) {
+    return apiFetch<ImportResolved>("/import/mapping/resolve", { method: "POST", body: JSON.stringify(input) });
+  },
+  importMappingGet(sessionId: string) {
+    return apiFetch<ImportStoredMapping>(`/import/sessions/${encodeURIComponent(sessionId)}/mapping`);
+  },
+  importMappingPut(sessionId: string, input: { mapping: ImportMappingDoc; label?: string; expectedVersion?: number }) {
+    return apiFetch<{ ok: true; version: number; mappingHash: string }>(`/import/sessions/${encodeURIComponent(sessionId)}/mapping`, { method: "PUT", body: JSON.stringify(input) });
+  },
+  importMappingDelete(sessionId: string) {
+    return apiFetch<{ ok: true; deleted: boolean }>(`/import/sessions/${encodeURIComponent(sessionId)}/mapping`, { method: "DELETE" });
   },
   // Resolve how each git app of the connected source would be linked on the target server's team (read-only).
   importGitLinks(input: { sessionId: string; targetServerId: string }) {

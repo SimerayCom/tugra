@@ -9,13 +9,14 @@ import { Card, SectionCard, Btn, EmptyState, Spinner } from "./ui";
 import { useToast } from "./toast";
 import { useConfirm } from "./confirm";
 import { CopyBtn } from "./copy-row";
+import { ImportReviewStep } from "./import-review-step";
 import { CutoverPanel } from "./cutover-panel";
 import { planSummary, itemsByKind, riskTone, opProgress, coverageApps, coverageCounts, hasDeferredCoverage, reasonText, ackableItems, buildAcks, runnableAfterAcks, serviceChoicesPayload } from "../lib/import";
 import { EnvBlockers } from "./import/env-blockers";
 import { GitLinksPanel, GitRelinkCard, DeployKeyBlock } from "./import/git-links-panel";
 import { ImportServicesPanel } from "./import-services-panel";
 import { ImportChecklist } from "./import-checklist";
-import type { ImportPlan, ImportPlanItem, ImportRiskLevel, ImportOperation, ImportOpTask, ImportRemoteKind, ImportServiceChoice, ImportTaskStatus, MintedMigrationToken, ImportRemapPlan, ImportRemapResult } from "../lib/types";
+import type { Team, ImportPlan, ImportPlanItem, ImportRiskLevel, ImportOperation, ImportOpTask, ImportRemoteKind, ImportServiceChoice, ImportTaskStatus, MintedMigrationToken, ImportRemapPlan, ImportRemapResult } from "../lib/types";
 
 const toneColor: Record<"danger" | "warning" | "info", string> = {
   danger: "var(--c-r)",
@@ -51,6 +52,7 @@ export function ImportWizard() {
   const [teamId, setTeamId] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [token, setToken] = useState("");
+  const [scopeLabel, setScopeLabel] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [plan, setPlan] = useState<ImportPlan | null>(null);
   const [opId, setOpId] = useState<string | null>(null);
@@ -78,7 +80,7 @@ export function ImportWizard() {
     onError: (e) => toast((e as Error).message, "error"),
   });
   const connect = useMutation({
-    mutationFn: () => api.importConnect({ sourceKind: kind, teamId: effectiveTeam, baseUrl: baseUrl.trim(), token: token.trim() }),
+    mutationFn: () => api.importConnect({ sourceKind: kind, teamId: effectiveTeam, baseUrl: baseUrl.trim(), token: token.trim(), ...(scopeLabel.trim() ? { scopeLabel: scopeLabel.trim() } : {}) }),
     onSuccess: (s) => {
       setSessionId(s.sessionId);
       planM.mutate(s.sessionId);
@@ -92,6 +94,7 @@ export function ImportWizard() {
     setKind(next);
     setBaseUrl("");
     setToken("");
+    setScopeLabel("");
     connect.reset();
     planM.reset();
   };
@@ -114,6 +117,8 @@ export function ImportWizard() {
         plan={plan}
         kind={kind}
         servers={servers.filter((s) => s.teamId === effectiveTeam).map((s) => ({ id: s.id, name: s.name }))}
+        writableServers={servers.filter((s) => s.canWrite).map((s) => ({ id: s.id, name: s.name, teamId: s.teamId }))}
+        teams={teams}
         sessionId={sessionId}
         onApplied={setOpId}
         onReset={reset}
@@ -170,6 +175,10 @@ export function ImportWizard() {
       <input id="imp-token" style={field} type="password" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off" />
       <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "-6px 0 16px" }}>{t(src.tokHint)}</p>
 
+      <label style={label} htmlFor="imp-scope">{t("import.review.scopeLabel")}</label>
+      <input id="imp-scope" style={field} value={scopeLabel} onChange={(e) => setScopeLabel(e.target.value.toLowerCase())} placeholder="team-3" maxLength={64} autoComplete="off" spellCheck={false} />
+      <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "-6px 0 16px" }}>{t("import.review.scopeLabelHelp")}</p>
+
       {connect.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginBottom: 10 }}>{(connect.error as Error).message}</div>}
 
       <Btn onClick={() => connect.mutate()} disabled={busy || !effectiveTeam || !baseUrl.trim() || !token.trim()}>
@@ -185,6 +194,8 @@ function PlanView({
   plan,
   kind,
   servers,
+  writableServers,
+  teams,
   sessionId,
   onApplied,
   onReset,
@@ -192,6 +203,8 @@ function PlanView({
   plan: ImportPlan;
   kind: ImportRemoteKind;
   servers: { id: string; name: string }[];
+  writableServers: { id: string; name: string; teamId: string }[];
+  teams: Team[];
   sessionId: string;
   onApplied: (opId: string) => void;
   onReset: () => void;
@@ -201,6 +214,7 @@ function PlanView({
   const s = planSummary(plan);
   const groups = itemsByKind(plan);
   const [targetServerId, setTargetServerId] = useState("");
+  const [reviewing, setReviewing] = useState(false);
   const target = targetServerId || servers[0]?.id || "";
   // Strict env (Coolify): apps acknowledged to be created WITHOUT the variables Tugra cannot carry. Apply stays
   // disabled until every ackable blocker is acknowledged; a non-ackable blocker (token cannot read values) never is.
@@ -220,6 +234,9 @@ function PlanView({
     });
   const serviceChoices = serviceChoicesPayload(plan, choices);
 
+  // An older hub omits the feature flag: keep the original one-click apply, no review step.
+  const mappingSupported = !!plan.mapping?.features?.includes("mapping-v1");
+
   const apply = useMutation({
     mutationFn: () => {
       const acks = buildAcks(plan, acked);
@@ -228,6 +245,10 @@ function PlanView({
     onSuccess: (r) => onApplied(r.opId),
     onError: (e) => toast((e as Error).message, "error"),
   });
+
+  if (reviewing && mappingSupported) {
+    return <ImportReviewStep plan={plan} kind={kind} sessionId={sessionId} servers={writableServers} teams={teams} onApplied={onApplied} onBack={() => setReviewing(false)} />;
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 720 }}>
@@ -314,6 +335,10 @@ function PlanView({
         )}
 
         <div style={{ borderTop: "1px solid var(--c-bd)", margin: "16px 0 14px" }} />
+        {mappingSupported ? (
+          <Btn onClick={() => setReviewing(true)} disabled={!s.runnable}>{t("import.review.continue")}</Btn>
+        ) : (
+        <>
         <label style={label} htmlFor="imp-target">{t("import.target")}</label>
         {servers.length === 0 ? (
           <p style={{ fontSize: 12, color: "var(--c-am)", margin: "0 0 8px" }}>{t("import.noTarget")}</p>
@@ -329,6 +354,8 @@ function PlanView({
         <Btn onClick={() => apply.mutate()} disabled={apply.isPending || !target || runnable === 0 || unackedCount > 0 || missingTargets > 0}>
           {apply.isPending ? t("import.applying") : t("import.apply")}
         </Btn>
+        </>
+        )}
       </SectionCard>
 
       <EnvBlockers plan={plan} acked={acked} onChange={setAcked} />
@@ -411,7 +438,10 @@ function Timeline({ opId, onReset }: { opId: string; onReset: () => void }) {
         {op.tasks.map((task, i) => (
           <div key={task.itemRef ?? i} style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 8, fontSize: 12, borderBottom: "1px solid var(--c-bd)", paddingBottom: 6 }}>
             <span style={{ color: statusColor(task.status), fontWeight: 600, minWidth: 90 }}>{task.status}</span>
-            <span className="mono" style={{ flex: 1, wordBreak: "break-all" }}>{task.name ?? task.itemRef}</span>
+            <span className="mono" style={{ flex: 1, wordBreak: "break-all" }}>
+              {task.name ?? task.itemRef}
+              {task.mapped && task.sourceName && task.sourceName !== task.name && <span style={{ color: "var(--c-tx3)", marginLeft: 8, fontFamily: "inherit" }}>{t("import.review.wasName", { name: task.sourceName })}</span>}
+            </span>
             {typeof task.unresolvedEnv === "number" && task.unresolvedEnv > 0 && (
               <span style={{ color: "var(--c-am)" }}>{t("import.unresolvedEnv", { n: task.unresolvedEnv })}</span>
             )}

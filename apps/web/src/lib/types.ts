@@ -1048,6 +1048,70 @@ export interface ImportPlan {
   warnings: string[];
   planHash: string;
   preflight?: ImportPreflight;
+  /** Additive, outside planHash. Absent on a hub that predates editable mappings (the review step is then hidden). */
+  mapping?: { features: string[]; stored: ImportMappingDoc | null; storedVersion: number | null; scopeKey: string };
+}
+
+// ── editable import mapping (names + placement only — never a secret) ──
+export interface ImportMappingItem {
+  include?: boolean;
+  name?: string;
+  project?: string;
+  environment?: string;
+  containerAlias?: string | null;
+  dbIdentifier?: string;
+}
+export interface ImportMappingDoc {
+  version: 1;
+  scope?: { sourceKind: ImportRemoteKind; scopeKey?: string };
+  items: Record<string, ImportMappingItem>;
+  projects: Record<string, { name?: string; environments?: Record<string, string> }>;
+  gitSources: Record<string, { name: string }>;
+  acks: string[];
+}
+export type ImportConflictLevel = "error" | "warn" | "info";
+export interface ImportConflict {
+  code: string;
+  level: ImportConflictLevel;
+  itemRef?: string;
+  ref?: string;
+  field?: "name" | "project" | "environment" | "containerAlias" | "dbIdentifier";
+  params: Record<string, string | number>;
+  requiresAck?: boolean;
+  ackKey?: string;
+  acked?: boolean;
+}
+export interface ImportEffectiveItem {
+  itemRef: string;
+  kind: "app" | "database";
+  sourceName: string;
+  include: boolean;
+  name: string;
+  project: string | null;
+  environment: string | null;
+  containerAlias?: string | null;
+  dbIdentifier?: string;
+  origin: { name: "source" | "mapping"; placement: "mapping" | "tree" | "default" | "selected"; alias?: "mapping"; dbIdentifier?: "mapping" | "derived" };
+  status: "pending" | "blocked" | "already_imported" | "excluded";
+  existing?: { resourceType: string; resourceId: string; name: string };
+  changed: Array<"name" | "project" | "environment" | "containerAlias" | "include">;
+  drift?: Array<"name" | "environment" | "containerAlias">;
+}
+export interface ImportResolved {
+  version: 1;
+  effective: ImportEffectiveItem[];
+  projects: Array<{ name: string; environments: string[]; willCreate: boolean; envsToCreate: string[]; itemCount: number }>;
+  gitSources: Array<{ ref: string; sourceName: string; name: string; exists: boolean }>;
+  conflicts: ImportConflict[];
+  orphans: string[];
+  mappingHash: string;
+  counts: { renamed: number; moved: number; excluded: number; aliased: number; newProjects: number; newEnvironments: number };
+}
+export interface ImportStoredMapping {
+  doc: ImportMappingDoc | null;
+  version: number | null;
+  label: string | null;
+  lastAppliedAt: string | null;
 }
 /** The short-lived encrypted connection returned by import_connect. */
 export interface ImportSession {
@@ -1104,6 +1168,9 @@ export interface ImportOpTask {
   itemRef: string | null;
   kind: string;
   name: string | null;
+  /** Under an editable mapping: the source-side name, and a marker. Absent without one. */
+  sourceName?: string;
+  mapped?: boolean;
   status: ImportTaskStatus;
   resourceType: string | null;
   resourceId: string | null;
