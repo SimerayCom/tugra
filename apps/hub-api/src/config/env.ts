@@ -192,7 +192,7 @@ export const envSchema = z
   MOVE_MAX_CONCURRENT_RELAYS: z.coerce.number().int().min(1).max(16).default(2),
   // Migration volume stream v2 (Coolify/Dokploy -> Tugra volume data, streamed through the memory relay in parts).
   // Kill switch: false = the vx routes 404 and /targets advertises no `kind:"volume"` rows.
-  MIGRATION_VX_ENABLED: z.enum(["true", "false", "1", "0"]).default("true"),
+  MIGRATION_VX_ENABLED: z.string().regex(/^(true|false|1|0|on|off|yes|no)$/i, "expected true/false").default("true"),
   // Raw (tar) MiB per part, clamped 32..512; the migrator's --part-mib must equal it.
   MIGRATION_VX_PART_MIB: z.coerce.number().int().min(32).max(512).default(128),
   // Raw bytes allowed per volume (default 256 GiB, ceiling 2 TiB) and the part-count ceiling (names are 5 digits).

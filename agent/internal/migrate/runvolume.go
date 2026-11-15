@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -131,7 +132,7 @@ func (v *volRunner) inspect(ctx context.Context, tg Target, mayStop bool) volume
 	v.usedIDs[src.ContainerID+"|"+src.Destination] = tg.ItemRef
 	if src.MountType == "bind" && !v.c.allowBind {
 		f.src = src
-		f.item.Found, f.item.MountType, f.item.MountDest, f.item.Image = true, src.MountType, src.Destination, src.Image
+		f.item.Found, f.item.MountType, f.item.MountDest, f.item.Image = true, src.MountType, src.Destination, reportableImage(src.Image)
 		f.state, f.reason = "volume-bind-refused", "bind-mount"
 		return f
 	}
@@ -142,7 +143,7 @@ func (v *volRunner) inspect(ctx context.Context, tg Target, mayStop bool) volume
 	if mayStop && (src.State.Running || src.State.Restarting || src.State.Paused) {
 		if !v.c.stopSource {
 			f.src = src
-			f.item.Found, f.item.MountType, f.item.MountDest, f.item.Image, f.item.Running = true, src.MountType, src.Destination, src.Image, true
+			f.item.Found, f.item.MountType, f.item.MountDest, f.item.Image, f.item.Running = true, src.MountType, src.Destination, reportableImage(src.Image), true
 			f.state, f.reason = "volume-skipped-running", "stop "+shortName(src.Name)+" first (or rerun with --stop-source)"
 			return f
 		}
@@ -163,7 +164,7 @@ func (v *volRunner) inspect(ctx context.Context, tg Target, mayStop bool) volume
 	f.item.Found = true
 	f.item.MountType = src.MountType
 	f.item.MountDest = src.Destination
-	f.item.Image = src.Image
+	f.item.Image = reportableImage(src.Image)
 	running := src.State.Running || src.State.Restarting || src.State.Paused
 	f.item.Running = running
 	if !running {
@@ -222,6 +223,17 @@ func (v *volRunner) startContainer(s *volSource) {
 }
 
 // volumeOutcome maps a resolution/inspection error to an item state + a value-free reason.
+var reportableImageRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,255}$`)
+
+// reportableImage is the image reference as the hub's strict inventory schema accepts it; an unusual reference is left out
+// (the hub then cannot prove "same image" and the Postgres gate stays closed) rather than failing the whole inventory.
+func reportableImage(img string) string {
+	if reportableImageRe.MatchString(img) {
+		return img
+	}
+	return ""
+}
+
 func volumeOutcome(err error) (state, reason string) {
 	switch {
 	case errors.Is(err, ErrNotFound):

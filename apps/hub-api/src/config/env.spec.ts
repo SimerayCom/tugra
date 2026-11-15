@@ -262,3 +262,29 @@ describe("validateEnv — MOVE_PART_MIB (clamped, never a boot failure for a num
     expect(() => run({ MOVE_PART_MIB: "abc" })).toThrow(/MOVE_PART_MIB/);
   });
 });
+
+describe("validateEnv — migration volume stream (MIGRATION_VX_*)", () => {
+  const dev = { ...base, NODE_ENV: "development" };
+  it("defaults keep the documented policy (enabled, 128 MiB parts, 256 GiB, 100000 parts, 5 min, 72 h, 2 seats)", () => {
+    const env = validateEnv(dev);
+    expect(env).toMatchObject({
+      MIGRATION_VX_PART_MIB: 128,
+      MIGRATION_VX_MAX_BYTES: 256 * 1024 ** 3,
+      MIGRATION_VX_MAX_PARTS: 100_000,
+      MIGRATION_VX_STALE_MS: 300_000,
+      MIGRATION_TOKEN_MAX_LIFE_HOURS: 72,
+      MIGRATION_RELAY_CONCURRENCY: 2,
+    });
+    expect(env.MIGRATION_VX_ENABLED).toBe("true");
+  });
+  it("accepts the kill-switch spellings the runtime understands and rejects garbage", () => {
+    for (const v of ["false", "FALSE", "0", "off", "no", "true", "1"]) expect(() => validateEnv({ ...dev, MIGRATION_VX_ENABLED: v })).not.toThrow();
+    expect(() => validateEnv({ ...dev, MIGRATION_VX_ENABLED: "maybe" })).toThrow();
+  });
+  it("bounds: part size 32..512, relay seats 1..16, token life >= 1 h", () => {
+    for (const bad of [{ MIGRATION_VX_PART_MIB: "8" }, { MIGRATION_VX_PART_MIB: "1024" }, { MIGRATION_RELAY_CONCURRENCY: "0" }, { MIGRATION_RELAY_CONCURRENCY: "17" }, { MIGRATION_TOKEN_MAX_LIFE_HOURS: "0" }, { MIGRATION_VX_MAX_PARTS: "100001" }]) {
+      expect(() => validateEnv({ ...dev, ...bad })).toThrow();
+    }
+    expect(validateEnv({ ...dev, MIGRATION_VX_PART_MIB: "256", MIGRATION_RELAY_CONCURRENCY: "4" })).toMatchObject({ MIGRATION_VX_PART_MIB: 256, MIGRATION_RELAY_CONCURRENCY: 4 });
+  });
+});

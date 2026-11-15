@@ -94,3 +94,21 @@ describe("toStatusView — service tasks", () => {
     expect(view.tasks[0]).not.toHaveProperty("service");
   });
 });
+
+describe("toStatusView with data tasks", () => {
+  const done = { itemRef: "app:srv:web", kind: "app", status: "DONE", resourceType: "application", resourceId: "app1", result: {}, output: null, startedAt: null, finishedAt: null };
+  const data = (itemRef: string, status: string) => ({ itemRef, kind: "data", status, resourceType: null, resourceId: null, result: {}, output: null, startedAt: null, finishedAt: null });
+
+  it("a RUNNING streamed volume copy (data:volume:*, hours long) does NOT keep the import reading RUNNING, so the post-import panel stays visible", () => {
+    const v = toStatusView(op({ tasks: [done, data("data:volume:srv1:5f3a9c:data", "RUNNING")] }));
+    expect(v.status).toBe("SUCCEEDED");
+    expect(v.totals).toMatchObject({ total: 1, done: 1, running: 0 });
+  });
+
+  it("a v1 data task (short restore) still counts exactly as before", () => {
+    const v = toStatusView(op({ tasks: [done, data("data:database:srv:pg", "RUNNING")] }));
+    expect(v.status).toBe("RUNNING");
+    expect(v.totals).toMatchObject({ total: 2, running: 1 });
+    expect(toStatusView(op({ tasks: [done, data("data:vol:app:srv:web:data", "RUNNING")] })).status).toBe("RUNNING");
+  });
+});

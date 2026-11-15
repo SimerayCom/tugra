@@ -301,6 +301,9 @@ numeric ids are preserved on purpose; the source is your own host.
 - **One hub.** The relay is in-process memory, so a streamed copy needs the single-hub topology; every byte
   crosses the hub's network twice. Migration parts use their **own relay seats** (`MIGRATION_RELAY_CONCURRENCY`,
   default 2), separate from app moves. The migrator container is capped at **768 MiB**.
+- **A proxy in front of the hub** that caps request bodies (for example Cloudflare's 100 MB limit on a proxied
+  hostname) also caps a part: already-compressed data does not shrink, so lower `MIGRATION_VX_PART_MIB` (32 is the
+  minimum) or point the migrator at an unproxied hub address.
 - **The token renews itself** while a copy runs (1 hour at a time, **72 hours** in total, `MIGRATION_TOKEN_MAX_LIFE_HOURS`).
 - Each hub-side limit is an env var: `MIGRATION_VX_ENABLED` (kill switch), `MIGRATION_VX_PART_MIB`,
   `MIGRATION_VX_MAX_BYTES` (256 GiB per volume by default), `MIGRATION_VX_STALE_MS`.

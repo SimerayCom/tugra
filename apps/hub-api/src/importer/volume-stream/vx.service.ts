@@ -523,6 +523,16 @@ export class VxService {
     }
   }
 
+  /** Wait for `p` up to `ms`; "pending" when it is not settled yet. The timer is always cleared (no 90 s ghost per poll). */
+  private async raceTimeout<T>(p: Promise<T>, ms: number): Promise<T | "pending"> {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([p, new Promise<"pending">((r) => (timer = setTimeout(() => r("pending"), ms)))]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
   async registerPart(op: MigrationTokenContext, itemRef: string, idx: number, body: VxPartBody): Promise<Record<string, unknown>> {
     const ctx = await this.resolve(op.opId, op.actorId, itemRef);
     const t = await this.assertLeased(ctx, body.runId);
@@ -607,7 +617,7 @@ export class VxService {
       if (idx < t.partsDone) return done(t.partsDone, Number(t.bytesDone)); // committed already (the response was lost)
       throw new ConflictException(VX_409.partLost);
     }
-    const outcome = await Promise.race([inflight.settled, new Promise<"pending">((r) => setTimeout(() => r("pending"), vxCommitWaitMs()).unref?.())]);
+    const outcome = await this.raceTimeout(inflight.settled, vxCommitWaitMs());
     if (outcome === "pending") return { pending: true, expiresAt };
     if (!outcome.ok) {
       this.registry.delete(t.id, inflight);
@@ -804,7 +814,7 @@ export class VxService {
     const key = this.speedKey(op.opId, itemRef, body.runId);
     const part = this.registry.getSpeed(key);
     if (!part || part.idx !== idx) throw new ConflictException(VX_409.partLost);
-    const outcome = await Promise.race([part.settled, new Promise<"pending">((r) => setTimeout(() => r("pending"), vxCommitWaitMs()).unref?.())]);
+    const outcome = await this.raceTimeout(part.settled, vxCommitWaitMs());
     if (outcome === "pending") return { pending: true };
     this.registry.deleteSpeed(key);
     if (!outcome.ok) return { done: false, retryable: outcome.retryable, reason: outcome.reason };

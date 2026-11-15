@@ -80,6 +80,10 @@ export function vxDataRef(itemRef: string): string {
   return `data:${itemRef}`;
 }
 export const VX_DATA_PREFIX = "data:volume:";
+/** A streamed copy's data task: hours-long by design, so it must not make the whole import read "still running". */
+export function isVxDataTask(t: { kind?: string | null; itemRef?: string | null }): boolean {
+  return t.kind === "data" && typeof t.itemRef === "string" && t.itemRef.startsWith(VX_DATA_PREFIX);
+}
 
 /**
  * The 409 `message` literals the Go migrator keys on (`classify409`). They are identical in

@@ -41,7 +41,7 @@ import { REMOTE_SOURCE_KINDS, type ImportAck, type ImportApplyInput, type Remote
 import { ImportMappingService } from "./import-mapping.service";
 import type { EffectiveItem, ResolvedMapping } from "./import-mapping";
 import { slug as dbSlug } from "../databases/databases.service";
-import { VX_DATA_PREFIX, vxEnabled } from "./volume-stream/vx-constants";
+import { VX_DATA_PREFIX, isVxDataTask, vxEnabled } from "./volume-stream/vx-constants";
 import { VxApplyService } from "./volume-stream/vx-apply.service";
 
 const CONCURRENCY = 5;
@@ -1741,14 +1741,15 @@ export class ImportExecutorService {
    */
   private async assertCanMigrate(
     userId: string,
-    op: { meta: unknown; cancelRequestedAt: Date | null; tasks: Array<{ status: string; resourceType: string | null; resourceId: string | null }> },
+    op: { meta: unknown; cancelRequestedAt: Date | null; tasks: Array<{ status: string; kind?: string; itemRef?: string | null; resourceType: string | null; resourceId: string | null }> },
   ): Promise<void> {
     const meta = typeof op.meta === "object" && op.meta ? (op.meta as { sourceKind?: string; serverId?: string; rolledBackAt?: string }) : {};
     if (!COPY_MODE_KINDS.has(meta.sourceKind ?? "")) throw new ConflictException("only a copy-mode (remote-source) import can migrate data");
     if (op.cancelRequestedAt) throw new ConflictException("operation was cancelled");
     if (meta.rolledBackAt) throw new ConflictException("operation was rolled back");
     if (!meta.serverId) throw new ConflictException("operation has no target server");
-    if (deriveOpStatus(op.tasks.map((t) => t.status as TaskStatus)) === "RUNNING") {
+    // A streamed volume copy runs for hours: it must not stop the owner from reissuing the token that resumes it.
+    if (deriveOpStatus(op.tasks.filter((t) => !isVxDataTask(t)).map((t) => t.status as TaskStatus)) === "RUNNING") {
       throw new ConflictException("the import is still running — wait for it to finish before migrating data");
     }
     const hasDest = op.tasks.some((t) => t.status === "DONE" && (t.resourceType === "application" || t.resourceType === "database") && !!t.resourceId);
@@ -2009,7 +2010,10 @@ export function toStatusView(op: {
     finishedAt: Date | null;
   }>;
 }) {
-  const statuses = op.tasks.map((t) => t.status as TaskStatus);
+  // Streamed volume copies (hours) are shown on their own panel; they must not keep the IMPORT reading "running" (which would
+  // hide the post-import steps while the data moves). v1 data tasks (short restores) keep counting exactly as before.
+  const counted = op.tasks.filter((t) => !isVxDataTask(t));
+  const statuses = counted.map((t) => t.status as TaskStatus);
   const count = (s: TaskStatus) => statuses.filter((x) => x === s).length;
   const meta = typeof op.meta === "object" && op.meta ? (op.meta as { sourceKind?: string; serverId?: string; plan?: unknown }) : {};
   return {
@@ -2024,7 +2028,7 @@ export function toStatusView(op: {
     cancelRequested: !!op.cancelRequestedAt,
     createdAt: op.createdAt,
     totals: {
-      total: op.tasks.length,
+      total: counted.length,
       done: count("DONE"),
       failed: count("FAILED") + count("FAILED_VERIFY"),
       skipped: count("SKIPPED"),
