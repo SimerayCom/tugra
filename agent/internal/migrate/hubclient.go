@@ -1,6 +1,7 @@
 package migrate
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -496,4 +497,83 @@ func sanitizeLocation(loc string) string {
 		return u.Scheme + "://" + u.Host
 	}
 	return "(opaque)"
+}
+
+// ---- opt-in ACME certificate seeding (`migrate --certs`) -----------------------------------
+
+// CertsWantedResp is GET /certs/wanted. ServerRef is optional (older hubs omit it) and is echoed
+// back verbatim in the PUT bundle.
+type CertsWantedResp struct {
+	Hosts     []string `json:"hosts"`
+	ServerRef string   `json:"serverRef"`
+}
+
+// CertReject is one cert the hub refused (Reason is hub text: count it, do not print it).
+type CertReject struct {
+	Main   string `json:"main"`
+	Reason string `json:"reason"`
+}
+
+// PutCertsResp is the PUT /certs result.
+type PutCertsResp struct {
+	Accepted int          `json:"accepted"`
+	Rejected []CertReject `json:"rejected"`
+}
+
+// CertsWanted GETs the hostnames the hub wants certificates for.
+func (h *Hub) CertsWanted(ctx context.Context) (*CertsWantedResp, error) {
+	var w CertsWantedResp
+	if err := h.doJSON(ctx, http.MethodGet, "certs/wanted", nil, &w, false, 5); err != nil {
+		return nil, err
+	}
+	return &w, nil
+}
+
+// PutCerts PUTs the bundle as the RAW body with Content-Type application/octet-stream (NOT
+// application/json: the hub reads the raw body under a 2 MiB cap). The body holds private keys, so
+// it is never logged; retries re-send the same in-memory bytes.
+func (h *Hub) PutCerts(ctx context.Context, b CertsBundle) (*PutCertsResp, error) {
+	body, err := json.Marshal(b)
+	if err != nil {
+		return nil, err
+	}
+	rawurl := h.url("certs", nil)
+	backoff := time.Second
+	var last error
+	for i := 0; i < 4; i++ {
+		if i > 0 {
+			if err := waitRetry(ctx, jitter(backoff)); err != nil {
+				return nil, err
+			}
+			if backoff < 30*time.Second {
+				backoff *= 2
+			}
+		}
+		req, err := h.newReq(ctx, http.MethodPut, rawurl, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.ContentLength = int64(len(body))
+		req.Header.Set("Content-Type", "application/octet-stream")
+		resp, err := h.hc.Do(req)
+		if err != nil {
+			last = &HubError{Kind: KindServer, Msg: scrubNetErr(err)}
+			continue
+		}
+		var out PutCertsResp
+		_, derr := h.handle(resp, &out, false)
+		if derr == nil {
+			return &out, nil
+		}
+		last = derr
+		var he *HubError
+		if errors.As(derr, &he) && isRetriableStatus(he.Status) {
+			if ra := retryAfter(resp.Header); ra > 0 {
+				backoff = ra
+			}
+			continue
+		}
+		return nil, derr
+	}
+	return nil, last
 }

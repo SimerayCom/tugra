@@ -73,6 +73,7 @@ type output struct {
 	Engines     []string     `json:"engines,omitempty"`
 	Counts      counts       `json:"counts"`
 	Items       []itemResult `json:"items"`
+	Certs       *certsResult `json:"certs,omitempty"` // only present when --certs was set
 }
 
 type stringList []string
@@ -97,6 +98,9 @@ type cli struct {
 	maxGzBytes     int64
 	dumpTimeout    time.Duration
 	restoreTimeout time.Duration
+	certs          bool   // opt-in: seed ACME certificates (--certs)
+	proxyContainer string // the source proxy container to inspect for acme.json
+	acmeFile       string // optional explicit acme.json path as seen by this process
 }
 
 // RunCLI is the `tugra-agent migrate` entrypoint. It installs its own signal handling (no agent
@@ -269,9 +273,16 @@ func RunCLI(args []string, version string, stdout, stderr io.Writer) (code int) 
 	// in-scope database items, filtered by --only, sorted for determinism
 	inScope := selectTargets(targets.Targets, c.only)
 
+	run := &runner{hub: hub, dockerPath: dockerPath, dockerEnv: dockerEnv, spoolDir: spoolDir,
+		maxGz: maxGz, c: c, sc: sc, logf: logf, parsed: parsed, rejected: rejected, overrides: mapOverrides,
+		usedIDs: map[string]string{}}
+
 	if len(inScope) == 0 {
 		out.NoTargets = true
 		code = exitOK
+		if c.certs && ctx.Err() == nil && !c.dryRun {
+			code = certsPhase(ctx, run, &out, code)
+		}
 		return
 	}
 
@@ -300,10 +311,6 @@ func RunCLI(args []string, version string, stdout, stderr io.Writer) (code int) 
 	}
 
 	// --- Step 4: sequential per-item loop ---
-	run := &runner{hub: hub, dockerPath: dockerPath, dockerEnv: dockerEnv, spoolDir: spoolDir,
-		maxGz: maxGz, c: c, sc: sc, logf: logf, parsed: parsed, rejected: rejected, overrides: mapOverrides,
-		usedIDs: map[string]string{}}
-
 	for i, tg := range inScope {
 		if ctx.Err() != nil {
 			out.Interrupted = true
@@ -341,7 +348,26 @@ func RunCLI(args []string, version string, stdout, stderr io.Writer) (code int) 
 		return
 	}
 	code = partialOrOK(out.Counts)
+	if c.certs {
+		code = certsPhase(ctx, run, &out, code)
+	}
 	return
+}
+
+// certsPhase runs the opt-in --certs phase after the data items and folds its outcome into the
+// final exit code: a hub failure (auth/skew/unreachable) replaces it; rejected certs downgrade a
+// clean run to partial; a skipped phase changes nothing.
+func certsPhase(ctx context.Context, run *runner, out *output, code int) int {
+	res, abort := run.runCerts(ctx)
+	out.Certs = &res
+	if abort != 0 {
+		run.logf("certs phase failed: %s", codeName(abort))
+		return abort
+	}
+	if res.State == "partial" && code == exitOK {
+		return exitPartial
+	}
+	return code
 }
 
 // runner holds the per-run context for the item loop.
@@ -582,7 +608,19 @@ func parseFlags(args []string, stderr io.Writer) (*cli, error) {
 	fs.Int64Var(&c.maxGzBytes, "max-gz-bytes", 0, "cap the compressed artifact size (default: the hub's cap)")
 	fs.DurationVar(&c.dumpTimeout, "dump-timeout", 20*time.Minute, "per-item dump+upload timeout")
 	fs.DurationVar(&c.restoreTimeout, "restore-timeout", 12*time.Minute, "per-item restore-wait timeout")
+	fs.BoolVar(&c.certs, "certs", false, "also seed the source proxy's issued ACME certificates (opt-in)")
+	fs.StringVar(&c.proxyContainer, "proxy-container", defaultProxyContainer, "source proxy container whose acme.json --certs reads")
+	fs.StringVar(&c.acmeFile, "acme-file", "", "explicit acme.json path as seen by this process (skips the docker lookup)")
 	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	if err := validProxyContainer(c.proxyContainer); err != nil {
+		fmt.Fprintln(stderr, err)
+		return nil, err
+	}
+	if c.acmeFile != "" && !isCleanAbs(c.acmeFile) {
+		err := fmt.Errorf("--acme-file: must be a clean absolute path")
+		fmt.Fprintln(stderr, err)
 		return nil, err
 	}
 	return c, nil
