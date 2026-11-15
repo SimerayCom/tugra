@@ -59,12 +59,16 @@ Options are validated strictly (unknown keys are refused: a secret never belongs
 Drains run from the host, so where they may connect is restricted.
 
 - Cloud metadata and link-local addresses (`169.254.0.0/16`, `fe80::/10`, `fd00:ec2::254`), the unspecified
-  address and multicast are **never** allowed, for any drain. The agent checks the address the name actually
-  resolves to when it connects, so a DNS name or an HTTP redirect cannot reach them.
+  address and multicast are blocked **for per-app drains and for server-wide syslog, GELF and fluentd drains**. The
+  agent checks the address the name actually resolves to when it connects, so a DNS name or an HTTP redirect cannot
+  reach them.
+- **Server-wide http, loki and datadog drains keep their previous, unguarded reach.** Only the literal-IP check made
+  when the drain is created applies to them: a host name that resolves to a metadata or link-local address, or a
+  redirect to one, is not blocked.
 - A **per-app** drain additionally cannot reach loopback, private (RFC 1918), `100.64.0.0/10` and unique-local
   addresses unless **Allow private network targets** (`allowPrivate`) is set. Setting it, or changing the
   destination of a drain that has it, needs the `servers:ops` permission on the team that owns the app's server, on
-  top of `apps:config`. Server-wide http/loki/datadog drains keep their previous reach.
+  top of `apps:config`.
 - App drains need `apps:config` on the app's team. The server's operators see which app drains ship from their
   server (name, type, app, delivery) but never the endpoint, options or token.
 

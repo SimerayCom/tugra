@@ -30,6 +30,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `tugra-proxy`), is rejected when it is saved and on the next git deploy. Such a label could declare a route for
   another team's hostname, and the network lets a service answer for every tenant's routes.
 - **Changed:** the config snapshot records a fingerprint of each custom label value.
+- **Changed (behaviour): a pasted compose file may not build reserved names through variables.** `${VAR}` / `$VAR` in
+  a label key (`"${P:-traefik.}http.routers.x.rule=..."`), in `container_name`, or in a top-level network `name` is
+  rejected when the compose is saved, because compose substitutes it only at deploy time and the reserved-namespace
+  checks would never see the result; label values keep working with variables. `label_file`, and a service
+  `env_file` that points at a sensitive host path, outside the compose directory or through a variable, are rejected
+  too, and the compose preview returns a fixed error message instead of the raw `docker compose` output.
+- **Compose deploy hooks:** the pre-deploy one-off container is started with `traefik.enable=false`, so it can no
+  longer register as a Traefik backend of the live router during a deploy. The post-deploy hook (`exec` in the
+  running container) is unchanged.
+- **Custom label values** are hidden from API tokens without `read:secrets` (`customLabels` on the app view, and
+  `GET /apps/{id}/labels` now needs that scope).
+- **Log drains: fixes.** Drain pushes to one server are serialized, so an older drain set can no longer reach the
+  agent with a newer revision. The agent bounds the total size of a fluentd acknowledgement or handshake reply, retries
+  a connection that drops during the fluentd handshake (instead of reporting a configuration error), reports a sink
+  that requires user authentication as such, stops an in-flight HTTP delivery when the drain is removed or `logs` is
+  revoked, and counts GELF messages it cannot send as dropped and syslog lines cut to the size limit as truncated.
+  Changing a drain's type in the edit form clears its stored token. Old custom-named image tags stay reclaimable
+  after the image name is cleared.
 
 - **Custom pushed image name and an alias tag.** On an Image or Git app that pushes to a team registry, **Build &
   registry** now takes an **Image name** (a repository path under the registry namespace, for example `team/web`;
@@ -165,7 +183,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   stalls the others. Each drain shows a delivery state (delivering, waiting, agent offline, agent update required,
   failing with a failure class, and so on) from the agent's own reports, and a server's **Log drains** tab lists the
   app drains shipping from it (name, type, app, delivery; never the endpoint). Egress is restricted: cloud metadata
-  and link-local addresses are never reachable, and per-app drains cannot reach loopback, private or CGNAT ranges
+  and link-local addresses are blocked for per-app drains and for server-wide syslog, GELF and fluentd drains
+  (server-wide http, loki and datadog drains keep their previous unguarded reach), and per-app drains cannot reach loopback, private or CGNAT ranges
   unless **Allow private network targets** is set, which needs `servers:ops` on the app's server team in addition to
   `apps:config`. Drains travel to the agent in a signed `log_drains_v2` frame gated on the `logs` capability; an agent
   without it receives only plain server-wide http/loki/datadog drains (exactly as before) and shows **Agent update
