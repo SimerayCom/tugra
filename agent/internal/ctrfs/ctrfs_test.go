@@ -919,9 +919,19 @@ type execWorld struct {
 	ctrWorld
 	execs []call
 	reply reply
+	// probes are the in-container `test` calls (the tmpfs fallback); probe answers them, default exit 1 (false).
+	probes []call
+	probe  func(flag, path string) reply
 }
 
 func (w *execWorld) handler(c call) reply {
+	if len(c.args) == 7 && c.args[0] == "exec" && c.args[4] == "test" {
+		w.probes = append(w.probes, c)
+		if w.probe != nil {
+			return w.probe(c.args[5], c.args[6])
+		}
+		return reply{err: exitErr{1}}
+	}
 	if len(c.args) > 0 && c.args[0] == "exec" {
 		w.execs = append(w.execs, c)
 		return w.reply
@@ -1117,5 +1127,78 @@ func TestListFlagsTruncationWhenTheByteBudgetEndsOnAnEntryBoundary(t *testing.T)
 	listMaxBytes = 512 * 3
 	if es, trunc, err := List(bg, "tugra_a", "/data"); err != nil || trunc || len(es) != 2 {
 		t.Fatalf("complete stream: %v %v %d", err, trunc, len(es))
+	}
+}
+
+// docker cp cannot see tmpfs mounts: the exec-based ops must still work on a file that exists only there.
+func TestExecOpWorksOnPathsDockerCpCannotSee(t *testing.T) {
+	cases := []struct {
+		name, op, a, b string
+		rec            bool
+		present        map[string]bool // test flag -> true
+		want           string
+	}{
+		{"delete file", "delete", "/scratch/ok", "", false, map[string]bool{"-e": true}, "exec -w / tugra_a rm -- /scratch/ok"},
+		{"delete dir", "delete", "/scratch/d", "", false, map[string]bool{"-e": true, "-d": true}, "exec -w / tugra_a rmdir -- /scratch/d"},
+		{"delete dir recursive", "delete", "/scratch/d", "", true, map[string]bool{"-e": true, "-d": true}, "exec -w / tugra_a rm -r -- /scratch/d"},
+		{"delete symlink to dir", "delete", "/scratch/l", "", true, map[string]bool{"-e": true, "-d": true, "-L": true}, "exec -w / tugra_a rm -- /scratch/l"},
+		{"chmod", "chmod", "/scratch/ok", "", false, map[string]bool{"-e": true}, "exec -w / tugra_a chmod 0644 -- /scratch/ok"},
+		{"rename", "rename", "/scratch/ok", "/scratch/new", false, map[string]bool{"-e": true}, "exec -w / tugra_a mv -- /scratch/ok /scratch/new"},
+	}
+	for _, c := range cases {
+		w, _ := newExec(t, map[string]ent{})
+		w.probe = func(flag, p string) reply {
+			if p == c.a && c.present[flag] {
+				return reply{}
+			}
+			return reply{err: exitErr{1}}
+		}
+		if err := ExecOp(bg, "tugra_a", c.op, c.a, c.b, "644", c.rec); err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if len(w.execs) != 1 || strings.Join(w.execs[0].args, " ") != c.want {
+			t.Fatalf("%s: argv %v want %q", c.name, w.execs, c.want)
+		}
+		for _, pc := range w.probes {
+			if a := pc.args; a[1] != "-w" || a[2] != "/" || a[3] != "tugra_a" || a[4] != "test" || !strings.HasPrefix(a[6], "/") {
+				t.Fatalf("%s: probe argv %v", c.name, a)
+			}
+		}
+	}
+}
+
+func TestExecOpTmpfsFallbackKeepsNotFoundAndExists(t *testing.T) {
+	// nothing there for exec either -> not_found, nothing mutated
+	w, _ := newExec(t, map[string]ent{})
+	if err := ExecOp(bg, "tugra_a", "delete", "/scratch/nope", "", "", false); code(err) != "not_found" {
+		t.Fatalf("%v", err)
+	}
+	// the container cannot answer (no `test` binary / distroless) -> the docker cp verdict stands
+	w, _ = newExec(t, map[string]ent{})
+	w.probe = func(string, string) reply { return reply{err: exitErr{127}} }
+	if err := ExecOp(bg, "tugra_a", "chmod", "/scratch/f", "", "644", false); code(err) != "not_found" {
+		t.Fatalf("%v", err)
+	}
+	// rename destination that exists only in a tmpfs is still refused as exists
+	w, _ = newExec(t, map[string]ent{"/app/f": {typ: tar.TypeReg, body: "x"}})
+	w.probe = func(flag, p string) reply {
+		if p == "/scratch/g" && flag == "-e" {
+			return reply{}
+		}
+		return reply{err: exitErr{1}}
+	}
+	if err := ExecOp(bg, "tugra_a", "rename", "/app/f", "/scratch/g", "", false); code(err) != "exists" {
+		t.Fatalf("%v", err)
+	}
+	if len(w.execs) != 0 {
+		t.Fatal("a refused rename executed")
+	}
+}
+
+func TestMapDockerRealDockerReadOnlyRootfsText(t *testing.T) {
+	// verbatim from Docker 29.9.3 when writing into a read-only-rootfs container
+	err := mapDocker("Error response from daemon: container rootfs is marked read-only", exitErr{1})
+	if code(err) != "read_only" {
+		t.Fatalf("%v", err)
 	}
 }

@@ -37,7 +37,9 @@ import { withRetryAfter } from "./files.controller";
  * `files` + `terminal` (reads) / + `files_write` (mutations); no separate owner flag exists. Reads, writes and
  * mkdir go through `docker cp`, which the Docker daemon performs as container-root: they ignore the image's USER and
  * file modes, so they can reach files an interactive shell as that user could not. Rename, chmod and delete run as the
- * image's default user, like the shell. Because this edits a running app's runtime, EVERY mutation needs the
+ * image's default user, like the shell. `docker cp` cannot see tmpfs mounts and Docker refuses every cp write into a
+ * read-only-rootfs container, so browse/read/write of such paths report not_found/read_only (rename, chmod and delete
+ * re-check from inside the container and still work there). Because this edits a running app's runtime, EVERY mutation needs the
  * `admin` token scope (reads: `read:secrets`). A single-container app ignores `container`; a COMPOSE app must name
  * one of its own containers. Clustered apps are refused.
  */

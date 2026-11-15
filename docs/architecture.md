@@ -98,7 +98,10 @@ tar stream is parsed header by header and never extracted) for list, stat, read,
 `docker exec` for rename, chmod and delete. Because `docker cp` is performed by the Docker daemon, list, read, write and
 mkdir act as container-root (they ignore the image's `USER` and file modes), whereas rename, chmod and delete run as the
 image's default user, like the terminal. Changes are ephemeral and not atomic, and a very large directory lists only
-its first part.
+its first part. Limitation: `docker cp` cannot read or write tmpfs mounts, and Docker refuses every `docker cp` write
+into a container with a read-only root filesystem (even onto a tmpfs), so those paths report not found or read-only
+for browse, read and write; rename, chmod and delete re-check from inside the container and do work on files that
+exist in a tmpfs.
 
 The web server streams file bodies through dedicated routes (Next's generic rewrite buffers and truncates request
 bodies above 10 MiB); a hub behind a reverse proxy must also allow large request bodies on `/api/v1/apps/*/files/content`

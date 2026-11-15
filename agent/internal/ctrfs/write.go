@@ -340,6 +340,49 @@ func Mkdir(ctx context.Context, name, p string, mode fs.FileMode, parents bool) 
 	return nil
 }
 
+// execTest runs a fixed-argv `docker exec -w / <name> test <flag> <path>` (no shell). yes is the test result; known is
+// false when the container cannot answer at all (stopped, no `test` binary: distroless), in which case callers keep
+// the docker cp verdict.
+func execTest(ctx context.Context, name, flag, p string) (yes, known bool) {
+	pr, err := start(ctx, nil, "exec", "-w", "/", name, "test", flag, p)
+	if err != nil {
+		return false, false
+	}
+	var out capBuffer
+	out.max = maxCmdOutput
+	_, _ = io.Copy(&out, pr.Stdout)
+	werr := pr.Wait()
+	if werr == nil {
+		return true, true
+	}
+	var ec exitCoder
+	if errors.As(werr, &ec) && ec.ExitCode() == 1 {
+		return false, true
+	}
+	return false, false
+}
+
+// resolveForExec is the existence/type pre-check of the exec-based ops. docker cp cannot see tmpfs mounts, so a
+// docker cp "not found" is re-checked from inside the container (`test -e`): a path that exists there is accepted
+// (isDir from `test -d` and not `test -L`), because the exec'd tool operates on the real mount. When the container
+// cannot answer, the original docker cp error stands.
+func resolveForExec(ctx context.Context, name, p string) (isDir bool, err error) {
+	st, serr := Stat(ctx, name, p)
+	if serr == nil {
+		return st.Type == "dir", nil
+	}
+	var te *fsd.Error
+	if !errors.As(serr, &te) || te.Code != fsd.CodeNotFound {
+		return false, serr
+	}
+	if yes, known := execTest(ctx, name, "-e", p); known && yes {
+		dir, _ := execTest(ctx, name, "-d", p)
+		link, _ := execTest(ctx, name, "-L", p)
+		return dir && !link, nil
+	}
+	return false, serr
+}
+
 // ExecOp runs rename / chmod / delete through a fixed-argv `docker exec` (no -i, -t, --user, --privileged or env, no
 // shell) as the image's default user. A missing binary (exit 126/127) is `no_binary`; a stopped container is
 // `not_running`. a is the path (rename: the source), b the rename destination.
@@ -359,10 +402,10 @@ func ExecOp(ctx context.Context, name, op, a, b, mode string, recursive bool) er
 		if a == b || strings.HasPrefix(b, a+"/") {
 			return bad("cannot move an entry into itself")
 		}
-		if _, err := Stat(ctx, name, a); err != nil {
+		if _, err := resolveForExec(ctx, name, a); err != nil {
 			return err
 		}
-		if _, err := Stat(ctx, name, b); err == nil {
+		if _, err := resolveForExec(ctx, name, b); err == nil {
 			return typed(fsd.CodeExists, "destination already exists") // never let `mv` move INTO an existing dir
 		} else if te := (*fsd.Error)(nil); !errors.As(err, &te) || te.Code != fsd.CodeNotFound {
 			return err
@@ -373,17 +416,17 @@ func ExecOp(ctx context.Context, name, op, a, b, mode string, recursive bool) er
 		if err != nil {
 			return bad("%s", err.Error())
 		}
-		if _, err := Stat(ctx, name, a); err != nil {
+		if _, err := resolveForExec(ctx, name, a); err != nil {
 			return err
 		}
 		argv = []string{"chmod", fmt.Sprintf("%04o", uint32(m)), "--", a}
 	case "delete":
-		st, err := Stat(ctx, name, a)
+		isDir, err := resolveForExec(ctx, name, a)
 		if err != nil {
 			return err
 		}
 		switch {
-		case st.Type != "dir":
+		case !isDir:
 			argv = []string{"rm", "--", a}
 		case recursive:
 			argv = []string{"rm", "-r", "--", a}
