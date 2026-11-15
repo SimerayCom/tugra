@@ -59341,6 +59341,31 @@
                       ]
                     }
                   },
+                  "acks": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "app.env.unresolved",
+                            "app.env.key.invalid"
+                          ]
+                        },
+                        "itemRef": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 300
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 2000
+                  },
                   "mapping": {
                     "type": "object",
                     "properties": {

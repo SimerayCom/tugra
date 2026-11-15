@@ -14,7 +14,7 @@ import {
   type ResolveOpts,
 } from "./import-mapping";
 import { planImport } from "./import-planner";
-import { isRunnable, skipReason } from "./import-executor.logic";
+import { isRunnable, skipReason, isAcked, hasUnackedBlocker } from "./import-executor.logic";
 import type { ForeignFleet } from "./foreign-fleet";
 import { ownerFleet, BIG_DB_REF } from "./__fixtures__/owner-fleet.scrubbed";
 
@@ -178,6 +178,23 @@ describe("isRunnable / skipReason (extracted loop predicate)", () => {
         expect(isRunnable(it, app, db, dup)).toBe(legacy);
       }
     }
+  });
+  it("risk acks lift only an ackable blocker the ack covers (matrix)", () => {
+    const blocked = { itemRef: APP1, kind: "app" as const, risks: [{ level: "blocker" as const, code: "app.env.unresolved", message: "m" }] };
+    const app = f.apps[0];
+    expect(isRunnable(blocked, app, undefined, false)).toBe(false);
+    expect(isRunnable(blocked, app, undefined, false, [])).toBe(false);
+    expect(isRunnable(blocked, app, undefined, false, [{ code: "app.env.unresolved" }])).toBe(true);
+    expect(isRunnable(blocked, app, undefined, false, [{ code: "app.env.unresolved", itemRef: APP1 }])).toBe(true);
+    expect(isRunnable(blocked, app, undefined, false, [{ code: "app.env.unresolved", itemRef: "app:srv-1:other" }])).toBe(false); // another item's ack
+    expect(isRunnable(blocked, app, undefined, false, [{ code: "app.env.key.invalid" }])).toBe(false); // another code
+    expect(isRunnable(blocked, app, undefined, true, [{ code: "app.env.unresolved" }])).toBe(false); // dup still wins
+    const hard = { itemRef: APP1, kind: "app" as const, risks: [{ level: "blocker" as const, code: "app.env.tokenReadOnly", message: "m" }] };
+    expect(isRunnable(hard, app, undefined, false, [{ code: "app.env.tokenReadOnly" }])).toBe(false); // never ackable
+    expect(hasUnackedBlocker(blocked, [{ code: "app.env.unresolved" }])).toBe(false);
+    expect(isAcked(undefined, APP1, "app.env.unresolved")).toBe(false);
+    expect(skipReason(blocked, undefined, false, [{ code: "app.env.unresolved" }])).toBe("could not resolve the source resource");
+    expect(skipReason(blocked, undefined, false)).toBe("blocked by a plan risk");
   });
   it("reasons keep their exact text", () => {
     expect(skipReason(item(APP1), undefined, true)).toBe("already imported onto this server in a previous run");

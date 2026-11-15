@@ -13,14 +13,14 @@ import { ProjectsService } from "../projects/projects.service";
 import type { CreateDatabaseInput } from "../databases/dto";
 import { ImporterService } from "./importer.service";
 import { LocalDockerSource } from "./sources/local-docker.source";
-import { planImport, ns, ENV_RISK_UNRESOLVED, ENV_RISK_INVALID, ACKABLE_RISK_CODES } from "./import-planner";
+import { planImport, ns, ENV_RISK_UNRESOLVED, ENV_RISK_INVALID } from "./import-planner";
 import { isValidUserEnvKey } from "../common/env-key";
 import { mapSourceEnvFlags } from "./env-auto-flags";
 import { mapBuildPack } from "./buildpack-map";
 import { IMPORT_REASON_CODES, type ImportReasonCode } from "@tugra/shared";
 import { why, type Reasoned, type Unmapped } from "./reason";
 import { foreignAppToCreateInput, foreignAppToIngressPlan, foreignAppToPostCreateConfig, foreignAppToVolumes } from "./apply-map";
-import { seedTasks, deriveOpStatus, PROVISIONABLE_ENGINES, type TaskSeed, type TaskStatus } from "./import-executor.logic";
+import { seedTasks, deriveOpStatus, isAcked, isRunnable, skipReason, hasUnackedBlocker, type TaskSeed, type TaskStatus } from "./import-executor.logic";
 import { MigrationTokenService } from "./migration-token.service";
 import { assertSafeBase, buildMigrationCommand, buildMigrationCommands, buildMigrationCommandsTemplate, buildMigrationCommandTemplate } from "./migration-command";
 import { cleanupOpStaging } from "./migration-staging";
@@ -37,7 +37,7 @@ import type { DatabaseView } from "../databases/databases.service";
 
 import { SetBasicAuthSchema } from "../applications/dto";
 import type { ImportSource, FetchedDbCredentials, SourceAppExtras } from "./import-source";
-import { REMOTE_SOURCE_KINDS, type ImportAck, type ImportApplyInput, type RemoteSourceKind, type ServiceChoice } from "./dto";
+import { REMOTE_SOURCE_KINDS, type ImportApplyInput, type RemoteSourceKind, type ServiceChoice } from "./dto";
 import { ImportMappingService } from "./import-mapping.service";
 import type { EffectiveItem, ResolvedMapping } from "./import-mapping";
 import { slug as dbSlug } from "../databases/databases.service";
@@ -70,12 +70,7 @@ function privateNetworkName(appName: string): string | undefined {
  *  silently dropped. Dokploy/local keep their lenient behaviour (byte-identical). */
 const STRICT_ENV_KINDS = new Set<string>(["coolify"]);
 
-/** Is `code` on `item` covered by an operator ack? Only the ackable codes can ever be; an ack without `itemRef`
- *  covers every item carrying the code. */
-export function isAcked(acks: readonly ImportAck[] | undefined, itemRef: string, code: string): boolean {
-  if (!acks?.length || !ACKABLE_RISK_CODES.includes(code)) return false;
-  return acks.some((a) => a.code === code && (a.itemRef === undefined || a.itemRef === itemRef));
-}
+export { isAcked };
 
 /** "KEY1, KEY2 (+M more)" — names only, never values. */
 const keyList = (keys: string[], cap: number): string => (keys.length > cap ? `${keys.slice(0, cap).join(", ")} (+${keys.length - cap} more)` : keys.join(", "));
@@ -181,6 +176,7 @@ export class ImportExecutorService {
             reconcile: input.reconcile,
             ignoreStoredMapping: input.ignoreStoredMapping,
             environmentId: input.environmentId,
+            acks: input.acks,
           })
         : undefined;
       const effByRef = new Map((res?.effective ?? []).map((e) => [e.itemRef, e]));
@@ -256,30 +252,23 @@ export class ImportExecutorService {
         // targetFor(item): the service choice's own target, else the op target (the serverMap lane is not in this slice).
         const targetServerId = choice?.targetServerId ?? input.targetServerId;
         const dup = (alreadyOnTarget.get(targetServerId) ?? already).has(item.itemRef);
-        const hasBlocker = item.risks.some((r) => r.level === "blocker" && !isAcked(input.acks, item.itemRef, r.code));
-        const provisionableDb = !!db && PROVISIONABLE_ENGINES.has(db.engine);
+        const hasBlocker = hasUnackedBlocker(item, input.acks);
         const serviceRunnable = !!service && !choice?.skip && item.proposed.verdict !== "skipped" && typeof service.composeFile === "string" && typeof source.fetchServiceBundle === "function";
         const eff = effByRef.get(item.itemRef); // set only under a mapping
         const excluded = !!eff && !eff.include;
         // An already-imported item with mapped drift is reconciled ONLY behind the explicit flag; its task is
         // SKIPPED at the end (never DONE), so rollback and the idempotency scan stay blind to it.
         const reconciles = !!eff && dup && !excluded && reconcile && !!eff.drift?.length;
-        const runnable = !excluded && !dup && !hasBlocker && ((item.kind === "app" && !!app) || (item.kind === "database" && provisionableDb) || (item.kind === "service" && serviceRunnable));
-        const baseReason = dup
-          ? "already imported onto this server in a previous run"
-          : hasBlocker
-            ? "blocked by a plan risk"
-            : item.kind === "volume"
-              ? "handled with its owning app (declared there when eligible); its data is not copied by this import yet"
-              : item.kind === "database" && !provisionableDb
-                ? "database engine has no Tugra equivalent"
-                : item.kind === "service"
-                  ? choice?.skip
-                    ? "skipped by your choice"
-                    : item.proposed.verdict === "skipped"
-                      ? "this service is not imported (see its plan note)"
-                      : "this source cannot read the service's variables"
-                  : "could not resolve the source resource";
+        // App/database items use the exact predicate the mapping resolver previews with; the service branch is local.
+        const runnable = !excluded && (isRunnable(item, app, db, dup, input.acks) || (item.kind === "service" && !dup && !hasBlocker && serviceRunnable));
+        const baseReason =
+          item.kind === "service" && !dup && !hasBlocker
+            ? choice?.skip
+              ? "skipped by your choice"
+              : item.proposed.verdict === "skipped"
+                ? "this service is not imported (see its plan note)"
+                : "this source cannot read the service's variables"
+            : skipReason(item, db, dup, input.acks);
         const reason = excluded
           ? "excluded by mapping"
           : eff && dup && eff.drift?.length && !reconcile

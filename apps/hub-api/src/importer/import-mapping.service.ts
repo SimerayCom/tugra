@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
 import type { ForeignFleet, ImportPlan } from "./foreign-fleet";
+import type { RiskAck } from "./import-executor.logic";
 import {
   ImportMappingDocSchema,
   type ImportMappingDoc,
@@ -33,6 +34,8 @@ export interface ApplyMappingInput {
   reconcile?: boolean;
   ignoreStoredMapping?: boolean;
   saveMapping?: boolean;
+  /** Operator risk acks (the apply's `acks`): bound into the mappingHash and used by the resolver's runnable predicate. */
+  acks?: readonly RiskAck[];
 }
 
 export interface StoredProfile {
@@ -225,7 +228,7 @@ export class ImportMappingService {
     fleet: ForeignFleet,
     plan: ImportPlan,
     server: { id: string; teamId: string },
-    input: { mapping: ImportMappingDoc; environmentId?: string; reconcile?: boolean },
+    input: { mapping: ImportMappingDoc; environmentId?: string; reconcile?: boolean; acks?: readonly RiskAck[] },
   ): Promise<ResolvedMapping> {
     const snap = await this.buildSnapshot(userId, server, plan.items.map((i) => i.itemRef));
     return resolveMapping(fleet, plan, input.mapping, snap, {
@@ -233,6 +236,7 @@ export class ImportMappingService {
       targetServerId: server.id,
       environmentId: input.environmentId,
       reconcile: !!input.reconcile,
+      acks: input.acks,
       session: { sourceKind: session.sourceKind, scopeKey: session.scopeKey },
     });
   }
@@ -263,7 +267,7 @@ export class ImportMappingService {
       return undefined;
     }
     if (!input.mappingHash) throw conflict("import.mapping_changed", "the mapping changed since it was reviewed — resolve it again and review");
-    const res = await this.resolve(userId, session, fleet, plan, server, { mapping: input.mapping, environmentId: input.environmentId, reconcile: input.reconcile });
+    const res = await this.resolve(userId, session, fleet, plan, server, { mapping: input.mapping, environmentId: input.environmentId, reconcile: input.reconcile, acks: input.acks });
     if (res.mappingHash !== input.mappingHash) throw conflict("import.mapping_changed", "the mapping, the source or the target changed since it was reviewed — resolve it again and review");
     if (res.orphans.length) throw conflict("import.mapping_orphans", "the mapping refers to items the source no longer has — remove them and review again", { orphans: res.orphans });
     const errors = blockingErrors(res);

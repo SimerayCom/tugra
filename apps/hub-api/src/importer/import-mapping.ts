@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { ForeignFleet, ImportPlan } from "./foreign-fleet";
 import { mapBuildPack } from "./buildpack-map";
-import { isRunnable } from "./import-executor.logic";
+import { isRunnable, type RiskAck } from "./import-executor.logic";
 
 /**
  * Editable import mapping — the PURE half (no I/O, no Prisma, no Nest): the mapping document schema, the name
@@ -146,10 +146,14 @@ export interface MappingHashInput {
   targetServerId: string;
   environmentId?: string;
   reconcile: boolean;
+  /** The operator's plan-risk acknowledgements: they change which items are runnable, so they bind the hash (a
+   *  preview resolved without them cannot be applied with them). Absent/empty leaves the hash byte-identical. */
+  acks?: readonly RiskAck[];
 }
 export function mappingHashOf(norm: unknown, i: MappingHashInput): string {
+  const riskAcks = [...new Set((i.acks ?? []).map((a) => `${a.code}\u0000${a.itemRef ?? "*"}`))].sort();
   return createHash("sha256")
-    .update(canonicalJson({ v: 1, planHash: i.planHash, targetServerId: i.targetServerId, environmentId: i.environmentId ?? null, reconcile: !!i.reconcile, mapping: norm }))
+    .update(canonicalJson({ v: 1, planHash: i.planHash, targetServerId: i.targetServerId, environmentId: i.environmentId ?? null, reconcile: !!i.reconcile, ...(riskAcks.length ? { riskAcks } : {}), mapping: norm }))
     .digest("hex")
     .slice(0, 32);
 }
@@ -298,7 +302,7 @@ export function resolveMapping(fleet: ForeignFleet, plan: ImportPlan, doc: Impor
     const existing = snap?.existing.get(item.itemRef);
     const dup = !!existing;
     const include = entry.include !== false;
-    const runnable = isRunnable(item, app, db, dup);
+    const runnable = isRunnable(item, app, db, dup, opts.acks);
     const status: EffectiveItem["status"] = !include ? "excluded" : dup ? "already_imported" : runnable ? "pending" : "blocked";
     const changed: EffectiveChange[] = [];
     if (!include) changed.push("include");

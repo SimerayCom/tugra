@@ -166,6 +166,8 @@ export const ImportMappingResolveSchema = z.object({
   reconcile: z.boolean().optional(),
   /** The same per-database data modes the plan was made with — the resolve re-plans with them so its planHash matches. */
   dbDataModes: dbDataModes.optional(),
+  /** The operator's risk acks from the plan step — the preview then treats an acked item as runnable, like apply. */
+  acks: z.array(ImportAckSchema).max(2000).optional(),
   mapping: ImportMappingDocSchema,
 });
 export type ImportMappingResolveInput = z.infer<typeof ImportMappingResolveSchema>;

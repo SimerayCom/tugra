@@ -38357,6 +38357,11 @@ export interface operations {
                     dbDataModes?: {
                         [key: string]: "volume";
                     };
+                    acks?: {
+                        /** @enum {string} */
+                        code: "app.env.unresolved" | "app.env.key.invalid";
+                        itemRef?: string;
+                    }[];
                     mapping: {
                         /** @enum {number} */
                         version: 1;

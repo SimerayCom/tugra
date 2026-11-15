@@ -1,4 +1,5 @@
 import type { ForeignApp, ForeignDb, ForeignFleet, ImportPlan, ImportPlanItem } from "./foreign-fleet";
+import { ACKABLE_RISK_CODES } from "./import-planner";
 
 /** The BulkTaskStatus values, as a string union (the logic here does not import Prisma). */
 export type TaskStatus =
@@ -85,24 +86,42 @@ export function deriveOpStatus(statuses: TaskStatus[]): OpStatus {
  *  is skipped by a plan blocker, but we re-check at apply so a bad engine never reaches DatabasesService. */
 export const PROVISIONABLE_ENGINES = new Set(["POSTGRES", "MYSQL", "REDIS", "MONGO", "MARIADB", "KEYDB", "DRAGONFLY", "CLICKHOUSE", "LIBSQL"]);
 
+/** An operator acknowledgement of an ackable plan blocker (structurally the dto's `ImportAck`; declared here so this
+ *  pure module does not import the dto). */
+export type RiskAck = { code: string; itemRef?: string };
+
+/** Is `code` on `itemRef` covered by an operator ack? Only the ackable codes can ever be; an ack without `itemRef`
+ *  covers every item carrying the code. */
+export function isAcked(acks: readonly RiskAck[] | undefined, itemRef: string, code: string): boolean {
+  if (!acks?.length || !ACKABLE_RISK_CODES.includes(code)) return false;
+  return acks.some((a) => a.code === code && (a.itemRef === undefined || a.itemRef === itemRef));
+}
+
+type PredicateItem = Pick<ImportPlanItem, "kind" | "risks"> & { itemRef?: string };
+
+/** Pure: does the item carry a blocker the operator has NOT acknowledged? */
+export function hasUnackedBlocker(item: PredicateItem, acks?: readonly RiskAck[]): boolean {
+  return item.risks.some((r) => r.level === "blocker" && !(item.itemRef !== undefined && isAcked(acks, item.itemRef, r.code)));
+}
+
 /**
- * Pure: will the remote-copy apply actually create a Tugra resource for this plan item? One predicate shared by
- * the apply loop and the mapping resolver, so the preview can never disagree with what apply does. `dup` = the
- * item was already imported onto the target server by a prior op (and its resource still exists).
+ * Pure: will the remote-copy apply actually create a Tugra resource for this app/database plan item? One predicate
+ * shared by the apply loop and the mapping resolver, so the preview can never disagree with what apply does. `dup` =
+ * the item was already imported onto the target server by a prior op (and its resource still exists). `acks` are
+ * the operator's risk acknowledgements (none = the original behaviour, byte-identical). Services are decided by the
+ * apply loop's own service branch.
  */
-export function isRunnable(item: Pick<ImportPlanItem, "kind" | "risks">, app: ForeignApp | undefined, db: ForeignDb | undefined, dup: boolean): boolean {
-  const hasBlocker = item.risks.some((r) => r.level === "blocker");
+export function isRunnable(item: PredicateItem, app: ForeignApp | undefined, db: ForeignDb | undefined, dup: boolean, acks?: readonly RiskAck[]): boolean {
   const provisionableDb = !!db && PROVISIONABLE_ENGINES.has(db.engine);
-  return !dup && !hasBlocker && ((item.kind === "app" && !!app) || (item.kind === "database" && provisionableDb));
+  return !dup && !hasUnackedBlocker(item, acks) && ((item.kind === "app" && !!app) || (item.kind === "database" && provisionableDb));
 }
 
 /** Pure: why a non-runnable item is skipped (the exact text apply has always written). */
-export function skipReason(item: Pick<ImportPlanItem, "kind" | "risks">, db: ForeignDb | undefined, dup: boolean): string {
-  const hasBlocker = item.risks.some((r) => r.level === "blocker");
+export function skipReason(item: PredicateItem, db: ForeignDb | undefined, dup: boolean, acks?: readonly RiskAck[]): string {
   const provisionableDb = !!db && PROVISIONABLE_ENGINES.has(db.engine);
   return dup
     ? "already imported onto this server in a previous run"
-    : hasBlocker
+    : hasUnackedBlocker(item, acks)
       ? "blocked by a plan risk"
       : item.kind === "volume"
         ? "handled with its owning app (declared there when eligible); its data is not copied by this import yet"

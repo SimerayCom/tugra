@@ -122,7 +122,7 @@ function harness(over: { fleet?: ForeignFleet; profile?: ImportMappingDoc | null
   const plan = planImport(f, { sourceKind: "coolify" });
   const base = { sourceKind: "coolify" as const, sessionId: "sess-1", targetServerId: "srv-tugra", planHash: plan.planHash };
   /** The reviewed hash for a doc (what the web gets from POST /import/mapping/resolve). */
-  const resolve = (doc: ImportMappingDoc, extra: { environmentId?: string; reconcile?: boolean } = {}) => mappings.resolve("user-1", session, f, plan, { id: "srv-tugra", teamId: "team-1" }, { mapping: doc, ...extra });
+  const resolve = (doc: ImportMappingDoc, extra: { environmentId?: string; reconcile?: boolean; acks?: Array<{ code: "app.env.unresolved" | "app.env.key.invalid"; itemRef?: string }> } = {}) => mappings.resolve("user-1", session, f, plan, { id: "srv-tugra", teamId: "team-1" }, { mapping: doc, ...extra });
   const nothingCreated = () => {
     expect(gitSources.upsertForImport).not.toHaveBeenCalled();
     expect(projects.findOrCreateForImport).not.toHaveBeenCalled();
@@ -278,6 +278,31 @@ describe("apply — with a mapping", () => {
     const envId = (await h.projects.findOrCreateForImport.mock.results[0].value).environments.live;
     expect(h.apps.create).toHaveBeenCalledWith("user-1", expect.objectContaining({ name: "web", environmentId: envId }));
     expect(h.apps.create).toHaveBeenCalledWith("user-1", expect.objectContaining({ name: "worker", environmentId: undefined }));
+  });
+  it("an ACKED blocker item is mapped like any other: its project/environment group is created and apply places it there; a hash resolved without the ack is refused", async () => {
+    const f = fleet();
+    f.apps[0].envReport = { total: 2, previewSkipped: 0, unresolved: [{ key: "SERVICE_FQDN_X", reason: "MAGIC" }], invalidKeys: [], tokenReadOnly: false };
+    const acks = [{ code: "app.env.unresolved" as const, itemRef: APP }];
+    const d = doc({ items: { [APP]: { project: "Shop", environment: "prod" } } });
+    // without the ack: blocked, no group, and the apply SKIPS it (nothing was ever placed)
+    const blocked = harness({ fleet: f });
+    expect((await blocked.resolve(d)).effective.find((e) => e.itemRef === APP)).toMatchObject({ status: "blocked" });
+    // with the ack: pending, the group exists, and the reviewed hash differs
+    const h = harness({ fleet: f });
+    const res = await h.resolve(d, { acks });
+    expect(res.effective.find((e) => e.itemRef === APP)).toMatchObject({ status: "pending" });
+    expect(res.projects.map((p) => p.name)).toContain("Shop");
+    expect(res.mappingHash).not.toBe((await blocked.resolve(d)).mappingHash);
+    await h.svc.apply("user-1", { ...h.base, mapping: d, mappingHash: res.mappingHash, acks } as never);
+    await flush();
+    expect(h.projects.findOrCreateForImport).toHaveBeenCalledWith("user-1", "team-1", expect.objectContaining({ name: "Shop", environments: [{ name: "prod", isDefault: false }] }));
+    const envId = (await h.projects.findOrCreateForImport.mock.results[0].value).environments.prod;
+    expect(h.apps.create).toHaveBeenCalledWith("user-1", expect.objectContaining({ name: "web", environmentId: envId }));
+    // the ack-less hash cannot be applied with the acks
+    const h2 = harness({ fleet: f });
+    const e = await h2.svc.apply("user-1", { ...h2.base, mapping: d, mappingHash: (await h2.resolve(d)).mappingHash, acks } as never).catch((x) => x);
+    expect((e as ConflictException).getResponse()).toMatchObject({ code: "import.mapping_changed" });
+    h2.nothingCreated();
   });
   it("a project alone lands in a production environment, flagged default", async () => {
     const h = harness();
