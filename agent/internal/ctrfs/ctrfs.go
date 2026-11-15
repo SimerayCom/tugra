@@ -4,6 +4,12 @@
 // ever extracted to the agent's disk: the tar streams are parsed header-by-header (stdlib archive/tar) with hard
 // byte/time/entry budgets, and the helper container of the volume path is not used (and never gets docker.sock).
 //
+// Limitation: `docker cp` is daemon-side and works on the container's layered rootfs and on volume mounts, but it
+// cannot read or write tmpfs mounts, and Docker refuses every write into a read-only-rootfs container (even onto a
+// tmpfs). Browsing/reading/writing a tmpfs path therefore reports not_found / read_only. The exec-based ops
+// (rename, chmod, delete) re-check a docker cp "not found" from inside the container (`test -e`), so they do work on
+// files that exist in a tmpfs.
+//
 // Every argument that reaches the CLI starts with "/" (paths) or an alphanumeric (the validated container name), so
 // nothing can be parsed as an option, and no shell is involved anywhere.
 package ctrfs
@@ -157,7 +163,7 @@ func mapDocker(stderr string, err error) error {
 		return typed(fsd.CodeNotRunning, "the container is not available")
 	case strings.Contains(low, "could not find the file"), strings.Contains(low, "no such file or directory"), strings.Contains(low, "no such file"):
 		return typed(fsd.CodeNotFound, "no such file or directory")
-	case strings.Contains(low, "read-only file system"), strings.Contains(low, "is read-only"):
+	case strings.Contains(low, "read-only file system"), strings.Contains(low, "is read-only"), strings.Contains(low, "marked read-only"):
 		return typed(fsd.CodeReadOnly, "read-only file system")
 	case strings.Contains(low, "permission denied"), strings.Contains(low, "operation not permitted"):
 		return typed(fsd.CodeDenied, "permission denied")
