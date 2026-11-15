@@ -46,6 +46,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   writers, with an explicit acknowledgement) overwrites changes, and deleting extra destination objects is off by default
   behind its own acknowledgement. Verification compares keys and sizes (`mc diff`); it is not a content-hash check.
   Object versions, IAM users and keys, replication, notifications, SSE keys and object lock are not carried.
+- **Coolify services import as stopped compose apps.** Each Coolify service (Meilisearch, MinIO, Gotenberg, SigNoz,
+  Beszel, cloudflared, your own compose stacks) becomes one stopped Tugra compose app built from the service's own compose
+  file; nothing is deployed. Secrets are carried, never regenerated. Named volumes are declared (a host folder bind
+  becomes a named volume), `container_name`, published ports and `coolify.*` / `traefik.*` labels are stripped and
+  reported, members that need the Docker socket or other host access are dropped, and config files kept next to the
+  compose become config mounts when the token can read them. The review screen shows a per-service verdict, members,
+  volumes, domains and variable names (never values), with per-service choices, and the timeline ends with a post-import
+  checklist. An internal-only service joins a private network under a stable alias: a new `PUT /apps/{id}/compose-networks`
+  attaches a compose service to a hub-owned network (one additive migration). Service data is still copied by hand.
 - **Dependencies.** The glob override moved to 14 (minimatch 11), clearing two dev-tooling advisories (minimatch
   GHSA-g3hv-75wg-m249, glob GHSA-3g3m-2fjr-6pw4). The vite lock was refreshed to 8.3.8. No runtime behaviour change.
 - **Updater.** The pre-update restore point now refuses to start when the backup directory clearly lacks free space for
