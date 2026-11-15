@@ -111,6 +111,13 @@ describe("Terminal (e2e)", () => {
     return { lines: () => buf };
   }
 
+  // The relay is async (hub → mock agent → hub → ws); a fixed sleep is a race on a loaded CI runner, so poll
+  // for the expected text instead (bounded) and fall through to the assertion for a readable failure.
+  async function waitForText(got: { lines: () => string }, text: string, timeoutMs = 5000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (!got.lines().includes(text) && Date.now() < deadline) await sleep(25);
+  }
+
   it("opens a host shell and relays output + echoed input", async () => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/terminal?server=${serverId}`, ["tugra.bearer", token]);
     const got = collect(ws);
@@ -118,11 +125,11 @@ describe("Terminal (e2e)", () => {
       ws.on("open", () => resolve());
       ws.on("error", reject);
     });
-    await sleep(120);
+    await waitForText(got, "shell:");
     expect(got.lines()).toContain("shell:"); // host → target ""
 
     ws.send(JSON.stringify({ type: "term_input", data: b64("ls\n") }));
-    await sleep(120);
+    await waitForText(got, "echo:ls");
     expect(got.lines()).toContain("echo:ls");
     ws.close();
   });
@@ -134,7 +141,7 @@ describe("Terminal (e2e)", () => {
       ws.on("open", () => resolve());
       ws.on("error", reject);
     });
-    await sleep(120);
+    await waitForText(got, `shell:tugra_${appId}`);
     expect(got.lines()).toContain(`shell:tugra_${appId}`);
     ws.close();
   });
@@ -146,7 +153,7 @@ describe("Terminal (e2e)", () => {
       ws.on("open", () => resolve());
       ws.on("error", reject);
     });
-    await sleep(120);
+    await waitForText(got, `shell:tugra_db_${databaseId}`);
     expect(got.lines()).toContain(`shell:tugra_db_${databaseId}`);
     ws.close();
   });
@@ -159,7 +166,7 @@ describe("Terminal (e2e)", () => {
       ws.on("open", () => resolve());
       ws.on("error", reject);
     });
-    await sleep(120);
+    await waitForText(got, `shell:${c}`);
     expect(got.lines()).toContain(`shell:${c}`);
     ws.close();
   });
