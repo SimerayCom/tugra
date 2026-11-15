@@ -5,19 +5,36 @@ import { join } from "node:path";
 import {
   DOCKER_NAME_RE,
   MOVE_STAGING_ROOT,
+  MOVE_TIMEOUTS,
   assertDockerName,
   assertIdx,
   assertMoveId,
   assertPart,
+  buildMoveApplyScript,
+  buildMoveArchivePurgeScript,
+  buildMoveCleanupScript,
+  buildMovePackScript,
+  buildMovePartStatScript,
+  buildMovePrepareScript,
   buildMoveProbeScript,
+  buildMoveRecvScript,
+  buildMoveSendScript,
+  buildMoveSourcePartDropScript,
   isValidDockerName,
   moveDir,
+  parseMoveApplyOk,
+  parseMovePacked,
+  parseMovePart,
+  parseMovePrepare,
   parseMoveProbe,
   partName,
   probeHostPathKey,
+  scrubMoveOutput,
   shq,
   volDir,
 } from "./app-move-scripts";
+import { BACKUP_HELPER_IMAGE } from "../volume-backups/volume-backup-script";
+import { mintRelayPath } from "./volume-relay-sig";
 
 const MOVE_ID = "ckmoveabcdefghijklmnopqrs"; // 25 chars, cuid-shaped
 
@@ -183,5 +200,270 @@ exit 1`,
     expect([...p!.ports].sort((a, b) => a - b)).toEqual([22, 53, 20001]);
     expect(p!.hostPaths["/definitely/not/here"]).toBe(false);
     expect(p!.df["/var/lib/docker"].dev).toBe("2049");
+  });
+});
+
+
+// ───────────────────────────── transfer script builders: goldens + hostile input ─────────────────────────────
+
+const IMG = BACKUP_HELPER_IMAGE;
+const D0 = `${MOVE_STAGING_ROOT}/${MOVE_ID}/0`;
+const RELAY = mintRelayPath("secret-0123456789", { id: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", role: "src", serverId: "s1", moveId: MOVE_ID, volIdx: 0, part: 7, size: 1000, sha256: "a".repeat(64) }, 1_900_000_000);
+const SHA = "b".repeat(64);
+
+describe("buildMovePrepareScript", () => {
+  it("golden: staging dir, helper image, labelled create-if-missing per volume (compose labels only for compose volumes)", () => {
+    expect(buildMovePrepareScript(MOVE_ID, [{ dockerName: "tugra_appv_capp_data" }, { dockerName: "tugra_capp_db", compose: { project: "tugra_capp", key: "db" } }])).toBe(
+      [
+        "set -e",
+        "umask 077",
+        `mkdir -p -m 700 ${MOVE_STAGING_ROOT}/${MOVE_ID}`,
+        `docker image inspect ${IMG} >/dev/null 2>&1 || docker pull ${IMG}`,
+        `if docker volume inspect 'tugra_appv_capp_data' >/dev/null 2>&1; then echo "TUGRA_VX_CREATED tugra_appv_capp_data 0"; else docker volume create --label tugra.move=${MOVE_ID} 'tugra_appv_capp_data' >/dev/null; echo "TUGRA_VX_CREATED tugra_appv_capp_data 1"; fi`,
+        `if docker volume inspect 'tugra_capp_db' >/dev/null 2>&1; then echo "TUGRA_VX_CREATED tugra_capp_db 0"; else docker volume create --label tugra.move=${MOVE_ID} --label com.docker.compose.project=tugra_capp --label com.docker.compose.volume=db 'tugra_capp_db' >/dev/null; echo "TUGRA_VX_CREATED tugra_capp_db 1"; fi`,
+      ].join("\n"),
+    );
+  });
+
+  it("rejects hostile docker names, compose labels and move ids", () => {
+    for (const bad of ["a;b", "$(id)", "-x", "a\nb", "../x"]) expect(() => buildMovePrepareScript(MOVE_ID, [{ dockerName: bad }])).toThrow();
+    expect(() => buildMovePrepareScript(MOVE_ID, [{ dockerName: "ok", compose: { project: "p;x", key: "k" } }])).toThrow();
+    expect(() => buildMovePrepareScript(MOVE_ID, [{ dockerName: "ok", compose: { project: "p", key: "k\nx" } }])).toThrow();
+    expect(() => buildMovePrepareScript("../../etc", [{ dockerName: "ok" }])).toThrow();
+  });
+
+  it("parseMovePrepare is strict: every volume exactly once, nothing unknown, 0/1 only", () => {
+    expect(parseMovePrepare("TUGRA_VX_CREATED a 1\nTUGRA_VX_CREATED b 0\n", ["a", "b"])).toEqual({ a: true, b: false });
+    expect(parseMovePrepare("TUGRA_VX_CREATED a 1\n", ["a", "b"])).toBeNull(); // missing
+    expect(parseMovePrepare("TUGRA_VX_CREATED a 1\nTUGRA_VX_CREATED a 0\n", ["a"])).toBeNull(); // duplicate
+    expect(parseMovePrepare("TUGRA_VX_CREATED a 2\n", ["a"])).toBeNull();
+    expect(parseMovePrepare("TUGRA_VX_CREATED z 1\n", ["a"])).toBeNull(); // unknown volume
+    expect(parseMovePrepare("TUGRA_VX_CREATED a 1 extra\n", ["a"])).toBeNull();
+  });
+});
+
+describe("buildMovePackScript", () => {
+  it("golden", () => {
+    expect(buildMovePackScript({ moveId: MOVE_ID, idx: 0, dockerVolume: "tugra_appv_capp_data", partBytes: 268435456 })).toBe(
+      [
+        "set -e",
+        "set -o pipefail",
+        `D=${D0}`,
+        'umask 077; rm -rf "$D"; mkdir -p "$D"',
+        `docker run --rm -v 'tugra_appv_capp_data':/data:ro ${IMG} tar -C /data -cf - . | gzip -1 | split -b 268435456 -d -a 5 - "$D/p."`,
+        `N=$(ls "$D" | grep -c '^p\\.' || true)`,
+        '[ "$N" -ge 1 ] || { echo "empty pack" >&2; exit 67; }',
+        '( cd "$D" && sha256sum p.* > sums )',
+        `E=$(docker run --rm -v 'tugra_appv_capp_data':/data:ro ${IMG} sh -c 'find /data -mindepth 1 | wc -l | tr -d " "')`,
+        'echo "TUGRA_VX_PACKED parts=$N entries=$E"',
+      ].join("\n"),
+    );
+  });
+
+  it("mounts the volume read-only and never relays or touches the network", () => {
+    const s = buildMovePackScript({ moveId: MOVE_ID, idx: 2, dockerVolume: "v", partBytes: 4096 });
+    expect(s).toContain("/data:ro");
+    expect(s).not.toMatch(/curl|TUGRA_HUB_ORIGIN|agent-vx/);
+  });
+
+  it("validates volume name, index, move id and part size", () => {
+    expect(() => buildMovePackScript({ moveId: MOVE_ID, idx: 0, dockerVolume: "a;b", partBytes: 4096 })).toThrow();
+    expect(() => buildMovePackScript({ moveId: MOVE_ID, idx: 1000, dockerVolume: "v", partBytes: 4096 })).toThrow();
+    expect(() => buildMovePackScript({ moveId: "bad", idx: 0, dockerVolume: "v", partBytes: 4096 })).toThrow();
+    for (const partBytes of [0, 1023, 2 * 1024 ** 3 + 1, 1.5, NaN]) expect(() => buildMovePackScript({ moveId: MOVE_ID, idx: 0, dockerVolume: "v", partBytes })).toThrow();
+  });
+
+  it("parseMovePacked is strict", () => {
+    expect(parseMovePacked("noise\nTUGRA_VX_PACKED parts=3 entries=12\n")).toEqual({ parts: 3, entries: 12 });
+    expect(parseMovePacked("TUGRA_VX_PACKED parts=3 entries=0\n")).toEqual({ parts: 3, entries: 0 });
+    for (const bad of ["", "TUGRA_VX_PACKED parts=0 entries=1", "TUGRA_VX_PACKED parts=3", "TUGRA_VX_PACKED parts=3 entries=1 x", "TUGRA_VX_PACKED parts=-1 entries=1", "TUGRA_VX_PACKED parts=3 entries=1\nTUGRA_VX_PACKED parts=3 entries=1", "TUGRA_VX_PACKED parts=999999 entries=1"]) {
+      expect(parseMovePacked(bad)).toBeNull();
+    }
+  });
+});
+
+describe("part stat / send / recv / drop", () => {
+  it("stat golden + strict parse", () => {
+    expect(buildMovePartStatScript(MOVE_ID, 0, 7)).toBe(
+      [
+        "set -e",
+        `D=${D0}`,
+        'F="$D/p.00007"',
+        '[ -f "$F" ] || { echo "part missing" >&2; exit 66; }',
+        'S=$(stat -c %s "$F")',
+        `H=$(awk '$2=="p.00007"{print $1}' "$D/sums")`,
+        '[ -n "$H" ] || { echo "no checksum" >&2; exit 66; }',
+        'echo "TUGRA_VX_PART $S $H"',
+      ].join("\n"),
+    );
+    expect(parseMovePart(`TUGRA_VX_PART 1000 ${SHA}\n`)).toEqual({ size: 1000, sha256: SHA });
+    for (const bad of ["", `TUGRA_VX_PART 0 ${SHA}`, "TUGRA_VX_PART 10 short", `TUGRA_VX_PART x ${SHA}`, `TUGRA_VX_PART 10 ${SHA} extra`, `TUGRA_VX_PART 10 ${SHA.toUpperCase()}`, `TUGRA_VX_PART 10 ${SHA}\nTUGRA_VX_PART 10 ${SHA}`]) {
+      expect(parseMovePart(bad)).toBeNull();
+    }
+  });
+
+  it("send golden: PUT of one part to the signed path under the agent's own origin, 14 min curl limit", () => {
+    expect(buildMoveSendScript({ moveId: MOVE_ID, idx: 0, part: 7, path: RELAY })).toBe(
+      [
+        "set -e",
+        'O="$TUGRA_HUB_ORIGIN"; [ -n "$O" ] || { echo "no hub origin" >&2; exit 64; }',
+        `F=${D0}/p.00007; [ -f "$F" ]`,
+        `curl -fsS --max-time 840 -X PUT -H 'Expect:' -H 'Content-Type: application/octet-stream' -T "$F" "$O"'${RELAY}' >/dev/null`,
+        "echo TUGRA_VX_SEND_OK",
+      ].join("\n"),
+    );
+  });
+
+  it("recv golden: verified length + sha256 before the part is moved into place", () => {
+    expect(buildMoveRecvScript({ moveId: MOVE_ID, idx: 0, part: 7, path: RELAY, size: 1000, sha256: SHA })).toBe(
+      [
+        "set -e",
+        "set -o pipefail",
+        'O="$TUGRA_HUB_ORIGIN"; [ -n "$O" ] || { echo "no hub origin" >&2; exit 64; }',
+        `D=${D0}; umask 077; mkdir -p "$D"; F="$D/p.00007"; rm -f "$F.tmp"`,
+        `trap 'rm -f "$F.tmp"' EXIT`,
+        `curl -fsS --no-buffer --max-time 840 "$O"'${RELAY}' -o "$F.tmp"`,
+        '[ "$(stat -c %s "$F.tmp")" = "1000" ] || { echo "size mismatch" >&2; exit 65; }',
+        `[ "$(sha256sum "$F.tmp" | cut -d' ' -f1)" = "${SHA}" ] || { echo "sha mismatch" >&2; exit 66; }`,
+        'mv "$F.tmp" "$F"; echo TUGRA_VX_RECV_OK',
+      ].join("\n"),
+    );
+  });
+
+  it("the relay path appears ONLY in send/recv scripts", () => {
+    const others = [
+      buildMovePrepareScript(MOVE_ID, [{ dockerName: "v" }]),
+      buildMovePackScript({ moveId: MOVE_ID, idx: 0, dockerVolume: "v", partBytes: 4096 }),
+      buildMovePartStatScript(MOVE_ID, 0, 0),
+      buildMoveSourcePartDropScript(MOVE_ID, 0, 0),
+      buildMoveApplyScript({ moveId: MOVE_ID, idx: 0, dockerVolume: "v", restoreId: "r", expectedEntries: 1 }),
+      buildMoveCleanupScript(MOVE_ID, { removeVolumes: ["v"] }),
+      buildMoveArchivePurgeScript(["v"]),
+    ];
+    for (const s of others) expect(s).not.toMatch(/agent-vx|TUGRA_HUB_ORIGIN|curl/);
+    expect(buildMoveProbeScript({ dockerVolumes: ["v"] })).not.toMatch(/agent-vx|TUGRA_HUB_ORIGIN/); // it only checks that curl EXISTS
+    expect(buildMoveSendScript({ moveId: MOVE_ID, idx: 0, part: 0, path: RELAY })).toContain("agent-vx");
+    expect(buildMoveRecvScript({ moveId: MOVE_ID, idx: 0, part: 0, path: RELAY, size: 1, sha256: SHA })).toContain("agent-vx");
+  });
+
+  it("send/recv only accept the exact relay path shape (no host, no traversal, no extra query, no shell metacharacters)", () => {
+    for (const bad of [
+      "", "https://evil.example/api/v1/agent-vx/t/AAAAAAAAAAAAAAAAAAAAAAAA?exp=1&sig=BBBBBBBBBBBBBBBBBBBBBBBB",
+      "/api/v1/agent-fs/t/AAAAAAAAAAAAAAAAAAAAAAAA?exp=1&sig=BBBBBBBBBBBBBBBBBBBBBBBB",
+      "/api/v1/agent-vx/t/../x?exp=1&sig=BBBBBBBBBBBBBBBBBBBBBBBB",
+      "/api/v1/agent-vx/t/AAAAAAAAAAAAAAAAAAAAAAAA?exp=1&sig=BBBBBBBBBBBBBBBBBBBBBBBB&x=1",
+      "/api/v1/agent-vx/t/AAAAAAAAAAAAAAAAAAAAAAAA?exp=1&sig=BBBBBBBBBBBBBBBBBBBBBBBB;id",
+      "/api/v1/agent-vx/t/AAAAAAAAAAAAAAAAAAAAAAAA?exp=1&sig=BBBBBBBBBBBBBBBBBBBBBBBB\n",
+      "/api/v1/agent-vx/t/short?exp=1&sig=BBBBBBBBBBBBBBBBBBBBBBBB",
+    ]) {
+      expect(() => buildMoveSendScript({ moveId: MOVE_ID, idx: 0, part: 0, path: bad })).toThrow(/invalid relay path/);
+      expect(() => buildMoveRecvScript({ moveId: MOVE_ID, idx: 0, part: 0, path: bad, size: 1, sha256: SHA })).toThrow(/invalid relay path/);
+    }
+  });
+
+  it("recv validates size and sha256; curl time limits are bounded", () => {
+    for (const size of [-1, 1.5, NaN, Number.MAX_SAFE_INTEGER + 2]) expect(() => buildMoveRecvScript({ moveId: MOVE_ID, idx: 0, part: 0, path: RELAY, size, sha256: SHA })).toThrow();
+    for (const sha256 of ["", "xyz", SHA.slice(1), SHA + "0", `${SHA.slice(0, 63)}"`]) expect(() => buildMoveRecvScript({ moveId: MOVE_ID, idx: 0, part: 0, path: RELAY, size: 1, sha256 })).toThrow(/invalid sha256/);
+    expect(() => buildMoveSendScript({ moveId: MOVE_ID, idx: 0, part: 0, path: RELAY, maxTimeSec: 5 })).toThrow();
+    expect(buildMoveSendScript({ moveId: MOVE_ID, idx: 0, part: 0, path: RELAY, maxTimeSec: 120 })).toContain("--max-time 120");
+  });
+
+  it("source part drop is a single rm of that part", () => {
+    expect(buildMoveSourcePartDropScript(MOVE_ID, 0, 7)).toBe(`rm -f ${D0}/p.00007`);
+    expect(() => buildMoveSourcePartDropScript(MOVE_ID, 0, 100_000)).toThrow();
+  });
+});
+
+describe("buildMoveApplyScript", () => {
+  const script = buildMoveApplyScript({ moveId: MOVE_ID, idx: 0, dockerVolume: "tugra_appv_capp_data", restoreId: `${MOVE_ID}_0`, expectedEntries: 12 });
+
+  it("streams the gunzipped parts (no decoded tar on disk), twice: validate then extract, ownership preserved", () => {
+    expect(script).toContain(`vx_stream() { cat ${D0}/p.* | gunzip; }`);
+    expect(script).toContain(`vx_stream | docker run --rm -i ${IMG} tar -tf - > "$TMP.list"`);
+    expect(script).toContain(`if vx_stream | docker run --rm -i -v 'tugra_appv_capp_data':/data ${IMG} sh -c 'cd /data && find . -mindepth 1 -delete; tar -xf -'; then`);
+    expect(script).not.toContain("--no-same-owner"); // a trusted tugra->tugra transfer keeps numeric uid/gid
+    expect(script).not.toContain('> "$TMP"'); // the decoded archive is never staged
+    expect(script).not.toContain('< "$TMP"');
+  });
+
+  it("keeps the restore contract (72 before the wipe, 71 rolled back, 70 recovery) and verifies the entry count (68)", () => {
+    for (const c of ["exit 72", "exit 71", "exit 70", "TUGRA_RESTORE_OK", `tugra_restore_rb_${MOVE_ID}_0`]) expect(script).toContain(c);
+    expect(script).toContain('[ "$E" = "12" ] || { echo "entry count mismatch" >&2; exit 68; }');
+    expect(script).toContain('echo "TUGRA_VX_APPLY_OK entries=$E"');
+    expect(script.trimEnd().endsWith(`rm -rf ${D0}`)).toBe(true); // staging removed only after success
+    expect(script.indexOf("TUGRA_VX_APPLY_OK")).toBeGreaterThan(script.indexOf("fi\n"));
+    expect(script.split("\n").slice(0, 4)).toEqual(["set -e", "set -o pipefail", "TMP=$(mktemp)", `trap 'rm -f "$TMP" "$TMP.list"' EXIT`]);
+  });
+
+  it("rejects hostile volume names / restore ids / counts; parseMoveApplyOk is strict", () => {
+    expect(() => buildMoveApplyScript({ moveId: MOVE_ID, idx: 0, dockerVolume: "a;b", restoreId: "r", expectedEntries: 1 })).toThrow();
+    expect(() => buildMoveApplyScript({ moveId: MOVE_ID, idx: 0, dockerVolume: "v", restoreId: "r;x", expectedEntries: 1 })).toThrow(/invalid restore id/);
+    expect(() => buildMoveApplyScript({ moveId: MOVE_ID, idx: 0, dockerVolume: "v", restoreId: "r", expectedEntries: -1 })).toThrow();
+    expect(parseMoveApplyOk("TUGRA_VX_APPLY_OK entries=12\n")).toBe(12);
+    for (const bad of ["", "TUGRA_VX_APPLY_OK entries=", "TUGRA_VX_APPLY_OK entries=1 x", "TUGRA_VX_APPLY_OK entries=1\nTUGRA_VX_APPLY_OK entries=1"]) expect(parseMoveApplyOk(bad)).toBeNull();
+  });
+});
+
+describe("cleanup + archive purge builders", () => {
+  it("cleanup golden: staging rm, label re-check before every volume rm, rollback snapshots by their own label", () => {
+    expect(buildMoveCleanupScript(MOVE_ID, { removeVolumes: ["tugra_appv_capp_data"], removeRollbackFor: [`${MOVE_ID}_0`] })).toBe(
+      [
+        "set +e",
+        `rm -rf ${MOVE_STAGING_ROOT}/${MOVE_ID}`,
+        `if docker volume inspect 'tugra_appv_capp_data' >/dev/null 2>&1; then`,
+        `  lb=$(docker volume inspect -f '{{index .Labels "tugra.move"}}' 'tugra_appv_capp_data' 2>/dev/null)`,
+        `  if [ "$lb" = '${MOVE_ID}' ]; then if docker volume rm 'tugra_appv_capp_data' >/dev/null 2>&1; then echo "TUGRA_VX_VOL tugra_appv_capp_data removed"; else echo "TUGRA_VX_VOL tugra_appv_capp_data kept"; fi; else echo "TUGRA_VX_VOL tugra_appv_capp_data skipped"; fi`,
+        `else echo "TUGRA_VX_VOL tugra_appv_capp_data absent"; fi`,
+        `if docker volume inspect 'tugra_restore_rb_${MOVE_ID}_0' >/dev/null 2>&1; then`,
+        `  lb=$(docker volume inspect -f '{{index .Labels "tugra.restore-rb"}}' 'tugra_restore_rb_${MOVE_ID}_0' 2>/dev/null)`,
+        `  if [ "$lb" = '${MOVE_ID}_0' ]; then if docker volume rm 'tugra_restore_rb_${MOVE_ID}_0' >/dev/null 2>&1; then echo "TUGRA_VX_VOL tugra_restore_rb_${MOVE_ID}_0 removed"; else echo "TUGRA_VX_VOL tugra_restore_rb_${MOVE_ID}_0 kept"; fi; else echo "TUGRA_VX_VOL tugra_restore_rb_${MOVE_ID}_0 skipped"; fi`,
+        `else echo "TUGRA_VX_VOL tugra_restore_rb_${MOVE_ID}_0 absent"; fi`,
+        "echo TUGRA_VX_CLEANUP_DONE",
+      ].join("\n"),
+    );
+  });
+
+  it("cleanup with nothing listed only removes the staging dir; hostile names throw", () => {
+    expect(buildMoveCleanupScript(MOVE_ID)).toBe(["set +e", `rm -rf ${MOVE_STAGING_ROOT}/${MOVE_ID}`, "echo TUGRA_VX_CLEANUP_DONE"].join("\n"));
+    expect(() => buildMoveCleanupScript(MOVE_ID, { removeVolumes: ["a;b"] })).toThrow();
+    expect(() => buildMoveCleanupScript(MOVE_ID, { removeRollbackFor: ["a b"] })).toThrow();
+    expect(() => buildMoveCleanupScript("../x", {})).toThrow();
+  });
+
+  it("archive purge golden + hostile names", () => {
+    expect(buildMoveArchivePurgeScript(["tugra_appv_capp_data"])).toBe(
+      [
+        "set +e",
+        `if docker volume inspect 'tugra_appv_capp_data' >/dev/null 2>&1; then if docker volume rm 'tugra_appv_capp_data' >/dev/null 2>&1; then echo "TUGRA_VX_VOL tugra_appv_capp_data removed"; else echo "TUGRA_VX_VOL tugra_appv_capp_data kept"; fi; else echo "TUGRA_VX_VOL tugra_appv_capp_data absent"; fi`,
+        "echo TUGRA_VX_CLEANUP_DONE",
+      ].join("\n"),
+    );
+    expect(() => buildMoveArchivePurgeScript(["a;b"])).toThrow();
+  });
+});
+
+describe("timeouts + scrubbing", () => {
+  const GiB = 1024 ** 3;
+  it("pack = 10 min + 150 s/GiB, apply = 10 min + 240 s/GiB, clamped to 24 h", () => {
+    expect(MOVE_TIMEOUTS.pack(0)).toBe(600_000);
+    expect(MOVE_TIMEOUTS.pack(GiB)).toBe(750_000);
+    expect(MOVE_TIMEOUTS.pack(10 * GiB + 1)).toBe(600_000 + 11 * 150_000);
+    expect(MOVE_TIMEOUTS.apply(0)).toBe(600_000);
+    expect(MOVE_TIMEOUTS.apply(GiB)).toBe(840_000);
+    expect(MOVE_TIMEOUTS.apply(10_000 * GiB)).toBe(24 * 3600_000);
+    expect(MOVE_TIMEOUTS.pack(10_000 * GiB)).toBe(24 * 3600_000);
+    expect([MOVE_TIMEOUTS.probe, MOVE_TIMEOUTS.prepare, MOVE_TIMEOUTS.stat, MOVE_TIMEOUTS.drop, MOVE_TIMEOUTS.transfer]).toEqual([600_000, 120_000, 120_000, 120_000, 900_000]);
+    expect(MOVE_TIMEOUTS.pack(-5)).toBe(600_000);
+  });
+
+  it("scrubMoveOutput removes signed relay paths (with or without an origin) and a literal origin env, plus the shared secrets scrub", () => {
+    const out = scrubMoveOutput(`curl: (22) The requested URL returned error: 404 for https://hub.example.com${RELAY}\nretry ${RELAY} now\nTUGRA_HUB_ORIGIN=https://hub.example.com\nPASSWORD=hunter2\nok`);
+    expect(out).not.toContain("agent-vx/t/AAAA");
+    expect(out).not.toContain("sig=");
+    expect(out).not.toContain("hub.example.com");
+    expect(out).not.toContain("hunter2");
+    expect(out).toContain("<relay-path-redacted>");
+    expect(out).toContain("ok");
+    expect(scrubMoveOutput("")).toBe("");
   });
 });

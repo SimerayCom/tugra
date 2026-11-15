@@ -102,8 +102,24 @@ export function buildVolumeBackupScript(
  * atomic — Docker has no atomic volume swap; a hard kill mid-extract is recoverable from the snapshot, not
  * seamless. `tarFlags` is "" for our own backup (keep ownership) or "--no-same-owner " for an untrusted import.
  */
-function safeWipeExtract(dockerVolume: string, restoreId: string, tarFlags: string): string[] {
+/** Where safeWipeExtract reads the (decoded) tar from: the staged `$TMP` file (restore/import — the default), or a
+ *  hub-built shell function that STREAMS it (`fn` is a constant function name such as `vx_stream`, never user text) so
+ *  the decoded tar is never stored on disk — the app move reads its gzip parts twice (validate, then extract) instead. */
+export type WipeExtractInput = { kind: "tmp" } | { kind: "stream"; fn: string };
+
+export function safeWipeExtract(dockerVolume: string, restoreId: string, tarFlags: string, input: WipeExtractInput = { kind: "tmp" }): string[] {
   const img = BACKUP_HELPER_IMAGE;
+  if (input.kind === "stream" && !/^[A-Za-z_][A-Za-z0-9_]{0,31}$/.test(input.fn)) throw new Error("invalid stream function name");
+  // Stream mode: `<fn> |` feeds each docker invocation (pipefail, already set, makes a failed/truncated producer fail the
+  // pipeline); tmp mode: the staged file is redirected in, byte-for-byte what restore/import have always emitted.
+  const validateCmd =
+    input.kind === "stream"
+      ? `${input.fn} | docker run --rm -i ${img} tar -tf - > "$TMP.list" 2>/dev/null || { echo "invalid archive" >&2; exit 72; }`
+      : `docker run --rm -i ${img} tar -tf - < "$TMP" > "$TMP.list" 2>/dev/null || { echo "invalid archive" >&2; exit 72; }`;
+  const extractIf = (vol: string): string =>
+    input.kind === "stream"
+      ? `if ${input.fn} | docker run --rm -i -v ${vol}:/data ${img} sh -c 'cd /data && find . -mindepth 1 -delete; tar ${tarFlags}-xf -'; then`
+      : `if docker run --rm -i -v ${vol}:/data ${img} sh -c 'cd /data && find . -mindepth 1 -delete; tar ${tarFlags}-xf -' < "$TMP"; then`;
   const rb = `tugra_restore_rb_${restoreId}`;
   const vol = shq(dockerVolume);
   const rbq = shq(rb);
@@ -114,7 +130,7 @@ function safeWipeExtract(dockerVolume: string, restoreId: string, tarFlags: stri
   // any other code as an unknown outcome (possibly mid-restore; the snapshot volume survives for recovery).
   return [
     // 1. VALIDATE the tar layer before touching the volume. Corrupt/truncated → exit 72, data intact.
-    `docker run --rm -i ${img} tar -tf - < "$TMP" > "$TMP.list" 2>/dev/null || { echo "invalid archive" >&2; exit 72; }`,
+    validateCmd,
     // 2. An all-zero / empty tar lists nothing and `tar -tf` exits 0 — reject it so it can't wipe to empty.
     //    Our own backups always carry a `./` entry.
     `[ -s "$TMP.list" ] || { echo "empty archive" >&2; exit 72; }`,
@@ -125,7 +141,7 @@ function safeWipeExtract(dockerVolume: string, restoreId: string, tarFlags: stri
     `docker volume create --label tugra.restore-rb=${shq(restoreId)} ${rbq} >/dev/null || { echo "snapshot volume create failed" >&2; exit 72; }`,
     `docker run --rm -v ${vol}:/src:ro -v ${rbq}:/dst ${img} sh -c 'cp -a /src/. /dst/' || { docker volume rm ${rbq} >/dev/null 2>&1 || true; echo "snapshot failed" >&2; exit 72; }`,
     // 5. Extract the validated archive into the live volume; on failure restore from the snapshot.
-    `if docker run --rm -i -v ${vol}:/data ${img} sh -c 'cd /data && find . -mindepth 1 -delete; tar ${tarFlags}-xf -' < "$TMP"; then`,
+    extractIf(vol),
     `  docker volume rm ${rbq} >/dev/null 2>&1 || true`,
     `  echo TUGRA_RESTORE_OK`,
     `elif docker run --rm -v ${rbq}:/src:ro -v ${vol}:/data ${img} sh -c 'cd /data && find . -mindepth 1 -delete; cp -a /src/. /data/'; then`,

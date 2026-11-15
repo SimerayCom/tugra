@@ -9,7 +9,19 @@ import { CryptoService } from "../crypto/crypto.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { loadProjectCtx } from "../common/resource-project";
 import { APP_MOVE_TERMINAL } from "../common/app-move-guard";
-import { buildMoveProbeScript, parseMoveProbe, probeHostPathKey, type MoveProbe } from "./app-move-scripts";
+import {
+  LINK_PROBE_BYTES,
+  MOVE_TIMEOUTS,
+  buildMoveCleanupScript,
+  buildMoveLinkProbeFileScript,
+  buildMoveProbeScript,
+  newLinkProbeId,
+  parseMovePart,
+  parseMoveProbe,
+  scrubMoveOutput,
+  type MoveProbe,
+} from "./app-move-scripts";
+import { PartTransferService } from "./part-transfer.service";
 import {
   assemblePreflight,
   declaredVolumes,
@@ -55,6 +67,7 @@ export class AppMovesService {
     private readonly agentWs: AgentWsServer,
     private readonly crypto: CryptoService,
     private readonly config: ConfigService,
+    private readonly transfers: PartTransferService,
   ) {}
 
   // ───────────────────────────── authorization ─────────────────────────────
@@ -126,7 +139,7 @@ export class AppMovesService {
       facts.sourceProbe = sp.probe;
       facts.targetProbe = tp.probe;
       facts.probeFailed = { source: sp.failed, target: tp.failed };
-      if (probeLink) facts.link = await this.probeLinkBetween(source, target, facts);
+      if (probeLink) facts.link = await this.probeLinkBetween(source, target);
     }
     return assemblePreflight(facts);
   }
@@ -148,10 +161,36 @@ export class AppMovesService {
     }
   }
 
-  /** M2: a real 16 MiB relay transfer between the two hosts. Until the relay exists this reports "not run". */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  protected async probeLinkBetween(_source: Server, _target: Server, _facts: PreflightFacts): Promise<PreflightFacts["link"]> {
-    return null;
+  /**
+   * The optional link test: ONE real 16 MiB part through the same relay + send/recv scripts a move uses, measuring
+   * throughput. A failure is `link_probe_failed` with a scrubbed hint (hub origin unreachable from an agent, a proxy
+   * body limit, ...). It cannot detect a fronting proxy that caps bodies ABOVE 16 MiB — lower MOVE_PART_MIB for that.
+   * Both hosts delete the probe file afterwards, success or not. Returns null when a side cannot take part at all
+   * (the preflight already reports that as its own blocker).
+   */
+  async probeLinkBetween(source: Server, target: Server): Promise<{ ok: boolean; mbps: number | null; hint?: string } | null> {
+    const usable = (s: Server): boolean => this.agentWs.isOnline(s.id) && this.agentWs.agentSupports(s.id, AGENT_FEATURE_HUB_ORIGIN_ENV) && s.capabilities.includes("backup");
+    if (!usable(source) || !usable(target)) return null;
+    const probeId = newLinkProbeId();
+    const cleanup = (srv: Server): Promise<unknown> => this.agentWs.sendCommand(srv.id, buildMoveCleanupScript(probeId), "backup", MOVE_TIMEOUTS.drop).catch(() => undefined);
+    try {
+      const made = await this.agentWs.sendCommand(source.id, buildMoveLinkProbeFileScript(probeId), "backup", MOVE_TIMEOUTS.stat);
+      const part = made.exitCode === 0 ? parseMovePart(made.output) : null;
+      if (!part || part.size !== LINK_PROBE_BYTES) return { ok: false, mbps: null, hint: "could not create the probe file on the source" };
+      const started = Date.now();
+      let r = await this.transfers.transfer({ moveId: probeId, idx: 0, part: 0, size: part.size, sha256: part.sha256, srcServerId: source.id, dstServerId: target.id, maxTimeSec: 120, timeoutMs: 150_000 });
+      for (let i = 0; i < 5 && !r.ok && r.busy; i++) {
+        await new Promise((res) => setTimeout(res, 1000 * (i + 1)));
+        r = await this.transfers.transfer({ moveId: probeId, idx: 0, part: 0, size: part.size, sha256: part.sha256, srcServerId: source.id, dstServerId: target.id, maxTimeSec: 120, timeoutMs: 150_000 });
+      }
+      if (!r.ok) return { ok: false, mbps: null, hint: scrubMoveOutput(r.detail).slice(0, 300) };
+      const seconds = Math.max((Date.now() - started) / 1000, 0.05);
+      return { ok: true, mbps: Math.round(((part.size * 8) / 1e6 / seconds) * 10) / 10 };
+    } catch (e) {
+      return { ok: false, mbps: null, hint: scrubMoveOutput(e instanceof Error ? e.message : String(e)).slice(0, 300) };
+    } finally {
+      await Promise.all([cleanup(source), cleanup(target)]);
+    }
   }
 
   private serverFacts(s: Server): MoveServerFacts {

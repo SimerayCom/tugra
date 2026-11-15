@@ -96,7 +96,10 @@ Either way, `--domain` sets `COOKIE_SECURE=true` and `HUB_TRUSTED_PROXY=true`. R
 
 File uploads and downloads are streamed through the web service, so any body size limit in your proxy must allow the
 largest file you want to move (the hub's default cap is 256 MiB per upload, `FILES_MAX_UPLOAD_BYTES`). Optionally route
-`/api/v1/agent-fs/` straight to the hub `:3000`: it is only ever called by agents and carries whole file bodies.
+`/api/v1/agent-fs/` straight to the hub `:3000`: it is only ever called by agents and carries whole file bodies. The same
+goes for `/api/v1/agent-vx/`, the relay an app move streams a volume through in bounded parts (`MOVE_PART_MIB`, default
+256 MiB, clamped 32 to 1024): a proxy that caps request bodies below that part size answers the move's upload with 413,
+so lower `MOVE_PART_MIB` or let those paths bypass the body limit.
 
 Time limits on that path, from the browser to the agent. An upload is answered only after the hub has received the whole
 body *and* the agent has pulled and applied it (budget: 30 s + 1 s per 512 KiB, at most 10 minutes):

@@ -6,6 +6,7 @@ import { proxyToHub } from "../../../lib/hub-stream-proxy";
 import * as volumeRoute from "./apps/[id]/files/content/route";
 import * as containerRoute from "./apps/[id]/container-files/content/route";
 import * as agentRoute from "./agent-fs/t/[id]/route";
+import * as relayRoute from "./agent-vx/t/[id]/route";
 
 beforeEach(() => vi.mocked(proxyToHub).mockClear());
 const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
@@ -18,6 +19,7 @@ describe("streaming file routes", () => {
     ["volume content", volumeRoute, "a1", "/api/v1/apps/a1/files/content"],
     ["container content", containerRoute, "a1", "/api/v1/apps/a1/container-files/content"],
     ["agent transfer", agentRoute, "AAAAAAAAAAAAAAAAAAAAAAAA", "/api/v1/agent-fs/t/AAAAAAAAAAAAAAAAAAAAAAAA"],
+    ["app move volume relay", relayRoute, "AAAAAAAAAAAAAAAAAAAAAAAA", "/api/v1/agent-vx/t/AAAAAAAAAAAAAAAAAAAAAAAA"],
   ])("%s proxies GET and PUT to the right hub path", async (_n, mod, id, hubPath) => {
     const req = new Request("http://web/anything?x=1", { method: "PUT", body: "x" });
     expect(await (await mod.PUT(req, ctx(id))).text()).toBe("proxied");

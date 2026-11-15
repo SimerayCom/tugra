@@ -105,7 +105,7 @@ exist in a tmpfs.
 
 The web server streams file bodies through dedicated routes (Next's generic rewrite buffers and truncates request
 bodies above 10 MiB); a hub behind a reverse proxy must also allow large request bodies on `/api/v1/apps/*/files/content`
-and `/api/v1/agent-fs/t/*`.
+and `/api/v1/agent-fs/t/*`, and parts of at most `MOVE_PART_MIB` on `/api/v1/agent-vx/t/*` (the app-move volume relay).
 
 ## Deployment
 

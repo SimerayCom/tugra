@@ -7,6 +7,7 @@ import {
   parseShareUrl,
   volumeBackupFilename,
   BACKUP_HELPER_IMAGE,
+  safeWipeExtract,
 } from "./volume-backup-script";
 import type { DestinationSpec } from "../backups/destination";
 
@@ -201,5 +202,103 @@ describe("volume export url (migration)", () => {
 describe("backup helper image", () => {
   it("pins the tar/restore helper to a tag + sha256 digest (was a bare alpine :latest)", () => {
     expect(BACKUP_HELPER_IMAGE).toMatch(/^alpine:[\w.]+@sha256:[a-f0-9]{64}$/);
+  });
+});
+
+// ── FULL-output goldens (captured from the pre-refactor builders). safeWipeExtract grew an optional input mode for
+// the app-move transfer; the default (staged $TMP) path must stay byte-identical, so these pin every line. ──
+describe("restore/import scripts — byte-for-byte goldens (default input mode)", () => {
+  const IMG = BACKUP_HELPER_IMAGE;
+  const wipeTail = (rid: string, vol: string, tarFlags: string) => [
+    `docker run --rm -i ${IMG} tar -tf - < "$TMP" > "$TMP.list" 2>/dev/null || { echo "invalid archive" >&2; exit 72; }`,
+    `[ -s "$TMP.list" ] || { echo "empty archive" >&2; exit 72; }`,
+    `if LC_ALL=C grep -Eq '^/|(^|/)[.][.](/|$)' "$TMP.list"; then echo "unsafe archive entry" >&2; exit 72; fi`,
+    `docker volume create --label tugra.restore-rb='${rid}' 'tugra_restore_rb_${rid}' >/dev/null || { echo "snapshot volume create failed" >&2; exit 72; }`,
+    `docker run --rm -v '${vol}':/src:ro -v 'tugra_restore_rb_${rid}':/dst ${IMG} sh -c 'cp -a /src/. /dst/' || { docker volume rm 'tugra_restore_rb_${rid}' >/dev/null 2>&1 || true; echo "snapshot failed" >&2; exit 72; }`,
+    `if docker run --rm -i -v '${vol}':/data ${IMG} sh -c 'cd /data && find . -mindepth 1 -delete; tar ${tarFlags}-xf -' < "$TMP"; then`,
+    `  docker volume rm 'tugra_restore_rb_${rid}' >/dev/null 2>&1 || true`,
+    `  echo TUGRA_RESTORE_OK`,
+    `elif docker run --rm -v 'tugra_restore_rb_${rid}':/src:ro -v '${vol}':/data ${IMG} sh -c 'cd /data && find . -mindepth 1 -delete; cp -a /src/. /data/'; then`,
+    `  docker volume rm 'tugra_restore_rb_${rid}' >/dev/null 2>&1 || true`,
+    `  echo TUGRA_RESTORE_FAILED_ROLLED_BACK >&2; exit 71`,
+    `else`,
+    `  echo "TUGRA_RESTORE_RECOVERY_REQUIRED rollback=tugra_restore_rb_${rid}" >&2; exit 70`,
+    `fi`,
+  ];
+
+  it("buildVolumeRestoreScript (LOCAL): the complete script", () => {
+    expect(buildVolumeRestoreScript("app1", "data", "tugra_appv_app1_data", "20260101.tar.gz", LOCAL, "rid1")).toBe(
+      [
+        "set -e",
+        "set -o pipefail",
+        "TMP=$(mktemp)",
+        `trap 'rm -f "$TMP" "$TMP.list"' EXIT`,
+        `cat /etc/tugra/volume-backups/app1/data/20260101.tar.gz | gunzip > "$TMP"`,
+        ...wipeTail("rid1", "tugra_appv_app1_data", ""),
+      ].join("\n"),
+    );
+  });
+
+  it("buildVolumeImportScript (plain gzip): the complete script (--no-same-owner)", () => {
+    expect(buildVolumeImportScript("tugra_appv_app1_data", "https://x.example/d.tgz", "rid2", { encrypted: false, key: "", gzip: true })).toBe(
+      [
+        "set -e",
+        "set -o pipefail",
+        "TMP=$(mktemp)",
+        `trap 'rm -f "$TMP" "$TMP.list"' EXIT`,
+        `curl -fsSL 'https://x.example/d.tgz' | gunzip > "$TMP"`,
+        ...wipeTail("rid2", "tugra_appv_app1_data", "--no-same-owner "),
+      ].join("\n"),
+    );
+  });
+
+  it("buildVolumeImportScript (encrypted, decoded-size cap): the complete script", () => {
+    expect(buildVolumeImportScript("tugra_appv_app1_data", "https://x.example/d.tgz", "rid3", { encrypted: true, key: "k3y", gzip: false, maxDecodedBytes: 1000 })).toBe(
+      [
+        "set -e",
+        "set -o pipefail",
+        "TMP=$(mktemp)",
+        `trap 'rm -f "$TMP" "$TMP.list"' EXIT`,
+        `curl -fsSL 'https://x.example/d.tgz' | gpg --batch --yes --passphrase 'k3y' --decrypt | head -c 1001 > "$TMP"`,
+        `if [ "$(wc -c < "$TMP")" -gt 1000 ]; then echo "decoded volume exceeds the 1000-byte cap" >&2; exit 1; fi`,
+        ...wipeTail("rid3", "tugra_appv_app1_data", "--no-same-owner "),
+      ].join("\n"),
+    );
+  });
+});
+
+describe("safeWipeExtract — stream input (app move)", () => {
+  const IMG = BACKUP_HELPER_IMAGE;
+  const vol = "tugra_appv_app1_data";
+
+  it("the default input is byte-identical to an explicit {kind:'tmp'}", () => {
+    expect(safeWipeExtract(vol, "r1", "")).toEqual(safeWipeExtract(vol, "r1", "", { kind: "tmp" }));
+    expect(safeWipeExtract(vol, "r1", "--no-same-owner ")).toEqual(safeWipeExtract(vol, "r1", "--no-same-owner ", { kind: "tmp" }));
+  });
+
+  it("stream mode swaps ONLY the two input lines (double-stream: validate, then extract); everything else is identical", () => {
+    const tmp = safeWipeExtract(vol, "r1", "");
+    const stream = safeWipeExtract(vol, "r1", "", { kind: "stream", fn: "vx_stream" });
+    expect(stream).toHaveLength(tmp.length);
+    const diff = stream.map((l, i) => [l, tmp[i]]).filter(([a, b]) => a !== b);
+    expect(diff).toHaveLength(2);
+    expect(stream[0]).toBe(`vx_stream | docker run --rm -i ${IMG} tar -tf - > "$TMP.list" 2>/dev/null || { echo "invalid archive" >&2; exit 72; }`);
+    expect(stream.find((l) => l.startsWith("if vx_stream"))).toBe(`if vx_stream | docker run --rm -i -v '${vol}':/data ${IMG} sh -c 'cd /data && find . -mindepth 1 -delete; tar -xf -'; then`);
+    expect(stream.join("\n")).not.toContain('< "$TMP"'); // the decoded tar is never read from a staged file
+    expect(stream.join("\n")).not.toContain('"$TMP"'); // ...nor written (only $TMP.list is)
+  });
+
+  it("stream mode keeps the exit contract (72 before the wipe, 71 rolled back, 70 recovery) and the rollback snapshot", () => {
+    const s = safeWipeExtract(vol, "r1", "", { kind: "stream", fn: "vx_stream" }).join("\n");
+    for (const c of ["exit 72", "exit 71", "exit 70", "TUGRA_RESTORE_OK", "tugra_restore_rb_r1", "docker volume create --label tugra.restore-rb='r1'"]) expect(s).toContain(c);
+  });
+
+  it("keeps the caller's tar flags (a move preserves ownership: tarFlags empty)", () => {
+    expect(safeWipeExtract(vol, "r1", "", { kind: "stream", fn: "f" }).join("\n")).toContain("tar -xf -");
+    expect(safeWipeExtract(vol, "r1", "--no-same-owner ", { kind: "stream", fn: "f" }).join("\n")).toContain("tar --no-same-owner -xf -");
+  });
+
+  it("the stream function name is a constant identifier: anything else throws", () => {
+    for (const bad of ["a b", "a;b", "$(x)", "", "1abc", "a|b", "f\nx"]) expect(() => safeWipeExtract(vol, "r1", "", { kind: "stream", fn: bad })).toThrow(/stream function/);
   });
 });

@@ -30,7 +30,9 @@ const TARGET_PROBE = (vol: string) =>
     `TUGRA_VOL ${vol} ABSENT`, "TUGRA_PORT 22", "TUGRA_PROBE_END",
   ].join("\n");
 
-function make(opts: { app?: Record<string, unknown> | null; perms?: Set<string>; member?: boolean; targetTeam?: string; owner?: boolean; send?: jest.Mock; online?: Record<string, boolean>; supports?: boolean; moves?: Record<string, unknown>[] } = {}) {
+const LINK_SHA = "c".repeat(64);
+
+function make(opts: { transfer?: jest.Mock; app?: Record<string, unknown> | null; perms?: Set<string>; member?: boolean; targetTeam?: string; owner?: boolean; send?: jest.Mock; online?: Record<string, boolean>; supports?: boolean; moves?: Record<string, unknown>[] } = {}) {
   const app = opts.app === undefined ? APP : opts.app && { ...APP, ...opts.app };
   const servers: Record<string, ReturnType<typeof srv>> = { s1: srv("s1"), s2: srv("s2", { teamId: opts.targetTeam ?? "t1" }) };
   const prisma = {
@@ -58,7 +60,14 @@ function make(opts: { app?: Record<string, unknown> | null; perms?: Set<string>;
     membershipPermissions: jest.fn().mockResolvedValue(perms),
   };
   const online = opts.online ?? { s1: true, s2: true };
-  const send = opts.send ?? jest.fn(async (id: string) => ({ exitCode: 0, output: id === "s1" ? PROBE_OUT("tugra_appv_capp_data", 2048) : TARGET_PROBE("tugra_appv_capp_data") }));
+  const send =
+    opts.send ??
+    jest.fn(async (id: string, script: string) => {
+      if (script.includes("head -c")) return { exitCode: 0, output: `TUGRA_VX_PART 16777216 ${LINK_SHA}\n` }; // link-probe file on the source
+      if (script.includes("TUGRA_VX_CLEANUP_DONE")) return { exitCode: 0, output: "TUGRA_VX_CLEANUP_DONE\n" };
+      return { exitCode: 0, output: id === "s1" ? PROBE_OUT("tugra_appv_capp_data", 2048) : TARGET_PROBE("tugra_appv_capp_data") };
+    });
+  const transfers = { transfer: opts.transfer ?? jest.fn().mockResolvedValue({ ok: true, bytes: 16777216 }) };
   const agentWs = {
     isOnline: jest.fn((id: string) => online[id] ?? false),
     agentSupports: jest.fn((_id: string, f: string) => f === AGENT_FEATURE_HUB_ORIGIN_ENV && opts.supports !== false),
@@ -66,8 +75,8 @@ function make(opts: { app?: Record<string, unknown> | null; perms?: Set<string>;
   };
   const crypto = { decrypt: (s: string) => s };
   const config = { get: (k: string) => ({ MOVE_PART_MIB: 256, TUGRA_HOSTPORT_MIN: 20000, TUGRA_HOSTPORT_MAX: 45000, MAGIC_DOMAIN_SUFFIX: "sslip.io" } as Record<string, unknown>)[k] };
-  const svc = new AppMovesService(prisma as never, access as never, { log: jest.fn() } as never, agentWs as never, crypto as never, config as never);
-  return { svc, prisma, access, agentWs, send };
+  const svc = new AppMovesService(prisma as never, access as never, { log: jest.fn() } as never, agentWs as never, crypto as never, config as never, transfers as never);
+  return { svc, prisma, access, agentWs, send, transfers };
 }
 
 const input = { targetServerId: "s2", acknowledge: {}, probeLink: false } as never;
@@ -184,6 +193,72 @@ describe("AppMovesService.preflight — assembly with live probes", () => {
     const w = r.warnings.find((x) => x.code === "env_may_reference_old_host")!;
     expect(w.details).toEqual({ keys: ["PUBLIC_URL"] });
     expect(JSON.stringify(r)).not.toContain("hunter2");
+  });
+});
+
+describe("AppMovesService.preflight — optional link probe", () => {
+  const withLink = { ...(input as object), probeLink: true } as never;
+
+  it("runs ONE real relay part (16 MiB) source->target, reports throughput, and deletes the probe dir on both hosts", async () => {
+    const t = make();
+    const r = await t.svc.preflight("u1", "capp", withLink);
+    expect(r.ok).toBe(true);
+    expect(r.plan.link).toEqual({ ok: true, mbps: expect.any(Number) });
+    expect(t.transfers.transfer).toHaveBeenCalledTimes(1);
+    const req = t.transfers.transfer.mock.calls[0][0];
+    expect(req).toMatchObject({ idx: 0, part: 0, size: 16777216, sha256: LINK_SHA, srcServerId: "s1", dstServerId: "s2", maxTimeSec: 120 });
+    expect(req.moveId).toMatch(/^probe[0-9a-f]{20}$/);
+    const cleanups = t.send.mock.calls.filter((c) => String(c[1]).includes("TUGRA_VX_CLEANUP_DONE"));
+    expect(cleanups.map((c) => c[0]).sort()).toEqual(["s1", "s2"]);
+    for (const c of cleanups) expect(c[1]).toContain(`rm -rf /etc/tugra/app-moves/${req.moveId}`);
+  });
+
+  it("a failed transfer is link_probe_failed with a scrubbed hint, and the probe dir is still removed", async () => {
+    const t = make({ transfer: jest.fn().mockResolvedValue({ ok: false, sendExit: 22, recvExit: 0, detail: "source exit 22: curl: (22) 413 https://hub.example.com/api/v1/agent-vx/t/AAAAAAAAAAAAAAAAAAAAAAAA?exp=1&sig=BBBBBBBBBBBBBBBBBBBBBBBB" }) });
+    const r = await t.svc.preflight("u1", "capp", withLink);
+    const b = r.blockers.find((x) => x.code === "link_probe_failed")!;
+    expect(b).toBeDefined();
+    expect(String((b.details as { hint: string }).hint)).toContain("413");
+    expect(JSON.stringify(r)).not.toContain("sig=");
+    expect(JSON.stringify(r)).not.toContain("agent-vx/t/AAAA");
+    expect(r.plan.link).toEqual({ ok: false, mbps: null });
+    expect(t.send.mock.calls.filter((c) => String(c[1]).includes("TUGRA_VX_CLEANUP_DONE"))).toHaveLength(2);
+  });
+
+  it("cannot create the probe file -> link_probe_failed (no transfer attempted)", async () => {
+    const send = jest.fn(async (_id: string, script: string) => (script.includes("head -c") ? { exitCode: 1, output: "disk full" } : { exitCode: 0, output: script.includes("TUGRA_VX_CLEANUP_DONE") ? "TUGRA_VX_CLEANUP_DONE\n" : "" }));
+    const t = make({ send: send as never });
+    const link = await t.svc.probeLinkBetween({ id: "s1", capabilities: ["backup"] } as never, { id: "s2", capabilities: ["backup"] } as never);
+    expect(link).toEqual({ ok: false, mbps: null, hint: "could not create the probe file on the source" });
+    expect(t.transfers.transfer).not.toHaveBeenCalled();
+  });
+
+  it("is skipped (null) when a side is offline / too old / lacks the backup capability — the preflight reports those itself", async () => {
+    const t = make({ online: { s1: true, s2: false } });
+    expect(await t.svc.probeLinkBetween({ id: "s1", capabilities: ["backup"] } as never, { id: "s2", capabilities: ["backup"] } as never)).toBeNull();
+    expect(await make({ supports: false }).svc.probeLinkBetween({ id: "s1", capabilities: ["backup"] } as never, { id: "s2", capabilities: ["backup"] } as never)).toBeNull();
+    expect(await make().svc.probeLinkBetween({ id: "s1", capabilities: ["deploy"] } as never, { id: "s2", capabilities: ["backup"] } as never)).toBeNull();
+  });
+
+  it("a busy relay is retried with backoff (not a failure)", async () => {
+    jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate", "queueMicrotask"] });
+    try {
+      const transfer = jest.fn().mockResolvedValueOnce({ ok: false, busy: true, sendExit: null, recvExit: null, detail: "relay busy" }).mockResolvedValueOnce({ ok: true, bytes: 16777216 });
+      const t = make({ transfer });
+      const p = t.svc.probeLinkBetween({ id: "s1", capabilities: ["backup"] } as never, { id: "s2", capabilities: ["backup"] } as never);
+      await jest.advanceTimersByTimeAsync(1500);
+      expect(await p).toMatchObject({ ok: true });
+      expect(transfer).toHaveBeenCalledTimes(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("no link test unless asked (probeLink:false never transfers)", async () => {
+    const t = make();
+    await t.svc.preflight("u1", "capp", input);
+    expect(t.transfers.transfer).not.toHaveBeenCalled();
+    expect((await t.svc.preflight("u1", "capp", input)).plan.link).toBeNull();
   });
 });
 
