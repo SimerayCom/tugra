@@ -96,6 +96,7 @@ describe("ack helpers", () => {
 
 describe("ImportWizard — strict env gating", () => {
   beforeEach(() => {
+    window.history.replaceState(null, "", "/"); // a previous apply mirrored its op into ?op=
     vi.spyOn(api, "listTeams").mockResolvedValue([{ id: "t1", name: "Team One" }] as never);
     vi.spyOn(api, "listServers").mockResolvedValue([{ id: "srv1", name: "Server A", teamId: "t1", status: "ONLINE", clusterId: null, tags: [] }] as never);
     vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s1", expiresAt: "2026-01-01T00:00:00.000Z" });

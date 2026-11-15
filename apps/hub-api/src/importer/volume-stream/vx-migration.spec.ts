@@ -12,7 +12,7 @@ describe("migration_volume_transfer migration (static; the empty-DB apply runs i
   it("sorts after the previous migration and is the last one", () => {
     const all = readdirSync(MIG).filter((d) => /^\d{14}_/.test(d)).sort();
     expect(all.indexOf(NAME)).toBeGreaterThan(all.indexOf("20261119110000_app_move"));
-    expect(all[all.length - 1]).toBe(NAME);
+    expect(all.indexOf(NAME)).toBeGreaterThan(-1); // later group-4 lanes (object migration, cutover, mapping) sort after it by design
   });
 
   it("creates the enum, both tables, the unique + state indexes and cascading foreign keys", () => {

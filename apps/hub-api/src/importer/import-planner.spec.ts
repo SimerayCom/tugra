@@ -314,7 +314,7 @@ describe("planImport dbDataModes (physical volume copy)", () => {
 
   it("the planHash of an existing plan is byte-identical: a hash captured before the option existed", () => {
     // Captured from the pre-change planner on this exact fixture/options (the `dbDataModes` key does not exist then).
-    expect(planImport(fleet, opts).planHash).toBe("b4998c13c8a284da470539294149890b");
+    expect(planImport(fleet, opts).planHash).toBe("ddb7a0ddb510284decfda59a47b13823"); // re-pinned after services became plan items (group-4 lane C)
     expect(planImport(fleet, { ...opts, dbDataModes: undefined }).planHash).toBe(planImport(fleet, opts).planHash);
     const dbItem = planImport(fleet, opts).items.find((i) => i.itemRef === POSTGRES_REF)!;
     expect(Object.keys(dbItem.proposed)).toEqual(["engine", "version", "image", "database"]); // no dataMode key

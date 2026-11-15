@@ -20,6 +20,8 @@ export const ENCRYPTED_COLUMNS: ReadonlyArray<{ model: string; columns: string[]
   { model: "registry", columns: ["passwordEnc"] },
   { model: "cloudCredential", columns: ["apiTokenEnc"] },
   { model: "dnsCredential", columns: ["apiTokenEnc"] },
+  { model: "objectMigration", columns: ["srcAccessKeyEnc", "srcSecretKeyEnc", "dstAccessKeyEnc", "dstSecretKeyEnc"] },
+  { model: "cutoverCert", columns: ["keyEnc"] },
   { model: "importSession", columns: ["tokenEnc"] },
   { model: "application", columns: ["gitTokenEnc", "gitSshKeyEnc", "registryAuthEnc", "envEnc", "envMetaEnc", "buildArgsEnc", "buildSecretsEnc", "certKeyEnc", "webhookSecret"] },
   { model: "secretProvider", columns: ["tokenEnc"] },

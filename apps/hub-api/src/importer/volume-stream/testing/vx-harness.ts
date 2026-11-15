@@ -77,7 +77,11 @@ export function harness(o: HarnessOpts = {}) {
     if (script.includes("TUGRA_VX_RECV_OK")) {
       if (recvOverride.hang) return new Promise(() => undefined);
       if (recvOverride.fail) return recvOverride.fail;
-      const m = /\/api\/v1\/agent-vx\/t\/([A-Za-z0-9_-]+)\?exp=(\d+)&sig=([A-Za-z0-9_-]+)/.exec(script);
+      // The recv script hands curl the signed relay path through a private -K config file: the path travels base64-encoded
+      // inside a `printf %s '<b64>' | base64 -d` pipeline (see relayCredentialLines), so decode it the way the shell would.
+      const b64 = /printf %s '([A-Za-z0-9+/=]+)' \| base64 -d/.exec(script)?.[1];
+      const decoded = b64 ? Buffer.from(b64, "base64").toString("utf8") : script;
+      const m = /\/api\/v1\/agent-vx\/t\/([A-Za-z0-9_-]+)\?exp=(\d+)&sig=([A-Za-z0-9_-]+)/.exec(decoded);
       const partM = /p\.(\d{5})/.exec(script);
       if (!m || !partM) return { exitCode: 64, output: "bad recv script" };
       const file = relay.serveToTarget(m[1], m[2], m[3]);

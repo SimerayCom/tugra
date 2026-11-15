@@ -31,7 +31,7 @@ function make(state: string | null, kind: "app" | "db") {
   const dbs = { remove: jest.fn().mockResolvedValue(undefined) };
   const vxApply = { cleanupTarget: jest.fn().mockResolvedValue(true) };
   const migrationTokens = { revoke: jest.fn().mockResolvedValue(false) };
-  const svc = new ImportExecutorService(prisma as never, {} as never, access as never, audit as never, {} as never, apps as never, dbs as never, migrationTokens as never, {} as never, {} as never, {} as never, vxApply as never);
+  const svc = new ImportExecutorService(prisma as never, {} as never, access as never, audit as never, {} as never, apps as never, dbs as never, migrationTokens as never, {} as never, {} as never, {} as never, {} as never, undefined as never, vxApply as never);
   return { svc, prisma, apps, dbs, vxApply };
 }
 

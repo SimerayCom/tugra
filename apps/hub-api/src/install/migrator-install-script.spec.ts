@@ -289,7 +289,7 @@ describe("renderMigratorInstallScript", () => {
           '    --tmpfs "/spool:rw,noexec,nosuid,nodev,mode=0700,size=$SPOOL_SIZE" \\',
           '    --mount "type=bind,src=$SOCK,dst=/var/run/docker.sock" \\',
           '    --group-add "$GID" \\',
-          "    $NETARG $MEMARG \\",
+          "    $NETARG $ACMEMOUNT $MEMARG \\",
           '    -e TUGRA_MIGRATION_TOKEN -e "TUGRA_SELF_IMAGE=$IMAGE" -e HOME=/tmp \\',
           "    --entrypoint tugra-agent \\",
           '    "$IMAGE" migrate "--hub=$HUB" --spool-dir=/spool "$@" </dev/null ',

@@ -99,6 +99,7 @@ function renderPanel(over: { choices?: Record<string, ImportServiceChoice>; onCh
 
 describe("ImportServicesPanel", () => {
   beforeEach(() => {
+    window.history.replaceState(null, "", "/"); // a previous apply mirrored its op into ?op=
     qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     vi.spyOn(api, "previewImportServices").mockResolvedValue({ services: previews });
   });
@@ -209,6 +210,7 @@ describe("ImportServicesPanel", () => {
 
 describe("ImportWizard — services", () => {
   beforeEach(() => {
+    window.history.replaceState(null, "", "/"); // a previous apply mirrored its op into ?op=
     qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     vi.spyOn(api, "listTeams").mockResolvedValue([{ id: "t1", name: "Team One" }] as never);
     vi.spyOn(api, "listServers").mockResolvedValue([{ id: "srv1", name: "Server A", teamId: "t1", status: "ONLINE", clusterId: null, tags: [] }] as never);
@@ -279,6 +281,7 @@ describe("ImportWizard — services", () => {
 
 describe("ImportChecklist", () => {
   beforeEach(() => {
+    window.history.replaceState(null, "", "/"); // a previous apply mirrored its op into ?op=
     qc = new QueryClient();
   });
   it("renders one translated sentence per kind, with copy buttons only where a value is pasted", () => {
