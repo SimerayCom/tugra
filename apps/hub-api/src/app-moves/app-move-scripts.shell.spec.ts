@@ -89,7 +89,9 @@ const STAT = `#!/bin/bash
 # only the GNU forms the scripts use
 case "$2" in %s) wc -c < "$3" | tr -d ' ' ;; %d) echo 7 ;; *) exit 1 ;; esac
 `;
+// GNU sha256sum where it exists (Linux CI), else the macOS shasum with the same output format
 const SHA = `#!/bin/bash
+for c in /usr/bin/sha256sum /usr/local/bin/sha256sum /opt/homebrew/bin/sha256sum; do [ -x "$c" ] && exec "$c" "$@"; done
 exec shasum -a 256 "$@"
 `;
 

@@ -8547,6 +8547,73 @@ describe("ApplicationsService — app move guards", () => {
     });
   });
 
+  describe("move seams used by the runner", () => {
+    it("moveLifecycle (classic app) uses the SAME builders as stop/start/remove, and the remove keeps the volumes", async () => {
+      const { svc } = mk(null);
+      const life = await svc.moveLifecycle({ ...movingApp, volumes: [{ name: "data", path: "/data" }] } as never);
+      expect(life.stop).toBe("docker stop tugra_app1 2>/dev/null || true");
+      expect(life.start).toBe("docker start tugra_app1");
+      expect(life.removeContainer).toContain("docker rm -f tugra_app1");
+      expect(life.removeContainer).not.toMatch(/docker volume rm/); // the archive: volumes stay until the purge
+      expect(life.timeoutMs).toBeGreaterThanOrEqual(120_000);
+    });
+
+    it("moveLifecycle (compose app) builds compose stop/start and a `down` WITHOUT -v", async () => {
+      const { svc } = mk(null);
+      const compose = { ...movingApp, source: "COMPOSE", composeFile: "services:\n  web:\n    image: nginx\n", env: {}, envEnc: null };
+      const life = await svc.moveLifecycle(compose as never);
+      expect(life.stop).toMatch(/compose.* stop/);
+      expect(life.start).toMatch(/compose.* start/);
+      expect(life.removeContainer).toMatch(/compose.* down/);
+      expect(life.removeContainer).not.toMatch(/ down[^\n]*(-v|--volumes)/);
+    });
+
+    it("submitMoveDeploy enqueues with the move's key, the `move` trigger and the detached shape; unknown app is 404", async () => {
+      const { svc } = mk(null);
+      const spy = jest.spyOn(svc as unknown as { submitDeploy: (...a: unknown[]) => Promise<unknown> }, "submitDeploy").mockResolvedValue({ id: "dep1", status: "RUNNING" });
+      await expect(svc.submitMoveDeploy("app1", "u1", "move:mv1")).resolves.toMatchObject({ id: "dep1" });
+      expect(spy).toHaveBeenCalledWith(expect.objectContaining({ id: "app1" }), "u1", false, "move:mv1", { detach: true, trigger: "move" });
+      const none = mk(null);
+      (none.prisma.application.findUnique as jest.Mock).mockResolvedValue(null);
+      await expect(none.svc.submitMoveDeploy("nope", "u1", "move:x")).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it("syncAfterMove re-pushes log drains to BOTH servers, resyncs the tunnel only when exposed, and reports failed steps", async () => {
+      const pushForServers = jest.fn().mockResolvedValue(undefined);
+      const monitors = makeMonitors();
+      monitors.removeForApp.mockRejectedValue(new Error("monitor down"));
+      const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...movingApp, tunnelExposed: false }) }, appMove: { findFirst: jest.fn().mockResolvedValue(null) } } as unknown as PrismaService;
+      const svc = make(prisma, okAccess(), {} as AgentWsServer, makeDeployLogs(), monitors, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, { pushForServers });
+      expect(await svc.syncAfterMove("app1", ["s1", "s2", "s1"])).toEqual(["monitor"]);
+      expect(pushForServers).toHaveBeenCalledWith(["s1", "s2", "s1"]);
+    });
+
+    it("cancelMoveDeployment: a QUEUED row is cancelled by CAS; a RUNNING one has its in-flight agent command killed; a finished one is left alone", async () => {
+      const updateMany = jest.fn().mockResolvedValueOnce({ count: 1 }).mockResolvedValue({ count: 0 });
+      const cancelCommand = jest.fn().mockReturnValue(true);
+      const prisma = {
+        deployment: { updateMany, findUnique: jest.fn().mockResolvedValue({ id: "d2", status: "SUCCESS" }), count: jest.fn().mockResolvedValue(0) },
+        appMove: { findFirst: jest.fn().mockResolvedValue(null) },
+      } as unknown as PrismaService;
+      const svc = make(prisma, okAccess(), { cancelCommand } as unknown as AgentWsServer);
+      expect(await svc.cancelMoveDeployment("d1", "rolled back")).toBe(true);
+      expect(updateMany).toHaveBeenCalledWith({ where: { id: "d1", status: "QUEUED" }, data: { status: "CANCELLED", exitCode: -1, logs: "rolled back" } });
+      // RUNNING with a live in-memory command
+      (svc as unknown as { activeDeployCommands: Map<string, { serverId: string; reqId: string }> }).activeDeployCommands.set("d3", { serverId: "s2", reqId: "r9" });
+      expect(await svc.cancelMoveDeployment("d3", "x")).toBe(true);
+      expect(cancelCommand).toHaveBeenCalledWith("s2", "r9");
+      // nothing to cancel
+      expect(await svc.cancelMoveDeployment("d2", "x")).toBe(false);
+    });
+
+    it("drainApp runs the queue drain for the app", async () => {
+      const { svc } = mk(null);
+      const drain = jest.spyOn(svc as unknown as { drain: (id: string) => Promise<void> }, "drain").mockResolvedValue(undefined);
+      await svc.drainApp("app1");
+      expect(drain).toHaveBeenCalledWith("app1");
+    });
+  });
+
   it("upsertPreview (PR webhook) is skipped, not failed, while the parent is moving", async () => {
     const create = jest.fn();
     const { svc, prisma } = mk(LIVE, { application: { findFirst: jest.fn(), create, findUnique: jest.fn() } });
