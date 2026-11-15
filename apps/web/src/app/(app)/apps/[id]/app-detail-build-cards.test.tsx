@@ -231,11 +231,11 @@ describe("DeploySettingsCard — post-cutover soak", () => {
   it("shows the probe count from the health interval, and warns when the window cannot trip a revert", () => {
     const a = wrap(<DeploySettingsCard {...props} postCutoverSoakSec={30} zeroDowntime healthInterval={3} />);
     expect(screen.getByRole("status").textContent).toMatch(/About 10 health checks/);
-    expect(screen.queryByText(/can never trigger a revert/)).toBeNull();
+    expect(screen.queryByText(/could never trigger a revert/)).toBeNull();
     a.unmount();
     wrap(<DeploySettingsCard {...props} postCutoverSoakSec={10} zeroDowntime healthInterval={5} />);
     expect(screen.getByText(/About 2 health checks/)).toBeTruthy();
-    expect(screen.getByText("10s is under 3 health-check intervals, so it can never trigger a revert.")).toBeTruthy();
+    expect(screen.getByText(/10s is under 3 health-check intervals, so it could never trigger a revert/)).toBeTruthy();
   });
 
   it("shows no soak hint when the soak is off", () => {
