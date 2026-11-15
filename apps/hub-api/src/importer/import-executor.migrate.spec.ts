@@ -139,3 +139,13 @@ describe("ImportExecutorService.migrateCommand", () => {
     expect(rolledBack.active).toBe(false);
   });
 });
+
+describe("ImportExecutorService stale reaper (loadOwnedOp)", () => {
+  it("never reaps a streamed volume copy (data:volume:*) but still reaps null-itemRef and other tasks", async () => {
+    const { svc, prisma } = harness();
+    await svc.migrateCommand("user-1", "op-1", BASE);
+    const where = prisma.bulkTask.updateMany.mock.calls[0][0].where;
+    expect(where.status).toBe("RUNNING");
+    expect(where.OR).toEqual([{ itemRef: null }, { NOT: { itemRef: { startsWith: "data:volume:" } } }]);
+  });
+});

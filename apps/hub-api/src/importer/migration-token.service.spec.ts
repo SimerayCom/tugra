@@ -9,6 +9,7 @@ function harness(findUniqueResult: unknown = null, updateManyCount = 1) {
       updateMany: jest.fn().mockResolvedValue({ count: updateManyCount }),
       update: jest.fn().mockResolvedValue({}),
     },
+    migrationVolumeTransfer: { count: jest.fn().mockResolvedValue(1) },
   };
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
   const svc = new MigrationTokenService(prisma as never, audit as never);
@@ -94,5 +95,66 @@ describe("MigrationTokenService.revoke", () => {
     const { svc, audit } = harness(null, 1);
     await svc.revoke("op-1");
     expect(JSON.stringify(audit.log.mock.calls[0][0])).not.toMatch(/tugra_mig_|[a-f0-9]{64}/);
+  });
+});
+
+describe("MigrationTokenService.extend (sliding renewal, hard cap)", () => {
+  const H = 3_600_000;
+  const row = (over: Record<string, unknown> = {}) => ({
+    migrationTokenHash: "h",
+    migrationTokenExpiresAt: new Date(Date.now() + 10 * 60_000),
+    cancelRequestedAt: null,
+    createdAt: new Date(Date.now() - 2 * H),
+    meta: {},
+    ...over,
+  });
+
+  afterEach(() => {
+    delete process.env.MIGRATION_TOKEN_MAX_LIFE_HOURS;
+  });
+
+  it("slides the expiry to now + 1 h while a transfer is in flight, with a conditional WHERE", async () => {
+    const { svc, prisma } = harness(row());
+    const next = await svc.extend("op-1");
+    expect(next!.getTime()).toBeGreaterThan(Date.now() + H - 5_000);
+    expect(next!.getTime()).toBeLessThanOrEqual(Date.now() + H + 5_000);
+    const call = prisma.bulkOperation.updateMany.mock.calls[0][0];
+    expect(call.where).toEqual({ id: "op-1", migrationTokenHash: { not: null }, cancelRequestedAt: null });
+    expect(call.data).toEqual({ migrationTokenExpiresAt: next });
+    expect(prisma.migrationVolumeTransfer.count).toHaveBeenCalledWith({ where: { opId: "op-1", state: { in: ["PENDING", "COPYING", "COPIED", "APPLYING"] } } });
+  });
+
+  it("never extends past createdAt + the 72 h hard cap (and never shortens a longer-lived expiry)", async () => {
+    const createdAt = new Date(Date.now() - 71.5 * H);
+    const capped = await harness(row({ createdAt, migrationTokenExpiresAt: new Date(Date.now() + 5 * 60_000) })).svc.extend("op-1");
+    expect(capped!.getTime()).toBe(createdAt.getTime() + 72 * H);
+    // already at the cap: the current expiry is returned untouched, no write
+    const atCap = harness(row({ createdAt, migrationTokenExpiresAt: new Date(createdAt.getTime() + 72 * H) }));
+    const same = await atCap.svc.extend("op-1");
+    expect(same!.getTime()).toBe(createdAt.getTime() + 72 * H);
+    expect(atCap.prisma.bulkOperation.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("honours MIGRATION_TOKEN_MAX_LIFE_HOURS", async () => {
+    process.env.MIGRATION_TOKEN_MAX_LIFE_HOURS = "3";
+    const createdAt = new Date(Date.now() - 2.5 * H);
+    const next = await harness(row({ createdAt })).svc.extend("op-1");
+    expect(next!.getTime()).toBe(createdAt.getTime() + 3 * H);
+  });
+
+  it("refuses terminal ops: revoked, expired, cancelled, rolled back, unknown, or no in-flight transfer", async () => {
+    expect(await harness(null).svc.extend("op-1")).toBeNull();
+    expect(await harness(row({ migrationTokenHash: null })).svc.extend("op-1")).toBeNull();
+    expect(await harness(row({ migrationTokenExpiresAt: new Date(Date.now() - 1) })).svc.extend("op-1")).toBeNull();
+    expect(await harness(row({ cancelRequestedAt: new Date() })).svc.extend("op-1")).toBeNull();
+    expect(await harness(row({ meta: { rolledBackAt: new Date().toISOString() } })).svc.extend("op-1")).toBeNull();
+    const idle = harness(row());
+    idle.prisma.migrationVolumeTransfer.count.mockResolvedValue(0);
+    expect(await idle.svc.extend("op-1")).toBeNull();
+    expect(idle.prisma.bulkOperation.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("returns null when a concurrent revoke wins the conditional update", async () => {
+    expect(await harness(row(), 0).svc.extend("op-1")).toBeNull();
   });
 });

@@ -311,3 +311,36 @@ describe("safeWipeExtract — stream input (app move)", () => {
     for (const bad of ["a b", "a;b", "$(x)", "", "1abc", "a|b", "f\nx"]) expect(() => safeWipeExtract(vol, "r1", "", { kind: "stream", fn: bad })).toThrow(/stream function/);
   });
 });
+
+describe("safeWipeExtract — drain (opt-in, stream input only)", () => {
+  const IMG = BACKUP_HELPER_IMAGE;
+  const vol = "tugra_appv_app1_data";
+
+  it("without drain (absent or false) the output is byte-identical to the existing stream mode", () => {
+    const base = safeWipeExtract(vol, "r1", "", { kind: "stream", fn: "vx_stream" });
+    expect(safeWipeExtract(vol, "r1", "", { kind: "stream", fn: "vx_stream", drain: false })).toEqual(base);
+    expect(safeWipeExtract(vol, "r1", "--no-same-owner ", { kind: "stream", fn: "f", drain: false })).toEqual(safeWipeExtract(vol, "r1", "--no-same-owner ", { kind: "stream", fn: "f" }));
+  });
+
+  it("drain swaps ONLY the two consumer lines: tar's exit code is kept and the rest of stdin is drained", () => {
+    const base = safeWipeExtract(vol, "r1", "", { kind: "stream", fn: "vx_stream" });
+    const d = safeWipeExtract(vol, "r1", "", { kind: "stream", fn: "vx_stream", drain: true });
+    expect(d).toHaveLength(base.length);
+    expect(d.map((l, i) => [l, base[i]]).filter(([a, b]) => a !== b)).toHaveLength(2);
+    expect(d[0]).toBe(`vx_stream | docker run --rm -i ${IMG} sh -c 'tar -tf -; r=$?; cat >/dev/null; exit $r' > "$TMP.list" 2>/dev/null || { echo "invalid archive" >&2; exit 72; }`);
+    expect(d.find((l) => l.startsWith("if vx_stream"))).toBe(
+      `if vx_stream | docker run --rm -i -v '${vol}':/data ${IMG} sh -c 'cd /data && find . -mindepth 1 -delete; tar -xf -; r=$?; cat >/dev/null; exit $r'; then`,
+    );
+  });
+
+  it("drain keeps the caller's tar flags and the exit contract", () => {
+    const s = safeWipeExtract(vol, "r1", "--no-same-owner ", { kind: "stream", fn: "f", drain: true }).join("\n");
+    expect(s).toContain("tar --no-same-owner -xf -; r=$?; cat >/dev/null; exit $r");
+    for (const c of ["exit 72", "exit 71", "exit 70", "TUGRA_RESTORE_OK"]) expect(s).toContain(c);
+  });
+
+  it("drain has no effect in tmp mode", () => {
+    // @ts-expect-error drain only exists on the stream variant
+    expect(safeWipeExtract(vol, "r1", "", { kind: "tmp", drain: true })).toEqual(safeWipeExtract(vol, "r1", ""));
+  });
+});

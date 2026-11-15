@@ -972,13 +972,13 @@ enum BulkTaskStatus {
 }
 
 model BulkOperation {
-  id                      String          @id @default(cuid())
+  id                      String                    @id @default(cuid())
   actorId                 String
   // `command` is the raw fan-out command for kind="command" (the original/only use); orchestrated kinds
   // (e.g. kind="import") leave it empty and describe the work on the tasks instead.
   command                 String
   // Generalization for orchestrated operations. kind="command" is the legacy fan-out path, unchanged.
-  kind                    String          @default("command")
+  kind                    String                    @default("command")
   planId                  String? // the ImportPlan (or similar) this operation executes, when applicable
   meta                    Json? // operation-level metadata (secret-free), e.g. the import source + target server
   // Cooperative cancel: set by a cancel request; the in-flight fan-out reads it before starting each
@@ -989,13 +989,75 @@ model BulkOperation {
   // opId from the token alone (the host never names the destination). Only the SHA-256 is stored (mirrors
   // ApiToken.tokenHash — the enroll token's plaintext storage is deliberately NOT copied). NULL = no live
   // token; revoke = null both columns, so the unique-hash lookup simply stops matching.
-  migrationTokenHash      String?         @unique
+  migrationTokenHash      String?                   @unique
   migrationTokenExpiresAt DateTime?
   tasks                   BulkTask[]
   cutoverDomains          CutoverDomain[]
   cutoverRuns             CutoverRun[]
   cutoverCerts            CutoverCert[]
-  createdAt               DateTime        @default(now())
+  volumeTransfers         MigrationVolumeTransfer[]
+  createdAt               DateTime                  @default(now())
+}
+
+enum VolumeTransferState {
+  PENDING
+  COPYING
+  COPIED
+  APPLYING
+  DONE
+  FAILED
+  ABORTED
+}
+
+// One streamed copy of a source volume (migration volume stream v2). The row id is ALSO the relay moveId and the
+// staging directory name on the target (/etc/tugra/app-moves/<id>).
+model MigrationVolumeTransfer {
+  id             String                @id @default(cuid())
+  opId           String
+  operation      BulkOperation         @relation(fields: [opId], references: [id], onDelete: Cascade)
+  itemRef        String // volume:<serverRef|_>:<sourceRef>:<volName>
+  destType       String // 'app-volume' | 'db-data'
+  targetServerId String // hub-derived from the op's DONE task, never from the migrator
+  dockerVolume   String // hub-derived destination docker volume
+  resourceType   String // 'application' | 'database'
+  resourceId     String
+  state          VolumeTransferState   @default(PENDING)
+  attempt        Int                   @default(1) // bumped by reset; part of the rollback-snapshot restoreId
+  partRawBytes   Int // R, fixed per attempt (hub policy)
+  partsDone      Int                   @default(0)
+  bytesDone      BigInt                @default(0) // compressed bytes committed on the target
+  rawBytesDone   BigInt                @default(0)
+  rawBytesTotal  BigInt? // inventory du -sb, advisory
+  rawBytesFinal  BigInt? // migrator-reported at finish, cross-checked against the part rows
+  entries        Int?
+  fingerprint    Json? // begin-time source fingerprint (secret-free)
+  runId          String? // lease owner (the migrator process)
+  lastBeatAt     DateTime?
+  phase          String?
+  bps            BigInt?
+  error          String?
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  parts          MigrationVolumePart[]
+
+  @@unique([opId, itemRef])
+  @@index([state, lastBeatAt])
+}
+
+model MigrationVolumePart {
+  transferId String
+  transfer   MigrationVolumeTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  idx        Int
+  rawOffset  BigInt
+  rawLen     Int
+  rawSha256  String // sha256 of the RAW tar slice (resume check, compressor-independent)
+  size       Int // compressed member length
+  sha256     String // sha256 of the compressed member (relay + target verified)
+  doneAt     DateTime                @default(now())
+
+  @@id([transferId, idx])
 }
 
 model BulkTask {
@@ -2097,13 +2159,13 @@ model AppMove {
 /// encrypted (CryptoService) and appear in NO view, audit row or log. No object keys are stored: only counts, fixed codes
 /// and a classified error.
 model ObjectMigration {
-  id                String    @id @default(cuid())
-  team              Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  id                String                  @id @default(cuid())
+  team              Team                    @relation(fields: [teamId], references: [id], onDelete: Cascade)
   teamId            String
   createdById       String
   name              String
   targetServerId    String
-  status            String    @default("DRAFT") // DRAFT|PREFLIGHTED|SEEDING|SEEDED|FINALIZING|FINAL|VERIFYING|DONE|FAILED
+  status            String                  @default("DRAFT") // DRAFT|PREFLIGHTED|SEEDING|SEEDED|FINALIZING|FINAL|VERIFYING|DONE|FAILED
   phase             String? // seed|final while helpers are live
   srcEndpoint       String // scheme://host[:port]
   srcAccessKeyEnc   String
@@ -2111,13 +2173,13 @@ model ObjectMigration {
   dstEndpoint       String
   dstAccessKeyEnc   String
   dstSecretKeyEnc   String
-  preserve          Boolean   @default(true) // mc mirror --preserve
-  removeExtraneous  Boolean   @default(false) // final pass --remove (explicit ack)
-  mergeIntoExisting Boolean   @default(false) // explicit ack when a destination bucket already has objects
-  cancelRequested   Boolean   @default(false)
+  preserve          Boolean                 @default(true) // mc mirror --preserve
+  removeExtraneous  Boolean                 @default(false) // final pass --remove (explicit ack)
+  mergeIntoExisting Boolean                 @default(false) // explicit ack when a destination bucket already has objects
+  cancelRequested   Boolean                 @default(false)
   warnings          Json? // [{code, level, bucket?}] fixed codes, secret-free
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
   finishedAt        DateTime?
   buckets           ObjectMigrationBucket[]
 

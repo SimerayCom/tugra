@@ -41,8 +41,10 @@ import { REMOTE_SOURCE_KINDS, type ImportAck, type ImportApplyInput, type Remote
 import { ImportMappingService } from "./import-mapping.service";
 import type { EffectiveItem, ResolvedMapping } from "./import-mapping";
 import { slug as dbSlug } from "../databases/databases.service";
+import { VX_DATA_PREFIX } from "./volume-stream/vx-constants";
 
 const CONCURRENCY = 5;
+
 const STALE_RUNNING_MS = 10 * 60_000; // a RUNNING task older than this is treated as a dead worker's leftover
 /** Source kinds that create FRESH Tugra resources (copy-mode): rollback REMOVES them, and only these may
  *  migrate data. local-docker is NOT here — it adopts live containers in place (rollback un-adopts). */
@@ -1775,7 +1777,15 @@ export class ImportExecutorService {
     // never kill a long migration the way a mutating caller's reaper would.
     const reapData = opts.reapData !== false;
     await this.prisma.bulkTask.updateMany({
-      where: { opId, ...(reapData ? {} : { kind: { not: "data" } }), status: "RUNNING", startedAt: { lt: new Date(Date.now() - STALE_RUNNING_MS) } },
+      where: {
+        opId,
+        ...(reapData ? {} : { kind: { not: "data" } }),
+        // A streamed volume copy (data:volume:*) runs for hours: ONLY its own heartbeat sweep (VxRecoveryService) may
+        // settle it, never this 10-minute reaper. (OR keeps rows with a NULL itemRef reapable: SQL NOT(NULL) is NULL.)
+        OR: [{ itemRef: null }, { NOT: { itemRef: { startsWith: VX_DATA_PREFIX } } }],
+        status: "RUNNING",
+        startedAt: { lt: new Date(Date.now() - STALE_RUNNING_MS) },
+      },
       data: { status: "FAILED", output: "stale: no completion signal (the worker stopped before finishing)", finishedAt: new Date() },
     });
     const op = await this.prisma.bulkOperation.findUnique({

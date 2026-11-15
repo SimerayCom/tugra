@@ -190,6 +190,20 @@ export const envSchema = z
   }, z.coerce.number().int().min(MIN_PART_MIB).max(MAX_PART_MIB).default(DEFAULT_PART_MIB)),
   // Hub-wide cap on simultaneously relayed parts (memory-only relay); beyond it a part waits for a free seat.
   MOVE_MAX_CONCURRENT_RELAYS: z.coerce.number().int().min(1).max(16).default(2),
+  // Migration volume stream v2 (Coolify/Dokploy -> Tugra volume data, streamed through the memory relay in parts).
+  // Kill switch: false = the vx routes 404 and /targets advertises no `kind:"volume"` rows.
+  MIGRATION_VX_ENABLED: z.enum(["true", "false", "1", "0"]).default("true"),
+  // Raw (tar) MiB per part, clamped 32..512; the migrator's --part-mib must equal it.
+  MIGRATION_VX_PART_MIB: z.coerce.number().int().min(32).max(512).default(128),
+  // Raw bytes allowed per volume (default 256 GiB, ceiling 2 TiB) and the part-count ceiling (names are 5 digits).
+  MIGRATION_VX_MAX_BYTES: z.coerce.number().int().positive().max(2048 * 1024 ** 3).default(256 * 1024 ** 3),
+  MIGRATION_VX_MAX_PARTS: z.coerce.number().int().min(1).max(100_000).default(100_000),
+  // No beat/commit for this long = the migrator is gone (the transfer becomes FAILED and resumable).
+  MIGRATION_VX_STALE_MS: z.coerce.number().int().min(30_000).default(300_000),
+  // A migration token slides 1 h at a time while a copy is in flight, but never lives longer than this in total.
+  MIGRATION_TOKEN_MAX_LIFE_HOURS: z.coerce.number().int().min(1).max(336).default(72),
+  // Relay seats for migration parts: its OWN pool, never shared with app moves.
+  MIGRATION_RELAY_CONCURRENCY: z.coerce.number().int().min(1).max(16).default(2),
   // Optional, opt-in: a signed remote template catalog. When CATALOG_SOURCE_URL is set the hub
   // periodically fetches it, verifies the ed25519 signature against CATALOG_PUBLISHER_KEY, and
   // overlays it onto the bundled catalog (offline-fallback to bundled when unset/unreachable/invalid).

@@ -110,20 +110,34 @@ export function buildVolumeBackupScript(
 /** Where safeWipeExtract reads the (decoded) tar from: the staged `$TMP` file (restore/import — the default), or a
  *  hub-built shell function that STREAMS it (`fn` is a constant function name such as `vx_stream`, never user text) so
  *  the decoded tar is never stored on disk — the app move reads its gzip parts twice (validate, then extract) instead. */
-export type WipeExtractInput = { kind: "tmp" } | { kind: "stream"; fn: string };
+export type WipeExtractInput =
+  | { kind: "tmp" }
+  | {
+      kind: "stream";
+      fn: string;
+      /** Opt-in: after tar returns, drain what is left of stdin (`cat >/dev/null`) and keep tar's exit code. busybox tar
+       *  stops reading at the end-of-archive marker, so under `pipefail` an upstream SIGPIPE (141) would turn a VALID
+       *  archive into "invalid archive". Absent/false = byte-identical to every existing caller. */
+      drain?: boolean;
+    };
 
 export function safeWipeExtract(dockerVolume: string, restoreId: string, tarFlags: string, input: WipeExtractInput = { kind: "tmp" }): string[] {
   const img = BACKUP_HELPER_IMAGE;
   if (input.kind === "stream" && !/^[A-Za-z_][A-Za-z0-9_]{0,31}$/.test(input.fn)) throw new Error("invalid stream function name");
   // Stream mode: `<fn> |` feeds each docker invocation (pipefail, already set, makes a failed/truncated producer fail the
   // pipeline); tmp mode: the staged file is redirected in, byte-for-byte what restore/import have always emitted.
+  const drain = input.kind === "stream" && input.drain === true;
   const validateCmd =
     input.kind === "stream"
-      ? `${input.fn} | docker run --rm -i ${img} tar -tf - > "$TMP.list" 2>/dev/null || { echo "invalid archive" >&2; exit 72; }`
+      ? drain
+        ? `${input.fn} | docker run --rm -i ${img} sh -c 'tar -tf -; r=$?; cat >/dev/null; exit $r' > "$TMP.list" 2>/dev/null || { echo "invalid archive" >&2; exit 72; }`
+        : `${input.fn} | docker run --rm -i ${img} tar -tf - > "$TMP.list" 2>/dev/null || { echo "invalid archive" >&2; exit 72; }`
       : `docker run --rm -i ${img} tar -tf - < "$TMP" > "$TMP.list" 2>/dev/null || { echo "invalid archive" >&2; exit 72; }`;
   const extractIf = (vol: string): string =>
     input.kind === "stream"
-      ? `if ${input.fn} | docker run --rm -i -v ${vol}:/data ${img} sh -c 'cd /data && find . -mindepth 1 -delete; tar ${tarFlags}-xf -'; then`
+      ? drain
+        ? `if ${input.fn} | docker run --rm -i -v ${vol}:/data ${img} sh -c 'cd /data && find . -mindepth 1 -delete; tar ${tarFlags}-xf -; r=$?; cat >/dev/null; exit $r'; then`
+        : `if ${input.fn} | docker run --rm -i -v ${vol}:/data ${img} sh -c 'cd /data && find . -mindepth 1 -delete; tar ${tarFlags}-xf -'; then`
       : `if docker run --rm -i -v ${vol}:/data ${img} sh -c 'cd /data && find . -mindepth 1 -delete; tar ${tarFlags}-xf -' < "$TMP"; then`;
   const rb = `tugra_restore_rb_${restoreId}`;
   const vol = shq(dockerVolume);

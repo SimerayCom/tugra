@@ -99,10 +99,15 @@ jobs:
           want="$(sed -n 's/^export const MC_VERSION = "\(.*\)";/\1/p' apps/hub-api/src/backups/destination.ts)"
           docker buildx build --platform linux/arm64 -f deploy/Dockerfile.agent -t tugra-agent:it-arm64 --load .
           docker run --rm --platform linux/arm64 --entrypoint mc tugra-agent:it-arm64 --version | tee /dev/stderr | grep -q "$want"
+      # The migration volume stream uses the agent image's own GNU tar as the source-side helper (no pull on the
+      # customer's host): the release gate proves the flags it relies on exist in THIS image.
+      - name: GNU tar flags the migrator relies on
+        working-directory: .
+        run: docker run --rm --entrypoint tar tugra-agent:it --sort=name --version
       - name: Real-docker integration tests
         env:
           TUGRA_AGENT_IMAGE: tugra-agent:it
-        run: go test -count=1 -timeout 15m -tags dockerit ./internal/fsd/... ./internal/ctrfs/...
+        run: go test -count=1 -timeout 15m -tags dockerit ./internal/fsd/... ./internal/ctrfs/... ./internal/migrate/...
 
   # Backward-compatibility guard for the public API: fail a PR that makes a BREAKING change to the committed
   # OpenAPI contract vs the base branch. (The node job's drift-guard already proves the spec matches the code.)

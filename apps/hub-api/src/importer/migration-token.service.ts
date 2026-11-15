@@ -2,6 +2,10 @@ import { ConflictException, Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { generateMigrationToken, hashMigrationToken, MIGRATION_TOKEN_TTL_MS } from "./migration-token";
+import { tokenMaxLifeMs } from "./volume-stream/vx-constants";
+
+/** States of a migration volume transfer that are still in flight (a token may keep sliding while one exists). */
+const LIVE_TRANSFER_STATES = ["PENDING", "COPYING", "COPIED", "APPLYING"] as const;
 
 /** What the guard needs once a token is resolved — the opId (the host never names the destination itself). */
 export interface MigrationTokenContext {
@@ -66,6 +70,35 @@ export class MigrationTokenService {
       data: { migrationTokenHash: hashMigrationToken(token), migrationTokenExpiresAt: expiresAt },
     });
     return { token, expiresAt };
+  }
+
+  /**
+   * Sliding renewal for a long streamed copy: `expiresAt = min(now + 1 h, op.createdAt + MIGRATION_TOKEN_MAX_LIFE_HOURS)`.
+   * Only while the hash is live (non-null, not expired), the op is not cancelled / rolled back, and a NON-TERMINAL
+   * volume transfer exists. Never shortens an expiry, never mints or rotates a secret (same token on the wire) and
+   * `revoke` still kills it. Returns the (possibly unchanged) expiry, or null when no renewal is allowed.
+   */
+  async extend(opId: string): Promise<Date | null> {
+    const op = await this.prisma.bulkOperation.findUnique({
+      where: { id: opId },
+      select: { migrationTokenHash: true, migrationTokenExpiresAt: true, cancelRequestedAt: true, createdAt: true, meta: true },
+    });
+    if (!op || !op.migrationTokenHash || !op.migrationTokenExpiresAt || op.cancelRequestedAt) return null;
+    const meta = typeof op.meta === "object" && op.meta ? (op.meta as { rolledBackAt?: string }) : {};
+    if (meta.rolledBackAt) return null;
+    const now = Date.now();
+    const current = op.migrationTokenExpiresAt;
+    if (current.getTime() <= now) return null;
+    const live = await this.prisma.migrationVolumeTransfer.count({ where: { opId, state: { in: [...LIVE_TRANSFER_STATES] } } });
+    if (live === 0) return null;
+    const target = Math.min(now + MIGRATION_TOKEN_TTL_MS, op.createdAt.getTime() + tokenMaxLifeMs());
+    if (target <= current.getTime()) return current; // already at (or beyond) the cap: never shorten, never extend past it
+    const next = new Date(target);
+    const res = await this.prisma.bulkOperation.updateMany({
+      where: { id: opId, migrationTokenHash: { not: null }, cancelRequestedAt: null },
+      data: { migrationTokenExpiresAt: next },
+    });
+    return res.count === 1 ? next : null;
   }
 
   /** Kill any live token for an op (on cancel/rollback/complete). Idempotent; audits only when it took effect. */

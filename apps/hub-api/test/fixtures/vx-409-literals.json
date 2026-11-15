@@ -1,0 +1,19 @@
+{
+  "comment": "409 message literals the hub throws for the migration volume stream and the Go ErrKind classify409 must map each to. Identical copy: agent/internal/migrate/testdata/vx-409-literals.json (a hub test fails when they differ).",
+  "vectors": [
+    { "message": "vx-fingerprint-changed", "kind": "VxFingerprintChanged" },
+    { "message": "vx-diverged", "kind": "VxDiverged" },
+    { "message": "vx-short-part", "kind": "VxShortPart" },
+    { "message": "vx-part-lost", "kind": "VxPartLost" },
+    { "message": "vx-disk-insufficient", "kind": "VxDiskInsufficient" },
+    { "message": "vx-aborted", "kind": "VxAborted" },
+    { "message": "another migrator run is active for this volume", "kind": "VxOtherRun" },
+    { "message": "this database is set to volume copy", "kind": "VxDbVolumeMode" },
+    { "message": "this volume uses the streamed copy", "kind": "VxUsesStream" },
+    { "message": "this volume already uses the hub-staged upload", "kind": "VxUsesHubStaged" },
+    { "message": "the destination was started or holds data not restored by this migration", "kind": "DestDirty" },
+    { "message": "a restore is already in progress for this item", "kind": "RestoreInProgress" },
+    { "message": "an upload is already in progress for this item", "kind": "BusyUpload" },
+    { "message": "something nobody has ever thrown", "kind": "UnknownConflict" }
+  ]
+}

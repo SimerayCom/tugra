@@ -89,9 +89,15 @@ export class VolumeRelayService implements OnModuleDestroy {
     return s;
   }
 
-  private maxConcurrent(): number {
-    const n = Number(this.config.get("MOVE_MAX_CONCURRENT_RELAYS") ?? 2);
+  private maxConcurrent(pool: "move" | "migration"): number {
+    const key = pool === "migration" ? "MIGRATION_RELAY_CONCURRENCY" : "MOVE_MAX_CONCURRENT_RELAYS";
+    const n = Number(this.config.get(key) ?? 2);
     return Number.isInteger(n) && n >= 1 ? n : 2;
+  }
+
+  /** A migrator-sourced part (principal `mig:<opId>`) draws from its OWN seat pool, never the app-move one (and vice versa). */
+  private poolOf(srcServerId: string): "move" | "migration" {
+    return srcServerId.startsWith("mig:") ? "migration" : "move";
   }
 
   private claimOf(rv: Rendezvous, role: RelayRole): RelayClaim {
@@ -103,7 +109,10 @@ export class VolumeRelayService implements OnModuleDestroy {
     o: { moveId: string; volIdx: number; part: number; size: number; sha256: string; srcServerId: string; dstServerId: string },
     nowMs = Date.now(),
   ): RelayRegistration | { busy: true } {
-    if (this.map.size >= this.maxConcurrent()) return { busy: true };
+    const pool = this.poolOf(o.srcServerId);
+    let inPool = 0;
+    for (const rv of this.map.values()) if (this.poolOf(rv.srcServerId) === pool) inPool++;
+    if (inPool >= this.maxConcurrent(pool)) return { busy: true };
     let resolve!: (r: RelayResult) => void;
     let reject!: (e: Error) => void;
     const done = new Promise<RelayResult>((res, rej) => {
