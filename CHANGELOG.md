@@ -73,6 +73,46 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   600000 -md sha256`), and `scripts/hub-migrate.sh pack` now includes `destination-keys.json` (mode 600) when hub-api is
   running. The destination test also round-trips a canary through gpg with the stored key.
 
+- **Move an app to another server.** An app can be relocated, with its data, to another server of the same team
+  (app Settings, General, **Move to server**). It keeps its identity: the same app ID, settings, secrets, webhooks,
+  scheduled tasks and history. The dialog runs a read-only preflight on both servers (disk space, tools, ports,
+  aliases, volumes, GPU and CPU fit, DNS and domain consequences, an optional real link-speed test), asks you to
+  acknowledge each consequence, and starts the move after you type the app name. The app is stopped on the old server
+  (checked, not assumed), each volume is packed, sent through the hub in bounded parts (verified by size and SHA-256 at
+  both ends, retried per part) and unpacked on the new server with ownership preserved, the app is switched to the new
+  server in one database transaction, deployed there, and the old container is removed. The old server keeps a stopped
+  copy of the data for the archive period you choose (default 7 days; **Remove old copy now** and an hourly sweeper
+  purge it, guarded when the app lives there again). Any failure before the switch leaves the app untouched on the old
+  server and restarts it; a failed deploy on the new server restores the app (server, generated domain, host port,
+  log drains) from a snapshot and restarts the old copy. A hub restart at any point ends with the app on exactly one
+  server (rolled back before the switch, completed or rolled back after it). The move shows live progress and a cancel
+  button on the app page until the switch; completion, rollback and failure fire the `app_move_completed`,
+  `app_move_rolled_back` and `app_move_failed` notifications. New endpoints `POST /apps/{id}/move/preflight`,
+  `POST /apps/{id}/move`, `GET /apps/{id}/moves`, `GET /apps/{id}/moves/{moveId}`, `POST /apps/{id}/moves/{moveId}/cancel`
+  and `POST /apps/{id}/moves/{moveId}/purge-source`; `AppView.move` is additive. Swarm/cluster apps, apps with previews or
+  linked managed databases, and apps with an active rollout or deploy are refused.
+- **Agent: `hub_origin_env_v1`.** The agent exports `TUGRA_HUB_ORIGIN` (derived from its own configured hub URL, never
+  from the hub's message) to `backup`-capability commands only, so a hub-built script can reach a signed relay path.
+  Update agents before moving an app; an agent that cannot update itself cleanly has to be moved by hand once
+  (the preflight reports `agent_too_old`). New hub settings `MOVE_PART_MIB` (default 256, clamped 32 to 1024) and
+  `MOVE_MAX_CONCURRENT_RELAYS` (default 2); lower `MOVE_PART_MIB` when a proxy in front of the hub caps request bodies.
+  Route `/api/v1/agent-vx/` straight to the hub, like `/api/v1/agent-fs/`.
+- **Changed (behaviour, only while or after a move).** While an app is being moved, config edits, start, stop, restart,
+  delete, rollback and volume restore return 409 `app_move_in_progress`, and queued deploys wait until the move ends.
+  After a move, a rollback target that only exists as a local image tag on the previous server returns 409
+  `rollback_predates_move` (registry and digest-pinned deployments are unaffected); restoring a LOCAL volume backup made
+  on a previous server returns 409 `backup_on_other_server`; deleting a server is refused (409 `server_in_active_move`)
+  while it is part of a move or still holds a move's archived data. Deleting an app best-effort removes its archives.
+  Nothing is on by default: the migration adds one table and two nullable columns, existing rows are untouched.
+- **Known limits of app moves.** Downtime equals the copy time (a cold move; no incremental sync). Extended attributes,
+  ACLs and sparse files are not preserved. Host bind-mount data and compose `external:` / `name:` volumes are not
+  transferred (each needs an acknowledgement). Metrics and traffic history split at the move. The move deploy uses the
+  configured tag or commit, so a mutable `latest` or a branch may resolve to something newer. Managed databases,
+  swarm apps, previews and the CLI/MCP surface are out of scope for now. A fronting proxy that caps request bodies below
+  `MOVE_PART_MIB` makes the transfer fail cleanly (the app is restored); the link test only detects limits up to 16 MiB.
+  A compose app whose YAML publishes fixed ports cannot have them checked for conflicts on the new server (only
+  template-installed ports are), so a clash surfaces as a failed deploy and a rollback.
+
 ## [0.1.0-beta.14] - 2026-11-15
 
 - **Container labels.** The app's Configuration tab has a **Container labels** card. It lists, read-only, every label
