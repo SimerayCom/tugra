@@ -89,3 +89,20 @@ export function coverageCounts(plan: ImportPlan): { apps: number; warn: number; 
   for (const a of apps) for (const n of a.notCarried) (n.level === "warn" ? warn++ : info++);
   return { apps: apps.length, warn, info };
 }
+
+/** The deferred-read codes: those rows describe what happens when the Coolify plan is APPLIED (labels / Dockerfile text are
+ *  read then). The note under the coverage card is only true for a plan that has one. */
+const DEFERRED_REASON_CODES = new Set(["custom_labels_deferred", "dockerfile_deferred"]);
+
+export function hasDeferredCoverage(plan: ImportPlan): boolean {
+  return coverageApps(plan).some((a) => a.notCarried.some((n) => !!n.reasonCode && DEFERRED_REASON_CODES.has(n.reasonCode)));
+}
+
+/** The translated reason of a coverage / apply-timeline entry: `import.reason_<code>` with its params, the hub's English
+ *  `reason` for a row with no (or an unknown) code, e.g. one persisted before the codes existed. */
+export function reasonText(t: (k: string, v?: Record<string, string | number>) => string, e: { reason: string; reasonCode?: string; reasonParams?: Record<string, string | number> }): string {
+  if (!e.reasonCode) return e.reason;
+  const key = `import.reason_${e.reasonCode}`;
+  const text = t(key, e.reasonParams);
+  return text === key ? e.reason : text;
+}

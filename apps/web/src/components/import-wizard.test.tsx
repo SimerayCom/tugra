@@ -243,6 +243,7 @@ describe("ImportWizard", () => {
         coverage: { apps: [{ itemRef: "app:srv:web", name: "web-app", notCarried: [
           { field: "basicAuth", level: "warn", reason: "the source gated this app with HTTP basic auth" },
           { field: "limits", level: "info", reason: "resource limits are not carried from Coolify yet" },
+          { field: "customLabels", level: "info", reason: "read when you apply", reasonCode: "custom_labels_deferred" },
         ] }] },
       },
     };
@@ -253,11 +254,12 @@ describe("ImportWizard", () => {
     fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
     await screen.findByText("What isn't carried over");
-    expect(screen.getByText("Not carried (2)")).toBeTruthy();
-    expect((screen.getByText("Not carried (2)").closest("details") as HTMLDetailsElement).open).toBe(false); // collapsed
+    expect(screen.getByText("Not carried (3)")).toBeTruthy();
+    expect((screen.getByText("Not carried (3)").closest("details") as HTMLDetailsElement).open).toBe(false); // collapsed
     expect(screen.getByText("Review")).toBeTruthy(); // warn row: text cue, not colour alone
-    expect(screen.getByText("Note")).toBeTruthy();
-    expect(screen.getByText(/the source gated this app with HTTP basic auth/)).toBeTruthy();
+    expect(screen.getAllByText("Note")).toHaveLength(2);
+    expect(screen.getByText(/the source gated this app with HTTP basic auth/)).toBeTruthy(); // no code: the hub's English text is the fallback
+    expect(screen.getByText(/read when you apply: Tugra-safe labels are carried/)).toBeTruthy(); // a code: the translated text
     expect(screen.getByText("Custom labels and Dockerfile text are read when you apply.")).toBeTruthy();
     first.unmount();
 
@@ -271,6 +273,26 @@ describe("ImportWizard", () => {
     expect(screen.queryByText("What isn't carried over")).toBeNull();
   });
 
+  it("the 'read when you apply' note is not shown for a plan without a deferred row (a Dokploy plan has none)", async () => {
+    vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s1", expiresAt: "2026-01-01T00:00:00.000Z" });
+    vi.spyOn(api, "importPlan").mockResolvedValue({
+      ...plan,
+      sourceKind: "dokploy",
+      preflight: {
+        databases: [], services: [], appsWithVolumeData: 0,
+        coverage: { apps: [{ itemRef: "app:srv:web", name: "web-app", notCarried: [{ field: "customLabels", level: "info", reason: "x", reasonCode: "dokploy_swarm_labels" }] }] },
+      },
+    });
+    wrap(<ImportWizard />);
+    await screen.findByRole("option", { name: "Team One" });
+    fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://c.example.com" } });
+    fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
+    await screen.findByText("What isn't carried over");
+    expect(screen.getByText(/Dokploy Swarm service labels are not carried/)).toBeTruthy();
+    expect(screen.queryByText("Custom labels and Dockerfile text are read when you apply.")).toBeNull();
+  });
+
   it("timeline: a task with postCreate/ingress unmapped shows 'Not carried (n)' + Applied; a task without renders no disclosure", async () => {
     vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s1", expiresAt: "2026-01-01T00:00:00.000Z" });
     vi.spyOn(api, "importPlan").mockResolvedValue(plan);
@@ -279,7 +301,7 @@ describe("ImportWizard", () => {
       ...settledOp,
       totals: { ...settledOp.totals, total: 2, done: 2 },
       tasks: [
-        { ...settledOp.tasks[0], postCreate: { applied: ["build", "customLabels"], unmapped: [{ field: "customLabel:traefik.enable", reason: "in the reserved traefik.* namespace" }] }, ingress: { applied: [], unmapped: [{ field: "ports", reason: "r" }] } },
+        { ...settledOp.tasks[0], postCreate: { applied: ["build", "customLabels"], unmapped: [{ field: "customLabel:traefik.enable", reason: "in the reserved traefik.* namespace", reasonCode: "label_reserved_traefik" }] }, ingress: { applied: [], unmapped: [{ field: "ports", reason: "Tugra allows at most 20 extra published ports", reasonCode: "ports_limit", reasonParams: { max: 20 } }] } },
         { ...settledOp.tasks[0], itemRef: "app:srv:plain", name: "plain-app" },
       ],
     });
@@ -293,6 +315,8 @@ describe("ImportWizard", () => {
     await screen.findByText("Not carried (2)");
     expect(screen.getByText(/customLabel:traefik\.enable/)).toBeTruthy();
     expect(screen.getByText("Applied: build, customLabels")).toBeTruthy();
+    expect(screen.getByText(/in the reserved traefik\.\* namespace \(owned by Tugra's ingress routing/)).toBeTruthy(); // translated by code
+    expect(screen.getByText(/Tugra allows at most 20 extra published ports/)).toBeTruthy(); // params substituted
     expect(screen.getAllByText(/^Not carried \(/)).toHaveLength(1); // only the task with something unmapped
   });
 });

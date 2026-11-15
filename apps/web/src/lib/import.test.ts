@@ -1,5 +1,8 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import importMessages from "../i18n/locales/en/import.json";
 import { describe, it, expect } from "vitest";
-import { hasBlocker, blockingRisks, planSummary, itemsByKind, canApply, riskTone, opProgress, coverageApps, coverageCounts } from "./import";
+import { hasBlocker, blockingRisks, planSummary, itemsByKind, canApply, riskTone, opProgress, coverageApps, coverageCounts, hasDeferredCoverage, reasonText } from "./import";
 import type { ImportPlan, ImportPlanItem, ImportOperation } from "./types";
 
 const item = (over: Partial<ImportPlanItem>): ImportPlanItem => ({
@@ -100,5 +103,31 @@ describe("coverage helpers", () => {
     });
     expect(coverageApps(p).map((a) => a.name)).toEqual(["a", "b"]);
     expect(coverageCounts(p)).toEqual({ apps: 2, warn: 1, info: 2 });
+  });
+});
+
+describe("reasonText", () => {
+  const t = (k: string, v?: Record<string, string | number>) => (k === "import.reason_ports_limit" ? `at most ${v?.max}` : k);
+  it("translates a known code with its params and falls back to the hub's English text otherwise", () => {
+    expect(reasonText(t, { reason: "EN", reasonCode: "ports_limit", reasonParams: { max: 20 } })).toBe("at most 20");
+    expect(reasonText(t, { reason: "EN", reasonCode: "brand_new_code" })).toBe("EN"); // the web does not know it yet
+    expect(reasonText(t, { reason: "EN" })).toBe("EN"); // a row persisted before the codes existed
+  });
+  it("the deferred note is only for a plan that has a deferred-read row", () => {
+    const row = (reasonCode?: string) => ({ ...plan, preflight: { databases: [], services: [], appsWithVolumeData: 0, coverage: { apps: [{ itemRef: "a", name: "a", notCarried: [{ field: "f", level: "info" as const, reason: "r", reasonCode }] }] } } });
+    expect(hasDeferredCoverage(row("custom_labels_deferred"))).toBe(true);
+    expect(hasDeferredCoverage(row("dockerfile_deferred"))).toBe(true);
+    expect(hasDeferredCoverage(row("dokploy_swarm_labels"))).toBe(false);
+    expect(hasDeferredCoverage(plan)).toBe(false);
+  });
+});
+
+describe("every shared importer reason code has an i18n key", () => {
+  it("import.reason_<code> exists for each code (the shared list is the single source of truth)", () => {
+    const shared = readFileSync(path.resolve(__dirname, "../../../../packages/shared/src/import-reasons.ts"), "utf8");
+    const codes = [.../IMPORT_REASON_CODES = \[([\s\S]*?)\] as const/.exec(shared)![1].matchAll(/"([a-z0-9_]+)"/g)].map((m) => m[1]);
+    expect(codes.length).toBeGreaterThan(60);
+    const I = importMessages as unknown as Record<string, string>;
+    for (const c of codes) expect(typeof I[`reason_${c}`], `reason_${c}`).toBe("string");
   });
 });

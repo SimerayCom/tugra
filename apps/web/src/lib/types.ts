@@ -940,7 +940,10 @@ export type ImportRemoteKind = "coolify" | "dokploy";
 /** One field present on the source that Tugra does not carry: a field NAME + a fixed reason, never a value. */
 export interface ImportCoverageEntry {
   field: string;
+  /** English fallback; the UI translates `reasonCode` (+ `reasonParams`) and only shows this for an unknown code. */
   reason: string;
+  reasonCode?: string;
+  reasonParams?: Record<string, string | number>;
   level: "warn" | "info";
 }
 export interface ImportCoverageApp {
@@ -979,7 +982,14 @@ export type ImportTaskStatus =
 /** What an applied app could (applied) and could not (unmapped) carry — field names + fixed reasons only. */
 export interface ImportApplyReport {
   applied: string[];
-  unmapped: Array<{ field: string; reason: string }>;
+  unmapped: ImportUnmapped[];
+}
+/** One field an apply could not carry: a field NAME + a fixed reason (code + params for the UI), never a value. */
+export interface ImportUnmapped {
+  field: string;
+  reason: string;
+  reasonCode?: string;
+  reasonParams?: Record<string, string | number>;
 }
 export interface ImportOpTask {
   itemRef: string | null;

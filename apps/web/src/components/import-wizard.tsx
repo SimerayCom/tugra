@@ -9,7 +9,7 @@ import { Card, SectionCard, Btn, EmptyState, Spinner } from "./ui";
 import { useToast } from "./toast";
 import { useConfirm } from "./confirm";
 import { CopyBtn } from "./copy-row";
-import { planSummary, itemsByKind, riskTone, opProgress, coverageApps, coverageCounts } from "../lib/import";
+import { planSummary, itemsByKind, riskTone, opProgress, coverageApps, coverageCounts, hasDeferredCoverage, reasonText } from "../lib/import";
 import type { ImportPlan, ImportPlanItem, ImportRiskLevel, ImportOperation, ImportOpTask, ImportRemoteKind, ImportTaskStatus, MintedMigrationToken, ImportRemapPlan, ImportRemapResult } from "../lib/types";
 
 const toneColor: Record<"danger" | "warning" | "info", string> = {
@@ -521,14 +521,14 @@ function CoverageCard({ plan }: { plan: ImportPlan }) {
                 {a.notCarried.map((n) => (
                   <li key={n.field} style={{ color: n.level === "warn" ? "var(--c-am)" : "var(--c-tx3)", wordBreak: "break-word" }}>
                     <strong>{n.level === "warn" ? t("import.coverageWarn") : t("import.coverageInfo")}</strong>{" "}
-                    <span className="mono" style={{ wordBreak: "break-all" }}>{n.field}</span>: {n.reason}
+                    <span className="mono" style={{ wordBreak: "break-all" }}>{n.field}</span>: {reasonText(t, n)}
                   </li>
                 ))}
               </ul>
             </div>
           ))}
         </div>
-        <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "10px 0 0" }}>{t("import.coverageDeferred")}</p>
+        {hasDeferredCoverage(plan) && <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "10px 0 0" }}>{t("import.coverageDeferred")}</p>}
       </details>
     </SectionCard>
   );
@@ -546,7 +546,7 @@ function TaskNotCarried({ task }: { task: ImportOpTask }) {
       <ul style={{ margin: "4px 0 0", paddingLeft: 16 }}>
         {unmapped.map((u, i) => (
           <li key={`${u.field}-${i}`} style={{ wordBreak: "break-word" }}>
-            <span className="mono" style={{ wordBreak: "break-all" }}>{u.field}</span>: {u.reason}
+            <span className="mono" style={{ wordBreak: "break-all" }}>{u.field}</span>: {reasonText(t, u)}
           </li>
         ))}
       </ul>
