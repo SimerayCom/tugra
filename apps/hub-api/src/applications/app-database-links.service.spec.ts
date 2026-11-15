@@ -138,6 +138,6 @@ describe("AppDatabaseLinksService.create — adoptEnv keeps the flag column in s
     await plain.svc.create("u1", "app1", { databaseId: "db1", envVar: "DATABASE_URL", adoptEnv: true });
     expect(plain.txUpdate.mock.calls[0][0].data.envMetaEnc).toBeNull();
     const bad = adoptDeps({ envEnc: JSON.stringify({ DATABASE_URL: "x" }), envMetaEnc: "garbage" });
-    await expect(bad.svc.create("u1", "app1", { databaseId: "db1", envVar: "DATABASE_URL", adoptEnv: true })).rejects.toThrow(/unreadable/);
+    await expect(bad.svc.create("u1", "app1", { databaseId: "db1", envVar: "DATABASE_URL", adoptEnv: true })).rejects.toThrow(/stored variable flags are unreadable; reset them in the app.s Environment tab before adopting/);
   });
 });

@@ -244,7 +244,7 @@ export class AppDatabaseLinksService {
       const enc = encodeEnvMeta(pruneMeta(parseEnvMeta(this.crypto.decrypt(app.envMetaEnc)), keys));
       return enc === null ? null : this.crypto.encrypt(enc);
     } catch {
-      throw new ConflictException("stored variable flags are unreadable; resend the full set with an explicit flags object");
+      throw new ConflictException("stored variable flags are unreadable; reset them in the app's Environment tab before adopting a variable");
     }
   }
 
