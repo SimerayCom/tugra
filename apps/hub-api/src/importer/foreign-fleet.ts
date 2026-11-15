@@ -220,10 +220,34 @@ export interface ForeignService {
   sourceRef: string;
   name: string;
   templateSlug?: string;
+  /** The source's own RAW compose (`docker_compose_raw`). Server-side only: it is never copied into a plan item's
+   *  `proposed`, the preflight or any response (it can carry literal secrets). */
   composeFile?: string;
   memberApps: string[]; // app sourceRefs
   memberDbs: string[]; // db sourceRefs
   serverRef?: string;
+  /** The stack's members (compose services) with their per-member domains. Sorted by name (planHash determinism). */
+  members?: ForeignServiceMember[];
+  /** The source server's display name (display only). */
+  serverName?: string;
+}
+
+/** One compose service of a {@link ForeignService}. `name` IS the compose service key. */
+export interface ForeignServiceMember {
+  name: string;
+  kind: "app" | "db";
+  ref: string; // the member's source uuid; never resolvable against fleet.apps
+  image?: string;
+  domains: ForeignDomain[]; // the member's fqdn rows; `serviceRef` = name
+}
+
+/** Secret-bearing material for one service, fetched server-side at apply/preview time ONLY. Never serialised into a
+ *  plan, task, audit row or log. */
+export interface ServiceBundle {
+  values: Record<string, string>; // null-prototype map
+  flags?: Record<string, { buildTime?: boolean; runtime?: boolean; literal?: boolean; multiline?: boolean }>;
+  unresolved: string[]; // key names
+  files?: Array<{ path: string; content: string; mode?: string }>;
 }
 
 export interface ForeignFleet {
@@ -247,7 +271,7 @@ export type ImportRisk = { level: "info" | "warn" | "blocker"; code: string; mes
 
 export interface ImportPlanItem {
   itemRef: string; // namespaced "kind:serverRef:sourceRef" — the idempotency key for the executor
-  kind: "app" | "database" | "volume";
+  kind: "app" | "database" | "volume" | "service";
   name: string;
   proposed: Record<string, unknown>; // preview of the Tugra resource (secret-free; for the review UI)
   risks: ImportRisk[];
@@ -276,7 +300,7 @@ export interface ImportPlan {
   sourceKind: string;
   mode: ImportMode;
   items: ImportPlanItem[];
-  totals: { apps: number; databases: number; volumes: number; blockers: number };
+  totals: { apps: number; databases: number; volumes: number; blockers: number; services?: number };
   /** Source-level notices that are NOT per-item (e.g. "N compose-managed containers skipped"). Carried
    *  through from the discovered fleet so the review UI can show what the plan does NOT cover. */
   warnings: string[];
@@ -322,7 +346,7 @@ export interface ImportPreflight {
   databases: Array<{ name: string; engine: string; dataPlane: DbDataPlane; reason: string }>;
   /** Services (compose / one-click stacks) are discovered but NOT imported yet — surfaced here so they are
    *  never a silent drop on the review screen. */
-  services: Array<{ name: string; members: number; note: string; /** A MinIO object store: its data moves through Object migration. */ objectStore?: true }>;
+  services: Array<{ name: string; members: number; note: string; /** A MinIO object store: its data moves through Object migration. */ objectStore?: true; verdict?: "importable" | "partial" | "skipped"; hold?: boolean; volumes?: Array<{ key: string; dataPlane: string }> }>;
   /** Number of apps that declare a volume whose DATA must be copied (config-only was the old behavior). */
   appsWithVolumeData: number;
   volumeDataNote?: string;

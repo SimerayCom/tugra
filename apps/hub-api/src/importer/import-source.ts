@@ -1,4 +1,4 @@
-import type { ForeignEnv, ForeignFleet } from "./foreign-fleet";
+import type { ForeignEnv, ForeignFleet, ServiceBundle } from "./foreign-fleet";
 import type { Unmapped } from "./reason";
 
 /** What transports/data a source adapter offers, so the planner/UI can adapt (e.g. warn that volume data
@@ -88,6 +88,10 @@ export interface ImportSource {
    *  and keyed by the app's `sourceRef`. A genuine read error MUST throw; the executor records it as unmapped
    *  (fixed reason), never as a task failure. */
   fetchAppExtras?(ref: string): Promise<SourceAppExtras | undefined>;
+  /** OPTIONAL secret path: a service's env values + config files, re-fetched server-side at apply/preview time and keyed
+   *  by the discovered service's `sourceRef`. `undefined` when the token cannot read them (403/404). Any other error is
+   *  re-thrown with a FIXED message. Dokploy/local-docker do not implement it. */
+  fetchServiceBundle?(ref: string): Promise<ServiceBundle | undefined>;
   /** Dump a database's contents (requires capabilities().dbDataDump). */
   dumpDb?(ref: string): Promise<DumpHandle>;
   /** Open a volume's bytes as a tar stream (requires capabilities().volumeRead). */

@@ -1,0 +1,24 @@
+{
+  "_fixture": {
+    "source": "scrubbed from the owner's Coolify inventory (2026-11); names, hosts, uuids, ips and paths are synthetic",
+    "unverified": "UNVERIFIED against live Coolify (probe C0 not approved): applications[].image / databases[].image / server on the /services list row, and the /services/{uuid}/envs and /storages shapes used by the bundle specs",
+    "index": 12
+  },
+  "uuid": "svc00012abcdefgh",
+  "name": "epsilon-meilisearch",
+  "service_type": "meilisearch",
+  "docker_compose_raw": "services:\n  meilisearch:\n    image: 'getmeili/meilisearch:latest'\n    environment:\n      - SERVICE_URL_MEILISEARCH_7700\n      - 'MEILI_NO_ANALYTICS=${MEILI_NO_ANALYTICS:-true}'\n      - 'MEILI_ENV=${MEILI_ENV:-production}'\n      - 'MEILI_MASTER_KEY=${SERVICE_PASSWORD_MEILISEARCH}'\n    volumes:\n      - 'meilisearch-data:/meili_data'\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '-f'\n        - 'http://127.0.0.1:7700/health'\n      interval: 2s\n      timeout: 10s\n      retries: 15\n",
+  "server": {
+    "uuid": "srv00006",
+    "name": "server-f"
+  },
+  "applications": [
+    {
+      "uuid": "app1200abcdefgh",
+      "name": "meilisearch",
+      "fqdn": "",
+      "image": "getmeili/meilisearch:latest"
+    }
+  ],
+  "databases": []
+}

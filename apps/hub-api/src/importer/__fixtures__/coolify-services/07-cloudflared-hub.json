@@ -1,0 +1,24 @@
+{
+  "_fixture": {
+    "source": "scrubbed from the owner's Coolify inventory (2026-11); names, hosts, uuids, ips and paths are synthetic",
+    "unverified": "UNVERIFIED against live Coolify (probe C0 not approved): applications[].image / databases[].image / server on the /services list row, and the /services/{uuid}/envs and /storages shapes used by the bundle specs",
+    "index": 7
+  },
+  "uuid": "svc00007abcdefgh",
+  "name": "cloudflared-hub",
+  "service_type": "cloudflared",
+  "docker_compose_raw": "services:\n  cloudflared:\n    container_name: cloudflare-tunnel\n    image: 'cloudflare/cloudflared:latest'\n    restart: unless-stopped\n    command: 'tunnel --no-autoupdate run'\n    environment:\n      - 'TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}'\n    healthcheck:\n      test:\n        - CMD\n        - cloudflared\n        - '--version'\n      interval: 5s\n      timeout: 20s\n      retries: 10\n",
+  "server": {
+    "uuid": "srvlocal0",
+    "name": "localhost"
+  },
+  "applications": [
+    {
+      "uuid": "app0700abcdefgh",
+      "name": "cloudflared",
+      "fqdn": null,
+      "image": "cloudflare/cloudflared:latest"
+    }
+  ],
+  "databases": []
+}

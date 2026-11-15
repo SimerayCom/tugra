@@ -7,14 +7,15 @@ import type {
   ForeignEnv,
   ForeignFleet,
   ForeignService,
+  ForeignServiceMember,
   ForeignVolume,
   TugraDbEngine,
 } from "../foreign-fleet";
 
 /**
  * Pure mappers: Coolify v4 REST JSON → the neutral {@link ForeignFleet}. SECRET-FREE — discover runs on a
- * plain read token, where Coolify strips passwords, env VALUES, internal_db_url, docker_compose_raw and
- * dockerfile (all `read:sensitive`-gated). We therefore carry only non-secret identity: names, usernames,
+ * plain read token, where Coolify strips passwords, env VALUES, internal_db_url and
+ * dockerfile (all `read:sensitive`-gated; a service's `docker_compose_raw` was readable with the inventory token). We therefore carry only non-secret identity: names, usernames,
  * database names, env KEYS, domains, ports, build config, and `secretRef` (the Coolify uuid) for a later
  * sensitive-scoped fetch. Field names below are taken verbatim from Coolify v4.4.6 models/controllers.
  */
@@ -42,7 +43,7 @@ export interface CoolifyApp {
   build_command?: string | null;
   start_command?: string | null;
   fqdn?: string | null; // "https://a.com,http://b.com:3000"
-  docker_compose_raw?: string | null; // read:sensitive → usually absent in discover
+  docker_compose_raw?: string | null; // may need read:sensitive for an app (a service's raw compose was readable)
   // ── Presence-only / apply-time reads. Names + encodings are HAND-BUILT from Coolify v4 sources, UNVERIFIED until
   // the live check (spec G3-C section 11); a wrong name only loses a coverage note, never produces wrong data.
   custom_labels?: string | null; // container labels, one `key=value` per line (believed base64 over the API); read:sensitive-gated
@@ -80,9 +81,14 @@ export interface CoolifyService {
   uuid: string;
   name?: string | null;
   service_type?: string | null; // one-click template key
-  docker_compose_raw?: string | null; // read:sensitive → usually absent in discover
-  applications?: Array<{ uuid: string; name?: string | null; fqdn?: string | null }>;
-  databases?: Array<{ uuid: string; name?: string | null }>;
+  /** The raw compose is readable with the inventory token (verified on the owner's inventory: all 19 rows carry it). The
+   *  rendered `docker_compose` is NEVER used (rendered `<uuid>_*` volume names, `coolify.*` labels). */
+  docker_compose_raw?: string | null;
+  // The /services list rows already eager-load the members (inventory shape). `image` on a member is the compose image,
+  // not the running one. UNVERIFIED against live Coolify (probe C0 not run): a wrong name only loses a note.
+  applications?: Array<{ uuid: string; name?: string | null; fqdn?: string | null; image?: string | null }>;
+  databases?: Array<{ uuid: string; name?: string | null; image?: string | null }>;
+  server?: { uuid?: string | null; name?: string | null } | null;
 }
 export interface CoolifyEnv {
   key: string;
@@ -437,14 +443,36 @@ export function mapDatabase(
 }
 
 export function mapService(svc: CoolifyService, ctx: { serverRef?: string }): ForeignService {
+  // Members: the compose service key is the Coolify member name. Apps carry their fqdn rows (parseFqdns dedupes the
+  // http/https pair and keeps the port); databases of a service are compose containers and carry none. Sorted by name
+  // so the plan hash does not depend on the source's row order.
+  const members: ForeignServiceMember[] = [
+    ...(svc.applications ?? []).map((a): ForeignServiceMember => ({
+      name: a.name ?? a.uuid,
+      kind: "app",
+      ref: a.uuid,
+      ...(a.image ? { image: a.image } : {}),
+      domains: parseFqdns(a.fqdn).map((d) => ({ ...d, serviceRef: a.name ?? a.uuid, primary: false })),
+    })),
+    ...(svc.databases ?? []).map((d): ForeignServiceMember => ({
+      name: d.name ?? d.uuid,
+      kind: "db",
+      ref: d.uuid,
+      ...(d.image ? { image: d.image } : {}),
+      domains: [],
+    })),
+  ].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   return {
     sourceRef: svc.uuid,
     name: svc.name ?? svc.uuid,
     templateSlug: svc.service_type ?? undefined,
-    composeFile: svc.docker_compose_raw ?? undefined, // read:sensitive-gated
+    composeFile: svc.docker_compose_raw ?? undefined,
     memberApps: (svc.applications ?? []).map((a) => a.uuid),
     memberDbs: (svc.databases ?? []).map((d) => d.uuid),
-    serverRef: ctx.serverRef,
+    // The server listing may not name the service (the list row carries its own server): fall back to it.
+    serverRef: ctx.serverRef ?? svc.server?.uuid ?? undefined,
+    members,
+    ...(svc.server?.name ? { serverName: svc.server.name } : {}),
   };
 }
 

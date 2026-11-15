@@ -1,4 +1,4 @@
-import type { ForeignEnv, ForeignFleet } from "../foreign-fleet";
+import type { ForeignEnv, ForeignFleet, ServiceBundle } from "../foreign-fleet";
 import type { ImportSource, ImportSourceCapabilities, FetchedSecrets, SourceAppExtras } from "../import-source";
 import { why } from "../reason";
 import { mapLimit } from "./map-limit";
@@ -85,9 +85,12 @@ export class CoolifySource implements ImportSource {
       resourcesByServer[s.uuid] = resources.map((r) => r?.uuid).filter((u): u is string => !!u);
     });
 
-    // GET /services does NOT eager-load member apps/databases; the detail endpoint does. Preserve order.
+    // The /services list rows already carry the members (applications[], databases[]) and the raw compose (verified on
+    // the owner's inventory). The per-service detail GET stays as the FALLBACK for a row that lacks them. Preserve order.
     const services = await mapLimit(serviceList, DISCOVER_CONCURRENCY, (s) =>
-      tryGet<CoolifyService>(`/services/${s.uuid}`, s, `service ${s.name ?? s.uuid}`),
+      Array.isArray(s.applications) && typeof s.docker_compose_raw === "string"
+        ? Promise.resolve(s)
+        : tryGet<CoolifyService>(`/services/${s.uuid}`, s, `service ${s.name ?? s.uuid}`),
     );
 
     await mapLimit(apps, DISCOVER_CONCURRENCY, async (a) => {
@@ -160,6 +163,53 @@ export class CoolifySource implements ImportSource {
   }
 
   /**
+   * Resolve one SERVICE's env values + config-file contents at apply/preview time (requires a read:sensitive token).
+   * Same rules as {@link fetchSecrets} (preview twins skipped, `real_value ?? value`, null-prototype maps), plus: the
+   * `SERVICE_URL_*` / `SERVICE_FQDN_*` bookkeeping rows are dropped (the importer derives domains itself) and so is any
+   * other `is_coolify` row, EXCEPT the carried magic secrets (`SERVICE_PASSWORD_*` / `SERVICE_USER_*` / `SERVICE_BASE64_*` /
+   * `SERVICE_REALBASE64_*`: carried, never regenerated). `/services/{uuid}/envs` and `/storages` are UNVERIFIED against live
+   * Coolify (probe C0 not approved): a 403/404 returns `undefined`; any other error is re-thrown with a FIXED message,
+   * because a client error can echo the response body (which carries the secrets).
+   */
+  async fetchServiceBundle(ref: string): Promise<ServiceBundle | undefined> {
+    let rawEnvs: unknown;
+    try {
+      rawEnvs = await this.client.get<unknown>(`/services/${encodeURIComponent(ref)}/envs`);
+    } catch (e) {
+      if (isDeniedOrMissing(e)) return undefined;
+      throw new Error(SERVICE_BUNDLE_ERROR);
+    }
+    const envs = Array.isArray(rawEnvs) ? (rawEnvs as CoolifyEnv[]) : [];
+    const values: Record<string, string> = Object.create(null);
+    const unresolved: string[] = [];
+    const flags: NonNullable<ServiceBundle["flags"]> = Object.create(null);
+    for (const e of envs) {
+      if (!e || typeof e.key !== "string" || e.is_preview === true) continue;
+      if (/^SERVICE_(URL|FQDN)_/.test(e.key)) continue;
+      if (e.is_coolify === true && !CARRIED_MAGIC_RE.test(e.key)) continue;
+      const v = e.real_value ?? e.value;
+      if (typeof v !== "string") {
+        unresolved.push(e.key);
+        continue;
+      }
+      values[e.key] = v;
+      const f: { buildTime?: boolean; runtime?: boolean; literal?: boolean; multiline?: boolean } = {};
+      if (typeof e.is_buildtime === "boolean") f.buildTime = e.is_buildtime;
+      if (typeof e.is_runtime === "boolean") f.runtime = e.is_runtime;
+      if (typeof e.is_literal === "boolean") f.literal = e.is_literal;
+      if (typeof e.is_multiline === "boolean") f.multiline = e.is_multiline;
+      if (Object.keys(f).length) flags[e.key] = f;
+    }
+    let files: ServiceBundle["files"];
+    try {
+      files = extractServiceFiles(await this.client.get<unknown>(`/services/${encodeURIComponent(ref)}/storages`));
+    } catch (e) {
+      if (!isDeniedOrMissing(e)) throw new Error(SERVICE_BUNDLE_ERROR);
+    }
+    return { values, unresolved: unresolved.sort(), ...(Object.keys(flags).length ? { flags } : {}), ...(files?.length ? { files } : {}) };
+  }
+
+  /**
    * Re-read one application's container labels and inline Dockerfile text at apply time (both `read:sensitive`-gated
    * on Coolify; absent for a plain token → nothing carried). ONE guarded GET; a transport/permission error PROPAGATES
    * (the executor turns it into a fixed unmapped note). The text lives in memory only — never in the fleet, plan or
@@ -181,6 +231,36 @@ export class CoolifySource implements ImportSource {
   }
 
   async close(): Promise<void> {}
+}
+
+/** The ONLY error text a failed service-bundle read may surface (a client error can echo the response body = secrets). */
+export const SERVICE_BUNDLE_ERROR = "service variables could not be read";
+const CARRIED_MAGIC_RE = /^SERVICE_(PASSWORD|USER|BASE64|REALBASE64)_/;
+
+/** A 401/403/404 from the Coolify client (the token cannot read it / the endpoint does not exist). The concrete client
+ *  throws an error carrying the HTTP status; a status-less error is treated as a hard failure. */
+function isDeniedOrMissing(e: unknown): boolean {
+  const status = (e as { status?: unknown; statusCode?: unknown })?.status ?? (e as { statusCode?: unknown })?.statusCode;
+  if (status === 401 || status === 403 || status === 404) return true;
+  return typeof e === "object" && e !== null && /\b(401|403|404)\b/.test(String((e as { message?: unknown }).message ?? ""));
+}
+
+/** Pure: Coolify's `/storages` file rows (`file_storages`: fs_path/content/is_directory) → relative config files. Only
+ *  rows with real text content are kept; the compose transform later accepts only paths its raw compose declares. */
+function extractServiceFiles(raw: unknown): ServiceBundle["files"] {
+  const obj = (raw ?? {}) as { file_storages?: unknown };
+  const rows = Array.isArray(obj.file_storages) ? (obj.file_storages as Array<Record<string, unknown>>) : [];
+  const out: NonNullable<ServiceBundle["files"]> = [];
+  for (const r of rows) {
+    if (!r || r.is_directory === true) continue;
+    const fsPath = typeof r.fs_path === "string" ? r.fs_path : undefined;
+    const content = typeof r.content === "string" ? r.content : undefined;
+    if (!fsPath || content === undefined) continue;
+    // Coolify stores the service's files under /data/coolify/services/<uuid>/<relative path>: keep the relative tail.
+    const rel = fsPath.replace(/^\/data\/coolify\/services\/[^/]+\//, "");
+    out.push({ path: rel.replace(/^\.\//, ""), content });
+  }
+  return out;
 }
 
 /** The value when it is a non-empty string, else undefined (so `??` falls through an empty `dockerfile` to `dockerfile_raw`). */

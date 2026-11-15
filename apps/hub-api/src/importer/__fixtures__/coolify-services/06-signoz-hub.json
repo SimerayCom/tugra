@@ -1,0 +1,60 @@
+{
+  "_fixture": {
+    "source": "scrubbed from the owner's Coolify inventory (2026-11); names, hosts, uuids, ips and paths are synthetic",
+    "unverified": "UNVERIFIED against live Coolify (probe C0 not approved): applications[].image / databases[].image / server on the /services list row, and the /services/{uuid}/envs and /storages shapes used by the bundle specs",
+    "index": 6
+  },
+  "uuid": "svc00006abcdefgh",
+  "name": "signoz-hub",
+  "service_type": "signoz",
+  "docker_compose_raw": "services:\n  init-clickhouse:\n    image: 'clickhouse/clickhouse-server:25.5.6-alpine'\n    command:\n      - bash\n      - '-c'\n      - \"version=\\\"v0.0.1\\\"\\nnode_os=$$(uname -s | tr '[:upper:]' '[:lower:]')\\nnode_arch=$$(uname -m | sed s/aarch64/arm64/ | sed s/x86_64/amd64/)\\necho \\\"Fetching histogram-binary for $${node_os}/$${node_arch}\\\"\\ncd /tmp\\nwget -O histogram-quantile.tar.gz \\\"https://github.com/SigNoz/signoz/releases/download/histogram-quantile%2F$${version}/histogram-quantile_$${node_os}_$${node_arch}.tar.gz\\\"\\ntar -xvzf histogram-quantile.tar.gz\\nmkdir -p /var/lib/clickhouse/user_scripts/histogramQuantile\\nmv histogram-quantile /var/lib/clickhouse/user_scripts/histogramQuantile\\n\"\n    restart: on-failure\n    exclude_from_hc: true\n    logging:\n      options:\n        max-size: 50m\n        max-file: '3'\n  zookeeper:\n    image: 'signoz/zookeeper:3.9.3'\n    user: root\n    healthcheck:\n      test:\n        - CMD-SHELL\n        - 'curl -s -m 2 http://localhost:8080/commands/ruok | grep error | grep null'\n      interval: 30s\n      timeout: 5s\n      retries: 3\n    logging:\n      options:\n        max-size: 50m\n        max-file: '3'\n    volumes:\n      - 'zookeeper:/bitnami/zookeeper'\n    environment:\n      - 'ALLOW_ANONYMOUS_LOGIN=${ZOO_ALLOW_ANONYMOUS_LOGIN:-yes}'\n      - 'ZOO_AUTOPURGE_INTERVAL=${ZOO_AUTOPURGE_INTERVAL:-1}'\n      - 'ZOO_ENABLE_PROMETHEUS_METRICS=${ZOO_ENABLE_PROMETHEUS_METRICS:-yes}'\n      - 'ZOO_PROMETHEUS_METRICS_PORT_NUMBER=${ZOO_PROMETHEUS_METRICS_PORT_NUMBER:-9141}'\n  clickhouse:\n    image: 'clickhouse/clickhouse-server:25.5.6-alpine'\n    tty: true\n    depends_on:\n      init-clickhouse:\n        condition: service_completed_successfully\n      zookeeper:\n        condition: service_healthy\n    healthcheck:\n      test:\n        - CMD\n        - wget\n        - '--spider'\n        - '-q'\n        - '0.0.0.0:8123/ping'\n      interval: 30s\n      timeout: 5s\n      retries: 3\n    ulimits:\n      nproc: 65535\n      nofile:\n        soft: 262144\n        hard: 262144\n    logging:\n      options:\n        max-size: 50m\n        max-file: '3'\n    environment:\n      - CLICKHOUSE_SKIP_USER_SETUP=1\n    volumes:\n      -\n        type: volume\n        source: clickhouse\n        target: /var/lib/clickhouse/\n      -\n        type: bind\n        source: ./clickhouse/custom-function.xml\n        target: /etc/clickhouse-server/custom-function.xml\n      -\n        type: bind\n        source: ./clickhouse/cluster.xml\n        target: /etc/clickhouse-server/config.d/cluster.xml\n      -\n        type: bind\n        source: ./clickhouse/users.xml\n        target: /etc/clickhouse-server/users.xml\n      -\n        type: bind\n        source: ./clickhouse/config.xml\n        target: /etc/clickhouse-server/config.xml\n  signoz:\n    image: 'signoz/signoz:v0.97.1'\n    depends_on:\n      clickhouse:\n        condition: service_healthy\n      schema-migrator-sync:\n        condition: service_completed_successfully\n    logging:\n      options:\n        max-size: 50m\n        max-file: '3'\n    command:\n      - '--config=/root/config/prometheus.yml'\n    volumes:\n      -\n        type: bind\n        source: ./prometheus.yml\n        target: /root/config/prometheus.yml\n      -\n        type: volume\n        source: sqlite\n        target: /var/lib/signoz/\n    environment:\n      - SERVICE_URL_SIGNOZ_8080\n      - 'SIGNOZ_JWT_SECRET=${SERVICE_REALBASE64_JWTSECRET}'\n      - 'SIGNOZ_TELEMETRYSTORE_CLICKHOUSE_DSN=tcp://clickhouse:9000'\n      - SIGNOZ_SQLSTORE_SQLITE_PATH=/var/lib/signoz/signoz.db\n      - DASHBOARDS_PATH=/root/config/dashboards\n      - STORAGE=clickhouse\n      - GODEBUG=netdns=go\n      - DEPLOYMENT_TYPE=docker-standalone-amd\n      - 'SIGNOZ_STATSREPORTER_ENABLED=${SIGNOZ_STATSREPORTER_ENABLED:-true}'\n      - 'SIGNOZ_EMAILING_ENABLED=${SIGNOZ_EMAILING_ENABLED:-false}'\n      - 'SIGNOZ_EMAILING_SMTP_ADDRESS=${SIGNOZ_EMAILING_SMTP_ADDRESS}'\n      - 'SIGNOZ_EMAILING_SMTP_FROM=${SIGNOZ_EMAILING_SMTP_FROM}'\n      - 'SIGNOZ_EMAILING_SMTP_AUTH_USERNAME=${SIGNOZ_EMAILING_SMTP_AUTH_USERNAME}'\n      - 'SIGNOZ_EMAILING_SMTP_AUTH_PASSWORD=${SIGNOZ_EMAILING_SMTP_AUTH_PASSWORD}'\n      - SIGNOZ_ALERTMANAGER_PROVIDER=signoz\n      - 'SIGNOZ_ALERTMANAGER_SIGNOZ_GLOBAL_SMTP__AUTH__PASSWORD=${SIGNOZ_ALERTMANAGER_SIGNOZ_GLOBAL_SMTP__AUTH__PASSWORD}'\n      - 'SIGNOZ_ALERTMANAGER_SIGNOZ_GLOBAL_SMTP__AUTH__USERNAME=${SIGNOZ_ALERTMANAGER_SIGNOZ_GLOBAL_SMTP__AUTH__USERNAME}'\n      - 'SIGNOZ_ALERTMANAGER_SIGNOZ_GLOBAL_SMTP__FROM=${SIGNOZ_ALERTMANAGER_SIGNOZ_GLOBAL_SMTP__FROM}'\n      - 'SIGNOZ_ALERTMANAGER_SIGNOZ_GLOBAL_SMTP__SMARTHOST=${SIGNOZ_ALERTMANAGER_SIGNOZ_GLOBAL_SMTP__SMARTHOST}'\n      - DOT_METRICS_ENABLED=true\n    healthcheck:\n      test:\n        - CMD\n        - wget\n        - '--spider'\n        - '-q'\n        - 'localhost:8080/api/v1/health'\n      interval: 30s\n      timeout: 5s\n      retries: 3\n  otel-collector:\n    image: 'signoz/signoz-otel-collector:v0.129.7'\n    depends_on:\n      clickhouse:\n        condition: service_healthy\n      schema-migrator-sync:\n        condition: service_completed_successfully\n      signoz:\n        condition: service_healthy\n    logging:\n      options:\n        max-size: 50m\n        max-file: '3'\n    command:\n      - '--config=/etc/otel-collector-config.yaml'\n      - '--manager-config=/etc/manager-config.yaml'\n      - '--copy-path=/var/tmp/collector-config.yaml'\n      - '--feature-gates=-pkg.translator.prometheus.NormalizeName'\n    volumes:\n      -\n        type: bind\n        source: ./otel-collector-config.yaml\n        target: /etc/otel-collector-config.yaml\n      -\n        type: bind\n        source: ./otel-collector-opamp-config.yaml\n        target: /etc/manager-config.yaml\n    environment:\n      - SERVICE_URL_OTELCOLLECTORHTTP_4318\n      - 'OTEL_RESOURCE_ATTRIBUTES=host.name=signoz-host,os.type=linux'\n      - LOW_CARDINAL_EXCEPTION_GROUPING=false\n    healthcheck:\n      test: 'bash -c \"exec 6<> /dev/tcp/localhost/13133\"'\n      interval: 30s\n      timeout: 5s\n      retries: 3\n  schema-migrator-sync:\n    image: 'signoz/signoz-schema-migrator:v0.129.7'\n    command:\n      - sync\n      - '--dsn=tcp://clickhouse:9000'\n      - '--up='\n    depends_on:\n      clickhouse:\n        condition: service_healthy\n    restart: on-failure\n    exclude_from_hc: true\n    logging:\n      options:\n        max-size: 50m\n        max-file: '3'\n  schema-migrator-async:\n    image: 'signoz/signoz-schema-migrator:v0.129.7'\n    depends_on:\n      clickhouse:\n        condition: service_healthy\n      schema-migrator-sync:\n        condition: service_completed_successfully\n    restart: on-failure\n    exclude_from_hc: true\n    logging:\n      options:\n        max-size: 50m\n        max-file: '3'\n    command:\n      - async\n      - '--dsn=tcp://clickhouse:9000'\n      - '--up='\n",
+  "server": {
+    "uuid": "srvlocal0",
+    "name": "localhost"
+  },
+  "applications": [
+    {
+      "uuid": "app0600abcdefgh",
+      "name": "clickhouse",
+      "fqdn": null,
+      "image": "clickhouse/clickhouse-server:25.5.6-alpine"
+    },
+    {
+      "uuid": "app0601abcdefgh",
+      "name": "schema-migrator-async",
+      "fqdn": null,
+      "image": "signoz/signoz-schema-migrator:v0.129.7"
+    },
+    {
+      "uuid": "app0602abcdefgh",
+      "name": "schema-migrator-sync",
+      "fqdn": null,
+      "image": "signoz/signoz-schema-migrator:v0.129.7"
+    },
+    {
+      "uuid": "app0603abcdefgh",
+      "name": "zookeeper",
+      "fqdn": null,
+      "image": "signoz/zookeeper:3.9.3"
+    },
+    {
+      "uuid": "app0604abcdefgh",
+      "name": "otel-collector",
+      "fqdn": "https://otel.example.test:4318,http://otel.example.test:4318",
+      "image": "signoz/signoz-otel-collector:v0.129.7"
+    },
+    {
+      "uuid": "app0605abcdefgh",
+      "name": "signoz",
+      "fqdn": "https://signoz.example.test:8080,http://signoz.example.test:8080",
+      "image": "signoz/signoz:v0.97.1"
+    }
+  ],
+  "databases": [
+    {
+      "uuid": "dbs0600abcdefgh",
+      "name": "init-clickhouse",
+      "image": "clickhouse/clickhouse-server:25.5.6-alpine"
+    }
+  ]
+}

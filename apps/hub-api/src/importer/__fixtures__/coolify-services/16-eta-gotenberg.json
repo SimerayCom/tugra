@@ -1,0 +1,24 @@
+{
+  "_fixture": {
+    "source": "scrubbed from the owner's Coolify inventory (2026-11); names, hosts, uuids, ips and paths are synthetic",
+    "unverified": "UNVERIFIED against live Coolify (probe C0 not approved): applications[].image / databases[].image / server on the /services list row, and the /services/{uuid}/envs and /storages shapes used by the bundle specs",
+    "index": 16
+  },
+  "uuid": "svc00016abcdefgh",
+  "name": "eta-gotenberg",
+  "service_type": "gotenberg",
+  "docker_compose_raw": "services:\n  gotenberg:\n    image: 'gotenberg/gotenberg:latest'\n    environment:\n      - SERVICE_URL_GOTENBERG_3000\n      - 'GOTENBERG_API_BASIC_AUTH_USERNAME=${SERVICE_USER_GOTENBERG}'\n      - 'GOTENBERG_API_BASIC_AUTH_PASSWORD=${SERVICE_PASSWORD_GOTENBERG}'\n    command:\n      - gotenberg\n      - '--api-enable-basic-auth'\n      - '--api-disable-health-check-logging'\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - '-f'\n        - 'http://127.0.0.1:3000/health'\n      interval: 5s\n      timeout: 20s\n      retries: 10\n",
+  "server": {
+    "uuid": "srv00010",
+    "name": "server-j"
+  },
+  "applications": [
+    {
+      "uuid": "app1600abcdefgh",
+      "name": "gotenberg",
+      "fqdn": "",
+      "image": "gotenberg/gotenberg:latest"
+    }
+  ],
+  "databases": []
+}

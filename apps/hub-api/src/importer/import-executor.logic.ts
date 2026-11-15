@@ -16,7 +16,7 @@ export type TaskStatus =
  *  place); databases/volumes cannot be moved in place, so they are recorded SKIPPED with a reason. */
 export interface TaskSeed {
   itemRef: string;
-  kind: "app" | "database" | "volume";
+  kind: "app" | "database" | "volume" | "service";
   name: string;
   dependsOn: string[];
   run: boolean;

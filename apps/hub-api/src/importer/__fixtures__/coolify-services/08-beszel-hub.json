@@ -1,0 +1,30 @@
+{
+  "_fixture": {
+    "source": "scrubbed from the owner's Coolify inventory (2026-11); names, hosts, uuids, ips and paths are synthetic",
+    "unverified": "UNVERIFIED against live Coolify (probe C0 not approved): applications[].image / databases[].image / server on the /services list row, and the /services/{uuid}/envs and /storages shapes used by the bundle specs",
+    "index": 8
+  },
+  "uuid": "svc00008abcdefgh",
+  "name": "beszel-hub",
+  "service_type": "beszel",
+  "docker_compose_raw": "services:\n  beszel:\n    image: 'henrygd/beszel:0.18.7'\n    environment:\n      - SERVICE_URL_BESZEL_8090\n    volumes:\n      - 'beszel_data:/beszel_data'\n      - 'beszel_socket:/beszel_socket'\n  beszel-agent:\n    image: 'henrygd/beszel-agent:0.18.7'\n    environment:\n      - LISTEN=/beszel_socket/beszel.sock\n      - 'HUB_URL=http://beszel:8090'\n      - 'TOKEN=${TOKEN}'\n      - 'KEY=${KEY}'\n    volumes:\n      - 'beszel_agent_data:/var/lib/beszel-agent'\n      - 'beszel_socket:/beszel_socket'\n      - '/var/run/docker.sock:/var/run/docker.sock:ro'\n",
+  "server": {
+    "uuid": "srvlocal0",
+    "name": "localhost"
+  },
+  "applications": [
+    {
+      "uuid": "app0800abcdefgh",
+      "name": "beszel-agent",
+      "fqdn": null,
+      "image": "henrygd/beszel-agent:0.18.7"
+    },
+    {
+      "uuid": "app0801abcdefgh",
+      "name": "beszel",
+      "fqdn": "https://monitor.example.test:8090,http://monitor.example.test:8090",
+      "image": "henrygd/beszel:0.18.7"
+    }
+  ],
+  "databases": []
+}

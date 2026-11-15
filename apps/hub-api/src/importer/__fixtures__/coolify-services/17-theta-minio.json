@@ -1,0 +1,24 @@
+{
+  "_fixture": {
+    "source": "scrubbed from the owner's Coolify inventory (2026-11); names, hosts, uuids, ips and paths are synthetic",
+    "unverified": "UNVERIFIED against live Coolify (probe C0 not approved): applications[].image / databases[].image / server on the /services list row, and the /services/{uuid}/envs and /storages shapes used by the bundle specs",
+    "index": 17
+  },
+  "uuid": "svc00017abcdefgh",
+  "name": "theta-minio",
+  "service_type": null,
+  "docker_compose_raw": "services:\n  minio:\n    image: 'minio/minio:RELEASE.2025-04-22T22-12-26Z'\n    container_name: minio\n    restart: unless-stopped\n    command: 'server /data --address \":9000\" --console-address \":9001\"'\n    environment:\n      - MINIO_ROOT_USER=$SERVICE_USER_MINIO\n      - MINIO_ROOT_PASSWORD=$SERVICE_PASSWORD_MINIO\n      - MINIO_REGION=us-west-1\n      - MINIO_BROWSER_REDIRECT_URL=$MINIO_BROWSER_REDIRECT_URL\n      - MINIO_SERVER_URL=$MINIO_SERVER_URL\n      - 'MINIO_API_CORS_ALLOW_ORIGIN=https://app.example.test,https://api.example.test,https://www.example.test,https://s3.example.test,https://console.example.test'\n    volumes:\n      - '/mnt/HC_Volume_100000001:/data'\n    healthcheck:\n      test:\n        - CMD\n        - mc\n        - ready\n        - local\n      interval: 5s\n      timeout: 20s\n      retries: 10\n",
+  "server": {
+    "uuid": "srv00011",
+    "name": "server-k"
+  },
+  "applications": [
+    {
+      "uuid": "app1700abcdefgh",
+      "name": "minio",
+      "fqdn": null,
+      "image": "minio/minio:RELEASE.2025-04-22T22-12-26Z"
+    }
+  ],
+  "databases": []
+}
