@@ -1,5 +1,6 @@
 import { ConflictException, PayloadTooLargeException, UnsupportedMediaTypeException } from "@nestjs/common";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -180,6 +181,73 @@ describe("CutoverCertService.seed", () => {
     await expect(m.svc.seed("u1", "op1", { acknowledgeProxyRestart: true })).rejects.toBeInstanceOf(ConflictException);
     expect(m.proxy.ensureProxy).toHaveBeenCalledWith("srv1", { force: true });
     expect(m.prisma.cutoverCert.update).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the target acme.json read is truncated: nothing is written, the proxy is still recreated", async () => {
+    const m = make({ staged: stagedReal() });
+    m.agentWs.sendCommand.mockResolvedValueOnce({ exitCode: 0, output: "TUGRA_ACME_SIZE=90000\nTUGRA_ACME_B64_BEGIN\nAAAA\n…(truncated)" });
+    await expect(m.svc.seed("u1", "op1", { acknowledgeProxyRestart: true })).rejects.toThrow(/could not be read completely/);
+    expect(m.agentWs.sendCommand).toHaveBeenCalledTimes(1);
+    expect(m.sent.some((c) => c.includes("acme.json.tmp"))).toBe(false);
+    expect(m.proxy.ensureProxy).toHaveBeenCalledWith("srv1", { force: true });
+    expect(m.prisma.cutoverCert.update).not.toHaveBeenCalled();
+  });
+
+  describe("large acme.json (read in chunks)", () => {
+    const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
+    /** A pretty-printed store well beyond the agent's 64 KiB output cap, holding an ACME account and filler certs. */
+    const bigStore = () => {
+      const certs = Array.from({ length: 12 }, (_, i) => ({ domain: { main: `other${i}.example.net` }, certificate: "A".repeat(8000), key: "B".repeat(3000) }));
+      return Buffer.from(JSON.stringify({ le: { Account: { Email: "ops@example.net", PrivateKey: "ACCOUNT-KEY" }, Certificates: certs } }, null, 2), "utf8");
+    };
+    function mockFile(m: ReturnType<typeof make>, file: Buffer, over: { chunkOutput?: (n: number, real: string) => string; sha?: string } = {}) {
+      let n = 0;
+      m.agentWs.sendCommand.mockImplementation(async (_s: string, cmd: string) => {
+        m.sent.push(cmd);
+        if (cmd.includes("docker stop")) return { exitCode: 0, output: `TUGRA_ACME_SIZE=${file.length}\nTUGRA_ACME_SHA256=${over.sha ?? sha(file)}\n` };
+        const rng = /tail -c \+(\d+) .* \| head -c (\d+) /.exec(cmd);
+        if (rng) {
+          const real = `${file.subarray(Number(rng[1]) - 1, Number(rng[1]) - 1 + Number(rng[2])).toString("base64")}\nTUGRA_ACME_CHUNK_END\n`;
+          return { exitCode: 0, output: over.chunkOutput ? over.chunkOutput(n++, real) : real };
+        }
+        return { exitCode: 0, output: "TUGRA_ACME_SEED ok n=1" };
+      });
+    }
+
+    it("reassembles the chunks, verifies them and merges without losing the account or the other certs", async () => {
+      const file = bigStore();
+      expect(file.length).toBeGreaterThan(64 * 1024);
+      const m = make({ staged: stagedReal() });
+      mockFile(m, file);
+      expect(await m.svc.seed("u1", "op1", { acknowledgeProxyRestart: true })).toEqual({ applied: 1 });
+      const chunkCmds = m.sent.filter((c) => c.includes("tail -c"));
+      expect(chunkCmds.length).toBe(Math.ceil(file.length / (36 * 1024)));
+      const write = m.sent.find((c) => c.includes("acme.json.tmp"))!;
+      const written = JSON.parse(Buffer.from(/printf %s '([^']+)'/.exec(write)![1], "base64").toString("utf8"));
+      expect(written.le.Account.PrivateKey).toBe("ACCOUNT-KEY");
+      expect(written.le.Certificates).toHaveLength(13);
+      expect(written.le.Certificates.some((c: { domain: { main: string } }) => c.domain.main === "a.example.com")).toBe(true);
+      expect(m.proxy.ensureProxy).toHaveBeenCalledWith("srv1", { force: true });
+    });
+
+    it.each([
+      ["a truncated chunk", (_n: number, real: string) => real.slice(0, 2000) + "\n…(truncated)"],
+      ["a chunk without its end marker", (_n: number, real: string) => real.replace("TUGRA_ACME_CHUNK_END\n", "")],
+      ["a short chunk", (n: number, real: string) => (n === 1 ? "AAAA\nTUGRA_ACME_CHUNK_END\n" : real)],
+    ])("refuses %s and writes nothing", async (_name, chunkOutput) => {
+      const m = make({ staged: stagedReal() });
+      mockFile(m, bigStore(), { chunkOutput });
+      await expect(m.svc.seed("u1", "op1", { acknowledgeProxyRestart: true })).rejects.toThrow(/could not be read completely/);
+      expect(m.sent.some((c) => c.includes("acme.json.tmp"))).toBe(false);
+      expect(m.proxy.ensureProxy).toHaveBeenCalledWith("srv1", { force: true });
+    });
+
+    it("refuses a reassembled store whose sha256 differs from the probe", async () => {
+      const m = make({ staged: stagedReal() });
+      mockFile(m, bigStore(), { sha: "0".repeat(64) });
+      await expect(m.svc.seed("u1", "op1", { acknowledgeProxyRestart: true })).rejects.toThrow(/could not be read completely/);
+      expect(m.sent.some((c) => c.includes("acme.json.tmp"))).toBe(false);
+    });
   });
 
   it("requires the proxy-restart acknowledgement, and refuses swarm nodes and an empty stage", async () => {

@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Cutover certificate seeding no longer overwrites a large target `acme.json`.** A target proxy store bigger than one
+  agent command result (about 48 KiB) used to be read back cut off, treated as empty and replaced, losing the ACME
+  account and every certificate already issued there. The store is now read in verified chunks (length and sha256
+  checked, up to 2 MiB), and any truncated or inconsistent read stops the seed with nothing written; the proxy is still
+  recreated.
 - **Cutover: apps and databases moved by the streamed volume copy are no longer "stateful" forever.** The plan now
   counts a finished streamed volume copy (an app's volumes, or a volume-mode Postgres) as its data being moved, so the
   flip no longer demands the data-risk acknowledgement and keeps auto-revert for them.

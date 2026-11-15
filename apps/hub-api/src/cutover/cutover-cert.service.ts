@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, PayloadTooLargeException, UnsupportedMediaTypeException } from "@nestjs/common";
-import { X509Certificate } from "node:crypto";
+import { createHash, X509Certificate } from "node:crypto";
 import type { Readable } from "node:stream";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -9,7 +9,7 @@ import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { ProxyService } from "../applications/proxy.service";
 import { ImportExecutorService } from "../importer/import-executor.service";
 import type { MigrationTokenContext } from "../importer/migration-token.service";
-import { buildAcmeReadScript, buildAcmeWriteScript, parseAcmeReadOutput, parseAcmeSeedOutput } from "./cutover-scripts";
+import { ACME_CHUNK_BYTES, buildAcmeReadChunkScript, buildAcmeReadScript, buildAcmeWriteScript, parseAcmeChunkOutput, parseAcmeReadOutput, parseAcmeSeedOutput } from "./cutover-scripts";
 import { certNames, keyMatchesCert, MIN_SEED_DAYS, mergeAcmeStore, sanitizeText, type SeedCert } from "./cutover.logic";
 import type { CutoverSeedCertsInput } from "./cutover.dto";
 
@@ -198,10 +198,7 @@ export class CutoverCertService {
       await this.withServerLock(sid, async () => {
         const seeds: SeedCert[] = mine.map((c) => ({ main: c.hosts[0], sans: c.hosts.slice(1), certPem: c.certPem, keyPem: this.crypto.decrypt(c.keyEnc) }));
         try {
-          const read = await this.agentWs.sendCommand(sid, buildAcmeReadScript(), "deploy", 30_000);
-          const parsed = parseAcmeReadOutput(read.output);
-          if (!parsed || parsed.tooBig) throw new ConflictException("the target acme.json could not be read (missing or too large)");
-          const existing = parsed.b64 ? Buffer.from(parsed.b64, "base64").toString("utf8") : null;
+          const existing = await this.readTargetAcme(sid);
           const merged = mergeAcmeStore(existing, seeds, "le");
           const b64 = Buffer.from(merged.json, "utf8").toString("base64");
           const w = await this.agentWs.sendCommand(sid, buildAcmeWriteScript(b64, merged.added), "deploy", 30_000);
@@ -221,6 +218,35 @@ export class CutoverCertService {
     }
     await this.audit.log({ actor: userId, action: "cutover.seedCerts", target: opId, meta: { applied: appliedCertIds.size, servers: byServer.size, minDays: MIN_SEED_DAYS } }).catch(() => undefined);
     return { applied: appliedCertIds.size };
+  }
+
+  /**
+   * The target's acme.json as text (`null` only when the file is genuinely absent/empty). The proxy is stopped by the
+   * probe. A store larger than one command result is read in slices and verified (length + sha256); anything cut or
+   * inconsistent throws, so an unreadable store is never mistaken for an empty one and overwritten.
+   */
+  private async readTargetAcme(sid: string): Promise<string | null> {
+    const unreadable = () => new ConflictException("the target acme.json could not be read completely (missing, too large or truncated); nothing was written");
+    const probe = await this.agentWs.sendCommand(sid, buildAcmeReadScript(), "deploy", 30_000);
+    const parsed = parseAcmeReadOutput(probe.output);
+    if (!parsed || parsed.tooBig || (parsed.size > 0 && parsed.b64 === null && !parsed.sha256)) throw unreadable();
+    if (parsed.size === 0) return null;
+    let buf: Buffer;
+    if (parsed.b64 !== null) {
+      buf = Buffer.from(parsed.b64, "base64");
+    } else {
+      const parts: Buffer[] = [];
+      for (let off = 0; off < parsed.size; off += ACME_CHUNK_BYTES) {
+        const want = Math.min(ACME_CHUNK_BYTES, parsed.size - off);
+        const r = await this.agentWs.sendCommand(sid, buildAcmeReadChunkScript(off, want), "deploy", 30_000);
+        const part = parseAcmeChunkOutput(r.output);
+        if (!part || part.length !== want) throw unreadable();
+        parts.push(part);
+      }
+      buf = Buffer.concat(parts);
+    }
+    if (buf.length !== parsed.size || (parsed.sha256 && createHash("sha256").update(buf).digest("hex") !== parsed.sha256)) throw unreadable();
+    return buf.toString("utf8");
   }
 
   /** Purge every staged private key of an op (op rollback / cleanup). Rows cascade-delete with the op itself. */

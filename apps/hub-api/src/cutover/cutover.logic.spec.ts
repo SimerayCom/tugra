@@ -9,7 +9,7 @@ import {
   type CutoverState, type LedgerRecord, type ProviderRec,
 } from "./cutover.logic";
 import { shq } from "../deploy/deploy-script";
-import { buildAcmeDiagScript, buildAcmeReadScript, buildAcmeWriteScript, buildCutoverLoopbackProbeScript, parseAcmeReadOutput, parseAcmeSeedOutput } from "./cutover-scripts";
+import { buildAcmeDiagScript, buildAcmeReadChunkScript, buildAcmeReadScript, buildAcmeWriteScript, buildCutoverLoopbackProbeScript, parseAcmeChunkOutput, parseAcmeReadOutput, parseAcmeSeedOutput } from "./cutover-scripts";
 
 const T = { v4: ["203.0.113.7"], v6: [] as string[] };
 const rec = (id: string, type: string, content: string, over: Partial<ProviderRec> = {}): ProviderRec => ({ id, type, name: "app.example.com", content, ttl: 3600, proxied: false, ...over });
@@ -229,6 +229,29 @@ describe("marker parsers and scripts", () => {
     expect(w).toContain("chmod 600");
     expect(w).toContain("mv /etc/tugra/letsencrypt/acme.json.tmp /etc/tugra/letsencrypt/acme.json");
     expect(parseAcmeSeedOutput(w.split("\n").pop()!.replace(/^echo "|"$/g, ""))).toBe(2);
+  });
+  it("acme read fails closed on a truncated, short or unchecked output", () => {
+    // the agent cut the output: BEGIN without END, with its truncation marker
+    expect(parseAcmeReadOutput("TUGRA_ACME_SIZE=90000\nTUGRA_ACME_B64_BEGIN\nAAAA\n…(truncated)")).toBeNull();
+    expect(parseAcmeReadOutput("TUGRA_ACME_SIZE=5\nTUGRA_ACME_B64_BEGIN\naGVs")).toBeNull();
+    // decoded length differs from the probed size
+    expect(parseAcmeReadOutput("TUGRA_ACME_SIZE=9\nTUGRA_ACME_B64_BEGIN\naGVsbG8=\nTUGRA_ACME_B64_END")).toBeNull();
+    // a non-empty file with neither a body nor a checksum is never "absent"
+    expect(parseAcmeReadOutput("TUGRA_ACME_SIZE=5")).toBeNull();
+    expect(parseAcmeReadOutput(`TUGRA_ACME_SIZE=5\nTUGRA_ACME_SHA256=${"a".repeat(64)}`)).toBeNull(); // small files must carry the body
+    // a big store is announced bodiless with its checksum, to be read in chunks
+    expect(parseAcmeReadOutput(`TUGRA_ACME_SIZE=90000\nTUGRA_ACME_SHA256=${"a".repeat(64)}`)).toEqual({ size: 90000, b64: null, tooBig: false, sha256: "a".repeat(64) });
+    expect(buildAcmeReadScript()).toContain("TUGRA_ACME_SHA256");
+  });
+  it("acme chunk scripts: bounded range in, complete chunk out", () => {
+    expect(buildAcmeReadChunkScript(36864, 100)).toContain("tail -c +36865 /etc/tugra/letsencrypt/acme.json | head -c 100 | base64");
+    expect(() => buildAcmeReadChunkScript(-1, 10)).toThrow();
+    expect(() => buildAcmeReadChunkScript(0, 0)).toThrow();
+    expect(() => buildAcmeReadChunkScript(0, 36 * 1024 + 1)).toThrow();
+    expect(parseAcmeChunkOutput("aGVsbG8=\nTUGRA_ACME_CHUNK_END\n")?.toString()).toBe("hello");
+    expect(parseAcmeChunkOutput("aGVsbG8=\n…(truncated)")).toBeNull();
+    expect(parseAcmeChunkOutput("aGVsbG8=")).toBeNull();
+    expect(parseAcmeChunkOutput("not base64!\nTUGRA_ACME_CHUNK_END")).toBeNull();
   });
 });
 

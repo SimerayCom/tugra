@@ -5,8 +5,8 @@ export { parseCutoverProbeMarkers, parseAcmeDiagMarkers } from "./cutover.logic"
 const PROXY = "tugra-proxy";
 const ACME_DIR = "/etc/tugra/letsencrypt";
 export const ACME_FILE = `${ACME_DIR}/acme.json`;
-/** acme.json larger than this never rides a command result (the hub reads it back as base64). */
-export const ACME_READ_CAP = 512 * 1024;
+/** acme.json larger than this is refused (the hub reads it back in ACME_CHUNK_BYTES slices, at most ~57 commands). */
+export const ACME_READ_CAP = 2 * 1024 * 1024;
 
 /**
  * Agent-side loopback probe: the proxy's routing for `host` seen from the server itself (curl --resolve to
@@ -48,7 +48,17 @@ export function buildAcmeDiagScript(host: string): string {
   ].join("\n");
 }
 
-/** Stop the proxy (so Traefik cannot rewrite acme.json under us) and print the file as one base64 line. */
+/** The agent caps a command's output at 64 KiB and appends this marker when it cuts (agent/internal/exec). */
+const AGENT_TRUNCATION_MARKER = "…(truncated)";
+
+/** Bytes of acme.json read per command: 36 KiB -> 48 KiB of base64, comfortably under the agent's 64 KiB output cap. */
+export const ACME_CHUNK_BYTES = 36 * 1024;
+
+/**
+ * Stop the proxy (so Traefik cannot rewrite acme.json under us) and probe the file: its size, its sha256 and, only
+ * when it fits one command result, the body as one base64 line. A larger store is then read with
+ * {@link buildAcmeReadChunkScript} and checked against the probe, so the hub never acts on a truncated read.
+ */
 export function buildAcmeReadScript(): string {
   return [
     "set -u",
@@ -57,27 +67,66 @@ export function buildAcmeReadScript(): string {
     `  SZ=$(wc -c < ${ACME_FILE} | tr -d ' ')`,
     '  echo "TUGRA_ACME_SIZE=$SZ"',
     `  if [ "$SZ" -gt ${ACME_READ_CAP} ]; then echo "TUGRA_ACME_TOOBIG"; exit 0; fi`,
-    '  echo "TUGRA_ACME_B64_BEGIN"',
-    `  base64 < ${ACME_FILE} | tr -d '\\n'`,
-    '  echo ""',
-    '  echo "TUGRA_ACME_B64_END"',
+    `  echo "TUGRA_ACME_SHA256=$(sha256sum < ${ACME_FILE} | cut -d' ' -f1)"`,
+    `  if [ "$SZ" -le ${ACME_CHUNK_BYTES} ]; then`,
+    '    echo "TUGRA_ACME_B64_BEGIN"',
+    `    base64 < ${ACME_FILE} | tr -d '\\n'`,
+    '    echo ""',
+    '    echo "TUGRA_ACME_B64_END"',
+    "  fi",
     "else",
     '  echo "TUGRA_ACME_SIZE=0"',
     "fi",
   ].join("\n");
 }
 
-export function parseAcmeReadOutput(out: string): { size: number; b64: string | null; tooBig: boolean } | null {
+/**
+ * Parse the probe. Fails CLOSED: anything that is not a complete, self-consistent read is `null` (a cut output must
+ * never be mistaken for "no acme.json"). `b64` is the whole file when it rode the probe; it is `null` for an absent /
+ * empty file (size 0) and for a store too big for one command (`size > ACME_CHUNK_BYTES`, `sha256` set), which the
+ * caller then reads chunk by chunk.
+ */
+export function parseAcmeReadOutput(out: string): { size: number; b64: string | null; tooBig: boolean; sha256?: string } | null {
+  if (out.includes(AGENT_TRUNCATION_MARKER)) return null;
   const lines = out.split(/\r?\n/);
   const sizeLine = lines.find((l) => /^TUGRA_ACME_SIZE=\d{1,12}$/.test(l));
   if (!sizeLine) return null;
   const size = Number(sizeLine.split("=")[1]);
   if (lines.includes("TUGRA_ACME_TOOBIG")) return { size, b64: null, tooBig: true };
+  const shaLine = lines.find((l) => /^TUGRA_ACME_SHA256=[0-9a-f]{64}$/.test(l));
+  const sha256 = shaLine ? shaLine.split("=")[1] : undefined;
   const begin = lines.indexOf("TUGRA_ACME_B64_BEGIN");
   const end = lines.indexOf("TUGRA_ACME_B64_END");
-  if (begin < 0 || end < begin) return { size, b64: null, tooBig: false };
+  if (begin < 0) {
+    if (size === 0) return { size, b64: null, tooBig: false };
+    // chunked path: only valid for a store that could not ride the probe, and only with its checksum
+    return size > ACME_CHUNK_BYTES && sha256 ? { size, b64: null, tooBig: false, sha256 } : null;
+  }
+  if (end < begin) return null;
   const b64 = lines.slice(begin + 1, end).join("");
-  return /^[A-Za-z0-9+/=]*$/.test(b64) ? { size, b64, tooBig: false } : null;
+  if (!/^[A-Za-z0-9+/=]*$/.test(b64) || Buffer.from(b64, "base64").length !== size) return null;
+  return sha256 ? { size, b64, tooBig: false, sha256 } : { size, b64, tooBig: false };
+}
+
+/** One slice of acme.json (the proxy is already stopped) as a single base64 line. */
+export function buildAcmeReadChunkScript(offset: number, length: number): string {
+  if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(length) || length < 1 || length > ACME_CHUNK_BYTES) throw new Error("bad acme chunk range");
+  return [
+    "set -u",
+    `tail -c +${offset + 1} ${ACME_FILE} | head -c ${length} | base64 | tr -d '\\n'`,
+    'echo ""',
+    'echo "TUGRA_ACME_CHUNK_END"',
+  ].join("\n");
+}
+
+/** The decoded bytes of one chunk, or `null` when the output is cut, malformed or lacks its end marker. */
+export function parseAcmeChunkOutput(out: string): Buffer | null {
+  if (out.includes(AGENT_TRUNCATION_MARKER)) return null;
+  const lines = out.split(/\r?\n/);
+  const end = lines.indexOf("TUGRA_ACME_CHUNK_END");
+  if (end < 0) return null;
+  const b64 = lines.slice(0, end).join("");
+  return /^[A-Za-z0-9+/=]*$/.test(b64) ? Buffer.from(b64, "base64") : null;
 }
 
 /** Atomically replace acme.json (tmp + chmod 600 + mv, the certPrelude precedent). b64 is shq()-quoted. */
