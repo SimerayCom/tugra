@@ -1,19 +1,26 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, NotFoundException, PayloadTooLargeException } from "@nestjs/common";
 import { AGENT_FEATURE_HUB_ORIGIN_ENV } from "@tugra/shared";
-import { Prisma } from "@prisma/client";
+import { Prisma, type MigrationVolumeTransfer } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { TeamAccessService } from "../../common/team-access.service";
 import { AgentWsServer } from "../../agent-gateway/agent-ws.server";
-import { DOCKER_ROOT, MOVE_STAGING_ROOT, MOVE_TIMEOUTS, buildMoveProbeScript, parseMoveProbe } from "../../app-moves/app-move-scripts";
+import { DOCKER_ROOT, MOVE_STAGING_ROOT, MOVE_TIMEOUTS, buildMoveProbeScript, buildMoveRecvScript, hasMarker, parseMovePart, parseMoveProbe, scrubMoveOutput, type MoveProbe } from "../../app-moves/app-move-scripts";
+import { VolumeRelayService } from "../../app-moves/volume-relay.service";
 import { diskVerdict } from "../../app-moves/move-preflight";
 import { appVolumeName } from "../../deploy/deploy-script";
 import { dbVolumeName } from "../../databases/database-script";
 import { ImportExecutorService } from "../import-executor.service";
 import { MigrationTokenService, type MigrationTokenContext } from "../migration-token.service";
-import { evaluateDbGates, type GateResult } from "./vx-gates";
-import { VX_PROTOCOL, vxEnabled, vxMaxBytes, vxMaxParts, vxPartRawBytes } from "./vx-constants";
+import type { GateResult } from "./vx-gates";
+import { dbGates } from "./vx-dest-gate";
+import { VX_409, VX_PROTOCOL, VX_VOL_IDX, vxDataRef, vxEnabled, vxMaxBytes, vxMaxParts, vxPartRawBytes, vxPrincipal, vxCommitWaitMs, vxStaleMs } from "./vx-constants";
+import { VxPartRegistry, type InflightPart, type PartOutcome } from "./vx-part-registry";
+import { VxApplyService } from "./vx-apply.service";
+import { buildMigrationPartStatScript } from "./vx-scripts";
+import { firstGate } from "./vx-dest-gate";
+import { volDataRef } from "../migration-volume";
 import { buildVolumeTargets, dbVolumeModeRefs, parseVolumeItemRef, type VxDbLite, type VxExclusion, type VxVolumeTarget } from "./vx-targets";
-import type { VxInventoryBody, VxInventoryItem } from "./vx.dto";
+import type { VxBeginBody, VxFinishBody, VxFingerprint, VxInventoryBody, VxInventoryItem, VxPartBody, VxRunBody } from "./vx.dto";
 import { buildVolumeView, type VolumeTransferView } from "./vx-view";
 
 /** A fully resolved, re-authorized destination of ONE volume itemRef. Everything here is hub-derived, never from the migrator. */
@@ -64,6 +71,9 @@ export class VxService {
     protected readonly executor: ImportExecutorService,
     protected readonly agentWs: AgentWsServer,
     protected readonly tokens: MigrationTokenService,
+    protected readonly relay: VolumeRelayService,
+    protected readonly registry: VxPartRegistry,
+    protected readonly apply: VxApplyService,
   ) {}
 
   // ───────────────────────────── targets ─────────────────────────────
@@ -186,28 +196,33 @@ export class VxService {
    * An offline agent or an unreadable probe is `unknown` and NEVER `ok` (fail closed).
    */
   async diskVerdictFor(ctx: Pick<VxCtx, "targetServerId" | "dockerVolume" | "server">, rawBytes: number): Promise<VxDiskResult> {
-    const unknown = (why: string): VxDiskResult => ({ ok: false, unknown: true, details: { totalBytes: rawBytes, reason: why } });
-    if (!ctx.server.capabilities.includes("backup")) return unknown("the target server has no backup capability granted");
-    if (!this.agentWs.isOnline(ctx.targetServerId)) return unknown("the target agent is offline");
-    if (!this.agentWs.agentSupports(ctx.targetServerId, AGENT_FEATURE_HUB_ORIGIN_ENV)) return unknown("the target agent is too old for streamed copies; update it");
+    const p = await this.probeTarget(ctx);
+    if (!p.probe) return { ok: false, unknown: true, details: { totalBytes: rawBytes, reason: p.why } };
+    const stage = p.probe.df[MOVE_STAGING_ROOT];
+    const dock = p.probe.df[DOCKER_ROOT];
+    const v = diskVerdict({
+      totalBytes: rawBytes,
+      sourceStagingFreeBytes: Number.MAX_SAFE_INTEGER, // nothing is staged on the source host
+      targetStagingFreeBytes: stage?.availKb != null ? stage.availKb * 1024 : null,
+      targetDockerFreeBytes: dock?.availKb != null ? dock.availKb * 1024 : null,
+      targetSameDevice: !!stage?.dev && !!dock?.dev && stage.dev === dock.dev,
+    });
+    return { ok: v.ok, unknown: v.unknown, details: v.details as VxDiskResult["details"] };
+  }
+
+  /** The read-only probe of the TARGET host; `probe: null` carries WHY it is unknown (offline, old agent, no capability, bad output). */
+  protected async probeTarget(ctx: Pick<VxCtx, "targetServerId" | "dockerVolume" | "server">): Promise<{ probe: MoveProbe | null; why: string }> {
+    if (!ctx.server.capabilities.includes("backup")) return { probe: null, why: "the target server has no backup capability granted" };
+    if (!this.agentWs.isOnline(ctx.targetServerId)) return { probe: null, why: "the target agent is offline" };
+    if (!this.agentWs.agentSupports(ctx.targetServerId, AGENT_FEATURE_HUB_ORIGIN_ENV)) return { probe: null, why: "the target agent is too old for streamed copies; update it" };
     try {
       const input = { dockerVolumes: [ctx.dockerVolume] };
       const r = await this.agentWs.sendCommand(ctx.targetServerId, buildMoveProbeScript(input), "backup", MOVE_TIMEOUTS.probe);
-      if (r.exitCode !== 0) return unknown("the target probe failed");
+      if (r.exitCode !== 0) return { probe: null, why: "the target probe failed" };
       const probe = parseMoveProbe(r.output, input);
-      if (!probe) return unknown("the target probe output was unusable");
-      const stage = probe.df[MOVE_STAGING_ROOT];
-      const dock = probe.df[DOCKER_ROOT];
-      const v = diskVerdict({
-        totalBytes: rawBytes,
-        sourceStagingFreeBytes: Number.MAX_SAFE_INTEGER, // nothing is staged on the source host
-        targetStagingFreeBytes: stage?.availKb != null ? stage.availKb * 1024 : null,
-        targetDockerFreeBytes: dock?.availKb != null ? dock.availKb * 1024 : null,
-        targetSameDevice: !!stage?.dev && !!dock?.dev && stage.dev === dock.dev,
-      });
-      return { ok: v.ok, unknown: v.unknown, details: v.details as VxDiskResult["details"] };
+      return probe ? { probe, why: "" } : { probe: null, why: "the target probe output was unusable" };
     } catch {
-      return unknown("the target agent could not be reached");
+      return { probe: null, why: "the target agent could not be reached" };
     }
   }
 
@@ -290,13 +305,467 @@ export class VxService {
     return { vxProtocol: VX_PROTOCOL, vx: { partRawBytes: vxPartRawBytes(), maxBytes: vxMaxBytes(), maxParts: vxMaxParts() } };
   }
 
-  /** Gates for the db-data volume of one database (dry-run and begin share this). */
-  async dbGates(ctx: VxCtx, inventory: VxInventoryItem | undefined): Promise<GateResult[]> {
-    const db = await this.prisma.database.findUnique({ where: { id: ctx.resourceId }, select: { version: true, image: true, status: true } });
-    if (!db) throw new ConflictException("destination no longer exists");
-    const restores = await this.prisma.restore.count({ where: { databaseId: ctx.resourceId } });
-    const backups = await this.prisma.backup.count({ where: { databaseId: ctx.resourceId } });
-    return evaluateDbGates({ credentialsCarried: ctx.credentialsCarried, record: { version: db.version, image: db.image, status: db.status, restores, backups }, inventory });
+  // ───────────────────────────── transfer lifecycle (token routes) ─────────────────────────────
+
+  private metaOfOp(opId: string): Promise<OpMetaVx> {
+    return this.prisma.bulkOperation.findUnique({ where: { id: opId }, select: { meta: true } }).then((r) => metaOf(r?.meta));
+  }
+
+  private async expiry(op: MigrationTokenContext): Promise<string> {
+    const renewed = await this.tokens.extend(op.opId).catch(() => null);
+    return (renewed ?? op.expiresAt).toISOString();
+  }
+
+  private findTransfer(opId: string, itemRef: string): Promise<MigrationVolumeTransfer | null> {
+    return this.prisma.migrationVolumeTransfer.findUnique({ where: { opId_itemRef: { opId, itemRef } } });
+  }
+
+  /** The migrator that holds the lease of a COPYING transfer; anything else is a 409 with the matching literal. */
+  private async assertLeased(ctx: VxCtx, runId: string): Promise<MigrationVolumeTransfer> {
+    const t = await this.findTransfer(ctx.opId, ctx.target.itemRef);
+    if (!t) throw new NotFoundException("no such migration target");
+    if (t.state === "ABORTED") throw new ConflictException(VX_409.aborted);
+    if (t.runId !== runId || t.state !== "COPYING") throw new ConflictException(VX_409.otherRun);
+    return t;
+  }
+
+  /** The destination must STILL be as-provisioned (a deploy or restore during a long copy aborts it). */
+  private async assertDestOpen(ctx: VxCtx, inventory: VxInventoryItem | undefined): Promise<void> {
+    if (ctx.target.destType === "app-volume") {
+      if ((await this.prisma.deployment.count({ where: { appId: ctx.resourceId } })) > 0) throw new ConflictException(VX_409.destDirty);
+      return;
+    }
+    const bad = firstGate(await dbGates(this.prisma, ctx, inventory));
+    if (bad) throw new ConflictException(bad.text);
+  }
+
+  private sameFingerprint(a: unknown, b: VxFingerprint): boolean {
+    if (!a || typeof a !== "object") return false;
+    const x = a as Record<string, unknown>;
+    for (const k of ["containerId", "startedAt", "finishedAt", "exitCode", "mountType", "mountName", "imageId", "pgMajor"] as const) {
+      if ((x[k] ?? null) !== ((b as Record<string, unknown>)[k] ?? null)) return false;
+    }
+    return true;
+  }
+
+  private gib(n: unknown): string {
+    return typeof n === "number" ? (n / 1024 ** 3).toFixed(1) : "?";
+  }
+
+  private beginView(t: MigrationVolumeTransfer, expiresAt: string, parts: Array<{ idx: number; rawOffset: bigint; rawLen: number; rawSha256: string }>, disk?: VxDiskResult | null): Record<string, unknown> {
+    return {
+      transferId: t.id,
+      attempt: t.attempt,
+      state: t.state,
+      partRawBytes: t.partRawBytes,
+      resumeFromPart: t.partsDone,
+      manifest: parts.map((p) => ({ idx: p.idx, rawOffset: Number(p.rawOffset), rawLen: p.rawLen, rawSha256: p.rawSha256 })),
+      expiresAt,
+      diskVerdict: disk ? { ok: disk.ok, details: disk.details } : null,
+    };
+  }
+
+  /**
+   * Claim (or resume) the transfer of one volume for a migrator run. Gates first (destination still as-provisioned, no v1
+   * hub-staged upload for the same volume, caps, the physical-copy gates for a Postgres volume, free space on the TARGET),
+   * then ONE atomic updateMany takes the lease. The begin-time source fingerprint is stored; a later begin with a different
+   * one is `vx-fingerprint-changed` (never an automatic reset).
+   */
+  async begin(op: MigrationTokenContext, itemRef: string, body: VxBeginBody): Promise<Record<string, unknown>> {
+    const ctx = await this.resolve(op.opId, op.actorId, itemRef);
+    if (ctx.target.excluded) throw new ConflictException("this volume was excluded from the migration by its owner");
+    if (body.partRawBytes !== vxPartRawBytes()) throw new BadRequestException(`partRawBytes must equal the hub policy (${vxPartRawBytes()})`);
+    if (body.rawTotal !== undefined && body.rawTotal > vxMaxBytes()) throw new PayloadTooLargeException(`the volume exceeds the ${vxMaxBytes()}-byte limit`);
+    const meta = await this.metaOfOp(op.opId);
+    const inv = meta.vxInventory?.[itemRef];
+
+    if (ctx.target.destType === "app-volume") {
+      // v1 hub-staged upload and the streamed copy are mutually exclusive per volume (either order).
+      const v1 = await this.prisma.bulkTask.findFirst({ where: { opId: op.opId, itemRef: volDataRef(ctx.ownerTaskItemRef, ctx.target.name) }, select: { id: true } });
+      if (v1) throw new ConflictException(VX_409.usesHubStaged);
+    }
+
+    let t = await this.findTransfer(op.opId, itemRef);
+    if (t?.state === "DONE") return { ...this.beginView(t, await this.expiry(op), []), alreadyDone: true };
+    if (t?.state === "ABORTED") throw new ConflictException(VX_409.aborted);
+    if (t && (t.state === "COPIED" || t.state === "APPLYING")) return this.beginView(t, await this.expiry(op), []); // the apply is running: just poll status
+    if (t && t.fingerprint && !this.sameFingerprint(t.fingerprint, body.fingerprint)) throw new ConflictException(VX_409.fingerprintChanged);
+    if (t && t.partsDone > 0 && t.partRawBytes !== body.partRawBytes) throw new ConflictException(VX_409.diverged);
+
+    // The post-apply start of a Postgres volume failed earlier: only that step is retried (nothing is copied again).
+    if (t && t.state === "FAILED" && t.phase === "provision-failed") {
+      const claimed = await this.prisma.migrationVolumeTransfer.updateMany({
+        where: { id: t.id, state: "FAILED", OR: [{ runId: null }, { runId: body.runId }, { lastBeatAt: { lt: new Date(Date.now() - vxStaleMs()) } }] },
+        data: { state: "APPLYING", runId: body.runId, lastBeatAt: new Date(), error: null, phase: "provisioning", finishedAt: null },
+      });
+      if (claimed.count !== 1) throw new ConflictException(VX_409.otherRun);
+      t = (await this.findTransfer(op.opId, itemRef))!;
+      await this.setDataTask(ctx, t, "RUNNING", [{ name: "applied", status: "DONE" }, { name: "db-provisioned", status: "RUNNING" }]);
+      this.apply.retryProvision(ctx, t);
+      return this.beginView(t, await this.expiry(op), []);
+    }
+
+    // The gates run first (cheap, no agent round trip) and BEFORE the lease is taken, so a refused volume never holds one.
+    await this.assertDestOpen(ctx, inv);
+
+    // Free space on the TARGET (compressed parts + the decoded copy). Skipped when parts are already staged (resume).
+    const bytes = body.rawTotal ?? inv?.rawBytes ?? 0;
+    let disk: VxDiskResult | null = null;
+    if (!t || t.partsDone === 0) {
+      disk = await this.diskVerdictFor(ctx, bytes);
+      if (disk.unknown) throw new ConflictException(`${VX_409.diskInsufficient}: could not verify the free space on the target (${String(disk.details.reason ?? "unknown")})`);
+      if (!disk.ok) {
+        const d = disk.details;
+        throw new ConflictException(`${VX_409.diskInsufficient}: the transfer needs about ${this.gib(Math.max(Number(d.totalBytes) * 2.05 + 1024 ** 3, 0))} GiB free on one filesystem (data ${this.gib(d.totalBytes)} GiB; free ${this.gib(d.targetStagingFreeBytes)} GiB staging, ${this.gib(d.targetDockerFreeBytes)} GiB docker root)`);
+      }
+      await this.storeDisk(op.opId, itemRef, disk);
+    }
+
+    if (!t) {
+      try {
+        t = await this.prisma.migrationVolumeTransfer.create({
+          data: {
+            opId: op.opId,
+            itemRef,
+            destType: ctx.target.destType,
+            targetServerId: ctx.targetServerId,
+            dockerVolume: ctx.dockerVolume,
+            resourceType: ctx.resourceType,
+            resourceId: ctx.resourceId,
+            partRawBytes: body.partRawBytes,
+            rawBytesTotal: body.rawTotal ?? inv?.rawBytes ?? null,
+            fingerprint: body.fingerprint as unknown as Prisma.InputJsonValue,
+          },
+        });
+      } catch {
+        t = await this.findTransfer(op.opId, itemRef); // unique race (P2002)
+        if (!t) throw new ConflictException(VX_409.otherRun);
+      }
+    }
+    const claimed = await this.prisma.migrationVolumeTransfer.updateMany({
+      where: { id: t.id, state: { in: ["PENDING", "COPYING", "FAILED"] }, OR: [{ runId: null }, { runId: body.runId }, { lastBeatAt: { lt: new Date(Date.now() - vxStaleMs()) } }] },
+      data: {
+        runId: body.runId,
+        lastBeatAt: new Date(),
+        state: "COPYING",
+        error: null,
+        phase: "verifying",
+        finishedAt: null,
+        startedAt: t.startedAt ?? new Date(),
+        ...(t.fingerprint ? {} : { fingerprint: body.fingerprint as unknown as Prisma.InputJsonValue }),
+        ...(body.rawTotal !== undefined ? { rawBytesTotal: body.rawTotal } : {}),
+      },
+    });
+    if (claimed.count !== 1) {
+      const cur = await this.findTransfer(op.opId, itemRef);
+      if (cur?.state === "DONE") return { ...this.beginView(cur, await this.expiry(op), []), alreadyDone: true };
+      throw new ConflictException(VX_409.otherRun);
+    }
+    t = (await this.findTransfer(op.opId, itemRef))!;
+    await this.setDataTask(ctx, t, "RUNNING", [{ name: "source-verified", status: "DONE" }, { name: "copying", status: "RUNNING" }]);
+    const parts = t.partsDone > 0 ? await this.prisma.migrationVolumePart.findMany({ where: { transferId: t.id }, orderBy: { idx: "asc" } }) : [];
+    return this.beginView(t, await this.expiry(op), parts, disk);
+  }
+
+  /** Find-or-create the `data:<itemRef>` task that mirrors the transfer; stamps the owner ref AT CLAIM (rollback guard + reaper exclusion). */
+  protected async setDataTask(ctx: VxCtx, t: MigrationVolumeTransfer, status: "RUNNING" | "DONE" | "FAILED", steps: Array<{ name: string; status: string }>, extra: Record<string, unknown> = {}): Promise<void> {
+    const owner = ctx.target.destType === "app-volume" ? { appItemRef: ctx.ownerTaskItemRef, volumeName: ctx.target.name } : { databaseItemRef: ctx.ownerTaskItemRef };
+    const result = { vx: true, ...owner, ...extra } as Prisma.InputJsonValue;
+    const ref = vxDataRef(t.itemRef);
+    const existing = await this.prisma.bulkTask.findFirst({ where: { opId: t.opId, itemRef: ref }, select: { id: true } });
+    if (!existing) {
+      try {
+        await this.prisma.bulkTask.create({ data: { opId: t.opId, serverId: ctx.targetServerId, kind: "data", itemRef: ref, status, startedAt: new Date(), steps, result } });
+        return;
+      } catch {
+        /* unique race: fall through to the update */
+      }
+    }
+    await this.prisma.bulkTask.updateMany({ where: { opId: t.opId, itemRef: ref }, data: { status, startedAt: new Date(), finishedAt: null, exitCode: null, output: null, steps, result } });
+  }
+
+  /** Receive-side settle of one part: the target's curl exited 0 with its marker AND the relay counted exactly the signed bytes. */
+  private settlePart(reg: Pick<InflightPart, "reg" | "size" | "sha256">, recv: Promise<{ exitCode: number; output: string }>): Promise<PartOutcome> {
+    return (async (): Promise<PartOutcome> => {
+      try {
+        const r = await recv;
+        if (r.exitCode !== 0 || !hasMarker(r.output, "TUGRA_VX_RECV_OK")) {
+          const tail = scrubMoveOutput(r.output).trim().split("\n").slice(-2).join(" | ");
+          return { ok: false, retryable: true, reason: `target exit ${r.exitCode}: ${tail}`.slice(0, 300) };
+        }
+        const done = await reg.reg.done;
+        if (done.bytes !== reg.size || done.sha256 !== reg.sha256) return { ok: false, retryable: true, reason: "relay counters differ from the signed part" };
+        return { ok: true, bytes: done.bytes };
+      } catch (e) {
+        const m = e instanceof Error ? e.message : String(e);
+        // Offline / not granted are not worth an immediate retry loop; everything else (idle, reset, sha) is retried by the migrator.
+        return { ok: false, retryable: !/offline|not granted|forbidden/i.test(m), reason: scrubMoveOutput(m).slice(0, 300) };
+      }
+    })();
+  }
+
+  /** Persist one committed part and advance the transfer in ONE fenced transaction (replays are no-ops). */
+  private async recordPart(ctx: VxCtx, t: MigrationVolumeTransfer, p: { idx: number; rawOffset: number; rawLen: number; rawSha256: string; size: number; sha256: string }, bps: number | null): Promise<boolean> {
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        const r = await tx.migrationVolumeTransfer.updateMany({
+          where: { id: t.id, runId: t.runId, state: "COPYING", partsDone: p.idx },
+          data: { partsDone: { increment: 1 }, bytesDone: { increment: p.size }, rawBytesDone: { increment: p.rawLen }, lastBeatAt: new Date(), phase: "streaming", ...(bps !== null ? { bps } : {}) },
+        });
+        if (r.count !== 1) throw new ConflictException(VX_409.otherRun);
+        await tx.migrationVolumePart.create({ data: { transferId: t.id, idx: p.idx, rawOffset: p.rawOffset, rawLen: p.rawLen, rawSha256: p.rawSha256, size: p.size, sha256: p.sha256 } });
+      });
+      return true;
+    } catch (e) {
+      if (e instanceof ConflictException) return false;
+      throw e;
+    }
+  }
+
+  async registerPart(op: MigrationTokenContext, itemRef: string, idx: number, body: VxPartBody): Promise<Record<string, unknown>> {
+    const ctx = await this.resolve(op.opId, op.actorId, itemRef);
+    const t = await this.assertLeased(ctx, body.runId);
+    const meta = await this.metaOfOp(op.opId);
+    await this.assertDestOpen(ctx, meta.vxInventory?.[itemRef]);
+    const expiresAt = await this.expiry(op);
+    if (idx < 0 || idx >= vxMaxParts()) throw new BadRequestException("part index out of range");
+
+    if (idx < t.partsDone) {
+      const row = await this.prisma.migrationVolumePart.findUnique({ where: { transferId_idx: { transferId: t.id, idx } } });
+      if (row && row.rawSha256 === body.rawSha256) return { alreadyDone: true, expiresAt };
+      throw new ConflictException(VX_409.diverged);
+    }
+    if (idx > t.partsDone) throw new ConflictException("part out of order");
+    if (body.rawLen > t.partRawBytes) throw new BadRequestException("rawLen exceeds the part size");
+    if (body.size > body.rawLen + Math.floor(body.rawLen / 100) + 1024) throw new BadRequestException("size exceeds the compressed bound");
+    if (body.rawOffset !== Number(t.rawBytesDone)) throw new BadRequestException("rawOffset does not follow the committed parts");
+    if (body.rawOffset + body.rawLen > vxMaxBytes()) throw new PayloadTooLargeException(`the volume exceeds the ${vxMaxBytes()}-byte limit`);
+    if (idx > 0) {
+      const last = await this.prisma.migrationVolumePart.findUnique({ where: { transferId_idx: { transferId: t.id, idx: idx - 1 } } });
+      if (!last || last.rawLen < t.partRawBytes) throw new ConflictException(VX_409.shortPart);
+    }
+
+    // After a hub restart the target may already hold this part (the commit was lost): verify by size + sha instead of re-sending.
+    if (!this.registry.hasSeen(t.id)) {
+      try {
+        const r = await this.agentWs.sendCommand(ctx.targetServerId, buildMigrationPartStatScript(t.id, idx), "backup", MOVE_TIMEOUTS.stat);
+        const have = r.exitCode === 0 ? parseMovePart(r.output) : null;
+        if (have && have.size === body.size && have.sha256 === body.sha256) {
+          this.registry.markSeen(t.id, idx);
+          if (await this.recordPart(ctx, t, { idx, ...body }, null)) return { alreadyDone: true, expiresAt };
+        }
+      } catch {
+        /* no shortcut: fall through to a normal transfer */
+      }
+    }
+
+    this.registry.cancel(t.id, new Error("part re-registered"));
+    const reg = this.relay.register({ moveId: t.id, volIdx: VX_VOL_IDX, part: idx, size: body.size, sha256: body.sha256, srcServerId: vxPrincipal(op.opId), dstServerId: ctx.targetServerId });
+    if (reg.busy) return { busy: true };
+
+    const recvScript = buildMoveRecvScript({ moveId: t.id, idx: VX_VOL_IDX, part: idx, path: reg.dstPath, size: body.size, sha256: body.sha256 });
+    let dstReq: string | undefined;
+    let aborted = false;
+    const cancelDst = (): void => {
+      if (dstReq) this.agentWs.cancelCommand(ctx.targetServerId, dstReq);
+    };
+    const recv = this.agentWs.sendCommand(ctx.targetServerId, recvScript, "backup", MOVE_TIMEOUTS.transfer, undefined, (reqId) => {
+      dstReq = reqId;
+      if (aborted) cancelDst();
+    });
+    recv.catch(() => undefined); // owned by settlePart
+    reg.done.catch(() => cancelDst()); // a failed relay must not leave the target's curl waiting out its timeout
+    const inflight: InflightPart = {
+      transferId: t.id,
+      idx,
+      rawOffset: body.rawOffset,
+      rawLen: body.rawLen,
+      rawSha256: body.rawSha256,
+      size: body.size,
+      sha256: body.sha256,
+      reg,
+      settled: this.settlePart({ reg, size: body.size, sha256: body.sha256 }, recv),
+      cancel: (reason: Error) => {
+        aborted = true;
+        reg.cancel(reason);
+        cancelDst();
+      },
+      startedAt: Date.now(),
+    };
+    this.registry.set(inflight);
+    return { srcPath: reg.srcPath, expiresAt };
+  }
+
+  async commitPart(op: MigrationTokenContext, itemRef: string, idx: number, body: VxRunBody): Promise<Record<string, unknown>> {
+    const ctx = await this.resolve(op.opId, op.actorId, itemRef);
+    const t = await this.assertLeased(ctx, body.runId);
+    const expiresAt = await this.expiry(op);
+    const done = (partsDone: number, bytesDone: number): Record<string, unknown> => ({ done: true, partsDone, bytesDone, expiresAt });
+    const inflight = this.registry.get(t.id);
+    if (!inflight || inflight.idx !== idx) {
+      if (idx < t.partsDone) return done(t.partsDone, Number(t.bytesDone)); // committed already (the response was lost)
+      throw new ConflictException(VX_409.partLost);
+    }
+    const outcome = await Promise.race([inflight.settled, new Promise<"pending">((r) => setTimeout(() => r("pending"), vxCommitWaitMs()).unref?.())]);
+    if (outcome === "pending") return { pending: true, expiresAt };
+    if (!outcome.ok) {
+      this.registry.delete(t.id, inflight);
+      return { done: false, retryable: outcome.retryable, reason: outcome.reason, expiresAt };
+    }
+    const secs = Math.max(1, (Date.now() - inflight.startedAt) / 1000);
+    const cur = inflight.rawLen / secs;
+    const prev = t.bps != null ? Number(t.bps) : null;
+    const bps = Math.round(prev === null ? cur : 0.7 * prev + 0.3 * cur);
+    const ok = await this.recordPart(ctx, t, { idx, rawOffset: inflight.rawOffset, rawLen: inflight.rawLen, rawSha256: inflight.rawSha256, size: inflight.size, sha256: inflight.sha256 }, bps);
+    this.registry.delete(t.id, inflight);
+    const after = await this.findTransfer(op.opId, itemRef);
+    if (!ok) {
+      if (after && idx < after.partsDone) return done(after.partsDone, Number(after.bytesDone)); // a concurrent identical commit won
+      throw new ConflictException(VX_409.otherRun);
+    }
+    // ONE progress write per commit (~230 for 29 GB), mirrored on the data task
+    await this.prisma.bulkTask
+      .updateMany({ where: { opId: op.opId, itemRef: vxDataRef(itemRef) }, data: { result: { vx: true, ...(ctx.target.destType === "app-volume" ? { appItemRef: ctx.ownerTaskItemRef, volumeName: ctx.target.name } : { databaseItemRef: ctx.ownerTaskItemRef }), progress: { partsDone: idx + 1, rawBytesDone: Number(t.rawBytesDone) + inflight.rawLen } } as Prisma.InputJsonValue } })
+      .catch(() => undefined);
+    return done(idx + 1, Number(t.bytesDone) + inflight.size);
+  }
+
+  /** After the last tar byte: validate what the hub recorded, re-check the destination and the target's space, start the apply. */
+  async finish(op: MigrationTokenContext, itemRef: string, body: VxFinishBody): Promise<Record<string, unknown>> {
+    const ctx = await this.resolve(op.opId, op.actorId, itemRef);
+    const t = await this.assertLeased(ctx, body.runId);
+    const meta = await this.metaOfOp(op.opId);
+    await this.assertDestOpen(ctx, meta.vxInventory?.[itemRef]);
+    if (this.registry.get(t.id)) throw new ConflictException("a part is still in flight");
+    if (body.parts !== t.partsDone) throw new BadRequestException("parts does not match the committed parts");
+    const rows = await this.prisma.migrationVolumePart.findMany({ where: { transferId: t.id }, orderBy: { idx: "asc" } });
+    let off = 0;
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i].idx !== i || Number(rows[i].rawOffset) !== off) throw new ConflictException(VX_409.diverged); // a gap or overlap in the committed parts
+      off += rows[i].rawLen;
+    }
+    if (rows.length !== t.partsDone || off !== body.rawBytes) throw new BadRequestException("rawBytes does not match the committed parts");
+    if (body.rawBytes > vxMaxBytes()) throw new PayloadTooLargeException(`the volume exceeds the ${vxMaxBytes()}-byte limit`);
+    const fp = t.fingerprint as { containerId?: string; startedAt?: string; finishedAt?: string } | null;
+    const after = body.fingerprintAfter;
+    if (!fp || after.running || fp.containerId !== after.containerId || fp.startedAt !== after.startedAt || fp.finishedAt !== after.finishedAt) throw new ConflictException(VX_409.fingerprintChanged);
+
+    // Free space for the DECODED copy now that the parts are staged (the staged parts already took their share).
+    const probe = await this.probeTarget(ctx);
+    const dock = probe.probe?.df[DOCKER_ROOT];
+    if (!probe.probe || dock?.availKb == null) throw new ConflictException(`${VX_409.diskInsufficient}: could not verify the free space on the target (${probe.why || "unreadable df"})`);
+    const need = 1.05 * body.rawBytes + 512 * 1024 ** 2;
+    if (dock.availKb * 1024 < need) throw new ConflictException(`${VX_409.diskInsufficient}: extracting needs about ${this.gib(need)} GiB free in the docker root, the target has ${this.gib(dock.availKb * 1024)} GiB`);
+
+    const copied = await this.prisma.migrationVolumeTransfer.updateMany({ where: { id: t.id, runId: body.runId, state: "COPYING" }, data: { state: "COPIED", rawBytesFinal: body.rawBytes, entries: body.entries, lastBeatAt: new Date(), phase: "applying" } });
+    if (copied.count !== 1) throw new ConflictException(VX_409.otherRun);
+    const applying = await this.prisma.migrationVolumeTransfer.updateMany({ where: { id: t.id, state: "COPIED" }, data: { state: "APPLYING", lastBeatAt: new Date() } });
+    if (applying.count !== 1) throw new ConflictException(VX_409.otherRun);
+    const fresh = (await this.findTransfer(op.opId, itemRef))!;
+    await this.setDataTask(ctx, fresh, "RUNNING", [{ name: "source-verified", status: "DONE" }, { name: "copying", status: "DONE" }, { name: "copied", status: "DONE" }, { name: "applying", status: "RUNNING" }]);
+    this.apply.start(ctx, fresh);
+    return { state: "APPLYING", expiresAt: await this.expiry(op) };
+  }
+
+  /** What the migrator polls after finish (and any time): state, progress, steps, the renewed expiry. */
+  async status(op: MigrationTokenContext, itemRef: string): Promise<Record<string, unknown>> {
+    const ctx = await this.resolve(op.opId, op.actorId, itemRef);
+    const t = await this.findTransfer(op.opId, itemRef);
+    const expiresAt = await this.expiry(op);
+    if (!t) return { state: "NONE", partsDone: 0, bytesDone: 0, rawBytesDone: 0, rawBytesTotal: null, bps: null, etaSec: null, steps: [], expiresAt };
+    const task = await this.prisma.bulkTask.findFirst({ where: { opId: op.opId, itemRef: vxDataRef(itemRef) }, select: { steps: true } });
+    const view = buildVolumeView({ target: ctx.target, resourceName: null, destVolume: ctx.target.name, transfer: t, inventory: undefined, disk: null, gates: null, steps: task?.steps });
+    return {
+      state: t.state,
+      phase: t.phase,
+      partsDone: view.partsDone,
+      bytesDone: view.bytesDone,
+      rawBytesDone: view.rawBytesDone,
+      rawBytesTotal: view.rawBytesTotal,
+      bps: view.bps,
+      etaSec: view.etaSec,
+      ...(t.error ? { error: scrubMoveOutput(t.error) } : {}),
+      steps: view.steps,
+      expiresAt,
+    };
+  }
+
+  /** Renew the lease + token during phases that make no other call (resume-skip, inventory). */
+  async beat(op: MigrationTokenContext, itemRef: string, body: VxRunBody): Promise<{ expiresAt: string }> {
+    const ctx = await this.resolve(op.opId, op.actorId, itemRef);
+    const t = await this.assertLeased(ctx, body.runId);
+    await this.prisma.migrationVolumeTransfer.updateMany({ where: { id: t.id, runId: body.runId, state: "COPYING" }, data: { lastBeatAt: new Date(), ...(body.phase ? { phase: body.phase } : {}) } });
+    return { expiresAt: await this.expiry(op) };
+  }
+
+  /** The migrator was interrupted: drop whatever part is in flight and release the lease, KEEPING the staged parts so the next run resumes. */
+  async abort(op: MigrationTokenContext, itemRef: string, body: VxRunBody): Promise<{ state: string }> {
+    const ctx = await this.resolve(op.opId, op.actorId, itemRef);
+    const t = await this.findTransfer(op.opId, itemRef);
+    if (!t) throw new NotFoundException("no such migration target");
+    if (t.runId !== body.runId || t.state !== "COPYING") return { state: t.state }; // nothing of ours to release
+    this.registry.cancel(t.id, new Error("aborted by the migrator"));
+    await this.prisma.migrationVolumeTransfer.updateMany({ where: { id: t.id, runId: body.runId, state: "COPYING" }, data: { state: "FAILED", runId: null, error: "the migrator was interrupted; re-run it to resume", phase: null } });
+    await this.setDataTask(ctx, t, "FAILED", [{ name: "source-verified", status: "DONE" }, { name: "copying", status: "FAILED" }], { progress: { partsDone: t.partsDone } });
+    return { state: "FAILED" };
+  }
+
+  /** Discard the staged parts and the destination's partial content and start over (after a divergence / fingerprint change). */
+  async reset(op: MigrationTokenContext, itemRef: string, body: VxRunBody): Promise<{ state: string; attempt: number }> {
+    const ctx = await this.resolve(op.opId, op.actorId, itemRef);
+    const t = await this.findTransfer(op.opId, itemRef);
+    if (!t) return { state: "NONE", attempt: 1 };
+    const stale = !t.lastBeatAt || t.lastBeatAt.getTime() < Date.now() - vxStaleMs();
+    if (t.state === "COPYING" && t.runId && t.runId !== body.runId && !stale) throw new ConflictException(VX_409.otherRun);
+    return this.doReset(ctx, t);
+  }
+
+  protected async doReset(ctx: VxCtx, t: MigrationVolumeTransfer): Promise<{ state: string; attempt: number }> {
+    if (t.state === "APPLYING" || t.state === "COPIED") throw new ConflictException("an apply is running for this volume: wait for it to end");
+    if (t.state === "DONE") throw new ConflictException("this volume was already applied; its data is the result of the migration");
+    const meta = await this.metaOfOp(ctx.opId);
+    await this.assertDestOpen(ctx, meta.vxInventory?.[t.itemRef]); // never wipe a destination that is live
+    this.registry.forget(t.id);
+    if (!(await this.apply.cleanupTarget(t.id, ctx.targetServerId))) throw new ConflictException("the target could not be cleaned up (is its agent online?): try again");
+    try {
+      await this.apply.wipeDest(ctx, t.id);
+    } catch (e) {
+      throw new ConflictException(e instanceof Error ? e.message : "the destination could not be emptied");
+    }
+    await this.prisma.$transaction([
+      this.prisma.migrationVolumePart.deleteMany({ where: { transferId: t.id } }),
+      this.prisma.migrationVolumeTransfer.update({
+        where: { id: t.id },
+        data: { attempt: { increment: 1 }, state: "PENDING", partsDone: 0, bytesDone: 0, rawBytesDone: 0, rawBytesFinal: null, entries: null, fingerprint: Prisma.DbNull, runId: null, lastBeatAt: null, phase: null, bps: null, error: null, startedAt: null, finishedAt: null },
+      }),
+    ]);
+    await this.prisma.bulkTask.updateMany({ where: { opId: t.opId, itemRef: vxDataRef(t.itemRef) }, data: { status: "FAILED", output: "reset: the copy starts over", finishedAt: new Date() } });
+    return { state: "PENDING", attempt: t.attempt + 1 };
+  }
+
+  // ───────────────────────────── user-authed abort / reset ─────────────────────────────
+
+  /** The owner stops a copy from the UI: a live lease becomes ABORTED (the migrator's next call gets `vx-aborted` and exits). */
+  async userAbort(userId: string, opId: string, itemRef: string): Promise<{ state: string }> {
+    const ctx = await this.resolve(opId, userId, itemRef);
+    const t = await this.findTransfer(opId, itemRef);
+    if (!t) throw new NotFoundException("this volume has no copy to abort");
+    if (t.state === "APPLYING" || t.state === "COPIED") throw new ConflictException("an apply is running for this volume: it cannot be aborted midway");
+    if (t.state === "DONE") throw new ConflictException("this volume was already applied");
+    this.registry.cancel(t.id, new Error("aborted by the owner"));
+    await this.prisma.migrationVolumeTransfer.updateMany({ where: { id: t.id, state: { in: ["PENDING", "COPYING", "FAILED"] } }, data: { state: "ABORTED", runId: null, phase: null, error: "aborted by the owner" } });
+    await this.setDataTask(ctx, t, "FAILED", [{ name: "copying", status: "FAILED" }]);
+    return { state: "ABORTED" };
+  }
+
+  /** Start the volume over: a live lease is only ABORTED (the migrator must exit first), anything else is wiped and reset. */
+  async userReset(userId: string, opId: string, itemRef: string): Promise<{ state: string; attempt?: number }> {
+    const ctx = await this.resolve(opId, userId, itemRef);
+    const t = await this.findTransfer(opId, itemRef);
+    if (!t) return { state: "NONE" };
+    const live = t.state === "COPYING" && !!t.lastBeatAt && t.lastBeatAt.getTime() >= Date.now() - vxStaleMs();
+    if (live) return this.userAbort(userId, opId, itemRef);
+    return this.doReset(ctx, t);
   }
 
   /** The user-facing per-volume view: state, progress, the migrator's inventory, the disk verdict and the db-data gates. */
@@ -326,7 +795,7 @@ export class VxService {
       let destVolume = t.name;
       if (t.destType === "db-data" && ownerId) {
         const ctx: Pick<VxCtx, "resourceId" | "credentialsCarried"> = { resourceId: ownerId, credentialsCarried: (owner?.result as { credentialsCarried?: boolean } | null)?.credentialsCarried === true };
-        gates = await this.dbGates(ctx as VxCtx, inv);
+        gates = await dbGates(this.prisma, ctx, inv);
         destVolume = "data";
       }
       volumes.push(

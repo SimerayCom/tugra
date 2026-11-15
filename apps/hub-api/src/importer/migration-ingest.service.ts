@@ -22,6 +22,8 @@ import { isValidVolumeName, maxDecodedVolumeBytes, maxVolumeBytes, scrubVolumeTa
 import { buildAllMigratorRecipes, MIGRATOR_ENGINES, MIGRATOR_UNSUPPORTED, type MigratorRecipe } from "./migrator-recipe";
 import { ImportExecutorService } from "./import-executor.service";
 import { VxService } from "./volume-stream/vx.service";
+import { VX_409, vxEnabled } from "./volume-stream/vx-constants";
+import { dbVolumeModeRefs, volumeItemRef } from "./volume-stream/vx-targets";
 import type { MigrationTokenContext } from "./migration-token.service";
 import { mintArtifactUrl, verifyArtifactSig } from "./migration-artifact";
 import {
@@ -52,6 +54,8 @@ interface Target {
   db: { id: string; engine: string; status: string; serverId: string; teamId: string };
   serverTeamId: string;
   engine: string;
+  /** The plan chose a PHYSICAL (volume) copy for this database: the logical dump route is closed. */
+  dbVolumeMode: boolean;
 }
 
 interface VolumeTarget {
@@ -212,6 +216,7 @@ export class MigrationIngestService {
       db: { id: db.id, engine: db.engine, status: db.status, serverId: db.serverId, teamId: db.teamId },
       serverTeamId: server.teamId,
       engine: db.engine,
+      dbVolumeMode: vxEnabled() && task.itemRef !== null && dbVolumeModeRefs((opRow.meta as { plan?: { items?: unknown } } | null)?.plan?.items).has(task.itemRef),
     };
   }
 
@@ -222,6 +227,7 @@ export class MigrationIngestService {
   /** Stream an artifact to hub staging, hashing + byte-capping it; the hub records its OWN sha256/bytes. */
   async stage(op: MigrationTokenContext, itemRef: string, req: RawReq, opts: { gzip: boolean; format?: string }): Promise<unknown> {
     const ctx = await this.resolveTarget(op, itemRef); // authz + resolution BEFORE reading the body
+    if (ctx.dbVolumeMode) throw new ConflictException(VX_409.dbVolumeMode); // fail closed for an OLD migrator: this DB moves by volume copy
     const lockKey = `${op.opId}:${ctx.task.id}`;
     if (this.uploadLocks.has(lockKey)) throw new ConflictException("an upload is already in progress for this item");
     this.uploadLocks.add(lockKey);
@@ -279,6 +285,7 @@ export class MigrationIngestService {
    *  runs the restore in the background; the host polls /status. */
   async restore(op: MigrationTokenContext, itemRef: string, opts: { resync: boolean }): Promise<unknown> {
     const ctx = await this.resolveTarget(op, itemRef);
+    if (ctx.dbVolumeMode) throw new ConflictException(VX_409.dbVolumeMode);
     const base = this.agentBase(ctx.hubBase); // resolve + validate BEFORE the claim (a bad base never locks the item)
     const meta = await readStagedMeta(op.opId, ctx.task.id);
     if (!meta) throw new ConflictException("nothing staged for this item — upload the artifact first");
@@ -477,6 +484,15 @@ export class MigrationIngestService {
     };
   }
 
+  /** The hub-staged upload and the streamed copy are mutually exclusive per volume: once a transfer exists, v1 is closed. */
+  private async assertNotStreamed(opId: string, appTaskItemRef: string, volumeName: string): Promise<void> {
+    if (!vxEnabled()) return;
+    const ref = volumeItemRef(appTaskItemRef, volumeName);
+    if (!ref) return;
+    const t = await this.prisma.migrationVolumeTransfer.findUnique({ where: { opId_itemRef: { opId, itemRef: ref } }, select: { id: true } });
+    if (t) throw new ConflictException(VX_409.usesStream);
+  }
+
   /** Find-or-create the per-volume STAGING row (kind:"data", status DONE) whose cuid keys the staged file. */
   private async ensureVolumeStageRow(opId: string, serverId: string, stageRef: string): Promise<string> {
     const existing = await this.prisma.bulkTask.findFirst({ where: { opId, itemRef: stageRef }, select: { id: true } });
@@ -496,6 +512,7 @@ export class MigrationIngestService {
   /** Stream an app-volume tarball to hub staging (gzip-capped), hashing it; the hub records its OWN sha256/bytes. */
   async stageVolume(op: MigrationTokenContext, appItemRef: string, volumeName: string, req: RawReq, opts: { gzip: boolean }): Promise<unknown> {
     const ctx = await this.resolveVolumeTarget(op, appItemRef, volumeName); // authz + resolution BEFORE reading the body
+    await this.assertNotStreamed(op.opId, ctx.appTaskItemRef, volumeName);
     const stageRef = volStageRef(ctx.appTaskItemRef, volumeName);
     const stageTaskId = await this.ensureVolumeStageRow(op.opId, ctx.app.serverId, stageRef);
     const lockKey = `${op.opId}:${stageTaskId}`;
@@ -556,6 +573,7 @@ export class MigrationIngestService {
   /** Restore a staged volume tarball into the app's docker volume (destructive wipe+extract, gated + idempotent). */
   async restoreVolume(op: MigrationTokenContext, appItemRef: string, volumeName: string, opts: { resync: boolean }): Promise<unknown> {
     const ctx = await this.resolveVolumeTarget(op, appItemRef, volumeName);
+    await this.assertNotStreamed(op.opId, ctx.appTaskItemRef, volumeName);
     const base = this.agentBase(ctx.hubBase); // resolve + validate BEFORE the claim
     const stageRef = volStageRef(ctx.appTaskItemRef, volumeName);
     const stageRow = await this.prisma.bulkTask.findFirst({ where: { opId: op.opId, itemRef: stageRef }, select: { id: true } });

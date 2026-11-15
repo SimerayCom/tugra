@@ -288,4 +288,18 @@ export class ImporterController {
   volumeInclude(@CurrentUser() user: AuthUser, @Param("opId") opId: string, @Param("itemRef") itemRef: string) {
     return this.vx.setExcluded(user.userId, opId, itemRef, false);
   }
+
+  /** Stop the streamed copy of one volume from the UI. A live migrator's next call gets `vx-aborted` and exits. */
+  @Post("operations/:opId/volumes/:itemRef/abort")
+  @RequireScopes("deploy")
+  volumeAbort(@CurrentUser() user: AuthUser, @Param("opId") opId: string, @Param("itemRef") itemRef: string) {
+    return this.vx.userAbort(user.userId, opId, itemRef);
+  }
+
+  /** Start one volume over: discards its staged parts and the partial destination (a live copy is only aborted first). */
+  @Post("operations/:opId/volumes/:itemRef/reset")
+  @RequireScopes("deploy")
+  volumeReset(@CurrentUser() user: AuthUser, @Param("opId") opId: string, @Param("itemRef") itemRef: string) {
+    return this.vx.userReset(user.userId, opId, itemRef);
+  }
 }

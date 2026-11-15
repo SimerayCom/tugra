@@ -1,4 +1,4 @@
-import { Body, Controller, Param, Post } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Param, ParseIntPipe, Post } from "@nestjs/common";
 import { ApiExcludeController } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
 import { UseGuards } from "@nestjs/common";
@@ -9,7 +9,20 @@ import { MigrationTokenGuard } from "../migration-token.guard";
 import { MigrationOp } from "../migration-op.decorator";
 import type { MigrationTokenContext } from "../migration-token.service";
 import { VxService } from "./vx.service";
-import { VxInventoryBodySchema, VxMigratorDiskCheckBodySchema, type VxInventoryBody, type VxMigratorDiskCheckBody } from "./vx.dto";
+import {
+  VxBeginBodySchema,
+  VxFinishBodySchema,
+  VxInventoryBodySchema,
+  VxMigratorDiskCheckBodySchema,
+  VxPartBodySchema,
+  VxRunBodySchema,
+  type VxBeginBody,
+  type VxFinishBody,
+  type VxInventoryBody,
+  type VxMigratorDiskCheckBody,
+  type VxPartBody,
+  type VxRunBody,
+} from "./vx.dto";
 
 /**
  * The endpoints the untrusted SOURCE host calls for the streamed volume copy, authenticated ONLY by the migration token
@@ -36,5 +49,70 @@ export class MigrationVolumeController {
   @Post(":itemRef/disk-check")
   diskCheck(@MigrationOp() op: MigrationTokenContext, @Param("itemRef") itemRef: string, @Body(new ZodValidationPipe(VxMigratorDiskCheckBodySchema)) body: VxMigratorDiskCheckBody) {
     return this.vx.diskCheck(op.opId, op.actorId, itemRef, body.rawBytes);
+  }
+
+  /** Claim (or resume) the transfer of one volume: gates, lease, source fingerprint, manifest of the committed parts. */
+  @Post(":itemRef/begin")
+  @HttpCode(200)
+  begin(@MigrationOp() op: MigrationTokenContext, @Param("itemRef") itemRef: string, @Body(new ZodValidationPipe(VxBeginBodySchema)) body: VxBeginBody) {
+    return this.vx.begin(op, itemRef, body);
+  }
+
+  /** Register part `idx`: returns the signed relay path to PUT it to (or alreadyDone / busy). */
+  @Post(":itemRef/parts/:idx")
+  @HttpCode(200)
+  registerPart(
+    @MigrationOp() op: MigrationTokenContext,
+    @Param("itemRef") itemRef: string,
+    @Param("idx", ParseIntPipe) idx: number,
+    @Body(new ZodValidationPipe(VxPartBodySchema)) body: VxPartBody,
+  ) {
+    return this.vx.registerPart(op, itemRef, idx, body);
+  }
+
+  /** Wait for the target to confirm part `idx` (long-poll: `pending` means ask again). */
+  @Post(":itemRef/parts/:idx/commit")
+  @HttpCode(200)
+  commitPart(
+    @MigrationOp() op: MigrationTokenContext,
+    @Param("itemRef") itemRef: string,
+    @Param("idx", ParseIntPipe) idx: number,
+    @Body(new ZodValidationPipe(VxRunBodySchema)) body: VxRunBody,
+  ) {
+    return this.vx.commitPart(op, itemRef, idx, body);
+  }
+
+  /** The last tar byte was sent: validate, re-check the destination and the target's space, start the apply. */
+  @Post(":itemRef/finish")
+  @HttpCode(202)
+  finish(@MigrationOp() op: MigrationTokenContext, @Param("itemRef") itemRef: string, @Body(new ZodValidationPipe(VxFinishBodySchema)) body: VxFinishBody) {
+    return this.vx.finish(op, itemRef, body);
+  }
+
+  /** What the migrator polls after finish. */
+  @Get(":itemRef/status")
+  status(@MigrationOp() op: MigrationTokenContext, @Param("itemRef") itemRef: string) {
+    return this.vx.status(op, itemRef);
+  }
+
+  /** Renew the lease and the token during phases that make no other call. */
+  @Post(":itemRef/beat")
+  @HttpCode(200)
+  beat(@MigrationOp() op: MigrationTokenContext, @Param("itemRef") itemRef: string, @Body(new ZodValidationPipe(VxRunBodySchema)) body: VxRunBody) {
+    return this.vx.beat(op, itemRef, body);
+  }
+
+  /** Discard the staged parts and start the volume over (never automatic). */
+  @Post(":itemRef/reset")
+  @HttpCode(200)
+  reset(@MigrationOp() op: MigrationTokenContext, @Param("itemRef") itemRef: string, @Body(new ZodValidationPipe(VxRunBodySchema)) body: VxRunBody) {
+    return this.vx.reset(op, itemRef, body);
+  }
+
+  /** The migrator was interrupted: release the lease, keep the staged parts. */
+  @Post(":itemRef/abort")
+  @HttpCode(200)
+  abort(@MigrationOp() op: MigrationTokenContext, @Param("itemRef") itemRef: string, @Body(new ZodValidationPipe(VxRunBodySchema)) body: VxRunBody) {
+    return this.vx.abort(op, itemRef, body);
   }
 }

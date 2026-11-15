@@ -119,7 +119,7 @@ describe("ImportExecutorService.reissueMigrationToken", () => {
 describe("ImportExecutorService.migrateCommand", () => {
   it("reports inactive + a <TOKEN> template when no token is live, never the raw token", async () => {
     const res = await harness().svc.migrateCommand("user-1", "op-1", BASE);
-    expect(res).toEqual({ opId: "op-1", active: false, expiresAt: null, commandTemplate: expect.stringContaining("<TOKEN>") });
+    expect(res).toEqual({ opId: "op-1", active: false, expiresAt: null, commandTemplate: expect.stringContaining("<TOKEN>"), commandsTemplate: expect.objectContaining({ run: expect.stringContaining("--arms all") }) });
     expect(res.commandTemplate).not.toContain("tugra_mig_");
   });
 
@@ -147,5 +147,32 @@ describe("ImportExecutorService stale reaper (loadOwnedOp)", () => {
     const where = prisma.bulkTask.updateMany.mock.calls[0][0].where;
     expect(where.status).toBe("RUNNING");
     expect(where.OR).toEqual([{ itemRef: null }, { NOT: { itemRef: { startsWith: "data:volume:" } } }]);
+  });
+});
+
+describe("migration commands for the streamed volume copy", () => {
+  it("mint returns the legacy command UNCHANGED plus the three streamed-copy commands (token only in the env slot)", async () => {
+    const { svc } = harness();
+    const res = await svc.mintMigrationToken("user-1", "op-1", BASE);
+    expect(res.command).toBe(`curl -fsSL ${BASE}/install/migrator.sh | TUGRA_MIGRATION_TOKEN=${res.token} sh -s -- --hub ${BASE}`);
+    expect(res.commands).toEqual({
+      dryRun: `${res.command} --arms all --dry-run`,
+      run: `${res.command} --arms all`,
+      resume: `${res.command} --arms all --hub-outage-wait 30m`,
+    });
+    for (const c of Object.values(res.commands!)) expect(c).not.toContain("--token");
+  });
+
+  it("with the stream switched off the response is exactly today's", async () => {
+    process.env.MIGRATION_VX_ENABLED = "false";
+    try {
+      const { svc } = harness();
+      const res = await svc.mintMigrationToken("user-1", "op-1", BASE);
+      expect(Object.keys(res).sort()).toEqual(["command", "expiresAt", "opId", "token"]);
+      const tpl = await harness().svc.migrateCommand("user-1", "op-1", BASE);
+      expect(Object.keys(tpl).sort()).toEqual(["active", "commandTemplate", "expiresAt", "opId"]);
+    } finally {
+      delete process.env.MIGRATION_VX_ENABLED;
+    }
   });
 });

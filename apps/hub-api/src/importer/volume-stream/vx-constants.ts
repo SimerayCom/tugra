@@ -58,6 +58,11 @@ export function migrationRelayConcurrency(): number {
   return clampInt(num("MIGRATION_RELAY_CONCURRENCY"), 2, 1, 16);
 }
 
+/** How long `commit` long-polls for the target's confirmation before answering `pending` (the migrator asks again). */
+export function vxCommitWaitMs(): number {
+  return clampInt(num("MIGRATION_VX_COMMIT_WAIT_MS"), 90_000, 10, 120_000);
+}
+
 /** The relay principal of a migrator-sourced part: cannot collide with a cuid ServerId, and the relay HMAC binds it. */
 export const VX_PRINCIPAL_PREFIX = "mig:";
 export function vxPrincipal(opId: string): string {

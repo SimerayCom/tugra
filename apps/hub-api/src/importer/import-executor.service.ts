@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, HttpException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, HttpException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -22,7 +22,7 @@ import { why, type Reasoned, type Unmapped } from "./reason";
 import { foreignAppToCreateInput, foreignAppToIngressPlan, foreignAppToPostCreateConfig, foreignAppToVolumes } from "./apply-map";
 import { seedTasks, deriveOpStatus, PROVISIONABLE_ENGINES, type TaskSeed, type TaskStatus } from "./import-executor.logic";
 import { MigrationTokenService } from "./migration-token.service";
-import { assertSafeBase, buildMigrationCommand, buildMigrationCommandTemplate } from "./migration-command";
+import { assertSafeBase, buildMigrationCommand, buildMigrationCommands, buildMigrationCommandsTemplate, buildMigrationCommandTemplate } from "./migration-command";
 import { cleanupOpStaging } from "./migration-staging";
 import type { ForeignApp, ForeignDb, ForeignFleet, ForeignGitProvider, ForeignService, ServiceBundle } from "./foreign-fleet";
 import { transformServiceCompose, type ServiceTransformResult } from "./import-service-map";
@@ -41,7 +41,8 @@ import { REMOTE_SOURCE_KINDS, type ImportAck, type ImportApplyInput, type Remote
 import { ImportMappingService } from "./import-mapping.service";
 import type { EffectiveItem, ResolvedMapping } from "./import-mapping";
 import { slug as dbSlug } from "../databases/databases.service";
-import { VX_DATA_PREFIX } from "./volume-stream/vx-constants";
+import { VX_DATA_PREFIX, vxEnabled } from "./volume-stream/vx-constants";
+import { VxApplyService } from "./volume-stream/vx-apply.service";
 
 const CONCURRENCY = 5;
 
@@ -107,6 +108,7 @@ export class ImportExecutorService {
     private readonly gitLinkResolver: GitLinkResolverService,
     // Trailing + optional: the mapping-free construction (and every pre-existing spec) is unchanged.
     private readonly mappings?: ImportMappingService,
+    @Optional() private readonly vxApply?: VxApplyService,
   ) {}
 
   apply(userId: string, input: ImportApplyInput): Promise<{ opId: string; mappingApplied?: boolean }> {
@@ -1170,9 +1172,28 @@ export class ImportExecutorService {
     // a temp file BEFORE the wipe), and a mid-extract failure can leave partial data. Either way, never
     // auto-remove: collect every data task's appItemRef regardless of status, then skip those apps.
     const restoredDataApps = new Set<string>();
-    for (const dt of op.tasks.filter((t) => t.kind === "data")) {
-      const air = typeof dt.result === "object" && dt.result ? (dt.result as { appItemRef?: string }).appItemRef : undefined;
-      if (air) restoredDataApps.add(air);
+    const restoredDataDbs = new Set<string>();
+    const dataTasks = op.tasks.filter((t) => t.kind === "data");
+    // Streamed (v2) copies: a transfer that is APPLYING or DONE has written the destination volume, so its app/database is
+    // protected exactly like a v1 restore; a COPYING/COPIED/FAILED one only holds staged parts on the target, which are
+    // cleaned up instead of blocking the rollback.
+    const vxData = dataTasks.filter((t) => typeof t.result === "object" && t.result && (t.result as { vx?: boolean }).vx === true);
+    const transfers = vxData.length ? await this.prisma.migrationVolumeTransfer.findMany({ where: { opId } }) : [];
+    const transferOf = new Map(transfers.map((t) => [`data:${t.itemRef}`, t]));
+    for (const dt of dataTasks) {
+      const res = typeof dt.result === "object" && dt.result ? (dt.result as { appItemRef?: string; databaseItemRef?: string; vx?: boolean }) : {};
+      if (res.vx === true) {
+        const tr = dt.itemRef ? transferOf.get(dt.itemRef) : undefined;
+        if (tr && (tr.state === "APPLYING" || tr.state === "DONE")) {
+          if (res.appItemRef) restoredDataApps.add(res.appItemRef);
+          if (res.databaseItemRef) restoredDataDbs.add(res.databaseItemRef);
+        } else if (tr) {
+          await this.vxApply?.cleanupTarget(tr.id, tr.targetServerId).catch(() => false);
+          await this.prisma.migrationVolumeTransfer.updateMany({ where: { id: tr.id, state: { in: ["PENDING", "COPYING", "COPIED", "FAILED"] } }, data: { state: "ABORTED", runId: null, error: "the import was rolled back" } });
+        }
+        continue;
+      }
+      if (res.appItemRef) restoredDataApps.add(res.appItemRef);
     }
 
     const done = op.tasks.filter((t) => t.status === "DONE" && t.resourceType === "application" && t.resourceId);
@@ -1217,6 +1238,10 @@ export class ImportExecutorService {
         await this.prisma.bulkTask.update({ where: { id: t.id }, data: { status: "ROLLED_BACK", output: "database already removed", finishedAt: new Date() } });
         continue;
       }
+      if (t.itemRef && restoredDataDbs.has(t.itemRef)) {
+        await this.prisma.bulkTask.update({ where: { id: t.id }, data: { output: "rollback skipped: database data was copied by this migration — remove it manually if intended" } });
+        continue;
+      }
       // NEVER destroy a DB that has left its as-provisioned EMPTY state: dbs.remove does `docker rm -f`
       // + `docker volume rm`, so once the DB has been started (status != NEW) or had data restored/backed
       // up into it (the whole point — the migrator restores INTO it), teardown would be irreversible data
@@ -1254,7 +1279,7 @@ export class ImportExecutorService {
     await this.captureHubBase(opId, op.meta, base); // trusted capture (actor's request) for the agent download later
     const { token, expiresAt } = await this.migrationTokens.issue(opId);
     await this.auditTokenOrElseRevoke(userId, opId, "import.migration_token.mint", expiresAt);
-    return { opId, token, expiresAt, command: buildMigrationCommand(token, base, opts) };
+    return { opId, token, expiresAt, command: buildMigrationCommand(token, base, opts), ...(vxEnabled() ? { commands: buildMigrationCommands(token, base) } : {}) };
   }
 
   /** Rotate the migration token: revoke the old and mint a new one atomically (works with or without a prior token). */
@@ -1265,7 +1290,7 @@ export class ImportExecutorService {
     await this.captureHubBase(opId, op.meta, base);
     const { token, expiresAt } = await this.migrationTokens.reissue(opId);
     await this.auditTokenOrElseRevoke(userId, opId, "import.migration_token.reissue", expiresAt);
-    return { opId, token, expiresAt, command: buildMigrationCommand(token, base, opts) };
+    return { opId, token, expiresAt, command: buildMigrationCommand(token, base, opts), ...(vxEnabled() ? { commands: buildMigrationCommands(token, base) } : {}) };
   }
 
   /** Persist the hub origin the AUTHENTICATED actor reached us on, so the (untrusted) ingest path can later
@@ -1293,7 +1318,7 @@ export class ImportExecutorService {
     const meta = typeof op.meta === "object" && op.meta ? (op.meta as { rolledBackAt?: string }) : {};
     const expiresAt = op.migrationTokenExpiresAt;
     const active = !!op.migrationTokenHash && !!expiresAt && expiresAt.getTime() > Date.now() && !op.cancelRequestedAt && !meta.rolledBackAt;
-    return { opId, active, expiresAt: active ? expiresAt : null, commandTemplate: buildMigrationCommandTemplate(base, opts) };
+    return { opId, active, expiresAt: active ? expiresAt : null, commandTemplate: buildMigrationCommandTemplate(base, opts), ...(vxEnabled() ? { commandsTemplate: buildMigrationCommandsTemplate(base) } : {}) };
   }
 
   /**
