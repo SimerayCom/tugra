@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 import { I18nProvider } from "../../i18n/provider";
 import { api } from "../../lib/api";
-import { ScheduleField, scheduleFromFields, scheduleToFields, scheduleComplete, type ScheduleValue } from "./schedule-field";
+import { ScheduleField, formatInZone, scheduleFromFields, scheduleToFields, scheduleComplete, type ScheduleValue } from "./schedule-field";
 
 function Harness({ initial, minGapHours, onValue }: { initial: ScheduleValue; minGapHours?: number; onValue?: (v: ScheduleValue) => void }) {
   const [v, setV] = useState(initial);
@@ -87,5 +87,33 @@ describe("ScheduleField", () => {
     (api.previewSchedule as ReturnType<typeof vi.fn>).mockResolvedValue({ valid: true, timezone: "UTC", nextRuns: ["2026-11-16T03:00:00Z"], minGapSeconds: 900 });
     show({ mode: "cron", hours: "24", cron: "*/15 * * * *" }, 1);
     await waitFor(() => expect(screen.getByText(/more often than once an hour/)).toBeTruthy());
+  });
+});
+
+describe("ScheduleField — radio groups and timezone", () => {
+  it("two mounted editors use DIFFERENT radio group names (no cross-editor native grouping)", () => {
+    const qc = new QueryClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <I18nProvider>
+          <Harness initial={{ mode: "interval", hours: "24", cron: "" }} />
+          <Harness initial={{ mode: "cron", hours: "24", cron: "0 3 * * *" }} />
+        </I18nProvider>
+      </QueryClientProvider>,
+    );
+    const names = [...document.querySelectorAll<HTMLInputElement>('input[type="radio"]')].map((r) => r.name);
+    expect(names).toHaveLength(4);
+    expect(names[0]).toBe(names[1]);
+    expect(names[2]).toBe(names[3]);
+    expect(names[0]).not.toBe(names[2]);
+  });
+
+  it("formatInZone renders in the hub's zone, not the browser's, and tolerates a bad zone", () => {
+    const iso = "2026-11-16T03:00:00Z";
+    // Pacific/Kiritimati is UTC+14 -> 17:00 on the 16th; UTC -> 03:00
+    expect(formatInZone(iso, "Pacific/Kiritimati")).toMatch(/17:00|5:00/);
+    expect(formatInZone(iso, "UTC")).toMatch(/03:00|3:00/);
+    expect(formatInZone(iso, "Not/AZone")).toBe(new Date(iso).toLocaleString());
+    expect(formatInZone(iso, null)).toBe(new Date(iso).toLocaleString());
   });
 });

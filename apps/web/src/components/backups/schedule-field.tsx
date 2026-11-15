@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useId, useState, type CSSProperties } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { useT } from "../../i18n/provider";
@@ -57,6 +57,20 @@ const chip = (active: boolean): CSSProperties => ({
   fontFamily: "inherit",
 });
 
+/** An ISO instant formatted in the HUB's timezone (the cron fires there), falling back to the browser's local
+ *  format when the zone string is missing or not understood by this browser. */
+export function formatInZone(iso: string, timeZone: string | null | undefined): string {
+  const d = new Date(iso);
+  if (timeZone) {
+    try {
+      return d.toLocaleString(undefined, { timeZone });
+    } catch {
+      /* unknown zone: fall through to the browser's own zone */
+    }
+  }
+  return d.toLocaleString();
+}
+
 /**
  * Schedule editor shared by database, volume and hub backups: an "every N hours" interval OR a 5-field cron
  * (presets + custom) with a live preview of the next fires in the hub's timezone. `minGapHours` flags a cron
@@ -64,6 +78,9 @@ const chip = (active: boolean): CSSProperties => ({
  */
 export function ScheduleField({ value, onChange, minGapHours }: { value: ScheduleValue; onChange: (v: ScheduleValue) => void; minGapHours?: number }) {
   const t = useT();
+  // A unique radio group per editor: the app volume card and a per-volume policy modal can be mounted together, and
+  // same-named radios outside a <form> form ONE native group (arrow keys / checked state would cross editors).
+  const groupName = `schedule-mode-${useId()}`;
   const cron = value.cron.trim();
   // Debounce the cron so we don't hit the preview endpoint on every keystroke.
   const [debounced, setDebounced] = useState(cron);
@@ -86,11 +103,11 @@ export function ScheduleField({ value, onChange, minGapHours }: { value: Schedul
     <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
       <div role="radiogroup" aria-label={t("backups.schedule")} style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 13, color: "var(--c-tx2)" }}>
         <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <input type="radio" name="schedule-mode" checked={value.mode === "interval"} onChange={() => onChange({ ...value, mode: "interval" })} />
+          <input type="radio" name={groupName} checked={value.mode === "interval"} onChange={() => onChange({ ...value, mode: "interval" })} />
           {t("backups.scheduleInterval")}
         </label>
         <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <input type="radio" name="schedule-mode" checked={value.mode === "cron"} onChange={() => onChange({ ...value, mode: "cron", cron: value.cron || CRON_PRESETS[1].cron })} />
+          <input type="radio" name={groupName} checked={value.mode === "cron"} onChange={() => onChange({ ...value, mode: "cron", cron: value.cron || CRON_PRESETS[1].cron })} />
           {t("backups.scheduleCron")}
         </label>
       </div>
@@ -122,7 +139,7 @@ export function ScheduleField({ value, onChange, minGapHours }: { value: Schedul
             <div style={{ fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>
               <div style={{ fontWeight: 600, color: "var(--c-tx2)" }}>{t("backups.nextRuns")}</div>
               <ul style={{ margin: "2px 0", paddingLeft: 18 }}>
-                {preview.nextRuns.map((r) => <li key={r}>{new Date(r).toLocaleString()}</li>)}
+                {preview.nextRuns.map((r) => <li key={r}>{formatInZone(r, preview.timezone)}</li>)}
               </ul>
               <div>{t("backups.nextRunsTz", { tz: preview.timezone })}</div>
             </div>
