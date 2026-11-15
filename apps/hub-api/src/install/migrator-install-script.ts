@@ -37,6 +37,7 @@ export function renderMigratorInstallScript(opts: { image: string; digests?: Arc
     "# Tugra one-click data migrator - runs the tugra-agent `migrate` subcommand as a one-shot, hardened",
     "# Docker container on the source host. The migration token rides the ENVIRONMENT, never an argv.",
     "# Usage: curl -fsSL <hub>/install/migrator.sh | TUGRA_MIGRATION_TOKEN=<token> sh -s -- --hub <hub-url> [--dry-run] [--only REF] [--map REF=CONTAINER] [--resync] [--certs] [--proxy-container NAME]",
+    "#   volume data (streamed in resumable parts): [--arms databases|volumes|all] [--stop-source] [--stop-timeout S] [--allow-bind] [--part-mib N] [--reset-volume REF] [--hub-outage-wait D] [--speedtest-mib N]",
     "set -eu",
     "",
     // Version-matched agent image, injected by the hub (the migrator is the agent image's `migrate` subcommand).
@@ -55,6 +56,8 @@ export function renderMigratorInstallScript(opts: { image: string; digests?: Arc
     // Opt-in `--certs` (copy the source proxy's ACME certs): never set unless the owner passes the flag.
     'WANT_CERTS=""',
     'PROXY=""',
+    // Which arm(s) run: the default (databases) keeps today's container exactly as it was; a volume arm adds a memory cap.
+    'ARMS="databases"',
     "",
     "# die prints to stderr WITHOUT ever echoing a token/value and exits with the given (or usage=2) code.",
     "die() { printf 'tugra-migrator: %s\\n' \"$1\" >&2; exit \"${2:-2}\"; }",
@@ -78,6 +81,11 @@ export function renderMigratorInstallScript(opts: { image: string; digests?: Arc
     '      --certs) WANT_CERTS=1; set -- "$@" "$a" ;;',
     '      --proxy-container) [ "$n" -ge 1 ] || die "--proxy-container needs a value"; PROXY=$1; set -- "$@" "$a" "$1"; shift; n=$((n - 1)) ;;',
     "      --proxy-container=*) PROXY=${a#--proxy-container=}; set -- \"$@\" \"$a\" ;;",
+    // The tar helper of the volume arm is THIS migrator image (never pulled onto the source host); it cannot be repointed.
+    '      --helper-image|--helper-image=*) die "--helper-image is fixed to the migrator image" ;;',
+    // --arms is both parsed (to size the container) and forwarded verbatim to `migrate`.
+    '      --arms) [ "$n" -ge 1 ] || die "--arms needs a value"; ARMS=$1; shift; n=$((n - 1)); set -- "$@" --arms "$ARMS" ;;',
+    "      --arms=*) ARMS=${a#--arms=}; set -- \"$@\" \"$a\" ;;",
     "      --*) set -- \"$@\" \"$a\" ;;",
     // A single-dash option (Go's flag package accepts `-token` as well as `--token`) would slip a token /
     // spool-dir / hub onto the container argv or override a pinned value. Reject ALL single-dash options
@@ -93,6 +101,7 @@ export function renderMigratorInstallScript(opts: { image: string; digests?: Arc
     "  case \"$IMAGE\" in ''|-*|*[!A-Za-z0-9._/:@-]*) die \"invalid --image reference\" ;; esac",
     "  case \"$SPOOL_SIZE\" in ''|*[!0-9mMgG]*) die \"TUGRA_SPOOL_SIZE must look like 512m or 2g\" ;; esac",
     '  case "$NETWORK" in -*|*[!A-Za-z0-9_.-]*) die "invalid TUGRA_MIGRATOR_NETWORK" ;; esac',
+    '  case "$ARMS" in databases|volumes|all) ;; *) die "--arms must be databases, volumes or all" ;; esac',
     '  case "$SOCK" in /*) ;; *) die "TUGRA_DOCKER_SOCK must be an absolute path" ;; esac',
     '  case "$SOCK" in *[!A-Za-z0-9._/-]*) die "TUGRA_DOCKER_SOCK contains unsafe characters" ;; esac',
     '  case "$PROXY" in -*|*[!A-Za-z0-9_.-]*) die "invalid --proxy-container" ;; esac',
@@ -129,6 +138,10 @@ export function renderMigratorInstallScript(opts: { image: string; digests?: Arc
     "  case \"$GID\" in ''|*[!0-9]*) GID=0 ;; esac",
     '  NETARG=""',
     '  [ -n "$NETWORK" ] && NETARG="--network=$NETWORK"',
+    // The streamed volume copy keeps one 128 MiB raw slice + two member buffers in memory: cap the container so a bug can
+    // never take the source host down. The databases arm is untouched (its dump spool lives in the tmpfs below).
+    '  MEMARG=""',
+    '  case "$ARMS" in volumes|all) MEMARG="--memory=768m --memory-swap=768m" ;; esac',
     "",
     "  # --certs only: make the source proxy's acme.json visible (read-only) inside the migrator container. The path is",
     "  # resolved from the proxy container's own mounts (default /data/coolify/proxy/acme.json), must be a regular",
@@ -154,8 +167,9 @@ export function renderMigratorInstallScript(opts: { image: string; digests?: Arc
     '    --tmpfs "/spool:rw,noexec,nosuid,nodev,mode=0700,size=$SPOOL_SIZE" \\',
     '    --mount "type=bind,src=$SOCK,dst=/var/run/docker.sock" \\',
     '    --group-add "$GID" \\',
-    "    $NETARG $ACMEMOUNT \\",
-    "    -e TUGRA_MIGRATION_TOKEN -e HOME=/tmp \\",
+    "    $NETARG $ACMEMOUNT $MEMARG \\",
+    // TUGRA_SELF_IMAGE: the volume arm's tar helper is this very image (already pulled above), run with --pull=never.
+    '    -e TUGRA_MIGRATION_TOKEN -e "TUGRA_SELF_IMAGE=$IMAGE" -e HOME=/tmp \\',
     "    --entrypoint tugra-agent \\",
     '    "$IMAGE" migrate "--hub=$HUB" --spool-dir=/spool "$@" </dev/null || rc=$?',
     "  # Propagate migrate's contract exit code (0 ok, 1 partial, 3 auth, 4 unreachable, 5 skew, 6 precond, 130 int).",

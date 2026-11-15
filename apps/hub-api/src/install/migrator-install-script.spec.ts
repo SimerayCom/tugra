@@ -232,6 +232,74 @@ describe("renderMigratorInstallScript", () => {
       expect(r.stderr).not.toMatch(/shift/i);
     });
 
+    const argsOf = (r: Run) => r.log.split("\n").filter((l) => l.startsWith("ARG:")).map((l) => l.slice(4));
+
+    it("passes the migrator's OWN image as the volume arm's tar helper (TUGRA_SELF_IMAGE) and never pulls on the source host beyond the migrator image", () => {
+      const r = run(["--hub", "https://hub.example.com", "--dry-run"]);
+      const args = argsOf(r);
+      expect(args).toContain(`TUGRA_SELF_IMAGE=${IMAGE}`);
+      // exactly ONE pull: the migrator image itself
+      expect(r.log.match(/CMD:pull/g)).toHaveLength(1);
+    });
+
+    it("the default (databases) container is unchanged: no memory cap", () => {
+      const args = argsOf(run(["--hub", "https://hub.example.com"]));
+      expect(args.some((a) => a.startsWith("--memory"))).toBe(false);
+    });
+
+    it("a volume arm caps the container at 768 MiB (no swap); both --arms forms are forwarded verbatim", () => {
+      for (const form of [["--arms", "all"], ["--arms", "volumes"], ["--arms=all"]]) {
+        const r = run(["--hub", "https://hub.example.com", ...form]);
+        expect(r.code).toBe(0);
+        const args = argsOf(r);
+        expect(args).toEqual(expect.arrayContaining(["--memory=768m", "--memory-swap=768m", ...form]));
+      }
+      // ...and a databases-only arm stays uncapped even when spelled out
+      expect(argsOf(run(["--hub", "https://hub.example.com", "--arms", "databases"])).some((a) => a.startsWith("--memory"))).toBe(false);
+    });
+
+    it("rejects an unknown --arms value and a dangling --arms before any docker call", () => {
+      for (const bad of [["--arms", "everything"], ["--arms=x;id"], ["--arms"]]) {
+        const r = run(["--hub", "https://hub.example.com", ...bad]);
+        expect(r.code).not.toBe(0);
+        expect(r.log).toBe("");
+      }
+    });
+
+    it("forwards every volume flag untouched and still refuses to repoint the helper image or the spool", () => {
+      const flags = ["--stop-source", "--stop-timeout", "90", "--allow-bind", "--part-mib", "128", "--reset-volume", "volume:srv1:abc:data", "--hub-outage-wait", "20m", "--speedtest-mib", "64"];
+      const r = run(["--hub", "https://hub.example.com", "--arms", "all", ...flags]);
+      expect(r.code).toBe(0);
+      expect(argsOf(r)).toEqual(expect.arrayContaining(flags));
+      for (const bad of [["--helper-image", "evil:latest"], ["--helper-image=evil:latest"], ["--spool-dir", "/x"], ["--token", "X"], ["-helper-image=evil"]]) {
+        const rr = run(["--hub", "https://hub.example.com", ...bad]);
+        expect(rr.code).not.toBe(0);
+        expect(rr.log).toBe("");
+      }
+    });
+
+    it("golden: the final docker run line keeps the hardening, the socket as the ONLY mount, and the new env/memory slots", () => {
+      const text = script.slice(script.indexOf("  docker run --rm --name"));
+      const run = text.slice(0, text.indexOf("|| rc=$?"));
+      expect(run).toBe(
+        [
+          '  docker run --rm --name "$NAME" \\',
+          "    --cap-drop ALL --security-opt no-new-privileges --read-only --pids-limit 128 \\",
+          "    --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m \\",
+          '    --tmpfs "/spool:rw,noexec,nosuid,nodev,mode=0700,size=$SPOOL_SIZE" \\',
+          '    --mount "type=bind,src=$SOCK,dst=/var/run/docker.sock" \\',
+          '    --group-add "$GID" \\',
+          "    $NETARG $MEMARG \\",
+          '    -e TUGRA_MIGRATION_TOKEN -e "TUGRA_SELF_IMAGE=$IMAGE" -e HOME=/tmp \\',
+          "    --entrypoint tugra-agent \\",
+          '    "$IMAGE" migrate "--hub=$HUB" --spool-dir=/spool "$@" </dev/null ',
+        ].join("\n"),
+      );
+      // the only bind mount is still the docker socket; the volume arm's source volumes are mounted by `docker run` calls
+      // the MIGRATOR makes over that socket, never by this container
+      expect(text.match(/--mount "[^"]+"/g)).toEqual(['--mount "type=bind,src=$SOCK,dst=/var/run/docker.sock"']);
+    });
+
     it("pull failure aborts before run; container reaped (--rm)", () => {
       const r = run(["--hub", "https://hub.example.com"], { STUB_PULL_EXIT: "1" });
       expect(r.code).toBe(6);

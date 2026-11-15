@@ -34,3 +34,32 @@ export function buildMigrationCommandTemplate(base: string, opts: { certs?: bool
   assertSafeBase(base);
   return `curl -fsSL ${base}/install/migrator.sh | TUGRA_MIGRATION_TOKEN=<TOKEN> sh -s -- --hub ${base}${opts.certs ? CERTS_FLAG : ""}`;
 }
+
+/** The three commands the "Move data" step offers for the streamed volume copy. Each is the legacy bootstrap plus flags. */
+export interface MigrationCommands {
+  /** Inspect only: sizes, running state, Postgres image/major/layout and the target's free space; nothing is stopped or moved. */
+  dryRun: string;
+  /** Copy (the source container must already be stopped, or add --stop-source). Re-running it resumes by part. */
+  run: string;
+  /** Same as run with a longer wait for a restarting hub: what to paste after an interruption. */
+  resume: string;
+}
+
+const ARMS_ALL = "--arms all";
+const RESUME_FLAGS = "--hub-outage-wait 30m";
+
+function withFlags(base: string, flags: string): string {
+  return `${base} ${flags}`;
+}
+
+/** Streamed-copy commands carrying the live token (shown ONCE, like {@link buildMigrationCommand}). */
+export function buildMigrationCommands(token: string, base: string): MigrationCommands {
+  const cmd = buildMigrationCommand(token, base);
+  return { dryRun: withFlags(cmd, `${ARMS_ALL} --dry-run`), run: withFlags(cmd, ARMS_ALL), resume: withFlags(cmd, `${ARMS_ALL} ${RESUME_FLAGS}`) };
+}
+
+/** The same three with a literal <TOKEN> placeholder (the read-only GET never returns a credential). */
+export function buildMigrationCommandsTemplate(base: string): MigrationCommands {
+  const cmd = buildMigrationCommandTemplate(base);
+  return { dryRun: withFlags(cmd, `${ARMS_ALL} --dry-run`), run: withFlags(cmd, ARMS_ALL), resume: withFlags(cmd, `${ARMS_ALL} ${RESUME_FLAGS}`) };
+}

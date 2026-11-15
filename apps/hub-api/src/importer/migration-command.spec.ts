@@ -1,5 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
-import { assertSafeBase, buildMigrationCommand, buildMigrationCommandTemplate, CERTS_FLAG } from "./migration-command";
+import { assertSafeBase, buildMigrationCommand, buildMigrationCommands, buildMigrationCommandsTemplate, buildMigrationCommandTemplate, CERTS_FLAG } from "./migration-command";
 import { generateMigrationToken } from "./migration-token";
 
 const TOK = generateMigrationToken();
@@ -59,5 +59,31 @@ describe("migration command --certs (opt-in)", () => {
     expect(buildMigrationCommand(TOK, base, { certs: true })).toMatch(/--hub https:\/\/hub\.example\.com --certs$/);
     expect(buildMigrationCommandTemplate(base)).not.toContain("--certs");
     expect(buildMigrationCommandTemplate(base, { certs: true })).toMatch(/--certs$/);
+  });
+});
+
+describe("streamed-copy commands", () => {
+  it("dry-run / run / resume are the legacy bootstrap plus --arms all (token in the env slot only)", () => {
+    const c = buildMigrationCommands(TOK, "https://hub.example.com");
+    const base = buildMigrationCommand(TOK, "https://hub.example.com");
+    expect(c).toEqual({ dryRun: `${base} --arms all --dry-run`, run: `${base} --arms all`, resume: `${base} --arms all --hub-outage-wait 30m` });
+    for (const v of Object.values(c)) {
+      expect(v).not.toContain("--token");
+      expect(v).toMatch(/\| TUGRA_MIGRATION_TOKEN=tugra_mig_[A-Za-z0-9_-]{43} sh -s -- --hub /);
+    }
+  });
+
+  it("the template variant carries <TOKEN> and never a credential", () => {
+    const t = buildMigrationCommandsTemplate("https://hub.example.com");
+    for (const v of Object.values(t)) {
+      expect(v).toContain("TUGRA_MIGRATION_TOKEN=<TOKEN>");
+      expect(v).not.toContain("tugra_mig_");
+    }
+  });
+
+  it("refuses a hostile base or a non-migration token exactly like the legacy builder", () => {
+    expect(() => buildMigrationCommands(TOK, "http://evil;id")).toThrow(BadRequestException);
+    expect(() => buildMigrationCommands("tugra_pat_" + "a".repeat(43), "https://hub.example.com")).toThrow(BadRequestException);
+    expect(() => buildMigrationCommandsTemplate("http://evil$(id)")).toThrow(BadRequestException);
   });
 });
