@@ -44,4 +44,16 @@ describe("resolveDestinationSpec", () => {
     );
     await expect(resolveDestinationSpec(prismaOf({ ...base, type: "LOCAL", encryptionEnabled: true, encryptionKey: null }), crypto, "d1")).rejects.toThrow(/key is missing/);
   });
+
+  it("a missing key and an unreadable key/credential are typed 422s carrying a stable code and no key text", async () => {
+    await expect(resolveDestinationSpec(prismaOf({ ...base, type: "LOCAL", encryptionEnabled: true, encryptionKey: null }), crypto, "d1")).rejects.toMatchObject({
+      status: 422,
+      response: expect.objectContaining({ code: "destination_key_missing" }),
+    });
+    const broken = { decrypt: () => { throw new Error("secrets key tk1.deadbeef unavailable"); } } as unknown as CryptoService;
+    const err = await resolveDestinationSpec(prismaOf({ ...base, type: "S3", encryptionEnabled: true, encryptionKey: "tk1.x" }), broken, "d1").catch((e) => e);
+    expect(err.status).toBe(422);
+    expect(err.response.code).toBe("destination_key_unavailable");
+    expect(err.message).not.toContain("deadbeef");
+  });
 });

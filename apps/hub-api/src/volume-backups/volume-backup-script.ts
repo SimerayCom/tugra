@@ -7,6 +7,7 @@
  */
 import { mcHostEnv, mcTarget, MC_INSTALL, type DestinationSpec } from "../backups/destination";
 import { GPG_PREFLIGHT } from "../backups/backup-script";
+import { DestinationKeyError } from "../backups/destination-key-error";
 // Shared mc-output parser (also used by DB backups) — re-exported so existing importers keep working.
 export { parseShareUrl } from "../backups/destination";
 
@@ -173,7 +174,7 @@ export function buildVolumeRestoreScript(
   // `gpg --passphrase ''`.
   const encrypted = filename.endsWith(".gpg");
   if (encrypted && !dest.encryption.key) {
-    throw new Error("backup is encrypted but the destination has no key (destination deleted?)");
+    throw new DestinationKeyError("backup_key_missing", "backup is encrypted but the destination has no key (destination deleted?)");
   }
   const decode = [source];
   if (encrypted) decode.push(gpgDecrypt(dest));
