@@ -76,6 +76,10 @@ export function buildVolumeBackupScript(
     if (dest.encryption.enabled) {
       // Encrypted object: stream to `<file>.part` then `mv`, so a crash mid-write never leaves a truncated
       // .gpg at the real path. (Unencrypted LOCAL stays a direct write — that script is byte-identical.)
+      // A failed run removes its own `.part` (EXIT trap); a SIGKILLed one cannot, so stale ones (> 1 day, far past
+      // the backup timeout) are swept before the next write.
+      lines.push(`find ${dir} -maxdepth 1 -name '*.part' -mmin +1440 -delete 2>/dev/null || true`);
+      lines.push(`trap 'rm -f ${file}.part' EXIT`);
       lines.push(`${pipe.join(" | ")} > ${file}.part`);
       lines.push(`mv ${file}.part ${file}`);
     } else {

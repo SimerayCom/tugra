@@ -48,6 +48,15 @@ describe("volume-backup-script — encryption, suffix-driven restore, atomic loc
     expect(s).toContain(`stat -c %s ${f}`);
   });
 
+  it("an encrypted LOCAL write reaps its own .part on failure and sweeps stale ones; the unencrypted script has neither", () => {
+    const f = "/etc/tugra/volume-backups/a1/data/t.tar.gz.gpg";
+    const s = buildVolumeBackupScript("a1", "data", "v", "t.tar.gz.gpg", ENC);
+    expect(s).toContain(`trap 'rm -f ${f}.part' EXIT`);
+    expect(s.indexOf("trap ")).toBeLessThan(s.indexOf(`> ${f}.part`));
+    expect(s).toContain("find /etc/tugra/volume-backups/a1/data -maxdepth 1 -name '*.part' -mmin +1440 -delete");
+    expect(buildVolumeBackupScript("a1", "data", "v", "t.tar.gz", LOCAL)).not.toMatch(/trap|\.part/);
+  });
+
   it("restore decrypts by the .gpg SUFFIX, not the destination flag", () => {
     const gpgFile = buildVolumeRestoreScript("a1", "data", "v", "t.tar.gz.gpg", ENC, "r1");
     expect(gpgFile).toContain("--decrypt");
