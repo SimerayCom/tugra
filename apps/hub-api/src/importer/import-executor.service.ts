@@ -12,7 +12,8 @@ import { ProjectsService } from "../projects/projects.service";
 import type { CreateDatabaseInput } from "../databases/dto";
 import { ImporterService } from "./importer.service";
 import { LocalDockerSource } from "./sources/local-docker.source";
-import { planImport } from "./import-planner";
+import { planImport, ns, ENV_RISK_UNRESOLVED, ENV_RISK_INVALID, ACKABLE_RISK_CODES } from "./import-planner";
+import { isValidUserEnvKey } from "../common/env-key";
 import { mapSourceEnvFlags } from "./env-auto-flags";
 import { mapBuildPack } from "./buildpack-map";
 import { IMPORT_REASON_CODES, type ImportReasonCode } from "@tugra/shared";
@@ -33,7 +34,7 @@ import type { DatabaseView } from "../databases/databases.service";
 const PROVISIONABLE_ENGINES = new Set(["POSTGRES", "MYSQL", "REDIS", "MONGO", "MARIADB", "KEYDB", "DRAGONFLY", "CLICKHOUSE", "LIBSQL"]);
 import { SetBasicAuthSchema } from "../applications/dto";
 import type { ImportSource, FetchedDbCredentials, SourceAppExtras } from "./import-source";
-import { REMOTE_SOURCE_KINDS, type ImportApplyInput, type RemoteSourceKind } from "./dto";
+import { REMOTE_SOURCE_KINDS, type ImportAck, type ImportApplyInput, type RemoteSourceKind } from "./dto";
 
 const CONCURRENCY = 5;
 const STALE_RUNNING_MS = 10 * 60_000; // a RUNNING task older than this is treated as a dead worker's leftover
@@ -50,6 +51,20 @@ const remapHostShapeFor = (sourceKind: string | undefined): RegExp | undefined =
 /** A DB_IDENT_RE-safe database name derived from a display name (fallback when the source has no database name). */
 const safeDbIdent = (name: string): string => name.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 63) || "app";
 const msg = (e: unknown): string => (e instanceof Error ? e.message : "failed");
+
+/** Sources whose variables are imported STRICTLY: an unresolved/invalid key blocks (ackably) instead of being
+ *  silently dropped. Dokploy/local keep their lenient behaviour (byte-identical). */
+const STRICT_ENV_KINDS = new Set<string>(["coolify"]);
+
+/** Is `code` on `item` covered by an operator ack? Only the ackable codes can ever be; an ack without `itemRef`
+ *  covers every item carrying the code. */
+export function isAcked(acks: readonly ImportAck[] | undefined, itemRef: string, code: string): boolean {
+  if (!acks?.length || !ACKABLE_RISK_CODES.includes(code)) return false;
+  return acks.some((a) => a.code === code && (a.itemRef === undefined || a.itemRef === itemRef));
+}
+
+/** "KEY1, KEY2 (+M more)" — names only, never values. */
+const keyList = (keys: string[], cap: number): string => (keys.length > cap ? `${keys.slice(0, cap).join(", ")} (+${keys.length - cap} more)` : keys.join(", "));
 
 /**
  * Applies an import plan, persisted as a BulkOperation(kind="import") with one typed task per plan item so
@@ -148,6 +163,13 @@ export class ImportExecutorService {
         plan,
         ...(opWarnings.length ? { warnings: opWarnings } : {}),
         ...(tree.summary.length ? { projects: tree.summary } : {}),
+        // Audit trail of what the operator acknowledged (codes + itemRefs only — never a variable name or value).
+        ...(input.acks?.length ? { acks: input.acks } : {}),
+        // Coolify services (uuid + name only) so the env-remap preview can flag a value that still points at an old
+        // service host (e.g. MinIO) instead of leaving it silently unchanged. Not a secret.
+        ...(input.sourceKind === "coolify" && fleet.services.length
+          ? { services: fleet.services.map((sv) => ({ itemRef: ns("service", sv.serverRef, sv.sourceRef), name: sv.name.slice(0, 120), oldHost: sv.sourceRef })) }
+          : {}),
       });
       // Idempotency: skip app refs a prior op already imported onto this target (and whose app still exists),
       // so a re-apply after a partial/cancelled run does not create duplicate Tugra apps.
@@ -164,7 +186,7 @@ export class ImportExecutorService {
         const app = item.kind === "app" ? appByRef.get(item.itemRef) : undefined;
         const db = item.kind === "database" ? dbByRef.get(item.itemRef) : undefined;
         const dup = already.has(item.itemRef);
-        const hasBlocker = item.risks.some((r) => r.level === "blocker");
+        const hasBlocker = item.risks.some((r) => r.level === "blocker" && !isAcked(input.acks, item.itemRef, r.code));
         const provisionableDb = !!db && PROVISIONABLE_ENGINES.has(db.engine);
         const runnable = !dup && !hasBlocker && ((item.kind === "app" && !!app) || (item.kind === "database" && provisionableDb));
         const reason = dup
@@ -190,7 +212,9 @@ export class ImportExecutorService {
         });
         // The resource's own source environment when the tree resolved it; else the single selected environment.
         const environmentId = resolveTreeEnvironment(tree.envByRef, app ?? db) ?? input.environmentId;
-        if (runnable && app) runners.set(task.id, () => this.runCopyApp(task.id, source, app, userId, input.targetServerId, input.sourceKind, environmentId, gitSourceByRef));
+        // Ack codes that actually cover a risk THIS item carries (an ack for a code the plan never raised for it grants nothing).
+        const ackedCodes = new Set(item.risks.filter((r) => isAcked(input.acks, item.itemRef, r.code)).map((r) => r.code));
+        if (runnable && app) runners.set(task.id, () => this.runCopyApp(task.id, source, app, userId, input.targetServerId, input.sourceKind, environmentId, gitSourceByRef, ackedCodes));
         else if (runnable && db) runners.set(task.id, () => this.runCreateDb(task.id, source, db, userId, input.targetServerId, environmentId));
       }
       await this.audit.log({ actor: userId, action: "import.apply", target: op.id, meta: { sourceKind: input.sourceKind, serverId: input.targetServerId, run: runners.size, total: plan.items.length } });
@@ -359,10 +383,40 @@ export class ImportExecutorService {
     }
   }
 
-  private async runCopyApp(taskId: string, source: ImportSource, app: ForeignApp, userId: string, targetServerId: string, sourceKind: RemoteSourceKind, environmentId?: string, gitSourceByRef: ReadonlyMap<string, string> = new Map()): Promise<void> {
+  private async runCopyApp(taskId: string, source: ImportSource, app: ForeignApp, userId: string, targetServerId: string, sourceKind: RemoteSourceKind, environmentId?: string, gitSourceByRef: ReadonlyMap<string, string> = new Map(), ackedCodes: ReadonlySet<string> = new Set()): Promise<void> {
     if (!(await this.claim(taskId))) return;
     try {
-      const { values, unresolved, flags } = await source.fetchSecrets(app.sourceRef); // real env values (server-side only)
+      const fetched = await source.fetchSecrets(app.sourceRef); // real env values (server-side only)
+      const { unresolved } = fetched;
+      let { values, flags } = fetched;
+      // STRICT ENV (Coolify): never create an app that silently lacks variables. Keys that are not valid env names are
+      // dropped here (this closes the importer's bypass of the zod env-key check), and any unresolved/invalid key that
+      // the operator did not acknowledge for THIS item fails the task BEFORE apps.create: no row exists, so a retry can
+      // never duplicate. Names only in the message/result; values appear nowhere.
+      let unresolvedKeys: string[] = [];
+      let droppedInvalid: string[] = [];
+      if (STRICT_ENV_KINDS.has(sourceKind)) {
+        const clean: Record<string, string> = Object.create(null);
+        for (const [k, v] of Object.entries(values)) {
+          if (isValidUserEnvKey(k)) clean[k] = v;
+          else droppedInvalid.push(k);
+        }
+        droppedInvalid = [...new Set([...droppedInvalid, ...(fetched.invalidKeys ?? [])])].sort();
+        if (droppedInvalid.length) {
+          values = clean;
+          if (flags) {
+            const kept: NonNullable<typeof flags> = Object.create(null);
+            for (const k of Object.keys(flags)) if (isValidUserEnvKey(k)) kept[k] = flags[k];
+            flags = kept;
+          }
+        }
+        unresolvedKeys = [...new Set(unresolved.map((u) => u.key))].sort();
+        const missing = [
+          ...(unresolvedKeys.length && !ackedCodes.has(ENV_RISK_UNRESOLVED) ? unresolvedKeys : []),
+          ...(droppedInvalid.length && !ackedCodes.has(ENV_RISK_INVALID) ? droppedInvalid : []),
+        ];
+        if (missing.length) throw new Error(`env not carried: ${keyList(missing, 20)}`);
+      }
       const gitSourceId = await this.resolveGitSourceId(targetServerId, app, gitSourceByRef);
       // Flags that could not be carried are reported by key name (never silently dropped); mapped once, used for both.
       const mappedFlags = mapSourceEnvFlags(values, flags, mapBuildPack(app).source);
@@ -412,7 +466,9 @@ export class ImportExecutorService {
         ? `ingress not carried: ${ingress.unmapped.map((u) => u.field).join(", ")}`
         : undefined;
       const flagNote = flagWarnings.length ? `env flags not carried: ${flagWarnings.join("; ")}` : undefined;
-      const note = [volNote, cfgNote, ingressNote, flagNote].filter(Boolean).join("; ") || undefined;
+      const notCarriedKeys = [...unresolvedKeys, ...droppedInvalid.filter((k) => !unresolvedKeys.includes(k))];
+      const envNote = notCarriedKeys.length ? `env not carried (acknowledged): ${keyList(notCarriedKeys, 20)}` : undefined;
+      const note = [volNote, cfgNote, ingressNote, flagNote, envNote].filter(Boolean).join("; ") || undefined;
       await this.prisma.bulkTask.update({
         where: { id: taskId },
         data: {
@@ -420,7 +476,7 @@ export class ImportExecutorService {
           resourceType: "application",
           resourceId: created.id,
           // count only — never the values; `volumes` omitted entirely for an app with no mounts (byte-identical to before)
-          result: { name: created.name, appId: created.id, unresolvedEnv: unresolved.length, ...(volumes ? { volumes } : {}), ...(postCreate.applied.length || postCreate.unmapped.length ? { postCreate } : {}), ...(ingress.applied.length || ingress.unmapped.length ? { ingress } : {}) },
+          result: { name: created.name, appId: created.id, unresolvedEnv: unresolved.length, ...(unresolvedKeys.length ? { unresolvedKeys: unresolvedKeys.slice(0, 50) } : {}), ...(droppedInvalid.length ? { droppedInvalidKeys: droppedInvalid.slice(0, 50) } : {}), ...(volumes ? { volumes } : {}), ...(postCreate.applied.length || postCreate.unmapped.length ? { postCreate } : {}), ...(ingress.applied.length || ingress.unmapped.length ? { ingress } : {}) },
           ...(note ? { output: note } : {}),
           finishedAt: new Date(),
         },
@@ -901,8 +957,9 @@ export class ImportExecutorService {
   private async computeRemapPlan(userId: string, opId: string) {
     const op = await this.loadOwnedOp(userId, opId, { reapData: false }); // never kill an in-flight restore
     await this.assertCanMigrate(userId, op); // coolify copy-mode, settled, creator still holds apps:config
-    const meta = op.meta as { serverId: string; sourceKind?: string };
+    const meta = op.meta as { serverId: string; sourceKind?: string; services?: Array<{ itemRef: string; name: string; oldHost: string }> };
     const hostShape = remapHostShapeFor(meta.sourceKind);
+    const sourceServices = meta.sourceKind === "coolify" && Array.isArray(meta.services) ? meta.services.filter((sv) => sv && typeof sv.oldHost === "string" && typeof sv.itemRef === "string") : undefined;
     const server = await this.prisma.server.findUnique({ where: { id: meta.serverId } });
     if (!server) throw new ConflictException("target server not found");
     await this.access.requirePermission(userId, server.teamId, "databases"); // reading DB credentials
@@ -991,7 +1048,7 @@ export class ImportExecutorService {
     const writes: Array<{ appId: string; name: string; itemRef: string; entries: Array<{ key: string; newValue: string }> }> = [];
     // Pass 1 (sync): run the pure engine per app; collect the public diff + the DBs each app references.
     const prepped = appEnvs.map((a) => {
-      const res = remapEnv(a.env, { dbs: targets, apps: appTargets.filter((at) => at.itemRef !== a.itemRef), ...(hostShape ? { hostShape, bareHostKeyGate: true } : {}) });
+      const res = remapEnv(a.env, { dbs: targets, apps: appTargets.filter((at) => at.itemRef !== a.itemRef), ...(hostShape ? { hostShape, bareHostKeyGate: true } : {}), ...(sourceServices?.length ? { services: sourceServices } : {}) });
       writes.push({ appId: a.appId, name: a.name, itemRef: a.itemRef, entries: res.changes.map((c) => ({ key: c.key, newValue: c.newValue })) });
       const needsManual = res.needsManual.map((n) => ({ key: n.key, reason: n.reason, targetItemRef: n.target }));
       // A value that references a DB we could NOT load looks "unchanged" but actually needs this DB — surface

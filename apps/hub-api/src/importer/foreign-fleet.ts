@@ -40,6 +40,8 @@ export interface ForeignEnv {
   scope?: "resource" | "environment" | "project" | "team" | "shared";
   ref?: { type: "shared" | "vault" | "magic" | "encrypted"; provider?: string; path?: string };
   generated?: boolean; // source-generated (e.g. SERVICE_PASSWORD_*) — regenerate or carry, don't treat as user input
+  /** Why a variable could not be carried (set by `fetchSecrets` on an `unresolved` entry; Coolify only). */
+  reason?: "NO_VALUE" | "SHARED_UNEXPANDED" | "MAGIC";
 }
 
 export interface ForeignVolume {
@@ -163,6 +165,15 @@ export interface ForeignApp {
   /** Fields PRESENT on the source that no Tugra setter carries. Field NAMES + FIXED reasons only, never values.
    *  Feeds the plan-time coverage report. NOT copied into `proposed`; no new `risks`; planHash unchanged. */
   notCarried?: Array<Unmapped & { level: "warn" | "info" }>;
+  /** Key NAMES + reason codes of the variables an import could not carry (Coolify only; absent = the source does not
+   *  report it, e.g. Dokploy/local, so the planner stays lenient and byte-identical). NEVER values. */
+  envReport?: {
+    total: number; // non-preview rows
+    previewSkipped: number; // is_preview twins (not imported)
+    unresolved: { key: string; reason: "NO_VALUE" | "SHARED_UNEXPANDED" | "MAGIC" }[]; // sorted by key, capped
+    invalidKeys: string[]; // fail isValidUserEnvKey (or are denied); sorted, capped
+    tokenReadOnly: boolean; // variables exist but no row carried a value: the API token lacks read:sensitive
+  };
 }
 
 export interface ForeignDb {
@@ -299,6 +310,12 @@ export interface ImportCoverageApp {
 /** Per-app "what was not carried" report (presence-only: field names + fixed reasons, never values). Advisory. */
 export interface ImportCoverage {
   apps: ImportCoverageApp[]; // only apps with at least one entry
+  /** Presence-only env summary (Coolify): counts, key NAMES and reason codes. Never values. */
+  env?: {
+    apps: Array<{ itemRef: string; name: string; unresolved: Array<{ key: string; reason: string }>; invalidKeys: string[]; previewSkipped: number; tokenReadOnly: boolean }>;
+  };
+  /** Git repo shapes across the apps (counts only; the target-team link status is resolved at `POST /import/git-links`). */
+  git?: { apps: number; https: number; ssh: number; githubApp: number };
 }
 
 export interface ImportPreflight {
@@ -315,4 +332,8 @@ export interface ImportPreflight {
   volumes?: Array<{ app: string; mountPath: string; type?: "named" | "bind"; dataPlane: VolumeDataPlane; reason: string }>;
   /** Per-app "what is not carried over". Additive; NOT part of planHash (preflight never is). */
   coverage?: ImportCoverage;
+  /** Coolify only: how many apps' variables are unreadable because the API token lacks read:sensitive. */
+  env?: { tokenReadOnlyApps: number };
+  /** Git hosts the apps clone from (host + app count), so a non-GitHub host is visible at plan time. */
+  git?: { hosts: Array<{ host: string; apps: number }> };
 }

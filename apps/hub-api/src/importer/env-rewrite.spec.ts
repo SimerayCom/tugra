@@ -8,6 +8,7 @@ import {
   RM_QUERY_CREDS,
   RM_AMBIGUOUS,
   RM_UNCONFIRMED_CRED,
+  RM_SERVICE_LINK_REVIEW,
 } from "./env-rewrite";
 
 const UUID = "3f1a9c0b2d4e6f8a1b3c5d7e"; // 24 hex-ish, matches UUID_RE
@@ -399,5 +400,45 @@ describe("remapEnv hostShape (L3)", () => {
     const next: Record<string, string> = { DB_HOST: DK_HOST, DB_USER: "dies" };
     for (const c of first.changes) next[c.key] = c.newValue;
     expect(remapEnv(next, dkCtx([dkMysql("rotate")])).changes).toHaveLength(0);
+  });
+});
+
+describe("remapEnv — old source services (RM_SERVICE_LINK_REVIEW)", () => {
+  const SVC = "k1l2m3n4o5p6q7r8s9t0u1v2"; // Coolify service uuid (uuid-shaped)
+  const services = [{ itemRef: `service:srv:${SVC}`, name: "minio", oldHost: SVC }];
+  const c = (extra: Partial<RemapContext> = {}): RemapContext => ({ dbs: [pgTarget("preserve")], apps: [], services, ...extra });
+
+  it("a URL whose host is the service uuid or a member container `<name>-<uuid>` is needsManual, never edited", () => {
+    const r = remapEnv(
+      { S3_ENDPOINT: `http://minio-${SVC}:9000`, S3_URL: `https://${SVC}:9000/bucket`, S3_HOST: SVC, S3_HOSTPORT: `${SVC}:9000`, S3_BARE: `minio-${SVC}` },
+      c(),
+    );
+    expect(r.changes).toEqual([]);
+    expect(r.needsManual.map((n) => [n.key, n.reason, n.target]).sort()).toEqual(
+      ["S3_BARE", "S3_ENDPOINT", "S3_HOST", "S3_HOSTPORT", "S3_URL"].map((k) => [k, RM_SERVICE_LINK_REVIEW, services[0].itemRef]).sort(),
+    );
+    expect(r.unchanged).toEqual([]);
+  });
+
+  it("without `services` the same env is byte-identical to before (silently unchanged)", () => {
+    const env = { S3_ENDPOINT: `http://minio-${SVC}:9000`, S3_HOST: SVC };
+    const before = remapEnv(env, { dbs: [pgTarget("preserve")], apps: [] });
+    const withEmpty = remapEnv(env, { dbs: [pgTarget("preserve")], apps: [], services: [] });
+    expect(withEmpty).toEqual(before);
+    expect(before.needsManual).toEqual([]);
+    expect(before.unchanged.sort()).toEqual(["S3_ENDPOINT", "S3_HOST"]);
+  });
+
+  it("DB and app rules are unchanged by the services list; unrelated values stay unchanged", () => {
+    const r = remapEnv({ DATABASE_URL: `postgres://appuser:pw@${UUID}:5432/appdb`, NAME: "minio-sibling", REGION: "eu-west-1" }, c());
+    expect(r.changes).toHaveLength(1);
+    expect(r.changes[0].rule).toBe("url");
+    expect(r.needsManual).toEqual([]);
+    expect(r.unchanged.sort()).toEqual(["NAME", "REGION"]);
+  });
+
+  it("a service oldHost that is not uuid-shaped is ignored (never matched on a loose string)", () => {
+    const r = remapEnv({ X: "minio" }, c({ services: [{ itemRef: "service:srv:minio", name: "minio", oldHost: "minio" }] }));
+    expect(r.needsManual).toEqual([]);
   });
 });

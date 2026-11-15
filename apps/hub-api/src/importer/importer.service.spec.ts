@@ -140,7 +140,11 @@ describe("ImporterService.plan — coverage (G3-C)", () => {
     const { svc, sources } = make({ session: session(kind) });
     (sources.create as jest.Mock).mockReturnValue(stubSource());
     const plan = await svc.plan("u1", { sourceKind: kind, sessionId: "sess-1" });
-    expect(plan.preflight?.coverage).toEqual({ apps: [{ itemRef: "app:s1:web-1", name: "web", notCarried: [{ field: "registry", reason: "r", level: "info" }] }] });
+    expect(plan.preflight?.coverage).toEqual({
+      apps: [{ itemRef: "app:s1:web-1", name: "web", notCarried: [{ field: "registry", reason: "r", level: "info" }] }],
+      // Coolify only: the repo-shape summary (Dokploy's coverage stays byte-identical)
+      ...(kind === "coolify" ? { git: { apps: 1, https: 1, ssh: 0, githubApp: 0 } } : {}),
+    });
     // same fleet without notCarried → identical hash
     const { svc: svc2, sources: sources2 } = make({ session: session(kind) });
     const bare = stubSource();
@@ -152,7 +156,11 @@ describe("ImporterService.plan — coverage (G3-C)", () => {
   it("omits coverage when nothing is not carried, and for local-docker", async () => {
     const { svc, sources } = make({ session: session("coolify") });
     (sources.create as jest.Mock).mockReturnValue({ discover: jest.fn().mockResolvedValue({ servers: [], apps: [{ ...app, notCarried: undefined }], databases: [], services: [], volumes: [], sharedEnv: [], warnings: [] }), close: jest.fn() });
-    expect((await svc.plan("u1", { sourceKind: "coolify", sessionId: "sess-1" })).preflight).not.toHaveProperty("coverage");
+    // Coolify: only the repo-shape summary remains (no notCarried entries, no env report)
+    expect((await svc.plan("u1", { sourceKind: "coolify", sessionId: "sess-1" })).preflight?.coverage).toEqual({ apps: [], git: { apps: 1, https: 1, ssh: 0, githubApp: 0 } });
+    const { svc: dk, sources: dkSources } = make({ session: session("dokploy") });
+    (dkSources.create as jest.Mock).mockReturnValue({ discover: jest.fn().mockResolvedValue({ servers: [], apps: [{ ...app, notCarried: undefined }], databases: [], services: [], volumes: [], sharedEnv: [], warnings: [] }), close: jest.fn() });
+    expect((await dk.plan("u1", { sourceKind: "dokploy", sessionId: "sess-1" })).preflight).not.toHaveProperty("coverage");
     const local = await make().svc.plan("u1", { sourceKind: "local-docker", serverId: "srv1" });
     expect(local.preflight).not.toHaveProperty("coverage");
   });

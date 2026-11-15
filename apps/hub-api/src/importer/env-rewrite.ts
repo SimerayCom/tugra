@@ -62,6 +62,11 @@ export interface RemapContext {
    *  rewriting it would corrupt the value; when the key is not host-like the value is reported
    *  ({@link RM_CONTAINS_TOKEN}), never edited. Off by default so Coolify (uuid hosts, unambiguous) is unchanged. */
   bareHostKeyGate?: boolean;
+  /** OPTIONAL (Coolify): the source's multi-container SERVICES (e.g. MinIO). An env value that points at one of them
+   *  (URL host, bare host or host:port equal to the service uuid, or ending `-<uuid>` as a member container's name)
+   *  is reported {@link RM_SERVICE_LINK_REVIEW} instead of staying silently `unchanged`. NEVER auto-edited: a service
+   *  is not imported as an app, so there is no new host to rewrite to. Callers that omit it are byte-identical. */
+  services?: { itemRef: string; name: string; oldHost: string }[];
 }
 
 export type RemapRule = "url" | "host" | "host-port" | "user" | "database" | "password" | "port";
@@ -96,6 +101,7 @@ export const RM_UNCONFIRMED_CRED = "unconfirmed-credential"; // a rotate split *
 export const RM_AMBIGUOUS = "ambiguous-target"; // a split var could belong to >1 referenced DB with differing outcomes
 export const RM_APP_LINK_REVIEW = "app-link-review"; // an inter-app URL — correct but network-dependent, review first
 export const RM_CONTAINS_TOKEN = "contains-old-token"; // a known uuid appears as a non-boundary substring; too risky to edit
+export const RM_SERVICE_LINK_REVIEW = "service-link-review"; // points at an old source service (e.g. MinIO) that is not imported as an app
 export const RM_UNSUPPORTED_ENGINE = "unsupported-engine"; // the matched DB's engine has no connection form we rewrite
 export const RM_QUERY_CREDS = "credentials-in-query"; // a connection URL carries credentials in the query (rotate would half-rewrite)
 
@@ -235,6 +241,14 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
   const companionKeys: string[] = [];
   const dbRef = (d: DbRemapTarget) => ({ itemRef: d.itemRef, kind: "database" as const, name: d.name });
 
+  // Service lookup: a member container is named `<name>-<serviceUuid>`, so a host equal to the uuid or ending
+  // `-<uuid>` is the service. The uuid itself must be uuid-shaped (the existing gate) before it is ever matched.
+  const services = (ctx.services ?? []).filter((sv) => shapeTest(hostShape, sv.oldHost));
+  const serviceFor = (host: string): string | undefined => {
+    for (const sv of services) if (host === sv.oldHost || host.endsWith(`-${sv.oldHost}`)) return sv.itemRef;
+    return undefined;
+  };
+
   const embeddedTarget = (value: string): string | undefined => {
     for (const [tok, d] of dbByHost) if (value.includes(tok)) return d.itemRef;
     for (const [tok, a] of appByHost) if (value.includes(tok)) return a.itemRef;
@@ -277,6 +291,11 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
         needsManual.push({ key, reason: RM_APP_LINK_REVIEW, target: app.itemRef });
         continue;
       }
+      const svcRef = serviceFor(auth.host);
+      if (svcRef) {
+        needsManual.push({ key, reason: RM_SERVICE_LINK_REVIEW, target: svcRef });
+        continue;
+      }
       // a URL to something we don't manage: fall through to the embedded-token scan (host may be <uuid>.suffix).
     } else {
       // R2 — the value is exactly an old host token, or <host>:<port>.
@@ -302,6 +321,11 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
         const db = dbByHost.get(hp[1])!;
         changes.push({ key, rule: "host-port", target: dbRef(db), oldMasked: value, newMasked: `${db.newHost}:${db.newPort}`, newValue: `${db.newHost}:${db.newPort}`, confidence: "exact" });
         referencedDbs.add(db);
+        continue;
+      }
+      const svcRef = services.length ? serviceFor(hp ? hp[1] : value) : undefined; // bare host or host:port of an old service
+      if (svcRef) {
+        needsManual.push({ key, reason: RM_SERVICE_LINK_REVIEW, target: svcRef });
         continue;
       }
     }

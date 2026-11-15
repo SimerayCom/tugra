@@ -3,6 +3,7 @@ import { foreignAppToIngressPlan, foreignAppToPostCreateConfig } from "./apply-m
 import { why } from "./reason";
 import { mapBuildPack } from "./buildpack-map";
 import { ns } from "./import-planner";
+import { isSshGitUrl } from "../deploy/deploy-script";
 
 type Entry = ImportCoverageApp["notCarried"][number];
 
@@ -22,9 +23,45 @@ export function buildCoverage(fleet: ForeignFleet, options: ImportOptions): Impo
     const notCarried = coverageFor(app);
     if (notCarried.length) apps.push({ itemRef: ns("app", app.serverRef, app.sourceRef), name: app.name, notCarried });
   }
-  if (!apps.length) return undefined;
+  const env = envCoverage(fleet);
+  const git = options.sourceKind === "coolify" ? gitCoverage(fleet) : undefined; // other sources keep their output byte-identical
+  if (!apps.length && !env && !git) return undefined;
   apps.sort((a, b) => (a.itemRef < b.itemRef ? -1 : a.itemRef > b.itemRef ? 1 : 0));
-  return { apps };
+  return { apps, ...(env ? { env } : {}), ...(git ? { git } : {}) };
+}
+
+const byRef = (a: { itemRef: string }, b: { itemRef: string }): number => (a.itemRef < b.itemRef ? -1 : a.itemRef > b.itemRef ? 1 : 0);
+
+/** Presence-only env section (key NAMES + reason codes; never values). Only for apps whose source reported an envReport
+ *  (Coolify), and only when something is worth saying — a clean app is not listed. */
+function envCoverage(fleet: ForeignFleet): NonNullable<ImportCoverage["env"]> | undefined {
+  const apps = fleet.apps
+    .filter((a) => a.envReport && (a.envReport.unresolved.length || a.envReport.invalidKeys.length || a.envReport.previewSkipped || a.envReport.tokenReadOnly))
+    .map((a) => ({
+      itemRef: ns("app", a.serverRef, a.sourceRef),
+      name: a.name,
+      unresolved: a.envReport!.unresolved.map((u) => ({ key: u.key, reason: u.reason })),
+      invalidKeys: a.envReport!.invalidKeys,
+      previewSkipped: a.envReport!.previewSkipped,
+      tokenReadOnly: a.envReport!.tokenReadOnly,
+    }))
+    .sort(byRef);
+  return apps.length ? { apps } : undefined;
+}
+
+/** Repo URL shapes across the apps (counts only). Link status needs the target team and is resolved by /import/git-links. */
+function gitCoverage(fleet: ForeignFleet): NonNullable<ImportCoverage["git"]> | undefined {
+  let apps = 0;
+  let ssh = 0;
+  let githubApp = 0;
+  for (const a of fleet.apps) {
+    const url = a.git?.url;
+    if (!url) continue;
+    apps++;
+    if (isSshGitUrl(url)) ssh++;
+    if (a.git?.provider === "github") githubApp++;
+  }
+  return apps ? { apps, https: apps - ssh, ssh, githubApp } : undefined;
 }
 
 function coverageFor(app: ForeignApp): Entry[] {

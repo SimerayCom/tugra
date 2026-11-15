@@ -93,3 +93,26 @@ describe("buildPreflight", () => {
     expect(pf.volumeDataNote).toBeUndefined();
   });
 });
+
+describe("buildPreflight — strict env + git hosts (additive, outside planHash)", () => {
+  const app = (over: Partial<ForeignFleet["apps"][number]> = {}): ForeignFleet["apps"][number] => ({ sourceRef: "a", name: "web", kind: "git", buildPack: "nixpacks", serverRef: "s1", ...over });
+  const o: ImportOptions = { sourceKind: "coolify" };
+
+  it("counts apps whose API token cannot read variable values (only when the source reports envReport)", () => {
+    const rep = (tokenReadOnly: boolean) => ({ total: 1, previewSkipped: 0, unresolved: [], invalidKeys: [], tokenReadOnly });
+    const p = buildPreflight(fleet({ apps: [app({ envReport: rep(true) }), app({ sourceRef: "b", envReport: rep(true) }), app({ sourceRef: "c", envReport: rep(false) })] }), o);
+    expect(p.env).toEqual({ tokenReadOnlyApps: 2 });
+    expect(buildPreflight(fleet({ apps: [app()] }), { sourceKind: "dokploy" })).not.toHaveProperty("env");
+  });
+
+  it("lists git hosts with app counts (github.com x74 + a gitlab host) from https, scp and ssh:// URLs", () => {
+    const apps = [
+      ...Array.from({ length: 3 }, (_, i) => app({ sourceRef: `g${i}`, git: { url: "https://github.com/o/r.git" } })),
+      app({ sourceRef: "s1", git: { url: "git@github.com:o/r2.git" } }),
+      app({ sourceRef: "l1", git: { url: "https://gitlab.example.org/x/y.git" } }),
+      app({ sourceRef: "n1" }), // no git
+    ];
+    expect(buildPreflight(fleet({ apps }), o).git).toEqual({ hosts: [{ host: "github.com", apps: 4 }, { host: "gitlab.example.org", apps: 1 }] });
+    expect(buildPreflight(fleet({ apps: [app()] }), o)).not.toHaveProperty("git");
+  });
+});

@@ -34,7 +34,22 @@ export type ImportPlanRequestInput = z.infer<typeof ImportPlanRequestSchema>;
  *  the server re-plans and refuses (409) if the source changed since. local-docker adopts in place; a remote
  *  source (coolify/dokploy) COPIES each app onto `targetServerId` (a fresh Tugra server/cluster). */
 const planHash = z.string().regex(/^[a-f0-9]{32}$/, "invalid planHash");
-const remoteApplyFields = { sessionId: z.string().min(1), targetServerId: z.string().min(1), environmentId: z.string().min(1).optional(), planHash };
+/** Operator acknowledgement of an ACKABLE plan blocker (`app.env.unresolved` / `app.env.key.invalid`): "create the
+ *  app WITHOUT those variables". Outside planHash (the apply still re-plans and compares the hash exactly). An
+ *  omitted `itemRef` acknowledges every item carrying that code. `app.env.tokenReadOnly` and every other blocker
+ *  can never be acknowledged — the enum is the allow-list. */
+export const ImportAckSchema = z.object({
+  code: z.enum(["app.env.unresolved", "app.env.key.invalid"]),
+  itemRef: z.string().min(1).max(300).optional(),
+});
+export type ImportAck = z.infer<typeof ImportAckSchema>;
+const remoteApplyFields = {
+  sessionId: z.string().min(1),
+  targetServerId: z.string().min(1),
+  environmentId: z.string().min(1).optional(),
+  planHash,
+  acks: z.array(ImportAckSchema).max(2000).optional(),
+};
 export const ImportApplySchema = z.discriminatedUnion("sourceKind", [
   z.object({ sourceKind: z.literal("local-docker"), serverId: z.string().min(1), planHash }),
   z.object({ sourceKind: z.literal("coolify"), ...remoteApplyFields }),
@@ -49,3 +64,16 @@ export const ImportRemapEnvSchema = z.object({
   confirmToken: z.string().regex(/^[a-f0-9]{64}$/, "invalid confirmToken"),
 });
 export type ImportRemapEnvInput = z.infer<typeof ImportRemapEnvSchema>;
+
+/** Body of `POST /import/git-links`: resolve, for the target server's team, how each imported git app would be linked. */
+export const ImportGitLinksSchema = z.object({
+  sessionId: z.string().min(1),
+  targetServerId: z.string().min(1),
+});
+export type ImportGitLinksInput = z.infer<typeof ImportGitLinksSchema>;
+
+/** Body of `POST /import/operations/:opId/git-links/relink`: optional per-app picks for ambiguous rows. */
+export const ImportGitRelinkSchema = z.object({
+  choices: z.record(z.string().min(1).max(300), z.string().min(1).max(100)).optional(),
+});
+export type ImportGitRelinkInput = z.infer<typeof ImportGitRelinkSchema>;

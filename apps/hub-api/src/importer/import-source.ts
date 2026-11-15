@@ -32,6 +32,10 @@ export interface VolumeHandle {
 export interface FetchedSecrets {
   values: Record<string, string>;
   unresolved: ForeignEnv[];
+  /** Keys that are not valid env names (Coolify strict mode; absent otherwise). NAMES only. */
+  invalidKeys?: string[];
+  /** Preview-deployment twin rows that were not imported (Coolify; absent when 0). */
+  previewSkipped?: number;
   /** Per-variable flags the source carried alongside the values (key -> flags). Absent for sources with none. */
   flags?: Record<string, { buildTime?: boolean; runtime?: boolean; literal?: boolean; multiline?: boolean }>;
 }

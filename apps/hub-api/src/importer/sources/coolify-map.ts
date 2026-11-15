@@ -110,6 +110,8 @@ export interface CoolifyFleetInput {
   databases: CoolifyDatabase[];
   services: CoolifyService[];
   envsByResource: Record<string, CoolifyEnv[]>;
+  /** appUuid → the key-name/reason-code env report computed by the adapter (absent when the env read failed). */
+  envReportByResource?: Record<string, NonNullable<ForeignApp["envReport"]>>;
   volumesByResource: Record<string, CoolifyVolume[]>;
   /** Non-fatal fetch warnings accumulated by the adapter (a partial 403/404 during enumeration). */
   warnings?: string[];
@@ -457,7 +459,11 @@ export function buildCoolifyFleet(input: CoolifyFleetInput): ForeignFleet {
   const envs = (uuid: string) => input.envsByResource[uuid] ?? [];
   const vols = (uuid: string) => input.volumesByResource[uuid] ?? [];
 
-  const apps = input.apps.map((a) => mapApplication(a, { envs: envs(a.uuid), volumes: vols(a.uuid), serverRef: serverOf.get(a.uuid) }));
+  const apps = input.apps.map((a) => {
+    const mapped = mapApplication(a, { envs: envs(a.uuid), volumes: vols(a.uuid), serverRef: serverOf.get(a.uuid) });
+    const envReport = input.envReportByResource?.[a.uuid];
+    return envReport ? { ...mapped, envReport } : mapped;
+  });
   const databases = input.databases.map((d) => mapDatabase(d, { volumes: vols(d.uuid), serverRef: serverOf.get(d.uuid) }));
   const services = input.services.map((s) => mapService(s, { serverRef: serverOf.get(s.uuid) }));
 

@@ -2,6 +2,7 @@ import type { ForeignEnv, ForeignFleet } from "../foreign-fleet";
 import type { ImportSource, ImportSourceCapabilities, FetchedSecrets, SourceAppExtras } from "../import-source";
 import { why } from "../reason";
 import { mapLimit } from "./map-limit";
+import { buildEnvReport, classifyEnvRow } from "../env-report";
 import {
   buildCoolifyFleet,
   decodeCoolifyDockerfile,
@@ -76,6 +77,7 @@ export class CoolifySource implements ImportSource {
     // rather than aborting, and the shared maps are keyed by uuid so concurrent writes never collide.
     const resourcesByServer: Record<string, string[]> = {};
     const envsByResource: Record<string, CoolifyEnv[]> = {};
+    const envReportByResource: Record<string, NonNullable<ForeignFleet["apps"][number]["envReport"]>> = {};
     const volumesByResource: Record<string, CoolifyVolume[]> = {};
 
     await mapLimit(servers, DISCOVER_CONCURRENCY, async (s) => {
@@ -89,12 +91,20 @@ export class CoolifySource implements ImportSource {
     );
 
     await mapLimit(apps, DISCOVER_CONCURRENCY, async (a) => {
-      // The two per-app reads are independent → fetch them together.
-      const [envs, vols] = await Promise.all([
-        tryGet<unknown>(`/applications/${a.uuid}/envs`, [], `env for ${a.name ?? a.uuid}`),
-        tryGet<unknown>(`/applications/${a.uuid}/storages`, [], `storage for ${a.name ?? a.uuid}`),
-      ]);
-      envsByResource[a.uuid] = extractEnvs(envs);
+      // The two per-app reads are independent → fetch them together. The env read is NOT routed through tryGet: a
+      // failure must leave `envReport` ABSENT (never an empty, "clean" report) and say so with a fixed warning.
+      const readEnvs = async (): Promise<unknown | undefined> => {
+        try {
+          return (await this.client.get<unknown>(`/applications/${a.uuid}/envs`)) ?? [];
+        } catch {
+          warnings.push(`env: could not read variables for ${a.name ?? a.uuid}`);
+          return undefined;
+        }
+      };
+      const [envs, vols] = await Promise.all([readEnvs(), tryGet<unknown>(`/applications/${a.uuid}/storages`, [], `storage for ${a.name ?? a.uuid}`)]);
+      envsByResource[a.uuid] = extractEnvs(envs ?? []);
+      // Key NAMES + reason codes only (values are inspected in memory by the classifier and dropped at once).
+      if (envs !== undefined) envReportByResource[a.uuid] = buildEnvReport(envs);
       volumesByResource[a.uuid] = extractVolumes(vols);
     });
 
@@ -102,39 +112,51 @@ export class CoolifySource implements ImportSource {
       volumesByResource[d.uuid] = extractVolumes(await tryGet<unknown>(`/databases/${d.uuid}/storages`, [], `storage for ${d.name ?? d.uuid}`));
     });
 
-    return buildCoolifyFleet({ servers, resourcesByServer, apps, databases, services, envsByResource, volumesByResource, warnings });
+    return buildCoolifyFleet({ servers, resourcesByServer, apps, databases, services, envsByResource, envReportByResource, volumesByResource, warnings });
   }
 
   /**
    * Resolve one application's REAL environment values at apply time (requires a read:sensitive token). Coolify
    * returns `value` (+ `real_value`, with shared/magic {{refs}} already expanded) only to a sensitive token;
-   * otherwise those fields are absent and the key is reported `unresolved` so the executor fails loud rather
-   * than deploying with a missing value. Preview twins are skipped. These values are consumed SERVER-SIDE
-   * only — never returned to the client.
+   * otherwise those fields are absent and the key is reported `unresolved` (with a reason code) so the CALLER can
+   * fail loud rather than deploy with a missing value: this method only reports, the executor enforces (strict
+   * for Coolify — unacknowledged unresolved/invalid keys fail the task before the app row is created). Preview
+   * twins are skipped and counted in `previewSkipped`. Classification is shared with discover's `envReport`
+   * ({@link classifyEnvRow}). These values are consumed SERVER-SIDE only — never returned to the client.
    */
   async fetchSecrets(ref: string): Promise<FetchedSecrets> {
     const raw = await this.client.get<unknown>(`/applications/${ref}/envs`);
     const envs = Array.isArray(raw) ? (raw as CoolifyEnv[]) : [];
     const values: Record<string, string> = Object.create(null); // null-proto: a key like "__proto__" is a real entry, not the setter
     const unresolved: ForeignEnv[] = [];
+    const invalidKeys: string[] = [];
+    let previewSkipped = 0;
     const flags: NonNullable<FetchedSecrets["flags"]> = Object.create(null);
     for (const e of envs) {
-      if (!e || typeof e.key !== "string" || e.is_preview === true) continue;
-      const v = e.real_value ?? e.value; // real_value resolves shared/magic references
-      if (typeof v === "string") {
-        values[e.key] = v;
+      const c = classifyEnvRow(e);
+      if (c.kind === "skip") continue;
+      if (c.kind === "preview") {
+        previewSkipped++;
+        continue;
+      }
+      if (c.kind === "invalid") {
+        invalidKeys.push(c.key);
+        continue;
+      }
+      if (c.kind === "value") {
+        values[c.key] = c.value;
         // The four per-variable flags Coolify records on the same row (field names per Coolify's env API schema).
         const f: { buildTime?: boolean; runtime?: boolean; literal?: boolean; multiline?: boolean } = {};
         if (typeof e.is_buildtime === "boolean") f.buildTime = e.is_buildtime;
         if (typeof e.is_runtime === "boolean") f.runtime = e.is_runtime;
         if (typeof e.is_literal === "boolean") f.literal = e.is_literal;
         if (typeof e.is_multiline === "boolean") f.multiline = e.is_multiline;
-        if (Object.keys(f).length) flags[e.key] = f;
+        if (Object.keys(f).length) flags[c.key] = f;
       } else {
-        unresolved.push({ key: e.key, secret: true, ref: e.is_shared ? { type: "shared" } : e.is_coolify ? { type: "magic" } : undefined });
+        unresolved.push({ key: c.key, secret: true, reason: c.reason, ref: c.reason === "SHARED_UNEXPANDED" ? { type: "shared" } : c.reason === "MAGIC" ? { type: "magic" } : undefined });
       }
     }
-    return { values, unresolved, ...(Object.keys(flags).length ? { flags } : {}) };
+    return { values, unresolved, ...(invalidKeys.length ? { invalidKeys } : {}), ...(previewSkipped ? { previewSkipped } : {}), ...(Object.keys(flags).length ? { flags } : {}) };
   }
 
   /**

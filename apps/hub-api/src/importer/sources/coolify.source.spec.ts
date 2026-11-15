@@ -90,12 +90,13 @@ describe("CoolifySource", () => {
       expect(res.unresolved.map((e) => e.key)).toEqual(["LOCKED"]);
     });
 
-    it("keeps a dangerous key like __proto__ as a real entry (null-proto values), never silently dropped", async () => {
+    it("reports a dangerous key like __proto__ in invalidKeys (strict mode) instead of carrying it; values stay null-proto", async () => {
       const client = new FakeClient({ "/applications/app-1/envs": [{ key: "__proto__", real_value: "x" }, { key: "NORMAL", value: "y" }] });
       const res = await new CoolifySource(client).fetchSecrets("app-1");
-      expect(Object.keys(res.values).sort()).toEqual(["NORMAL", "__proto__"]);
-      expect(res.values["__proto__"]).toBe("x");
+      expect(Object.keys(res.values)).toEqual(["NORMAL"]);
+      expect(res.invalidKeys).toEqual(["__proto__"]);
       expect(res.unresolved).toEqual([]);
+      expect(Object.getPrototypeOf(res.values)).toBeNull();
     });
 
     it("reports every key unresolved when the token lacks read:sensitive (no values returned)", async () => {
@@ -194,5 +195,98 @@ describe("CoolifySource.fetchAppExtras", () => {
     const client = new FakeClient({ "/applications/a%2Fb": row({}) });
     await new CoolifySource(client).fetchAppExtras("a/b");
     expect(client.calls).toEqual(["/applications/a%2Fb"]);
+  });
+});
+
+describe("CoolifySource.discover — strict env report (names + reason codes, never values)", () => {
+  const base = {
+    "/servers": [{ uuid: "srv-a" }],
+    "/servers/srv-a/resources": [{ uuid: "app-1" }, { uuid: "app-2" }],
+    "/applications": [
+      { uuid: "app-1", name: "web", build_pack: "nixpacks", git_repository: "o/r" },
+      { uuid: "app-2", name: "api", build_pack: "nixpacks", git_repository: "o/r2" },
+    ],
+    "/databases": [],
+    "/services": [],
+    "/applications/app-1/storages": [],
+    "/applications/app-2/storages": [],
+  };
+
+  it("builds envReport per app from the same /envs read (preview twins counted, values dropped, shared-unexpanded flagged)", async () => {
+    const client = new FakeClient({
+      ...base,
+      "/applications/app-1/envs": [
+        { key: "DATABASE_URL", value: "postgres://u:hunter2@h/db", real_value: "postgres://u:hunter2@h/db" },
+        { key: "SHARED", value: "{{team.SHARED}}", real_value: "{{team.SHARED}}", is_shared: true },
+        { key: "BAD KEY", value: "x" },
+        { key: "DATABASE_URL", value: "postgres://u:preview@h/db", is_preview: true },
+      ],
+      "/applications/app-2/envs": [{ key: "A" }, { key: "B", is_coolify: true }],
+    });
+    const fleet = await new CoolifySource(client).discover();
+    const web = fleet.apps.find((a) => a.sourceRef === "app-1")!;
+    const api = fleet.apps.find((a) => a.sourceRef === "app-2")!;
+    expect(web.envReport).toEqual({ total: 3, previewSkipped: 1, unresolved: [{ key: "SHARED", reason: "SHARED_UNEXPANDED" }], invalidKeys: ["BAD KEY"], tokenReadOnly: false });
+    expect(api.envReport).toEqual({ total: 2, previewSkipped: 0, unresolved: [{ key: "A", reason: "NO_VALUE" }, { key: "B", reason: "MAGIC" }], invalidKeys: [], tokenReadOnly: true });
+    // no extra GET: exactly one /envs read per app
+    expect(client.calls.filter((c) => c.endsWith("/envs"))).toHaveLength(2);
+    const json = JSON.stringify(fleet);
+    expect(json).not.toContain("hunter2");
+    expect(json).not.toContain("preview@h");
+  });
+
+  it("a per-app envs fetch failure omits envReport and adds a fixed warning — never silently clean", async () => {
+    const client = new FakeClient({ ...base, "/applications/app-1/envs": new Error("502 boom"), "/applications/app-2/envs": [{ key: "OK", value: "v" }] });
+    const fleet = await new CoolifySource(client).discover();
+    expect(fleet.apps.find((a) => a.sourceRef === "app-1")!.envReport).toBeUndefined();
+    expect(fleet.apps.find((a) => a.sourceRef === "app-2")!.envReport).toMatchObject({ total: 1, tokenReadOnly: false });
+    expect(fleet.warnings).toContain("env: could not read variables for web");
+    expect(fleet.warnings.join("\n")).not.toContain("502");
+  });
+
+  it("runs the env reads with bounded concurrency", async () => {
+    const apps = Array.from({ length: 30 }, (_, i) => ({ uuid: `a${i}`, name: `app${i}`, build_pack: "nixpacks", git_repository: "o/r" }));
+    let inflight = 0;
+    let peak = 0;
+    const client: { get<T>(p: string): Promise<T> } = {
+      async get<T>(path: string): Promise<T> {
+        if (path === "/servers") return [] as T;
+        if (path === "/applications") return apps as T;
+        if (path === "/databases" || path === "/services") return [] as T;
+        inflight++;
+        peak = Math.max(peak, inflight);
+        await new Promise((r) => setTimeout(r, 2));
+        inflight--;
+        return [] as T;
+      },
+    };
+    await new CoolifySource(client).discover();
+    expect(peak).toBeLessThanOrEqual(16); // DISCOVER_CONCURRENCY (8) x the two parallel per-app reads
+  });
+});
+
+describe("CoolifySource.fetchSecrets — strict reason tags", () => {
+  it("tags each unresolved key with its reason, counts preview twins and drops invalid keys into invalidKeys", async () => {
+    const client = new FakeClient({
+      "/applications/app-1/envs": [
+        { key: "OK", value: "v" },
+        { key: "LOCKED" },
+        { key: "SHARED", is_shared: true },
+        { key: "MAGIC", is_coolify: true },
+        { key: "UNEXPANDED", value: "{{environment.X}}", real_value: "{{environment.X}}" },
+        { key: "A=B", value: "x" },
+        { key: "OK", value: "preview", is_preview: true },
+      ],
+    });
+    const res = await new CoolifySource(client).fetchSecrets("app-1");
+    expect(res.values).toEqual({ OK: "v" });
+    expect(Object.fromEntries(res.unresolved.map((u) => [u.key, u.reason]))).toEqual({ LOCKED: "NO_VALUE", SHARED: "SHARED_UNEXPANDED", MAGIC: "MAGIC", UNEXPANDED: "SHARED_UNEXPANDED" });
+    expect(res.invalidKeys).toEqual(["A=B"]);
+    expect(res.previewSkipped).toBe(1);
+  });
+
+  it("a clean app has neither invalidKeys nor previewSkipped (shape unchanged)", async () => {
+    const res = await new CoolifySource(new FakeClient({ "/applications/app-1/envs": [{ key: "A", value: "1" }] })).fetchSecrets("app-1");
+    expect(res).toEqual({ values: { A: "1" }, unresolved: [], flags: undefined } as never);
   });
 });

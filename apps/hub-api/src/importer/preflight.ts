@@ -1,6 +1,7 @@
 import { MIGRATOR_ENGINES } from "./migrator-recipe";
 import { UNSUPPORTED_DB_IMPORT } from "./import-planner";
 import { foreignAppToVolumes } from "./apply-map";
+import { gitUrlHost } from "../deploy/deploy-script";
 import { DEFAULT_MAX_ARTIFACT_BYTES } from "./migration-staging";
 import { maxVolumeBytes } from "./migration-volume";
 import type { DbDataPlane, ForeignApp, ForeignFleet, ImportOptions, ImportPreflight, VolumeDataPlane } from "./foreign-fleet";
@@ -99,6 +100,14 @@ export function buildPreflight(fleet: ForeignFleet, options: ImportOptions, inve
   const capMiB = Math.round(cap / (1024 * 1024));
   const volumes = carried ? [] : buildVolumeRows(fleet.apps, inventory, cap, capMiB);
 
+  const envApps = fleet.apps.filter((a) => a.envReport);
+  const gitHosts = new Map<string, number>();
+  for (const a of fleet.apps) {
+    const h = a.git?.url ? gitUrlHost(a.git.url) : null;
+    if (h) gitHosts.set(h, (gitHosts.get(h) ?? 0) + 1);
+  }
+  const git = [...gitHosts.entries()].sort((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : 1)).map(([host, apps]) => ({ host, apps }));
+
   return {
     databases,
     services,
@@ -110,5 +119,9 @@ export function buildPreflight(fleet: ForeignFleet, options: ImportOptions, inve
           ? `empty volumes are declared on the new apps; upload their DATA to the hub before the first deploy (tar each source volume and curl it to the migration endpoint, up to ~${capMiB} MiB per volume; file ownership is not preserved, and a live tar is not crash-consistent — stop the source app first). Larger volumes are copied manually, or the app starts empty`
           : `these volumes are compose-managed or skipped (not declared on the target) — recreate and copy their DATA manually before the first deploy or the app starts empty`,
     ...(volumes.length ? { volumes } : {}),
+    // Additive, outside planHash. `env` only when the source reports it (Coolify); `git.hosts` so a gitlab/bitbucket
+    // host is visible at plan time (those repos are not linked: "unsupported_host").
+    ...(envApps.length ? { env: { tokenReadOnlyApps: envApps.filter((a) => a.envReport!.tokenReadOnly).length } } : {}),
+    ...(git.length ? { git: { hosts: git } } : {}),
   };
 }

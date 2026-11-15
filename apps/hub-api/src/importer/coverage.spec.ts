@@ -10,7 +10,21 @@ describe("buildCoverage", () => {
   it("is undefined for local-docker, for an empty fleet and for apps with nothing to report", () => {
     expect(buildCoverage(fleet([app({ notCarried: [{ field: "x", level: "info", reason: "r" }] })]), { sourceKind: "local-docker" })).toBeUndefined();
     expect(buildCoverage(fleet([]), o)).toBeUndefined();
-    expect(buildCoverage(fleet([app()]), o)).toBeUndefined();
+    expect(buildCoverage(fleet([app()]), { sourceKind: "dokploy" })).toBeUndefined();
+    expect(buildCoverage(fleet([app({ git: undefined })]), o)).toBeUndefined();
+  });
+
+  it("coolify: carries a repo-shape summary and a presence-only env section (names + reasons, never values)", () => {
+    const c = buildCoverage(
+      fleet([
+        app({ git: { url: "git@github.com:o/r.git" }, envReport: { total: 3, previewSkipped: 1, unresolved: [{ key: "A", reason: "NO_VALUE" }], invalidKeys: ["B C"], tokenReadOnly: false } }),
+        app({ sourceRef: "a2", name: "clean", envReport: { total: 2, previewSkipped: 0, unresolved: [], invalidKeys: [], tokenReadOnly: false } }),
+      ]),
+      o,
+    )!;
+    expect(c.git).toEqual({ apps: 2, https: 1, ssh: 1, githubApp: 0 });
+    expect(c.env!.apps).toEqual([{ itemRef: "app:s1:a1", name: "web", unresolved: [{ key: "A", reason: "NO_VALUE" }], invalidKeys: ["B C"], previewSkipped: 1, tokenReadOnly: false }]); // the clean app is not listed
+    expect(buildCoverage(fleet([app()]), { sourceKind: "dokploy" })?.git).toBeUndefined();
   });
 
   it("aggregates post-create unmapped, ingress unmapped, replicas and the source's notCarried per app (itemRef = plan item ref)", () => {
