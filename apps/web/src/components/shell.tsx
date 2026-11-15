@@ -10,6 +10,7 @@ import { useAuth } from "../lib/auth";
 import { navForMode, uiMode, isHomeAllowed } from "../lib/ui-mode";
 import { useT } from "../i18n/provider";
 import { useIsMobile } from "../hooks/useIsMobile";
+import { nextThemeChoice, resolveThemeChoice, useAppearance, type ThemeChoice } from "../lib/appearance";
 import { Spinner, Btn } from "./ui";
 import { useToast } from "./toast";
 import { CommandPalette, type CommandDest } from "./command-palette";
@@ -39,6 +40,7 @@ import {
   Menu,
   Monitor,
   Moon,
+  Palette,
   Plus,
   ScrollText,
   Search,
@@ -127,55 +129,27 @@ export const DESTS: CommandDest[] = NAV.flatMap((g) =>
   { labelKey: "nav.addServer", href: "/servers/new" },
 ]);
 
-export type ThemePref = "system" | "light" | "dark";
-const THEME_KEY = "tugra.theme";
+export type ThemePref = ThemeChoice;
 
-/** Cycle order for the single theme control: System → Light → Dark → System. */
+/** Cycle order for the header's quick theme control: System → Light → Dark → System (a custom theme is picked
+ *  on Settings → Appearance; from it the cycle re-enters at System). */
 export function nextTheme(pref: ThemePref): ThemePref {
-  return pref === "system" ? "light" : pref === "light" ? "dark" : "system";
+  return nextThemeChoice(pref);
 }
 /** Resolve a preference to the concrete theme written to <html data-theme>; "system" follows the OS. */
-export function resolveTheme(pref: ThemePref, prefersDark: boolean): "light" | "dark" {
-  if (pref === "system") return prefersDark ? "dark" : "light";
-  return pref;
-}
-function osPrefersDark(): boolean {
-  return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches;
+export function resolveTheme(pref: ThemePref, prefersDark: boolean): "light" | "dark" | "custom" {
+  return resolveThemeChoice(pref, prefersDark);
 }
 
 /**
- * Theme preference with a third "system" state that follows the OS (prefers-color-scheme). The stored
- * preference is resolved to a concrete light/dark and written to <html data-theme> (matching the
- * pre-paint script in layout.tsx, so there is no flash); in system mode an OS theme change updates it
- * live. Returns the preference, the resolved theme, a setter and a cycle control.
+ * Theme preference (system / light / dark / custom) — a thin view over useAppearance(), which persists it
+ * (`tugra.theme`), applies it to <html data-theme> (matching the pre-paint script in layout.tsx, so there is
+ * no flash) and follows the OS live in system mode. Returns the preference, the resolved theme, a setter and
+ * the cycle control.
  */
-export function useTheme(): { pref: ThemePref; resolved: "light" | "dark"; setPref: (p: ThemePref) => void; cycle: () => void } {
-  const [pref, setPrefState] = useState<ThemePref>("dark");
-  useEffect(() => {
-    try {
-      const s = localStorage.getItem(THEME_KEY);
-      if (s === "system" || s === "light" || s === "dark") setPrefState(s);
-    } catch {
-      /* no storage → keep the dark default */
-    }
-  }, []);
-  useEffect(() => {
-    document.documentElement.setAttribute("data-theme", resolveTheme(pref, osPrefersDark()));
-    if (pref !== "system" || typeof window === "undefined" || typeof window.matchMedia !== "function") return;
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = () => document.documentElement.setAttribute("data-theme", resolveTheme("system", mq.matches));
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, [pref]);
-  const setPref = (p: ThemePref) => {
-    setPrefState(p);
-    try {
-      localStorage.setItem(THEME_KEY, p);
-    } catch {
-      /* ignore */
-    }
-  };
-  return { pref, resolved: resolveTheme(pref, osPrefersDark()), setPref, cycle: () => setPref(nextTheme(pref)) };
+export function useTheme(): { pref: ThemePref; resolved: "light" | "dark" | "custom"; setPref: (p: ThemePref) => void; cycle: () => void } {
+  const a = useAppearance();
+  return { pref: a.theme, resolved: a.resolvedTheme, setPref: a.setTheme, cycle: a.cycleTheme };
 }
 
 export function CenteredSpinner() {
@@ -238,6 +212,7 @@ export function Sidebar({ openPalette, mobile = false, open = false, onNavigate 
 
   return (
     <aside
+      className="tg-sidebar"
       // When the mobile drawer is slid off-screen it is still in the tab order and the a11y tree;
       // `inert` takes its links/buttons out of both until it is opened.
       {...(mobile && !open ? { inert: true } : {})}
@@ -246,7 +221,8 @@ export function Sidebar({ openPalette, mobile = false, open = false, onNavigate 
         flexShrink: 0,
         background: "var(--c-sb)",
         borderRight: "1px solid var(--c-bd)",
-        height: "100vh",
+        // 100% (not 100vh) so the UI-scale zoom can't leave a gap under the sidebar; the mobile drawer is fixed.
+        height: mobile ? "100vh" : "100%",
         display: "flex",
         flexDirection: "column",
         transition: mobile ? "transform .2s" : "width .15s",
@@ -484,8 +460,8 @@ function TopHeader({ onMenu, showMenu }: { onMenu?: () => void; showMenu?: boole
   const { user } = useAuth();
   const t = useT();
   const { pref: themePref, cycle: cycleTheme } = useTheme();
-  const themeMode = themePref === "system" ? t("nav.themeSystem") : themePref === "light" ? t("nav.themeLight") : t("nav.themeDark");
-  const ThemeIcon = themePref === "system" ? Monitor : themePref === "light" ? Sun : Moon;
+  const themeMode = themePref === "system" ? t("nav.themeSystem") : themePref === "light" ? t("nav.themeLight") : themePref === "custom" ? t("nav.themeCustom") : t("nav.themeDark");
+  const ThemeIcon = themePref === "system" ? Monitor : themePref === "light" ? Sun : themePref === "custom" ? Palette : Moon;
   // Home mode hides fleet-only chrome (bulk "New", team scoping).
   const isHome = uiMode(user?.uiMode) === "home";
   return (
@@ -686,7 +662,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("keydown", h);
   }, []);
   return (
-    <div style={{ display: "flex", height: "100%" }}>
+    <div className="tg-shell" style={{ display: "flex", height: "100%" }}>
       {isMobile ? (
         <Sidebar openPalette={() => { setDrawer(false); setPalette(true); }} mobile open={drawer} onNavigate={() => setDrawer(false)} />
       ) : (
@@ -695,11 +671,11 @@ export function AppShell({ children }: { children: ReactNode }) {
       {isMobile && drawer && (
         <div onClick={() => setDrawer(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", zIndex: 55 }} />
       )}
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div className="tg-content" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <TopHeader onMenu={() => setDrawer(true)} showMenu={isMobile} />
         <VerifyBanner />
         <NoticeBanner />
-        <main style={{ flex: 1, overflowY: "auto" }}>{children}</main>
+        <main className="tg-main" style={{ flex: 1, overflowY: "auto" }}>{children}</main>
       </div>
       {/* In Home mode, ⌘K only offers Home-allowed destinations (a fleet route would just bounce to /home). */}
       {palette && <CommandPalette dests={isHome ? DESTS.filter((d) => isHomeAllowed(d.href)) : DESTS} fleet={!isHome} onClose={() => setPalette(false)} />}

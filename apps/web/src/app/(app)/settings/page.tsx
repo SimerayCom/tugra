@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Home, Server, User, ShieldCheck, SlidersHorizontal, Mail, DatabaseBackup, BadgeCheck } from "lucide-react";
+import { Home, Server, User, ShieldCheck, SlidersHorizontal, Mail, DatabaseBackup, BadgeCheck, Palette } from "lucide-react";
 import { api } from "../../../lib/api";
 import { useAuth } from "../../../lib/auth";
 import { ApiTokensCard } from "./api-tokens-card";
@@ -18,6 +18,7 @@ import { EmailSettingsCard } from "./email-settings-card";
 import { PanelTlsCard } from "./panel-tls-card";
 import { HubBackupCard } from "./hub-backup-card";
 import { UpdatesCard } from "./updates-card";
+import { AppearanceCard } from "./appearance-card";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card } from "../../../components/ui";
 import { MailNotConfiguredNote } from "../../../components/mail-not-configured-note";
@@ -68,6 +69,7 @@ export default function SettingsPage() {
   // (resolveTab drops a key that isn't in the live list), and once `user` loads it self-corrects.
   const tabs = [
     { key: "account", label: t("settings.sectionAccount"), icon: User },
+    { key: "appearance", label: t("settings.sectionAppearance"), icon: Palette },
     { key: "security", label: t("settings.sectionSecurity"), icon: ShieldCheck },
     ...(isOwner ? [{ key: "instance", label: t("settings.sectionInstance"), icon: SlidersHorizontal }] : []),
   ];
@@ -121,6 +123,12 @@ export default function SettingsPage() {
           <AccountCard />
           <UiModeCard />
           <FeedbackCard />
+        </SettingsGrid>
+      )}
+
+      {tab === "appearance" && (
+        <SettingsGrid>
+          <Wide><AppearanceCard /></Wide>
         </SettingsGrid>
       )}
 

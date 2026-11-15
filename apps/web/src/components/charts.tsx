@@ -2,6 +2,8 @@
 
 import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import { useT } from "../i18n/provider";
+import { useChartTimes, type ChartTimes } from "../lib/appearance";
+import { formatUtc, withUtc } from "../lib/format-time";
 
 /** Compact trend line for table rows. `fixedMax` pins the top of the scale (e.g. 100 for a percent series)
  *  so a quiet host reads as a low flat line instead of being stretched to fill the cell. */
@@ -111,11 +113,21 @@ export function formatTick(ts: number, spanMs: number): string {
   return d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-/** Full timestamp for the tooltip (seconds only when the window is short enough for them to matter). */
-export function formatStamp(ts: number, spanMs: number): string {
+/** Local timestamp for the tooltip (seconds only when the window is short enough for them to matter). */
+export function formatStampLocal(ts: number, spanMs: number): string {
   const d = new Date(ts);
   if (spanMs <= 2 * 3600_000) return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   return d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+/** The same instant in UTC, at the precision of formatStampLocal (the tooltip's second line). */
+export function formatStampUtc(ts: number, spanMs: number): string {
+  return formatUtc(ts, { seconds: spanMs <= 2 * 3600_000 });
+}
+
+/** Full timestamp for titles / tables: local time, plus ` · <UTC>` when the "Chart times" preference asks for it. */
+export function formatStamp(ts: number, spanMs: number, mode: ChartTimes = "local"): string {
+  return withUtc(formatStampLocal(ts, spanMs), ts, mode, { seconds: spanMs <= 2 * 3600_000 });
 }
 
 /** Horizontal position (0..width) of each point: time-proportional when valid ascending timestamps are
@@ -528,6 +540,7 @@ export function MetricChart({
   loading?: boolean;
 }) {
   const t = useT();
+  const chartTimes = useChartTimes();
   const [setPlotEl, width] = useElementWidth(FALLBACK_W);
   const uid = useId().replace(/:/g, ""); // colons in useId break an SVG url(#…) reference
   const [active, setActive] = useState<number | null>(null);
@@ -587,9 +600,9 @@ export function MetricChart({
       markers.map((m) => {
         const base = m.label ? `${m.label} · ` : "";
         const more = m.count > 1 ? ` (+${m.count - 1})` : "";
-        return `${base}${t(`charts.event.${m.kind}`)}${more} · ${formatStamp(m.ts, spanForStamp)}`;
+        return `${base}${t(`charts.event.${m.kind}`)}${more} · ${formatStamp(m.ts, spanForStamp, chartTimes)}`;
       }),
-    [markers, t, spanForStamp],
+    [markers, t, spanForStamp, chartTimes],
   );
 
   // Y scale: percent metrics are ALWAYS 0–100 so an idle series sits LOW with the frame visible (the Beszel
@@ -677,7 +690,7 @@ export function MetricChart({
 
   const idx = active !== null && active < n ? active : null;
   const hoverFrac = idx !== null && xs[idx] !== undefined ? xs[idx] / width : 0;
-  const stamp = (i: number) => (validTimes ? formatStamp(validTimes[i], spanMs) : "");
+  const stamp = (i: number) => (validTimes ? formatStamp(validTimes[i], spanMs, chartTimes) : "");
   const stackHas = (i: number) => stackPresentAt(plotItems, i);
   const totalAt = (i: number) => plotItems.reduce((s, it) => s + (it.kind === "stacked" && finite(it.vals[i]) ? it.vals[i] : 0), 0);
   /** Per-series values at point i, largest first (the multi-series tooltip order). */
@@ -1077,7 +1090,12 @@ export function MetricChart({
                       )}
                     </>
                   )}
-                  {validTimes && <div style={{ color: "var(--c-tx3)" }}>{stamp(idx)}</div>}
+                  {validTimes && (
+                    <div style={{ color: "var(--c-tx3)" }}>
+                      <div>{formatStampLocal(validTimes[idx], spanMs)}</div>
+                      {chartTimes === "localUtc" && <div data-testid="chart-tooltip-utc">{formatStampUtc(validTimes[idx], spanMs)}</div>}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

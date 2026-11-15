@@ -17,6 +17,8 @@ import { type Application, type Deployment } from "../../../../lib/types";
 import { ContainerPickerModal } from "./app-detail-misc-cards";
 import { LogDrainCard } from "../../../../components/log-drains/log-drain-card";
 import { ROLLOUT_KNOWN, rolloutColor } from "./app-detail-shared";
+import { useChartTimes } from "../../../../lib/appearance";
+import { formatDateTime } from "../../../../lib/format-time";
 
 export function LiveContainerLogsCard({ id, isCompose, neverDeployed = false }: { id: string; isCompose: boolean; neverDeployed?: boolean }) {
   const t = useT();
@@ -173,6 +175,7 @@ export function DeploymentsTab({
   onCancel: (id: string) => void;
 }) {
   const t = useT();
+  const chartTimes = useChartTimes();
   return (
     <Card style={{ padding: 16 }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -206,7 +209,7 @@ export function DeploymentsTab({
               )}
               {d.exitCode != null && <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("apps.exit", { code: d.exitCode })}</span>}
               <span style={{ flex: 1 }} />
-              <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{new Date(d.createdAt).toLocaleString()}</span>
+              <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{formatDateTime(d.createdAt, chartTimes)}</span>
               <ChevronRight size={15} aria-hidden style={{ color: "var(--c-tx3)", flexShrink: 0 }} />
             </Link>
             {cancellable && (

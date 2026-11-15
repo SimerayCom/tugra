@@ -788,3 +788,89 @@ body {
     flex-shrink: 0;
   }
 }
+
+/* ── Appearance preferences (Settings → Appearance) ────────────────────────────────────────────
+   lib/appearance.ts writes these <html data-*> attributes (and lib/appearance-script.ts sets them before
+   first paint). Defaults (100 / full / default / flat) match the rules above, so they need no CSS. */
+
+/* UI scale. The UI is sized in px, so a root font-size would change nothing; `zoom` scales every length. The
+   body height is divided by the zoom so the shell still fills the viewport exactly. Phones (<640px) always
+   render at 100 % — keep this media query last so it wins. */
+html[data-ui-scale="90"] body {
+  zoom: 0.9;
+  height: calc(100% / 0.9);
+}
+html[data-ui-scale="80"] body {
+  zoom: 0.8;
+  height: calc(100% / 0.8);
+}
+@media (max-width: 639px) {
+  html[data-ui-scale] body {
+    zoom: 1;
+    height: 100%;
+  }
+}
+
+/* Page width "centered": the content column stops growing at ~1400px and centres. A page that sets its own
+   inline max-width / margin keeps it (inline wins), so only edge-to-edge pages are affected. */
+html[data-page-width="centered"] .tg-main > * {
+  max-width: 1400px;
+  margin-inline: auto;
+}
+
+/* Navigation style "floating": the sidebar and the content column become framed panels on a dotted
+   backdrop. Desktop only — on a phone the sidebar is an off-canvas drawer and frames would waste space. */
+@media (min-width: 768px) {
+  html[data-nav-style="floating"] body {
+    background-color: var(--c-sur);
+    background-image: radial-gradient(color-mix(in srgb, var(--c-tx3) 38%, transparent) 1px, transparent 1.2px);
+    background-size: 18px 18px;
+  }
+  html[data-nav-style="floating"] .tg-shell {
+    padding: 10px;
+    gap: 10px;
+  }
+  html[data-nav-style="floating"] .tg-sidebar {
+    border: 1px solid var(--c-bd) !important;
+    border-radius: var(--r2);
+    overflow: hidden;
+  }
+  html[data-nav-style="floating"] .tg-content {
+    border: 1px solid var(--c-bd);
+    border-radius: var(--r2);
+    background: var(--c-bg);
+  }
+}
+
+/* Style "3D": cards get a raised bottom edge and lift a little on hover; primary buttons sit proud and press
+   down (the global .tg-btn:active already translates 1px). "Flat" is the default and needs no rules. */
+html[data-ui-style="3d"] .tg-card {
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--c-tx) 7%, transparent),
+    0 3px 0 color-mix(in srgb, var(--c-bd) 70%, black),
+    0 8px 16px -8px rgba(0, 0, 0, 0.35);
+  transition:
+    transform 0.14s ease,
+    box-shadow 0.14s ease;
+}
+@media (hover: hover) {
+  html[data-ui-style="3d"] .tg-card:hover {
+    transform: translateY(-2px);
+    box-shadow:
+      inset 0 1px 0 color-mix(in srgb, var(--c-tx) 9%, transparent),
+      0 5px 0 color-mix(in srgb, var(--c-bd) 70%, black),
+      0 14px 22px -10px rgba(0, 0, 0, 0.4);
+  }
+}
+html[data-ui-style="3d"] .tg-btn:not(:disabled) {
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.3);
+}
+html[data-ui-style="3d"] .tg-btn:not(:disabled):active {
+  box-shadow: none;
+  transform: translateY(2px);
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-ui-style="3d"] .tg-card:hover {
+    transform: none;
+  }
+}

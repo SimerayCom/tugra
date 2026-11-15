@@ -8,6 +8,7 @@ import type { FleetTrendRow } from "../lib/types";
 import type { WallMetric } from "../lib/fleet-wall";
 import { buildHeatmap, heatHasTrend, heatStep, HEAT_PAGE, HEAT_STEPS, type HeatRow } from "../lib/fleet-heatmap";
 import { useT } from "../i18n/provider";
+import { useChartTimes } from "../lib/appearance";
 import { Card, EmptyState, StatusDot } from "./ui";
 import { Skeleton } from "./skeleton";
 import { formatStamp, formatTick, pickTimeTicks } from "./charts";
@@ -107,6 +108,7 @@ export function FleetHeatmap({
   loading?: boolean;
 }) {
   const t = useT();
+  const chartTimes = useChartTimes();
   const [limit, setLimit] = useState(HEAT_PAGE);
   const heat = useMemo(() => buildHeatmap(rows, trends, metric), [rows, trends, metric]);
 
@@ -159,7 +161,7 @@ export function FleetHeatmap({
   });
   const shown = heat.rows.slice(0, limit);
   const noData = t("fleet.heatNoData");
-  const stamps = heat.times.map((ts) => formatStamp(ts, spanMs));
+  const stamps = heat.times.map((ts) => formatStamp(ts, spanMs, chartTimes));
 
   return (
     <div>

@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Settings → Appearance: make the panel look the way you like.** A new tab holds per-user, browser-local choices:
+  colour theme (Light, System, Dark, or Custom with Tugra Gold / Slate / Forest / Rose presets plus accent and
+  surface-tint pickers), UI scale (80 / 90 / 100 %, always 100 % on phones), page width (Full or Centered),
+  navigation style (Default or a Floating framed sidebar), a 3D or Flat style, and "Your time + UTC" for chart
+  tooltips and deployment timestamps. Everything is applied before first paint, so a reload never flashes the defaults.
 - **The running version is always in view, and the logo goes home.** The sidebar logo is now a link to the
   dashboard, and the running version (`v0.1.0-beta.N`) sits under the product name — in the logo's tooltip when
   the sidebar is collapsed. Every signed-in member sees it, not only the owner: a new session-guarded

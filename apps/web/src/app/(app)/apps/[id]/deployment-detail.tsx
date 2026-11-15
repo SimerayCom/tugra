@@ -5,6 +5,8 @@ import { ArrowDown, ExternalLink, Lock } from "lucide-react";
 import { useToast } from "../../../../components/toast";
 import { Btn, Card } from "../../../../components/ui";
 import { useT } from "../../../../i18n/provider";
+import { useChartTimes } from "../../../../lib/appearance";
+import { formatClock, formatDateTime } from "../../../../lib/format-time";
 import { deploymentColor, shortDigest } from "../../../../lib/apps";
 import { buildTimeline } from "../../../../lib/deployment-timeline";
 import { relativeTime } from "../../../../lib/fleet";
@@ -45,6 +47,7 @@ export function DeploymentDetailView({
   onAnalyze: () => void;
 }) {
   const t = useT();
+  const chartTimes = useChartTimes();
   const toast = useToast();
   const timeline = buildTimeline(d);
   const links = gitWebUrls(app.gitUrl, d.commitSha);
@@ -151,8 +154,8 @@ export function DeploymentDetailView({
                 <span aria-hidden style={{ width: 10, height: 10, borderRadius: "50%", background: s.state === "pending" || s.state === "skipped" ? "transparent" : color, border: `2px solid ${color}`, flexShrink: 0 }} />
                 <div style={{ fontSize: 12 }}>
                   <div style={{ fontWeight: 600, color: "var(--c-tx)" }}>{stepLabel(s.key)}</div>
-                  <div style={{ color: "var(--c-tx3)" }} title={s.at ? new Date(s.at).toLocaleString() : undefined}>
-                    {s.at ? `${new Date(s.at).toLocaleTimeString()} · ${relativeTime(s.at)}` : t(`apps.depStep${s.state === "active" ? "Active" : s.state === "skipped" ? "Skipped" : "Pending"}`)}
+                  <div style={{ color: "var(--c-tx3)" }} title={s.at ? formatDateTime(s.at, chartTimes) : undefined}>
+                    {s.at ? `${formatClock(s.at, chartTimes)} · ${relativeTime(s.at)}` : t(`apps.depStep${s.state === "active" ? "Active" : s.state === "skipped" ? "Skipped" : "Pending"}`)}
                   </div>
                 </div>
                 {i < timeline.steps.length - 1 && <span aria-hidden style={{ flex: 1, minWidth: 16, height: 2, background: "var(--c-bd)", margin: "0 10px" }} />}

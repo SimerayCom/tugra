@@ -132,6 +132,7 @@ export function Card({
   return (
     <div
       id={id}
+      className="tg-card"
       style={{
         background: "var(--c-sb)",
         border: "1px solid var(--c-bd)",

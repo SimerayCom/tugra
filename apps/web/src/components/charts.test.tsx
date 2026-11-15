@@ -28,7 +28,7 @@ describe("MetricChart", () => {
 
 // ── P3: time axis, crosshair + tooltip, min/avg/max, auto-scale, peak band ────────────────────────────────
 import { fireEvent, within, act } from "@testing-library/react";
-import { niceMax, fmtAxis, pickTimeTicks, pointXs, nearestIndex, seriesStats, formatTick, Sparkline } from "./charts";
+import { niceMax, fmtAxis, pickTimeTicks, pointXs, nearestIndex, seriesStats, formatTick, formatStamp, formatStampUtc, Sparkline } from "./charts";
 import { ChartCard, detectGaps, buildRuns, linePath, seriesHasData, seriesColor, seriesDash, type ChartSeries } from "./charts";
 import { vi } from "vitest";
 
@@ -76,6 +76,14 @@ describe("chart helpers", () => {
     expect(seriesStats([])).toBeNull();
     expect(seriesStats([2, 4, 9])).toEqual({ min: 2, avg: 5, max: 9 });
   });
+  it("formatStamp: local only by default, local + UTC when asked; formatStampUtc is the tooltip's second line", () => {
+    const local = formatStamp(T0, 3600_000);
+    expect(local).not.toContain("UTC");
+    expect(formatStamp(T0, 3600_000, "localUtc")).toBe(`${local} · ${formatStampUtc(T0, 3600_000)}`);
+    expect(formatStampUtc(T0, 3600_000)).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC$/); // short window → seconds
+    expect(formatStampUtc(T0, 7 * 86_400_000)).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC$/);
+  });
+
   it("formatTick: clock time for a short window, a date for a multi-day one", () => {
     expect(formatTick(T0, 3600_000)).toMatch(/\d{1,2}[:.]\d{2}/);
     expect(formatTick(T0, 7 * 86_400_000)).not.toMatch(/:/);
@@ -142,6 +150,19 @@ describe("MetricChart (P3)", () => {
     const tip = screen.getByTestId("chart-tooltip");
     expect(tip.textContent).toContain("20%");
     expect(tip.textContent).toMatch(/\d{1,2}[:.]\d{2}/);
+  });
+
+  it("Chart times 'Your time + UTC' adds a UTC second line to the tooltip; 'Your time' does not", () => {
+    localStorage.clear();
+    const { unmount } = wrapI18n(<MetricChart data={[10, 20, 30]} times={times(3)} label="CPU" unit="%" />);
+    fireEvent.focus(screen.getByRole("slider", { name: "CPU" }));
+    expect(screen.queryByTestId("chart-tooltip-utc")).toBeNull();
+    unmount();
+    localStorage.setItem("tugra.chartTimes", "localUtc");
+    wrapI18n(<MetricChart data={[10, 20, 30]} times={times(3)} label="CPU" unit="%" />);
+    fireEvent.focus(screen.getByRole("slider", { name: "CPU" }));
+    expect(screen.getByTestId("chart-tooltip-utc").textContent).toMatch(/^2026-11-07 10:02:00 UTC$/);
+    localStorage.clear();
   });
 
   it("pointer hover picks the nearest point by X and blur/leave clears it", () => {
