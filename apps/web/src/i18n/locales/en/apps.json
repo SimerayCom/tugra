@@ -766,7 +766,7 @@
   "postCutoverSoakDesc": "Zero-downtime rolling deploys only. After cutover Tugra keeps the previous version for this many seconds and reverts automatically if the new one fails 3 health checks in a row. New apps default to 30; 0 turns it off. Use at least 3x your health-check interval.",
   "postCutoverSoakInactive": "Not active: this app does not use a zero-downtime rolling deploy, so there is nothing to revert to.",
   "postCutoverSoakProbes": "About {count} health checks run during the soak window.",
-  "postCutoverSoakCannotTrip": "{sec}s is under 3 health-check intervals, so it can never trigger a revert.",
+  "postCutoverSoakCannotTrip": "{sec}s is under 3 health-check intervals, so it could never trigger a revert and the soak is skipped on deploy. Widen the window or shorten the health interval.",
   "zeroDowntime": "zero-downtime",
   "recreateStrategy": "recreate",
   "clusterDeploy": "Cluster deploy (Docker Swarm)",
