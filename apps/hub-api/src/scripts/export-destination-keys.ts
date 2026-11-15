@@ -7,8 +7,16 @@
 import { ConfigService } from "@nestjs/config";
 import { PrismaClient } from "@prisma/client";
 import { CryptoService } from "../crypto/crypto.service";
+import { PrismaKeyringStore } from "../crypto/keyring.store";
 import type { PrismaService } from "../prisma/prisma.service";
 import { buildKeyManifest, type KeyManifest } from "../destinations/key-manifest";
+
+/** Same wiring as crypto.module.ts: the ring must include the Postgres keyring (data keys wrapped under the .env
+ *  root keys), otherwise every key written after a rotation (`tk1.<dataKeyId>.…`) is unreadable here. A store
+ *  failure throws, which is right: the exporter fails closed rather than emit an empty manifest. */
+export function buildExporterCrypto(config: ConfigService, prisma: PrismaService): CryptoService {
+  return new CryptoService(config, new PrismaKeyringStore(prisma));
+}
 
 export async function runExport(
   prisma: PrismaService,
@@ -23,7 +31,7 @@ async function main(): Promise<void> {
   const prisma = new PrismaClient();
   try {
     const config = new ConfigService();
-    const crypto = new CryptoService(config);
+    const crypto = buildExporterCrypto(config, prisma as unknown as PrismaService);
     await crypto.onModuleInit();
     const secretsKey = config.get<string>("SECRETS_ENCRYPTION_KEY") ?? "";
     const { manifest, exitCode } = await runExport(prisma as unknown as PrismaService, crypto, secretsKey);
