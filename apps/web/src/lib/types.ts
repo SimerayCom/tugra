@@ -1301,6 +1301,8 @@ export interface Application {
   // default; containerEntrypoint [] clears the image entrypoint.
   containerEntrypoint: string[] | null;
   containerCommand: string[] | null;
+  // Operator custom container labels {key: value} (writer-only; null for read-only members and when none are set).
+  customLabels: Record<string, string> | null;
   restartPolicy: string | null; // Docker restart policy; null = the "unless-stopped" default
   volumes: AppVolume[];
   hostMounts: HostMount[];
@@ -1854,4 +1856,28 @@ export interface SecretsKeyStatus {
     unreadableRefs: string[];
     error: string | null;
   } | null;
+}
+
+/** One label Tugra itself applies (read-only). `value` is null when `masked` (basic-auth hashes, forward-auth address). */
+export interface AppliedLabel {
+  scope: string; // "container" | "service:<name>" | "swarm-service"
+  key: string;
+  value: string | null;
+  masked: boolean;
+  purpose: "traefik_routing" | "proxy_network_pin" | "alias" | "config_mount_fp";
+}
+
+/** GET /apps/:id/labels — the labels Tugra applies plus the custom ones, with the rules the editor validates against. */
+export interface AppLabelsView {
+  engine: "docker" | "compose" | "swarm";
+  editable: boolean;
+  editableReason: "compose" | "preview" | null;
+  applyMode: "next_deploy";
+  tugra: AppliedLabel[];
+  custom: { key: string; value: string }[];
+  fromDockerOptions: { key: string; value: string }[];
+  /** Reserved label namespaces (lower-case, with the trailing dot) — the server is the single source. */
+  reservedPrefixes: string[];
+  limits: { maxCount: number; keyMax: number; valueMax: number; totalBytes: number; keyPattern: string };
+  notes: ("rolling_health_labels" | "needs_domain" | "compose_user_labels" | "image_labels_not_shown" | "swarm_container_labels" | "swarm_runtime_labels")[];
 }

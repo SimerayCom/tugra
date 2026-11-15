@@ -1,5 +1,6 @@
 import type {
   ApiToken,
+  AppLabelsView,
   ApiTokenScope,
   PlacementConstraint,
   InstanceStatus,
@@ -1427,6 +1428,17 @@ export const api = {
     return apiFetch<{ ok: true }>(`/apps/${id}/docker-options`, {
       method: "PUT",
       body: JSON.stringify({ dockerOptions }),
+    });
+  },
+  // Container labels: the read-only view of what Tugra applies + the custom ones (writer-only), and the editor's PUT
+  // (replace semantics; {} = reset to defaults). The reserved prefixes/limits ride along in the GET.
+  getAppLabels(id: string) {
+    return apiFetch<AppLabelsView>(`/apps/${id}/labels`);
+  },
+  setAppCustomLabels(id: string, labels: Record<string, string>) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/custom-labels`, {
+      method: "PUT",
+      body: JSON.stringify({ labels }),
     });
   },
   // Instance-owner only (the hub enforces session + owner): lift the docker-options host-escape denylist.

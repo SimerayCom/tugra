@@ -146,3 +146,27 @@ describe("api image-update calls", () => {
     expect(r.imageUpdate.state).toBe("up_to_date");
   });
 });
+
+describe("container labels client", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("getAppLabels GETs /apps/:id/labels", async () => {
+    const fetchMock = vi.fn(async () => jsonRes(200, { engine: "docker", custom: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const v = await api.getAppLabels("a1");
+    expect(v.engine).toBe("docker");
+    expect((fetchMock.mock.calls[0] as unknown as [string])[0]).toBe("/api/v1/apps/a1/labels");
+  });
+
+  it("setAppCustomLabels PUTs the full map under `labels`; {} is the reset", async () => {
+    const fetchMock = vi.fn(async () => jsonRes(200, { ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+    await api.setAppCustomLabels("a1", { team: "core" });
+    await api.setAppCustomLabels("a1", {});
+    const calls = fetchMock.mock.calls as unknown as [string, RequestInit][];
+    expect(calls[0][0]).toBe("/api/v1/apps/a1/custom-labels");
+    expect(calls[0][1].method).toBe("PUT");
+    expect(JSON.parse(String(calls[0][1].body))).toEqual({ labels: { team: "core" } });
+    expect(JSON.parse(String(calls[1][1].body))).toEqual({ labels: {} });
+  });
+});

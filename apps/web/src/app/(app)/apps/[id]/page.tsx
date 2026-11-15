@@ -36,6 +36,7 @@ import { ExtraPortsCard } from "../../../../components/extra-ports-card";
 import { LimitsCard } from "../../../../components/limits-card";
 import { HealthCheckCard } from "../../../../components/health-check-card";
 import { DockerOptionsCard } from "../../../../components/docker-options-card";
+import { ContainerLabelsCard } from "../../../../components/container-labels-card";
 import { DomainCard } from "../../../../components/domain-card";
 import { Tabs } from "../../../../components/tabs-nav";
 import { ConfigLayout } from "../../../../components/config-layout";
@@ -259,6 +260,7 @@ export default function AppDetailPage() {
     buildArgs: () => <BuildArgsCard id={id} />,
     buildSecrets: () => <BuildSecretsCard id={id} buildType={appData.buildType} source={appData.source} />,
     dockerOptions: () => <DockerOptionsCard id={id} dockerOptions={appData.dockerOptions} allowPrivileged={appData.allowPrivilegedDockerOptions} />,
+    containerLabels: () => <ContainerLabelsCard id={id} source={appData.source} clusterId={appData.clusterId} isPreview={appData.isPreview} customLabels={appData.customLabels} />,
     containerCommand: () => <ContainerCommandCard id={id} entrypoint={appData.containerEntrypoint} command={appData.containerCommand} />,
     restartPolicy: () => <RestartPolicyCard id={id} restartPolicy={appData.restartPolicy} restartMaxRetries={appData.restartMaxRetries} />,
     deployHooks: () => <DeployHooksCard id={id} pre={appData.preDeployCommand} post={appData.postDeployCommand} />,

@@ -70,7 +70,7 @@ describe("visibleConfigGroups", () => {
     expect(keysOf(f)).toEqual(["general", "build", "environment", "domains", "danger"]);
     // general holds the description note (metadata, every app type) + the always-on cards (environment + tags)
     expect(group(f, "general")!.cardIds).toEqual(["description", "environment", "tags"]);
-    expect(group(f, "build")!.cardIds).toEqual(["credentials"]);
+    expect(group(f, "build")!.cardIds).toEqual(["containerLabels", "credentials"]); // labels: read-only applied view + a note
     expect(group(f, "environment")!.cardIds).toEqual(["env", "secretRefs"]); // secret refs resolve on compose deploys too
     expect(group(f, "domains")!.cardIds).toEqual(["expose", "serviceDomains"]); // compose gains per-service domains
   });
@@ -99,6 +99,14 @@ describe("visibleConfigGroups", () => {
     expect(group(f, "general")!.cardIds).not.toContain("tags");
     expect(group(f, "automation")!.cardIds).not.toContain("preview");
     expect(group(f, "domains")?.cardIds ?? []).not.toContain("expose");
+  });
+
+  it("containerLabels follows dockerOptions in build, for every app type, writers only", () => {
+    const ids = group(facts(), "build")!.cardIds;
+    expect(ids.indexOf("containerLabels")).toBe(ids.indexOf("dockerOptions") + 1);
+    expect(group(facts({ source: "COMPOSE", domain: null, domainKind: null, volumes: [] }), "build")!.cardIds).toContain("containerLabels");
+    expect(group(facts({ isPreview: true }), "build")!.cardIds).toContain("containerLabels"); // shows the preview note
+    expect(group(facts({ canWrite: false }), "build")?.cardIds ?? []).not.toContain("containerLabels");
   });
 
   it("domainOptions appears only when a domain is set", () => {

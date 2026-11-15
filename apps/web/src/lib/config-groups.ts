@@ -35,6 +35,7 @@ export type ConfigCardId =
   | "buildArgs"
   | "buildSecrets"
   | "dockerOptions"
+  | "containerLabels"
   | "containerCommand"
   | "restartPolicy"
   | "credentials"
@@ -107,6 +108,9 @@ export const CONFIG_CARDS: { id: ConfigCardId; group: ConfigGroupKey; visible: (
   // BuildKit secret mounts — the card itself explains when the build pack (non-Dockerfile) cannot consume them.
   { id: "buildSecrets", group: "build", visible: (a) => a.source === "GIT" },
   { id: "dockerOptions", group: "build", visible: notCompose },
+  // Container labels: the read-only applied-labels view for EVERY app type (compose + preview show a note instead
+  // of the editor), so it is visible to any writer.
+  { id: "containerLabels", group: "build", visible: (a) => a.canWrite },
   // Classic docker-run concept only: single-server Image/Git apps (not compose, not clustered, not a preview).
   { id: "containerCommand", group: "build", visible: (a) => notCompose(a) && a.canWrite && !a.isPreview && !a.clusterId },
   // Docker restart policy — classic docker-run apps only (compose/swarm declare their own), writer, not preview.
