@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.16] - 2026-11-15
+
 - **Settings → Appearance: make the panel look the way you like.** A new tab holds per-user, browser-local choices:
   colour theme (Light, System, Dark, or Custom with Tugra Gold / Slate / Forest / Rose presets plus accent and
   surface-tint pickers), UI scale (80 / 90 / 100 %, always 100 % on phones), page width (Full or Centered),
