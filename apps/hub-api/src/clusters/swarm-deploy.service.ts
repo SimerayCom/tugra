@@ -244,6 +244,8 @@ export class SwarmDeployService {
         reserveCpus: spec.reserveCpus ?? null,
         healthCmd: spec.healthCmd ?? null,
         labels,
+        customLabels: spec.customLabels ?? null,
+        scrubContainerLabels: spec.customLabelsScrub ?? false,
         publish,
         constraints,
         placementPrefs,

@@ -65,6 +65,9 @@ export interface ConfigSnapshot {
   volumes: { name: string; path: string }[];
   /** config mount target → 12-hex fingerprint of its (placeholder) content — never stored verbatim. */
   configMounts?: { target: string; mode?: string; fp: string }[];
+  /** Operator custom container label key → 12-hex fingerprint of its value (value never stored; values can be
+   *  tokens). Omitted when none, so a snapshot of an app without custom labels is unchanged. */
+  customLabels?: Record<string, string>;
   /** env var name → 12-hex fingerprint of its value (value itself is never stored). */
   env: Record<string, string>;
   /** Per-variable flags: env var name -> readable token (build, build-only, literal, multiline, joined by +). Only keys
@@ -158,6 +161,12 @@ export function buildConfigSnapshot(spec: AppSpec): ConfigSnapshot {
     if (token) envFlags[k] = token;
     if (f.buildTime && spec.buildArgs && Object.prototype.hasOwnProperty.call(spec.buildArgs, k)) buildEnv[k] = fingerprint(spec.buildArgs[k]);
   }
+  let customLabels: Record<string, string> | undefined;
+  const cl = spec.customLabels;
+  if (cl && Object.keys(cl).length) {
+    customLabels = {};
+    for (const k of Object.keys(cl).sort()) customLabels[k] = fingerprint(cl[k]);
+  }
   return {
     snapV: 2,
     source: spec.source,
@@ -210,6 +219,7 @@ export function buildConfigSnapshot(spec: AppSpec): ConfigSnapshot {
     ...(spec.configMounts && spec.configMounts.length
       ? { configMounts: spec.configMounts.map((m) => ({ target: m.target, mode: m.mode, fp: fingerprint(m.content) })) }
       : {}),
+    ...(customLabels ? { customLabels } : {}),
     env,
     ...(Object.keys(envFlags).length ? { envFlags } : {}),
     ...(Object.keys(buildEnv).length ? { buildEnv } : {}),
@@ -293,6 +303,15 @@ export function diffSnapshots(
   for (const [target] of pm) {
     if (!nm.has(target)) changes.push({ field: `configMount.${target}`, kind: "removed" });
   }
+
+  // custom container labels: key presence + value fingerprint, never revealing values (they can be tokens).
+  const pcl = prev.customLabels ?? {};
+  const ncl = next.customLabels ?? {};
+  for (const k of Object.keys(ncl)) {
+    if (!(k in pcl)) changes.push({ field: `customLabel.${k}`, kind: "added", after: SECRET });
+    else if (pcl[k] !== ncl[k]) changes.push({ field: `customLabel.${k}`, kind: "changed", before: SECRET, after: SECRET });
+  }
+  for (const k of Object.keys(pcl)) if (!(k in ncl)) changes.push({ field: `customLabel.${k}`, kind: "removed", before: SECRET });
 
   // env: presence + fingerprint changes, never revealing values
   const pe = prev.env ?? {};

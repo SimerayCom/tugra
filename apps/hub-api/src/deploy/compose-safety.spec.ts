@@ -272,3 +272,62 @@ describe("assertSafeCompose — git mode (gitCloneRoot)", () => {
     expect(git(`services:\n  app:\n    image: x\nconfigs:\n  c:\n    file: /etc/host-config\n`)).toThrow(/top-level configs/);
   });
 });
+
+describe("assertSafeCompose — reserved labels and Tugra networks (D5b)", () => {
+  const labelErr = /reserved .*namespace/;
+  it("rejects traefik.* / tugra.* / com.docker.compose.* labels in map form", () => {
+    expect(() => assertSafeCompose(wrap("    labels:\n      traefik.enable: \"true\""))).toThrow(labelErr);
+    expect(() => assertSafeCompose(wrap("    labels:\n      Tugra.role: gpu-probe"))).toThrow(/"Tugra\.role"/);
+    expect(() => assertSafeCompose(wrap("    labels:\n      com.docker.compose.project: x"))).toThrow(labelErr);
+    expect(() => assertSafeCompose(wrap("    labels:\n      com.docker.swarm.service.name: x"))).toThrow(labelErr);
+  });
+  it("rejects them in list form, a no-= list entry, flow style and deploy.labels", () => {
+    expect(() => assertSafeCompose(wrap('    labels:\n      - "traefik.http.routers.x.rule=Host(`v.com`)"'))).toThrow(labelErr);
+    expect(() => assertSafeCompose(wrap("    labels:\n      - tugra.role"))).toThrow(labelErr);
+    expect(() => assertSafeCompose(wrap("    labels: {traefik.enable: 'true'}"))).toThrow(labelErr);
+    expect(() => assertSafeCompose(wrap("    deploy:\n      labels:\n        - traefik.enable=true"))).toThrow(labelErr);
+  });
+  it("rejects a reserved label smuggled through a YAML merge key / anchor", () => {
+    const c = "x-l: &l\n  labels:\n    traefik.enable: \"true\"\nservices:\n  app:\n    image: nginx\n    <<: *l\n";
+    expect(() => assertSafeCompose(c)).toThrow(labelErr);
+  });
+  it("allows ordinary labels", () => {
+    expect(() => assertSafeCompose(wrap("    labels:\n      com.example.team: core\n      org.opencontainers.image.title: x"))).not.toThrow();
+    expect(() => assertSafeCompose(wrap('    labels:\n      - "com.example.a=1"\n      - traefikish=ok'))).not.toThrow();
+  });
+  it("rejects attaching to a tugra-* external network (by key, by name, old external.name form)", () => {
+    const net = (body: string) => `services:\n  app:\n    image: nginx\nnetworks:\n${body}\n`;
+    expect(() => assertSafeCompose(net("  tugra-proxy:\n    external: true"))).toThrow(/Tugra-managed network/);
+    expect(() => assertSafeCompose(net("  proxy:\n    external: true\n    name: tugra-proxy"))).toThrow(/Tugra-managed network \(tugra-proxy\)/);
+    expect(() => assertSafeCompose(net("  proxy:\n    external:\n      name: tugra_net"))).toThrow(/Tugra-managed network/);
+    expect(() => assertSafeCompose(net("  p:\n    name: tugra-proxy"))).toThrow(/Tugra-managed network/);
+  });
+  it("allows other external networks and ordinary internal ones", () => {
+    const net = (body: string) => `services:\n  app:\n    image: nginx\nnetworks:\n${body}\n`;
+    expect(() => assertSafeCompose(net("  shared:\n    external: true"))).not.toThrow();
+    expect(() => assertSafeCompose(net("  backend:\n    driver: bridge"))).not.toThrow();
+    expect(() => assertSafeCompose(net("  tugra-internal:\n    driver: bridge"))).not.toThrow(); // project-scoped, not a Tugra network
+  });
+  it("applies on the git-render path too, without tripping a project-prefixed rendered network", () => {
+    const g = (c: string) => () => assertSafeCompose(c, { gitCloneRoot: "/etc/tugra/compose-git/abc/src" });
+    expect(g('services:\n  app:\n    image: nginx\n    labels:\n      traefik.enable: "true"\n')).toThrow(labelErr);
+    expect(g("services:\n  app:\n    image: nginx\nnetworks:\n  default:\n    name: tugra_abc_default\n")).not.toThrow();
+    expect(g("services:\n  app:\n    image: nginx\nnetworks:\n  p:\n    name: tugra-proxy\n    external: true\n")).toThrow(/Tugra-managed network/);
+  });
+});
+
+describe("bundled templates vs the reserved-label / Tugra-network rules", () => {
+  it("no bundled template trips the new rules", () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { TEMPLATES } = require("../templates/catalog") as typeof import("../templates/catalog");
+    const tripped: string[] = [];
+    for (const [slug, t] of Object.entries(TEMPLATES)) {
+      try {
+        assertSafeCompose(t.composeFile);
+      } catch (e) {
+        if (/reserved .*namespace|Tugra-managed network/.test(String((e as Error).message))) tripped.push(slug);
+      }
+    }
+    expect(tripped).toEqual([]);
+  });
+});

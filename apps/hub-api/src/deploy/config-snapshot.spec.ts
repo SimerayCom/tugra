@@ -256,3 +256,31 @@ describe("env flags in the snapshot", () => {
     expect(fields).toEqual(expect.arrayContaining(["env.K:removed", "envFlags.K:added", "buildEnv.K:added"]));
   });
 });
+
+describe("custom labels in the snapshot (D5)", () => {
+  it("is absent when empty or null, so existing snapshots stay byte-identical", () => {
+    const plain = JSON.stringify(buildConfigSnapshot(spec()));
+    expect(JSON.stringify(buildConfigSnapshot(spec({ customLabels: null })))).toBe(plain);
+    expect(JSON.stringify(buildConfigSnapshot(spec({ customLabels: {} })))).toBe(plain);
+    expect(buildConfigSnapshot(spec()).snapV).toBe(2);
+    expect(plain).not.toContain("customLabels");
+  });
+
+  it("stores sorted keys with value fingerprints, never raw values", () => {
+    const snap = buildConfigSnapshot(spec({ customLabels: { z: "tok_SECRETVALUE", a: "1" } }));
+    expect(Object.keys(snap.customLabels ?? {})).toEqual(["a", "z"]);
+    expect(snap.customLabels?.z).toMatch(/^[0-9a-f]{12}$/);
+    expect(JSON.stringify(snap)).not.toContain("SECRETVALUE");
+    expect(snap.snapV).toBe(2);
+  });
+
+  it("diffs add / remove / change with the secret placeholder", () => {
+    const mk = (l?: Record<string, string>) => buildConfigSnapshot(spec({ customLabels: l }));
+    expect(diffSnapshots(mk(), mk({ team: "core" }))).toEqual([{ field: "customLabel.team", kind: "added", after: "•••" }]);
+    expect(diffSnapshots(mk({ team: "core" }), mk())).toEqual([{ field: "customLabel.team", kind: "removed", before: "•••" }]);
+    expect(diffSnapshots(mk({ team: "core" }), mk({ team: "edge" }))).toEqual([
+      { field: "customLabel.team", kind: "changed", before: "•••", after: "•••" },
+    ]);
+    expect(diffSnapshots(mk({ team: "core" }), mk({ team: "core" }))).toEqual([]);
+  });
+});

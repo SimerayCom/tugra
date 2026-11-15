@@ -61,6 +61,8 @@ import {
   buildImageRemoveScriptForTags,
   appNetworkPlan,
   internalHostFor,
+  classicTugraLabelLines,
+  classicAliasLabelLine,
   type AppSpec,
 } from "./deploy-script";
 import { createHash } from "node:crypto";
@@ -2879,6 +2881,94 @@ describe("per-variable env flags — docker run transport", () => {
       const s = buildRunScript({ ...git, sourceCommitMode: "BUILD", buildArgs: { SOURCE_COMMIT: "mine" }, buildFlagKeys: ["SOURCE_COMMIT"] }, "v1", true);
       expect(s).toContain("--build-arg 'SOURCE_COMMIT=mine'");
       expect(s).not.toContain('--build-arg "SOURCE_COMMIT=$TUGRA_C"');
+    });
+  });
+});
+
+describe("custom container labels (D5)", () => {
+  const gate = { retries: 1, intervalSec: 1, startPeriodSec: 0 };
+  const dom: AppSpec = { ...base, domain: "app.example.com" };
+  const labels = { team: "core", env: "prod" };
+
+  it("null / {} / undefined customLabels leave every builder byte-identical", () => {
+    for (const cl of [null, {}, undefined]) {
+      expect(buildRunScript({ ...dom, customLabels: cl }, "v1", true)).toBe(buildRunScript(dom, "v1", true));
+      expect(buildRollingDeployScript({ ...dom, customLabels: cl }, "v1", { probe: { kind: "stableWait" }, ...gate })).toBe(
+        buildRollingDeployScript(dom, "v1", { probe: { kind: "stableWait" }, ...gate }),
+      );
+      expect(buildRecreateDeployScript({ ...base, hostPort: 8080, customLabels: cl }, "v1", { probe: { kind: "stableWait" }, ...gate })).toBe(
+        buildRecreateDeployScript({ ...base, hostPort: 8080 }, "v1", { probe: { kind: "stableWait" }, ...gate }),
+      );
+    }
+  });
+
+  it("emits sorted --label tokens AFTER dockerOptions and BEFORE Tugra's own labels / alias / image ref", () => {
+    const s = buildRunScript({ ...dom, containerAlias: "web", dockerOptions: "--memory-reservation=64m", customLabels: { team: "core", env: "prod" } }, "v1", false);
+    const iOpts = s.indexOf("'--memory-reservation=64m'");
+    const iEnv = s.indexOf("--label 'env=prod'");
+    const iTeam = s.indexOf("--label 'team=core'");
+    const iNet = s.indexOf("--network tugra-proxy --label 'traefik.enable=true'");
+    const iAlias = s.indexOf("--label 'tugra.alias=web'");
+    const iRef = s.indexOf("'tugra_abc:v1'");
+    expect(iOpts).toBeGreaterThan(-1);
+    expect(iEnv).toBeGreaterThan(iOpts);
+    expect(iTeam).toBeGreaterThan(iEnv);
+    expect(iNet).toBeGreaterThan(iTeam);
+    expect(iAlias).toBeGreaterThan(iNet);
+    expect(iRef).toBeGreaterThan(iAlias);
+  });
+
+  it("keeps $, backtick, quote, space and an empty value literal through shq", () => {
+    const s = buildRunScript({ ...base, customLabels: { a: "x $HOME `id` 'q' \"d\"", b: "" } }, "v1", false);
+    expect(s).toContain("--label 'a=x $HOME `id` '\\''q'\\'' \"d\"'");
+    expect(s).toContain("--label 'b='");
+  });
+
+  it("a reserved key in a stored row fails closed at build time", () => {
+    expect(() => buildRunScript({ ...base, customLabels: { "traefik.enable": "true" } }, "v1", false)).toThrow(/reserved/);
+    expect(() => buildRunScript({ ...base, customLabels: { "Tugra.role": "gpu-probe" } }, "v1", false)).toThrow(/reserved/);
+  });
+
+  it("hard-cutover, rolling (rollout + canonical relabel), recreate and rollback all carry the labels", () => {
+    const hard = buildRunScript({ ...base, customLabels: labels }, "v1", true);
+    expect(hard).toContain("--label 'team=core'");
+    const rollback = buildRunScript({ ...base, customLabels: labels }, "old1", false);
+    expect(rollback).toContain("--label 'team=core'");
+    const rolling = buildRollingDeployScript({ ...dom, customLabels: labels }, "v1", { probe: { kind: "stableWait" }, ...gate });
+    expect((rolling.match(/--label 'team=core'/g) ?? []).length).toBeGreaterThanOrEqual(1);
+    const recreate = buildRecreateDeployScript({ ...base, hostPort: 8080, customLabels: labels }, "v1", { probe: { kind: "stableWait" }, ...gate });
+    expect(recreate).toContain("--label 'env=prod'");
+  });
+
+  it("the pre-deploy hook container carries no labels", () => {
+    const git: AppSpec = { ...base, source: "GIT", gitUrl: "https://github.com/x/y", buildType: "DOCKERFILE", preDeployCommand: "migrate", customLabels: labels };
+    const s = buildRunScript(git, "v1", true);
+    const hook = s.slice(s.indexOf("docker run --rm"), s.indexOf("TUGRA_PREDEPLOY: failed"));
+    expect(hook).toContain("docker run --rm");
+    expect(hook).not.toContain("--label");
+  });
+
+  describe("classicTugraLabelLines / classicAliasLabelLine", () => {
+    it("is empty without a domain", () => {
+      expect(classicTugraLabelLines(base)).toEqual([]);
+    });
+    it("matches traefikLabels for a plain domain app (no pin)", () => {
+      expect(classicTugraLabelLines(dom)).toEqual(traefikLabels(dom));
+    });
+    it("appends the proxy-network pin with dbNetwork or extra networks", () => {
+      expect(classicTugraLabelLines({ ...dom, dbNetwork: true }).slice(-1)).toEqual(["traefik.docker.network=tugra-proxy"]);
+      expect(classicTugraLabelLines({ ...dom, networks: ["shared"] }).slice(-1)).toEqual(["traefik.docker.network=tugra-proxy"]);
+    });
+    it("the run line renders exactly these lines", () => {
+      const app = { ...dom, dbNetwork: true, containerAlias: "web" };
+      const s = buildRunScript(app, "v1", false);
+      for (const l of classicTugraLabelLines(app)) expect(s).toContain(`--label '${l}'`);
+      expect(s).toContain(`--label '${classicAliasLabelLine(app)}'`);
+    });
+    it("alias line needs an alias and a Tugra-managed network", () => {
+      expect(classicAliasLabelLine(base)).toBeNull();
+      expect(classicAliasLabelLine({ ...base, containerAlias: "web" })).toBe("tugra.alias=web"); // no domain -> tugra-apps
+      expect(classicAliasLabelLine({ ...base, containerAlias: "web", dockerOptions: "--network host" })).toBeNull();
     });
   });
 });

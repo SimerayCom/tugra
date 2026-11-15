@@ -7,6 +7,8 @@ import {
   buildContainersScript,
   buildLogsScript,
   composeProject,
+  composeOverride,
+  composeTugraLabels,
   composeVolumes,
   composeServiceNames,
   interpolateMountContent,
@@ -475,5 +477,45 @@ describe("compose-script — per-variable env flags", () => {
   it("config mounts still interpolate ${KEY} from the FULL env", () => {
     const s = buildComposeUpScript({ ...flagged, configMounts: [{ containerPath: "/c", content: "pw=${PW}", mode: "0444" } as never] });
     expect(s).toContain(Buffer.from("pw=pa$$word${X}").toString("base64"));
+  });
+});
+
+describe("composeTugraLabels (D5)", () => {
+  const app: AppSpec = {
+    ...base,
+    composeWebService: "web",
+    domain: "a.example.com",
+    containerPort: 8080,
+    basicAuthUsers: [{ user: "u", hash: "$2b$x$y" }],
+    serviceDomains: [{ service: "api", hostname: "y.example.com", port: 82 }],
+    configMounts: [{ serviceName: "api", target: "/c.conf", content: "hi" }],
+  };
+
+  it("groups traefik routing and config-mount fingerprints per service", () => {
+    const m = composeTugraLabels(app, { dollarEscape: true });
+    expect([...m.keys()]).toEqual(["web", "api"]);
+    expect(m.get("web")!.every((l) => l.purpose === "traefik_routing")).toBe(true);
+    expect(m.get("web")!.some((l) => l.key === "traefik.enable" && l.value === "true")).toBe(true);
+    const api = m.get("api")!;
+    expect(api.filter((l) => l.purpose === "config_mount_fp").map((l) => l.key)).toEqual(["tugra.config-mount.0"]);
+    expect(api.some((l) => l.purpose === "traefik_routing")).toBe(true);
+  });
+
+  it("renders the override from exactly these lines (escaped), one labels block per service", () => {
+    const yaml = composeOverride(app);
+    const parsed = parseYaml(yaml) as { services: Record<string, { labels: string[] }> };
+    for (const [svc, entries] of composeTugraLabels(app, { dollarEscape: true })) {
+      expect(parsed.services[svc].labels).toEqual(entries.map((e) => e.line));
+    }
+  });
+
+  it("dollarEscape:false returns the un-doubled basic-auth hash, true doubles it", () => {
+    const find = (m: ReturnType<typeof composeTugraLabels>) => m.get("web")!.find((l) => l.key.endsWith("basicauth.users"))!.value;
+    expect(find(composeTugraLabels(app, { dollarEscape: true }))).toBe("u:$$2b$$x$$y");
+    expect(find(composeTugraLabels(app, { dollarEscape: false }))).toBe("u:$2b$x$y");
+  });
+
+  it("is empty without a domain, mounts, or rows", () => {
+    expect(composeTugraLabels(base, { dollarEscape: false }).size).toBe(0);
   });
 });

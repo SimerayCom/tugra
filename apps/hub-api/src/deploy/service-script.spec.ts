@@ -409,3 +409,94 @@ describe("swarm env secret — multiline wrapper (APP_ENV_WRAPPER_ML)", () => {
     });
   });
 });
+
+describe("swarm custom container labels (D5)", () => {
+  const envSecret = { name: "tugra-appenv-tugra_abc-h1", confighash: "h1", credsB64: "QT0x" };
+  const wrapped = { env: { A: "1" }, envSecret, imageEntrypoint: ["/app"], imageCmd: [] as string[] };
+  const labels = { team: "core", "com.example/env": "prod" };
+
+  it("is byte-identical with null / {} labels and no scrub, in every update branch", () => {
+    for (const base of [opts(), opts(wrapped), opts({ env: { A: "1" }, envFallbackNoShell: true })]) {
+      const plain = buildServiceDeployScript(base);
+      expect(buildServiceDeployScript({ ...base, customLabels: null })).toBe(plain);
+      expect(buildServiceDeployScript({ ...base, customLabels: {} })).toBe(plain);
+      expect(buildServiceDeployScript({ ...base, customLabels: {}, scrubContainerLabels: false })).toBe(plain);
+      expect(plain).not.toContain("container-label");
+    }
+  });
+
+  it("create carries --container-label (sorted, shq'd), never --label", () => {
+    const s = buildServiceDeployScript(opts({ customLabels: labels }));
+    const create = s.slice(s.indexOf("docker service create"));
+    expect(create).toContain("--container-label 'com.example/env=prod' --container-label 'team=core'");
+    expect(create).not.toMatch(/--label 'team/);
+  });
+
+  it("update adds --container-label-add and the scrub block in all three branches", () => {
+    for (const base of [opts(), opts(wrapped), opts({ env: { A: "1" }, envFallbackNoShell: true })]) {
+      const s = buildServiceDeployScript(opts({ ...base, customLabels: labels }));
+      expect(s).toContain("--container-label-add 'com.example/env=prod' --container-label-add 'team=core'");
+      expect(s).toContain("TUGRA_CL_KEEP=' com.example/env team '");
+      expect(s).toContain('--container-label-rm "$TUGRA_CL_K"');
+      expect(s).toContain("{{range $k, $v := .Spec.TaskTemplate.ContainerSpec.Labels}}{{$k}}{{\"\\n\"}}{{end}}");
+    }
+  });
+
+  it("scrub-only (no labels) emits the block with an empty KEEP and no add flags", () => {
+    const s = buildServiceDeployScript(opts({ scrubContainerLabels: true }));
+    expect(s).toContain("TUGRA_CL_KEEP='  '");
+    expect(s).toContain("--container-label-rm");
+    expect(s).not.toContain("--container-label-add");
+  });
+
+  it("the scrub block follows the env/secret `set --` build and precedes placement + update", () => {
+    const s = buildServiceDeployScript(opts({ ...wrapped, customLabels: labels, constraints: ["node.role==worker"] }));
+    const upd = s.slice(s.indexOf("TUGRA_MODE=update"));
+    expect(upd.indexOf("set --")).toBeGreaterThan(-1);
+    expect(upd.indexOf("set --")).toBeLessThan(upd.indexOf("TUGRA_CL_KEEP"));
+    expect(upd.indexOf("TUGRA_CL_KEEP")).toBeLessThan(upd.indexOf("--constraint-rm"));
+    expect(upd.indexOf("--constraint-rm")).toBeLessThan(upd.indexOf("docker service update"));
+  });
+
+  it("fails closed on a reserved key", () => {
+    expect(() => buildServiceDeployScript(opts({ customLabels: { "traefik.enable": "true" } }))).toThrow(/reserved/);
+  });
+
+  it("shell-quotes keys/values with odd characters", () => {
+    const s = buildServiceDeployScript(opts({ customLabels: { "a@b:c/d": "x $(id) `y` 'z'" } }));
+    expect(s).toContain("--container-label 'a@b:c/d=x $(id) `y` '\\''z'\\'''");
+  });
+
+  describe("real shell: stale labels are removed, desired ones kept", () => {
+    const run = (o: ServiceDeployOpts, live: string[]) => {
+      const dir = mkdtempSync(join(tmpdir(), "d5-swarm-"));
+      try {
+        const script = [
+          // docker stub: inspect succeeds (update branch), reports the live container labels and a completed rollout.
+          `docker() { case "$*" in *ContainerSpec.Labels*) printf '%s\\n' ${live.map((l) => `'${l}'`).join(" ")};; *UpdateStatus*) echo completed;; *"service update"*) printf 'UPDATE'; for a in "$@"; do printf ' [%s]' "$a"; done; echo;; esac; return 0; }`,
+          "sleep() { :; }",
+          buildServiceDeployScript(o),
+        ].join("\n");
+        const f = join(dir, "s.sh");
+        writeFileSync(f, script);
+        return spawnSync("sh", [f], { encoding: "utf8" }).stdout;
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    };
+
+    it("removes only keys that exist and are not wanted", () => {
+      const out = run(opts({ customLabels: { team: "core" } }), ["team", "stale", "old.key"]);
+      expect(out).toContain("[--container-label-rm] [stale] [--container-label-rm] [old.key]");
+      expect(out).not.toContain("[--container-label-rm] [team]");
+      expect(out).toContain("[--container-label-add] [team=core]");
+    });
+
+    it("scrub-only strips everything and adds nothing; no scrub means no removals", () => {
+      const out = run(opts({ scrubContainerLabels: true }), ["team", "stale"]);
+      expect(out).toContain("[--container-label-rm] [team] [--container-label-rm] [stale]");
+      expect(out).not.toContain("--container-label-add");
+      expect(run(opts(), ["team", "stale"])).not.toContain("--container-label-rm");
+    });
+  });
+});

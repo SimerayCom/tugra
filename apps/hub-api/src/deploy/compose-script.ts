@@ -17,6 +17,7 @@ import {
   certPreludeFor,
   PROXY_NETWORK,
   type AppSpec,
+  type TraefikLabelInput,
 } from "./deploy-script";
 import { assertScriptFits, mlPrefix, mlPrelude, planEnv } from "./env-render";
 
@@ -133,6 +134,50 @@ export function composeOverridePath(app: { id: string }): string {
   return `${composeDir(app)}/docker-compose.tugra.yml`;
 }
 
+/** One label Tugra stamps on a compose service, split into key/value plus the original `key=value` line. */
+export interface ComposeTugraLabel {
+  key: string;
+  value: string;
+  purpose: "traefik_routing" | "config_mount_fp";
+  line: string;
+}
+
+/**
+ * The Tugra-owned labels of a COMPOSE app, per service, in the exact order the override renders them: the
+ * primary web service's Traefik set, then each per-service domain row's set, then one content fingerprint per
+ * config mount. Single source for composeOverride AND the read-only applied-labels view. `dollarEscape: true`
+ * doubles every `$` (the override file is interpolated by compose); the view passes false since compose
+ * un-escapes `$$` at interpolation, so the running container carries the single-`$` value.
+ */
+export function composeTugraLabels(
+  app: TraefikLabelInput & Pick<AppSpec, "composeWebService" | "serviceDomains" | "configMounts">,
+  opts: { dollarEscape: boolean },
+): Map<string, ComposeTugraLabel[]> {
+  const out = new Map<string, ComposeTugraLabel[]>();
+  const put = (svc: string, purpose: ComposeTugraLabel["purpose"], line: string) => {
+    const eq = line.indexOf("=");
+    (out.get(svc) ?? out.set(svc, []).get(svc)!).push({ key: line.slice(0, eq), value: line.slice(eq + 1), purpose, line });
+  };
+  const magic = !!(app.domain && app.composeWebService);
+  const rows = app.serviceDomains ?? [];
+  if (magic && app.composeWebService) {
+    const name = app.composeWebService;
+    // When a per-service domain also targets the web service, the container has >1 Traefik service → the
+    // primary router must name its service explicitly (byte-identical when there are no such rows).
+    const primaryExplicit = rows.some((row) => row.service === name);
+    for (const l of traefikLabels(app, { explicitService: primaryExplicit, composeDollarEscape: opts.dollarEscape })) put(name, "traefik_routing", l);
+  }
+  // Per-service domains: each row gets its own HTTPS router on its named service + port.
+  for (const row of rows) {
+    for (const l of serviceDomainLabels(app, row, { composeDollarEscape: opts.dollarEscape })) put(row.service, "traefik_routing", l);
+  }
+  (app.configMounts ?? []).forEach((m, i) => {
+    // Fingerprint label so a content edit changes this service's compose config → `up -d` recreates it.
+    put(m.serviceName, "config_mount_fp", `tugra.config-mount.${i}=${mountFp(m.content)}`);
+  });
+  return out;
+}
+
 /**
  * A minimal override compose file that joins the app's primary web service to the
  * Traefik proxy network and stamps it with the router labels — deep-merged over the
@@ -168,24 +213,15 @@ export function composeOverride(app: AppSpec): string {
     // service would lose reach to its DB/siblings). Set once per service.
     if (!networks.has(name)) networks.set(name, ["      - default", `      - ${PROXY_NETWORK}`]);
   };
-  if (magic && app.composeWebService) {
-    const name = app.composeWebService;
-    joinProxy(name);
-    // When a per-service domain also targets the web service, the container has >1 Traefik service → the
-    // primary router must name its service explicitly (byte-identical when there are no such rows).
-    const primaryExplicit = rows.some((row) => row.service === name);
-    // Compose interpolates the override file → a basic-auth hash's `$` must be escaped to `$$`.
-    for (const l of traefikLabels(app, { explicitService: primaryExplicit, composeDollarEscape: true })) add(labels, name, `      - ${JSON.stringify(l)}`);
-  }
-  // Per-service domains: each row gets its own HTTPS router on its named service + port.
-  for (const row of rows) {
-    joinProxy(row.service);
-    for (const l of serviceDomainLabels(app, row)) add(labels, row.service, `      - ${JSON.stringify(l)}`);
+  if (magic && app.composeWebService) joinProxy(app.composeWebService);
+  for (const row of rows) joinProxy(row.service);
+  // The Tugra-owned labels per service (traefik routing + config-mount fingerprints), rendered as ONE
+  // `labels:` block per service. Compose interpolates the override file → dollarEscape (`$` → `$$`).
+  for (const [svc, entries] of composeTugraLabels(app, { dollarEscape: true })) {
+    for (const e of entries) add(labels, svc, `      - ${JSON.stringify(e.line)}`);
   }
   mounts.forEach((m, i) => {
     add(binds, m.serviceName, `      - ${JSON.stringify(`${mountFilePath(app, i)}:${m.target}:ro`)}`);
-    // Fingerprint label so a content edit changes this service's compose config → `up -d` recreates it.
-    add(labels, m.serviceName, `      - ${JSON.stringify(`tugra.config-mount.${i}=${mountFp(m.content)}`)}`);
   });
 
   const lines: string[] = ["services:"];

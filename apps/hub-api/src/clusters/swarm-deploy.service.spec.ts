@@ -364,3 +364,34 @@ describe("SwarmDeployService — multiline env variables", () => {
     expect(await hashOf({ FOO: { buildTime: true } })).toBe(await hashOf(undefined));
   });
 });
+
+describe("SwarmDeployService custom container labels (D5)", () => {
+  it("passes custom labels + the scrub flag from the spec into the service script", async () => {
+    const { svc, send } = make();
+    await svc.deploy(app(), spec({ customLabels: { team: "core" }, customLabelsScrub: true }), "dep1", { timeoutMs: 300_000 });
+    const script = send.mock.calls[0][1] as string;
+    expect(script).toContain("--container-label 'team=core'");
+    expect(script).toContain("--container-label-add 'team=core'");
+    expect(script).toContain("TUGRA_CL_KEEP=' team '");
+  });
+
+  it("scrub-only (labels reset) emits the removal block without any add flags", async () => {
+    const { svc, send } = make();
+    await svc.deploy(app(), spec({ customLabels: null, customLabelsScrub: true }), "dep1", { timeoutMs: 300_000 });
+    const script = send.mock.calls[0][1] as string;
+    expect(script).toContain("--container-label-rm");
+    expect(script).not.toContain("--container-label-add");
+  });
+
+  it("emits no label machinery when there are no labels and no scrub", async () => {
+    const { svc, send } = make();
+    await svc.deploy(app(), spec(), "dep1", { timeoutMs: 300_000 });
+    expect(send.mock.calls[0][1] as string).not.toContain("container-label");
+  });
+
+  it("rollbackTo carries them too", async () => {
+    const { svc, send } = make();
+    await svc.rollbackTo(app(), spec({ customLabels: { team: "core" } }), "ghcr.io/org/app:0", null);
+    expect(send.mock.calls[0][1] as string).toContain("--container-label-add 'team=core'");
+  });
+});

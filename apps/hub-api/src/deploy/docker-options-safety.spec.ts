@@ -1,4 +1,4 @@
-import { assertSafeDockerOptions, validateHostMounts } from "./docker-options-safety";
+import { assertSafeDockerOptions, dockerOptionLabels, validateHostMounts } from "./docker-options-safety";
 
 const ok = (s: string) => expect(() => assertSafeDockerOptions(s)).not.toThrow();
 const bad = (s: string, re?: RegExp) => expect(() => assertSafeDockerOptions(s)).toThrow(re ?? /disallowed flag|unterminated/);
@@ -196,4 +196,59 @@ describe("assertSafeDockerOptions — owner privileged override", () => {
   });
 
   it("still fails closed on an unterminated quote even with the override", () => stillBad('--privileged "oops', /unterminated/));
+});
+
+describe("reserved label namespaces (D5)", () => {
+  it("rejects tugra.* and com.docker.compose|swarm|stack.* labels in every flag form", () => {
+    bad("--label tugra.role=gpu-probe", /reserved tugra\.\* namespace/);
+    bad("--label=Tugra.X=1", /reserved tugra\.\*/);
+    bad("-ltugra.x=1", /reserved tugra\.\*/);
+    bad("-l com.docker.compose.project=x", /reserved com\.docker\.compose\.\*/);
+    bad("--label com.docker.swarm.service.name=x", /reserved com\.docker\.swarm\.\*/);
+    bad("--label com.docker.stack.namespace=x", /reserved com\.docker\.stack\.\*/);
+  });
+  it("applies even with allowPrivileged and never echoes the value", () => {
+    expect(() => assertSafeDockerOptions("--label tugra.role=SECRETVAL", { allowPrivileged: true })).toThrow(/reserved tugra\.\*/);
+    try {
+      assertSafeDockerOptions("--label tugra.role=SECRETVAL");
+    } catch (e) {
+      expect(String((e as Error).message)).not.toContain("SECRETVAL");
+    }
+  });
+  it("keeps the traefik message byte-identical", () => {
+    bad("--label traefik.enable=true", /--label in the traefik\.\* namespace \(would hijack shared ingress routing\)/);
+  });
+  it("still allows near-miss and unrelated labels", () => {
+    ok("--label traefikish=notreally");
+    ok("-lcom.example.k=v");
+    ok("--label com.docker.extension.x=1");
+    ok("--label org.opencontainers.image.title=x");
+  });
+  it("the refactored walker still fails closed on an unknown short flag", () => {
+    bad("-z foo", /unrecognized short flag/);
+    expect(() => dockerOptionLabels("-z foo")).toThrow(/unrecognized short flag/);
+  });
+});
+
+describe("dockerOptionLabels", () => {
+  it("collects every label flag form", () => {
+    expect(dockerOptionLabels("--label a=1 --label=b=2 -l c=3 -ld=4 -l=e=5 --memory=256m")).toEqual([
+      { key: "a", value: "1" },
+      { key: "b", value: "2" },
+      { key: "c", value: "3" },
+      { key: "d", value: "4" },
+      { key: "e", value: "5" },
+    ]);
+  });
+  it("splits at the first = and handles quotes and a missing =", () => {
+    expect(dockerOptionLabels('--label "x=a b=c" --label flag')).toEqual([
+      { key: "x", value: "a b=c" },
+      { key: "flag", value: "" },
+    ]);
+  });
+  it("returns [] for empty and throws on an unterminated quote", () => {
+    expect(dockerOptionLabels(null)).toEqual([]);
+    expect(dockerOptionLabels("  ")).toEqual([]);
+    expect(() => dockerOptionLabels('--label "x=')).toThrow(/unterminated/);
+  });
 });

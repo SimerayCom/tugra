@@ -12,6 +12,7 @@ import { trimDnsCreds } from "../common/dns-creds";
 import { BUILD_KEY_RE } from "../common/env-key";
 import { assertScriptFits, mlEnvFlags, mlPrefix, mlPrelude, planEnv } from "./env-render";
 import { APPS_NETWORK, isUserNetworkNameAllowed } from "./network-names";
+import { customLabelArgs } from "./custom-labels";
 import {
   buildPanelRouterYaml,
   validateAcmeEmail,
@@ -159,6 +160,12 @@ export interface AppSpec {
   buildSecrets?: Record<string, string>;
   /** Raw extra flags appended to `docker run` (advanced; passed through verbatim). */
   dockerOptions?: string | null;
+  /** Operator custom container labels {key: value} (classic docker-run + swarm). Never holds a reserved-namespace
+   *  key (re-validated by customLabelArgs). null/{} → nothing emitted → byte-identical scripts. */
+  customLabels?: Record<string, string> | null;
+  /** Swarm only: the previous deploy carried custom labels, so the update strips container labels that are no
+   *  longer wanted (stateless runtime scrub). Set by the hub, never by the user. */
+  customLabelsScrub?: boolean;
   /** Exec-form argv overriding the image ENTRYPOINT (IMAGE/GIT classic). `[]` clears the image entrypoint
    *  (`--entrypoint=''`); null/undefined keeps the image default. docker's `--entrypoint` takes a single
    *  executable, so argv[1..] is prepended to the command args. */
@@ -322,6 +329,18 @@ export interface AppConfigMount {
   mode?: string; // octal file mode, default 0644
 }
 
+/** The ONLY AppSpec fields the Tugra label builders (traefikLabels, classicTugraLabelLines, appNetworkPlan) read.
+ *  The applied-labels view is built from this narrow type so the compiler proves it can never touch a
+ *  secret-bearing field (env, git/registry credentials, build secrets). certPem/certKey are only tested for
+ *  presence; the view passes placeholders. */
+export type TraefikLabelInput = Pick<
+  AppSpec,
+  | "id" | "source" | "domain" | "domainRedirect" | "pathPrefix" | "stripPrefix" | "certType" | "wildcardDomain"
+  | "customCertResolver" | "certPem" | "certKey" | "containerPort" | "securityHeaders" | "gzip" | "forwardAuth"
+  | "ipAllowlist" | "basicAuthUsers" | "rateLimit" | "redirects" | "extraDomains" | "rollingHealthPath"
+  | "dbNetwork" | "networks" | "containerAlias" | "dockerOptions"
+>;
+
 export function containerName(app: { id: string }): string {
   return `tugra_${app.id}`;
 }
@@ -335,7 +354,7 @@ const boundedInt = (v: number | null | undefined, lo: number, hi: number): numbe
 
 /** The single predicate for "this app lands on the shared per-server bridge (tugra-apps)": a classic app with
  *  no domain (tugra-proxy), no db link (tugra-net) and no operator-owned raw `--network`. */
-function usesAppsNetwork(app: AppSpec): boolean {
+function usesAppsNetwork(app: TraefikLabelInput): boolean {
   return !app.domain && !app.dbNetwork && !hasNetworkOpt(app.dockerOptions) && app.source !== "COMPOSE";
 }
 
@@ -346,7 +365,7 @@ export interface NetworkPlan {
 }
 /** Which network the container is created on and which are attached after create. Single source of truth for
  *  the run line, the network prelude, the pre-deploy hook and AppView.internalHost. */
-export function appNetworkPlan(app: AppSpec): NetworkPlan {
+export function appNetworkPlan(app: TraefikLabelInput): NetworkPlan {
   const primary = app.domain ? PROXY_NETWORK : app.dbNetwork ? DB_NET : usesAppsNetwork(app) ? APPS_NETWORK : null;
   const connect = [
     ...(app.domain && app.dbNetwork ? [DB_NET] : []),
@@ -360,7 +379,7 @@ export function appNetworkPlan(app: AppSpec): NetworkPlan {
 export function internalHostFor(
   a: Pick<AppSpec, "id" | "domain" | "dbNetwork" | "dockerOptions" | "source" | "networks" | "networkAliases" | "containerAlias" | "containerPort">,
 ): { host: string; port: number; networks: string[]; aliases: string[] } | null {
-  const plan = appNetworkPlan(a as AppSpec);
+  const plan = appNetworkPlan(a as TraefikLabelInput);
   if (a.source === "COMPOSE" || plan.primary === null) return null;
   return {
     host: containerName(a),
@@ -605,7 +624,7 @@ function secretsDirPrelude(): string[] {
   ];
 }
 
-export function traefikLabels(app: AppSpec, opts: { router?: string; explicitService?: boolean; composeDollarEscape?: boolean } = {}): string[] {
+export function traefikLabels(app: TraefikLabelInput, opts: { router?: string; explicitService?: boolean; composeDollarEscape?: boolean } = {}): string[] {
   if (!app.domain) return [];
   // `router` overrides the router/service/middleware name prefix (per-service compose domains pass a hashed
   // one); `explicitService` emits `routers.*.service=` so routing stays unambiguous once a container carries
@@ -822,9 +841,13 @@ export function serviceRouterName(r: string, service: string, host: string): str
 /** Traefik labels for ONE per-service compose domain row — its own HTTPS router (HTTP-01, or the app's
  *  uploaded cert), on the row's port, reusing the app's forward-auth/security-headers chain but never the
  *  le-dns wildcard or the www/bare canonical redirect. Built via traefikLabels on a derived spec. */
-export function serviceDomainLabels(app: AppSpec, row: { service: string; hostname: string; port: number }): string[] {
+export function serviceDomainLabels(
+  app: TraefikLabelInput & Pick<AppSpec, "dbNetwork">,
+  row: { service: string; hostname: string; port: number },
+  opts: { composeDollarEscape?: boolean } = {},
+): string[] {
   const r = serviceRouterName(containerName(app), row.service, row.hostname);
-  const derived: AppSpec = {
+  const derived: TraefikLabelInput = {
     ...app,
     domain: row.hostname,
     containerPort: row.port,
@@ -837,7 +860,7 @@ export function serviceDomainLabels(app: AppSpec, row: { service: string; hostna
   };
   // serviceDomainLabels is only ever used in the COMPOSE override (compose interpolates the file), so a
   // basic-auth hash's `$` must be escaped to `$$`.
-  return traefikLabels(derived, { router: r, explicitService: true, composeDollarEscape: true });
+  return traefikLabels(derived, { router: r, explicitService: true, composeDollarEscape: opts.composeDollarEscape ?? true });
 }
 
 /** Generated Dockerfile for a STATIC site: optional node build stage, then nginx. */
@@ -1425,6 +1448,25 @@ function sourceCommitRunToken(app: AppSpec): string {
   return "${TUGRA_C:+-e SOURCE_COMMIT=$TUGRA_C}";
 }
 
+/** The Tugra-owned label lines a classic `docker run` carries for ingress: the Traefik set (domain apps only)
+ *  plus the proxy-network pin. A dbNetwork app is on BOTH tugra-proxy and tugra-net; pin Traefik to the proxy
+ *  network or it may pick the (proxy-unreachable) tugra-net IP and 502. Only added when the app opts in, so
+ *  default apps keep byte-identical labels. Extra user networks put the app on >1 network too → same pin.
+ *  Single source for the deploy script AND the read-only applied-labels view. */
+export function classicTugraLabelLines(app: TraefikLabelInput): string[] {
+  if (!app.domain) return [];
+  const labels = [...traefikLabels(app)];
+  if (app.dbNetwork || appNetworkPlan(app).connect.length > 0) labels.push(`traefik.docker.network=${PROXY_NETWORK}`);
+  return labels;
+}
+
+/** The stable-alias label (`tugra.alias=<alias>`), stamped so the alias is discoverable from `docker inspect`.
+ *  NOT in traefikLabels (swarm/compose share that and it returns nothing without a domain). Null when the app
+ *  has no alias or sits on an operator-owned raw `--network` (aliases are meaningless there). */
+export function classicAliasLabelLine(app: TraefikLabelInput): string | null {
+  return appNetworkPlan(app).primary !== null && app.containerAlias ? `tugra.alias=${app.containerAlias}` : null;
+}
+
 function runContainerArgs(app: AppSpec, version: string, name: string): string {
   const ref = runTag(app, version);
   const { flags: envArg, prefix: envPrefix } = envRunFlags(app);
@@ -1432,12 +1474,7 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
   const plan = appNetworkPlan(app);
   let netExpose: string;
   if (app.domain) {
-    const labels = [...traefikLabels(app)];
-    // A dbNetwork app is on BOTH tugra-proxy and tugra-net; pin Traefik to the proxy network or it may
-    // pick the (proxy-unreachable) tugra-net IP and 502. Only added when the app opts in, so default
-    // apps keep byte-identical labels. Extra user networks put the app on >1 network too → same pin.
-    if (app.dbNetwork || plan.connect.length > 0) labels.push(`traefik.docker.network=${PROXY_NETWORK}`);
-    netExpose = `--network ${PROXY_NETWORK} ` + labels.map((l) => `--label ${shq(l)}`).join(" ");
+    netExpose = `--network ${PROXY_NETWORK} ` + classicTugraLabelLines(app).map((l) => `--label ${shq(l)}`).join(" ");
   } else if (app.dbNetwork) {
     // No ingress → run ON the DB network as the sole network (single --network works on any engine), so the
     // app resolves tugra_db_<id> by name. Keep the optional host-port publish.
@@ -1508,7 +1545,8 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
   const aliasArgs = onUserNetwork ? aliasNames.map((a) => `--network-alias ${shq(a)}`).join(" ") : "";
   // The stable alias is also stamped as a label so it is discoverable from `docker inspect`. NOT in traefikLabels
   // (swarm/compose share that and it returns nothing without a domain).
-  const aliasLabel = onUserNetwork && app.containerAlias ? `--label ${shq(`tugra.alias=${app.containerAlias}`)}` : "";
+  const aliasLabelLine = classicAliasLabelLine(app);
+  const aliasLabel = aliasLabelLine ? `--label ${shq(aliasLabelLine)}` : "";
   // The container is CONNECTED to every extra network after create, so its aliases must be repeated on each
   // connect (`--alias`) or peers on those networks couldn't resolve them.
   const connectAliasArgs = aliasNames.map((a) => `--alias ${shq(a)}`).join(" ");
@@ -1536,6 +1574,10 @@ function runContainerArgs(app: AppSpec, version: string, name: string): string {
     // Operator-supplied raw flags (advanced) — tokenized + shell-quoted per word so they can't inject
     // shell into the `sh -c` deploy command (host-root RCE); see dockerOptionsArgs.
     dockerOptionsArgs(app.dockerOptions),
+    // Operator custom labels. Placed BEFORE Tugra's own `--label`s (netExpose/aliasLabel below): docker is
+    // last-wins on a duplicate key, so Tugra's labels always win a collision, behind the reserved-namespace
+    // check. "" for null/{} → dropped by filter(Boolean) → byte-identical for existing apps.
+    customLabelArgs(app.customLabels),
     envArg,
     sourceCommitRunToken(app),
     netExpose.trim(),

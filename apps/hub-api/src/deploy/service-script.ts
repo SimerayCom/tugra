@@ -14,6 +14,7 @@
  *    — an accepted Docker-Swarm trade-off, same as `--with-registry-auth`.)
  *  - Swarm resolves+pins every task to a digest; we capture it via `service inspect` for byte-exact rollback.
  */
+import { customContainerLabelFlags, assertSafeCustomLabels } from "./custom-labels";
 import { RegistryAuth, containerName, registryLoginPrelude, registryLogoutSteps, envFileB64, envFilePath, ENV_DIR } from "./deploy-script";
 
 /** Single-quote a value for safe shell interpolation. */
@@ -120,6 +121,11 @@ export interface ServiceDeployOpts {
   // previously env-secret-WRAPPED, `docker service update` can't reset its entrypoint — so recreate instead.
   // Only meaningful when envSecret is null; keeps no-env/classic apps' scripts byte-identical to before.
   envFallbackNoShell?: boolean;
+  /** Operator custom labels, applied as CONTAINER labels (`--container-label`), never service labels (those stay
+   *  Tugra/Traefik territory). null/{} → nothing emitted → byte-identical scripts. */
+  customLabels?: Record<string, string> | null;
+  /** The previous deploy carried custom labels: strip container labels that are no longer wanted on update. */
+  scrubContainerLabels?: boolean;
   pollSec: number; // total rollout poll budget (effective timeout, sized by replica count)
 }
 
@@ -241,6 +247,26 @@ function placementUpdateBuild(svc: string, constraints: string[], placementPrefs
   ];
 }
 
+/** Stateless removal of stale custom CONTAINER labels on UPDATE. `docker service update` only adds, so when the
+ *  previous deploy carried custom labels (`scrubContainerLabels`) or this one does, inspect the LIVE service,
+ *  keep exactly the desired keys and `--container-label-rm` every other key that really exists on the spec.
+ *  The whole `ContainerSpec.Labels` set is Tugra-owned (Tugra sets none itself), so this also drops labels added
+ *  out-of-band. Returns [] — emitting nothing — when there are no labels and no scrub, so existing scripts stay
+ *  byte-identical. Appends onto the SAME `$@` the env build started (no bare `set --`); IFS is a literal newline
+ *  so `for` splits the inspect output on lines only, with no subshell (a `| while read` would lose `$@`). */
+function customLabelsUpdateBuild(o: ServiceDeployOpts, q: string): string[] {
+  const keys = Object.keys(assertSafeCustomLabels(o.customLabels)).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  if (keys.length === 0 && !o.scrubContainerLabels) return [];
+  return [
+    `TUGRA_CL_KEEP=${shq(` ${keys.join(" ")} `)}`,
+    `TUGRA_CL_CUR=$(docker service inspect ${q} --format '{{range $k, $v := .Spec.TaskTemplate.ContainerSpec.Labels}}{{$k}}{{"\\n"}}{{end}}' 2>/dev/null || true)`,
+    `TUGRA_CL_OLDIFS=$IFS`,
+    `IFS='\n'`,
+    `for TUGRA_CL_K in $TUGRA_CL_CUR; do case "$TUGRA_CL_KEEP" in *" $TUGRA_CL_K "*) ;; *) [ -n "$TUGRA_CL_K" ] && set -- "$@" --container-label-rm "$TUGRA_CL_K";; esac; done`,
+    `IFS=$TUGRA_CL_OLDIFS`,
+  ];
+}
+
 /**
  * Idempotent, existence-driven create-vs-update — decided by `docker service inspect`, NOT by Tugra's
  * local Deployment history, so a prior failed attempt that left a real service object behind can't wedge
@@ -278,6 +304,7 @@ export function buildServiceDeployScript(o: ServiceDeployOpts): string {
     ...constraints.map((c) => `--constraint ${shq(c)}`),
     ...placementPrefs.map((p) => `--placement-pref ${shq(p)}`),
     ...labels.map((l) => `--label ${shq(l)}`),
+    ...customContainerLabelFlags(o.customLabels, "--container-label"),
     ...publish.map((p) => `--publish ${shq(p)}`),
     ...mounts.map((m) => `--mount ${shq(`type=volume,source=${m.source},destination=${m.target}`)}`),
     ...(es
@@ -301,6 +328,7 @@ export function buildServiceDeployScript(o: ServiceDeployOpts): string {
     `--replicas ${o.replicas}`,
     ...health,
     ...labels.map((l) => `--label-add ${shq(l)}`),
+    ...customContainerLabelFlags(o.customLabels, "--container-label-add"),
     ...publish.map((p) => `--publish-add ${shq(p)}`),
     ...mounts.map((m) => `--mount-add ${shq(`type=volume,source=${m.source},destination=${m.target}`)}`),
     `"$@"`, // accumulated below: plaintext --env-add (classic), OR --env-rm scrub + --secret-* (secret), + placement
@@ -342,6 +370,7 @@ export function buildServiceDeployScript(o: ServiceDeployOpts): string {
     ? [
         `  TUGRA_MODE=update`,
         ...secretUpdateBuild.map((s) => `  ${s}`),
+        ...customLabelsUpdateBuild(o, q).map((s) => `  ${s}`),
         ...placementUpdateBuild(o.serviceName, constraints, placementPrefs).map((s) => `  ${s}`),
         `  docker service update --detach ${updateFlags}`,
         `  TUGRA_RC=$?`,
@@ -360,6 +389,7 @@ export function buildServiceDeployScript(o: ServiceDeployOpts): string {
           `  else`,
           `    TUGRA_MODE=update`,
           ...env!.updateBuild.map((s) => `    ${s}`),
+          ...customLabelsUpdateBuild(o, q).map((s) => `    ${s}`),
           ...placementUpdateBuild(o.serviceName, constraints, placementPrefs).map((s) => `    ${s}`),
           `    docker service update --detach ${updateFlags}`,
           `    TUGRA_RC=$?`,
@@ -368,6 +398,7 @@ export function buildServiceDeployScript(o: ServiceDeployOpts): string {
       : [
           `  TUGRA_MODE=update`,
           ...env!.updateBuild.map((s) => `  ${s}`),
+          ...customLabelsUpdateBuild(o, q).map((s) => `  ${s}`),
           ...placementUpdateBuild(o.serviceName, constraints, placementPrefs).map((s) => `  ${s}`),
           `  docker service update --detach ${updateFlags}`,
           `  TUGRA_RC=$?`,

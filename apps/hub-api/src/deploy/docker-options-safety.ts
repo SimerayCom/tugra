@@ -1,6 +1,7 @@
 import { BadRequestException } from "@nestjs/common";
 import { SAFE_CAPS, isSensitivePath } from "./compose-safety";
 import { tokenizeDockerOptions, type HostMount } from "./deploy-script";
+import { LABEL_NAMESPACE_WHY, reservedLabelNamespace } from "./label-namespaces";
 
 /** Max host bind-mounts per app — a sane cap so one app can't attach an unbounded number of host dirs. */
 export const MAX_HOST_MOUNTS = 20;
@@ -75,21 +76,10 @@ function disallowed(what: string): BadRequestException {
   return new BadRequestException(`dockerOptions contains a disallowed flag: ${what}`);
 }
 
-export function assertSafeDockerOptions(raw: string | null | undefined, opts: { allowPrivileged?: boolean } = {}): void {
-  if (!raw || !raw.trim()) return;
-  // Host-escape / privilege class is RELAXED only when the INSTANCE OWNER opted this app in
-  // (Application.allowPrivilegedDockerOptions). The owner owns the box, so --privileged/--device/--cap-add/
-  // host namespaces/host binds/docker.sock/--security-opt are their call. The Tugra-integrity class below
-  // (traefik.* labels, --label-file, --name, --env-file) stays blocked REGARDLESS — those hijack Tugra's
-  // own routing/naming or read arbitrary host files, not a "my own box" prerogative (separate Dilim-2).
-  const allow = opts.allowPrivileged === true;
-  let tokens: string[];
-  try {
-    tokens = tokenizeDockerOptions(raw);
-  } catch {
-    throw new BadRequestException("dockerOptions has an unterminated quote");
-  }
-
+/** One parsed flag of a docker-run option string: its canonical name (`--label`, `-l`, `-v`, `--privileged`…) and
+ *  its value ("" when absent). Walks the tokens with the exact pflag semantics assertSafeDockerOptions needs
+ *  (short-flag clusters, attached values, `--flag value`), failing closed on an unrecognized short flag. */
+function* walkFlags(tokens: string[]): Generator<{ name: string; val: string }> {
   for (let i = 0; i < tokens.length; i++) {
     const tok = tokens[i];
     if (!tok.startsWith("-")) continue; // a bare value / positional — not a flag we gate
@@ -126,7 +116,43 @@ export function assertSafeDockerOptions(raw: string | null | undefined, opts: { 
     if (value === undefined && VALUE_FLAGS.has(name) && i + 1 < tokens.length && !tokens[i + 1].startsWith("-")) {
       value = tokens[++i];
     }
-    const val = value ?? "";
+    yield { name, val: value ?? "" };
+  }
+}
+
+function tokenizeOrThrow(raw: string): string[] {
+  try {
+    return tokenizeDockerOptions(raw);
+  } catch {
+    throw new BadRequestException("dockerOptions has an unterminated quote");
+  }
+}
+
+/** Every `--label k=v` / `--label=k=v` / `-l k=v` / `-lk=v` an operator put in raw dockerOptions (split at the
+ *  first `=`; a key with no `=` has an empty value). Throws like the safety gate on an unterminated quote or an
+ *  unrecognized short flag. Used for the read-only "from Docker options" view and the label collision checks. */
+export function dockerOptionLabels(raw: string | null | undefined): { key: string; value: string }[] {
+  if (!raw || !raw.trim()) return [];
+  const out: { key: string; value: string }[] = [];
+  for (const { name, val } of walkFlags(tokenizeOrThrow(raw))) {
+    if (name !== "--label" && name !== "-l") continue;
+    const eq = val.indexOf("=");
+    out.push(eq === -1 ? { key: val.trim(), value: "" } : { key: val.slice(0, eq).trim(), value: val.slice(eq + 1) });
+  }
+  return out;
+}
+
+export function assertSafeDockerOptions(raw: string | null | undefined, opts: { allowPrivileged?: boolean } = {}): void {
+  if (!raw || !raw.trim()) return;
+  // Host-escape / privilege class is RELAXED only when the INSTANCE OWNER opted this app in
+  // (Application.allowPrivilegedDockerOptions). The owner owns the box, so --privileged/--device/--cap-add/
+  // host namespaces/host binds/docker.sock/--security-opt are their call. The Tugra-integrity class below
+  // (traefik.* labels, --label-file, --name, --env-file) stays blocked REGARDLESS — those hijack Tugra's
+  // own routing/naming or read arbitrary host files, not a "my own box" prerogative (separate Dilim-2).
+  const allow = opts.allowPrivileged === true;
+  const tokens = tokenizeOrThrow(raw);
+
+  for (const { name, val } of walkFlags(tokens)) {
 
     switch (name) {
       // ---- host-escape / privilege class: relaxed when `allow` (owner opted in) ----
@@ -204,6 +230,15 @@ export function assertSafeDockerOptions(raw: string | null | undefined, opts: { 
         // the namespace; non-traefik labels (monitoring, metadata) stay allowed.
         if (val.split("=")[0].trim().toLowerCase().startsWith("traefik.")) {
           throw disallowed("--label in the traefik.* namespace (would hijack shared ingress routing)");
+        }
+        {
+          const key = val.split("=")[0].trim();
+          const ns = reservedLabelNamespace(key);
+          if (ns) {
+            throw disallowed(
+              `--label "${key}" is in the reserved ${ns}* namespace (${LABEL_NAMESPACE_WHY[ns]}); remove it from Custom Docker options`,
+            );
+          }
         }
         break;
       case "--label-file":

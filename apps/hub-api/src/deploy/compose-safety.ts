@@ -1,6 +1,7 @@
 import { posix } from "node:path";
 import { BadRequestException } from "@nestjs/common";
 import { parse } from "yaml";
+import { reservedLabelNamespace } from "./label-namespaces";
 
 // A fork-free compose OVERRIDE is user-authored, written verbatim to the host, and run by the agent
 // (`docker compose up`) with the host docker socket — so `privileged`, a docker.sock bind, host
@@ -152,8 +153,29 @@ function checkBuild(build: unknown, gitCloneRoot: string): void {
   if (isDangerousNamespace(b.network)) throw disallowed("build.network host");
 }
 
+/** The label KEYS a compose `labels:` value declares. A map gives its keys; a list gives the part of each
+ *  `"k=v"` entry before the first `=` (an entry without `=` is itself a key). */
+function composeLabelKeys(labels: unknown): string[] {
+  if (Array.isArray(labels)) return labels.map((e) => String(e).split("=")[0]);
+  if (labels && typeof labels === "object") return Object.keys(labels as Record<string, unknown>);
+  return [];
+}
+
+/** Compose files may not set labels in a reserved namespace (traefik.* / tugra.* / com.docker.compose|swarm|stack.*):
+ *  a `traefik.*` label declares a router on the shared proxy that can hijack another team's hostname, and a
+ *  `tugra.*` / `com.docker.compose.*` label spoofs Tugra's own lookups. Checked on service labels and on
+ *  `deploy.labels` (swarm-style service labels), over the YAML-merged structure. */
+function checkServiceLabels(svc: Record<string, unknown>): void {
+  const deploy = svc.deploy && typeof svc.deploy === "object" && !Array.isArray(svc.deploy) ? (svc.deploy as Record<string, unknown>) : {};
+  for (const key of [...composeLabelKeys(svc.labels), ...composeLabelKeys(deploy.labels)]) {
+    const ns = reservedLabelNamespace(key);
+    if (ns) throw disallowed(`service label "${key.trim()}" is in the reserved ${ns}* namespace`);
+  }
+}
+
 function checkService(svc: Record<string, unknown>, gitCloneRoot: string | null): void {
   if (isTrue(svc.privileged)) throw disallowed("privileged: true");
+  checkServiceLabels(svc);
   if (typeof svc.container_name === "string" && RESERVED_CONTAINER_NAME.test(svc.container_name)) {
     throw disallowed(`container_name "${svc.container_name}" (the tugra-/tugra_ prefix is reserved for Tugra-managed containers)`);
   }
@@ -218,6 +240,24 @@ export function assertSafeCompose(compose: string, opts: SafeComposeOpts = {}): 
   if (services && typeof services === "object" && !Array.isArray(services)) {
     for (const svc of Object.values(services)) {
       if (svc && typeof svc === "object" && !Array.isArray(svc)) checkService(svc as Record<string, unknown>, gitCloneRoot);
+    }
+  }
+  // Top-level networks: attaching to a Tugra-managed network (`tugra-proxy`, `tugra-net`, `tugra-apps`, the
+  // panel network…) completes the router-hijack the label rule closes (a service on the shared proxy network
+  // is reachable by, and can answer for, every tenant's routes). The effective name is `name ?? key`. External
+  // networks are always checked; a non-external one only when it pins an explicit `name` (a rendered git stack
+  // gives every network its own project-prefixed `name`, which is never a reach into a Tugra network).
+  const topNetworks = (doc as { networks?: unknown }).networks;
+  if (topNetworks && typeof topNetworks === "object" && !Array.isArray(topNetworks)) {
+    for (const [key, raw] of Object.entries(topNetworks as Record<string, unknown>)) {
+      const entry = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+      const ext = entry.external;
+      const extObj = ext && typeof ext === "object" && !Array.isArray(ext) ? (ext as Record<string, unknown>) : null;
+      const external = extObj !== null || (ext != null && isTrue(ext));
+      const explicitName = typeof entry.name === "string" ? entry.name : typeof extObj?.name === "string" ? (extObj.name as string) : null;
+      if (!external && (explicitName === null || gitCloneRoot)) continue;
+      const effective = (explicitName ?? key).trim();
+      if (RESERVED_CONTAINER_NAME.test(effective)) throw disallowed(`attaching to a Tugra-managed network (${effective})`);
     }
   }
   // Top-level secrets/configs with `file:` bind a host file into the container (compose-go implements
