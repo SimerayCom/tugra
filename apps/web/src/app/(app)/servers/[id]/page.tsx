@@ -195,7 +195,7 @@ export default function ServerDetailPage() {
               <Info label={t("servers.uptime")} value={formatUptime(server.uptimeSeconds)} />
             </Card>
           )}
-          <GpuCard serverId={id} canWrite={server.canWrite} online={server.status === "ONLINE"} />
+          <GpuCard serverId={id} canOps={server.canOps} online={server.status === "ONLINE"} />
         </>
       )}
 

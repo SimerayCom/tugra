@@ -46,6 +46,7 @@ const s = (id: string, canWrite: boolean): ServerView => ({
   provider: null,
   providerServerId: null,
   canWrite,
+  canOps: canWrite,
 });
 
 describe("bulkSummary", () => {

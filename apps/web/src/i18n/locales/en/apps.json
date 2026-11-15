@@ -890,7 +890,7 @@
   "gpusAdvice_nonNvidia": "This server only has non-NVIDIA GPUs, and Docker's --gpus flag is NVIDIA-only.",
   "gpusAdvice_noDriver": "An NVIDIA GPU was found but its driver isn't loaded, so GPU containers can't use it yet.",
   "gpusAdvice_runtimeUnconfirmed": "The NVIDIA runtime isn't confirmed on this server. GPU containers may still work if the NVIDIA Container Toolkit is installed.",
-  "gpusAdvice_countExceeds": "This server has {n} GPU(s)",
+  "gpusAdvice_countExceeds": "You asked for more GPUs than this server has ({n} detected).",
   "gpusAdvice_indexOutOfRange": "A device index here isn't among this server's {n} detected GPU(s).",
   "gpusAdvice_deviceUnknown": "That GPU UUID isn't among this server's detected GPUs.",
   "cloneWarn_gpus_unavailable_on_target": "This app requests GPUs but the target server has no detected NVIDIA GPU. The setting was kept; check it before deploying.",

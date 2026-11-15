@@ -51,6 +51,7 @@ const s = (
   provider: null,
   providerServerId: null,
   canWrite,
+  canOps: canWrite,
 });
 
 describe("fleet helpers", () => {

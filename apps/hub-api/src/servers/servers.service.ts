@@ -97,6 +97,7 @@ export const ServerViewSchema = z.object({
   provider: z.string().nullable(), // cloud provider that created this VM (null = manually enrolled)
   providerServerId: z.string().nullable(), // provider-side id (present once created; enables destroy-VM)
   canWrite: z.boolean(),
+  canOps: z.boolean(), // servers:ops — may run host operations (e.g. re-run GPU detection); gates those UI actions
 });
 export type ServerView = z.infer<typeof ServerViewSchema>;
 
@@ -179,7 +180,7 @@ export class ServersService {
       .catch(() => undefined);
 
     return {
-      server: this.toView(created, true),
+      server: this.toView(created, true, true),
       enrollToken,
       installCommand: this.buildInstallCommand(enrollToken, publicUrl),
     };
@@ -307,7 +308,7 @@ export class ServersService {
 
     const views = servers
       .filter((s) => permsByTeam.has(s.teamId))
-      .map((s) => this.toView(s, permsByTeam.get(s.teamId)?.has("servers:manage") ?? false));
+      .map((s) => this.toView(s, permsByTeam.get(s.teamId)?.has("servers:manage") ?? false, permsByTeam.get(s.teamId)?.has("servers:ops") ?? false));
     // `?q`: in-memory substring filter over non-secret fields of the already-authorized views.
     return filterByQuery(views, filter?.q, (s) => [s.name, s.hostname, s.publicIp, s.wildcardDomain]);
   }
@@ -320,7 +321,7 @@ export class ServersService {
     if (!server) throw new NotFoundException("server not found");
     const perms = await this.access.membershipPermissions(userId, server.teamId);
     if (!perms) throw new ForbiddenException("not a member of this team");
-    return this.toView(server, perms.has("servers:manage"));
+    return this.toView(server, perms.has("servers:manage"), perms.has("servers:ops"));
   }
 
   /** This server's audit history (every actor). Reuses getForUser's membership check as the view gate. */
@@ -719,6 +720,7 @@ export class ServersService {
       providerServerId?: string | null;
     },
     canWrite: boolean,
+    canOps: boolean,
   ): ServerView {
     return {
       id: s.id,
@@ -766,6 +768,7 @@ export class ServersService {
       provider: s.provider ?? null,
       providerServerId: s.providerServerId ?? null,
       canWrite,
+      canOps,
     };
   }
 }

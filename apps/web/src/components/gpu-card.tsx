@@ -51,11 +51,16 @@ function GpuRow({ g, moduleVersion }: { g: GpuDevice; moduleVersion: string | nu
   );
 }
 
+/** Servers whose automatic refresh was refused with a 403 (a revoked capability grant the hub-sent `canOps` cannot see):
+ *  later visits skip the automatic attempt instead of re-failing on every page load. Explicit clicks always go through. */
+const autoForbidden = new Set<string>();
+
 /**
- * "Detected GPUs" — the persisted GPU/Docker-runtime snapshot of one server. A writer's visit refreshes an unknown or
- * stale snapshot once; read-only members only ever see the last result. Unknown is "not checked", never "no GPU".
+ * "Detected GPUs" — the persisted GPU/Docker-runtime snapshot of one server. A viewer holding the permission the
+ * refresh endpoint requires (`canOps` = servers:ops) refreshes an unknown or stale snapshot once; everyone else only
+ * ever sees the last result. Unknown is "not checked", never "no GPU".
  */
-export function GpuCard({ serverId, canWrite, online }: { serverId: string; canWrite: boolean; online: boolean }) {
+export function GpuCard({ serverId, canOps, online }: { serverId: string; canOps: boolean; online: boolean }) {
   const t = useT();
   const qc = useQueryClient();
   const q = useQuery({ queryKey: gpusQueryKey(serverId), queryFn: () => api.getServerGpus(serverId), staleTime: 30_000, retry: false });
@@ -63,14 +68,21 @@ export function GpuCard({ serverId, canWrite, online }: { serverId: string; canW
   const [busy, setBusy] = useState(false);
   const [, setTick] = useState(0);
 
+  // `auto` = the visit-triggered refresh: a 403 there is silent (and stops further automatic attempts); a click always reports.
   const refresh = useMutation({
-    mutationFn: () => api.refreshServerGpus(serverId),
+    mutationFn: (_auto: boolean) => api.refreshServerGpus(serverId),
     onSuccess: (r: GpuReport) => {
       setError(null);
       setBusy(!!r.busy);
       qc.setQueryData(gpusQueryKey(serverId), r);
     },
-    onError: (e: unknown) => setError(t(`servers.gpus.${gpuErrorKey(e)}`)),
+    onError: (e: unknown, auto: boolean) => {
+      if (auto && gpuErrorKey(e) === "errForbidden") {
+        autoForbidden.add(serverId);
+        return;
+      }
+      setError(t(`servers.gpus.${gpuErrorKey(e)}`));
+    },
   });
 
   // Re-render every 15 s so "checked N ago" keeps moving.
@@ -82,15 +94,15 @@ export function GpuCard({ serverId, canWrite, online }: { serverId: string; canW
   const report = q.data;
   const auto = useRef(false);
   useEffect(() => {
-    if (auto.current || !report || !canWrite || !online) return;
+    if (auto.current || !report || !canOps || !online || autoForbidden.has(serverId)) return;
     if (report.readiness === "unknown" || report.stale) {
       auto.current = true;
-      refresh.mutate();
+      refresh.mutate(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [report, canWrite, online]);
+  }, [report, canOps, online]);
 
-  const disabledReason = !canWrite ? t("servers.gpus.refreshNeedsWrite") : !online ? t("servers.gpus.refreshOffline") : undefined;
+  const disabledReason = !canOps ? t("servers.gpus.refreshNeedsWrite") : !online ? t("servers.gpus.refreshOffline") : undefined;
   const inv = report?.inventory ?? null;
   const real = (inv?.gpus ?? []).filter((g) => g.kind === "gpu");
   const virtual = (inv?.gpus ?? []).filter((g) => g.kind === "virtual");
@@ -100,7 +112,7 @@ export function GpuCard({ serverId, canWrite, online }: { serverId: string; canW
     <span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
       {report?.checkedAt && <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("servers.gpus.checkedAgo", { ago: relativeTime(report.checkedAt) })}</span>}
       {report?.stale && <Badge tone="warn">{t("servers.gpus.stale")}</Badge>}
-      <Btn variant="ghost" disabled={!canWrite || !online || refresh.isPending} title={disabledReason} onClick={() => refresh.mutate()}>
+      <Btn variant="ghost" disabled={!canOps || !online || refresh.isPending} title={disabledReason} onClick={() => refresh.mutate(false)}>
         {refresh.isPending ? t("servers.gpus.refreshing") : t("servers.gpus.refresh")}
       </Btn>
     </span>

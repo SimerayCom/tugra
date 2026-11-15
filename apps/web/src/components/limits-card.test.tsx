@@ -185,7 +185,7 @@ describe("LimitsCard — detected GPU hints (advisory)", () => {
   it("warns when the count exceeds the detected GPUs", async () => {
     vi.spyOn(api, "getServerGpus").mockResolvedValue(ready2);
     wrap(<LimitsCard {...base} gpus="4" serverId="s1" />);
-    expect((await screen.findByRole("note")).textContent).toBe("This server has 2 GPU(s)");
+    expect((await screen.findByRole("note")).textContent).toBe("You asked for more GPUs than this server has (2 detected).");
   });
 
   it("Re-detect runs the refresh mutation and updates the hints; 403 shows the capability message", async () => {

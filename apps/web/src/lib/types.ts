@@ -410,6 +410,7 @@ export interface ServerView {
   provider: string | null; // cloud provider that created this VM (null = manually enrolled)
   providerServerId: string | null; // provider-side id (present once created; enables destroy-VM)
   canWrite: boolean;
+  canOps: boolean; // servers:ops — gates host operations such as GPU re-detection
 }
 
 // A team's cloud-provider API credential. The token itself is never returned.

@@ -3539,6 +3539,9 @@
                       },
                       "canWrite": {
                         "type": "boolean"
+                      },
+                      "canOps": {
+                        "type": "boolean"
                       }
                     },
                     "required": [
@@ -3584,7 +3587,8 @@
                       "trafficAnalytics",
                       "provider",
                       "providerServerId",
-                      "canWrite"
+                      "canWrite",
+                      "canOps"
                     ],
                     "additionalProperties": false
                   }
@@ -3925,6 +3929,9 @@
                     },
                     "canWrite": {
                       "type": "boolean"
+                    },
+                    "canOps": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
@@ -3970,7 +3977,8 @@
                     "trafficAnalytics",
                     "provider",
                     "providerServerId",
-                    "canWrite"
+                    "canWrite",
+                    "canOps"
                   ],
                   "additionalProperties": false
                 }

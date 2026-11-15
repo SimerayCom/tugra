@@ -7798,6 +7798,7 @@ export interface operations {
                         provider: string | null;
                         providerServerId: string | null;
                         canWrite: boolean;
+                        canOps: boolean;
                     }[];
                 };
             };
@@ -7972,6 +7973,7 @@ export interface operations {
                         provider: string | null;
                         providerServerId: string | null;
                         canWrite: boolean;
+                        canOps: boolean;
                     };
                 };
             };

@@ -41,12 +41,12 @@ beforeEach(() => {
   vi.mocked(copyText).mockResolvedValue(true);
 });
 
-const show = (props: { canWrite?: boolean; online?: boolean } = {}) =>
+const show = (props: { canOps?: boolean; online?: boolean; serverId?: string } = {}) =>
   render(
     <QueryClientProvider client={qc}>
       <I18nProvider>
         <ToastProvider>
-          <GpuCard serverId="s1" canWrite={props.canWrite ?? true} online={props.online ?? true} />
+          <GpuCard serverId={props.serverId ?? "s1"} canOps={props.canOps ?? true} online={props.online ?? true} />
         </ToastProvider>
       </I18nProvider>
     </QueryClientProvider>,
@@ -77,7 +77,7 @@ describe("GpuCard", () => {
       cleanup();
       qc.clear();
       vi.spyOn(api, "getServerGpus").mockResolvedValue(rep(r, gpus, {}, r === "probe_failed" ? { error: "docker: boom" } : {}));
-      show({ canWrite: false });
+      show({ canOps: false });
       expect(await screen.findByText(text)).toBeTruthy();
       if (r === "probe_failed") expect(screen.getByText(/docker: boom/)).toBeTruthy();
     }
@@ -85,17 +85,17 @@ describe("GpuCard", () => {
 
   it("unknown reads 'Not checked yet' (online) / 'Server is offline'", async () => {
     vi.spyOn(api, "getServerGpus").mockResolvedValue(rep("unknown"));
-    show({ canWrite: false });
+    show({ canOps: false });
     expect(await screen.findByText("Not checked yet")).toBeTruthy();
     cleanup();
-    show({ canWrite: false, online: false });
+    show({ canOps: false, online: false });
     expect(await screen.findByText("Server is offline")).toBeTruthy();
   });
 
   it("the age text keeps moving", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
     vi.spyOn(api, "getServerGpus").mockResolvedValue(rep("ready", [smi], { checkedAt: new Date(Date.now() - 30_000).toISOString() }));
-    show({ canWrite: false });
+    show({ canOps: false });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     await waitFor(() => expect(screen.getByText(/checked 30s ago/)).toBeTruthy());
     await act(async () => { vi.advanceTimersByTime(30_000); });
@@ -125,6 +125,31 @@ describe("GpuCard", () => {
     expect(await screen.findByText("Couldn't reach the server agent")).toBeTruthy();
   });
 
+  it("an automatic refresh that is refused (403) stays silent and is not retried on the next visit; a click still reports", async () => {
+    vi.spyOn(api, "getServerGpus").mockResolvedValue(rep("unknown"));
+    const refresh = vi.spyOn(api, "refreshServerGpus").mockRejectedValue(new ApiError(403, "forbidden"));
+    show({ serverId: "s-forbidden" });
+    await screen.findByText("Not checked yet");
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("alert")).toBeNull();
+    cleanup();
+    qc.clear();
+    show({ serverId: "s-forbidden" });
+    await screen.findByText("Not checked yet");
+    expect(refresh).toHaveBeenCalledTimes(1); // no second automatic attempt
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(await screen.findByText(/needs the 'bulk' capability and server-ops permission/)).toBeTruthy();
+    expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("never auto-refreshes without the servers:ops permission", async () => {
+    vi.spyOn(api, "getServerGpus").mockResolvedValue(rep("unknown"));
+    const refresh = vi.spyOn(api, "refreshServerGpus").mockResolvedValue(rep("ready", [smi]));
+    show({ canOps: false, serverId: "s-noops" });
+    await screen.findByText("Not checked yet");
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
   it("auto-refreshes exactly once for a writer when unknown or stale", async () => {
     vi.spyOn(api, "getServerGpus").mockResolvedValue(rep("unknown"));
     const refresh = vi.spyOn(api, "refreshServerGpus").mockResolvedValue(rep("ready", [smi]));
@@ -141,14 +166,14 @@ describe("GpuCard", () => {
 
   it("shows a Stale badge on an old snapshot", async () => {
     vi.spyOn(api, "getServerGpus").mockResolvedValue(rep("none", [], { stale: true }));
-    show({ canWrite: false });
+    show({ canOps: false });
     expect(await screen.findByText("Stale")).toBeTruthy();
   });
 
   it("never auto-refreshes for a read-only member or an offline server, and Refresh is disabled", async () => {
     const get = vi.spyOn(api, "getServerGpus").mockResolvedValue(rep("none", [], { stale: true }));
     const refresh = vi.spyOn(api, "refreshServerGpus").mockResolvedValue(rep("ready", [smi]));
-    show({ canWrite: false });
+    show({ canOps: false });
     await screen.findByText("No GPU detected");
     expect(screen.getByRole("button", { name: "Refresh" })).toHaveProperty("disabled", true);
     cleanup();
@@ -163,7 +188,7 @@ describe("GpuCard", () => {
   it("renders a hostile name as text, never as markup", async () => {
     const evil = "<img src=x onerror=alert(1)><script>alert(2)</script>";
     vi.spyOn(api, "getServerGpus").mockResolvedValue(rep("ready", [{ ...smi, name: evil }]));
-    const { container } = show({ canWrite: false });
+    const { container } = show({ canOps: false });
     expect(await screen.findByText(evil)).toBeTruthy();
     expect(container.querySelector("img")).toBeNull();
     expect(container.querySelector("script")).toBeNull();
@@ -171,7 +196,7 @@ describe("GpuCard", () => {
 
   it("collapses virtual displays under a disclosure", async () => {
     vi.spyOn(api, "getServerGpus").mockResolvedValue(rep("none", [pci({ vendor: "other", kind: "virtual", name: "Virtual display [1a03:2000]" })]));
-    const { container } = show({ canWrite: false });
+    const { container } = show({ canOps: false });
     expect(await screen.findByText("Virtual displays (1)")).toBeTruthy();
     const details = container.querySelector("details")!;
     expect(details.open).toBe(false);
@@ -180,7 +205,7 @@ describe("GpuCard", () => {
 
   it("copies device=<uuid>", async () => {
     vi.spyOn(api, "getServerGpus").mockResolvedValue(rep("ready", [smi]));
-    show({ canWrite: false });
+    show({ canOps: false });
     fireEvent.click(await screen.findByRole("button", { name: "Copy device flag" }));
     await waitFor(() => expect(copyText).toHaveBeenCalledWith(`device=${UUID}`));
   });
