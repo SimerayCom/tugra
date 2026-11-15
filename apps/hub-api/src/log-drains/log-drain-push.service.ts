@@ -124,8 +124,38 @@ export class LogDrainPushService {
     }
   }
 
-  /** Push the server's full effective drain set (server-wide + app drains targeting it) to its agent. */
-  async pushToAgent(serverId: string): Promise<void> {
+  /** Per-server push serialization: while a push runs, further requests only mark it dirty and join it. */
+  private readonly pushing = new Map<string, { running: Promise<void>; dirty: boolean }>();
+
+  /**
+   * Push the server's full effective drain set (server-wide + app drains targeting it) to its agent. Pushes for one
+   * server never overlap: a request that arrives mid-push coalesces into ONE follow-up push that re-reads the rows,
+   * so the rows are always read after the mutation that asked for them and the rev (taken at send time, after the
+   * reads) grows in read order. Without this an older snapshot could be signed last, take the higher rev and win
+   * over the newer one, which the agent would reject as stale.
+   */
+  pushToAgent(serverId: string): Promise<void> {
+    const cur = this.pushing.get(serverId);
+    if (cur) {
+      cur.dirty = true;
+      return cur.running;
+    }
+    const entry = { running: Promise.resolve(), dirty: false };
+    entry.running = (async () => {
+      try {
+        do {
+          entry.dirty = false;
+          await this.doPush(serverId);
+        } while (entry.dirty);
+      } finally {
+        this.pushing.delete(serverId);
+      }
+    })();
+    this.pushing.set(serverId, entry);
+    return entry.running;
+  }
+
+  private async doPush(serverId: string): Promise<void> {
     const server = await this.prisma.server.findUnique({ where: { id: serverId }, select: { name: true, clusterId: true } });
     if (!server) return;
     const where: Prisma.LogDrainWhereInput = {

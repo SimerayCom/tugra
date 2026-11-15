@@ -345,3 +345,37 @@ describe("LogDrainPushService: drain_status (S5, in-memory)", () => {
     expect(svc.deliveryFor({ id: "d1", enabled: true }, [])).toMatchObject({ delivery: "offline" });
   });
 });
+
+describe("LogDrainPushService: per-server push serialization", () => {
+  it("overlapping pushes never interleave: the newer snapshot is read after the mutation and is signed with the higher rev", async () => {
+    const { svc, findMany, sendToAgent, agentWs } = make([], { v2: true });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    // push 1 reads the OLD set, then stalls on the capability check; the mutation lands; push 2 is requested.
+    (agentWs.isCapabilityGranted as jest.Mock).mockImplementationOnce(async () => {
+      await gate;
+      return true;
+    });
+    findMany.mockResolvedValueOnce([row({ id: "old" })]).mockResolvedValue([row({ id: "new" })]);
+    const p1 = svc.pushToAgent("s1");
+    await new Promise((r) => setImmediate(r));
+    const p2 = svc.pushToAgent("s1");
+    const p3 = svc.pushToAgent("s1"); // coalesces with p2
+    release();
+    await Promise.all([p1, p2, p3]);
+    const frames = sendToAgent.mock.calls.map((c) => c[1] as { rev: number; drainsJson: string });
+    expect(frames).toHaveLength(2);
+    expect(frames[1].rev).toBeGreaterThan(frames[0].rev);
+    expect(JSON.parse(frames[0].drainsJson)[0].id).toBe("old");
+    expect(JSON.parse(frames[1].drainsJson)[0].id).toBe("new");
+    expect(findMany).toHaveBeenCalledTimes(2); // p2 + p3 became ONE follow-up read
+  });
+
+  it("different servers push independently, and a failed push does not wedge the server", async () => {
+    const { svc, findMany, sendToAgent } = make([row()], { v2: true });
+    findMany.mockRejectedValueOnce(new Error("db down"));
+    await expect(svc.pushToAgent("s1")).rejects.toThrow("db down");
+    await Promise.all([svc.pushToAgent("s1"), svc.pushToAgent("s2")]);
+    expect(sendToAgent).toHaveBeenCalledTimes(2);
+  });
+});
