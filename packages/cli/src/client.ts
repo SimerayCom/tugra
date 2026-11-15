@@ -10,6 +10,16 @@ export interface HubVersion {
   edition: string;
 }
 
+/** The subset of GET /apps/:id/labels the CLI reads (the full object flows through `--json`). */
+export interface AppLabelsView {
+  engine: string;
+  editable: boolean;
+  tugra: { scope: string; key: string; value: string | null; masked: boolean; purpose: string }[];
+  custom: { key: string; value: string }[];
+  fromDockerOptions: { key: string; value: string }[];
+  [k: string]: unknown;
+}
+
 /** An error carrying the hub's HTTP status + message. status 0 = the hub was unreachable. */
 export class ApiError extends Error {
   constructor(
@@ -102,6 +112,14 @@ export class TugraClient {
     // Only forward a sane positive line count; a NaN (bad --tail) or 0 falls back to the hub default.
     const q = typeof tail === "number" && Number.isFinite(tail) && tail > 0 ? `?tail=${Math.floor(tail)}` : "";
     return this.request("GET", `/apps/${encodeURIComponent(id)}/logs${q}`);
+  }
+  /** GET /apps/:id/labels — every label Tugra applies (read-only) + the custom ones (writer-only). */
+  getAppLabels(id: string): Promise<AppLabelsView> {
+    return this.request("GET", `/apps/${encodeURIComponent(id)}/labels`);
+  }
+  /** PUT /apps/:id/custom-labels — replaces the FULL custom-label map; `{}` resets to defaults. */
+  setAppCustomLabels(id: string, labels: Record<string, string>): Promise<Row> {
+    return this.request("PUT", `/apps/${encodeURIComponent(id)}/custom-labels`, { labels });
   }
   listDatabases(): Promise<Row[]> {
     return this.request("GET", "/databases");

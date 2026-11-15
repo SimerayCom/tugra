@@ -9,6 +9,25 @@ function emit(rows: Row[], json: boolean | undefined, columns: Column[]): void {
   else printTable(rows, columns);
 }
 
+/** `KEY=VALUE` words → pairs, splitting at the FIRST `=` (values may contain `=`; an empty value is allowed). */
+export function parseLabelPairs(pairs: string[]): [string, string][] {
+  return pairs.map((p) => {
+    const eq = p.indexOf("=");
+    if (eq < 1) throw new Error(`expected KEY=VALUE, got ${JSON.stringify(p)}`);
+    return [p.slice(0, eq), p.slice(eq + 1)];
+  });
+}
+
+/** Overlay `wanted` on `current`; a key that differs only by case replaces the existing one (the hub treats keys case-insensitively). */
+function mergeLabels(current: Record<string, string>, wanted: [string, string][]): Record<string, string> {
+  const out = { ...current };
+  for (const [k, v] of wanted) {
+    for (const existing of Object.keys(out)) if (existing.toLowerCase() === k.toLowerCase()) delete out[existing];
+    out[k] = v;
+  }
+  return out;
+}
+
 export function register(program: Command): void {
   // ── servers ──
   const servers = program.command("servers").description("Manage servers");
@@ -96,6 +115,69 @@ export function register(program: Command): void {
       if (opts.json) printJson(logs);
       else if (typeof logs === "string") printLine(logs);
       else printJson(logs);
+    });
+
+  // ── app container labels ──
+  const labels = apps.command("labels").description("Container labels: what Tugra applies (read-only) and your custom ones");
+  labels
+    .command("ls <id>")
+    .description("List the labels Tugra applies and the app's custom labels")
+    .option("--json", "output as JSON")
+    .action(async (id: string, opts: { json?: boolean }) => {
+      const view = await activeClient().client.getAppLabels(id);
+      if (opts.json) {
+        printJson(view);
+        return;
+      }
+      const rows: Row[] = [
+        ...view.tugra.map((l) => ({ source: "tugra", scope: l.scope, key: l.key, value: l.masked ? "(masked)" : (l.value ?? "") })),
+        ...view.custom.map((l) => ({ source: "custom", scope: "container", key: l.key, value: l.value })),
+        ...view.fromDockerOptions.map((l) => ({ source: "docker-options", scope: "container", key: l.key, value: l.value })),
+      ];
+      emit(rows, false, [
+        { key: "source", header: "SOURCE" },
+        { key: "scope", header: "SCOPE" },
+        { key: "key", header: "KEY" },
+        { key: "value", header: "VALUE" },
+      ]);
+    });
+  labels
+    .command("set <id> <pairs...>")
+    .description("Set custom labels (KEY=VALUE ...). Merges over the current ones unless --replace. Applied on the next deploy")
+    .option("--replace", "replace all custom labels instead of merging")
+    .option("--json", "output as JSON")
+    .action(async (id: string, pairs: string[], opts: { replace?: boolean; json?: boolean }) => {
+      const wanted = parseLabelPairs(pairs);
+      const client = activeClient().client;
+      const current = opts.replace ? {} : Object.fromEntries((await client.getAppLabels(id)).custom.map((l) => [l.key, l.value]));
+      const next = mergeLabels(current, wanted);
+      const res = await client.setAppCustomLabels(id, next);
+      if (opts.json) printJson(res);
+      else printLine(`custom labels set on app ${id} (${Object.keys(next).length} total, applied on next deploy)`);
+    });
+  labels
+    .command("rm <id> <keys...>")
+    .description("Remove custom labels by key. Applied on the next deploy")
+    .option("--json", "output as JSON")
+    .action(async (id: string, keys: string[], opts: { json?: boolean }) => {
+      const client = activeClient().client;
+      const current = (await client.getAppLabels(id)).custom;
+      const drop = new Set(keys.map((k) => k.toLowerCase()));
+      const missing = keys.filter((k) => !current.some((l) => l.key.toLowerCase() === k.toLowerCase()));
+      if (missing.length) throw new Error(`no custom label named ${missing.map((k) => JSON.stringify(k)).join(", ")}`);
+      const next = Object.fromEntries(current.filter((l) => !drop.has(l.key.toLowerCase())).map((l) => [l.key, l.value]));
+      const res = await client.setAppCustomLabels(id, next);
+      if (opts.json) printJson(res);
+      else printLine(`removed ${keys.length} custom label(s) from app ${id} (applied on next deploy)`);
+    });
+  labels
+    .command("reset <id>")
+    .description("Remove ALL custom labels (Tugra's own labels are derived on every deploy). Applied on the next deploy")
+    .option("--json", "output as JSON")
+    .action(async (id: string, opts: { json?: boolean }) => {
+      const res = await activeClient().client.setAppCustomLabels(id, {});
+      if (opts.json) printJson(res);
+      else printLine(`custom labels reset on app ${id} (applied on next deploy)`);
     });
 
   // ── databases ──
