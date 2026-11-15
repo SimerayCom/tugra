@@ -71,6 +71,7 @@
   "err_ack": "no acknowledgement",
   "err_policy": "blocked by the egress policy",
   "err_config": "configuration rejected",
+  "err_auth": "the server requires user authentication, which a shared key cannot provide",
   "err_overflow": "queue overflow, lines dropped",
   "udpWarn": "UDP is fire-and-forget: Tugra cannot confirm delivery, and lines can be lost on the way.",
   "lossNote": "Delivery is best-effort. Lines emitted while the agent is disconnected are not buffered, and a line can be delivered twice after a restart.",

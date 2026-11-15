@@ -24,6 +24,7 @@ const (
 	errAck      = "ack"
 	errPolicy   = "policy"
 	errConfig   = "config"
+	errAuth     = "auth" // the sink requires user authentication, which a shared-key drain cannot do
 	errOverflow = "overflow"
 )
 

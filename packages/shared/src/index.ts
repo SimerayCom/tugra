@@ -629,9 +629,10 @@ export type DrainErrClass =
   | "ack"
   | "policy"
   | "config"
+  | "auth"
   | "overflow";
 export const DRAIN_ERR_CLASSES: readonly DrainErrClass[] = [
-  "dns", "dial", "tls", "timeout", "refused", "http", "write", "ack", "policy", "config", "overflow",
+  "dns", "dial", "tls", "timeout", "refused", "http", "write", "ack", "policy", "config", "auth", "overflow",
 ];
 export const DRAIN_STATES = ["ok", "error", "idle", "invalid"] as const;
 export interface DrainStatusEntry {

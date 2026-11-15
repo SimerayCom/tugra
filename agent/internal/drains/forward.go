@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"net"
+	"os"
 	"sync"
 	"time"
 
@@ -246,6 +247,26 @@ func sha512Hex(parts ...[]byte) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// handshakeReadErr classifies a failed read of HELO (first) or PONG. Malformed or oversized content is a permanent
+// config error. A genuine I/O failure (reset, EOF, a slow or restarting sink) is transient and retried: a timeout
+// as "timeout", anything else as "dial". The one exception is a timeout waiting for HELO: a plain fluentd without
+// <security> never sends one, so with a key configured that silence IS the misconfiguration (permanent config).
+func handshakeReadErr(err error, helo bool) *drainErr {
+	if errors.Is(err, errMsgpack) {
+		return newDrainErr(errConfig, true, err)
+	}
+	var ne net.Error
+	timeout := errors.Is(err, os.ErrDeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout())
+	switch {
+	case timeout && helo:
+		return newDrainErr(errConfig, true, err) // no HELO: server not configured for auth (or not fluentd)
+	case timeout:
+		return newDrainErr(errTimeout, false, err)
+	default:
+		return newDrainErr(errDial, false, err)
+	}
+}
+
 func asBytes(v any) ([]byte, bool) {
 	switch x := v.(type) {
 	case []byte:
@@ -272,7 +293,7 @@ func (f *fluentSender) handshake(ctx context.Context, c net.Conn) error {
 
 	v, err := mpDecode(br)
 	if err != nil {
-		return newDrainErr(errConfig, true, err) // no HELO: server not configured for auth (or not fluentd)
+		return handshakeReadErr(err, true)
 	}
 	helo, ok := v.([]any)
 	if !ok || len(helo) < 2 {
@@ -286,6 +307,12 @@ func (f *fluentSender) handshake(ctx context.Context, c net.Conn) error {
 		return newDrainErr(errConfig, true, errors.New("bad HELO options"))
 	}
 	nonce, _ := asBytes(opts["nonce"])
+	// A non-empty `auth` is the salt of USER authentication: the server wants a username + password digest too.
+	// The drain only carries a shared key, so refuse up front with a clear class instead of letting the server
+	// answer PONG false (which would read as "wrong shared key").
+	if a, _ := asBytes(opts["auth"]); len(a) > 0 {
+		return newDrainErr(errAuth, true, errors.New("server requires user authentication"))
+	}
 
 	salt := make([]byte, 16)
 	if _, err := rand.Read(salt); err != nil {
@@ -305,7 +332,7 @@ func (f *fluentSender) handshake(ctx context.Context, c net.Conn) error {
 
 	v, err = mpDecode(br)
 	if err != nil {
-		return newDrainErr(errConfig, true, err)
+		return handshakeReadErr(err, false)
 	}
 	pong, ok := v.([]any)
 	if !ok || len(pong) < 5 {

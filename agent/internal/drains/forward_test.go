@@ -6,7 +6,9 @@ import (
 	"context"
 	"crypto/sha512"
 	"encoding/hex"
+	"io"
 	"net"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -77,6 +79,10 @@ type fakeFluent struct {
 	badPong bool   // reply PONG with a wrong digest
 	noHelo  bool   // never send HELO (a server without <security>)
 	reject  bool   // reply PONG ok=false
+	// handshake fault injection
+	closeAfterHelo bool // send HELO, then close (a flapping / restarting sink)
+	silentPong     bool // read PING and never answer
+	userAuth       bool // HELO carries a non-empty `auth` salt (the server wants user authentication)
 }
 
 func startFakeFluent(t *testing.T, mut func(f *fakeFluent)) *fakeFluent {
@@ -113,12 +119,23 @@ func (f *fakeFluent) serve(c net.Conn, n int) {
 		e.str("nonce")
 		e.bin(nonce)
 		e.str("auth")
-		e.bin(nil)
+		if f.userAuth {
+			e.bin([]byte("user-salt"))
+		} else {
+			e.bin(nil)
+		}
 		e.str("keepalive")
 		e.bool_(true)
 		_, _ = c.Write(e.b)
+		if f.closeAfterHelo {
+			return
+		}
 		v, err := mpDecode(br)
 		if err != nil {
+			return
+		}
+		if f.silentPong {
+			time.Sleep(2 * time.Second)
 			return
 		}
 		ping := v.([]any)
@@ -376,5 +393,70 @@ func TestNewFluentSenderValidation(t *testing.T) {
 	fs := s.(*fluentSender)
 	if fs.tag != "tugra" || !fs.requireAck {
 		t.Fatalf("defaults: tag %q ack %v", fs.tag, fs.requireAck)
+	}
+}
+
+func shortHandshake(t *testing.T) {
+	t.Helper()
+	old := handshakeTimeout
+	handshakeTimeout = 150 * time.Millisecond
+	t.Cleanup(func() { handshakeTimeout = old })
+}
+
+func TestFluentdHandshakeIOErrorsAreRetriable(t *testing.T) {
+	shortHandshake(t)
+	// the sink closes right after HELO: the connection ends mid-handshake -> transient, retried (conns > 1)
+	f := startFakeFluent(t, func(f *fakeFluent) { f.key = "k"; f.closeAfterHelo = true })
+	s, _ := newFluentSender(fluentCfg(f.addr(), nil, "k"))
+	defer s.Close()
+	err := s.Send(context.Background(), batchOf("x"))
+	de := classifyErr(err)
+	if de == nil || de.permanent || de.class == errConfig {
+		t.Fatalf("a connection lost mid-handshake must be a retriable I/O error, got %v (%+v)", err, de)
+	}
+	if f.conns.Load() < 2 {
+		t.Fatalf("a transient handshake failure must be retried, conns=%d", f.conns.Load())
+	}
+}
+
+func TestFluentdPongTimeoutIsRetriableTimeout(t *testing.T) {
+	shortHandshake(t)
+	f := startFakeFluent(t, func(f *fakeFluent) { f.key = "k"; f.silentPong = true })
+	s, _ := newFluentSender(fluentCfg(f.addr(), nil, "k"))
+	defer s.Close()
+	err := s.Send(context.Background(), batchOf("x"))
+	if de := classifyErr(err); de == nil || de.permanent || de.class != errTimeout {
+		t.Fatalf("a PONG timeout after a HELO must be a retriable timeout, got %v", err)
+	}
+	if f.conns.Load() < 2 {
+		t.Fatalf("a PONG timeout must be retried, conns=%d", f.conns.Load())
+	}
+}
+
+func TestFluentdUserAuthHeloIsAClearPermanentClass(t *testing.T) {
+	f := startFakeFluent(t, func(f *fakeFluent) { f.key = "k"; f.userAuth = true })
+	s, _ := newFluentSender(fluentCfg(f.addr(), nil, "k"))
+	defer s.Close()
+	err := s.Send(context.Background(), batchOf("x"))
+	if de := classifyErr(err); de == nil || de.class != errAuth || !de.permanent {
+		t.Fatalf("a user-auth HELO must be a permanent auth-class error (not 'wrong shared key'), got %v", err)
+	}
+	if f.conns.Load() != 1 {
+		t.Fatalf("a permanent failure must not be retried, conns=%d", f.conns.Load())
+	}
+}
+
+func TestHandshakeReadErrClassification(t *testing.T) {
+	if de := handshakeReadErr(errMsgpack, false); de.class != errConfig || !de.permanent {
+		t.Fatalf("malformed content stays permanent config: %+v", de)
+	}
+	if de := handshakeReadErr(io.EOF, true); de.permanent || de.class != errDial {
+		t.Fatalf("EOF is transient: %+v", de)
+	}
+	if de := handshakeReadErr(os.ErrDeadlineExceeded, true); de.class != errConfig || !de.permanent {
+		t.Fatalf("a HELO timeout is the no-<security> signature: %+v", de)
+	}
+	if de := handshakeReadErr(os.ErrDeadlineExceeded, false); de.class != errTimeout || de.permanent {
+		t.Fatalf("a PONG timeout is transient: %+v", de)
 	}
 }
