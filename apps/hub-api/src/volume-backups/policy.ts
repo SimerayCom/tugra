@@ -22,3 +22,22 @@ export function policyJobExists(appEnabled: boolean, p: PolicyLike): boolean {
 export function policyAlertId(appId: string, volumeName: string): string {
   return `${appId}:${volumeName}`;
 }
+
+/** The shared size pool's internal key. It starts with a NUL, which a volume name can never contain
+ *  (names match /^[a-z0-9][a-z0-9_-]*$/), so a volume literally called "app" cannot collide with it. */
+export const SHARED_POOL = "\u0000app";
+
+/** Which size pool a volume's backups count against: its own (keyed by its name) when its policy sets
+ *  `maxSizeGb`, else the app-wide shared pool. Prune and the usage view both group through this. */
+export function poolKeyOf(policies: Map<string, { maxSizeGb: number | null }>, volumeName: string): string {
+  return policies.get(volumeName)?.maxSizeGb != null ? volumeName : SHARED_POOL;
+}
+
+/** The size budget (GiB, null = unlimited) of a pool produced by {@link poolKeyOf}. */
+export function poolBudgetGb(
+  pool: string,
+  appMaxSizeGb: number | null,
+  policies: Map<string, { maxSizeGb: number | null }>,
+): number | null {
+  return pool === SHARED_POOL ? appMaxSizeGb : policies.get(pool)?.maxSizeGb ?? null;
+}

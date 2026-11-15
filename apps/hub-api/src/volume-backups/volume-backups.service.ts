@@ -16,7 +16,7 @@ import { BackupAlertsService } from "../backups/backup-alerts.service";
 import { GIB, planRetention } from "../backups/retention";
 import { nextRuns } from "../common/cron";
 import type { VolumeBackupConfigInput, VolumeImportFromUrlInput, VolumePolicyInput } from "./dto";
-import { policyAlertId } from "./policy";
+import { SHARED_POOL, policyAlertId, poolBudgetGb, poolKeyOf } from "./policy";
 
 export const VolumeBackupViewSchema = z.object({
   id: z.string(),
@@ -65,7 +65,8 @@ export const VolumeBackupConfigViewSchema = z.object({
   policies: z.array(VolumePolicyViewSchema),
   usage: z.array(
     z.object({
-      pool: z.string(), // "app" or a volume name that has its own size budget
+      pool: z.string(), // "app" (the shared pool) or a volume name that has its own size budget
+      volume: z.string().nullable(), // null = the shared app pool; else the volume that owns this pool (disambiguates a volume named "app")
       usedBytes: z.string(),
       backupCount: z.number(),
       unknownSizeCount: z.number(),
@@ -325,14 +326,13 @@ export class VolumeBackupsService {
     const declared = new Set(this.runner.volumesOf(app).map((v) => v.name));
     const rows = (await this.prisma.volumeBackup.findMany({ where: { appId, status: "SUCCESS" }, orderBy: { createdAt: "desc" } })).filter((b) => declared.has(b.volumeName));
     const polBy = new Map(policies.map((p) => [p.volumeName, p]));
-    const pools = new Map<string, typeof rows>([["app", []]]);
+    const pools = new Map<string, typeof rows>([[SHARED_POOL, []]]);
     for (const p of policies) if (p.maxSizeGb != null && declared.has(p.volumeName)) pools.set(p.volumeName, []);
     for (const b of rows) {
-      const k = polBy.get(b.volumeName)?.maxSizeGb != null ? b.volumeName : "app";
-      pools.get(k)!.push(b);
+      pools.get(poolKeyOf(polBy, b.volumeName))!.push(b);
     }
     const usage = [...pools].map(([pool, rs]) => {
-      const gb = pool === "app" ? app.volumeBackupMaxSizeGb : polBy.get(pool)?.maxSizeGb ?? null;
+      const gb = poolBudgetGb(pool, app.volumeBackupMaxSizeGb, polBy);
       const plan = planRetention(
         rs.map((b) => ({ id: b.id, series: b.volumeName, createdAt: b.createdAt, sizeBytes: b.sizeBytes })),
         { keep: app.volumeBackupRetention, maxAgeDays: app.volumeBackupRetentionDays, maxBytes: gb != null ? BigInt(gb) * GIB : null },
@@ -341,7 +341,8 @@ export class VolumeBackupsService {
       );
       const used = rs.reduce((n, b) => n + (b.sizeBytes ?? 0n), 0n);
       return {
-        pool,
+        pool: pool === SHARED_POOL ? "app" : pool,
+        volume: pool === SHARED_POOL ? null : pool,
         usedBytes: used.toString(),
         backupCount: rs.length,
         unknownSizeCount: rs.filter((b) => b.sizeBytes == null).length,

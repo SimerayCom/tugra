@@ -137,7 +137,11 @@ export function BackupPolicyCard({
         <section style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <div style={heading}>{t("backups.storage")}</div>
           {usage.map((u) => (
-            <StorageMeter key={u.pool} usage={u} label={usage.length > 1 ? (u.pool === "app" ? t("backups.poolApp") : u.pool) : undefined} />
+            <StorageMeter
+              key={u.volume != null ? `vol:${u.volume}` : `pool:${u.pool}`}
+              usage={u}
+              label={usage.length > 1 ? (u.volume != null ? u.volume : u.pool === "app" ? t("backups.poolApp") : u.pool) : undefined}
+            />
           ))}
         </section>
       )}

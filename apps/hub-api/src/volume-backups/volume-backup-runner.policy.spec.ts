@@ -154,6 +154,17 @@ describe("VolumeBackupRunnerService.prune — whole-app plan with per-volume pol
     expect(removed).toEqual(["c2", "d2", "m2"]);
   });
 
+  it("a volume literally named \"app\" with its own budget does NOT merge into the shared pool", async () => {
+    const rows = [
+      r("a1", "app", 1, 6), r("a2", "app", 9, 6), // own pool, cap 8 -> a2 goes (a1 protected)
+      r("d1", "data", 1, 4), r("d2", "data", 5, 4), // shared pool, cap 100 GiB -> nothing goes
+    ];
+    const policies = [{ volumeName: "app", retention: null, retentionDays: null, maxSizeGb: 8 }];
+    const { svc, del } = make({ app: { volumes: [{ name: "app" }, { name: "data" }], volumeBackupMaxSizeGb: 100 }, rows, policies });
+    await svc.prune({ ...baseApp, volumes: [{ name: "app" }, { name: "data" }], volumeBackupMaxSizeGb: 100 } as never);
+    expect(del.mock.calls.map((c) => c[0].where.id).sort()).toEqual(["a2"]);
+  });
+
   it("never removes the newest backup of a volume, even when over budget", async () => {
     const rows = [r("d1", "data", 1, 50)];
     const { svc, del } = make({ app: { volumeBackupMaxSizeGb: 1 }, rows });

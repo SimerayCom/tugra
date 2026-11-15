@@ -180,6 +180,20 @@ describe("VolumeBackupsService.getConfig", () => {
     expect(JSON.stringify(cfg)).not.toMatch(/secret|credential|key/i);
   });
 
+  it("keeps a volume named \"app\" with its own budget separate from the shared app pool", async () => {
+    const t = make({
+      app: { volumes: [{ name: "app", path: "/a" }, { name: "data", path: "/d" }], volumeBackupMaxSizeGb: 50 },
+      policies: [{ volumeName: "app", enabled: true, intervalHours: null, cron: null, retention: null, retentionDays: null, maxSizeGb: 2 }],
+      rows: [row("a", "app", 1, 3), row("d", "data", 1, 4)],
+    });
+    const cfg = await t.service.getConfig("u1", "a1");
+    expect(cfg.usage).toHaveLength(2);
+    const shared = cfg.usage.find((u) => u.volume === null)!;
+    const own = cfg.usage.find((u) => u.volume === "app")!;
+    expect(shared).toMatchObject({ pool: "app", backupCount: 1, budgetGb: 50, usedBytes: (4n * GIB).toString() });
+    expect(own).toMatchObject({ pool: "app", backupCount: 1, budgetGb: 2, overBudget: true, usedBytes: (3n * GIB).toString() });
+  });
+
   it("reports destinationEncrypted=null for the implicit server-disk path and nextRun=null for an interval", async () => {
     const t = make({ app: { volumeBackupEnabled: true, volumeBackupIntervalHours: 12 } });
     const cfg = await t.service.getConfig("u1", "a1");

@@ -1702,6 +1702,8 @@ export interface VolumeBackupPolicy {
 
 export interface BackupUsage {
   pool: string;
+  /** null/absent = the shared app pool; else the volume that owns this pool (a volume may itself be named "app"). */
+  volume?: string | null;
   usedBytes: string;
   backupCount: number;
   unknownSizeCount: number;

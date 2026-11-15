@@ -10,7 +10,7 @@ import { objectKey, type DestinationSpec } from "../backups/destination";
 import { resolveDestinationSpec } from "../backups/destination-resolver";
 import { gpgMissingTail, scrubRunOutput } from "../backups/backup-script";
 import { GIB, planRetention, type RetentionRow } from "../backups/retention";
-import { isCarvedOut, policyAlertId } from "./policy";
+import { SHARED_POOL, isCarvedOut, policyAlertId, poolBudgetGb, poolKeyOf } from "./policy";
 import { BackupAlertsService } from "../backups/backup-alerts.service";
 import { AppMoveInProgressException, findActiveMove } from "../common/app-move-guard";
 import {
@@ -188,15 +188,14 @@ export class VolumeBackupRunnerService {
     ).filter((b) => declared.has(b.volumeName));
     if (!rows.length) return;
     const policies = new Map((await this.prisma.volumeBackupPolicy.findMany({ where: { appId: app.id } })).map((p) => [p.volumeName, p]));
-    const poolOf = (vol: string) => (policies.get(vol)?.maxSizeGb != null ? vol : "app");
     const pools = new Map<string, typeof rows>();
     for (const b of rows) {
-      const k = poolOf(b.volumeName);
+      const k = poolKeyOf(policies, b.volumeName);
       pools.set(k, [...(pools.get(k) ?? []), b]);
     }
     const byId = new Map(rows.map((b) => [b.id, b]));
     for (const [pool, poolRows] of pools) {
-      const gb = pool === "app" ? app.volumeBackupMaxSizeGb : policies.get(pool)?.maxSizeGb ?? null;
+      const gb = poolBudgetGb(pool, app.volumeBackupMaxSizeGb, policies);
       const plan = planRetention(
         poolRows.map<RetentionRow>((b) => ({ id: b.id, series: b.volumeName, createdAt: b.createdAt, sizeBytes: b.sizeBytes })),
         { keep: app.volumeBackupRetention, maxAgeDays: app.volumeBackupRetentionDays, maxBytes: gb != null ? BigInt(gb) * GIB : null },
@@ -206,7 +205,7 @@ export class VolumeBackupRunnerService {
           return { keep: p?.retention ?? app.volumeBackupRetention, maxAgeDays: p?.retentionDays ?? app.volumeBackupRetentionDays };
         },
       );
-      if (plan.overBudget) this.logger.warn(`volume backups of app ${app.id} (${pool}) exceed the ${gb} GiB budget with only protected backups left`);
+      if (plan.overBudget) this.logger.warn(`volume backups of app ${app.id} (${pool === SHARED_POOL ? "app" : `volume ${pool}`}) exceed the ${gb} GiB budget with only protected backups left`);
       for (const { id } of plan.remove) {
         const b = byId.get(id)!;
         // Each stale backup may live in its own destination — delete from it. A destination that cannot be
