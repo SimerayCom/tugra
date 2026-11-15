@@ -97,13 +97,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (the preflight reports `agent_too_old`). New hub settings `MOVE_PART_MIB` (default 256, clamped 32 to 1024) and
   `MOVE_MAX_CONCURRENT_RELAYS` (default 2); lower `MOVE_PART_MIB` when a proxy in front of the hub caps request bodies.
   Route `/api/v1/agent-vx/` straight to the hub, like `/api/v1/agent-fs/`.
-- **Changed (behaviour, only while or after a move).** While an app is being moved, config edits, start, stop, restart,
-  delete, rollback and volume restore return 409 `app_move_in_progress`, and queued deploys wait until the move ends.
-  After a move, a rollback target that only exists as a local image tag on the previous server returns 409
-  `rollback_predates_move` (registry and digest-pinned deployments are unaffected); restoring a LOCAL volume backup made
-  on a previous server returns 409 `backup_on_other_server`; deleting a server is refused (409 `server_in_active_move`)
-  while it is part of a move or still holds a move's archived data. Deleting an app best-effort removes its archives.
-  Nothing is on by default: the migration adds one table and two nullable columns, existing rows are untouched.
+- **Changed (behaviour, only while or after a move).** While an app is being moved these return 409
+  `app_move_in_progress`: config edits, start, stop, restart, delete, rollback, restoring a volume backup, importing a
+  volume, creating or deleting a database link, and file-manager writes and moves of volume files. Manual volume
+  backups of the app are refused the same way and scheduled ones skip that tick. A pull-request preview webhook is
+  skipped and audited as `preview.skipped` (reason `app-move-in-progress`). Deploys keep queueing but wait until the
+  move ends (a deploy that is already running when the move starts is waited out for up to 10 minutes, then the move
+  rolls back with the app untouched). `Idempotency-Key` values starting with `move:` are reserved and return 400 for
+  every client, like `rollout:`; the move's own deploys use them and are exempt from the per-app queue cap.
+  Deployments gain a nullable `runServerId` and the `move` trigger (additive). After a move, a rollback target that only
+  exists as a local image tag on the previous server returns 409 `rollback_predates_move` (registry and digest-pinned
+  deployments are unaffected); restoring a LOCAL volume backup made on a previous server returns 409
+  `backup_on_other_server`; deleting a server is refused (409 `server_in_active_move`) while it is part of a move or
+  still holds a move's archived data. Deleting an app best-effort removes the old server's archive too, unless you chose
+  to keep its volumes: then the archive stays and the hourly sweeper removes it after the archive period. A move is also
+  refused while a migration import is still filling the app (`migration_import_active`). When a move fails and the app
+  cannot be restarted on the old server it stays flagged as needing attention (with a critical notification) until you
+  clear it with **Remove old copy now**, which never removes data that is live on the new server. If an unpacking step
+  could not be undone cleanly, the replaced data is kept on the new server as a recovery volume (shown on the move card)
+  until you remove it with that same button. Nothing is on by default: the migration adds one table and two nullable
+  columns, existing rows are untouched.
 - **Known limits of app moves.** Downtime equals the copy time (a cold move; no incremental sync). Extended attributes,
   ACLs and sparse files are not preserved. Host bind-mount data and compose `external:` / `name:` volumes are not
   transferred (each needs an acknowledgement). Metrics and traffic history split at the move. The move deploy uses the
