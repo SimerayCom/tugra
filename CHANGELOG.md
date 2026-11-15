@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.14] - 2026-11-15
+
 - **Container labels.** The app's Configuration tab has a **Container labels** card. It lists, read-only, every label
   Tugra applies (Traefik routing, the proxy-network pin, the stable alias, compose config fingerprints; basic-auth
   hashes and the forward-auth address are hidden), built by the same code that writes the deploy scripts, and lets
