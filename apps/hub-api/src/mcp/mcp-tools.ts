@@ -12,7 +12,7 @@ import type { BackupsService } from "../backups/backups.service";
 import type { MonitorsService } from "../monitors/monitors.service";
 import type { ImporterService } from "../importer/importer.service";
 import type { ImportExecutorService } from "../importer/import-executor.service";
-import { REMOTE_SOURCE_KINDS, ServiceChoicesSchema, isRemoteSourceKind, ImportMappingResolveSchema, ImportMappingPutSchema } from "../importer/dto";
+import { REMOTE_SOURCE_KINDS, ServiceChoicesSchema, ImportAckSchema, isRemoteSourceKind, ImportMappingResolveSchema, ImportMappingPutSchema } from "../importer/dto";
 import { ImportMappingDocSchema } from "../importer/import-mapping";
 import type { LicenseService } from "../license/license.service";
 import type { MetricsService } from "../metrics/metrics.service";
@@ -693,7 +693,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "import_apply",
     description:
-      "Apply a reviewed import plan. Pass the planHash from import_plan (the apply is refused if the source changed since). local-docker adopts the host's containers in place; a remote source (Coolify/Dokploy) COPIES each app onto targetServerId. Optional mapping (+ the mappingHash from import_mapping_resolve) renames and re-places items; if a saved mapping exists for the source the apply is refused (409) unless you send the mapping or ignoreStoredMapping. Returns an opId to poll with import_status.",
+      "Apply a reviewed import plan. Pass the planHash from import_plan (the apply is refused if the source changed since). local-docker adopts the host's containers in place; a remote source (Coolify/Dokploy) COPIES each app onto targetServerId. Optional mapping (+ the mappingHash from import_mapping_resolve) renames and re-places items; if a saved mapping exists for the source the apply is refused (409) unless you send the mapping or ignoreStoredMapping. Blocked env rows (app.env.unresolved / app.env.key.invalid) are skipped unless acknowledged via acks. Returns an opId to poll with import_status.",
     scope: "deploy",
     inputSchema: {
       type: "object",
@@ -704,6 +704,12 @@ export const MCP_TOOLS: McpTool[] = [
         targetServerId: { type: "string" },
         environmentId: { type: "string" },
         planHash: { type: "string" },
+        acks: {
+          type: "array",
+          description:
+            "Coolify only: acknowledge ACKABLE env blockers from import_plan so the app is created WITHOUT those variables. Each item: { code: \"app.env.unresolved\" | \"app.env.key.invalid\", itemRef?: string } - omit itemRef to acknowledge every item carrying that code. app.env.tokenReadOnly and every other blocker cannot be acknowledged.",
+          items: { type: "object", properties: { code: { type: "string", enum: ["app.env.unresolved", "app.env.key.invalid"] }, itemRef: { type: "string" } }, required: ["code"] },
+        },
         serviceChoices: {
           type: "object",
           description:
@@ -732,6 +738,7 @@ export const MCP_TOOLS: McpTool[] = [
           environmentId: optStr(a, "environmentId"),
           planHash,
           ...(a.serviceChoices !== undefined ? { serviceChoices: ServiceChoicesSchema.parse(a.serviceChoices) } : {}),
+          ...(a.acks !== undefined ? { acks: ImportAckSchema.array().max(2000).parse(a.acks) } : {}),
           ...(mapping !== undefined ? { mapping, mappingHash } : {}),
           ...(a.reconcile === true ? { reconcile: true } : {}),
           ...(a.ignoreStoredMapping === true ? { ignoreStoredMapping: true } : {}),
@@ -755,6 +762,7 @@ export const MCP_TOOLS: McpTool[] = [
         targetServerId: { type: "string" },
         environmentId: { type: "string" },
         reconcile: { type: "boolean" },
+        acks: { type: "array", description: "the same acks you will send to import_apply: an acked blocker item previews as runnable and binds into the mappingHash", items: { type: "object" } },
         mapping: { type: "object" },
       },
       required: ["sourceKind", "sessionId", "planHash", "targetServerId", "mapping"],

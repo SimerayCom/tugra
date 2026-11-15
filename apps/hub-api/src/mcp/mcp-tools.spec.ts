@@ -113,6 +113,19 @@ describe("MCP_TOOLS catalog", () => {
       await expect(Promise.resolve().then(() => tool("import_apply").execute(deps, "u1", { sourceKind: "coolify", sessionId: "s1", targetServerId: "t-srv", planHash: "h", mapping: { version: 1, bogus: 1 }, mappingHash: "m" }))).rejects.toThrow();
     });
 
+    it("import_apply forwards validated acks only when sent and rejects a non-ackable code", async () => {
+      const { deps, executor } = mk();
+      const base = { sourceKind: "coolify", sessionId: "s1", targetServerId: "t-srv", planHash: "h" };
+      const acks = [{ code: "app.env.unresolved" }, { code: "app.env.key.invalid", itemRef: "app:x" }];
+      await tool("import_apply").execute(deps, "u1", { ...base, acks });
+      expect(executor.apply).toHaveBeenLastCalledWith("u1", expect.objectContaining({ acks }));
+      await tool("import_apply").execute(deps, "u1", base);
+      expect(executor.apply).toHaveBeenLastCalledWith("u1", expect.not.objectContaining({ acks: expect.anything() }));
+      await expect(Promise.resolve().then(() => tool("import_apply").execute(deps, "u1", { ...base, acks: [{ code: "app.env.tokenReadOnly" }] }))).rejects.toThrow();
+      expect(JSON.stringify(tool("import_apply").inputSchema)).toContain("acks");
+      expect(tool("import_apply").description).toContain("acks");
+    });
+
     it("the mapping tools exist with REST-equivalent scopes and delegate", async () => {
       const { deps, importer } = mk();
       expect(tool("import_mapping_resolve").scope).toBe("read:secrets");
