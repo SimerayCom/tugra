@@ -40,6 +40,8 @@ export function TileActionsSheet({
     enabled: showLogs,
   });
 
+  // The "files" action is only offered to writers (tileActions), so tile.canWrite is true when the files view opens;
+  // it is passed through so the write UI is gated on that same flag.
   // The tile doesn't carry volumes; fetch the app lazily when the files view opens (no navigation — Home-safe).
   const appForFiles = useQuery({
     queryKey: ["app", tile.id],
@@ -117,7 +119,7 @@ export function TileActionsSheet({
           ) : appForFiles.isError ? (
             <div style={{ fontSize: 13, color: "var(--c-r)", padding: 8 }}>{t("home.filesError")}</div>
           ) : (
-            <AppFilesCard id={tile.id} volumes={appForFiles.data?.volumes ?? []} />
+            <AppFilesCard id={tile.id} volumes={appForFiles.data?.volumes ?? []} canWrite={tile.canWrite} serverId={appForFiles.data?.serverId} />
           )}
           <div>
             <Btn variant="ghost" onClick={() => setShowFiles(false)}>{t("home.logsBack")}</Btn>

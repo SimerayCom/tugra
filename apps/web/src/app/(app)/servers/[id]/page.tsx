@@ -27,6 +27,7 @@ import { TerminalPanel } from "../../../../components/terminal-panel";
 import { RenameModal } from "../../../../components/rename-modal";
 import { TagsCard } from "../../../../components/tags";
 import { LogDrainCard } from "../../../../components/log-drains/log-drain-card";
+import { CapabilitiesCard } from "../../../../components/server-capabilities-card";
 import { TrafficAnalyticsCard } from "../../../../components/traffic-analytics-card";
 import { Badge, Btn, Card, EmptyState, SectionCard, Spinner, StatusPill } from "../../../../components/ui";
 import { Skeleton, SkeletonCard } from "../../../../components/skeleton";
@@ -826,45 +827,6 @@ function DeleteServerCard({ id, server }: { id: string; server: ServerView }) {
           {del.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(del.error as Error).message}</div>}
         </Modal>
       )}
-    </SectionCard>
-  );
-}
-
-const CAPABILITIES = ["deploy", "database", "backup", "cleanup", "bulk", "terminal", "schedule", "patch", "logs", "swarm"];
-
-function CapabilitiesCard({ id, server }: { id: string; server: ServerView }) {
-  const t = useT();
-  const qc = useQueryClient();
-  // The checked set IS the granted set: what's ticked is exactly what the hub may do. An empty
-  // grant means "nothing allowed" (fail-safe) — unchecking everything revokes, never grants.
-  const [caps, setCaps] = useState<Set<string>>(() => new Set(server.capabilities));
-  useEffect(() => {
-    setCaps(new Set(server.capabilities));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [server.id]);
-  const toggle = (c: string) =>
-    setCaps((prev) => {
-      const n = new Set(prev);
-      if (n.has(c)) n.delete(c);
-      else n.add(c);
-      return n;
-    });
-  const save = useMutation({
-    mutationFn: () => api.setServerCapabilities(id, [...caps]),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["server", id] }),
-  });
-  return (
-    <SectionCard title={t("servers.capabilities")} desc={t("servers.capabilitiesDesc")} style={{ marginTop: 20 }}>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 12 }}>
-        {CAPABILITIES.map((c) => (
-          <label key={c} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx2)" }}>
-            <input type="checkbox" checked={caps.has(c)} onChange={() => toggle(c)} />
-            {t(`servers.cap_${c}`)}
-          </label>
-        ))}
-      </div>
-      <Btn variant="ghost" onClick={() => save.mutate()} disabled={save.isPending}>{t("servers.save")}</Btn>
-      {save.isSuccess && <span style={{ fontSize: 12, color: "var(--c-g)", marginLeft: 10 }}>{t("servers.capsSaved")}</span>}
     </SectionCard>
   );
 }

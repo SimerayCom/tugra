@@ -197,11 +197,11 @@ export function hubPublicUrl(): string {
   return "http://localhost:3000";
 }
 
-const TG_CSRF = "tg_csrf";
+export const TG_CSRF = "tg_csrf";
 const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 /** Read a JS-readable cookie by name (used for the double-submit CSRF token). */
-function readCookie(name: string): string | null {
+export function readCookie(name: string): string | null {
   if (typeof document === "undefined") return null;
   for (const part of document.cookie.split("; ")) {
     const i = part.indexOf("=");
@@ -222,9 +222,21 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** The body's stable machine `code` (e.g. file-manager failures: exists, changed, datastore_running). Additive. */
+    readonly code?: string,
+    /** The raw JSON error body, for callers that need extra keys (capability, retryAfterSec, ...). Additive. */
+    readonly data?: Record<string, unknown>,
   ) {
     super(message);
   }
+}
+
+/** Parse a failed response's JSON body into (message, code, data); falls back to the status text. */
+export function parseApiErrorBody(body: unknown, fallback: string): { message: string; code?: string; data?: Record<string, unknown> } {
+  const obj = body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : undefined;
+  const m = obj?.message;
+  const message = Array.isArray(m) ? m.join(", ") : typeof m === "string" ? m : fallback;
+  return { message, code: typeof obj?.code === "string" ? obj.code : undefined, data: obj };
 }
 
 /**
@@ -237,7 +249,7 @@ export class ApiError extends Error {
  * rotation can never race itself; the next 401 cycle starts a fresh one.
  */
 let refreshing: Promise<boolean> | null = null;
-function tryRefresh(): Promise<boolean> {
+export function tryRefresh(): Promise<boolean> {
   if (!refreshing) refreshing = doRefresh().finally(() => { refreshing = null; });
   return refreshing;
 }
@@ -274,16 +286,13 @@ export async function apiFetch<T>(
     return apiFetch<T>(path, init, false);
   }
   if (!res.ok) {
-    let msg = res.statusText;
+    let parsed: ReturnType<typeof parseApiErrorBody> = { message: res.statusText };
     try {
-      const body = await res.json();
-      msg = Array.isArray(body?.message)
-        ? body.message.join(", ")
-        : (body?.message ?? msg);
+      parsed = parseApiErrorBody(await res.json(), res.statusText);
     } catch {
       /* ignore */
     }
-    throw new ApiError(res.status, msg);
+    throw new ApiError(res.status, parsed.message, parsed.code, parsed.data);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;

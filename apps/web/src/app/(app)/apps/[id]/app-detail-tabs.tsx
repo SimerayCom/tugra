@@ -116,12 +116,15 @@ export function MetricsTab({ id, events }: { id: string; events: ChartEvent[] })
   );
 }
 
-export function FilesTab({ id, app }: { id: string; app: Pick<Application, "source" | "composeVolumes" | "volumes"> }) {
+// The Files tab is only rendered for writers (the page gates it on `appData.canWrite`), so the write UI is enabled here.
+export function FilesTab({ id, app }: { id: string; app: Pick<Application, "source" | "composeVolumes" | "volumes" | "serverId"> }) {
   const t = useT();
   return (
     <SectionCard title={t("apps.files.title")} desc={t("apps.files.desc")}>
       <AppFilesCard
         id={id}
+        canWrite
+        serverId={app.serverId}
         volumes={
           app.source === "COMPOSE"
             ? app.composeVolumes
