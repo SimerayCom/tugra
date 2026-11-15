@@ -98,6 +98,8 @@ export function buildPreflight(fleet: ForeignFleet, options: ImportOptions, inve
     note: isMinioService(s)
       ? MINIO_SERVICE_NOTE
       : "service stack (compose / one-click) — not imported yet; recreate it on Tugra and copy its volume data manually (rsync; quiesce the source first)",
+    // Only a MinIO service carries the flag (the key is ABSENT otherwise, so every other row stays byte-identical).
+    ...(isMinioService(s) ? { objectStore: true as const } : {}),
   }));
 
   const appsWithVolumeData = carried ? 0 : fleet.apps.filter((a) => (a.volumes ?? []).length > 0).length;

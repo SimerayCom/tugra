@@ -253,7 +253,15 @@ function PlanView({
                 </div>
                 <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: "var(--c-tx3)" }}>
                   {plan.preflight.services.map((sv, i) => (
-                    <li key={i} className="mono">{sv.name}{sv.members > 0 ? ` (${sv.members})` : ""}</li>
+                    <li key={i}>
+                      <span className="mono">{sv.name}{sv.members > 0 ? ` (${sv.members})` : ""}</span>
+                      {sv.objectStore && (
+                        <>
+                          {" "}
+                          <a href="/migrations/objects/new" target="_blank" rel="noopener noreferrer" title={t("objectMigration.migrateObjectsHint")}>{t("objectMigration.migrateObjects")}</a>
+                        </>
+                      )}
+                    </li>
                   ))}
                 </ul>
               </div>

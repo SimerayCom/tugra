@@ -1,0 +1,170 @@
+{
+  "title": "Object migration",
+  "subtitle": "Mirror buckets from one S3-compatible store (MinIO) to another. The target server's agent runs the copy; the data never passes through the hub.",
+  "new": "New object migration",
+  "list": {
+    "empty": "No object migrations yet.",
+    "open": "Open",
+    "target": "Target server",
+    "buckets": "{n} bucket(s)"
+  },
+  "name": "Name",
+  "targetServer": "Target server",
+  "targetServerHint": "The agent on this server runs the copy and must be able to reach both endpoints.",
+  "source": {
+    "title": "Source",
+    "endpoint": "Endpoint",
+    "accessKey": "Access key",
+    "secretKey": "Secret key",
+    "readOnlyHint": "Use a read-only key (list and get) for the source."
+  },
+  "destination": {
+    "title": "Destination",
+    "endpoint": "Endpoint",
+    "sameHostHint": "A MinIO on the same host as the agent: http://host.docker.internal:9100 (its published port). Another host: its address or domain.",
+    "accessKey": "Access key",
+    "secretKey": "Secret key"
+  },
+  "endpointHint": "http or https only, no path or credentials. Loopback, 0.0.0.0 and link-local addresses are refused.",
+  "credsHint": "Credentials are encrypted at rest and never shown again.",
+  "preserve": "Preserve object attributes and bucket policy on the destination (mc --preserve)",
+  "create": "Create and check",
+  "creating": "Creating...",
+  "buckets": {
+    "title": "Buckets",
+    "size": "Size",
+    "objects": "Objects",
+    "select": "Select",
+    "rename": "Destination name",
+    "exclude": "Exclude (comma separated globs)",
+    "nonePreselected": "Nothing is selected: choose the buckets to copy. A large bucket may just hold backups.",
+    "destExists": "Destination already has {n} object(s)",
+    "selectAll": "Select all",
+    "save": "Save selection",
+    "saving": "Saving...",
+    "none": "No buckets were found on the source.",
+    "unknownSize": "size unknown"
+  },
+  "preflight": {
+    "title": "Preflight",
+    "run": "Run preflight",
+    "running": "Checking both endpoints and sizing buckets...",
+    "srcUnreachable": "The source endpoint could not be reached from the target server.",
+    "dstUnreachable": "The destination endpoint could not be reached from the target server.",
+    "noMc": "The agent image on this server has no mc binary: update the agent.",
+    "noSpace": "The destination is on this host and its free disk space may not fit the selected data.",
+    "notCarried": "Mirrors object data (keys, sizes, metadata, timestamps). Object versions, IAM users and access keys, replication, event notifications, SSE keys and object lock are NOT carried. Writes made to the source after the final pass are NOT copied: Tugra cannot freeze an object store, so stop the writers (or the apps) before the final pass."
+  },
+  "warn": {
+    "no_agent_image": "The agent does not know its own image: update the agent.",
+    "probe_incomplete": "The check did not finish: try again.",
+    "too_many_buckets": "Only the first 500 buckets are listed.",
+    "no_buckets": "The source has no buckets.",
+    "size_unknown": "Size could not be measured for {bucket}.",
+    "versions_not_carried": "{bucket} has object versioning: versions are not carried, only the current objects.",
+    "dst_not_empty": "The destination bucket for {bucket} already has objects.",
+    "src_unreachable": "The source endpoint could not be reached from the target server.",
+    "dst_unreachable": "The destination endpoint could not be reached from the target server.",
+    "no_mc": "The agent image on this server has no mc binary: update the agent.",
+    "dst_space_low": "The destination is on this host and its free disk space may not fit the selected data."
+  },
+  "phase": {
+    "seed": "Start seed copy",
+    "final": "Final pass",
+    "verify": "Verify",
+    "cancel": "Cancel",
+    "resume": "Resume",
+    "seedHint": "A live copy of missing objects. It never overwrites and needs no downtime.",
+    "finalHint": "Run after the writers are stopped: copies the changes and overwrites objects that differ.",
+    "carry": "Carry bucket settings",
+    "running": "Running",
+    "progress": "{done} of {total}",
+    "mergeAck": "The destination already has objects in some selected buckets: copy into them anyway",
+    "retrying": "Waiting for a free helper slot (at most 2 per server)."
+  },
+  "freeze": {
+    "title": "Final pass",
+    "body": "The final pass copies what changed since the seed and overwrites objects that differ. Writes made to the source after this pass are NOT copied.",
+    "confirm": "I stopped the writers: writes after this pass are not copied",
+    "removeExtraneous": "Also delete destination objects that are not on the source (mc --remove)",
+    "removeWarning": "This deletes objects on the destination. It is off by default.",
+    "start": "Start final pass"
+  },
+  "verify": {
+    "title": "Verification",
+    "keysSizesOnly": "Compares keys and sizes (mc diff). It is not a content-hash check.",
+    "missing": "Missing on the destination: {n}",
+    "differ": "Different: {n}",
+    "extra": "Extra on the destination: {n}",
+    "ok": "Keys and sizes match",
+    "notRun": "Not verified yet"
+  },
+  "config": {
+    "title": "Bucket settings",
+    "carry": "Apply to destination",
+    "carrying": "Applying...",
+    "notCarried": "Anonymous policy, lifecycle rules and tags are exported from the source and can be applied after the data. IAM users, replication and notifications are not carried.",
+    "policy": "policy",
+    "lifecycle": "lifecycle",
+    "tags": "tags",
+    "applied": "applied",
+    "failed": "failed",
+    "none": "nothing to carry"
+  },
+  "cutover": {
+    "title": "Cutover checklist",
+    "steps": {
+      "stop": "Stop the writers to the bucket on the old side (Tugra cannot stop Coolify apps).",
+      "final": "Run the final pass.",
+      "verify": "Verify.",
+      "endpoint": "Set the new endpoint in the apps (the env remap lists values that still point at the old service).",
+      "start": "Start the apps on Tugra."
+    }
+  },
+  "status": {
+    "DRAFT": "Draft",
+    "PREFLIGHTED": "Checked",
+    "SEEDING": "Seeding",
+    "SEEDED": "Seeded",
+    "FINALIZING": "Final pass",
+    "FINAL": "Final pass done",
+    "VERIFYING": "Verifying",
+    "DONE": "Done",
+    "FAILED": "Failed"
+  },
+  "bucketStatus": {
+    "PENDING": "Pending",
+    "QUEUED": "Queued",
+    "SEEDING": "Seeding",
+    "SEEDED": "Seeded",
+    "FINALIZING": "Final pass",
+    "FINAL": "Final pass done",
+    "VERIFIED": "Verified",
+    "DIFFERS": "Differs",
+    "FAILED": "Failed"
+  },
+  "error": {
+    "access-denied": "Access denied by one of the endpoints.",
+    "no-such-bucket": "A bucket does not exist.",
+    "unreachable": "An endpoint could not be reached.",
+    "signature": "The credentials were rejected (signature mismatch).",
+    "quota": "The destination is out of space or quota.",
+    "timeout": "The copy timed out.",
+    "run-failed": "The copy could not be started.",
+    "mirror-failed": "The copy failed.",
+    "mirror-errors": "The copy finished with errors.",
+    "helper-missing": "The copy helper disappeared and could not be restarted.",
+    "verify-failed": "Verification could not complete.",
+    "agent-offline": "The agent is offline."
+  },
+  "delete": "Delete",
+  "deleteConfirm": "Delete this migration and its stored credentials? The copied data stays on the destination.",
+  "deleted": "Migration deleted",
+  "migrateObjects": "Migrate objects",
+  "migrateObjectsHint": "MinIO object data is not copied by the import. Use Object migration.",
+  "noServers": "No server available for this team.",
+  "readOnly": "You can view this migration but not change it.",
+  "back": "Object migrations",
+  "loading": "Loading...",
+  "notFound": "Migration not found."
+}

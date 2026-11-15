@@ -21,6 +21,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   host-port reallocation; before, the list was always empty. If the ports cannot be listed the preflight fails with
   `probe_failed` instead of assuming none are in use. The probe still never pulls an image. Unknown device ids are
   sized as one shared disk (the stricter rule).
+- **Changed (behaviour): Coolify imports are strict about environment variables.** The plan now reports, per app and by
+  NAME only (never a value), the variables an import cannot carry: unresolved or unexpanded shared variables, Coolify
+  magic variables, and names that are not valid environment keys. Each is a blocker you can acknowledge (per app, or
+  all at once) to create the app WITHOUT those variables; until then the app is not imported. A Coolify API token that
+  cannot read variable values (no `read:sensitive`) is one non-acknowledgeable blocker per app instead of silently
+  importing apps with missing variables. Preview-environment variables are counted and listed as not imported. The apply
+  request takes an optional `acks` list (existing API, CLI and MCP callers that omit it now see these blockers; the
+  acknowledgement is the escape hatch). Dokploy and local imports are unchanged. An env value that still points at an old
+  Coolify service host (for example MinIO) is now listed for review in the env-remap preview instead of staying silently
+  unchanged.
+- **Changed (behaviour): imported git apps are linked by repository visibility.** The old rule "link when the team has
+  exactly one installed GitHub source" is gone: it could link an App that cannot see the repository. Each git app is now
+  matched against the connected GitHub Apps (and Gitea/Forgejo/Codeberg tokens) that can actually see its repo, keyed by
+  the repo URL host, so https repositories link too. Zero or several matches leave the app unlinked and listed (recoverable
+  with Link now / `POST /import/operations/:opId/git-links/relink`). SSH repositories that a connected GitHub App covers are
+  created as their https twin; the others keep their generated deploy key, whose public key is shown on the import
+  timeline. New: `POST /import/git-links` (preview before apply), the "connect GitHub once, link N apps" panel, a `git.hosts`
+  list in the import preflight (GitLab/Bitbucket hosts are reported as unsupported, never linked) and `tugra import git-links`.
+- **Object migration (MinIO / S3).** New `Object migration` screens, API (`/object-migrations`) and `tugra objects` commands
+  mirror buckets between two S3-compatible stores. The TARGET server's agent runs `mc mirror` in a detached helper
+  container of its own image (the pinned, sha256-verified `mc` release is now vendored into the agent image; see NOTICE),
+  so the data never passes through the hub. Seed is live and copies missing keys only; the final pass (after you stop the
+  writers, with an explicit acknowledgement) overwrites changes, and deleting extra destination objects is off by default
+  behind its own acknowledgement. Verification compares keys and sizes (`mc diff`); it is not a content-hash check.
+  Object versions, IAM users and keys, replication, notifications, SSE keys and object lock are not carried.
 - **Dependencies.** The glob override moved to 14 (minimatch 11), clearing two dev-tooling advisories (minimatch
   GHSA-g3hv-75wg-m249, glob GHSA-3g3m-2fjr-6pw4). The vite lock was refreshed to 8.3.8. No runtime behaviour change.
 - **Updater.** The pre-update restore point now refuses to start when the backup directory clearly lacks free space for

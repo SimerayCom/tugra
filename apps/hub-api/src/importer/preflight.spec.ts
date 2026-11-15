@@ -125,11 +125,13 @@ describe("buildPreflight — MinIO services point at Object migration (everythin
   it("a service with templateSlug minio, or a minio/minio image in its compose file, gets the Object migration note", () => {
     const p = buildPreflight(fleet({ services: [svc({ name: "simeray-storage", templateSlug: "minio" }), svc({ name: "storage-xcinex", composeFile: "services:\n  minio:\n    image: minio/minio:RELEASE.2025\n" })] }), o);
     for (const s of p.services) expect(s.note).toMatch(/^object data is not copied by this import - use Object migration/);
+    expect(p.services.every((s) => s.objectStore === true)).toBe(true);
     expect(p.services[0].note).toMatch(/not versions, IAM users, replication or notifications/);
   });
 
   it("every other service keeps the existing note byte-identical", () => {
     const p = buildPreflight(fleet({ services: [svc({ name: "plausible", templateSlug: "plausible" }), svc({ name: "nope", composeFile: "services: { web: { image: nginx } }" }), svc({ name: "minio-like", templateSlug: "minio-console-proxy" })] }), o);
     expect(p.services.map((s) => s.note)).toEqual([OTHER, OTHER, OTHER]);
+    for (const s of p.services) expect(s).not.toHaveProperty("objectStore"); // the key is absent, not false
   });
 });

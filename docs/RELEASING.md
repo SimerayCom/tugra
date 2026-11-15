@@ -42,7 +42,7 @@ applying an update. The pipeline lives in [`.github/workflows/release.yml`](../.
    `min_upgrade_from` (the minimum version required to upgrade directly to this release).
 4. The workflow:
    - builds + pushes `ghcr.io/simeraycom/tugra-{hub,web,agent,updater}:<version>` (and `:latest` for stable).
-     The **agent is multi-arch** (`linux/amd64,linux/arm64`); hub/web/updater are `amd64`. Each image carries
+     The **agent is multi-arch** (`linux/amd64,linux/arm64`); hub/web/updater are `amd64`. The agent image also vendors a pinned, sha256-verified, unmodified MinIO client (`mc`, AGPL-3.0, see `NOTICE`; the pins are `MC_VERSION` / `MC_SHA256` in `apps/hub-api/src/backups/destination.ts` and a jest drift test keeps `deploy/Dockerfile.agent` equal to them). Each image carries
      **two** provenance layers (see [Supply-chain verification](#supply-chain-verification) below):
      - an **unsigned BuildKit SLSA provenance + SPDX SBOM**, attached as OCI attestation manifests in the
        index — inspect with

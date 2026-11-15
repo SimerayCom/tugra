@@ -27,6 +27,9 @@ Two paths, used **together**:
 | **LibSQL** data | **Manual** — it's a single SQLite file; copy the volume (`tar`/`rsync`) |
 | App **volume** data | **Hub-staged upload** — before the first deploy, `tar` one declared app volume on the source and `curl -T` it to the migration volume endpoint (up to ~256 MiB gzip per volume; file ownership is **not** preserved; stop the source app first for a consistent copy). Larger volumes: manual `tar`/`rsync`. The automated one-click volume step is not shipped yet. |
 | `DATABASE_URL` rewrite (apps → new Tugra DB) | **Env remap** step — a preview then a confirm-gated apply (API/CLI: `GET/POST /import/operations/:opId/remap-env`), since the migrated DB gets **fresh** Tugra credentials. Compose/swarm/cross-host apps are flagged needs-manual. |
+| Environment variables | Strict: a variable the import cannot carry (unresolved shared, magic, invalid name, or an API token without `read:sensitive`) is a plan blocker; acknowledge it to create the app without it (see "Strict environment variables" below) |
+| Private git repositories | Linked at apply to the connected GitHub/Gitea source that can see the repo (see "Git links" below) |
+| **MinIO / S3 object data** | **Object migration** (below): `mc mirror` run by the target agent, bucket by bucket |
 | DNS cutover | **Manual** (point your records at the Tugra server) |
 
 ---
@@ -356,3 +359,66 @@ writes are lost:
 - Stateless apps first, then small DBs, then large/critical DBs last. One app + its DB at a time; verify each.
 - Keep Coolify around for at least a few clean days. Never delete anything on Coolify until the Tugra copy has
   served real traffic and backed up successfully.
+
+---
+
+# Strict environment variables
+
+Coolify imports no longer drop variables silently. The plan lists, per app and **by name only** (values never appear in
+the plan, task output, audit or logs), every variable it cannot carry, with a reason:
+
+| Reason | Meaning |
+|---|---|
+| `NO_VALUE` | the API returned no value for the variable |
+| `SHARED_UNEXPANDED` | a shared (`{{team.X}}` / `{{project.X}}` / `{{environment.X}}`) variable that Coolify did not expand |
+| `MAGIC` | a Coolify `SERVICE_*` magic variable |
+| invalid name | not a valid environment key (for example it contains `=` or a space); such a key is skipped |
+
+Each is a **blocker you can acknowledge** (per app, or "Acknowledge all") to create the app **without** those variables; a
+deploy may then fail or misbehave. Preview-environment variables are counted and not imported. If the API token cannot read
+variable values at all (it lacks the `read:sensitive` ability) the plan shows one **non-acknowledgeable** row per app:
+create a token with `read:sensitive` and reconnect. Over the API, `POST /import/apply` takes an optional
+`acks: [{ code: "app.env.unresolved" | "app.env.key.invalid", itemRef? }]` (omitting `itemRef` acknowledges every item
+carrying the code); the applied set is recorded in the operation. Dokploy and local imports are unchanged.
+
+An env value that still points at an old Coolify service host (for example the MinIO service) is listed under
+"review" in the env-remap preview; it is never rewritten automatically. Set the new endpoint after you have migrated that
+service's data.
+
+# Git links
+
+At apply, each git app is linked to the connected source that can actually see its repository (a GitHub App installation, or
+a Gitea / Forgejo / Codeberg token on the same host). The old "exactly one installed source" rule is gone. Use
+`POST /import/git-links` (or the panel before Apply, or `tugra import git-links`) to see the result per owner: **linked**,
+**public** (clones without a source), **needs a source** (connect a GitHub App installed on it, then Re-check), **ambiguous**
+(several sources see it; pick one after import), **SSH deploy key** and **unsupported host**. An SSH GitHub URL that a
+connected App covers is created as its https twin; other SSH repositories keep a generated deploy key and the timeline shows
+its public key. GitLab and Bitbucket are not supported yet: those repositories are created unlinked and the preflight
+`git.hosts` list tells you which hosts your fleet uses. After import, "Link now"
+(`POST /import/operations/:opId/git-links/relink`) links every created app that a source now covers.
+
+# Object migration (MinIO / S3)
+
+A Coolify import does not copy object data. Use **Object migration** (Import page, or `tugra objects`):
+
+1. **Create** with the source endpoint and keys (a read-only key is enough), the destination endpoint and keys, and the
+   target server whose agent runs the copy. For a MinIO on the same host as that agent use
+   `http://host.docker.internal:9100` (its published port). The agent must be able to reach both endpoints. Secret keys are
+   encrypted at rest and never shown again. The agent needs the `backup` capability (the same grant as S3 backups) and an
+   agent image that ships `mc` (update the agent if the preflight says it does not).
+2. **Preflight** lists every source bucket with its real object count and size and exports each bucket's anonymous policy,
+   lifecycle rules and tags. **Nothing is pre-selected**: choose the buckets (a large bucket may just hold backups), optionally
+   rename a destination bucket or add exclude globs.
+3. **Seed** copies live; it never overwrites an existing destination object. At most two helpers run per target server at once.
+4. Stop the writers to the bucket on the old side (Tugra cannot stop Coolify apps), then run the **final pass**: it copies the
+   changes and overwrites objects that differ. Deleting extra destination objects (`mc --remove`) is a separate, off-by-default
+   acknowledgement.
+5. **Verify** runs `mc diff` per selected bucket and compares **keys and sizes**; it is not a content-hash check. The
+   migration is **Done** only when every selected bucket verified clean after a final pass.
+6. Optionally **apply the exported bucket settings** (policy, lifecycle, tags) to the destination.
+7. Set the new endpoint in the apps (the env-remap preview lists values that still point at the old service) and start them.
+
+**Not carried:** object versions, IAM users and access keys, replication, event notifications, SSE keys and object lock.
+Writes made to the source after the final pass are not copied. The copy runs in a detached helper container
+(`--cap-drop ALL`, read-only root, no docker socket or host mount); the credentials live only in its environment, which is
+visible to `docker inspect` on the target host until the helper is removed, exactly like any Tugra app's environment there.

@@ -322,7 +322,7 @@ export interface ImportPreflight {
   databases: Array<{ name: string; engine: string; dataPlane: DbDataPlane; reason: string }>;
   /** Services (compose / one-click stacks) are discovered but NOT imported yet — surfaced here so they are
    *  never a silent drop on the review screen. */
-  services: Array<{ name: string; members: number; note: string }>;
+  services: Array<{ name: string; members: number; note: string; /** A MinIO object store: its data moves through Object migration. */ objectStore?: true }>;
   /** Number of apps that declare a volume whose DATA must be copied (config-only was the old behavior). */
   appsWithVolumeData: number;
   volumeDataNote?: string;

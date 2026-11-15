@@ -18,6 +18,7 @@ import importNs from "./import.json";
 import monitors from "./monitors.json";
 import nav from "./nav.json";
 import notifications from "./notifications.json";
+import objectMigration from "./objectMigration.json";
 import onboarding from "./onboarding.json";
 import patching from "./patching.json";
 import projects from "./projects.json";
@@ -38,6 +39,6 @@ import terminal from "./terminal.json";
 import traffic from "./traffic.json";
 
 // Split into namespace files (this JSON gets large); merged here.
-const en = { apps, audit, auth, backups, bulk, charts, cloudCredentials, secretProviders, clusters, common, dashboard, databases, destinations, domains, errors, feedback, fleet, home, import: importNs, logdrains, monitors, nav, notifications, onboarding, patching, projects, registries, resources, rollouts, servers, settings, sources, shared, tags, teams, templates, terminal, traffic };
+const en = { apps, audit, auth, backups, bulk, charts, cloudCredentials, secretProviders, clusters, common, dashboard, databases, destinations, domains, errors, feedback, fleet, home, import: importNs, logdrains, monitors, nav, notifications, objectMigration, onboarding, patching, projects, registries, resources, rollouts, servers, settings, sources, shared, tags, teams, templates, terminal, traffic };
 
 export default en;

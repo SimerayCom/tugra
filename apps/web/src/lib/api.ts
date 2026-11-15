@@ -107,6 +107,9 @@ import type {
   TeamMember,
   TeamRole,
   ImportAck,
+  ObjectMigrationView,
+  CreateObjectMigrationInput,
+  StartObjectMigrationInput,
   ImportGitLinksView,
   ImportRelinkResult,
   ImportPlan,
@@ -2029,6 +2032,38 @@ export const api = {
   },
   remapEnvUndo(opId: string) {
     return apiFetch<ImportRemapResult>(`/import/operations/${encodeURIComponent(opId)}/remap-env/undo`, { method: "POST" });
+  },
+
+  // ── object (S3/MinIO) migration: mc mirror run by the target server's agent. No response carries a credential. ──
+  listObjectMigrations(teamId?: string) {
+    return apiFetch<ObjectMigrationView[]>(`/object-migrations${teamId ? `?teamId=${encodeURIComponent(teamId)}` : ""}`);
+  },
+  getObjectMigration(id: string) {
+    return apiFetch<ObjectMigrationView>(`/object-migrations/${encodeURIComponent(id)}`);
+  },
+  createObjectMigration(input: CreateObjectMigrationInput) {
+    return apiFetch<ObjectMigrationView>("/object-migrations", { method: "POST", body: JSON.stringify(input) });
+  },
+  preflightObjectMigration(id: string) {
+    return apiFetch<ObjectMigrationView>(`/object-migrations/${encodeURIComponent(id)}/preflight`, { method: "POST" });
+  },
+  setObjectMigrationBuckets(id: string, buckets: Array<{ srcBucket: string; dstBucket?: string; selected: boolean; exclude?: string[] }>) {
+    return apiFetch<ObjectMigrationView>(`/object-migrations/${encodeURIComponent(id)}/buckets`, { method: "PUT", body: JSON.stringify({ buckets }) });
+  },
+  startObjectMigration(id: string, input: StartObjectMigrationInput) {
+    return apiFetch<ObjectMigrationView>(`/object-migrations/${encodeURIComponent(id)}/start`, { method: "POST", body: JSON.stringify(input) });
+  },
+  verifyObjectMigration(id: string) {
+    return apiFetch<ObjectMigrationView>(`/object-migrations/${encodeURIComponent(id)}/verify`, { method: "POST" });
+  },
+  carryObjectMigrationConfig(id: string) {
+    return apiFetch<ObjectMigrationView>(`/object-migrations/${encodeURIComponent(id)}/carry-config`, { method: "POST" });
+  },
+  cancelObjectMigration(id: string) {
+    return apiFetch<ObjectMigrationView>(`/object-migrations/${encodeURIComponent(id)}/cancel`, { method: "POST" });
+  },
+  deleteObjectMigration(id: string) {
+    return apiFetch<{ ok: true }>(`/object-migrations/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
 
   // ── shared variables (team-wide env) ──

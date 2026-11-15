@@ -973,7 +973,7 @@ export interface ImportAck {
 }
 export interface ImportPreflight {
   databases: Array<{ name: string; engine: string; dataPlane: DbDataPlane; reason: string }>;
-  services: Array<{ name: string; members: number; note: string }>;
+  services: Array<{ name: string; members: number; note: string; objectStore?: true }>;
   appsWithVolumeData: number;
   volumeDataNote?: string;
   volumes?: Array<{ app: string; mountPath: string; type?: "named" | "bind"; dataPlane: "hub-staged" | "manual-large" | "manual" | "unknown-size"; reason: string }>;
@@ -2202,4 +2202,70 @@ export interface AppMove {
   plan: Record<string, unknown> | null;
   acks: Record<string, boolean> | null;
   logTail: string | null;
+}
+
+// ── object (S3/MinIO) migration ──
+export type ObjectMigrationStatus = "DRAFT" | "PREFLIGHTED" | "SEEDING" | "SEEDED" | "FINALIZING" | "FINAL" | "VERIFYING" | "DONE" | "FAILED";
+export type ObjectBucketStatus = "PENDING" | "QUEUED" | "SEEDING" | "SEEDED" | "FINALIZING" | "FINAL" | "VERIFIED" | "DIFFERS" | "FAILED";
+export interface ObjectMigrationWarning {
+  code: string;
+  level: "blocker" | "warn" | "info";
+  bucket?: string;
+}
+export interface ObjectBucketView {
+  idx: number;
+  srcBucket: string;
+  dstBucket: string;
+  exclude: string[];
+  selected: boolean;
+  status: ObjectBucketStatus;
+  srcObjects: number | null;
+  srcBytes: number | null;
+  dstObjects: number | null;
+  dstBytes: number | null;
+  doneObjects: number | null;
+  doneBytes: number | null;
+  diffMissing: number | null;
+  diffDiffer: number | null;
+  diffExtra: number | null;
+  versioning: string | null;
+  configSummary: { policy: boolean; lifecycle: boolean; tags: boolean } | null;
+  configStatus: string | null;
+  lastError: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+/** No credentials, ever: endpoints, names, counts and fixed codes only. */
+export interface ObjectMigrationView {
+  id: string;
+  name: string;
+  teamId: string;
+  targetServerId: string;
+  status: ObjectMigrationStatus;
+  phase: "seed" | "final" | null;
+  srcEndpoint: string;
+  dstEndpoint: string;
+  preserve: boolean;
+  removeExtraneous: boolean;
+  mergeIntoExisting: boolean;
+  cancelRequested: boolean;
+  warnings: ObjectMigrationWarning[];
+  buckets: ObjectBucketView[];
+  canWrite: boolean;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+}
+export interface CreateObjectMigrationInput {
+  name: string;
+  targetServerId: string;
+  preserve: boolean;
+  source: { endpoint: string; accessKey: string; secretKey: string };
+  destination: { endpoint: string; accessKey: string; secretKey: string };
+}
+export interface StartObjectMigrationInput {
+  phase: "seed" | "final";
+  acknowledgeWritesFrozen?: boolean;
+  removeExtraneous?: boolean;
+  mergeIntoExisting?: boolean;
 }
