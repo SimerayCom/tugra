@@ -52,7 +52,7 @@ export const REASON_EN: Record<ImportReasonCode, string> = {
   context_path: "Tugra has no separate docker build context (base directory only)",
   static_spa: "Tugra's static builds always serve an SPA fallback",
   replicas: "replicas convert the app to a swarm service — set the replica count explicitly in Tugra after import",
-  domain_dns01: "uses a DNS-01 certificate — needs a DNS-provider credential binding in Tugra; it will use Let's Encrypt HTTP-01 once DNS points here",
+  domain_dns01: "uses a DNS-01 certificate. Tugra imports it as HTTP-01; enable per-host DNS-01 on the app (Domain options) after binding a DNS credential to the server",
   domain_custom_cert: "uses an uploaded certificate — upload it in Tugra (the certificate itself is not carried yet)",
   domain_no_https: "was served without HTTPS — Tugra serves custom domains over HTTPS (Let's Encrypt) and will upgrade it",
   domain_redirect: "redirects to {to} — configure the redirect in Tugra",
