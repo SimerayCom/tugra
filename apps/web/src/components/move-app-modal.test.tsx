@@ -160,6 +160,30 @@ describe("MoveAppModal", () => {
     expect(toast).toHaveBeenCalledWith("The move has started.", "success");
   });
 
+  it("acknowledgements ticked for one target do not follow the operator to another target; the SAME target keeps them", async () => {
+    vi.spyOn(api, "listServers").mockResolvedValue([...SERVERS, { id: "s4", name: "delta", status: "ONLINE", teamId: "t1" } as unknown as ServerView]);
+    preview.mockResolvedValue(result({ ok: false, blockers: [{ code: "domain_changes", message: "", ack: true }], requiredAcks: ["domainChanges"] }));
+    show();
+    await pickTargetAndContinue("s2");
+    await screen.findByText("What will happen");
+    const label = "I understand the app's domain(s) change or must be pointed at the new server.";
+    fireEvent.click(screen.getByLabelText(label));
+    expect((screen.getByLabelText(label) as HTMLInputElement).checked).toBe(true);
+    // Back, and choose the same target again: the tick is still there
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.change(screen.getByLabelText("Target server"), { target: { value: "s2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByText("What will happen");
+    expect((screen.getByLabelText(label) as HTMLInputElement).checked).toBe(true);
+    // Back, and choose ANOTHER target: its review starts with nothing acknowledged and Continue is locked
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.change(screen.getByLabelText("Target server"), { target: { value: "s4" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByText("What will happen");
+    expect((screen.getByLabelText(label) as HTMLInputElement).checked).toBe(false);
+    expect(screen.getByRole("button", { name: "Continue" })).toHaveProperty("disabled", true);
+  });
+
   it("options: repoint DNS and the archive retention are sent", async () => {
     show();
     await pickTargetAndContinue();

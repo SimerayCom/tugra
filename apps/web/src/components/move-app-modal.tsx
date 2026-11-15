@@ -86,6 +86,18 @@ export function MoveAppModal({
     },
   });
 
+  /** Acknowledgements, the DNS choice and the typed name are consequences of ONE target: choosing a different one starts
+   *  them over, so a box ticked for target A is never silently carried into B's review. The same target (Back, then
+   *  Continue; Recheck; a 409's fresh result) keeps them. */
+  const pickTarget = (id: string): void => {
+    if (id === targetId) return;
+    setTargetId(id);
+    setResult(undefined);
+    setAcks({});
+    setRepointDns(false);
+    setTyped("");
+  };
+
   const target = choices.find((c) => c.value === targetId);
   const split = result ? splitBlockers(result) : undefined;
   const ready = canContinue(result, acks as never);
@@ -112,7 +124,7 @@ export function MoveAppModal({
           ) : (
             <label style={{ display: "block", marginBottom: 12 }}>
               <span style={{ display: "block", fontSize: 12, color: "var(--c-tx2)", marginBottom: 6 }}>{t("apps.movePickTarget")}</span>
-              <select aria-label={t("apps.movePickTarget")} value={targetId} onChange={(e) => setTargetId(e.target.value)} style={fieldStyle}>
+              <select aria-label={t("apps.movePickTarget")} value={targetId} onChange={(e) => pickTarget(e.target.value)} style={fieldStyle}>
                 <option value="" disabled>{t("common.select")}</option>
                 {choices.map((c) => (
                   <option key={c.value} value={c.value} disabled={c.disabled}>{c.label}</option>
