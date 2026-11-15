@@ -5,6 +5,7 @@ import React from "react";
 import { I18nProvider } from "../../../i18n/provider";
 import { ConfirmProvider } from "../../../components/confirm";
 import { api } from "../../../lib/api";
+import { subscribeToast } from "../../../lib/toast-bus";
 import NotificationsPage from "./page";
 
 afterEach(cleanup);
@@ -138,5 +139,26 @@ describe("NotificationsPage — rich provider config fields", () => {
     expect(createSpy).toHaveBeenCalledWith(
       expect.objectContaining({ type: "webhook", config: expect.objectContaining({ headers: { "X-Api-Key": "abc123" } }) }),
     );
+  });
+});
+
+describe("NotificationsPage — channel test feedback", () => {
+  beforeEach(() => {
+    qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    vi.spyOn(api, "listTeams").mockResolvedValue([{ id: "t1", name: "Team", role: "OWNER" }] as never);
+    vi.spyOn(api, "listChannelEvents").mockResolvedValue({ events: ["deploy_failed"] });
+    vi.spyOn(api, "listChannels").mockResolvedValue([{ id: "c1", name: "Ops Slack", type: "slack", teamId: "t1", enabled: true, canWrite: true, eventTypes: ["deploy_failed"] }] as never);
+    vi.spyOn(api, "listDeliveries").mockResolvedValue([] as never);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("names the channel in the success toast after Test", async () => {
+    vi.spyOn(api, "testChannel").mockResolvedValue({ ok: true } as never);
+    const toasts: string[] = [];
+    const off = subscribeToast((x) => toasts.push(x.message));
+    wrap(<NotificationsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Test" }));
+    await waitFor(() => expect(toasts).toContain("Test sent to Ops Slack"));
+    off();
   });
 });

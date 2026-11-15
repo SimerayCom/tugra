@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { BackupRunModal } from "../../../../components/backup-run-modal";
 import { useConfirm } from "../../../../components/confirm";
+import { useToast } from "../../../../components/toast";
 import { BackupPolicyCard } from "../../../../components/backups/backup-policy-card";
 import { VolumePolicyTable } from "../../../../components/backups/volume-policy-table";
 import { scheduleFromFields, scheduleToFields, type ScheduleValue } from "../../../../components/backups/schedule-field";
@@ -113,6 +114,7 @@ export function VolumeBackupsCard({ id, volumes }: { id: string; volumes: AppVol
   const t = useT();
   const qc = useQueryClient();
   const confirm = useConfirm();
+  const toast = useToast();
   const { data: backups = [] } = useQuery({ queryKey: ["volBackups", id], queryFn: () => api.listVolumeBackups(id), refetchInterval: 5000 });
   const { data: destinations = [] } = useQuery({ queryKey: ["destinations"], queryFn: () => api.listDestinations() });
   // The schedule/retention/policies/usage come from GET volume-backups/config (not the Application view).
@@ -134,8 +136,29 @@ export function VolumeBackupsCard({ id, volumes }: { id: string; volumes: AppVol
     setDest(cfg.destinationId ?? "");
   }, [cfg, id]);
   const invalidate = () => qc.invalidateQueries({ queryKey: ["volBackups", id] });
-  const backupNow = useMutation({ mutationFn: () => api.volumeBackupNow(id), onSuccess: invalidate });
-  const restore = useMutation({ mutationFn: (bid: string) => api.restoreVolumeBackup(id, bid) });
+  // The backup call returns once the run has finished, so the toast reports the outcome (a FAILED run is not an HTTP error).
+  const backupNow = useMutation({
+    mutationFn: () => api.volumeBackupNow(id),
+    onSuccess: (runs) => {
+      invalidate();
+      if (runs.some((r) => r.status === "FAILED")) toast(t("apps.volBackupFailed"), "error");
+      else toast(t("apps.volBackupDone"), "success");
+    },
+  });
+  // Restore overwrites the volume and only returns when the agent is done: announce the start, then the end, and
+  // keep every Restore button locked while it runs so a second click can never fire a second overwrite.
+  const restore = useMutation({
+    mutationFn: (bid: string) => api.restoreVolumeBackup(id, bid),
+    onMutate: () => { toast(t("apps.volRestoreStarted"), "info"); },
+    onSuccess: () => toast(t("apps.volRestoreDone"), "success"),
+    onSettled: invalidate,
+  });
+  const restoreBackup = async (bid: string) => {
+    if (restore.isPending) return;
+    if (!(await confirm({ body: t("apps.volRestoreConfirm"), danger: true }))) return;
+    if (restore.isPending) return; // a second confirm may have resolved while the first restore was already running
+    restore.mutate(bid);
+  };
   const del = useMutation({ mutationFn: (bid: string) => api.deleteVolumeBackup(id, bid), onSuccess: invalidate });
   // Migrator export: a presigned migration URL for an S3 backup (feed it to import-from-URL elsewhere).
   const [exported, setExported] = useState<{ id: string; url: string } | null>(null);
@@ -263,8 +286,13 @@ export function VolumeBackupsCard({ id, volumes }: { id: string; volumes: AppVol
                   {exportUrl.isPending && exportUrl.variables === b.id ? "…" : t("apps.volExportUrl")}
                 </button>
               )}
-              <button onClick={async () => { if (await confirm({ body: t("apps.volRestoreConfirm"), danger: true })) restore.mutate(b.id); }} style={{ background: "transparent", border: "none", color: "var(--c-lapis)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
-                {t("databases.restore")}
+              <button
+                onClick={() => void restoreBackup(b.id)}
+                disabled={restore.isPending}
+                aria-busy={restore.isPending && restore.variables === b.id}
+                style={{ background: "transparent", border: "none", color: "var(--c-lapis)", fontSize: 12, cursor: restore.isPending ? "default" : "pointer", opacity: restore.isPending && restore.variables !== b.id ? 0.5 : 1, fontFamily: "inherit" }}
+              >
+                {restore.isPending && restore.variables === b.id ? t("apps.volRestoring") : t("databases.restore")}
               </button>
               <button aria-label={t("common.delete")} onClick={async () => { if (await confirm({ body: t("common.deleteNamedConfirm", { name: new Date(b.createdAt).toLocaleString() }), danger: true })) del.mutate(b.id); }} style={{ background: "transparent", border: "none", color: "var(--c-r)", cursor: "pointer", fontFamily: "inherit", display: "inline-flex", alignItems: "center" }}><X size={14} /></button>
             </div>

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useT } from "../i18n/provider";
+import { useToast } from "./toast";
 
 /**
  * Per-app switch: issue the custom domain's certificate with DNS-01 instead of HTTP-01. It needs DNS-01
@@ -13,6 +14,7 @@ import { useT } from "../i18n/provider";
 export function DnsChallengeToggle({ appId, serverId, dnsChallenge }: { appId: string; serverId: string; dnsChallenge: boolean }) {
   const t = useT();
   const qc = useQueryClient();
+  const toast = useToast();
   const [on, setOn] = useState(dnsChallenge);
   useEffect(() => setOn(dnsChallenge), [dnsChallenge]);
   const { data: server, isLoading } = useQuery({ queryKey: ["server", serverId], queryFn: () => api.getServer(serverId) });
@@ -21,6 +23,7 @@ export function DnsChallengeToggle({ appId, serverId, dnsChallenge }: { appId: s
     mutationFn: (next: boolean) => api.setAppDomainOptions(appId, { dnsChallenge: next }),
     onSuccess: (_r, next) => {
       setOn(next);
+      toast(t(next ? "apps.domainDnsChallenge.enabledToast" : "apps.domainDnsChallenge.disabledToast"), "success");
       void qc.invalidateQueries({ queryKey: ["app", appId] });
     },
   });

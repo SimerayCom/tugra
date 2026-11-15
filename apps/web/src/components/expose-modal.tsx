@@ -66,7 +66,8 @@ export function ExposeModal({
   const tunnelReady = !!tunnelQ.data?.configured && tunnelQ.data.status === "connected";
   const setTunnel = useMutation({
     mutationFn: (exposed: boolean) => api.setAppTunnel(appId, exposed),
-    onSuccess: () => {
+    onSuccess: (_r, exposed) => {
+      toast(t(exposed ? "apps.tunnelExposedOn" : "apps.tunnelExposedOff"), "success");
       qc.invalidateQueries({ queryKey: ["app", appId] });
       qc.invalidateQueries({ queryKey: ["apps"] });
     },

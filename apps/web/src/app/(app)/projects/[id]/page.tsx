@@ -39,6 +39,7 @@ export default function ProjectDetailPage() {
   const qc = useQueryClient();
   const router = useRouter();
   const confirm = useConfirm();
+  const toast = useToast();
 
   const { data: project, isLoading, isError, refetch } = useQuery({ queryKey: ["project", id], queryFn: () => api.getProject(id) });
   const invalidate = () => qc.invalidateQueries({ queryKey: ["project", id] });
@@ -50,7 +51,7 @@ export default function ProjectDetailPage() {
   });
   const del = useMutation({
     mutationFn: () => api.deleteProject(id),
-    onSuccess: () => router.replace("/projects"),
+    onSuccess: () => { router.replace("/projects"); toast(t("common.deletedNamed", { name: project?.name ?? "" }), "success"); },
   });
   const [renaming, setRenaming] = useState(false);
   const [rname, setRname] = useState("");

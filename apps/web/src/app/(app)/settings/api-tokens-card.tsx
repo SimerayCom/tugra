@@ -7,6 +7,7 @@ import { api } from "../../../lib/api";
 import type { ApiTokenScope } from "../../../lib/types";
 import { useAuth } from "../../../lib/auth";
 import { useT } from "../../../i18n/provider";
+import { useToast } from "../../../components/toast";
 import { Badge, Btn, Card, EmptyState } from "../../../components/ui";
 import { tokenExpiry } from "../../../lib/api-token-expiry";
 import type { ApiToken } from "../../../lib/types";
@@ -25,6 +26,7 @@ const SCOPE_OPTIONS: { key: ApiTokenScope; stem: string; ownerOnly: boolean }[] 
 
 export function ApiTokensCard() {
   const t = useT();
+  const toast = useToast();
   const confirm = useConfirm();
   const qc = useQueryClient();
   const { user } = useAuth();
@@ -59,7 +61,10 @@ export function ApiTokensCard() {
   });
   const revoke = useMutation({
     mutationFn: (id: string) => api.deleteApiToken(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["apiTokens"] }),
+    onSuccess: (_r, id) => {
+      void qc.invalidateQueries({ queryKey: ["apiTokens"] });
+      toast(t("common.revokedNamed", { name: tokens.find((tk) => tk.id === id)?.name ?? "" }), "success");
+    },
   });
 
   const rename = useMutation({

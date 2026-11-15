@@ -69,18 +69,30 @@ export function CutoverPanel({ opId }: { opId: string }) {
   const init = useMutation({ mutationFn: () => api.cutoverInit(opId, credId ? { dnsCredentialId: credId } : {}), onSuccess: setView });
   const prepare = useMutation({
     mutationFn: (hostnames: string[]) => api.cutoverCertPrepare(opId, { hostnames, challenge }),
-    onSuccess: (r) => { setBlocked(r.blocked); setView(r.view); },
+    onSuccess: (r, hostnames) => {
+      setBlocked(r.blocked);
+      setView(r.view);
+      toast(t("cutover.done.prepare", { ready: Math.max(0, hostnames.length - r.blocked.length), blocked: r.blocked.length }), "success");
+    },
   });
   const check = useMutation({
     mutationFn: (hostnames: string[]) => api.cutoverCheck(opId, { hostnames, probeVia, ...(healthPath.trim() ? { healthPath: healthPath.trim() } : {}) }),
-    onSuccess: setView,
+    onSuccess: (v, hostnames) => {
+      setView(v);
+      const checked = v.entries.filter((e) => hostnames.includes(e.hostname));
+      const blockedCount = checked.filter((e) => e.state === "BLOCKED" || e.state === "CONFLICT").length;
+      toast(t("cutover.done.check", { ready: checked.filter((e) => e.state === "READY").length, blocked: blockedCount }), "success");
+    },
   });
   const ttl = useMutation({
     mutationFn: (hostnames: string[]) => api.cutoverTtl(opId, { hostnames }),
-    onSuccess: (r) => { setGuidance(r.guidance); setView(r.view); },
+    onSuccess: (r) => { setGuidance(r.guidance); setView(r.view); toast(t("cutover.done.ttl", { count: r.guidance.length }), "success"); },
   });
   const cancel = useMutation({ mutationFn: () => api.cutoverCancel(opId), onSuccess: setView });
-  const finalize = useMutation({ mutationFn: (hostnames: string[]) => api.cutoverFinalize(opId, { hostnames }), onSuccess: setView });
+  const finalize = useMutation({
+    mutationFn: (hostnames: string[]) => api.cutoverFinalize(opId, { hostnames }),
+    onSuccess: (v, hostnames) => { setView(v); toast(t("cutover.done.finalize", { count: hostnames.length }), "success"); },
+  });
   const exclude = useMutation({ mutationFn: (v: { hostnames: string[]; excluded: boolean }) => api.cutoverExclude(opId, v), onSuccess: setView });
   const fix = useMutation({ mutationFn: (v: { applicationId: string; direction: "root" | "www" }) => api.cutoverFixCounterpart(opId, v), onSuccess: setView });
   const seed = useMutation({
@@ -174,20 +186,20 @@ export function CutoverPanel({ opId }: { opId: string }) {
                 <option value="dns01">{t("cutover.challenge.dns01")}</option>
                 <option value="http01">{t("cutover.challenge.http01")}</option>
               </select>
-              <Btn onClick={() => prepare.mutate(all)} disabled={busy || running || all.length === 0}>{t("cutover.action.prepareCerts")}</Btn>
+              <Btn onClick={() => prepare.mutate(all)} loading={prepare.isPending} disabled={busy || running || all.length === 0}>{t("cutover.action.prepareCerts")}</Btn>
               <select aria-label={t("cutover.probe.label")} value={probeVia} onChange={(e) => setProbeVia(e.target.value as "hub" | "agent")} style={{ ...field, width: "auto" }}>
                 <option value="hub">{t("cutover.probe.viaHub")}</option>
                 <option value="agent">{t("cutover.probe.viaAgent")}</option>
               </select>
               <input aria-label={t("cutover.probe.healthPath")} placeholder={t("cutover.probe.healthPathPlaceholder")} value={healthPath} onChange={(e) => setHealthPath(e.target.value)} style={{ ...field, width: 150 }} spellCheck={false} autoComplete="off" />
-              <Btn onClick={() => check.mutate(all)} disabled={busy || all.length === 0}>{t("cutover.action.check")}</Btn>
-              <Btn variant="ghost" onClick={() => ttl.mutate(all)} disabled={busy || all.length === 0}>{t("cutover.action.lowerTtl")}</Btn>
+              <Btn onClick={() => check.mutate(all)} loading={check.isPending} disabled={busy || all.length === 0}>{t("cutover.action.check")}</Btn>
+              <Btn variant="ghost" onClick={() => ttl.mutate(all)} loading={ttl.isPending} disabled={busy || all.length === 0}>{t("cutover.action.lowerTtl")}</Btn>
             </div>
             {probeVia === "agent" && <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: 0 }}>{t("cutover.probe.agentNote")}</p>}
             <div style={bar}>
               <Btn onClick={() => setFlipHosts(flippable)} disabled={busy || running || flippable.length === 0}>{t("cutover.action.planFlip")}</Btn>
               {running && <Btn variant="danger" onClick={() => cancel.mutate()} disabled={cancel.isPending}>{t("cutover.action.cancel")}</Btn>}
-              <Btn variant="ghost" onClick={() => finalize.mutate(finalizable)} disabled={busy || running || finalizable.length === 0}>{t("cutover.action.finalize")}</Btn>
+              <Btn variant="ghost" onClick={() => finalize.mutate(finalizable)} loading={finalize.isPending} disabled={busy || running || finalizable.length === 0}>{t("cutover.action.finalize")}</Btn>
               <Btn variant="dangerGhost" onClick={() => setRevertHosts(revertible)} disabled={busy || running || revertible.length === 0}>{t("cutover.action.revert")}</Btn>
               <Btn variant="ghost" onClick={() => exclude.mutate({ hostnames: excludable, excluded: true })} disabled={busy || running || excludable.length === 0}>{t("cutover.action.exclude")}</Btn>
               <Btn variant="ghost" onClick={() => exclude.mutate({ hostnames: includable, excluded: false })} disabled={busy || running || includable.length === 0}>{t("cutover.action.include")}</Btn>

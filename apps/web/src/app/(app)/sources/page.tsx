@@ -6,6 +6,7 @@ import { GitBranch, Trash2 } from "lucide-react";
 import { api } from "../../../lib/api";
 import type { GitSource, SourceRepo } from "../../../lib/types";
 import { useT } from "../../../i18n/provider";
+import { useToast } from "../../../components/toast";
 import { sourceKindLabel } from "../../../lib/source-kind";
 import { Badge, Btn, Card, EmptyState, Spinner } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
@@ -15,6 +16,7 @@ import { Field, Select, TextInput } from "../../../components/form";
 
 export default function SourcesPage() {
   const t = useT();
+  const toast = useToast();
   const qc = useQueryClient();
   const confirm = useConfirm();
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
@@ -35,7 +37,10 @@ export default function SourcesPage() {
     mutationFn: () => api.createGitSource({ name, teamId: activeTeam, appId, privateKey, installationId: installationId || undefined, webhookSecret: webhookSecret || undefined }),
     onSuccess: () => { setName(""); setAppId(""); setInstallationId(""); setPrivateKey(""); setWebhookSecret(""); invalidate(); },
   });
-  const del = useMutation({ mutationFn: (id: string) => api.deleteGitSource(id), onSuccess: invalidate });
+  const del = useMutation({
+    mutationFn: (id: string) => api.deleteGitSource(id),
+    onSuccess: (_r, id) => { invalidate(); toast(t("common.deletedNamed", { name: sources.find((s) => s.id === id)?.name ?? "" }), "success"); },
+  });
 
   // Gitea / Forgejo / Codeberg (token) form. The token is write-only: it is cleared right after a successful save.
   const [tKind, setTKind] = useState<"gitea" | "forgejo" | "codeberg">("gitea");

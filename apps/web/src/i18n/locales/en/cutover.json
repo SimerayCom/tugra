@@ -151,6 +151,12 @@
     "status": "Flip run {status} · {done} batch(es) done"
   },
   "prepare": { "blocked": "{count} host(s) could not be prepared" },
+  "done": {
+    "prepare": "Certificates prepared: {ready} ready, {blocked} blocked",
+    "check": "Check complete: {ready} ready, {blocked} blocked",
+    "ttl": "TTL lowered for {count} host(s)",
+    "finalize": "{count} host(s) finalized"
+  },
   "seed": {
     "title": "Apply staged certificates",
     "body": "Staged certificates from the migration are applied to the server's proxy, which restarts for a few seconds and briefly drops ingress for every app on that server. Continue?",

@@ -103,7 +103,15 @@ export default function DatabaseDetailPage() {
     keepVolume.current = false;
     if (await confirm({ title: t("databases.delete"), body: t("databases.deleteConfirm"), danger: true, confirmText: db.name, checkbox: { label: t("databases.keepVolume"), ref: keepVolume } })) del.mutate();
   };
-  const backupNow = useMutation({ mutationFn: () => api.backupNow(id), onSuccess: invalidateBackups, onError: (e) => toast(errMsg(e), "error") });
+  // backupNow returns once the run has finished: report the outcome (a FAILED run is a 201, not an HTTP error).
+  const backupNow = useMutation({
+    mutationFn: () => api.backupNow(id),
+    onSuccess: (b) => {
+      invalidateBackups();
+      toast(b.status === "FAILED" ? t("databases.backupFailedToast") : t("databases.backupDone"), b.status === "FAILED" ? "error" : "success");
+    },
+    onError: (e) => toast(errMsg(e), "error"),
+  });
   // Restore-verify drill: provisions a throwaway, restores the latest backup into it, attests the result. A
   // SUCCESS proves the backup restores; a FAILED attestation (the drill ran, the backup is bad) is surfaced as
   // an error toast, while an offline agent / no-backup surfaces via errMsg.
@@ -195,6 +203,7 @@ export default function DatabaseDetailPage() {
       });
     },
     onSuccess: invalidate,
+    meta: { successMessage: t("databases.backupPolicySaved") },
   });
   const saveVerify = useMutation({
     mutationFn: () =>

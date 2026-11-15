@@ -5,6 +5,7 @@ import React from "react";
 import { I18nProvider } from "../i18n/provider";
 import { DnsChallengeToggle } from "./dns-challenge-toggle";
 import { api } from "../lib/api";
+import { subscribeToast } from "../lib/toast-bus";
 
 afterEach(cleanup);
 
@@ -38,6 +39,19 @@ describe("DnsChallengeToggle", () => {
     fireEvent.click(box);
     await waitFor(() => expect(set).toHaveBeenCalledWith("a1", { dnsChallenge: true }));
     await waitFor(() => expect(box).toBeChecked());
+  });
+
+  it("toasts that the change applies on the next deploy", async () => {
+    vi.spyOn(api, "getServer").mockResolvedValue({ id: "s1", hasDnsCreds: true, dnsCredentialId: null } as never);
+    vi.spyOn(api, "setAppDomainOptions").mockResolvedValue({ ok: true });
+    const toasts: string[] = [];
+    const off = subscribeToast((x) => toasts.push(x.message));
+    mount();
+    const box = await screen.findByRole("checkbox", { name: /Issue the certificate with DNS-01/ });
+    await waitFor(() => expect(box).toBeEnabled());
+    fireEvent.click(box);
+    await waitFor(() => expect(toasts).toContain("DNS-01 enabled — applies on the next deploy"));
+    off();
   });
 
   it("surfaces the hub's 400 message and leaves the switch off", async () => {

@@ -8,6 +8,7 @@ import { useTeamScope } from "../../../components/team-scope";
 import { scopeByTeam, defaultTeamId } from "../../../lib/team-scope";
 import { IconBtn } from "../../../components/icon-btn";
 import { useConfirm } from "../../../components/confirm";
+import { useToast } from "../../../components/toast";
 import { useT } from "../../../i18n/provider";
 import { Badge, Btn, Card, EmptyState, Spinner } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
@@ -84,6 +85,7 @@ export default function NotificationsPage() {
   const t = useT();
   const qc = useQueryClient();
   const confirm = useConfirm();
+  const toast = useToast();
   const { teamId: scope } = useTeamScope();
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
   const { data: channels = [], isLoading, isError, refetch } = useQuery({ queryKey: ["channels"], queryFn: () => api.listChannels() });
@@ -126,7 +128,10 @@ export default function NotificationsPage() {
     mutationFn: () => api.createChannel({ name, type, teamId: target, config: buildConfig(), eventTypes: events }),
     onSuccess: () => { setName(""); setConfig({}); setSecure(false); setHeaders([]); setCreateTeam(""); invalidate(); },
   });
-  const test = useMutation({ mutationFn: (id: string) => api.testChannel(id) });
+  const test = useMutation({
+    mutationFn: (id: string) => api.testChannel(id),
+    onSuccess: (_r, id) => toast(t("notifications.testSentTo", { name: channels.find((c) => c.id === id)?.name ?? "" }), "success"),
+  });
   const del = useMutation({ mutationFn: (id: string) => api.deleteChannel(id), onSuccess: invalidate });
   const toggle = useMutation({
     mutationFn: (c: { id: string; enabled: boolean }) => api.updateChannel(c.id, { enabled: c.enabled }),
@@ -192,8 +197,8 @@ export default function NotificationsPage() {
               </div>
               {c.canWrite && (
                 <>
-                  <Btn variant="ghost" onClick={() => test.mutate(c.id)} disabled={test.isPending}>
-                    {test.isPending ? "…" : t("notifications.test")}
+                  <Btn variant="ghost" onClick={() => test.mutate(c.id)} loading={test.isPending && test.variables === c.id} disabled={test.isPending}>
+                    {test.isPending && test.variables === c.id ? "…" : t("notifications.test")}
                   </Btn>
                   <IconBtn label={t("notifications.editName")} onClick={() => { setRName(c.name); setRenamingId(renamingId === c.id ? null : c.id); }}><Pencil size={15} /></IconBtn>
                   <IconBtn label={t("notifications.delete")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(c.id); }}><Trash2 size={15} /></IconBtn>
@@ -204,7 +209,6 @@ export default function NotificationsPage() {
           ))}
         </div>
       )}
-      {test.isSuccess && <div style={{ fontSize: 12, color: "var(--c-g)", marginBottom: 12 }}>{t("notifications.testSent")}</div>}
       {test.isError && <div style={{ fontSize: 12, color: "var(--c-r)", marginBottom: 12 }}>{t("notifications.testFailed")}: {(test.error as Error).message}</div>}
 
       {canCreate && (

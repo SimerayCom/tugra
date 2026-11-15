@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Package, Pencil, Trash2 } from "lucide-react";
 import { api } from "../../../lib/api";
 import { useT } from "../../../i18n/provider";
+import { useToast } from "../../../components/toast";
 import { Badge, Btn, Card, EmptyState, Spinner } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
 import { IconBtn } from "../../../components/icon-btn";
@@ -15,6 +16,7 @@ const TYPES = ["dockerhub", "ghcr", "gitlab", "generic"];
 
 export default function RegistriesPage() {
   const t = useT();
+  const toast = useToast();
   const qc = useQueryClient();
   const confirm = useConfirm();
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
@@ -36,7 +38,10 @@ export default function RegistriesPage() {
       api.createRegistry({ name, teamId: activeTeam, type, url: url.trim() || null, username, password, imagePrefix: imagePrefix.trim() || null }),
     onSuccess: () => { setName(""); setUrl(""); setUsername(""); setPassword(""); setImagePrefix(""); invalidate(); },
   });
-  const del = useMutation({ mutationFn: (id: string) => api.deleteRegistry(id), onSuccess: invalidate });
+  const del = useMutation({
+    mutationFn: (id: string) => api.deleteRegistry(id),
+    onSuccess: (_r, id) => { invalidate(); toast(t("common.deletedNamed", { name: registries.find((r) => r.id === id)?.name ?? "" }), "success"); },
+  });
 
   return (
     <div style={{ padding: "var(--page-pad)", maxWidth: 880 }}>

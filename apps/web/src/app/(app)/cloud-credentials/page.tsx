@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Cloud, Pencil, Trash2 } from "lucide-react";
 import { api } from "../../../lib/api";
 import { useT } from "../../../i18n/provider";
+import { useToast } from "../../../components/toast";
 import { Badge, Btn, Card, EmptyState, Spinner } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
 import { IconBtn } from "../../../components/icon-btn";
@@ -13,6 +14,7 @@ import { Field, Select, TextInput } from "../../../components/form";
 
 export default function CloudCredentialsPage() {
   const t = useT();
+  const toast = useToast();
   const qc = useQueryClient();
   const confirm = useConfirm();
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
@@ -29,7 +31,10 @@ export default function CloudCredentialsPage() {
     mutationFn: () => api.createCloudCredential({ name, teamId: activeTeam, provider: "hetzner", apiToken }),
     onSuccess: () => { setName(""); setApiToken(""); invalidate(); },
   });
-  const del = useMutation({ mutationFn: (id: string) => api.deleteCloudCredential(id), onSuccess: invalidate });
+  const del = useMutation({
+    mutationFn: (id: string) => api.deleteCloudCredential(id),
+    onSuccess: (_r, id) => { invalidate(); toast(t("common.deletedNamed", { name: creds.find((c) => c.id === id)?.name ?? "" }), "success"); },
+  });
 
   return (
     <div style={{ padding: "var(--page-pad)", maxWidth: 880 }}>

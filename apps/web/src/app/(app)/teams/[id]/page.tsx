@@ -32,6 +32,7 @@ export default function TeamDetailPage() {
   const qc = useQueryClient();
   const router = useRouter();
   const confirm = useConfirm();
+  const toast = useToast();
 
   const { data: team, isLoading: teamLoading, isError } = useQuery({ queryKey: ["team", id], queryFn: () => api.getTeam(id), retry: false });
   const canManage = team?.role === "OWNER" || team?.role === "ADMIN";
@@ -72,7 +73,10 @@ export default function TeamDetailPage() {
   });
   const removeMember = useMutation({ mutationFn: (userId: string) => api.removeTeamMember(id, userId), onSuccess: refetch });
   const revoke = useMutation({ mutationFn: (invId: string) => api.revokeTeamInvitation(id, invId), onSuccess: refetch });
-  const del = useMutation({ mutationFn: () => api.deleteTeam(id), onSuccess: () => router.replace("/teams") });
+  const del = useMutation({
+    mutationFn: () => api.deleteTeam(id),
+    onSuccess: () => { router.replace("/teams"); toast(t("common.deletedNamed", { name: team?.name ?? "" }), "success"); },
+  });
   const [newName, setNewName] = useState("");
   const rename = useMutation({
     mutationFn: () => api.renameTeam(id, newName),

@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import { I18nProvider } from "../../../i18n/provider";
 import { api } from "../../../lib/api";
+import { subscribeToast } from "../../../lib/toast-bus";
 import type { PublicUser } from "../../../lib/types";
 
 // Owner flag is mutable per test; useAuth/confirm/navigation are replaced so the card renders standalone.
@@ -144,5 +145,28 @@ describe("ApiTokensCard expiry, rename and rotate", () => {
     fireEvent.change(screen.getByLabelText("Expires in (days, optional)"), { target: { value: "30" } });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
     await waitFor(() => expect(create).toHaveBeenCalledWith("ci", ["read"], 30));
+  });
+});
+
+describe("ApiTokensCard revoke feedback", () => {
+  beforeEach(() => {
+    qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    h.user = { isInstanceOwner: false };
+    vi.spyOn(api, "listApiTokens").mockResolvedValue([{ id: "t1", name: "CI token", prefix: "tugra_pat_", scopes: ["read"], expiresAt: null, lastUsedAt: null, createdAt: "2026-11-15T00:00:00Z" }] as never);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    cleanup();
+  });
+
+  it("names the token in the toast after a confirmed revoke", async () => {
+    vi.spyOn(api, "deleteApiToken").mockResolvedValue({ ok: true } as never);
+    const toasts: string[] = [];
+    const off = subscribeToast((x) => toasts.push(x.message));
+    wrap();
+    await screen.findByText("CI token");
+    fireEvent.click(screen.getByRole("button", { name: /^(Revoke|Delete)$/ }));
+    await waitFor(() => expect(toasts).toContain("CI token revoked"));
+    off();
   });
 });

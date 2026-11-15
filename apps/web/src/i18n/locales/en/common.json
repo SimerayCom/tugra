@@ -8,6 +8,8 @@
   "save": "Save",
   "saving": "Saving…",
   "saved": "Saved",
+  "deletedNamed": "{name} deleted",
+  "revokedNamed": "{name} revoked",
   "dismiss": "Dismiss",
   "unsaved": "Unsaved changes",
   "leaveUnsavedTitle": "Unsaved changes",

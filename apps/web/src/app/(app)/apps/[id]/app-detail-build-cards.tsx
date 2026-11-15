@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Eye, EyeOff, ExternalLink, X } from "lucide-react";
 import { useToast } from "../../../../components/toast";
+import { useConfirm } from "../../../../components/confirm";
+import { CopyBtn } from "../../../../components/copy-row";
 import { Select } from "../../../../components/form";
 import { Badge, Btn, SectionCard } from "../../../../components/ui";
 import { useUnsavedChanges } from "../../../../hooks/useUnsavedChanges";
@@ -843,6 +845,8 @@ export function CredentialsCard({
 }) {
   const t = useT();
   const qc = useQueryClient();
+  const toast = useToast();
+  const confirm = useConfirm();
   // A GIT build OR a git-sourced COMPOSE app both clone a repo → both manage a deploy key / git token here.
   const isGit = source === "GIT" || (source === "COMPOSE" && composePath != null);
   // An ssh:// / git@ repo authenticates with a deploy key, not a token.
@@ -862,8 +866,24 @@ export function CredentialsCard({
       ),
     onSuccess: () => { setGitToken(""); setToken(""); invalidate(); },
   });
-  const genKey = useMutation({ mutationFn: () => api.generateGitSshKey(id), onSuccess: invalidate });
-  const rmKey = useMutation({ mutationFn: () => api.removeGitSshKey(id), onSuccess: invalidate });
+  const genKey = useMutation({
+    mutationFn: () => api.generateGitSshKey(id),
+    onSuccess: () => { invalidate(); toast(t("apps.deployKeyGenerated"), "success"); },
+  });
+  const rmKey = useMutation({
+    mutationFn: () => api.removeGitSshKey(id),
+    onSuccess: () => { invalidate(); toast(t("apps.deployKeyRemoved"), "success"); },
+  });
+  // Regenerating invalidates the key already added to the repository, and removing drops it: both break
+  // the next clone until the operator acts, so they are confirmed.
+  const regenKey = async () => {
+    if (genKey.isPending) return;
+    if (await confirm({ body: t("apps.deployKeyRegenConfirm"), danger: true })) genKey.mutate();
+  };
+  const removeKey = async () => {
+    if (rmKey.isPending) return;
+    if (await confirm({ body: t("apps.deployKeyRemoveConfirm"), danger: true })) rmKey.mutate();
+  };
 
   return (
     <SectionCard title={t("apps.credentials")} desc={t("apps.credentialsDesc")}>
@@ -873,17 +893,17 @@ export function CredentialsCard({
             <p style={{ fontSize: 12, color: "var(--c-tx2)", margin: "0 0 6px" }}>{t("apps.deployKeyHint")}</p>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <input readOnly value={gitSshPublicKey} onFocus={(e) => e.currentTarget.select()} aria-label={t("apps.deployKey")} style={{ ...envField, flex: 1, minWidth: 200, fontFamily: "monospace", fontSize: 11 }} />
-              <Btn variant="ghost" onClick={() => navigator.clipboard?.writeText(gitSshPublicKey).catch(() => {})}>{t("apps.copy")}</Btn>
+              <CopyBtn text={gitSshPublicKey} label={t("apps.copy")} />
             </div>
             <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-              <Btn variant="ghost" onClick={() => genKey.mutate()} disabled={genKey.isPending}>{t("apps.deployKeyRegen")}</Btn>
-              <Btn variant="dangerGhost" onClick={() => rmKey.mutate()} disabled={rmKey.isPending}>{t("apps.deployKeyRemove")}</Btn>
+              <Btn variant="ghost" onClick={() => void regenKey()} loading={genKey.isPending}>{t("apps.deployKeyRegen")}</Btn>
+              <Btn variant="dangerGhost" onClick={() => void removeKey()} loading={rmKey.isPending}>{t("apps.deployKeyRemove")}</Btn>
             </div>
           </div>
         ) : (
           <div>
             <p style={{ fontSize: 12, color: "var(--c-tx3)", margin: "0 0 8px" }}>{t("apps.deployKeyNone")}</p>
-            <Btn onClick={() => genKey.mutate()} disabled={genKey.isPending}>{t("apps.deployKeyGenerate")}</Btn>
+            <Btn onClick={() => genKey.mutate()} loading={genKey.isPending}>{t("apps.deployKeyGenerate")}</Btn>
             {genKey.isError && <div style={{ fontSize: 12, color: "var(--c-r)", marginTop: 8 }}>{(genKey.error as Error).message}</div>}
           </div>
         )

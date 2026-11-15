@@ -7,6 +7,7 @@ import { useAuth } from "../../../lib/auth";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card } from "../../../components/ui";
 import { Field } from "../../../components/form";
+import { useToast } from "../../../components/toast";
 
 /**
  * Owner-only license/plan card. Shows the effective plan + license validity/expiry and lets the owner paste
@@ -18,6 +19,7 @@ export function LicenseCard() {
   const qc = useQueryClient();
   const { user } = useAuth();
   const isOwner = !!user?.isInstanceOwner;
+  const toast = useToast();
 
   const { data } = useQuery({
     queryKey: ["license"],
@@ -29,8 +31,12 @@ export function LicenseCard() {
   const [token, setToken] = useState("");
   const activate = useMutation({
     mutationFn: (tok: string) => api.activateLicense(tok),
-    onSuccess: () => {
+    onSuccess: (r, tok) => {
       setToken("");
+      // An empty token is the downgrade; otherwise name the edition the instance now runs as, or say the token did not verify.
+      if (!tok) toast(t("settings.licenseRemoved"), "info");
+      else if (r.valid) toast(t("settings.licenseActivated", { plan: r.plan.charAt(0).toUpperCase() + r.plan.slice(1) }), "success");
+      else toast(t("settings.licenseNotVerified"), "error");
       // The edition may have changed → refresh anything that gates on it (license status + settings).
       qc.invalidateQueries({ queryKey: ["license"] });
       qc.invalidateQueries({ queryKey: ["instanceSettings"] });

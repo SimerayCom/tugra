@@ -49,11 +49,12 @@ export function TileActionsSheet({
     enabled: showFiles,
   });
 
+  // `done` is the named, keyed toast for the action (same keys the app page uses for its lifecycle buttons).
   const run = useMutation({
-    mutationFn: (fn: () => Promise<unknown>) => fn(),
-    onSuccess: async () => {
+    mutationFn: (a: { fn: () => Promise<unknown>; done: string }) => a.fn(),
+    onSuccess: async (_r, a) => {
       await qc.invalidateQueries({ queryKey: ["apps"] });
-      toast(t("home.actionDone"), "success");
+      toast(t(a.done, { name: tile.name }), "success");
       onClose();
     },
     // A failed action (409 already-deploying, 403, …) must not fail silently — the sheet stays open.
@@ -86,18 +87,18 @@ export function TileActionsSheet({
         return;
       case "start":
       case "update": // redeploy: pull latest + restart (same deploy endpoint)
-        return run.mutate(() => api.deployApp(tile.id));
+        return run.mutate({ fn: () => api.deployApp(tile.id), done: action === "start" ? "apps.started" : "home.deployStarted" });
       case "restart":
-        return run.mutate(() => api.restartApp(tile.id));
+        return run.mutate({ fn: () => api.restartApp(tile.id), done: "apps.restarted" });
       case "stop":
-        return run.mutate(() => api.stopApp(tile.id));
+        return run.mutate({ fn: () => api.stopApp(tile.id), done: "apps.stopped" });
       case "expose":
         onClose();
         onExpose(tile.id);
         return;
       case "uninstall":
         if (await confirm({ title: t("home.uninstall"), body: t("home.uninstallConfirm", { name: tile.name }), danger: true })) {
-          run.mutate(() => api.deleteApp(tile.id));
+          run.mutate({ fn: () => api.deleteApp(tile.id), done: "home.uninstalled" });
         }
         return;
     }

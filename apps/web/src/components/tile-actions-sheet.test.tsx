@@ -6,6 +6,7 @@ import { I18nProvider } from "../i18n/provider";
 import { ConfirmProvider } from "./confirm";
 import { TileActionsSheet } from "./tile-actions-sheet";
 import { api } from "../lib/api";
+import { subscribeToast } from "../lib/toast-bus";
 import type { LauncherTile } from "../lib/launcher";
 
 afterEach(cleanup);
@@ -45,6 +46,16 @@ describe("TileActionsSheet", () => {
     wrap(<TileActionsSheet tile={tile()} onClose={vi.fn()} onExpose={vi.fn()} />);
     fireEvent.click(screen.getByText("Update"));
     await waitFor(() => expect(deploy).toHaveBeenCalledWith("a1"));
+  });
+
+  it("Restart toasts with the app name (keyed lifecycle toast, not a generic Done)", async () => {
+    vi.spyOn(api, "restartApp").mockResolvedValue({} as never);
+    const toasts: string[] = [];
+    const off = subscribeToast((x) => toasts.push(x.message));
+    wrap(<TileActionsSheet tile={tile()} onClose={vi.fn()} onExpose={vi.fn()} />);
+    fireEvent.click(screen.getByText("Restart"));
+    await waitFor(() => expect(toasts).toContain("Ghost restarted."));
+    off();
   });
 
   it("Files opens an inline file browser (fetches the app's volumes, no navigation)", async () => {

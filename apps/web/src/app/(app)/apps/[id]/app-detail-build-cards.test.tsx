@@ -6,7 +6,8 @@ import { I18nProvider } from "../../../../i18n/provider";
 import { api, ApiError } from "../../../../lib/api";
 import { subscribeToast, type ToastInput } from "../../../../lib/toast-bus";
 import type { GitSource } from "../../../../lib/types";
-import { BuildConfigCard, BuildSecretsCard, BuildSettingsCard, DeployHooksCard, DeploySettingsCard, RestartPolicyCard, SourceCard, looksSensitiveKey } from "./app-detail-build-cards";
+import { ConfirmProvider } from "../../../../components/confirm";
+import { BuildConfigCard, CredentialsCard, BuildSecretsCard, BuildSettingsCard, DeployHooksCard, DeploySettingsCard, RestartPolicyCard, SourceCard, looksSensitiveKey } from "./app-detail-build-cards";
 
 afterEach(cleanup);
 let qc: QueryClient;
@@ -630,5 +631,49 @@ describe("BuildSettingsCard — inline Dockerfile", () => {
     expect(saveBtn().disabled).toBe(true);
     fireEvent.change(ta, { target: { value: "FROM x\n" } });
     expect(saveBtn().disabled).toBe(false);
+  });
+});
+
+describe("CredentialsCard — deploy key feedback", () => {
+  const wrapC = (ui: React.ReactElement) =>
+    render(
+      <QueryClientProvider client={qc}>
+        <I18nProvider>
+          <ConfirmProvider>{ui}</ConfirmProvider>
+        </I18nProvider>
+      </QueryClientProvider>,
+    );
+  const card = () => (
+    <CredentialsCard id="a1" source="GIT" gitUrl="git@github.com:o/r.git" composePath={null} hasGitToken={false} hasGitSshKey gitSshPublicKey="ssh-ed25519 AAAA" registryUrl={null} registryUser={null} />
+  );
+  let toasts: string[];
+  let off: () => void;
+  beforeEach(() => {
+    toasts = [];
+    off = subscribeToast((x) => toasts.push(x.message));
+  });
+  afterEach(() => off());
+
+  it("Regenerate asks first (the old key stops working) and toasts when done", async () => {
+    const gen = vi.spyOn(api, "generateGitSshKey").mockResolvedValue({} as never);
+    wrapC(card());
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate" }));
+    expect(await screen.findByText(/current key stops working immediately/)).toBeTruthy();
+    expect(gen).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(gen).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(toasts).toContain("Deploy key generated — add the public key to the repository"));
+  });
+
+  it("Remove is confirmed, and Copy says Copied", async () => {
+    const rm = vi.spyOn(api, "removeGitSshKey").mockResolvedValue({} as never);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: vi.fn().mockResolvedValue(undefined) }, configurable: true });
+    wrapC(card());
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    await waitFor(() => expect(toasts).toContain("Copied"));
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    expect(rm).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(rm).toHaveBeenCalledTimes(1));
   });
 });

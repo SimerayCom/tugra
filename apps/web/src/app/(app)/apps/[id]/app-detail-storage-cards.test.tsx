@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "../../../../i18n/provider";
 import { ConfirmProvider } from "../../../../components/confirm";
 import { api } from "../../../../lib/api";
+import { subscribeToast, type ToastInput } from "../../../../lib/toast-bus";
 import type { VolumeBackupConfig } from "../../../../lib/types";
 import { VolumeBackupsCard } from "./app-detail-storage-cards";
 
@@ -72,5 +73,40 @@ describe("VolumeBackupsCard (rebuilt on the shared policy components)", () => {
     await waitFor(() => expect((api.getVolumeBackupConfig as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(1));
     await new Promise((r) => setTimeout(r, 100)); // let the refetched config render + any hydrate effect run
     expect((screen.getByLabelText("Every (hours)") as HTMLInputElement).value).toBe("6");
+  });
+
+  describe("restore / backup-now feedback", () => {
+    let toasts: ToastInput[];
+    let off: () => void;
+    const BK = { id: "b1", volumeName: "data", status: "SUCCESS", filename: "f.tar", sizeBytes: "10", destinationId: null, destinationType: null, createdBy: "u", createdAt: "2026-11-15T00:00:00Z", completedAt: null, exitCode: 0, durationMs: 1, errorTail: null } as const;
+    beforeEach(() => {
+      toasts = [];
+      off = subscribeToast((x) => toasts.push(x));
+      vi.spyOn(api, "listVolumeBackups").mockResolvedValue([BK] as never);
+    });
+    afterEach(() => off());
+
+    it("Restore: confirm, then loading + locked while pending (no double fire), started + done toasts", async () => {
+      let resolve!: (v: { ok: true }) => void;
+      const restore = vi.spyOn(api, "restoreVolumeBackup").mockReturnValue(new Promise((r) => { resolve = r; }));
+      show();
+      fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+      const busy = await screen.findByRole("button", { name: "Restoring…" });
+      expect((busy as HTMLButtonElement).disabled).toBe(true);
+      fireEvent.click(busy);
+      expect(restore).toHaveBeenCalledTimes(1);
+      expect(toasts.map((x) => x.message)).toContain("Restore started — the volume is being overwritten…");
+      resolve({ ok: true });
+      await waitFor(() => expect(toasts.map((x) => x.message)).toContain("Volume restored"));
+      expect((await screen.findByRole("button", { name: "Restore" }) as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it("Backup now toasts the outcome of the finished run", async () => {
+      vi.spyOn(api, "volumeBackupNow").mockResolvedValue([BK] as never);
+      show();
+      fireEvent.click(await screen.findByRole("button", { name: "Backup now" }));
+      await waitFor(() => expect(toasts.map((x) => x.message)).toContain("Volume backup completed"));
+    });
   });
 });

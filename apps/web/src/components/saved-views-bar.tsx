@@ -6,6 +6,7 @@ import { Users } from "lucide-react";
 import { api } from "../lib/api";
 import { teamLabel } from "../lib/fleet";
 import { useT } from "../i18n/provider";
+import { useToast } from "../components/toast";
 import type { SavedView, ServerStatus } from "../lib/types";
 import { Btn } from "./ui";
 
@@ -20,6 +21,7 @@ export function SavedViewsBar({
   onApply: (v: SavedView) => void;
 }) {
   const t = useT();
+  const toast = useToast();
   const qc = useQueryClient();
   const { data: views = [] } = useQuery({ queryKey: ["savedViews"], queryFn: () => api.listSavedViews() });
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
@@ -32,7 +34,10 @@ export function SavedViewsBar({
     mutationFn: () => api.createSavedView({ name: name.trim(), status, tags, teamId: target || undefined }),
     onSuccess: () => { setName(""); setTarget(""); setSaving(false); invalidate(); },
   });
-  const del = useMutation({ mutationFn: (id: string) => api.deleteSavedView(id), onSuccess: invalidate });
+  const del = useMutation({
+    mutationFn: (id: string) => api.deleteSavedView(id),
+    onSuccess: (_r, id) => { invalidate(); toast(t("common.deletedNamed", { name: views.find((v) => v.id === id)?.name ?? "" }), "success"); },
+  });
 
   const inputStyle: React.CSSProperties = { fontSize: 12, padding: "4px 10px", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: 999, color: "var(--c-tx)" };
 

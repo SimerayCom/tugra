@@ -5,6 +5,7 @@ import React from "react";
 import { I18nProvider } from "../i18n/provider";
 import { ConfirmProvider } from "./confirm";
 import { CutoverPanel } from "./cutover-panel";
+import { subscribeToast } from "../lib/toast-bus";
 import { api, ApiError, type CutoverEntryView, type CutoverFlipPlan, type CutoverView } from "../lib/api";
 import { isRunning, targetHostnames, isFlippable, hasHttp01Gap, flippedSourceApps, CUTOVER_POLL_MS } from "../lib/cutover";
 
@@ -226,6 +227,21 @@ describe("CutoverPanel", () => {
     await screen.findByText("a.example.com");
     await new Promise((r) => setTimeout(r, 200));
     expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  it("Check shows a loading button while pending and a summary toast with the counts", async () => {
+    vi.spyOn(api, "getCutover").mockResolvedValue(view([entry({ hostname: "a.example.com", state: "PLANNED" }), entry({ hostname: "b.example.com", state: "PLANNED" })]));
+    let resolve!: (v: CutoverView) => void;
+    vi.spyOn(api, "cutoverCheck").mockReturnValue(new Promise((r) => { resolve = r; }));
+    const toasts: string[] = [];
+    const off = subscribeToast((x) => toasts.push(x.message));
+    wrap(<CutoverPanel opId="op1" />);
+    await screen.findByText("a.example.com");
+    fireEvent.click(screen.getByRole("button", { name: "Check" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Check" }).getAttribute("aria-busy")).toBe("true"));
+    resolve(view([entry({ hostname: "a.example.com", state: "READY" }), entry({ hostname: "b.example.com", state: "BLOCKED" })]));
+    await waitFor(() => expect(toasts).toContain("Check complete: 1 ready, 1 blocked"));
+    off();
   });
 
   it("fix-counterpart sends the chosen direction", async () => {

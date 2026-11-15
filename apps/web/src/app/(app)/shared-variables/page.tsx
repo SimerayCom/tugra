@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Variable } from "lucide-react";
 import { api } from "../../../lib/api";
 import { useT } from "../../../i18n/provider";
+import { useToast } from "../../../components/toast";
 import { Btn, Card, EmptyState, Spinner } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
 import { useConfirm } from "../../../components/confirm";
@@ -21,6 +22,7 @@ const field: React.CSSProperties = {
 
 export default function SharedVariablesPage() {
   const t = useT();
+  const toast = useToast();
   const confirm = useConfirm();
   const qc = useQueryClient();
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
@@ -43,7 +45,10 @@ export default function SharedVariablesPage() {
     mutationFn: () => api.setSharedVar(activeTeam, key, value),
     onSuccess: () => { setKey(""); setValue(""); invalidate(); },
   });
-  const del = useMutation({ mutationFn: (id: string) => api.deleteSharedVar(id), onSuccess: invalidate });
+  const del = useMutation({
+    mutationFn: (id: string) => api.deleteSharedVar(id),
+    onSuccess: (_r, id) => { invalidate(); toast(t("common.deletedNamed", { name: vars.find((v) => v.id === id)?.key ?? "" }), "success"); },
+  });
 
   return (
     <div style={{ padding: "var(--page-pad)", maxWidth: 720 }}>

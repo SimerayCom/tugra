@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import { I18nProvider } from "../../../i18n/provider";
 import { api } from "../../../lib/api";
+import { subscribeToast } from "../../../lib/toast-bus";
 import type { PublicUser } from "../../../lib/types";
 
 const h = vi.hoisted(() => ({ user: { isInstanceOwner: false } as Partial<PublicUser> }));
@@ -54,6 +55,17 @@ describe("LicenseCard", () => {
     fireEvent.change(ta, { target: { value: "  signed.jwt.token  " } });
     fireEvent.click(screen.getByRole("button", { name: "Activate license" }));
     await waitFor(() => expect(api.activateLicense).toHaveBeenCalledWith("signed.jwt.token")); // trimmed
+  });
+
+  it("toasts the activated edition", async () => {
+    h.user = { isInstanceOwner: true };
+    const toasts: string[] = [];
+    const off = subscribeToast((x) => toasts.push(x.message));
+    wrap();
+    fireEvent.change((await screen.findByLabelText("License token")) as HTMLTextAreaElement, { target: { value: "tok" } });
+    fireEvent.click(screen.getByRole("button", { name: "Activate license" }));
+    await waitFor(() => expect(toasts).toContain("License activated: Pro"));
+    off();
   });
 
   it("lets the owner clear an expired/invalid stored license via Remove", async () => {

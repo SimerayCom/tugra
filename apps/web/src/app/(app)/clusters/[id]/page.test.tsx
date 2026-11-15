@@ -87,6 +87,7 @@ describe("ClusterDetailPage", () => {
     const addButtons = await screen.findAllByRole("button", { name: "Add node" });
     fireEvent.click(addButtons[addButtons.length - 1]);
     await waitFor(() => expect(joinSpy).toHaveBeenCalledWith("c1", { serverId: "s3" }));
+    expect(await screen.findByText("node-c joined the swarm")).toBeTruthy(); // the modal closes silently otherwise
   });
 
   it("hides 'Add node' when the ACTIVE swarm has no eligible candidate", async () => {

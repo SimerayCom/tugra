@@ -14,6 +14,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   "Hub is restarting or unreachable", an amber banner watches for the hub to answer and refreshes the page data,
   identical error toasts within two seconds show once, and the enroll-token re-issue and "Log out everywhere"
   buttons report failures instead of hanging.
+- **Clicks now answer for apps, databases and the rest.** Volume Restore asks first, shows "Restoring…", locks every
+  Restore button while it runs and toasts start and finish (it can no longer fire twice); backups, monitor checks,
+  channel tests, swarm form/join/add-manager, license activation, environment moves and the tunnel and DNS-01
+  switches end in a named toast; cutover Prepare, Check, Lower TTL and Finalize show a spinner and report counts;
+  regenerating or removing a deploy key is confirmed and Copy says "Copied"; deleting a token, source, registry,
+  credential, variable, saved view, project or team names what went; the Home sheet reuses the keyed Restart,
+  Start and Stop toasts.
 - **Updates reach beta testers.** Signed update checks are now on by default (hourly and whenever the panel is
   opened; `--no-update-checks` or `TUGRA_UPDATE_CHECKS=0` opts out, `UPDATE_CHECK_INTERVAL_MIN` tunes the interval),
   the release channel follows the running build (a beta hub tracks beta, shown as "Automatic (Beta)" in Settings →

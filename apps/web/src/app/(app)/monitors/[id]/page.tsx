@@ -13,6 +13,7 @@ import { useT } from "../../../../i18n/provider";
 import { Btn, Card, Spinner } from "../../../../components/ui";
 import { PageHeader } from "../../../../components/page-header";
 import { Field, TextInput } from "../../../../components/form";
+import { useToast } from "../../../../components/toast";
 import { MonitorFavicon } from "../../../../components/monitor-favicon";
 
 export default function MonitorDetailPage() {
@@ -36,11 +37,15 @@ export default function MonitorDetailPage() {
     refetchInterval: 30000,
   });
 
+  const toast = useToast();
   const check = useMutation({
     mutationFn: () => api.checkMonitor(id),
-    onSuccess: () => {
+    onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ["heartbeats", id] });
       qc.invalidateQueries({ queryKey: ["monitor", id] });
+      // The check runs synchronously, so the click answers with the actual result (status + latency).
+      const up = r.status === "UP";
+      toast(t(up ? "monitors.checkUp" : "monitors.checkDown", { name: m?.name ?? "", status: r.status, ms: r.ms, msg: r.msg }), up ? "success" : "error");
     },
   });
 
@@ -126,6 +131,7 @@ function MonitorSettings({ monitor }: { monitor: Monitor }) {
         channelIds,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["monitor", monitor.id] }),
+    meta: { successMessage: t("monitors.saved") },
   });
   const toggleChannel = (cid: string) =>
     setChannelIds((cur) => (cur.includes(cid) ? cur.filter((x) => x !== cid) : [...cur, cid]));

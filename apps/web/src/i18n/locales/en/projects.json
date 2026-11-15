@@ -42,6 +42,7 @@
   "iconReadFailed": "Couldn't read that image file.",
   "iconFailed": "Couldn't update the icon.",
   "environment": "Environment",
+  "moved": "Moved to {name}",
   "assignTitle": "Project / Environment",
   "unassigned": "Unassigned",
   "moveDesc": "Assign this resource to a project environment.",

@@ -453,12 +453,14 @@ function ClusterRunModal({ cluster, memberIds, onClose }: { cluster: ClusterDeta
 function FormSwarmModal({ cluster, onClose }: { cluster: ClusterDetail; onClose: () => void }) {
   const t = useT();
   const qc = useQueryClient();
+  const toast = useToast();
   const online = cluster.servers.filter((s) => s.status === "ONLINE");
   const [managerServerId, setManagerServerId] = useState(online[0]?.id ?? "");
   const [advertiseAddr, setAdvertiseAddr] = useState("");
   const form = useMutation({
     mutationFn: () => api.formSwarm(cluster.id, { managerServerId, advertiseAddr: advertiseAddr.trim() || undefined }),
     onSuccess: () => {
+      toast(t("clusters.swarmFormed", { name: online.find((s) => s.id === managerServerId)?.name ?? "" }), "success");
       qc.invalidateQueries({ queryKey: ["swarm", cluster.id] });
       qc.invalidateQueries({ queryKey: ["cluster", cluster.id] });
       qc.invalidateQueries({ queryKey: ["ingress", cluster.id] });
@@ -488,7 +490,7 @@ function FormSwarmModal({ cluster, onClose }: { cluster: ClusterDetail; onClose:
       {form.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{form.error instanceof Error ? form.error.message : t("clusters.swarmActionFailed")}</div>}
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
         <Btn variant="ghost" onClick={onClose}>{t("common.cancel")}</Btn>
-        <Btn onClick={() => form.mutate()} disabled={form.isPending || !managerServerId}>{form.isPending ? "…" : t("clusters.formSwarm")}</Btn>
+        <Btn onClick={() => form.mutate()} loading={form.isPending} disabled={!managerServerId}>{form.isPending ? t("clusters.formingSwarm") : t("clusters.formSwarm")}</Btn>
       </div>
     </Modal>
   );
@@ -497,11 +499,13 @@ function FormSwarmModal({ cluster, onClose }: { cluster: ClusterDetail; onClose:
 function AddNodeModal({ cluster, swarm, onClose }: { cluster: ClusterDetail; swarm: SwarmView; onClose: () => void }) {
   const t = useT();
   const qc = useQueryClient();
+  const toast = useToast();
   const candidates = swarm.nodes.filter((n) => !n.swarmRole && n.status === "ONLINE" && n.swarmCapable);
   const [serverId, setServerId] = useState(candidates[0]?.serverId ?? "");
   const join = useMutation({
     mutationFn: () => api.joinSwarmNode(cluster.id, { serverId }),
     onSuccess: () => {
+      toast(t("clusters.nodeJoined", { name: candidates.find((n) => n.serverId === serverId)?.name ?? "" }), "success");
       qc.invalidateQueries({ queryKey: ["swarm", cluster.id] });
       qc.invalidateQueries({ queryKey: ["cluster", cluster.id] });
       qc.invalidateQueries({ queryKey: ["ingress", cluster.id] });
@@ -525,7 +529,7 @@ function AddNodeModal({ cluster, swarm, onClose }: { cluster: ClusterDetail; swa
       {join.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{join.error instanceof Error ? join.error.message : t("clusters.addNodeFailed")}</div>}
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
         <Btn variant="ghost" onClick={onClose}>{t("common.cancel")}</Btn>
-        <Btn onClick={() => join.mutate()} disabled={join.isPending || !serverId}>{join.isPending ? "…" : t("clusters.addNode")}</Btn>
+        <Btn onClick={() => join.mutate()} loading={join.isPending} disabled={!serverId}>{join.isPending ? t("clusters.joiningNode") : t("clusters.addNode")}</Btn>
       </div>
     </Modal>
   );
@@ -537,12 +541,14 @@ function AddNodeModal({ cluster, swarm, onClose }: { cluster: ClusterDetail; swa
 function AddManagerModal({ cluster, swarm, onClose }: { cluster: ClusterDetail; swarm: SwarmView; onClose: () => void }) {
   const t = useT();
   const qc = useQueryClient();
+  const toast = useToast();
   const candidates = swarm.nodes.filter((n) => n.swarmRole !== "MANAGER" && n.status === "ONLINE" && n.swarmCapable);
   const [serverId, setServerId] = useState(candidates[0]?.serverId ?? "");
   const [ack, setAck] = useState(false);
   const add = useMutation({
     mutationFn: () => api.addManager(cluster.id, { serverId, acknowledgeEvenQuorum: ack || undefined }),
     onSuccess: () => {
+      toast(t("clusters.managerAdded", { name: candidates.find((n) => n.serverId === serverId)?.name ?? "" }), "success");
       qc.invalidateQueries({ queryKey: ["swarm", cluster.id] });
       qc.invalidateQueries({ queryKey: ["cluster", cluster.id] });
       qc.invalidateQueries({ queryKey: ["ingress", cluster.id] });
@@ -581,7 +587,7 @@ function AddManagerModal({ cluster, swarm, onClose }: { cluster: ClusterDetail; 
       )}
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
         <Btn variant="ghost" onClick={onClose}>{t("common.cancel")}</Btn>
-        <Btn onClick={() => add.mutate()} disabled={add.isPending || !serverId || (evenBlocked && !ack)}>{add.isPending ? "…" : t("clusters.addManager")}</Btn>
+        <Btn onClick={() => add.mutate()} loading={add.isPending} disabled={!serverId || (evenBlocked && !ack)}>{add.isPending ? t("clusters.addingManager") : t("clusters.addManager")}</Btn>
       </div>
     </Modal>
   );

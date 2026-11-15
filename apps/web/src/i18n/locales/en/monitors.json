@@ -30,6 +30,9 @@
   "status": "Status",
   "uptime24h": "24h uptime",
   "checkNow": "Check now",
+  "checkUp": "{name} is up ({ms} ms)",
+  "checkDown": "{name} check returned {status} ({ms} ms): {msg}",
+  "saved": "Monitor settings saved",
   "lastChecks": "Recent checks",
   "noChecks": "No checks yet.",
   "uptimeAria": "Recent checks: {up} of {total} up, {down} down."
