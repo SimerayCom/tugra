@@ -49,15 +49,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   off it is build-only and never reaches the running container), **Literal** (Compose: the value is not expanded,
   `$VAR` and `${VAR}` stay as written; other app types already pass values literally) and **Multiline** (PEM keys,
   JSON). `PUT /apps/{id}/env` takes an optional `flags` object (omitted keeps the stored flags, present replaces
-  them) and `GET /apps/{id}/env-flags` returns them. Multiline values are delivered by name through the docker CLI
-  environment (Swarm: an in-container base64 decode) - never on a command line, never in the env file. Apps with no
-  flags deploy exactly as before. Variables from a Vault secret reference cannot be build-time or build-only. The
-  Coolify importer carries Coolify's four flags; imported and adopted values with line breaks are marked Multiline.
+  them; the body is now strict, so unknown fields return 400), `POST /apps` takes `envFlags`, and
+  `GET /apps/{id}/env-flags` returns the stored flags. Multiline (and, on Compose, Literal) values are delivered by
+  name through the Docker CLI's own environment (`env KEY=... docker ...`): they are never written to the env file
+  and never a docker argument (the base64 payload is part of the deploy script, which travels as one `bash -c`
+  argument, like the other tokens in it). On Swarm they are decoded inside the container, which needs a shell and
+  `base64` in the image; the deploy fails with a clear error otherwise rather than falling back to plain env. The
+  name of a multiline or Compose-literal variable must be a plain identifier and must not be one that changes how
+  Docker runs: `PATH`, `HOME`, `TMPDIR`, `LD_*`, `DYLD_*`, `DOCKER_*`, `COMPOSE_*`, `BUILDKIT_*`, `BUILDX_*`,
+  `XDG_*`, `*_PROXY`, `SSL_CERT_FILE`/`SSL_CERT_DIR`, shell-special names such as `UID`, `RANDOM` or `BASH*`, and a
+  short list of ssh and git names that make a process run a program (`SSH_AUTH_SOCK`, `GIT_SSH_COMMAND`,
+  `GIT_ASKPASS`, `GIT_CONFIG_*` and similar); names such as `SSH_PRIVATE_KEY`, `GIT_DEPLOY_KEY`, `SSL_KEY` and
+  `SSL_CERT` are accepted. Compose lifecycle commands (stop, start, restart, logs, remove and the final `ps` of a
+  deploy) carry the same variables, and when every variable is moved out of the env file the previous plaintext file
+  is removed. A deploy script that would exceed the one-argument size limit now fails up front with a clear error
+  for multiline, build-time and Swarm deploys. Apps with no flags deploy exactly as before. Variables from a Vault
+  secret reference cannot be build-time or build-only. The Coolify importer carries Coolify's four flags, imported
+  and adopted values with line breaks are marked Multiline, and Dokploy build arguments map to Build time.
 
-- **A line break in an environment value is now refused instead of corrupting the env file.** A value with a line
-  break (or NUL) that is not marked Multiline - reachable through shared variables, the importer, MCP or the
-  migrator - used to add extra variables to the env file. The deploy now fails with an error naming the variable:
-  mark it Multiline or remove the line break. Shared variables reject line breaks when saved.
+- **A line break in an environment value no longer corrupts the env file.** A value with a line break that is not
+  marked Multiline - data stored before this release, or reachable through shared variables, the importer, MCP or
+  the migrator - used to add extra variables to the env file. Saving such a value without the flag is refused (400).
+  Values already stored that way keep deploying: at deploy and rollback time they are delivered as Multiline
+  automatically (the deploy log lists `auto multiline: KEY`, nothing is rewritten); only a value whose name cannot be
+  a multiline variable, that contains a NUL, or that exceeds 16 KiB fails the deploy, with an error naming the
+  variable. The same fail-closed check now covers every env-file writer, so an empty, `=`, CR, LF or NUL in a key,
+  or a line break in a DNS-challenge credential or a service variable, is refused with the credential named.
+  DNS-challenge credentials are validated when saved (a single line per value, trailing whitespace trimmed) and
+  already-stored ones with a trailing newline are trimmed when the proxy is rendered, so they keep working. Shared
+  variables reject line breaks when saved.
 
 ## [0.1.0-beta.13] - 2026-11-15
 

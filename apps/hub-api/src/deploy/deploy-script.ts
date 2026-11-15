@@ -1260,8 +1260,10 @@ function buildFlagNote(app: AppSpec): string[] {
   return out;
 }
 
-/** Write the app's secrets to a 0600 --env-file (empty when there are no env vars).
- *  Secrets go through a file, never -e, so they never hit the process list. */
+/** Write the app's plain variables to a 0600 --env-file (empty when there are no env vars). Plain values never
+ *  appear in docker's argv. Multiline values are decoded into unexported shell variables and passed to docker by
+ *  name (`-e KEY`), so they are in neither the env file nor docker's argv. Both are base64-embedded in the deploy
+ *  script itself, which travels as one `bash -c` argument. */
 function envPreludeFor(app: AppSpec): string[] {
   const env = app.env && typeof app.env === "object" ? app.env : {};
   // An app whose flags moved EVERY variable out of the file (multiline / build-only) must not keep the previous

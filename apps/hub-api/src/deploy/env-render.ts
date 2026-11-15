@@ -2,12 +2,13 @@
  * Env placement planner. `docker run --env-file`, the swarm `read` loader and Compose's dotenv are three different
  * line-based (and, for Compose, interpolating) parsers, so a multiline - or Compose-literal - value cannot ride them.
  * Those values are base64-embedded in the hub-built deploy script, decoded into UNEXPORTED shell variables and attached
- * to exactly ONE command by scoped prefix assignment:
+ * to exactly ONE command through a scoped `env` prefix:
  *
  *   env KEY="$TUGRA_ML_0" docker run ... -e KEY
  *
- * (`-e KEY` with no `=` copies the value from the docker CLI process environment: never argv, never the env file,
- * never exported to a later script step.) Swarm instead emits `KEY:b64=<base64>` lines that an in-container wrapper
+ * (`-e KEY` with no `=` copies the value from the docker CLI process environment: never docker's argv, never the
+ * env file, never exported to a later script step. The base64 payload is part of the deploy script, which itself
+ * travels as one `bash -c` argument.) Swarm instead emits `KEY:b64=<base64>` lines that an in-container wrapper
  * decodes. Pure module: no deploy-script import, so deploy-script can import it without a cycle.
  */
 import { ENV_KEY_RE, isHostExportSafeKey } from "../common/env-key";
@@ -63,7 +64,7 @@ export function mlPrelude(shell: EnvPlan["shell"]): string[] {
   if (shell.length === 0) return [];
   const names = shell.map((s) => s.key).join(", ");
   return [
-    `echo ${shq(`TUGRA_ENV_ML: ${shell.length} multiline variable(s) via the docker CLI environment (never argv, never the env file): ${names}`)}`,
+    `echo ${shq(`TUGRA_ENV_ML: ${shell.length} multiline variable(s) via the docker CLI environment (never docker argv, never the env file): ${names}`)}`,
     ...shell.map((s, i) => `TUGRA_ML_${i}=$(printf %s ${shq(Buffer.from(s.value, "utf8").toString("base64"))} | base64 -d; printf x); TUGRA_ML_${i}=\${TUGRA_ML_${i}%x}`),
   ];
 }
