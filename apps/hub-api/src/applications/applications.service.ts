@@ -3145,31 +3145,111 @@ export class ApplicationsService {
     path = "",
   ): Promise<{ entries: FsEntry[]; truncated: boolean }> {
     const app = await this.requireWrite(userId, id);
-    let dockerName: string;
+    const dockerName = this.resolveFsVolume(app, volumeName);
+    const rel = assertSafeFsPath(path);
+    const targetServer = this.resolveFsVolumeHost(app);
+    return this.agentWs.sendFsReq(targetServer, "list", dockerName, rel);
+  }
+
+  /** The docker volume name behind one of the app's browsable volume KEYS (400 for anything else). */
+  private resolveFsVolume(app: Application, volumeName: string): string {
     if (app.source === "COMPOSE") {
       // Only a Tugra-owned, auto-named compose volume (tugra_<id>_<key>) is browsable — never an
       // external or custom-named volume, which could point at another app's or a host volume.
       const cv = composeVolumes(app).find((v) => v.key === volumeName);
       if (!cv || !cv.browsable) throw new BadRequestException("unknown volume for this app");
-      dockerName = cv.dockerName;
-    } else {
-      const declared =
-        Array.isArray(app.volumes) &&
-        (app.volumes as Array<{ name?: string }>).some((v) => v?.name === volumeName);
-      if (!declared) throw new BadRequestException("unknown volume for this app");
-      dockerName = appVolumeName(app, volumeName);
+      return cv.dockerName;
     }
-    const rel = assertSafeFsPath(path);
-    // A swarm (clustered) app's stateful volume lives on the node it is PINNED to (constraintServerId),
-    // not on app.serverId (the cluster's entry/manager) — targeting serverId would list the wrong host's
-    // filesystem (empty or a different app's data). Resolve the real node for clustered apps.
+    const declared =
+      Array.isArray(app.volumes) &&
+      (app.volumes as Array<{ name?: string }>).some((v) => v?.name === volumeName);
+    if (!declared) throw new BadRequestException("unknown volume for this app");
+    return appVolumeName(app, volumeName);
+  }
+
+  /** The server whose agent holds the app's volumes. A swarm (clustered) app's stateful volume lives on the node
+   *  it is PINNED to (constraintServerId), not on app.serverId (the cluster's entry/manager) — targeting serverId
+   *  would browse the wrong host's filesystem. 400 when unpinned, 503 when that agent is offline. */
+  private resolveFsVolumeHost(app: Application): string {
     let targetServer = app.serverId;
     if (app.clusterId) {
       if (!app.constraintServerId) throw new BadRequestException("clustered app has no pinned node to browse");
       targetServer = app.constraintServerId;
     }
     if (!this.agentWs.isOnline(targetServer)) throw new ServiceUnavailableException("agent offline");
-    return this.agentWs.sendFsReq(targetServer, "list", dockerName, rel);
+    return targetServer;
+  }
+
+  /** The browsable volume KEYS of an app (what the `volume` request parameter may be). */
+  fsVolumeKeys(app: Application): string[] {
+    if (app.source === "COMPOSE") return composeVolumes(app).filter((v) => v.browsable).map((v) => v.key);
+    return Array.isArray(app.volumes)
+      ? (app.volumes as Array<{ name?: string }>).map((v) => v?.name).filter((n): n is string => typeof n === "string")
+      : [];
+  }
+
+  /**
+   * Resolve a file-manager target (one declared volume OR the live container filesystem) to the server, scope and
+   * subject the agent is signed for. `mutating` additionally refuses while a deploy is queued/running.
+   *
+   * Volume branch = the listFiles resolution verbatim (permission, browsable-compose rule, declared volumes,
+   * clustered pin, offline). Container branch additionally needs the team permission `terminal` (the same power as
+   * an interactive shell), refuses clustered apps and never-deployed apps, and only resolves containers that
+   * belong to this app (single container: derived; compose: the `tugra_<id>` project prefix + charset).
+   */
+  async resolveFsTarget(
+    userId: string,
+    id: string,
+    target: { volume?: string; container?: string },
+    opts: { mutating: boolean },
+  ): Promise<{ app: Application; serverId: string; scope: "volume" | "container"; subject: string }> {
+    const app = await this.requireWrite(userId, id);
+    let serverId: string;
+    let scope: "volume" | "container";
+    let subject: string;
+    if (target.container !== undefined) {
+      await this.access.requirePermission(userId, app.teamId, "terminal");
+      if (app.clusterId) throw new BadRequestException({ statusCode: 400, message: "the container filesystem is not available for clustered apps", code: "unsupported_clustered" });
+      if (app.status === AppStatus.NEW) throw new ConflictException({ statusCode: 409, message: "app has not been deployed yet", code: "not_deployed" });
+      subject = app.source === "COMPOSE" ? this.resolveLogTarget(app, target.container) : containerName(app);
+      if (/__(rollout|prev)$/.test(subject)) throw new BadRequestException("invalid container for this app");
+      if (!this.agentWs.isOnline(app.serverId)) throw new ServiceUnavailableException("agent offline");
+      serverId = app.serverId;
+      scope = "container";
+    } else {
+      subject = this.resolveFsVolume(app, target.volume ?? "");
+      serverId = this.resolveFsVolumeHost(app);
+      scope = "volume";
+    }
+    if (opts.mutating) {
+      const active = await this.prisma.deployment.findFirst({ where: { appId: app.id, status: { in: ["QUEUED", "RUNNING"] } }, select: { id: true } });
+      if (active) throw new ConflictException({ statusCode: 409, message: "a deploy is in progress — file changes are paused until it finishes", code: "deploy_in_progress" });
+    }
+    return { app, serverId, scope, subject };
+  }
+
+  /**
+   * Everything the file-manager meta endpoint needs about an app, behind the same `apps:config` writer check as
+   * every other file route. `canTerminal` is the non-throwing form of the container route's permission.
+   */
+  async fsContext(userId: string, id: string): Promise<{
+    app: Application;
+    canTerminal: boolean;
+    volumeKeys: string[];
+    volumeServerId: string | null;
+    deployInProgress: boolean;
+  }> {
+    const app = await this.requireWrite(userId, id);
+    const perms = await this.access.membershipPermissions(userId, app.teamId);
+    const volumeServerId = app.clusterId ? app.constraintServerId : app.serverId;
+    const active = await this.prisma.deployment.findFirst({ where: { appId: app.id, status: { in: ["QUEUED", "RUNNING"] } }, select: { id: true } });
+    return {
+      app,
+      canTerminal: !!perms?.has("terminal"),
+      volumeKeys: this.fsVolumeKeys(app),
+      volumeServerId: volumeServerId ?? null,
+      deployInProgress: !!active,
+    };
   }
 
   /**

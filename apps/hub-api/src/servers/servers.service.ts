@@ -44,12 +44,14 @@ const ENROLL_TTL_MS = 60 * 60 * 1000; // 1 hour
 // The capabilities a NEW server is granted by default — everything except `terminal`
 // (interactive shell), which is opt-in (least privilege). Legacy servers were backfilled
 // to the full set by the migration, so an empty grant now safely means "deny all" (fail-safe).
-const DEFAULT_CAPABILITIES = ["deploy", "database", "backup", "cleanup", "bulk", "schedule", "patch", "logs"];
+export const DEFAULT_CAPABILITIES = ["deploy", "database", "backup", "cleanup", "bulk", "schedule", "patch", "logs"];
 // "swarm" (Docker Swarm formation) is opt-in like "terminal": granted explicitly per server, NEVER in
 // DEFAULT_CAPABILITIES and never backfilled — joining a swarm changes a box's trust topology (it accepts
 // raft/gossip that can affect other nodes), a bigger step than deploying one app on it.
-// "files" (read/list an app volume via the sandboxed fsd helper) is likewise opt-in and
+// "files" (read/list/download an app volume via the sandboxed fsd helper) is likewise opt-in and
 // default-OFF: it exposes application data, so an operator must grant it explicitly per server.
+// "files_write" (upload/create/edit/rename/chmod/delete on app volumes, plus container-FS writes) is a further
+// opt-in on top of "files": NEVER in DEFAULT_CAPABILITIES and never backfilled — it runs a read-write helper.
 // The full grantable set is the shared AGENT_CAPABILITIES source of truth (same list the grant-API schema
 // validates against — they can't drift). DEFAULT_CAPABILITIES above is the least-privilege subset.
 const ALL_CAPABILITIES: readonly string[] = AGENT_CAPABILITIES;
@@ -425,6 +427,12 @@ export class ServersService {
     if (!server) throw new NotFoundException("server not found");
     await this.access.requirePermission(userId, server.teamId, "servers:manage");
     const next = [...new Set(capabilities)].filter((c) => ALL_CAPABILITIES.includes(c));
+    // "files_write" (upload/edit/rename/chmod/delete on app volumes) only makes sense on top of "files" (browse/read):
+    // refuse the incoherent set rather than silently granting write without read. Dropping "files" therefore means
+    // the caller drops "files_write" in the same request (the web card does this when files is unchecked).
+    if (next.includes("files_write") && !next.includes("files")) {
+      throw new BadRequestException("files_write requires files");
+    }
     await this.prisma.server.update({ where: { id }, data: { capabilities: next } });
     // Live-push the new set to the connected agent (fail-closed allowlist updates immediately).
     this.capabilityPusher?.(id, next);

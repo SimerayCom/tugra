@@ -1,5 +1,6 @@
 import {
   ForbiddenException,
+  HttpException,
   Injectable,
   Logger,
   OnApplicationBootstrap,
@@ -12,11 +13,16 @@ import type {
   AgentCapability,
   AgentMessage,
   CommandStateMsg,
+  Fs2Fields,
+  Fs2Op,
+  Fs2ResultMsg,
+  Fs2Scope,
   FsEntry,
   TermExitMsg,
   TermOutputMsg,
 } from "@tugra/shared";
-import { PROTOCOL_VERSION, checkAgentCompat, canonicalCommand, canonicalCommandCancel, canonicalCommandStatus, canonicalTermStart, canonicalLogStart, canonicalAgentUpdate, canonicalFs, canonicalLogDrains } from "@tugra/shared";
+import { PROTOCOL_VERSION, checkAgentCompat, canonicalCommand, canonicalCommandCancel, canonicalCommandStatus, canonicalTermStart, canonicalLogStart, canonicalAgentUpdate, canonicalFs, canonicalLogDrains, canonicalFs2, fs2RequiredCapabilities, AGENT_FEATURE_FS2 } from "@tugra/shared";
+import { FsRemoteException } from "../files/fs-errors";
 import { HubSigningService } from "./hub-signing.service";
 import { AgentCommandTimeoutException, AgentDisconnectedException, AgentOfflineException } from "./agent-offline.exception";
 
@@ -124,6 +130,18 @@ interface FsPending {
   timer: NodeJS.Timeout;
 }
 
+interface Fs2Pending {
+  serverId: string;
+  resolve: (r: Fs2ResultMsg) => void;
+  reject: (e: Error) => void;
+  timer: NodeJS.Timeout;
+}
+
+/** Max concurrent fs2 operations the hub keeps in flight per server (the agent caps itself at the same number). */
+export const FS2_MAX_IN_FLIGHT_PER_SERVER = 4;
+/** Slack added to an fs2 request's `exp` beyond its own timeout, covering clock skew and queueing. */
+const FS2_EXP_SLACK_SEC = 300;
+
 /**
  * Raw WebSocket server for agents. Agents dial OUT to /agent (zero inbound port
  * on managed servers). Protocol is the JSON contract in @tugra/shared.
@@ -138,6 +156,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly sockets = new Map<string, WebSocket>(); // serverId → socket
   private readonly pending = new Map<string, Pending>(); // reqId → resolver
   private readonly fsPending = new Map<string, FsPending>(); // reqId → file-op resolver
+  private readonly fs2Pending = new Map<string, Fs2Pending>(); // reqId → fs2 (write-capable file op) resolver
   private readonly statePending = new Map<string, StatePending>(); // reqId → command_status resolver
   private readonly chunkListeners = new Map<string, (chunk: string) => void>(); // reqId → live log sink
   private readonly logListeners = new Map<string, LogListener>(); // streamId → live container-log sink
@@ -468,6 +487,17 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           }
           return;
         }
+        case "fs2_result": {
+          // Same rule as fs_result: only from the authed socket that OWNS the pending request's server.
+          if (!st.authed || !st.serverId) return;
+          const p = this.fs2Pending.get(msg.reqId);
+          if (!p || p.serverId !== st.serverId) return;
+          clearTimeout(p.timer);
+          this.fs2Pending.delete(msg.reqId);
+          if (msg.ok) p.resolve(msg);
+          else p.reject(new FsRemoteException(msg.code, msg.error));
+          return;
+        }
         default:
           return;
       }
@@ -695,6 +725,73 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
     });
   }
 
+  /**
+   * The checks every fs2 request must pass BEFORE anything is signed (and, for an upload, before its body is read):
+   * the agent is online, it speaks fs2_v1, and EVERY capability in the (scope, op) set is granted. Returns that
+   * set (the last element is the signed capability).
+   */
+  async assertFs2Ready(serverId: string, scope: Fs2Scope, op: Fs2Op): Promise<AgentCapability[]> {
+    const socket = this.sockets.get(serverId);
+    if (!socket || socket.readyState !== WebSocket.OPEN) throw new AgentOfflineException();
+    if (!this.agentSupports(serverId, AGENT_FEATURE_FS2)) {
+      throw new HttpException(
+        { statusCode: 409, code: "agent_too_old", message: "this server's agent is too old for file writes — update the agent" },
+        409,
+      );
+    }
+    const required = fs2RequiredCapabilities(scope, op);
+    if (required.length === 0) throw new HttpException({ statusCode: 400, code: "bad_request", message: "unsupported file operation" }, 400);
+    for (const capability of required) {
+      if (!(await this.isCapabilityGranted(serverId, capability))) {
+        throw new ForbiddenException({
+          statusCode: 403,
+          message: `capability "${capability}" is not granted for this server`,
+          code: "capability_not_granted",
+          capability,
+          serverId,
+        });
+      }
+    }
+    return required;
+  }
+
+  /** Number of fs2 operations currently awaiting an agent reply for this server. */
+  fs2InFlight(serverId: string): number {
+    let n = 0;
+    for (const p of this.fs2Pending.values()) if (p.serverId === serverId) n++;
+    return n;
+  }
+
+  /**
+   * Send a signed fs2 file operation (write-capable volume ops and container-filesystem ops) and await its
+   * result. Order: online -> fs2_v1 -> every required capability -> per-server in-flight cap -> sign (with an
+   * `exp`) -> send. A failed op rejects with FsRemoteException(code), a drop with AgentDisconnectedException, a
+   * deadline with AgentCommandTimeoutException.
+   */
+  async sendFs2(
+    serverId: string,
+    req: Omit<Fs2Fields, "reqId" | "exp" | "capability" | "timeoutMs">,
+    timeoutMs: number,
+  ): Promise<Fs2ResultMsg> {
+    const required = await this.assertFs2Ready(serverId, req.scope, req.op);
+    const socket = this.sockets.get(serverId);
+    if (!socket || socket.readyState !== WebSocket.OPEN) throw new AgentOfflineException(); // the await above may have outlived it
+    if (this.fs2InFlight(serverId) >= FS2_MAX_IN_FLIGHT_PER_SERVER) {
+      throw new HttpException({ statusCode: 429, code: "busy", message: "too many file operations in flight for this server" }, 429);
+    }
+    const reqId = randomUUID();
+    const exp = Math.floor(Date.now() / 1000) + Math.ceil(timeoutMs / 1000) + FS2_EXP_SLACK_SEC;
+    return new Promise<Fs2ResultMsg>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.fs2Pending.delete(reqId);
+        reject(new AgentCommandTimeoutException("file operation timed out"));
+      }, timeoutMs);
+      timer.unref?.();
+      this.fs2Pending.set(reqId, { serverId, resolve, reject, timer });
+      this.send(socket, this.signOutbound({ type: "fs2_req", ...req, reqId, timeoutMs, exp, capability: required[required.length - 1] }));
+    });
+  }
+
   /** Sign command/term_start (capability included) so the agent can verify + scope. */
   private signOutbound(msg: Record<string, unknown>): Record<string, unknown> {
     if (msg.type === "command") {
@@ -748,6 +845,8 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
       msg.sig = this.hubSign.sign(
         canonicalLogDrains(msg.serverId as string, msg.rev as number, msg.drainsJson as string, msg.capability as string),
       );
+    } else if (msg.type === "fs2_req") {
+      msg.sig = this.hubSign.sign(canonicalFs2(msg as unknown as Fs2Fields));
     } else if (msg.type === "fs_req") {
       msg.sig = this.hubSign.sign(
         canonicalFs(
@@ -918,6 +1017,12 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
       if (p.serverId !== serverId) continue;
       clearTimeout(p.timer);
       this.fsPending.delete(reqId);
+      p.reject(new AgentDisconnectedException("agent disconnected"));
+    }
+    for (const [reqId, p] of this.fs2Pending) {
+      if (p.serverId !== serverId) continue;
+      clearTimeout(p.timer);
+      this.fs2Pending.delete(reqId);
       p.reject(new AgentDisconnectedException("agent disconnected"));
     }
     for (const [reqId, p] of this.statePending) {

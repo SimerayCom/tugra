@@ -4537,6 +4537,118 @@ describe("ApplicationsService listFiles", () => {
   });
 });
 
+describe("ApplicationsService resolveFsTarget / fsContext (file manager targets)", () => {
+  const composeFile = [
+    "services:",
+    "  web:",
+    "    image: nginx",
+    "    volumes: [data:/data, ext:/e, custom:/c]",
+    "volumes:",
+    "  data: {}",
+    "  ext:",
+    "    external: true",
+    "  custom:",
+    "    name: someone-elses",
+  ].join("\n");
+  const single = { id: "app1", teamId: "t1", serverId: "s1", source: "IMAGE", status: "RUNNING", volumes: [{ name: "data", path: "/data" }], clusterId: null, constraintServerId: null };
+  const compose = { ...single, source: "COMPOSE", composeFile, volumes: [] };
+
+  function build(appRow: Record<string, unknown>, opts: { online?: boolean; activeDeploy?: boolean; perms?: Set<string> | null; requirePermission?: jest.Mock } = {}) {
+    const findFirst = jest.fn().mockResolvedValue(opts.activeDeploy ? { id: "d1" } : null);
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(appRow) }, deployment: { findFirst } } as unknown as PrismaService;
+    const requirePermission = opts.requirePermission ?? jest.fn().mockResolvedValue(undefined);
+    const access = { requirePermission, membershipPermissions: jest.fn().mockResolvedValue(opts.perms === undefined ? OWNER_PERMS() : opts.perms) } as unknown as TeamAccessService;
+    const agentWs = { isOnline: jest.fn().mockReturnValue(opts.online ?? true) } as unknown as AgentWsServer;
+    return { svc: make(prisma, access, agentWs), requirePermission, findFirst, agentWs };
+  }
+  const read = { mutating: false };
+
+  it("resolves a declared volume to its docker volume on the app's server (the listFiles resolution)", async () => {
+    const { svc, requirePermission } = build(single);
+    await expect(svc.resolveFsTarget("u1", "app1", { volume: "data" }, read)).resolves.toMatchObject({ serverId: "s1", scope: "volume", subject: "tugra_appv_app1_data" });
+    expect(requirePermission).toHaveBeenCalledWith("u1", "t1", "apps:config");
+    expect(requirePermission).not.toHaveBeenCalledWith("u1", "t1", "terminal"); // volumes never need the terminal permission
+  });
+
+  it("refuses an undeclared volume, an external compose volume and a custom-named compose volume", async () => {
+    await expect(build(single).svc.resolveFsTarget("u1", "app1", { volume: "etc" }, read)).rejects.toBeInstanceOf(BadRequestException);
+    const c = build(compose).svc;
+    await expect(c.resolveFsTarget("u1", "app1", { volume: "data" }, read)).resolves.toMatchObject({ subject: "tugra_app1_data" });
+    await expect(c.resolveFsTarget("u1", "app1", { volume: "ext" }, read)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(c.resolveFsTarget("u1", "app1", { volume: "custom" }, read)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(c.resolveFsTarget("u1", "app1", { volume: "nope" }, read)).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("a clustered app targets its pinned node; unpinned is 400; offline is 503; a missing writer permission is 403", async () => {
+    const clustered = { ...single, clusterId: "c1", constraintServerId: "s9" };
+    await expect(build(clustered).svc.resolveFsTarget("u1", "app1", { volume: "data" }, read)).resolves.toMatchObject({ serverId: "s9" });
+    await expect(build({ ...clustered, constraintServerId: null }).svc.resolveFsTarget("u1", "app1", { volume: "data" }, read)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(build(single, { online: false }).svc.resolveFsTarget("u1", "app1", { volume: "data" }, read)).rejects.toBeInstanceOf(ServiceUnavailableException);
+    const denied = jest.fn().mockRejectedValue(new ForbiddenException("nope"));
+    await expect(build(single, { requirePermission: denied }).svc.resolveFsTarget("u1", "app1", { volume: "data" }, read)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it("the container scope also needs the team permission `terminal`", async () => {
+    const requirePermission = jest.fn(async (_u: string, _t: string, perm: string) => {
+      if (perm === "terminal") throw new ForbiddenException("insufficient permission");
+    });
+    await expect(build(single, { requirePermission }).svc.resolveFsTarget("u1", "app1", { container: "" }, read)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(requirePermission).toHaveBeenCalledWith("u1", "t1", "terminal");
+    // and a user who has it resolves to the app's own container
+    await expect(build(single).svc.resolveFsTarget("u1", "app1", { container: "ignored-by-single-container-apps" }, read)).resolves.toMatchObject({ scope: "container", subject: "tugra_app1", serverId: "s1" });
+  });
+
+  it("container scope: clustered apps are refused (400 unsupported_clustered), a NEW app is 409 not_deployed", async () => {
+    const e1 = await build({ ...single, clusterId: "c1", constraintServerId: "s9" }).svc.resolveFsTarget("u1", "app1", { container: "" }, read).catch((e: unknown) => e);
+    expect(e1).toBeInstanceOf(BadRequestException);
+    expect((e1 as BadRequestException).getResponse()).toMatchObject({ code: "unsupported_clustered" });
+    const e2 = await build({ ...single, status: "NEW" }).svc.resolveFsTarget("u1", "app1", { container: "" }, read).catch((e: unknown) => e);
+    expect(e2).toBeInstanceOf(ConflictException);
+    expect((e2 as ConflictException).getResponse()).toMatchObject({ code: "not_deployed" });
+    // volumes of a NEW app are still resolvable (the volume may exist before the first deploy completes)
+    await expect(build({ ...single, status: "NEW" }).svc.resolveFsTarget("u1", "app1", { volume: "data" }, read)).resolves.toBeDefined();
+  });
+
+  it("container scope: a COMPOSE app must name a container of ITS OWN project; transient names never resolve", async () => {
+    const svc = build(compose).svc;
+    await expect(svc.resolveFsTarget("u1", "app1", { container: "tugra_app1-web-1" }, read)).resolves.toMatchObject({ subject: "tugra_app1-web-1" });
+    for (const bad of ["", "tugra_other-web-1", "web", "tugra_app1-web-1; rm -rf /", "tugra_app1-web-1 x", "tugra_app10-web-1", "tugra_app1-web-1__rollout", "tugra_app1-web-1__prev"]) {
+      await expect(svc.resolveFsTarget("u1", "app1", { container: bad }, read)).rejects.toBeInstanceOf(BadRequestException);
+    }
+    // a single-container app: even a client-supplied __rollout name is ignored (the server derives tugra_<id>)
+    await expect(build(single).svc.resolveFsTarget("u1", "app1", { container: "tugra_app1__rollout" }, read)).resolves.toMatchObject({ subject: "tugra_app1" });
+  });
+
+  it("container scope surfaces an offline agent as 503", async () => {
+    await expect(build(single, { online: false }).svc.resolveFsTarget("u1", "app1", { container: "" }, read)).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+
+  it("mutations are refused with 409 deploy_in_progress while a deploy is QUEUED/RUNNING; reads are not", async () => {
+    const m = build(single, { activeDeploy: true });
+    const err = await m.svc.resolveFsTarget("u1", "app1", { volume: "data" }, { mutating: true }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect((err as ConflictException).getResponse()).toMatchObject({ statusCode: 409, code: "deploy_in_progress" });
+    expect(m.findFirst).toHaveBeenCalledWith({ where: { appId: "app1", status: { in: ["QUEUED", "RUNNING"] } }, select: { id: true } });
+    await expect(m.svc.resolveFsTarget("u1", "app1", { volume: "data" }, read)).resolves.toBeDefined();
+    await expect(build(single, { activeDeploy: true }).svc.resolveFsTarget("u1", "app1", { container: "" }, { mutating: true })).rejects.toBeInstanceOf(ConflictException);
+    await expect(build(single).svc.resolveFsTarget("u1", "app1", { volume: "data" }, { mutating: true })).resolves.toBeDefined();
+  });
+
+  it("an unknown app is 404", async () => {
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(null) } } as unknown as PrismaService;
+    await expect(make(prisma, {}, {} as AgentWsServer).resolveFsTarget("u1", "x", { volume: "data" }, read)).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it("fsContext reports the terminal permission non-throwingly, the volume keys and the active-deploy flag", async () => {
+    const a = await build(compose, { activeDeploy: true }).svc.fsContext("u1", "app1");
+    expect(a).toMatchObject({ canTerminal: true, volumeKeys: ["data"], volumeServerId: "s1", deployInProgress: true });
+    const b = await build(single, { perms: new Set(["apps:config"]) }).svc.fsContext("u1", "app1");
+    expect(b).toMatchObject({ canTerminal: false, volumeKeys: ["data"], deployInProgress: false });
+    const c = await build({ ...single, clusterId: "c1", constraintServerId: null }, { perms: null }).svc.fsContext("u1", "app1");
+    expect(c).toMatchObject({ canTerminal: false, volumeServerId: null });
+  });
+});
+
 describe("setDbNetwork + guards (S4d-4 managed-DB network link)", () => {
   const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
 

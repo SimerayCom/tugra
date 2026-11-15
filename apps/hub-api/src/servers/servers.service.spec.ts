@@ -1,7 +1,7 @@
 import { Role, ServerStatus } from "@prisma/client";
 // Signature verification is exercised elsewhere; here we drive the auth branch deterministically.
 jest.mock("./agent-auth", () => ({ ...jest.requireActual("./agent-auth"), verifyEd25519: jest.fn(() => true) }));
-import { ServersService } from "./servers.service";
+import { DEFAULT_CAPABILITIES, ServersService } from "./servers.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
@@ -579,6 +579,27 @@ describe("ServersService capabilities", () => {
     svc.setCapabilityPusher(push);
     await svc.setCapabilities("u1", "s1", ["deploy", "backup"]);
     expect(push).toHaveBeenCalledWith("s1", ["deploy", "backup"]);
+  });
+
+  it("files_write is opt-in: it needs files, is stored verbatim with it, and is never in the default grant", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue(row("s1", "teamA")), update },
+      ...owner(Role.OWNER),
+    } as unknown as PrismaService;
+    const svc = svcWith(prisma);
+    expect(DEFAULT_CAPABILITIES).not.toContain("files_write");
+    expect(DEFAULT_CAPABILITIES).not.toContain("files");
+    await expect(svc.setCapabilities("u1", "s1", ["deploy", "files_write"])).rejects.toThrow(/files_write requires files/);
+    expect(update).not.toHaveBeenCalled();
+    await svc.setCapabilities("u1", "s1", ["files", "files_write"]);
+    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ data: { capabilities: ["files", "files_write"] } }));
+    // dropping files drops files_write in the same write (the caller sends neither)
+    await svc.setCapabilities("u1", "s1", ["deploy"]);
+    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ data: { capabilities: ["deploy"] } }));
+    // files alone (read-only file manager) is unchanged behaviour
+    await svc.setCapabilities("u1", "s1", ["files"]);
+    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ data: { capabilities: ["files"] } }));
   });
 
   it("grantedCapabilities returns the stored set", async () => {

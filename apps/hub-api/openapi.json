@@ -5268,7 +5268,8 @@
                         "patch",
                         "logs",
                         "swarm",
-                        "files"
+                        "files",
+                        "files_write"
                       ]
                     }
                   }
@@ -17667,6 +17668,122 @@
         ],
         "responses": {
           "200": {
+            "description": ""
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      },
+      "delete": {
+        "operationId": "FilesController_remove",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "acknowledgeRisk",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "0",
+                "1"
+              ]
+            }
+          },
+          {
+            "name": "recursive",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "0",
+                "1"
+              ]
+            }
+          },
+          {
+            "name": "path",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "volume",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
             "description": ""
           },
           "401": {
@@ -41644,6 +41761,2443 @@
         ],
         "tags": [
           "agent-update"
+        ]
+      }
+    },
+    "/api/v1/apps/{id}/files/meta": {
+      "get": {
+        "operationId": "FilesController_meta",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "serverOnline": {
+                      "type": "boolean"
+                    },
+                    "clustered": {
+                      "type": "boolean"
+                    },
+                    "capabilities": {
+                      "type": "object",
+                      "properties": {
+                        "files": {
+                          "type": "boolean"
+                        },
+                        "filesWrite": {
+                          "type": "boolean"
+                        },
+                        "terminal": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "files",
+                        "filesWrite",
+                        "terminal"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "canTerminal": {
+                      "type": "boolean"
+                    },
+                    "agentSupportsFs2": {
+                      "type": "boolean"
+                    },
+                    "datastore": {
+                      "type": "boolean"
+                    },
+                    "volumes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "writable": {
+                            "type": "boolean"
+                          },
+                          "reason": {
+                            "type": "string",
+                            "enum": [
+                              "capability",
+                              "agent_old",
+                              "datastore_running",
+                              "offline",
+                              "deploy_in_progress"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "writable"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "container": {
+                      "type": "object",
+                      "properties": {
+                        "available": {
+                          "type": "boolean"
+                        },
+                        "writable": {
+                          "type": "boolean"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "enum": [
+                            "clustered",
+                            "not_deployed",
+                            "capability",
+                            "permission",
+                            "agent_old",
+                            "offline",
+                            "deploy_in_progress"
+                          ]
+                        },
+                        "names": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "available",
+                        "writable",
+                        "names"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "limits": {
+                      "type": "object",
+                      "properties": {
+                        "maxUploadBytes": {
+                          "type": "number"
+                        },
+                        "maxDownloadBytes": {
+                          "type": "number"
+                        },
+                        "maxEditBytes": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "maxUploadBytes",
+                        "maxDownloadBytes",
+                        "maxEditBytes"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "serverOnline",
+                    "clustered",
+                    "capabilities",
+                    "canTerminal",
+                    "agentSupportsFs2",
+                    "datastore",
+                    "volumes",
+                    "container",
+                    "limits"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
+    "/api/v1/apps/{id}/files/stat": {
+      "get": {
+        "operationId": "FilesController_stat",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "required": false,
+            "in": "query",
+            "description": "volume-relative path; empty = the volume root",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "volume",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "file",
+                        "dir",
+                        "symlink",
+                        "other"
+                      ]
+                    },
+                    "size": {
+                      "type": "number"
+                    },
+                    "mode": {
+                      "type": "string",
+                      "description": "octal permission bits, e.g. 0644"
+                    },
+                    "mtime": {
+                      "type": "number"
+                    },
+                    "mtimeNs": {
+                      "type": "number"
+                    },
+                    "uid": {
+                      "type": "number"
+                    },
+                    "gid": {
+                      "type": "number"
+                    },
+                    "etag": {
+                      "type": "string",
+                      "description": "<size>-<mtimeNs>; send it back as ifMatch to avoid overwriting a concurrent change"
+                    },
+                    "linkTarget": {
+                      "type": "string"
+                    },
+                    "uname": {
+                      "type": "string"
+                    },
+                    "gname": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "size",
+                    "mode",
+                    "mtime",
+                    "mtimeNs",
+                    "uid",
+                    "gid",
+                    "etag"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
+    "/api/v1/apps/{id}/files/content": {
+      "get": {
+        "operationId": "FilesController_download",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "volume",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      },
+      "put": {
+        "operationId": "FilesController_upload",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "acknowledgeRisk",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "0",
+                "1"
+              ]
+            },
+            "description": "1 = write into a running datastore volume anyway"
+          },
+          {
+            "name": "ifMatch",
+            "required": false,
+            "in": "query",
+            "description": "etag of the version being replaced",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "required": false,
+            "in": "query",
+            "description": "octal permission bits (<= 0777)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "overwrite",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "0",
+                "1"
+              ]
+            }
+          },
+          {
+            "name": "path",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "volume",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "bytes": {
+                      "type": "number"
+                    },
+                    "sha256": {
+                      "type": "string"
+                    },
+                    "etag": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "bytes",
+                    "sha256",
+                    "etag"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
+    "/api/v1/apps/{id}/files/mkdir": {
+      "post": {
+        "operationId": "FilesController_mkdir",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "volume": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+                  },
+                  "path": {
+                    "type": "string",
+                    "maxLength": 4096
+                  },
+                  "mode": {
+                    "type": "string",
+                    "pattern": "^[0-7]{3,4}$"
+                  },
+                  "parents": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "volume",
+                  "path"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "file",
+                        "dir",
+                        "symlink",
+                        "other"
+                      ]
+                    },
+                    "size": {
+                      "type": "number"
+                    },
+                    "mode": {
+                      "type": "string",
+                      "description": "octal permission bits, e.g. 0644"
+                    },
+                    "mtime": {
+                      "type": "number"
+                    },
+                    "mtimeNs": {
+                      "type": "number"
+                    },
+                    "uid": {
+                      "type": "number"
+                    },
+                    "gid": {
+                      "type": "number"
+                    },
+                    "etag": {
+                      "type": "string",
+                      "description": "<size>-<mtimeNs>; send it back as ifMatch to avoid overwriting a concurrent change"
+                    },
+                    "linkTarget": {
+                      "type": "string"
+                    },
+                    "uname": {
+                      "type": "string"
+                    },
+                    "gname": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "size",
+                    "mode",
+                    "mtime",
+                    "mtimeNs",
+                    "uid",
+                    "gid",
+                    "etag"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
+    "/api/v1/apps/{id}/files/rename": {
+      "post": {
+        "operationId": "FilesController_rename",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "volume": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+                  },
+                  "from": {
+                    "type": "string",
+                    "maxLength": 4096
+                  },
+                  "to": {
+                    "type": "string",
+                    "maxLength": 4096
+                  },
+                  "acknowledgeRisk": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "volume",
+                  "from",
+                  "to"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "file",
+                        "dir",
+                        "symlink",
+                        "other"
+                      ]
+                    },
+                    "size": {
+                      "type": "number"
+                    },
+                    "mode": {
+                      "type": "string",
+                      "description": "octal permission bits, e.g. 0644"
+                    },
+                    "mtime": {
+                      "type": "number"
+                    },
+                    "mtimeNs": {
+                      "type": "number"
+                    },
+                    "uid": {
+                      "type": "number"
+                    },
+                    "gid": {
+                      "type": "number"
+                    },
+                    "etag": {
+                      "type": "string",
+                      "description": "<size>-<mtimeNs>; send it back as ifMatch to avoid overwriting a concurrent change"
+                    },
+                    "linkTarget": {
+                      "type": "string"
+                    },
+                    "uname": {
+                      "type": "string"
+                    },
+                    "gname": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "size",
+                    "mode",
+                    "mtime",
+                    "mtimeNs",
+                    "uid",
+                    "gid",
+                    "etag"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
+    "/api/v1/apps/{id}/files/chmod": {
+      "post": {
+        "operationId": "FilesController_chmod",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "volume": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+                  },
+                  "path": {
+                    "type": "string",
+                    "maxLength": 4096
+                  },
+                  "mode": {
+                    "type": "string",
+                    "pattern": "^[0-7]{3,4}$"
+                  },
+                  "acknowledgeRisk": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "volume",
+                  "path",
+                  "mode"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "file",
+                        "dir",
+                        "symlink",
+                        "other"
+                      ]
+                    },
+                    "size": {
+                      "type": "number"
+                    },
+                    "mode": {
+                      "type": "string",
+                      "description": "octal permission bits, e.g. 0644"
+                    },
+                    "mtime": {
+                      "type": "number"
+                    },
+                    "mtimeNs": {
+                      "type": "number"
+                    },
+                    "uid": {
+                      "type": "number"
+                    },
+                    "gid": {
+                      "type": "number"
+                    },
+                    "etag": {
+                      "type": "string",
+                      "description": "<size>-<mtimeNs>; send it back as ifMatch to avoid overwriting a concurrent change"
+                    },
+                    "linkTarget": {
+                      "type": "string"
+                    },
+                    "uname": {
+                      "type": "string"
+                    },
+                    "gname": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "size",
+                    "mode",
+                    "mtime",
+                    "mtimeNs",
+                    "uid",
+                    "gid",
+                    "etag"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
+    "/api/v1/apps/{id}/container-files": {
+      "get": {
+        "operationId": "ContainerFilesController_list",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "required": false,
+            "in": "query",
+            "description": "absolute in-container path (default /)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "container",
+            "required": false,
+            "in": "query",
+            "description": "required for COMPOSE apps",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "file",
+                              "dir",
+                              "symlink",
+                              "other"
+                            ]
+                          },
+                          "size": {
+                            "type": "number"
+                          },
+                          "mode": {
+                            "type": "string"
+                          },
+                          "mtime": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "type",
+                          "size",
+                          "mode",
+                          "mtime"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "entries",
+                    "truncated"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      },
+      "delete": {
+        "operationId": "ContainerFilesController_remove",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "recursive",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "0",
+                "1"
+              ]
+            }
+          },
+          {
+            "name": "path",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "container",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
+    "/api/v1/apps/{id}/container-files/stat": {
+      "get": {
+        "operationId": "ContainerFilesController_stat",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "container",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "file",
+                        "dir",
+                        "symlink",
+                        "other"
+                      ]
+                    },
+                    "size": {
+                      "type": "number"
+                    },
+                    "mode": {
+                      "type": "string",
+                      "description": "octal permission bits, e.g. 0644"
+                    },
+                    "mtime": {
+                      "type": "number"
+                    },
+                    "mtimeNs": {
+                      "type": "number"
+                    },
+                    "uid": {
+                      "type": "number"
+                    },
+                    "gid": {
+                      "type": "number"
+                    },
+                    "etag": {
+                      "type": "string",
+                      "description": "<size>-<mtimeNs>; send it back as ifMatch to avoid overwriting a concurrent change"
+                    },
+                    "linkTarget": {
+                      "type": "string"
+                    },
+                    "uname": {
+                      "type": "string"
+                    },
+                    "gname": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "size",
+                    "mode",
+                    "mtime",
+                    "mtimeNs",
+                    "uid",
+                    "gid",
+                    "etag"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
+    "/api/v1/apps/{id}/container-files/content": {
+      "get": {
+        "operationId": "ContainerFilesController_download",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "container",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      },
+      "put": {
+        "operationId": "ContainerFilesController_upload",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ifMatch",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "overwrite",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "0",
+                "1"
+              ]
+            }
+          },
+          {
+            "name": "path",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "container",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "bytes": {
+                      "type": "number"
+                    },
+                    "sha256": {
+                      "type": "string"
+                    },
+                    "etag": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "bytes",
+                    "sha256",
+                    "etag"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
+    "/api/v1/apps/{id}/container-files/mkdir": {
+      "post": {
+        "operationId": "ContainerFilesController_mkdir",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "container": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+                  },
+                  "path": {
+                    "type": "string",
+                    "maxLength": 4096
+                  },
+                  "mode": {
+                    "type": "string",
+                    "pattern": "^[0-7]{3,4}$"
+                  },
+                  "parents": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "path"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "file",
+                        "dir",
+                        "symlink",
+                        "other"
+                      ]
+                    },
+                    "size": {
+                      "type": "number"
+                    },
+                    "mode": {
+                      "type": "string",
+                      "description": "octal permission bits, e.g. 0644"
+                    },
+                    "mtime": {
+                      "type": "number"
+                    },
+                    "mtimeNs": {
+                      "type": "number"
+                    },
+                    "uid": {
+                      "type": "number"
+                    },
+                    "gid": {
+                      "type": "number"
+                    },
+                    "etag": {
+                      "type": "string",
+                      "description": "<size>-<mtimeNs>; send it back as ifMatch to avoid overwriting a concurrent change"
+                    },
+                    "linkTarget": {
+                      "type": "string"
+                    },
+                    "uname": {
+                      "type": "string"
+                    },
+                    "gname": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "size",
+                    "mode",
+                    "mtime",
+                    "mtimeNs",
+                    "uid",
+                    "gid",
+                    "etag"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
+    "/api/v1/apps/{id}/container-files/rename": {
+      "post": {
+        "operationId": "ContainerFilesController_rename",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "container": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+                  },
+                  "from": {
+                    "type": "string",
+                    "maxLength": 4096
+                  },
+                  "to": {
+                    "type": "string",
+                    "maxLength": 4096
+                  }
+                },
+                "required": [
+                  "from",
+                  "to"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "file",
+                        "dir",
+                        "symlink",
+                        "other"
+                      ]
+                    },
+                    "size": {
+                      "type": "number"
+                    },
+                    "mode": {
+                      "type": "string",
+                      "description": "octal permission bits, e.g. 0644"
+                    },
+                    "mtime": {
+                      "type": "number"
+                    },
+                    "mtimeNs": {
+                      "type": "number"
+                    },
+                    "uid": {
+                      "type": "number"
+                    },
+                    "gid": {
+                      "type": "number"
+                    },
+                    "etag": {
+                      "type": "string",
+                      "description": "<size>-<mtimeNs>; send it back as ifMatch to avoid overwriting a concurrent change"
+                    },
+                    "linkTarget": {
+                      "type": "string"
+                    },
+                    "uname": {
+                      "type": "string"
+                    },
+                    "gname": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "size",
+                    "mode",
+                    "mtime",
+                    "mtimeNs",
+                    "uid",
+                    "gid",
+                    "etag"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
+    "/api/v1/apps/{id}/container-files/chmod": {
+      "post": {
+        "operationId": "ContainerFilesController_chmod",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "container": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+                  },
+                  "path": {
+                    "type": "string",
+                    "maxLength": 4096
+                  },
+                  "mode": {
+                    "type": "string",
+                    "pattern": "^[0-7]{3,4}$"
+                  }
+                },
+                "required": [
+                  "path",
+                  "mode"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "file",
+                        "dir",
+                        "symlink",
+                        "other"
+                      ]
+                    },
+                    "size": {
+                      "type": "number"
+                    },
+                    "mode": {
+                      "type": "string",
+                      "description": "octal permission bits, e.g. 0644"
+                    },
+                    "mtime": {
+                      "type": "number"
+                    },
+                    "mtimeNs": {
+                      "type": "number"
+                    },
+                    "uid": {
+                      "type": "number"
+                    },
+                    "gid": {
+                      "type": "number"
+                    },
+                    "etag": {
+                      "type": "string",
+                      "description": "<size>-<mtimeNs>; send it back as ifMatch to avoid overwriting a concurrent change"
+                    },
+                    "linkTarget": {
+                      "type": "string"
+                    },
+                    "uname": {
+                      "type": "string"
+                    },
+                    "gname": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "size",
+                    "mode",
+                    "mtime",
+                    "mtimeNs",
+                    "uid",
+                    "gid",
+                    "etag"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
         ]
       }
     },

@@ -1,5 +1,6 @@
-import { ServiceUnavailableException } from "@nestjs/common";
-import { canonicalLogDrains } from "@tugra/shared";
+import { ForbiddenException, HttpException, ServiceUnavailableException } from "@nestjs/common";
+import { canonicalLogDrains, canonicalFs2, fs2RequiredCapabilities } from "@tugra/shared";
+import { FsRemoteException } from "../files/fs-errors";
 import { AgentWsServer } from "./agent-ws.server";
 import { AgentCommandTimeoutException, AgentDisconnectedException, AgentOfflineException } from "./agent-offline.exception";
 
@@ -989,5 +990,160 @@ describe("AgentWsServer log drains (D7)", () => {
     expect(JSON.parse(socket.send.mock.calls.at(-1)![0])).toEqual({ type: "capabilities", capabilities: ["deploy"] });
     expect(provider).toHaveBeenCalledWith("s1");
     void server.onModuleDestroy();
+  });
+});
+
+describe("AgentWsServer fs2 (write-capable file ops)", () => {
+  function fs2Harness(caps: string[], features: string[] = ["cmd_journal_v1", "fs2_v1"]) {
+    const sign = jest.fn().mockReturnValue("SIG");
+    const servers = { markOffline: jest.fn(), healOnline: jest.fn(), grantedCapabilities: jest.fn().mockResolvedValue(caps) } as any;
+    const server = new AgentWsServer({} as any, servers, { ingest: jest.fn() } as any, { ingest: jest.fn() } as any, { sign, publicKeySpkiBase64: "K" } as any, {} as any);
+    const socket = { readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn() } as any;
+    (server as any).state.set(socket, { nonce: "n", serverId: "s1", authed: true, features: new Set(features) });
+    (server as any).sockets.set("s1", socket);
+    const lastSent = () => JSON.parse(socket.send.mock.calls.at(-1)![0]);
+    const deliver = (msg: object, s = socket) => (server as any).onMessage(s, JSON.stringify(msg));
+    return { server, socket, servers, sign, lastSent, deliver };
+  }
+
+  const base = { op: "stat", scope: "volume", subject: "tugra_appv_a_data", path: "d/f", path2: "", mode: "", flags: "", size: 0, sha256: "", ifMatch: "", xfer: "" } as const;
+  const writeReq = { ...base, op: "write", mode: "0644", flags: "o", size: 5, sha256: "a".repeat(64), xfer: "/api/v1/agent-fs/t/X?exp=1&sig=Y" } as const;
+
+  it("signs a fs2_req over EVERY field (canonicalFs2), with exp and the last required capability", async () => {
+    const { server, sign, lastSent, deliver } = fs2Harness(["files", "files_write"]);
+    const before = Math.floor(Date.now() / 1000);
+    const p = server.sendFs2("s1", writeReq as any, 40_000);
+    await flush();
+    const sent = lastSent();
+    expect(sent.type).toBe("fs2_req");
+    expect(sent.sig).toBe("SIG");
+    expect(sent.capability).toBe("files_write");
+    expect(sent.timeoutMs).toBe(40_000);
+    expect(sent.exp).toBeGreaterThanOrEqual(before + 40 + 300);
+    expect(sent.exp).toBeLessThanOrEqual(before + 40 + 300 + 5);
+    const { type: _t, sig: _s, ...fields } = sent;
+    expect(sign).toHaveBeenLastCalledWith(canonicalFs2(fields));
+    // every signed field is carried on the wire exactly as signed
+    for (const k of ["reqId", "op", "scope", "subject", "path", "path2", "mode", "flags", "size", "sha256", "ifMatch", "xfer", "timeoutMs", "exp", "capability"]) {
+      expect(fields).toHaveProperty(k);
+    }
+    await deliver({ type: "fs2_result", reqId: sent.reqId, ok: true, created: true, bytes: 5 });
+    await expect(p).resolves.toMatchObject({ ok: true, created: true, bytes: 5 });
+  });
+
+  it("refuses in order: offline, then a too-old agent (409 agent_too_old), then every capability in the set", async () => {
+    const off = fs2Harness(["files"]);
+    await expect(off.server.sendFs2("ghost", base as any, 5000)).rejects.toBeInstanceOf(AgentOfflineException);
+
+    const old = fs2Harness(["files", "files_write"], ["cmd_journal_v1"]);
+    const e1 = await old.server.sendFs2("s1", writeReq as any, 5000).catch((e: unknown) => e);
+    expect(e1).toBeInstanceOf(HttpException);
+    expect((e1 as any).getStatus()).toBe(409);
+    expect((e1 as any).getResponse()).toMatchObject({ code: "agent_too_old" });
+    expect(old.socket.send).not.toHaveBeenCalled();
+
+    // only `files` granted: a mutating op names the MISSING files_write, with serverId
+    const ro = fs2Harness(["files"]);
+    const e2 = await ro.server.sendFs2("s1", writeReq as any, 5000).catch((e: unknown) => e);
+    expect(e2).toBeInstanceOf(ForbiddenException);
+    expect((e2 as any).getResponse()).toMatchObject({ statusCode: 403, code: "capability_not_granted", capability: "files_write", serverId: "s1" });
+    expect(ro.socket.send).not.toHaveBeenCalled();
+  });
+
+  it("enforces the whole (scope, op) capability matrix before anything is signed", async () => {
+    const ops = ["stat", "read", "write", "mkdir", "rename", "chmod", "delete"] as const;
+    for (const scope of ["volume", "container"] as const) {
+      for (const op of [...ops, "list"] as const) {
+        const need = fs2RequiredCapabilities(scope, op);
+        if (need.length === 0) continue; // volume list is not an fs2 op
+        for (const missing of need) {
+          const h = fs2Harness(need.filter((c) => c !== missing));
+          const err = await h.server.sendFs2("s1", { ...base, op, scope } as any, 5000).catch((e: unknown) => e);
+          expect(err).toBeInstanceOf(ForbiddenException);
+          expect((err as any).getResponse().capability).toBe(missing);
+          expect(h.socket.send).not.toHaveBeenCalled();
+          expect(h.sign).not.toHaveBeenCalled();
+        }
+        const ok = fs2Harness(need);
+        const p = ok.server.sendFs2("s1", { ...base, op, scope } as any, 5000);
+        await flush();
+        expect(ok.lastSent().capability).toBe(need[need.length - 1]);
+        await ok.deliver({ type: "fs2_result", reqId: ok.lastSent().reqId, ok: true });
+        await p;
+      }
+    }
+    // an unknown (scope, op) is a 400, not a signed request
+    const h = fs2Harness(["files", "files_write", "terminal"]);
+    await expect(h.server.sendFs2("s1", { ...base, op: "list", scope: "volume" } as any, 5000)).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("caps in-flight fs2 operations per server at 4 (429 busy), freeing a slot on completion", async () => {
+    const h = fs2Harness(["files"]);
+    const pending = Array.from({ length: 4 }, () => h.server.sendFs2("s1", base as any, 5000));
+    await flush();
+    const err = await h.server.sendFs2("s1", base as any, 5000).catch((e: unknown) => e);
+    expect((err as any).getStatus()).toBe(429);
+    expect((err as any).getResponse()).toMatchObject({ code: "busy" });
+    await h.deliver({ type: "fs2_result", reqId: JSON.parse(h.socket.send.mock.calls[0][0]).reqId, ok: true });
+    await pending[0];
+    const again = h.server.sendFs2("s1", base as any, 5000);
+    await flush();
+    expect(h.socket.send).toHaveBeenCalledTimes(5);
+    for (const c of h.socket.send.mock.calls.slice(1)) await h.deliver({ type: "fs2_result", reqId: JSON.parse(c[0]).reqId, ok: true });
+    await Promise.all([...pending.slice(1), again]);
+  });
+
+  it("rejects with the agent's typed code on ok:false (FsRemoteException)", async () => {
+    const h = fs2Harness(["files", "files_write"]);
+    const p = h.server.sendFs2("s1", { ...base, op: "mkdir" } as any, 5000);
+    await flush();
+    await h.deliver({ type: "fs2_result", reqId: h.lastSent().reqId, ok: false, code: "exists", error: "already exists" });
+    const err = await p.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(FsRemoteException);
+    expect((err as any).getStatus()).toBe(409);
+    expect((err as any).getResponse()).toEqual({ statusCode: 409, code: "exists", message: "already exists" });
+  });
+
+  it("accepts a result ONLY from the authed socket that owns the request", async () => {
+    const h = fs2Harness(["files"]);
+    const p = h.server.sendFs2("s1", base as any, 5000);
+    await flush();
+    const reqId = h.lastSent().reqId;
+    const other = { readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn() } as any;
+    (h.server as any).state.set(other, { nonce: "n", serverId: "s2", authed: true, features: new Set() });
+    await h.deliver({ type: "fs2_result", reqId, ok: true }, other);
+    expect((h.server as any).fs2Pending.has(reqId)).toBe(true); // a foreign reply is ignored
+    const unauthed = { readyState: 1, send: jest.fn(), on: jest.fn(), close: jest.fn() } as any;
+    (h.server as any).state.set(unauthed, { nonce: "n", authed: false, features: new Set() });
+    await h.deliver({ type: "fs2_result", reqId, ok: true }, unauthed);
+    expect((h.server as any).fs2Pending.has(reqId)).toBe(true);
+    await h.deliver({ type: "fs2_result", reqId, ok: true, stat: { name: "f" } });
+    await expect(p).resolves.toMatchObject({ ok: true, stat: { name: "f" } });
+    // fs_result (legacy) and fs2_result are separate maps: a legacy reply never resolves an fs2 request
+    expect((h.server as any).fsPending.size).toBe(0);
+  });
+
+  it("rejects pending fs2 ops when the agent disconnects, and times out with a 504", async () => {
+    const h = fs2Harness(["files"]);
+    const p = h.server.sendFs2("s1", base as any, 5000);
+    await flush();
+    (h.server as any).rejectPendingFor("s1");
+    await expect(p).rejects.toBeInstanceOf(AgentDisconnectedException);
+    expect((h.server as any).fs2Pending.size).toBe(0);
+
+    const t = h.server.sendFs2("s1", base as any, 15);
+    const err = await t.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AgentCommandTimeoutException);
+    expect((h.server as any).fs2Pending.size).toBe(0);
+  });
+
+  it("leaves the legacy fs_req path alone (still signs canonicalFs, still gated on files only)", async () => {
+    const h = fs2Harness(["files"]);
+    const p = h.server.sendFsReq("s1", "list", "tugra_appv_x_data", "sub");
+    await flush();
+    expect(h.lastSent().type).toBe("fs_req");
+    expect(h.sign).toHaveBeenLastCalledWith("fs\n" + h.lastSent().reqId + "\nlist\ntugra_appv_x_data\nsub\nfiles");
+    await h.deliver({ type: "fs_result", reqId: h.lastSent().reqId, ok: true, entries: [] });
+    await p;
   });
 });
