@@ -187,6 +187,61 @@ describe("scripts/install.sh", () => {
       expect(parseEnv(readFileSync(p, "utf8")).TUGRA_TELEMETRY).toBe("0");
     });
 
+    describe("signed self-update checks are ON by default (opt-out)", () => {
+      const KEYS = ["UPDATE_MANIFEST_URL", "UPDATE_PUBLISHER_KEY", "TUGRA_UPDATE_CHECKS"];
+      const lineCount = (p: string, key: string): number => (readFileSync(p, "utf8").match(new RegExp(`^${key}=`, "gm")) ?? []).length;
+
+      it("no flags writes neither the manifest URL, the publisher key nor TUGRA_UPDATE_CHECKS (the hub carries the official values)", () => {
+        const p = join(dir, "upd-default.env");
+        run([], p);
+        const env = parseEnv(readFileSync(p, "utf8"));
+        for (const k of KEYS) expect(env[k]).toBeUndefined();
+      });
+
+      it("--no-update-checks writes TUGRA_UPDATE_CHECKS=0 and a flag-less re-run keeps it", () => {
+        const p = join(dir, "upd-off.env");
+        run(["--no-update-checks"], p);
+        expect(parseEnv(readFileSync(p, "utf8")).TUGRA_UPDATE_CHECKS).toBe("0");
+        run([], p);
+        expect(parseEnv(readFileSync(p, "utf8")).TUGRA_UPDATE_CHECKS).toBe("0");
+      });
+
+      it("--enable-update-checks on a re-run flips a stored opt-out back to 1 with exactly one line", () => {
+        const p = join(dir, "upd-reenable.env");
+        run(["--no-update-checks"], p);
+        run(["--enable-update-checks"], p);
+        expect(parseEnv(readFileSync(p, "utf8")).TUGRA_UPDATE_CHECKS).toBe("1");
+        expect(lineCount(p, "TUGRA_UPDATE_CHECKS")).toBe(1);
+      });
+
+      it("the two flags together are rejected", () => {
+        const p = join(dir, "upd-both.env");
+        const r = spawnSync("bash", [INSTALL_SH, "--dry-run", "--env-file", p, "--no-update-checks", "--enable-update-checks"], { env: cleanEnv, encoding: "utf8" });
+        expect(r.status).toBe(1);
+        expect(`${r.stdout}${r.stderr}`).toContain("mutually exclusive");
+      });
+
+      it("the env form TUGRA_UPDATE_CHECKS=0 opts out (the one-line bootstrap passes the variable the hub reads)", () => {
+        const p = join(dir, "upd-envform.env");
+        execFileSync("bash", [INSTALL_SH, "--dry-run", "--env-file", p], { stdio: "pipe", env: { ...cleanEnv, TUGRA_UPDATE_CHECKS: "0" } });
+        expect(parseEnv(readFileSync(p, "utf8")).TUGRA_UPDATE_CHECKS).toBe("0");
+      });
+
+      it("an operator's explicit URL + key pair survives a re-run untouched", () => {
+        const p = join(dir, "upd-custom.env");
+        run([], p);
+        const url = "https://updates.example.com/versions.json";
+        const key = "MCowBQYDK2VwAyEAcustomcustomcustomcustomcustomcustomcus=";
+        writeFileSync(p, `${readFileSync(p, "utf8")}UPDATE_MANIFEST_URL=${url}\nUPDATE_PUBLISHER_KEY=${key}\n`);
+        run([], p);
+        const env = parseEnv(readFileSync(p, "utf8"));
+        expect(env.UPDATE_MANIFEST_URL).toBe(url);
+        expect(env.UPDATE_PUBLISHER_KEY).toBe(key);
+        expect(env.TUGRA_UPDATE_CHECKS).toBeUndefined();
+        expect(lineCount(p, "UPDATE_MANIFEST_URL")).toBe(1);
+      });
+    });
+
     const runEnv = (args: string[], envPath: string, extra: Record<string, string>) =>
       execFileSync("bash", [INSTALL_SH, "--dry-run", "--env-file", envPath, ...args], {
         stdio: "pipe",
@@ -375,7 +430,7 @@ describe("scripts/install.sh", () => {
 
     it("--help prints EVERY flag (it used to cut off after --env-file)", () => {
       const help = execFileSync("bash", [INSTALL_SH, "--help"], { stdio: "pipe", env: cleanEnv }).toString();
-      for (const f of ["--restore-from", "--public-ip", "--detect-public-ip", "--no-telemetry", "--enable-update-checks", "--home", "--dry-run", "--keep-raw-ports", "--acme-dns-cloudflare-file"]) {
+      for (const f of ["--restore-from", "--public-ip", "--detect-public-ip", "--no-telemetry", "--no-update-checks", "--enable-update-checks", "--home", "--dry-run", "--keep-raw-ports", "--acme-dns-cloudflare-file"]) {
         expect(help).toContain(f);
       }
       expect(help).not.toContain("set -euo pipefail");
@@ -513,6 +568,21 @@ exit 0
     };
     const HTTP = ["--hub-url", "http://10.0.0.5:3000", "--web-url", "http://10.0.0.5:3001"];
     const readEnv = (p: string) => parseEnv(readFileSync(p, "utf8"));
+
+    describe("update-check hint", () => {
+      it("says checks are ON by default and OFF after --no-update-checks", () => {
+        const on = join(work, "hint-on.env"); reset();
+        const ron = install(on, HTTP);
+        expect(ron.code).toBe(0);
+        expect(ron.out).toContain("Update checks are ON");
+        const off = join(work, "hint-off.env"); reset();
+        const roff = install(off, [...HTTP, "--no-update-checks"]);
+        expect(roff.code).toBe(0);
+        expect(roff.out).toContain("Update checks are OFF");
+        expect(roff.out).not.toContain("Update checks are ON");
+        expect(readEnv(off).TUGRA_UPDATE_CHECKS).toBe("0");
+      });
+    });
 
     describe("compose take-over of a self-updated agent", () => {
       it("removes a tugra-agent-1 container that exists WITHOUT compose labels before `compose up`, and leaves a managed one alone", () => {

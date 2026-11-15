@@ -37,8 +37,10 @@ Pick what matches how you would actually use it. Each item takes a couple of min
   **Rollout** across several apps (canary → waves) and halt/resume it.
 - **Operations** — restart the hub (`docker compose restart hub-api` in the install directory) while a deploy
   is running: the deploy should finish and be picked back up, not be marked failed.
-- **Self-update** — Settings → Instance → Updates. Check, apply, and confirm the restore point appeared under
-  `backups/` in the install directory.
+- **Self-update** — Settings → Instance → Updates. Update checks are on by default and the card shows
+  **Automatic (Beta)** with the last check time; the next beta appears within an hour, or as soon as you open the
+  panel. Turn on auto-update to have beta.N → beta.N+1 applied for you, and confirm the restore point appeared
+  under `backups/` in the install directory.
 - **MCP** — mint a personal access token and point an MCP client at `POST /api/v1/mcp` (see the README's MCP
   quick start). Try `list_applications` and a deploy.
 
@@ -53,6 +55,8 @@ Pick what matches how you would actually use it. Each item takes a couple of min
   two-port install.
 - The in-app updater updates the hub and web (and now the local agent); a release that changes the compose file
   or the scripts still needs `git pull && ./scripts/install.sh`.
+- Hubs on beta.16 or earlier have no working update check, so they upgrade to the first automatic-check release
+  manually, once (`git pull && ./scripts/install.sh`); after that the hub finds new betas on its own.
 - Pro/Cloud (SSO/OIDC, audit export, white-label) are not available yet; the core is complete and free.
 
 ## 4. Reporting a bug

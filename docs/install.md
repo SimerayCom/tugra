@@ -145,7 +145,7 @@ public origin so the session cookie is visible to the SPA); it isn't available i
 | `--env-file <path>` | Write the env file elsewhere (default `<repo>/.env`). |
 | `--home` | Start the owner in the simple Home launcher instead of the full Fleet control plane. |
 | `--no-telemetry` / `--enable-telemetry` | Opt out of / explicitly accept the anonymous usage stats (also `TUGRA_TELEMETRY=0\|1`). |
-| `--enable-update-checks` | Opt in to the signed self-update version check (off by default). |
+| `--no-update-checks` / `--enable-update-checks` | Opt out of (or re-enable) the signed self-update checks, which are on by default (also `TUGRA_UPDATE_CHECKS=0`). |
 | `--public-ip <ip>` / `--detect-public-ip` | Pin this host's public IP (or opt in to a best-effort probe) so deployed-app URLs resolve from outside. |
 | `--restore-from <bundle>` | Restore a hub bundle made by `scripts/hub-migrate.sh pack` onto this host (see [Disaster recovery](disaster-recovery.md)). |
 | `--yes`, `-y` | Assume yes for confirmation prompts. |

@@ -33,7 +33,8 @@
 #   --home              Start the owner account in the simple Home launcher (CasaOS-style) instead of the
 #                       full Fleet control plane. Owner can still choose/switch in onboarding or Settings.
 #   --no-telemetry      Opt OUT of the on-by-default anonymous usage stats (also: TUGRA_TELEMETRY=0).
-#   --enable-update-checks  Opt IN to the signed self-update version check (off by default).
+#   --no-update-checks  Opt OUT of the signed self-update checks, on by default (also: TUGRA_UPDATE_CHECKS=0).
+#   --enable-update-checks  Re-enable update checks after --no-update-checks (they are on by default; also: TUGRA_ENABLE_UPDATE_CHECKS=1).
 #   --detect-public-ip  Best-effort auto-detect this host's public IP (off by default, for privacy).
 #   --public-ip <ip>    Pin the host's public IP (so deployed-app magic URLs are reachable from outside).
 #   --dry-run           Generate the .env and exit — do not touch Docker.
@@ -57,9 +58,11 @@ DRY_RUN=0
 RESTORE_FROM=""
 RESTORE_SET=0
 ASSUME_YES=0
-# Outbound policy: update checks and public-IP detection are explicit opt-in (default off); anonymous usage
-# stats are on by default (opt-out, see below). env-var forms let the one-line curl|sh installer opt in too.
-ENABLE_UPDATE_CHECKS="${TUGRA_ENABLE_UPDATE_CHECKS:-0}"
+# Outbound policy: update checks and anonymous usage stats are ON by default (opt-out); public-IP detection is
+# opt-in. env-var forms let the one-line curl|sh installer choose too.
+ENABLE_UPDATE_CHECKS="${TUGRA_ENABLE_UPDATE_CHECKS:-0}" # re-enable after an earlier opt-out (checks are on by default)
+NO_UPDATE_CHECKS="${TUGRA_NO_UPDATE_CHECKS:-0}"         # explicit opt-out of the default-on signed update checks
+[ "${TUGRA_UPDATE_CHECKS:-}" = "0" ] && NO_UPDATE_CHECKS=1 # the same variable the hub reads
 DETECT_PUBLIC_IP="${TUGRA_DETECT_PUBLIC_IP:-0}"
 MANUAL_PUBLIC_IP="${TUGRA_PUBLIC_IP:-}"
 ENABLE_TELEMETRY="${TUGRA_ENABLE_TELEMETRY:-0}" # explicit opt-in (skips the confirm prompt)
@@ -135,6 +138,7 @@ while [ $# -gt 0 ]; do
     --env-file) ENV_FILE="${2:-}"; shift 2 ;;
     --build)    FORCE_BUILD=1; shift ;;
     --pull)     FORCE_PULL=1; shift ;;
+    --no-update-checks)     NO_UPDATE_CHECKS=1; shift ;;
     --enable-update-checks) ENABLE_UPDATE_CHECKS=1; shift ;;
     --enable-telemetry)     ENABLE_TELEMETRY=1; shift ;;
     --no-telemetry)         NO_TELEMETRY=1; shift ;;
@@ -158,6 +162,9 @@ while [ $# -gt 0 ]; do
     *) err "unknown option: $1"; exit 1 ;;
   esac
 done
+if [ "$NO_UPDATE_CHECKS" = "1" ] && [ "$ENABLE_UPDATE_CHECKS" = "1" ]; then
+  err "--no-update-checks and --enable-update-checks are mutually exclusive"; exit 1
+fi
 
 if [ "$ACME_DNS_TOKEN_ARGV" = "1" ]; then
   warn "the Cloudflare token was passed on the command line (visible in ps / shell history); prefer --acme-dns-cloudflare-file <path> or TUGRA_ACME_DNS_TOKEN."
@@ -593,14 +600,13 @@ if [ -n "${TUGRA_VERSION:-}" ]; then
   drop_digest_pins
 fi
 if [ "$FORCE_BUILD" -eq 1 ]; then drop_digest_pins; fi
-# Signed self-update channel — OPT-IN (off by default). Enable with --enable-update-checks
-# (or TUGRA_ENABLE_UPDATE_CHECKS=1): the hub then fetches ONE ed25519-signed manifest (no identifiers, no
-# version, no payload). Left unset, the update scheduler + agent digest-pin stay inert (env.ts fail-closed)
-# and you update by pulling images on your own schedule. only-if-unset so an operator override survives re-runs.
-if [ "$ENABLE_UPDATE_CHECKS" = "1" ]; then
-  ensure_env UPDATE_MANIFEST_URL  "https://simeraycom.github.io/tugra/versions.json"
-  ensure_env UPDATE_PUBLISHER_KEY "MCowBQYDK2VwAyEA4+vvlIQS9SWHEKc0Fo1UD2ZW+DSl0AJA9hOK5NeiXBE="
-fi
+# Signed self-update checks — ON by default. The hub fetches ONE ed25519-signed manifest (no identifiers, no
+# version, no payload) hourly and when the panel is opened; the official URL/key are built into the hub, so
+# nothing is written here unless the operator decides. An EXPLICIT choice on this run upserts (set_env) so it
+# overrides a stored value; a flag-less re-run keeps whatever is stored (including an earlier opt-out).
+# An operator's own UPDATE_MANIFEST_URL/UPDATE_PUBLISHER_KEY pair in .env still wins over the built-in defaults.
+if [ "$NO_UPDATE_CHECKS" = "1" ]; then set_env TUGRA_UPDATE_CHECKS "0"
+elif [ "$ENABLE_UPDATE_CHECKS" = "1" ]; then set_env TUGRA_UPDATE_CHECKS "1"; fi
 # Persist the telemetry choice decided above. The hub sends a once-a-day anonymous ping of COUNTS only
 # (servers, apps, databases, deploys) + version/edition/OS with a random instance id when
 # TUGRA_TELEMETRY != "0". An EXPLICIT choice on this run upserts (set_env) so it OVERRIDES a stored value;
@@ -927,12 +933,14 @@ else
 fi
 printf '  Back up the hub: keep %s offsite and schedule a pg_dump of the hub database (see docs/disaster-recovery.md).\n' "$ENV_FILE"
 printf '  Open the Web UI and create the owner account (enter the setup code if one is shown below). This machine connects itself as your first server; add more from Settings -> Servers.\n'
-# Trust-wedge hints: both are opt-in, so say plainly what is OFF and how to turn it on.
+# Trust-wedge hints: say plainly what is ON/OFF and how to change it.
 if ! env_has LOCAL_SERVER_PUBLIC_IP; then
   printf '  \033[2mPublic IP not set (no outbound probe by default). Deployed app URLs on a bare IP may not resolve until you set it: re-run with --public-ip <ip>, or set LOCAL_SERVER_PUBLIC_IP in %s.\033[0m\n' "$ENV_FILE"
 fi
-if [ "$ENABLE_UPDATE_CHECKS" != "1" ] && ! env_has UPDATE_MANIFEST_URL; then
-  printf '  \033[2mUpdate checks are OFF. Enable signed update checks: re-run with --enable-update-checks (see docs/upgrade.md). Watch GitHub releases for security advisories.\033[0m\n'
+if [ "$(env_get TUGRA_UPDATE_CHECKS)" = "0" ]; then
+  printf '  \033[2mUpdate checks are OFF (--no-update-checks). Watch GitHub releases for security advisories; re-enable with --enable-update-checks.\033[0m\n'
+else
+  printf '  \033[2mUpdate checks are ON: a signed release manifest is fetched hourly (no identifiers sent); the owner sees new releases in Settings -> Updates. Turn off with --no-update-checks.\033[0m\n'
 fi
 # Email is OUTBOUND-only and optional: with no MAIL_HOST the hub sends nothing (reset/verify links go to the hub
 # log). `|| true` + quote-stripping keep this safe under `set -euo pipefail` and for a blank `MAIL_HOST=""`.

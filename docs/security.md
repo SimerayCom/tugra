@@ -47,7 +47,7 @@ secrets, server names, IPs or personal data unless noted.
 | --- | --- | --- | --- |
 | Agent ↔ hub (WSS, signed commands) | On (core function) | n/a — the product | `agent-gateway/`, `scripts/agent-bootstrap` |
 | **Anonymous usage stats** → `TUGRA_TELEMETRY_URL` (default `telemetry.tugra.io`) | **On (opt-out)** | `TUGRA_TELEMETRY=0` / `install.sh --no-telemetry` / Settings toggle | `telemetry/telemetry.service.ts` |
-| Signed update-manifest check | **Off** — opt-in; when enabled, a scheduled daily fetch (not click-only) | `UPDATE_MANIFEST_URL` + `--enable-update-checks`; interval `UPDATE_CHECK_INTERVAL_MIN` | `update/update-check.scheduler.service.ts` |
+| Signed update-manifest check → `UPDATE_MANIFEST_URL` (default `simeraycom.github.io/tugra/versions.json`) | **On (opt-out)** — hourly + on panel open; ~2 KB GET, no identifiers | `TUGRA_UPDATE_CHECKS=0` / `install.sh --no-update-checks`; interval `UPDATE_CHECK_INTERVAL_MIN` | `update/update-check.scheduler.service.ts`, `update/update.service.ts` |
 | ACME / Let's Encrypt (issue TLS certs) | Only when you enable SSL for a domain | per-app/domain | `dns/`, `deploy/` |
 | Remote template catalog | Off — opt-in, signature-verified | `CATALOG_SOURCE_URL` + `CATALOG_PUBLISHER_KEY` | `catalog/` |
 | AI deploy-log analysis → Anthropic | Off — opt-in | `ANTHROPIC_API_KEY` | `deploy/` |
@@ -63,7 +63,8 @@ in **Settings → Anonymous usage stats**.
 
 The one-click / auto self-update runs through a deliberately minimal `tugra-updater` sidecar with a fixed
 command set; the hub verifies the release manifest's ed25519 signature and refuses downgrades/channel-skips
-before queueing anything. The sidecar's docker-socket surface is documented in
+before queueing anything. The same verified manifest supplies the per-arch agent image digests, so with checks on
+new agent installs are digest-pinned by default. The sidecar's docker-socket surface is documented in
 [SECURITY.md](../SECURITY.md); the publisher/signing side (how the signed manifest is produced) is in
 [Releasing](RELEASING.md).
 
