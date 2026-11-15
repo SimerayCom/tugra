@@ -397,7 +397,6 @@ describe("AppFilesCard uploads", () => {
     [new ApiError(413, "x", "too_large"), "That is larger than the allowed size."],
     [new ApiError(507, "x", "staging_full"), "There isn't enough free space."],
     [new ApiError(403, "x", "denied"), "Permission denied. The server refused that change."],
-    [new ApiError(429, "x", "rate_limited"), "Too many changes in a short time. Wait a moment."],
     [new ApiError(412, "x", "changed"), "It changed since you opened it. Reload or overwrite."],
   ])("maps a failed upload (%#) to a readable, retryable row", async (err, text) => {
     setup();
@@ -408,6 +407,20 @@ describe("AppFilesCard uploads", () => {
     expect(await screen.findByText(text)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Retry upload of a.txt" }));
     await waitFor(() => expect(calls).toHaveLength(2));
+  });
+
+  it("a 429 (rate limit / busy) retries by itself after Retry-After instead of failing the file", async () => {
+    setup();
+    const calls = fakeUploads();
+    await pick([file("a.txt")]);
+    await waitFor(() => expect(calls).toHaveLength(1));
+    await act(async () => calls[0].reject(new ApiError(429, "slow down", "rate_limited", { retryAfterSec: 0.1 })));
+    expect(await screen.findByText(/Retrying in \d+s/)).toBeTruthy();
+    expect(screen.queryByText("Failed")).toBeNull();
+    await waitFor(() => expect(calls).toHaveLength(2), { timeout: 2000 });
+    await act(async () => calls[1].reject(new ApiError(429, "busy", "busy"))); // busy => 3 s default backoff
+    expect(await screen.findByText(/Retrying in \d+s/)).toBeTruthy();
+    expect(calls).toHaveLength(2); // not before the backoff elapses
   });
 
   it("cancel aborts an in-flight upload and removes its row", async () => {

@@ -22,9 +22,14 @@ export interface UploadItem {
   ack: boolean;
   /** a failed upload whose file is still held (a too-large file is not) */
   retryable: boolean;
+  /** 429 (rate limit / server busy) backoff: do not start before this time (ms epoch); a counter caps the retries */
+  notBefore?: number;
+  throttled: number;
 }
 
 export const MAX_PARALLEL_UPLOADS = 3;
+/** How many times one file is automatically retried after a 429 before it is shown as failed. */
+export const MAX_THROTTLE_RETRIES = 30;
 
 /**
  * The upload queue: at most `maxParallel` files in flight, per-file progress and cancel/retry, a client-side size
@@ -45,6 +50,7 @@ export function useUploadQueue(cfg: {
   const [items, setItems] = useState<UploadItem[]>([]);
   const itemsRef = useRef<UploadItem[]>([]);
   const handles = useRef(new Map<number, UploadHandle>());
+  const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
   const files = useRef(new Map<number, File>());
   const seq = useRef(0);
   const cfgRef = useRef({ describeError, onChanged });
@@ -64,6 +70,7 @@ export function useUploadQueue(cfg: {
     for (const it of itemsRef.current) {
       if (running >= maxParallel) break;
       if (it.status !== "queued") continue;
+      if (it.notBefore && it.notBefore > Date.now()) continue; // backing off after a 429
       const file = files.current.get(it.uid);
       if (!file) continue;
       running++;
@@ -91,6 +98,17 @@ export function useUploadQueue(cfg: {
           if (e instanceof UploadAbortedError) {
             files.current.delete(it.uid);
             commit(itemsRef.current.filter((x) => x.uid !== it.uid));
+          } else if (e instanceof ApiError && e.status === 429 && it.throttled < MAX_THROTTLE_RETRIES) {
+            // Rate limited or the server is busy: honour Retry-After (the hub reports retryAfterSec) and try again by
+            // itself — a folder drop is far more than a person would retry by hand.
+            const secs = typeof e.data?.retryAfterSec === "number" ? e.data.retryAfterSec : e.code === "busy" ? 3 : 5;
+            const delay = Math.min(Math.max(secs, 0.05), 120) * 1000;
+            patch(it.uid, { status: "queued", throttled: it.throttled + 1, notBefore: Date.now() + delay, error: undefined });
+            const tm = setTimeout(() => {
+              timers.current.delete(tm);
+              pump();
+            }, delay + 10);
+            timers.current.add(tm);
           } else if (e instanceof ApiError && e.code === "exists") patch(it.uid, { status: "conflict" });
           else if (e instanceof ApiError && e.code === "datastore_running") patch(it.uid, { status: "needsAck" });
           else patch(it.uid, { status: "failed", error: cfgRef.current.describeError(e), retryable: true });
@@ -120,6 +138,7 @@ export function useUploadQueue(cfg: {
           overwrite: false,
           ack: false,
           retryable: false,
+          throttled: 0,
         });
       }
       commit(next);
@@ -144,7 +163,7 @@ export function useUploadQueue(cfg: {
   const retry = useCallback(
     (uid: number) => {
       if (!files.current.has(uid)) return;
-      patch(uid, { status: "queued", error: undefined, loaded: 0 });
+      patch(uid, { status: "queued", error: undefined, loaded: 0, throttled: 0, notBefore: undefined });
       pump();
     },
     [patch, pump],
@@ -183,8 +202,10 @@ export function useUploadQueue(cfg: {
   // Abort anything still in flight when the card goes away.
   useEffect(() => {
     const hs = handles.current;
+    const ts = timers.current;
     return () => {
       for (const h of hs.values()) h.abort();
+      for (const tm of ts) clearTimeout(tm);
     };
   }, []);
 
@@ -226,8 +247,11 @@ export function UploadQueuePanel({
         {items.map((it) => {
           const pct = it.size > 0 ? Math.min(100, Math.floor((it.loaded / it.size) * 100)) : it.status === "done" ? 100 : 0;
           const active = it.status === "uploading" || it.status === "applying" || it.status === "queued" || it.status === "conflict" || it.status === "needsAck";
+          const backoff = it.status === "queued" && it.notBefore && it.notBefore > Date.now() ? Math.ceil((it.notBefore - Date.now()) / 1000) : 0;
           const label =
-            it.status === "queued" || it.status === "conflict" || it.status === "needsAck"
+            backoff > 0
+              ? t("apps.files.queueRetrying", { seconds: backoff })
+              : it.status === "queued" || it.status === "conflict" || it.status === "needsAck"
               ? t("apps.files.queueQueued")
               : it.status === "uploading"
                 ? t("apps.files.queueUploading", { percent: pct })

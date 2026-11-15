@@ -121,6 +121,7 @@
     "loadingFile": "Loading file…",
     "queueTitle": "Uploads",
     "queueQueued": "Waiting",
+    "queueRetrying": "Too many changes at once. Retrying in {seconds}s…",
     "queueUploading": "Uploading {percent}%",
     "queueApplying": "Applying on the server…",
     "queueDone": "Uploaded",
