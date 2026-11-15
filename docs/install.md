@@ -95,11 +95,31 @@ Either way, `--domain` sets `COOKIE_SECURE=true` and `HUB_TRUSTED_PROXY=true`. R
 | everything else (`/`, `/api/*`) | web `:3001` |
 
 File uploads and downloads are streamed through the web service, so any body size limit in your proxy must allow the
-largest file you want to move (the hub's default cap is 256 MiB per upload, `FILES_MAX_UPLOAD_BYTES`). Node's HTTP server
-closes a request that is not fully received within 5 minutes; the hub raises this to 15 minutes (`HUB_REQUEST_TIMEOUT_MS`),
-but the web service keeps Node's default, so an upload through it must finish within 5 minutes (256 MiB needs about
-7 Mbps). Optionally route `/api/v1/agent-fs/` straight to the hub `:3000`: it is only ever called by agents and carries
-whole file bodies.
+largest file you want to move (the hub's default cap is 256 MiB per upload, `FILES_MAX_UPLOAD_BYTES`). Optionally route
+`/api/v1/agent-fs/` straight to the hub `:3000`: it is only ever called by agents and carries whole file bodies.
+
+Time limits on that path, from the browser to the agent. An upload is answered only after the hub has received the whole
+body *and* the agent has pulled and applied it (budget: 30 s + 1 s per 512 KiB, at most 10 minutes):
+
+| Hop | Limit | Setting |
+|---|---|---|
+| Your reverse proxy | its own read/send timeouts must allow the above (for example 15 minutes) | yours |
+| Web service to hub | idle timeout 11 minutes (no headers or body timeout of its own, so a 10-minute apply is not cut) | `HUB_PROXY_TIMEOUT_MS` (web service environment) |
+| Hub receiving the browser's body | Node's `requestTimeout`, raised to 15 minutes; `0` disables it | `HUB_REQUEST_TIMEOUT_MS` |
+| Hub staging a body | cancelled when it trickles in: after a 20 s grace, at least 16 KiB per 10 s, and no longer than 60 s + size / 64 KiB/s (at most 10 minutes). A cancelled upload frees its slot, staged bytes and file | fixed |
+
+The hub-side tunables for the file manager (set them in `.env`; the hub reads them at start):
+
+| Variable | Default | Ceiling | Meaning |
+|---|---|---|---|
+| `FILES_MAX_UPLOAD_BYTES` | 256 MiB | 2 GiB | Largest single upload |
+| `FILES_MAX_DOWNLOAD_BYTES` | 1 GiB | 64 GiB | Largest single download |
+| `FILES_STAGING_MAX_BYTES` | 2 GiB | 64 GiB | Total bytes uploads may hold in staging at once (reserved from each upload's declared length; over it is `507 staging_full`) |
+| `FILES_STAGING_DIR` | `<tmp>/tugra-files` (`/tmp/tugra-files` in the hub container's writable layer) | - | Where uploads are staged as private `<uuid>.part` files (mode 0600) until the agent has pulled them. Staged files are removed after each upload; leftovers older than 1 hour are swept at boot and hourly. The hub needs free space of at least twice the upload size here; mount a volume if the container disk is small |
+| `FILES_MUTATIONS_PER_MIN` | 60 | - | File changes (upload, new folder, rename, permissions, delete) per user per minute; over it is `429 rate_limited` with `Retry-After` |
+| `FILES_MAX_CONCURRENT_UPLOADS` | 2 | - | Uploads in flight per user per server, and per app; over it is `429 busy`. A server also accepts at most 4 file operations at once |
+| `HUB_REQUEST_TIMEOUT_MS` | 900000 | - | See the table above |
+| `HUB_PROXY_TIMEOUT_MS` | 660000 | - | See the table above (web service) |
 
 "Sign in with GitHub" works only in this single-origin proxy deployment (the hub and web share one
 public origin so the session cookie is visible to the SPA); it isn't available in the two-port quick start.

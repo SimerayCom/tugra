@@ -113,9 +113,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   them, and an overwrite keeps the file's owner and mode. An upload is hashed by the hub, pulled by the agent over a
   single-use signed URL, written to a temporary file in the same folder and renamed into place, so an interrupted or
   tampered upload leaves nothing behind. Symbolic links are never followed or written through. Every change is
-  audited with its path and shape, never its content, and a refused or failed attempt leaves an `app.file.failed`
-  row. Changes are paused while a deploy is queued or running, and writing into a running database or broker volume
-  (detected from its image or template) needs an explicit acknowledgement. API: `GET /apps/{id}/files/meta`,
+  audited with its path and shape, never its content: a change that was dispatched and then failed leaves an
+  `app.file.failed` row, and a request refused before dispatch (policy, capability, path, rate limit) leaves an
+  `app.file.denied` row with its path and reason code (a busy server leaves none). Changes are paused while a deploy is queued or running, and writing into a running
+  database or broker volume (detected from its image or template) needs an explicit acknowledgement. API: `GET /apps/{id}/files/meta`,
   `GET /apps/{id}/files/stat`, `GET|PUT /apps/{id}/files/content`, `POST /apps/{id}/files/mkdir|rename|chmod` and
   `DELETE /apps/{id}/files`; a token needs `write` and `read:secrets` for writes and `admin` for delete. Needs an
   agent that advertises `fs2_v1` (update the agent first; older agents answer `agent_too_old`). `fs2_v1` is a new
@@ -142,7 +143,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **Large uploads through the web origin.** The web server's generic `/api/v1` rewrite buffered request bodies in
   memory and cut them at 10 MiB, so a larger upload hung. File uploads and the agent transfer URLs now stream
-  through dedicated routes with real backpressure, and the generic proxy is a fallback rewrite.
+  through dedicated routes with real backpressure, and the generic proxy is a fallback rewrite. An upload that trickles in below a minimum
+  throughput is cancelled, each user may have two uploads in flight per server, a busy server no longer burns the rate
+  limit or audit log, a deploy that starts while a body is being received pauses the write, and the web hop to the hub
+  idles out after 11 minutes (`HUB_PROXY_TIMEOUT_MS`) instead of fetch's 5.
 
 - **Agent toolchain.** The agent now builds with Go 1.25 (the file helper needs `os.Root` operations that arrived in
   that release). Overwriting a file replaces its inode, so hard links, extended attributes and ACLs of the old file
