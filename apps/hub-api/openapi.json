@@ -43053,6 +43053,9 @@
                       "needsAttention": {
                         "type": "boolean"
                       },
+                      "snapshotKept": {
+                        "type": "boolean"
+                      },
                       "plan": {
                         "type": "object",
                         "additionalProperties": {},
@@ -43091,6 +43094,7 @@
                       "createdAt",
                       "canCancel",
                       "needsAttention",
+                      "snapshotKept",
                       "plan",
                       "acks",
                       "logTail"
@@ -43357,6 +43361,9 @@
                     "needsAttention": {
                       "type": "boolean"
                     },
+                    "snapshotKept": {
+                      "type": "boolean"
+                    },
                     "plan": {
                       "type": "object",
                       "additionalProperties": {},
@@ -43395,6 +43402,7 @@
                     "createdAt",
                     "canCancel",
                     "needsAttention",
+                    "snapshotKept",
                     "plan",
                     "acks",
                     "logTail"

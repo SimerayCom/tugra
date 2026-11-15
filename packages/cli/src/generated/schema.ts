@@ -27938,6 +27938,7 @@ export interface operations {
                         createdAt: string;
                         canCancel: boolean;
                         needsAttention: boolean;
+                        snapshotKept: boolean;
                         plan: {
                             [key: string]: unknown;
                         } | null;
@@ -28057,6 +28058,7 @@ export interface operations {
                         createdAt: string;
                         canCancel: boolean;
                         needsAttention: boolean;
+                        snapshotKept: boolean;
                         plan: {
                             [key: string]: unknown;
                         } | null;
