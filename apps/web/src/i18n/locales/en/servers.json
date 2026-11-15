@@ -310,5 +310,15 @@
     "reapply": "Re-apply token",
     "reapplyHint": "Save first to switch credentials; re-apply only refreshes the one already in use.",
     "reapplied": "Token re-applied"
-  }
+  },
+  "proxyStarted": "Proxy started",
+  "proxyStopped": "Proxy stopped",
+  "proxyRestarted": "Proxy restarted",
+  "proxyRefresh": "Refresh proxy status",
+  "proxyDynamicSaved": "Configuration saved and applied",
+  "tunnelConnected": "Tunnel connected",
+  "tunnelConnecting": "Tunnel created — connecting to Cloudflare…",
+  "tunnelConnectingBtn": "Connecting…",
+  "tunnelDisconnected": "Tunnel disconnected",
+  "tunnelDisconnecting": "Disconnecting…"
 }

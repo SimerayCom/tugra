@@ -24,5 +24,12 @@
   "agentSkipped": "Skipped.",
   "agentUnconfigured": "Agent updates aren't configured on this hub (no signed release manifest).",
   "agentError": "Couldn't verify the latest signed release.",
-  "runtimeRestart": "This update includes the container engine ({packages}). Applying it restarts Docker, so every app and database on this server restarts and is briefly unavailable."
+  "runtimeRestart": "This update includes the container engine ({packages}). Applying it restarts Docker, so every app and database on this server restarts and is briefly unavailable.",
+  "agentRestarting": "Restarting…",
+  "agentRestartingHint": "The agent is restarting on the new version. This card updates when it reconnects.",
+  "agentUpdated": "Agent updated to {version}",
+  "applied": "Updates applied",
+  "appliedOne": "{pkg} updated",
+  "applyFailed": "The update did not finish cleanly — see the log below.",
+  "rebootRequiredToast": "Updates applied — a reboot is required to finish them."
 }

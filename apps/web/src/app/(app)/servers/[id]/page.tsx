@@ -22,7 +22,7 @@ import { LiveGauges } from "../../../../components/live-gauges";
 import { GpuCard } from "../../../../components/gpu-card";
 import { DiscoverAdoptCard } from "../../../../components/discover-adopt-card";
 import { Modal } from "../../../../components/modal";
-import { fieldStyle } from "../../../../components/form";
+import { fieldStyle, useSaveFeedback } from "../../../../components/form";
 import { TerminalPanel } from "../../../../components/terminal-panel";
 import { RenameModal } from "../../../../components/rename-modal";
 import { TagsCard } from "../../../../components/tags";
@@ -430,6 +430,8 @@ function ServerInstallCard({ id }: { id: string }) {
 // Signed, digest-pinned self-update of the Tugra Go agent. The hub picks the target from its ed25519-verified
 // release manifest (the request can't name a version/image), so this is a safe one-click op; the new version
 // shows in overview once the recreated agent reconnects.
+const AGENT_RESTART_TIMEOUT_MS = 180_000;
+
 function AgentUpdateCard({ id, version }: { id: string; version: string | null }) {
   const t = useT();
   const qc = useQueryClient();
@@ -450,14 +452,33 @@ function AgentUpdateCard({ id, version }: { id: string; version: string | null }
     };
     return { tone: "warn", text: t(reasons[item.reason ?? ""] ?? "patching.agentSkipped") };
   };
+  // After a dispatched update the agent restarts on the new image: remember the version it ran before and
+  // keep the card in a "restarting" state until the polled server record reports a different one.
+  const toast = useToast();
+  const [restartingFrom, setRestartingFrom] = useState<{ version: string | null } | null>(null);
+  const restarting = restartingFrom !== null;
   const update = useMutation({
     mutationFn: () => api.updateAgent(id),
     onSuccess: (r) => {
       setMsg(buildMsg(r));
+      if (r.status === "ok" && r.results[0]?.status === "sent") setRestartingFrom({ version });
       qc.invalidateQueries({ queryKey: ["server", id] });
     },
     onError: (e) => setMsg({ tone: "err", text: (e as Error).message }),
   });
+  useEffect(() => {
+    if (restartingFrom && version && version !== restartingFrom.version) {
+      toast(t("patching.agentUpdated", { version }), "success");
+      setMsg(null);
+      setRestartingFrom(null);
+    }
+  }, [version, restartingFrom, toast, t]);
+  // Safety net: a dispatch that never changes the version (e.g. the pull failed) must not spin forever.
+  useEffect(() => {
+    if (!restartingFrom) return;
+    const h = setTimeout(() => setRestartingFrom(null), AGENT_RESTART_TIMEOUT_MS);
+    return () => clearTimeout(h);
+  }, [restartingFrom]);
   const run = async () => {
     if (await confirm({ body: t("patching.agentConfirm") })) update.mutate();
   };
@@ -471,13 +492,14 @@ function AgentUpdateCard({ id, version }: { id: string; version: string | null }
       right={
         <>
           <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "1px 6px" }}>{version ?? "—"}</span>
-          <Btn variant="ghost" onClick={run} disabled={update.isPending}>
-            {update.isPending ? t("patching.agentUpdating") : t("patching.agentUpdate")}
+          <Btn variant="ghost" onClick={run} loading={update.isPending || restarting} disabled={update.isPending || restarting}>
+            {update.isPending ? t("patching.agentUpdating") : restarting ? t("patching.agentRestarting") : t("patching.agentUpdate")}
           </Btn>
         </>
       }
     >
       {msg && <div style={{ fontSize: 13, color: toneColor }}>{msg.text}</div>}
+      {restarting && <div role="status" style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 6 }}>{t("patching.agentRestartingHint")}</div>}
     </SectionCard>
   );
 }
@@ -559,16 +581,35 @@ function PatchCard({ id }: { id: string }) {
   const log = usePatchLogStream(id, applying);
   const logText = applying ? log.lines : output;
   const logRef = useStickToBottom<HTMLPreElement>(logText); // follow the live apt output as it streams
-  const check = useMutation({ mutationFn: () => api.checkUpdates(id) });
+  const toast = useToast();
+  // True from a finished apply until its follow-up re-check lands, so the reboot notice fires only for that check.
+  const recheckAfterApply = useRef(false);
+  const check = useMutation({
+    mutationFn: () => api.checkUpdates(id),
+    onSuccess: (r) => {
+      if (!recheckAfterApply.current) return;
+      recheckAfterApply.current = false;
+      if (r.supported && r.rebootRequired) toast(t("patching.rebootRequiredToast"), "info");
+    },
+    onError: () => { recheckAfterApply.current = false; },
+  });
   const info = check.data;
+  // Exit 0 = applied; anything else is a failed apply that returned (not threw), so don't toast success for it.
+  const applyDone = (r: { output: string; exitCode: number }, okMsg: string) => {
+    setOutput(r.output);
+    if (r.exitCode === 0) toast(okMsg, "success");
+    else toast(t("patching.applyFailed"), "error");
+    recheckAfterApply.current = true;
+    check.mutate();
+  };
   const upgradeAll = useMutation({
     mutationFn: () => api.upgradeAll(id),
-    onSuccess: (r) => { setOutput(r.output); check.mutate(); },
+    onSuccess: (r) => applyDone(r, t("patching.applied")),
     onSettled: () => setApplying(false),
   });
   const upgradeOne = useMutation({
     mutationFn: (pkg: string) => api.upgradeOne(id, pkg),
-    onSuccess: (r) => { setOutput(r.output); check.mutate(); },
+    onSuccess: (r, pkg) => applyDone(r, t("patching.appliedOne", { pkg })),
     onSettled: () => setApplying(false),
   });
   const busy = upgradeAll.isPending || upgradeOne.isPending;
@@ -612,7 +653,7 @@ function PatchCard({ id }: { id: string }) {
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
                 <span style={{ fontSize: 13, fontWeight: 600 }}>{t("patching.count", { n: info.count })}</span>
                 <div style={{ flex: 1 }} />
-                <Btn onClick={runAll} disabled={busy}>
+                <Btn onClick={runAll} loading={upgradeAll.isPending} disabled={busy}>
                   {upgradeAll.isPending ? t("patching.running") : t("patching.updateAll")}
                 </Btn>
               </div>
@@ -625,9 +666,10 @@ function PatchCard({ id }: { id: string }) {
                     <button
                       onClick={() => runOne(p.name)}
                       disabled={busy}
+                      aria-busy={(upgradeOne.isPending && upgradeOne.variables === p.name) || undefined}
                       style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-lapis)", fontSize: 11, cursor: "pointer", padding: "2px 8px", fontFamily: "inherit" }}
                     >
-                      {t("patching.update")}
+                      {upgradeOne.isPending && upgradeOne.variables === p.name ? t("patching.running") : t("patching.update")}
                     </button>
                   </div>
                 ))}
@@ -847,6 +889,7 @@ function NetworkCard({ id, server }: { id: string; server: ServerView }) {
   const [dnsCreds, setDnsCreds] = useState(""); // write-only: never seeded from the server
   const [dnsCredId, setDnsCredId] = useState(""); // team DNS credential whose token is copied onto the server
   const toast = useToast();
+  const saveFeedback = useSaveFeedback("servers.saved");
   useEffect(() => {
     setWildcard(server.wildcardDomain ?? "");
     setSuffix(server.magicSuffix ?? "");
@@ -885,6 +928,7 @@ function NetworkCard({ id, server }: { id: string; server: ServerView }) {
       setDnsCreds("");
       qc.invalidateQueries({ queryKey: ["server", id] });
     },
+    ...saveFeedback,
   });
 
   // Re-send the SAME credential id: the hub copies the credential's current token onto the server again.
@@ -954,7 +998,7 @@ function NetworkCard({ id, server }: { id: string; server: ServerView }) {
           </>
         )}
         <div>
-          <Btn variant="ghost" onClick={() => save.mutate()} disabled={save.isPending}>{t("servers.save")}</Btn>
+          <Btn variant="ghost" onClick={() => save.mutate()} loading={save.isPending} disabled={save.isPending}>{t("servers.save")}</Btn>
         </div>
       </div>
     </SectionCard>
@@ -999,12 +1043,18 @@ function ProxyCard({ id, canWrite }: { id: string; canWrite: boolean }) {
   const status = useQuery({ queryKey: ["proxy", id], queryFn: () => api.getProxyStatus(id) });
   const st = status.data?.status;
   const refresh = () => qc.invalidateQueries({ queryKey: ["proxy", id] });
-  const onResult = (r: { status: ProxyStatus }) => qc.setQueryData(["proxy", id], r);
+  const toast = useToast();
+  // The proxy calls return only once the work is done and a restart leaves the pill at "running", so without a
+  // toast the click looks like it did nothing.
+  const onDone = (key: "servers.proxyStarted" | "servers.proxyStopped" | "servers.proxyRestarted") => (r: { status: ProxyStatus }) => {
+    qc.setQueryData(["proxy", id], r);
+    toast(t(key), "success");
+  };
   const confirm = useConfirm();
 
-  const start = useMutation({ mutationFn: () => api.startProxy(id), onSuccess: onResult });
-  const stop = useMutation({ mutationFn: () => api.stopProxy(id), onSuccess: onResult });
-  const restart = useMutation({ mutationFn: () => api.restartProxy(id), onSuccess: onResult });
+  const start = useMutation({ mutationFn: () => api.startProxy(id), onSuccess: onDone("servers.proxyStarted") });
+  const stop = useMutation({ mutationFn: () => api.stopProxy(id), onSuccess: onDone("servers.proxyStopped") });
+  const restart = useMutation({ mutationFn: () => api.restartProxy(id), onSuccess: onDone("servers.proxyRestarted") });
   const viewLogs = useMutation({ mutationFn: () => api.getProxyLogs(id), onSuccess: (r) => setLogs(r.output || "—") });
   const busy = start.isPending || stop.isPending || restart.isPending;
 
@@ -1029,7 +1079,7 @@ function ProxyCard({ id, canWrite }: { id: string; canWrite: boolean }) {
       <Btn variant="ghost" icon={ScrollText} onClick={() => viewLogs.mutate()} disabled={viewLogs.isPending}>
         {viewLogs.isPending ? "…" : t("servers.proxyViewLogs")}
       </Btn>
-      <button onClick={refresh} aria-label={t("servers.proxyViewLogs")} style={{ marginLeft: 8, background: "transparent", border: "none", color: "var(--c-tx3)", cursor: "pointer", fontFamily: "inherit", display: "inline-flex", alignItems: "center", verticalAlign: "middle" }}><RefreshCw size={13} /></button>
+      <button onClick={refresh} disabled={status.isFetching} aria-label={t("servers.proxyRefresh")} aria-busy={status.isFetching || undefined} style={{ marginLeft: 8, background: "transparent", border: "none", color: "var(--c-tx3)", cursor: "pointer", fontFamily: "inherit", display: "inline-flex", alignItems: "center", verticalAlign: "middle" }}><RefreshCw size={13} aria-hidden style={status.isFetching ? { animation: "spin 0.7s linear infinite" } : undefined} /></button>
       {logs && (
         <pre className="mono" style={{ margin: "10px 0 0", fontSize: 11, color: "var(--c-tx3)", whiteSpace: "pre-wrap", maxHeight: 220, overflowY: "auto", background: "var(--c-el)", padding: 10, borderRadius: "var(--r1)" }}>{logs}</pre>
       )}
@@ -1077,7 +1127,8 @@ function DynamicConfigRow({ id, name, initial, canWrite, onChanged }: { id: stri
   const t = useT();
   const confirm = useConfirm();
   const [content, setContent] = useState(initial);
-  const save = useMutation({ mutationFn: () => api.putProxyDynamicConfig(id, name, content), onSuccess: onChanged });
+  const saveFeedback = useSaveFeedback("servers.proxyDynamicSaved");
+  const save = useMutation({ mutationFn: () => api.putProxyDynamicConfig(id, name, content), onSuccess: onChanged, ...saveFeedback });
   const del = useMutation({ mutationFn: () => api.deleteProxyDynamicConfig(id, name), onSuccess: onChanged });
   return (
     <div>
@@ -1086,7 +1137,7 @@ function DynamicConfigRow({ id, name, initial, canWrite, onChanged }: { id: stri
       {save.isError && <div style={{ fontSize: 12, color: "var(--c-r)", marginTop: 6 }}>{(save.error as Error).message}</div>}
       {canWrite && (
         <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-          <Btn onClick={() => save.mutate()} disabled={save.isPending || content === initial}>{t("servers.proxyDynamicSave")}</Btn>
+          <Btn onClick={() => save.mutate()} loading={save.isPending} disabled={save.isPending || content === initial}>{t("servers.proxyDynamicSave")}</Btn>
           <Btn variant="dangerGhost" onClick={async () => { if (await confirm({ body: t("servers.proxyDynamicDeleteConfirm", { name }), danger: true })) del.mutate(); }} disabled={del.isPending}>{t("servers.proxyDynamicDelete")}</Btn>
         </div>
       )}
@@ -1126,6 +1177,7 @@ function TunnelCard({ id, server }: { id: string; server: ServerView }) {
   const [zoneName, setZoneName] = useState("");
   const [wildcardDomain, setWildcardDomain] = useState("");
 
+  const toast = useToast();
   const setup = useMutation({
     mutationFn: () =>
       api.setupTunnel(id, {
@@ -1134,15 +1186,20 @@ function TunnelCard({ id, server }: { id: string; server: ServerView }) {
         zoneName: zoneName.trim(),
         wildcardDomain: wildcardDomain.trim() || undefined,
       }),
-    onSuccess: () => {
+    onSuccess: (r) => {
       setApiToken("");
+      // The hub returns before cloudflared has dialled in, so the status is usually still "connecting".
+      toast(t(r.status === "connected" ? "servers.tunnelConnected" : "servers.tunnelConnecting"), "success");
       qc.invalidateQueries({ queryKey: ["tunnel", id] });
       qc.invalidateQueries({ queryKey: ["server", id] });
     },
   });
   const teardown = useMutation({
     mutationFn: () => api.teardownTunnel(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["tunnel", id] }),
+    onSuccess: () => {
+      toast(t("servers.tunnelDisconnected"), "success");
+      qc.invalidateQueries({ queryKey: ["tunnel", id] });
+    },
   });
 
   const st = tun?.status ?? undefined;
@@ -1173,9 +1230,10 @@ function TunnelCard({ id, server }: { id: string; server: ServerView }) {
                 onClick={async () => {
                   if (await confirm({ body: t("servers.tunnelDisconnectConfirm"), danger: true })) teardown.mutate();
                 }}
+                loading={teardown.isPending}
                 disabled={teardown.isPending}
               >
-                {t("servers.tunnelDisconnect")}
+                {teardown.isPending ? t("servers.tunnelDisconnecting") : t("servers.tunnelDisconnect")}
               </Btn>
             </div>
           )}
@@ -1205,9 +1263,10 @@ function TunnelCard({ id, server }: { id: string; server: ServerView }) {
             <Btn
               variant="ghost"
               onClick={() => setup.mutate()}
+              loading={setup.isPending}
               disabled={setup.isPending || !apiToken.trim() || !cfAccountId.trim() || !zoneName.trim()}
             >
-              {setup.isPending ? "…" : t("servers.tunnelConnect")}
+              {setup.isPending ? t("servers.tunnelConnectingBtn") : t("servers.tunnelConnect")}
             </Btn>
           </div>
         </div>

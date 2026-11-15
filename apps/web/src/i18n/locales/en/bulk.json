@@ -52,5 +52,6 @@
   "close": "Close",
   "exit": "exit {code}",
   "running": "Running…",
-  "noOutput": "(no output)"
+  "noOutput": "(no output)",
+  "rebootHint": "Reboots are never automatic. Run Check updates on a server to see whether one is pending."
 }

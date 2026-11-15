@@ -106,6 +106,9 @@ export function PatchBulkModal({
               </div>
             ))}
           </div>
+          {apply.data.results.some((r) => r.exitCode === 0) && (
+            <div role="note" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--c-am)", marginBottom: 12 }}>{t("bulk.rebootHint")}</div>
+          )}
           <div style={{ display: "flex", justifyContent: "flex-end" }}>
             <Btn variant="ghost" onClick={onClose}>{t("bulk.close")}</Btn>
           </div>

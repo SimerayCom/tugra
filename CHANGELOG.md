@@ -19,6 +19,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Restart, Start and Stop now say what they did.** A restart finishes with the app still "Running", so the
   click looked like nothing happened; each lifecycle action now ends in a named toast ("Gitea restarted.") or an
   error toast, never silence.
+- **Server page actions now confirm themselves.** Proxy start, stop and restart end in a toast, network settings and
+  proxy dynamic-config saves say "Saved", the Cloudflare Tunnel connect and disconnect show progress and a result,
+  and the proxy refresh icon spins and has the right label. "Update agent" shows a restarting state until the new
+  version reports in, then toasts it. OS patching toasts when an apply finishes (or fails), flags a pending reboot,
+  and the per-package Update button shows its own loading state.
 - **Sidebar footer is two short rows and the scrollbars follow the theme.** Sponsor is a small distinct pill,
   What's new and Documentation are icon buttons beside it, and Log out and Collapse share a row, so the
   navigation above keeps its room (five stacked rows before). Scrollbars everywhere are thin and tinted from the
