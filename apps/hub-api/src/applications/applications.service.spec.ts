@@ -7037,7 +7037,8 @@ describe("ApplicationsService — per-variable env flags", () => {
         jest.spyOn(svc as unknown as { submitDeploy: (...a: unknown[]) => Promise<unknown> }, "submitDeploy").mockResolvedValue(undefined);
         return { create, svc };
       };
-      const parent = { ...baseApp, name: "web", environmentId: "e1", previewEnabled: true, domain: "app.example.com", envEnc: '{"PEM":"a\\nb","SECRET":"x"}', envMetaEnc: meta({ PEM: { multiline: true }, SECRET: { literal: true } }) };
+      // previews exist for Git-built parents only (an IMAGE parent is skipped and audited).
+      const parent = { ...baseApp, source: "GIT", image: null, gitUrl: "https://github.com/acme/web", name: "web", environmentId: "e1", previewEnabled: true, domain: "app.example.com", envEnc: '{"PEM":"a\\nb","SECRET":"x"}', envMetaEnc: meta({ PEM: { multiline: true }, SECRET: { literal: true } }) };
       const a = mk();
       await a.svc.upsertPreview({ ...parent, previewExcludeKeys: [] } as never, 7, "f");
       expect(a.create.mock.calls[0][0].data.envMetaEnc).toBe(parent.envMetaEnc);
