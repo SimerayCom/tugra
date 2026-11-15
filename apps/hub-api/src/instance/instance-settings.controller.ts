@@ -10,6 +10,7 @@ import { AuditService } from "../audit/audit.service";
 import { InstanceSettingsService } from "./instance-settings.service";
 import { InstanceOwnerGuard } from "./instance-owner.guard";
 import { currentEdition, RequireEdition, RequireEditionGuard } from "../common/edition";
+import { AUTO_UPDATE_CHANNEL } from "@tugra/shared";
 import { CryptoService } from "../crypto/crypto.service";
 import { SecretsRotationService } from "../crypto/secrets-rotation.service";
 import { KeyRingService } from "../crypto/keyring.service";
@@ -145,9 +146,11 @@ export class InstanceSettingsController {
     @CurrentUser() user: AuthUser,
     @Body(new ZodValidationPipe(UpdateInstanceUpdateSchema)) body: UpdateInstanceUpdateInput,
   ) {
-    const patch: { autoUpdate?: boolean; updateChannel?: string | null } = {};
+    const patch: { autoUpdate?: boolean; updateChannel?: string } = {};
     if (body.autoUpdate !== undefined) patch.autoUpdate = body.autoUpdate;
-    if (body.updateChannel !== undefined) patch.updateChannel = body.updateChannel;
+    // null on the wire = "follow the build"; stored as the "auto" sentinel (the column stays non-null so an
+    // older hub image can still read the row after a rollback).
+    if (body.updateChannel !== undefined) patch.updateChannel = body.updateChannel ?? AUTO_UPDATE_CHANNEL;
     await this.settings.update(patch);
     await this.audit.log({ actor: user.userId, action: "instance_update.settings", target: "singleton" });
     return this.update.getStatus();

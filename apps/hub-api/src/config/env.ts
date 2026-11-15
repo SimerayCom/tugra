@@ -322,10 +322,15 @@ export const OFFICIAL_UPDATE_PUBLISHER_KEY = "MCowBQYDK2VwAyEA4+vvlIQS9SWHEKc0Fo
  * Default-on update checks: inject the official manifest URL + publisher key ONLY when the operator set
  * NEITHER (an explicit pair — custom build, mirror — is never touched; a half pair keeps today's semantics:
  * URL-only fails closed in superRefine, key-only stays unconfigured) and TUGRA_UPDATE_CHECKS is not "0".
+ * "0" is the hard off: the manifest pair is dropped entirely, so a half pair can no longer refuse the boot
+ * that the refine's own message tells the operator to fix with TUGRA_UPDATE_CHECKS=0.
  * Pure; runs on the blank-stripped map BEFORE schema parse so the usual validators still apply.
  */
 export function applyUpdateCheckDefaults(cleaned: Record<string, unknown>): Record<string, unknown> {
-  if (cleaned.TUGRA_UPDATE_CHECKS === "0") return cleaned;
+  if (cleaned.TUGRA_UPDATE_CHECKS === "0") {
+    const { UPDATE_MANIFEST_URL: _url, UPDATE_PUBLISHER_KEY: _key, ...rest } = cleaned;
+    return rest;
+  }
   if (cleaned.UPDATE_MANIFEST_URL !== undefined || cleaned.UPDATE_PUBLISHER_KEY !== undefined) return cleaned;
   return {
     ...cleaned,

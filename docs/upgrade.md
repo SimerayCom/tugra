@@ -98,7 +98,11 @@ point at your own signed manifest. Use `TUGRA_UPDATE_CHECKS=0` to disable update
 ### Upgrading from beta.16 or earlier
 
 Hubs on `0.1.0-beta.16` or older have no working update check, so the first upgrade to a release with automatic
-checks is manual: `git pull && ./scripts/install.sh`. After that the hub checks on its own.
+checks is manual: `git pull && ./scripts/install.sh`. After that the hub checks on its own. Checks turn **on**
+with this upgrade (also on a hub that had left `UPDATE_MANIFEST_URL` blank to keep them off): to stay off, set
+`TUGRA_UPDATE_CHECKS=0` in `.env` before the restart, or run the installer with `--no-update-checks`. A hub that
+was pinned to Stable on a beta build is switched to Automatic (Beta) by this upgrade; pin Stable again in
+Settings → Updates if that was deliberate.
 
 ## Rollback & troubleshooting
 

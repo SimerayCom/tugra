@@ -178,6 +178,8 @@ describe("resolveUpdateChannel", () => {
     ["beta", "0.1.0", "beta", "explicit"],
     ["", "0.1.0", "stable", "auto"],
     [undefined, "0.1.0-beta.1", "beta", "auto"],
+    ["auto", "0.1.0-beta.16", "beta", "auto"],
+    ["auto", "0.1.0", "stable", "auto"],
   ])("explicit=%j current=%s -> %s (%s)", (explicit, current, channel, source) => {
     expect(resolveUpdateChannel(explicit, current)).toEqual({ channel, source });
   });

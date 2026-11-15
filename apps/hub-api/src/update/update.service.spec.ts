@@ -19,6 +19,7 @@ function settingsStub(
   over: Partial<{
     updateChannel: string | null;
     cachedLatestVersion: string | null;
+    cachedLatestChannel: string | null;
     autoUpdate: boolean;
     cachedNotice: unknown;
     updateLastCheckedAt: Date | null;
@@ -30,6 +31,7 @@ function settingsStub(
   const rec = {
     updateChannel: "stable" as string | null,
     cachedLatestVersion: null as string | null,
+    cachedLatestChannel: null as string | null,
     autoUpdate: false,
     cachedNotice: null as unknown,
     updateLastCheckedAt: null as Date | null,
@@ -290,6 +292,29 @@ describe("UpdateService", () => {
       const { svc, st } = withManifest(raw, detachedSig(priv, raw), settings);
       expect(await svc.checkRemote()).toMatchObject({ status: "ok", channel: "stable", latest: "0.1.0-beta.16", updateAvailable: false });
       expect(st.rec.cachedLatestVersion).toBe("0.1.0-beta.16");
+    });
+
+    it("the \"auto\" sentinel stored in the DB is automatic, not a pin named auto", async () => {
+      process.env.TUGRA_VERSION = "0.1.0-beta.16";
+      const raw = manifest({ beta: { version: "0.1.0-beta.17" } });
+      const { svc, st } = withManifest(raw, detachedSig(priv, raw), settingsStub({ updateChannel: "auto" }));
+      expect(await svc.checkRemote()).toMatchObject({ status: "ok", channel: "beta", latest: "0.1.0-beta.17", updateAvailable: true });
+      expect(st.rec.cachedLatestChannel).toBe("beta");
+      expect(await svc.getStatus()).toMatchObject({ channel: "beta", channelSource: "auto" });
+    });
+
+    it("a cache read from another channel is ignored after the owner pins Stable (no beta advertised forever)", async () => {
+      process.env.TUGRA_VERSION = "0.1.0-beta.16";
+      // The auto (beta) channel cached beta.17; then the owner pinned Stable, which has no manifest entry yet.
+      const settings = settingsStub({ updateChannel: "stable", cachedLatestVersion: "0.1.0-beta.17", cachedLatestChannel: "beta" });
+      const raw = manifest({ beta: { version: "0.1.0-beta.17" } });
+      const { svc } = withManifest(raw, detachedSig(priv, raw), settings);
+      expect(await svc.getStatus()).toMatchObject({ channel: "stable", channelSource: "explicit", latest: null, updateAvailable: false });
+      expect(await svc.checkRemote()).toMatchObject({ status: "ok", channel: "stable", updateAvailable: false });
+      // …while a cache with no recorded channel (pre-bookkeeping rows) is still honoured
+      const legacy = settingsStub({ updateChannel: "stable", cachedLatestVersion: "0.2.0", cachedLatestChannel: null });
+      const { svc: svc2 } = withManifest(raw, detachedSig(priv, raw), legacy);
+      expect(await svc2.getStatus()).toMatchObject({ latest: "0.2.0", updateAvailable: true });
     });
   });
 

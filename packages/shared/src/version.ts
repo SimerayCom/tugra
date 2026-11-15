@@ -155,15 +155,18 @@ export function autoUpdateChannel(version: string): "stable" | "beta" {
   return v && v.pre.length === 0 ? "stable" : "beta";
 }
 
+/** The stored sentinel for "no pin, follow the build" (kept non-null so older hub images can read the row). */
+export const AUTO_UPDATE_CHANNEL = "auto";
+
 /**
  * The effective update channel and where it came from. A non-empty explicit value (an owner pin) wins;
- * null / undefined / "" mean "automatic" and resolve to `autoUpdateChannel(current)`.
+ * "auto" / null / undefined / "" mean "automatic" and resolve to `autoUpdateChannel(current)`.
  */
 export function resolveUpdateChannel(
   explicit: string | null | undefined,
   current: string,
 ): { channel: string; source: "auto" | "explicit" } {
-  if (explicit) return { channel: explicit, source: "explicit" };
+  if (explicit && explicit !== AUTO_UPDATE_CHANNEL) return { channel: explicit, source: "explicit" };
   return { channel: autoUpdateChannel(current), source: "auto" };
 }
 

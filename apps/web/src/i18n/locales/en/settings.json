@@ -123,7 +123,7 @@
   "updateChannel": "Release channel",
   "channelStable": "Stable",
   "channelBeta": "Beta",
-  "updateAuto": "Apply patch updates automatically",
+  "updateAuto": "Apply updates automatically (patch releases, and the next beta on a beta build)",
   "updateAutoHint": "Patch releases — and the next beta while you run a beta — are applied automatically. New minor/major versions and the move from beta to stable always wait for you.",
   "channelAuto": "Automatic ({channel})",
   "channelAutoHint": "Automatic follows the running build: a beta build tracks Beta, a release build tracks Stable. Pin a channel to override.",

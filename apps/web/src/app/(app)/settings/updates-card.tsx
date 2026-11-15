@@ -35,6 +35,13 @@ const STEP_STATE_LABEL: Record<UpdateStepState, string> = {
 };
 
 /** Ticks once a second while `running`; freezes at `endedAt` once the run finishes. */
+/** The channel "Automatic" resolves to for a running build: a prerelease (0.1.0-beta.N, rc, dev) follows Beta,
+ *  a release follows Stable — the same rule the hub applies (@tugra/shared autoUpdateChannel). Unknown → beta. */
+export function autoChannelFor(current: string | null | undefined): "stable" | "beta" {
+  if (!current) return "beta";
+  return /^v?\d+\.\d+\.\d+(?:\+|$)/.test(current.trim()) ? "stable" : "beta";
+}
+
 function useElapsed(startedAt: number | null, endedAt: number | null): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -260,8 +267,10 @@ export function UpdatesCard() {
           options={[
             {
               value: "auto",
+              // What Automatic WOULD resolve to is a property of the running build, not of the current pin:
+              // a prerelease build (0.1.0-beta.N) follows Beta, a release build follows Stable.
               label: t("settings.channelAuto", {
-                channel: t(data?.channel === "beta" ? "settings.channelBeta" : "settings.channelStable"),
+                channel: t(autoChannelFor(data?.current) === "beta" ? "settings.channelBeta" : "settings.channelStable"),
               }),
             },
             { value: "stable", label: t("settings.channelStable") },

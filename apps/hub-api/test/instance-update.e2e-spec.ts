@@ -88,7 +88,8 @@ describe("instance update status (e2e)", () => {
       // null → automatic: the channel follows the running build ("0.0.0-dev" is a prerelease → beta)
       const auto = await request(srv()).patch("/instance/update").set("Authorization", `Bearer ${jwt}`).send({ updateChannel: null }).expect(200);
       expect(auto.body).toMatchObject({ channelSource: "auto", channel: "beta", autoUpdate: true });
-      expect((await prisma.instanceSettings.findUniqueOrThrow({ where: { id: "singleton" } })).updateChannel).toBeNull();
+      // stored as the non-null "auto" sentinel (an older hub image must still be able to read the row)
+      expect((await prisma.instanceSettings.findUniqueOrThrow({ where: { id: "singleton" } })).updateChannel).toBe("auto");
 
       // absent → unchanged (autoUpdate-only patch keeps the automatic channel)
       const kept = await request(srv()).patch("/instance/update").set("Authorization", `Bearer ${jwt}`).send({ autoUpdate: false }).expect(200);
@@ -105,7 +106,7 @@ describe("instance update status (e2e)", () => {
       await prisma.user.update({ where: { id: userId }, data: { isInstanceOwner: false } });
       await request(srv()).patch("/instance/update").set("Authorization", `Bearer ${jwt}`).send({ autoUpdate: false }).expect(403);
     } finally {
-      await prisma.instanceSettings.update({ where: { id: "singleton" }, data: { updateChannel: null, autoUpdate: false } }).catch(() => undefined);
+      await prisma.instanceSettings.update({ where: { id: "singleton" }, data: { updateChannel: "auto", autoUpdate: false } }).catch(() => undefined);
       await prisma.user.update({ where: { id: userId }, data: { isInstanceOwner: false } }).catch(() => undefined);
     }
   });

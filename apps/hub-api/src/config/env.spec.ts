@@ -320,6 +320,13 @@ describe("validateEnv — default-on signed update checks", () => {
     expect(() => validateEnv({ ...dev, UPDATE_MANIFEST_URL: "https://mirror.example/versions.json" })).toThrow(/TUGRA_UPDATE_CHECKS=0/);
   });
 
+  it("the opt-out the message names really works: TUGRA_UPDATE_CHECKS=0 boots a half pair and drops it", () => {
+    const env = validateEnv({ ...dev, TUGRA_UPDATE_CHECKS: "0", UPDATE_MANIFEST_URL: "https://mirror.example/versions.json" });
+    expect(env.UPDATE_MANIFEST_URL).toBeUndefined();
+    expect(env.UPDATE_PUBLISHER_KEY).toBeUndefined();
+    expect(env.TUGRA_UPDATE_CHECKS).toBe("0");
+  });
+
   it("a key without a URL injects nothing (the operator touched the pair)", () => {
     const env = validateEnv({ ...dev, UPDATE_PUBLISHER_KEY: OFFICIAL_UPDATE_PUBLISHER_KEY });
     expect(env.UPDATE_MANIFEST_URL).toBeUndefined();

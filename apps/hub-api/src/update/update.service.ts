@@ -43,6 +43,8 @@ export class UpdateService {
 
   private inflight?: Promise<unknown>;
   private lastAttemptAt = 0;
+  /** When the most recent attempt FAILED: panel-load refreshes back off for a full interval after a failure. */
+  private lastFailureAt = 0;
 
   /** TUGRA_UPDATE_CHECKS=0 — the deployment-level hard off: no fetch, no scheduler, no defaults. */
   isForcedOff(): boolean {
@@ -65,7 +67,10 @@ export class UpdateService {
     const intervalMs = (this.config.get<number>("UPDATE_CHECK_INTERVAL_MIN") ?? DEFAULT_CHECK_INTERVAL_MIN) * 60_000;
     const now = Date.now();
     const stale = !lastCheckedAt || !(now - Date.parse(lastCheckedAt) < intervalMs); // NaN -> stale (fail toward checking)
-    if (!stale || this.inflight || now - this.lastAttemptAt < STALE_REFRESH_MIN_GAP_MS) return;
+    // A hub whose manifest never verifies (egress blocked, mirror misconfigured) never gets a success stamp, so
+    // without this it would retry on every panel load once the short gap elapsed: after a failure, wait a full
+    // interval (the scheduler keeps its own hourly cadence regardless).
+    if (!stale || this.inflight || now - this.lastAttemptAt < STALE_REFRESH_MIN_GAP_MS || now - this.lastFailureAt < intervalMs) return;
     this.lastAttemptAt = now;
     this.inflight = this.checkRemote()
       .catch(() => undefined)
@@ -118,15 +123,15 @@ export class UpdateService {
         return this.fail("persist", e);
       }
       const current = appVersion();
-      const latest = s.cachedLatestVersion ?? current;
-      return { status: "ok", channel, current, latest, updateAvailable: this.available(s.cachedLatestVersion, current) };
+      const cached = this.cachedLatestFor(s, channel);
+      return { status: "ok", channel, current, latest: cached ?? current, updateAvailable: this.available(cached, current) };
     }
 
     const latest = entry.version;
     // Never cache a version we can't even parse (a signed-but-garbage entry would pollute the status).
     try {
       if (parseVersion(latest)) {
-        await this.settings.update({ cachedLatestVersion: latest, cachedNotice, ...this.checkedOk() });
+        await this.settings.update({ cachedLatestVersion: latest, cachedLatestChannel: channel, cachedNotice, ...this.checkedOk() });
       } else {
         this.logger.warn(`update manifest channel "${channel}" has an unparseable version — not caching`);
         await this.settings.update({ cachedNotice, ...this.checkedOk() });
@@ -188,8 +193,8 @@ export class UpdateService {
   async getStatus(): Promise<UpdateStatusView> {
     const s = await this.settings.get();
     const current = appVersion();
-    const latest = s.cachedLatestVersion ?? null;
     const { channel, source } = resolveUpdateChannel(s.updateChannel, current);
+    const latest = this.cachedLatestFor(s, channel);
     return {
       current,
       latest,
@@ -264,12 +269,25 @@ export class UpdateService {
     }
   }
 
+  /**
+   * The cached latest version, but only if it was read from the channel now in effect. After the owner pins
+   * another channel (Stable on a beta hub, the standard "no more betas" move) the old channel's cache must not
+   * keep advertising — or hourly re-attempting — an update. A cache with no recorded channel predates this
+   * bookkeeping and is accepted as-is.
+   */
+  private cachedLatestFor(s: { cachedLatestVersion: string | null; cachedLatestChannel: string | null }, channel: string): string | null {
+    if (!s.cachedLatestVersion) return null;
+    if (s.cachedLatestChannel && s.cachedLatestChannel !== channel) return null;
+    return s.cachedLatestVersion;
+  }
+
   /** Bookkeeping for a successful signed verify: stamp the time and clear any earlier failure reason. */
   private checkedOk(): { updateLastCheckedAt: Date; updateLastCheckError: null } {
     return { updateLastCheckedAt: new Date(), updateLastCheckError: null };
   }
 
   private fail(reason: string, e: unknown): CheckResult {
+    this.lastFailureAt = Date.now();
     this.logger.warn(`update check failed (${reason}) — keeping cached version: ${String((e as Error)?.message ?? e)}`);
     // Best-effort: surface "why no update?" to the owner. updateLastCheckedAt is deliberately untouched, and a
     // failing write (the DB may be the very thing that failed) must never throw out of a check.

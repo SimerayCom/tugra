@@ -1931,10 +1931,14 @@ model InstanceSettings {
   // PANEL_DOMAIN win over this (synced to DB at bootstrap). Null = bring-your-own-proxy (unchanged).
   panelDomain         String?
   autoUpdate          Boolean   @default(false)
-  // Release channel to track. NULL = automatic: a prerelease build (0.1.0-beta.N) tracks "beta", a release
-  // build tracks "stable" (see @tugra/shared autoUpdateChannel). A non-null value is an explicit owner pin.
-  updateChannel       String?
+  // Release channel to track. "auto" (the default) = automatic: a prerelease build (0.1.0-beta.N) tracks "beta",
+  // a release build tracks "stable" (see @tugra/shared autoUpdateChannel); "stable" / "beta" are explicit owner
+  // pins. A sentinel rather than NULL so the PREVIOUS hub image (required-string client) can still read the row
+  // after a rollback of the upgrade that introduced it.
+  updateChannel       String    @default("auto")
   cachedLatestVersion String?
+  // The channel `cachedLatestVersion` was read from; a cache from another channel is ignored after a pin change.
+  cachedLatestChannel String?
   cachedNotice        Json? // signed top-level operator notice from the update manifest, or null
   // Last SUCCESSFUL signed manifest check (set even when the tracked channel has no entry — the check itself
   // worked). Drives "Last checked" in the Updates card and the panel-load stale refresh.

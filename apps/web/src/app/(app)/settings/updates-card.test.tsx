@@ -13,7 +13,8 @@ vi.mock("../../../lib/auth", () => ({ useAuth: () => ({ user: h.user }) }));
 import { UpdatesCard } from "./updates-card";
 
 const STATUS: InstanceUpdateStatus = {
-  current: "0.1.0",
+  // a prerelease build, so "Automatic" resolves to Beta (the label follows the build, not the current pin)
+  current: "0.1.0-beta.16",
   latest: "0.2.0",
   channel: "beta",
   channelSource: "auto",
@@ -71,7 +72,7 @@ describe("UpdatesCard", () => {
     h.user = { isInstanceOwner: true };
     wrap();
     expect(await screen.findByText("Updates")).toBeTruthy();
-    await waitFor(() => expect(screen.getByText("0.1.0")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("0.1.0-beta.16")).toBeTruthy());
     expect(screen.getByText(/Update available/)).toBeTruthy();
     expect(screen.getByText("View changelog")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Update now" })).toBeTruthy(); // in-app updater available
@@ -245,7 +246,7 @@ describe("UpdatesCard", () => {
       vi.mocked(api.checkInstanceUpdate).mockResolvedValue({ ...STATUS, updateAvailable: false, latest: "0.1.0" });
       click();
       await waitFor(() => expect(toasts).toHaveLength(1));
-      expect(toasts[0]).toMatchObject({ message: "Up to date (v0.1.0)", type: "success" });
+      expect(toasts[0]).toMatchObject({ message: "Up to date (v0.1.0-beta.16)", type: "success" });
 
       vi.mocked(api.checkInstanceUpdate).mockResolvedValue({ ...STATUS, updateAvailable: true, latest: "0.2.0" });
       click();

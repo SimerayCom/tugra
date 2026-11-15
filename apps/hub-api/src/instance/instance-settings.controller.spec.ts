@@ -183,10 +183,10 @@ describe("InstanceSettingsController", () => {
     expect(out).toMatchObject({ channel: "stable" }); // getStatus() shape
   });
 
-  it("setUpdate passes updateChannel: null through (reset to automatic)", async () => {
+  it("setUpdate stores updateChannel: null as the non-null \"auto\" sentinel (reset to automatic)", async () => {
     const { ctrl, settings } = make({ apiEnabled: true, apiAllowedIps: [] });
     await ctrl.setUpdate(OWNER, { updateChannel: null });
-    expect(settings.update).toHaveBeenCalledWith({ updateChannel: null });
+    expect(settings.update).toHaveBeenCalledWith({ updateChannel: "auto" });
   });
 
   it("setUpdate only patches the fields present in the body", async () => {
