@@ -392,9 +392,15 @@ func RunCLI(args []string, version string, stdout, stderr io.Writer) (code int) 
 	}
 
 	if vr != nil && ctx.Err() == nil {
-		for _, res := range vr.run(ctx, volScope) {
+		vres, vabort := vr.run(ctx, volScope)
+		for _, res := range vres {
 			out.Items = append(out.Items, res)
 			tallyState(&out.Counts, res.State)
+		}
+		if vabort != 0 {
+			logf("aborting the run after %s", codeName(vabort))
+			code = vabort
+			return
 		}
 	}
 

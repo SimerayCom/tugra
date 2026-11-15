@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -107,6 +108,11 @@ type Hub struct {
 	tok  string
 	hc   *http.Client
 	ua   string
+
+	// Streamed volume copy: the latest renewed token expiry and the hub-restart wait (see vxclient.go).
+	expMu  sync.Mutex
+	expiry time.Time
+	outage time.Duration
 }
 
 // Response shapes.

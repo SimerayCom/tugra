@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -40,8 +41,10 @@ type volRunner struct {
 	policy     VxPolicy
 	overrides  map[string]string
 	usedIDs    map[string]string
-	// expiry is the latest token expiry the hub reported (every vx response renews it); margins compare against it.
+	// expiry is the probe's token expiry; the hub's renewed value (Hub.Expiry) wins once a vx call returned one.
 	expiry time.Time
+	// abortCode is set when the whole run must stop (authentication lost).
+	abortCode int
 }
 
 func newRunID() string {
@@ -92,11 +95,14 @@ type volumeFacts struct {
 	item   InvItem
 	state  string // "" = inspectable and streamable; else the item state to report
 	reason string
+	// stopped is the container THIS run stopped (so it may restart it if the copy does not complete); nil otherwise.
+	stopped *volSource
 }
 
-// inspect resolves + validates one volume target and reads its inventory WITHOUT stopping or writing anything. The
-// returned state is non-empty when the item must not be copied (and `item` is then the honest inventory entry).
-func (v *volRunner) inspect(ctx context.Context, tg Target) volumeFacts {
+// inspect resolves + validates one volume target and reads its inventory. With mayStop (the real run, never the dry run)
+// and --stop-source it first stops ONLY that container, re-resolves it and verifies it is quiescent. The returned state is
+// non-empty when the item must not be copied (and `item` is then the honest inventory entry).
+func (v *volRunner) inspect(ctx context.Context, tg Target, mayStop bool) volumeFacts {
 	f := volumeFacts{item: InvItem{ItemRef: tg.ItemRef, MountType: "volume"}}
 	if tg.VolumeIngest == "excluded" {
 		f.state, f.reason = "volume-not-migrated", sanitizeReason(tg.Reason)
@@ -121,6 +127,36 @@ func (v *volRunner) inspect(ctx context.Context, tg Target) volumeFacts {
 		return f
 	}
 	v.usedIDs[src.ContainerID+"|"+src.Destination] = tg.ItemRef
+	if src.MountType == "bind" && !v.c.allowBind {
+		f.src = src
+		f.item.Found, f.item.MountType, f.item.MountDest, f.item.Image = true, src.MountType, src.Destination, src.Image
+		f.state, f.reason = "volume-bind-refused", "bind-mount"
+		return f
+	}
+	if _, merr := src.mountSrc(); merr != nil {
+		f.state, f.reason = volumeOutcome(merr)
+		return f
+	}
+	if mayStop && (src.State.Running || src.State.Restarting || src.State.Paused) {
+		if !v.c.stopSource {
+			f.src = src
+			f.item.Found, f.item.MountType, f.item.MountDest, f.item.Image, f.item.Running = true, src.MountType, src.Destination, src.Image, true
+			f.state, f.reason = "volume-skipped-running", "stop "+shortName(src.Name)+" first (or rerun with --stop-source)"
+			return f
+		}
+		v.logf("stopping %s (only this container; it is restarted if the copy does not complete)", shortName(src.Name))
+		if serr := v.stopContainer(ctx, src); serr != nil {
+			f.state, f.reason = "failed", "stop-failed"
+			return f
+		}
+		f.stopped = src
+		fresh, rerr := ResolveVolume(ctx, tg, v.overrides[tg.ItemRef], v.dockerPath, v.dockerEnv)
+		if rerr != nil || fresh.ContainerID != src.ContainerID {
+			f.state, f.reason = "failed", "stop-failed"
+			return f
+		}
+		src = fresh
+	}
 	f.src = src
 	f.item.Found = true
 	f.item.MountType = src.MountType
@@ -133,13 +169,12 @@ func (v *volRunner) inspect(ctx context.Context, tg Target) volumeFacts {
 		f.item.ExitCode = &code
 		f.item.FinishedAt = src.State.FinishedAt
 	}
-	if src.MountType == "bind" && !v.c.allowBind {
-		f.state, f.reason = "volume-bind-refused", "bind-mount"
-		return f
-	}
-	if _, merr := src.mountSrc(); merr != nil {
-		f.state, f.reason = volumeOutcome(merr)
-		return f
+	if mayStop {
+		// The proof, not an assumption: not running AND no other container on the same volume/path.
+		if qerr := VerifyQuiescent(ctx, v.dockerPath, v.dockerEnv, src); qerr != nil {
+			f.state, f.reason = "volume-skipped-running", sanitizeReason(strings.TrimPrefix(qerr.Error(), ErrSourceRunning.Error()+": "))
+			return f
+		}
 	}
 	inv, ierr := InventoryVolume(ctx, v.dockerPath, v.dockerEnv, v.c.helperImage, src, excludesFor(tg))
 	if ierr != nil {
@@ -159,6 +194,29 @@ func (v *volRunner) inspect(ctx context.Context, tg Target) volumeFacts {
 		return f
 	}
 	return f
+}
+
+// stopContainer stops ONLY the given container by its immutable id (never removes it).
+func (v *volRunner) stopContainer(ctx context.Context, s *volSource) error {
+	cctx, cancel := context.WithTimeout(ctx, time.Duration(v.c.stopTimeout+120)*time.Second)
+	defer cancel()
+	_, stderr, err := runDocker(cctx, []string{v.dockerPath, "stop", "-t", strconv.Itoa(v.c.stopTimeout), s.ContainerID}, v.dockerEnv)
+	if err != nil {
+		v.logf("docker stop failed: %v (%s)", err, firstLine(stderr))
+		return err
+	}
+	return nil
+}
+
+// startContainer restarts a container THIS run stopped, with its own context (the run's may already be cancelled).
+func (v *volRunner) startContainer(s *volSource) {
+	cctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	if _, stderr, err := runDocker(cctx, []string{v.dockerPath, "start", s.ContainerID}, v.dockerEnv); err != nil {
+		v.logf("could not restart %s: %v (%s) - start it by hand", shortName(s.Name), err, firstLine(stderr))
+		return
+	}
+	v.logf("restarted %s", shortName(s.Name))
 }
 
 // volumeOutcome maps a resolution/inspection error to an item state + a value-free reason.
@@ -192,7 +250,7 @@ func (v *volRunner) dryRun(ctx context.Context, scope []Target) []itemResult {
 	facts := make([]volumeFacts, 0, len(scope))
 	var inv []InvItem
 	for _, tg := range scope {
-		f := v.inspect(ctx, tg)
+		f := v.inspect(ctx, tg, false)
 		facts = append(facts, f)
 		if tg.VolumeIngest != "excluded" && (f.item.Found || f.state == "volume-source-missing") {
 			inv = append(inv, f.item)
@@ -272,12 +330,295 @@ func shortName(n string) string {
 	return n
 }
 
-// run streams every volume in scope, one at a time. (The streamed copy itself lands in the next slice; until then a
-// volume is reported as skipped with an honest reason rather than touched.)
-func (v *volRunner) run(ctx context.Context, scope []Target) []itemResult {
+// run streams every volume in scope, one at a time. It returns the per-volume results and a non-zero exit code when the
+// whole run must stop (authentication lost).
+func (v *volRunner) run(ctx context.Context, scope []Target) ([]itemResult, int) {
 	results := make([]itemResult, 0, len(scope))
-	for _, tg := range scope {
-		results = append(results, itemResult{ItemRef: tg.ItemRef, Engine: engineOfVolume(tg), State: "volume-aborted", Reason: "copy-not-available"})
+	v.hub.SetOutageWait(v.c.hubOutageWait)
+	reapStaleHelpers(ctx, v.dockerPath, v.dockerEnv)
+	for i, tg := range scope {
+		if ctx.Err() != nil {
+			for _, rest := range scope[i:] {
+				results = append(results, itemResult{ItemRef: rest.ItemRef, Engine: engineOfVolume(rest), State: "volume-aborted", Reason: "interrupted"})
+			}
+			return results, 0
+		}
+		if exp := v.latestExpiry(); !exp.IsZero() && time.Until(exp) < 2*time.Minute {
+			for _, rest := range scope[i:] {
+				results = append(results, itemResult{ItemRef: rest.ItemRef, Engine: engineOfVolume(rest), State: "volume-aborted", Reason: "token-expiring"})
+			}
+			return results, 0
+		}
+		v.logf("[vol %d/%d] %s", i+1, len(scope), tg.ItemRef)
+		res := v.runOne(ctx, tg)
+		results = append(results, res)
+		if v.abortCode != 0 {
+			for _, rest := range scope[i+1:] {
+				results = append(results, itemResult{ItemRef: rest.ItemRef, Engine: engineOfVolume(rest), State: "volume-aborted", Reason: "run-aborted"})
+			}
+			return results, v.abortCode
+		}
 	}
-	return results
+	return results, 0
 }
+
+// latestExpiry is the freshest token expiry known: the hub's renewed value, else the probe's.
+func (v *volRunner) latestExpiry() time.Time {
+	if e := v.hub.Expiry(); !e.IsZero() {
+		return e
+	}
+	return v.expiry
+}
+
+// runOne copies ONE volume end to end. A container this run stopped is restarted on every exit path that did not reach
+// COPIED (failure, SIGINT, panic); after COPIED the source stays stopped (the target now owns the cutover).
+func (v *volRunner) runOne(ctx context.Context, tg Target) (res itemResult) {
+	res = itemResult{ItemRef: tg.ItemRef, Engine: engineOfVolume(tg)}
+	var stopped *volSource
+	copied := false
+	leased := false
+	defer func() {
+		if rec := recover(); rec != nil {
+			res.State, res.Reason = "failed", "internal"
+		}
+		if leased && !copied && ctx.Err() != nil {
+			actx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			_ = v.hub.VxAbort(actx, tg.ItemRef, v.runID) // release the lease, keep the staged parts
+			cancel()
+		}
+		if stopped != nil && !copied && v.c.restartOnFailure {
+			v.startContainer(stopped)
+		}
+	}()
+
+	f := v.inspect(ctx, tg, true)
+	stopped = f.stopped
+	fillFacts(&res, f)
+	if f.state != "" {
+		res.State, res.Reason = f.state, f.reason
+		return res
+	}
+	src := f.src
+	partRaw, perr := v.partRawBytes()
+	if perr != nil {
+		res.State, res.Reason = "failed", "part-size"
+		return res
+	}
+
+	// The hub needs the inventory (image/major/layout) for its gates and the dry-run view; it also validates the ref.
+	if exp, ierr := v.hub.VxInventory(ctx, v.runID, []InvItem{f.item}); ierr != nil {
+		v.setHubFailure(&res, ierr)
+		return res
+	} else if !exp.IsZero() {
+		v.expiry = exp
+	}
+
+	if containsStr(v.c.resetVolume, tg.ItemRef) {
+		if rerr := v.hub.VxReset(ctx, tg.ItemRef, v.runID); rerr != nil {
+			v.setHubFailure(&res, rerr)
+			return res
+		}
+		v.logf("reset %s: the staged parts were discarded", tg.ItemRef)
+	}
+
+	fp := src.fingerprint(f.inv.PgMajor)
+	total := f.inv.RawBytes
+	br, berr := v.hub.VxBegin(ctx, tg.ItemRef, VxBeginReq{RunID: v.runID, PartRawBytes: partRaw, RawTotal: &total, Fingerprint: toVxFingerprint(fp)})
+	if berr != nil {
+		v.setHubFailure(&res, berr)
+		return res
+	}
+	leased = true
+	if br.AlreadyDone || br.State == "DONE" {
+		res.State, res.Reason = "volume-applied", "already-applied"
+		return res
+	}
+	if br.State == "APPLYING" || br.State == "COPIED" {
+		copied = true // the copy finished in an earlier run: only the apply remains
+		return v.awaitApply(ctx, tg, f, &res)
+	}
+	if br.PartRawBytes != partRaw {
+		res.State, res.Reason = "failed", "part-size"
+		return res
+	}
+
+	started := time.Now()
+	sr, serr := StreamVolume(ctx, v.hub, v.dockerPath, v.dockerEnv, tg, src, StreamOpts{
+		PartRawBytes: partRaw, Helper: v.c.helperImage, RunID: v.runID, Excludes: excludesFor(tg),
+		ResumeFromPart: br.ResumeFromPart, Manifest: br.Manifest, TotalRaw: total, MaxParts: v.policy.MaxParts,
+		Progress: func(p Progress) {
+			secs := time.Since(started).Seconds()
+			rate := 0.0
+			if secs > 0 {
+				rate = float64(p.Committed) / secs / 1e6
+			}
+			v.logf("  part %d  %.2f GiB / %.2f GiB  (%.1f MB/s compressed)", p.Part, float64(p.RawDone)/(1<<30), float64(p.RawTotal)/(1<<30), rate)
+		},
+	})
+	if serr != nil {
+		v.setStreamFailure(ctx, &res, serr)
+		return res
+	}
+	res.Parts, res.RawBytes = sr.Parts, sr.RawBytes
+
+	// Re-prove quiescence AFTER the last byte; the hub compares this with the begin-time fingerprint.
+	after, aerr := ResolveVolume(ctx, tg, v.overrides[tg.ItemRef], v.dockerPath, v.dockerEnv)
+	if aerr != nil || after.ContainerID != src.ContainerID || after.State.Running || after.State.Restarting || after.State.Paused {
+		res.State, res.Reason = "volume-diverged", "source-restarted"
+		return res
+	}
+	if qerr := VerifyQuiescent(ctx, v.dockerPath, v.dockerEnv, after); qerr != nil {
+		res.State, res.Reason = "volume-diverged", "source-restarted"
+		return res
+	}
+	ferr := v.hub.VxFinish(ctx, tg.ItemRef, VxFinishReq{
+		RunID: v.runID, Parts: sr.Parts, RawBytes: sr.RawBytes, Entries: f.inv.Entries,
+		FingerprintAfter: VxAfterFing{ContainerID: after.ContainerID, StartedAt: after.State.StartedAt, FinishedAt: after.State.FinishedAt, Running: false},
+	})
+	if ferr != nil {
+		v.setHubFailure(&res, ferr)
+		return res
+	}
+	copied = true // from here the source stays stopped
+	if stopped != nil {
+		v.logf("%s stays stopped: start it on the target, then repoint DNS", shortName(stopped.Name))
+	}
+	return v.awaitApply(ctx, tg, f, &res)
+}
+
+func containsStr(l stringList, v string) bool {
+	for _, x := range l {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+func toVxFingerprint(f Fingerprint) VxFingerprint {
+	return VxFingerprint{ContainerID: f.ContainerID, StartedAt: f.StartedAt, FinishedAt: f.FinishedAt, ExitCode: f.ExitCode, MountType: f.MountType, MountName: f.MountName, ImageID: f.ImageID, PgMajor: f.PgMajor}
+}
+
+// awaitApply polls the hub every 5 s until the apply (and, for a database, its start) reached a terminal state.
+func (v *volRunner) awaitApply(ctx context.Context, tg Target, f volumeFacts, res *itemResult) itemResult {
+	deadline := time.Now().Add(applyWait(f.inv.RawBytes))
+	for time.Now().Before(deadline) {
+		if ctx.Err() != nil {
+			res.State, res.Reason = "volume-copied", "interrupted-before-apply-confirmed"
+			return *res
+		}
+		st, err := v.hub.VxStatus(ctx, tg.ItemRef)
+		if err != nil {
+			if kindOf(err) == KindAuth {
+				v.abortCode = exitAuth
+				res.State, res.Reason = "volume-copied", "auth"
+				return *res
+			}
+			if ctx.Err() == nil {
+				v.logf("status: %v", err)
+			}
+		} else {
+			switch st.State {
+			case "DONE":
+				res.State, res.Reason = "volume-applied", ""
+				return *res
+			case "FAILED":
+				res.State, res.Reason = "volume-copied", "apply-failed: "+hubText(st.Error)
+				return *res
+			case "ABORTED":
+				res.State, res.Reason = "volume-aborted", "owner-aborted"
+				return *res
+			}
+		}
+		if waitRetry(ctx, 5*time.Second) != nil {
+			res.State, res.Reason = "volume-copied", "interrupted-before-apply-confirmed"
+			return *res
+		}
+	}
+	res.State, res.Reason = "volume-copied", "apply-timeout"
+	return *res
+}
+
+// applyWait is how long the migrator keeps polling the apply: the hub's own apply budget plus the database start.
+func applyWait(rawBytes int64) time.Duration {
+	gib := rawBytes/(1<<30) + 1
+	d := 10*time.Minute + time.Duration(gib)*4*time.Minute + 35*time.Minute
+	if d > 24*time.Hour {
+		d = 24 * time.Hour
+	}
+	return d
+}
+
+// hubText makes a hub message safe for the one JSON result line (bounded, no control characters).
+func hubText(s string) string {
+	s = stripControl(s)
+	if len(s) > 160 {
+		s = s[:160]
+	}
+	if s == "" {
+		return "see the hub"
+	}
+	return s
+}
+
+// setHubFailure maps a hub error on a volume call to an honest item state; auth loss stops the run.
+func (v *volRunner) setHubFailure(res *itemResult, err error) {
+	switch kindOf(err) {
+	case KindAuth:
+		v.abortCode = exitAuth
+		res.State, res.Reason = "failed", "auth"
+	case KindVxFingerprintChanged:
+		res.State, res.Reason = "volume-diverged", "fingerprint-changed: rerun with --reset-volume "+res.ItemRef
+	case KindVxDiverged:
+		res.State, res.Reason = "volume-diverged", "diverged: rerun with --reset-volume "+res.ItemRef
+	case KindVxAborted:
+		res.State, res.Reason = "volume-aborted", "owner-aborted"
+	case KindVxDiskInsufficient:
+		res.State, res.Reason = "volume-disk-insufficient", "target-disk: "+hubText(errMsg(err))
+	case KindTooLarge:
+		res.State, res.Reason = "volume-disk-insufficient", "over-limit"
+	case KindVxOtherRun:
+		res.State, res.Reason = "failed", "another-run-active"
+	case KindDestDirty:
+		res.State, res.Reason = "failed", "dest-dirty"
+	case KindVxUsesHubStaged:
+		res.State, res.Reason = "failed", "uses-hub-staged-upload"
+	case KindVxUsesStream, KindVxDbVolumeMode:
+		res.State, res.Reason = "failed", "route-closed"
+	case KindNotFound:
+		res.State, res.Reason = "failed", "no-such-target"
+	case KindRedirect, KindServer, KindRateLimited:
+		res.State, res.Reason = "failed", "hub-unreachable"
+	case KindDecode:
+		res.State, res.Reason = "failed", "bad-response"
+	case KindUnknownConflict, KindBadRequest:
+		res.State, res.Reason = "failed", "refused: "+hubText(errMsg(err)) // the hub's own gate text (e.g. the PostgreSQL gates)
+	default:
+		res.State, res.Reason = "failed", "hub-error"
+	}
+}
+
+// setStreamFailure maps a streaming failure.
+func (v *volRunner) setStreamFailure(ctx context.Context, res *itemResult, err error) {
+	switch {
+	case ctx.Err() != nil:
+		res.State, res.Reason = "volume-aborted", "interrupted"
+	case errors.Is(err, ErrDiverged):
+		res.State, res.Reason = "volume-diverged", "source-changed: rerun with --reset-volume "+res.ItemRef
+	case errors.Is(err, ErrTarFailed):
+		res.State, res.Reason = "failed", "tar-failed"
+	case kindOf(err) != KindOther:
+		v.setHubFailure(res, err)
+	default:
+		res.State, res.Reason = "failed", "part-failed"
+	}
+}
+
+func errMsg(err error) string {
+	var he *HubError
+	if errors.As(err, &he) {
+		return he.Msg
+	}
+	return err.Error()
+}
+
