@@ -125,6 +125,8 @@ export const NAME_VECTORS: Array<{ kind: keyof typeof NAME_MAX; input: string; o
   { kind: "gitsource", input: "g".repeat(81), ok: false, code: "name.too_long" },
   { kind: "database", input: "\u{1F600}".repeat(60), ok: true, value: "\u{1F600}".repeat(60) }, // 60 code points (120 UTF-16 units)
   { kind: "database", input: "\u{1F600}".repeat(61), ok: false, code: "name.too_long" },
+  { kind: "project", input: "\u{1F600}".repeat(40), ok: true, value: "\u{1F600}".repeat(40) }, // 80 UTF-16 units
+  { kind: "project", input: "\u{1F600}".repeat(41), ok: false, code: "name.too_long" }, // 41 code points but 82 units (the project service slices by unit)
   { kind: "app", input: "a‮b", ok: false, code: "name.invalid" }, // bidi override
   { kind: "app", input: "a⁦b", ok: false, code: "name.invalid" }, // bidi isolate
   { kind: "app", input: "a​b", ok: false, code: "name.invalid" }, // zero-width space

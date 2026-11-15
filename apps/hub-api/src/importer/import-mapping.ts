@@ -57,7 +57,7 @@ export const EMPTY_MAPPING: ImportMappingDoc = { version: 1, items: {}, projects
 
 // ── name policy ────────────────────────────────────────────────────────────────────────────────────────
 
-/** Per-kind caps, in code points. Apps: RenameSchema max 100. Databases: 60 (the stricter of the DB DTOs: create
+/** Per-kind caps, in code points (projects/environments additionally in UTF-16 units — see validateName). Apps: RenameSchema max 100. Databases: 60 (the stricter of the DB DTOs: create
  *  has no cap, clone clamps to 60, rename allows 100). Projects/environments: projects/dto.ts 80. */
 export const NAME_MAX = { app: 100, database: 60, project: 80, environment: 80, gitsource: 80 } as const;
 export type NameKind = keyof typeof NAME_MAX;
@@ -73,6 +73,9 @@ export function validateName(kind: NameKind, raw: string): NameCheck {
   if (!value) return { ok: false, code: "name.invalid" };
   if (FORBIDDEN.test(value)) return { ok: false, code: "name.invalid" };
   if ([...value].length > NAME_MAX[kind]) return { ok: false, code: "name.too_long" };
+  // Projects and environments go through ProjectsService.findOrCreateForImport, which slices to 80 UTF-16 units:
+  // a name that fits in code points but not in units would be silently cut there, so reject it here instead.
+  if ((kind === "project" || kind === "environment") && value.length > NAME_MAX[kind]) return { ok: false, code: "name.too_long" };
   return { ok: true, value };
 }
 
