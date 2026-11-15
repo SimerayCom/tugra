@@ -5,6 +5,7 @@ import React from "react";
 import { I18nProvider } from "../i18n/provider";
 import { ToastProvider } from "./toast";
 import { EnvCard } from "./env-card";
+import { ConfirmProvider } from "./confirm";
 import { api, ApiError } from "../lib/api";
 
 vi.mock("../lib/clipboard", () => ({ copyText: vi.fn().mockResolvedValue(true) }));
@@ -14,7 +15,7 @@ afterEach(cleanup);
 
 let qc: QueryClient;
 beforeEach(() => {
-  qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  qc = new QueryClient({ defaultOptions: { queries: { retry: false, retryDelay: 0 } } });
   vi.restoreAllMocks();
   vi.mocked(copyText).mockResolvedValue(true);
 });
@@ -23,7 +24,7 @@ const wrap = (ui: React.ReactNode) =>
   render(
     <QueryClientProvider client={qc}>
       <I18nProvider>
-        <ToastProvider>{ui}</ToastProvider>
+        <ToastProvider><ConfirmProvider>{ui}</ConfirmProvider></ToastProvider>
       </I18nProvider>
     </QueryClientProvider>,
   );
@@ -378,6 +379,97 @@ describe("EnvCard — per-variable flags (flagsEnabled)", () => {
     fireEvent.change(screen.getByLabelText("Value"), { target: { value: "y" } });
     fireEvent.click(saveBtn());
     expect(await screen.findByText(/Could not save the environment variables: variable LD_PRELOAD/)).toBeTruthy();
+  });
+
+  describe("the flags endpoint never blocks the editor", () => {
+    const failFlags = (err: Error, env: Record<string, string> = { A: "1" }, canWrite = true) => {
+      vi.spyOn(api, "getAppEnv").mockResolvedValue(env);
+      vi.spyOn(api, "getAppEnvFlags").mockRejectedValue(err);
+      const setAppEnv = vi.spyOn(api, "setAppEnv").mockResolvedValue({ ok: true });
+      wrap(<EnvCard id="a1" canWrite={canWrite} flagsEnabled />);
+      return { setAppEnv };
+    };
+
+    it("404 (an older hub) / network failure: plain editor with a notice, and Save sends NO flags object", async () => {
+      for (const err of [new ApiError(404, "not found"), new Error("network down")]) {
+        cleanup();
+        const { setAppEnv } = failFlags(err);
+        await screen.findByDisplayValue("1");
+        expect(screen.getByTestId("env-flags-unavailable")).toBeTruthy();
+        expect(screen.queryByRole("button", { name: "Variable options" })).toBeNull(); // no per-row flag UI
+        fireEvent.change(screen.getByLabelText("Value"), { target: { value: "2" } });
+        fireEvent.click(saveBtn());
+        await waitFor(() => expect(setAppEnv).toHaveBeenCalledTimes(1));
+        expect(setAppEnv.mock.calls[0]).toEqual(["a1", { A: "2" }]); // flags omitted: the hub keeps what is stored
+      }
+    });
+
+    it("the notice offers a retry of the flags query", async () => {
+      failFlags(new ApiError(500, "boom"));
+      await screen.findByDisplayValue("1");
+      const spy = vi.mocked(api.getAppEnvFlags);
+      spy.mockClear();
+      fireEvent.click(screen.getByRole("button", { name: "Retry loading flags" }));
+      await waitFor(() => expect(spy).toHaveBeenCalledWith("a1"));
+    });
+
+    it("a stored value with a line break stays intact (shown as a block, never flattened into a single-line input) while flags are unavailable", async () => {
+      const { setAppEnv } = failFlags(new ApiError(404, "nf"), { PEM: "l1\nl2\n", A: "1" });
+      await screen.findByTestId("env-ml-masked");
+      fireEvent.change(screen.getByDisplayValue("1"), { target: { value: "2" } });
+      fireEvent.click(saveBtn());
+      await waitFor(() => expect(setAppEnv).toHaveBeenCalled());
+      expect(setAppEnv.mock.calls[0]).toEqual(["a1", { PEM: "l1\nl2\n", A: "2" }]);
+    });
+
+    it("409 (unreadable stored flags): editor + warning, a plain Save is not offered, Reset asks to confirm then saves with an explicit empty flags object", async () => {
+      const { setAppEnv } = failFlags(new ApiError(409, "stored variable flags are unreadable"), { A: "1", B: "2" });
+      await screen.findByDisplayValue("1");
+      expect(screen.getByTestId("env-flags-corrupt")).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Reset flags and save" }));
+      // declining the confirm saves nothing
+      fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+      await new Promise((r) => setTimeout(r, 20));
+      expect(setAppEnv).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Reset flags and save" }));
+      const dialog = await screen.findByRole("dialog");
+      const confirmBtn = Array.from(dialog.querySelectorAll("button")).find((b) => b.textContent !== "Cancel")!;
+      fireEvent.click(confirmBtn);
+      await waitFor(() => expect(setAppEnv).toHaveBeenCalledTimes(1));
+      expect(setAppEnv.mock.calls[0]).toEqual(["a1", { A: "1", B: "2" }, {}]);
+    });
+
+    it("409: a stored line-broken value keeps Multiline in the reset payload so the hub accepts it", async () => {
+      const { setAppEnv } = failFlags(new ApiError(409, "unreadable"), { PEM: "a\nb" });
+      await screen.findByTestId("env-ml-masked");
+      fireEvent.click(screen.getByRole("button", { name: "Reset flags and save" }));
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.click(Array.from(dialog.querySelectorAll("button")).find((b) => b.textContent !== "Cancel")!);
+      await waitFor(() => expect(setAppEnv).toHaveBeenCalled());
+      expect(setAppEnv.mock.calls[0][2]).toEqual({ PEM: { buildTime: false, runtime: true, literal: false, multiline: true } });
+    });
+
+    it("409 for a read-only viewer: warning but no reset action", async () => {
+      failFlags(new ApiError(409, "unreadable"), { A: "1" }, false);
+      await screen.findByDisplayValue("1");
+      expect(screen.getByTestId("env-flags-corrupt")).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Reset flags and save" })).toBeNull();
+    });
+  });
+
+  it("bulk edit: an unterminated quote is reported by key and blocks Apply (never silently becomes a Multiline variable)", async () => {
+    const { setAppEnv } = setup({ A: "1" });
+    await screen.findByDisplayValue("1");
+    fireEvent.click(screen.getByRole("button", { name: "Bulk edit" }));
+    const ta = screen.getByLabelText("Bulk edit") as HTMLTextAreaElement;
+    fireEvent.change(ta, { target: { value: 'A=1\nPEM="forgot the closing quote\nB=2' } });
+    expect(screen.getByTestId("env-bulk-unterminated").textContent).toContain("PEM");
+    expect(screen.getByRole("button", { name: "Apply" })).toHaveProperty("disabled", true);
+    fireEvent.change(ta, { target: { value: 'A=1\nPEM="closed\nvalue"\nB=2' } });
+    expect(screen.queryByTestId("env-bulk-unterminated")).toBeNull();
+    expect(screen.getByRole("button", { name: "Apply" })).toHaveProperty("disabled", false);
+    expect(setAppEnv).not.toHaveBeenCalled();
   });
 
   it("a read-only viewer sees chips but cannot change the flags", async () => {

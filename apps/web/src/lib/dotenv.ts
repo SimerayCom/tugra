@@ -11,8 +11,10 @@
  *    that legitimately contains ` #` (e.g. a password). Our own serializer quotes any value containing
  *    `#`, so this never affects the round-trip; it only keeps pasted values verbatim.
  *  - Unknown escapes keep their backslash (`\p` stays `\p`), so pasted Windows paths and regexes survive.
- *  - An unterminated quote is read leniently to end-of-input rather than throwing; the server rejects the
- *    resulting newline value, so it surfaces as an error, never as silently-persisted corruption. */
+ *  - An unterminated quote is read leniently to end-of-input rather than throwing, and the row is marked
+ *    `unterminated`. The server no longer catches this (a line break is legal in a Multiline variable), so the
+ *    editor guards it client-side: an unterminated row is reported by key and blocks Apply, and it is never
+ *    auto-switched to Multiline (see applyBulkFlags). */
 
 import { flagsEqual } from "./env-flags";
 
@@ -23,6 +25,8 @@ export interface EnvRow {
   value: string;
   /** Per-variable flags (apps only; the database card never sets it). */
   flags?: { buildTime: boolean; runtime: boolean; literal: boolean; multiline: boolean };
+  /** Set by parseDotenv only: the value's quote never closed, so it swallowed the rest of the text. */
+  unterminated?: true;
 }
 
 /** A value that can't be written bare on a `KEY=value` line without changing its meaning on the way back
@@ -105,7 +109,7 @@ export function parseDotenv(text: string): EnvRow[] {
         value += "\n";
         buf = lines[i];
       }
-      rows.push({ key, value });
+      rows.push(closed ? { key, value } : { key, value, unterminated: true });
     } else {
       // Bare value: trim trailing blanks (serializeValue never emits a bare value with edge whitespace).
       rows.push({ key, value: trimTrailingBlanks(rest) });

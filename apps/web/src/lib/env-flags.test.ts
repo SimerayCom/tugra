@@ -75,6 +75,11 @@ describe("applyBulkFlags / flagsPayload", () => {
     expect(rows.map((r) => r.flags.multiline)).toEqual([false, true, false]);
     expect(autoCount).toBe(1);
   });
+  it("never auto-enables Multiline for a row whose quote never closed", () => {
+    const { rows, autoCount } = applyBulkFlags([{ key: "A", value: "oops\nB=2", unterminated: true }, { key: "PEM", value: "x\ny" }], []);
+    expect(rows.map((r) => r.flags.multiline)).toEqual([false, true]);
+    expect(autoCount).toBe(1);
+  });
   it("payload is sparse and a later duplicate wins", () => {
     expect(flagsPayload([{ key: "A" }, { key: "B", flags: { multiline: true } }, { key: " ", flags: { multiline: true } }])).toEqual({
       B: { buildTime: false, runtime: true, literal: false, multiline: true },

@@ -10,6 +10,7 @@ import { useAutoMask } from "../lib/use-auto-mask";
 import { parseDotenv, toDotenv, duplicateKeys, invalidKeys, envDirty } from "../lib/dotenv";
 import { DEFAULT_FLAGS, applyBulkFlags, budgetIssues, canonicalFlags, flagsPayload, hasLineBreak, lineCount, looksSensitiveKey, rowIssues, type EnvFlagView } from "../lib/env-flags";
 import { Badge, Btn, SectionCard, Spinner } from "./ui";
+import { useOptionalConfirm } from "./confirm";
 import { ErrorState } from "./error-state";
 import { IconBtn } from "./icon-btn";
 import { useToast } from "./toast";
@@ -71,9 +72,23 @@ export function EnvCard({
   const toast = useToast();
   const envKey = queryKey ?? ["appEnv", id];
   const relKey = relatedKey ?? ["app", id];
+  const confirm = useOptionalConfirm();
   const { data: env, isLoading, isError, refetch } = useQuery({ queryKey: envKey, queryFn: () => (fetchEnv ? fetchEnv() : api.getAppEnv(id)) });
-  const flagsQ = useQuery({ queryKey: ["appEnvFlags", id], queryFn: () => api.getAppEnvFlags(id), enabled: flagsEnabled });
+  const flagsQ = useQuery({
+    queryKey: ["appEnvFlags", id],
+    queryFn: () => api.getAppEnvFlags(id),
+    enabled: flagsEnabled,
+    // 404 (an older hub without the endpoint) and 409 (unreadable stored flags) are answers, not blips: no retry.
+    retry: (n, err) => !(err instanceof ApiError && (err.status === 404 || err.status === 409)) && n < 1,
+  });
   const flagsData = flagsEnabled ? flagsQ.data : undefined;
+  // The editor never hard-depends on the flags endpoint: when it cannot answer, the card degrades to the plain
+  // editor ("unavailable": saves WITHOUT a flags object, so the hub keeps whatever is stored) or, when the stored
+  // blob is unreadable (409), offers an explicit reset ("corrupt": the one save that sends `flags: {}`).
+  const flagsFailed = flagsEnabled && flagsQ.isError && !flagsData;
+  const flagsCorrupt = flagsFailed && flagsQ.error instanceof ApiError && flagsQ.error.status === 409;
+  const flagsUnavailable = flagsFailed && !flagsCorrupt;
+  const flagsOn = flagsEnabled && !!flagsData; // per-row flag UI + the flags payload only exist when flags loaded
   const ctx = { applicable: flagsData?.applicable ?? { buildTime: false, literal: false } };
   const [rows, setRows] = useState<Row[]>([]);
   const [query, setQuery] = useState("");
@@ -93,20 +108,24 @@ export function EnvCard({
   useEffect(() => {
     // Rows are replaced wholesale from the server, so any per-row reveal would now point at a
     // different row — re-mask to avoid showing a secret the user never revealed.
-    // With flags enabled, wait for BOTH queries: seeding rows before the flags arrive and saving would send a
-    // present-but-empty `flags` that wipes every stored flag.
-    if (env && (!flagsEnabled || flagsData)) {
-      setRows(Object.entries(env).map(([key, value]) => newRow(key, value, canonicalFlags(flagsData?.flags[key]))));
+    // With flags enabled, wait for the flags query to SETTLE (loaded or failed): seeding rows before the flags
+    // arrive and saving would send a present-but-empty `flags` that wipes every stored flag.
+    if (env && (!flagsEnabled || flagsData || flagsFailed)) {
+      // With the flags unavailable a value that holds a line break is shown as a multiline block (a single-line
+      // <input> would flatten it on display and on save); nothing about it is sent.
+      setRows(Object.entries(env).map(([key, value]) => newRow(key, value, canonicalFlags({ ...flagsData?.flags[key], ...(flagsFailed && hasLineBreak(value) ? { multiline: true } : {}) }))));
       remask();
     }
-  }, [env, flagsData, flagsEnabled, remask]);
+  }, [env, flagsData, flagsEnabled, flagsFailed, remask]);
 
   const save = useMutation({
-    mutationFn: () => {
+    mutationFn: (opts?: { resetFlags?: boolean }) => {
       const map: Record<string, string> = {};
       for (const r of rows) if (r.key.trim()) map[r.key.trim()] = r.value;
       if (saveEnv) return saveEnv(map);
-      return flagsEnabled ? api.setAppEnv(id, map, flagsPayload(rows)) : api.setAppEnv(id, map);
+      // explicit flags object (empty unless a stored line-broken value must keep Multiline): the hub replaces the unreadable blob
+      if (opts?.resetFlags) return api.setAppEnv(id, map, flagsPayload(rows));
+      return flagsOn ? api.setAppEnv(id, map, flagsPayload(rows)) : api.setAppEnv(id, map);
     },
     onSuccess: () => {
       // Returned so isPending covers the refetch (the card doesn't flash dirty against a stale cache).
@@ -133,11 +152,13 @@ export function EnvCard({
   const openBulk = () => { setBulkText(toDotenv(rows)); setBulk(true); };
   const applyBulk = () => {
     const parsed = parseDotenv(bulkText);
-    if (flagsEnabled) {
-      // Keep the flags a key already had; auto-enable Multiline for values with line breaks.
+    if (parsed.some((r) => r.unterminated)) return; // the Apply button is disabled for this; never persist a swallowed file
+    if (flagsOn || flagsFailed) {
+      // Keep the flags a key already had; auto-enable Multiline for values with line breaks. (With the flags
+      // unavailable the Multiline state only drives how a line-broken value is DISPLAYED: nothing is sent.)
       const { rows: next, autoCount } = applyBulkFlags(parsed, rows);
       setRows(next.map((r) => newRow(r.key, r.value, r.flags)));
-      if (autoCount > 0) toast(t("apps.envMultilineAutoOn", { count: String(autoCount) }), "success");
+      if (flagsOn && autoCount > 0) toast(t("apps.envMultilineAutoOn", { count: String(autoCount) }), "success");
     } else {
       setRows(parsed.map((r) => newRow(r.key, r.value)));
     }
@@ -148,7 +169,7 @@ export function EnvCard({
   // Browsers strip line breaks when pasting into an <input>, so read the clipboard text ourselves and switch the
   // row to Multiline (keeping the full text) instead of silently flattening a PEM key.
   const onPasteValue = (i: number, e: React.ClipboardEvent<HTMLInputElement>) => {
-    if (!flagsEnabled || !canWrite) return;
+    if (!flagsOn || !canWrite) return;
     const text = e.clipboardData.getData("text");
     if (!hasLineBreak(text)) return;
     e.preventDefault();
@@ -158,6 +179,11 @@ export function EnvCard({
     const end = el.selectionEnd ?? cur.length;
     setRows((rs) => rs.map((r, j) => (j === i ? { ...r, value: cur.slice(0, start) + text + cur.slice(end), flags: { ...r.flags, multiline: true } } : r)));
     toast(t("apps.envMultilineAutoOn", { count: "1" }), "success");
+  };
+  const resetFlagsAndSave = async () => {
+    const body = t("apps.envFlagsResetBody");
+    const ok = confirm ? await confirm({ title: t("apps.envFlagsResetTitle"), body, danger: true }) : window.confirm(body);
+    if (ok) save.mutate({ resetFlags: true });
   };
   const copyValue = async (value: string) => {
     const ok = await copyText(value);
@@ -188,18 +214,21 @@ export function EnvCard({
   // The server replaces the whole env blob on save, so Save must stay disabled until the env has loaded
   // (while loading/errored, rows is still [] and a click would PUT {} and wipe everything) and only
   // enable on a real change.
-  const flagsLoaded = !flagsEnabled || !!flagsData;
-  const dirty = flagsLoaded && envDirty(rows, env, flagsEnabled ? flagsData?.flags : undefined);
+  const flagsLoaded = !flagsEnabled || !!flagsData || flagsFailed;
+  const dirty = flagsLoaded && envDirty(rows, env, flagsOn ? flagsData?.flags : undefined);
   // Flag problems block Save (same pattern as duplicate keys); the server still has the final say.
-  const issuesByRow = flagsEnabled ? rows.map((r) => rowIssues(r, ctx)) : rows.map(() => []);
-  const budget = flagsEnabled ? budgetIssues(rows) : [];
+  const issuesByRow = flagsOn ? rows.map((r) => rowIssues(r, ctx)) : rows.map(() => []);
+  const budget = flagsOn ? budgetIssues(rows) : [];
   const flagBlocked = issuesByRow.some((x) => x.length > 0) || budget.length > 0;
   // Leave guard: the row edits, or a bulk-edit draft that hasn't been applied yet, are lost on navigation.
   // A save in flight is not "unsaved". Read-only viewers can't have edits.
   useUnsavedChanges(canWrite && !save.isPending && (dirty || (bulk && !!env && bulkText !== toDotenv(rows))));
   const keyCount = rows.filter((r) => r.key.trim()).length;
   // A live count so a bulk paste never silently replaces the whole env with nothing (count 0 = wipe).
-  const bulkCount = useMemo(() => (bulk ? parseDotenv(bulkText).filter((r) => r.key.trim()).length : 0), [bulk, bulkText]);
+  const bulkParsedRows = useMemo(() => (bulk ? parseDotenv(bulkText) : []), [bulk, bulkText]);
+  const bulkCount = bulkParsedRows.filter((r) => r.key.trim()).length;
+  // A quote that never closes would swallow the rest of the text into ONE value: show it, never persist it.
+  const bulkUnterminated = bulkParsedRows.filter((r) => r.unterminated).map((r) => r.key);
 
   const toolbar = env ? (
     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -226,8 +255,6 @@ export function EnvCard({
     <SectionCard title={title ?? t("apps.env")} desc={desc ?? t(clusterId ? "apps.envDescSwarm" : "apps.envDesc")} right={toolbar}>
       {isError && !env ? (
         <ErrorState onRetry={() => refetch()} />
-      ) : flagsEnabled && flagsQ.isError && !flagsData ? (
-        <ErrorState onRetry={() => flagsQ.refetch()} />
       ) : isLoading || !env || !flagsLoaded ? (
         <div style={{ display: "flex", justifyContent: "center", padding: "20px 0" }}><Spinner /></div>
       ) : bulk ? (
@@ -247,11 +274,30 @@ export function EnvCard({
             </span>
             <div style={{ flex: 1 }} />
             <Btn variant="ghost" onClick={() => setBulk(false)}>{t("common.cancel")}</Btn>
-            <Btn icon={Check} onClick={applyBulk} disabled={bulkCount === 0}>{t("apps.bulkApply")}</Btn>
+            <Btn icon={Check} onClick={applyBulk} disabled={bulkCount === 0 || bulkUnterminated.length > 0}>{t("apps.bulkApply")}</Btn>
           </div>
+          {bulkUnterminated.length > 0 && (
+            <div role="alert" data-testid="env-bulk-unterminated" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--c-r)", marginTop: 8 }}>
+              <AlertCircle size={13} aria-hidden style={{ flexShrink: 0 }} />
+              <span>{t("apps.bulkUnterminated", { keys: bulkUnterminated.join(", ") })}</span>
+            </div>
+          )}
         </>
       ) : (
         <>
+          {flagsUnavailable && (
+            <div role="status" data-testid="env-flags-unavailable" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 12, color: "var(--c-am)", marginBottom: 8 }}>
+              <AlertTriangle size={13} aria-hidden style={{ flexShrink: 0 }} />
+              <span>{t("apps.envFlagsUnavailable")}</span>
+              <Btn variant="ghost" onClick={() => flagsQ.refetch()}>{t("apps.envFlagsRetry")}</Btn>
+            </div>
+          )}
+          {flagsCorrupt && (
+            <div role="alert" data-testid="env-flags-corrupt" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 12, color: "var(--c-am)", marginBottom: 8 }}>
+              <AlertTriangle size={13} aria-hidden style={{ flexShrink: 0 }} />
+              <span>{t("apps.envFlagsCorrupt")}</span>
+            </div>
+          )}
           {rows.length > 3 && (
             <input
               style={{ ...envField, width: "100%", marginBottom: 8, fontFamily: "inherit" }}
@@ -323,13 +369,13 @@ export function EnvCard({
                         aria-label={t("apps.envValue")}
                         value={r.value}
                         onChange={(e) => setRow(i, { value: e.target.value })}
-                        onPaste={flagsEnabled ? (e) => onPasteValue(i, e) : undefined}
+                        onPaste={flagsOn ? (e) => onPasteValue(i, e) : undefined}
                         readOnly={!canWrite}
                         spellCheck={false}
                         autoComplete="off"
                       />
                     )}
-                    {flagsEnabled && (
+                    {flagsOn && (
                       <button
                         type="button"
                         className="tg-iconbtn"
@@ -353,14 +399,14 @@ export function EnvCard({
                         <X size={14} />
                       </IconBtn>
                     )}
-                    {flagsEnabled && (r.flags.buildTime || r.flags.literal || r.flags.multiline) && (
+                    {flagsOn && (r.flags.buildTime || r.flags.literal || r.flags.multiline) && (
                       <div data-testid="env-row-chips" style={{ flexBasis: "100%", display: "flex", gap: 4, flexWrap: "wrap" }}>
                         {r.flags.buildTime && <Badge>{r.flags.runtime ? t("apps.envChipBuild") : t("apps.envChipBuildOnly")}</Badge>}
                         {r.flags.literal && <Badge>{t("apps.envChipLiteral")}</Badge>}
                         {r.flags.multiline && <Badge>{t("apps.envChipMultiline")}</Badge>}
                       </div>
                     )}
-                    {flagsEnabled && r.optsOpen && (
+                    {flagsOn && r.optsOpen && (
                       <div data-testid="env-row-options" style={{ flexBasis: "100%", display: "flex", flexDirection: "column", gap: 8, padding: "8px 10px", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)" }}>
                         {ctx.applicable.buildTime && (
                           <FlagOption label={t("apps.envFlagBuild")} hint={t("apps.envFlagBuildHint")} checked={r.flags.buildTime} disabled={!canWrite} onChange={(v) => setFlags(i, v ? { buildTime: true } : { buildTime: false, runtime: true })} />
@@ -379,7 +425,7 @@ export function EnvCard({
                         <FlagOption label={t("apps.envFlagMultiline")} hint={t("apps.envFlagMultilineHint")} checked={r.flags.multiline} disabled={!canWrite} onChange={(v) => setFlags(i, { multiline: v })} />
                       </div>
                     )}
-                    {flagsEnabled &&
+                    {flagsOn &&
                       issuesByRow[i].map((iss) => (
                         <div key={iss.code} data-testid="env-row-flag-issue" role="alert" style={{ flexBasis: "100%", display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--c-r)", flexWrap: "wrap" }}>
                           <AlertCircle size={13} aria-hidden style={{ flexShrink: 0 }} />
@@ -409,7 +455,7 @@ export function EnvCard({
           {budget.map((b) => <div key={b.i18nKey} role="alert" style={{ fontSize: 12, color: "var(--c-r)", marginTop: 8 }}>{t(`apps.${b.i18nKey}`, b.params)}</div>)}
           {save.isError && (
             <div role="alert" style={{ fontSize: 12, color: "var(--c-r)", marginTop: 8 }}>
-              {flagsEnabled && save.error instanceof ApiError && save.error.status === 400 && save.error.message
+              {flagsEnabled && save.error instanceof ApiError && (save.error.status === 400 || save.error.status === 409) && save.error.message
                 ? t("apps.envSaveFailedDetail", { detail: save.error.message })
                 : t("apps.envSaveFailed")}
             </div>
@@ -419,9 +465,17 @@ export function EnvCard({
               <Btn variant="ghost" icon={Plus} onClick={() => setRows((rs) => [...rs, newRow()])}>{t("apps.envAdd")}</Btn>
               {dirty && !save.isPending && <span style={{ fontSize: 12, color: "var(--c-am)" }}>{t("apps.envUnsaved")}</span>}
               <div style={{ flex: 1 }} />
-              <Btn onClick={() => save.mutate()} disabled={save.isPending || !dirty || dups.length > 0 || flagBlocked}>
-                {save.isPending ? t("apps.envSaving") : t("apps.save")}
-              </Btn>
+              {flagsCorrupt ? (
+                // A plain save would 409 again (the hub cannot merge into an unreadable blob), so the only save here
+                // is the explicit reset: it sends `flags: {}` and replaces the corrupt blob.
+                <Btn variant="danger" onClick={resetFlagsAndSave} disabled={save.isPending || dups.length > 0}>
+                  {save.isPending ? t("apps.envSaving") : t("apps.envFlagsReset")}
+                </Btn>
+              ) : (
+                <Btn onClick={() => save.mutate(undefined)} disabled={save.isPending || !dirty || dups.length > 0 || flagBlocked}>
+                  {save.isPending ? t("apps.envSaving") : t("apps.save")}
+                </Btn>
+              )}
             </div>
           )}
           {save.isSuccess && <div role="status" style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{redeployHint ?? t("apps.envRedeploy")}</div>}

@@ -106,7 +106,9 @@ export function applyBulkFlags(parsed: EnvRow[], previous: { key: string; flags?
   let autoCount = 0;
   const rows = parsed.map((r) => {
     const flags = canonicalFlags(prev.get(r.key.trim()));
-    if (hasLineBreak(r.value) && !flags.multiline) {
+    // An unterminated quote swallowed the rest of the text: that is a typo, not a multiline value (the editor
+    // blocks Apply for it; never turn it into a Multiline variable here either).
+    if (hasLineBreak(r.value) && !flags.multiline && !r.unterminated) {
       flags.multiline = true;
       autoCount += 1;
     }

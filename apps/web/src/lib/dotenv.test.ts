@@ -96,8 +96,12 @@ describe("parseDotenv quoting", () => {
     ]);
   });
 
-  it("keeps an unterminated quote lenient instead of throwing", () => {
-    expect(parseDotenv('K="no closing quote')).toEqual([{ key: "K", value: "no closing quote" }]);
+  it("keeps an unterminated quote lenient instead of throwing, and marks the row so the editor can refuse it", () => {
+    expect(parseDotenv('K="no closing quote')).toEqual([{ key: "K", value: "no closing quote", unterminated: true }]);
+    // it swallows the rest of the file into one value
+    expect(parseDotenv('A="oops\nB=2\nC=3')).toEqual([{ key: "A", value: "oops\nB=2\nC=3", unterminated: true }]);
+    // a properly closed multi-line value is NOT marked
+    expect(parseDotenv('A="l1\nl2"\nB=2')).toEqual([{ key: "A", value: "l1\nl2" }, { key: "B", value: "2" }]);
   });
 
   it("does not strip quote characters that are part of an unquoted value", () => {
