@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.15] - 2026-11-15
+
 - **Migrator: a volume-mode Postgres is no longer dumped by the database arm.** With `--arms all` the database row of a
   Postgres set to the physical volume copy is left to the volume arm (before, it was dumped, uploaded and refused by
   the hub on every run, or reported `not-running` and made the run exit partial). With `--arms databases` it is
