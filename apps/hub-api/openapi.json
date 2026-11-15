@@ -5762,7 +5762,10 @@
                         "rollout_completed",
                         "rollout_rolled_back",
                         "rollout_rollback_failed",
-                        "image_update_available"
+                        "image_update_available",
+                        "app_move_completed",
+                        "app_move_rolled_back",
+                        "app_move_failed"
                       ]
                     }
                   },
@@ -5968,7 +5971,10 @@
                         "rollout_completed",
                         "rollout_rolled_back",
                         "rollout_rollback_failed",
-                        "image_update_available"
+                        "image_update_available",
+                        "app_move_completed",
+                        "app_move_rolled_back",
+                        "app_move_failed"
                       ]
                     }
                   },

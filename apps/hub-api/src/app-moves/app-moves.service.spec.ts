@@ -1,6 +1,7 @@
 import { ForbiddenException, NotFoundException } from "@nestjs/common";
 import { AGENT_FEATURE_HUB_ORIGIN_ENV } from "@tugra/shared";
 import { AppMovesService } from "./app-moves.service";
+import { MovePreflightService } from "./move-preflight.service";
 import { DOCKER_ROOT, MOVE_STAGING_ROOT } from "./app-move-scripts";
 
 const APP = {
@@ -75,8 +76,9 @@ function make(opts: { transfer?: jest.Mock; app?: Record<string, unknown> | null
   };
   const crypto = { decrypt: (s: string) => s };
   const config = { get: (k: string) => ({ MOVE_PART_MIB: 256, TUGRA_HOSTPORT_MIN: 20000, TUGRA_HOSTPORT_MAX: 45000, MAGIC_DOMAIN_SUFFIX: "sslip.io" } as Record<string, unknown>)[k] };
-  const svc = new AppMovesService(prisma as never, access as never, { log: jest.fn() } as never, agentWs as never, crypto as never, config as never, transfers as never);
-  return { svc, prisma, access, agentWs, send, transfers };
+  const pre = new MovePreflightService(prisma as never, agentWs as never, crypto as never, config as never, transfers as never);
+  const svc = new AppMovesService(prisma as never, access as never, { log: jest.fn() } as never, pre);
+  return { svc, pre, prisma, access, agentWs, send, transfers };
 }
 
 const input = { targetServerId: "s2", acknowledge: {}, probeLink: false } as never;
@@ -228,16 +230,16 @@ describe("AppMovesService.preflight — optional link probe", () => {
   it("cannot create the probe file -> link_probe_failed (no transfer attempted)", async () => {
     const send = jest.fn(async (_id: string, script: string) => (script.includes("head -c") ? { exitCode: 1, output: "disk full" } : { exitCode: 0, output: script.includes("TUGRA_VX_CLEANUP_DONE") ? "TUGRA_VX_CLEANUP_DONE\n" : "" }));
     const t = make({ send: send as never });
-    const link = await t.svc.probeLinkBetween({ id: "s1", capabilities: ["backup"] } as never, { id: "s2", capabilities: ["backup"] } as never);
+    const link = await t.pre.probeLinkBetween({ id: "s1", capabilities: ["backup"] } as never, { id: "s2", capabilities: ["backup"] } as never);
     expect(link).toEqual({ ok: false, mbps: null, hint: "could not create the probe file on the source" });
     expect(t.transfers.transfer).not.toHaveBeenCalled();
   });
 
   it("is skipped (null) when a side is offline / too old / lacks the backup capability — the preflight reports those itself", async () => {
     const t = make({ online: { s1: true, s2: false } });
-    expect(await t.svc.probeLinkBetween({ id: "s1", capabilities: ["backup"] } as never, { id: "s2", capabilities: ["backup"] } as never)).toBeNull();
-    expect(await make({ supports: false }).svc.probeLinkBetween({ id: "s1", capabilities: ["backup"] } as never, { id: "s2", capabilities: ["backup"] } as never)).toBeNull();
-    expect(await make().svc.probeLinkBetween({ id: "s1", capabilities: ["deploy"] } as never, { id: "s2", capabilities: ["backup"] } as never)).toBeNull();
+    expect(await t.pre.probeLinkBetween({ id: "s1", capabilities: ["backup"] } as never, { id: "s2", capabilities: ["backup"] } as never)).toBeNull();
+    expect(await make({ supports: false }).pre.probeLinkBetween({ id: "s1", capabilities: ["backup"] } as never, { id: "s2", capabilities: ["backup"] } as never)).toBeNull();
+    expect(await make().pre.probeLinkBetween({ id: "s1", capabilities: ["deploy"] } as never, { id: "s2", capabilities: ["backup"] } as never)).toBeNull();
   });
 
   it("a busy relay is retried with backoff (not a failure)", async () => {
@@ -245,7 +247,7 @@ describe("AppMovesService.preflight — optional link probe", () => {
     try {
       const transfer = jest.fn().mockResolvedValueOnce({ ok: false, busy: true, sendExit: null, recvExit: null, detail: "relay busy" }).mockResolvedValueOnce({ ok: true, bytes: 16777216 });
       const t = make({ transfer });
-      const p = t.svc.probeLinkBetween({ id: "s1", capabilities: ["backup"] } as never, { id: "s2", capabilities: ["backup"] } as never);
+      const p = t.pre.probeLinkBetween({ id: "s1", capabilities: ["backup"] } as never, { id: "s2", capabilities: ["backup"] } as never);
       await jest.advanceTimersByTimeAsync(1500);
       expect(await p).toMatchObject({ ok: true });
       expect(transfer).toHaveBeenCalledTimes(2);

@@ -75,6 +75,9 @@ const EVENT_LABEL: Record<string, string> = {
   rollout_rolled_back: "eventRolloutRolledBack",
   rollout_rollback_failed: "eventRolloutRollbackFailed",
   image_update_available: "eventImageUpdateAvailable",
+  app_move_completed: "eventAppMoveCompleted",
+  app_move_rolled_back: "eventAppMoveRolledBack",
+  app_move_failed: "eventAppMoveFailed",
 };
 
 export default function NotificationsPage() {

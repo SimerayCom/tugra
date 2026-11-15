@@ -484,3 +484,69 @@ describe("renderEvent — fleet rollout events", () => {
     for (const e of ["rollout_halted", "rollout_completed", "rollout_rolled_back", "rollout_rollback_failed"]) expect(EVENT_TYPES).toContain(e);
   });
 });
+
+describe("renderEvent — app move events", () => {
+  const ctx = { appId: "capp1", appName: "blog", sourceName: "alpha", targetName: "beta", archiveUntil: "2026-11-22T10:00:00.000Z" };
+
+  it("app_move_completed: success, names both servers, keeps the archive date, not critical, app link", () => {
+    const m = render("app_move_completed", ctx);
+    expect(m.event).toBe("app_move_completed");
+    expect(m.level).toBe("success");
+    expect(m.critical).toBeFalsy();
+    expect(m.title).toBe("App moved — blog");
+    expect(m.summary).toBe("blog now runs on beta. The stopped copy of its data on alpha is kept until 2026-11-22.");
+    expect(fieldVal(m, "From")).toBe("alpha");
+    expect(fieldVal(m, "To")).toBe("beta");
+    expect(fieldVal(m, "Old copy kept until")).toBe("2026-11-22");
+    expect(fieldVal(m, "Reason")).toBeUndefined();
+    expect(linkUrl(m, "Open app")).toBe("https://web.test/apps/capp1");
+  });
+
+  it("app_move_completed with no archive (retain 0) says nothing about a kept copy", () => {
+    const m = render("app_move_completed", { ...ctx, archiveUntil: "" });
+    expect(m.summary).toBe("blog now runs on beta.");
+    expect(fieldVal(m, "Old copy kept until")).toBeUndefined();
+  });
+
+  it("app_move_rolled_back: warning (not critical), translated reason, says the app runs on the old server again", () => {
+    const m = render("app_move_rolled_back", { ...ctx, reason: "sha_mismatch" });
+    expect(m.level).toBe("warning");
+    expect(m.critical).toBeFalsy();
+    expect(m.title).toBe("App move rolled back — blog");
+    expect(m.summary).toBe("Moving blog to beta did not finish: a transferred part failed its checksum. blog is running on alpha again.");
+    expect(fieldVal(m, "Reason")).toBe("a transferred part failed its checksum");
+  });
+
+  it("app_move_failed: failure + CRITICAL with the exact next step", () => {
+    const m = render("app_move_failed", { ...ctx, reason: "source_restart_failed" });
+    expect(m.level).toBe("failure");
+    expect(m.critical).toBe(true);
+    expect(m.title).toBe("App move FAILED — blog");
+    expect(m.summary).toContain("could not be brought back up on alpha");
+    expect(m.summary).toContain("Next step:");
+    expect(fieldVal(m, "Reason")).toBe("the app could not be restarted on the old server");
+  });
+
+  it("every failure reason code has a translation (no raw key ever reaches a channel)", () => {
+    const { APP_MOVE_FAILURE_REASONS } = jest.requireActual("@tugra/shared") as { APP_MOVE_FAILURE_REASONS: readonly string[] };
+    for (const code of APP_MOVE_FAILURE_REASONS) {
+      const text = render("app_move_rolled_back", { ...ctx, reason: code }).summary;
+      expect(text).not.toContain("appMove.reason");
+      expect(text.length).toBeGreaterThan(30);
+    }
+  });
+
+  it("never carries relay paths, keys or script output; empty ctx never prints 'undefined'", () => {
+    const m = render("app_move_failed", { ...ctx, reason: "transfer_failed", logTail: "curl https://hub/api/v1/agent-vx/t/AAAA?sig=SECRET", signedPath: "/api/v1/agent-vx/t/x" });
+    expect(JSON.stringify(m)).not.toMatch(/agent-vx|SECRET|sig=/);
+    for (const type of ["app_move_completed", "app_move_rolled_back", "app_move_failed"]) {
+      const blob = JSON.stringify(render(type, {}));
+      expect(blob).not.toContain("undefined");
+    }
+  });
+
+  it("the three are subscribable event ids", () => {
+    const { EVENT_TYPES } = jest.requireActual("@tugra/shared") as { EVENT_TYPES: readonly string[] };
+    for (const e of ["app_move_completed", "app_move_rolled_back", "app_move_failed"]) expect(EVENT_TYPES).toContain(e);
+  });
+});

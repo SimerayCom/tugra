@@ -52,6 +52,9 @@ export const EVENT_TYPES = [
   "rollout_rolled_back",
   "rollout_rollback_failed",
   "image_update_available",
+  "app_move_completed",
+  "app_move_rolled_back",
+  "app_move_failed",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

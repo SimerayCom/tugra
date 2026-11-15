@@ -3,6 +3,7 @@ import { AgentGatewayModule } from "../agent-gateway/agent-gateway.module";
 import { CryptoModule } from "../crypto/crypto.module";
 import { AppMovesController } from "./app-moves.controller";
 import { AppMovesService } from "./app-moves.service";
+import { MovePreflightService } from "./move-preflight.service";
 import { PartTransferService } from "./part-transfer.service";
 import { VolumeRelayController } from "./volume-relay.controller";
 import { VolumeRelayService } from "./volume-relay.service";
@@ -15,7 +16,7 @@ import { VolumeRelayService } from "./volume-relay.service";
 @Module({
   imports: [AgentGatewayModule, CryptoModule],
   controllers: [AppMovesController, VolumeRelayController],
-  providers: [AppMovesService, PartTransferService, VolumeRelayService],
-  exports: [AppMovesService, PartTransferService, VolumeRelayService],
+  providers: [AppMovesService, MovePreflightService, PartTransferService, VolumeRelayService],
+  exports: [AppMovesService, MovePreflightService, PartTransferService, VolumeRelayService],
 })
 export class AppMovesModule {}

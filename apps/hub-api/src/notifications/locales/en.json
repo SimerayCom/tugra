@@ -25,6 +25,46 @@
     "field": { "wave": "Wave", "passed": "Passed", "failed": "Failed", "reverted": "Reverted", "skipped": "Untouched", "total": "Apps" },
     "link": { "open": "Open rollout" }
   },
+  "appMove": {
+    "completed": {
+      "title": "App moved — {app}",
+      "summary": "{app} now runs on {target}. The stopped copy of its data on {source} is kept until {until}.",
+      "summaryNoArchive": "{app} now runs on {target}."
+    },
+    "rolledBack": { "title": "App move rolled back — {app}", "summary": "Moving {app} to {target} did not finish: {reason}. {app} is running on {source} again." },
+    "failed": {
+      "title": "App move FAILED — {app}",
+      "summary": "Moving {app} to {target} failed ({reason}) and {app} could not be brought back up on {source}. Next step: open the app, read the move's log, fix the old server by hand, then purge the move."
+    },
+    "reason": {
+      "preflight_changed": "the situation changed after the move was planned (re-run the preflight)",
+      "cancelled": "it was cancelled",
+      "agent_offline": "a server's agent went offline",
+      "stop_failed": "the app could not be stopped on the old server",
+      "stop_unverified": "the app was still running on the old server after the stop",
+      "prepare_failed": "the new server could not be prepared",
+      "pack_failed": "the volume could not be packed on the old server",
+      "part_stat_failed": "a transfer part could not be measured",
+      "transfer_failed": "a part of the data could not be transferred",
+      "size_mismatch": "a transferred part had the wrong size",
+      "sha_mismatch": "a transferred part failed its checksum",
+      "apply_aborted": "the data could not be unpacked on the new server (nothing was changed there)",
+      "apply_rolled_back": "unpacking the data failed and was rolled back on the new server",
+      "apply_rollback_failed": "unpacking the data failed and its rollback failed on the new server",
+      "apply_failed": "unpacking the data failed on the new server",
+      "entry_count_mismatch": "the unpacked data did not match the original",
+      "changed_under_us": "the app was changed by someone else during the move",
+      "cutover_failed": "switching the app to the new server failed",
+      "deploy_failed": "the app failed to start on the new server",
+      "deploy_timeout": "the app did not become healthy on the new server in time",
+      "hub_restarted": "the hub restarted during the move",
+      "deadline_exceeded": "the move took too long and a server stayed offline",
+      "source_restart_failed": "the app could not be restarted on the old server",
+      "internal_error": "an internal error occurred"
+    },
+    "field": { "source": "From", "target": "To", "reason": "Reason", "archiveUntil": "Old copy kept until" },
+    "link": { "openApp": "Open app" }
+  },
   "backup": {
     "failed": { "title": "Backup failed — {db}", "summary": "A backup of {db} failed." },
     "succeeded": { "title": "Backup succeeded — {db}", "summary": "A backup of {db} completed." },

@@ -9677,7 +9677,7 @@ export interface operations {
                     config: {
                         [key: string]: unknown;
                     };
-                    eventTypes?: ("deploy_success" | "deploy_failed" | "deploy_rolled_back" | "server_offline" | "server_online" | "swarm_degraded" | "ssl_expiring" | "token_expiring" | "backup_failed" | "backup_success" | "backup_missing" | "backup_recovered" | "backup_restore_failed" | "verify_missing" | "verify_recovered" | "volume_backup_success" | "volume_backup_failed" | "scheduled_task_success" | "scheduled_task_failed" | "docker_cleanup_success" | "docker_cleanup_failed" | "container_crashed" | "container_oom" | "container_unhealthy" | "container_mem_pressure" | "rollout_halted" | "rollout_completed" | "rollout_rolled_back" | "rollout_rollback_failed" | "image_update_available")[];
+                    eventTypes?: ("deploy_success" | "deploy_failed" | "deploy_rolled_back" | "server_offline" | "server_online" | "swarm_degraded" | "ssl_expiring" | "token_expiring" | "backup_failed" | "backup_success" | "backup_missing" | "backup_recovered" | "backup_restore_failed" | "verify_missing" | "verify_recovered" | "volume_backup_success" | "volume_backup_failed" | "scheduled_task_success" | "scheduled_task_failed" | "docker_cleanup_success" | "docker_cleanup_failed" | "container_crashed" | "container_oom" | "container_unhealthy" | "container_mem_pressure" | "rollout_halted" | "rollout_completed" | "rollout_rolled_back" | "rollout_rollback_failed" | "image_update_available" | "app_move_completed" | "app_move_rolled_back" | "app_move_failed")[];
                     /** @default en */
                     locale?: string;
                 };
@@ -9804,7 +9804,7 @@ export interface operations {
                 "application/json": {
                     name?: string;
                     enabled?: boolean;
-                    eventTypes?: ("deploy_success" | "deploy_failed" | "deploy_rolled_back" | "server_offline" | "server_online" | "swarm_degraded" | "ssl_expiring" | "token_expiring" | "backup_failed" | "backup_success" | "backup_missing" | "backup_recovered" | "backup_restore_failed" | "verify_missing" | "verify_recovered" | "volume_backup_success" | "volume_backup_failed" | "scheduled_task_success" | "scheduled_task_failed" | "docker_cleanup_success" | "docker_cleanup_failed" | "container_crashed" | "container_oom" | "container_unhealthy" | "container_mem_pressure" | "rollout_halted" | "rollout_completed" | "rollout_rolled_back" | "rollout_rollback_failed" | "image_update_available")[];
+                    eventTypes?: ("deploy_success" | "deploy_failed" | "deploy_rolled_back" | "server_offline" | "server_online" | "swarm_degraded" | "ssl_expiring" | "token_expiring" | "backup_failed" | "backup_success" | "backup_missing" | "backup_recovered" | "backup_restore_failed" | "verify_missing" | "verify_recovered" | "volume_backup_success" | "volume_backup_failed" | "scheduled_task_success" | "scheduled_task_failed" | "docker_cleanup_success" | "docker_cleanup_failed" | "container_crashed" | "container_oom" | "container_unhealthy" | "container_mem_pressure" | "rollout_halted" | "rollout_completed" | "rollout_rolled_back" | "rollout_rollback_failed" | "image_update_available" | "app_move_completed" | "app_move_rolled_back" | "app_move_failed")[];
                     config?: {
                         [key: string]: unknown;
                     };
