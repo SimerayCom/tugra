@@ -7,6 +7,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Per-variable environment flags.** Each variable of an Image, Git or Compose app can now be marked
+  **Build time** (Git apps: passed to the image build as `--build-arg` / builder `--env`; with **Available at runtime**
+  off it is build-only and never reaches the running container), **Literal** (Compose: the value is not expanded,
+  `$VAR` and `${VAR}` stay as written; other app types already pass values literally) and **Multiline** (PEM keys,
+  JSON). `PUT /apps/{id}/env` takes an optional `flags` object (omitted keeps the stored flags, present replaces
+  them) and `GET /apps/{id}/env-flags` returns them. Multiline values are delivered by name through the docker CLI
+  environment (Swarm: an in-container base64 decode) - never on a command line, never in the env file. Apps with no
+  flags deploy exactly as before. Variables from a Vault secret reference cannot be build-time or build-only. The
+  Coolify importer carries Coolify's four flags; imported and adopted values with line breaks are marked Multiline.
+
+- **A line break in an environment value is now refused instead of corrupting the env file.** A value with a line
+  break (or NUL) that is not marked Multiline - reachable through shared variables, the importer, MCP or the
+  migrator - used to add extra variables to the env file. The deploy now fails with an error naming the variable:
+  mark it Multiline or remove the line break. Shared variables reject line breaks when saved.
+
 ## [0.1.0-beta.13] - 2026-11-15
 
 - **No container-log stream before the first deploy.** The Logs tab of a never-deployed app no longer opens a
