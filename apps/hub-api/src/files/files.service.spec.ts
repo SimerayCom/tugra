@@ -39,6 +39,14 @@ class FakeRes extends Writable {
   }
 }
 
+async function waitFor(pred: () => boolean | Promise<boolean>, timeoutMs = 5000): Promise<void> {
+  const start = Date.now();
+  while (!(await pred())) {
+    if (Date.now() - start > timeoutMs) throw new Error("waitFor timed out");
+    await new Promise((r) => setTimeout(r, 2));
+  }
+}
+
 function uploadReq(body: string | Readable, contentLength?: number | string): IncomingMessage {
   const r = (typeof body === "string" ? Readable.from([Buffer.from(body)]) : body) as Readable & { headers: Record<string, string> };
   r.headers = contentLength === undefined ? {} : { "content-length": String(contentLength) };
@@ -82,6 +90,9 @@ describe("FilesService", () => {
         events.push("resolve");
         return { app, serverId: "s1", scope, subject: scope === "volume" ? "tugra_appv_app1_data" : "tugra_app1" };
       }),
+      assertNoActiveDeploy: jest.fn(async (..._a: unknown[]) => {
+        events.push("deploycheck");
+      }),
       fsContext: jest.fn(),
     };
     const agentWs = {
@@ -101,7 +112,7 @@ describe("FilesService", () => {
       agentSupports: jest.fn().mockReturnValue(true),
       isCapabilityGranted: jest.fn().mockResolvedValue(true),
     };
-    const audit = { log: jest.fn(async (e: { action: string; meta?: Record<string, unknown> }) => void events.push(`audit:${e.action}`)) };
+    const audit = { log: jest.fn(async (e: { actor?: string; action: string; meta?: Record<string, unknown> }) => void events.push(`audit:${e.action}`)) };
     const limiter = new FileOpLimiter(1000, 60_000);
     const take = jest.spyOn(limiter, "take").mockImplementation(() => void events.push("limit"));
     const svc = new FilesService(apps as never, agentWs as never, audit as never, transfers, limiter);
@@ -113,7 +124,7 @@ describe("FilesService", () => {
   it("runs resolve -> ready -> limiter -> write-ahead audit -> dispatch, in that order", async () => {
     const { svc } = build();
     await svc.mkdir("u1", "app1", { volume: "data" }, { path: "a/b", parents: true });
-    expect(events).toEqual(["resolve", "ready", "limit", "audit:app.file.mkdir", "send"]);
+    expect(events).toEqual(["resolve", "ready", "reserve", "limit", "audit:app.file.mkdir", "send"]);
   });
 
   it("an audit failure ABORTS the operation (nothing is dispatched)", async () => {
@@ -157,7 +168,12 @@ describe("FilesService", () => {
       await expect(svc.mkdir("u1", "app1", { volume: "data" }, { path: "d" })).rejects.toBe(err);
     }
     expect(take).not.toHaveBeenCalled();
-    expect(audit.log).not.toHaveBeenCalled();
+    expect(agentWs.reserveFs2).not.toHaveBeenCalled();
+    expect(audit.log.mock.calls.map((c) => [c[0].action, (c[0].meta as { code: string }).code])).toEqual([
+      ["app.file.denied", "offline"],
+      ["app.file.denied", "agent_too_old"],
+      ["app.file.denied", "capability_not_granted"],
+    ]);
     expect(agentWs.sendFs2).not.toHaveBeenCalled();
   });
 
@@ -170,8 +186,55 @@ describe("FilesService", () => {
     expect(err).toBeInstanceOf(FsRateLimitedException);
     expect((err as FsRateLimitedException).getStatus()).toBe(429);
     expect((err as FsRateLimitedException).retryAfterSec).toBe(12);
-    expect(audit.log).not.toHaveBeenCalled();
+    expect(audit.log.mock.calls.map((c) => c[0].action)).toEqual(["app.file.denied"]); // a refusal, never a write-ahead row
     expect(agentWs.sendFs2).not.toHaveBeenCalled();
+  });
+
+  it("writes at most one rate_limited denial per user per minute, so a throttled caller cannot flood the audit table", async () => {
+    const { svc, take, audit } = build();
+    take.mockImplementation(() => {
+      throw new FsRateLimitedException(5);
+    });
+    for (let i = 0; i < 5; i++) await svc.remove("u1", "app1", { volume: "data" }, { path: "x" }).catch(() => undefined);
+    await svc.remove("u2", "app1", { volume: "data" }, { path: "x" }).catch(() => undefined);
+    expect(audit.log.mock.calls.map((c) => [c[0].action, c[0].actor])).toEqual([["app.file.denied", "u1"], ["app.file.denied", "u2"]]);
+  });
+
+  it("a refusal leaves an app.file.denied row with the path and a reason code, and releases the slot it held", async () => {
+    const { svc, audit, agentWs, take } = build();
+    const slot = jest.fn();
+    agentWs.reserveFs2.mockReturnValueOnce(slot as never);
+    take.mockImplementationOnce(() => {
+      throw new FsRateLimitedException(3);
+    });
+    await expect(svc.rename("u1", "app1", { volume: "data" }, { from: "a", to: "b" })).rejects.toBeInstanceOf(FsRateLimitedException);
+    expect(slot).toHaveBeenCalled();
+    expect(audit.log).toHaveBeenCalledWith({ actor: "u1", action: "app.file.denied", target: "app1", meta: { op: "rename", scope: "volume", paths: ["a", "b"], code: "rate_limited" } });
+    // an unreasonable path is a denial too, and a hub-side audit failure never masks the refusal
+    audit.log.mockRejectedValueOnce(new Error("audit down"));
+    await expect(svc.remove("u1", "app1", { volume: "data" }, { path: "../x" })).rejects.toBeInstanceOf(BadRequestException);
+    audit.log.mockClear();
+    await expect(svc.remove("u1", "app1", { volume: "data" }, { path: "../x" })).rejects.toBeInstanceOf(BadRequestException);
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "app.file.denied", meta: expect.objectContaining({ code: "bad_request", paths: ["../x"] }) }));
+  });
+
+  it("a busy server (no fs2 slot) burns no limiter token and writes neither a write-ahead nor a denied row", async () => {
+    const { svc, audit, agentWs, take } = build();
+    agentWs.reserveFs2.mockImplementationOnce(() => {
+      throw new HttpException({ statusCode: 429, code: "busy", message: "busy" }, 429);
+    });
+    await expect(svc.mkdir("u1", "app1", { volume: "data" }, { path: "d" })).rejects.toMatchObject({ status: 429 });
+    expect(take).not.toHaveBeenCalled();
+    expect(audit.log).not.toHaveBeenCalled();
+  });
+
+  it("small mutations hand their reserved slot to sendFs2 and release it afterwards", async () => {
+    const { svc, agentWs } = build();
+    const slot = jest.fn();
+    agentWs.reserveFs2.mockReturnValueOnce(slot as never);
+    await svc.mkdir("u1", "app1", { volume: "data" }, { path: "d" });
+    expect(agentWs.sendFs2.mock.calls[0][3]).toEqual({ reservation: slot });
+    expect(slot).toHaveBeenCalled();
   });
 
   it("validates paths at the service too (volume: relative strict; container: absolute clean, root immutable)", async () => {
@@ -196,7 +259,8 @@ describe("FilesService", () => {
     expect((err as FsPolicyException).getStatus()).toBe(409);
     expect((err as FsPolicyException).code).toBe("datastore_running");
     expect(agentWs.sendFs2).not.toHaveBeenCalled();
-    expect(audit.log).not.toHaveBeenCalled();
+    expect(audit.log.mock.calls.map((c) => [c[0].action, (c[0].meta as { code: string }).code])).toEqual([["app.file.denied", "datastore_running"]]);
+    audit.log.mockClear();
     await svc.mkdir("u1", "app1", { volume: "data" }, { path: "d", acknowledgeRisk: true });
     expect(audit.log).toHaveBeenLastCalledWith(expect.objectContaining({ meta: expect.objectContaining({ acknowledgedRisk: true }) }));
   });
@@ -216,19 +280,20 @@ describe("FilesService", () => {
 
   it("maps mkdir/rename/chmod/delete onto the signed fields and returns the agent's stat", async () => {
     const { svc, agentWs } = build();
-    const sent = () => agentWs.sendFs2.mock.calls.at(-1) as unknown as [string, Record<string, unknown>, number];
+    const sent = () => agentWs.sendFs2.mock.calls.at(-1) as unknown as [string, Record<string, unknown>, number, unknown];
+    const resv = { reservation: expect.any(Function) };
     const base = { scope: "volume", subject: "tugra_appv_app1_data", path2: "", mode: "", flags: "", size: 0, sha256: "", ifMatch: "", xfer: "" };
 
     await expect(svc.mkdir("u1", "app1", { volume: "data" }, { path: "a/b", mode: "0750", parents: true })).resolves.toMatchObject({ name: "x" });
-    expect(sent()).toEqual(["s1", { ...base, op: "mkdir", path: "a/b", mode: "0750", flags: "p" }, 30_000]);
+    expect(sent()).toEqual(["s1", { ...base, op: "mkdir", path: "a/b", mode: "0750", flags: "p" }, 30_000, resv]);
     await svc.rename("u1", "app1", { volume: "data" }, { from: "a", to: "b" });
-    expect(sent()).toEqual(["s1", { ...base, op: "rename", path: "a", path2: "b" }, 30_000]);
+    expect(sent()).toEqual(["s1", { ...base, op: "rename", path: "a", path2: "b" }, 30_000, resv]);
     await svc.chmod("u1", "app1", { volume: "data" }, { path: "a", mode: "0644" });
-    expect(sent()).toEqual(["s1", { ...base, op: "chmod", path: "a", mode: "0644" }, 30_000]);
+    expect(sent()).toEqual(["s1", { ...base, op: "chmod", path: "a", mode: "0644" }, 30_000, resv]);
     await svc.remove("u1", "app1", { volume: "data" }, { path: "a" });
-    expect(sent()).toEqual(["s1", { ...base, op: "delete", path: "a" }, 30_000]);
+    expect(sent()).toEqual(["s1", { ...base, op: "delete", path: "a" }, 30_000, resv]);
     await svc.remove("u1", "app1", { volume: "data" }, { path: "a", recursive: true });
-    expect(sent()).toEqual(["s1", { ...base, op: "delete", path: "a", flags: "r" }, 5 * 60_000]);
+    expect(sent()).toEqual(["s1", { ...base, op: "delete", path: "a", flags: "r" }, 5 * 60_000, resv]);
   });
 
   it("an applied mkdir/rename/chmod whose follow-up stat is missing is still a success (nominal stat), never a doomed-retry error", async () => {
@@ -341,6 +406,8 @@ describe("FilesService", () => {
     expect(pulled).toBe(false);
     expect(await readdir(dir)).toEqual([]);
     expect(h.agentWs.sendFs2).not.toHaveBeenCalled();
+    expect(h.take).not.toHaveBeenCalled(); // a busy refusal burns no limiter token...
+    expect(h.audit.log).not.toHaveBeenCalled(); // ...and leaves no write-ahead audit row
 
     // happy path: reserve happens first, the same release is passed to sendFs2, and it is released afterwards
     const slot = jest.fn();
@@ -351,8 +418,10 @@ describe("FilesService", () => {
     fakeAgent(h);
     events.length = 0;
     await h.svc.upload("u1", "app1", { volume: "data" }, { path: "f" }, uploadReq("hello", 5));
-    expect(events.indexOf("reserve")).toBeGreaterThan(events.indexOf("audit:app.file.write"));
-    expect(events.indexOf("reserve")).toBeLessThan(events.indexOf("send"));
+    expect(events.indexOf("reserve")).toBeLessThan(events.indexOf("limit")); // admission before the limiter token and the audit row
+    expect(events.indexOf("reserve")).toBeLessThan(events.indexOf("audit:app.file.write"));
+    expect(events.indexOf("deploycheck")).toBeGreaterThan(events.indexOf("reserve"));
+    expect(events.indexOf("deploycheck")).toBeLessThan(events.indexOf("send"));
     expect(h.agentWs.sendFs2.mock.calls[0][3]).toEqual({ reservation: slot });
     expect(slot).toHaveBeenCalled(); // idempotent release in finally
     // ...and also on a failed upload
@@ -360,6 +429,67 @@ describe("FilesService", () => {
     h.agentWs.reserveFs2.mockImplementation((() => slot2) as never);
     await expect(h.svc.upload("u1", "app1", { volume: "data" }, { path: "f" }, uploadReq("abc", 10))).rejects.toBeInstanceOf(BadRequestException);
     expect(slot2).toHaveBeenCalled();
+  });
+
+  it("re-checks for a running deploy AFTER the body is staged: 409 deploy_in_progress, nothing sent, staged file discarded", async () => {
+    const h = build();
+    fakeAgent(h);
+    h.apps.assertNoActiveDeploy.mockRejectedValueOnce(new ConflictException({ statusCode: 409, code: "deploy_in_progress", message: "deploy" }));
+    const err = await h.svc.upload("u1", "app1", { volume: "data" }, { path: "f" }, uploadReq("hello", 5)).catch((e: unknown) => e);
+    expect((err as HttpException).getStatus()).toBe(409);
+    expect(h.agentWs.sendFs2).not.toHaveBeenCalled();
+    expect(await readdir(dir)).toEqual([]);
+    expect(transfers.size).toBe(0);
+    expect(h.audit.log).toHaveBeenLastCalledWith(expect.objectContaining({ action: "app.file.failed", meta: { op: "write", scope: "volume", code: "deploy_in_progress" } }));
+  });
+
+  it("caps concurrent uploads per user per server and per app (429 busy, no limiter token, no audit row); a finished upload frees its seat", async () => {
+    process.env.FILES_MAX_CONCURRENT_UPLOADS = "2";
+    const h = build();
+    fakeAgent(h);
+    const bodies = [new PassThrough(), new PassThrough()];
+    const running = bodies.map((b) => h.svc.upload("u1", "app1", { volume: "data" }, { path: "f" }, uploadReq(b, 5)));
+    await waitFor(() => h.audit.log.mock.calls.length === 2);
+    h.take.mockClear();
+    h.audit.log.mockClear();
+    const err = await h.svc.upload("u1", "app1", { volume: "data" }, { path: "g" }, uploadReq("hello", 5)).catch((e: unknown) => e);
+    expect((err as HttpException).getStatus()).toBe(429);
+    expect((err as HttpException).getResponse()).toMatchObject({ code: "busy" });
+    expect(h.take).not.toHaveBeenCalled();
+    expect(h.audit.log).not.toHaveBeenCalled();
+    // another user on another app is unaffected only by the per-app cap when it is a different app
+    h.apps.resolveFsTarget.mockImplementationOnce((async () => ({ app: { id: "app2", status: "RUNNING", source: "IMAGE", image: "nginx" }, serverId: "s1", scope: "volume", subject: "v" })) as never);
+    await expect(h.svc.upload("u2", "app2", { volume: "data" }, { path: "g" }, uploadReq("hello", 5))).resolves.toMatchObject({ created: true });
+    for (const b of bodies) {
+      b.end("hello");
+    }
+    await Promise.all(running);
+    await expect(h.svc.upload("u1", "app1", { volume: "data" }, { path: "g" }, uploadReq("hello", 5))).resolves.toMatchObject({ created: true });
+  });
+
+  it("a trickled upload below the throughput floor is cancelled and releases its slot, seat and staged file", async () => {
+    const h = build();
+    const slot = jest.fn();
+    h.agentWs.reserveFs2.mockReturnValue(slot as never);
+    const trickle = new PassThrough();
+    const realStage = jest.requireActual("./fs-staging") as typeof import("./fs-staging");
+    const original = realStage.stageUpload;
+    const spy = jest.spyOn(realStage, "stageUpload");
+    spy.mockImplementation((src, cap) => original(src, cap, { graceMs: 20, windowMs: 10, minBytesPerWindow: 1000, deadlineMs: 5000 }));
+    try {
+      const p = h.svc.upload("u1", "app1", { volume: "data" }, { path: "f" }, uploadReq(trickle, 100));
+      trickle.write("a");
+      await expect(p).rejects.toMatchObject({ status: 408 });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(slot).toHaveBeenCalled();
+    expect(await readdir(dir)).toEqual([]);
+    expect(h.agentWs.sendFs2).not.toHaveBeenCalled();
+    // the seat was released: the next upload is admitted
+    h.agentWs.reserveFs2.mockReturnValue(jest.fn() as never);
+    fakeAgent(h);
+    await expect(h.svc.upload("u1", "app1", { volume: "data" }, { path: "f" }, uploadReq("hello", 5))).resolves.toBeDefined();
   });
 
   it("a body shorter or longer than its Content-Length is a 400 and leaves nothing staged", async () => {
@@ -385,7 +515,7 @@ describe("FilesService", () => {
 
     const body = new PassThrough();
     const p = h.svc.upload("u1", "app1", { volume: "data" }, { path: "f" }, uploadReq(body, 100));
-    await new Promise((r) => setTimeout(r, 20));
+    await waitFor(async () => (await readdir(dir)).some((n) => n.endsWith(".part"))); // the staging pipeline is attached
     body.write("abc");
     body.destroy(new Error("client gone"));
     await expect(p).rejects.toBeInstanceOf(BadRequestException);

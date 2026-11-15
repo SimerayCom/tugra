@@ -3193,8 +3193,8 @@ export class ApplicationsService {
    * subject the agent is signed for. `mutating` additionally refuses while a deploy is queued/running.
    *
    * Volume branch = the listFiles resolution verbatim (permission, browsable-compose rule, declared volumes,
-   * clustered pin, offline). Container branch additionally needs the team permission `terminal` (the same power as
-   * an interactive shell), refuses clustered apps and never-deployed apps, and only resolves containers that
+   * clustered pin, offline). Container branch additionally needs the team permission `terminal` (the terminal's
+   * gate; the daemon-side reads and writes are container-root, see ContainerFilesController), refuses clustered apps and never-deployed apps, and only resolves containers that
    * belong to this app (single container: derived; compose: the `tugra_<id>` project prefix + charset).
    */
   async resolveFsTarget(
@@ -3221,11 +3221,18 @@ export class ApplicationsService {
       serverId = this.resolveFsVolumeHost(app);
       scope = "volume";
     }
-    if (opts.mutating) {
-      const active = await this.prisma.deployment.findFirst({ where: { appId: app.id, status: { in: ["QUEUED", "RUNNING"] } }, select: { id: true } });
-      if (active) throw new ConflictException({ statusCode: 409, message: "a deploy is in progress — file changes are paused until it finishes", code: "deploy_in_progress" });
-    }
+    if (opts.mutating) await this.assertNoActiveDeploy(app.id);
     return { app, serverId, scope, subject };
+  }
+
+  /**
+   * 409 `deploy_in_progress` while a deployment of the app is queued or running (file changes are paused). Also called
+   * right before an upload is dispatched, because the body can take minutes to stage. Best-effort by nature: a deploy
+   * may still start right after the check, which only shrinks the window from minutes to milliseconds.
+   */
+  async assertNoActiveDeploy(appId: string): Promise<void> {
+    const active = await this.prisma.deployment.findFirst({ where: { appId, status: { in: ["QUEUED", "RUNNING"] } }, select: { id: true } });
+    if (active) throw new ConflictException({ statusCode: 409, message: "a deploy is in progress — file changes are paused until it finishes", code: "deploy_in_progress" });
   }
 
   /**

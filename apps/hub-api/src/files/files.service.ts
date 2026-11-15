@@ -1,15 +1,16 @@
 import { BadRequestException, HttpException, Injectable } from "@nestjs/common";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { AGENT_FEATURE_FS2, type Fs2Fields, type Fs2Op, type Fs2ResultMsg, type Fs2Scope, type Fs2Stat, type FsEntry } from "@tugra/shared";
+import { AgentOfflineException } from "../agent-gateway/agent-offline.exception";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { ApplicationsService } from "../applications/applications.service";
 import { AuditService } from "../audit/audit.service";
 import { containerName } from "../deploy/deploy-script";
 import { assertSafeCtrPath, assertSafeFsPathV2 } from "../common/fs-path";
 import { looksLikeDatastore } from "./datastore-guard";
-import { FsPolicyException, FsRemoteException } from "./fs-errors";
+import { FsPolicyException, FsRateLimitedException, FsRemoteException } from "./fs-errors";
 import { FileOpLimiter } from "./fs-limiter";
-import { assertDiskHeadroom, discardStaged, filesLimits, stageUpload, StagedTooLargeError, StagingBudget } from "./fs-staging";
+import { assertDiskHeadroom, discardStaged, filesLimits, stageUpload, StagedStalledError, StagedTooLargeError, StagingBudget } from "./fs-staging";
 import { attachmentDisposition } from "./fs-transfer";
 import { FsTransferService } from "./fs-transfer.service";
 
@@ -70,7 +71,11 @@ export function fsAuditAction(scope: Fs2Scope, op: Fs2Op): string {
 
 function failureCode(e: unknown): string {
   if (e instanceof FsRemoteException || e instanceof FsPolicyException) return e.code;
-  if (e instanceof HttpException) return `http_${e.getStatus()}`;
+  if (e instanceof HttpException) {
+    const r = e.getResponse();
+    const code = typeof r === "object" && r !== null ? (r as { code?: unknown }).code : undefined;
+    return typeof code === "string" ? code : `http_${e.getStatus()}`;
+  }
   return "stream_failed";
 }
 
@@ -81,15 +86,47 @@ interface Resolved {
   subject: string;
 }
 
+/** An admitted mutation: it holds an fs2 slot (and, for an upload, a concurrent-upload seat) until `release()`. */
+interface Admitted extends Resolved {
+  slot: () => void;
+  release: () => void;
+}
+
+/** Concurrent uploads one user may have per server, and one app may have at once (admission control, `busy` 429). */
+function maxConcurrentUploads(): number {
+  const n = Number(process.env.FILES_MAX_CONCURRENT_UPLOADS);
+  return Number.isInteger(n) && n > 0 ? n : 2;
+}
+
+const DENIED_RATE_LIMITED_WINDOW_MS = 60_000;
+
+/** The audit reason code for a refusal that should leave an `app.file.denied` row; undefined = do not audit it. */
+function denialCode(e: unknown): string | undefined {
+  if (e instanceof FsRateLimitedException) return "rate_limited";
+  if (e instanceof FsPolicyException) return e.code === "busy" ? undefined : e.code;
+  if (e instanceof AgentOfflineException) return "offline";
+  if (e instanceof HttpException) {
+    const r = e.getResponse();
+    const code = typeof r === "object" && r !== null ? (r as { code?: unknown }).code : undefined;
+    if (e.getStatus() === 429) return undefined;
+    if (typeof code !== "string") return e.getStatus() === 400 ? "bad_request" : undefined; // an unreasonable path
+    return ["capability_not_granted", "agent_too_old", "deploy_in_progress", "bad_request"].includes(code) ? code : undefined;
+  }
+  return undefined;
+}
+
 /**
  * The file manager's WRITE side and the container filesystem. Every mutation runs the same pipeline, in this order:
  * resolve + team permission -> policy (deploy in progress, datastore) -> path validation -> offline / fs2 /
- * capability-set checks (BEFORE any upload body is read) -> per-user limiter -> write-ahead audit (an audit failure
- * aborts the op) -> dispatch -> an `app.file.failed` row on failure. Audit rows carry the path and shape, NEVER content.
+ * capability-set checks (BEFORE any upload body is read) -> admission (fs2 slot, upload seat: `busy`) -> per-user
+ * limiter -> write-ahead audit (an audit failure aborts the op) -> dispatch -> an `app.file.failed` row on failure.
+ * A refusal before the write-ahead row leaves an `app.file.denied` row. Audit rows carry the path and shape, NEVER content.
  */
 @Injectable()
 export class FilesService {
   private readonly budget = new StagingBudget();
+  private readonly uploadSeats = new Map<string, number>();
+  private readonly lastRateDenied = new Map<string, number>();
 
   constructor(
     private readonly apps: ApplicationsService,
@@ -184,27 +221,88 @@ export class FilesService {
 
   // ── mutation pipeline ──────────────────────────────────────────────────────────────────────────────────────
 
+  /** Take one seat in the per-(user, server) and per-app concurrent-upload counters, or 429 `busy`. */
+  private acquireUploadSeat(userId: string, serverId: string, appId: string): () => void {
+    const max = maxConcurrentUploads();
+    const keys = [`u|${userId}|${serverId}`, `a|${appId}`];
+    if (keys.some((k) => (this.uploadSeats.get(k) ?? 0) >= max)) {
+      throw new HttpException({ statusCode: 429, code: "busy", message: "too many uploads in flight — wait for one to finish" }, 429);
+    }
+    for (const k of keys) this.uploadSeats.set(k, (this.uploadSeats.get(k) ?? 0) + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      for (const k of keys) {
+        const left = (this.uploadSeats.get(k) ?? 1) - 1;
+        if (left <= 0) this.uploadSeats.delete(k);
+        else this.uploadSeats.set(k, left);
+      }
+    };
+  }
+
+  /** `app.file.denied`: a request refused by policy, capability, path or the limiter (path + reason code, never content). */
+  private async denied(userId: string, appId: string, target: FsTarget, op: Fs2Op, paths: string[], e: unknown): Promise<void> {
+    const code = denialCode(e);
+    if (!code) return;
+    if (code === "rate_limited") {
+      // A throttled caller must not flood the audit table (that would defeat the limiter): one row per window.
+      const now = Date.now();
+      if (now - (this.lastRateDenied.get(userId) ?? 0) < DENIED_RATE_LIMITED_WINDOW_MS) return;
+      if (this.lastRateDenied.size > 10_000) this.lastRateDenied.clear();
+      this.lastRateDenied.set(userId, now);
+    }
+    try {
+      await this.audit.log({
+        actor: userId,
+        action: "app.file.denied",
+        target: appId,
+        meta: { op, scope: "container" in target ? "container" : "volume", paths: paths.map((p) => String(p).slice(0, 300)), code },
+      });
+    } catch {
+      /* the refusal itself is what the caller must see */
+    }
+  }
+
+  /**
+   * Admission first, then the limiter and the write-ahead audit: a `busy` refusal (no fs2 slot, no upload seat) must not
+   * burn a limiter token or leave a write-ahead row, because the web client retries it every few seconds. Policy,
+   * capability, path and limiter refusals leave an `app.file.denied` row.
+   */
   private async prepare(
     userId: string,
     appId: string,
     target: FsTarget,
     op: Fs2Op,
     o: { acknowledgeRisk?: boolean; paths: string[]; meta: Record<string, unknown> },
-  ): Promise<Resolved> {
-    const t = await this.apps.resolveFsTarget(userId, appId, target, { mutating: true });
-    if (t.scope === "volume" && t.app.status === "RUNNING" && looksLikeDatastore(t.app) && !o.acknowledgeRisk) {
-      throw new FsPolicyException(409, "datastore_running", "this app looks like a database or broker and is running — editing its data files can corrupt it");
+  ): Promise<Admitted> {
+    const releases: Array<() => void> = [];
+    const release = () => releases.forEach((r) => r());
+    try {
+      const t = await this.apps.resolveFsTarget(userId, appId, target, { mutating: true });
+      if (t.scope === "volume" && t.app.status === "RUNNING" && looksLikeDatastore(t.app) && !o.acknowledgeRisk) {
+        throw new FsPolicyException(409, "datastore_running", "this app looks like a database or broker and is running — editing its data files can corrupt it");
+      }
+      for (const p of o.paths) {
+        pathFor(t.scope, p, { mutating: true });
+      }
+      await this.agentWs.assertFs2Ready(t.serverId, t.scope, op); // offline / agent_too_old / capability SET — before any body is read
+      if (op === "write") releases.push(this.acquireUploadSeat(userId, t.serverId, t.app.id));
+      const slot = this.agentWs.reserveFs2(t.serverId); // 429 busy BEFORE the limiter token and the audit row
+      releases.push(slot);
+      this.limiter.take(userId);
+      await this.audit.log({
+        actor: userId,
+        action: fsAuditAction(t.scope, op),
+        target: t.app.id,
+        meta: { scope: t.scope, subject: t.subject, ...(o.acknowledgeRisk && t.scope === "volume" ? { acknowledgedRisk: true } : {}), ...o.meta },
+      });
+      return { ...t, slot, release };
+    } catch (e) {
+      release();
+      await this.denied(userId, appId, target, op, o.paths, e);
+      throw e;
     }
-    for (const p of o.paths) pathFor(t.scope, p, { mutating: true });
-    await this.agentWs.assertFs2Ready(t.serverId, t.scope, op); // offline / agent_too_old / capability SET — before any body is read
-    this.limiter.take(userId);
-    await this.audit.log({
-      actor: userId,
-      action: fsAuditAction(t.scope, op),
-      target: t.app.id,
-      meta: { scope: t.scope, subject: t.subject, ...(o.acknowledgeRisk && t.scope === "volume" ? { acknowledgedRisk: true } : {}), ...o.meta },
-    });
-    return t;
   }
 
   private async fail(userId: string, t: Resolved, op: Fs2Op, e: unknown): Promise<void> {
@@ -215,38 +313,40 @@ export class FilesService {
     }
   }
 
-  private async dispatch<T>(userId: string, t: Resolved, op: Fs2Op, run: () => Promise<T>): Promise<T> {
+  private async dispatch<T>(userId: string, t: Resolved & { release?: () => void }, op: Fs2Op, run: () => Promise<T>): Promise<T> {
     try {
       return await run();
     } catch (e) {
       await this.fail(userId, t, op, e);
       throw e;
+    } finally {
+      t.release?.();
     }
   }
 
   async mkdir(userId: string, appId: string, target: FsTarget, b: { path: string; mode?: string; parents?: boolean; acknowledgeRisk?: boolean }): Promise<Fs2Stat> {
     const flags = b.parents ? "p" : "";
     const t = await this.prepare(userId, appId, target, "mkdir", { acknowledgeRisk: b.acknowledgeRisk, paths: [b.path], meta: { path: b.path, ...(b.mode ? { mode: b.mode } : {}), flags } });
-    const r = await this.dispatch(userId, t, "mkdir", () => this.agentWs.sendFs2(t.serverId, this.req(t.scope, "mkdir", t.subject, b.path, { mode: b.mode ?? "", flags }), 30_000));
+    const r = await this.dispatch(userId, t, "mkdir", () => this.agentWs.sendFs2(t.serverId, this.req(t.scope, "mkdir", t.subject, b.path, { mode: b.mode ?? "", flags }), 30_000, { reservation: t.slot }));
     return this.statOrNominal(r, b.path, "dir");
   }
 
   async rename(userId: string, appId: string, target: FsTarget, b: { from: string; to: string; acknowledgeRisk?: boolean }): Promise<Fs2Stat> {
     const t = await this.prepare(userId, appId, target, "rename", { acknowledgeRisk: b.acknowledgeRisk, paths: [b.from, b.to], meta: { path: b.from, path2: b.to, flags: "" } });
-    const r = await this.dispatch(userId, t, "rename", () => this.agentWs.sendFs2(t.serverId, this.req(t.scope, "rename", t.subject, b.from, { path2: b.to }), 30_000));
+    const r = await this.dispatch(userId, t, "rename", () => this.agentWs.sendFs2(t.serverId, this.req(t.scope, "rename", t.subject, b.from, { path2: b.to }), 30_000, { reservation: t.slot }));
     return this.statOrNominal(r, b.to, "other");
   }
 
   async chmod(userId: string, appId: string, target: FsTarget, b: { path: string; mode: string; acknowledgeRisk?: boolean }): Promise<Fs2Stat> {
     const t = await this.prepare(userId, appId, target, "chmod", { acknowledgeRisk: b.acknowledgeRisk, paths: [b.path], meta: { path: b.path, mode: b.mode, flags: "" } });
-    const r = await this.dispatch(userId, t, "chmod", () => this.agentWs.sendFs2(t.serverId, this.req(t.scope, "chmod", t.subject, b.path, { mode: b.mode }), 30_000));
+    const r = await this.dispatch(userId, t, "chmod", () => this.agentWs.sendFs2(t.serverId, this.req(t.scope, "chmod", t.subject, b.path, { mode: b.mode }), 30_000, { reservation: t.slot }));
     return this.statOrNominal(r, b.path, "other");
   }
 
   async remove(userId: string, appId: string, target: FsTarget, b: { path: string; recursive?: boolean; acknowledgeRisk?: boolean }): Promise<void> {
     const flags = b.recursive ? "r" : "";
     const t = await this.prepare(userId, appId, target, "delete", { acknowledgeRisk: b.acknowledgeRisk, paths: [b.path], meta: { path: b.path, recursive: !!b.recursive, flags } });
-    await this.dispatch(userId, t, "delete", () => this.agentWs.sendFs2(t.serverId, this.req(t.scope, "delete", t.subject, b.path, { flags }), b.recursive ? 5 * 60_000 : 30_000));
+    await this.dispatch(userId, t, "delete", () => this.agentWs.sendFs2(t.serverId, this.req(t.scope, "delete", t.subject, b.path, { flags }), b.recursive ? 5 * 60_000 : 30_000, { reservation: t.slot }));
   }
 
   /**
@@ -286,8 +386,9 @@ export class FilesService {
     });
 
     return this.dispatch(userId, t, "write", async () => {
-      // Admission control BEFORE the first body byte is read: a per-server fs2 slot (429 busy) and staging space (507).
-      const slot = this.agentWs.reserveFs2(t.serverId);
+      // Admission control BEFORE the first body byte is read: prepare() already holds the per-server fs2 slot and the
+      // concurrent-upload seat (429 busy); what is left here is staging space (507).
+      const slot = t.slot;
       let release: (() => void) | undefined;
       let stagedPath: string | undefined;
       let xferId: string | undefined;
@@ -298,12 +399,15 @@ export class FilesService {
         try {
           staged = await stageUpload(req, len);
         } catch (e) {
+          if (e instanceof StagedStalledError) throw new FsPolicyException(408, "upload_too_slow", "the upload was too slow and was cancelled");
           if (e instanceof StagedTooLargeError) throw new BadRequestException({ statusCode: 400, code: "bad_request", message: "the body is longer than its Content-Length" });
           if ((e as { code?: string }).code === "ENOSPC") throw new FsPolicyException(507, "staging_full", "insufficient staging storage");
           throw new BadRequestException({ statusCode: 400, code: "bad_request", message: "the upload did not complete" });
         }
         stagedPath = staged.path;
         if (staged.bytes !== len) throw new BadRequestException({ statusCode: 400, code: "bad_request", message: "the body is shorter than its Content-Length" });
+        // The body may have taken minutes: re-check that no deploy started meanwhile (sendFs2 re-checks the capability set).
+        await this.apps.assertNoActiveDeploy(t.app.id);
         const reg = this.transfers.registerUpload({ serverId: t.serverId, appId: t.app.id, stagedPath: staged.path, size: len, sha256: staged.sha256 });
         xferId = reg.id;
         const r = await this.agentWs.sendFs2(
