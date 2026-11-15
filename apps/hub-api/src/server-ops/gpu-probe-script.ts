@@ -17,6 +17,9 @@
  *        under an in-container `timeout`, so the helper exits (and --rm fires) on its own; a failed run is removed too.
  *  - S4  Capability "bulk" (DEFAULT_CAPABILITIES, revocable per server). No new capability.
  *  - S5  All output is untrusted and sanitized hub-side (gpu-inventory.ts) before it is stored or relayed.
+ *  - S6  Runtime NAMES only are listed (space-separated): Docker >= 29 adds a multi-KB `status` blob to every runtime
+ *        in `{{json .Runtimes}}`, which a byte cap truncated mid-JSON and glued the next line onto. The cap bounds the
+ *        names, never the newline.
  */
 export const GPU_PROBE_BEGIN = "TUGRA_GPU_PROBE v1";
 export const GPU_PROBE_END = "TUGRA_GPU_PROBE_END";
@@ -38,10 +41,10 @@ for d in /sys/bus/pci/devices/*; do
       fi;;
   esac
 done
-rt=$(docker info --format '{{json .Runtimes}}' 2>/dev/null) && printf 'TUGRA_RUNTIMES %s\\n' "$rt" | head -c 2000
+rt=$(docker info --format '{{range $k,$v := .Runtimes}}{{$k}} {{end}}' 2>/dev/null) && printf 'TUGRA_RUNTIMES %s\\n' "$(printf %s "$rt" | head -c 2000)"
 dr=$(docker info --format '{{.DefaultRuntime}}' 2>/dev/null) && printf 'TUGRA_DEFRT %s\\n' "$dr" | head -c 100
 [ -r /proc/driver/nvidia/version ] && printf 'TUGRA_NVRM %s\\n' "$(head -n 1 /proc/driver/nvidia/version)" | head -c 300
-if [ -n "$TUGRA_AGENT_IMAGE" ] && printf %s "$rt" | grep -q '"nvidia"'; then
+if [ -n "$TUGRA_AGENT_IMAGE" ] && printf ' %s ' "$rt" | grep -q ' nvidia '; then
   for o in $(timeout 10 docker ps -aq --filter label=tugra.role=gpu-probe 2>/dev/null); do timeout 10 docker rm -f "$o" >/dev/null 2>&1; done
   pn="tugra-gpuprobe-$$-$(date +%s)"
   out=$(timeout -k 5 30 docker run --rm --pull never --name "$pn" --label tugra.role=gpu-probe \\

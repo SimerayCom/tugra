@@ -105,16 +105,15 @@ function vendorOf(vendorHex: string): GpuVendor {
 
 const VENDOR_LABEL: Record<GpuVendor, string> = { nvidia: "NVIDIA GPU", amd: "AMD GPU", intel: "Intel GPU", other: "GPU" };
 
-function parseRuntimeNames(json: string): string[] {
-  try {
-    const parsed: unknown = JSON.parse(json);
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return [];
-    return Object.keys(parsed as Record<string, unknown>)
-      .filter((k) => RUNTIME_NAME_RE.test(k))
-      .slice(0, MAX_RUNTIMES);
-  } catch {
-    return [];
+/** The probe lists runtime NAMES only, space-separated (`{{range $k,$v := .Runtimes}}{{$k}} {{end}}`). */
+function parseRuntimeNames(list: string): string[] {
+  const names: string[] = [];
+  for (const n of list.split(/\s+/)) {
+    if (n === "" || !RUNTIME_NAME_RE.test(n) || names.includes(n)) continue;
+    names.push(n);
+    if (names.length >= MAX_RUNTIMES) break;
   }
+  return names;
 }
 
 /**

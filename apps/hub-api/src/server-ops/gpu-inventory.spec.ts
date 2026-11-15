@@ -3,8 +3,8 @@ import { classifyReadiness, isGpuStale, parseGpuProbe, parseStoredInventory, typ
 const B = "TUGRA_GPU_PROBE v1";
 const E = "TUGRA_GPU_PROBE_END";
 const probe = (...lines: string[]) => [B, ...lines, E].join("\n") + "\n";
-const RT_NVIDIA = 'TUGRA_RUNTIMES {"io.containerd.runc.v2":{"path":"runc"},"nvidia":{"path":"nvidia-container-runtime"},"runc":{"path":"runc"}}';
-const RT_PLAIN = 'TUGRA_RUNTIMES {"io.containerd.runc.v2":{"path":"runc"},"runc":{"path":"runc"}}';
+const RT_NVIDIA = "TUGRA_RUNTIMES io.containerd.runc.v2 nvidia runc ";
+const RT_PLAIN = "TUGRA_RUNTIMES io.containerd.runc.v2 runc ";
 const NVRM = "TUGRA_NVRM NVRM version: NVIDIA UNIX x86_64 Kernel Module  550.54.15  Thu Feb 22 01:44:30 UTC 2024";
 const parse = (s: string): GpuInventory => {
   const r = parseGpuProbe(s);
@@ -189,20 +189,33 @@ describe("parseGpuProbe", () => {
     expect(inv.nvidiaDriverLoaded).toBe(false);
   });
 
-  it("drops runtime keys with spaces / junk, survives invalid runtimes JSON, and a __proto__ key pollutes nothing", () => {
-    expect(parse(probe('TUGRA_RUNTIMES {"nvidia":{},"bad name":{},"a;b":{},"ok.1":{}}')).runtimes).toEqual(["nvidia", "ok.1"]);
-    expect(parse(probe("TUGRA_RUNTIMES {not json")).runtimes).toEqual([]);
-    expect(parse(probe("TUGRA_RUNTIMES [1,2]")).runtimes).toEqual([]);
-    expect(parse(probe("TUGRA_RUNTIMES null")).runtimes).toEqual([]);
-    const inv = parse(probe('TUGRA_RUNTIMES {"__proto__":{"polluted":true},"nvidia":{}}'));
+  it("drops runtime names with junk, dedupes, survives garbage, and a __proto__ name pollutes nothing", () => {
+    expect(parse(probe("TUGRA_RUNTIMES nvidia bad;name a|b ok.1 nvidia")).runtimes).toEqual(["nvidia", "ok.1"]);
+    expect(parse(probe("TUGRA_RUNTIMES ")).runtimes).toEqual([]);
+    expect(parse(probe("TUGRA_RUNTIMES {not [json]")).runtimes).toEqual([]);
+    const inv = parse(probe("TUGRA_RUNTIMES __proto__ nvidia"));
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
     expect(inv.nvidiaRuntime).toBe(true);
     expect(parse(probe("TUGRA_DEFRT bad name; x")).defaultRuntime).toBeNull();
   });
 
+  it("Docker 29 shaped output (names-only runtimes line, intact DEFRT line) keeps runtimes, default runtime and nvidia", () => {
+    const inv = parse(
+      probe(
+        "TUGRA_PCI 0000:01:00.0 0x10de 0x2684 0x030000",
+        "TUGRA_RUNTIMES io.containerd.runc.v2 nvidia runc ",
+        "TUGRA_DEFRT runc",
+        NVRM,
+      ),
+    );
+    expect(inv.runtimes).toEqual(["io.containerd.runc.v2", "nvidia", "runc"]);
+    expect(inv.defaultRuntime).toBe("runc");
+    expect(inv.nvidiaRuntime).toBe(true);
+  });
+
   it("caps the runtimes at 16 and the GPUs at 16", () => {
-    const rts = Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`rt${i}`, {}]));
-    expect(parse(probe(`TUGRA_RUNTIMES ${JSON.stringify(rts)}`)).runtimes).toHaveLength(16);
+    const rts = Array.from({ length: 40 }, (_, i) => `rt${i}`).join(" ");
+    expect(parse(probe(`TUGRA_RUNTIMES ${rts}`)).runtimes).toHaveLength(16);
     const lines = Array.from({ length: 30 }, (_, i) => `TUGRA_PCI 0000:${i.toString(16).padStart(2, "0")}:00.0 0x1002 0x73bf 0x030000`);
     expect(parse(probe(...lines)).gpus).toHaveLength(16);
   });
