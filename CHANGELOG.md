@@ -7,6 +7,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Cutover: apps and databases moved by the streamed volume copy are no longer "stateful" forever.** The plan now
+  counts a finished streamed volume copy (an app's volumes, or a volume-mode Postgres) as its data being moved, so the
+  flip no longer demands the data-risk acknowledgement and keeps auto-revert for them.
 - **Cutover certificate transfer: staged hosts come from the certificate itself.** The `sans` list sent by the
   migrator is no longer trusted or stored; the hosts of a staged certificate (and what gets written into the target's
   `acme.json`) are taken from the certificate's own names only, each checked as a valid hostname.

@@ -101,9 +101,12 @@ export function deriveEntries(app: { domain: string | null; extraDomains: string
 
 export interface OpTaskLite { itemRef: string | null; kind: string; status: string; dependsOn: string[] }
 
-/** Pure: an app is `stateful` when it depends on a database or volume whose DATA task is not DONE. The ingest
- *  service records a sibling `data:<itemRef>` task per restore (volumes: `data:vol:<appRef>:<name>`). A volume
- *  dependency is satisfied only when at least as many DONE volume data tasks exist as volume dependencies. */
+/** Pure: an app is `stateful` when it depends on a database or volume whose DATA task is not DONE. A database's data
+ *  arrives either as a dump restore (`data:database:<s>:<r>`) or, for a volume-mode Postgres, as the streamed physical
+ *  copy (`data:volume:<s>:<r>:data`); an app volume either via the v1 hub-staged restore (`data:vol:<appRef>:<name>`) or
+ *  the streamed copy (`data:volume:<s>:<r>:<name>`, appRef = `app:<s>:<r>`). The two lanes are mutually exclusive per
+ *  volume/database, so the counts add without double counting. A volume dependency is satisfied only when at least as
+ *  many DONE volume data tasks exist as volume dependencies. */
 export function isStateful(appItemRef: string | null, tasks: OpTaskLite[]): boolean {
   const app = tasks.find((t) => t.itemRef === appItemRef && t.kind === "app");
   if (!app) return false;
@@ -111,9 +114,11 @@ export function isStateful(appItemRef: string | null, tasks: OpTaskLite[]): bool
   const dbDeps = deps.filter((d) => d.startsWith("database:"));
   const volDeps = deps.filter((d) => d.startsWith("volume:"));
   const dataDone = (ref: string) => tasks.some((t) => t.kind === "data" && t.status === "DONE" && t.itemRef === ref);
-  for (const d of dbDeps) if (!dataDone(`data:${d}`)) return true;
+  for (const d of dbDeps) if (!dataDone(`data:${d}`) && !dataDone(`data:${d.replace(/^database:/, "volume:")}:data`)) return true;
   if (volDeps.length > 0) {
-    const doneVols = tasks.filter((t) => t.kind === "data" && t.status === "DONE" && (t.itemRef ?? "").startsWith(`data:vol:${appItemRef}:`)).length;
+    const v1Prefix = `data:vol:${appItemRef}:`;
+    const vxPrefix = `data:${String(appItemRef ?? "").replace(/^app:/, "volume:")}:`;
+    const doneVols = tasks.filter((t) => t.kind === "data" && t.status === "DONE" && ((t.itemRef ?? "").startsWith(v1Prefix) || (t.itemRef ?? "").startsWith(vxPrefix))).length;
     if (doneVols < volDeps.length) return true;
   }
   return false;

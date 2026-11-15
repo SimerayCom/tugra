@@ -70,6 +70,15 @@ describe("hostnames and entry derivation", () => {
     expect(isStateful("app:_:3", [vol])).toBe(true);
     expect(isStateful("app:_:3", [vol, { itemRef: "data:vol:app:_:3:data", kind: "data", status: "DONE", dependsOn: [] }])).toBe(false);
   });
+  it("counts the streamed (v2) data tasks: data:volume:<s>:<r>:<name> for app volumes, :data for a volume-mode Postgres", () => {
+    const vx = { itemRef: "app:_:4", kind: "app", status: "DONE", dependsOn: ["database:_:9", "volume:_:v1"] };
+    const dbVx = { itemRef: "data:volume:_:9:data", kind: "data", status: "DONE", dependsOn: [] };
+    const volVx = { itemRef: "data:volume:_:4:data", kind: "data", status: "DONE", dependsOn: [] };
+    expect(isStateful("app:_:4", [vx, dbVx, volVx])).toBe(false);
+    expect(isStateful("app:_:4", [vx, { ...dbVx, status: "RUNNING" }, volVx])).toBe(true);
+    expect(isStateful("app:_:4", [vx, dbVx, { ...volVx, status: "FAILED" }])).toBe(true);
+    expect(isStateful("app:_:4", [vx, dbVx, { ...volVx, itemRef: "data:volume:_:5:data" }])).toBe(true); // another app's volume does not count
+  });
 });
 
 describe("planRecords", () => {
