@@ -71,6 +71,9 @@ export interface CoolifyService {
 export interface CoolifyEnv {
   key: string;
   is_buildtime?: boolean;
+  is_runtime?: boolean;
+  is_literal?: boolean;
+  is_multiline?: boolean;
   is_shared?: boolean;
   is_coolify?: boolean; // SERVICE_* magic var
   is_preview?: boolean; // preview-deployment twin — the /envs list merges these in; must be filtered out
@@ -232,6 +235,9 @@ function mapEnv(e: CoolifyEnv): ForeignEnv {
   return {
     key: e.key,
     buildTime: e.is_buildtime ?? undefined,
+    runtime: e.is_runtime ?? undefined,
+    literal: e.is_literal ?? undefined,
+    multiline: e.is_multiline ?? undefined,
     generated: e.is_coolify ?? undefined,
     ref: e.is_shared ? { type: "shared" } : e.is_coolify ? { type: "magic" } : undefined,
     // value intentionally omitted — read:sensitive-gated; fetched at apply time via secretRef

@@ -222,3 +222,14 @@ describe("buildCoolifyFleet", () => {
     expect(JSON.stringify(fleet)).not.toMatch(/password|secret_value|internal_db_url/i);
   });
 });
+
+describe("coolify env flag mapping", () => {
+  it("maps is_buildtime / is_runtime / is_literal / is_multiline onto the ForeignEnv (value never carried)", () => {
+    const a = mapApplication(
+      { uuid: "app-3", name: "f", build_pack: "nixpacks", git_repository: "https://github.com/o/f.git", git_branch: "main" },
+      { envs: [{ key: "A", is_buildtime: true, is_runtime: false, is_literal: true, is_multiline: true, value: "SECRET" } as never], volumes: [], serverRef: "srv-a" },
+    );
+    expect(a.env).toEqual([{ key: "A", buildTime: true, runtime: false, literal: true, multiline: true }]);
+    expect(JSON.stringify(a)).not.toContain("SECRET");
+  });
+});

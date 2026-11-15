@@ -31,6 +31,8 @@ export interface VolumeHandle {
 export interface FetchedSecrets {
   values: Record<string, string>;
   unresolved: ForeignEnv[];
+  /** Per-variable flags the source carried alongside the values (key -> flags). Absent for sources with none. */
+  flags?: Record<string, { buildTime?: boolean; runtime?: boolean; literal?: boolean; multiline?: boolean }>;
 }
 
 /** A source database's REAL credentials, for the apply-time secret path only (never the discovered fleet, a

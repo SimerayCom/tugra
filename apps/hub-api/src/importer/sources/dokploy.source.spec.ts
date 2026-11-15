@@ -355,3 +355,19 @@ describe("DokploySource.fetchBasicAuthCredentials (L7 secret path)", () => {
     await expect(src.fetchBasicAuthCredentials("web-a1b2c3")).rejects.toThrow(/403/);
   });
 });
+
+describe("DokploySource.fetchSecrets — build args carry the Build time flag", () => {
+  it("a key from the build-args blob gets buildTime:true and stays a normal runtime value; no blob, no flags", async () => {
+    const withArgs = source({
+      "/application.one?applicationId=app-1": { ...(ROUTES["/application.one?applicationId=app-1"] as object), buildArgs: "NEXT_PUBLIC_URL=https://x\nAPI_TOKEN=t" },
+    });
+    await withArgs.discover();
+    const r = await withArgs.fetchSecrets("web-a1b2c3");
+    expect(r.values.NEXT_PUBLIC_URL).toBe("https://x");
+    expect(r.flags).toEqual({ NEXT_PUBLIC_URL: { buildTime: true }, API_TOKEN: { buildTime: true } });
+    expect(r.flags).not.toHaveProperty("PORT");
+    const plain = source();
+    await plain.discover();
+    expect((await plain.fetchSecrets("web-a1b2c3")).flags).toBeUndefined();
+  });
+});

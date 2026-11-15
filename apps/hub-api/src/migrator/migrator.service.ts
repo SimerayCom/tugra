@@ -22,6 +22,7 @@ import {
 } from "./discover-script";
 import { assertSafeDockerOptions } from "../deploy/docker-options-safety";
 import type { AdoptInput } from "./dto";
+import { autoFlagMultiline } from "../importer/env-auto-flags";
 
 const DISCOVER_TIMEOUT_MS = 30_000;
 const INSPECT_TIMEOUT_MS = 15_000;
@@ -94,6 +95,15 @@ export class MigratorService {
     // un-carriable mount rejects the adopt cleanly instead of silently dropping data.
     const dockerOptions = volumeDockerOptions(found.mounts);
     assertSafeDockerOptions(dockerOptions);
+    // A container env value with a line break is flagged Multiline (a name that cannot carry it rejects the adopt
+    // here, before any write) instead of silently corrupting the env file.
+    const adoptEnv = pickEnv(found.env, dto.envKeys);
+    let adoptFlags: ReturnType<typeof autoFlagMultiline>;
+    try {
+      adoptFlags = autoFlagMultiline(adoptEnv);
+    } catch (e) {
+      throw new BadRequestException(`cannot adopt: ${(e as Error).message}`);
+    }
     // Insert the app row only (deploy:false → no docker); exposeMode:none is mandatory (else create()
     // silently mints a magic sslip.io domain). All image/port/env values come from the fresh inspect.
     const app = await this.apps.create(userId, {
@@ -104,7 +114,8 @@ export class MigratorService {
       image: found.image,
       hostPort: chosen?.host ?? undefined, // undefined (Zod optional), never null
       containerPort: chosen?.container ?? 80,
-      env: pickEnv(found.env, dto.envKeys),
+      env: adoptEnv,
+      ...(Object.keys(adoptFlags).length ? { envFlags: adoptFlags } : {}),
       exposeMode: "none",
       deploy: false,
       tags: ["adopted"],

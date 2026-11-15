@@ -133,3 +133,22 @@ describe("mapLimit", () => {
     expect(fn).not.toHaveBeenCalled();
   });
 });
+
+describe("CoolifySource.fetchSecrets — per-variable flags", () => {
+  it("fills flags from the same row, carries a multiline value, and omits flags when the rows carry none", async () => {
+    const withFlags = new CoolifySource(
+      new FakeClient({
+        "/applications/app-1/envs": [
+          { key: "PEM", value: "l1\nl2", is_multiline: true, is_literal: true },
+          { key: "API", value: "v", is_buildtime: true, is_runtime: false },
+          { key: "PLAIN", value: "p" },
+        ],
+      }),
+    );
+    const res = await withFlags.fetchSecrets("app-1");
+    expect(res.values.PEM).toBe("l1\nl2");
+    expect(res.flags).toEqual({ PEM: { multiline: true, literal: true }, API: { buildTime: true, runtime: false } });
+    const none = await new CoolifySource(new FakeClient({ "/applications/app-1/envs": [{ key: "PLAIN", value: "p" }] })).fetchSecrets("app-1");
+    expect(none.flags).toBeUndefined();
+  });
+});

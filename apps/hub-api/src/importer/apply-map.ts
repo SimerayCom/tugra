@@ -3,6 +3,7 @@ import { SetBuildSchema, SetContainerCommandSchema, SetDomainOptionsSchema, SetE
 import type { AppVolume } from "../deploy/deploy-script";
 import type { ForeignApp, ForeignDomain } from "./foreign-fleet";
 import { mapBuildPack } from "./buildpack-map";
+import { mapSourceEnvFlags, type SourceEnvFlags } from "./env-auto-flags";
 
 /** Options for turning a discovered foreign app into a Tugra app to create. */
 export interface AppCreateOptions {
@@ -34,7 +35,7 @@ const relPath = (v: string | undefined): string | undefined => {
   return s && s !== "." ? s : undefined;
 };
 
-export function foreignAppToCreateInput(app: ForeignApp, env: Record<string, string>, opts: AppCreateOptions): CreateAppInput {
+export function foreignAppToCreateInput(app: ForeignApp, env: Record<string, string>, opts: AppCreateOptions, flags?: Record<string, SourceEnvFlags>): CreateAppInput {
   const build = mapBuildPack(app); // { source: IMAGE|GIT|COMPOSE, buildType? }
   const domain = (app.domains ?? []).find((d) => d.primary) ?? (app.domains ?? [])[0];
 
@@ -80,6 +81,11 @@ export function foreignAppToCreateInput(app: ForeignApp, env: Record<string, str
     input.outputDir = relPath(app.publishDirectory);
     if (opts.gitSourceId) input.gitSourceId = opts.gitSourceId; // link a private GitHub-App repo to a connected GitSource
   }
+  // Per-variable flags: the source's own (Coolify) mapped onto this app, plus Multiline auto-marked on any value with a
+  // line break (a line break on an unflaggable name throws: that used to silently corrupt the env file). Only set when
+  // non-empty so an unflagged import keeps its exact input shape.
+  const mapped = mapSourceEnvFlags(env, flags, build.source);
+  if (Object.keys(mapped.flags).length) input.envFlags = mapped.flags;
   return input;
 }
 

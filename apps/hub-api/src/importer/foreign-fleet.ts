@@ -30,6 +30,12 @@ export interface ForeignEnv {
   key: string;
   secret?: boolean;
   buildTime?: boolean;
+  /** Coolify "Available at runtime" (default on). Only a `false` is information. */
+  runtime?: boolean;
+  /** Coolify "Literal": the value is not interpolated. */
+  literal?: boolean;
+  /** Coolify "Multiline": the value may contain line breaks. */
+  multiline?: boolean;
   scope?: "resource" | "environment" | "project" | "team" | "shared";
   ref?: { type: "shared" | "vault" | "magic" | "encrypted"; provider?: string; path?: string };
   generated?: boolean; // source-generated (e.g. SERVICE_PASSWORD_*) — regenerate or carry, don't treat as user input

@@ -114,16 +114,24 @@ export class CoolifySource implements ImportSource {
     const envs = Array.isArray(raw) ? (raw as CoolifyEnv[]) : [];
     const values: Record<string, string> = Object.create(null); // null-proto: a key like "__proto__" is a real entry, not the setter
     const unresolved: ForeignEnv[] = [];
+    const flags: NonNullable<FetchedSecrets["flags"]> = Object.create(null);
     for (const e of envs) {
       if (!e || typeof e.key !== "string" || e.is_preview === true) continue;
       const v = e.real_value ?? e.value; // real_value resolves shared/magic references
       if (typeof v === "string") {
         values[e.key] = v;
+        // The four per-variable flags Coolify records on the same row (field names per Coolify's env API schema).
+        const f: { buildTime?: boolean; runtime?: boolean; literal?: boolean; multiline?: boolean } = {};
+        if (typeof e.is_buildtime === "boolean") f.buildTime = e.is_buildtime;
+        if (typeof e.is_runtime === "boolean") f.runtime = e.is_runtime;
+        if (typeof e.is_literal === "boolean") f.literal = e.is_literal;
+        if (typeof e.is_multiline === "boolean") f.multiline = e.is_multiline;
+        if (Object.keys(f).length) flags[e.key] = f;
       } else {
         unresolved.push({ key: e.key, secret: true, ref: e.is_shared ? { type: "shared" } : e.is_coolify ? { type: "magic" } : undefined });
       }
     }
-    return { values, unresolved };
+    return { values, unresolved, ...(Object.keys(flags).length ? { flags } : {}) };
   }
 
   async close(): Promise<void> {}

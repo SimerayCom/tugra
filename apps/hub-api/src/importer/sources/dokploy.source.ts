@@ -347,7 +347,10 @@ export class DokploySource implements ImportSource {
       return { values, unresolved };
     }
 
-    for (const blob of [detail?.env, detail?.buildArgs]) {
+    // A key that appears in the build-args blob also carries the Build time flag. It stays RUNTIME too (today the
+    // two blobs merge into one runtime env, so behaviour does not change); we never infer runtime:false.
+    const flags: NonNullable<FetchedSecrets["flags"]> = Object.create(null);
+    for (const [blob, isBuildArgs] of [[detail?.env, false], [detail?.buildArgs, true]] as const) {
       for (const { key, value } of parseDotenv(blob)) {
         const isRef = /\$\{\{/.test(value) || value.startsWith("enc:v1:");
         if (isRef) {
@@ -355,10 +358,11 @@ export class DokploySource implements ImportSource {
           unresolved.push({ key, secret: true, ref: { type } });
         } else {
           values[key] = value;
+          if (isBuildArgs) flags[key] = { buildTime: true };
         }
       }
     }
-    return { values, unresolved };
+    return { values, unresolved, ...(Object.keys(flags).length ? { flags } : {}) };
   }
 
   /**

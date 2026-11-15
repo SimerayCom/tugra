@@ -413,3 +413,24 @@ describe("foreignAppToIngressPlan", () => {
     expect(u.field.length).toBeLessThanOrEqual("domain: custom-cert".length + 200);
   });
 });
+
+describe("foreignAppToCreateInput — env flags", () => {
+  const git = base({ kind: "git", buildPack: "nixpacks", git: { url: "https://git/x" } });
+  it("passes the source flags through as envFlags and the result satisfies CreateAppSchema", () => {
+    const input = foreignAppToCreateInput(git, { A: "1", PEM: "x\ny" }, { serverId: "s" }, { A: { buildTime: true, runtime: false } });
+    expect(input.envFlags).toEqual({ A: { buildTime: true, runtime: false }, PEM: { multiline: true } });
+    expect(CreateAppSchema.safeParse(input).success).toBe(true);
+  });
+  it("an unflagged import keeps its exact input shape (no envFlags key)", () => {
+    expect("envFlags" in foreignAppToCreateInput(git, { A: "1" }, { serverId: "s" })).toBe(false);
+  });
+  it("flags Tugra cannot carry for the mapped source are dropped, so create() never rejects the import", () => {
+    const img = base({ kind: "image", buildPack: "image", image: "redis:7" });
+    const input = foreignAppToCreateInput(img, { A: "1" }, { serverId: "s" }, { A: { buildTime: true } });
+    expect(input.envFlags).toBeUndefined();
+    expect(CreateAppSchema.safeParse(input).success).toBe(true);
+  });
+  it("a line break on an unflaggable name fails loudly instead of corrupting the env file", () => {
+    expect(() => foreignAppToCreateInput(git, { LD_PRELOAD: "a\nb" }, { serverId: "s" })).toThrow(/cannot be a multiline variable/);
+  });
+});

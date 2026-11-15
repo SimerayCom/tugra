@@ -13,6 +13,8 @@ import type { CreateDatabaseInput } from "../databases/dto";
 import { ImporterService } from "./importer.service";
 import { LocalDockerSource } from "./sources/local-docker.source";
 import { planImport } from "./import-planner";
+import { mapSourceEnvFlags } from "./env-auto-flags";
+import { mapBuildPack } from "./buildpack-map";
 import { foreignAppToCreateInput, foreignAppToIngressPlan, foreignAppToPostCreateConfig, foreignAppToVolumes } from "./apply-map";
 import { seedTasks, deriveOpStatus, type TaskSeed, type TaskStatus } from "./import-executor.logic";
 import { MigrationTokenService } from "./migration-token.service";
@@ -358,9 +360,11 @@ export class ImportExecutorService {
   private async runCopyApp(taskId: string, source: ImportSource, app: ForeignApp, userId: string, targetServerId: string, sourceKind: RemoteSourceKind, environmentId?: string, gitSourceByRef: ReadonlyMap<string, string> = new Map()): Promise<void> {
     if (!(await this.claim(taskId))) return;
     try {
-      const { values, unresolved } = await source.fetchSecrets(app.sourceRef); // real env values (server-side only)
+      const { values, unresolved, flags } = await source.fetchSecrets(app.sourceRef); // real env values (server-side only)
       const gitSourceId = await this.resolveGitSourceId(targetServerId, app, gitSourceByRef);
-      const createInput = foreignAppToCreateInput(app, values, { serverId: targetServerId, environmentId, sourceTag: sourceKind, gitSourceId });
+      const createInput = foreignAppToCreateInput(app, values, { serverId: targetServerId, environmentId, sourceTag: sourceKind, gitSourceId }, flags);
+      // Flags that could not be carried are reported by key name (never silently dropped).
+      const flagWarnings = mapSourceEnvFlags(values, flags, mapBuildPack(app).source).warnings;
       const created = await this.apps.create(userId, createInput); // re-checks apps:config on the TARGET team; deploy:false
       // Declare the app's volumes as EMPTY named mounts (their DATA is copied by a later slice). Best-effort,
       // mirroring resolveGitSourceId: a failure here must NEVER reach the outer catch, or it would leave an
@@ -403,7 +407,8 @@ export class ImportExecutorService {
       const ingressNote = ingress.unmapped.length
         ? `ingress not carried: ${ingress.unmapped.map((u) => u.field).join(", ")}`
         : undefined;
-      const note = [volNote, cfgNote, ingressNote].filter(Boolean).join("; ") || undefined;
+      const flagNote = flagWarnings.length ? `env flags not carried: ${flagWarnings.join("; ")}` : undefined;
+      const note = [volNote, cfgNote, ingressNote, flagNote].filter(Boolean).join("; ") || undefined;
       await this.prisma.bulkTask.update({
         where: { id: taskId },
         data: {

@@ -253,3 +253,34 @@ describe("MigratorService", () => {
     });
   });
 });
+
+describe("MigratorService.adopt — env values with line breaks", () => {
+  function agentSeq(inspectOut: string) {
+    return {
+      sendCommand: jest.fn().mockResolvedValueOnce({ output: inspectOut, exitCode: 0 }).mockResolvedValueOnce({ output: "", exitCode: 0 }),
+    } as unknown as AgentWsServer;
+  }
+  const withEnv = (env: string[]) => inspectJson({ Config: { Image: "nginx:1.25", Env: env, Labels: {} } });
+
+  it("a PEM-style value is adopted with the Multiline flag set", async () => {
+    const { svc, apps } = make({ agentWs: agentSeq(withEnv(["TLS_KEY=-----BEGIN-----\nabc\n-----END-----", "PLAIN=1"])) });
+    await svc.adopt("u1", "s1", { container: "legacy-web", name: "web" });
+    const arg = (apps.create as jest.Mock).mock.calls[0][1];
+    expect(arg.env.TLS_KEY).toBe("-----BEGIN-----\nabc\n-----END-----");
+    expect(arg.envFlags).toEqual({ TLS_KEY: { multiline: true } });
+  });
+
+  it("a line break on a name that cannot be multiline rejects the adopt before any write", async () => {
+    const agentWs = agentSeq(withEnv(["LD_PRELOAD=a\nb"]));
+    const { svc, apps } = make({ agentWs });
+    await expect(svc.adopt("u1", "s1", { container: "legacy-web", name: "web" })).rejects.toThrow(/cannot adopt: env var "LD_PRELOAD"/);
+    expect(apps.create).not.toHaveBeenCalled();
+    expect((agentWs.sendCommand as jest.Mock)).toHaveBeenCalledTimes(1); // inspect only, no rename
+  });
+
+  it("an env without line breaks creates no envFlags key", async () => {
+    const { svc, apps } = make({ agentWs: agentSeq(inspectJson()) });
+    await svc.adopt("u1", "s1", { container: "legacy-web", name: "web" });
+    expect("envFlags" in (apps.create as jest.Mock).mock.calls[0][1]).toBe(false);
+  });
+});

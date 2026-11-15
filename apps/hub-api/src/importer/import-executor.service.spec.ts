@@ -1043,3 +1043,33 @@ describe("ImportExecutorService.applyRemote — project/environment tree (L5)", 
     expect(JSON.stringify(meta.warnings)).not.toContain("secret-ish");
   });
 });
+
+describe("ImportExecutorService.applyRemote — env flags", () => {
+  async function applyWithSecrets(secrets: { values: Record<string, string>; flags?: Record<string, unknown> }) {
+    const h = harness({ secrets: () => ({ ...secrets, unresolved: [] }) as never });
+    const base = fleet();
+    const f = { ...base, databases: [] } as unknown as ForeignFleet;
+    h.source.discover.mockResolvedValue(f);
+    const planHash = planImport(f, { sourceKind: "coolify" }).planHash;
+    await h.svc.apply("user-1", { sourceKind: "coolify" as const, sessionId: "sess-1", targetServerId: "srv-tugra", planHash });
+    await flush();
+    const done = h.prisma.bulkTask.update.mock.calls.map((c: unknown[]) => c[0] as { data: Record<string, unknown> }).find((a) => a.data.resourceType === "application");
+    const failed = h.prisma.bulkTask.update.mock.calls.map((c: unknown[]) => c[0] as { data: Record<string, unknown> }).find((a) => a.data.status === "FAILED");
+    return { ...h, done, failed };
+  }
+
+  it("auto-flags a multiline value, carries Coolify's flags into create(), and notes dropped ones by key", async () => {
+    const { apps, done } = await applyWithSecrets({ values: { PEM: "l1\nl2", API: "v", DOT: "x" }, flags: { API: { buildTime: true }, DOT: { runtime: false } } });
+    const input = (apps.create as jest.Mock).mock.calls[0][1];
+    expect(input.envFlags).toEqual({ PEM: { multiline: true }, API: { buildTime: true } });
+    expect(String(done?.data.output)).toContain('env flags not carried: env var "DOT": runtime off flag not carried');
+    expect(JSON.stringify(done?.data)).not.toContain("l1");
+  });
+
+  it("a line break on an unflaggable name FAILS the task naming the key only", async () => {
+    const { apps, failed } = await applyWithSecrets({ values: { LD_PRELOAD: "SECRETVALUE\nx" } });
+    expect(apps.create).not.toHaveBeenCalled();
+    expect(String(failed?.data.output)).toContain('env var "LD_PRELOAD" has a line break but its name cannot be a multiline variable');
+    expect(String(failed?.data.output)).not.toContain("SECRETVALUE");
+  });
+});
