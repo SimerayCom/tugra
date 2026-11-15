@@ -396,3 +396,15 @@ func TestServerMsgFs2JSONKeys(t *testing.T) {
 		t.Fatalf("decoded %+v, want %+v", f, want)
 	}
 }
+
+func TestFeaturesAdvertiseHubOriginEnv(t *testing.T) {
+	found := false
+	for _, f := range Features {
+		if f == FeatureHubOriginEnv {
+			found = true
+		}
+	}
+	if !found || FeatureHubOriginEnv != "hub_origin_env_v1" {
+		t.Fatalf("Features must advertise hub_origin_env_v1: %v", Features)
+	}
+}

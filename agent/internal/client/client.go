@@ -26,6 +26,7 @@ import (
 	"github.com/SimerayCom/tugra/agent/internal/selfupdate"
 	"github.com/SimerayCom/tugra/agent/internal/terminal"
 	"github.com/SimerayCom/tugra/agent/internal/traffic"
+	"github.com/SimerayCom/tugra/agent/internal/xfer"
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 )
@@ -269,7 +270,7 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 						continue
 					}
 				}
-				go func(reqID, command string, timeoutMs int, durable bool) {
+				go func(reqID, command, capability string, timeoutMs int, durable bool) {
 					to := commandTimeout
 					if timeoutMs > 0 {
 						to = time.Duration(timeoutMs) * time.Millisecond
@@ -287,7 +288,7 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 						reg.Untrack(reqID)
 						cancel()
 					}()
-					r := exec.RunStreaming(cmdCtx, command, to, func(chunk string) {
+					r := exec.RunStreamingEnv(cmdCtx, command, to, commandEnv(cfg.HubURL, capability), func(chunk string) {
 						if durable {
 							reg.Chunk(reqID, chunk)
 						}
@@ -315,7 +316,7 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 						ExitCode: r.ExitCode,
 						Output:   r.Output,
 					})
-				}(m.ReqID, m.Command, m.TimeoutMs, m.Durable)
+				}(m.ReqID, m.Command, m.Capability, m.TimeoutMs, m.Durable)
 			case "command_cancel":
 				// Kill a running command's process group. Verified by the hub signature over the reqId; the
 				// command was already capability-gated when it started, so cancelling needs no extra grant.
@@ -581,6 +582,20 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 // interruptedMarker is appended to the re-sent result of a durable command that was running when the agent
 // process itself died (its real outcome is unknown; the hub treats it like a hub-restart interruption).
 const interruptedMarker = "TUGRA_INTERRUPTED: the agent restarted while this command was running; its result is unknown"
+
+// commandEnv returns the extra environment for a hub command. ONLY `backup`-capability commands receive
+// TUGRA_HUB_ORIGIN, and the origin is derived from the agent's OWN configured hub URL (never from the hub's
+// message), so the hub cannot aim an agent at another host and a deploy/compose command (user YAML) never sees it.
+func commandEnv(hubURL, capability string) []string {
+	if capability != "backup" {
+		return nil
+	}
+	origin, err := xfer.Origin(hubURL)
+	if err != nil {
+		return nil
+	}
+	return []string{"TUGRA_HUB_ORIGIN=" + origin}
+}
 
 // allowsCapability reports whether the allowlist permits a capability. FAIL-CLOSED: an empty
 // allowlist denies everything (deny-by-default). The bypass escape hatch lives in capState.

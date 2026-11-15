@@ -53,3 +53,26 @@ func TestCapState(t *testing.T) {
 		t.Fatal("bypass must persist even after a hub capabilities push")
 	}
 }
+
+// TUGRA_HUB_ORIGIN is exported to `backup` commands ONLY, derived from the agent's own configured hub URL.
+func TestCommandEnvScopedToBackupCapability(t *testing.T) {
+	env := commandEnv("wss://hub.example.com:8443/ws/agent", "backup")
+	if len(env) != 1 || env[0] != "TUGRA_HUB_ORIGIN=https://hub.example.com:8443" {
+		t.Fatalf("backup command must get the origin of the agent's own hub URL, got %v", env)
+	}
+	if env := commandEnv("ws://10.0.0.5:3000/ws", "backup"); len(env) != 1 || env[0] != "TUGRA_HUB_ORIGIN=http://10.0.0.5:3000" {
+		t.Fatalf("ws must map to http, got %v", env)
+	}
+	for _, c := range []string{"deploy", "database", "cleanup", "terminal", "files_write", ""} {
+		if env := commandEnv("wss://hub.example.com/ws", c); env != nil {
+			t.Fatalf("capability %q must NOT see the hub origin, got %v", c, env)
+		}
+	}
+	// A hub URL the agent cannot derive an origin from fails closed: no env at all.
+	if env := commandEnv("ftp://hub.example.com", "backup"); env != nil {
+		t.Fatalf("unsupported scheme must yield no env, got %v", env)
+	}
+	if env := commandEnv("::not a url", "backup"); env != nil {
+		t.Fatalf("unparseable URL must yield no env, got %v", env)
+	}
+}

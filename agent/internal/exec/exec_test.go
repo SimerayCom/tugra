@@ -115,3 +115,32 @@ func TestRunStreamingCapsOutputNotStream(t *testing.T) {
 		t.Fatalf("expected live stream uncapped (>%d), got %d", maxOutput, streamed)
 	}
 }
+
+// Extra environment reaches the command when passed, and is absent when nil (existing behaviour unchanged).
+func TestRunStreamingEnvPassesExtraEnv(t *testing.T) {
+	r := RunStreamingEnv(context.Background(), `printf '%s' "$TUGRA_TEST_ENV"`, 5*time.Second, []string{"TUGRA_TEST_ENV=hello"}, nil)
+	if r.ExitCode != 0 || r.Output != "hello" {
+		t.Fatalf("expected the extra env var, got exit=%d out=%q", r.ExitCode, r.Output)
+	}
+}
+
+func TestRunStreamingEnvAbsentWhenNil(t *testing.T) {
+	t.Setenv("TUGRA_TEST_INHERIT", "inherited")
+	r := RunStreamingEnv(context.Background(), `printf '[%s][%s]' "$TUGRA_TEST_ENV" "$TUGRA_TEST_INHERIT"`, 5*time.Second, nil, nil)
+	if r.Output != "[][inherited]" {
+		t.Fatalf("nil extraEnv must leave the inherited environment untouched and add nothing, got %q", r.Output)
+	}
+	// The plain wrapper is byte-identical to the nil-env variant.
+	w := RunStreaming(context.Background(), `printf '[%s]' "$TUGRA_TEST_ENV"`, 5*time.Second, nil)
+	if w.Output != "[]" {
+		t.Fatalf("RunStreaming must not add the variable, got %q", w.Output)
+	}
+}
+
+func TestRunStreamingEnvKeepsInheritedWithExtra(t *testing.T) {
+	t.Setenv("TUGRA_TEST_INHERIT", "inherited")
+	r := RunStreamingEnv(context.Background(), `printf '%s/%s' "$TUGRA_TEST_INHERIT" "$TUGRA_TEST_ENV"`, 5*time.Second, []string{"TUGRA_TEST_ENV=x"}, nil)
+	if r.Output != "inherited/x" {
+		t.Fatalf("extra env must be appended to the inherited environment, got %q", r.Output)
+	}
+}

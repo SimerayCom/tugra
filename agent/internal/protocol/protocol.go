@@ -99,8 +99,13 @@ const (
 // filesystem ops, bounded transfers). Mirrors AGENT_FEATURE_FS2 in packages/shared.
 const FeatureFs2 = "fs2_v1"
 
+// FeatureHubOriginEnv: this agent exports TUGRA_HUB_ORIGIN (derived from its OWN configured hub URL) to commands of
+// the `backup` capability only, so a hub-built script can reach a signed relay path without the hub naming a host.
+// Mirrors AGENT_FEATURE_HUB_ORIGIN_ENV in packages/shared.
+const FeatureHubOriginEnv = "hub_origin_env_v1"
+
 // Features is the list this agent advertises in enroll/auth.
-var Features = []string{FeatureCmdJournal, FeatureLogDrainsV2, FeatureDrainSyslog, FeatureDrainGelf, FeatureDrainFluentd, FeatureFs2}
+var Features = []string{FeatureCmdJournal, FeatureLogDrainsV2, FeatureDrainSyslog, FeatureDrainGelf, FeatureDrainFluentd, FeatureFs2, FeatureHubOriginEnv}
 
 // CommandState: Agent -> Hub, reply to command_status (what happened to a durable command).
 type CommandState struct {

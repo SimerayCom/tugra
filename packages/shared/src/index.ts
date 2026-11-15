@@ -10,6 +10,7 @@ export * from "./version";
 // Editions — the open-core tier ordering (community < pro < cloud) + normalizeEdition/editionAtLeast,
 // shared by the hub's requireEdition gate and any web edition display.
 export * from "./editions";
+export * from "./app-move";
 
 /**
  * Notification event types — single source of truth for the hub (Zod enum) and the web UI (served via
@@ -128,6 +129,12 @@ export function canonicalLogDrains(serverId: string, rev: number, drainsJson: st
  * The legacy `fs_req` list path is unaffected.
  */
 export const AGENT_FEATURE_FS2 = "fs2_v1";
+/**
+ * `hub_origin_env_v1`: the agent exports `TUGRA_HUB_ORIGIN` (derived from its OWN configured hub URL) to commands
+ * of the `backup` capability only, so a hub-built script can pull/push a signed relay path without the hub ever
+ * naming a host. The app-move preflight refuses a server whose agent lacks it (`agent_too_old`).
+ */
+export const AGENT_FEATURE_HUB_ORIGIN_ENV = "hub_origin_env_v1";
 export function canonicalTermStart(
   sessionId: string,
   target: string,

@@ -4,6 +4,7 @@ package exec
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -71,10 +72,20 @@ func Run(ctx context.Context, command string, timeout time.Duration) Result {
 // command's combined output as it is produced (live streaming). onChunk may be
 // nil. The returned Result.Output is capped at maxOutput; the live stream is not.
 func RunStreaming(ctx context.Context, command string, timeout time.Duration, onChunk func(string)) Result {
+	return RunStreamingEnv(ctx, command, timeout, nil, onChunk)
+}
+
+// RunStreamingEnv is RunStreaming plus extra KEY=VALUE environment entries appended to the agent's own
+// environment. With no extra entries cmd.Env stays nil (the child inherits the process environment exactly as
+// before), so every existing caller behaves byte-identically.
+func RunStreamingEnv(ctx context.Context, command string, timeout time.Duration, extraEnv []string, onChunk func(string)) Result {
 	c, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(c, shellBin, "-c", command)
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
+	}
 	// Run in its own process group and kill the whole group on timeout/cancel; otherwise only `sh`
 	// dies and its docker/git children linger holding the output pipes. WaitDelay force-closes the
 	// pipes if a straggler still holds them after the kill.
