@@ -1711,7 +1711,11 @@ export class ApplicationsService {
       if (prior) return prior;
     }
 
-    if ((await this.prisma.deployment.count({ where: { appId: app.id, status: "QUEUED" } })) >= QUEUE_CAP) {
+    // A move's own deploys (`move:<id>`, `move:<id>:rb`: at most two per move, minted only by the move runner because
+    // deploy() rejects client keys with that prefix) bypass the cap. While a move is live every other deploy queues but
+    // claimNext holds it back, so the cap can be full exactly when the cutover or the rollback needs to enqueue.
+    const isMoveDeploy = key !== null && key.startsWith("move:");
+    if (!isMoveDeploy && (await this.prisma.deployment.count({ where: { appId: app.id, status: "QUEUED" } })) >= QUEUE_CAP) {
       throw new ConflictException("deploy queue is full — wait for queued deploys to run");
     }
 
@@ -3081,9 +3085,12 @@ export class ApplicationsService {
     await this.monitors.removeForApp(id).catch(() => undefined);
     // A COMPLETED app move keeps the app's old data on its previous server until the archive is purged; deleting the
     // app must not strand it (best-effort: an offline server is simply left to the move's own sweeper, which keeps
-    // running because AppMove rows have no foreign key to the app).
-    const archives = await this.prisma.appMove.findMany({ where: { appId: id, phase: "COMPLETED", sourcePurgedAt: null } });
-    for (const m of archives) await purgeMoveSource({ prisma: this.prisma as never, agentWs: this.agentWs as never }, m, { stampWhenLive: false }).catch(() => undefined);
+    // running because AppMove rows have no foreign key to the app). With keepVolumes the user asked to KEEP the data:
+    // the archive is a copy of it, so it stays too, and the sweeper reclaims it after `archiveUntil` as usual.
+    if (!opts.keepVolumes) {
+      const archives = await this.prisma.appMove.findMany({ where: { appId: id, phase: "COMPLETED", sourcePurgedAt: null } });
+      for (const m of archives) await purgeMoveSource({ prisma: this.prisma as never, agentWs: this.agentWs as never }, m, { stampWhenLive: false }).catch(() => undefined);
+    }
     // Best-effort: remove the Cloudflare records Tugra auto-created for this app BEFORE the Domain rows cascade
     // away (otherwise they'd dangle at the provider). Never blocks deletion — the user already passed requireWrite.
     await this.dns.purgeDomains(userId, id).catch(() => undefined);

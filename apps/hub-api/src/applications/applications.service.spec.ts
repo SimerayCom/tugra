@@ -1041,6 +1041,27 @@ describe("ApplicationsService", () => {
     expect(prisma.deployment.create as jest.Mock).not.toHaveBeenCalled(); // capped before creating a row
   });
 
+  it("a move's own deploy (key move:<id>) bypasses the full queue; a user deploy at the same cap is still 409", async () => {
+    const created = { id: "mv1", status: "QUEUED", appId: "app1" };
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app) },
+      deployment: {
+        count: jest.fn().mockImplementation(({ where }: { where: { status: string } }) => Promise.resolve(where.status === "QUEUED" ? 10 : 0)),
+        create: jest.fn().mockResolvedValue(created),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        findFirst: jest.fn().mockResolvedValue(null),
+        findUnique: jest.fn().mockResolvedValue(null),
+      },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const svc = make(prisma, access, {} as AgentWsServer);
+    await expect(svc.submitMoveDeploy("app1", "u1", "move:ckmoveabcdefghijklmnopqrs")).resolves.toBeDefined();
+    expect(prisma.deployment.create as jest.Mock).toHaveBeenCalledWith({ data: expect.objectContaining({ idempotencyKey: "move:ckmoveabcdefghijklmnopqrs", status: "QUEUED" }) });
+    (prisma.deployment.create as jest.Mock).mockClear();
+    await expect(svc.submitMoveDeploy("app1", "u1", "move:ckmoveabcdefghijklmnopqrs:rb")).resolves.toBeDefined();
+    await expect(svc.deploy("u1", "app1")).rejects.toBeInstanceOf(ConflictException);
+  });
+
   it("a webhook submit supersedes older still-QUEUED webhook deploys for the same app", async () => {
     const supersede = jest.fn().mockResolvedValue({ count: 2 });
     const prisma = {
@@ -8529,6 +8550,15 @@ describe("ApplicationsService — app move guards", () => {
       expect(t.update).toHaveBeenCalledWith({ where: { id: archive.id }, data: { sourcePurgedAt: expect.any(Date) } });
       expect((t.prisma.application.delete as jest.Mock)).toHaveBeenCalled();
       expect(t.prisma.appMove.findMany).toHaveBeenCalledWith({ where: { appId: "app1", phase: "COMPLETED", sourcePurgedAt: null } });
+    });
+
+    it("keepVolumes keeps the old server's archive too: no purge command, no stamp, and the lookup is skipped", async () => {
+      const t = mkRemove([archive]);
+      await t.svc.remove("u1", "app1", { keepVolumes: true });
+      expect(t.sent.some((s) => s.host === "s0")).toBe(false);
+      expect(t.update).not.toHaveBeenCalled();
+      expect(t.prisma.appMove.findMany).not.toHaveBeenCalled();
+      expect((t.prisma.application.delete as jest.Mock)).toHaveBeenCalled();
     });
 
     it("an unreachable old server never blocks the delete (the move's sweeper keeps the archive; AppMove has no FK to the app)", async () => {
