@@ -67,7 +67,12 @@ export function planImport(fleet: ForeignFleet, options: ImportOptions): ImportP
   // itemRef first, so the hash is independent of discovery order (two scans of an unchanged host hash equal
   // — the apply-time stale-guard relies on this). Warnings are advisory and intentionally excluded.
   const sorted = [...items].sort((a, b) => (a.itemRef < b.itemRef ? -1 : a.itemRef > b.itemRef ? 1 : 0));
-  const planHash = createHash("sha256").update(JSON.stringify({ items: sorted, options })).digest("hex").slice(0, 32);
+  // dbDataModes is a client-built record (the wizard sends toggle order at plan time, item order at apply time) and
+  // JSON.stringify keeps insertion order, so its keys are sorted before hashing. Byte-identical when it is absent.
+  const hashedOptions = options.dbDataModes
+    ? { ...options, dbDataModes: Object.fromEntries(Object.entries(options.dbDataModes).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) }
+    : options;
+  const planHash = createHash("sha256").update(JSON.stringify({ items: sorted, options: hashedOptions })).digest("hex").slice(0, 32);
   return { sourceKind: options.sourceKind, mode: options.mode ?? "copy", items, totals, warnings: fleet.warnings, planHash };
 }
 

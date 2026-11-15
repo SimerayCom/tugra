@@ -330,6 +330,14 @@ describe("planImport dbDataModes (physical volume copy)", () => {
     expect(vol.totals.blockers).toBe(base.totals.blockers);
   });
 
+  it("the planHash does not depend on the key order of dbDataModes (toggle order at plan vs item order at apply)", () => {
+    const f: ForeignFleet = { ...fleet, databases: [{ sourceRef: "m1", name: "m", engine: "MARIADB", version: "11", serverRef: "srv1" }, { sourceRef: "p2", name: "p", engine: "POSTGRES", serverRef: "srv1" }] };
+    const a = planImport(f, { ...opts, dbDataModes: { "database:srv1:m1": "volume", "database:srv1:p2": "volume" } });
+    const b = planImport(f, { ...opts, dbDataModes: { "database:srv1:p2": "volume", "database:srv1:m1": "volume" } });
+    expect(b.planHash).toBe(a.planHash);
+    expect(a.planHash).not.toBe(planImport(f, opts).planHash);
+  });
+
   it("is a blocker for a non-Postgres engine and when the source reported no exact image/version", () => {
     const f: ForeignFleet = { ...fleet, databases: [{ sourceRef: "m1", name: "m", engine: "MARIADB", version: "11", serverRef: "srv1" }, { sourceRef: "p2", name: "p", engine: "POSTGRES", serverRef: "srv1" }] };
     const plan = planImport(f, { ...opts, dbDataModes: { "database:srv1:m1": "volume", "database:srv1:p2": "volume" } });
