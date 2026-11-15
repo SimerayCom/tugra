@@ -154,6 +154,7 @@ case "$1" in
   compose)
     case "$*" in
       *pg_dump*) [ -n "$SHIM_DUMP_FAIL" ] && exit 1; printf 'PGDMP-fake-dump'; exit 0 ;;
+      *psql*) [ -n "$SHIM_DB_SIZE" ] && printf '%s\n' "$SHIM_DB_SIZE"; exit 0 ;;
       *" ps -q "*) echo "cid-\${@: -1}"; exit 0 ;;
     esac ;;
 esac
@@ -171,8 +172,20 @@ esac
 exit 0
 `,
     );
+    // df: the free-space pre-check reads `df -Pk <dir>` (header + one line, field 4 = KiB available). SHIM_DF_AVAIL_KB
+    // fakes that line, SHIM_DF_RAW replaces the whole output (garbage case); otherwise the real df runs.
+    const REAL_DF = execFileSync("sh", ["-c", "command -v df"]).toString().trim();
+    writeFileSync(
+      join(bin, "df"),
+      `#!/bin/bash
+if [ -n "$SHIM_DF_RAW" ]; then printf '%s\n' "$SHIM_DF_RAW"; exit 0; fi
+if [ -n "$SHIM_DF_AVAIL_KB" ]; then printf 'Filesystem 1024-blocks Used Available Capacity Mounted\nfs 0 0 %s 0%% /\n' "$SHIM_DF_AVAIL_KB"; exit 0; fi
+exec ${REAL_DF} "$@"
+`,
+    );
     chmodSync(join(bin, "docker"), 0o755);
     chmodSync(join(bin, "redis-cli"), 0o755);
+    chmodSync(join(bin, "df"), 0o755);
 
     let n = 0;
     const watchOnce = (envText: string, extra: Record<string, string> = {}) => {
@@ -275,6 +288,43 @@ exit 0
       expect(dumps.some((f) => f.includes("0.0.6-to-"))).toBe(true); // …newest old ones kept
       expect(readdirSync(backups).filter((f) => f.endsWith(".env")).length).toBe(5); // each dump's .env goes with it
       expect(existsSync(join(backups, "pre-update-0.0.1-to-0.0.2-20200101T000000Z.env"))).toBe(false);
+    });
+
+    describe("free-space pre-check", () => {
+      it("refuses when the backup dir clearly lacks room: failed, no pull, lock released, nothing left behind", () => {
+        const { envFile, backups, log } = watchOnce("TUGRA_VERSION=0.1.0\n", { SHIM_DB_SIZE: "1073741824", SHIM_DF_AVAIL_KB: "1024" });
+        expect(log).toMatch(/SET instance:update:status .*"phase":"failed".*pre-update backup failed; nothing was changed/);
+        expect(log).not.toMatch(/docker compose .* pull /);
+        expect(log).not.toContain("pg_dump");
+        expect(log).toContain("DEL instance:update:lock");
+        expect(readFileSync(envFile, "utf8")).toContain("TUGRA_VERSION=0.1.0");
+        const left = existsSync(backups) ? readdirSync(backups) : [];
+        expect(left.filter((f) => /\.(part|dump|env)$/.test(f))).toEqual([]);
+      });
+
+      it("an unparseable database size never blocks (the dump's own failure handling still applies)", () => {
+        const { log, backups } = watchOnce("TUGRA_VERSION=0.1.0\n", { SHIM_DB_SIZE: "abc", SHIM_DF_AVAIL_KB: "1024" });
+        expect(log).toContain('"phase":"done"');
+        expect(readdirSync(backups).some((f) => f.endsWith(".dump"))).toBe(true);
+      });
+
+      it("an unparseable df output never blocks", () => {
+        const { log } = watchOnce("TUGRA_VERSION=0.1.0\n", { SHIM_DB_SIZE: "1073741824", SHIM_DF_RAW: "garbage" });
+        expect(log).toContain('"phase":"done"');
+      });
+
+      it("ample space proceeds and writes the dump", () => {
+        const { log, backups } = watchOnce("TUGRA_VERSION=0.1.0\n", { SHIM_DB_SIZE: "1073741824", SHIM_DF_AVAIL_KB: "999999999" });
+        expect(log).toContain('"phase":"done"');
+        expect(readdirSync(backups).some((f) => f.endsWith(".dump"))).toBe(true);
+      });
+
+      it("PRE_UPDATE_BACKUP=0 still skips the whole snapshot, space check included", () => {
+        const { log } = watchOnce("TUGRA_VERSION=0.1.0\nPRE_UPDATE_BACKUP=0\n", { SHIM_DB_SIZE: "1073741824", SHIM_DF_AVAIL_KB: "1024" });
+        expect(log).not.toContain("pg_dump");
+        expect(log).not.toContain("psql");
+        expect(log).toContain('"phase":"done"');
+      });
     });
   });
 

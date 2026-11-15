@@ -42,6 +42,24 @@ _snap_prune() {
   return 0
 }
 
+# Refuse early (before anything is changed) when the backup dir clearly lacks room for the dump. pg_database_size
+# is an upper bound for a custom-format (-Fc, compressed) dump. A measurement we cannot parse NEVER blocks (the dump's
+# own failure is still caught below); the check can only add a refusal on a positive shortfall, never a new way to skip.
+_snap_space_ok() {
+  local dir="$1" size avail need
+  size="$(compose exec -T postgres psql -U tugra -d tugra -Atc "select pg_database_size('tugra')" 2>/dev/null | tr -d '[:space:]' || true)"
+  avail="$(df -Pk "$dir" 2>/dev/null | awk 'NR==2{print $4}' || true)"
+  case "$size" in ''|*[!0-9]*) return 0 ;; esac
+  case "$avail" in ''|*[!0-9]*) return 0 ;; esac
+  need=$(( size + size / 10 + 67108864 ))      # +10% and 64 MiB slack
+  avail=$(( avail * 1024 ))
+  if [ "$avail" -lt "$need" ]; then
+    log "snapshot: not enough free disk in $dir (need ~$(( need / 1048576 )) MiB, have $(( avail / 1048576 )) MiB). Free space, then retry."
+    return 1
+  fi
+  return 0
+}
+
 _snap_run() {
   local from to dir stamp base out owner
   from="$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"
@@ -68,6 +86,7 @@ _snap_run() {
     log "snapshot: cannot secure/write $dir (owned by another user, e.g. created by the root updater). Fix: sudo chown -R \"\$(id -un)\" \"$dir\" && chmod 700 \"$dir\""
     return 1
   fi
+  _snap_space_ok "$dir" || return 1
   if ! compose exec -T postgres pg_dump -U tugra -Fc tugra > "$out.part"; then
     log "snapshot: pg_dump failed (is the postgres container running?)"; rm -f "$out.part"; return 1
   fi

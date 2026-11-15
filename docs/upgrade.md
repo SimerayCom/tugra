@@ -49,7 +49,8 @@ without digest support in its compose file safely keeps pulling by tag.
 Before anything changes, the sidecar takes a **pre-update restore point** — a `pg_dump -Fc` of the hub database
 plus a copy of your `.env` — into `backups/` in the install directory (directory `0700`, files `0600`, the newest 5
 sets kept; secret-bearing, gitignored). If it cannot be taken the update aborts with nothing changed (status
-`failed`, "pre-update backup failed"). `PRE_UPDATE_BACKUP=0` in `.env` disables it (not recommended); tune with
+`failed`, "pre-update backup failed"). The updater refuses to start when the backup directory clearly lacks free space
+for the dump; nothing is changed. `PRE_UPDATE_BACKUP=0` in `.env` disables it (not recommended); tune with
 `PRE_UPDATE_KEEP` and `TUGRA_BACKUP_DIR`. For the in-app updater `TUGRA_BACKUP_DIR` must be an absolute path
 **inside the checkout** (that is the only directory the sidecar has mounted); otherwise the update is refused
 with "pre-update backup failed". The installer (`install.sh`) accepts any path. After hub-api and web are healthy the sidecar also refreshes the bundled
