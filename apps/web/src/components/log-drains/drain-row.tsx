@@ -32,6 +32,7 @@ export function DeliveryInfo({ delivery, status }: { delivery: DrainDelivery; st
       {status && (
         <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>
           {t("logdrains.status_line", { sent: status.sent, dropped: status.dropped })}
+          {status.truncated ? ` · ${t("logdrains.truncatedLines", { n: status.truncated })}` : ""}
           {status.errClass ? ` · ${t(`logdrains.err_${status.errClass}`)}` : ""}
           {status.lastOkAt ? ` · ${t("logdrains.lastDelivery", { time: new Date(status.lastOkAt).toLocaleString() })}` : ""}
         </span>

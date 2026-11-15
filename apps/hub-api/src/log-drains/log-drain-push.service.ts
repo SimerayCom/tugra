@@ -29,6 +29,7 @@ export type DrainDelivery =
 export interface DrainStatusView {
   sent: number;
   dropped: number;
+  truncated?: number;
   errClass?: DrainErrClass;
   lastOkAt?: string;
 }
@@ -41,6 +42,7 @@ interface StatusRecord {
   errClass?: DrainErrClass;
   sent: number;
   dropped: number;
+  truncated: number;
   lastOkAt?: number;
   receivedAt: number;
 }
@@ -316,6 +318,7 @@ export class LogDrainPushService {
         state: state as StatusRecord["state"],
         sent: clampCount(r.sent),
         dropped: clampCount(r.dropped),
+        truncated: clampCount(r.truncated),
         receivedAt: now,
       };
       if (typeof r.errClass === "string" && (DRAIN_ERR_CLASSES as readonly string[]).includes(r.errClass)) rec.errClass = r.errClass as DrainErrClass;
@@ -345,6 +348,7 @@ export class LogDrainPushService {
     let first = true;
     let sent = 0;
     let dropped = 0;
+    let truncated = 0;
     let errClass: DrainErrClass | undefined;
     let lastOk = 0;
     let any = false;
@@ -356,13 +360,14 @@ export class LogDrainPushService {
         any = true;
         sent += rec.sent;
         dropped += rec.dropped;
+        truncated += rec.truncated;
         if (rec.errClass && !errClass) errClass = rec.errClass;
         if (rec.lastOkAt && rec.lastOkAt > lastOk) lastOk = rec.lastOkAt;
       }
     }
     if (first) worst = "offline";
     const status: DrainStatusView | null = any
-      ? { sent, dropped, ...(errClass ? { errClass } : {}), ...(lastOk ? { lastOkAt: new Date(lastOk).toISOString() } : {}) }
+      ? { sent, dropped, ...(truncated ? { truncated } : {}), ...(errClass ? { errClass } : {}), ...(lastOk ? { lastOkAt: new Date(lastOk).toISOString() } : {}) }
       : null;
     return { delivery: worst, status };
   }

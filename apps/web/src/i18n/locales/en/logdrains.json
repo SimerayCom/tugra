@@ -61,6 +61,7 @@
   "status_line": "{sent} lines sent, {dropped} dropped",
   "lastDelivery": "last delivery {time}",
   "droppedLines": "{n} dropped",
+  "truncatedLines": "{n} cut to the size limit",
   "err_dns": "DNS lookup failed",
   "err_dial": "could not connect",
   "err_tls": "TLS verification failed",

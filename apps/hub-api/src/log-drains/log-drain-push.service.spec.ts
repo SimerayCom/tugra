@@ -298,6 +298,13 @@ describe("LogDrainPushService: drain_status (S5, in-memory)", () => {
     expect(svc.deliveryFor({ id: "d1", enabled: false }, ["s1"])).toEqual({ delivery: "disabled", status: null });
   });
 
+  it("carries the truncated counter through (clamped, omitted when zero) and accepts the auth error class", async () => {
+    const { svc } = await pushed();
+    svc.ingestStatus("s1", [{ id: "d1", state: "ok", sent: 3, dropped: 0, truncated: 2 }, { id: "d2", state: "error", errClass: "auth", sent: 0, dropped: 1, truncated: -4 }]);
+    expect(svc.deliveryFor({ id: "d1", enabled: true }, ["s1"]).status).toEqual({ sent: 3, dropped: 0, truncated: 2 });
+    expect(svc.deliveryFor({ id: "d2", enabled: true }, ["s1"]).status).toEqual({ sent: 0, dropped: 1, errClass: "auth" });
+  });
+
   it("ignores ids this hub never pushed to that server, and anything for a server it never pushed to", async () => {
     const { svc } = await pushed();
     svc.ingestStatus("s1", [{ id: "other-servers-drain", state: "ok", sent: 1, dropped: 0 }]);

@@ -501,7 +501,7 @@ export interface LogDrain {
   options: Record<string, unknown> | null;
   allowPrivate: boolean;
   delivery: DrainDelivery;
-  status: { sent: number; dropped: number; errClass?: DrainErrClass; lastOkAt?: string } | null;
+  status: { sent: number; dropped: number; truncated?: number; errClass?: DrainErrClass; lastOkAt?: string } | null;
 }
 
 /** One app drain shipping logs off a server, as the SERVER operator sees it (no endpoint/options/token). */

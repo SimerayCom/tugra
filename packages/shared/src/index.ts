@@ -641,6 +641,8 @@ export interface DrainStatusEntry {
   errClass?: DrainErrClass;
   sent: number;
   dropped: number;
+  /** Lines delivered but cut to the transport's size cap (syslog); omitted when zero. */
+  truncated?: number;
   lastOkAt?: number;
 }
 /** Agent -> Hub: per-sink delivery status (in-memory on the hub; no error text, only the enum class). */
