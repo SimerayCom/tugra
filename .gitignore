@@ -15,6 +15,7 @@
 # hub-migrate.sh bundles — contain ALL hub secrets, never commit
 tugra-hub-*.tar
 tugra-hub-*.tar.enc
+destination-keys.json
 secrets/
 # pre-update restore points (scripts/lib/snapshot.sh): DB dumps + .env copies — secret-bearing, never commit
 /backups/
