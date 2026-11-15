@@ -252,7 +252,10 @@ func TestFs2CapabilitySetEnforcedIndividually(t *testing.T) {
 				return protocol.Fs2Result{OK: true}
 			}
 			h.g.handle(context.Background(), h.msg(c.scope, c.op, nil))
-			h.expectSilence()
+			// a typed refusal (not silence): the hub must not hold its slot and staged upload until the timeout
+			if r := h.expectReply(); r.OK || r.Code != "denied" || !strings.Contains(r.Error, missing) {
+				t.Errorf("%s %s without %s: %+v", c.scope, c.op, missing, r)
+			}
 			if h.launchN.Load() != 0 {
 				t.Errorf("%s %s without %s still ran", c.scope, c.op, missing)
 			}
@@ -273,7 +276,9 @@ func TestFs2FilesOnlyCannotMutate(t *testing.T) {
 	h := newFs2Harness(t, []string{"files"}, "img")
 	for _, op := range []string{"write", "mkdir", "rename", "chmod", "delete"} {
 		h.g.handle(context.Background(), h.msg("volume", op, nil))
-		h.expectSilence()
+		if r := h.expectReply(); r.OK || r.Code != "denied" {
+			t.Fatalf("%s: %+v", op, r)
+		}
 	}
 	if h.launchN.Load() != 0 {
 		t.Fatal("a mutating op ran with only files granted")
@@ -284,9 +289,13 @@ func TestFs2SignedCapabilityMustMatchOp(t *testing.T) {
 	h := newFs2Harness(t, allFiles, "img")
 	// a validly signed mutating request that CLAIMS the weaker capability
 	h.g.handle(context.Background(), h.msg("volume", "delete", func(m *protocol.ServerMsg) { m.Capability = "files" }))
-	h.expectSilence()
+	if r := h.expectReply(); r.OK || r.Code != "denied" {
+		t.Fatalf("%+v", r)
+	}
 	h.g.handle(context.Background(), h.msg("volume", "stat", func(m *protocol.ServerMsg) { m.Capability = "files_write" }))
-	h.expectSilence()
+	if r := h.expectReply(); r.OK || r.Code != "denied" {
+		t.Fatalf("%+v", r)
+	}
 	if h.launchN.Load() != 0 {
 		t.Fatal("capability relabel reached the helper")
 	}

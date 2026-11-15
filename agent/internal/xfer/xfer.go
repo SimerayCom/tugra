@@ -53,6 +53,9 @@ var client = &http.Client{
 	Transport: func() http.RoundTripper {
 		t := http.DefaultTransport.(*http.Transport).Clone()
 		t.ResponseHeaderTimeout = 30 * time.Second
+		// No transparent gzip: Go would add Accept-Encoding and decode, which hides Content-Length (-1) and would fail
+		// the exact-length check below behind any proxy or CDN that compresses octet-streams.
+		t.DisableCompression = true
 		return t
 	}(),
 }

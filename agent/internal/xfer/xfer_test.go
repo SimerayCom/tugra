@@ -238,3 +238,22 @@ func TestPutFromHubRejectUnblocksProducer(t *testing.T) {
 		t.Fatal("producer stayed blocked after the hub rejected the transfer")
 	}
 }
+
+func TestNoTransparentCompression(t *testing.T) {
+	// Behind a proxy that gzips octet-streams, Go's default transport would add Accept-Encoding, decode the answer and
+	// report Content-Length -1, failing the exact-length check. The transfer client must not negotiate compression.
+	var acceptEnc string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		acceptEnc = r.Header.Get("Accept-Encoding")
+		_, _ = w.Write([]byte("hello"))
+	}))
+	defer srv.Close()
+	rc, err := Get(context.Background(), srv.URL, goodPath, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+	if acceptEnc != "" {
+		t.Fatalf("Accept-Encoding = %q, want none", acceptEnc)
+	}
+}

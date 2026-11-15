@@ -310,9 +310,12 @@ func norm(name string) (string, bool) {
 }
 
 // List returns the DIRECT children of dir by parsing tar headers only (never extracting). It is honest-partial for
-// huge trees: it stops at 50,000 headers, 5 s or 128 MiB of stream (whichever comes first) and reports
-// truncated=true. The archive's naming differs for "/" and for ordinary directories, so the parser takes the first
-// header as the directory itself and keeps entries exactly one component below it.
+// huge trees: `docker cp` streams the whole subtree depth-first, so it stops at 50,000 headers, 5 s or 128 MiB of
+// stream (whichever comes first) and reports truncated=true — later siblings may be missing, and the user reaches
+// them by typing the path. The archive's naming differs for "/" and for ordinary directories, so the parser takes the
+// first header as the directory itself and keeps entries exactly one component below it. A directory that is itself a
+// symlink (/app -> /usr/src/app, usr-merged /bin) comes back from docker cp as a bare symlink header; it is retried
+// once with a trailing "/.", which makes docker resolve the link and archive the directory's contents.
 func List(ctx context.Context, name, dir string) ([]protocol.FsEntry, bool, error) {
 	if err := ValidateName(name); err != nil {
 		return nil, false, bad("%s", err.Error())
@@ -320,13 +323,26 @@ func List(ctx context.Context, name, dir string) ([]protocol.FsEntry, bool, erro
 	if err := ValidatePath(dir, false); err != nil {
 		return nil, false, bad("%s", err.Error())
 	}
+	es, trunc, symlink, err := listOnce(ctx, name, dir)
+	if err == nil && symlink {
+		es, trunc, symlink, err = listOnce(ctx, name, strings.TrimSuffix(dir, "/")+"/.")
+		if err == nil && symlink {
+			return nil, false, typed(fsd.CodeNotDir, "not a directory")
+		}
+	}
+	return es, trunc, err
+}
+
+// listOnce runs one `docker cp src -` listing. symlink=true means the first header was a symlink (the caller retries
+// through "/.").
+func listOnce(ctx context.Context, name, src string) (entries []protocol.FsEntry, truncated, symlink bool, err error) {
 	wctx, wcancel := context.WithTimeout(ctx, listMaxWall)
 	defer wcancel()
 	cctx, cancel := context.WithCancel(wctx)
-	pr, err := start(cctx, nil, "cp", name+":"+dir, "-")
-	if err != nil {
+	pr, serr := start(cctx, nil, "cp", name+":"+src, "-")
+	if serr != nil {
 		cancel()
-		return nil, false, typed(fsd.CodeFailed, "could not run docker")
+		return nil, false, false, typed(fsd.CodeFailed, "could not run docker")
 	}
 	defer func() {
 		pr.Kill()
@@ -335,37 +351,39 @@ func List(ctx context.Context, name, dir string) ([]protocol.FsEntry, bool, erro
 	}()
 	tr := tar.NewReader(io.LimitReader(pr.Stdout, listMaxBytes))
 
-	first, err := tr.Next()
-	if err != nil {
+	first, nerr := tr.Next()
+	if nerr != nil {
 		pr.Kill()
 		if werr := finish(ctx, pr, false); werr != nil {
-			return nil, false, werr
+			return nil, false, false, werr
 		}
-		if errors.Is(err, io.EOF) {
-			return nil, false, typed(fsd.CodeNotFound, "no such file or directory")
+		if errors.Is(nerr, io.EOF) {
+			return nil, false, false, typed(fsd.CodeNotFound, "no such file or directory")
 		}
-		return nil, false, typed(fsd.CodeFailed, "unreadable archive from docker")
+		return nil, false, false, typed(fsd.CodeFailed, "unreadable archive from docker")
+	}
+	if first.Typeflag == tar.TypeSymlink {
+		return nil, false, true, nil
 	}
 	if first.Typeflag != tar.TypeDir {
-		return nil, false, typed(fsd.CodeNotDir, "not a directory")
+		return nil, false, false, typed(fsd.CodeNotDir, "not a directory")
 	}
 	rootNorm, ok := norm(first.Name)
 	if !ok {
-		return nil, false, typed(fsd.CodeFailed, "unexpected archive layout")
+		return nil, false, false, typed(fsd.CodeFailed, "unexpected archive layout")
 	}
 
 	out := make([]protocol.FsEntry, 0, 64)
 	seen := map[string]bool{}
 	scanned := 1
-	truncated := false
 	for {
 		if scanned >= listMaxHeaders {
 			truncated = true
 			break
 		}
-		h, err := tr.Next()
-		if err != nil {
-			if errors.Is(err, io.EOF) {
+		h, herr := tr.Next()
+		if herr != nil {
+			if errors.Is(herr, io.EOF) {
 				break
 			}
 			// Budget exhausted mid-stream (byte limit / wall clock / killed): what we have is a partial listing.
@@ -403,7 +421,7 @@ func List(ctx context.Context, name, dir string) ([]protocol.FsEntry, bool, erro
 	if wctx.Err() != nil && ctx.Err() == nil {
 		truncated = true // our own 5 s budget, not the caller's deadline
 	}
-	return out, truncated, nil
+	return out, truncated, false, nil
 }
 
 // ── ReadTo ───────────────────────────────────────────────────────────────────────────────────────────────────

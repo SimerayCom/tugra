@@ -327,6 +327,51 @@ func TestListToleratesRootLayouts(t *testing.T) {
 	}
 }
 
+func TestListResolvesASymlinkedDirectoryThroughTrailingDot(t *testing.T) {
+	// /app -> /usr/src/app: docker cp answers a bare symlink header; the listing is retried through "/." which archives
+	// the resolved directory's contents.
+	contents := mkTar(t, ent{name: "./", typ: tar.TypeDir}, ent{name: "./index.js", typ: tar.TypeReg, body: "x"}, ent{name: "./lib/", typ: tar.TypeDir})
+	f := &fakeDocker{handler: func(c call) reply {
+		if strings.HasSuffix(c.args[1], "/.") {
+			return reply{stdout: contents}
+		}
+		return reply{stdout: mkTar(t, ent{name: "app", typ: tar.TypeSymlink, link: "/usr/src/app"})}
+	}}
+	f.install(t)
+	es, _, err := List(bg, "tugra_a", "/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, e := range es {
+		got[e.Name] = e.Type
+	}
+	if got["index.js"] != "file" || got["lib"] != "dir" || len(got) != 2 {
+		t.Fatalf("%v", got)
+	}
+	if len(f.calls) != 2 || strings.Join(f.calls[1].args, " ") != "cp tugra_a:/app/. -" {
+		t.Fatalf("calls %v", f.calls)
+	}
+	// a symlink that STILL does not resolve to a directory is not_dir (no loop)
+	g := &fakeDocker{handler: func(c call) reply {
+		return reply{stdout: mkTar(t, ent{name: "app", typ: tar.TypeSymlink, link: "/nowhere"})}
+	}}
+	g.install(t)
+	if _, _, err := List(bg, "tugra_a", "/app"); code(err) != "not_dir" {
+		t.Fatalf("%v", err)
+	}
+	if len(g.calls) != 2 {
+		t.Fatalf("must retry exactly once, got %d calls", len(g.calls))
+	}
+	// the root's retry spelling is "/."
+	h := &fakeDocker{handler: func(c call) reply { return reply{stdout: mkTar(t, ent{name: "x", typ: tar.TypeSymlink, link: "y"})} }}
+	h.install(t)
+	_, _, _ = List(bg, "tugra_a", "/")
+	if len(h.calls) != 2 || h.calls[1].args[1] != "tugra_a:/." {
+		t.Fatalf("root retry: %v", h.calls)
+	}
+}
+
 func TestListNotADirectoryAndErrors(t *testing.T) {
 	f := &fakeDocker{handler: func(call) reply { return reply{stdout: mkTar(t, ent{name: "hosts", typ: tar.TypeReg, body: "x"})} }}
 	f.install(t)
@@ -743,6 +788,21 @@ func TestWriteMapsDaemonErrors(t *testing.T) {
 		if _, err := Write(bg, "tugra_a", "/app/f", WriteOpts{Size: 1}, strings.NewReader("x")); code(err) != want {
 			t.Errorf("%q -> %v", stderr, err)
 		}
+	}
+}
+
+func TestWriteRefusesWhenTheAgentCannotStageTheBody(t *testing.T) {
+	withStage(t)
+	w := &ctrWorld{t: t, entries: map[string]ent{"/app": {typ: tar.TypeDir}}}
+	f := &fakeDocker{handler: w.handler}
+	f.install(t)
+	// a body bigger than the free space (+ headroom) is refused as no_space before a byte is read or the container touched
+	_, err := Write(bg, "tugra_a", "/app/big", WriteOpts{Size: 1 << 60}, strings.NewReader("x"))
+	if code(err) != "no_space" {
+		t.Fatalf("%v", err)
+	}
+	if len(w.writes) != 0 {
+		t.Fatal("container touched")
 	}
 }
 

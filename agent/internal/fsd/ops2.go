@@ -814,11 +814,11 @@ func runCLI2(root string, args []string, stdin io.Reader, stdout, stderr io.Writ
 		if err := Rename(root, a.path, a.path2); err != nil {
 			return fail(err)
 		}
-		st, err := Stat(root, a.path2)
-		if err != nil {
-			return fail(err)
+		// The change is applied: a failing follow-up stat (the app removed it already) must not turn it into a failure.
+		if st, err := Stat(root, a.path2); err == nil {
+			return emit(cli2Output{Stat: &st})
 		}
-		return emit(cli2Output{Stat: &st})
+		return emit(cli2Output{})
 	case "chmod":
 		if !hasMode {
 			return fail(errf(CodeBadRequest, "mode is required"))
@@ -826,11 +826,10 @@ func runCLI2(root string, args []string, stdin io.Reader, stdout, stderr io.Writ
 		if err := Chmod(root, a.path, mode); err != nil {
 			return fail(err)
 		}
-		st, err := Stat(root, a.path)
-		if err != nil {
-			return fail(err)
+		if st, err := Stat(root, a.path); err == nil { // best effort, as for rename
+			return emit(cli2Output{Stat: &st})
 		}
-		return emit(cli2Output{Stat: &st})
+		return emit(cli2Output{})
 	case "delete":
 		if err := Remove(root, a.path, strings.Contains(a.flags, "r")); err != nil {
 			return fail(err)

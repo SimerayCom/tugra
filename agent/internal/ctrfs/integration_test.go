@@ -236,6 +236,25 @@ func TestIntegrationRootAndDirListNaming(t *testing.T) {
 	}
 }
 
+func TestIntegrationSymlinkedDirectoryListing(t *testing.T) {
+	img := itImage(t)
+	name := itContainer(t, img)
+	ex(t, name, "mkdir -p /srv/real && echo x > /srv/real/f && ln -s /srv/real /srv/lnk")
+	c := ctx(t)
+	// docker cp does not follow a final-component symlink: the listing must resolve it (retry through "/.")
+	es, _, err := List(c, name, "/srv/lnk")
+	if err != nil {
+		t.Fatalf("list of a symlinked directory: %v", err)
+	}
+	if len(es) != 1 || es[0].Name != "f" {
+		t.Fatalf("symlinked dir listing = %v", es)
+	}
+	// the usr-merged /bin of a Debian image is the same shape
+	if _, _, err := List(c, name, "/bin"); err != nil {
+		t.Fatalf("list /bin: %v", err)
+	}
+}
+
 func TestIntegrationStoppedContainer(t *testing.T) {
 	img := itImage(t)
 	name := itContainer(t, img)

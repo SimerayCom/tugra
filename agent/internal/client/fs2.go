@@ -223,14 +223,18 @@ func (g *fs2Gate) handle(ctx context.Context, m protocol.ServerMsg) {
 		g.fail(m.ReqID, fsd.CodeBadRequest, "unsupported operation")
 		return
 	}
+	// The request is hub-signed and fresh at this point, so answering a refusal leaks nothing: reply `denied` instead
+	// of dropping it, otherwise the hub would hold its slot, staged upload and transfer until the whole timeout.
 	for _, c := range req {
 		if !g.cs.allows(c) {
 			fmt.Fprintf(os.Stderr, "rejected fs2_req: capability not allowed: %s (%s %s)\n", c, m.Scope, m.Op)
+			g.fail(m.ReqID, fsd.CodeDenied, "capability \""+c+"\" is not allowed on this agent")
 			return
 		}
 	}
 	if m.Capability != req[len(req)-1] {
 		fmt.Fprintln(os.Stderr, "rejected fs2_req: signed capability does not match the operation")
+		g.fail(m.ReqID, fsd.CodeDenied, "the signed capability does not match the operation")
 		return
 	}
 	if msg := validateFs2Fields(m); msg != "" {

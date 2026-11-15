@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/SimerayCom/tugra/agent/internal/fsd"
@@ -45,6 +46,9 @@ var StageDir = func() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".tugra", "fsx")
 }()
+
+// stageHeadroom is the free space that must remain on the agent after staging an upload.
+const stageHeadroom = 64 << 20
 
 var stageRe = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
@@ -80,6 +84,9 @@ func stage(src io.Reader, size int64, wantSha string) (*os.File, string, error) 
 	if err := os.MkdirAll(StageDir, 0o700); err != nil {
 		return nil, "", typed(fsd.CodeFailed, "cannot stage the upload")
 	}
+	if free, ok := freeBytes(StageDir); ok && free < uint64(size)+stageHeadroom {
+		return nil, "", typed(fsd.CodeNoSpace, "not enough free space on the agent to stage the upload")
+	}
 	p := filepath.Join(StageDir, randName())
 	f, err := os.OpenFile(p, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
@@ -95,6 +102,9 @@ func stage(src io.Reader, size int64, wantSha string) (*os.File, string, error) 
 	if cerr != nil {
 		if errors.Is(cerr, io.EOF) {
 			return fail(bad("body shorter than declared size (%d of %d)", n, size))
+		}
+		if errors.Is(cerr, syscall.ENOSPC) {
+			return fail(typed(fsd.CodeNoSpace, "not enough free space on the agent to stage the upload"))
 		}
 		return fail(typed(fsd.CodeFailed, "could not read the upload"))
 	}
