@@ -6,6 +6,7 @@ import { LABEL_KEY_RE, LABEL_VALUE_RE } from "../clusters/dto";
 import { BUILD_KEY_RE, isValidUserEnvKey, isSafeEnvValue } from "../common/env-key";
 import { normalizeFlags, validateEnvFlags } from "../common/env-flags";
 import { isUserNetworkNameAllowed } from "../deploy/network-names";
+import { CUSTOM_LABEL_KEY_RE, CUSTOM_LABEL_LIMITS } from "../deploy/label-namespaces";
 
 // Every ingress for user-supplied env goes through this: it closes the `--env-file` line-injection
 // boundary (a key with '=', whitespace or a newline, or a value with a newline, would define an extra
@@ -248,6 +249,49 @@ export const SetContainerCommandSchema = z
     "container command is too long",
   );
 export type SetContainerCommandInput = z.infer<typeof SetContainerCommandSchema>;
+
+// Per-app custom container labels (classic docker-run + swarm). The body is the FULL desired map (replace
+// semantics); `{labels:{}}` is "Reset to defaults". The zod shape bounds the input; assertSafeCustomLabels in the
+// service is authoritative (reserved namespaces, case-insensitive duplicates, dockerOptions collisions).
+export const SetCustomLabelsSchema = z
+  .object({
+    labels: z
+      .record(
+        z.string().min(1).max(CUSTOM_LABEL_LIMITS.keyMax).regex(CUSTOM_LABEL_KEY_RE),
+        z
+          .string()
+          .max(CUSTOM_LABEL_LIMITS.valueMax)
+          // eslint-disable-next-line no-control-regex
+          .refine((v) => !/[\x00-\x1f\x7f]/.test(v), "control characters not allowed"),
+      )
+      .refine((m) => Object.keys(m).length <= CUSTOM_LABEL_LIMITS.maxCount, `at most ${CUSTOM_LABEL_LIMITS.maxCount} labels`),
+  })
+  .strict();
+export type SetCustomLabelsInput = z.infer<typeof SetCustomLabelsSchema>;
+
+// GET /apps/:id/labels: every label Tugra applies (read-only, derived on each deploy) plus the operator's custom
+// labels. The reserved prefixes / limits / key pattern ride along so the web never hardcodes them.
+export const AppLabelsViewSchema = z.object({
+  engine: z.enum(["docker", "compose", "swarm"]),
+  editable: z.boolean(),
+  editableReason: z.enum(["compose", "preview"]).nullable(),
+  applyMode: z.literal("next_deploy"),
+  tugra: z.array(
+    z.object({
+      scope: z.string(), // "container" | "service:<name>" | "swarm-service"
+      key: z.string(),
+      value: z.string().nullable(), // null when masked (basic-auth hashes / forward-auth address)
+      masked: z.boolean(),
+      purpose: z.enum(["traefik_routing", "proxy_network_pin", "alias", "config_mount_fp"]),
+    }),
+  ),
+  custom: z.array(z.object({ key: z.string(), value: z.string() })),
+  fromDockerOptions: z.array(z.object({ key: z.string(), value: z.string() })),
+  reservedPrefixes: z.array(z.string()),
+  limits: z.object({ maxCount: z.number(), keyMax: z.number(), valueMax: z.number(), totalBytes: z.number(), keyPattern: z.string() }),
+  notes: z.array(z.enum(["rolling_health_labels", "needs_domain", "compose_user_labels", "image_labels_not_shown", "swarm_container_labels", "swarm_runtime_labels"])),
+});
+export type AppLabelsView = z.infer<typeof AppLabelsViewSchema>;
 
 // Edit a COMPOSE app's docker-compose.yml after creation. Validated server-side (valid YAML + no
 // privileged / host-escaping / host-bind compose) before it can reach a deploy.

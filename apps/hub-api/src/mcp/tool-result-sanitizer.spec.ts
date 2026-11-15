@@ -16,6 +16,12 @@ describe("sanitizeToolResult", () => {
     expect(out.exportUrl).toBeNull();
   });
 
+  it("redacts operator custom container labels (values can be tokens)", () => {
+    const out = sanitizeToolResult({ name: "web", customLabels: { team: "core", token: "tok_abc" } }) as Record<string, unknown>;
+    expect(out.name).toBe("web");
+    expect(out.customLabels).toBeNull();
+  });
+
   it("does NOT over-redact generic fields like `value` (metric/monitor values survive)", () => {
     const out = sanitizeToolResult({ metric: "cpu", value: 42, status: "ok" }) as Record<string, unknown>;
     expect(out.value).toBe(42);

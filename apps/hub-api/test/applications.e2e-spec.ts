@@ -515,6 +515,40 @@ describe("Applications / deploy (e2e)", () => {
     await put({ pidsLimit: null }).expect(200); // clearing is always allowed
   });
 
+  it("custom container labels: PUT then GET round-trips, reaches the docker run line before Tugra's labels, refuses reserved keys, and reset clears them", async () => {
+    const created = await request(app.getHttpServer())
+      .post("/apps")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name: "labelsapp", serverId, image: "nginx:alpine", hostPort: 8149 })
+      .expect(201);
+    const lid = created.body.id;
+    const put = (labels: Record<string, string>) => request(app.getHttpServer()).put(`/apps/${lid}/custom-labels`).set("Authorization", `Bearer ${token}`).send({ labels });
+    const getLabels = async () => (await request(app.getHttpServer()).get(`/apps/${lid}/labels`).set("Authorization", `Bearer ${token}`).expect(200)).body;
+    const getApp = async () => (await request(app.getHttpServer()).get(`/apps/${lid}`).set("Authorization", `Bearer ${token}`).expect(200)).body;
+
+    await put({ "traefik.enable": "true" }).expect(400);
+    await put({ "Tugra.role": "gpu-probe" }).expect(400);
+    await put({ Foo: "1", foo: "2" }).expect(400);
+    await put({ team: "core", env: "prod" }).expect(200);
+    expect((await getApp()).customLabels).toEqual({ env: "prod", team: "core" });
+    const view = await getLabels();
+    expect(view).toMatchObject({ engine: "docker", editable: true, applyMode: "next_deploy" });
+    expect(view.custom).toEqual([{ key: "env", value: "prod" }, { key: "team", value: "core" }]);
+    expect(view.reservedPrefixes).toContain("traefik.");
+
+    commands.length = 0;
+    await request(app.getHttpServer()).post(`/apps/${lid}/deploy`).set("Authorization", `Bearer ${token}`).expect(200);
+    await waitForCommand(commands, "--label 'team=core'");
+    expect(commands.join("\n")).toContain("--label 'env=prod' --label 'team=core'");
+
+    await put({}).expect(200); // Reset to defaults
+    expect((await getApp()).customLabels).toBeNull();
+    expect((await getLabels()).custom).toEqual([]);
+
+    await prisma.application.update({ where: { id: lid }, data: { source: "COMPOSE" } });
+    await put({ a: "1" }).expect(400); // compose declares labels in its own YAML
+  });
+
   it("edits the container port after create and re-emits it on the next deploy; rejects COMPOSE", async () => {
     const appRes = await request(app.getHttpServer())
       .post("/apps")

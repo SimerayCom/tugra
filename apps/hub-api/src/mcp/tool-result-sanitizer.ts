@@ -46,6 +46,8 @@ const SECRET_FIELD_NAMES = new Set([
   "preDeployCommand",
   "postDeployCommand",
   "webhookToken",
+  // operator custom container labels: values can be tokens (e.g. a monitoring/auth key), writer-only in the app view.
+  "customLabels",
 ]);
 
 const MAX_STRING_LEN = 2000;

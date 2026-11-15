@@ -94,7 +94,9 @@ import {
 } from "../deploy/deploy-script";
 import { parseCustomCert, certCoversHost } from "./custom-cert";
 import { generateEd25519DeployKey } from "../git-sources/ssh-keygen";
-import { assertSafeDockerOptions, validateHostMounts } from "../deploy/docker-options-safety";
+import { assertSafeDockerOptions, dockerOptionLabels, validateHostMounts } from "../deploy/docker-options-safety";
+import { assertSafeCustomLabels } from "../deploy/custom-labels";
+import { buildAppliedLabels } from "./applied-labels";
 import { AppDatabaseLinksService } from "./app-database-links.service";
 import { AppSecretRefsService } from "./app-secret-refs.service";
 import {
@@ -143,7 +145,7 @@ import { classifyReadiness, parseStoredInventory } from "../server-ops/gpu-inven
 import { cpusetMax } from "./dto";
 import { computeImageUpdateView, isImageCheckSubject, ImageUpdateViewSchema, loadLiveImageMany, type LiveImage } from "./image-update";
 import { ImageUpdateService } from "./image-update.service";
-import type { CreateAppInput, SetLimitsInput, SetSourceInput, SetBuildInput, SetContainerCommandInput, AppRuntimeState } from "./dto";
+import type { CreateAppInput, SetLimitsInput, SetSourceInput, SetBuildInput, SetContainerCommandInput, SetCustomLabelsInput, AppLabelsView, AppRuntimeState } from "./dto";
 
 const DEPLOY_TIMEOUT_MS = 300_000; // builds can be slow
 // stop/start/restart (non-swarm) run no build but a compose restart of several services with a stop grace
@@ -235,6 +237,8 @@ export const AppViewSchema = z.object({
   // Container command override (exec-form argv) — write-gated in view() (args can embed credentials).
   containerEntrypoint: z.array(z.string()).nullable(),
   containerCommand: z.array(z.string()).nullable(),
+  // Operator custom container labels {key: value} — write-gated in view() (values can be tokens); null = none.
+  customLabels: z.record(z.string(), z.string()).nullable(),
   restartPolicy: z.string().nullable(), // Docker restart policy; null = the "unless-stopped" default
   dbNetwork: z.boolean(), // attached to the node-local managed-DB network (tugra-net) — set by DB links
   volumes: z.array(z.object({ name: z.string(), path: z.string() })),
@@ -830,6 +834,10 @@ export class ApplicationsService {
     if (src.allowPrivilegedDockerOptions && src.dockerOptions) {
       warnings.push("privileged_options_dropped");
     }
+    // Custom container labels are not privilege-bearing, so (unlike dockerOptions) they carry over to a classic or
+    // swarm clone. A COMPOSE app cannot hold them (labels live in its YAML), so a stray value is dropped with a flag.
+    const srcCustomLabels = this.storedCustomLabels(src.customLabels);
+    if (srcCustomLabels && src.source === "COMPOSE") warnings.push("custom_labels_dropped");
     // CPU pinning is host-specific: a cpuset naming a core the target doesn't have would fail the first deploy.
     // Reset it only when the target's core count is known and the set doesn't fit (unknown → Docker decides).
     const cpusetReset = crossServer && !!src.cpusetCpus && server.cpuCores != null && cpusetMax(src.cpusetCpus) >= server.cpuCores;
@@ -923,6 +931,7 @@ export class ApplicationsService {
           postDeployCommand: src.postDeployCommand,
           containerEntrypoint: jsonOrNull(src.containerEntrypoint),
           containerCommand: jsonOrNull(src.containerCommand),
+          customLabels: srcCustomLabels && src.source !== "COMPOSE" ? (srcCustomLabels as Prisma.InputJsonValue) : Prisma.DbNull,
           restartPolicy: src.restartPolicy,
           restartMaxRetries: src.restartMaxRetries,
           stopGracePeriodSec: src.stopGracePeriodSec,
@@ -1915,6 +1924,7 @@ export class ApplicationsService {
       // deploy. If the owner revoked the override (or a path stored privileged options without the flag), the
       // deploy fails here instead of silently running --privileged/host binds again. No-op for COMPOSE/null.
       assertSafeDockerOptions(app.dockerOptions, { allowPrivileged: app.allowPrivilegedDockerOptions });
+      this.assertStoredCustomLabels(app);
       const isCompose = app.source === "COMPOSE";
       // COMPOSE-from-git: the compose file is cloned + rendered + validated on the agent rather than read from
       // a stored composeFile. It routes only through explicit per-service domains (there is no stored YAML to
@@ -1949,6 +1959,9 @@ export class ApplicationsService {
       // Capture the pushed ref before it is cleared (build-server path nulls registryPush) so
       // the deployment records it → a later rollback can pull it even after local prune.
       const registryRef = spec.registryPush?.tag ?? null;
+      // Swarm: did the previous deploy carry custom labels? Read BEFORE this deployment's snapshot is written (and
+      // excluding it) so a label removal/reset strips the stale container labels exactly once.
+      if (app.clusterId && !isCompose) spec.customLabelsScrub = await this.prevSnapshotHadCustomLabels(app.id, dep.id);
       // Record a redacted config snapshot so the Deployments view can diff it.
       await this.prisma.deployment.update({
         where: { id: dep.id },
@@ -2425,6 +2438,7 @@ export class ApplicationsService {
     // re-validate them against the app's CURRENT privileged flag (covers the classic AND swarm paths, since
     // the clusterId branch below is reached only after this). A revoked override can never run here.
     assertSafeDockerOptions(app.dockerOptions, { allowPrivileged: app.allowPrivilegedDockerOptions });
+    this.assertStoredCustomLabels(app);
     const target = await this.prisma.deployment.findFirst({
       where: { id: targetDeploymentId, appId: id, status: "SUCCESS" },
     });
@@ -2455,6 +2469,7 @@ export class ApplicationsService {
     }
     await this.ensureNoActiveDeploy(appId);
     assertSafeDockerOptions(app.dockerOptions, { allowPrivileged: app.allowPrivilegedDockerOptions });
+    this.assertStoredCustomLabels(app);
     const target = await this.prisma.deployment.findFirst({ where: { id: targetDeploymentId, appId, status: "SUCCESS" } });
     const plan = await this.resolveRollbackSource(app, target);
     let dep: Deployment;
@@ -2658,6 +2673,7 @@ export class ApplicationsService {
     this.deployLogs.begin(app.id);
     try {
       const spec = this.toSpec(app);
+      spec.customLabelsScrub = await this.prevSnapshotHadCustomLabels(app.id, dep.id);
       this.logAutoMultiline(app.id, (await this.attachResolvedEnv(app, spec, { withBuild: false })).autoMultiline);
       const sd = await this.swarmDeploy.rollbackTo(app, spec, ref, auth, {
         onChunk: (chunk) => this.deployLogs.push(app.id, chunk),
@@ -3435,8 +3451,85 @@ export class ApplicationsService {
     if (this.argv(app.containerEntrypoint) && tokenizeDockerOptions(dockerOptions).some((t) => /^--entrypoint(=|$)/.test(t))) {
       throw new BadRequestException("this app has a container entrypoint override — clear it before adding --entrypoint to Docker options");
     }
+    // A raw `--label` that collides with a structured custom label would make the result flag-order dependent.
+    // Refuse (never rewrite the string). Not applicable on swarm, where dockerOptions is not applied. The reverse
+    // direction is checked in setCustomLabels.
+    const stored = !app.clusterId ? this.storedCustomLabels(app.customLabels) : null;
+    if (stored) {
+      const have = new Set(Object.keys(stored).map((k) => k.toLowerCase()));
+      const hit = dockerOptionLabels(dockerOptions).find((l) => have.has(l.key.toLowerCase()));
+      if (hit) throw new BadRequestException(`label "${hit.key}" is a custom label; remove it there first`);
+    }
     await this.prisma.application.update({ where: { id }, data: { dockerOptions } });
     await this.audit.log({ actor: userId, action: "app.docker_options.update", target: id });
+  }
+
+  /** Replace the app's custom container labels (classic docker-run + swarm). `{}` is "Reset to defaults": Tugra's
+   *  own labels are derived on every deploy and never stored, so a reset just clears the column. Write-gated;
+   *  refused for COMPOSE (labels live in the compose YAML) and previews; the audit record carries the key NAMES
+   *  and count, never the values (values can be tokens). Applies on the next deploy. */
+  async setCustomLabels(userId: string, id: string, input: SetCustomLabelsInput): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    if (app.source === "COMPOSE") throw new BadRequestException("compose apps declare labels in the compose file");
+    if (app.isPreview) throw new BadRequestException("preview apps do not support custom labels");
+    await this.ensureNoActiveDeploy(id);
+    const clean = assertSafeCustomLabels(input.labels, { dockerOptions: app.clusterId ? null : app.dockerOptions });
+    const keys = Object.keys(clean).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    const sorted = Object.fromEntries(keys.map((k) => [k, clean[k]]));
+    await this.prisma.application.update({
+      where: { id },
+      data: { customLabels: keys.length ? (sorted as Prisma.InputJsonValue) : Prisma.DbNull },
+    });
+    await this.audit.log({ actor: userId, action: "app.custom_labels.update", target: id, meta: { count: keys.length, keys } });
+  }
+
+  /** Every label Tugra applies to this app (read-only, derived from the same builders the deploy scripts use) plus
+   *  the operator's custom labels. Writer-only. Never calls the secret-decrypting toSpec. */
+  async getAppLabels(userId: string, id: string): Promise<AppLabelsView> {
+    const app = await this.requireWrite(userId, id);
+    const compose = app.source === "COMPOSE";
+    const web = compose ? this.composeWeb(app) : null;
+    // le-dns wildcard / custom resolver come from the server config (hydrateCertSpec); reuse it on a throwaway shell.
+    const certCfg: { wildcardDomain?: string | null; customCertResolver?: string | null } = {};
+    await this.hydrateCertSpec(app, certCfg as unknown as AppSpec);
+    return buildAppliedLabels({
+      source: app.source,
+      clusterId: app.clusterId,
+      isPreview: app.isPreview,
+      label: {
+        id: app.id,
+        source: app.source,
+        domain: app.domain,
+        domainRedirect: (app.domainRedirect as "www" | "root" | null) ?? null,
+        pathPrefix: app.pathPrefix ?? null,
+        stripPrefix: app.stripPrefix ?? true,
+        certType: app.certType,
+        wildcardDomain: certCfg.wildcardDomain ?? null,
+        customCertResolver: certCfg.customCertResolver ?? null,
+        // Presence only: the PEM/key never enter the view. A clustered app is never given a custom cert (as in toSpec).
+        certPem: !app.clusterId && app.certPem ? "present" : null,
+        certKey: !app.clusterId && app.certKeyEnc ? "present" : null,
+        containerPort: web?.port ?? app.containerPort,
+        securityHeaders: app.securityHeaders,
+        gzip: app.gzip,
+        forwardAuth: app.forwardAuth,
+        ipAllowlist: app.ipAllowlist ?? [],
+        basicAuthUsers: parseBasicAuthUsers(app.basicAuthUsers),
+        rateLimit: parseRateLimit(app.rateLimit),
+        redirects: parseRedirects(app.redirects),
+        extraDomains: app.extraDomains ?? [],
+        rollingHealthPath: null,
+        dbNetwork: !!app.dbNetwork && !app.clusterId,
+        networks: compose || app.clusterId ? [] : (app.networks ?? []),
+        containerAlias: !compose && !app.clusterId ? app.containerAlias : null,
+        dockerOptions: app.dockerOptions,
+      },
+      composeWebService: web?.service ?? null,
+      serviceDomains: compose ? await this.loadServiceDomains(app.id) : [],
+      configMounts: compose ? this.appConfigMounts(app) : [],
+      customLabels: compose ? null : this.storedCustomLabels(app.customLabels),
+      rollingEligible: !compose && !app.clusterId && this.rollingEligible(app),
+    });
   }
 
   /**
@@ -4751,6 +4844,41 @@ export class ApplicationsService {
   /** A container-command override column (Json) coerced to a string[] — null unless it is a clean array of
    *  strings (so a malformed value never reaches `docker run` as a half-argv). `[]` is preserved (it means
    *  "clear the image entrypoint"). */
+  /** The stored custom-labels map when it is a plain `{string: string}` object with entries, else null. Shape-only
+   *  (never throws): validation is assertSafeCustomLabels at set-time, deploy and rollback. */
+  private storedCustomLabels(j: Prisma.JsonValue | null | undefined): Record<string, string> | null {
+    if (!j || typeof j !== "object" || Array.isArray(j)) return null;
+    const entries = Object.entries(j as Record<string, unknown>);
+    if (entries.length === 0 || !entries.every(([, v]) => typeof v === "string")) return null;
+    return Object.fromEntries(entries) as Record<string, string>;
+  }
+
+  /** Fail-closed re-validation of the STORED custom labels at deploy/rollback time (a hand-edited row with a
+   *  reserved key, or one that now collides with a raw `--label` in dockerOptions, must not reach a script).
+   *  dockerOptions are not applied on swarm, so the collision check is skipped for cluster apps. */
+  private assertStoredCustomLabels(app: Application): void {
+    if (app.source === "COMPOSE" || app.customLabels == null) return;
+    assertSafeCustomLabels(app.customLabels, { dockerOptions: app.clusterId ? null : app.dockerOptions });
+  }
+
+  /** Did a recent deploy of this swarm app carry custom labels? Drives the one-shot stateless scrub that strips
+   *  container labels the operator has since removed (`docker service update` never removes on its own). Looks at
+   *  the latest snapshot AND the latest SUCCESS snapshot (excluding the current deployment), so a failed
+   *  label-removal deploy cannot strand the old labels: the next deploy scrubs again. After a clean deploy of the
+   *  new (empty) set neither snapshot has labels and the scrub block disappears. */
+  private async prevSnapshotHadCustomLabels(appId: string, excludeDeploymentId?: string): Promise<boolean> {
+    const base = { appId, configSnapshot: { not: Prisma.DbNull }, ...(excludeDeploymentId ? { id: { not: excludeDeploymentId } } : {}) };
+    const has = (snap: Prisma.JsonValue | null | undefined) => {
+      const cl = snap && typeof snap === "object" && !Array.isArray(snap) ? (snap as Record<string, unknown>).customLabels : null;
+      return !!cl && typeof cl === "object" && Object.keys(cl as object).length > 0;
+    };
+    const [latest, latestOk] = await Promise.all([
+      this.prisma.deployment.findFirst({ where: base, orderBy: { createdAt: "desc" }, select: { configSnapshot: true } }),
+      this.prisma.deployment.findFirst({ where: { ...base, status: "SUCCESS" }, orderBy: { createdAt: "desc" }, select: { configSnapshot: true } }),
+    ]);
+    return has(latest?.configSnapshot) || has(latestOk?.configSnapshot);
+  }
+
   private argv(j: Prisma.JsonValue | null): string[] | null {
     return Array.isArray(j) && j.every((x) => typeof x === "string") ? (j as string[]) : null;
   }
@@ -5082,6 +5210,10 @@ export class ApplicationsService {
       dockerOptions: app.dockerOptions,
       containerEntrypoint: this.argv(app.containerEntrypoint),
       containerCommand: this.argv(app.containerCommand),
+      // Custom container labels: classic docker-run + swarm (not COMPOSE, which declares labels in its own YAML).
+      // Lenient read (shape only): the deploy/rollback gates run assertSafeCustomLabels and the script builders
+      // re-assert, so a hand-edited row fails closed at deploy without breaking unrelated reads (logs, containers).
+      customLabels: app.source === "COMPOSE" ? null : this.storedCustomLabels(app.customLabels),
       restartPolicy: app.restartPolicy,
       restartMaxRetries: classic && app.restartPolicy === "on-failure" ? app.restartMaxRetries : null,
       stopGracePeriodSec: classic ? app.stopGracePeriodSec : null,
@@ -5429,6 +5561,8 @@ export class ApplicationsService {
       // Container argv can embed credentials (e.g. --password=…) → writer-only, like the hooks above.
       containerEntrypoint: canWrite ? this.argv(app.containerEntrypoint) : null,
       containerCommand: canWrite ? this.argv(app.containerCommand) : null,
+      // Custom label values can be tokens → writer-only, like the container argv above. A malformed row reads as none.
+      customLabels: canWrite ? this.storedCustomLabels(app.customLabels) : null,
       restartPolicy: app.restartPolicy, // not secret → shown regardless of write access
       restartMaxRetries: app.restartMaxRetries, // not secret → shown regardless of write access
       stopGracePeriodSec: app.stopGracePeriodSec,

@@ -11406,6 +11406,13 @@
                         },
                         "nullable": true
                       },
+                      "customLabels": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "nullable": true
+                      },
                       "restartPolicy": {
                         "type": "string",
                         "nullable": true
@@ -12175,6 +12182,7 @@
                       "postDeployCommand",
                       "containerEntrypoint",
                       "containerCommand",
+                      "customLabels",
                       "restartPolicy",
                       "dbNetwork",
                       "volumes",
@@ -12794,6 +12802,13 @@
                     "containerCommand": {
                       "type": "array",
                       "items": {
+                        "type": "string"
+                      },
+                      "nullable": true
+                    },
+                    "customLabels": {
+                      "type": "object",
+                      "additionalProperties": {
                         "type": "string"
                       },
                       "nullable": true
@@ -13567,6 +13582,7 @@
                     "postDeployCommand",
                     "containerEntrypoint",
                     "containerCommand",
+                    "customLabels",
                     "restartPolicy",
                     "dbNetwork",
                     "volumes",
@@ -14236,6 +14252,13 @@
                       },
                       "nullable": true
                     },
+                    "customLabels": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "nullable": true
+                    },
                     "restartPolicy": {
                       "type": "string",
                       "nullable": true
@@ -15005,6 +15028,7 @@
                     "postDeployCommand",
                     "containerEntrypoint",
                     "containerCommand",
+                    "customLabels",
                     "restartPolicy",
                     "dbNetwork",
                     "volumes",
@@ -15678,6 +15702,13 @@
                       },
                       "nullable": true
                     },
+                    "customLabels": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "nullable": true
+                    },
                     "restartPolicy": {
                       "type": "string",
                       "nullable": true
@@ -16447,6 +16478,7 @@
                     "postDeployCommand",
                     "containerEntrypoint",
                     "containerCommand",
+                    "customLabels",
                     "restartPolicy",
                     "dbNetwork",
                     "volumes",
@@ -20286,6 +20318,366 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
+    "/api/v1/apps/{id}/custom-labels": {
+      "put": {
+        "operationId": "ApplicationsController_setCustomLabels",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "labels": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string",
+                      "maxLength": 1024
+                    }
+                  }
+                },
+                "required": [
+                  "labels"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
+    "/api/v1/apps/{id}/labels": {
+      "get": {
+        "operationId": "ApplicationsController_getLabels",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "engine": {
+                      "type": "string",
+                      "enum": [
+                        "docker",
+                        "compose",
+                        "swarm"
+                      ]
+                    },
+                    "editable": {
+                      "type": "boolean"
+                    },
+                    "editableReason": {
+                      "type": "string",
+                      "enum": [
+                        "compose",
+                        "preview"
+                      ],
+                      "nullable": true
+                    },
+                    "applyMode": {
+                      "type": "string",
+                      "enum": [
+                        "next_deploy"
+                      ]
+                    },
+                    "tugra": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "scope": {
+                            "type": "string"
+                          },
+                          "key": {
+                            "type": "string"
+                          },
+                          "value": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "masked": {
+                            "type": "boolean"
+                          },
+                          "purpose": {
+                            "type": "string",
+                            "enum": [
+                              "traefik_routing",
+                              "proxy_network_pin",
+                              "alias",
+                              "config_mount_fp"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "scope",
+                          "key",
+                          "value",
+                          "masked",
+                          "purpose"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "custom": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          },
+                          "value": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "value"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "fromDockerOptions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          },
+                          "value": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "value"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "reservedPrefixes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "limits": {
+                      "type": "object",
+                      "properties": {
+                        "maxCount": {
+                          "type": "number"
+                        },
+                        "keyMax": {
+                          "type": "number"
+                        },
+                        "valueMax": {
+                          "type": "number"
+                        },
+                        "totalBytes": {
+                          "type": "number"
+                        },
+                        "keyPattern": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "maxCount",
+                        "keyMax",
+                        "valueMax",
+                        "totalBytes",
+                        "keyPattern"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "notes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "rolling_health_labels",
+                          "needs_domain",
+                          "compose_user_labels",
+                          "image_labels_not_shown",
+                          "swarm_container_labels",
+                          "swarm_runtime_labels"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "engine",
+                    "editable",
+                    "editableReason",
+                    "applyMode",
+                    "tugra",
+                    "custom",
+                    "fromDockerOptions",
+                    "reservedPrefixes",
+                    "limits",
+                    "notes"
+                  ],
+                  "additionalProperties": false
                 }
               }
             }
@@ -25861,6 +26253,13 @@
                           },
                           "nullable": true
                         },
+                        "customLabels": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "nullable": true
+                        },
                         "restartPolicy": {
                           "type": "string",
                           "nullable": true
@@ -26630,6 +27029,7 @@
                         "postDeployCommand",
                         "containerEntrypoint",
                         "containerCommand",
+                        "customLabels",
                         "restartPolicy",
                         "dbNetwork",
                         "volumes",
@@ -27158,6 +27558,13 @@
                     "containerCommand": {
                       "type": "array",
                       "items": {
+                        "type": "string"
+                      },
+                      "nullable": true
+                    },
+                    "customLabels": {
+                      "type": "object",
+                      "additionalProperties": {
                         "type": "string"
                       },
                       "nullable": true
@@ -27931,6 +28338,7 @@
                     "postDeployCommand",
                     "containerEntrypoint",
                     "containerCommand",
+                    "customLabels",
                     "restartPolicy",
                     "dbNetwork",
                     "volumes",
@@ -28529,6 +28937,13 @@
                       "containerCommand": {
                         "type": "array",
                         "items": {
+                          "type": "string"
+                        },
+                        "nullable": true
+                      },
+                      "customLabels": {
+                        "type": "object",
+                        "additionalProperties": {
                           "type": "string"
                         },
                         "nullable": true
@@ -29302,6 +29717,7 @@
                       "postDeployCommand",
                       "containerEntrypoint",
                       "containerCommand",
+                      "customLabels",
                       "restartPolicy",
                       "dbNetwork",
                       "volumes",
@@ -29985,6 +30401,13 @@
                     "containerCommand": {
                       "type": "array",
                       "items": {
+                        "type": "string"
+                      },
+                      "nullable": true
+                    },
+                    "customLabels": {
+                      "type": "object",
+                      "additionalProperties": {
                         "type": "string"
                       },
                       "nullable": true
@@ -30758,6 +31181,7 @@
                     "postDeployCommand",
                     "containerEntrypoint",
                     "containerCommand",
+                    "customLabels",
                     "restartPolicy",
                     "dbNetwork",
                     "volumes",
@@ -32688,6 +33112,13 @@
                       },
                       "nullable": true
                     },
+                    "customLabels": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "nullable": true
+                    },
                     "restartPolicy": {
                       "type": "string",
                       "nullable": true
@@ -33457,6 +33888,7 @@
                     "postDeployCommand",
                     "containerEntrypoint",
                     "containerCommand",
+                    "customLabels",
                     "restartPolicy",
                     "dbNetwork",
                     "volumes",

@@ -7282,3 +7282,213 @@ describe("ApplicationsService — per-variable env flags", () => {
   
   });
 });
+
+describe("ApplicationsService custom container labels (D5)", () => {
+  const row = { ...app, source: "IMAGE", image: "nginx", status: "RUNNING", isPreview: false, clusterId: null as string | null, dockerOptions: null as string | null, customLabels: null as unknown };
+  const mk = (over: Record<string, unknown> = {}, access: Partial<TeamAccessService> = {}) => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue({ ...row, ...over }), update },
+      deployment: { findFirst: jest.fn().mockResolvedValue(null) },
+    } as unknown as PrismaService;
+    const svc = make(prisma, accessWith(access), {} as AgentWsServer);
+    (audit.log as jest.Mock).mockClear();
+    return { svc, update };
+  };
+
+  describe("setCustomLabels", () => {
+    it("is write-gated", async () => {
+      const denied = { requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("nope")) };
+      await expect(mk({}, denied).svc.setCustomLabels("u1", "app1", { labels: { a: "1" } })).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it("refuses COMPOSE and preview apps", async () => {
+      await expect(mk({ source: "COMPOSE" }).svc.setCustomLabels("u1", "app1", { labels: { a: "1" } })).rejects.toThrow(/compose file/);
+      await expect(mk({ isPreview: true }).svc.setCustomLabels("u1", "app1", { labels: { a: "1" } })).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it("persists sorted, stores a DB null on empty, and audits key names never values", async () => {
+      const ok = mk();
+      await ok.svc.setCustomLabels("u1", "app1", { labels: { zeta: "SECRET_VALUE_1", alpha: "SECRET_VALUE_2" } });
+      const data = ok.update.mock.calls[0][0].data;
+      expect(Object.keys(data.customLabels)).toEqual(["alpha", "zeta"]);
+      expect(data.customLabels).toEqual({ alpha: "SECRET_VALUE_2", zeta: "SECRET_VALUE_1" });
+      const calls = (audit.log as jest.Mock).mock.calls;
+      expect(calls[0][0]).toMatchObject({ action: "app.custom_labels.update", target: "app1", meta: { count: 2, keys: ["alpha", "zeta"] } });
+      expect(JSON.stringify(calls)).not.toContain("SECRET_VALUE");
+      const reset = mk({ customLabels: { a: "1" } });
+      await reset.svc.setCustomLabels("u1", "app1", { labels: {} });
+      expect(reset.update.mock.calls[0][0].data.customLabels).toBe(Prisma.DbNull);
+    });
+
+    it("rejects reserved namespaces and case-duplicates naming the key (400)", async () => {
+      await expect(mk().svc.setCustomLabels("u1", "app1", { labels: { "Traefik.x": "1" } })).rejects.toThrow(/"Traefik\.x"/);
+      await expect(mk().svc.setCustomLabels("u1", "app1", { labels: { "com.docker.compose.project": "x" } })).rejects.toBeInstanceOf(BadRequestException);
+      await expect(mk().svc.setCustomLabels("u1", "app1", { labels: { Foo: "1", foo: "2" } })).rejects.toThrow(/duplicates/);
+    });
+
+    it("refuses a key already set via --label in dockerOptions, but not on a swarm app", async () => {
+      await expect(mk({ dockerOptions: "--label team=x" }).svc.setCustomLabels("u1", "app1", { labels: { Team: "y" } })).rejects.toThrow(/already set via --label/);
+      const swarm = mk({ dockerOptions: "--label team=x", clusterId: "c1" });
+      await swarm.svc.setCustomLabels("u1", "app1", { labels: { team: "y" } });
+      expect(swarm.update).toHaveBeenCalled();
+    });
+  });
+
+  describe("setDockerOptions cross-check", () => {
+    it("refuses a raw --label that collides with a stored custom label (case-insensitive), not on swarm", async () => {
+      await expect(mk({ customLabels: { Team: "core" } }).svc.setDockerOptions("u1", "app1", "--label team=x")).rejects.toThrow(/is a custom label/);
+      const fine = mk({ customLabels: { team: "core" } });
+      await fine.svc.setDockerOptions("u1", "app1", "--label other=x");
+      expect(fine.update).toHaveBeenCalled();
+      const swarm = mk({ customLabels: { team: "core" }, clusterId: "c1" });
+      await swarm.svc.setDockerOptions("u1", "app1", "--label team=x");
+      expect(swarm.update).toHaveBeenCalled();
+    });
+    it("now rejects the wider reserved label namespaces", async () => {
+      await expect(mk().svc.setDockerOptions("u1", "app1", "--label tugra.role=gpu-probe")).rejects.toThrow(/reserved tugra\./);
+    });
+  });
+
+  describe("view", () => {
+    it("exposes customLabels to a writer and hides it from a non-writer", async () => {
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue({ ...row, customLabels: { team: "core" } }) },
+        deployment: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
+      } as unknown as PrismaService;
+      const writer = await make(prisma, accessWith({}), {} as AgentWsServer).get("u1", "app1");
+      expect((writer as { customLabels: unknown }).customLabels).toEqual({ team: "core" });
+      const viewer = await make(prisma, accessWith({ membershipPermissions: jest.fn().mockResolvedValue(new Set()) }), {} as AgentWsServer).get("u1", "app1");
+      expect((viewer as { customLabels: unknown }).customLabels).toBeNull();
+    });
+  });
+
+  describe("deploy / rollback re-validation", () => {
+    const bad = { customLabels: { "tugra.role": "gpu-probe" } };
+    it("executeDeploy fails the deployment on a stored reserved label and sends nothing", async () => {
+      const depUpdate = jest.fn().mockResolvedValue({});
+      const send = jest.fn().mockResolvedValue({ exitCode: 0, output: "" });
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue({ ...row, ...bad }), update: jest.fn().mockResolvedValue({}) },
+        deployment: { create: jest.fn().mockResolvedValue({ id: "d1" }), update: depUpdate, findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "FAILED" }), findFirst: jest.fn().mockResolvedValue(null) },
+        sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+      } as unknown as PrismaService;
+      await make(prisma, accessWith({}), { sendCommand: send } as unknown as AgentWsServer).deploy("u1", "app1");
+      await flushMicrotasks();
+      expect(depUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED", logs: expect.stringContaining("reserved") }) }));
+      expect(send).not.toHaveBeenCalled();
+    });
+
+    it("rollback and rollbackDetached reject before touching anything", async () => {
+      const create = jest.fn();
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue({ ...row, ...bad }) },
+        deployment: { findFirst: jest.fn().mockResolvedValue(null), findUnique: jest.fn().mockResolvedValue(null), create },
+      } as unknown as PrismaService;
+      const svc = make(prisma, accessWith({}), {} as AgentWsServer);
+      await expect(svc.rollback("u1", "app1", "t1")).rejects.toThrow(/reserved/);
+      await expect(svc.rollbackDetached("u1", "app1", "t1", { key: "k" })).rejects.toThrow(/reserved/);
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it("a collision with dockerOptions --label also fails the deploy gate (classic only)", async () => {
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue({ ...row, customLabels: { team: "a" }, dockerOptions: "--label team=b" }) },
+        deployment: { findFirst: jest.fn().mockResolvedValue(null), findUnique: jest.fn().mockResolvedValue(null) },
+      } as unknown as PrismaService;
+      await expect(make(prisma, accessWith({}), {} as AgentWsServer).rollback("u1", "app1", "t1")).rejects.toThrow(/already set via --label/);
+    });
+  });
+
+  describe("swarm scrub trigger", () => {
+    const swarmRow = { ...row, clusterId: "c1", customLabels: null };
+    const run = async (snapshots: { latest?: unknown; latestOk?: unknown }) => {
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue(swarmRow), update: jest.fn().mockResolvedValue({}) },
+        deployment: {
+          create: jest.fn().mockResolvedValue({ id: "d2", createdAt: new Date() }),
+          update: jest.fn().mockResolvedValue({}),
+          findUnique: jest.fn().mockResolvedValue({ id: "d2", status: "SUCCESS" }),
+          findMany: jest.fn().mockResolvedValue([]),
+          findFirst: jest.fn().mockImplementation((args: { where: { configSnapshot?: unknown; status?: string; id?: unknown } }) => {
+            if (!args.where.configSnapshot) return Promise.resolve(null);
+            expect(args.where.id).toEqual({ not: "d2" }); // the current deployment is excluded
+            return Promise.resolve((args.where.status === "SUCCESS" ? snapshots.latestOk : snapshots.latest) ?? null);
+          }),
+        },
+        sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+      } as unknown as PrismaService;
+      const svc = make(prisma, accessWith({}), {} as AgentWsServer);
+      const deploy = jest.fn().mockResolvedValue({ exitCode: 0, output: "", digest: null, registryRef: null });
+      (svc as unknown as { swarmDeploy: { deploy: jest.Mock } }).swarmDeploy = { deploy };
+      await svc.deploy("u1", "app1");
+      await flushMicrotasks();
+      return (deploy.mock.calls[0][1] as { customLabelsScrub?: boolean }).customLabelsScrub;
+    };
+    const had = { configSnapshot: { customLabels: { team: "abc123abc123" } } };
+    const none = { configSnapshot: { snapV: 2 } };
+
+    it("is true when the previous snapshot had labels, false when it had none", async () => {
+      expect(await run({ latest: had, latestOk: had })).toBe(true);
+      expect(await run({ latest: none, latestOk: none })).toBe(false);
+      expect(await run({})).toBe(false);
+    });
+    it("stays true when the latest attempt had none but the latest SUCCESS still did (failed removal)", async () => {
+      expect(await run({ latest: none, latestOk: had })).toBe(true);
+    });
+  });
+
+  describe("clone", () => {
+    const src = { ...row, id: "src1", name: "shop", domain: null, certPem: null, certKeyEnc: null, envEnc: null, gitTokenEnc: null, registryAuthEnc: null, buildArgsEnc: null, buildSecretsEnc: null, volumes: null, hostMounts: null, portMappings: null, placement: null, tags: [], webhookToken: "t" };
+    const server = { id: "s1", teamId: "t1", publicIp: null, publicIpv6: null, wildcardDomain: null, magicSuffix: null, certMode: "http", proxyBind: "public" };
+    const run = async (over: Record<string, unknown>) => {
+      const create = jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ ...data, id: "clone1", createdAt: new Date() }));
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue({ ...src, ...over }), create },
+        server: { findUnique: jest.fn().mockResolvedValue(server) },
+        appIcon: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
+        scheduledTask: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
+      } as unknown as PrismaService;
+      const res = await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", {});
+      return { data: create.mock.calls[0][0].data, warnings: res.warnings };
+    };
+    it("copies custom labels for classic and swarm apps", async () => {
+      expect((await run({ customLabels: { team: "core" } })).data.customLabels).toEqual({ team: "core" });
+      expect((await run({ customLabels: { team: "core" }, clusterId: "c1" })).data.customLabels).toEqual({ team: "core" });
+      expect((await run({})).data.customLabels).toBe(Prisma.DbNull);
+    });
+    it("drops them from a COMPOSE source with the custom_labels_dropped warning", async () => {
+      const r = await run({ source: "COMPOSE", customLabels: { team: "core" } });
+      expect(r.data.customLabels).toBe(Prisma.DbNull);
+      expect(r.warnings).toContain("custom_labels_dropped");
+    });
+  });
+
+  describe("getAppLabels", () => {
+    const labelsRow = { ...row, domain: "app.example.com", certType: "le-http", basicAuthUsers: [{ user: "u", hash: "$2b$HASHSECRET" }], forwardAuth: "https://auth.internal/verify?t=FASTOKEN", envEnc: "ENVSECRET", gitTokenEnc: "GITSECRET", customLabels: { team: "core" } };
+    const prismaFor = (r: Record<string, unknown>) =>
+      ({
+        application: { findUnique: jest.fn().mockResolvedValue(r) },
+        server: { findUnique: jest.fn().mockResolvedValue(null) },
+        appServiceDomain: { findMany: jest.fn().mockResolvedValue([]) },
+      }) as unknown as PrismaService;
+
+    it("is writer-only", async () => {
+      const denied = { requirePermission: jest.fn().mockRejectedValue(new ForbiddenException("nope")) };
+      await expect(make(prismaFor(labelsRow), accessWith(denied), {} as AgentWsServer).getAppLabels("u1", "app1")).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it("returns Tugra + custom labels with masked secrets and never leaks env/credentials", async () => {
+      const v = await make(prismaFor(labelsRow), accessWith({}), {} as AgentWsServer).getAppLabels("u1", "app1");
+      expect(v.engine).toBe("docker");
+      expect(v.editable).toBe(true);
+      expect(v.tugra.some((l) => l.key === "traefik.enable" && l.value === "true")).toBe(true);
+      const ba = v.tugra.find((l) => l.key.endsWith("basicauth.users"))!;
+      expect(ba).toMatchObject({ masked: true, value: null });
+      expect(v.tugra.find((l) => l.key.endsWith("forwardauth.address"))).toMatchObject({ masked: true, value: null });
+      expect(v.custom).toEqual([{ key: "team", value: "core" }]);
+      const blob = JSON.stringify(v);
+      for (const s of ["HASHSECRET", "FASTOKEN", "ENVSECRET", "GITSECRET"]) expect(blob).not.toContain(s);
+    });
+  });
+});

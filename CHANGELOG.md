@@ -7,6 +7,30 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Container labels.** The app's Configuration tab has a **Container labels** card. It lists, read-only, every label
+  Tugra applies (Traefik routing, the proxy-network pin, the stable alias, compose config fingerprints; basic-auth
+  hashes and the forward-auth address are hidden), built by the same code that writes the deploy scripts, and lets
+  you add your own container labels on classic docker-run and swarm apps, with a paste helper for `KEY=VALUE`
+  lines and a **Reset to defaults** button. Changes apply on the next deploy. On a swarm they are container labels
+  set through a rolling update, and removing or resetting them strips the old ones on the next deploy. Compose apps
+  declare their own labels in the compose file, and previews do not take custom labels (previews do not inherit
+  them from their parent). Keys in the `traefik.`, `tugra.`, `com.docker.compose.`, `com.docker.swarm.` and
+  `com.docker.stack.` namespaces are reserved, and a key set both here and as `--label` in Custom Docker options is
+  refused. Cloning an app copies its custom labels. The deployment diff shows `customLabel.<key>` changes without
+  the values. New endpoints `PUT /apps/{id}/custom-labels` and `GET /apps/{id}/labels`, and `tugra apps labels
+  ls|set|rm|reset`.
+- **Changed (behaviour): Custom Docker options reject more label namespaces.** `--label` keys in `tugra.*` and
+  `com.docker.compose.*`, `com.docker.swarm.*` and `com.docker.stack.*` are refused in addition to `traefik.*` (a
+  `tugra.role` label could make Tugra's own cleanup remove the app's container, and a `com.docker.compose.project`
+  label could spoof compose lookups). An app that already stores such a label fails its next deploy or rollback with
+  a message naming the label; the running container is not touched.
+- **Changed (behaviour): compose files may not set Tugra's labels or join its networks.** A compose file (pasted,
+  from a template override, or cloned from git) with `traefik.*`, `tugra.*` or `com.docker.compose|swarm|stack.*`
+  labels on a service (or in `deploy.labels`), or an external network named `tugra-*` / `tugra_*` (for example
+  `tugra-proxy`), is rejected when it is saved and on the next git deploy. Such a label could declare a route for
+  another team's hostname, and the network lets a service answer for every tenant's routes.
+- **Changed:** the config snapshot records a fingerprint of each custom label value.
+
 - **GPU detection.** A server's page has a **Detected GPUs** card: GPUs found on the PCI bus, the NVIDIA driver
   and the Docker `nvidia` runtime, and one verdict (ready, driver missing, runtime missing, non-NVIDIA, none, probe
   failed). The result is stored per server, so read-only members see the last snapshot; a member with the

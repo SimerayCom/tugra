@@ -89,6 +89,9 @@ import {
   SetConfigMountContentSchema,
   SetDockerOptionsInput,
   SetDockerOptionsSchema,
+  SetCustomLabelsInput,
+  SetCustomLabelsSchema,
+  AppLabelsViewSchema,
   SetDeployHooksInput,
   SetDeployHooksSchema,
   SetContainerCommandInput,
@@ -534,6 +537,26 @@ export class ApplicationsController {
   ) {
     await this.apps.setDockerOptions(user.userId, id, body.dockerOptions);
     return { ok: true };
+  }
+
+  // Per-app custom container labels. `{labels:{}}` is "Reset to defaults". Same guards as docker-options.
+  @Put(":id/custom-labels")
+  @HttpCode(200)
+  @ApiZodBody(SetCustomLabelsSchema)
+  async setCustomLabels(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetCustomLabelsSchema)) body: SetCustomLabelsInput,
+  ) {
+    await this.apps.setCustomLabels(user.userId, id, body);
+    return { ok: true };
+  }
+
+  // Read-only view of every label Tugra applies + the custom ones (+ the reserved prefixes/limits for the editor).
+  @Get(":id/labels")
+  @ApiZodResponse(AppLabelsViewSchema)
+  getLabels(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.apps.getAppLabels(user.userId, id);
   }
 
   @Put(":id/deploy-hooks")
