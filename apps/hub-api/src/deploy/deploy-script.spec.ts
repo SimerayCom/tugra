@@ -843,6 +843,31 @@ describe("deploy-script", () => {
       expect(resolveSoak({ ...base, postCutoverSoakSec: 60, healthInterval: 5 })).toEqual({ windowSec: 60, intervalSec: 5 });
     });
 
+    it("resolveSoak skips a window that can never trip (< THRESHOLD intervals): off, with the configured seconds recorded", () => {
+      // 30s default at a 20s interval: floor(30/20)=1 < 3 -> would delay every deploy and could never revert
+      expect(resolveSoak({ ...base, postCutoverSoakSec: 30, healthInterval: 20 })).toEqual({ windowSec: 0, intervalSec: 20, skippedSec: 30 });
+      expect(resolveSoak({ ...base, postCutoverSoakSec: 30, healthInterval: 11 })).toMatchObject({ windowSec: 0, skippedSec: 30 });
+      // exactly THRESHOLD intervals still trips (10s x 3 = 30s)
+      expect(resolveSoak({ ...base, postCutoverSoakSec: 30, healthInterval: 10 })).toEqual({ windowSec: 30, intervalSec: 10 });
+      expect(resolveSoak({ ...base, postCutoverSoakSec: 30 })).toEqual({ windowSec: 30, intervalSec: 3 }); // default interval
+    });
+
+    it("a skipped soak logs an honest line, emits no soak machinery, and a trippable soak keeps its revert promise + had_prev guard", () => {
+      const soak = resolveSoak({ ...domained, postCutoverSoakSec: 30, healthInterval: 20 });
+      const skipped = buildRollingDeployScript(domained, "v2", { probe: httpProbe, soak, ...gate });
+      expect(skipped).toContain("TUGRA: post-cutover soak skipped: 30s is shorter than 3 health intervals of 20s");
+      expect(skipped).not.toContain("soak_ok");
+      expect(skipped).not.toContain("exit 4");
+      const ok = buildRollingDeployScript(domained, "v2", { probe: httpProbe, soak: { windowSec: 60, intervalSec: 5 }, ...gate });
+      expect(ok).toContain("reverting automatically after 3 consecutive failed checks");
+      expect(ok).toContain('if [ "$had_prev" = 1 ]; then');
+      expect(ok).not.toContain("soak skipped");
+      // a raw too-short window (bypassing resolveSoak) never promises a revert
+      const raw = buildRollingDeployScript(domained, "v2", { probe: httpProbe, soak: { windowSec: 30, intervalSec: 20 }, ...gate });
+      expect(raw).toContain("too short to trigger a revert");
+      expect(raw).not.toContain("reverting automatically");
+    });
+
     it("soakRetries = floor(window/interval), ≥1; a window < interval*THRESHOLD watches but cannot trip", () => {
       expect(soakRetries({ windowSec: 60, intervalSec: 5 })).toBe(12);
       expect(soakRetries({ windowSec: 7, intervalSec: 5 })).toBe(1); // floor(7/5)=1

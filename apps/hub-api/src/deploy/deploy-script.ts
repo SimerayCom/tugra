@@ -1788,20 +1788,28 @@ export function defaultSoakFor(source: string): number {
 export interface SoakWindow {
   windowSec: number;
   intervalSec: number;
+  /** Set (with windowSec 0) when a configured window was dropped because it can never trip: the configured seconds. */
+  skippedSec?: number;
 }
 
 /** The post-cutover soak window for an app: the per-app postCutoverSoakSec (seconds; 0/null = off), re-probed
  *  on the same interval the deploy gate uses. Mirrors resolveHealthGate. */
 export function resolveSoak(app: AppSpec): SoakWindow {
-  return {
-    windowSec: Math.max(0, app.postCutoverSoakSec ?? 0),
-    intervalSec: app.healthInterval ?? 3,
-  };
+  const configured = Math.max(0, app.postCutoverSoakSec ?? 0);
+  const intervalSec = app.healthInterval ?? 3;
+  // The revert needs SOAK_FAIL_THRESHOLD consecutive failed probes, one per interval. A window shorter than
+  // THRESHOLD intervals could never trip: it would delay every deploy and promise a revert that cannot happen.
+  // So it is skipped (honestly logged by the deploy script) rather than run as a no-op; the user can widen the
+  // window or shorten the health interval to turn the soak back on.
+  if (configured > 0 && Math.floor(configured / Math.max(1, intervalSec)) < SOAK_FAIL_THRESHOLD) {
+    return { windowSec: 0, intervalSec, skippedSec: configured };
+  }
+  return { windowSec: configured, intervalSec };
 }
 
 /** Number of soak probe iterations: one per interval across the window, at least 1 when the soak is on. When
- *  soakRetries < SOAK_FAIL_THRESHOLD the watch runs but can never trip (conservative: no false revert on a
- *  too-short window). */
+ *  soakRetries < SOAK_FAIL_THRESHOLD the watch could never trip; resolveSoak() therefore never hands such a window
+ *  to the deploy script (it skips the soak instead). */
 export function soakRetries(s: SoakWindow): number {
   return Math.max(1, Math.floor(s.windowSec / Math.max(1, s.intervalSec)));
 }
@@ -1986,6 +1994,10 @@ export function buildRollingDeployScript(
     ...(build ? preDeploySteps(app, version) : []),
     `docker rm -f ${rollout} 2>/dev/null || true`, // clear any stale rollout
     runContainerArgs(rApp, version, rollout),
+    // A configured soak that can never trip was dropped (resolveSoak): say so instead of silently not soaking.
+    ...(opts.soak?.skippedSec
+      ? [`echo "TUGRA: post-cutover soak skipped: ${opts.soak.skippedSec}s is shorter than ${SOAK_FAIL_THRESHOLD} health intervals of ${opts.soak.intervalSec}s, so it could never revert; widen the soak window or shorten the health interval"`]
+      : []),
     "set +e", // the health gate must not abort the script on a failed probe
     ...buildHealthGateFragment(rollout, opts.probe, opts),
   ];
@@ -2058,7 +2070,9 @@ export function buildRollingDeployScript(
     ...cutover,
     // POST-CUTOVER SOAK: re-probe the now-live canonical container; a SUSTAINED failure reverts to __prev.
     `  if [ "$had_prev" = 1 ]; then`,
-    `    echo "TUGRA: post-cutover soak: watching the new version for ${soak.windowSec}s; reverting automatically after ${SOAK_FAIL_THRESHOLD} consecutive failed checks"`,
+    soakRetries(soak) >= SOAK_FAIL_THRESHOLD
+      ? `    echo "TUGRA: post-cutover soak: watching the new version for ${soak.windowSec}s; reverting automatically after ${SOAK_FAIL_THRESHOLD} consecutive failed checks"`
+      : `    echo "TUGRA: post-cutover soak: watching the new version for ${soak.windowSec}s; this window is too short to trigger a revert"`,
     ...buildSoakWatchFragment(canonical, opts.probe, soak).map((l) => "    " + l),
     `  else soak_ok=1; fi`,
     `  if [ "$soak_ok" = 1 ]; then`,
