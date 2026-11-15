@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { createReadStream } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { StreamableFile } from "@nestjs/common";
+import { Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { byteCounter, mintXferPath, newXferId, verifyXferSig, type XferClaim, type XferDir } from "./fs-transfer";
 
@@ -131,12 +132,40 @@ export class FsTransferService implements OnModuleDestroy {
       throw new NotFoundException();
     }
     for (const [k, v] of Object.entries(t.headers ?? {})) sink.setHeader(k, v);
+    // pipeline() destroys its LAST stream on any error, so the browser response must not be that stream: a failure
+    // before the first byte would otherwise kill the socket and the typed JSON error could never be delivered. A thin
+    // wrapper takes the hit instead; fail() then strips the download headers (nothing sent yet: the caller answers with
+    // a typed JSON error) or destroys the response (bytes already sent: the browser sees a FAILED download).
+    const relay = new Writable({
+      write: (chunk: Buffer, _enc, cb) => {
+        if (sink.destroyed) return cb(new Error("client gone"));
+        if (sink.write(chunk)) return cb();
+        const resume = (): void => {
+          sink.off("drain", resume);
+          sink.off("close", resume);
+          cb(sink.destroyed ? new Error("client gone") : null);
+        };
+        sink.once("drain", resume);
+        sink.once("close", resume);
+      },
+      final: (cb) => {
+        sink.end(); // only reached when every byte arrived and the count matched
+        cb();
+      },
+    });
+    sink.on("error", () => undefined); // the wrapper, not pipeline(), owns the sink now: a late socket error must not be unhandled
+    const onSinkClose = (): void => {
+      relay.destroy(new Error("client gone"));
+    };
+    sink.once("close", onSinkClose);
     try {
-      await pipeline(req, byteCounter(t.size), sink);
+      await pipeline(req, byteCounter(t.size), relay);
     } catch (e) {
       // Never end the browser response cleanly on a failed relay: the browser must see a FAILED download.
       this.fail(t, e instanceof Error ? e : new Error("relay failed"));
       throw new NotFoundException();
+    } finally {
+      sink.off("close", onSinkClose);
     }
     t.settle?.resolve();
     this.transfers.delete(t.id);
@@ -146,7 +175,7 @@ export class FsTransferService implements OnModuleDestroy {
     this.transfers.delete(t.id);
     if (t.sink && !t.sink.destroyed) {
       if (t.sink.headersSent) {
-        t.sink.destroy(err); // mid-body: the browser must see a FAILED download, never a clean end
+        t.sink.destroy(); // mid-body: the browser must see a FAILED download, never a clean end
       } else {
         // Nothing sent yet: strip the download headers so the owner can still answer with a typed JSON error.
         for (const k of Object.keys(t.headers ?? {})) t.sink.removeHeader(k);

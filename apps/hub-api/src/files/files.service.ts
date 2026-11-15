@@ -98,6 +98,9 @@ function maxConcurrentUploads(): number {
   return Number.isInteger(n) && n > 0 ? n : 2;
 }
 
+/** How long a download waits for the agent's own typed reason after a relay error (changed, denied, ...). */
+export const RELAY_RECONCILE_MS = 1500;
+
 const DENIED_RATE_LIMITED_WINDOW_MS = 60_000;
 
 /** The audit reason code for a refusal that should leave an `app.file.denied` row; undefined = do not audit it. */
@@ -477,7 +480,12 @@ export class FilesService {
       } catch (first) {
         // A relay error (the bytes stopped) usually arrives just before the agent's own typed reason (changed, denied,
         // ...). Give the agent a moment so the audit row and the JSON error carry the real cause, not "stream failed".
-        const e = first instanceof FsRemoteException ? first : await Promise.race([sent.then(() => first, (x: unknown) => x), new Promise((r) => setTimeout(() => r(first), 1500))]);
+        let graceTimer: NodeJS.Timeout | undefined;
+        const grace = new Promise((r) => {
+          graceTimer = setTimeout(() => r(first), RELAY_RECONCILE_MS);
+          graceTimer.unref?.();
+        });
+        const e = first instanceof FsRemoteException ? first : await Promise.race([sent.then(() => first, (x: unknown) => x), grace]).finally(() => clearTimeout(graceTimer));
         reg.cancel(e instanceof Error ? e : new Error("download failed"));
         if (res.headersSent) {
           // Mid-body: the browser must see a FAILED download (never a clean end), and the audit trail must show it.

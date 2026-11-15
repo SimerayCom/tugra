@@ -1,7 +1,8 @@
 import { NotFoundException, StreamableFile } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import type { IncomingMessage, ServerResponse } from "node:http";
+import http, { type IncomingMessage, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough, Readable, Writable } from "node:stream";
@@ -211,6 +212,68 @@ describe("FsTransferService", () => {
     await expect(reg.done).rejects.toThrow();
     expect(sink.destroyed).toBe(true);
     expect(sink.writableFinished).toBe(false);
+  });
+
+  it("a relay that fails BEFORE the first byte leaves a REAL response intact, so the typed JSON error reaches the browser", async () => {
+    const server = http.createServer((_req, res) => {
+      void (async () => {
+        const reg = svc.registerDownload({ serverId: "s1", appId: "a", size: 10, sink: res, headers: { "Content-Length": "10", "Content-Disposition": "attachment" } }, 600, NOW);
+        const { id, exp, sig } = parts(reg.path);
+        const body = new PassThrough();
+        const put = svc.receiveFromAgent(id, exp, sig, agentReq(body, 10), NOW).catch(() => undefined);
+        body.destroy(new Error("helper died")); // the agent aborts its PUT before any body byte
+        await put;
+        await reg.done.catch(() => undefined);
+        // the owner's view of the sink after the failed relay (what FilesService.download relies on)
+        expect({ destroyed: res.destroyed, headersSent: res.headersSent, hasDisposition: res.hasHeader("Content-Disposition") }).toEqual({ destroyed: false, headersSent: false, hasDisposition: false });
+        res.statusCode = 412;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ statusCode: 412, code: "changed" }));
+      })();
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    try {
+      const { status, text } = await new Promise<{ status: number; text: string }>((resolve, reject) => {
+        http.get({ host: "127.0.0.1", port: (server.address() as AddressInfo).port }, (r) => {
+          const chunks: Buffer[] = [];
+          r.on("data", (c: Buffer) => chunks.push(c)).on("end", () => resolve({ status: r.statusCode ?? 0, text: Buffer.concat(chunks).toString() }));
+        }).on("error", reject);
+      });
+      expect(status).toBe(412);
+      expect(JSON.parse(text)).toEqual({ statusCode: 412, code: "changed" });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("refuses the agent's PUT when the browser is already gone or the headers already went out, and fails done", async () => {
+    for (const mode of ["destroyed", "headersSent"] as const) {
+      const sink = new FakeRes();
+      const reg = svc.registerDownload({ serverId: "s1", appId: "a", size: 5, sink: sink as unknown as ServerResponse, headers: {} }, 600, NOW);
+      if (mode === "destroyed") sink.destroy();
+      else sink.headersSent = true;
+      const { id, exp, sig } = parts(reg.path);
+      let read = false;
+      const body = new Readable({ read() { read = true; this.push(null); } }) as Readable & { headers: Record<string, string> };
+      body.headers = { "content-length": "5" };
+      await expect(svc.receiveFromAgent(id, exp, sig, body as unknown as IncomingMessage, NOW)).rejects.toBeInstanceOf(NotFoundException);
+      await expect(reg.done).rejects.toThrow("client gone");
+      expect(read).toBe(false); // not one byte of the agent's body was consumed
+      expect(svc.size).toBe(0);
+    }
+  });
+
+  it("a browser that disconnects while the relay is in flight fails done and the agent's PUT", async () => {
+    const sink = new FakeRes();
+    const reg = svc.registerDownload({ serverId: "s1", appId: "a", size: 10, sink: sink as unknown as ServerResponse, headers: {} }, 600, NOW);
+    const { id, exp, sig } = parts(reg.path);
+    const body = new PassThrough();
+    const put = svc.receiveFromAgent(id, exp, sig, agentReq(body, 10), NOW);
+    body.write("hello");
+    await new Promise((r) => setImmediate(r));
+    sink.destroy(); // the browser closed the tab
+    await expect(put).rejects.toBeInstanceOf(NotFoundException);
+    await expect(reg.done).rejects.toThrow("client gone");
   });
 
   it("a body shorter or longer than declared fails the relay and destroys the sink", async () => {

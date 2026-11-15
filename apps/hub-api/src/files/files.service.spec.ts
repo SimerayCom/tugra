@@ -9,7 +9,7 @@ import { AgentOfflineException } from "../agent-gateway/agent-offline.exception"
 import { FsPolicyException, FsRateLimitedException, FsRemoteException } from "./fs-errors";
 import { FileOpLimiter } from "./fs-limiter";
 import { FsTransferService } from "./fs-transfer.service";
-import { FilesService, fsAuditAction, transferTimeoutMs } from "./files.service";
+import { FilesService, fsAuditAction, RELAY_RECONCILE_MS, transferTimeoutMs } from "./files.service";
 
 const SECRET = "test-secret-0123456789";
 
@@ -632,6 +632,59 @@ describe("FilesService", () => {
     await h.svc.download("u1", "app1", { volume: "data" }, "r.txt", res as unknown as ServerResponse);
     expect(res.destroyed).toBe(true);
     expect(h.audit.log).toHaveBeenLastCalledWith({ actor: "u1", action: "app.file.failed", target: "app1", meta: { op: "read", scope: "volume", code: "changed" } });
+  });
+
+  describe("error reconciliation after a relay failure", () => {
+    afterEach(() => jest.useRealTimers());
+
+    /** A download whose relay fails first (a plain Error from the transfer) while the agent's own reply is still pending. */
+    function relayFailsFirst(h: ReturnType<typeof build>) {
+      let settleAgent!: { resolve: (v: unknown) => void; reject: (e: unknown) => void };
+      const agentReply = new Promise((resolve, reject) => {
+        settleAgent = { resolve, reject };
+      });
+      h.agentWs.sendFs2.mockImplementation((async (_sid: string, req: Record<string, unknown>) => {
+        if (req.op === "stat") return statResult();
+        const { id, exp, sig } = parts(req.xfer as string);
+        // a Content-Length that differs from the registered size fails the transfer with a plain Error (not an FsRemoteException)
+        await transfers.receiveFromAgent(id, exp, sig, agentPut(["hello!"], 6)).catch(() => undefined);
+        return agentReply;
+      }) as never);
+      return settleAgent;
+    }
+
+    it("the agent's typed reason arriving inside the window wins over the plain relay error, and no timer outlives the race", async () => {
+      jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate", "queueMicrotask"] });
+      const h = build();
+      const settleAgent = relayFailsFirst(h);
+      const res = new FakeRes();
+      const p = h.svc.download("u1", "app1", { volume: "data" }, "r.txt", res as unknown as ServerResponse).catch((e: unknown) => e);
+      await jest.advanceTimersByTimeAsync(300); // inside the 1.5 s window
+      settleAgent.reject(new FsRemoteException("changed", "file size changed"));
+      const err = await p;
+      expect(err).toBeInstanceOf(FsRemoteException);
+      expect((err as FsRemoteException).code).toBe("changed");
+      expect(jest.getTimerCount()).toBe(0); // the reconcile timer was cleared, not left pending
+      expect(h.audit.log).toHaveBeenLastCalledWith(expect.objectContaining({ action: "app.file.failed", meta: { op: "read", scope: "volume", code: "changed" } }));
+      expect(res.headersSent).toBe(false);
+    });
+
+    it("an agent that never answers lets the plain relay error through once the window closes", async () => {
+      jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate", "queueMicrotask"] });
+      const h = build();
+      relayFailsFirst(h); // never settled
+      const p = h.svc.download("u1", "app1", { volume: "data" }, "r.txt", new FakeRes() as unknown as ServerResponse).catch((e: unknown) => e);
+      await jest.advanceTimersByTimeAsync(RELAY_RECONCILE_MS - 100);
+      let done = false;
+      void p.then(() => (done = true));
+      await jest.advanceTimersByTimeAsync(0);
+      expect(done).toBe(false); // still waiting for the agent's reason
+      await jest.advanceTimersByTimeAsync(200);
+      const err = await p;
+      expect(err).toBeInstanceOf(Error);
+      expect(err).not.toBeInstanceOf(FsRemoteException);
+      expect(h.audit.log).toHaveBeenLastCalledWith(expect.objectContaining({ action: "app.file.failed", meta: { op: "read", scope: "volume", code: "stream_failed" } }));
+    });
   });
 
   // ── meta ────────────────────────────────────────────────────────────────────────────────────────────────────
