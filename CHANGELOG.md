@@ -31,6 +31,58 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   another team's hostname, and the network lets a service answer for every tenant's routes.
 - **Changed:** the config snapshot records a fingerprint of each custom label value.
 
+- **Custom pushed image name and an alias tag.** On an Image or Git app that pushes to a team registry, **Build &
+  registry** now takes an **Image name** (a repository path under the registry namespace, for example `team/web`;
+  empty keeps `tugra_<app id>`) and an optional **Alias tag** template (`latest`, `{branch}`, `{branch}-{sha}`;
+  `{sha}` is the first 12 characters of the built commit and, like `{branch}`, is for Git apps only). The immutable
+  `:<deployment id>` tag is always pushed and is still what the deployment records and what a rollback pulls; the
+  alias is an extra, registry-side tag that moves on every build (last built, not last deployed), and a rollback
+  does not move it. A registry that enforces immutable tags rejects the alias and the deploy fails before the swap
+  with the old version still serving; clear the alias tag for such a registry. An alias can never take a
+  deployment-id shape, and a name can never start with `tugra_` (reserved for default repositories). A repository can
+  belong to one app per registry (a clash returns 409), and clearing the registry or push clears the name and alias.
+  `PUT /apps/{id}/build-config` takes `pushImageName` and `pushImageTag` (undefined keeps, null clears); both are
+  returned on the app view and recorded in the deployment's config snapshot. Cloning an app no longer shares them:
+  the clone pushes to its own default repository, because a copied name would be rejected by the unique index and a
+  copied alias would let two apps race on one tag.
+
+- **Fixed: cleanup of pushed local image tags is anchored on the app's own deployment ids.** Removing the local copy
+  of a pushed image (a failed or cancelled deploy, adoption, keep-N pruning) used to match only the
+  `tugra_<app id>:` namespace; with a custom repository name it now also accepts a tag whose version is one of the
+  app's own deployment ids, and never any other image. Apps without a custom name run the same cleanup as before.
+
+- **Pre/post-deploy commands for Compose apps.** The **Pre/post-deploy commands** card now appears on single-server
+  Compose apps with a service picker (a dropdown for a pasted compose file; a text field plus **Detect services**
+  for a git-sourced one). The pre-deploy command runs in a one-off container of that service after its image is
+  pulled or built and before the stack is brought up; a failure fails the deploy with the current stack still
+  serving. It does not use `--no-deps`: the service's dependencies are started first so a migration can reach its
+  database, including on the first deploy, and if the command fails those dependencies keep running (the service
+  itself is never recreated). The post-deploy command runs with `compose exec` once the service is running (and
+  healthy, when it has a health check) and is best-effort: a failure is logged and never fails the deploy. Both are
+  part of the one durable deploy command, so a hub restart recovers them with the deploy, and a rollback runs
+  neither. The service must exist in the compose file: a pasted file is checked when the hooks are saved and when the
+  file is edited (a file that drops the hooked service is refused); a git-sourced file is checked against the
+  rendered stack at deploy time. `PUT /apps/{id}/deploy-hooks` takes `composeHookService`. Apps without hooks deploy
+  exactly as before.
+
+- **Resolved compose preview.** Compose apps (pasted or from git) get a **Preview resolved compose** button that
+  shows the file as Compose resolves it (anchors, `extends`, normalisation) via `POST /apps/{id}/compose-preview`
+  (scope `read:secrets`, apps:config). The agent runs `docker compose config --no-interpolate`, so `${VAR}`
+  references are shown unresolved and no environment value is sent to the agent; literal `environment` and
+  build-argument values are replaced with `<redacted>` on the hub, as is any of the app's environment values found
+  elsewhere in the file. The preview never touches the running stack's files (a git preview clones into a private
+  temporary directory that is removed afterwards), is not cached, and is not exposed through MCP. It needs a Docker
+  Compose that supports `--no-interpolate` on the agent (422 otherwise), and the Tugra routing override added at
+  deploy is not shown.
+
+- **Inline Dockerfile for Dockerfile builds.** A Git app built with a Dockerfile can store the Dockerfile text on
+  the app (**Dockerfile source: Inline**, up to 48 KiB, must start with `FROM` after any `ARG`s) instead of using
+  the repository's file. It is passed with `docker build -f` from a path outside the clone, so the repository is
+  still the build context (`COPY` paths resolve against it and its `.dockerignore` applies). It is not a repository-free
+  app; the Dockerfile path stays stored and is used again when the inline text is cleared. The text is visible only to
+  members who can edit the app, is never part of the config snapshot or MCP results (only its size and a
+  fingerprint), and is copied by clone and by PR previews. `PUT /apps/{id}/build` takes `inlineDockerfile`.
+
 - **GPU detection.** A server's page has a **Detected GPUs** card: GPUs found on the PCI bus, the NVIDIA driver
   and the Docker `nvidia` runtime, and one verdict (ready, driver missing, runtime missing, non-NVIDIA, none, probe
   failed). The result is stored per server, so read-only members see the last snapshot; a member with the

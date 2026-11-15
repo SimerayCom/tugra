@@ -1249,6 +1249,8 @@ export interface Application {
   nixpacksStartCmd: string | null;
   dockerfilePath: string | null;
   dockerBuildTarget: string | null;
+  inlineDockerfile: string | null; // DOCKERFILE build: inline Dockerfile text (writer-only; null for read-only members)
+  hasInlineDockerfile: boolean; // an inline Dockerfile overrides the repository's (visible to everyone)
   baseDirectory: string | null;
   watchPaths: string[];
   autoDeploy: boolean;
@@ -1297,6 +1299,9 @@ export interface Application {
   // Pre/post-deploy hook commands (writer-only in the API → null for read-only members). Single-server apps.
   preDeployCommand: string | null;
   postDeployCommand: string | null;
+  // COMPOSE hooks: the service they run in (writer-only) + the pasted-compose service names for the picker ([] for git-compose).
+  composeHookService: string | null;
+  composeServices: string[];
   // Container ENTRYPOINT/CMD override, exec-form argv (writer-only; null for read-only members). null = image
   // default; containerEntrypoint [] clears the image entrypoint.
   containerEntrypoint: string[] | null;
@@ -1316,6 +1321,8 @@ export interface Application {
   registryUser: string | null;
   registryId: string | null;
   pushToRegistry: boolean;
+  pushImageName: string | null; // custom pushed repo path (null = tugra_<id>)
+  pushImageTag: string | null; // mutable alias tag template, {sha}/{branch} (null = no alias)
   buildServerId: string | null;
   clusterId: string | null;
   replicas: number | null;
@@ -1880,4 +1887,14 @@ export interface AppLabelsView {
   reservedPrefixes: string[];
   limits: { maxCount: number; keyMax: number; valueMax: number; totalBytes: number; keyPattern: string };
   notes: ("rolling_health_labels" | "needs_domain" | "compose_user_labels" | "image_labels_not_shown" | "swarm_container_labels" | "swarm_runtime_labels")[];
+}
+
+/** POST /apps/:id/compose-preview: the REDACTED `docker compose config --no-interpolate` output. */
+export interface ComposePreviewResult {
+  resolvedCompose: string;
+  services: string[];
+  sha256: string;
+  redactions: number;
+  warnings: string[];
+  generatedAt: string;
 }

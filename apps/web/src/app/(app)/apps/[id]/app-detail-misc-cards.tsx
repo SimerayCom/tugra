@@ -11,14 +11,15 @@ import { useToast } from "../../../../components/toast";
 import { Badge, Btn, Card, SectionCard, Spinner } from "../../../../components/ui";
 import { useUnsavedChanges } from "../../../../hooks/useUnsavedChanges";
 import { useT } from "../../../../i18n/provider";
-import { api, appIconUrl } from "../../../../lib/api";
+import { api, ApiError, appIconUrl } from "../../../../lib/api";
+import { copyText } from "../../../../lib/clipboard";
 import { appStatusDisplay, appSourceSummary, deploymentColor, previewBadgeKey, previewRefLabelKey } from "../../../../lib/apps";
 import { statusLabel } from "../../../../lib/status";
 import { relativeTime } from "../../../../lib/fleet";
 import { safeExternalUrl } from "../../../../lib/external-link";
 import { cropToPngBase64 } from "../../../../lib/icon";
 import { TERMINAL_PRE_STYLE } from "../../../../lib/terminal-theme";
-import { type Application, type Deployment, type PrProvider, type ScheduledTask } from "../../../../lib/types";
+import { type Application, type ComposePreviewResult, type Deployment, type PrProvider, type ScheduledTask } from "../../../../lib/types";
 import { linkKindText } from "./app-links-menu";
 import { envField, taskRunColor } from "./app-detail-shared";
 
@@ -189,6 +190,70 @@ export function ContainerPickerModal({ id, onClose, onPick }: { id: string; onCl
   );
 }
 
+/** Resolved compose preview (writer-only). Loads on click only, never automatically. The result lives ONLY in this
+ *  component's state (no query cache, no storage, no URL) and is dropped on unmount. The hub redacts literal
+ *  environment / build-arg values and shows `${VAR}` unresolved; the Tugra routing override is not included. */
+export function ComposePreviewPanel({ id }: { id: string }) {
+  const t = useT();
+  const toast = useToast();
+  const [state, setState] = useState<{ kind: "idle" } | { kind: "loading" } | { kind: "ok"; result: ComposePreviewResult } | { kind: "error"; message: string }>({ kind: "idle" });
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
+  const load = async () => {
+    setState({ kind: "loading" });
+    try {
+      const result = await api.previewAppCompose(id);
+      if (alive.current) setState({ kind: "ok", result });
+    } catch (e) {
+      if (!alive.current) return;
+      let message = t("apps.composePreviewFailed");
+      if (e instanceof ApiError) {
+        if (e.status === 409) message = t("apps.composePreviewBusy");
+        else if (e.status === 503 || e.status === 504) message = t("apps.composePreviewOffline");
+        else if (/update Docker Compose/i.test(e.message)) message = t("apps.composePreviewUnsupported");
+        else message = `${t("apps.composePreviewFailed")} ${e.message}`;
+      }
+      setState({ kind: "error", message });
+    }
+  };
+  return (
+    <SectionCard title={t("apps.composePreviewTitle")} desc={t("apps.composePreviewNote")}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <Btn variant="ghost" onClick={() => void load()} disabled={state.kind === "loading"}>{t("apps.composePreviewButton")}</Btn>
+        {state.kind === "loading" && <span role="status" style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.composePreviewLoading")}</span>}
+      </div>
+      {state.kind === "error" && <div role="alert" style={{ fontSize: 12, color: "var(--c-r)", marginTop: 8 }}>{state.message}</div>}
+      {state.kind === "ok" && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", fontSize: 12, color: "var(--c-tx3)" }}>
+            <span>{t("apps.composePreviewServices")}:</span>
+            {state.result.services.map((svc) => (
+              <Badge key={svc}>{svc}</Badge>
+            ))}
+            {state.result.redactions > 0 && <span>{t("apps.composePreviewRedactions", { count: state.result.redactions })}</span>}
+            <div style={{ flex: 1 }} />
+            <Btn variant="ghost" onClick={() => void copyText(state.result.resolvedCompose).then((ok) => ok && toast(t("apps.copy"), "success"))}>{t("apps.composePreviewCopy")}</Btn>
+          </div>
+          {state.result.warnings.length > 0 && (
+            <div role="note" style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>
+              <div style={{ fontWeight: 600 }}>{t("apps.composePreviewWarnings")}</div>
+              <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+                {state.result.warnings.map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <pre className="mono" aria-label={t("apps.composePreviewTitle")} style={{ margin: "8px 0 0", fontSize: 12, color: "var(--c-tx2)", whiteSpace: "pre-wrap", maxHeight: 420, overflow: "auto", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: 10 }}>{state.result.resolvedCompose}</pre>
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
 /** Read-only summary for a COMPOSE-from-git app: where the stack is cloned from. The compose file lives in
  *  the repo (not stored here), so there is no in-place editor — it is cloned, validated and run on deploy. */
 export function GitComposeSourceCard({ app }: { app: Application }) {
@@ -199,17 +264,20 @@ export function GitComposeSourceCard({ app }: { app: Application }) {
     { label: t("apps.composePath"), value: app.composePath ?? "docker-compose.yml" },
   ];
   return (
-    <SectionCard title={t("apps.composeFromGit")}>
-      <div style={{ display: "grid", gap: 8 }}>
-        {rows.map((r) => (
-          <div key={r.label} style={{ display: "flex", gap: 12, fontSize: 13 }}>
-            <span style={{ color: "var(--c-tx3)", minWidth: 120 }}>{r.label}</span>
-            <span className="mono" style={{ color: "var(--c-tx)", wordBreak: "break-all" }}>{r.value}</span>
-          </div>
-        ))}
-      </div>
-      <div style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 10 }}>{t("apps.composePathHint")}</div>
-    </SectionCard>
+    <>
+      <SectionCard title={t("apps.composeFromGit")}>
+        <div style={{ display: "grid", gap: 8 }}>
+          {rows.map((r) => (
+            <div key={r.label} style={{ display: "flex", gap: 12, fontSize: 13 }}>
+              <span style={{ color: "var(--c-tx3)", minWidth: 120 }}>{r.label}</span>
+              <span className="mono" style={{ color: "var(--c-tx)", wordBreak: "break-all" }}>{r.value}</span>
+            </div>
+          ))}
+        </div>
+        <div style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 10 }}>{t("apps.composePathHint")}</div>
+      </SectionCard>
+      {app.canWrite && <ComposePreviewPanel id={app.id} />}
+    </>
   );
 }
 
@@ -239,6 +307,7 @@ export function ComposeEditorCard({ id, composeFile, canWrite, onDeploy }: { id:
   }
 
   return (
+    <>
     <SectionCard title={t("apps.compose")} right={dirty && <span style={{ fontSize: 11, color: "var(--c-am)" }}>{t("apps.composeUnsaved")}</span>}>
       <textarea
         className="mono"
@@ -256,6 +325,8 @@ export function ComposeEditorCard({ id, composeFile, canWrite, onDeploy }: { id:
       </div>
       {save.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 6 }}>{(save.error as Error).message}</div>}
     </SectionCard>
+    <ComposePreviewPanel id={id} />
+    </>
   );
 }
 

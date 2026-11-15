@@ -22,6 +22,7 @@ import type {
   SavedView,
   Application,
   ImageUpdate,
+  ComposePreviewResult,
   BuildType,
   SourceCommitMode,
   AppConfigMount,
@@ -1108,7 +1109,7 @@ export const api = {
   deleteRegistry(id: string) {
     return apiFetch<{ ok: true }>(`/registries/${id}`, { method: "DELETE" });
   },
-  setAppBuildConfig(id: string, cfg: { registryId?: string | null; pushToRegistry?: boolean; buildServerId?: string | null }) {
+  setAppBuildConfig(id: string, cfg: { registryId?: string | null; pushToRegistry?: boolean; buildServerId?: string | null; pushImageName?: string | null; pushImageTag?: string | null }) {
     return apiFetch<{ ok: true }>(`/apps/${id}/build-config`, { method: "PUT", body: JSON.stringify(cfg) });
   },
   setAppDeploySettings(id: string, cfg: { deployStrategy?: "ROLLING" | "RECREATE"; rollbackOnFailure?: boolean; imagesToKeep?: number | null; postCutoverSoakSec?: number; stopGracePeriodSec?: number | null; drainSec?: number | null }) {
@@ -1148,7 +1149,7 @@ export const api = {
   setAppSource(id: string, body: { gitUrl?: string; gitBranch?: string; gitCommit?: string | null; gitSourceId?: string | null; image?: string; composePath?: string }) {
     return apiFetch<{ warnings: string[] }>(`/apps/${id}/source`, { method: "PUT", body: JSON.stringify(body) });
   },
-  setAppBuild(id: string, body: { buildType: BuildType; dockerfilePath?: string | null; dockerBuildTarget?: string | null; buildCommand?: string | null; outputDir?: string | null; baseDirectory?: string | null; nixpacksInstallCmd?: string | null; nixpacksBuildCmd?: string | null; nixpacksStartCmd?: string | null; gitSubmodules?: boolean; gitLfs?: boolean; gitShallowClone?: boolean; disableBuildCache?: boolean; injectEnvAsBuildArgs?: boolean; sourceCommitMode?: SourceCommitMode }) {
+  setAppBuild(id: string, body: { buildType: BuildType; dockerfilePath?: string | null; dockerBuildTarget?: string | null; inlineDockerfile?: string | null; buildCommand?: string | null; outputDir?: string | null; baseDirectory?: string | null; nixpacksInstallCmd?: string | null; nixpacksBuildCmd?: string | null; nixpacksStartCmd?: string | null; gitSubmodules?: boolean; gitLfs?: boolean; gitShallowClone?: boolean; disableBuildCache?: boolean; injectEnvAsBuildArgs?: boolean; sourceCommitMode?: SourceCommitMode }) {
     return apiFetch<{ ok: true }>(`/apps/${id}/build`, { method: "PUT", body: JSON.stringify(body) });
   },
   setAppWatchPaths(id: string, watchPaths: string[]) {
@@ -1448,11 +1449,15 @@ export const api = {
       body: JSON.stringify({ allow }),
     });
   },
-  setAppDeployHooks(id: string, hooks: { preDeployCommand: string | null; postDeployCommand: string | null }) {
+  setAppDeployHooks(id: string, hooks: { preDeployCommand: string | null; postDeployCommand: string | null; composeHookService?: string | null }) {
     return apiFetch<{ ok: true }>(`/apps/${id}/deploy-hooks`, {
       method: "PUT",
       body: JSON.stringify(hooks),
     });
+  },
+  /** Resolved compose preview (redacted, never resolves ${VAR}). Runs on the app's agent: a click, never automatic. */
+  previewAppCompose(id: string) {
+    return apiFetch<ComposePreviewResult>(`/apps/${id}/compose-preview`, { method: "POST" });
   },
   setAppContainerCommand(id: string, body: { containerEntrypoint: string[] | null; containerCommand: string[] | null }) {
     return apiFetch<{ ok: true }>(`/apps/${id}/container-command`, {

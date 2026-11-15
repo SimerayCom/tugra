@@ -8,11 +8,13 @@ import { Select } from "../../../../components/form";
 import { Badge, Btn, SectionCard } from "../../../../components/ui";
 import { useUnsavedChanges } from "../../../../hooks/useUnsavedChanges";
 import { useT } from "../../../../i18n/provider";
-import { api } from "../../../../lib/api";
+import { api, ApiError } from "../../../../lib/api";
 import { duplicateKeys, invalidKeys } from "../../../../lib/dotenv";
 import { gitUrlHost, isSshGitUrl } from "../../../../lib/git-host";
 import { gitWebUrls } from "../../../../lib/git-web-url";
 import { sourceKindLabel } from "../../../../lib/source-kind";
+import { INLINE_DOCKERFILE_MAX, inlineDockerfileBytes, inlineDockerfileProblem } from "../../../../lib/inline-dockerfile";
+import { aliasRefPreview, registryRefPreview, validatePushName, validateTagTemplate } from "../../../../lib/push-ref";
 import { type AppSource, type BuildType, type SourceCommitMode } from "../../../../lib/types";
 import { BUILD_TYPE_LABEL, envField, normalizeBaseDir } from "./app-detail-shared";
 
@@ -188,13 +190,18 @@ export function SourceCard({ id, source, gitUrl, gitBranch, gitCommit, image, co
   );
 }
 
-export function BuildSettingsCard({ id, buildType, dockerfilePath, dockerBuildTarget, baseDirectory, buildCommand, outputDir, nixpacksInstallCmd, nixpacksBuildCmd, nixpacksStartCmd, gitSubmodules, gitLfs, gitShallowClone, disableBuildCache, injectEnvAsBuildArgs, sourceCommitMode }: { id: string; buildType: BuildType; dockerfilePath: string | null; dockerBuildTarget: string | null; baseDirectory: string | null; buildCommand: string | null; outputDir: string | null; nixpacksInstallCmd: string | null; nixpacksBuildCmd: string | null; nixpacksStartCmd: string | null; gitSubmodules: boolean; gitLfs: boolean; gitShallowClone: boolean; disableBuildCache: boolean; injectEnvAsBuildArgs: boolean; sourceCommitMode: SourceCommitMode }) {
+export function BuildSettingsCard({ id, buildType, dockerfilePath, dockerBuildTarget, inlineDockerfile = null, baseDirectory, buildCommand, outputDir, nixpacksInstallCmd, nixpacksBuildCmd, nixpacksStartCmd, gitSubmodules, gitLfs, gitShallowClone, disableBuildCache, injectEnvAsBuildArgs, sourceCommitMode }: { id: string; buildType: BuildType; dockerfilePath: string | null; dockerBuildTarget: string | null; inlineDockerfile?: string | null; baseDirectory: string | null; buildCommand: string | null; outputDir: string | null; nixpacksInstallCmd: string | null; nixpacksBuildCmd: string | null; nixpacksStartCmd: string | null; gitSubmodules: boolean; gitLfs: boolean; gitShallowClone: boolean; disableBuildCache: boolean; injectEnvAsBuildArgs: boolean; sourceCommitMode: SourceCommitMode }) {
   const t = useT();
   const qc = useQueryClient();
   const toast = useToast();
   const [type, setType] = useState<BuildType>(buildType);
   const [dockerfile, setDockerfile] = useState(dockerfilePath ?? "");
   const [target, setTarget] = useState(dockerBuildTarget ?? "");
+  // Dockerfile source: the repository file, or inline text (stored on the app, written outside the clone at deploy).
+  const [inlineOn, setInlineOn] = useState(!!inlineDockerfile);
+  const [inlineText, setInlineText] = useState(inlineDockerfile ?? "");
+  const inlineBytes = inlineDockerfileBytes(inlineText);
+  const inlineProblem = inlineOn && type === "DOCKERFILE" ? inlineDockerfileProblem(inlineText) : null;
   const [base, setBase] = useState(baseDirectory ?? "");
   const [cmd, setCmd] = useState(buildCommand ?? "");
   const [out, setOut] = useState(outputDir ?? "");
@@ -213,7 +220,7 @@ export function BuildSettingsCard({ id, buildType, dockerfilePath, dockerBuildTa
         buildType: type,
         // Always sent (replace semantics): a monorepo base applies to every build type.
         baseDirectory: normalizeBaseDir(base),
-        ...(type === "DOCKERFILE" ? { dockerfilePath: dockerfile.trim() || null, dockerBuildTarget: target.trim() || null } : {}),
+        ...(type === "DOCKERFILE" ? { dockerfilePath: dockerfile.trim() || null, dockerBuildTarget: target.trim() || null, ...(inlineOn ? { inlineDockerfile: inlineText } : {}) } : {}), // inline omitted = cleared (replace semantics)
         ...(type === "STATIC" ? { buildCommand: cmd.trim() || null, outputDir: out.trim() || null } : {}),
         ...(type === "NIXPACKS" ? { nixpacksInstallCmd: nixInstall.trim() || null, nixpacksBuildCmd: nixBuild.trim() || null, nixpacksStartCmd: nixStart.trim() || null } : {}),
         // Git/build behaviour: always sent. Railpack has no cache-bypass and env build-args are Dockerfile-only,
@@ -242,7 +249,7 @@ export function BuildSettingsCard({ id, buildType, dockerfilePath, dockerBuildTa
         <input style={{ ...envField, flex: "1 1 200px" }} placeholder={t("apps.buildBaseDirectory")} value={base} onChange={(e) => setBase(e.target.value)} aria-label={t("apps.buildBaseDirectory")} />
         {type === "DOCKERFILE" && (
           <>
-            <input style={{ ...envField, flex: "1 1 240px" }} placeholder={t("apps.buildDockerfilePath")} value={dockerfile} onChange={(e) => setDockerfile(e.target.value)} aria-label={t("apps.buildDockerfilePath")} />
+            <input style={{ ...envField, flex: "1 1 240px" }} placeholder={t("apps.buildDockerfilePath")} value={dockerfile} onChange={(e) => setDockerfile(e.target.value)} disabled={inlineOn} aria-label={t("apps.buildDockerfilePath")} />
             <input style={{ ...envField, width: 160 }} placeholder={t("apps.buildTarget")} value={target} onChange={(e) => setTarget(e.target.value)} aria-label={t("apps.buildTarget")} />
           </>
         )}
@@ -259,8 +266,39 @@ export function BuildSettingsCard({ id, buildType, dockerfilePath, dockerBuildTa
             <input style={{ ...envField, flex: "1 1 200px" }} placeholder={t("apps.nixpacksStartCmd")} value={nixStart} onChange={(e) => setNixStart(e.target.value)} aria-label={t("apps.nixpacksStartCmd")} />
           </>
         )}
-        <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
+        <Btn onClick={() => save.mutate()} disabled={save.isPending || !!inlineProblem}>{t("apps.save")}</Btn>
       </div>
+      {type === "DOCKERFILE" && (
+        <div style={{ marginTop: 10 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 13, color: "var(--c-tx)" }}>
+            {t("apps.buildDockerfileSource")}
+            <select style={{ ...envField, width: 200 }} value={inlineOn ? "inline" : "repo"} onChange={(e) => setInlineOn(e.target.value === "inline")} aria-label={t("apps.buildDockerfileSource")}>
+              <option value="repo">{t("apps.buildDockerfileSourceRepo")}</option>
+              <option value="inline">{t("apps.buildDockerfileSourceInline")}</option>
+            </select>
+          </label>
+          {inlineOn && (
+            <div style={{ marginTop: 8 }}>
+              <textarea
+                className="mono"
+                value={inlineText}
+                spellCheck={false}
+                onChange={(e) => setInlineText(e.target.value)}
+                aria-label={t("apps.buildInlineDockerfile")}
+                aria-invalid={!!inlineProblem && inlineText !== ""}
+                placeholder={"FROM node:22-alpine\nWORKDIR /app\nCOPY . .\nRUN npm ci && npm run build\nCMD [\"npm\", \"start\"]"}
+                style={{ width: "100%", minHeight: 160, maxHeight: 420, resize: "vertical", fontSize: 12, lineHeight: 1.5, color: "var(--c-tx)", background: "var(--c-el)", border: `1px solid ${inlineProblem && inlineText !== "" ? "var(--c-r)" : "var(--c-bd)"}`, borderRadius: "var(--r1)", padding: 10, boxSizing: "border-box" }}
+              />
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", fontSize: 11, color: inlineBytes > INLINE_DOCKERFILE_MAX ? "var(--c-r)" : "var(--c-tx3)", marginTop: 4 }}>
+                <span>{t("apps.buildInlineDockerfileHint")}</span>
+                <span>{t("apps.buildInlineBytes", { used: inlineBytes, max: INLINE_DOCKERFILE_MAX })}</span>
+              </div>
+              <div style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 4 }}>{t("apps.buildInlineOverrides")}</div>
+              {inlineProblem && <div role="alert" style={{ fontSize: 12, color: "var(--c-r)", marginTop: 4 }}>{t(inlineProblem === "too_large" ? "apps.buildInlineTooLarge" : "apps.buildInlineInvalid")}</div>}
+            </div>
+          )}
+        </div>
+      )}
       {type === "NIXPACKS" && <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "8px 0 0" }}>{t("apps.nixpacksCmdHint")}</p>}
       {/* Git group — how the repository is fetched. */}
       <div style={{ fontSize: 12, fontWeight: 600, color: "var(--c-tx2)", margin: "16px 0 6px" }}>{t("apps.buildGitSection")}</div>
@@ -440,9 +478,10 @@ export function DeploySettingsCard({ id, deployStrategy, rollbackOnFailure, imag
   );
 }
 
-export function BuildConfigCard({ id, teamId, registryId, pushToRegistry, buildServerId }: { id: string; teamId: string; registryId: string | null; pushToRegistry: boolean; buildServerId: string | null }) {
+export function BuildConfigCard({ id, teamId, registryId, pushToRegistry, buildServerId, source = "IMAGE", gitBranch = null, pushImageName = null, pushImageTag = null }: { id: string; teamId: string; registryId: string | null; pushToRegistry: boolean; buildServerId: string | null; source?: AppSource; gitBranch?: string | null; pushImageName?: string | null; pushImageTag?: string | null }) {
   const t = useT();
   const qc = useQueryClient();
+  const toast = useToast();
   const { data: registries = [] } = useQuery({ queryKey: ["registries"], queryFn: () => api.listRegistries() });
   const { data: servers = [] } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
   const teamRegistries = registries.filter((r) => r.teamId === teamId);
@@ -450,13 +489,45 @@ export function BuildConfigCard({ id, teamId, registryId, pushToRegistry, buildS
   const [reg, setReg] = useState(registryId ?? "");
   const [push, setPush] = useState(pushToRegistry);
   const [buildServer, setBuildServer] = useState(buildServerId ?? "");
+  const [name, setName] = useState(pushImageName ?? "");
+  const [tag, setTag] = useState(pushImageTag ?? "");
   // A build server needs a registry (the deploy server pulls the image); push is then implied.
   const effectivePush = (push && !!reg) || (!!buildServer && !!reg);
+  // The name and alias only mean something while pushing: clearing the registry clears them (the hub does the same).
+  useEffect(() => {
+    if (!effectivePush) {
+      setName("");
+      setTag("");
+    }
+  }, [effectivePush]);
+  const tagSource = source === "GIT" ? "GIT" : "IMAGE";
+  const nameTrim = name.trim();
+  const tagTrim = tag.trim();
+  const nameInvalid = effectivePush && nameTrim !== "" && validatePushName(nameTrim) !== null;
+  const tagInvalid = effectivePush && tagTrim !== "" && validateTagTemplate(tagTrim, tagSource) !== null;
+  const registry = teamRegistries.find((r) => r.id === reg);
+  const nameChanged = nameTrim !== (pushImageName ?? "");
+  const tagChanged = tagTrim !== (pushImageTag ?? "");
+  const [conflict, setConflict] = useState(false);
   const save = useMutation({
-    mutationFn: () => api.setAppBuildConfig(id, { registryId: reg || null, pushToRegistry: effectivePush, buildServerId: (buildServer && reg) ? buildServer : null }),
+    mutationFn: () =>
+      api.setAppBuildConfig(id, {
+        registryId: reg || null,
+        pushToRegistry: effectivePush,
+        buildServerId: (buildServer && reg) ? buildServer : null,
+        // Only when changed, so a card that never touched them sends the byte-identical payload of before.
+        ...(nameChanged ? { pushImageName: nameTrim || null } : {}),
+        ...(tagChanged ? { pushImageTag: tagTrim || null } : {}),
+      }),
+    onMutate: () => setConflict(false),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+    onError: (e) => {
+      if (e instanceof ApiError && e.status === 409) setConflict(true);
+      else toast(e instanceof Error ? e.message : t("apps.buildSaveFailed"), "error");
+    },
     meta: { successMessage: t("apps.saved") },
   });
+  const addToken = (tok: string) => setTag((v) => `${v}${tok}`);
 
   return (
     <SectionCard title={t("apps.buildConfig")} desc={t("apps.buildConfigDesc")}>
@@ -471,7 +542,7 @@ export function BuildConfigCard({ id, teamId, registryId, pushToRegistry, buildS
           <input type="checkbox" checked={effectivePush} disabled={!reg || !!buildServer} onChange={(e) => setPush(e.target.checked)} />
           {t("apps.pushToRegistry")}
         </label>
-        <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn>
+        <Btn onClick={() => save.mutate()} disabled={save.isPending || nameInvalid || tagInvalid}>{t("apps.save")}</Btn>
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
         <select style={{ ...envField, width: 240 }} value={reg ? buildServer : ""} onChange={(e) => setBuildServer(e.target.value)} disabled={!reg} aria-label={t("apps.buildServer")}>
@@ -482,6 +553,58 @@ export function BuildConfigCard({ id, teamId, registryId, pushToRegistry, buildS
         </select>
         <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("apps.buildServerHint")}</span>
       </div>
+      {/* Custom pushed repository + mutable alias tag (next to the always-pushed immutable :<deploymentId> tag). */}
+      {source !== "COMPOSE" && (
+        <div style={{ marginTop: 14 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <input
+              style={{ ...envField, flex: "1 1 220px", ...(nameInvalid ? { borderColor: "var(--c-r)" } : {}) }}
+              placeholder={`tugra_${id}`}
+              value={name}
+              disabled={!effectivePush}
+              onChange={(e) => { setName(e.target.value); setConflict(false); }}
+              aria-label={t("apps.buildConfigImageName")}
+              aria-invalid={nameInvalid}
+              spellCheck={false}
+            />
+            <input
+              style={{ ...envField, flex: "1 1 200px", ...(tagInvalid ? { borderColor: "var(--c-r)" } : {}) }}
+              placeholder={source === "GIT" ? "{branch}" : "latest"}
+              value={tag}
+              disabled={!effectivePush}
+              onChange={(e) => setTag(e.target.value)}
+              aria-label={t("apps.buildConfigAliasTag")}
+              aria-invalid={tagInvalid}
+              spellCheck={false}
+            />
+            {source === "GIT" && (
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                {["{sha}", "{branch}"].map((tok) => (
+                  <Btn key={tok} variant="ghost" disabled={!effectivePush} onClick={() => addToken(tok)}>{t("apps.buildConfigAliasInsert", { token: tok })}</Btn>
+                ))}
+              </div>
+            )}
+          </div>
+          <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "6px 0 0" }}>{t("apps.buildConfigImageNameHint")}</p>
+          <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "4px 0 0" }}>{t("apps.buildConfigAliasTagHint")}</p>
+          {!effectivePush && <p role="note" style={{ fontSize: 12, color: "var(--c-tx3)", margin: "6px 0 0" }}>{t("apps.buildConfigNeedsPush")}</p>}
+          {nameInvalid && <div role="alert" style={{ fontSize: 12, color: "var(--c-r)", marginTop: 6 }}>{t("apps.buildConfigNameInvalid")}</div>}
+          {tagInvalid && <div role="alert" style={{ fontSize: 12, color: "var(--c-r)", marginTop: 6 }}>{t("apps.buildConfigAliasInvalid")}</div>}
+          {conflict && <div role="alert" style={{ fontSize: 12, color: "var(--c-r)", marginTop: 6 }}>{t("apps.buildConfigRepoTaken")}</div>}
+          {effectivePush && registry && !nameInvalid && (
+            <div style={{ marginTop: 8, fontSize: 12 }} aria-label={t("apps.buildConfigPreviewLabel")}>
+              <div style={{ color: "var(--c-tx3)" }}>{t("apps.buildConfigPreviewImmutable")}</div>
+              <code className="mono" style={{ wordBreak: "break-all" }}>{registryRefPreview(registry, id, nameTrim || null, "{deploymentId}")}</code>
+              {tagTrim !== "" && !tagInvalid && (
+                <>
+                  <div style={{ color: "var(--c-tx3)", marginTop: 6 }}>{t("apps.buildConfigPreviewAlias")}</div>
+                  <code className="mono" style={{ wordBreak: "break-all" }}>{aliasRefPreview(registry, id, nameTrim || null, tagTrim, { branch: gitBranch ?? "main" })}</code>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
       {teamRegistries.length === 0 && <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("apps.buildNoRegistries")}</div>}
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.envRedeploy")}</div>}
     </SectionCard>
@@ -611,29 +734,73 @@ export function ContainerPortCard({ id, containerPort }: { id: string; container
   );
 }
 
-export function DeployHooksCard({ id, pre, post }: { id: string; pre: string | null; post: string | null }) {
+export function DeployHooksCard({ id, pre, post, source = "IMAGE", composeHookService = null, composeServices = [] }: { id: string; pre: string | null; post: string | null; source?: AppSource; composeHookService?: string | null; composeServices?: string[] }) {
   const t = useT();
   const qc = useQueryClient();
+  const toast = useToast();
+  const isCompose = source === "COMPOSE";
   const [preVal, setPreVal] = useState(pre ?? "");
   const [postVal, setPostVal] = useState(post ?? "");
+  const [service, setService] = useState(composeHookService ?? "");
+  // Git-compose: the service names are unknown until the stack is rendered, so they are detected on demand.
+  const [detected, setDetected] = useState<string[]>([]);
+  const names = composeServices.length ? composeServices : detected;
+  const detect = useMutation({
+    mutationFn: () => api.previewAppCompose(id),
+    onSuccess: (r) => setDetected(r.services),
+    onError: (e) => toast(e instanceof Error ? e.message : t("apps.deployHooksDetectFailed"), "error"),
+  });
+  const hooked = preVal.trim() !== "" || postVal.trim() !== "";
+  const needsService = isCompose && hooked && service.trim() === "";
   const save = useMutation({
-    mutationFn: () => api.setAppDeployHooks(id, { preDeployCommand: preVal.trim() || null, postDeployCommand: postVal.trim() || null }),
+    mutationFn: () =>
+      api.setAppDeployHooks(id, {
+        preDeployCommand: preVal.trim() || null,
+        postDeployCommand: postVal.trim() || null,
+        ...(isCompose ? { composeHookService: hooked ? service.trim() : null } : {}),
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
     meta: { successMessage: t("apps.saved") },
   });
   const field: React.CSSProperties = { ...envField, width: "100%", boxSizing: "border-box", minHeight: 52, resize: "vertical" };
   return (
-    <SectionCard title={t("apps.deployHooks")} desc={t("apps.deployHooksDesc")}>
+    <SectionCard title={t("apps.deployHooks")} desc={t(isCompose ? "apps.deployHooksComposeDesc" : "apps.deployHooksDesc")}>
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {isCompose && (
+          <div>
+            <span style={{ fontSize: 12, color: "var(--c-tx2)" }}>{t("apps.deployHooksService")}</span>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 4 }}>
+              {names.length > 0 ? (
+                <select style={{ ...envField, width: 240 }} value={service} onChange={(e) => setService(e.target.value)} aria-label={t("apps.deployHooksService")}>
+                  <option value="">{t("apps.deployHooksServiceSelect")}</option>
+                  {/* a stored service that the current file no longer lists stays visible so it can be fixed */}
+                  {service && !names.includes(service) && <option value={service}>{service}</option>}
+                  {names.map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+              ) : (
+                <input style={{ ...envField, width: 240 }} placeholder={t("apps.deployHooksServicePlaceholder")} value={service} onChange={(e) => setService(e.target.value)} aria-label={t("apps.deployHooksService")} spellCheck={false} />
+              )}
+              {composeServices.length === 0 && (
+                <Btn variant="ghost" onClick={() => detect.mutate()} disabled={detect.isPending}>{t(detect.isPending ? "apps.deployHooksDetecting" : "apps.deployHooksDetect")}</Btn>
+              )}
+            </div>
+            <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "4px 0 0" }}>{t("apps.deployHooksServiceHint")}</p>
+            {needsService && <div role="alert" style={{ fontSize: 12, color: "var(--c-r)", marginTop: 4 }}>{t("apps.deployHooksServiceRequired")}</div>}
+          </div>
+        )}
         <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           <span style={{ fontSize: 12, color: "var(--c-tx2)" }}>{t("apps.preDeployCommand")}</span>
           <textarea style={field} placeholder={t("apps.preDeployPlaceholder")} value={preVal} onChange={(e) => setPreVal(e.target.value)} />
+          {isCompose && <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("apps.deployHooksPreComposeHint")}</span>}
         </label>
         <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           <span style={{ fontSize: 12, color: "var(--c-tx2)" }}>{t("apps.postDeployCommand")}</span>
           <textarea style={field} placeholder={t("apps.postDeployPlaceholder")} value={postVal} onChange={(e) => setPostVal(e.target.value)} />
+          {isCompose && <span style={{ fontSize: 11, color: "var(--c-tx3)" }}>{t("apps.deployHooksPostComposeHint")}</span>}
         </label>
-        <div><Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("apps.save")}</Btn></div>
+        <div><Btn onClick={() => save.mutate()} disabled={save.isPending || needsService}>{t("apps.save")}</Btn></div>
       </div>
       {save.isSuccess && <div style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{t("apps.deployHooksRedeploy")}</div>}
     </SectionCard>

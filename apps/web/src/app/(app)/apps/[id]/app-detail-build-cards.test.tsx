@@ -3,10 +3,10 @@ import { render, screen, cleanup, waitFor, fireEvent } from "@testing-library/re
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import { I18nProvider } from "../../../../i18n/provider";
-import { api } from "../../../../lib/api";
+import { api, ApiError } from "../../../../lib/api";
 import { subscribeToast, type ToastInput } from "../../../../lib/toast-bus";
 import type { GitSource } from "../../../../lib/types";
-import { BuildSecretsCard, BuildSettingsCard, DeploySettingsCard, RestartPolicyCard, SourceCard, looksSensitiveKey } from "./app-detail-build-cards";
+import { BuildConfigCard, BuildSecretsCard, BuildSettingsCard, DeployHooksCard, DeploySettingsCard, RestartPolicyCard, SourceCard, looksSensitiveKey } from "./app-detail-build-cards";
 
 afterEach(cleanup);
 let qc: QueryClient;
@@ -340,5 +340,247 @@ describe("SourceCard — Git provider link", () => {
   it("mentions a stored personal access token under None", async () => {
     wrap(<SourceCard {...base} hasGitToken />);
     await waitFor(() => expect(screen.getByText(/personal access token is stored/)).toBeTruthy());
+  });
+});
+
+describe("BuildConfigCard — custom image name + alias tag", () => {
+  const reg = { id: "r1", name: "GHCR", teamId: "t1", type: "ghcr", url: "ghcr.io", username: "bot", imagePrefix: "org", createdAt: "", canWrite: true };
+  const props = { id: "a1", teamId: "t1", registryId: "r1", pushToRegistry: true, buildServerId: null };
+  beforeEach(() => {
+    vi.spyOn(api, "listRegistries").mockResolvedValue([reg]);
+    vi.spyOn(api, "listServers").mockResolvedValue([]);
+  });
+  const name = () => screen.getByLabelText("Image name") as HTMLInputElement;
+  const alias = () => screen.getByLabelText("Alias tag") as HTMLInputElement;
+  const save = () => screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+  const ready = () => waitFor(() => expect(screen.getByRole("option", { name: "GHCR" })).toBeTruthy());
+
+  it("shows the live preview: the immutable ref (always pushed) and the alias example (moves on every build, not on rollback)", async () => {
+    wrap(<BuildConfigCard {...props} source="GIT" gitBranch="feat/x" pushImageName="team/web" pushImageTag="{branch}-{sha}" />);
+    await ready();
+    expect(screen.getByText("Immutable tag, always pushed")).toBeTruthy();
+    expect(screen.getByText("ghcr.io/org/team/web:{deploymentId}")).toBeTruthy();
+    expect(screen.getByText("Alias tag, moves on every build, not on rollback")).toBeTruthy();
+    expect(screen.getByText("ghcr.io/org/team/web:feat-x-0123456789ab")).toBeTruthy();
+  });
+
+  it("previews the default tugra_<id> repo when no name is set, and shows no alias line without an alias", async () => {
+    wrap(<BuildConfigCard {...props} source="IMAGE" />);
+    await ready();
+    expect(screen.getByText("ghcr.io/org/tugra_a1:{deploymentId}")).toBeTruthy();
+    expect(screen.queryByText("Alias tag, moves on every build, not on rollback")).toBeNull();
+  });
+
+  it("offers the {sha}/{branch} chips for a GIT app only", async () => {
+    wrap(<BuildConfigCard {...props} source="GIT" />);
+    await ready();
+    expect(screen.getByRole("button", { name: "Insert {sha}" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Insert {branch}" }));
+    fireEvent.click(screen.getByRole("button", { name: "Insert {sha}" }));
+    expect(alias().value).toBe("{branch}{sha}");
+    cleanup();
+    wrap(<BuildConfigCard {...props} source="IMAGE" />);
+    await ready();
+    expect(screen.queryByRole("button", { name: "Insert {sha}" })).toBeNull();
+  });
+
+  it("an invalid name or alias shows an alert and disables Save; fixing it re-enables it", async () => {
+    wrap(<BuildConfigCard {...props} source="IMAGE" />);
+    await ready();
+    fireEvent.change(name(), { target: { value: "tugra_other" } });
+    expect(screen.getByText(/Not a valid image name/)).toBeTruthy();
+    expect(save().disabled).toBe(true);
+    fireEvent.change(name(), { target: { value: "my-app" } });
+    expect(save().disabled).toBe(false);
+    fireEvent.change(alias(), { target: { value: "{sha}" } }); // IMAGE apps have no commit
+    expect(screen.getByText(/Not a valid alias tag/)).toBeTruthy();
+    expect(save().disabled).toBe(true);
+    fireEvent.change(alias(), { target: { value: "latest" } });
+    expect(save().disabled).toBe(false);
+  });
+
+  it("both inputs are disabled with the hint when nothing is pushed, and are cleared when the registry is cleared", async () => {
+    wrap(<BuildConfigCard {...props} registryId={null} pushToRegistry={false} source="IMAGE" />);
+    await ready();
+    expect(name().disabled).toBe(true);
+    expect(alias().disabled).toBe(true);
+    expect(screen.getByText(/Pick a registry and enable push/)).toBeTruthy();
+    cleanup();
+    wrap(<BuildConfigCard {...props} source="IMAGE" pushImageName="team/web" pushImageTag="stable" />);
+    await ready();
+    expect(name().value).toBe("team/web");
+    fireEvent.change(screen.getByLabelText("Registry"), { target: { value: "" } });
+    await waitFor(() => expect(name().value).toBe(""));
+    expect(alias().value).toBe("");
+  });
+
+  it("sends the two fields only when they changed (an untouched card keeps the old payload)", async () => {
+    const set = vi.spyOn(api, "setAppBuildConfig").mockResolvedValue({ ok: true });
+    wrap(<BuildConfigCard {...props} source="IMAGE" />);
+    await ready();
+    fireEvent.click(save());
+    await waitFor(() => expect(set).toHaveBeenCalledTimes(1));
+    expect(set.mock.calls[0][1]).toEqual({ registryId: "r1", pushToRegistry: true, buildServerId: null });
+    fireEvent.change(name(), { target: { value: "team/web" } });
+    fireEvent.change(alias(), { target: { value: "stable" } });
+    fireEvent.click(save());
+    await waitFor(() => expect(set).toHaveBeenCalledTimes(2));
+    expect(set.mock.calls[1][1]).toEqual({ registryId: "r1", pushToRegistry: true, buildServerId: null, pushImageName: "team/web", pushImageTag: "stable" });
+  });
+
+  it("clearing a stored name sends an explicit null", async () => {
+    const set = vi.spyOn(api, "setAppBuildConfig").mockResolvedValue({ ok: true });
+    wrap(<BuildConfigCard {...props} source="IMAGE" pushImageName="team/web" />);
+    await ready();
+    fireEvent.change(name(), { target: { value: "" } });
+    fireEvent.click(save());
+    await waitFor(() => expect(set).toHaveBeenCalled());
+    expect(set.mock.calls[0][1]).toMatchObject({ pushImageName: null });
+    expect("pushImageTag" in set.mock.calls[0][1]).toBe(false);
+  });
+
+  it("maps a 409 to the 'repository already taken' message", async () => {
+    vi.spyOn(api, "setAppBuildConfig").mockRejectedValue(new ApiError(409, "another app already pushes to that repository in this registry"));
+    wrap(<BuildConfigCard {...props} source="IMAGE" />);
+    await ready();
+    fireEvent.change(name(), { target: { value: "taken" } });
+    fireEvent.click(save());
+    await waitFor(() => expect(screen.getByText("Another app already pushes to that repository in this registry.")).toBeTruthy());
+  });
+
+  it("a COMPOSE app gets no name/alias inputs", async () => {
+    wrap(<BuildConfigCard {...props} source="COMPOSE" />);
+    await ready();
+    expect(screen.queryByLabelText("Image name")).toBeNull();
+  });
+});
+
+describe("DeployHooksCard — compose service picker", () => {
+  it("a classic app has no service picker and sends the old payload", async () => {
+    const set = vi.spyOn(api, "setAppDeployHooks").mockResolvedValue({ ok: true });
+    wrap(<DeployHooksCard id="a1" pre="migrate" post={null} />);
+    expect(screen.queryByLabelText("Service")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(set).toHaveBeenCalled());
+    expect(set.mock.calls[0][1]).toEqual({ preDeployCommand: "migrate", postDeployCommand: null });
+  });
+
+  it("a pasted compose offers a <select> over its services; Save is blocked until one is picked", async () => {
+    const set = vi.spyOn(api, "setAppDeployHooks").mockResolvedValue({ ok: true });
+    wrap(<DeployHooksCard id="a1" pre={null} post={null} source="COMPOSE" composeHookService={null} composeServices={["web", "api"]} />);
+    const select = screen.getByLabelText("Service") as HTMLSelectElement;
+    expect(select.tagName).toBe("SELECT");
+    expect(screen.queryByRole("button", { name: "Detect services" })).toBeNull();
+    fireEvent.change(screen.getByPlaceholderText("npm run db:migrate"), { target: { value: "migrate" } });
+    expect(screen.getByText("Pick the service the hook runs in.")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(select, { target: { value: "api" } });
+    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(set).toHaveBeenCalled());
+    expect(set.mock.calls[0][1]).toEqual({ preDeployCommand: "migrate", postDeployCommand: null, composeHookService: "api" });
+  });
+
+  it("clearing both hooks sends composeHookService null (no service required)", async () => {
+    const set = vi.spyOn(api, "setAppDeployHooks").mockResolvedValue({ ok: true });
+    wrap(<DeployHooksCard id="a1" pre="migrate" post={null} source="COMPOSE" composeHookService="api" composeServices={["api"]} />);
+    fireEvent.change(screen.getByPlaceholderText("npm run db:migrate"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(set).toHaveBeenCalled());
+    expect(set.mock.calls[0][1]).toEqual({ preDeployCommand: null, postDeployCommand: null, composeHookService: null });
+  });
+
+  it("a git-compose app shows a text input + 'Detect services' that fills a select from the preview endpoint", async () => {
+    const preview = vi.spyOn(api, "previewAppCompose").mockResolvedValue({ resolvedCompose: "x", services: ["web", "worker"], sha256: "s", redactions: 0, warnings: [], generatedAt: "now" });
+    wrap(<DeployHooksCard id="a1" pre={null} post={null} source="COMPOSE" composeHookService={null} composeServices={[]} />);
+    expect((screen.getByLabelText("Service") as HTMLElement).tagName).toBe("INPUT");
+    fireEvent.click(screen.getByRole("button", { name: "Detect services" }));
+    await waitFor(() => expect(preview).toHaveBeenCalledWith("a1"));
+    await waitFor(() => expect((screen.getByLabelText("Service") as HTMLElement).tagName).toBe("SELECT"));
+    expect(screen.getByRole("option", { name: "worker" })).toBeTruthy();
+  });
+
+  it("shows the first-deploy / dependencies caveat on the pre-hook and the best-effort note on the post-hook", () => {
+    wrap(<DeployHooksCard id="a1" pre={null} post={null} source="COMPOSE" composeServices={["api"]} />);
+    expect(screen.getByText(/dependencies are started/)).toBeTruthy();
+    expect(screen.getByText(/A failure is logged and ignored/)).toBeTruthy();
+  });
+});
+
+describe("BuildSettingsCard — inline Dockerfile", () => {
+  const props = {
+    id: "a1",
+    buildType: "DOCKERFILE" as const,
+    dockerfilePath: "docker/Dockerfile",
+    dockerBuildTarget: null,
+    baseDirectory: null,
+    buildCommand: null,
+    outputDir: null,
+    nixpacksInstallCmd: null,
+    nixpacksBuildCmd: null,
+    nixpacksStartCmd: null,
+    gitSubmodules: false,
+    gitLfs: false,
+    gitShallowClone: true,
+    disableBuildCache: false,
+    injectEnvAsBuildArgs: false,
+    sourceCommitMode: "RUNTIME" as const,
+  };
+  const source = () => screen.getByLabelText("Dockerfile source") as HTMLSelectElement;
+
+  it("repo source is the default: no textarea, the path input is enabled, and the payload carries no inline text", async () => {
+    const set = vi.spyOn(api, "setAppBuild").mockResolvedValue({ ok: true });
+    wrap(<BuildSettingsCard {...props} />);
+    expect(source().value).toBe("repo");
+    expect(screen.queryByLabelText("Dockerfile")).toBeNull();
+    expect((screen.getByLabelText(/Dockerfile path/) as HTMLInputElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(set).toHaveBeenCalled());
+    expect("inlineDockerfile" in set.mock.calls[0][1]).toBe(false);
+  });
+
+  it("inline source shows the textarea with a byte counter, disables the path input and says it is overridden", () => {
+    wrap(<BuildSettingsCard {...props} />);
+    fireEvent.change(source(), { target: { value: "inline" } });
+    const ta = screen.getByLabelText("Dockerfile") as HTMLTextAreaElement;
+    expect((screen.getByLabelText(/Dockerfile path/) as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByText("The inline Dockerfile is used instead of this path.")).toBeTruthy();
+    fireEvent.change(ta, { target: { value: "FROM alpine\n" } });
+    expect(screen.getByText("12 of 49152 bytes")).toBeTruthy();
+    expect(screen.getByText(/The repository is still the build context/)).toBeTruthy();
+  });
+
+  it("starts in inline mode with the stored text, and sends it (replace semantics) on save", async () => {
+    const set = vi.spyOn(api, "setAppBuild").mockResolvedValue({ ok: true });
+    wrap(<BuildSettingsCard {...props} inlineDockerfile={"FROM node:22\nCMD [\"node\"]\n"} />);
+    expect(source().value).toBe("inline");
+    expect((screen.getByLabelText("Dockerfile") as HTMLTextAreaElement).value).toContain("FROM node:22");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(set).toHaveBeenCalled());
+    expect(set.mock.calls[0][1]).toMatchObject({ buildType: "DOCKERFILE", dockerfilePath: "docker/Dockerfile", inlineDockerfile: "FROM node:22\nCMD [\"node\"]\n" });
+  });
+
+  it("switching back to the repository file omits the inline field (the hub clears it)", async () => {
+    const set = vi.spyOn(api, "setAppBuild").mockResolvedValue({ ok: true });
+    wrap(<BuildSettingsCard {...props} inlineDockerfile={"FROM node:22\n"} />);
+    fireEvent.change(source(), { target: { value: "repo" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(set).toHaveBeenCalled());
+    expect("inlineDockerfile" in set.mock.calls[0][1]).toBe(false);
+  });
+
+  it("blocks Save for a Dockerfile without FROM or over 48 KiB", () => {
+    wrap(<BuildSettingsCard {...props} />);
+    fireEvent.change(source(), { target: { value: "inline" } });
+    const ta = screen.getByLabelText("Dockerfile") as HTMLTextAreaElement;
+    const saveBtn = () => screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+    fireEvent.change(ta, { target: { value: "RUN echo hi" } });
+    expect(screen.getByText(/must start with FROM/)).toBeTruthy();
+    expect(saveBtn().disabled).toBe(true);
+    fireEvent.change(ta, { target: { value: "FROM x\n" + "#".repeat(49 * 1024) } });
+    expect(screen.getByText("The Dockerfile is larger than 48 KiB.")).toBeTruthy();
+    expect(saveBtn().disabled).toBe(true);
+    fireEvent.change(ta, { target: { value: "FROM x\n" } });
+    expect(saveBtn().disabled).toBe(false);
   });
 });

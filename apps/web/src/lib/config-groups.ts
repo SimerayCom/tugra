@@ -158,9 +158,9 @@ export const CONFIG_CARDS: { id: ConfigCardId; group: ConfigGroupKey; visible: (
   { id: "limits", group: "health-resources", visible: notCompose },
   // Automation
   { id: "scheduledTasks", group: "automation", visible: notCompose },
-  // Pre/post-deploy hook commands run in a container of the app image; v1 is classic (non-swarm,
-  // non-compose, non-preview) apps only — hide the card where execution is not wired.
-  { id: "deployHooks", group: "automation", visible: (a) => notCompose(a) && !a.clusterId && !a.isPreview },
+  // Pre/post-deploy hook commands: classic apps run them in a container of the app image; a COMPOSE app runs them
+  // in a chosen service. Single-server, non-preview apps only — hide the card where execution is not wired.
+  { id: "deployHooks", group: "automation", visible: (a) => (notCompose(a) || a.source === "COMPOSE") && !a.clusterId && !a.isPreview },
   { id: "webhooks", group: "automation", visible: (a) => !!a.webhookToken },
   // Watch paths gate which pushes deploy — git-sourced apps only (a GIT build or a compose-from-git app).
   { id: "watchPaths", group: "automation", visible: (a) => (a.source === "GIT" || isGitCompose(a)) && a.canWrite && !a.isPreview },

@@ -50,7 +50,7 @@ import { SourceCard, BuildSettingsCard, BuildArgsCard, BuildSecretsCard, DeployS
 import { ExtraDomainsCard, ServiceDomainsCard, DomainOptionsCard, CustomCertCard, RedirectsCard, BasicAuthCard, NetworkAliasesCard, NetworkingCard } from "./app-detail-domain-cards";
 import { VolumesCard, HostMountsCard, VolumeBackupsCard } from "./app-detail-storage-cards";
 import { ImageUpdateBadge, ImageUpdateCard } from "./image-update-card";
-import { ScheduledTasksCard, PreviewCard, AppDescriptionCard, ComposeEditorCard, GitComposeSourceCard, AppIconCard, AppOverview, ContainerPickerModal, PreviewBadge, WebhookEventHelp } from "./app-detail-misc-cards";
+import { ScheduledTasksCard, PreviewCard, AppDescriptionCard, ComposeEditorCard, GitComposeSourceCard, AppIconCard, AppOverview, ComposePreviewPanel, ContainerPickerModal, PreviewBadge, WebhookEventHelp } from "./app-detail-misc-cards";
 import { DeploymentsTab, MetricsTab, LogsTab, FilesTab } from "./app-detail-tabs";
 
 export default function AppDetailPage() {
@@ -253,9 +253,9 @@ export default function AppDetailPage() {
     environment: () => <EnvironmentCard kind="app" id={id} environmentId={appData.environmentId} />,
     tags: () => <TagsCard tags={appData.tags} canWrite={appData.canWrite} onSave={(next) => tags.mutate(next)} />,
     source: () => <SourceCard id={id} source={appData.source} gitUrl={appData.gitUrl} gitBranch={appData.gitBranch} gitCommit={appData.gitCommit} image={appData.image} composePath={appData.composePath} gitSourceId={appData.gitSourceId} teamId={appData.teamId} hasGitToken={appData.hasGitToken} isPreview={appData.isPreview} />,
-    build: () => <BuildSettingsCard id={id} buildType={appData.buildType} dockerfilePath={appData.dockerfilePath} dockerBuildTarget={appData.dockerBuildTarget} baseDirectory={appData.baseDirectory} buildCommand={appData.buildCommand} outputDir={appData.outputDir} nixpacksInstallCmd={appData.nixpacksInstallCmd} nixpacksBuildCmd={appData.nixpacksBuildCmd} nixpacksStartCmd={appData.nixpacksStartCmd} gitSubmodules={appData.gitSubmodules} gitLfs={appData.gitLfs} gitShallowClone={appData.gitShallowClone} disableBuildCache={appData.disableBuildCache} injectEnvAsBuildArgs={appData.injectEnvAsBuildArgs} sourceCommitMode={appData.sourceCommitMode} />,
+    build: () => <BuildSettingsCard id={id} buildType={appData.buildType} dockerfilePath={appData.dockerfilePath} dockerBuildTarget={appData.dockerBuildTarget} inlineDockerfile={appData.inlineDockerfile} baseDirectory={appData.baseDirectory} buildCommand={appData.buildCommand} outputDir={appData.outputDir} nixpacksInstallCmd={appData.nixpacksInstallCmd} nixpacksBuildCmd={appData.nixpacksBuildCmd} nixpacksStartCmd={appData.nixpacksStartCmd} gitSubmodules={appData.gitSubmodules} gitLfs={appData.gitLfs} gitShallowClone={appData.gitShallowClone} disableBuildCache={appData.disableBuildCache} injectEnvAsBuildArgs={appData.injectEnvAsBuildArgs} sourceCommitMode={appData.sourceCommitMode} />,
     buildConfig: () => (
-      <BuildConfigCard id={id} teamId={appData.teamId} registryId={appData.registryId} pushToRegistry={appData.pushToRegistry} buildServerId={appData.buildServerId} />
+      <BuildConfigCard id={id} teamId={appData.teamId} registryId={appData.registryId} pushToRegistry={appData.pushToRegistry} buildServerId={appData.buildServerId} source={appData.source} gitBranch={appData.gitBranch} pushImageName={appData.pushImageName} pushImageTag={appData.pushImageTag} />
     ),
     buildArgs: () => <BuildArgsCard id={id} />,
     buildSecrets: () => <BuildSecretsCard id={id} buildType={appData.buildType} source={appData.source} />,
@@ -263,7 +263,7 @@ export default function AppDetailPage() {
     containerLabels: () => <ContainerLabelsCard id={id} source={appData.source} clusterId={appData.clusterId} isPreview={appData.isPreview} customLabels={appData.customLabels} />,
     containerCommand: () => <ContainerCommandCard id={id} entrypoint={appData.containerEntrypoint} command={appData.containerCommand} />,
     restartPolicy: () => <RestartPolicyCard id={id} restartPolicy={appData.restartPolicy} restartMaxRetries={appData.restartMaxRetries} />,
-    deployHooks: () => <DeployHooksCard id={id} pre={appData.preDeployCommand} post={appData.postDeployCommand} />,
+    deployHooks: () => <DeployHooksCard id={id} pre={appData.preDeployCommand} post={appData.postDeployCommand} source={appData.source} composeHookService={appData.composeHookService} composeServices={appData.composeServices} />,
     credentials: () => (
       <CredentialsCard id={id} source={appData.source} gitUrl={appData.gitUrl} composePath={appData.composePath} hasGitToken={appData.hasGitToken} hasGitSshKey={appData.hasGitSshKey} gitSshPublicKey={appData.gitSshPublicKey} registryUrl={appData.registryUrl} registryUser={appData.registryUser} />
     ),
@@ -503,6 +503,7 @@ export default function AppDetailPage() {
           ) : (
             <>
               <AppOverview app={appData} deployments={deployments} />
+              {appData.source === "COMPOSE" && appData.composePath && appData.canWrite && <ComposePreviewPanel id={id} />}
               {appData.imageUpdate && (
                 <ImageUpdateCard app={appData} canWrite={appData.canWrite} canDeploy={appData.canDeploy} onRedeploy={() => onDeploy({ noCache: true })} />
               )}

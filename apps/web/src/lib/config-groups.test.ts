@@ -67,7 +67,9 @@ describe("visibleConfigGroups", () => {
 
   it("COMPOSE (writable, not preview) shows general, build, environment, domains (via expose) and danger", () => {
     const f = facts({ source: "COMPOSE", webhookToken: null, domain: null, domainKind: null, volumes: [] });
-    expect(keysOf(f)).toEqual(["general", "build", "environment", "domains", "danger"]);
+    // (a single-server compose app gets the deploy-hooks card: the hook runs in a chosen service)
+    expect(keysOf(f)).toEqual(["general", "build", "environment", "domains", "automation", "danger"]);
+    expect(group(f, "automation")!.cardIds).toEqual(["deployHooks"]);
     // general holds the description note (metadata, every app type) + the always-on cards (environment + tags)
     expect(group(f, "general")!.cardIds).toEqual(["description", "environment", "tags"]);
     expect(group(f, "build")!.cardIds).toEqual(["containerLabels", "credentials"]); // labels: read-only applied view + a note
@@ -82,10 +84,10 @@ describe("visibleConfigGroups", () => {
     expect(group(f, "general")!.cardIds).toEqual(["environment"]);
   });
 
-  it("COMPOSE with a webhook token surfaces automation with only webhooks", () => {
+  it("COMPOSE with a webhook token surfaces automation with the hooks card and webhooks", () => {
     const f = facts({ source: "COMPOSE", domain: null, domainKind: null, volumes: [] });
     expect(keysOf(f)).toContain("automation");
-    expect(group(f, "automation")!.cardIds).toEqual(["webhooks"]);
+    expect(group(f, "automation")!.cardIds).toEqual(["deployHooks", "webhooks"]);
   });
 
   it("description note shows in general for every app type, hidden on a preview", () => {
@@ -258,7 +260,10 @@ describe("visibleConfigGroups", () => {
 
   it("deployHooks shows for a classic app and hides for compose / swarm / preview", () => {
     expect(group(facts(), "automation")!.cardIds).toContain("deployHooks");
-    expect(group(facts({ source: "COMPOSE", domain: null, domainKind: null, volumes: [] }), "automation")?.cardIds ?? []).not.toContain("deployHooks");
+    // a single-server compose app gets the hooks card too (the hook runs in a chosen service)
+    expect(group(facts({ source: "COMPOSE", domain: null, domainKind: null, volumes: [] }), "automation")!.cardIds).toContain("deployHooks");
+    expect(group(facts({ source: "COMPOSE", clusterId: "c1", domain: null, domainKind: null, volumes: [] }), "automation")?.cardIds ?? []).not.toContain("deployHooks");
+    expect(group(facts({ source: "COMPOSE", isPreview: true, domain: null, domainKind: null, volumes: [] }), "automation")?.cardIds ?? []).not.toContain("deployHooks");
     expect(group(facts({ clusterId: "c1" }), "automation")!.cardIds).not.toContain("deployHooks");
     expect(group(facts({ isPreview: true }), "automation")!.cardIds).not.toContain("deployHooks");
   });
