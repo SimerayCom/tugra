@@ -63,8 +63,25 @@ export function finishedAtOf(row: Pick<Deployment, "startedAt" | "createdAt" | "
 
 /** Is a SUCCESS row a rollback target? Its artifact must still exist: the compose YAML snapshot for compose apps
  *  (recorded at deploy START, hence the status gate), else a local tag / registry ref / pinned digest. */
-export function isRollbackable(row: Pick<Deployment, "status" | "imageTag" | "registryImage" | "imageDigest">, snapshot: ConfigSnapshot | null, isCompose: boolean): boolean {
-  return row.status === "SUCCESS" && (isCompose ? !!snapshot?.composeFile : !!(row.imageTag || row.registryImage || row.imageDigest));
+export function isRollbackable(
+  row: Pick<Deployment, "status" | "imageTag" | "registryImage" | "imageDigest"> & { runServerId?: string | null },
+  snapshot: ConfigSnapshot | null,
+  isCompose: boolean,
+  currentServerId?: string | null,
+): boolean {
+  if (row.status !== "SUCCESS") return false;
+  if (isCompose) return !!snapshot?.composeFile;
+  return !!(row.imageTag || row.registryImage || row.imageDigest) && !predatesMove(row, currentServerId);
+}
+
+/** A non-compose deploy that ran on ANOTHER server than the app's current one and left only a local image tag there
+ *  (no registry ref, no pinned digest) cannot be re-run after an app move. NULL runServerId (every legacy row, every
+ *  deploy since the last move) means "the current server" and never predates a move. */
+export function predatesMove(
+  row: Pick<Deployment, "registryImage" | "imageDigest"> & { runServerId?: string | null },
+  currentServerId: string | null | undefined,
+): boolean {
+  return row.runServerId != null && !!currentServerId && row.runServerId !== currentServerId && !row.registryImage && !row.imageDigest;
 }
 
 /** Internal bookkeeping that never leaves the hub (lease / recovery columns + the raw snapshot). */
@@ -76,6 +93,8 @@ export interface DeploymentRowOpts {
   prevSnapshot: ConfigSnapshot | null;
   /** Omit `logs` (the list's heavy column) — `rollout` and `hasLogs` are computed before it is dropped. */
   slim?: boolean;
+  /** The app's CURRENT server: a row that ran elsewhere (an earlier app move) and only has a local tag is not rollbackable. */
+  currentServerId?: string | null;
 }
 
 /** The ONE row mapper shared by the list and the detail endpoint. */
@@ -85,7 +104,8 @@ export function toDeploymentRow(d: Deployment, opts: DeploymentRowOpts) {
   const row = {
     ...rest,
     configChanges: snapshot ? diffSnapshots(opts.prevSnapshot, snapshot) : [],
-    rollbackable: isRollbackable(d, snapshot, opts.isCompose),
+    rollbackable: isRollbackable(d, snapshot, opts.isCompose, opts.currentServerId),
+    rollbackPredatesMove: !opts.isCompose && d.status === "SUCCESS" && predatesMove(d, opts.currentServerId),
     rollout: parseRolloutState(d.logs),
     hasLogs: !!d.logs,
   };
@@ -125,6 +145,10 @@ export const DeploymentRowSchema = z.object({
   createdAt: z.string().datetime(),
   configChanges: z.array(ConfigChangeSchema),
   rollbackable: z.boolean(),
+  /** A pre-move deploy that only has a local image tag on the app's old server: not rollbackable (409 `rollback_predates_move`). */
+  rollbackPredatesMove: z.boolean(),
+  /** Server the deploy ran on; null = the app's current server (legacy rows and every deploy since the last move). */
+  runServerId: z.string().nullable(),
   rollout: z.string().nullable(),
   hasLogs: z.boolean(),
 });

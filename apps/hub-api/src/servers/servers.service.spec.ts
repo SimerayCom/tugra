@@ -1,3 +1,4 @@
+import { ConflictException } from "@nestjs/common";
 import { Role, ServerStatus } from "@prisma/client";
 // Signature verification is exercised elsewhere; here we drive the auth branch deterministically.
 jest.mock("./agent-auth", () => ({ ...jest.requireActual("./agent-auth"), verifyEd25519: jest.fn(() => true) }));
@@ -220,7 +221,9 @@ describe("ServersService.deleteForUser (destroy VM)", () => {
           : { releaseResources: jest.fn().mockResolvedValue(undefined), removeForServer: jest.fn().mockResolvedValue(undefined) },
       ),
     } as unknown as import("@nestjs/core").ModuleRef;
-    const svc = new ServersService(prisma as PrismaService, audit, notifications, mr, crypto, new TeamAccessService(prisma as PrismaService));
+    // No app move holds this server (the delete guard) unless a test says so.
+    const db = { appMove: { findFirst: jest.fn().mockResolvedValue(null) }, ...prisma } as unknown as PrismaService;
+    const svc = new ServersService(db, audit, notifications, mr, crypto, new TeamAccessService(db));
     return { svc, destroyVm };
   }
 
@@ -837,5 +840,36 @@ describe("ServersService.reissueEnroll", () => {
       server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "teamA", status: ServerStatus.ONLINE }) },
     } as unknown as PrismaService;
     await expect(svcWith(prisma).reissueEnroll("u1", "s1")).rejects.toThrow(/already enrolled/);
+  });
+});
+
+describe("ServersService.deleteForUser — app moves", () => {
+  function svcFor(holds: unknown) {
+    const prisma = {
+      ...owner(),
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "teamA" }), delete: jest.fn().mockResolvedValue(undefined) },
+      appMove: { findFirst: jest.fn().mockResolvedValue(holds) },
+    } as unknown as PrismaService;
+    const mr = { get: jest.fn().mockReturnValue({ releaseResources: jest.fn().mockResolvedValue(undefined), removeForServer: jest.fn().mockResolvedValue(undefined) }) } as unknown as import("@nestjs/core").ModuleRef;
+    return { svc: new ServersService(prisma, audit, notifications, mr, crypto, new TeamAccessService(prisma)), prisma };
+  }
+
+  it("refuses with 409 server_in_active_move when a move uses the server or an archive/leftover still lives there", async () => {
+    const { svc, prisma } = svcFor({ id: "mv1" });
+    const e = await svc.deleteForUser("u1", "s1").catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(ConflictException);
+    expect((e as ConflictException).getResponse()).toMatchObject({ code: "server_in_active_move" });
+    expect(prisma.server!.delete as jest.Mock).not.toHaveBeenCalled();
+    // the query names all three holders: live move, unpurged completed archive, rolled-back/failed target leftovers
+    const where = (prisma.appMove!.findFirst as jest.Mock).mock.calls[0][0].where as { OR: Record<string, unknown>[] };
+    expect(where.OR).toHaveLength(3);
+    expect(JSON.stringify(where)).toContain("sourcePurgedAt");
+    expect(JSON.stringify(where)).toContain("targetPurgedAt");
+  });
+
+  it("deletes normally when no move holds the server", async () => {
+    const { svc, prisma } = svcFor(null);
+    await svc.deleteForUser("u1", "s1");
+    expect(prisma.server!.delete as jest.Mock).toHaveBeenCalled();
   });
 });

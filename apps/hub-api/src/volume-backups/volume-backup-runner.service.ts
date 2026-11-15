@@ -12,6 +12,7 @@ import { gpgMissingTail, scrubRunOutput } from "../backups/backup-script";
 import { GIB, planRetention, type RetentionRow } from "../backups/retention";
 import { isCarvedOut, policyAlertId } from "./policy";
 import { BackupAlertsService } from "../backups/backup-alerts.service";
+import { AppMoveInProgressException, findActiveMove } from "../common/app-move-guard";
 import {
   buildVolumeBackupScript,
   buildVolumeDeleteScript,
@@ -58,6 +59,12 @@ export class VolumeBackupRunnerService {
   ): Promise<VolumeBackup[]> {
     const app = await this.prisma.application.findUnique({ where: { id: appId } });
     if (!app) throw new Error("app not found");
+    // An app move is copying these volumes: a backup now would tar a half-moved volume. The schedule just skips
+    // this tick (the next one runs normally); a manual run is told why.
+    if (await findActiveMove(this.prisma, appId)) {
+      if (actor === "scheduler") return [];
+      throw new AppMoveInProgressException();
+    }
     let vols = this.volumesOf(app);
     if (opts?.only) vols = vols.filter((v) => opts.only!.includes(v.name));
     if (opts?.excludePolicied) {

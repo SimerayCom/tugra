@@ -11538,6 +11538,23 @@
                         "additionalProperties": false,
                         "nullable": true
                       },
+                      "move": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "phase": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "phase"
+                        ],
+                        "additionalProperties": false,
+                        "nullable": true
+                      },
                       "outputDir": {
                         "type": "string",
                         "nullable": true
@@ -12435,6 +12452,7 @@
                       "watchPaths",
                       "autoDeploy",
                       "imageUpdate",
+                      "move",
                       "outputDir",
                       "composeFile",
                       "composePath",
@@ -12965,6 +12983,23 @@
                         "error",
                         "upstreamDigest",
                         "deployedDigest"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
+                    "move": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "phase": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "phase"
                       ],
                       "additionalProperties": false,
                       "nullable": true
@@ -13866,6 +13901,7 @@
                     "watchPaths",
                     "autoDeploy",
                     "imageUpdate",
+                    "move",
                     "outputDir",
                     "composeFile",
                     "composePath",
@@ -14446,6 +14482,23 @@
                       "additionalProperties": false,
                       "nullable": true
                     },
+                    "move": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "phase": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "phase"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
                     "outputDir": {
                       "type": "string",
                       "nullable": true
@@ -15343,6 +15396,7 @@
                     "watchPaths",
                     "autoDeploy",
                     "imageUpdate",
+                    "move",
                     "outputDir",
                     "composeFile",
                     "composePath",
@@ -15927,6 +15981,23 @@
                       "additionalProperties": false,
                       "nullable": true
                     },
+                    "move": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "phase": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "phase"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
                     "outputDir": {
                       "type": "string",
                       "nullable": true
@@ -16824,6 +16895,7 @@
                     "watchPaths",
                     "autoDeploy",
                     "imageUpdate",
+                    "move",
                     "outputDir",
                     "composeFile",
                     "composePath",
@@ -17272,6 +17344,13 @@
                       "rollbackable": {
                         "type": "boolean"
                       },
+                      "rollbackPredatesMove": {
+                        "type": "boolean"
+                      },
+                      "runServerId": {
+                        "type": "string",
+                        "nullable": true
+                      },
                       "rollout": {
                         "type": "string",
                         "nullable": true
@@ -17301,6 +17380,8 @@
                       "createdAt",
                       "configChanges",
                       "rollbackable",
+                      "rollbackPredatesMove",
+                      "runServerId",
                       "rollout",
                       "hasLogs"
                     ],
@@ -18442,6 +18523,13 @@
                     "rollbackable": {
                       "type": "boolean"
                     },
+                    "rollbackPredatesMove": {
+                      "type": "boolean"
+                    },
+                    "runServerId": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "rollout": {
                       "type": "string",
                       "nullable": true
@@ -18535,6 +18623,8 @@
                     "createdAt",
                     "configChanges",
                     "rollbackable",
+                    "rollbackPredatesMove",
+                    "runServerId",
                     "rollout",
                     "hasLogs",
                     "diffBase",
@@ -26807,6 +26897,23 @@
                           "additionalProperties": false,
                           "nullable": true
                         },
+                        "move": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "phase": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "phase"
+                          ],
+                          "additionalProperties": false,
+                          "nullable": true
+                        },
                         "outputDir": {
                           "type": "string",
                           "nullable": true
@@ -27704,6 +27811,7 @@
                         "watchPaths",
                         "autoDeploy",
                         "imageUpdate",
+                        "move",
                         "outputDir",
                         "composeFile",
                         "composePath",
@@ -28143,6 +28251,23 @@
                         "error",
                         "upstreamDigest",
                         "deployedDigest"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
+                    "move": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "phase": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "phase"
                       ],
                       "additionalProperties": false,
                       "nullable": true
@@ -29044,6 +29169,7 @@
                     "watchPaths",
                     "autoDeploy",
                     "imageUpdate",
+                    "move",
                     "outputDir",
                     "composeFile",
                     "composePath",
@@ -29553,6 +29679,23 @@
                           "error",
                           "upstreamDigest",
                           "deployedDigest"
+                        ],
+                        "additionalProperties": false,
+                        "nullable": true
+                      },
+                      "move": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "phase": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "phase"
                         ],
                         "additionalProperties": false,
                         "nullable": true
@@ -30454,6 +30597,7 @@
                       "watchPaths",
                       "autoDeploy",
                       "imageUpdate",
+                      "move",
                       "outputDir",
                       "composeFile",
                       "composePath",
@@ -31048,6 +31192,23 @@
                         "error",
                         "upstreamDigest",
                         "deployedDigest"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
+                    "move": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "phase": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "phase"
                       ],
                       "additionalProperties": false,
                       "nullable": true
@@ -31949,6 +32110,7 @@
                     "watchPaths",
                     "autoDeploy",
                     "imageUpdate",
+                    "move",
                     "outputDir",
                     "composeFile",
                     "composePath",
@@ -33790,6 +33952,23 @@
                       "additionalProperties": false,
                       "nullable": true
                     },
+                    "move": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "phase": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "phase"
+                      ],
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
                     "outputDir": {
                       "type": "string",
                       "nullable": true
@@ -34687,6 +34866,7 @@
                     "watchPaths",
                     "autoDeploy",
                     "imageUpdate",
+                    "move",
                     "outputDir",
                     "composeFile",
                     "composePath",
@@ -42083,6 +42263,1010 @@
         ]
       }
     },
+    "/api/v1/apps/{id}/move/preflight": {
+      "post": {
+        "operationId": "AppMovesController_preflight",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "targetServerId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "acknowledge": {
+                    "type": "object",
+                    "properties": {
+                      "hostMounts": {
+                        "type": "boolean",
+                        "default": false
+                      },
+                      "externalVolumes": {
+                        "type": "boolean",
+                        "default": false
+                      },
+                      "dropPrivilegedOptions": {
+                        "type": "boolean",
+                        "default": false
+                      },
+                      "dropGpus": {
+                        "type": "boolean",
+                        "default": false
+                      },
+                      "resetCpuset": {
+                        "type": "boolean",
+                        "default": false
+                      },
+                      "hostPortChanged": {
+                        "type": "boolean",
+                        "default": false
+                      },
+                      "domainChanges": {
+                        "type": "boolean",
+                        "default": false
+                      }
+                    },
+                    "additionalProperties": false,
+                    "default": {}
+                  },
+                  "probeLink": {
+                    "type": "boolean",
+                    "default": false
+                  }
+                },
+                "required": [
+                  "targetServerId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "blockers": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "details": {
+                            "type": "object",
+                            "additionalProperties": {}
+                          },
+                          "ack": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "details": {
+                            "type": "object",
+                            "additionalProperties": {}
+                          }
+                        },
+                        "required": [
+                          "code"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "requiredAcks": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "hostMounts",
+                          "externalVolumes",
+                          "dropPrivilegedOptions",
+                          "dropGpus",
+                          "resetCpuset",
+                          "hostPortChanged",
+                          "domainChanges"
+                        ]
+                      }
+                    },
+                    "plan": {
+                      "type": "object",
+                      "properties": {
+                        "cheap": {
+                          "type": "boolean"
+                        },
+                        "volumes": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "dockerName": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "app",
+                                  "compose"
+                                ]
+                              },
+                              "sizeBytes": {
+                                "type": "integer",
+                                "nullable": true
+                              },
+                              "state": {
+                                "type": "string",
+                                "enum": [
+                                  "move",
+                                  "absent_skip",
+                                  "external_skip"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "name",
+                              "dockerName",
+                              "kind",
+                              "sizeBytes",
+                              "state"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "totalBytes": {
+                          "type": "integer"
+                        },
+                        "partBytes": {
+                          "type": "integer"
+                        },
+                        "estimatedParts": {
+                          "type": "integer"
+                        },
+                        "sourceStagingFreeBytes": {
+                          "type": "integer",
+                          "nullable": true
+                        },
+                        "targetFreeBytes": {
+                          "type": "integer",
+                          "nullable": true
+                        },
+                        "estimatedDowntimeSec": {
+                          "type": "object",
+                          "properties": {
+                            "low": {
+                              "type": "integer"
+                            },
+                            "high": {
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "low",
+                            "high"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "domain": {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string"
+                            },
+                            "from": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "to": {
+                              "type": "string",
+                              "nullable": true
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "from",
+                            "to"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "hostPort": {
+                          "type": "object",
+                          "properties": {
+                            "from": {
+                              "type": "integer",
+                              "nullable": true
+                            },
+                            "to": {
+                              "type": "integer",
+                              "nullable": true
+                            }
+                          },
+                          "required": [
+                            "from",
+                            "to"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "targetIp": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "link": {
+                          "type": "object",
+                          "properties": {
+                            "ok": {
+                              "type": "boolean"
+                            },
+                            "mbps": {
+                              "type": "number",
+                              "nullable": true
+                            }
+                          },
+                          "required": [
+                            "ok",
+                            "mbps"
+                          ],
+                          "additionalProperties": false,
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "cheap",
+                        "volumes",
+                        "totalBytes",
+                        "partBytes",
+                        "estimatedParts",
+                        "sourceStagingFreeBytes",
+                        "targetFreeBytes",
+                        "estimatedDowntimeSec",
+                        "domain",
+                        "hostPort",
+                        "targetIp",
+                        "link"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "blockers",
+                    "warnings",
+                    "requiredAcks",
+                    "plan"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
+    "/api/v1/apps/{id}/moves": {
+      "get": {
+        "operationId": "AppMovesController_list",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "active",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "appId": {
+                        "type": "string"
+                      },
+                      "appName": {
+                        "type": "string"
+                      },
+                      "phase": {
+                        "type": "string",
+                        "enum": [
+                          "QUEUED",
+                          "PRECHECK",
+                          "STOPPING_SOURCE",
+                          "TRANSFERRING",
+                          "DEPLOYING",
+                          "FINALIZING",
+                          "COMPLETED",
+                          "ROLLING_BACK",
+                          "ROLLED_BACK",
+                          "FAILED"
+                        ]
+                      },
+                      "prevStatus": {
+                        "type": "string"
+                      },
+                      "sourceServerId": {
+                        "type": "string"
+                      },
+                      "targetServerId": {
+                        "type": "string"
+                      },
+                      "volumes": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "type": "string"
+                            },
+                            "state": {
+                              "type": "string"
+                            },
+                            "sizeBytes": {
+                              "type": "integer",
+                              "nullable": true
+                            },
+                            "parts": {
+                              "type": "integer"
+                            },
+                            "partsDone": {
+                              "type": "integer"
+                            },
+                            "bytesDone": {
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "name",
+                            "state",
+                            "sizeBytes",
+                            "parts",
+                            "partsDone",
+                            "bytesDone"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "progress": {
+                        "type": "object",
+                        "properties": {
+                          "volumeIndex": {
+                            "type": "integer"
+                          },
+                          "volumeCount": {
+                            "type": "integer"
+                          },
+                          "bytesDone": {
+                            "type": "integer"
+                          },
+                          "bytesTotal": {
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "volumeIndex",
+                          "volumeCount",
+                          "bytesDone",
+                          "bytesTotal"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "warnings": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "code": {
+                              "type": "string"
+                            },
+                            "details": {
+                              "type": "object",
+                              "additionalProperties": {}
+                            }
+                          },
+                          "required": [
+                            "code"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "failureReason": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "failurePhase": {
+                        "type": "string",
+                        "enum": [
+                          "QUEUED",
+                          "PRECHECK",
+                          "STOPPING_SOURCE",
+                          "TRANSFERRING",
+                          "DEPLOYING",
+                          "FINALIZING",
+                          "COMPLETED",
+                          "ROLLING_BACK",
+                          "ROLLED_BACK",
+                          "FAILED"
+                        ],
+                        "nullable": true
+                      },
+                      "deploymentId": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "cutoverAt": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                      },
+                      "finishedAt": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                      },
+                      "archiveUntil": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                      },
+                      "sourcePurgedAt": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                      },
+                      "createdAt": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "canCancel": {
+                        "type": "boolean"
+                      },
+                      "needsAttention": {
+                        "type": "boolean"
+                      },
+                      "plan": {
+                        "type": "object",
+                        "additionalProperties": {},
+                        "nullable": true
+                      },
+                      "acks": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "boolean"
+                        },
+                        "nullable": true
+                      },
+                      "logTail": {
+                        "type": "string",
+                        "nullable": true
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "appId",
+                      "appName",
+                      "phase",
+                      "prevStatus",
+                      "sourceServerId",
+                      "targetServerId",
+                      "volumes",
+                      "progress",
+                      "warnings",
+                      "failureReason",
+                      "failurePhase",
+                      "deploymentId",
+                      "cutoverAt",
+                      "finishedAt",
+                      "archiveUntil",
+                      "sourcePurgedAt",
+                      "createdAt",
+                      "canCancel",
+                      "needsAttention",
+                      "plan",
+                      "acks",
+                      "logTail"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
+    "/api/v1/apps/{id}/moves/{moveId}": {
+      "get": {
+        "operationId": "AppMovesController_get",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "moveId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "appId": {
+                      "type": "string"
+                    },
+                    "appName": {
+                      "type": "string"
+                    },
+                    "phase": {
+                      "type": "string",
+                      "enum": [
+                        "QUEUED",
+                        "PRECHECK",
+                        "STOPPING_SOURCE",
+                        "TRANSFERRING",
+                        "DEPLOYING",
+                        "FINALIZING",
+                        "COMPLETED",
+                        "ROLLING_BACK",
+                        "ROLLED_BACK",
+                        "FAILED"
+                      ]
+                    },
+                    "prevStatus": {
+                      "type": "string"
+                    },
+                    "sourceServerId": {
+                      "type": "string"
+                    },
+                    "targetServerId": {
+                      "type": "string"
+                    },
+                    "volumes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string"
+                          },
+                          "sizeBytes": {
+                            "type": "integer",
+                            "nullable": true
+                          },
+                          "parts": {
+                            "type": "integer"
+                          },
+                          "partsDone": {
+                            "type": "integer"
+                          },
+                          "bytesDone": {
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "state",
+                          "sizeBytes",
+                          "parts",
+                          "partsDone",
+                          "bytesDone"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "progress": {
+                      "type": "object",
+                      "properties": {
+                        "volumeIndex": {
+                          "type": "integer"
+                        },
+                        "volumeCount": {
+                          "type": "integer"
+                        },
+                        "bytesDone": {
+                          "type": "integer"
+                        },
+                        "bytesTotal": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "volumeIndex",
+                        "volumeCount",
+                        "bytesDone",
+                        "bytesTotal"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "details": {
+                            "type": "object",
+                            "additionalProperties": {}
+                          }
+                        },
+                        "required": [
+                          "code"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "failureReason": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "failurePhase": {
+                      "type": "string",
+                      "enum": [
+                        "QUEUED",
+                        "PRECHECK",
+                        "STOPPING_SOURCE",
+                        "TRANSFERRING",
+                        "DEPLOYING",
+                        "FINALIZING",
+                        "COMPLETED",
+                        "ROLLING_BACK",
+                        "ROLLED_BACK",
+                        "FAILED"
+                      ],
+                      "nullable": true
+                    },
+                    "deploymentId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "cutoverAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "finishedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "archiveUntil": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "sourcePurgedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "canCancel": {
+                      "type": "boolean"
+                    },
+                    "needsAttention": {
+                      "type": "boolean"
+                    },
+                    "plan": {
+                      "type": "object",
+                      "additionalProperties": {},
+                      "nullable": true
+                    },
+                    "acks": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "boolean"
+                      },
+                      "nullable": true
+                    },
+                    "logTail": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "appId",
+                    "appName",
+                    "phase",
+                    "prevStatus",
+                    "sourceServerId",
+                    "targetServerId",
+                    "volumes",
+                    "progress",
+                    "warnings",
+                    "failureReason",
+                    "failurePhase",
+                    "deploymentId",
+                    "cutoverAt",
+                    "finishedAt",
+                    "archiveUntil",
+                    "sourcePurgedAt",
+                    "createdAt",
+                    "canCancel",
+                    "needsAttention",
+                    "plan",
+                    "acks",
+                    "logTail"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
     "/api/v1/apps/{id}/files/meta": {
       "get": {
         "operationId": "FilesController_meta",
@@ -48742,6 +49926,13 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "hostServerId": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "onOtherServer": {
+                        "type": "boolean"
+                      },
                       "createdBy": {
                         "type": "string"
                       },
@@ -48775,6 +49966,8 @@
                       "sizeBytes",
                       "destinationId",
                       "destinationType",
+                      "hostServerId",
+                      "onOtherServer",
                       "createdBy",
                       "createdAt",
                       "completedAt",
@@ -48894,6 +50087,13 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "hostServerId": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "onOtherServer": {
+                        "type": "boolean"
+                      },
                       "createdBy": {
                         "type": "string"
                       },
@@ -48927,6 +50127,8 @@
                       "sizeBytes",
                       "destinationId",
                       "destinationType",
+                      "hostServerId",
+                      "onOtherServer",
                       "createdBy",
                       "createdAt",
                       "completedAt",

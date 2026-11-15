@@ -3428,6 +3428,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/apps/{id}/move/preflight": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["AppMovesController_preflight"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/apps/{id}/moves": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["AppMovesController_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/apps/{id}/moves/{moveId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["AppMovesController_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/apps/{id}/files/meta": {
         parameters: {
             query?: never;
@@ -12454,6 +12502,10 @@ export interface operations {
                             upstreamDigest: string | null;
                             deployedDigest: string | null;
                         } | null;
+                        move: {
+                            id: string;
+                            phase: string;
+                        } | null;
                         outputDir: string | null;
                         composeFile: string | null;
                         composePath: string | null;
@@ -12811,6 +12863,10 @@ export interface operations {
                             error: "auth" | "notfound" | "unsupported" | "timeout" | "failed" | null;
                             upstreamDigest: string | null;
                             deployedDigest: string | null;
+                        } | null;
+                        move: {
+                            id: string;
+                            phase: string;
                         } | null;
                         outputDir: string | null;
                         composeFile: string | null;
@@ -13273,6 +13329,10 @@ export interface operations {
                             upstreamDigest: string | null;
                             deployedDigest: string | null;
                         } | null;
+                        move: {
+                            id: string;
+                            phase: string;
+                        } | null;
                         outputDir: string | null;
                         composeFile: string | null;
                         composePath: string | null;
@@ -13689,6 +13749,10 @@ export interface operations {
                             upstreamDigest: string | null;
                             deployedDigest: string | null;
                         } | null;
+                        move: {
+                            id: string;
+                            phase: string;
+                        } | null;
                         outputDir: string | null;
                         composeFile: string | null;
                         composePath: string | null;
@@ -14078,6 +14142,8 @@ export interface operations {
                             after?: string;
                         }[];
                         rollbackable: boolean;
+                        rollbackPredatesMove: boolean;
+                        runServerId: string | null;
                         rollout: string | null;
                         hasLogs: boolean;
                     }[];
@@ -14822,6 +14888,8 @@ export interface operations {
                             after?: string;
                         }[];
                         rollbackable: boolean;
+                        rollbackPredatesMove: boolean;
+                        runServerId: string | null;
                         rollout: string | null;
                         hasLogs: boolean;
                         diffBase: {
@@ -20241,6 +20309,10 @@ export interface operations {
                                 upstreamDigest: string | null;
                                 deployedDigest: string | null;
                             } | null;
+                            move: {
+                                id: string;
+                                phase: string;
+                            } | null;
                             outputDir: string | null;
                             composeFile: string | null;
                             composePath: string | null;
@@ -20585,6 +20657,10 @@ export interface operations {
                             error: "auth" | "notfound" | "unsupported" | "timeout" | "failed" | null;
                             upstreamDigest: string | null;
                             deployedDigest: string | null;
+                        } | null;
+                        move: {
+                            id: string;
+                            phase: string;
                         } | null;
                         outputDir: string | null;
                         composeFile: string | null;
@@ -20999,6 +21075,10 @@ export interface operations {
                             error: "auth" | "notfound" | "unsupported" | "timeout" | "failed" | null;
                             upstreamDigest: string | null;
                             deployedDigest: string | null;
+                        } | null;
+                        move: {
+                            id: string;
+                            phase: string;
                         } | null;
                         outputDir: string | null;
                         composeFile: string | null;
@@ -21471,6 +21551,10 @@ export interface operations {
                             error: "auth" | "notfound" | "unsupported" | "timeout" | "failed" | null;
                             upstreamDigest: string | null;
                             deployedDigest: string | null;
+                        } | null;
+                        move: {
+                            id: string;
+                            phase: string;
                         } | null;
                         outputDir: string | null;
                         composeFile: string | null;
@@ -22764,6 +22848,10 @@ export interface operations {
                             error: "auth" | "notfound" | "unsupported" | "timeout" | "failed" | null;
                             upstreamDigest: string | null;
                             deployedDigest: string | null;
+                        } | null;
+                        move: {
+                            id: string;
+                            phase: string;
                         } | null;
                         outputDir: string | null;
                         composeFile: string | null;
@@ -27463,6 +27551,398 @@ export interface operations {
             };
         };
     };
+    AppMovesController_preflight: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    targetServerId: string;
+                    /** @default {} */
+                    acknowledge?: {
+                        /** @default false */
+                        hostMounts?: boolean;
+                        /** @default false */
+                        externalVolumes?: boolean;
+                        /** @default false */
+                        dropPrivilegedOptions?: boolean;
+                        /** @default false */
+                        dropGpus?: boolean;
+                        /** @default false */
+                        resetCpuset?: boolean;
+                        /** @default false */
+                        hostPortChanged?: boolean;
+                        /** @default false */
+                        domainChanges?: boolean;
+                    };
+                    /** @default false */
+                    probeLink?: boolean;
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        ok: boolean;
+                        blockers: {
+                            code: string;
+                            message: string;
+                            details?: {
+                                [key: string]: unknown;
+                            };
+                            ack?: boolean;
+                        }[];
+                        warnings: {
+                            code: string;
+                            details?: {
+                                [key: string]: unknown;
+                            };
+                        }[];
+                        requiredAcks: ("hostMounts" | "externalVolumes" | "dropPrivilegedOptions" | "dropGpus" | "resetCpuset" | "hostPortChanged" | "domainChanges")[];
+                        plan: {
+                            cheap: boolean;
+                            volumes: {
+                                name: string;
+                                dockerName: string;
+                                /** @enum {string} */
+                                kind: "app" | "compose";
+                                sizeBytes: number | null;
+                                /** @enum {string} */
+                                state: "move" | "absent_skip" | "external_skip";
+                            }[];
+                            totalBytes: number;
+                            partBytes: number;
+                            estimatedParts: number;
+                            sourceStagingFreeBytes: number | null;
+                            targetFreeBytes: number | null;
+                            estimatedDowntimeSec: {
+                                low: number;
+                                high: number;
+                            };
+                            domain: {
+                                kind: string;
+                                from: string | null;
+                                to: string | null;
+                            };
+                            hostPort: {
+                                from: number | null;
+                                to: number | null;
+                            };
+                            targetIp: string | null;
+                            link: {
+                                ok: boolean;
+                                mbps: number | null;
+                            } | null;
+                        };
+                    };
+                };
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    AppMovesController_list: {
+        parameters: {
+            query: {
+                active: string;
+                limit: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        id: string;
+                        appId: string;
+                        appName: string;
+                        /** @enum {string} */
+                        phase: "QUEUED" | "PRECHECK" | "STOPPING_SOURCE" | "TRANSFERRING" | "DEPLOYING" | "FINALIZING" | "COMPLETED" | "ROLLING_BACK" | "ROLLED_BACK" | "FAILED";
+                        prevStatus: string;
+                        sourceServerId: string;
+                        targetServerId: string;
+                        volumes: {
+                            name: string;
+                            state: string;
+                            sizeBytes: number | null;
+                            parts: number;
+                            partsDone: number;
+                            bytesDone: number;
+                        }[];
+                        progress: {
+                            volumeIndex: number;
+                            volumeCount: number;
+                            bytesDone: number;
+                            bytesTotal: number;
+                        };
+                        warnings: {
+                            code: string;
+                            details?: {
+                                [key: string]: unknown;
+                            };
+                        }[];
+                        failureReason: string | null;
+                        /** @enum {string|null} */
+                        failurePhase: "QUEUED" | "PRECHECK" | "STOPPING_SOURCE" | "TRANSFERRING" | "DEPLOYING" | "FINALIZING" | "COMPLETED" | "ROLLING_BACK" | "ROLLED_BACK" | "FAILED" | null;
+                        deploymentId: string | null;
+                        /** Format: date-time */
+                        cutoverAt: string | null;
+                        /** Format: date-time */
+                        finishedAt: string | null;
+                        /** Format: date-time */
+                        archiveUntil: string | null;
+                        /** Format: date-time */
+                        sourcePurgedAt: string | null;
+                        /** Format: date-time */
+                        createdAt: string;
+                        canCancel: boolean;
+                        needsAttention: boolean;
+                        plan: {
+                            [key: string]: unknown;
+                        } | null;
+                        acks: {
+                            [key: string]: boolean;
+                        } | null;
+                        logTail: string | null;
+                    }[];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    AppMovesController_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                moveId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        id: string;
+                        appId: string;
+                        appName: string;
+                        /** @enum {string} */
+                        phase: "QUEUED" | "PRECHECK" | "STOPPING_SOURCE" | "TRANSFERRING" | "DEPLOYING" | "FINALIZING" | "COMPLETED" | "ROLLING_BACK" | "ROLLED_BACK" | "FAILED";
+                        prevStatus: string;
+                        sourceServerId: string;
+                        targetServerId: string;
+                        volumes: {
+                            name: string;
+                            state: string;
+                            sizeBytes: number | null;
+                            parts: number;
+                            partsDone: number;
+                            bytesDone: number;
+                        }[];
+                        progress: {
+                            volumeIndex: number;
+                            volumeCount: number;
+                            bytesDone: number;
+                            bytesTotal: number;
+                        };
+                        warnings: {
+                            code: string;
+                            details?: {
+                                [key: string]: unknown;
+                            };
+                        }[];
+                        failureReason: string | null;
+                        /** @enum {string|null} */
+                        failurePhase: "QUEUED" | "PRECHECK" | "STOPPING_SOURCE" | "TRANSFERRING" | "DEPLOYING" | "FINALIZING" | "COMPLETED" | "ROLLING_BACK" | "ROLLED_BACK" | "FAILED" | null;
+                        deploymentId: string | null;
+                        /** Format: date-time */
+                        cutoverAt: string | null;
+                        /** Format: date-time */
+                        finishedAt: string | null;
+                        /** Format: date-time */
+                        archiveUntil: string | null;
+                        /** Format: date-time */
+                        sourcePurgedAt: string | null;
+                        /** Format: date-time */
+                        createdAt: string;
+                        canCancel: boolean;
+                        needsAttention: boolean;
+                        plan: {
+                            [key: string]: unknown;
+                        } | null;
+                        acks: {
+                            [key: string]: boolean;
+                        } | null;
+                        logTail: string | null;
+                    };
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
     FilesController_meta: {
         parameters: {
             query?: never;
@@ -31620,6 +32100,8 @@ export interface operations {
                         sizeBytes: string | null;
                         destinationId: string | null;
                         destinationType: string | null;
+                        hostServerId: string | null;
+                        onOtherServer: boolean;
                         createdBy: string;
                         /** Format: date-time */
                         createdAt: string;
@@ -31702,6 +32184,8 @@ export interface operations {
                         sizeBytes: string | null;
                         destinationId: string | null;
                         destinationType: string | null;
+                        hostServerId: string | null;
+                        onOtherServer: boolean;
                         createdBy: string;
                         /** Format: date-time */
                         createdAt: string;

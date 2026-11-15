@@ -18,6 +18,7 @@ function make(opts: { app?: Record<string, unknown> | null; requirePermThrows?: 
 
   const prisma = {
     application: { findUnique: jest.fn().mockResolvedValue(app) },
+    appMove: { findFirst: jest.fn().mockResolvedValue(null) }, // no live app move
   } as unknown as PrismaService;
 
   const access = {
@@ -98,6 +99,7 @@ describe("VolumeBackupsService.restore", () => {
     const audit = { log: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService;
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app) },
+      appMove: { findFirst: jest.fn().mockResolvedValue(null) }, // no live app move
       volumeBackup: { findFirst: jest.fn().mockResolvedValue(backup) },
     } as unknown as PrismaService;
     const access = {
@@ -269,5 +271,60 @@ describe("VolumeBackupsService.list — run outcome, errorTail is WRITER-ONLY", 
     expect(v.exitCode).toBe(2);
     expect(JSON.stringify(v)).not.toContain("scrubbed reason");
     expect((await mk(null).list("u1", "a1"))[0].errorTail).toBeNull();
+  });
+});
+
+describe("VolumeBackupsService — app move interplay", () => {
+  function mk(over: { move?: unknown; backup?: Record<string, unknown>; dest?: { type: string } } = {}) {
+    const app = { id: "a1", teamId: "t1", serverId: "s2", environmentId: "e1", volumes: [{ name: "data", path: "/data" }] };
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(app) },
+      appMove: { findFirst: jest.fn().mockResolvedValue(over.move ?? null) },
+      volumeBackup: { findFirst: jest.fn().mockResolvedValue({ id: "vb1", appId: "a1", volumeName: "data", filename: "f.tar.gz", destinationId: null, hostServerId: null, ...over.backup }), findMany: jest.fn().mockResolvedValue([]) },
+      backupDestination: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined), teamRole: jest.fn().mockResolvedValue("OWNER"), requireResourceAccess: jest.fn().mockResolvedValue(undefined), membershipPermissions: jest.fn().mockResolvedValue(new Set(["backups"])) } as unknown as TeamAccessService;
+    const agentWs = { sendCommand: jest.fn().mockResolvedValue({ exitCode: 0, output: "" }) } as unknown as AgentWsServer;
+    const runner = { destinationSpecById: jest.fn().mockResolvedValue(over.dest ?? { type: "LOCAL", encryption: { enabled: false, key: "" } }), runBackup: jest.fn().mockResolvedValue([]) } as unknown as VolumeBackupRunnerService;
+    const service = new VolumeBackupsService(prisma, access, { log: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService, agentWs, runner, {} as unknown as VolumeBackupSchedulerService, fakeAlerts);
+    return { service, agentWs, runner };
+  }
+
+  it("restore and import are refused with 409 app_move_in_progress while the app is moving (nothing dispatched); the manual backup is guarded in the runner", async () => {
+    const t = mk({ move: { id: "mv1", phase: "TRANSFERRING" } });
+    for (const call of [() => t.service.restore("u1", "a1", "vb1"), () => t.service.importFromUrl("u1", "a1", { ...input })]) {
+      const e = await call().catch((x: unknown) => x);
+      expect(e).toBeInstanceOf(ConflictException);
+      expect((e as ConflictException).getResponse()).toMatchObject({ code: "app_move_in_progress" });
+    }
+    expect(t.agentWs.sendCommand).not.toHaveBeenCalled();
+  });
+
+  it("a LOCAL backup stamped with ANOTHER server cannot be restored here (409 backup_on_other_server); no command is sent", async () => {
+    const t = mk({ backup: { hostServerId: "s1" } });
+    const e = await t.service.restore("u1", "a1", "vb1").catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(ConflictException);
+    expect((e as ConflictException).getResponse()).toMatchObject({ code: "backup_on_other_server" });
+    expect(t.agentWs.sendCommand).not.toHaveBeenCalled();
+  });
+
+  it("an S3 backup is unaffected by hostServerId; a LOCAL one stamped with the CURRENT server (move back) or NULL restores", async () => {
+    const s3 = mk({ backup: { hostServerId: "s1", destinationId: "d1" }, dest: { type: "S3", s3: { bucket: "b", region: "r", endpoint: "e", accessKey: "a", secretKey: "s", prefix: "" }, encryption: { enabled: false, key: "" } } as never });
+    await expect(s3.service.restore("u1", "a1", "vb1")).resolves.toBeUndefined();
+    await expect(mk({ backup: { hostServerId: "s2" } }).service.restore("u1", "a1", "vb1")).resolves.toBeUndefined();
+    await expect(mk({ backup: { hostServerId: null } }).service.restore("u1", "a1", "vb1")).resolves.toBeUndefined();
+  });
+
+  it("the list view flags a stranded LOCAL backup (onOtherServer) and leaves S3 / unstamped rows alone", async () => {
+    const t = mk();
+    const prisma = (t.service as unknown as { prisma: { volumeBackup: { findMany: jest.Mock }; backupDestination: { findMany: jest.Mock } } }).prisma;
+    prisma.volumeBackup.findMany.mockResolvedValue([
+      { id: "a", appId: "a1", volumeName: "data", status: "SUCCESS", filename: "a", sizeBytes: null, destinationId: null, hostServerId: "s1", createdBy: "u", createdAt: new Date(), completedAt: null, exitCode: 0, durationMs: 1, errorTail: null },
+      { id: "b", appId: "a1", volumeName: "data", status: "SUCCESS", filename: "b", sizeBytes: null, destinationId: "d1", hostServerId: "s1", createdBy: "u", createdAt: new Date(), completedAt: null, exitCode: 0, durationMs: 1, errorTail: null },
+      { id: "c", appId: "a1", volumeName: "data", status: "SUCCESS", filename: "c", sizeBytes: null, destinationId: null, hostServerId: null, createdBy: "u", createdAt: new Date(), completedAt: null, exitCode: 0, durationMs: 1, errorTail: null },
+    ]);
+    prisma.backupDestination.findMany.mockResolvedValue([{ id: "d1", type: "S3" }]);
+    const views = await t.service.list("u1", "a1");
+    expect(Object.fromEntries(views.map((v) => [v.id, v.onOtherServer]))).toEqual({ a: true, b: false, c: false });
   });
 });

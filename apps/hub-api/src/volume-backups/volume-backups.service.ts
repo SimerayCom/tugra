@@ -6,6 +6,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { loadProjectCtx } from "../common/resource-project";
+import { assertNoActiveMove } from "../common/app-move-guard";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { appVolumeName } from "../deploy/deploy-script";
 import { buildVolumeDeleteScript, buildVolumeExportUrlScript, buildVolumeImportScript, buildVolumeRestoreScript, parseShareUrl } from "./volume-backup-script";
@@ -25,6 +26,8 @@ export const VolumeBackupViewSchema = z.object({
   sizeBytes: z.string().nullable(),
   destinationId: z.string().nullable(), // which destination stored it (null = local disk)
   destinationType: z.string().nullable(), // "S3" | "LOCAL" | null — only an S3 one can export a migration URL
+  hostServerId: z.string().nullable(), // LOCAL backups: the server whose disk holds the file; null = the app's current server
+  onOtherServer: z.boolean(), // a LOCAL backup stranded on a previous server after an app move: it cannot be restored here
   createdBy: z.string(),
   createdAt: z.date(),
   completedAt: z.date().nullable(),
@@ -74,6 +77,11 @@ export const VolumeBackupConfigViewSchema = z.object({
 });
 export type VolumeBackupConfigView = z.infer<typeof VolumeBackupConfigViewSchema>;
 
+/** A LOCAL backup file stranded on a previous server (stamped by an app move's cutover; NULL = the current server). */
+function onOtherServer(b: { hostServerId?: string | null }, currentServerId: string): boolean {
+  return b.hostServerId != null && b.hostServerId !== currentServerId;
+}
+
 @Injectable()
 export class VolumeBackupsService {
   constructor(
@@ -91,9 +99,9 @@ export class VolumeBackupsService {
   private readonly restoreInFlight = new Set<string>();
 
   async backupNow(userId: string, appId: string): Promise<VolumeBackupView[]> {
-    await this.requireWrite(userId, appId);
+    const app = await this.requireWrite(userId, appId);
     const rows = await this.runner.runBackup(appId, userId);
-    return this.toViews(rows, true); // requireWrite above → the caller is a writer
+    return this.toViews(rows, true, app.serverId); // requireWrite above → the caller is a writer
   }
 
   async list(userId: string, appId: string): Promise<VolumeBackupView[]> {
@@ -105,22 +113,23 @@ export class VolumeBackupsService {
     });
     // errorTail is command output → writers only (same gate as requireWrite).
     const perms = await this.access.membershipPermissions(userId, app.teamId);
-    return this.toViews(rows, perms?.has("backups") ?? false);
+    return this.toViews(rows, perms?.has("backups") ?? false, app.serverId);
   }
 
   /** Project rows to views, resolving each backup's destination TYPE (so the UI can offer export
    *  only for S3-stored backups) with a single batched lookup (no per-row query, no cred decrypt). */
-  private async toViews(rows: VolumeBackup[], canWrite: boolean): Promise<VolumeBackupView[]> {
+  private async toViews(rows: VolumeBackup[], canWrite: boolean, currentServerId: string): Promise<VolumeBackupView[]> {
     const ids = [...new Set(rows.map((r) => r.destinationId).filter((x): x is string => !!x))];
     const dests = ids.length
       ? await this.prisma.backupDestination.findMany({ where: { id: { in: ids } }, select: { id: true, type: true } })
       : [];
     const typeById = new Map(dests.map((d) => [d.id, d.type]));
-    return rows.map((b) => this.view(b, b.destinationId ? typeById.get(b.destinationId) ?? null : null, canWrite));
+    return rows.map((b) => this.view(b, b.destinationId ? typeById.get(b.destinationId) ?? null : null, canWrite, currentServerId));
   }
 
   async restore(userId: string, appId: string, backupId: string): Promise<void> {
     const app = await this.requireWrite(userId, appId);
+    await assertNoActiveMove(this.prisma, appId); // a move is copying these volumes: a restore would race the copy
     const backup = await this.prisma.volumeBackup.findFirst({ where: { id: backupId, appId } });
     if (!backup) throw new NotFoundException("backup not found");
     // One restore per (app, volume) at a time — two concurrent wipe+extracts into the same volume corrupt
@@ -131,6 +140,11 @@ export class VolumeBackupsService {
     try {
       // Read from the backup's OWN destination, not the app's current one.
       const dest = await this.runner.destinationSpecById(backup.destinationId);
+      // A LOCAL file lives on the disk of the server that ran the backup; after an app move that is no longer this
+      // app's server, so the file cannot be read here (an S3 backup is unaffected).
+      if (dest.type !== "S3" && onOtherServer(backup, app.serverId)) {
+        throw new ConflictException({ statusCode: 409, message: `this local backup was made on another server (${backup.hostServerId}) and is not on this app's current server`, code: "backup_on_other_server" });
+      }
       const restoreId = randomUUID().replace(/-/g, "");
       const rbVolume = `tugra_restore_rb_${restoreId}`;
       // Scale the timeout with the backup size (min 10 min, +1 min / 100 MB) so a large restore — which now
@@ -222,6 +236,7 @@ export class VolumeBackupsService {
     opts: { timeoutMs?: number; maxDecodedBytes?: number } = {},
   ): Promise<{ ok: boolean; exitCode: number; tail: string }> {
     const app = await this.requireWrite(userId, appId);
+    await assertNoActiveMove(this.prisma, appId); // the import overwrites a volume a move may be copying
     const declared =
       Array.isArray(app.volumes) &&
       (app.volumes as Array<{ name?: string }>).some((v) => v?.name === input.volumeName);
@@ -401,7 +416,7 @@ export class VolumeBackupsService {
     };
   }
 
-  private view(b: VolumeBackup, destinationType: string | null, canWrite: boolean): VolumeBackupView {
+  private view(b: VolumeBackup, destinationType: string | null, canWrite: boolean, currentServerId: string): VolumeBackupView {
     return {
       id: b.id,
       volumeName: b.volumeName,
@@ -410,6 +425,8 @@ export class VolumeBackupsService {
       sizeBytes: b.sizeBytes != null ? b.sizeBytes.toString() : null,
       destinationId: b.destinationId,
       destinationType,
+      hostServerId: b.hostServerId ?? null,
+      onOtherServer: destinationType !== "S3" && onOtherServer(b, currentServerId),
       createdBy: b.createdBy,
       createdAt: b.createdAt,
       completedAt: b.completedAt,

@@ -17,11 +17,12 @@ import { z } from "zod";
 import { Application, AppStatus, Deployment, Prisma, Role } from "@prisma/client";
 import type { FsEntry, TeamPermission } from "@tugra/shared";
 import { AGENT_FEATURE_CMD_JOURNAL } from "@tugra/shared";
+import { APP_MOVE_TERMINAL, assertNoActiveMove, findActiveMove } from "../common/app-move-guard";
 import { AgentDisconnectedException, AgentOfflineException } from "../agent-gateway/agent-offline.exception";
 import { DeployLeaseService } from "./deploy-lease.service";
 import { INTERRUPTED_DEPLOY_NOTE } from "./deployment-reconcile.service";
 import { decideDeployOutcome, isDispatchPlan, type DispatchPlan } from "./deploy-outcome";
-import { classifyActor, classifyNote, finishedAtOf, toDeploymentRow } from "./deployment-view";
+import { classifyActor, classifyNote, finishedAtOf, predatesMove, toDeploymentRow } from "./deployment-view";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService, type AuditFilters } from "../audit/audit.service";
 import { TeamAccessService, canAccessResource } from "../common/team-access.service";
@@ -155,7 +156,7 @@ import { appLinks, appUrl, primaryHostPort } from "../common/app-url";
 import { magicDomain } from "./magic-domain";
 import { inferComposeWeb } from "../deploy/compose-web";
 import { appIdOfContainer, liveContainerOf, reduceHealth, UNKNOWN_HEALTH, CONTAINER_STATE_MAX_AGE_MS, type AppContainerHealth } from "./container-health";
-import { classifyReadiness, parseStoredInventory } from "../server-ops/gpu-inventory";
+import { cpusetExceedsTarget, gpusUnavailableOnTarget, hasHostMounts, privilegedOptionsCarried } from "../app-moves/move-target-fit";
 import { cpusetMax } from "./dto";
 import { computeImageUpdateView, isImageCheckSubject, ImageUpdateViewSchema, loadLiveImageMany, type LiveImage } from "./image-update";
 import { ImageUpdateService } from "./image-update.service";
@@ -190,6 +191,8 @@ interface ViewExtras {
   health?: AppContainerHealth;
   /** The app's live (latest successful) deploy digest, for the image-update state; absent = no baseline. */
   imageLive?: LiveImage | null;
+  /** The app's live (non-terminal) move, when the caller loaded it; absent = no move. */
+  move?: { id: string; phase: string } | null;
 }
 
 export const AppViewSchema = z.object({
@@ -221,6 +224,7 @@ export const AppViewSchema = z.object({
   watchPaths: z.array(z.string()), // monorepo deploy-trigger globs (empty = deploy on every push)
   autoDeploy: z.boolean(), // per-app push-to-deploy switch
   imageUpdate: ImageUpdateViewSchema.nullable(), // IMAGE apps only: upstream digest vs deployed digest (null otherwise)
+  move: z.object({ id: z.string(), phase: z.string() }).nullable(), // live app move (get/list only); drives the web lock. null = none
   outputDir: z.string().nullable(),
   composeFile: z.string().nullable(),
   composePath: z.string().nullable(), // COMPOSE-from-git: repo-relative path to the compose file (null = pasted compose)
@@ -853,8 +857,8 @@ export class ApplicationsService {
     if (crossServer && src.clusterId) warnings.push("cluster_config_reset");
     // Host bind mounts point at paths on the SOURCE machine; carried over, but they may not exist (or hold
     // different data) on the target — docker would create an empty dir. Flag it so the operator checks.
-    if (crossServer && Array.isArray(src.hostMounts) && src.hostMounts.length > 0) warnings.push("host_mounts_copied");
-    if (src.allowPrivilegedDockerOptions && src.dockerOptions) {
+    if (crossServer && hasHostMounts(src.hostMounts)) warnings.push("host_mounts_copied");
+    if (privilegedOptionsCarried(src)) {
       warnings.push("privileged_options_dropped");
     }
     // Custom container labels are not privilege-bearing, so (unlike dockerOptions) they carry over to a classic or
@@ -863,14 +867,11 @@ export class ApplicationsService {
     if (srcCustomLabels && src.source === "COMPOSE") warnings.push("custom_labels_dropped");
     // CPU pinning is host-specific: a cpuset naming a core the target doesn't have would fail the first deploy.
     // Reset it only when the target's core count is known and the set doesn't fit (unknown → Docker decides).
-    const cpusetReset = crossServer && !!src.cpusetCpus && server.cpuCores != null && cpusetMax(src.cpusetCpus) >= server.cpuCores;
+    const cpusetReset = crossServer && cpusetExceedsTarget(src.cpusetCpus, server.cpuCores);
     if (cpusetReset) warnings.push("cpuset_reset");
     // GPUs are host hardware: a GPU request is KEPT (never reset) but flagged when the target is known to have no
     // usable NVIDIA GPU. An unprobed target (NULL inventory) is unknown and never warns.
-    if (crossServer && !!src.gpus && !src.clusterId) {
-      const gpuReadiness = classifyReadiness(parseStoredInventory(server.gpuInventory));
-      if (gpuReadiness === "none" || gpuReadiness === "non_nvidia") warnings.push("gpus_unavailable_on_target");
-    }
+    if (crossServer && gpusUnavailableOnTarget(src, server.gpuInventory)) warnings.push("gpus_unavailable_on_target");
     const name = this.cloneName(src.name, input.name);
     const composeWebService = src.source === "COMPOSE" ? (this.composeWeb(src)?.service ?? null) : null;
     // Fresh exposure — the domain is NEVER copied (two apps on one host = a Traefik router clash); a custom
@@ -1264,8 +1265,13 @@ export class ApplicationsService {
     const liveById = await this.loadImageLiveMany(visible);
     // Per-service domains feed the `links` field: one batched read for the visible compose apps, none otherwise.
     const domainsByApp = await this.loadServiceDomainsMany(visible.filter((a) => a.source === "COMPOSE").map((a) => a.id));
+    // Live app moves of the page in ONE query (the web lock + list badge); none for almost every app.
+    const moves = visible.length
+      ? await this.prisma.appMove.findMany({ where: { appId: { in: visible.map((a) => a.id) }, phase: { notIn: APP_MOVE_TERMINAL } }, select: { appId: true, id: true, phase: true } })
+      : [];
+    const moveByApp = new Map(moves.map((m) => [m.appId, { id: m.id, phase: m.phase as string }]));
     const views = visible.map((a) =>
-      this.view(a, perms.get(a.teamId)?.has("apps:config") ?? false, perms.get(a.teamId)?.has("apps:deploy") ?? false, ctxByEnv.get(a.environmentId), ipByServer.get(a.serverId) ?? null, { serviceDomains: domainsByApp.get(a.id) ?? [], health: healthById.get(a.id), imageLive: liveById.get(a.id) }),
+      this.view(a, perms.get(a.teamId)?.has("apps:config") ?? false, perms.get(a.teamId)?.has("apps:deploy") ?? false, ctxByEnv.get(a.environmentId), ipByServer.get(a.serverId) ?? null, { serviceDomains: domainsByApp.get(a.id) ?? [], health: healthById.get(a.id), imageLive: liveById.get(a.id), move: moveByApp.get(a.id) ?? null }),
     );
     // `?q`: in-memory substring filter over non-secret fields of the already-authorized views.
     return filterByQuery(views, q, (a) => [a.name, a.domain, a.image, a.gitUrl, a.templateSlug]);
@@ -1278,7 +1284,7 @@ export class ApplicationsService {
     // Per-service domains are non-secret routing facts every viewer sees as links; reading them is not write-gated
     // (only the dedicated service-domains endpoint is). Only a compose app can have any.
     const serviceDomains = app.source === "COMPOSE" ? await this.loadServiceDomains(app.id) : [];
-    return this.view(app, perms?.has("apps:config") ?? false, perms?.has("apps:deploy") ?? false, ctx, await this.serverIp(app.serverId), { serviceDomains, health: await this.loadHealth(app), imageLive: await this.loadImageLive(app) });
+    return this.view(app, perms?.has("apps:config") ?? false, perms?.has("apps:deploy") ?? false, ctx, await this.serverIp(app.serverId), { serviceDomains, health: await this.loadHealth(app), imageLive: await this.loadImageLive(app), move: await findActiveMove(this.prisma, app.id) });
   }
 
   async deploy(userId: string, id: string, opts?: { noCache?: boolean }, idempotencyKey?: string) {
@@ -1288,6 +1294,8 @@ export class ApplicationsService {
     // null for every non-interactive caller (webhook/preview/first-deploy/MCP) → no constraint → unchanged.
     // The `rollout:` namespace is reserved for the fleet rollout engine's dispatch keys (same (appId, key) index).
     if (idempotencyKey?.trim().startsWith("rollout:")) throw new BadRequestException("Idempotency-Key values starting with 'rollout:' are reserved");
+    // `move:` is the app-move runner's own dispatch namespace (move:<moveId> = the deploy a move runs on the target).
+    if (idempotencyKey?.trim().startsWith("move:")) throw new BadRequestException("Idempotency-Key values starting with 'move:' are reserved");
     return this.submitDeploy(app, userId, opts?.noCache ?? false, idempotencyKey ?? null);
   }
 
@@ -1298,6 +1306,7 @@ export class ApplicationsService {
       where: { appId, status: "RUNNING" },
     });
     if (running) throw new AppBusyException();
+    await assertNoActiveMove(this.prisma, appId); // a live move pauses every config-edit path that calls this
   }
 
   /** Create the RUNNING row for a rollback. Rollback doesn't go through the deploy queue, so it relies on the
@@ -1355,6 +1364,12 @@ export class ApplicationsService {
     opts?: { provider?: PrProvider; headSha?: string | null; onlyIfHeadChanged?: boolean },
   ) {
     if (!parent.previewEnabled || !parent.domain) return;
+    // A move is relocating the parent: a preview created now would land on the old server and block the move's
+    // preflight (previews_exist). The webhook is answered; the preview is simply skipped until the move is over.
+    if (await findActiveMove(this.prisma, parent.id)) {
+      await this.audit.log({ actor: "webhook:pr", action: "preview.skipped", target: parent.id, meta: { prNumber, reason: "app-move-in-progress" } });
+      return;
+    }
     // Previews clone the parent's git repo by branch; a COMPOSE / IMAGE parent would produce a broken preview
     // (composePath is not copied, an image has no branch). The API refuses enabling them, this guards old rows.
     if (parent.source !== "GIT" || !parent.gitUrl) {
@@ -1781,17 +1796,17 @@ export class ApplicationsService {
   /** The newest SUCCESS deployment whose artifact is still rollbackable (same predicate as deployments()) — the
    *  baseline a rollout records before it touches the app. Null when none. */
   async rolloutBaseline(appId: string): Promise<string | null> {
-    const app = await this.prisma.application.findUnique({ where: { id: appId }, select: { source: true } });
+    const app = await this.prisma.application.findUnique({ where: { id: appId }, select: { source: true, serverId: true } });
     if (!app) return null;
     const isCompose = app.source === "COMPOSE";
     const rows = await this.prisma.deployment.findMany({
       where: { appId, status: "SUCCESS" },
       orderBy: { createdAt: "desc" },
       take: 20,
-      select: { id: true, imageTag: true, registryImage: true, imageDigest: true, configSnapshot: true },
+      select: { id: true, imageTag: true, registryImage: true, imageDigest: true, configSnapshot: true, runServerId: true },
     });
     const hit = rows.find((d) =>
-      isCompose ? !!(d.configSnapshot as ConfigSnapshot | null)?.composeFile : !!(d.imageTag || d.registryImage || d.imageDigest),
+      isCompose ? !!(d.configSnapshot as ConfigSnapshot | null)?.composeFile : !!(d.imageTag || d.registryImage || d.imageDigest) && !predatesMove(d, app.serverId),
     );
     return hit?.id ?? null;
   }
@@ -1806,10 +1821,18 @@ export class ApplicationsService {
     return this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Application" WHERE id = ${appId} FOR UPDATE`;
       if (await tx.deployment.count({ where: { appId, status: "RUNNING" } })) return null;
+      // App move: while a move is live ONLY its own deploy (idempotencyKey move:<id>) is claimable — it runs ahead of
+      // older queued rows, and every other queued deploy waits until the move ends (the runner drains afterwards).
+      // Without a live move the queue is unchanged, except that a `move:` deploy whose move is already over is never
+      // run (a stale row from a rolled-back move).
+      const mv = await findActiveMove(tx, appId);
+      const moveFilter: Prisma.DeploymentWhereInput = mv
+        ? { idempotencyKey: `move:${mv.id}` }
+        : { OR: [{ idempotencyKey: null }, { NOT: { idempotencyKey: { startsWith: "move:" } } }] };
       const tried: string[] = []; // rows whose CAS lost to a cancel — skip them so the loop always terminates
       for (;;) {
         const next = await tx.deployment.findFirst({
-          where: { appId, status: "QUEUED", id: { notIn: tried } },
+          where: { appId, status: "QUEUED", id: { notIn: tried }, ...moveFilter },
           orderBy: { createdAt: "asc" },
         });
         if (!next) return null;
@@ -2501,7 +2524,7 @@ export class ApplicationsService {
 
   /** Re-run a previous successful deployment's image without rebuilding/pulling. */
   async rollback(userId: string, id: string, targetDeploymentId: string) {
-    const app = await this.requireWrite(userId, id, "apps:deploy");
+    const app = await this.requireMutate(userId, id, "apps:deploy");
     await this.ensureNoActiveDeploy(id); // don't race a running deploy/rollback (both write app.composeFile for compose)
     // Fail-closed, same as executeDeploy: a rollback re-runs the stored dockerOptions via `docker run`, so
     // re-validate them against the app's CURRENT privileged flag (covers the classic AND swarm paths, since
@@ -2529,7 +2552,7 @@ export class ApplicationsService {
    */
   async rollbackDetached(userId: string, appId: string, targetDeploymentId: string, opts: { key: string }): Promise<Deployment> {
     await this.require(userId, appId);
-    const app = await this.requireWrite(userId, appId, "apps:deploy");
+    const app = await this.requireMutate(userId, appId, "apps:deploy");
     if (app.clusterId) throw new ConflictException("swarm apps cannot be rolled back by a rollout");
     const prior = await this.prisma.deployment.findUnique({ where: { appId_idempotencyKey: { appId, idempotencyKey: opts.key } } });
     if (prior) {
@@ -2578,6 +2601,11 @@ export class ApplicationsService {
       // registry image, or the recorded upstream digest (IMAGE apps → byte-exact reconstruction).
       if (!target || (!target.imageTag && !target.registryImage && !target.imageDigest)) {
         throw new NotFoundException("no rollbackable deployment with that id");
+      }
+      // A deploy that ran on the app's PREVIOUS server (an app move happened since) and only has a local tag there
+      // cannot be re-run here. NULL runServerId (legacy rows, every deploy since the last move) behaves as before.
+      if (predatesMove(target, app.serverId)) {
+        throw new ConflictException({ statusCode: 409, message: "that deployment ran on the app's previous server and only exists there as a local image — it can no longer be rolled back to", code: "rollback_predates_move" });
       }
       // Prefer the retained LOCAL tag (fast, no network); pull from the registry only when the local
       // image is gone. If neither is usable, 404 up front.
@@ -2862,7 +2890,7 @@ export class ApplicationsService {
   }
 
   async stop(userId: string, id: string): Promise<void> {
-    const app = await this.requireWrite(userId, id, "apps:deploy");
+    const app = await this.requireMutate(userId, id, "apps:deploy");
     if (app.clusterId) {
       // Swarm: scale the service to 0 (keeps the service definition so start can scale it back up).
       const res = await this.swarmDeploy.scale(app, 0);
@@ -2885,7 +2913,7 @@ export class ApplicationsService {
   }
 
   async start(userId: string, id: string): Promise<void> {
-    const app = await this.requireWrite(userId, id, "apps:deploy");
+    const app = await this.requireMutate(userId, id, "apps:deploy");
     if (app.clusterId) {
       const res = await this.swarmDeploy.scale(app, Math.max(1, app.replicas ?? 1));
       if (res.exitCode !== 0) throw new ServiceUnavailableException(`start did not converge (exit ${res.exitCode}) — the app's status is unchanged`);
@@ -2902,7 +2930,7 @@ export class ApplicationsService {
   }
 
   async restart(userId: string, id: string): Promise<void> {
-    const app = await this.requireWrite(userId, id, "apps:deploy");
+    const app = await this.requireMutate(userId, id, "apps:deploy");
     if (app.clusterId) {
       // Swarm restart = a forced rolling recreation of all tasks (async; the builder polls to convergence).
       const res = await this.swarmDeploy.restart(app);
@@ -2942,7 +2970,7 @@ export class ApplicationsService {
     id: string,
     opts: { keepVolumes?: boolean; removeImages?: boolean; pruneNetworks?: boolean; pruneBuildCache?: boolean } = {},
   ): Promise<void> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireMutate(userId, id);
     // Refuse before any side effect (never a silent ignore): a compose stack removes its own networks on `down`,
     // swarm cleanup isn't wired, and only built apps have a build cache to prune.
     if (opts.pruneNetworks && (app.source === "COMPOSE" || app.clusterId)) {
@@ -3046,7 +3074,7 @@ export class ApplicationsService {
     // Diff each deploy's config against the immediately older one (rows are newest-first, so the previous
     // deploy is the next index). `slim` drops the heavy `logs` column for the list view (rollout/hasLogs are
     // computed first); the detail endpoint serves the full log of one row.
-    return rows.map((d, i) => toDeploymentRow(d, { isCompose, prevSnapshot: (rows[i + 1]?.configSnapshot as ConfigSnapshot | null) ?? null, slim: opts.slim }));
+    return rows.map((d, i) => toDeploymentRow(d, { isCompose, prevSnapshot: (rows[i + 1]?.configSnapshot as ConfigSnapshot | null) ?? null, slim: opts.slim, currentServerId: app.serverId }));
   }
 
   /**
@@ -3071,7 +3099,7 @@ export class ApplicationsService {
         ? this.prisma.user.findUnique({ where: { id: d.requestedBy }, select: { name: true, email: true } }).catch(() => null)
         : Promise.resolve(null),
     ]);
-    const row = toDeploymentRow(d, { isCompose: app.source === "COMPOSE", prevSnapshot: (base?.configSnapshot as ConfigSnapshot | null) ?? null });
+    const row = toDeploymentRow(d, { isCompose: app.source === "COMPOSE", prevSnapshot: (base?.configSnapshot as ConfigSnapshot | null) ?? null, currentServerId: app.serverId });
     const cancellable =
       d.status === "QUEUED" ||
       (d.status === "RUNNING" && (this.activeDeployCommands.has(d.id) || (!!d.agentReqId && !!d.agentServerId && (d.phase === "DISPATCHED" || d.phase === "RECOVERING"))));
@@ -3257,6 +3285,7 @@ export class ApplicationsService {
   async assertNoActiveDeploy(appId: string): Promise<void> {
     const active = await this.prisma.deployment.findFirst({ where: { appId, status: { in: ["QUEUED", "RUNNING"] } }, select: { id: true } });
     if (active) throw new ConflictException({ statusCode: 409, message: "a deploy is in progress — file changes are paused until it finishes", code: "deploy_in_progress" });
+    await assertNoActiveMove(this.prisma, appId); // a move is copying the volumes: file changes would be lost or torn
   }
 
   /**
@@ -3484,7 +3513,7 @@ export class ApplicationsService {
    * enforced here (not just in zod) so MCP, the importer and every other writer get them too.
    */
   async setEnv(userId: string, id: string, env: Record<string, string>, flags?: Record<string, FlagInput>): Promise<void> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireMutate(userId, id);
     const keys = Object.keys(env);
     let oldMeta: EnvMeta | null = null;
     try {
@@ -3539,7 +3568,7 @@ export class ApplicationsService {
    * (no live reattach); turning it OFF is always allowed (the next deploy drops the network). Writer-gated.
    */
   async setDbNetwork(userId: string, id: string, on: boolean): Promise<void> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireMutate(userId, id);
     if (on) {
       if (app.clusterId) throw new BadRequestException("a swarm/cluster app deploys on the overlay — it can't join the node-local DB network");
       if (app.source === "COMPOSE") throw new BadRequestException("a compose app manages its own networks — declare tugra-net in the compose file instead");
@@ -3565,7 +3594,7 @@ export class ApplicationsService {
   }
 
   async setBuildArgs(userId: string, id: string, buildArgs: Record<string, string>): Promise<void> {
-    await this.requireWrite(userId, id);
+    await this.requireMutate(userId, id);
     await this.prisma.application.update({
       where: { id },
       data: { buildArgsEnc: this.crypto.encrypt(JSON.stringify(buildArgs)) },
@@ -3582,7 +3611,7 @@ export class ApplicationsService {
   /** Only a DOCKERFILE build can consume a secret mount (`RUN --mount=type=secret`); refuse elsewhere so a value
    *  is never stored believing it is protected when the builder would silently ignore it. */
   async setBuildSecrets(userId: string, id: string, buildSecrets: Record<string, string>): Promise<void> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireMutate(userId, id);
     if (Object.keys(buildSecrets).length && (app.source !== "GIT" || app.buildType !== "DOCKERFILE")) {
       throw new BadRequestException("build secrets are mounted by Dockerfile builds only (RUN --mount=type=secret); this app's builder cannot consume them");
     }
@@ -3609,7 +3638,7 @@ export class ApplicationsService {
   }
 
   async setDockerOptions(userId: string, id: string, dockerOptions: string | null): Promise<void> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireMutate(userId, id);
     // Validate at set-time (clear 400 now, not a failed deploy later): reject an unterminated quote AND any
     // host-escaping flag (--privileged, docker.sock/host-path bind, host namespaces, host devices,
     // non-allowlisted --cap-add) — UNLESS the instance owner opted this app in (flag read from the DB row,
@@ -3648,7 +3677,7 @@ export class ApplicationsService {
    *  refused for COMPOSE (labels live in the compose YAML) and previews; the audit record carries the key NAMES
    *  and count, never the values (values can be tokens). Applies on the next deploy. */
   async setCustomLabels(userId: string, id: string, input: SetCustomLabelsInput): Promise<void> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireMutate(userId, id);
     if (app.source === "COMPOSE") throw new BadRequestException("compose apps declare labels in the compose file");
     if (app.isPreview) throw new BadRequestException("preview apps do not support custom labels");
     await this.ensureNoActiveDeploy(id);
@@ -3745,7 +3774,7 @@ export class ApplicationsService {
     post: string | null,
     composeHookService?: string | null,
   ): Promise<void> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireMutate(userId, id);
     const norm = (s: string | null) => {
       const trimmed = (s ?? "").trim();
       return trimmed ? trimmed : null;
@@ -3800,7 +3829,7 @@ export class ApplicationsService {
    *  (runContainerArgs); swarm services are a deferred follow-up. Clearing (both null) is always allowed so a
    *  stale override can be removed after an app moves to a cluster. */
   async setContainerCommand(userId: string, id: string, input: SetContainerCommandInput): Promise<void> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireMutate(userId, id);
     const setting = input.containerEntrypoint !== null || input.containerCommand !== null;
     if (setting && (app.source === "COMPOSE" || app.clusterId || app.isPreview)) {
       throw new BadRequestException("a container command override is only supported on single-server Image and Git apps");
@@ -3842,7 +3871,7 @@ export class ApplicationsService {
    * only the size + sha256 are audited, never the content.
    */
   async setComposeFile(userId: string, id: string, composeFile: string): Promise<void> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireMutate(userId, id);
     if (app.source !== "COMPOSE") throw new BadRequestException("not a compose app");
     assertSafeCompose(composeFile);
     // A saved deploy hook targets one service: refuse a file that drops it (the hook would fail every deploy).
@@ -3872,7 +3901,7 @@ export class ApplicationsService {
    * Returns the credential side effects as `warnings` so the UI can tell the operator what was reset.
    */
   async setSource(userId: string, id: string, input: SetSourceInput): Promise<{ warnings: string[] }> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireMutate(userId, id);
     if (app.isPreview) throw new BadRequestException("a preview app's source is controlled by its parent");
     // A git-sourced compose app edits its repo/branch/path here (like a GIT app); a PASTED compose edits its
     // YAML via the compose-file endpoint instead.
@@ -3984,7 +4013,7 @@ export class ApplicationsService {
    * COMPOSE builds from its compose file). Applies on the next deploy.
    */
   async setBuild(userId: string, id: string, input: SetBuildInput): Promise<void> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireMutate(userId, id);
     if (app.isPreview) throw new BadRequestException("a preview app's build is controlled by its parent");
     if (app.source !== "GIT") throw new BadRequestException("build settings apply only to Git apps");
     await this.ensureNoActiveDeploy(id);
@@ -4138,7 +4167,7 @@ export class ApplicationsService {
   /** Replace the app's extra published ports (raw host:container TCP/UDP maps beyond the ingress port).
    *  Classic (docker-run) apps only — a compose app declares its ports in its YAML. Applies on the next deploy. */
   async setExtraPorts(userId: string, id: string, ports: { hostPort: number; containerPort: number; protocol: "tcp" | "udp" }[]): Promise<void> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireMutate(userId, id);
     if (app.source === "COMPOSE") throw new BadRequestException("a compose app declares its ports in its compose file");
     await this.prisma.application.update({ where: { id }, data: { extraPorts: ports as unknown as Prisma.InputJsonValue } });
     await this.audit.log({ actor: userId, action: "app.extra_ports.update", target: id, meta: { count: ports.length } });
@@ -4147,7 +4176,7 @@ export class ApplicationsService {
   /** Replace the app's docker network aliases (extra DNS names on its user-defined network). Names are
    *  DTO-validated DNS labels, deduped there. Replace-set; empty clears. Applies on the next deploy. */
   async setNetworkAliases(userId: string, id: string, aliases: string[]): Promise<void> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireMutate(userId, id);
     // Swarm/cluster apps deploy via service-script.ts, which does not emit --network-alias, so accepting
     // them would be a silent no-op — refuse (mirrors setDbNetwork / extra domains).
     if (app.clusterId) throw new BadRequestException("network aliases aren't supported for clustered (swarm) apps yet");
@@ -4175,7 +4204,7 @@ export class ApplicationsService {
    *  already uses on this server is refused (two tenants must not silently share a bridge), and the alias must not
    *  collide with any app's alias on the same server (the unique index closes the race). Applies on the next deploy. */
   async setNetworks(userId: string, id: string, cfg: { networks?: string[]; containerAlias?: string | null }): Promise<void> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireMutate(userId, id);
     if (app.clusterId) throw new BadRequestException("networks and a container alias aren't supported for clustered (swarm) apps");
     if (app.source === "COMPOSE") throw new BadRequestException("a compose app manages its own networks — declare them in the compose file");
     if (app.isPreview) throw new BadRequestException("networks and a container alias aren't supported on preview apps");
@@ -4234,7 +4263,7 @@ export class ApplicationsService {
    *  COMPOSE apps are rejected — toSpec derives their web port from the YAML, so a stored value is ignored
    *  and editing it would silently do nothing. Applies on the NEXT deploy (the labels/-p are baked in at run). */
   async setContainerPort(userId: string, id: string, containerPort: number): Promise<void> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireMutate(userId, id);
     if (app.source === "COMPOSE") throw new BadRequestException("a compose app's port comes from its compose file");
     if (app.isPreview) throw new BadRequestException("a preview app's port is inherited from its parent app");
     await this.prisma.application.update({ where: { id }, data: { containerPort } });
@@ -4269,7 +4298,7 @@ export class ApplicationsService {
    * size + sha256 only, never the content.
    */
   async setConfigMountContent(userId: string, id: string, target: string, content: string): Promise<void> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireMutate(userId, id);
     if (app.source !== "COMPOSE") throw new BadRequestException("not a compose app");
     validateConfigMountTarget(target); // reuse the install-time shape/injection guard
     const mounts = this.appConfigMounts(app);
@@ -4331,7 +4360,7 @@ export class ApplicationsService {
   }
 
   async setLimits(userId: string, id: string, limits: SetLimitsInput): Promise<void> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireMutate(userId, id);
     const cpuset = limits.cpusetCpus === undefined ? undefined : limits.cpusetCpus || null; // "" (cleared) → null
     const extraSet = [limits.memorySwapMb, limits.pidsLimit, limits.shmSizeMb, limits.cpuShares, cpuset].some((v) => v != null);
     // These map to `docker run` flags on the classic single-container path only. Compose ignores them (it even
@@ -4384,7 +4413,7 @@ export class ApplicationsService {
       interval?: number | null; timeout?: number | null; retries?: number | null; startPeriod?: number | null; expectedStatus?: number | null;
     },
   ): Promise<void> {
-    await this.requireWrite(userId, id);
+    await this.requireMutate(userId, id);
     await this.prisma.application.update({
       where: { id },
       data: {
@@ -4419,14 +4448,14 @@ export class ApplicationsService {
    *  denylist (clear 400, not a broken deploy later) — the exact bar the free-form dockerOptions `-v` path
    *  already enforces. Applies on the next deploy. */
   async setHostMounts(userId: string, id: string, mounts: HostMount[]): Promise<void> {
-    await this.requireWrite(userId, id);
+    await this.requireMutate(userId, id);
     const clean = validateHostMounts(mounts);
     await this.prisma.application.update({ where: { id }, data: { hostMounts: clean as unknown as Prisma.InputJsonValue } });
     await this.audit.log({ actor: userId, action: "app.host_mounts.update", target: id, meta: { count: clean.length } });
   }
 
   async setVolumes(userId: string, id: string, volumes: AppVolume[]): Promise<void> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireMutate(userId, id);
     const data: Prisma.ApplicationUncheckedUpdateInput = { volumes: volumes as unknown as Prisma.InputJsonValue };
     // Adding persistent storage to an app ALREADY on a cluster hard-pins it to one node (a stateful
     // service can't diverge across nodes) — symmetric with setClusterConfig, and closes the pre-existing gap
@@ -4458,7 +4487,7 @@ export class ApplicationsService {
     id: string,
     creds: { gitToken?: string | null; registry?: RegistryAuth | null },
   ): Promise<void> {
-    await this.requireWrite(userId, id);
+    await this.requireMutate(userId, id);
     const data: Prisma.ApplicationUpdateInput = {};
     if (creds.gitToken !== undefined) {
       data.gitTokenEnc = creds.gitToken ? this.crypto.encrypt(creds.gitToken) : null;
@@ -4489,7 +4518,7 @@ export class ApplicationsService {
       pushImageTag?: string | null;
     },
   ): Promise<void> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireMutate(userId, id);
     // A registry must belong to the app's own team (no cross-team credential use).
     if (cfg.registryId) {
       const reg = await this.prisma.registry.findUnique({ where: { id: cfg.registryId } });
@@ -4570,7 +4599,7 @@ export class ApplicationsService {
     id: string,
     cfg: { clusterId?: string | null; replicas?: number | null },
   ): Promise<void> {
-    const app = await this.requireWrite(userId, id, "apps:deploy");
+    const app = await this.requireMutate(userId, id, "apps:deploy");
     const data: Prisma.ApplicationUncheckedUpdateInput = {};
     if (cfg.clusterId !== undefined) {
       let managerId: string | null = null;
@@ -4680,7 +4709,7 @@ export class ApplicationsService {
    *  (named-volume) app pinned to one node, mirroring setClusterConfig's guard. Reuses swarmDeploy.scale (which
    *  has no auth of its own) behind requireWrite('apps:deploy'). */
   async scaleNow(userId: string, id: string, replicas: number): Promise<void> {
-    const app = await this.requireWrite(userId, id, "apps:deploy");
+    const app = await this.requireMutate(userId, id, "apps:deploy");
     if (!app.clusterId) throw new BadRequestException("scaling replicas is only supported for cluster-deployed (swarm) apps");
     const n = Math.max(1, Math.floor(replicas));
     if (this.appVolumes(app).length > 0 && n > 1) {
@@ -4703,7 +4732,7 @@ export class ApplicationsService {
    *  save time (a TOCTOU with a node leaving between page-load and save is acceptable — same class as our
    *  manager-reachability checks elsewhere). */
   async setPlacement(userId: string, id: string, input: SetPlacementInput): Promise<void> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireMutate(userId, id);
     if (!app.clusterId) throw new BadRequestException("select a cluster before configuring placement");
     const needsLive = input.constraints.some((c) => c.type === "hostname" || c.type === "nodeId");
     if (needsLive) {
@@ -4731,7 +4760,7 @@ export class ApplicationsService {
       drainSec?: number | null;
     },
   ): Promise<void> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireMutate(userId, id);
     // The grace window / drain are applied by the classic docker-run scripts only. Setting one on a compose or
     // swarm app would be a silent no-op, so refuse (clearing with null is always allowed).
     if ((cfg.stopGracePeriodSec != null || cfg.drainSec != null) && app.source === "COMPOSE") {
@@ -4778,7 +4807,7 @@ export class ApplicationsService {
 
   /** Assign, change or clear an app's domain after creation (applied on next deploy). */
   async setDomain(userId: string, id: string, domain: string | null): Promise<void> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireMutate(userId, id);
     await this.assertDomainNotReserved(domain); // don't let an app steal the control-panel hostname
     // A user-set domain is "custom" and served over HTTPS (Let's Encrypt); clearing
     // it resets the kind. This keeps custom domains on HTTPS under the certType-aware
@@ -4803,7 +4832,7 @@ export class ApplicationsService {
    * passed list becomes the complete set), mirroring Coolify's domain-list replace.
    */
   async setExtraDomains(userId: string, id: string, domains: string[]): Promise<void> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireMutate(userId, id);
     if (!app.domain) throw new BadRequestException("set a primary domain before adding extra domains");
     // Swarm stale-label removal on `docker service update` isn't wired yet → extras are classic/compose only.
     if (app.clusterId) throw new BadRequestException("extra domains aren't supported for clustered (swarm) apps yet");
@@ -4869,7 +4898,7 @@ export class ApplicationsService {
    * the service must exist in the stored compose YAML (for a git compose the deploy's render step checks it).
    */
   async setServiceDomains(userId: string, id: string, rows: { service: string; hostname: string; port: number }[]): Promise<void> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireMutate(userId, id);
     if (app.source !== "COMPOSE") throw new BadRequestException("service domains apply only to compose apps");
     if (app.clusterId) throw new BadRequestException("service domains aren't supported for clustered apps");
     if (app.tunnelExposed) throw new BadRequestException("service domains aren't supported for a tunnel-exposed app");
@@ -4917,7 +4946,7 @@ export class ApplicationsService {
     id: string,
     input: { mode: "magic" | "port" | "none" | "custom"; domain?: string },
   ): Promise<AppView> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireMutate(userId, id);
     if (input.mode === "custom") await this.assertDomainNotReserved(input.domain); // not the panel's hostname
     const server = await this.prisma.server.findUnique({ where: { id: app.serverId } });
     if (!server) throw new NotFoundException("server not found");
@@ -4947,7 +4976,7 @@ export class ApplicationsService {
     id: string,
     opts: { domainRedirect?: "www" | "root" | null; securityHeaders?: boolean; gzip?: boolean; forwardAuth?: string | null; ipAllowlist?: string[]; pathPrefix?: string | null; stripPrefix?: boolean; rateLimit?: { average: number; burst: number; period: "1s" | "1m" | "1h" } | null },
   ): Promise<void> {
-    await this.requireWrite(userId, id);
+    await this.requireMutate(userId, id);
     const data: Prisma.ApplicationUncheckedUpdateInput = {};
     if (opts.domainRedirect !== undefined) data.domainRedirect = opts.domainRedirect;
     if (opts.securityHeaders !== undefined) data.securityHeaders = opts.securityHeaders;
@@ -4965,7 +4994,7 @@ export class ApplicationsService {
    *  htpasswd hash) and ONLY the hash is stored — the plaintext never touches the DB. An empty list clears
    *  basic auth. Applies on the next deploy. */
   async setBasicAuth(userId: string, id: string, users: { user: string; password: string }[]): Promise<void> {
-    await this.requireWrite(userId, id);
+    await this.requireMutate(userId, id);
     const hashed = users.map((u) => ({ user: u.user, hash: bcrypt.hashSync(u.password, 10) }));
     await this.prisma.application.update({
       where: { id },
@@ -4979,7 +5008,7 @@ export class ApplicationsService {
    *  are stored verbatim (validated single-line + length-capped in the DTO) and shell/YAML-escaped at the
    *  deploy boundary. Applies on the next deploy. */
   async setRedirects(userId: string, id: string, redirects: { regex: string; replacement: string; permanent: boolean }[]): Promise<void> {
-    await this.requireWrite(userId, id);
+    await this.requireMutate(userId, id);
     await this.prisma.application.update({
       where: { id },
       data: { redirects: redirects.length ? (redirects as unknown as Prisma.InputJsonValue) : Prisma.JsonNull },
@@ -4993,7 +5022,7 @@ export class ApplicationsService {
    *  condition). Clearing (null) is always allowed so a stale policy can be removed after a move. Applies on
    *  the next deploy. */
   async setRestartPolicy(userId: string, id: string, restartPolicy: string | null, maxRetries?: number | null): Promise<void> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireMutate(userId, id);
     if (restartPolicy !== null && (app.source === "COMPOSE" || app.clusterId || app.isPreview)) {
       throw new BadRequestException("a restart policy is only supported on single-server Image and Git apps");
     }
@@ -5019,7 +5048,7 @@ export class ApplicationsService {
    * writes the cert into the proxy's /dynamic and the router serves it statically by SNI (no ACME).
    */
   async setCustomCert(userId: string, id: string, certPem: string, keyPem: string): Promise<{ domains: string[]; notAfter: string }> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireMutate(userId, id);
     if (!app.domain || app.domainKind !== "custom") {
       throw new BadRequestException("a custom certificate applies to a custom domain — set one on this app first");
     }
@@ -5071,7 +5100,7 @@ export class ApplicationsService {
    *  deletes the cert from the proxy's /dynamic so it stops being served; the router label reverts on the
    *  next deploy. */
   async clearCustomCert(userId: string, id: string): Promise<void> {
-    const app = await this.requireWrite(userId, id);
+    const app = await this.requireMutate(userId, id);
     if (!app.certPem && app.certType !== "custom") return; // nothing stored
     await this.prisma.application.update({
       where: { id },
@@ -5101,7 +5130,7 @@ export class ApplicationsService {
     id: string,
     input: { domain: string; credentialId?: string; includeWww?: boolean; overwrite?: boolean; dryRun?: boolean },
   ): Promise<{ dryRun: boolean; hostname: string; status?: string; apex?: boolean; sslMode?: string; records: unknown[] }> {
-    await this.requireWrite(userId, id); // apps:config — we will set the domain; fail before any DNS mutation
+    await this.requireMutate(userId, id); // apps:config — we will set the domain; fail before any DNS mutation
     await this.assertDomainNotReserved(input.domain); // fail before creating DNS records for the panel's host
     const opts = { domain: input.domain, credentialId: input.credentialId, includeWww: input.includeWww, overwrite: input.overwrite };
     if (input.dryRun) {
@@ -5675,6 +5704,19 @@ export class ApplicationsService {
     await this.audit.log({ actor: userId, action: "app.icon.delete", target: app.id });
   }
 
+  /** requireWrite + the app-move lock: a config edit / lifecycle action / rollback is refused (409
+   *  app_move_in_progress) while the app is being moved to another server. Deploy QUEUEING deliberately keeps using
+   *  requireWrite (a queued deploy just waits until the move ends). */
+  private async requireMutate(
+    userId: string,
+    id: string,
+    permission: TeamPermission = "apps:config",
+  ): Promise<Application> {
+    const app = await this.requireWrite(userId, id, permission);
+    await assertNoActiveMove(this.prisma, id);
+    return app;
+  }
+
   // Deploy-family callers pass "apps:deploy"; config/CRUD callers use the default "apps:config".
   private async requireWrite(
     userId: string,
@@ -5885,6 +5927,7 @@ export class ApplicationsService {
       watchPaths: app.watchPaths ?? [],
       autoDeploy: app.autoDeploy ?? true,
       imageUpdate: computeImageUpdateView(app, extras?.imageLive, canWrite, this.imageUpdate.intervalMin() === 0),
+      move: extras?.move ?? null,
       outputDir: app.outputDir,
       composeFile: canWrite ? app.composeFile : null,
       composePath: app.composePath,

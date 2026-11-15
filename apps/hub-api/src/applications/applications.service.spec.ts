@@ -118,6 +118,12 @@ function make(
       findMany: jest.fn().mockResolvedValue([]),
       ...(prisma as { server?: object }).server,
     },
+    // App-move guards (assertNoActiveMove / claimNext / list): default to "no live move" so every existing test is unchanged.
+    appMove: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
+      ...(prisma as { appMove?: object }).appMove,
+    },
     // Compose deploys/rollbacks load per-service domains; default to none so existing tests need no stub.
     appServiceDomain: {
       findMany: jest.fn().mockResolvedValue([]),
@@ -8281,5 +8287,220 @@ describe("ApplicationsService — D4 build / registry / hooks", () => {
       const tools = readFileSync(join(__dirname, "../mcp/mcp.service.ts"), "utf8");
       expect(tools).not.toMatch(/compose-preview|previewCompose|compose_preview/);
     });
+  });
+});
+
+// ── app move guards (G3-D): every guard triggers ONLY while a live AppMove exists for the app ──
+describe("ApplicationsService — app move guards", () => {
+  const LIVE = { id: "mv1", phase: "TRANSFERRING" };
+  const movingApp = { ...app, status: "RUNNING", source: "IMAGE" };
+  const okAccess = (): TeamAccessService =>
+    ({
+      requirePermission: jest.fn().mockResolvedValue(undefined),
+      teamRole: jest.fn().mockResolvedValue("OWNER"),
+      requireResourceAccess: jest.fn().mockResolvedValue(undefined),
+      membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()),
+    }) as unknown as TeamAccessService;
+
+  function mk(move: { id: string; phase: string } | null, extra: Record<string, unknown> = {}) {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(movingApp), update: jest.fn().mockResolvedValue({}), delete: jest.fn().mockResolvedValue({}), findMany: jest.fn().mockResolvedValue([]) },
+      appMove: { findFirst: jest.fn().mockResolvedValue(move), findMany: jest.fn().mockResolvedValue(move ? [{ appId: movingApp.id, ...move }] : []) },
+      deployment: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]), findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), count: jest.fn().mockResolvedValue(0) },
+      ...extra,
+    } as unknown as PrismaService;
+    const sendCommand = jest.fn().mockResolvedValue({ exitCode: 0, output: "" });
+    const svc = make(prisma, okAccess(), { sendCommand } as unknown as AgentWsServer);
+    return { svc, prisma, sendCommand };
+  }
+
+  // [method, args after (userId, id)] — every config edit / lifecycle action / rollback entry the spec names.
+  const GUARDED: [string, unknown[]][] = [
+    ["rollback", ["d1"]],
+    ["rollbackDetached", ["d1", { key: "k" }]],
+    ["stop", []], ["start", []], ["restart", []], ["remove", [{}]],
+    ["scaleNow", [2]], ["setClusterConfig", [{}]], ["setPlacement", [{}]],
+    ["setNetworks", [{ networks: [] }]], ["setNetworkAliases", [[]]], ["setDbNetwork", [true]],
+    ["setExtraPorts", [[]]], ["setContainerPort", [80]], ["setHostMounts", [[]]], ["setVolumes", [[]]],
+    ["setDomain", [null]], ["setExtraDomains", [[]]], ["setServiceDomains", [[]]], ["expose", [{}]], ["setDomainOptions", [{}]],
+    ["setBasicAuth", [[]]], ["setRedirects", [[]]], ["setCustomCert", ["c", "k"]], ["clearCustomCert", []], ["autoSetupDomain", [{}]],
+    ["setComposeFile", ["services: {}"]], ["setSource", [{}]], ["setBuild", [{}]], ["setBuildConfig", [{}]],
+    ["setDockerOptions", [null]], ["setCustomLabels", [{}]], ["setLimits", [{}]], ["setContainerCommand", [{}]], ["setDeployHooks", [{}]],
+    ["setHealthCheck", [{}]], ["setConfigMountContent", ["/t", "x"]], ["setEnv", [{}]], ["setBuildArgs", [{}]], ["setBuildSecrets", [{}]],
+    ["setCredentials", [{}]], ["setDeploySettings", [{}]], ["setRestartPolicy", [null]],
+  ];
+
+  it.each(GUARDED)("%s is refused with 409 app_move_in_progress during a move — before any side effect", async (method, args) => {
+    const { svc, prisma, sendCommand } = mk(LIVE);
+    const err = await (svc as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)[method]("u1", "app1", ...args).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect((err as ConflictException).getResponse()).toMatchObject({ code: "app_move_in_progress" });
+    expect(sendCommand).not.toHaveBeenCalled();
+    expect(prisma.application.update as jest.Mock).not.toHaveBeenCalled();
+    expect(prisma.application.delete as jest.Mock).not.toHaveBeenCalled();
+  });
+
+  it("the guard is inert for an app with NO live move (stop runs as before)", async () => {
+    const { svc, sendCommand, prisma } = mk(null);
+    await svc.stop("u1", "app1");
+    expect(sendCommand).toHaveBeenCalled();
+    expect(prisma.application.update as jest.Mock).toHaveBeenCalled();
+  });
+
+  it("ensureNoActiveDeploy / assertNoActiveDeploy also refuse during a move (file edits, rollback, config edits)", async () => {
+    const { svc } = mk(LIVE);
+    await expect(svc.assertNoActiveDeploy("app1")).rejects.toMatchObject({ response: expect.objectContaining({ code: "app_move_in_progress" }) });
+    await expect((svc as unknown as { ensureNoActiveDeploy: (id: string) => Promise<void> }).ensureNoActiveDeploy("app1")).rejects.toBeInstanceOf(ConflictException);
+    const none = mk(null).svc;
+    await expect(none.assertNoActiveDeploy("app1")).resolves.toBeUndefined();
+  });
+
+  it("an active DEPLOY is still reported as such first (existing semantics unchanged)", async () => {
+    const { svc, prisma } = mk(LIVE);
+    (prisma.deployment.findFirst as jest.Mock).mockResolvedValue({ id: "d" });
+    await expect((svc as unknown as { ensureNoActiveDeploy: (id: string) => Promise<void> }).ensureNoActiveDeploy("app1")).rejects.toBeInstanceOf(AppBusyException);
+  });
+
+  it("deploy QUEUEING stays allowed during a move (a QUEUED row is created, nothing is dispatched)", async () => {
+    const created = { id: "dq", appId: "app1", status: "QUEUED" };
+    const { svc, prisma, sendCommand } = mk(LIVE);
+    (prisma.deployment.create as jest.Mock).mockResolvedValue(created);
+    (prisma.deployment.findUnique as jest.Mock).mockResolvedValue(created);
+    // claimNext (live move) only admits move:<id>, so the manual deploy waits: it is not claimed.
+    jest.spyOn(svc as unknown as { claimNext: () => Promise<null> }, "claimNext").mockResolvedValue(null);
+    const row = await svc.deploy("u1", "app1");
+    expect(prisma.deployment.create as jest.Mock).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "QUEUED" }) }));
+    expect(row).toMatchObject({ id: "dq", status: "QUEUED" });
+    expect(sendCommand).not.toHaveBeenCalled();
+  });
+
+  it("rejects the reserved move: Idempotency-Key namespace from clients", async () => {
+    const { svc } = mk(null);
+    await expect(svc.deploy("u1", "app1", undefined, "move:abc")).rejects.toThrow(/reserved/);
+    await expect(svc.deploy("u1", "app1", undefined, "  move:abc")).rejects.toThrow(/reserved/);
+  });
+
+  describe("claimNext", () => {
+    type Row = { id: string; appId: string; status: string; idempotencyKey: string | null; createdAt: number };
+    function queue(rows: Row[], move: { id: string; phase: string } | null) {
+      const claimed: string[] = [];
+      const tx = {
+        $queryRaw: jest.fn().mockResolvedValue([]),
+        deployment: {
+          count: jest.fn().mockResolvedValue(0),
+          findFirst: jest.fn(async ({ where }: { where: Record<string, unknown> }) => {
+            const key = where.idempotencyKey as string | undefined;
+            const notIn = (where.id as { notIn: string[] }).notIn;
+            return (
+              rows
+                .filter((r) => r.status === "QUEUED" && !notIn.includes(r.id))
+                .filter((r) => (key ? r.idempotencyKey === key : (r.idempotencyKey ?? "") .startsWith("move:") === false))
+                .sort((a, b) => a.createdAt - b.createdAt)[0] ?? null
+            );
+          }),
+          updateMany: jest.fn(async ({ where }: { where: { id: string } }) => {
+            const r = rows.find((x) => x.id === where.id && x.status === "QUEUED");
+            if (!r) return { count: 0 };
+            r.status = "RUNNING";
+            claimed.push(r.id);
+            return { count: 1 };
+          }),
+          findUnique: jest.fn(async ({ where }: { where: { id: string } }) => rows.find((r) => r.id === where.id) ?? null),
+        },
+        appMove: { findFirst: jest.fn().mockResolvedValue(move) },
+      };
+      const prisma = { ...tx, $transaction: (cb: (t: unknown) => unknown) => cb(tx) } as unknown as PrismaService;
+      const svc = make(prisma, okAccess(), {} as AgentWsServer);
+      const claimNext = (id: string) => (svc as unknown as { claimNext: (id: string) => Promise<Row | null> }).claimNext(id);
+      return { claimNext, claimed, tx };
+    }
+    const R = (id: string, key: string | null, at: number): Row => ({ id, appId: "app1", status: "QUEUED", idempotencyKey: key, createdAt: at });
+
+    it("with a live move ONLY its own move:<id> deploy is claimable — older queued rows wait", async () => {
+      const q = queue([R("old-webhook", null, 1), R("old-manual", "client-key", 2), R("move-dep", "move:mv1", 3)], LIVE);
+      expect((await q.claimNext("app1"))?.id).toBe("move-dep");
+      expect(await q.claimNext("app1")).toBeNull(); // nothing else is claimable until the move ends
+      expect(q.claimed).toEqual(["move-dep"]);
+    });
+
+    it("with a live move but no move deploy queued yet, nothing is claimed", async () => {
+      const q = queue([R("old-webhook", null, 1)], LIVE);
+      expect(await q.claimNext("app1")).toBeNull();
+    });
+
+    it("another move's deploy key is never claimable", async () => {
+      const q = queue([R("foreign", "move:other", 1)], LIVE);
+      expect(await q.claimNext("app1")).toBeNull();
+    });
+
+    it("without a live move the queue is FIFO as before and a stale move: row (its move is over) is never run", async () => {
+      const q = queue([R("stale-move", "move:mv0", 1), R("w1", null, 2), R("w2", "k", 3)], null);
+      expect((await q.claimNext("app1"))?.id).toBe("w1");
+      expect((await q.claimNext("app1"))?.id).toBe("w2");
+      expect(await q.claimNext("app1")).toBeNull();
+      expect(q.claimed).not.toContain("stale-move");
+    });
+  });
+
+  describe("resolveRollbackSource (server-aware)", () => {
+    const resolve = (a: Record<string, unknown>, t: Record<string, unknown> | null) =>
+      (mk(null).svc as unknown as { resolveRollbackSource: (a: unknown, t: unknown) => Promise<unknown> }).resolveRollbackSource({ ...movingApp, ...a }, t);
+    const row = (over: Record<string, unknown>) => ({ id: "d1", appId: "app1", status: "SUCCESS", imageTag: "tugra_app1:d1", registryImage: null, imageDigest: null, runServerId: null, ...over });
+
+    it("a pre-move deploy with only a local tag on the OLD server is not rollbackable (409 rollback_predates_move)", async () => {
+      await expect(resolve({ serverId: "s2" }, row({ runServerId: "s1" }))).rejects.toMatchObject({ response: expect.objectContaining({ code: "rollback_predates_move" }) });
+    });
+
+    it("legacy NULL runServerId rows behave as before", async () => {
+      await expect(resolve({ serverId: "s2" }, row({ runServerId: null }))).resolves.toMatchObject({ isCompose: false });
+    });
+
+    it("a row that ran on the CURRENT server is fine (move back, or never moved)", async () => {
+      await expect(resolve({ serverId: "s1" }, row({ runServerId: "s1" }))).resolves.toBeDefined();
+    });
+
+    it("a registry image or a pinned digest is still rollbackable across servers", async () => {
+      await expect(resolve({ serverId: "s2" }, row({ runServerId: "s1", registryImage: "r/x:1" }))).resolves.toBeDefined();
+      await expect(resolve({ serverId: "s2" }, row({ runServerId: "s1", imageDigest: "nginx@sha256:abc" }))).resolves.toBeDefined();
+    });
+
+    it("compose apps are unaffected (the YAML snapshot is the artifact)", async () => {
+      await expect(resolve({ serverId: "s2", source: "COMPOSE" }, row({ runServerId: "s1", imageTag: null, configSnapshot: { composeFile: "services: {}" } }))).resolves.toMatchObject({ isCompose: true });
+    });
+  });
+
+  describe("AppView.move", () => {
+    it("get() reports the live move {id, phase}; null when there is none", async () => {
+      const { svc } = mk(LIVE);
+      expect((await svc.get("u1", "app1")).move).toEqual({ id: "mv1", phase: "TRANSFERRING" });
+      expect((await mk(null).svc.get("u1", "app1")).move).toBeNull();
+    });
+
+    it("list() batches live moves in ONE query and attaches them per app", async () => {
+      const apps = [{ ...movingApp, id: "a1", environmentId: "e1" }, { ...movingApp, id: "a2", environmentId: "e1" }];
+      const prisma = {
+        application: { findMany: jest.fn().mockResolvedValue(apps) },
+        containerState: { findMany: jest.fn().mockResolvedValue([]) },
+        environment: { findMany: jest.fn().mockResolvedValue([]) },
+        appMove: { findMany: jest.fn().mockResolvedValue([{ appId: "a2", id: "mvX", phase: "DEPLOYING" }]) },
+      } as unknown as PrismaService;
+      const acc = accessWith({
+        accessByTeam: jest.fn().mockResolvedValue(new Map([["t1", { role: "OWNER", scoped: false, accessedProjects: [], accessedResources: [] }]])),
+        permissionsByTeam: jest.fn().mockResolvedValue(new Map([["t1", OWNER_PERMS()]])),
+      } as never);
+      const svc = make(prisma, acc, {} as AgentWsServer);
+      const out = await svc.list("u1");
+      expect(prisma.appMove.findMany as jest.Mock).toHaveBeenCalledTimes(1);
+      expect(Object.fromEntries(out.map((v) => [v.id, v.move]))).toEqual({ a1: null, a2: { id: "mvX", phase: "DEPLOYING" } });
+    });
+  });
+
+  it("upsertPreview (PR webhook) is skipped, not failed, while the parent is moving", async () => {
+    const create = jest.fn();
+    const { svc, prisma } = mk(LIVE, { application: { findFirst: jest.fn(), create, findUnique: jest.fn() } });
+    const parent = { id: "app1", name: "web", teamId: "t1", serverId: "s1", environmentId: "e1", source: "GIT", gitUrl: "https://github.com/u/r.git", previewEnabled: true, domain: "app.example.com" } as unknown as Parameters<typeof svc.upsertPreview>[0];
+    await svc.upsertPreview(parent, 7, "feat");
+    expect(create).not.toHaveBeenCalled();
+    expect(prisma.appMove.findFirst as jest.Mock).toHaveBeenCalled();
   });
 });

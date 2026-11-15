@@ -1109,6 +1109,8 @@ model VolumeBackup {
   exitCode      Int?
   errorTail     String?
   durationMs    Int?
+  // Server whose disk holds a LOCAL backup file; NULL = "the app's current server" (every legacy row). Stamped by an app move's cutover.
+  hostServerId  String?
 
   @@index([appId])
 }
@@ -1529,7 +1531,8 @@ model Deployment {
   // Redacted config snapshot this deploy ran with (secrets fingerprinted, not stored).
   configSnapshot Json?
   durationMs     Int? // wall-clock ms from start (startedAt) to terminal status; null for legacy/queued/running rows
-  trigger        String? // what initiated this run: "manual" | "webhook" | "preview" | "rollback"; null for legacy rows
+  runServerId    String? // server this deploy ran on; NULL = "the app's current server" (every legacy row). Stamped by an app move's cutover.
+  trigger        String? // what initiated this run: "manual" | "webhook" | "preview" | "rollback" | "move"; null for legacy rows
   noCache        Boolean          @default(false) // queued deploys carry their --no-cache choice until they start
   requestedBy    String? // actor that enqueued this deploy (userId | "webhook" | "webhook:pr"); drives trigger + audit
   startedAt      DateTime? // when the row moved QUEUED -> RUNNING; null while queued (durationMs measures from here)
@@ -1991,4 +1994,61 @@ model SecretsKeyring {
   id        String   @id @default("singleton")
   epoch     Int      @default(0)
   updatedAt DateTime @updatedAt
+}
+
+enum AppMovePhase {
+  QUEUED
+  PRECHECK
+  STOPPING_SOURCE
+  TRANSFERRING
+  DEPLOYING // cutover tx committed; target deploy in flight (roll-forward zone)
+  FINALIZING
+  COMPLETED
+  ROLLING_BACK
+  ROLLED_BACK
+  FAILED // rollback itself failed -> needs attention
+}
+
+/// A persisted "move this app to another server" job. The app keeps its id; only Application.serverId flips (inside the cutover tx).
+model AppMove {
+  id              String       @id @default(cuid())
+  appId           String // LOOSE ref, NO FK/cascade (like RolloutTarget.resourceId): archive purge + audit survive app deletion
+  appName         String // snapshot
+  teamId          String
+  requestedBy     String
+  sourceServerId  String // loose strings like Application.serverId
+  targetServerId  String
+  phase           AppMovePhase @default(QUEUED)
+  prevStatus      AppStatus // app.status at claim time
+  plan            Json // frozen preflight result (no secret values, no env values)
+  acks            Json         @default("{}")
+  repointDns      Boolean      @default(false)
+  retainDays      Int          @default(7) // 0 = purge source volumes right after COMPLETED
+  volumes         Json         @default("[]") // [{name,dockerName,kind:"app"|"compose",sizeBytes,state,parts,partsDone,bytesDone,entries,createdOnTarget,archiveOverwritten}]
+  snapshotBefore  Json? // pre-image of every Application column the cutover changes (+ logDrain ids); NEVER env*/cert key columns
+  deploymentId    String?
+  warnings        Json         @default("[]")
+  failureReason   String? // stable machine code (i18n suffix)
+  failurePhase    AppMovePhase?
+  logTail         String? // scrubbed, <= 16 KiB, writer-only
+  cancelRequested Boolean      @default(false)
+  ownerId         String? // hub bootId driving the job (DeployLeaseService.bootId); NULL = awaiting recovery
+  heartbeatAt     DateTime?
+  deadlineAt      DateTime?
+  startedAt       DateTime?
+  cutoverAt       DateTime?
+  finishedAt      DateTime?
+  archiveUntil    DateTime?
+  sourcePurgedAt  DateTime? // source archive volumes removed (or consumed by a move-back)
+  targetPurgedAt  DateTime? // target leftovers of a rolled-back/failed move removed
+  createdAt       DateTime     @default(now())
+
+  // NOTE: a partial unique index "AppMove_one_active_per_app" ON AppMove(appId) WHERE phase NOT IN
+  // ('COMPLETED','ROLLED_BACK','FAILED') (20261119110000_app_move migration) is the DB backstop for "one live move
+  // per app"; Prisma cannot model partial indexes (same precedent as deployment_one_running_per_app), so a future
+  // `migrate diff` must not drop it.
+  @@index([appId, createdAt(sort: Desc)])
+  @@index([phase])
+  @@index([sourceServerId])
+  @@index([targetServerId])
 }

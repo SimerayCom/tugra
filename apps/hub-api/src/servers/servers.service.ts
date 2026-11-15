@@ -15,6 +15,7 @@ import { AuditService, type AuditFilters } from "../audit/audit.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { TeamAccessService } from "../common/team-access.service";
+import { APP_MOVE_TERMINAL } from "../common/app-move-guard";
 // Type-only import (erased at build) + a string DI token resolved lazily via
 // ModuleRef, so there is no static edge servers.service → applications.service.
 // A value import WOULD create a require cycle: applications.service imports
@@ -342,6 +343,22 @@ export class ServersService {
     // Dissolve the swarm (or leave the node) first.
     if (server.swarmRole) {
       throw new ConflictException("this server is part of a cluster's swarm; dissolve it (or leave the node) first");
+    }
+    // App moves: refuse while the server is the source/target of a live move, or while it still holds a move's data —
+    // a COMPLETED move's stopped source copy (until its archive is purged) or a rolled-back/failed move's target
+    // leftovers. Deleting it would orphan that data (and strand the move's cleanup).
+    const holdsMove = await this.prisma.appMove.findFirst({
+      where: {
+        OR: [
+          { phase: { notIn: APP_MOVE_TERMINAL }, OR: [{ sourceServerId: id }, { targetServerId: id }] },
+          { phase: "COMPLETED", sourceServerId: id, sourcePurgedAt: null, archiveUntil: { not: null } },
+          { phase: { in: ["ROLLED_BACK", "FAILED"] }, targetServerId: id, targetPurgedAt: null },
+        ],
+      },
+      select: { id: true },
+    });
+    if (holdsMove) {
+      throw new ConflictException({ statusCode: 409, message: "this server is part of an app move, or still holds a moved app's archived data — finish the move or purge the archive first", code: "server_in_active_move" });
     }
     // Release any Cloudflare Tunnel resources BEFORE the cascade drops the row, so a deleted
     // server never leaks a live CF tunnel + wildcard CNAME. Best-effort; lazy token avoids a cycle.

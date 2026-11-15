@@ -26,6 +26,7 @@ import { BulkModule } from "./bulk/bulk.module";
 import { RolloutsModule } from "./rollouts/rollouts.module";
 import { AgentUpdateModule } from "./agent-update/agent-update.module";
 import { ApplicationsModule } from "./applications/applications.module";
+import { AppMovesModule } from "./app-moves/app-moves.module";
 import { FilesModule } from "./files/files.module";
 import { DatabasesModule } from "./databases/databases.module";
 import { BackupsModule } from "./backups/backups.module";
@@ -95,6 +96,7 @@ import { ApiExceptionFilter } from "./common/api-exception.filter";
     RolloutsModule,
     AgentUpdateModule,
     ApplicationsModule,
+    AppMovesModule, // move an app (same id, data included) to another server
     FilesModule,
     DatabasesModule,
     BackupsModule,

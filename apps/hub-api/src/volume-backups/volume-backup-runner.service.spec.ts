@@ -51,6 +51,7 @@ describe("VolumeBackupRunnerService.runBackup — aggregated notification", () =
   function make(sendCommand: jest.Mock) {
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app) },
+      appMove: { findFirst: jest.fn().mockResolvedValue(null) }, // no live app move
       volumeBackup: {
         create: jest.fn().mockResolvedValue({ id: "vb" }),
         update: jest.fn().mockResolvedValue({}),
@@ -110,6 +111,7 @@ describe("VolumeBackupRunnerService — persisted run outcome + throttle", () =>
     const update = jest.fn().mockResolvedValue({});
     const prisma = {
       application: { findUnique: jest.fn().mockResolvedValue(app) },
+      appMove: { findFirst: jest.fn().mockResolvedValue(null) }, // no live app move
       volumeBackup: {
         create: jest.fn().mockResolvedValue({ id: "vb" }),
         update,
@@ -170,5 +172,28 @@ describe("VolumeBackupRunnerService — persisted run outcome + throttle", () =>
     const ok = makeCapture(jest.fn().mockResolvedValue({ exitCode: 0, output: "1" }));
     await ok.svc.runBackup("app1", "u1");
     expect(ok.alerts.recover).toHaveBeenCalledWith("volume", "app1", "t1", expect.objectContaining({ appName: "blog" }));
+  });
+});
+
+describe("VolumeBackupRunnerService.runBackup — app move", () => {
+  const app = { id: "app1", name: "blog", teamId: "t1", serverId: "s1", volumes: [{ name: "data" }], volumeBackupDestinationId: null, volumeBackupRetention: 7 };
+  function make(move: unknown) {
+    const sendCommand = jest.fn().mockResolvedValue({ exitCode: 0, output: "1" });
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app) }, appMove: { findFirst: jest.fn().mockResolvedValue(move) }, volumeBackup: { create: jest.fn(), update: jest.fn(), findUnique: jest.fn(), findMany: jest.fn().mockResolvedValue([]), delete: jest.fn() } } as unknown as PrismaService;
+    const svc = new VolumeBackupRunnerService(prisma, { log: jest.fn() } as unknown as AuditService, {} as unknown as CryptoService, { sendCommand } as unknown as AgentWsServer, { fireForEvent: jest.fn() } as unknown as NotificationsService, noAlerts());
+    return { svc, sendCommand, prisma };
+  }
+
+  it("the SCHEDULED run skips an app with a live move (no row, no command); the next tick runs normally", async () => {
+    const t = make({ id: "mv1", phase: "TRANSFERRING" });
+    expect(await t.svc.runBackup("app1")).toEqual([]);
+    expect(t.sendCommand).not.toHaveBeenCalled();
+    expect(t.prisma.volumeBackup.create as jest.Mock).not.toHaveBeenCalled();
+  });
+
+  it("a MANUAL run is told why (409 app_move_in_progress)", async () => {
+    const t = make({ id: "mv1", phase: "STOPPING_SOURCE" });
+    await expect(t.svc.runBackup("app1", "u1")).rejects.toMatchObject({ response: expect.objectContaining({ code: "app_move_in_progress" }) });
+    expect(t.sendCommand).not.toHaveBeenCalled();
   });
 });

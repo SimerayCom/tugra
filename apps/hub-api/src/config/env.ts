@@ -180,6 +180,11 @@ export const envSchema = z
   // Host-port range the install-time allocator draws from when a template needs a published port.
   TUGRA_HOSTPORT_MIN: z.coerce.number().int().positive().default(20000),
   TUGRA_HOSTPORT_MAX: z.coerce.number().int().positive().default(45000),
+  // App move (relocate an app + its volumes to another server). Each volume crosses the hub in bounded parts of this
+  // many MiB (clamped 32..1024): lower it when a fronting proxy caps request bodies (e.g. Cloudflare-proxied 100 MB).
+  MOVE_PART_MIB: z.coerce.number().int().min(32).max(1024).default(256),
+  // Hub-wide cap on simultaneously relayed parts (memory-only relay); beyond it a part waits for a free seat.
+  MOVE_MAX_CONCURRENT_RELAYS: z.coerce.number().int().min(1).max(16).default(2),
   // Optional, opt-in: a signed remote template catalog. When CATALOG_SOURCE_URL is set the hub
   // periodically fetches it, verifies the ed25519 signature against CATALOG_PUBLISHER_KEY, and
   // overlays it onto the bundled catalog (offline-fallback to bundled when unset/unreachable/invalid).
