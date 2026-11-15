@@ -18,6 +18,9 @@ export const CERTS_MAX_COUNT = 500;
 export const CERT_PEM_MAX = 64 * 1024;
 export const WANTED_MAX = 500;
 
+/** A hostname the store may carry: a plain DNS name or a `*.zone` wildcard (the same shape `main` must have). */
+const HOST_RE = /^(\*\.)?[a-z0-9.-]{1,253}$/;
+
 export type CertReject = "expired" | "key-mismatch" | "no-matching-app" | "malformed" | "too-large";
 
 type IngestReq = Readable & { headers: Record<string, string | string[] | undefined> };
@@ -111,8 +114,7 @@ export class CutoverCertService {
       const reject = (reason: CertReject) => rejected.push({ main: sanitizeText(main, 120), reason });
       const certPem = item?.certPem;
       const keyPem = item?.keyPem;
-      const sansIn = Array.isArray(item?.sans) ? (item.sans as unknown[]).filter((s): s is string => typeof s === "string").map((s) => s.trim().toLowerCase()) : [];
-      if (!main || typeof certPem !== "string" || typeof keyPem !== "string" || !/^(\*\.)?[a-z0-9.-]{1,253}$/.test(main)) {
+      if (!main || typeof certPem !== "string" || typeof keyPem !== "string" || !HOST_RE.test(main)) {
         reject("malformed");
         continue;
       }
@@ -140,7 +142,8 @@ export class CutoverCertService {
         reject("key-mismatch");
         continue;
       }
-      const hosts = [...new Set([main, ...sansIn, ...names])];
+      // The host list comes from the certificate's own names (the source's `sans` claim is ignored), `main` first.
+      const hosts = [...new Set([main, ...names])].filter((h) => HOST_RE.test(h));
       if (![...wanted].some((w) => hosts.some((h) => nameCovers(h, w)))) {
         reject("no-matching-app");
         continue;

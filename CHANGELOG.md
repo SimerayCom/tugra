@@ -7,6 +7,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Cutover certificate transfer: staged hosts come from the certificate itself.** The `sans` list sent by the
+  migrator is no longer trusted or stored; the hosts of a staged certificate (and what gets written into the target's
+  `acme.json`) are taken from the certificate's own names only, each checked as a valid hostname.
 - **Backup destinations: the encryption test no longer fails at random on a fresh agent.** The test's encrypt and
   decrypt gpg processes run at the same time and both tried to create the gpg home on first use; on an agent that had
   just started (or self-updated) one of them could die with `can't create directory '/root/.gnupg': File exists` and

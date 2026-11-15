@@ -92,6 +92,18 @@ describe("CutoverCertService.stage", () => {
     expect(up.update).not.toHaveProperty("keyEnc");
   });
 
+  it("derives the stored hosts from the certificate names only: a source-supplied sans claim is ignored", async () => {
+    const m = make();
+    const res = await m.svc.stage(OP, req({ certs: [{ main: "a.example.com", sans: ["app.victim.com", "x".repeat(300)], ...good }] }));
+    expect(res.accepted).toBe(1);
+    expect(m.upserts[0].create.hosts).toEqual(["a.example.com", "www.a.example.com"]);
+    // a claimed san cannot make an unrelated cert match an app of this op
+    const n = make();
+    const rej = await n.svc.stage(OP, req({ certs: [{ main: "nope.example.org", sans: ["a.example.com"], ...unrelated }] }));
+    expect(rej.rejected).toEqual([{ main: "nope.example.org", reason: "no-matching-app" }]);
+    expect(n.upserts).toHaveLength(0);
+  });
+
   it("rejects with fixed reasons: expired, key-mismatch, no-matching-app, malformed, too-large", async () => {
     const m = make();
     const longKey = "x".repeat(70 * 1024);
