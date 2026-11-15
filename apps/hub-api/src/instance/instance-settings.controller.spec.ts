@@ -8,6 +8,7 @@ import type { CryptoService } from "../crypto/crypto.service";
 import type { LicenseService } from "../license/license.service";
 import type { TelemetryService } from "../telemetry/telemetry.service";
 import type { MailService } from "../mail/mail.service";
+import { RotateSecretsKeySchema, SecretsKeyIdParamSchema } from "./secrets-key.dto";
 import { UpdateMailSettingsSchema, MailTestSchema } from "./dto";
 import { REQUIRE_EDITION } from "../common/edition";
 
@@ -90,7 +91,13 @@ function make(current: CurrentSettings) {
     sendTest: jest.fn().mockResolvedValue({ ok: true }),
   } as unknown as MailService;
   const rotation = { status: jest.fn().mockResolvedValue({ currentKeyId: "k", previousKeyIds: [] }), start: jest.fn().mockReturnValue({ startedAt: new Date() }) };
-  return { ctrl: new InstanceSettingsController(settings, audit, update, updater, crypto, license, telemetry, mail, rotation as never), settings, audit, update, updater, crypto, license, telemetry, mail, rotation };
+  const keyring = {
+    statusView: jest.fn().mockResolvedValue({ currentKeyId: "k", previousKeyIds: [], keys: [], epoch: 0, degraded: null, downgradeSafe: true }),
+    rotate: jest.fn().mockResolvedValue({ keyId: "0123456789abcdef", epoch: 1, reencryptStarted: true }),
+    retire: jest.fn().mockResolvedValue({ keyId: "0123456789abcdef", state: "RETIRED" }),
+    restore: jest.fn().mockResolvedValue({ keyId: "0123456789abcdef", state: "DECRYPT_ONLY" }),
+  };
+  return { ctrl: new InstanceSettingsController(settings, audit, update, updater, crypto, license, telemetry, mail, rotation as never, keyring as never), settings, audit, update, updater, crypto, license, telemetry, mail, rotation, keyring };
 }
 
 const ORIGINAL_EDITION = process.env.TUGRA_EDITION;
@@ -442,5 +449,57 @@ describe("InstanceSettingsController — email settings", () => {
       expect(MailTestSchema.safeParse({ to: "me@x.io" }).success).toBe(true);
       expect(MailTestSchema.safeParse({ to: "nope" }).success).toBe(false);
     });
+  });
+});
+
+describe("InstanceSettingsController — secrets key rotation (keyring)", () => {
+  const proto = InstanceSettingsController.prototype as unknown as Record<string, (...a: unknown[]) => unknown>;
+  const meta = (fn: string) => ({
+    path: Reflect.getMetadata("path", proto[fn]),
+    method: Reflect.getMetadata("method", proto[fn]),
+    code: Reflect.getMetadata("__httpCode__", proto[fn]),
+    headers: (Reflect.getMetadata("__headers__", proto[fn]) ?? []) as { name: string; value: string }[],
+  });
+  const KID = "0123456789abcdef";
+
+  it("the routes are session + owner guarded by the class guards, so a PAT or non-owner cannot reach them", () => {
+    const guards = (Reflect.getMetadata("__guards__", InstanceSettingsController) ?? []).map((g: unknown) => (g as { name: string }).name);
+    expect(guards).toEqual(expect.arrayContaining(["JwtAuthGuard", "InstanceOwnerGuard", "RequireEditionGuard"]));
+    for (const fn of ["secretsKeyStatus", "rotateSecretsKey", "retireSecretsKey", "restoreSecretsKey"]) expect(typeof proto[fn]).toBe("function");
+  });
+
+  it("route shapes: rotate 202, retire/restore 200, every keyring response is no-store", () => {
+    expect(meta("rotateSecretsKey")).toMatchObject({ path: "secrets-key/rotate", code: 202 });
+    expect(meta("retireSecretsKey")).toMatchObject({ path: "secrets-key/keys/:keyId/retire", code: 200 });
+    expect(meta("restoreSecretsKey")).toMatchObject({ path: "secrets-key/keys/:keyId/restore", code: 200 });
+    for (const fn of ["secretsKeyStatus", "rotateSecretsKey", "retireSecretsKey", "restoreSecretsKey", "reencryptSecrets"]) {
+      expect(meta(fn).headers).toContainEqual({ name: "Cache-Control", value: "no-store" });
+    }
+  });
+
+  it("status comes from the keyring view; rotate/retire/restore delegate with the session user", async () => {
+    const { ctrl, keyring } = make({ apiEnabled: true, apiAllowedIps: [] });
+    expect(await ctrl.secretsKeyStatus()).toMatchObject({ downgradeSafe: true });
+    expect(keyring.statusView).toHaveBeenCalled();
+    const body = RotateSecretsKeySchema.parse({ expectedCurrentKeyId: KID });
+    expect(await ctrl.rotateSecretsKey(OWNER, body)).toEqual({ keyId: KID, epoch: 1, reencryptStarted: true });
+    expect(keyring.rotate).toHaveBeenCalledWith("owner1", { expectedCurrentKeyId: KID, target: "new-key", reencrypt: true });
+    await ctrl.retireSecretsKey(OWNER, KID);
+    expect(keyring.retire).toHaveBeenCalledWith("owner1", KID);
+    await ctrl.restoreSecretsKey(OWNER, KID);
+    expect(keyring.restore).toHaveBeenCalledWith("owner1", KID);
+  });
+
+  it("the rotate body is strict: defaults, only a 16-hex id, no extra keys, no key material accepted", () => {
+    expect(RotateSecretsKeySchema.parse({ expectedCurrentKeyId: KID })).toEqual({ expectedCurrentKeyId: KID, target: "new-key", reencrypt: true });
+    expect(RotateSecretsKeySchema.parse({ expectedCurrentKeyId: KID, target: "env-root", reencrypt: false })).toMatchObject({ target: "env-root", reencrypt: false });
+    for (const bad of [{}, { expectedCurrentKeyId: "short" }, { expectedCurrentKeyId: "ZZZZZZZZZZZZZZZZ" }, { expectedCurrentKeyId: KID, target: "other" }, { expectedCurrentKeyId: KID, key: "abc" }, { expectedCurrentKeyId: KID, reencrypt: "yes" }]) {
+      expect(RotateSecretsKeySchema.safeParse(bad).success).toBe(false);
+    }
+  });
+
+  it(":keyId must be 16 lowercase hex chars", () => {
+    expect(SecretsKeyIdParamSchema.safeParse(KID).success).toBe(true);
+    for (const bad of ["", "xyz", KID.toUpperCase(), `${KID}0`, "../etc/passwd"]) expect(SecretsKeyIdParamSchema.safeParse(bad).success).toBe(false);
   });
 });

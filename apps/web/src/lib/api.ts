@@ -478,6 +478,17 @@ export const api = {
   reencryptSecrets() {
     return apiFetch<{ startedAt: string }>("/instance/secrets-key/reencrypt", { method: "POST" });
   },
+  // Rotate with no restart: a new random data key becomes active (target "new-key"), or "env-root" goes back to the
+  // .env key. `expectedCurrentKeyId` is a compare-and-set against the key the page saw (409 stale_current).
+  rotateSecretsKey(body: { expectedCurrentKeyId: string; target?: "new-key" | "env-root"; reencrypt?: boolean }) {
+    return apiFetch<{ keyId: string; epoch: number; reencryptStarted: boolean }>("/instance/secrets-key/rotate", { method: "POST", body: JSON.stringify(body) });
+  },
+  retireSecretsKey(keyId: string) {
+    return apiFetch<{ keyId: string; state: "RETIRED" }>(`/instance/secrets-key/keys/${encodeURIComponent(keyId)}/retire`, { method: "POST" });
+  },
+  restoreSecretsKey(keyId: string) {
+    return apiFetch<{ keyId: string; state: "DECRYPT_ONLY" }>(`/instance/secrets-key/keys/${encodeURIComponent(keyId)}/restore`, { method: "POST" });
+  },
   updateProfile(input: { name?: string; email?: string; uiMode?: "fleet" | "home"; currentPassword?: string }) {
     // An email change is deferred (confirmed via a link to the new address) and requires the current
     // password — the response keeps the OLD email until the new one is confirmed.

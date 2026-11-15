@@ -1,4 +1,4 @@
-import { BadRequestException, Body, ConflictException, Controller, Get, HttpCode, type MessageEvent, Patch, Post, Sse, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, ConflictException, Controller, Get, Header, HttpCode, type MessageEvent, Param, Patch, Post, Sse, UseGuards } from "@nestjs/common";
 import { distinctUntilChanged, from, interval, map, mergeMap, type Observable, takeWhile } from "rxjs";
 import { ApiTags, ApiCookieAuth } from "@nestjs/swagger";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
@@ -12,6 +12,8 @@ import { InstanceOwnerGuard } from "./instance-owner.guard";
 import { currentEdition, RequireEdition, RequireEditionGuard } from "../common/edition";
 import { CryptoService } from "../crypto/crypto.service";
 import { SecretsRotationService } from "../crypto/secrets-rotation.service";
+import { KeyRingService } from "../crypto/keyring.service";
+import { RotateSecretsKeySchema, SecretsKeyIdParamSchema, type RotateSecretsKeyInput } from "./secrets-key.dto";
 import { assertSafeUrl, allowPrivateTargets } from "../notifications/safe-url";
 import { LicenseService } from "../license/license.service";
 import {
@@ -58,6 +60,7 @@ export class InstanceSettingsController {
     private readonly telemetry: TelemetryService,
     private readonly mail: MailService,
     private readonly rotation: SecretsRotationService,
+    private readonly keyring: KeyRingService,
   ) {}
 
   /**
@@ -65,13 +68,44 @@ export class InstanceSettingsController {
    * configured, and how many stored secrets are not yet under the current key. Never returns a key or a secret.
    */
   @Get("secrets-key")
+  @Header("Cache-Control", "no-store")
   secretsKeyStatus() {
-    return this.rotation.status();
+    return this.keyring.statusView();
+  }
+
+  /**
+   * Rotate the secrets encryption key with no restart: a new random data key becomes active (wrapped under the
+   * unchanged .env root key), and by default the re-encrypt job starts. `expectedCurrentKeyId` guards against a stale
+   * page (409 stale_current). Machine codes: ring_degraded, rotation_running, stale_current, already_env_root.
+   */
+  @Post("secrets-key/rotate")
+  @HttpCode(202)
+  @Header("Cache-Control", "no-store")
+  @ApiZodBody(RotateSecretsKeySchema)
+  rotateSecretsKey(@CurrentUser() user: AuthUser, @Body(new ZodValidationPipe(RotateSecretsKeySchema)) body: RotateSecretsKeyInput) {
+    return this.keyring.rotate(user.userId, body);
+  }
+
+  /** Retire a decrypt-only data key nothing references any more (reversible: Restore). */
+  @Post("secrets-key/keys/:keyId/retire")
+  @HttpCode(200)
+  @Header("Cache-Control", "no-store")
+  retireSecretsKey(@CurrentUser() user: AuthUser, @Param("keyId", new ZodValidationPipe(SecretsKeyIdParamSchema)) keyId: string) {
+    return this.keyring.retire(user.userId, keyId);
+  }
+
+  /** Bring a retired data key back as decrypt-only (when a configured root key can still unwrap it). */
+  @Post("secrets-key/keys/:keyId/restore")
+  @HttpCode(200)
+  @Header("Cache-Control", "no-store")
+  restoreSecretsKey(@CurrentUser() user: AuthUser, @Param("keyId", new ZodValidationPipe(SecretsKeyIdParamSchema)) keyId: string) {
+    return this.keyring.restore(user.userId, keyId);
   }
 
   /** Re-encrypt every stored secret under the CURRENT key (detached; poll the status). 409 while one runs. */
   @Post("secrets-key/reencrypt")
   @HttpCode(202)
+  @Header("Cache-Control", "no-store")
   async reencryptSecrets(@CurrentUser() user: AuthUser) {
     const run = this.rotation.start(user.userId);
     try {

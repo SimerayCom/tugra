@@ -1922,3 +1922,41 @@ model RolloutTarget {
   @@unique([rolloutId, resourceId])
   @@index([rolloutId, wave])
 }
+
+// Envelope keyring for the secrets-at-rest encryption: random data keys (DK) stored ONLY wrapped (secretbox) under the
+// .env root key(s), so the database alone never holds a usable key. A DK's id (16-hex fingerprint) is the key id carried
+// in every `tk1.<keyId>.` ciphertext. Zero rows = the ring is just the .env keys (today's behaviour).
+enum SecretsKeyState {
+  ACTIVE
+  DECRYPT_ONLY
+  RETIRED
+}
+
+model SecretsKey {
+  id          String           @id // 16-hex fingerprint of the DK == the key id in ciphertexts
+  state       SecretsKeyState  @default(ACTIVE)
+  createdBy   String? // userId, plain string
+  createdAt   DateTime         @default(now())
+  activatedAt DateTime         @default(now())
+  demotedAt   DateTime?
+  retiredAt   DateTime?
+  wraps       SecretsKeyWrap[]
+}
+
+model SecretsKeyWrap {
+  keyId     String
+  rootKeyId String // fingerprint of the .env root key that wrapped it
+  wrapped   String // tk1.<rootKeyId>.<b64 secretbox of base64(DK bytes)>; deliberately NOT named *Enc (never re-encrypted under a DK)
+  createdAt DateTime   @default(now())
+  key       SecretsKey @relation(fields: [keyId], references: [id], onDelete: Cascade)
+
+  @@id([keyId, rootKeyId])
+}
+
+// Singleton; updating it takes the row lock that serialises every keyring mutation (and bumps `epoch` so other
+// processes notice).
+model SecretsKeyring {
+  id        String   @id @default("singleton")
+  epoch     Int      @default(0)
+  updatedAt DateTime @updatedAt
+}

@@ -66,6 +66,9 @@ export interface RotationStatus {
   totals: RotationCounts;
   /** Recovery-code MACs that were written under a key other than the current one (cannot be rewritten). */
   hmacRowsOnOldKeys: Array<{ model: string; column: string; count: number | null }>;
+  /** Every non-empty ciphertext value counted by the key id it carries ("legacy" for an unprefixed one): how many
+   *  stored values each key still protects. Drives Retire (a key is only retirable at 0) and downgradeSafe. */
+  byKey: Record<string, number>;
   /** True when every stored secret is under the current key → SECRETS_ENCRYPTION_KEY_PREVIOUS can be removed. */
   previousKeyRemovable: boolean;
   running: boolean;
@@ -117,9 +120,22 @@ export class SecretsRotationService {
     return (this.prisma as unknown as Record<string, Delegate>)[model];
   }
 
+  /** Whether a re-encrypt run is in flight (the keyring refuses Rotate/Retire meanwhile). */
+  isRunning(): boolean {
+    return this.running;
+  }
+
   /** Owner status: what is still under an old key. Pure string inspection per value — never decrypts. */
   async status(): Promise<RotationStatus> {
+    // Read the run flag BEFORE the scan: a job that finishes mid-scan must not be reported as idle next to counts taken
+    // while it was still rewriting (that would show a stale byKey as the settled state).
+    const running = this.running;
     const models: RotationStatus["models"] = [];
+    const byKey: Record<string, number> = {};
+    const tally = (v: string) => {
+      const k = this.crypto.keyIdOf(v) ?? "legacy";
+      byKey[k] = (byKey[k] ?? 0) + 1;
+    };
     const totals: RotationCounts = { current: 0, stale: 0, unreadable: 0 };
     const known = new Set([this.crypto.currentKeyId, ...this.crypto.previousKeyIds]);
     for (const entry of ENCRYPTED_COLUMNS) {
@@ -129,6 +145,7 @@ export class SecretsRotationService {
           for (const col of entry.columns) {
             const v = row[col];
             if (typeof v !== "string" || !v) continue;
+            tally(v);
             if (this.crypto.isCurrent(v)) counts.current++;
             else {
               const id = this.crypto.keyIdOf(v);
@@ -150,6 +167,7 @@ export class SecretsRotationService {
       await this.forEachPage(sink.model, [sink.column], (rows) => {
         for (const row of rows) {
           for (const v of this.sinkValues(row[sink.column])) {
+            tally(v);
             if (this.crypto.isCurrent(v)) counts.current++;
             else {
               const id = this.crypto.keyIdOf(v);
@@ -179,8 +197,9 @@ export class SecretsRotationService {
       models,
       totals,
       hmacRowsOnOldKeys,
-      previousKeyRemovable: totals.stale === 0 && totals.unreadable === 0 && !this.running, // from the data alone (survives a restart)
-      running: this.running,
+      byKey,
+      previousKeyRemovable: totals.stale === 0 && totals.unreadable === 0 && !running, // from the data alone (survives a restart)
+      running,
       lastRun: this.lastRun,
     };
   }

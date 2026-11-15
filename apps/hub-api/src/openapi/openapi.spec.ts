@@ -6,6 +6,7 @@ import type { OpenAPIObject } from "@nestjs/swagger";
 import { AppModule } from "../app.module";
 import { configureApp } from "../app-config";
 import { buildOpenApiDocument } from "./openapi";
+import { KEYRING_STORE } from "../crypto/keyring.store";
 
 // apps/hub-api/openapi.json — the committed contract the drift-guard pins.
 const OPENAPI_PATH = path.join(__dirname, "..", "..", "openapi.json");
@@ -16,7 +17,12 @@ describe("OpenAPI document", () => {
   let serialized: string;
 
   beforeAll(async () => {
-    const mod = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    // The crypto module loads the keyring from Postgres while it is being built; this spec has no database (route
+    // metadata only), so give it an empty keyring instead of a connection.
+    const mod = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(KEYRING_STORE)
+      .useValue({ load: async () => ({ epoch: 0, keys: [], wraps: [] }), readEpoch: async () => 0 })
+      .compile();
     app = mod.createNestApplication();
     configureApp(app); // paths carry the /api/v1 prefix
     doc = buildOpenApiDocument(app); // no app.init() → route metadata only, no DB

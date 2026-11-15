@@ -69,6 +69,21 @@ describe("ENCRYPTED_COLUMNS registry — completeness against prisma/schema.pris
   });
 });
 
+describe("keyring tables are never rewritten by the rotation job", () => {
+  it("no ENCRYPTED_COLUMNS / NON_ENC entry has model secretsKey or secretsKeyWrap (a wrap under a data key would be circular)", () => {
+    for (const e of ENCRYPTED_COLUMNS) expect(["secretsKey", "secretsKeyWrap", "secretsKeyring"]).not.toContain(e.model);
+    for (const m of Object.keys(NON_ENC_CIPHERTEXT_COLUMNS)) expect(["secretsKey", "secretsKeyWrap", "secretsKeyring"]).not.toContain(m);
+    for (const j of JSON_SINKS) expect(["secretsKey", "secretsKeyWrap", "secretsKeyring"]).not.toContain(j.model);
+  });
+  it("the SecretsKeyWrap column is deliberately not named *Enc, so the completeness check never flags it", () => {
+    const schema = readFileSync(join(__dirname, "../../prisma/schema.prisma"), "utf8");
+    const block = /^model SecretsKeyWrap \{([\s\S]*?)^\}/m.exec(schema)![1];
+    const cols = block.split("\n").map((l) => l.trim().split(/\s+/)[0]).filter((c) => c && !c.startsWith("@@") && !c.startsWith("//"));
+    expect(cols).toContain("wrapped");
+    expect(cols.filter((c) => c.endsWith("Enc"))).toEqual([]);
+  });
+});
+
 describe("logDrain secrets (D7)", () => {
   it("the only LogDrain ciphertext column is authTokenEnc: the per-transport `options` Json never holds a secret", () => {
     expect(ENCRYPTED_COLUMNS.find((e) => e.model === "logDrain")?.columns).toEqual(["authTokenEnc"]);
@@ -208,5 +223,78 @@ describe("SecretsRotationService", () => {
     expect(fresh.decrypt(meta.remapUndo.apps[1].priorEnc)).toBe('{"B":"2"}');
     expect(meta.remapUndo.apps[1].keys).toEqual(["B"]);
     expect((await m.svc.status()).totals).toMatchObject({ current: 2, stale: 0, unreadable: 0 });
+  });
+});
+
+describe("SecretsRotationService — keyring (data keys)", () => {
+  /** An env-only service + a ring service that has one data key ACTIVE, on the same root. */
+  async function ringed(state: "ACTIVE" | "RETIRED" = "ACTIVE") {
+    const env = await crypto(OLD);
+    const dk = env.generateDataKey();
+    const row = { id: dk.id, state, activatedAt: new Date(), demotedAt: null };
+    const wraps = env.wrapForRoots(dk.key).map((w) => ({ keyId: dk.id, ...w }));
+    const store = { load: async () => ({ epoch: 1, keys: [row], wraps }), readEpoch: async () => 1 };
+    const svc = new CryptoService({ get: (k: string) => (k === "SECRETS_ENCRYPTION_KEY" ? OLD : undefined) } as unknown as ConfigService, store);
+    await svc.onModuleInit();
+    return { env, svc, dk };
+  }
+  const empty = (extra: Record<string, Array<Record<string, unknown>>>) => {
+    const tables: Record<string, Array<Record<string, unknown>>> = { ...extra };
+    for (const e of ENCRYPTED_COLUMNS) tables[e.model] ??= [];
+    for (const h of HMAC_COLUMNS) tables[h.model] ??= [];
+    for (const j of JSON_SINKS) tables[j.model] ??= [];
+    return tables;
+  };
+  const audit = () => ({ log: jest.fn().mockResolvedValue(undefined) }) as unknown as AuditService;
+
+  it("byKey counts every ciphertext by the key id it carries ('legacy' for bare ones); isRunning mirrors the job", async () => {
+    const { env, svc, dk } = await ringed();
+    const tables = empty({
+      sharedVariable: [
+        { id: "s1", valueEnc: svc.encrypt("under-dk") },
+        { id: "s2", valueEnc: env.encrypt("under-env") },
+        { id: "s3", valueEnc: legacy(env, "bare") },
+        { id: "s4", valueEnc: "" },
+        { id: "s5", valueEnc: null },
+      ],
+    });
+    const rot = new SecretsRotationService(fakePrisma(tables) as unknown as PrismaService, svc, audit());
+    expect(rot.isRunning()).toBe(false);
+    const st = await rot.status();
+    expect(st.byKey).toEqual({ [dk.id]: 1, [env.currentKeyId]: 1, legacy: 1 });
+    expect(st.totals).toMatchObject({ current: 1, stale: 2, unreadable: 0 });
+    rot.start("o");
+    expect(rot.isRunning()).toBe(true);
+    expect(() => rot.start("o")).toThrow(ConflictException); // a second start is refused while one runs
+    while (rot.isRunning()) await new Promise((r) => setTimeout(r, 5));
+    expect(rot.isRunning()).toBe(false);
+  });
+
+  it("the job moves env-key and legacy rows under the active data key, then byKey shows only the data key", async () => {
+    const { env, svc, dk } = await ringed();
+    const tables = empty({ sharedVariable: [{ id: "s2", valueEnc: env.encrypt("under-env") }, { id: "s3", valueEnc: legacy(env, "bare") }] });
+    const rot = new SecretsRotationService(fakePrisma(tables) as unknown as PrismaService, svc, audit());
+    const run = await rot.runNow("o");
+    expect(run).toMatchObject({ rewritten: 2, unreadable: 0, errors: 0 });
+    const st = await rot.status();
+    expect(st.byKey).toEqual({ [dk.id]: 2 });
+    expect(st.totals).toMatchObject({ current: 2, stale: 0, unreadable: 0 });
+    expect(svc.decrypt(String(tables.sharedVariable[0].valueEnc))).toBe("under-env");
+    expect(svc.decrypt(String(tables.sharedVariable[1].valueEnc))).toBe("bare");
+  });
+
+  it("values still under a RETIRED data key count as unreadable (the key is not loaded) and are listed, never touched", async () => {
+    const { svc: writer } = await ringed("ACTIVE");
+    const { svc: loaded } = await ringed("RETIRED"); // a different data key; this one is retired => nothing but env is loaded
+    const orphan = writer.encrypt("orphaned");
+    const tables = empty({ sharedVariable: [{ id: "s1", valueEnc: orphan }] });
+    const rot = new SecretsRotationService(fakePrisma(tables) as unknown as PrismaService, loaded, audit());
+    const st = await rot.status();
+    expect(st.totals.unreadable).toBe(1);
+    expect(st.previousKeyRemovable).toBe(false);
+    const run = await rot.runNow("o");
+    expect(run.unreadable).toBe(1);
+    expect(run.unreadableRefs).toEqual(["sharedVariable:s1:valueEnc"]);
+    expect(tables.sharedVariable[0].valueEnc).toBe(orphan);
   });
 });

@@ -93,24 +93,57 @@ Tugra is in early development — only the latest `main` receives security fixes
 
 ## Rotating the secrets key
 
-Every stored secret is encrypted with a key derived from `SECRETS_ENCRYPTION_KEY`. Each ciphertext records the
-id of the key it was written with, so the hub can hold the current key **and** previous keys at the same time
-and rewrite everything under the new one while it keeps running.
+Stored secrets are encrypted with **data keys**: random keys the hub generates and keeps in Postgres, each one
+wrapped (encrypted) under your `SECRETS_ENCRYPTION_KEY`. Every ciphertext records the id of the key it was
+written with, so the hub can hold several keys at once, read old values through their old keys and write new
+values under the new one while it keeps running. A database dump on its own holds no usable key: without the
+`.env` passphrase the wrapped data keys open nothing.
+
+### Rotate the data key (no restart, no `.env` change)
+
+1. Settings → Instance → Security → **Secrets encryption key** → **Rotate key**. Leave **Re-encrypt everything
+   now** ticked.
+2. The hub makes a new random key active immediately. New writes use it; every old value stays readable.
+3. The re-encrypt job rewrites each stored secret under the new key (resumable; **Re-encrypt now** runs it
+   again if it was interrupted). The **Keys** list shows how many secrets each key still protects.
+4. Once a replaced key protects nothing (and a minute has passed so every process has switched), **Retire** it.
+   A retired key is unloaded but its wrapped copy stays in the database, so **Restore** brings it back if you
+   find an old value that still needs it.
+
+A fresh install has no data keys: the hub behaves exactly as before, with `SECRETS_ENCRYPTION_KEY` as the
+encryption key, until an owner first clicks **Rotate key**.
+
+Rotating the data key does **not** rotate `SECRETS_ENCRYPTION_KEY`. That passphrase stays the root of trust: it
+unwraps the data keys at boot, signs the hub-backup `.gpg` passphrase, and is the only thing that opens a
+restored database dump. Two-factor recovery codes, hub-backup `.gpg` files, file-transfer and migration-import
+signatures are tied to the `.env` key and are unaffected by a data-key rotation.
+
+**Rolling back to an older Tugra release.** After the first rotation, a release that predates the key ring
+cannot read values stored under a data key. Before downgrading (or running `update.sh` recovery across such a
+version), click **Back to .env key** on the same card and wait for the re-encrypt to finish; the card then shows
+every secret is under the `.env` key and the downgrade is safe.
+
+### Rotate the `.env` passphrase (root key)
+
+Changing the root passphrase itself is still a manual, restart-based flow:
 
 1. Generate a new passphrase (e.g. `openssl rand -base64 24`).
 2. In the repo-root `.env`: move the old value to `SECRETS_ENCRYPTION_KEY_PREVIOUS` and put the new one in
    `SECRETS_ENCRYPTION_KEY`. Several previous keys may be listed, comma-separated.
 3. Restart the hub (`docker compose --env-file .env -f deploy/docker-compose.yml up -d hub-api`). It boots,
-   reads old secrets through the previous key and writes new ones with the current key.
-4. Settings → Instance → Security → **Secrets encryption key** → **Re-encrypt now**. The job rewrites every
-   stored secret under the current key (resumable; re-run it if it was interrupted). The card shows how many
-   values are still on an old key, per table.
+   reads old secrets through the previous key and writes new ones with the current key. **If you use rotated
+   data keys, the hub re-wraps them under the new passphrase automatically at boot**, so no data-key row needs
+   re-encrypting.
+4. Settings → Instance → Security → **Secrets encryption key** → **Re-encrypt now** moves any value that was
+   written directly under the old `.env` key. The card shows how many values are still on an old key, per table.
 5. When the card says every secret is under the current key, remove `SECRETS_ENCRYPTION_KEY_PREVIOUS` and
    restart once more. Keep the old passphrase in your password manager until every backup taken **before** the
    rotation is obsolete: restoring a pre-rotation backup (Postgres dump, volume bundle or in-app `.gpg`) under
    the current `.env` needs the old passphrase back in `SECRETS_ENCRYPTION_KEY_PREVIOUS`, otherwise its secrets
    are reported unreadable. In-app `.gpg` backups also derive their gpg passphrase from the key that was current
-   when they were taken (see [disaster recovery](disaster-recovery.md)).
+   when they were taken (see [disaster recovery](disaster-recovery.md)). A data key that you retired **before**
+   changing the passphrase is wrapped under the old passphrase only: **Restore** reports `no_root` until the
+   old passphrase is back in `SECRETS_ENCRYPTION_KEY_PREVIOUS`.
 
 Notes:
 - Two-factor **recovery codes** are stored as keyed hashes and cannot be rewritten (the code itself is never

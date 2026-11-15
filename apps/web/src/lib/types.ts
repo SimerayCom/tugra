@@ -1907,9 +1907,32 @@ export interface SecretsKeyCounts {
   stale: number;
   unreadable: number;
 }
+export type SecretsKeyRole = "active" | "decrypt-only" | "root" | "retired";
+export type SecretsKeyBlockedReason = "referenced" | "grace" | "running" | "degraded";
+export interface SecretsKeyInfo {
+  id: string;
+  source: "env" | "ring";
+  role: SecretsKeyRole;
+  createdAt: string | null;
+  activatedAt: string | null;
+  demotedAt: string | null;
+  retiredAt: string | null;
+  referenced: number;
+  retirable: boolean;
+  retireBlockedReason: SecretsKeyBlockedReason | null;
+}
 export interface SecretsKeyStatus {
   currentKeyId: string;
   previousKeyIds: string[];
+  /** Keyring epoch (0 until an owner first rotates). */
+  epoch: number;
+  /** Non-null when a stored data key cannot be unwrapped with the configured root key (rotation is blocked). */
+  degraded: string | null;
+  /** Stored values counted per key id ("legacy" for unprefixed ciphertexts). */
+  byKey: Record<string, number>;
+  /** True when no stored secret is under a keyring data key (an older release can read everything). */
+  downgradeSafe: boolean;
+  keys: SecretsKeyInfo[];
   models: ({ model: string } & SecretsKeyCounts)[];
   totals: SecretsKeyCounts;
   hmacRowsOnOldKeys: { model: string; column: string; count: number | null }[];
