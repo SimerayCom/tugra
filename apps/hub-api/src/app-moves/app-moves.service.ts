@@ -9,17 +9,13 @@ import { APP_MOVE_TERMINAL } from "../common/app-move-guard";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { MovePreflightService } from "./move-preflight.service";
 import { AppMoveRunnerService } from "./app-move-runner.service";
-import { purgeMoveSource, retryTargetCleanup, type PurgeOutcome } from "./app-move-archive";
-import type { StoredVolume } from "./move-types";
+import { hasKeptSnapshots, purgeMoveSource, retryTargetCleanup, type PurgeOutcome } from "./app-move-archive";
+import { asArray, type StoredVolume } from "./move-types";
 import type { AppMoveView, MoveAppPreflightInput, MoveAppPreflightResult, StartAppMoveInput } from "./dto";
 
-function asArray<T>(v: unknown): T[] {
-  return Array.isArray(v) ? (v as T[]) : [];
-}
-
-function parseExtraPorts(raw: unknown): { hostPort: number }[] {
-  return asArray<{ hostPort?: unknown }>(raw).filter((p) => p && typeof p.hostPort === "number") as { hostPort: number }[];
-}
+/** Warning codes whose `details` name things only a writer (apps:config) may see: env var NAMES (env is writer-only
+ *  everywhere else) and the internal name of a kept recovery volume. Read-only members get the bare code. */
+const WRITER_ONLY_WARNING_DETAILS = new Set(["env_may_reference_old_host", "apply_snapshot_kept"]);
 
 @Injectable()
 export class AppMovesService {
@@ -181,15 +177,22 @@ export class AppMovesService {
       outcome = await purgeMoveSource(deps, m, { stampWhenLive: false });
       if (outcome !== "purged" && outcome !== "nothing") fail(outcome);
     } else if (m.phase === "ROLLED_BACK" || m.phase === "FAILED") {
-      if (m.targetPurgedAt && (m.phase === "ROLLED_BACK" || m.sourcePurgedAt)) throw this.conflict("nothing_to_purge", "nothing is left to remove");
-      outcome = await retryTargetCleanup(deps, m);
-      if (outcome !== "purged") {
-        // a FAILED move is cleared by a human even when the target is unreachable: leftovers are reported, the block lifts
-        if (m.phase !== "FAILED") fail(outcome);
-      }
-      if (m.phase === "FAILED") {
-        // after fixing the source by hand: clear the "needs attention" block (both stamps)
-        await this.prisma.appMove.update({ where: { id: m.id }, data: { sourcePurgedAt: m.sourcePurgedAt ?? new Date(), targetPurgedAt: m.targetPurgedAt ?? new Date() } });
+      if (m.targetPurgedAt && !hasKeptSnapshots(m) && (m.phase === "ROLLED_BACK" || m.sourcePurgedAt)) throw this.conflict("nothing_to_purge", "nothing is left to remove");
+      // An explicit purge also removes the apply rollback snapshots that automatic cleanup keeps. The guard inside
+      // retryTargetCleanup refuses to touch a target that holds the app's LIVE data (a FAILED move can stop after the
+      // cutover committed): "skipped_live" removes nothing.
+      outcome = await retryTargetCleanup(deps, m, { includeKept: true });
+      if (m.phase === "ROLLED_BACK") {
+        if (outcome !== "purged") fail(outcome);
+      } else {
+        // FAILED is how a human clears "needs attention" after fixing things by hand, so the block lifts even when the
+        // target is unreachable or a volume is in use (the audit row says what happened). `targetPurgedAt` is only
+        // stamped when the target really is clean - or when it is live, where there is nothing of ours to remove.
+        const targetHandled = outcome === "purged" || outcome === "skipped_live";
+        await this.prisma.appMove.update({
+          where: { id: m.id },
+          data: { sourcePurgedAt: m.sourcePurgedAt ?? new Date(), ...(targetHandled ? { targetPurgedAt: m.targetPurgedAt ?? new Date() } : {}) },
+        });
       }
     } else {
       throw this.conflict("move_active", "the move is still running");
@@ -240,7 +243,7 @@ export class AppMovesService {
       targetServerId: m.targetServerId,
       volumes: vols.map((v) => ({ name: v.name, state: v.state, sizeBytes: v.sizeBytes ?? null, parts: v.parts ?? 0, partsDone: v.partsDone ?? 0, bytesDone: v.bytesDone ?? 0 })),
       progress: { volumeIndex: firstOpen === -1 ? moving.length : firstOpen, volumeCount: moving.length, bytesDone, bytesTotal },
-      warnings: asArray<{ code: string; details?: Record<string, unknown> }>(m.warnings),
+      warnings: asArray<{ code: string; details?: Record<string, unknown> }>(m.warnings).map((w) => (!canWrite && WRITER_ONLY_WARNING_DETAILS.has(w.code) ? { code: w.code } : w)),
       failureReason: m.failureReason,
       failurePhase: m.failurePhase,
       deploymentId: m.deploymentId,
@@ -251,6 +254,7 @@ export class AppMovesService {
       createdAt: m.createdAt.toISOString(),
       canCancel: !terminal && !pastCutover && !m.cancelRequested,
       needsAttention: m.phase === "FAILED" && !m.sourcePurgedAt && !m.targetPurgedAt,
+      snapshotKept: hasKeptSnapshots(m),
       plan: canWrite ? ((m.plan as Record<string, unknown>) ?? null) : null,
       acks: canWrite ? ((m.acks as Record<string, boolean>) ?? null) : null,
       logTail: canWrite ? m.logTail : null,

@@ -34,7 +34,7 @@ const TARGET_PROBE = (vol: string) =>
 
 const LINK_SHA = "c".repeat(64);
 
-function make(opts: { transfer?: jest.Mock; app?: Record<string, unknown> | null; perms?: Set<string>; member?: boolean; targetTeam?: string; owner?: boolean; send?: jest.Mock; online?: Record<string, boolean>; supports?: boolean; moves?: Record<string, unknown>[] } = {}) {
+function make(opts: { transfer?: jest.Mock; app?: Record<string, unknown> | null; perms?: Set<string>; member?: boolean; targetTeam?: string; owner?: boolean; send?: jest.Mock; online?: Record<string, boolean>; supports?: boolean; moves?: Record<string, unknown>[]; importTasks?: Record<string, unknown>[] } = {}) {
   const app = opts.app === undefined ? APP : opts.app && { ...APP, ...opts.app };
   const servers: Record<string, ReturnType<typeof srv>> = { s1: srv("s1"), s2: srv("s2", { teamId: opts.targetTeam ?? "t1" }) };
   const prisma = {
@@ -44,6 +44,7 @@ function make(opts: { transfer?: jest.Mock; app?: Record<string, unknown> | null
     appDatabaseLink: { count: jest.fn().mockResolvedValue(0) },
     rolloutTarget: { count: jest.fn().mockResolvedValue(0) },
     deployment: { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]) },
+    bulkTask: { findMany: jest.fn().mockResolvedValue(opts.importTasks ?? []) },
     appMove: {
       findFirst: jest.fn().mockResolvedValue(null),
       findMany: jest.fn().mockResolvedValue(opts.moves ?? []),
@@ -312,6 +313,46 @@ describe("AppMovesService views", () => {
     expect(svc.toView(row({ phase: "ROLLED_BACK" }) as never, true).needsAttention).toBe(false);
   });
 
+  it("env var NAMES in the stored warnings never reach a read-only member (a writer still sees them); other warnings keep their details", () => {
+    const { svc } = make();
+    const warnings = [{ code: "env_may_reference_old_host", details: { keys: ["DB_HOST", "SECRET_URL"] } }, { code: "apply_snapshot_kept", details: { volume: "data", snapshot: "tugra_restore_rb_x_0" } }, { code: "local_backups_stranded", details: { count: 2 } }];
+    const r = svc.toView(row({ warnings }) as never, false);
+    expect(r.warnings).toEqual([{ code: "env_may_reference_old_host" }, { code: "apply_snapshot_kept" }, { code: "local_backups_stranded", details: { count: 2 } }]);
+    expect(JSON.stringify(r)).not.toMatch(/DB_HOST|SECRET_URL/);
+    expect(svc.toView(row({ warnings }) as never, true).warnings).toEqual(warnings);
+  });
+
+  it("snapshotKept is true only while an apply rollback snapshot is kept", () => {
+    const { svc } = make();
+    expect(svc.toView(row() as never, true).snapshotKept).toBe(false);
+    const kept = [{ name: "data", dockerName: "tugra_appv_capp_data", kind: "app", sizeBytes: 1, state: "APPLIED", parts: 1, partsDone: 1, bytesDone: 1, entries: 1, createdOnTarget: true, archiveOverwritten: false, rollbackKept: true }];
+    expect(svc.toView(row({ phase: "ROLLED_BACK", volumes: kept }) as never, true).snapshotKept).toBe(true);
+  });
+
+  it("the runner's in-move PRECHECK re-run counts only a RUNNING non-move deploy as active; the first preflight counts queued ones too", async () => {
+    const t = make();
+    const s1 = srv("s1") as never;
+    const s2 = srv("s2") as never;
+    await t.pre.gatherFacts(APP as never, s1, s2, {}, "u1");
+    expect((t.prisma.deployment.count as jest.Mock).mock.calls[0][0].where.status).toEqual({ in: ["QUEUED", "RUNNING"] });
+    (t.prisma.deployment.count as jest.Mock).mockClear();
+    await t.pre.gatherFacts(APP as never, s1, s2, {}, "u1", "mvX");
+    expect((t.prisma.deployment.count as jest.Mock).mock.calls[0][0].where.status).toBe("RUNNING");
+  });
+
+  it("a migration import that still provisions or may still stream data into the app blocks the move (migration_import_active); a finished, cancelled-away or rolled-back one does not", async () => {
+    const future = new Date(Date.now() + 60_000);
+    const task = (op: Record<string, unknown>) => ({ operation: { meta: {}, migrationTokenHash: null, migrationTokenExpiresAt: null, tasks: [{ status: "DONE" }], ...op } });
+    const blocked = async (importTasks: Record<string, unknown>[]) => (await make({ importTasks }).svc.preflight("u1", "capp", input)).blockers.some((b) => b.code === "migration_import_active");
+    expect(await blocked([])).toBe(false);
+    expect(await blocked([task({ tasks: [{ status: "DONE" }, { status: "AWAITING_CUTOVER" }] })])).toBe(true);
+    expect(await blocked([task({ tasks: [{ status: "DONE" }, { status: "RUNNING" }] })])).toBe(true);
+    expect(await blocked([task({ migrationTokenHash: "h", migrationTokenExpiresAt: future })])).toBe(true); // a live token may still ingest data
+    expect(await blocked([task({ migrationTokenHash: "h", migrationTokenExpiresAt: new Date(Date.now() - 1) })])).toBe(false);
+    expect(await blocked([task({})])).toBe(false);
+    expect(await blocked([task({ meta: { rolledBackAt: "2026-11-01" }, tasks: [{ status: "RUNNING" }] })])).toBe(false);
+  });
+
   it("list(active) returns at most the live move; get 404s for a foreign move id", async () => {
     const t = make({ moves: [row()] });
     expect(await t.svc.list("u1", "capp", { active: true })).toHaveLength(1);
@@ -505,22 +546,57 @@ describe("AppMovesService.purgeSource", () => {
     expect(((await t.svc.purgeSource("u1", "capp", MVID).catch((x: unknown) => x)) as ConflictException).getResponse()).toMatchObject({ code: "nothing_to_purge" });
   });
 
-  it("FAILED: a human clears 'needs attention' — the target cleanup runs and BOTH stamps are written", async () => {
-    const t = setup(move({ phase: "FAILED" }), { sendOut: { exitCode: 0, output: `TUGRA_VX_VOL tugra_appv_capp_data removed\nTUGRA_VX_VOL tugra_restore_rb_${MVID}_0 absent\nTUGRA_VX_CLEANUP_DONE\n` } });
+  const cleanOut = { exitCode: 0, output: `TUGRA_VX_VOL tugra_appv_capp_data removed\nTUGRA_VX_VOL tugra_restore_rb_${MVID}_0 absent\nTUGRA_VX_CLEANUP_DONE\n` };
+
+  it("FAILED with the app back on the source: a human clears 'needs attention' - the target cleanup runs and BOTH stamps are written", async () => {
+    const t = setup(move({ phase: "FAILED" }), { appServer: "s1", sendOut: cleanOut });
     await t.svc.purgeSource("u1", "capp", MVID);
     expect(t.send).toHaveBeenCalledWith("s2", expect.stringContaining(`rm -rf /etc/tugra/app-moves/${MVID}`), "backup", expect.any(Number));
     const stamps = (t.prisma.appMove.update as jest.Mock).mock.calls.map((c) => c[0].data);
     expect(stamps).toEqual(expect.arrayContaining([expect.objectContaining({ sourcePurgedAt: expect.any(Date), targetPurgedAt: expect.any(Date) })]));
   });
 
-  it("FAILED with the target offline is still cleared (the leftovers are the human's to remove)", async () => {
-    const t = setup(move({ phase: "FAILED" }), { online: { s1: true, s2: false } });
+  it("FAILED with the app LIVE on the target (the cutover had committed): NOTHING is removed, the alert is cleared, the audit says skipped_live", async () => {
+    const t = setup(move({ phase: "FAILED" }), { appServer: "s2", sendOut: cleanOut });
     await t.svc.purgeSource("u1", "capp", MVID);
+    expect(t.send).not.toHaveBeenCalled();
     expect(t.prisma.appMove.update).toHaveBeenCalledWith({ where: { id: MVID }, data: { sourcePurgedAt: expect.any(Date), targetPurgedAt: expect.any(Date) } });
+    expect(t.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "app.move.purge_source", meta: expect.objectContaining({ outcome: "skipped_live" }) }));
+  });
+
+  it("FAILED with another live move of the app on the target server: nothing is removed either", async () => {
+    const t = setup(move({ phase: "FAILED" }), { appServer: "s1", sendOut: cleanOut });
+    (t.prisma.appMove.findFirst as jest.Mock).mockImplementation(async ({ where }: { where: Record<string, unknown> }) => (where.id === MVID ? move({ phase: "FAILED" }) : { id: "other" }));
+    await t.svc.purgeSource("u1", "capp", MVID);
+    expect(t.send).not.toHaveBeenCalled();
+  });
+
+  it("FAILED with the target offline is still cleared, but targetPurgedAt is NOT stamped (the leftovers are still there)", async () => {
+    const t = setup(move({ phase: "FAILED" }), { appServer: "s1", online: { s1: true, s2: false } });
+    await t.svc.purgeSource("u1", "capp", MVID);
+    expect(t.prisma.appMove.update).toHaveBeenCalledWith({ where: { id: MVID }, data: { sourcePurgedAt: expect.any(Date) } });
+    // a later retry is still possible: the move is not "nothing_to_purge"
+    const again = setup(move({ phase: "FAILED", sourcePurgedAt: new Date() }), { appServer: "s1", sendOut: cleanOut });
+    await again.svc.purgeSource("u1", "capp", MVID);
+    expect(again.send).toHaveBeenCalled();
+  });
+
+  it("an explicit purge also removes the kept apply rollback snapshot and spends its flag + warning; automatic cleanup never does", async () => {
+    const kept = [{ ...vols[0], rollbackKept: true }];
+    const t = setup(move({ phase: "ROLLED_BACK", targetPurgedAt: new Date(), volumes: kept, warnings: [{ code: "apply_snapshot_kept" }, { code: "dns_repoint_failed" }] }), {
+      appServer: "s1",
+      sendOut: cleanOut,
+    });
+    await t.svc.purgeSource("u1", "capp", MVID); // not "nothing_to_purge": a kept snapshot is left
+    expect(t.send.mock.calls[0][1]).toContain(`tugra_restore_rb_${MVID}_0`);
+    expect(t.prisma.appMove.update).toHaveBeenCalledWith({
+      where: { id: MVID },
+      data: { targetPurgedAt: expect.any(Date), volumes: [{ ...vols[0], rollbackKept: false }], warnings: [{ code: "dns_repoint_failed" }] },
+    });
   });
 
   it("ROLLED_BACK leftovers are retried; an active move is refused", async () => {
-    const t = setup(move({ phase: "ROLLED_BACK" }), { sendOut: { exitCode: 0, output: `TUGRA_VX_VOL tugra_appv_capp_data removed\nTUGRA_VX_VOL tugra_restore_rb_${MVID}_0 absent\nTUGRA_VX_CLEANUP_DONE\n` } });
+    const t = setup(move({ phase: "ROLLED_BACK" }), { appServer: "s1", sendOut: cleanOut });
     await t.svc.purgeSource("u1", "capp", MVID);
     expect(t.prisma.appMove.update).toHaveBeenCalledWith({ where: { id: MVID }, data: { targetPurgedAt: expect.any(Date) } });
     const live = setup(move({ phase: "TRANSFERRING" }));

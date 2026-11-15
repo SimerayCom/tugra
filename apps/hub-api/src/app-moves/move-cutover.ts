@@ -63,6 +63,8 @@ export interface CutoverInput {
   targetUsedPorts: Set<number>;
   /** The free port to switch to when the host port is busy (null = none available). */
   newHostPort: number | null;
+  /** Host ports the moving app itself bakes in (extraPorts, portMappings): the new host port must not be one of them. */
+  bakedPorts?: Set<number>;
 }
 
 /** A required acknowledgement that is missing at cutover: the situation changed after the operator confirmed. */
@@ -88,6 +90,8 @@ export function planCutover(i: CutoverInput): CutoverPlan {
     needsHostPort = true;
     if (!i.acks.hostPortChanged) throw new CutoverAckMissing("hostPortChanged");
     if (i.newHostPort == null) throw new Error("no free host port available on the target");
+    // belt and braces: the allocator was handed the same sets, so this can only trip on a logic drift
+    if (i.targetUsedPorts.has(i.newHostPort) || i.bakedPorts?.has(i.newHostPort)) throw new Error("the reallocated host port is not free on the target");
     set("hostPort", i.newHostPort);
   }
 

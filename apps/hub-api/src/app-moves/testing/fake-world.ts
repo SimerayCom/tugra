@@ -436,7 +436,7 @@ export class FakeWorld {
       this.prisma as never, this.agentWs as never, this.apps as never, this.preflights as never, this.transfers as never,
       this.portAlloc as never, this.dns as never, this.notifications as never, this.audit as never, this.lease as never,
     );
-    this.runner.timing = { heartbeatMs: 5, deployPollMs: 2, partRetryBackoffMs: 1, busyBackoffMs: 1, busyBackoffMaxMs: 2, cancelWaitMs: 50 };
+    this.runner.timing = { heartbeatMs: 5, deployPollMs: 2, partRetryBackoffMs: 1, busyBackoffMs: 1, busyBackoffMaxMs: 2, cancelWaitMs: 50, rollbackDeployWaitMs: 120, userDeployWaitMs: 60 };
     return this.runner;
   }
 

@@ -218,6 +218,25 @@ describe("AppMoveRunnerService — cutover field rules", () => {
     expect(w.move.snapshotBefore).toMatchObject({ hostPort: 8080 });
   });
 
+  it("the reallocated port is chosen against the target's extraPorts AND the moving app's own baked ports, not only live listeners", async () => {
+    const w = new FakeWorld({ app: { hostPort: 8080, extraPorts: [{ hostPort: 20002, containerPort: 1 }], portMappings: [{ hostPort: 20003 }] }, acks: { hostPortChanged: true }, plan: { hostPort: { from: 8080, to: 20001 } } });
+    w.otherApps.push({ id: "other", serverId: "s2", hostPort: 8080, portMappings: null, extraPorts: [{ hostPort: 20001 }] });
+    (w.portAlloc.allocate as jest.Mock).mockResolvedValueOnce([20004]); // what a correct allocator returns given the set it was handed
+    await go(w);
+    const taken = (w.portAlloc.allocate as jest.Mock).mock.calls[0][3] as Set<number>;
+    expect([...taken].sort((a, b) => a - b)).toEqual([8080, 20001, 20002, 20003]);
+    expect(w.app.hostPort).toBe(20004);
+    expect(w.move.phase).toBe("COMPLETED");
+  });
+
+  it("a reallocated port that collides with a baked port aborts the cutover (the defensive check), source untouched", async () => {
+    const w = new FakeWorld({ app: { hostPort: 8080, extraPorts: [{ hostPort: 20001 }] }, acks: { hostPortChanged: true }, plan: { hostPort: { from: 8080, to: 20001 } } });
+    w.otherApps.push({ id: "other", serverId: "s2", hostPort: 8080, portMappings: null, extraPorts: null });
+    await go(w); // the (fake) allocator ignores `probed` and hands out 20001, which the app itself bakes in
+    expect(w.move).toMatchObject({ phase: "ROLLED_BACK", failureReason: "cutover_failed" });
+    expect(w.app).toMatchObject({ serverId: "s1", hostPort: 8080 });
+  });
+
   it("a free host port is kept (the allocator is not consulted)", async () => {
     const w = new FakeWorld({ app: { hostPort: 8080 }, plan: { hostPort: { from: 8080, to: 8080 } } });
     await go(w);
@@ -351,6 +370,45 @@ describe("AppMoveRunnerService — every failure before the cutover rolls back w
     expect(target).toContain(`tugra_restore_rb_${MOVE_ID}_0`);
   });
 
+  it("apply exit 70 (extract AND rollback failed): the rollback snapshot is the only intact copy, so the rollback keeps it, flags it and warns", async () => {
+    const w = new FakeWorld();
+    w.handlers.apply = [() => fail(70, "RECOVERY_REQUIRED rollback=tugra_restore_rb_x\n")];
+    await go(w);
+    const target = w.onHost("cleanup").find((c) => c.server === "s2")!.script;
+    expect(target).toContain(`docker volume rm '${SRC_VOL}'`); // the volume this move created still goes
+    expect(target).not.toContain(`tugra_restore_rb_${MOVE_ID}_0`); // the snapshot does not
+    expect(w.move.volumes[0]).toMatchObject({ rollbackKept: true });
+    expect(w.move.warnings).toEqual([{ code: "apply_snapshot_kept", details: { volume: "data", snapshot: `tugra_restore_rb_${MOVE_ID}_0` } }]);
+    expect(w.move).toMatchObject({ phase: "ROLLED_BACK", failureReason: "apply_rollback_failed", targetPurgedAt: expect.any(Date) });
+  });
+
+  it("an apply with an UNKNOWN outcome (timeout / lost agent) keeps the snapshot of an overwritten archive, not that of a fresh volume", async () => {
+    const overwritten = new FakeWorld();
+    overwritten.volumesOnHost.s2.add(SRC_VOL);
+    overwritten.handlers.apply = [() => { throw new Error("command timed out"); }];
+    await go(overwritten);
+    expect(overwritten.move.volumes[0]).toMatchObject({ archiveOverwritten: true, rollbackKept: true });
+    expect(overwritten.onHost("cleanup").find((c) => c.server === "s2")!.script).not.toContain(`tugra_restore_rb_${MOVE_ID}_0`);
+
+    const fresh = new FakeWorld();
+    fresh.handlers.apply = [() => { throw new Error("command timed out"); }];
+    await go(fresh);
+    expect(fresh.move.volumes[0].rollbackKept).toBeUndefined();
+    expect(fresh.onHost("cleanup").find((c) => c.server === "s2")!.script).toContain(`tugra_restore_rb_${MOVE_ID}_0`);
+  });
+
+  it("a prepare that fails after creating some volumes: the rollback removes them by label (createdOnTarget was never recorded)", async () => {
+    const w = new FakeWorld();
+    w.handlers.prepare = [() => fail(1, `TUGRA_VX_CREATED ${SRC_VOL} 1\ndocker: no space left\n`)];
+    await go(w);
+    expect(w.move).toMatchObject({ phase: "ROLLED_BACK", failureReason: "prepare_failed" });
+    expect(w.move.volumes[0].createdOnTarget).toBe(false);
+    const target = w.onHost("cleanup").find((c) => c.server === "s2")!.script;
+    expect(target).toContain(`docker volume rm '${SRC_VOL}'`);
+    expect(target).toContain(`[ "$lb" = '${MOVE_ID}' ]`);
+    expect(w.move.targetPurgedAt).toBeTruthy();
+  });
+
   it("an offline target during rollback: cleanup is skipped and left for the sweeper (targetPurgedAt stays NULL) — the app is still restored", async () => {
     const w = new FakeWorld();
     w.handlers.apply = [() => { w.online.s2 = false; return fail(71); }];
@@ -382,6 +440,26 @@ describe("AppMoveRunnerService — every failure before the cutover rolls back w
     w.handlers.stop = [only("s1", fail(1))];
     await go(w);
     expect(w.onHost("start").map((c) => c.server)).toEqual(["s1"]);
+  });
+});
+
+describe("AppMoveRunnerService — user deploys during PRECHECK", () => {
+  it("a RUNNING user deploy is waited out (bounded) and the move then proceeds; QUEUED ones were never a blocker", async () => {
+    const w = new FakeWorld();
+    const dep = { id: "u1", appId: APP_ID, status: "RUNNING", idempotencyKey: null };
+    w.deployments.push(dep, { id: "u2", appId: APP_ID, status: "QUEUED", idempotencyKey: null });
+    setTimeout(() => void (dep.status = "SUCCESS"), 15);
+    await go(w);
+    expect(w.move.phase).toBe("COMPLETED");
+    expect(w.move.logTail).toContain("waiting for a running deployment");
+  });
+
+  it("one that never ends fails the PRECHECK at the wait's bound with a clear reason, before anything on the source is touched", async () => {
+    const w = new FakeWorld();
+    w.deployments.push({ id: "u1", appId: APP_ID, status: "RUNNING", idempotencyKey: null });
+    await go(w);
+    expect(w.move).toMatchObject({ phase: "ROLLED_BACK", failureReason: "preflight_changed", failurePhase: "PRECHECK" });
+    expect(w.onHost("stop")).toEqual([]);
   });
 });
 
@@ -544,6 +622,52 @@ describe("AppMoveRunnerService — failure after the cutover rolls back from the
     expect(w.events.map((e) => e.type)).toEqual(["app_move_failed"]);
     expect(w.audits.map((a) => a.action)).toContain("app.move.fail");
     expect(w.commands.filter((c) => c.server === "s1" && /docker volume rm/.test(c.script))).toEqual([]);
+  });
+
+  it("FAILED because the source could not be restarted: needs attention (neither purge stamp set, even though the target cleanup succeeded) and a critical notification", async () => {
+    const w = new FakeWorld();
+    w.deployOutcomes.move = "FAILED";
+    w.deployOutcomes.rb = "FAILED";
+    w.handlers.start = [only("s1", fail(1))];
+    await go(w);
+    expect(w.onHost("cleanup").some((c) => c.server === "s2")).toBe(true); // the target WAS cleaned...
+    expect(w.move).toMatchObject({ phase: "FAILED", sourcePurgedAt: null, targetPurgedAt: null }); // ...but that must not read as "handled"
+    // the predicate every consumer (view, preflight blocker, banner) keys on
+    expect(w.move.phase === "FAILED" && !w.move.sourcePurgedAt && !w.move.targetPurgedAt).toBe(true);
+    expect(w.events.map((e) => e.type)).toEqual(["app_move_failed"]);
+  });
+
+  it("the rollback fallback deploy gets its OWN time budget: a rollback for deploy_timeout (move deadline already spent) still waits for it and succeeds", async () => {
+    const w = new FakeWorld();
+    w.deployOutcomes.move = "HANG";
+    w.deployDelayMs = 25;
+    w.handlers.start = [only("s1", fail(1, "No such container"))];
+    const orig = w.apps.submitMoveDeploy;
+    w.apps.submitMoveDeploy = async (...a: unknown[]) => {
+      const r = await orig(...a);
+      w.move.deadlineAt = new Date(Date.now() - 1); // spent for good: every poll of the forward wait says TIMEOUT
+      return r;
+    };
+    await go(w);
+    expect(w.move).toMatchObject({ phase: "ROLLED_BACK", failureReason: "deploy_timeout" });
+    expect(w.deployments.find((d) => d.idempotencyKey === `move:${MOVE_ID}:rb`)!.status).toBe("SUCCESS");
+    expect(w.app).toMatchObject({ serverId: "s1", status: "RUNNING" });
+  });
+
+  it("...and that wait is bounded: an rb deploy that never ends fails the rollback at its own budget (FAILED, needs attention)", async () => {
+    const w = new FakeWorld();
+    w.deployOutcomes.move = "HANG";
+    w.deployOutcomes.rb = "HANG";
+    w.handlers.start = [only("s1", fail(1, "No such container"))];
+    const orig = w.apps.submitMoveDeploy;
+    w.apps.submitMoveDeploy = async (...a: unknown[]) => {
+      const r = await orig(...a);
+      w.move.deadlineAt = new Date(Date.now() - 1);
+      return r;
+    };
+    await go(w);
+    expect(w.move).toMatchObject({ phase: "FAILED", sourcePurgedAt: null, targetPurgedAt: null });
+    expect(w.app.status).toBe("FAILED");
   });
 
   it("a rollback that finds the app on NEITHER server refuses to guess: FAILED (needs a human)", async () => {

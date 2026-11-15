@@ -1,5 +1,3 @@
-import type { AppMovePhase } from "@prisma/client";
-
 /** One entry of AppMove.volumes (JSON). `state` is the transfer state machine, not the plan's move/skip choice. */
 export interface StoredVolume {
   name: string;
@@ -17,14 +15,16 @@ export interface StoredVolume {
   createdOnTarget: boolean;
   /** The destination volume held an archive of an earlier move that the apply overwrites. */
   archiveOverwritten: boolean;
+  /** The apply may have left its rollback snapshot (`tugra_restore_rb_<moveId>_<i>`) as the only intact copy of the
+   *  data it wiped (exit 70, or a timeout / lost agent whose outcome is unknown). Automatic cleanup never removes it;
+   *  only an explicit purge-source does. Absent / false = the snapshot is safe to remove. */
+  rollbackKept?: boolean;
 }
 
 export interface MoveWarning {
   code: string;
   details?: Record<string, unknown>;
 }
-
-export type MovePhaseName = AppMovePhase;
 
 export function asArray<T>(v: unknown): T[] {
   return Array.isArray(v) ? (v as T[]) : [];

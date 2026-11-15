@@ -103,6 +103,8 @@ export const AppMoveViewSchema = z.object({
   createdAt: z.string().datetime(),
   canCancel: z.boolean(),
   needsAttention: z.boolean(),
+  /** An apply rollback snapshot is deliberately kept on the target (the only intact copy of data an apply wiped). */
+  snapshotKept: z.boolean(),
   // WRITER-ONLY (apps:config): null for read-only members.
   plan: z.record(z.unknown()).nullable(),
   acks: z.record(z.boolean()).nullable(),

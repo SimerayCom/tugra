@@ -1,5 +1,5 @@
 import { AppMoveArchiveSweeper } from "./app-move-archive.sweeper";
-import { archiveVolumeNames, purgeMoveSource, retryTargetCleanup, targetLeftovers } from "./app-move-archive";
+import { archiveVolumeNames, hasKeptSnapshots, purgeMoveSource, retryTargetCleanup, targetLeftovers } from "./app-move-archive";
 
 const MVID = "ckmoveabcdefghijklmnopqrs";
 const vol = (over: Record<string, unknown> = {}) => ({ name: "data", dockerName: "tugra_appv_capp_data", kind: "app", state: "APPLIED", createdOnTarget: true, archiveOverwritten: false, ...over });
@@ -33,7 +33,7 @@ function make(opts: { moves?: Record<string, unknown>[]; appServer?: string | nu
 }
 
 describe("archive helpers", () => {
-  it("only APPLIED volumes with safe names are archive volumes; targetLeftovers excludes overwritten archives and pre-existing volumes", () => {
+  it("only APPLIED volumes with safe names are archive volumes; targetLeftovers is label-driven (not createdOnTarget) and excludes overwritten archives", () => {
     const vols = [vol(), vol({ name: "b", dockerName: "tugra_appv_capp_b", state: "SKIPPED" }), vol({ name: "c", dockerName: "bad;name" }), vol({ name: "d", dockerName: "tugra_appv_capp_d", createdOnTarget: false, archiveOverwritten: true })];
     expect(archiveVolumeNames({ volumes: vols } as never)).toEqual(["tugra_appv_capp_data", "tugra_appv_capp_d"]);
     expect(targetLeftovers({ id: MVID, volumes: vols } as never)).toEqual({
@@ -41,6 +41,19 @@ describe("archive helpers", () => {
       removeRollbackFor: [`${MVID}_0`, `${MVID}_2`, `${MVID}_3`],
     });
     expect(archiveVolumeNames({ volumes: null } as never)).toEqual([]);
+  });
+
+  it("a prepare that died halfway (createdOnTarget never recorded) still has its labelled volumes cleaned", () => {
+    const vols = [vol({ state: "PENDING", createdOnTarget: false }), vol({ name: "e", dockerName: "tugra_appv_capp_e", state: "PENDING", createdOnTarget: false })];
+    expect(targetLeftovers({ id: MVID, volumes: vols } as never).removeVolumes).toEqual(["tugra_appv_capp_data", "tugra_appv_capp_e"]);
+  });
+
+  it("a kept apply rollback snapshot is excluded from automatic cleanup and only included for an explicit purge", () => {
+    const vols = [vol(), vol({ name: "e", dockerName: "tugra_appv_capp_e", rollbackKept: true })];
+    expect(targetLeftovers({ id: MVID, volumes: vols } as never).removeRollbackFor).toEqual([`${MVID}_0`]);
+    expect(targetLeftovers({ id: MVID, volumes: vols } as never, { includeKept: true }).removeRollbackFor).toEqual([`${MVID}_0`, `${MVID}_1`]);
+    expect(hasKeptSnapshots({ volumes: vols } as never)).toBe(true);
+    expect(hasKeptSnapshots({ volumes: [vol()] } as never)).toBe(false);
   });
 });
 
@@ -66,10 +79,23 @@ describe("AppMoveArchiveSweeper.sweep", () => {
     expect(t.updates).toEqual([expect.objectContaining({ data: { sourcePurgedAt: expect.any(Date) } })]);
   });
 
-  it("GUARD: another live move targets/uses that server for the app -> nothing removed", async () => {
-    const t = make({ otherLive: true });
-    expect(await t.sweeper.sweep()).toEqual({ [MVID]: "archive:skipped_live" });
-    expect(t.sent).toEqual([]);
+  it("GUARD: another live move targets/uses that server for the app -> nothing removed and NOT stamped (that move may still roll back)", async () => {
+    for (const appServer of ["s2", "s1"]) {
+      const t = make({ otherLive: true, appServer });
+      expect(await t.sweeper.sweep()).toEqual({ [MVID]: "archive:skipped_live" });
+      expect(t.sent).toEqual([]);
+      expect(t.updates).toEqual([]);
+    }
+  });
+
+  it("GUARD (target): a rolled-back/failed move's target that holds the app's live data, or is used by another live move, is never cleaned", async () => {
+    const rb = move({ phase: "ROLLED_BACK", archiveUntil: null });
+    const onTarget = make({ moves: [rb], appServer: "s2" });
+    expect(await onTarget.sweeper.sweep()).toEqual({ [MVID]: "target:skipped_live" });
+    expect(onTarget.sent).toEqual([]);
+    const busy = make({ moves: [rb], appServer: "s1", otherLive: true });
+    expect(await busy.sweeper.sweep()).toEqual({ [MVID]: "target:skipped_live" });
+    expect(busy.sent).toEqual([]);
   });
 
   it("an offline source is retried next tick (no stamp)", async () => {
@@ -110,7 +136,7 @@ describe("AppMoveArchiveSweeper.sweep", () => {
 
   it("ROLLED_BACK leftovers on the target are retried (label-checked cleanup) and stamped when fully gone", async () => {
     const rb = move({ phase: "ROLLED_BACK", targetPurgedAt: null, archiveUntil: null });
-    const t = make({ moves: [rb], out: { exitCode: 0, output: removed("tugra_appv_capp_data", `tugra_restore_rb_${MVID}_0`) } });
+    const t = make({ moves: [rb], appServer: "s1", out: { exitCode: 0, output: removed("tugra_appv_capp_data", `tugra_restore_rb_${MVID}_0`) } });
     expect(await t.sweeper.sweep()).toEqual({ [MVID]: "target:purged" });
     expect(t.sent[0].server).toBe("s2");
     expect(t.sent[0].script).toContain(`rm -rf /etc/tugra/app-moves/${MVID}`);
@@ -127,8 +153,8 @@ describe("AppMoveArchiveSweeper.sweep", () => {
 
   it("a rolled-back move whose target is offline waits; leftovers in use stay un-stamped", async () => {
     const rb = move({ phase: "ROLLED_BACK", archiveUntil: null });
-    expect(await make({ moves: [rb], online: { s1: true, s2: false } }).sweeper.sweep()).toEqual({ [MVID]: "target:offline" });
-    const inUse = make({ moves: [rb], out: { exitCode: 0, output: `TUGRA_VX_VOL tugra_appv_capp_data kept\nTUGRA_VX_VOL tugra_restore_rb_${MVID}_0 absent\nTUGRA_VX_CLEANUP_DONE\n` } });
+    expect(await make({ moves: [rb], appServer: "s1", online: { s1: true, s2: false } }).sweeper.sweep()).toEqual({ [MVID]: "target:offline" });
+    const inUse = make({ moves: [rb], appServer: "s1", out: { exitCode: 0, output: `TUGRA_VX_VOL tugra_appv_capp_data kept\nTUGRA_VX_VOL tugra_restore_rb_${MVID}_0 absent\nTUGRA_VX_CLEANUP_DONE\n` } });
     expect(await inUse.sweeper.sweep()).toEqual({ [MVID]: "target:partial" });
     expect(inUse.updates).toEqual([]);
   });
@@ -137,7 +163,7 @@ describe("AppMoveArchiveSweeper.sweep", () => {
     const t = make({ appServer: "s1" });
     expect(await purgeMoveSource(t as never, move() as never, { stampWhenLive: false })).toBe("skipped_live");
     expect(t.updates).toEqual([]);
-    const u = make({ moves: [move({ phase: "FAILED" })], out: { exitCode: 0, output: removed("tugra_appv_capp_data", `tugra_restore_rb_${MVID}_0`) } });
+    const u = make({ moves: [move({ phase: "FAILED" })], appServer: "s1", out: { exitCode: 0, output: removed("tugra_appv_capp_data", `tugra_restore_rb_${MVID}_0`) } });
     expect(await retryTargetCleanup(u as never, move({ phase: "FAILED" }) as never)).toBe("purged");
   });
 });

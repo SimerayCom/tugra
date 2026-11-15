@@ -31,10 +31,10 @@ import {
 } from "./app-move-scripts";
 import { MovePreflightService } from "./move-preflight.service";
 import { PartTransferService, type PartTransferHandle } from "./part-transfer.service";
-import { collectReservedPorts } from "./move-preflight";
+import { collectReservedPorts, parseExtraPorts } from "./move-preflight";
 import { CutoverAckMissing, isValidSnapshot, planCutover, restoreData, type CutoverColumn } from "./move-cutover";
 import { repointMoveDomains } from "./move-dns";
-import { retryTargetCleanup, purgeMoveSource, targetLeftovers } from "./app-move-archive";
+import { purgeMoveSource, targetLeftovers } from "./app-move-archive";
 import { asArray, type MoveWarning, type StoredVolume } from "./move-types";
 import type { MoveAckInput } from "./dto";
 
@@ -67,6 +67,10 @@ export interface RunnerTiming {
   busyBackoffMs: number;
   busyBackoffMaxMs: number;
   cancelWaitMs: number;
+  /** How long the rollback waits for its `move:<id>:rb` deploy (independent of the move's own, possibly spent, deadline). */
+  rollbackDeployWaitMs: number;
+  /** How long PRECHECK waits for a user deploy that is RUNNING to finish before it gives up (rolls back, source untouched). */
+  userDeployWaitMs: number;
 }
 
 interface MoveRun {
@@ -90,7 +94,7 @@ interface MoveRun {
 export class AppMoveRunnerService implements OnModuleDestroy {
   private readonly logger = new Logger(AppMoveRunnerService.name);
   private readonly runs = new Map<string, MoveRun>();
-  timing: RunnerTiming = { heartbeatMs: 10_000, deployPollMs: 2_000, partRetryBackoffMs: 2_000, busyBackoffMs: 1_000, busyBackoffMaxMs: 15_000, cancelWaitMs: 60_000 };
+  timing: RunnerTiming = { heartbeatMs: 10_000, deployPollMs: 2_000, partRetryBackoffMs: 2_000, busyBackoffMs: 1_000, busyBackoffMaxMs: 15_000, cancelWaitMs: 60_000, rollbackDeployWaitMs: 30 * 60_000, userDeployWaitMs: 10 * 60_000 };
 
   constructor(
     private readonly prisma: PrismaService,
@@ -292,6 +296,10 @@ export class AppMoveRunnerService implements OnModuleDestroy {
     const target = await this.prisma.server.findUnique({ where: { id: move.targetServerId } });
     if (!target || target.teamId !== move.teamId) throw new MoveAbort("preflight_changed", "PRECHECK", "target server is gone");
 
+    // A queued user deploy waits for the move (claimNext holds it) and is never a reason to abort. One that is already
+    // RUNNING is waited out for a bounded time first, so the preflight below only fails for a deploy that will not end.
+    await this.waitForRunningDeploy(run, id, move.appId);
+
     // Re-probe both agents and rebuild the plan; any structural difference or new blocker rolls back before a byte moves.
     const fresh = await this.preflights.computePreflight(app, target, this.acksOf(move), move.requestedBy, false, id);
     if (!fresh.ok) throw new MoveAbort("preflight_changed", "PRECHECK", fresh.blockers.map((b) => b.code).join(","));
@@ -325,6 +333,19 @@ export class AppMoveRunnerService implements OnModuleDestroy {
       vols.map((v) => (v.state === "PENDING" ? { ...v, createdOnTarget: created[v.dockerName] === true, archiveOverwritten: created[v.dockerName] === false } : v)),
     );
     await this.flushLog(run);
+  }
+
+  private async waitForRunningDeploy(run: MoveRun, id: string, appId: string): Promise<void> {
+    const where = { appId, status: "RUNNING" as const, OR: [{ idempotencyKey: null }, { NOT: { idempotencyKey: { startsWith: "move:" } } }] };
+    if ((await this.prisma.deployment.count({ where })) === 0) return;
+    this.note(run, "waiting for a running deployment of the app to finish");
+    const until = Date.now() + this.timing.userDeployWaitMs;
+    for (;;) {
+      await this.checkpoint(run, id, "PRECHECK");
+      if ((await this.prisma.deployment.count({ where })) === 0) return;
+      if (Date.now() > until) throw new MoveAbort("preflight_changed", "PRECHECK", "deploy_active: a deployment of the app was still running");
+      await this.sleep(this.timing.deployPollMs);
+    }
   }
 
   private offline(e: unknown): boolean {
@@ -432,9 +453,14 @@ export class AppMoveRunnerService implements OnModuleDestroy {
           MOVE_TIMEOUTS.apply(size),
         );
       } catch (e) {
+        // timeout / kill / lost agent: the wipe may have happened with no way to tell. The snapshot of a volume that held an
+        // earlier move's archive is then the only intact copy of it: keep it (an empty snapshot of a fresh volume is not).
+        if (vol.archiveOverwritten) await this.keepSnapshot(run, id, vols, i);
         throw new MoveAbort(this.offline(e) ? "agent_offline" : "apply_failed", "TRANSFERRING");
       }
       if (ap.exitCode !== 0) {
+        // 70 = extract AND rollback both failed: the snapshot is the only intact copy of what the apply wiped
+        if (ap.exitCode === 70) await this.keepSnapshot(run, id, vols, i);
         const reason: AppMoveFailureReason = ({ 72: "apply_aborted", 71: "apply_rolled_back", 70: "apply_rollback_failed", 68: "entry_count_mismatch" } as Record<number, AppMoveFailureReason>)[ap.exitCode] ?? "apply_failed";
         throw new MoveAbort(reason, "TRANSFERRING", `exit ${ap.exitCode}: ${scrubMoveOutput(ap.output).slice(-200)}`);
       }
@@ -445,6 +471,14 @@ export class AppMoveRunnerService implements OnModuleDestroy {
       this.note(run, `volume ${vol.name} applied (${entries} entries)`);
       await this.flushLog(run);
     }
+  }
+
+  /** Flag the apply rollback snapshot of volume `i` as kept (automatic cleanup never removes it) and say so. */
+  private async keepSnapshot(run: MoveRun, id: string, vols: StoredVolume[], i: number): Promise<void> {
+    vols[i] = { ...vols[i], rollbackKept: true };
+    await this.setVolumes(id, vols).catch(() => undefined);
+    await this.warn(id, "apply_snapshot_kept", { volume: vols[i].name, snapshot: `tugra_restore_rb_${id}_${i}` }).catch(() => undefined);
+    this.note(run, `apply rollback snapshot of volume ${vols[i].name} kept for manual recovery`);
   }
 
   /** One part through the relay: up to 3 attempts; a busy relay seat waits with backoff and does not count. */
@@ -504,11 +538,15 @@ export class AppMoveRunnerService implements OnModuleDestroy {
           ]);
           const used = collectReservedPorts(apps, dbs, cur.id);
           for (const p of live) used.add(p);
-          const newHostPort = cur.hostPort != null && used.has(cur.hostPort) ? (await this.portAlloc.allocate(target.id, 1, tx, live))[0] ?? null : null;
+          // The replacement port follows the preflight's rules: free of every reservation on the target (other apps'
+          // hostPort / portMappings / extraPorts, databases, live listeners) AND of the ports this app itself bakes in.
+          const baked = new Set<number>([...parseExtraPorts(cur.extraPorts), ...parseExtraPorts(cur.portMappings)].map((p) => p.hostPort));
+          const taken = new Set<number>([...used, ...baked]);
+          const newHostPort = cur.hostPort != null && used.has(cur.hostPort) ? (await this.portAlloc.allocate(target.id, 1, tx, taken))[0] ?? null : null;
 
           let cp;
           try {
-            cp = planCutover({ app: cur, source, target, acks: this.acksOf(move), defaultMagicSuffix, targetUsedPorts: used, newHostPort });
+            cp = planCutover({ app: cur, source, target, acks: this.acksOf(move), defaultMagicSuffix, targetUsedPorts: used, newHostPort, bakedPorts: baked });
           } catch (e) {
             if (e instanceof CutoverAckMissing) throw new MoveAbort("changed_under_us", prev, e.message);
             throw e;
@@ -604,14 +642,23 @@ export class AppMoveRunnerService implements OnModuleDestroy {
     await this.rollback(run, id, outcome === "TIMEOUT" ? "deploy_timeout" : "deploy_failed", "DEPLOYING");
   }
 
-  private async awaitDeployment(id: string, depId: string): Promise<"SUCCESS" | "FAILED" | "TIMEOUT"> {
+  /**
+   * Poll a deployment until it ends. The forward deploy is bounded by the move's deadline; the rollback's fallback deploy
+   * passes its own absolute `untilMs` instead - a rollback for deadline_exceeded / deploy_timeout starts with the move
+   * deadline already spent, and judging its deploy TIMEOUT on the first poll would fail a rollback that is about to work.
+   */
+  private async awaitDeployment(id: string, depId: string, untilMs?: number): Promise<"SUCCESS" | "FAILED" | "TIMEOUT"> {
     for (;;) {
       const dep = await this.prisma.deployment.findUnique({ where: { id: depId }, select: { status: true } });
       if (!dep) return "FAILED";
       if (dep.status === "SUCCESS") return "SUCCESS";
       if (dep.status === "FAILED" || dep.status === "CANCELLED") return "FAILED";
-      const m = await this.prisma.appMove.findUnique({ where: { id }, select: { deadlineAt: true } });
-      if (m?.deadlineAt && m.deadlineAt.getTime() < Date.now()) return "TIMEOUT";
+      if (untilMs !== undefined) {
+        if (Date.now() > untilMs) return "TIMEOUT";
+      } else {
+        const m = await this.prisma.appMove.findUnique({ where: { id }, select: { deadlineAt: true } });
+        if (m?.deadlineAt && m.deadlineAt.getTime() < Date.now()) return "TIMEOUT";
+      }
       await this.sleep(this.timing.deployPollMs);
     }
   }
@@ -744,8 +791,9 @@ export class AppMoveRunnerService implements OnModuleDestroy {
       await this.removeTargetContainer(run, move);
     }
 
-    // 4. target + source staging cleanup (target leftovers retried by the sweeper when an agent is offline)
-    await this.cleanupHosts(run, move);
+    // 4. target + source staging cleanup (target leftovers retried by the sweeper when an agent is offline). The
+    //    "target is clean" stamp is only written with the ROLLED_BACK row below: a FAILED move must keep needing attention.
+    const targetDone = await this.cleanupHosts(run, move);
 
     // 5. bring the app back
     const app = await this.prisma.application.findUnique({ where: { id: move.appId } });
@@ -760,7 +808,7 @@ export class AppMoveRunnerService implements OnModuleDestroy {
     }
 
     // 6. done
-    await this.prisma.appMove.update({ where: { id }, data: { phase: "ROLLED_BACK", finishedAt: new Date(), ownerId: null } });
+    await this.prisma.appMove.update({ where: { id }, data: { phase: "ROLLED_BACK", finishedAt: new Date(), ownerId: null, ...(targetDone ? { targetPurgedAt: new Date() } : {}) } });
     await this.afterTerminal(run, id, "ROLLED_BACK");
   }
 
@@ -819,7 +867,8 @@ export class AppMoveRunnerService implements OnModuleDestroy {
     }
   }
 
-  private async cleanupHosts(run: MoveRun, move: AppMove): Promise<void> {
+  /** Returns true when the target is provably clean (everything this move left there is gone). Stamps nothing itself. */
+  private async cleanupHosts(run: MoveRun, move: AppMove): Promise<boolean> {
     // target: staging + the volumes THIS move created + apply rollback snapshots (label-checked in-script)
     let targetDone = false;
     if (this.agentWs.isOnline(move.targetServerId)) {
@@ -832,11 +881,11 @@ export class AppMoveRunnerService implements OnModuleDestroy {
         targetDone = false;
       }
     }
-    await this.prisma.appMove.update({ where: { id: move.id }, data: targetDone ? { targetPurgedAt: new Date() } : {} });
     // source staging dir (the volumes are never touched)
     if (this.agentWs.isOnline(move.sourceServerId)) {
       await this.cmd(run, move.sourceServerId, buildMoveCleanupScript(move.id), "backup", MOVE_TIMEOUTS.prepare).catch(() => undefined);
     }
+    return targetDone;
   }
 
   /** `docker start` the stopped source; when that is not possible (container gone, compose) deploy it there normally. */
@@ -853,18 +902,19 @@ export class AppMoveRunnerService implements OnModuleDestroy {
     }
     try {
       const dep = await this.apps.submitMoveDeploy(app.id, move.requestedBy, `move:${move.id}:rb`);
-      const outcome = await this.awaitDeployment(move.id, dep.id);
+      const outcome = await this.awaitDeployment(move.id, dep.id, Date.now() + this.timing.rollbackDeployWaitMs);
       return outcome === "SUCCESS";
     } catch {
       return false;
     }
   }
 
-  /** The rollback itself failed: the app needs a human. The source volumes were never touched. */
+  /** The rollback itself failed: the app needs a human. The source volumes were never touched. `targetPurgedAt` is
+   *  cleared so the needs-attention predicate (FAILED with neither purge stamp) holds; only purge-source lifts it. */
   private async markFailed(run: MoveRun, id: string, reason: AppMoveFailureReason, detail: string): Promise<void> {
     this.note(run, `rollback failed: ${detail}`);
     const move = await this.load(id);
-    await this.prisma.appMove.update({ where: { id }, data: { phase: "FAILED", failureReason: move.failureReason ?? reason, finishedAt: new Date(), ownerId: null } });
+    await this.prisma.appMove.update({ where: { id }, data: { phase: "FAILED", failureReason: move.failureReason ?? reason, finishedAt: new Date(), ownerId: null, targetPurgedAt: null } });
     await this.prisma.application.updateMany({ where: { id: move.appId }, data: { status: "FAILED" } });
     await this.afterTerminal(run, id, "FAILED");
   }

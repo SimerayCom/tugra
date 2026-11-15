@@ -66,6 +66,7 @@ export const APP_MOVE_BLOCKER_CODES = [
   "move_active",
   "move_active_on_server",
   "move_needs_attention",
+  "migration_import_active",
   "alias_conflict",
   "network_alias_conflict",
   "ports_conflict",
@@ -104,6 +105,7 @@ export const APP_MOVE_WARNING_CODES = [
   "staging_cleanup_failed",
   "post_cutover_sync_failed",
   "target_stop_failed",
+  "apply_snapshot_kept",
 ] as const;
 export type AppMoveWarningCode = (typeof APP_MOVE_WARNING_CODES)[number];
 

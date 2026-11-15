@@ -24,21 +24,15 @@ import {
   collectReservedPorts,
   declaredVolumes,
   hostMountPaths,
+  parseExtraPorts,
   partBytesFromEnv,
   type MoveAppFacts,
   type MoveDbFacts,
   type MoveServerFacts,
   type PreflightFacts,
 } from "./move-preflight";
+import { asArray } from "./move-types";
 import type { MoveAckInput, MoveAppPreflightResult } from "./dto";
-
-function asArray<T>(v: unknown): T[] {
-  return Array.isArray(v) ? (v as T[]) : [];
-}
-
-function parseExtraPorts(raw: unknown): { hostPort: number }[] {
-  return asArray<{ hostPort?: unknown }>(raw).filter((p) => p && typeof p.hostPort === "number") as { hostPort: number }[];
-}
 
 /**
  * Gathers everything the pure preflight assembly needs (DB facts + the two agents' read-only probes + the optional
@@ -153,12 +147,15 @@ export class MovePreflightService {
 
   /** Everything the pure assembly needs that comes from the database (and the agents' liveness). */
   async gatherFacts(app: Application, source: Server, target: Server, acks: Partial<MoveAckInput>, userId: string, excludeMoveId?: string): Promise<PreflightFacts> {
-    const [previews, dbLinkCount, rolloutActive, deployActive, active, activeOnServer, latest, targetApps, targetDbs, archives, backupRows, recentDeploys, domainRows, serviceDomainCount, callerIsOwner] = await Promise.all([
+    const [previews, dbLinkCount, rolloutActive, deployActive, active, activeOnServer, latest, targetApps, targetDbs, archives, backupRows, recentDeploys, domainRows, serviceDomainCount, callerIsOwner, importActive] = await Promise.all([
       this.prisma.application.findMany({ where: { parentAppId: app.id }, select: { prNumber: true } }),
       this.prisma.appDatabaseLink.count({ where: { appId: app.id } }),
       this.prisma.rolloutTarget.count({ where: { kind: "app_deploy", resourceId: app.id, active: true } }),
+      // Before the move exists (preflight, start) a QUEUED or RUNNING deploy blocks. The runner's PRECHECK re-run
+      // (excludeMoveId set) is inside the live move, where claimNext already holds every queued non-move deploy until the
+      // move ends: only one that is RUNNING right now is a conflict, a queued one simply waits (as the CHANGELOG says).
       this.prisma.deployment.count({
-        where: { appId: app.id, status: { in: ["QUEUED", "RUNNING"] }, OR: [{ idempotencyKey: null }, { NOT: { idempotencyKey: { startsWith: "move:" } } }] },
+        where: { appId: app.id, status: excludeMoveId ? "RUNNING" : { in: ["QUEUED", "RUNNING"] }, OR: [{ idempotencyKey: null }, { NOT: { idempotencyKey: { startsWith: "move:" } } }] },
       }),
       this.prisma.appMove.findFirst({ where: { appId: app.id, phase: { notIn: APP_MOVE_TERMINAL }, ...(excludeMoveId ? { id: { not: excludeMoveId } } : {}) }, select: { id: true } }),
       this.prisma.appMove.findFirst({
@@ -181,6 +178,7 @@ export class MovePreflightService {
       this.prisma.domain.count({ where: { applicationId: app.id } }),
       this.prisma.appServiceDomain.count({ where: { applicationId: app.id } }),
       this.isInstanceOwner(userId),
+      this.importActiveFor(app.id),
     ]);
 
     // Other apps on the target: alias / network collisions and reserved ports.
@@ -251,6 +249,7 @@ export class MovePreflightService {
         moveActive: !!active,
         moveActiveOnServer: !!activeOnServer,
         needsAttention: latest?.phase === "FAILED" && !latest.sourcePurgedAt && !latest.targetPurgedAt,
+        importActive,
         aliasConflict,
         networkAliasConflict,
         targetReservedPorts: [...reserved],
@@ -268,6 +267,27 @@ export class MovePreflightService {
       hostPortRange: { min: Number(this.config.get("TUGRA_HOSTPORT_MIN") ?? 20000), max: Number(this.config.get("TUGRA_HOSTPORT_MAX") ?? 45000) },
       defaultMagicSuffix: String(this.config.get("MAGIC_DOMAIN_SUFFIX") ?? process.env.MAGIC_DOMAIN_SUFFIX ?? "sslip.io"),
     };
+  }
+
+  /**
+   * Is a migration import (BulkOperation kind "import") still working on this app? The app is one of the op's DONE app
+   * tasks, the op was neither cancelled nor rolled back, and the op can still write: a task not yet finished
+   * (PENDING / RUNNING / AWAITING_CUTOVER) or a live migration token (an untrusted source host may still stream volume data
+   * into the app's destination volumes - data that would vanish, or 409, once the app is on another server).
+   */
+  private async importActiveFor(appId: string): Promise<boolean> {
+    const rows = await this.prisma.bulkTask.findMany({
+      where: { kind: "app", resourceType: "application", resourceId: appId, status: "DONE", operation: { kind: "import", cancelRequestedAt: null } },
+      select: { operation: { select: { meta: true, migrationTokenHash: true, migrationTokenExpiresAt: true, tasks: { select: { status: true } } } } },
+    });
+    const now = Date.now();
+    return rows.some(({ operation: op }) => {
+      const meta = typeof op.meta === "object" && op.meta ? (op.meta as { rolledBackAt?: string }) : {};
+      if (meta.rolledBackAt) return false;
+      const unfinished = op.tasks.some((t) => t.status === "PENDING" || t.status === "RUNNING" || t.status === "AWAITING_CUTOVER");
+      const tokenLive = !!op.migrationTokenHash && !!op.migrationTokenExpiresAt && op.migrationTokenExpiresAt.getTime() > now;
+      return unfinished || tokenLive;
+    });
   }
 
   /** Env var NAMES whose value mentions the source server's address or the app's magic domain. Values never leave. */

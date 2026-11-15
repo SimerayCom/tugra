@@ -102,6 +102,8 @@ export interface MoveDbFacts {
   moveActive: boolean;
   moveActiveOnServer: boolean;
   needsAttention: boolean;
+  /** A migration import still provisions this app or may still stream data into its volumes. */
+  importActive: boolean;
   aliasConflict: boolean;
   networkAliasConflict: boolean;
   /** Ports other apps' (hostPort / portMappings / extraPorts) and managed databases already reserve on the target. */
@@ -166,6 +168,11 @@ export function hostMountPaths(hostMounts: unknown): string[] {
   return hostMounts
     .map((m) => (m && typeof m === "object" ? (m as { hostPath?: unknown }).hostPath : null))
     .filter((p): p is string => typeof p === "string" && p.startsWith("/"));
+}
+
+/** The `{ hostPort }` entries of an app's `extraPorts` JSON column (anything else in the array is ignored). */
+export function parseExtraPorts(raw: unknown): { hostPort: number }[] {
+  return (Array.isArray(raw) ? (raw as { hostPort?: unknown }[]) : []).filter((p) => p && typeof p.hostPort === "number") as { hostPort: number }[];
 }
 
 /** Host ports other apps (hostPort, portMappings, extraPorts) and managed databases already reserve on a server. */
@@ -297,6 +304,7 @@ export function assemblePreflight(f: PreflightFacts): MoveAppPreflightResult {
   if (db.moveActive) hard("move_active", "This app already has a move in progress.");
   if (db.moveActiveOnServer) hard("move_active_on_server", "Another move is using the source or target server.");
   if (db.needsAttention) hard("move_needs_attention", "The last move of this app failed and needs attention (purge or fix it first).");
+  if (db.importActive) hard("migration_import_active", "A migration import is still filling this app; wait for it to finish (or cancel it) before moving the app.");
   if (db.aliasConflict) hard("alias_conflict", "The app's container alias is already used by another app on the target.");
   if (db.networkAliasConflict) hard("network_alias_conflict", "A network alias or network name of the app collides on the target.");
 
