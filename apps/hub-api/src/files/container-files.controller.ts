@@ -27,6 +27,7 @@ import {
   type CtrRenameBody,
   type CtrStatQuery,
 } from "./dto";
+import { ApiFileErrors } from "./fs-openapi";
 import { FilesService } from "./files.service";
 import { withRetryAfter } from "./files.controller";
 
@@ -53,6 +54,7 @@ export class ContainerFilesController {
   @ApiQuery({ name: "container", required: false, type: String, description: "required for COMPOSE apps" })
   @ApiQuery({ name: "path", required: false, type: String, description: "absolute in-container path (default /)" })
   @ApiZodResponse(FsContainerListingSchema)
+  @ApiFileErrors(409, 429, 502, 503, 504)
   list(@CurrentUser() user: AuthUser, @Param("id") id: string, @Query(new ZodValidationPipe(CtrListQuerySchema)) q: CtrListQuery) {
     return this.files.listContainer(user.userId, id, { container: q.container ?? "" }, q.path);
   }
@@ -62,6 +64,7 @@ export class ContainerFilesController {
   @ApiQuery({ name: "container", required: false, type: String })
   @ApiQuery({ name: "path", required: true, type: String })
   @ApiZodResponse(Fs2StatSchema)
+  @ApiFileErrors(409, 429, 502, 503, 504)
   stat(@CurrentUser() user: AuthUser, @Param("id") id: string, @Query(new ZodValidationPipe(CtrStatQuerySchema)) q: CtrStatQuery) {
     return this.files.stat(user.userId, id, { container: q.container ?? "" }, q.path);
   }
@@ -71,6 +74,7 @@ export class ContainerFilesController {
   @ApiQuery({ name: "container", required: false, type: String })
   @ApiQuery({ name: "path", required: true, type: String })
   @ApiProduces("application/octet-stream")
+  @ApiFileErrors(409, 412, 413, 429, 502, 503, 504)
   async download(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -90,7 +94,9 @@ export class ContainerFilesController {
   @ApiQuery({ name: "overwrite", required: false, schema: { type: "string", enum: ["0", "1"] } })
   @ApiQuery({ name: "mode", required: false, type: String })
   @ApiQuery({ name: "ifMatch", required: false, type: String })
-  @ApiZodResponse(FsWriteResultSchema, { status: 200 })
+  @ApiZodResponse(FsWriteResultSchema, { status: 200, description: "replaced an existing file" })
+  @ApiZodResponse(FsWriteResultSchema, { status: 201, description: "created a new file" })
+  @ApiFileErrors(408, 409, 411, 412, 413, 429, 502, 503, 504, 507)
   async upload(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -108,6 +114,7 @@ export class ContainerFilesController {
   @RequireScopes("admin")
   @ApiZodBody(CtrMkdirBodySchema)
   @ApiZodResponse(Fs2StatSchema, { status: 201 })
+  @ApiFileErrors(409, 429, 502, 503, 504)
   mkdir(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -123,6 +130,7 @@ export class ContainerFilesController {
   @RequireScopes("admin")
   @ApiZodBody(CtrRenameBodySchema)
   @ApiZodResponse(Fs2StatSchema)
+  @ApiFileErrors(409, 429, 502, 503, 504)
   rename(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -138,6 +146,7 @@ export class ContainerFilesController {
   @RequireScopes("admin")
   @ApiZodBody(CtrChmodBodySchema)
   @ApiZodResponse(Fs2StatSchema)
+  @ApiFileErrors(409, 429, 502, 503, 504)
   chmod(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -154,6 +163,7 @@ export class ContainerFilesController {
   @ApiQuery({ name: "container", required: false, type: String })
   @ApiQuery({ name: "path", required: true, type: String })
   @ApiQuery({ name: "recursive", required: false, schema: { type: "string", enum: ["0", "1"] } })
+  @ApiFileErrors(409, 429, 502, 503, 504)
   async remove(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,

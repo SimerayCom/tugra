@@ -28,6 +28,7 @@ import {
   type VolStatQuery,
 } from "./dto";
 import { FsRateLimitedException } from "./fs-errors";
+import { ApiFileErrors } from "./fs-openapi";
 import { FilesService } from "./files.service";
 
 /** Run a mutation and, when the per-user limiter refuses it, surface the wait as a Retry-After header. */
@@ -68,6 +69,7 @@ export class FilesController {
   @ApiQuery({ name: "volume", required: true, type: String })
   @ApiQuery({ name: "path", required: false, type: String, description: "volume-relative path; empty = the volume root" })
   @ApiZodResponse(Fs2StatSchema)
+  @ApiFileErrors(409, 429, 502, 503, 504)
   stat(@CurrentUser() user: AuthUser, @Param("id") id: string, @Query(new ZodValidationPipe(VolStatQuerySchema)) q: VolStatQuery) {
     return this.files.stat(user.userId, id, { volume: q.volume }, q.path);
   }
@@ -78,6 +80,7 @@ export class FilesController {
   @ApiQuery({ name: "volume", required: true, type: String })
   @ApiQuery({ name: "path", required: true, type: String })
   @ApiProduces("application/octet-stream")
+  @ApiFileErrors(409, 412, 413, 429, 502, 503, 504)
   async download(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -98,7 +101,9 @@ export class FilesController {
   @ApiQuery({ name: "mode", required: false, type: String, description: "octal permission bits (<= 0777)" })
   @ApiQuery({ name: "ifMatch", required: false, type: String, description: "etag of the version being replaced" })
   @ApiQuery({ name: "acknowledgeRisk", required: false, schema: { type: "string", enum: ["0", "1"] }, description: "1 = write into a running datastore volume anyway" })
-  @ApiZodResponse(FsWriteResultSchema, { status: 200 })
+  @ApiZodResponse(FsWriteResultSchema, { status: 200, description: "replaced an existing file" })
+  @ApiZodResponse(FsWriteResultSchema, { status: 201, description: "created a new file" })
+  @ApiFileErrors(408, 409, 411, 412, 413, 429, 502, 503, 504, 507)
   async upload(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -117,6 +122,7 @@ export class FilesController {
   @RequireScopes("write", "read:secrets")
   @ApiZodBody(VolMkdirBodySchema)
   @ApiZodResponse(Fs2StatSchema, { status: 201 })
+  @ApiFileErrors(409, 429, 502, 503, 504)
   mkdir(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -132,6 +138,7 @@ export class FilesController {
   @RequireScopes("write", "read:secrets")
   @ApiZodBody(VolRenameBodySchema)
   @ApiZodResponse(Fs2StatSchema)
+  @ApiFileErrors(409, 429, 502, 503, 504)
   rename(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -147,6 +154,7 @@ export class FilesController {
   @RequireScopes("write", "read:secrets")
   @ApiZodBody(VolChmodBodySchema)
   @ApiZodResponse(Fs2StatSchema)
+  @ApiFileErrors(409, 429, 502, 503, 504)
   chmod(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -164,6 +172,7 @@ export class FilesController {
   @ApiQuery({ name: "path", required: true, type: String })
   @ApiQuery({ name: "recursive", required: false, schema: { type: "string", enum: ["0", "1"] } })
   @ApiQuery({ name: "acknowledgeRisk", required: false, schema: { type: "string", enum: ["0", "1"] } })
+  @ApiFileErrors(409, 429, 502, 503, 504)
   async remove(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,

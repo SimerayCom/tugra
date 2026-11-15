@@ -17783,9 +17783,6 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": ""
-          },
           "401": {
             "description": "Missing or invalid authentication.",
             "content": {
@@ -17816,12 +17813,22 @@
               }
             }
           },
-          "429": {
-            "description": "Rate limit exceeded; see Retry-After.",
+          "409": {
+            "description": "Refused: `exists`, `not_dir`, `is_dir`, `not_regular`, `not_empty`, `read_only`, `no_binary`, `not_running`, `not_configured`, `deploy_in_progress`, `datastore_running` or `agent_too_old`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited` (see `Retry-After`; mutations are limited per user) or `busy` (too many file operations or uploads in flight; retry shortly).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
                 }
               }
             }
@@ -17832,6 +17839,36 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The agent failed the operation (`failed`, `integrity`) or answered with an unknown code (`agent_error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server's agent is offline.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The agent did not answer in time (`expired`) or the operation timed out.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
                 }
               }
             }
@@ -42111,12 +42148,22 @@
               }
             }
           },
-          "429": {
-            "description": "Rate limit exceeded; see Retry-After.",
+          "409": {
+            "description": "Refused: `exists`, `not_dir`, `is_dir`, `not_regular`, `not_empty`, `read_only`, `no_binary`, `not_running`, `not_configured`, `deploy_in_progress`, `datastore_running` or `agent_too_old`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited` (see `Retry-After`; mutations are limited per user) or `busy` (too many file operations or uploads in flight; retry shortly).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
                 }
               }
             }
@@ -42127,6 +42174,36 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The agent failed the operation (`failed`, `integrity`) or answered with an unknown code (`agent_error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server's agent is offline.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The agent did not answer in time (`expired`) or the operation timed out.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
                 }
               }
             }
@@ -42172,9 +42249,6 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": ""
-          },
           "401": {
             "description": "Missing or invalid authentication.",
             "content": {
@@ -42205,12 +42279,42 @@
               }
             }
           },
-          "429": {
-            "description": "Rate limit exceeded; see Retry-After.",
+          "409": {
+            "description": "Refused: `exists`, `not_dir`, `is_dir`, `not_regular`, `not_empty`, `read_only`, `no_binary`, `not_running`, `not_configured`, `deploy_in_progress`, `datastore_running` or `agent_too_old`.",
             "content": {
-              "application/json": {
+              "application/octet-stream": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "The file changed since the supplied `ifMatch` etag (or while it was being read): `changed`.",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Over the size limit (`FILES_MAX_UPLOAD_BYTES` / `FILES_MAX_DOWNLOAD_BYTES`): `too_large`.",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited` (see `Retry-After`; mutations are limited per user) or `busy` (too many file operations or uploads in flight; retry shortly).",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
                 }
               }
             }
@@ -42221,6 +42325,36 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The agent failed the operation (`failed`, `integrity`) or answered with an unknown code (`agent_error`).",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server's agent is offline.",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The agent did not answer in time (`expired`) or the operation timed out.",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
                 }
               }
             }
@@ -42319,7 +42453,38 @@
         },
         "responses": {
           "200": {
-            "description": "",
+            "description": "replaced an existing file",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "bytes": {
+                      "type": "number"
+                    },
+                    "sha256": {
+                      "type": "string"
+                    },
+                    "etag": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "bytes",
+                    "sha256",
+                    "etag"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "created a new file",
             "content": {
               "application/json": {
                 "schema": {
@@ -42389,12 +42554,62 @@
               }
             }
           },
-          "429": {
-            "description": "Rate limit exceeded; see Retry-After.",
+          "408": {
+            "description": "The upload was too slow (below the minimum throughput or past its deadline) and was cancelled: `upload_too_slow`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Refused: `exists`, `not_dir`, `is_dir`, `not_regular`, `not_empty`, `read_only`, `no_binary`, `not_running`, `not_configured`, `deploy_in_progress`, `datastore_running` or `agent_too_old`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "411": {
+            "description": "`Content-Length` is required on an upload.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "The file changed since the supplied `ifMatch` etag (or while it was being read): `changed`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Over the size limit (`FILES_MAX_UPLOAD_BYTES` / `FILES_MAX_DOWNLOAD_BYTES`): `too_large`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited` (see `Retry-After`; mutations are limited per user) or `busy` (too many file operations or uploads in flight; retry shortly).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
                 }
               }
             }
@@ -42405,6 +42620,46 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The agent failed the operation (`failed`, `integrity`) or answered with an unknown code (`agent_error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server's agent is offline.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The agent did not answer in time (`expired`) or the operation timed out.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "507": {
+            "description": "The hub's upload staging is full or out of disk (`staging_full`) or the volume is out of space (`no_space`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
                 }
               }
             }
@@ -42574,12 +42829,22 @@
               }
             }
           },
-          "429": {
-            "description": "Rate limit exceeded; see Retry-After.",
+          "409": {
+            "description": "Refused: `exists`, `not_dir`, `is_dir`, `not_regular`, `not_empty`, `read_only`, `no_binary`, `not_running`, `not_configured`, `deploy_in_progress`, `datastore_running` or `agent_too_old`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited` (see `Retry-After`; mutations are limited per user) or `busy` (too many file operations or uploads in flight; retry shortly).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
                 }
               }
             }
@@ -42590,6 +42855,36 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The agent failed the operation (`failed`, `integrity`) or answered with an unknown code (`agent_error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server's agent is offline.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The agent did not answer in time (`expired`) or the operation timed out.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
                 }
               }
             }
@@ -42760,12 +43055,22 @@
               }
             }
           },
-          "429": {
-            "description": "Rate limit exceeded; see Retry-After.",
+          "409": {
+            "description": "Refused: `exists`, `not_dir`, `is_dir`, `not_regular`, `not_empty`, `read_only`, `no_binary`, `not_running`, `not_configured`, `deploy_in_progress`, `datastore_running` or `agent_too_old`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited` (see `Retry-After`; mutations are limited per user) or `busy` (too many file operations or uploads in flight; retry shortly).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
                 }
               }
             }
@@ -42776,6 +43081,36 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The agent failed the operation (`failed`, `integrity`) or answered with an unknown code (`agent_error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server's agent is offline.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The agent did not answer in time (`expired`) or the operation timed out.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
                 }
               }
             }
@@ -42946,12 +43281,22 @@
               }
             }
           },
-          "429": {
-            "description": "Rate limit exceeded; see Retry-After.",
+          "409": {
+            "description": "Refused: `exists`, `not_dir`, `is_dir`, `not_regular`, `not_empty`, `read_only`, `no_binary`, `not_running`, `not_configured`, `deploy_in_progress`, `datastore_running` or `agent_too_old`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited` (see `Retry-After`; mutations are limited per user) or `busy` (too many file operations or uploads in flight; retry shortly).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
                 }
               }
             }
@@ -42962,6 +43307,36 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The agent failed the operation (`failed`, `integrity`) or answered with an unknown code (`agent_error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server's agent is offline.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The agent did not answer in time (`expired`) or the operation timed out.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
                 }
               }
             }
@@ -43096,12 +43471,22 @@
               }
             }
           },
-          "429": {
-            "description": "Rate limit exceeded; see Retry-After.",
+          "409": {
+            "description": "Refused: `exists`, `not_dir`, `is_dir`, `not_regular`, `not_empty`, `read_only`, `no_binary`, `not_running`, `not_configured`, `deploy_in_progress`, `datastore_running` or `agent_too_old`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited` (see `Retry-After`; mutations are limited per user) or `busy` (too many file operations or uploads in flight; retry shortly).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
                 }
               }
             }
@@ -43112,6 +43497,36 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The agent failed the operation (`failed`, `integrity`) or answered with an unknown code (`agent_error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server's agent is offline.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The agent did not answer in time (`expired`) or the operation timed out.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
                 }
               }
             }
@@ -43167,9 +43582,6 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": ""
-          },
           "401": {
             "description": "Missing or invalid authentication.",
             "content": {
@@ -43200,12 +43612,22 @@
               }
             }
           },
-          "429": {
-            "description": "Rate limit exceeded; see Retry-After.",
+          "409": {
+            "description": "Refused: `exists`, `not_dir`, `is_dir`, `not_regular`, `not_empty`, `read_only`, `no_binary`, `not_running`, `not_configured`, `deploy_in_progress`, `datastore_running` or `agent_too_old`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited` (see `Retry-After`; mutations are limited per user) or `busy` (too many file operations or uploads in flight; retry shortly).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
                 }
               }
             }
@@ -43216,6 +43638,36 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The agent failed the operation (`failed`, `integrity`) or answered with an unknown code (`agent_error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server's agent is offline.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The agent did not answer in time (`expired`) or the operation timed out.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
                 }
               }
             }
@@ -43359,12 +43811,22 @@
               }
             }
           },
-          "429": {
-            "description": "Rate limit exceeded; see Retry-After.",
+          "409": {
+            "description": "Refused: `exists`, `not_dir`, `is_dir`, `not_regular`, `not_empty`, `read_only`, `no_binary`, `not_running`, `not_configured`, `deploy_in_progress`, `datastore_running` or `agent_too_old`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited` (see `Retry-After`; mutations are limited per user) or `busy` (too many file operations or uploads in flight; retry shortly).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
                 }
               }
             }
@@ -43375,6 +43837,36 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The agent failed the operation (`failed`, `integrity`) or answered with an unknown code (`agent_error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server's agent is offline.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The agent did not answer in time (`expired`) or the operation timed out.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
                 }
               }
             }
@@ -43420,9 +43912,6 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": ""
-          },
           "401": {
             "description": "Missing or invalid authentication.",
             "content": {
@@ -43453,12 +43942,42 @@
               }
             }
           },
-          "429": {
-            "description": "Rate limit exceeded; see Retry-After.",
+          "409": {
+            "description": "Refused: `exists`, `not_dir`, `is_dir`, `not_regular`, `not_empty`, `read_only`, `no_binary`, `not_running`, `not_configured`, `deploy_in_progress`, `datastore_running` or `agent_too_old`.",
             "content": {
-              "application/json": {
+              "application/octet-stream": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "The file changed since the supplied `ifMatch` etag (or while it was being read): `changed`.",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Over the size limit (`FILES_MAX_UPLOAD_BYTES` / `FILES_MAX_DOWNLOAD_BYTES`): `too_large`.",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited` (see `Retry-After`; mutations are limited per user) or `busy` (too many file operations or uploads in flight; retry shortly).",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
                 }
               }
             }
@@ -43469,6 +43988,36 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The agent failed the operation (`failed`, `integrity`) or answered with an unknown code (`agent_error`).",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server's agent is offline.",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The agent did not answer in time (`expired`) or the operation timed out.",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
                 }
               }
             }
@@ -43552,7 +44101,38 @@
         },
         "responses": {
           "200": {
-            "description": "",
+            "description": "replaced an existing file",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "bytes": {
+                      "type": "number"
+                    },
+                    "sha256": {
+                      "type": "string"
+                    },
+                    "etag": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "bytes",
+                    "sha256",
+                    "etag"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "created a new file",
             "content": {
               "application/json": {
                 "schema": {
@@ -43622,12 +44202,62 @@
               }
             }
           },
-          "429": {
-            "description": "Rate limit exceeded; see Retry-After.",
+          "408": {
+            "description": "The upload was too slow (below the minimum throughput or past its deadline) and was cancelled: `upload_too_slow`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Refused: `exists`, `not_dir`, `is_dir`, `not_regular`, `not_empty`, `read_only`, `no_binary`, `not_running`, `not_configured`, `deploy_in_progress`, `datastore_running` or `agent_too_old`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "411": {
+            "description": "`Content-Length` is required on an upload.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "The file changed since the supplied `ifMatch` etag (or while it was being read): `changed`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Over the size limit (`FILES_MAX_UPLOAD_BYTES` / `FILES_MAX_DOWNLOAD_BYTES`): `too_large`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited` (see `Retry-After`; mutations are limited per user) or `busy` (too many file operations or uploads in flight; retry shortly).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
                 }
               }
             }
@@ -43638,6 +44268,46 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The agent failed the operation (`failed`, `integrity`) or answered with an unknown code (`agent_error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server's agent is offline.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The agent did not answer in time (`expired`) or the operation timed out.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "507": {
+            "description": "The hub's upload staging is full or out of disk (`staging_full`) or the volume is out of space (`no_space`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
                 }
               }
             }
@@ -43806,12 +44476,22 @@
               }
             }
           },
-          "429": {
-            "description": "Rate limit exceeded; see Retry-After.",
+          "409": {
+            "description": "Refused: `exists`, `not_dir`, `is_dir`, `not_regular`, `not_empty`, `read_only`, `no_binary`, `not_running`, `not_configured`, `deploy_in_progress`, `datastore_running` or `agent_too_old`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited` (see `Retry-After`; mutations are limited per user) or `busy` (too many file operations or uploads in flight; retry shortly).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
                 }
               }
             }
@@ -43822,6 +44502,36 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The agent failed the operation (`failed`, `integrity`) or answered with an unknown code (`agent_error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server's agent is offline.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The agent did not answer in time (`expired`) or the operation timed out.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
                 }
               }
             }
@@ -43988,12 +44698,22 @@
               }
             }
           },
-          "429": {
-            "description": "Rate limit exceeded; see Retry-After.",
+          "409": {
+            "description": "Refused: `exists`, `not_dir`, `is_dir`, `not_regular`, `not_empty`, `read_only`, `no_binary`, `not_running`, `not_configured`, `deploy_in_progress`, `datastore_running` or `agent_too_old`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited` (see `Retry-After`; mutations are limited per user) or `busy` (too many file operations or uploads in flight; retry shortly).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
                 }
               }
             }
@@ -44004,6 +44724,36 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The agent failed the operation (`failed`, `integrity`) or answered with an unknown code (`agent_error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server's agent is offline.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The agent did not answer in time (`expired`) or the operation timed out.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
                 }
               }
             }
@@ -44170,12 +44920,22 @@
               }
             }
           },
-          "429": {
-            "description": "Rate limit exceeded; see Retry-After.",
+          "409": {
+            "description": "Refused: `exists`, `not_dir`, `is_dir`, `not_regular`, `not_empty`, `read_only`, `no_binary`, `not_running`, `not_configured`, `deploy_in_progress`, `datastore_running` or `agent_too_old`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited` (see `Retry-After`; mutations are limited per user) or `busy` (too many file operations or uploads in flight; retry shortly).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
                 }
               }
             }
@@ -44186,6 +44946,36 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The agent failed the operation (`failed`, `integrity`) or answered with an unknown code (`agent_error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The server's agent is offline.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The agent did not answer in time (`expired`) or the operation timed out.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FsErrorBody"
                 }
               }
             }
@@ -61931,6 +62721,43 @@
           "statusCode",
           "error",
           "message"
+        ],
+        "additionalProperties": false
+      },
+      "FsErrorBody": {
+        "type": "object",
+        "properties": {
+          "statusCode": {
+            "type": "integer"
+          },
+          "error": {
+            "type": "string"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "code": {
+            "type": "string"
+          },
+          "retryAfterSec": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "statusCode",
+          "error",
+          "message",
+          "code"
         ],
         "additionalProperties": false
       }

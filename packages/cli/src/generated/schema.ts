@@ -5501,6 +5501,13 @@ export interface components {
             error: string;
             message: string | string[];
         };
+        FsErrorBody: {
+            statusCode: number;
+            error: string;
+            message: string | string[];
+            code: string;
+            retryAfterSec?: number;
+        };
     };
     responses: never;
     parameters: never;
@@ -14256,12 +14263,6 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
             /** @description Missing or invalid authentication. */
             401: {
                 headers: {
@@ -14289,13 +14290,22 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
-            /** @description Rate limit exceeded; see Retry-After. */
+            /** @description Refused: `exists`, `not_dir`, `is_dir`, `not_regular`, `not_empty`, `read_only`, `no_binary`, `not_running`, `not_configured`, `deploy_in_progress`, `datastore_running` or `agent_too_old`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description `rate_limited` (see `Retry-After`; mutations are limited per user) or `busy` (too many file operations or uploads in flight; retry shortly). */
             429: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiError"];
+                    "application/json": components["schemas"]["FsErrorBody"];
                 };
             };
             /** @description Unexpected server error. */
@@ -14305,6 +14315,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description The agent failed the operation (`failed`, `integrity`) or answered with an unknown code (`agent_error`). */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The server's agent is offline. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The agent did not answer in time (`expired`) or the operation timed out. */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
                 };
             };
         };
@@ -27283,13 +27320,22 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
-            /** @description Rate limit exceeded; see Retry-After. */
+            /** @description Refused: `exists`, `not_dir`, `is_dir`, `not_regular`, `not_empty`, `read_only`, `no_binary`, `not_running`, `not_configured`, `deploy_in_progress`, `datastore_running` or `agent_too_old`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description `rate_limited` (see `Retry-After`; mutations are limited per user) or `busy` (too many file operations or uploads in flight; retry shortly). */
             429: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiError"];
+                    "application/json": components["schemas"]["FsErrorBody"];
                 };
             };
             /** @description Unexpected server error. */
@@ -27299,6 +27345,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description The agent failed the operation (`failed`, `integrity`) or answered with an unknown code (`agent_error`). */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The server's agent is offline. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The agent did not answer in time (`expired`) or the operation timed out. */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
                 };
             };
         };
@@ -27317,12 +27390,6 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
             /** @description Missing or invalid authentication. */
             401: {
                 headers: {
@@ -27350,13 +27417,40 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
-            /** @description Rate limit exceeded; see Retry-After. */
+            /** @description Refused: `exists`, `not_dir`, `is_dir`, `not_regular`, `not_empty`, `read_only`, `no_binary`, `not_running`, `not_configured`, `deploy_in_progress`, `datastore_running` or `agent_too_old`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The file changed since the supplied `ifMatch` etag (or while it was being read): `changed`. */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description Over the size limit (`FILES_MAX_UPLOAD_BYTES` / `FILES_MAX_DOWNLOAD_BYTES`): `too_large`. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description `rate_limited` (see `Retry-After`; mutations are limited per user) or `busy` (too many file operations or uploads in flight; retry shortly). */
             429: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiError"];
+                    "application/octet-stream": components["schemas"]["FsErrorBody"];
                 };
             };
             /** @description Unexpected server error. */
@@ -27366,6 +27460,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description The agent failed the operation (`failed`, `integrity`) or answered with an unknown code (`agent_error`). */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The server's agent is offline. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The agent did not answer in time (`expired`) or the operation timed out. */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": components["schemas"]["FsErrorBody"];
                 };
             };
         };
@@ -27395,7 +27516,22 @@ export interface operations {
             };
         };
         responses: {
+            /** @description replaced an existing file */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        path: string;
+                        bytes: number;
+                        sha256: string;
+                        etag: string;
+                    };
+                };
+            };
+            /** @description created a new file */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -27444,13 +27580,58 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
-            /** @description Rate limit exceeded; see Retry-After. */
+            /** @description The upload was too slow (below the minimum throughput or past its deadline) and was cancelled: `upload_too_slow`. */
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description Refused: `exists`, `not_dir`, `is_dir`, `not_regular`, `not_empty`, `read_only`, `no_binary`, `not_running`, `not_configured`, `deploy_in_progress`, `datastore_running` or `agent_too_old`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description `Content-Length` is required on an upload. */
+            411: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The file changed since the supplied `ifMatch` etag (or while it was being read): `changed`. */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description Over the size limit (`FILES_MAX_UPLOAD_BYTES` / `FILES_MAX_DOWNLOAD_BYTES`): `too_large`. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description `rate_limited` (see `Retry-After`; mutations are limited per user) or `busy` (too many file operations or uploads in flight; retry shortly). */
             429: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiError"];
+                    "application/json": components["schemas"]["FsErrorBody"];
                 };
             };
             /** @description Unexpected server error. */
@@ -27460,6 +27641,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description The agent failed the operation (`failed`, `integrity`) or answered with an unknown code (`agent_error`). */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The server's agent is offline. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The agent did not answer in time (`expired`) or the operation timed out. */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The hub's upload staging is full or out of disk (`staging_full`) or the volume is out of space (`no_space`). */
+            507: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
                 };
             };
         };
@@ -27544,13 +27761,22 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
-            /** @description Rate limit exceeded; see Retry-After. */
+            /** @description Refused: `exists`, `not_dir`, `is_dir`, `not_regular`, `not_empty`, `read_only`, `no_binary`, `not_running`, `not_configured`, `deploy_in_progress`, `datastore_running` or `agent_too_old`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description `rate_limited` (see `Retry-After`; mutations are limited per user) or `busy` (too many file operations or uploads in flight; retry shortly). */
             429: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiError"];
+                    "application/json": components["schemas"]["FsErrorBody"];
                 };
             };
             /** @description Unexpected server error. */
@@ -27560,6 +27786,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description The agent failed the operation (`failed`, `integrity`) or answered with an unknown code (`agent_error`). */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The server's agent is offline. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The agent did not answer in time (`expired`) or the operation timed out. */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
                 };
             };
         };
@@ -27644,13 +27897,22 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
-            /** @description Rate limit exceeded; see Retry-After. */
+            /** @description Refused: `exists`, `not_dir`, `is_dir`, `not_regular`, `not_empty`, `read_only`, `no_binary`, `not_running`, `not_configured`, `deploy_in_progress`, `datastore_running` or `agent_too_old`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description `rate_limited` (see `Retry-After`; mutations are limited per user) or `busy` (too many file operations or uploads in flight; retry shortly). */
             429: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiError"];
+                    "application/json": components["schemas"]["FsErrorBody"];
                 };
             };
             /** @description Unexpected server error. */
@@ -27660,6 +27922,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description The agent failed the operation (`failed`, `integrity`) or answered with an unknown code (`agent_error`). */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The server's agent is offline. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The agent did not answer in time (`expired`) or the operation timed out. */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
                 };
             };
         };
@@ -27744,13 +28033,22 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
-            /** @description Rate limit exceeded; see Retry-After. */
+            /** @description Refused: `exists`, `not_dir`, `is_dir`, `not_regular`, `not_empty`, `read_only`, `no_binary`, `not_running`, `not_configured`, `deploy_in_progress`, `datastore_running` or `agent_too_old`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description `rate_limited` (see `Retry-After`; mutations are limited per user) or `busy` (too many file operations or uploads in flight; retry shortly). */
             429: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiError"];
+                    "application/json": components["schemas"]["FsErrorBody"];
                 };
             };
             /** @description Unexpected server error. */
@@ -27760,6 +28058,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description The agent failed the operation (`failed`, `integrity`) or answered with an unknown code (`agent_error`). */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The server's agent is offline. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The agent did not answer in time (`expired`) or the operation timed out. */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
                 };
             };
         };
@@ -27825,13 +28150,22 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
-            /** @description Rate limit exceeded; see Retry-After. */
+            /** @description Refused: `exists`, `not_dir`, `is_dir`, `not_regular`, `not_empty`, `read_only`, `no_binary`, `not_running`, `not_configured`, `deploy_in_progress`, `datastore_running` or `agent_too_old`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description `rate_limited` (see `Retry-After`; mutations are limited per user) or `busy` (too many file operations or uploads in flight; retry shortly). */
             429: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiError"];
+                    "application/json": components["schemas"]["FsErrorBody"];
                 };
             };
             /** @description Unexpected server error. */
@@ -27841,6 +28175,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description The agent failed the operation (`failed`, `integrity`) or answered with an unknown code (`agent_error`). */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The server's agent is offline. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The agent did not answer in time (`expired`) or the operation timed out. */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
                 };
             };
         };
@@ -27860,12 +28221,6 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
             /** @description Missing or invalid authentication. */
             401: {
                 headers: {
@@ -27893,13 +28248,22 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
-            /** @description Rate limit exceeded; see Retry-After. */
+            /** @description Refused: `exists`, `not_dir`, `is_dir`, `not_regular`, `not_empty`, `read_only`, `no_binary`, `not_running`, `not_configured`, `deploy_in_progress`, `datastore_running` or `agent_too_old`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description `rate_limited` (see `Retry-After`; mutations are limited per user) or `busy` (too many file operations or uploads in flight; retry shortly). */
             429: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiError"];
+                    "application/json": components["schemas"]["FsErrorBody"];
                 };
             };
             /** @description Unexpected server error. */
@@ -27909,6 +28273,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description The agent failed the operation (`failed`, `integrity`) or answered with an unknown code (`agent_error`). */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The server's agent is offline. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The agent did not answer in time (`expired`) or the operation timed out. */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
                 };
             };
         };
@@ -27978,13 +28369,22 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
-            /** @description Rate limit exceeded; see Retry-After. */
+            /** @description Refused: `exists`, `not_dir`, `is_dir`, `not_regular`, `not_empty`, `read_only`, `no_binary`, `not_running`, `not_configured`, `deploy_in_progress`, `datastore_running` or `agent_too_old`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description `rate_limited` (see `Retry-After`; mutations are limited per user) or `busy` (too many file operations or uploads in flight; retry shortly). */
             429: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiError"];
+                    "application/json": components["schemas"]["FsErrorBody"];
                 };
             };
             /** @description Unexpected server error. */
@@ -27994,6 +28394,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description The agent failed the operation (`failed`, `integrity`) or answered with an unknown code (`agent_error`). */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The server's agent is offline. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The agent did not answer in time (`expired`) or the operation timed out. */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
                 };
             };
         };
@@ -28012,12 +28439,6 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
             /** @description Missing or invalid authentication. */
             401: {
                 headers: {
@@ -28045,13 +28466,40 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
-            /** @description Rate limit exceeded; see Retry-After. */
+            /** @description Refused: `exists`, `not_dir`, `is_dir`, `not_regular`, `not_empty`, `read_only`, `no_binary`, `not_running`, `not_configured`, `deploy_in_progress`, `datastore_running` or `agent_too_old`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The file changed since the supplied `ifMatch` etag (or while it was being read): `changed`. */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description Over the size limit (`FILES_MAX_UPLOAD_BYTES` / `FILES_MAX_DOWNLOAD_BYTES`): `too_large`. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description `rate_limited` (see `Retry-After`; mutations are limited per user) or `busy` (too many file operations or uploads in flight; retry shortly). */
             429: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiError"];
+                    "application/octet-stream": components["schemas"]["FsErrorBody"];
                 };
             };
             /** @description Unexpected server error. */
@@ -28061,6 +28509,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description The agent failed the operation (`failed`, `integrity`) or answered with an unknown code (`agent_error`). */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The server's agent is offline. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The agent did not answer in time (`expired`) or the operation timed out. */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": components["schemas"]["FsErrorBody"];
                 };
             };
         };
@@ -28086,7 +28561,22 @@ export interface operations {
             };
         };
         responses: {
+            /** @description replaced an existing file */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        path: string;
+                        bytes: number;
+                        sha256: string;
+                        etag: string;
+                    };
+                };
+            };
+            /** @description created a new file */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -28135,13 +28625,58 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
-            /** @description Rate limit exceeded; see Retry-After. */
+            /** @description The upload was too slow (below the minimum throughput or past its deadline) and was cancelled: `upload_too_slow`. */
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description Refused: `exists`, `not_dir`, `is_dir`, `not_regular`, `not_empty`, `read_only`, `no_binary`, `not_running`, `not_configured`, `deploy_in_progress`, `datastore_running` or `agent_too_old`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description `Content-Length` is required on an upload. */
+            411: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The file changed since the supplied `ifMatch` etag (or while it was being read): `changed`. */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description Over the size limit (`FILES_MAX_UPLOAD_BYTES` / `FILES_MAX_DOWNLOAD_BYTES`): `too_large`. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description `rate_limited` (see `Retry-After`; mutations are limited per user) or `busy` (too many file operations or uploads in flight; retry shortly). */
             429: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiError"];
+                    "application/json": components["schemas"]["FsErrorBody"];
                 };
             };
             /** @description Unexpected server error. */
@@ -28151,6 +28686,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description The agent failed the operation (`failed`, `integrity`) or answered with an unknown code (`agent_error`). */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The server's agent is offline. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The agent did not answer in time (`expired`) or the operation timed out. */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The hub's upload staging is full or out of disk (`staging_full`) or the volume is out of space (`no_space`). */
+            507: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
                 };
             };
         };
@@ -28235,13 +28806,22 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
-            /** @description Rate limit exceeded; see Retry-After. */
+            /** @description Refused: `exists`, `not_dir`, `is_dir`, `not_regular`, `not_empty`, `read_only`, `no_binary`, `not_running`, `not_configured`, `deploy_in_progress`, `datastore_running` or `agent_too_old`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description `rate_limited` (see `Retry-After`; mutations are limited per user) or `busy` (too many file operations or uploads in flight; retry shortly). */
             429: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiError"];
+                    "application/json": components["schemas"]["FsErrorBody"];
                 };
             };
             /** @description Unexpected server error. */
@@ -28251,6 +28831,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description The agent failed the operation (`failed`, `integrity`) or answered with an unknown code (`agent_error`). */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The server's agent is offline. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The agent did not answer in time (`expired`) or the operation timed out. */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
                 };
             };
         };
@@ -28334,13 +28941,22 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
-            /** @description Rate limit exceeded; see Retry-After. */
+            /** @description Refused: `exists`, `not_dir`, `is_dir`, `not_regular`, `not_empty`, `read_only`, `no_binary`, `not_running`, `not_configured`, `deploy_in_progress`, `datastore_running` or `agent_too_old`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description `rate_limited` (see `Retry-After`; mutations are limited per user) or `busy` (too many file operations or uploads in flight; retry shortly). */
             429: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiError"];
+                    "application/json": components["schemas"]["FsErrorBody"];
                 };
             };
             /** @description Unexpected server error. */
@@ -28350,6 +28966,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description The agent failed the operation (`failed`, `integrity`) or answered with an unknown code (`agent_error`). */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The server's agent is offline. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The agent did not answer in time (`expired`) or the operation timed out. */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
                 };
             };
         };
@@ -28433,13 +29076,22 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
-            /** @description Rate limit exceeded; see Retry-After. */
+            /** @description Refused: `exists`, `not_dir`, `is_dir`, `not_regular`, `not_empty`, `read_only`, `no_binary`, `not_running`, `not_configured`, `deploy_in_progress`, `datastore_running` or `agent_too_old`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description `rate_limited` (see `Retry-After`; mutations are limited per user) or `busy` (too many file operations or uploads in flight; retry shortly). */
             429: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiError"];
+                    "application/json": components["schemas"]["FsErrorBody"];
                 };
             };
             /** @description Unexpected server error. */
@@ -28449,6 +29101,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description The agent failed the operation (`failed`, `integrity`) or answered with an unknown code (`agent_error`). */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The server's agent is offline. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
+                };
+            };
+            /** @description The agent did not answer in time (`expired`) or the operation timed out. */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsErrorBody"];
                 };
             };
         };

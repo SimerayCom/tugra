@@ -4,6 +4,7 @@ import type { OpenAPIObject } from "@nestjs/swagger";
 import * as zodToJsonSchemaModule from "zod-to-json-schema";
 import type { ZodTypeAny } from "zod";
 import { ApiErrorSchema } from "../common/api-error";
+import { FsErrorBodySchema } from "../files/dto";
 
 // zod-to-json-schema's own recursive return type makes tsc blow up (TS2589) when it's instantiated. Cast
 // the module through `unknown` to a flattened signature so that deep type is never read.
@@ -59,6 +60,7 @@ export function buildOpenApiDocument(app: INestApplication): OpenAPIObject {
 function attachErrorResponses(doc: OpenAPIObject): void {
   const components = ((doc as any).components ??= {});
   (components.schemas ??= {}).ApiError = toSchema(ApiErrorSchema);
+  components.schemas.FsErrorBody = toSchema(FsErrorBodySchema); // the typed error body the file routes reference
   const errorResponse = (description: string) => ({
     description,
     content: { "application/json": { schema: { $ref: "#/components/schemas/ApiError" } } },

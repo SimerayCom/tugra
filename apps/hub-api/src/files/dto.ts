@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ApiErrorSchema } from "../common/api-error";
 import { assertSafeCtrPath, assertSafeFsPathV2 } from "../common/fs-path";
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
@@ -121,3 +122,10 @@ export const FilesMetaSchema = z.object({
   }),
   limits: z.object({ maxUploadBytes: z.number(), maxDownloadBytes: z.number(), maxEditBytes: z.number() }),
 });
+
+/**
+ * The typed error body of the file routes: the uniform ApiError plus a stable machine `code` (`exists`, `changed`,
+ * `too_large`, `deploy_in_progress`, `datastore_running`, `rate_limited`, `busy`, `staging_full`, ...) the UI branches
+ * on, and `retryAfterSec` on a per-user rate limit (also sent as `Retry-After`). Registered as an OpenAPI component.
+ */
+export const FsErrorBodySchema = ApiErrorSchema.extend({ code: z.string(), retryAfterSec: z.number().int().optional() });
