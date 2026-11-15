@@ -38,6 +38,9 @@ import type { DatabaseView } from "../databases/databases.service";
 import { SetBasicAuthSchema } from "../applications/dto";
 import type { ImportSource, FetchedDbCredentials, SourceAppExtras } from "./import-source";
 import { REMOTE_SOURCE_KINDS, type ImportAck, type ImportApplyInput, type RemoteSourceKind, type ServiceChoice } from "./dto";
+import { ImportMappingService } from "./import-mapping.service";
+import type { EffectiveItem, ResolvedMapping } from "./import-mapping";
+import { slug as dbSlug } from "../databases/databases.service";
 
 const CONCURRENCY = 5;
 const STALE_RUNNING_MS = 10 * 60_000; // a RUNNING task older than this is treated as a dead worker's leftover
@@ -100,9 +103,11 @@ export class ImportExecutorService {
     private readonly gitSources: GitSourcesService,
     private readonly projects: ProjectsService,
     private readonly gitLinkResolver: GitLinkResolverService,
+    // Trailing + optional: the mapping-free construction (and every pre-existing spec) is unchanged.
+    private readonly mappings?: ImportMappingService,
   ) {}
 
-  apply(userId: string, input: ImportApplyInput): Promise<{ opId: string }> {
+  apply(userId: string, input: ImportApplyInput): Promise<{ opId: string; mappingApplied?: boolean }> {
     return input.sourceKind === "local-docker" ? this.applyLocalDocker(userId, input) : this.applyRemote(userId, input);
   }
 
@@ -141,8 +146,8 @@ export class ImportExecutorService {
   }
 
   /** Copy a remote fleet's apps onto a target Tugra server: per app, resolve its secrets and create it. */
-  private async applyRemote(userId: string, input: Extract<ImportApplyInput, { sourceKind: RemoteSourceKind }>): Promise<{ opId: string }> {
-    const { source } = await this.importer.openSession(userId, input.sessionId, input.sourceKind); // session ownership + team authz + kind pin
+  private async applyRemote(userId: string, input: Extract<ImportApplyInput, { sourceKind: RemoteSourceKind }>): Promise<{ opId: string; mappingApplied: boolean }> {
+    const { source, session } = await this.importer.openSession(userId, input.sessionId, input.sourceKind); // session ownership + team authz + kind pin
     try {
       const fleet = await source.discover();
       const plan = planImport(fleet, { sourceKind: input.sourceKind });
@@ -162,10 +167,25 @@ export class ImportExecutorService {
       // the op) and gets its own in-flight check.
       const svcTargets = await this.authorizeServiceTargets(userId, server.teamId, input.targetServerId, serviceChoices);
 
+      // Editable mapping: resolve + validate BEFORE anything is created (fail closed — a refusal here has created
+      // nothing: no git source, no project, no op row). `res` is undefined on the legacy no-mapping path, which
+      // then follows the original code byte-identically.
+      const res = this.mappings
+        ? await this.mappings.resolveForApply(userId, session, fleet, plan, server, {
+            mapping: input.mapping,
+            mappingHash: input.mappingHash,
+            reconcile: input.reconcile,
+            ignoreStoredMapping: input.ignoreStoredMapping,
+            environmentId: input.environmentId,
+          })
+        : undefined;
+      const effByRef = new Map((res?.effective ?? []).map((e) => [e.itemRef, e]));
+      const gitNameByRef = res ? new Map(res.gitSources.map((g) => [g.ref, g.name])) : undefined;
+
       // Carry each discovered GitHub App into a Tugra GitSource on the TARGET team (credentials flow
       // source → memory → GitSourcesService, encrypted at rest; never a task/plan/log). Done BEFORE the op row so
       // any skipped-provider warning is persisted with it; per-provider failures degrade, never abort the import.
-      const { gitSourceByRef, warnings: providerWarnings } = await this.carryGitProviders(userId, server.teamId, source, fleet.gitProviders ?? []);
+      const { gitSourceByRef, warnings: providerWarnings } = await this.carryGitProviders(userId, server.teamId, source, fleet.gitProviders ?? [], gitNameByRef);
 
       // Repo-visibility link resolution (D7): per git app, which connected source can actually see the repo. Computed
       // ONCE here (before the op row, so a failure note persists with it). A resolver failure degrades to "no links":
@@ -180,8 +200,14 @@ export class ImportExecutorService {
       // Mirror the source's project → environment tree on the TARGET team (find-or-create by name, so a re-import
       // reuses it). Also before the op row, so the created names + any degrade warning persist with it. A source
       // with no tree (Coolify) skips this and keeps the single input.environmentId.
-      const tree = await this.buildImportTree(userId, server.teamId, fleet);
-      const opWarnings = [...providerWarnings, ...tree.warnings];
+      // Under a mapping the tree is built from the RESOLVED groups instead (only the projects/environments a
+      // runnable item uses; a failure is a hard error, never a silent degrade — perm.projects was checked).
+      const tree = res ? await this.buildMappedTree(userId, server.teamId, fleet, res, input.mapping?.projects ?? {}) : await this.buildImportTree(userId, server.teamId, fleet);
+      const opWarnings = [
+        ...providerWarnings,
+        ...tree.warnings,
+        ...(res?.conflicts.some((c) => c.code === "gitsource.exists_not_renamed") ? ["a git source for a GitHub App already exists on the target team — its name was kept (a rename applies on create only)"] : []),
+      ];
 
       const op = await this.createOp(userId, input.sourceKind, input.targetServerId, plan.planHash, {
         sessionId: input.sessionId,
@@ -197,6 +223,7 @@ export class ImportExecutorService {
           : {}),
         // Secret-free: names, hostnames, volume policies. Never a value.
         ...(Object.keys(serviceChoices).length ? { serviceChoices } : {}),
+        ...(res ? { mapping: mappingSnapshot(res, input.reconcile === true) } : {}),
       });
       // Idempotency: skip app refs a prior op already imported onto this target (and whose app still exists),
       // so a re-apply after a partial/cancelled run does not create duplicate Tugra apps.
@@ -216,6 +243,7 @@ export class ImportExecutorService {
       // Volume items stay SKIPPED here — a volume is DECLARED (empty) inside its owning app's task; its DATA
       // is not copied by this import yet.
       const runners = new Map<string, () => Promise<void>>();
+      const reconcile = input.reconcile === true;
       for (const item of plan.items) {
         const app = item.kind === "app" ? appByRef.get(item.itemRef) : undefined;
         const db = item.kind === "database" ? dbByRef.get(item.itemRef) : undefined;
@@ -227,8 +255,13 @@ export class ImportExecutorService {
         const hasBlocker = item.risks.some((r) => r.level === "blocker" && !isAcked(input.acks, item.itemRef, r.code));
         const provisionableDb = !!db && PROVISIONABLE_ENGINES.has(db.engine);
         const serviceRunnable = !!service && !choice?.skip && item.proposed.verdict !== "skipped" && typeof service.composeFile === "string" && typeof source.fetchServiceBundle === "function";
-        const runnable = !dup && !hasBlocker && ((item.kind === "app" && !!app) || (item.kind === "database" && provisionableDb) || (item.kind === "service" && serviceRunnable));
-        const reason = dup
+        const eff = effByRef.get(item.itemRef); // set only under a mapping
+        const excluded = !!eff && !eff.include;
+        // An already-imported item with mapped drift is reconciled ONLY behind the explicit flag; its task is
+        // SKIPPED at the end (never DONE), so rollback and the idempotency scan stay blind to it.
+        const reconciles = !!eff && dup && !excluded && reconcile && !!eff.drift?.length;
+        const runnable = !excluded && !dup && !hasBlocker && ((item.kind === "app" && !!app) || (item.kind === "database" && provisionableDb) || (item.kind === "service" && serviceRunnable));
+        const baseReason = dup
           ? "already imported onto this server in a previous run"
           : hasBlocker
             ? "blocked by a plan risk"
@@ -243,31 +276,45 @@ export class ImportExecutorService {
                       ? "this service is not imported (see its plan note)"
                       : "this source cannot read the service's variables"
                   : "could not resolve the source resource";
+        const reason = excluded
+          ? "excluded by mapping"
+          : eff && dup && eff.drift?.length && !reconcile
+            ? `${baseReason}; mapping not applied (${eff.drift.join(", ")}) — enable reconcile`
+            : baseReason;
         const task = await this.prisma.bulkTask.create({
           data: {
             opId: op.id,
             serverId: targetServerId,
             kind: item.kind,
             itemRef: item.itemRef,
-            status: runnable ? "PENDING" : "SKIPPED",
+            status: runnable || reconciles ? "PENDING" : "SKIPPED",
             dependsOn: item.dependsOn,
-            output: runnable ? null : reason,
-            result: { name: item.name },
+            output: runnable || reconciles ? null : reason,
+            result: eff ? { name: eff.name, sourceName: item.name, mapped: true } : { name: item.name },
           },
         });
         // The resource's own source environment when the tree resolved it; else the single selected environment.
-        const environmentId = (item.kind === "service" ? choice?.environmentId : undefined) ?? resolveTreeEnvironment(tree.envByRef, app ?? db) ?? input.environmentId;
+        // Under a mapping the resolved (project, environment) of THIS item wins.
+        const environmentId = (item.kind === "service" ? choice?.environmentId : undefined) ?? tree.envByItemRef?.get(item.itemRef) ?? resolveTreeEnvironment(tree.envByRef, app ?? db) ?? input.environmentId;
         // Ack codes that actually cover a risk THIS item carries (an ack for a code the plan never raised for it grants nothing).
         const ackedCodes = new Set(item.risks.filter((r) => isAcked(input.acks, item.itemRef, r.code)).map((r) => r.code));
-        if (runnable && service) runners.set(task.id, () => this.runCopyService(task.id, source, service, userId, targetServerId, input.sourceKind, environmentId, choice));
-        else if (runnable && app) runners.set(task.id, () => this.runCopyApp(task.id, source, app, userId, input.targetServerId, input.sourceKind, environmentId, gitSourceByRef, ackedCodes, gitLinks));
-        else if (runnable && db) runners.set(task.id, () => this.runCreateDb(task.id, source, db, userId, input.targetServerId, environmentId));
+        if (reconciles && eff) runners.set(task.id, () => this.runReconcile(task.id, userId, eff, tree.envByItemRef?.get(item.itemRef)));
+        else if (runnable && service) runners.set(task.id, () => this.runCopyService(task.id, source, service, userId, targetServerId, input.sourceKind, environmentId, choice));
+        else if (runnable && app) runners.set(task.id, () => this.runCopyApp(task.id, source, app, userId, input.targetServerId, input.sourceKind, environmentId, gitSourceByRef, ackedCodes, gitLinks, eff));
+        else if (runnable && db) runners.set(task.id, () => this.runCreateDb(task.id, source, db, userId, input.targetServerId, environmentId, eff));
       }
-      await this.audit.log({ actor: userId, action: "import.apply", target: op.id, meta: { sourceKind: input.sourceKind, serverId: input.targetServerId, run: runners.size, total: plan.items.length } });
+      await this.audit.log({
+        actor: userId,
+        action: "import.apply",
+        target: op.id,
+        meta: { sourceKind: input.sourceKind, serverId: input.targetServerId, run: runners.size, total: plan.items.length, ...(res ? { mappingHash: res.mappingHash, ...res.counts, reconcile } : {}) },
+      });
       void this.fanout(op.id, [...runners.keys()], (taskId) => runners.get(taskId)!())
         .catch(() => undefined)
         .finally(() => source.close()); // close only once the async fan-out is done with the client
-      return { opId: op.id };
+      // The op row exists: keep the applied mapping as the editable profile for the next run (best effort).
+      if (res && input.mapping && input.saveMapping !== false) await this.mappings!.markApplied(userId, session, op.id, input.mapping);
+      return { opId: op.id, mappingApplied: !!res };
     } catch (e) {
       // Any failure before the fan-out is handed the source → close it here (the fan-out's finally won't run).
       await source.close();
@@ -459,6 +506,36 @@ export class ImportExecutorService {
     return tree;
   }
 
+  /**
+   * Mapped variant of {@link buildImportTree}: find-or-create exactly the (project, environment) groups the
+   * RESOLVED mapping uses (runnable items and reconcile moves) — no empty source projects — and return the
+   * environment id per itemRef. A failure THROWS (before the op row exists): the resolve already checked the
+   * `projects` permission, so a silent degrade onto another environment would be a misplaced import.
+   */
+  private async buildMappedTree(userId: string, teamId: string, fleet: ForeignFleet, res: ResolvedMapping, projectRenames: Record<string, { name?: string }>): Promise<ImportTree> {
+    const tree: ImportTree = { envByRef: new Map(), summary: [], warnings: [], envByItemRef: new Map() };
+    // Source descriptions/tags are carried only for a project the tree itself placed items into (by effective name).
+    const treeNames = new Set(res.effective.filter((e) => e.origin.placement === "tree" && e.project).map((e) => e.project as string));
+    const meta = new Map<string, { description?: string; tags: string[] }>();
+    for (const p of fleet.projects ?? []) {
+      const name = projectRenames[p.ref]?.name?.normalize("NFC").trim() || p.name;
+      if (treeNames.has(name)) meta.set(name, { description: p.description, tags: p.tags });
+    }
+    for (const g of res.projects) {
+      const r = await this.projects.findOrCreateForImport(userId, teamId, {
+        name: g.name,
+        description: meta.get(g.name)?.description,
+        tags: meta.get(g.name)?.tags,
+        environments: g.environments.map((n) => ({ name: n, isDefault: n === "production" })),
+      });
+      for (const e of res.effective) {
+        if (e.project === g.name && e.environment && r.environments[e.environment]) tree.envByItemRef!.set(e.itemRef, r.environments[e.environment]);
+      }
+      tree.summary.push({ project: g.name, projectCreated: r.created, environments: Object.keys(r.environments), environmentsCreated: r.createdEnvironments });
+    }
+    return tree;
+  }
+
   /** Upsert each discovered GitHub App into a Tugra GitSource on `teamId`, returning providerRef → gitSourceId.
    *  Idempotent (keyed by (teamId, appId) in GitSourcesService), so a retry reuses the rows. A provider with no
    *  resolvable private key / appId, or whose upsert fails (e.g. the caller lacks `integrations` on the team),
@@ -470,6 +547,8 @@ export class ImportExecutorService {
     teamId: string,
     source: ImportSource,
     providers: ForeignGitProvider[],
+    /** Mapped names (providerRef → name) under an editable mapping; applied at CREATE only (upsertForImport never renames). */
+    nameByRef?: ReadonlyMap<string, string>,
   ): Promise<{ gitSourceByRef: Map<string, string>; warnings: string[] }> {
     const gitSourceByRef = new Map<string, string>();
     const warnings: string[] = [];
@@ -486,7 +565,7 @@ export class ImportExecutorService {
           continue;
         }
         const id = await this.gitSources.upsertForImport(userId, teamId, {
-          name: p.appName || p.appSlug || `GitHub App ${p.appId}`,
+          name: nameByRef?.get(p.ref) ?? (p.appName || p.appSlug || `GitHub App ${p.appId}`),
           appId: p.appId,
           privateKey: values.privateKey,
           installationId: p.installationId || undefined,
@@ -582,7 +661,7 @@ export class ImportExecutorService {
     }
   }
 
-  private async runCopyApp(taskId: string, source: ImportSource, app: ForeignApp, userId: string, targetServerId: string, sourceKind: RemoteSourceKind, environmentId?: string, gitSourceByRef: ReadonlyMap<string, string> = new Map(), ackedCodes: ReadonlySet<string> = new Set(), gitLinks: ReadonlyMap<string, GitLinkRow> = new Map()): Promise<void> {
+  private async runCopyApp(taskId: string, source: ImportSource, app: ForeignApp, userId: string, targetServerId: string, sourceKind: RemoteSourceKind, environmentId?: string, gitSourceByRef: ReadonlyMap<string, string> = new Map(), ackedCodes: ReadonlySet<string> = new Set(), gitLinks: ReadonlyMap<string, GitLinkRow> = new Map(), eff?: EffectiveItem): Promise<void> {
     if (!(await this.claim(taskId))) return;
     try {
       const fetched = await source.fetchSecrets(app.sourceRef); // real env values (server-side only)
@@ -623,7 +702,7 @@ export class ImportExecutorService {
       const createApp: ForeignApp = link?.status === "linked" && link.rewriteUrl && app.git ? { ...app, git: { ...app.git, url: link.rewriteUrl } } : app;
       // Flags that could not be carried are reported by key name (never silently dropped); mapped once, used for both.
       const mappedFlags = mapSourceEnvFlags(values, flags, mapBuildPack(app).source);
-      const createInput = foreignAppToCreateInput(createApp, values, { serverId: targetServerId, environmentId, sourceTag: sourceKind, gitSourceId }, flags, mappedFlags);
+      const createInput = foreignAppToCreateInput(createApp, values, { serverId: targetServerId, environmentId, sourceTag: sourceKind, gitSourceId, ...(eff ? { name: eff.name } : {}) }, flags, mappedFlags);
       const flagWarnings = mappedFlags.warnings;
       const created = await this.apps.create(userId, createInput); // re-checks apps:config on the TARGET team; deploy:false
       // Declare the app's volumes as EMPTY named mounts (their DATA is copied by a later slice). Best-effort,
@@ -655,6 +734,10 @@ export class ImportExecutorService {
       // Ingress beyond create's one primary domain + guessed port (extra domains, path routing, compose service
       // domains, raw published ports). Same best-effort, never-throw contract as applyPostCreateConfig.
       const ingress = await this.applyIngress(userId, created.id, app, source);
+      // Mapped container alias: a stable DNS name on the Tugra network, via the existing setNetworks (which already
+      // refuses swarm/compose/raw --network/reserved/taken). Same never-throw contract as the setters above — a
+      // throw after the app row exists would orphan it and a retry would duplicate it.
+      const alias = eff?.containerAlias ? await this.applyAlias(userId, created.id, eff.containerAlias) : undefined;
       // Surface a declare FAILURE or skipped mounts on the task itself (the view renders `output` as the task
       // message) — otherwise a silently-empty app contradicts the plan's "a volume is declared" promise. A clean
       // declare (or a no-volume app) leaves `output` unset, so those rows stay byte-identical to before.
@@ -672,7 +755,8 @@ export class ImportExecutorService {
       const notCarriedKeys = [...unresolvedKeys, ...droppedInvalid.filter((k) => !unresolvedKeys.includes(k))];
       const envNote = notCarriedKeys.length ? `env not carried (acknowledged): ${keyList(notCarriedKeys, 20)}` : undefined;
       const git = link ? await this.gitOutcome(created.id, link) : undefined;
-      const note = [volNote, cfgNote, ingressNote, flagNote, envNote, git?.note].filter(Boolean).join("; ") || undefined;
+      const aliasNote = alias && !alias.applied ? `container alias not applied: ${alias.reason}` : undefined;
+      const note = [volNote, cfgNote, ingressNote, flagNote, envNote, aliasNote, git?.note].filter(Boolean).join("; ") || undefined;
       await this.prisma.bulkTask.update({
         where: { id: taskId },
         data: {
@@ -680,8 +764,65 @@ export class ImportExecutorService {
           resourceType: "application",
           resourceId: created.id,
           // count only — never the values; `volumes` omitted entirely for an app with no mounts (byte-identical to before)
-          result: { name: created.name, appId: created.id, unresolvedEnv: unresolved.length, ...(unresolvedKeys.length ? { unresolvedKeys: unresolvedKeys.slice(0, 50) } : {}), ...(droppedInvalid.length ? { droppedInvalidKeys: droppedInvalid.slice(0, 50) } : {}), ...(git ? { git: git.result } : {}), ...(volumes ? { volumes } : {}), ...(postCreate.applied.length || postCreate.unmapped.length ? { postCreate } : {}), ...(ingress.applied.length || ingress.unmapped.length ? { ingress } : {}) },
+          result: { name: created.name, ...(eff ? { sourceName: app.name, mapped: true } : {}), appId: created.id, unresolvedEnv: unresolved.length, ...(alias ? { aliasApplied: alias.applied } : {}), ...(unresolvedKeys.length ? { unresolvedKeys: unresolvedKeys.slice(0, 50) } : {}), ...(droppedInvalid.length ? { droppedInvalidKeys: droppedInvalid.slice(0, 50) } : {}), ...(git ? { git: git.result } : {}), ...(volumes ? { volumes } : {}), ...(postCreate.applied.length || postCreate.unmapped.length ? { postCreate } : {}), ...(ingress.applied.length || ingress.unmapped.length ? { ingress } : {}) },
           ...(note ? { output: note } : {}),
+          finishedAt: new Date(),
+        },
+      });
+    } catch (e) {
+      await this.prisma.bulkTask.update({ where: { id: taskId }, data: { status: "FAILED", output: msg(e), finishedAt: new Date() } });
+    }
+  }
+
+  /** Set a mapped container alias through the existing setNetworks. NEVER throws; a failure is a fixed reason. */
+  private async applyAlias(userId: string, appId: string, alias: string): Promise<{ applied: boolean; reason?: "reserved" | "taken" | "unsupported" | "other" }> {
+    try {
+      await this.apps.setNetworks(userId, appId, { containerAlias: alias });
+      return { applied: true };
+    } catch (e) {
+      return { applied: false, reason: aliasFailureReason(e) };
+    }
+  }
+
+  /**
+   * Reconcile ONE already-imported item with its mapped name / environment / alias through the existing in-place
+   * methods (each re-checks authz). Behind the explicit `reconcile` flag only. Each step is individually
+   * try/catch and NEVER throws; failures become fixed notes. The task ends SKIPPED (never DONE) with the
+   * resource ids for display, so rollback (acts on DONE application tasks) and the idempotency scan (DONE only)
+   * stay blind to it: an earlier op's resource can never be removed through a reconcile.
+   */
+  private async runReconcile(taskId: string, userId: string, eff: EffectiveItem, envId: string | undefined): Promise<void> {
+    if (!(await this.claim(taskId))) return;
+    const id = eff.existing?.resourceId;
+    const isDb = eff.existing?.resourceType === "database";
+    const done: string[] = [];
+    const notes: string[] = [];
+    const step = async (field: "name" | "environment" | "containerAlias", fn: () => Promise<unknown>) => {
+      try {
+        await fn();
+        done.push(field);
+      } catch {
+        notes.push(`${field} not reconciled`);
+      }
+    };
+    try {
+      if (id) {
+        const drift = new Set(eff.drift ?? []);
+        if (drift.has("name")) await step("name", () => (isDb ? this.dbs.rename(userId, id, eff.name) : this.apps.rename(userId, id, eff.name)));
+        if (drift.has("environment")) {
+          if (envId) await step("environment", () => (isDb ? this.dbs.setEnvironment(userId, id, envId) : this.apps.setEnvironment(userId, id, envId)));
+          else notes.push("environment not reconciled");
+        }
+        if (drift.has("containerAlias") && !isDb) await step("containerAlias", () => this.apps.setNetworks(userId, id, { containerAlias: eff.containerAlias ?? null }));
+      }
+      const output = `already imported onto this server in a previous run; reconciled: ${done.join(", ") || "nothing"}${notes.length ? `; ${notes.join("; ")}` : ""}`;
+      await this.prisma.bulkTask.update({
+        where: { id: taskId },
+        data: {
+          status: "SKIPPED",
+          ...(eff.existing ? { resourceType: eff.existing.resourceType, resourceId: eff.existing.resourceId } : {}),
+          output,
+          result: { name: eff.name, sourceName: eff.sourceName, mapped: true, reconciled: done },
           finishedAt: new Date(),
         },
       });
@@ -891,7 +1032,7 @@ export class ImportExecutorService {
    *  DatabasesService.createForImport, so a migrated app reconnects with the SAME password. The credentials flow
    *  source → memory → DatabasesService (encrypted at rest) only: the task result/output carries flags and fixed
    *  strings, never a value. Without credentials it falls back to a freshly minted password + a warning. */
-  private async runCreateDb(taskId: string, source: ImportSource, db: ForeignDb, userId: string, targetServerId: string, environmentId?: string): Promise<void> {
+  private async runCreateDb(taskId: string, source: ImportSource, db: ForeignDb, userId: string, targetServerId: string, environmentId?: string, eff?: EffectiveItem): Promise<void> {
     if (!(await this.claim(taskId))) return;
     try {
       const engine = db.engine as CreateDatabaseInput["engine"]; // PROVISIONABLE_ENGINES-gated before enqueue
@@ -922,7 +1063,7 @@ export class ImportExecutorService {
           }
         }
         created = await this.dbs.createForImport(userId, {
-          name: db.name,
+          name: eff?.name ?? db.name,
           serverId: targetServerId,
           engine,
           version: db.version,
@@ -938,8 +1079,12 @@ export class ImportExecutorService {
           notes.push("the source has a separate root password — Tugra uses one password for the user and root, so root logins need the user password");
         }
       } else {
-        const input: CreateDatabaseInput = { name: db.name, serverId: targetServerId, engine, version: db.version, environmentId };
-        created = await this.dbs.create(userId, input); // re-checks `databases` on the TARGET team; no deploy
+        const input: CreateDatabaseInput = { name: eff?.name ?? db.name, serverId: targetServerId, engine, version: db.version, environmentId };
+        // Under a mapping the internal identifier is PINNED to what the un-renamed import would have produced
+        // (slug of the SOURCE name) or the mapped override — a display rename never changes it.
+        created = eff
+          ? await this.dbs.createPinned(userId, input, { database: eff.dbIdentifier ?? dbSlug(db.name).slice(0, 63) })
+          : await this.dbs.create(userId, input); // re-checks `databases` on the TARGET team; no deploy
         flags = { credentialsCarried: false };
         notes.push("DB credentials not carried — fresh password minted; rewire the app DB_PASSWORD");
       }
@@ -958,7 +1103,7 @@ export class ImportExecutorService {
           status: "DONE",
           resourceType: "database",
           resourceId: created.id,
-          result: { name: created.name, databaseId: created.id, ...flags }, // flags only — never a credential value
+          result: { name: created.name, ...(eff ? { sourceName: db.name, mapped: true } : {}), databaseId: created.id, ...flags }, // flags only — never a credential value
           ...(notes.length ? { output: notes.join("; ") } : {}),
           finishedAt: new Date(),
         },
@@ -1648,6 +1793,31 @@ interface ImportTree {
   envByRef: Map<string, Map<string, string>>; // source projectRef → (source environmentRef → Tugra environmentId)
   summary: Array<{ project: string; projectCreated: boolean; environments: string[]; environmentsCreated: string[] }>;
   warnings: string[];
+  /** Under an editable mapping: itemRef → the Tugra environmentId its resolved (project, environment) maps to. */
+  envByItemRef?: Map<string, string>;
+}
+
+/** The secret-free snapshot of the applied mapping stored on op.meta: names and placement only, so later profile
+ *  edits never affect an in-flight or finished op. */
+function mappingSnapshot(res: ResolvedMapping, reconcile: boolean) {
+  return {
+    hash: res.mappingHash,
+    renamed: res.counts.renamed,
+    moved: res.counts.moved,
+    excluded: res.counts.excluded,
+    aliased: res.counts.aliased,
+    reconcile,
+    effective: res.effective.map((e) => ({ itemRef: e.itemRef, name: e.name, sourceName: e.sourceName, project: e.project, environment: e.environment })),
+  };
+}
+
+/** A fixed reason (never the error text) for a container alias the apply could not set. */
+function aliasFailureReason(e: unknown): "reserved" | "taken" | "unsupported" | "other" {
+  const m = e instanceof Error ? e.message : "";
+  if (/reserved/i.test(m)) return "reserved";
+  if (/already in use|alias already/i.test(m)) return "taken";
+  if (/compose|swarm|clustered|preview|--network|aren't supported|not supported/i.test(m)) return "unsupported";
+  return "other";
 }
 
 /** The Tugra environmentId for a resource's source project/environment, or undefined when it carries no
@@ -1829,11 +1999,14 @@ export function toStatusView(op: {
       rolledBack: count("ROLLED_BACK"),
     },
     tasks: op.tasks.map((t) => {
-      const res = typeof t.result === "object" && t.result ? (t.result as { name?: string; unresolvedEnv?: number; unresolvedKeys?: unknown; droppedInvalidKeys?: unknown; git?: unknown; postCreate?: unknown; ingress?: unknown }) : null;
+      const res = typeof t.result === "object" && t.result ? (t.result as { name?: string; sourceName?: string; mapped?: boolean; unresolvedEnv?: number; unresolvedKeys?: unknown; droppedInvalidKeys?: unknown; git?: unknown; postCreate?: unknown; ingress?: unknown }) : null;
       return {
         itemRef: t.itemRef,
         kind: t.kind,
         name: res?.name ?? null,
+        // Under an editable mapping: the source-side name and a marker (additive; absent without a mapping).
+        ...(typeof res?.sourceName === "string" ? { sourceName: res.sourceName } : {}),
+        ...(res?.mapped === true ? { mapped: true } : {}),
         status: t.status,
         resourceType: t.resourceType,
         resourceId: t.resourceId,

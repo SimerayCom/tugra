@@ -20,6 +20,7 @@ export interface AppCreateOptions {
   serviceImport?: boolean;
   /** Link the created app to an app-store template (logo + search only); set by the service importer when safe. */
   templateSlug?: string;
+  name?: string; // an editable-mapping display name; unset => the source app's name (byte-identical)
 }
 
 /**
@@ -56,7 +57,7 @@ export function foreignAppToCreateInput(
   const domain = (app.domains ?? []).find((d) => d.primary) ?? (app.domains ?? [])[0];
 
   const input: CreateAppInput = {
-    name: app.name,
+    name: opts.name ?? app.name,
     serverId: opts.serverId,
     environmentId: opts.environmentId,
     source: build.source,

@@ -138,7 +138,7 @@ function restoredName(name: string): string {
   return (name.length > room ? name.slice(0, room) : name) + suffix;
 }
 
-function slug(name: string): string {
+export function slug(name: string): string {
   const s = name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
   return s || "tugra";
 }
@@ -174,6 +174,20 @@ export class DatabasesService {
   ) {}
 
   async create(userId: string, dto: CreateDatabaseInput): Promise<DatabaseView> {
+    return this.createCore(userId, dto);
+  }
+
+  /**
+   * Internal (the importer under an editable mapping): `create()` with the internal database identifier PINNED
+   * instead of derived from the (possibly renamed) display name, so renaming never changes the identifier an
+   * un-renamed import would have produced. NOT on the public DTO. Same password minting, persistence and audit.
+   */
+  async createPinned(userId: string, dto: CreateDatabaseInput, opts: { database: string }): Promise<DatabaseView> {
+    if (!DB_IDENT_RE.test(opts.database)) throw new BadRequestException("invalid database name");
+    return this.createCore(userId, dto, opts);
+  }
+
+  private async createCore(userId: string, dto: CreateDatabaseInput, opts?: { database?: string }): Promise<DatabaseView> {
     const server = await this.prisma.server.findUnique({ where: { id: dto.serverId } });
     if (!server) throw new NotFoundException("server not found");
     await this.access.requirePermission(userId, server.teamId, "databases");
@@ -187,7 +201,7 @@ export class DatabasesService {
     const creds: DbCredentials = {
       username: "tugra",
       password: randomBytes(24).toString("base64url"),
-      database: slug(dto.name),
+      database: opts?.database ?? slug(dto.name),
     };
     const view = await this.persistDatabase(userId, server, {
       name: dto.name,
