@@ -1,4 +1,4 @@
-import { validateEnv } from "./env";
+import { OFFICIAL_UPDATE_MANIFEST_URL, OFFICIAL_UPDATE_PUBLISHER_KEY, applyUpdateCheckDefaults, validateEnv } from "./env";
 
 const base = {
   DATABASE_URL: "postgres://x",
@@ -154,7 +154,7 @@ describe("validateEnv — blank values are treated as UNSET", () => {
       AGENT_IMAGE: "",
     });
     expect(env.ACME_EMAIL).toBeUndefined();
-    expect(env.UPDATE_MANIFEST_URL).toBeUndefined();
+    expect(env.UPDATE_MANIFEST_URL).toBe(OFFICIAL_UPDATE_MANIFEST_URL); // blank pair = unset pair -> the official defaults
     expect(env.GITHUB_OAUTH_CLIENT_ID).toBeUndefined();
     expect(env.MAIL_HOST).toBeUndefined();
     expect(env.CATALOG_SOURCE_URL).toBeUndefined();
@@ -286,5 +286,56 @@ describe("validateEnv — migration volume stream (MIGRATION_VX_*)", () => {
       expect(() => validateEnv({ ...dev, ...bad })).toThrow();
     }
     expect(validateEnv({ ...dev, MIGRATION_VX_PART_MIB: "256", MIGRATION_RELAY_CONCURRENCY: "4" })).toMatchObject({ MIGRATION_VX_PART_MIB: 256, MIGRATION_RELAY_CONCURRENCY: 4 });
+  });
+});
+
+describe("validateEnv — default-on signed update checks", () => {
+  const dev = { ...base, NODE_ENV: "development" };
+
+  it("with no UPDATE_* keys applies the official URL + publisher key and an hourly interval", () => {
+    const env = validateEnv(dev);
+    expect(env.UPDATE_MANIFEST_URL).toBe(OFFICIAL_UPDATE_MANIFEST_URL);
+    expect(env.UPDATE_PUBLISHER_KEY).toBe(OFFICIAL_UPDATE_PUBLISHER_KEY);
+    expect(env.UPDATE_CHECK_INTERVAL_MIN).toBe(60);
+  });
+
+  it("TUGRA_UPDATE_CHECKS=0 is a hard off: no defaults are injected", () => {
+    const env = validateEnv({ ...dev, TUGRA_UPDATE_CHECKS: "0" });
+    expect(env.UPDATE_MANIFEST_URL).toBeUndefined();
+    expect(env.UPDATE_PUBLISHER_KEY).toBeUndefined();
+  });
+
+  it("TUGRA_UPDATE_CHECKS=1 keeps the defaults; anything else is rejected", () => {
+    expect(validateEnv({ ...dev, TUGRA_UPDATE_CHECKS: "1" }).UPDATE_MANIFEST_URL).toBe(OFFICIAL_UPDATE_MANIFEST_URL);
+    expect(() => validateEnv({ ...dev, TUGRA_UPDATE_CHECKS: "yes" })).toThrow(/TUGRA_UPDATE_CHECKS/);
+  });
+
+  it("a custom URL + key pair is left untouched", () => {
+    const env = validateEnv({ ...dev, UPDATE_MANIFEST_URL: "https://mirror.example/versions.json", UPDATE_PUBLISHER_KEY: OFFICIAL_UPDATE_PUBLISHER_KEY });
+    expect(env.UPDATE_MANIFEST_URL).toBe("https://mirror.example/versions.json");
+    expect(env.UPDATE_PUBLISHER_KEY).toBe(OFFICIAL_UPDATE_PUBLISHER_KEY);
+  });
+
+  it("a URL without a key still fails closed, and the message names the opt-out", () => {
+    expect(() => validateEnv({ ...dev, UPDATE_MANIFEST_URL: "https://mirror.example/versions.json" })).toThrow(/TUGRA_UPDATE_CHECKS=0/);
+  });
+
+  it("a key without a URL injects nothing (the operator touched the pair)", () => {
+    const env = validateEnv({ ...dev, UPDATE_PUBLISHER_KEY: OFFICIAL_UPDATE_PUBLISHER_KEY });
+    expect(env.UPDATE_MANIFEST_URL).toBeUndefined();
+    expect(env.UPDATE_PUBLISHER_KEY).toBe(OFFICIAL_UPDATE_PUBLISHER_KEY);
+  });
+
+  it("blank strings for both keys (the shipped .env.example) still get the defaults", () => {
+    const env = validateEnv({ ...dev, UPDATE_MANIFEST_URL: "", UPDATE_PUBLISHER_KEY: " " });
+    expect(env.UPDATE_MANIFEST_URL).toBe(OFFICIAL_UPDATE_MANIFEST_URL);
+    expect(env.UPDATE_PUBLISHER_KEY).toBe(OFFICIAL_UPDATE_PUBLISHER_KEY);
+  });
+
+  it("applyUpdateCheckDefaults is pure (does not mutate its input)", () => {
+    const input = { A: "1" };
+    const out = applyUpdateCheckDefaults(input);
+    expect(input).toEqual({ A: "1" });
+    expect(out.UPDATE_MANIFEST_URL).toBe(OFFICIAL_UPDATE_MANIFEST_URL);
   });
 });

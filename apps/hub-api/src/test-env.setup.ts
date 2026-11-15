@@ -15,3 +15,6 @@ process.env.REDIS_URL ??= "redis://localhost:6379";
 process.env.JWT_ACCESS_SECRET ??= "test-jwt-access-secret-0123456789";
 process.env.JWT_REFRESH_SECRET ??= "test-jwt-refresh-secret-0123456789";
 process.env.SECRETS_ENCRYPTION_KEY ??= "test-secrets-encryption-key-0123456789";
+// Signed update checks are ON by default (the official manifest URL + key are env defaults), so a test boot
+// would otherwise reach the real network from the panel-load refresh / manual check. Specs never fetch.
+process.env.TUGRA_UPDATE_CHECKS ??= "0";

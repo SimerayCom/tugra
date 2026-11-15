@@ -145,6 +145,48 @@ export function isPatchUpgrade(latest: string, current: string): boolean {
   return l.core[0] === c.core[0] && l.core[1] === c.core[1] && compareVersions(l, c) === 1;
 }
 
+/**
+ * The channel a build tracks when the owner has not pinned one: a prerelease build (0.1.0-beta.N, rc, the
+ * "0.0.0-dev" local build) tracks "beta", a release build tracks "stable". An unparseable string is treated
+ * like a dev build (beta) — there is no stable guarantee to protect.
+ */
+export function autoUpdateChannel(version: string): "stable" | "beta" {
+  const v = parseVersion(version);
+  return v && v.pre.length === 0 ? "stable" : "beta";
+}
+
+/**
+ * The effective update channel and where it came from. A non-empty explicit value (an owner pin) wins;
+ * null / undefined / "" mean "automatic" and resolve to `autoUpdateChannel(current)`.
+ */
+export function resolveUpdateChannel(
+  explicit: string | null | undefined,
+  current: string,
+): { channel: string; source: "auto" | "explicit" } {
+  if (explicit) return { channel: explicit, source: "explicit" };
+  return { channel: autoUpdateChannel(current), source: "auto" };
+}
+
+/**
+ * The AUTO-update gate. `latest` must be strictly newer than `current`, with the same major AND minor, and:
+ * both releases → a patch bump; both prereleases → the same major.minor.patch AND the same first pre-release
+ * identifier (beta.N → beta.N+1, rc.1 → rc.2); one release and one prerelease → never (beta → stable, stable →
+ * beta wait for the owner). Minor/major bumps are notify-only. Fail-safe: either side unparseable → false.
+ * Manual "Update now" ignores this (explicit consent).
+ */
+export function isAutoApplicable(latest: string, current: string): boolean {
+  const l = parseVersion(latest);
+  const c = parseVersion(current);
+  if (!l || !c) return false;
+  if (l.core[0] !== c.core[0] || l.core[1] !== c.core[1]) return false;
+  if (compareVersions(l, c) !== 1) return false;
+  const lRel = l.pre.length === 0;
+  const cRel = c.pre.length === 0;
+  if (lRel && cRel) return true;
+  if (lRel !== cRel) return false;
+  return l.core[2] === c.core[2] && l.pre[0] === c.pre[0];
+}
+
 // ── Agent compatibility gate ──
 
 export type AgentCompatReason = "protocol_too_old" | "protocol_too_new" | "agent_too_old";

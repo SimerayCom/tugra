@@ -42,8 +42,10 @@ export class InstanceController {
   @Get("version")
   @UseGuards(JwtAuthGuard)
   @ApiZodResponse(MemberVersionViewSchema)
-  version() {
-    return this.update.getMemberVersion();
+  async version() {
+    const status = await this.update.getStatus();
+    this.update.refreshIfStale(status.lastCheckedAt); // fire-and-forget stale refresh; never auto-applies
+    return MemberVersionViewSchema.parse(status); // members get exactly the four-field slice
   }
 
   @Get("status")

@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Updates reach beta testers.** Signed update checks are now on by default (hourly and whenever the panel is
+  opened; `--no-update-checks` or `TUGRA_UPDATE_CHECKS=0` opts out, `UPDATE_CHECK_INTERVAL_MIN` tunes the interval),
+  the release channel follows the running build (a beta hub tracks beta, shown as "Automatic (Beta)" in Settings →
+  Updates; pin Stable or Beta to override, and an existing hub left on the old default switches to automatic), the
+  card records when it last checked and why a check failed, and auto-update now applies the next beta of the same
+  series as well as stable patch releases. Beta → stable and minor/major still wait for you. Hubs on beta.16 or
+  older take this one upgrade manually (`git pull && ./scripts/install.sh`).
 - **Restart, Start and Stop now say what they did.** A restart finishes with the app still "Running", so the
   click looked like nothing happened; each lifecycle action now ends in a named toast ("Gitea restarted.") or an
   error toast, never silence.

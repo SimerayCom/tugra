@@ -125,7 +125,11 @@ export class InstanceSettingsController {
   @Get("update")
   @ApiZodResponse(UpdateStatusViewSchema)
   async getUpdate() {
-    return this.update.getStatus();
+    const status = await this.update.getStatus();
+    // Opening the panel is the moment an owner cares: kick a background refresh when the last check is stale.
+    // Fire-and-forget — the request never waits on the network, and this path never applies an update.
+    this.update.refreshIfStale(status.lastCheckedAt);
+    return status;
   }
 
   /**
@@ -141,7 +145,7 @@ export class InstanceSettingsController {
     @CurrentUser() user: AuthUser,
     @Body(new ZodValidationPipe(UpdateInstanceUpdateSchema)) body: UpdateInstanceUpdateInput,
   ) {
-    const patch: { autoUpdate?: boolean; updateChannel?: string } = {};
+    const patch: { autoUpdate?: boolean; updateChannel?: string | null } = {};
     if (body.autoUpdate !== undefined) patch.autoUpdate = body.autoUpdate;
     if (body.updateChannel !== undefined) patch.updateChannel = body.updateChannel;
     await this.settings.update(patch);
@@ -149,7 +153,7 @@ export class InstanceSettingsController {
     return this.update.getStatus();
   }
 
-  /** Manually re-check the signed manifest now (the scheduler otherwise checks daily). Never throws. */
+  /** Manually re-check the signed manifest now (the scheduler otherwise checks hourly). Never throws. */
   @Post("update/check")
   @HttpCode(200)
   @ApiZodResponse(UpdateStatusViewSchema)

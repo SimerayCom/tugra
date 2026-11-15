@@ -5,10 +5,23 @@ import type { MailService } from "../mail/mail.service";
 import type { UpdateService } from "../update/update.service";
 
 const memberVersion = { current: "0.1.0-beta.15", channel: "beta", latest: "0.1.0-beta.16", updateAvailable: true };
+// The full owner status: everything beyond memberVersion must NOT reach a member.
+const fullStatus = {
+  ...memberVersion,
+  channelSource: "auto",
+  changelogUrl: null,
+  autoUpdate: true,
+  notice: null,
+  checksEnabled: true,
+  checkIntervalMin: 60,
+  lastCheckedAt: "2026-11-15T10:00:00.000Z",
+  lastCheckError: null,
+};
+const refreshIfStale = jest.fn();
 
 function controllerWith(settings: Record<string, unknown>, setupCode?: string, mailConfigured = false): InstanceController {
   const config = { get: (k: string) => (k === "SETUP_CODE" ? setupCode : undefined) } as unknown as ConfigService;
-  const update = { getMemberVersion: jest.fn().mockResolvedValue(memberVersion) } as unknown as UpdateService;
+  const update = { getStatus: jest.fn().mockResolvedValue(fullStatus), refreshIfStale } as unknown as UpdateService;
   return new InstanceController({ get: jest.fn().mockResolvedValue(settings) } as unknown as InstanceSettingsService, config, { isConfigured: () => mailConfigured } as unknown as MailService, update);
 }
 
@@ -75,7 +88,9 @@ describe("InstanceController", () => {
 
   it("GET version returns the member slice of the update status (session-guarded, not owner-only)", async () => {
     const ctrl = controllerWith({ initializedAt: new Date(), allowRegistration: false });
-    await expect(ctrl.version()).resolves.toEqual(memberVersion);
+    refreshIfStale.mockClear();
+    await expect(ctrl.version()).resolves.toEqual(memberVersion); // exactly the four member keys, nothing else
+    expect(refreshIfStale).toHaveBeenCalledWith("2026-11-15T10:00:00.000Z"); // the stale kick runs on the member path too
     // The route is guarded by the session guard only (any member), never by the owner guard.
     const guards = Reflect.getMetadata("__guards__", ctrl.version) as unknown[];
     expect(guards.map((g) => (g as { name: string }).name)).toEqual(["JwtAuthGuard"]);

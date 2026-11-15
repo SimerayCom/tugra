@@ -6850,6 +6850,8 @@ export interface operations {
                         current: string;
                         latest: string | null;
                         channel: string;
+                        /** @enum {string} */
+                        channelSource: "auto" | "explicit";
                         updateAvailable: boolean;
                         changelogUrl: string | null;
                         autoUpdate: boolean;
@@ -6860,6 +6862,10 @@ export interface operations {
                             severity: "info" | "warning" | "critical";
                             url: string | null;
                         } | null;
+                        checksEnabled: boolean;
+                        checkIntervalMin: number;
+                        lastCheckedAt: string | null;
+                        lastCheckError: string | null;
                     };
                 };
             };
@@ -6971,8 +6977,8 @@ export interface operations {
             content: {
                 "application/json": {
                     autoUpdate?: boolean;
-                    /** @enum {string} */
-                    updateChannel?: "stable" | "beta";
+                    /** @enum {string|null} */
+                    updateChannel?: "stable" | "beta" | null;
                 };
             };
         };
@@ -6986,6 +6992,8 @@ export interface operations {
                         current: string;
                         latest: string | null;
                         channel: string;
+                        /** @enum {string} */
+                        channelSource: "auto" | "explicit";
                         updateAvailable: boolean;
                         changelogUrl: string | null;
                         autoUpdate: boolean;
@@ -6996,6 +7004,10 @@ export interface operations {
                             severity: "info" | "warning" | "critical";
                             url: string | null;
                         } | null;
+                        checksEnabled: boolean;
+                        checkIntervalMin: number;
+                        lastCheckedAt: string | null;
+                        lastCheckError: string | null;
                     };
                 };
             };
@@ -7064,6 +7076,8 @@ export interface operations {
                         current: string;
                         latest: string | null;
                         channel: string;
+                        /** @enum {string} */
+                        channelSource: "auto" | "explicit";
                         updateAvailable: boolean;
                         changelogUrl: string | null;
                         autoUpdate: boolean;
@@ -7074,6 +7088,10 @@ export interface operations {
                             severity: "info" | "warning" | "critical";
                             url: string | null;
                         } | null;
+                        checksEnabled: boolean;
+                        checkIntervalMin: number;
+                        lastCheckedAt: string | null;
+                        lastCheckError: string | null;
                     };
                 };
             };

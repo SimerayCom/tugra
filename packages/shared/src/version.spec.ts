@@ -10,6 +10,9 @@ import {
   compareVersions,
   isNewer,
   isPatchUpgrade,
+  autoUpdateChannel,
+  resolveUpdateChannel,
+  isAutoApplicable,
   checkAgentCompat,
 } from "./version";
 
@@ -150,6 +153,54 @@ describe("semver comparator", () => {
       expect(isPatchUpgrade("garbage", "1.2.3")).toBe(false);
       expect(isPatchUpgrade("1.2.4", "")).toBe(false);
     });
+  });
+});
+
+describe("autoUpdateChannel", () => {
+  it.each([
+    ["0.1.0-beta.16", "beta"],
+    ["0.1.0-rc.1", "beta"],
+    ["0.1.0", "stable"],
+    ["v1.2.3", "stable"],
+    ["0.0.0-dev", "beta"],
+    ["garbage", "beta"],
+  ])("%s -> %s", (v, ch) => {
+    expect(autoUpdateChannel(v)).toBe(ch);
+  });
+});
+
+describe("resolveUpdateChannel", () => {
+  it.each([
+    [null, "0.1.0-beta.16", "beta", "auto"],
+    [null, "0.1.0", "stable", "auto"],
+    [null, "0.0.0-dev", "beta", "auto"],
+    ["stable", "0.1.0-beta.16", "stable", "explicit"],
+    ["beta", "0.1.0", "beta", "explicit"],
+    ["", "0.1.0", "stable", "auto"],
+    [undefined, "0.1.0-beta.1", "beta", "auto"],
+  ])("explicit=%j current=%s -> %s (%s)", (explicit, current, channel, source) => {
+    expect(resolveUpdateChannel(explicit, current)).toEqual({ channel, source });
+  });
+});
+
+describe("isAutoApplicable (auto-update gate)", () => {
+  it.each([
+    ["0.1.0-beta.17", "0.1.0-beta.16", true],
+    ["0.1.0-rc.2", "0.1.0-rc.1", true],
+    ["0.1.1", "0.1.0", true],
+    ["1.4.9", "1.4.2", true],
+    ["0.1.0", "0.1.0-beta.16", false], // prerelease -> release waits for the owner
+    ["0.1.1-beta.1", "0.1.0-beta.16", false], // core differs
+    ["0.1.0-rc.1", "0.1.0-beta.16", false], // family differs
+    ["0.1.1-beta.1", "0.1.0", false], // release -> prerelease
+    ["0.2.0", "0.1.1", false], // minor bump
+    ["1.0.0", "0.1.1", false], // major bump
+    ["0.1.0-beta.16", "0.1.0-beta.17", false], // not newer
+    ["0.1.0-beta.16", "0.1.0-beta.16", false], // equal
+    ["garbage", "0.1.0-beta.16", false], // unparseable
+    ["0.1.0-beta.17", "0.0.0-dev", false], // a dev hub never auto-updates
+  ])("latest=%s current=%s -> %s", (latest, current, expected) => {
+    expect(isAutoApplicable(latest, current)).toBe(expected);
   });
 });
 

@@ -213,16 +213,20 @@ export const envSchema = z
     .refine(isBase64Ed25519Spki, "CATALOG_PUBLISHER_KEY must be a base64-encoded ed25519 SPKI DER public key")
     .optional(),
   CATALOG_SYNC_INTERVAL_MIN: z.coerce.number().int().positive().default(60),
-  // Optional, opt-in: the self-update version check. When UPDATE_MANIFEST_URL is set the hub
-  // periodically fetches the signed release manifest (versions.json + a detached versions.json.sig),
-  // verifies the ed25519 signature against UPDATE_PUBLISHER_KEY, and caches the latest published
-  // version so the owner sees an "update available" status. Never applies anything (report-only).
+  // Signed self-update checks — ON by default (the one default-on outbound call besides telemetry). "0" is a
+  // deployment-level HARD off (install.sh --no-update-checks): no defaults are injected, the scheduler never
+  // starts, the panel-load refresh is inert, and the agent digest-pin falls back to the bare tag. "1"/unset = on.
+  // The hub periodically fetches the signed release manifest (versions.json + a detached versions.json.sig),
+  // verifies the ed25519 signature against UPDATE_PUBLISHER_KEY, and caches the latest published version so the
+  // owner sees an "update available" status. The official URL + key are applied as defaults when the operator
+  // set neither (see applyUpdateCheckDefaults); a custom pair (own build, mirror) is never touched.
+  TUGRA_UPDATE_CHECKS: z.enum(["0", "1"]).optional(),
   UPDATE_MANIFEST_URL: z.string().url().optional(),
   UPDATE_PUBLISHER_KEY: z
     .string()
     .refine(isBase64Ed25519Spki, "UPDATE_PUBLISHER_KEY must be a base64-encoded ed25519 SPKI DER public key")
     .optional(),
-  UPDATE_CHECK_INTERVAL_MIN: z.coerce.number().int().positive().default(1440), // daily
+  UPDATE_CHECK_INTERVAL_MIN: z.coerce.number().int().positive().default(60), // hourly
   UPDATE_CHANGELOG_URL: z.string().url().optional(),
   // Per-app "image update available" check for IMAGE apps: how often (minutes) each app's own server probes the
   // upstream registry for a moved tag. 0 = the whole feature is off (operator kill switch, no probing at all).
@@ -303,12 +307,32 @@ export const envSchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["UPDATE_PUBLISHER_KEY"],
-        message: "UPDATE_PUBLISHER_KEY is required when UPDATE_MANIFEST_URL is set (never check an unsigned manifest)",
+        message: "UPDATE_PUBLISHER_KEY is required when UPDATE_MANIFEST_URL is set (never check an unsigned manifest) — or set TUGRA_UPDATE_CHECKS=0 to turn checks off",
       });
     }
   });
 
 export type Env = z.infer<typeof envSchema>;
+
+/** The official signed release manifest and the publisher key that signs it (built in so checks need no setup). */
+export const OFFICIAL_UPDATE_MANIFEST_URL = "https://simeraycom.github.io/tugra/versions.json";
+export const OFFICIAL_UPDATE_PUBLISHER_KEY = "MCowBQYDK2VwAyEA4+vvlIQS9SWHEKc0Fo1UD2ZW+DSl0AJA9hOK5NeiXBE=";
+
+/**
+ * Default-on update checks: inject the official manifest URL + publisher key ONLY when the operator set
+ * NEITHER (an explicit pair — custom build, mirror — is never touched; a half pair keeps today's semantics:
+ * URL-only fails closed in superRefine, key-only stays unconfigured) and TUGRA_UPDATE_CHECKS is not "0".
+ * Pure; runs on the blank-stripped map BEFORE schema parse so the usual validators still apply.
+ */
+export function applyUpdateCheckDefaults(cleaned: Record<string, unknown>): Record<string, unknown> {
+  if (cleaned.TUGRA_UPDATE_CHECKS === "0") return cleaned;
+  if (cleaned.UPDATE_MANIFEST_URL !== undefined || cleaned.UPDATE_PUBLISHER_KEY !== undefined) return cleaned;
+  return {
+    ...cleaned,
+    UPDATE_MANIFEST_URL: OFFICIAL_UPDATE_MANIFEST_URL,
+    UPDATE_PUBLISHER_KEY: OFFICIAL_UPDATE_PUBLISHER_KEY,
+  };
+}
 
 export function validateEnv(config: Record<string, unknown>): Env {
   // Treat blank / whitespace-only values as UNSET before validation. An operator who copies
@@ -321,7 +345,7 @@ export function validateEnv(config: Record<string, unknown>): Env {
     if (typeof v === "string" && v.trim() === "") continue;
     cleaned[k] = v;
   }
-  const parsed = envSchema.safeParse(cleaned);
+  const parsed = envSchema.safeParse(applyUpdateCheckDefaults(cleaned));
   if (!parsed.success) {
     const issues = parsed.error.issues
       .map((i) => `  - ${i.path.join(".")}: ${i.message}`)

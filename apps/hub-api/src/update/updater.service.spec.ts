@@ -81,6 +81,41 @@ describe("UpdaterService.requestUpdate", () => {
     expect(r.lpush).toHaveBeenCalledWith("instance:update:queue", expect.stringContaining("1.2.4"));
   });
 
+  describe("AUTO on a prerelease build", () => {
+    beforeEach(() => {
+      process.env.TUGRA_VERSION = "0.1.0-beta.16";
+    });
+
+    it("AUTO applies beta.N -> beta.N+1 (same family) — takes the lock + queues", async () => {
+      const r = redisStub();
+      const svc = new UpdaterService(r.svc, updateStub({ status: "ok", channel: "beta", entry: { version: "0.1.0-beta.17" } }));
+      expect(await svc.requestUpdate({ actor: "auto-update", auto: true })).toEqual({ status: "started", targetVersion: "0.1.0-beta.17" });
+      expect(r.firstInWindow).toHaveBeenCalledWith("instance:update:lock", 900);
+      expect(r.lpush).toHaveBeenCalledWith("instance:update:queue", expect.stringContaining("0.1.0-beta.17"));
+    });
+
+    it("AUTO declines beta -> stable (notify-only, no lock/queue)", async () => {
+      const r = redisStub();
+      const svc = new UpdaterService(r.svc, updateStub({ status: "ok", channel: "beta", entry: { version: "0.1.0" } }));
+      expect(await svc.requestUpdate({ actor: "auto-update", auto: true })).toEqual({ status: "notify-only", targetVersion: "0.1.0" });
+      expect(r.firstInWindow).not.toHaveBeenCalled();
+      expect(r.lpush).not.toHaveBeenCalled();
+    });
+
+    it("AUTO declines beta -> rc (notify-only)", async () => {
+      const r = redisStub();
+      const svc = new UpdaterService(r.svc, updateStub({ status: "ok", channel: "beta", entry: { version: "0.1.0-rc.1" } }));
+      expect(await svc.requestUpdate({ actor: "auto-update", auto: true })).toEqual({ status: "notify-only", targetVersion: "0.1.0-rc.1" });
+      expect(r.lpush).not.toHaveBeenCalled();
+    });
+
+    it("MANUAL still applies beta -> stable (explicit consent)", async () => {
+      const r = redisStub();
+      const svc = new UpdaterService(r.svc, updateStub({ status: "ok", channel: "beta", entry: { version: "0.1.0" } }));
+      expect(await svc.requestUpdate({ actor: "u1", auto: false })).toEqual({ status: "started", targetVersion: "0.1.0" });
+    });
+  });
+
   it("MANUAL applies a minor bump (explicit consent) — queues the job", async () => {
     const r = redisStub();
     const svc = new UpdaterService(r.svc, updateStub({ status: "ok", channel: "stable", entry: { version: "1.3.0" } }));

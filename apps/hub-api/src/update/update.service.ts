@@ -1,6 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { appVersion, isNewer, parseVersion } from "@tugra/shared";
+import { appVersion, isNewer, parseVersion, resolveUpdateChannel } from "@tugra/shared";
 import { InstanceSettingsService } from "../instance/instance-settings.service";
 import { Prisma } from "@prisma/client";
 import { MAX_MANIFEST_BYTES, MAX_SIG_BYTES, UpdateVerifyError, noticeSchema, verifyUpdateManifest } from "./update-manifest";
@@ -19,6 +19,9 @@ export type LatestEntryResult =
   | { status: "ok"; channel: string; entry: ChannelEntry };
 
 const FETCH_TIMEOUT_MS = 15_000;
+/** Minimum spacing between two panel-load refresh attempts in one process (a failing manifest is not hammered). */
+const STALE_REFRESH_MIN_GAP_MS = 5 * 60_000;
+const DEFAULT_CHECK_INTERVAL_MIN = 60;
 
 /**
  * The self-update version CHECK. Periodically (via the scheduler) it fetches the signed release manifest,
@@ -38,11 +41,44 @@ export class UpdateService {
     private readonly settings: InstanceSettingsService,
   ) {}
 
-  /** Fetch → verify → cache the latest version for the configured channel. Opt-in; never throws. */
+  private inflight?: Promise<unknown>;
+  private lastAttemptAt = 0;
+
+  /** TUGRA_UPDATE_CHECKS=0 — the deployment-level hard off: no fetch, no scheduler, no defaults. */
+  isForcedOff(): boolean {
+    return this.config.get<string>("TUGRA_UPDATE_CHECKS") === "0";
+  }
+
+  /** Checks can run: not hard-off AND a manifest URL + publisher key are both present (env defaults included). */
+  isConfigured(): boolean {
+    return !this.isForcedOff() && !!this.config.get<string>("UPDATE_MANIFEST_URL") && !!this.config.get<string>("UPDATE_PUBLISHER_KEY");
+  }
+
+  /**
+   * Fire-and-forget "the panel was just opened" refresh. Decides synchronously (so the caller never waits on
+   * network I/O): a check starts only when the last SUCCESSFUL check is older than the interval (or never
+   * happened), no check is already in flight, and no attempt was made in the last few minutes. Never calls the
+   * updater — auto-apply stays exclusively on the recurring scheduler path.
+   */
+  refreshIfStale(lastCheckedAt: string | null): void {
+    if (!this.isConfigured()) return;
+    const intervalMs = (this.config.get<number>("UPDATE_CHECK_INTERVAL_MIN") ?? DEFAULT_CHECK_INTERVAL_MIN) * 60_000;
+    const now = Date.now();
+    const stale = !lastCheckedAt || !(now - Date.parse(lastCheckedAt) < intervalMs); // NaN -> stale (fail toward checking)
+    if (!stale || this.inflight || now - this.lastAttemptAt < STALE_REFRESH_MIN_GAP_MS) return;
+    this.lastAttemptAt = now;
+    this.inflight = this.checkRemote()
+      .catch(() => undefined)
+      .finally(() => {
+        this.inflight = undefined;
+      });
+  }
+
+  /** Fetch → verify → cache the latest version for the effective channel. Never throws; never fetches when unconfigured/hard-off. */
   async checkRemote(): Promise<CheckResult> {
-    const url = this.config.get<string>("UPDATE_MANIFEST_URL");
-    const key = this.config.get<string>("UPDATE_PUBLISHER_KEY");
-    if (!url || !key) return { status: "unconfigured" }; // opt-in: never fetch
+    if (!this.isConfigured()) return { status: "unconfigured" };
+    const url = this.config.get<string>("UPDATE_MANIFEST_URL")!;
+    const key = this.config.get<string>("UPDATE_PUBLISHER_KEY")!;
 
     let s: Awaited<ReturnType<InstanceSettingsService["get"]>>;
     try {
@@ -50,7 +86,7 @@ export class UpdateService {
     } catch (e) {
       return this.fail("settings", e); // never throw: a transient DB error leaves the cache untouched
     }
-    const channel = s.updateChannel || "stable";
+    const { channel, source } = resolveUpdateChannel(s.updateChannel, appVersion());
 
     let manifestBody: string;
     let sigBody: string;
@@ -77,7 +113,7 @@ export class UpdateService {
       // Non-destructive on the VERSION cache: an unknown/absent channel must not blank a good version.
       this.logger.warn(`update manifest has no entry for channel "${channel}" — keeping cached version`);
       try {
-        await this.settings.update({ cachedNotice });
+        await this.settings.update({ cachedNotice, ...this.checkedOk() });
       } catch (e) {
         return this.fail("persist", e);
       }
@@ -90,10 +126,10 @@ export class UpdateService {
     // Never cache a version we can't even parse (a signed-but-garbage entry would pollute the status).
     try {
       if (parseVersion(latest)) {
-        await this.settings.update({ cachedLatestVersion: latest, cachedNotice });
+        await this.settings.update({ cachedLatestVersion: latest, cachedNotice, ...this.checkedOk() });
       } else {
         this.logger.warn(`update manifest channel "${channel}" has an unparseable version — not caching`);
-        await this.settings.update({ cachedNotice });
+        await this.settings.update({ cachedNotice, ...this.checkedOk() });
       }
     } catch (e) {
       return this.fail("persist", e); // never throw: a failed write simply leaves the prior cache
@@ -101,7 +137,7 @@ export class UpdateService {
 
     const current = appVersion();
     const updateAvailable = isNewer(latest, current);
-    this.logger.log(`update check: channel=${channel} current=${current} latest=${latest} updateAvailable=${updateAvailable}`);
+    this.logger.log(`update check: channel=${channel} source=${source} current=${current} latest=${latest} updateAvailable=${updateAvailable}`);
     return { status: "ok", channel, current, latest, updateAvailable };
   }
 
@@ -111,13 +147,13 @@ export class UpdateService {
    * or stale cache. Never throws — a typed status is returned on any failure (opt-in via UPDATE_MANIFEST_URL).
    */
   async verifyLatestEntry(): Promise<LatestEntryResult> {
-    const url = this.config.get<string>("UPDATE_MANIFEST_URL");
-    const key = this.config.get<string>("UPDATE_PUBLISHER_KEY");
-    if (!url || !key) return { status: "unconfigured" };
+    if (!this.isConfigured()) return { status: "unconfigured" };
+    const url = this.config.get<string>("UPDATE_MANIFEST_URL")!;
+    const key = this.config.get<string>("UPDATE_PUBLISHER_KEY")!;
 
     let channel = "stable";
     try {
-      channel = (await this.settings.get()).updateChannel || "stable";
+      channel = resolveUpdateChannel((await this.settings.get()).updateChannel, appVersion()).channel;
     } catch (e) {
       return this.failEntry("settings", e);
     }
@@ -153,14 +189,20 @@ export class UpdateService {
     const s = await this.settings.get();
     const current = appVersion();
     const latest = s.cachedLatestVersion ?? null;
+    const { channel, source } = resolveUpdateChannel(s.updateChannel, current);
     return {
       current,
       latest,
-      channel: s.updateChannel || "stable",
+      channel,
+      channelSource: source,
       updateAvailable: this.available(latest, current),
       changelogUrl: this.config.get<string>("UPDATE_CHANGELOG_URL") ?? null,
       autoUpdate: s.autoUpdate,
       notice: this.liveNotice(s.cachedNotice),
+      checksEnabled: this.isConfigured(),
+      checkIntervalMin: this.config.get<number>("UPDATE_CHECK_INTERVAL_MIN") ?? DEFAULT_CHECK_INTERVAL_MIN,
+      lastCheckedAt: s.updateLastCheckedAt?.toISOString() ?? null,
+      lastCheckError: s.updateLastCheckError ?? null,
     };
   }
 
@@ -222,8 +264,20 @@ export class UpdateService {
     }
   }
 
+  /** Bookkeeping for a successful signed verify: stamp the time and clear any earlier failure reason. */
+  private checkedOk(): { updateLastCheckedAt: Date; updateLastCheckError: null } {
+    return { updateLastCheckedAt: new Date(), updateLastCheckError: null };
+  }
+
   private fail(reason: string, e: unknown): CheckResult {
     this.logger.warn(`update check failed (${reason}) — keeping cached version: ${String((e as Error)?.message ?? e)}`);
+    // Best-effort: surface "why no update?" to the owner. updateLastCheckedAt is deliberately untouched, and a
+    // failing write (the DB may be the very thing that failed) must never throw out of a check.
+    try {
+      void Promise.resolve(this.settings.update({ updateLastCheckError: reason })).catch(() => undefined);
+    } catch {
+      /* best-effort */
+    }
     return { status: "error", reason };
   }
 }

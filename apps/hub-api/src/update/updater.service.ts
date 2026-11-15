@@ -1,5 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { appVersion, isNewer, isPatchUpgrade, parseVersion } from "@tugra/shared";
+import { appVersion, isAutoApplicable, isNewer, parseVersion } from "@tugra/shared";
 import { RedisService } from "../redis/redis.service";
 import { UpdateService } from "./update.service";
 import type { UpdateApplyResult, UpdateProgress } from "./dto";
@@ -83,8 +83,9 @@ export class UpdaterService {
     if (minUpgrade && (!parseVersion(minUpgrade) || isNewer(minUpgrade, current))) {
       return { status: "needs-intermediate", targetVersion: latest };
     }
-    // Auto-update applies PATCH bumps only; a minor/major is notify-only (never silently applied).
-    if (auto && !isPatchUpgrade(latest, current)) return { status: "notify-only", targetVersion: latest };
+    // AUTO applies a patch bump, or the next prerelease of the same family (beta.N → beta.N+1); minor/major and
+    // prerelease → stable are notify-only (never silently applied).
+    if (auto && !isAutoApplicable(latest, current)) return { status: "notify-only", targetVersion: latest };
 
     // Take the lock LAST so a rejected request never leaves one behind. The TTL is a backstop if the sidecar dies.
     const acquired = await this.redis.firstInWindow(LOCK_KEY, LOCK_TTL_S);

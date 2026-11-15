@@ -699,6 +699,13 @@
                     "channel": {
                       "type": "string"
                     },
+                    "channelSource": {
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "explicit"
+                      ]
+                    },
                     "updateAvailable": {
                       "type": "boolean"
                     },
@@ -739,16 +746,37 @@
                       ],
                       "additionalProperties": false,
                       "nullable": true
+                    },
+                    "checksEnabled": {
+                      "type": "boolean"
+                    },
+                    "checkIntervalMin": {
+                      "type": "integer",
+                      "exclusiveMinimum": true,
+                      "minimum": 0
+                    },
+                    "lastCheckedAt": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "lastCheckError": {
+                      "type": "string",
+                      "nullable": true
                     }
                   },
                   "required": [
                     "current",
                     "latest",
                     "channel",
+                    "channelSource",
                     "updateAvailable",
                     "changelogUrl",
                     "autoUpdate",
-                    "notice"
+                    "notice",
+                    "checksEnabled",
+                    "checkIntervalMin",
+                    "lastCheckedAt",
+                    "lastCheckError"
                   ],
                   "additionalProperties": false
                 }
@@ -823,7 +851,8 @@
                     "enum": [
                       "stable",
                       "beta"
-                    ]
+                    ],
+                    "nullable": true
                   }
                 },
                 "additionalProperties": false
@@ -848,6 +877,13 @@
                     },
                     "channel": {
                       "type": "string"
+                    },
+                    "channelSource": {
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "explicit"
+                      ]
                     },
                     "updateAvailable": {
                       "type": "boolean"
@@ -889,16 +925,37 @@
                       ],
                       "additionalProperties": false,
                       "nullable": true
+                    },
+                    "checksEnabled": {
+                      "type": "boolean"
+                    },
+                    "checkIntervalMin": {
+                      "type": "integer",
+                      "exclusiveMinimum": true,
+                      "minimum": 0
+                    },
+                    "lastCheckedAt": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "lastCheckError": {
+                      "type": "string",
+                      "nullable": true
                     }
                   },
                   "required": [
                     "current",
                     "latest",
                     "channel",
+                    "channelSource",
                     "updateAvailable",
                     "changelogUrl",
                     "autoUpdate",
-                    "notice"
+                    "notice",
+                    "checksEnabled",
+                    "checkIntervalMin",
+                    "lastCheckedAt",
+                    "lastCheckError"
                   ],
                   "additionalProperties": false
                 }
@@ -1075,6 +1132,13 @@
                     "channel": {
                       "type": "string"
                     },
+                    "channelSource": {
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "explicit"
+                      ]
+                    },
                     "updateAvailable": {
                       "type": "boolean"
                     },
@@ -1115,16 +1179,37 @@
                       ],
                       "additionalProperties": false,
                       "nullable": true
+                    },
+                    "checksEnabled": {
+                      "type": "boolean"
+                    },
+                    "checkIntervalMin": {
+                      "type": "integer",
+                      "exclusiveMinimum": true,
+                      "minimum": 0
+                    },
+                    "lastCheckedAt": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "lastCheckError": {
+                      "type": "string",
+                      "nullable": true
                     }
                   },
                   "required": [
                     "current",
                     "latest",
                     "channel",
+                    "channelSource",
                     "updateAvailable",
                     "changelogUrl",
                     "autoUpdate",
-                    "notice"
+                    "notice",
+                    "checksEnabled",
+                    "checkIntervalMin",
+                    "lastCheckedAt",
+                    "lastCheckError"
                   ],
                   "additionalProperties": false
                 }

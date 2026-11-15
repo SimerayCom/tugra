@@ -64,10 +64,13 @@ function make(current: CurrentSettings) {
       current: "0.0.0-dev",
       latest: null,
       channel: "stable",
+      channelSource: "auto",
       updateAvailable: false,
       changelogUrl: null,
       autoUpdate: false,
+      lastCheckedAt: "2026-11-15T10:00:00.000Z",
     }),
+    refreshIfStale: jest.fn(),
     checkRemote: jest.fn().mockResolvedValue({ status: "unconfigured" }),
   } as unknown as UpdateService;
   const updater = {
@@ -153,6 +156,24 @@ describe("InstanceSettingsController", () => {
     expect(out).toMatchObject({ current: "0.0.0-dev", updateAvailable: false, latest: null });
   });
 
+  it("getUpdate kicks refreshIfStale with the status' lastCheckedAt AFTER getStatus, without waiting for it", async () => {
+    const { ctrl, update } = make({ apiEnabled: true, apiAllowedIps: [] });
+    const order: string[] = [];
+    (update.getStatus as jest.Mock).mockImplementation(async () => {
+      order.push("getStatus");
+      return { current: "0.0.0-dev", lastCheckedAt: "2026-11-15T10:00:00.000Z" };
+    });
+    // a refresh that never settles: the handler must still return (it is fire-and-forget, not awaited)
+    (update.refreshIfStale as jest.Mock).mockImplementation(() => {
+      order.push("refreshIfStale");
+      return new Promise(() => undefined);
+    });
+    const out = await ctrl.getUpdate();
+    expect(order).toEqual(["getStatus", "refreshIfStale"]);
+    expect(update.refreshIfStale).toHaveBeenCalledWith("2026-11-15T10:00:00.000Z");
+    expect(out).toMatchObject({ current: "0.0.0-dev" });
+  });
+
   it("setUpdate persists channel + autoUpdate, audits, and returns the status (no remote fetch)", async () => {
     const { ctrl, settings, audit, update } = make({ apiEnabled: true, apiAllowedIps: [] });
     const out = await ctrl.setUpdate(OWNER, { autoUpdate: true, updateChannel: "beta" });
@@ -160,6 +181,12 @@ describe("InstanceSettingsController", () => {
     expect(update.checkRemote).not.toHaveBeenCalled(); // PATCH is fast — never fetches
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "instance_update.settings", actor: "owner1" }));
     expect(out).toMatchObject({ channel: "stable" }); // getStatus() shape
+  });
+
+  it("setUpdate passes updateChannel: null through (reset to automatic)", async () => {
+    const { ctrl, settings } = make({ apiEnabled: true, apiAllowedIps: [] });
+    await ctrl.setUpdate(OWNER, { updateChannel: null });
+    expect(settings.update).toHaveBeenCalledWith({ updateChannel: null });
   });
 
   it("setUpdate only patches the fields present in the body", async () => {

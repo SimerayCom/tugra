@@ -18,10 +18,18 @@ export const UpdateStatusViewSchema = z.object({
   current: z.string(),
   latest: z.string().nullable(),
   channel: z.string(),
+  // "auto" = the owner never pinned a channel (updateChannel NULL): `channel` was derived from the running build.
+  channelSource: z.enum(["auto", "explicit"]),
   updateAvailable: z.boolean(),
   changelogUrl: z.string().nullable(),
   autoUpdate: z.boolean(),
   notice: UpdateNoticeViewSchema.nullable(),
+  // false when TUGRA_UPDATE_CHECKS=0 or the manifest URL/key pair is unconfigured.
+  checksEnabled: z.boolean(),
+  checkIntervalMin: z.number().int().positive(),
+  // ISO 8601 of the last SUCCESSFUL signed check (null = never) and the short reason the latest attempt failed.
+  lastCheckedAt: z.string().nullable(),
+  lastCheckError: z.string().nullable(),
 });
 export type UpdateStatusView = z.infer<typeof UpdateStatusViewSchema>;
 

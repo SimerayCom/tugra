@@ -1931,9 +1931,17 @@ model InstanceSettings {
   // PANEL_DOMAIN win over this (synced to DB at bootstrap). Null = bring-your-own-proxy (unchanged).
   panelDomain         String?
   autoUpdate          Boolean   @default(false)
-  updateChannel       String    @default("stable")
+  // Release channel to track. NULL = automatic: a prerelease build (0.1.0-beta.N) tracks "beta", a release
+  // build tracks "stable" (see @tugra/shared autoUpdateChannel). A non-null value is an explicit owner pin.
+  updateChannel       String?
   cachedLatestVersion String?
   cachedNotice        Json? // signed top-level operator notice from the update manifest, or null
+  // Last SUCCESSFUL signed manifest check (set even when the tracked channel has no entry — the check itself
+  // worked). Drives "Last checked" in the Updates card and the panel-load stale refresh.
+  updateLastCheckedAt DateTime?
+  // Machine reason of the most recent FAILED attempt (fetch / bad signature / settings / persist …); NULL when
+  // the most recent attempt succeeded. Owner-visible so "why no update?" has an answer.
+  updateLastCheckError String?
   apiEnabled          Boolean   @default(true)
   apiAllowedIps       String[]  @default([])
   // OIDC single sign-on (Pro edition). Owner-configured IdP; the client secret is stored encrypted
