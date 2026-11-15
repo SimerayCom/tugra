@@ -43,7 +43,8 @@ history — comes across and the hub continues exactly where it left off.
 scripts/hub-migrate.sh pack --encrypt
 # → writes tugra-hub-<date>.tar.enc (0600). Briefly stops the stack for a consistent copy, then restarts.
 # While hub-api is still running it also exports destination-keys.json (plaintext backup keys, mode 600) into
-# the bundle; if hub-api is down it warns and carries on (the keys are still in the Postgres volume).
+# the bundle; if hub-api is down it warns and carries on (the keys are still in the Postgres volume). If some key
+# cannot be decrypted the pack aborts before stopping anything, unless you pass --allow-incomplete-keys.
 # (use --no-restart for a real move, to leave the old hub down and avoid two hubs commanding the same agents.)
 ```
 

@@ -11,7 +11,7 @@
 # machine" server must be moved with Tugra's per-app/volume backups or redeployed (pack warns if any exist).
 #
 # Usage:
-#   scripts/hub-migrate.sh pack   [--out <file>] [--include-redis] [--encrypt] [--no-restart] [--yes]
+#   scripts/hub-migrate.sh pack   [--out <file>] [--include-redis] [--encrypt] [--no-restart] [--allow-incomplete-keys] [--yes]
 #   scripts/hub-migrate.sh unpack <bundle>        [--yes]
 #
 # Options:
@@ -19,6 +19,8 @@
 #   --include-redis   pack: also carry the Redis volume (job queues/cache; rebuildable — off by default).
 #   --encrypt         pack: encrypt the bundle with a passphrase (openssl aes-256-cbc). unpack auto-detects .enc.
 #   --no-restart      pack: leave the source stack stopped (for a real move — avoids a split-brain with the new hub).
+#   --allow-incomplete-keys  pack: continue even if some destination encryption keys could not be exported (the
+#                     bundle's destination-keys.json is then INCOMPLETE). Without it, pack aborts before touching the stack.
 #   --yes             skip confirmation prompts (also: ASSUME_YES=1 in the environment).
 #
 # WARNING: a bundle contains ALL your secrets (encryption key, DB password, signing key). It is written 0600;
@@ -125,15 +127,56 @@ arch() { uname -m 2>/dev/null || echo unknown; }
 # Postgres major from the helper image tag (both ends share the compose pin, so this is stable).
 pg_major() { printf '%s' "$HELPER_IMAGE" | sed -nE 's#.*postgres:([0-9]+).*#\1#p' | head -n1; }
 
+# Destination encryption keys (plaintext, from the running hub-api) so the bundle can decrypt offsite backups
+# even if the database is later lost. A hub-api that is not running only warns (the keys stay recoverable from
+# the Postgres volume + .env). An INCOMPLETE export (exit 2: some key could not be decrypted) is a loud failure
+# unless --allow-incomplete-keys, because that file is the only copy outside the database. Sets DEST_KEYS.
+export_destination_keys() { # <bundle-dir>
+  _bd="$1"; DEST_KEYS=0; _dk_rc=0
+  (umask 077; compose exec -T hub-api node dist/scripts/export-destination-keys.js > "$_bd/destination-keys.json") 2>/dev/null || _dk_rc=$?
+  if [ "$_dk_rc" = 0 ]; then
+    chmod 600 "$_bd/destination-keys.json" 2>/dev/null || true
+    DEST_KEYS=1; ok "Destination encryption keys exported (destination-keys.json)."
+  elif [ "$_dk_rc" = 2 ] && [ -s "$_bd/destination-keys.json" ]; then
+    # exit 2 = some destination key could not be decrypted; the manifest is still written, but incomplete.
+    if [ "${ALLOW_INCOMPLETE_KEYS:-0}" = "1" ]; then
+      chmod 600 "$_bd/destination-keys.json" 2>/dev/null || true
+      DEST_KEYS=1; warn "some destination keys could not be decrypted — destination-keys.json is INCOMPLETE (continuing: --allow-incomplete-keys)."
+    else
+      rm -f "$_bd/destination-keys.json"
+      err "some destination encryption keys could not be decrypted, so the bundle's destination-keys.json would be INCOMPLETE."
+      err "Check the hub-api logs and SECRETS_ENCRYPTION_KEY(_PREVIOUS), or re-run with --allow-incomplete-keys to pack anyway."
+      return 2
+    fi
+  else
+    rm -f "$_bd/destination-keys.json"
+    warn "could not export destination keys (is hub-api running?). The bundle still holds .env + the Postgres volume, from which they are recoverable."
+  fi
+  return 0
+}
+
+# unpack: put destination-keys.json next to .env (mode 600). Never fatal — the keys are also in the restored DB.
+restore_destination_keys() { # <bundle-dir>
+  [ -f "$1/destination-keys.json" ] || return 0
+  _dkdst="$(dirname "$ENV_FILE")/destination-keys.json"
+  if (umask 077; cp "$1/destination-keys.json" "$_dkdst") 2>/dev/null && chmod 600 "$_dkdst" 2>/dev/null; then
+    note "destination-keys.json restored next to .env (mode 600, git-ignored); delete it after verifying a restore."
+  else
+    warn "could not restore destination-keys.json (not fatal; the keys are also in the restored database)."
+  fi
+  return 0
+}
+
 # ----------------------------------------------------------------------------------------------------- pack
 cmd_pack() {
-  OUT=""; INCLUDE_REDIS=0; ENCRYPT=0; NO_RESTART=0
+  OUT=""; INCLUDE_REDIS=0; ENCRYPT=0; NO_RESTART=0; ALLOW_INCOMPLETE_KEYS=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --out) [ $# -ge 2 ] || die "--out needs a value"; OUT="$2"; shift 2 ;;
       --include-redis) INCLUDE_REDIS=1; shift ;;
       --encrypt) ENCRYPT=1; shift ;;
       --no-restart) NO_RESTART=1; shift ;;
+      --allow-incomplete-keys) ALLOW_INCOMPLETE_KEYS=1; shift ;;
       --yes|-y) ASSUME_YES=1; shift ;;
       *) die "pack: unknown option: $1" ;;
     esac
@@ -193,20 +236,7 @@ cmd_pack() {
   if [ -d "$ETC_TUGRA" ]; then (umask 077; docker run --rm -v "$ETC_TUGRA":/s:ro -v "$BDIR":/out "$HELPER_IMAGE" \
       sh -c 'set -e; cd /s; tar cf /out/etc-tugra.tar .; gzip -f /out/etc-tugra.tar') || warn "could not pack /etc/tugra"; fi
 
-  # Destination encryption keys (plaintext, from the running hub-api) so the bundle can decrypt offsite backups
-  # even if the database is later lost. Best-effort: the stack must be up to exec; a failure never blocks the pack.
-  DEST_KEYS=0
-  _dk_rc=0
-  (umask 077; compose exec -T hub-api node dist/scripts/export-destination-keys.js > "$BDIR/destination-keys.json") 2>/dev/null || _dk_rc=$?
-  if [ "$_dk_rc" = 0 ]; then
-    DEST_KEYS=1; ok "Destination encryption keys exported (destination-keys.json)."
-  elif [ "$_dk_rc" = 2 ] && [ -s "$BDIR/destination-keys.json" ]; then
-    # exit 2 = some destination key could not be decrypted; the manifest is still written, but incomplete.
-    DEST_KEYS=1; warn "some destination keys could not be decrypted — destination-keys.json is incomplete."
-  else
-    rm -f "$BDIR/destination-keys.json"
-    warn "could not export destination keys (is hub-api running?). The bundle still holds .env + the Postgres volume, from which they are recoverable."
-  fi
+  export_destination_keys "$BDIR" || die "aborting the pack before the stack was stopped (nothing was changed)."
 
   log "Stopping the stack for a consistent copy…"
   compose --profile updater stop -t 120 >/dev/null 2>&1 || true
@@ -334,11 +364,7 @@ cmd_unpack() {
       sh -c 'set -e; cd /d; gunzip -c /in/etc-tugra.tar.gz | tar xf -' || warn "could not restore /etc/tugra (not fatal)"
   fi
 
-  if [ -f "$BDIR/destination-keys.json" ]; then
-    (umask 077; cp "$BDIR/destination-keys.json" "$(dirname "$ENV_FILE")/destination-keys.json") 2>/dev/null \
-      && note "destination-keys.json restored next to .env; delete it after verifying a restore." \
-      || warn "could not restore destination-keys.json (not fatal; the keys are also in the restored database)."
-  fi
+  restore_destination_keys "$BDIR"
 
   _mklabels="--label com.docker.compose.project=$PROJECT"
   docker volume create $_mklabels --label "com.docker.compose.volume=$VOL_PG_KEY" "$VOL_PG" >/dev/null
@@ -393,10 +419,12 @@ cmd_unpack() {
 }
 
 # --------------------------------------------------------------------------------------------------- dispatch
-usage() { sed -n '2,25p' "$SCRIPT_PATH" | sed 's/^#\{0,1\} \{0,1\}//'; }
+usage() { sed -n '2,27p' "$SCRIPT_PATH" | sed 's/^#\{0,1\} \{0,1\}//'; }
+if [ "${HUB_MIGRATE_SOURCED:-0}" != "1" ]; then
 case "${1:-}" in
   pack)   shift; cmd_pack "$@" ;;
   unpack) shift; cmd_unpack "$@" ;;
   -h|--help|help|"") usage ;;
   *) err "unknown command: $1"; usage; exit 1 ;;
 esac
+fi
