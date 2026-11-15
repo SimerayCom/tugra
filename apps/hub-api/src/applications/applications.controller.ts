@@ -143,7 +143,7 @@ import {
 @ApiSecurity("pat")
 @Controller("apps")
 @UseGuards(ApiAuthGuard, ScopesGuard)
-@UseInterceptors(new RedactSecretsInterceptor(["webhookSecret", "inlineDockerfile"]))
+@UseInterceptors(new RedactSecretsInterceptor(["webhookSecret", "inlineDockerfile", "customLabels"]))
 export class ApplicationsController {
   constructor(
     private readonly apps: ApplicationsService,
@@ -555,6 +555,7 @@ export class ApplicationsController {
 
   // Read-only view of every label Tugra applies + the custom ones (+ the reserved prefixes/limits for the editor).
   @Get(":id/labels")
+  @RequireScopes("read:secrets") // custom label values can be tokens; the interceptor only nulls top-level fields
   @ApiZodResponse(AppLabelsViewSchema)
   getLabels(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.apps.getAppLabels(user.userId, id);
