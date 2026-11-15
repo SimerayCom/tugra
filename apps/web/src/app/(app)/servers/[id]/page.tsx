@@ -11,11 +11,10 @@ import { ErrorState } from "../../../../components/error-state";
 import { installPhase } from "../../../../lib/server-install";
 import { useTabState } from "../../../../hooks/useTabState";
 import { CopyBtn } from "../../../../components/copy-row";
-import { IconBtn } from "../../../../components/icon-btn";
 import { useConfirm } from "../../../../components/confirm";
 import { pct, fmtBytesStr, formatUptime } from "../../../../lib/fleet";
 import { diskPctSeries, humanizeRatePair } from "../../../../lib/metrics";
-import type { MetricsRange, ServerStatus, ServerView, AgentUpdateResponse, LogDrain, LogDrainType } from "../../../../lib/types";
+import type { MetricsRange, ServerStatus, ServerView, AgentUpdateResponse } from "../../../../lib/types";
 import { useT } from "../../../../i18n/provider";
 import { MetricChart, METRIC_GRID_STYLE, METRIC_CHART_HEIGHT } from "../../../../components/charts";
 import { ServerContainersCard } from "../../../../components/server-containers-card";
@@ -27,6 +26,7 @@ import { fieldStyle } from "../../../../components/form";
 import { TerminalPanel } from "../../../../components/terminal-panel";
 import { RenameModal } from "../../../../components/rename-modal";
 import { TagsCard } from "../../../../components/tags";
+import { LogDrainCard } from "../../../../components/log-drains/log-drain-card";
 import { TrafficAnalyticsCard } from "../../../../components/traffic-analytics-card";
 import { Badge, Btn, Card, EmptyState, SectionCard, Spinner, StatusPill } from "../../../../components/ui";
 import { Skeleton, SkeletonCard } from "../../../../components/skeleton";
@@ -275,7 +275,7 @@ export default function ServerDetailPage() {
         </>
       )}
 
-      {tab === "drains" && server.canWrite && <LogDrainCard id={id} />}
+      {tab === "drains" && server.canWrite && <LogDrainCard scope={{ kind: "server", id }} />}
 
       {tab === "maintenance" && (
         <>
@@ -634,93 +634,6 @@ function PatchCard({ id }: { id: string }) {
       {logText && (
         <pre ref={logRef} className="mono" style={{ margin: "8px 0 0", fontSize: 11, color: "var(--c-tx3)", whiteSpace: "pre-wrap", maxHeight: 220, overflowY: "auto", background: "var(--c-el)", padding: 10, borderRadius: "var(--r1)" }}>{logText}</pre>
       )}
-    </SectionCard>
-  );
-}
-
-const DRAIN_TYPES: LogDrainType[] = ["http", "loki", "datadog"];
-const drainField: React.CSSProperties = { padding: "8px 10px", background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx)", fontSize: 13, fontFamily: "inherit" };
-
-// One drain: a compact row (enabled toggle · type badge · endpoint · edit · delete) that flips into an
-// inline edit form (name / type / endpoint / token). The token box stays blank unless the user types a
-// replacement — an empty token on save means "leave the stored token unchanged" (never wipe it blindly).
-function DrainRow({ id, drain, onChanged }: { id: string; drain: LogDrain; onChanged: () => void }) {
-  const t = useT();
-  const confirm = useConfirm();
-  const [editing, setEditing] = useState(false);
-  const [name, setName] = useState(drain.name);
-  const [type, setType] = useState<LogDrainType>(drain.type as LogDrainType);
-  const [endpoint, setEndpoint] = useState(drain.endpoint);
-  const [token, setToken] = useState("");
-  const reset = () => { setName(drain.name); setType(drain.type as LogDrainType); setEndpoint(drain.endpoint); setToken(""); setEditing(false); };
-  const save = useMutation({
-    mutationFn: () => api.updateLogDrain(id, drain.id, { name, type, endpoint, ...(token ? { token } : {}) }),
-    onSuccess: () => { setToken(""); setEditing(false); onChanged(); },
-  });
-  const toggle = useMutation({ mutationFn: (enabled: boolean) => api.updateLogDrain(id, drain.id, { enabled }), onSuccess: onChanged });
-  const del = useMutation({ mutationFn: () => api.deleteLogDrain(id, drain.id), onSuccess: onChanged });
-
-  if (editing) {
-    return (
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", padding: "8px 0", borderTop: "1px solid var(--c-bd)" }}>
-        <input style={{ ...drainField, width: 120 }} value={name} onChange={(e) => setName(e.target.value)} aria-label={t("logdrains.name")} />
-        <select style={{ ...drainField, width: 100 }} value={type} onChange={(e) => setType(e.target.value as LogDrainType)} aria-label={t("logdrains.type")}>
-          {DRAIN_TYPES.map((o) => <option key={o} value={o}>{t(`logdrains.type_${o}`)}</option>)}
-        </select>
-        <input style={{ ...drainField, flex: 1, minWidth: 160 }} value={endpoint} onChange={(e) => setEndpoint(e.target.value)} aria-label={t("logdrains.endpoint")} />
-        <input style={{ ...drainField, width: 150 }} type="password" placeholder={drain.hasToken ? t("logdrains.tokenKeep") : t("logdrains.token")} value={token} onChange={(e) => setToken(e.target.value)} aria-label={t("logdrains.token")} />
-        <Btn onClick={() => save.mutate()} disabled={save.isPending || !name || !endpoint}>{t("common.save")}</Btn>
-        <Btn variant="ghost" onClick={reset} disabled={save.isPending}>{t("common.cancel")}</Btn>
-        {save.isError && <div style={{ color: "var(--c-r)", fontSize: 12, width: "100%" }}>{(save.error as Error).message}</div>}
-      </div>
-    );
-  }
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
-      <input type="checkbox" checked={drain.enabled} onChange={(e) => toggle.mutate(e.target.checked)} aria-label={drain.name} />
-      <span style={{ fontWeight: 600, width: 120, overflow: "hidden", textOverflow: "ellipsis" }}>{drain.name}</span>
-      <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "1px 5px" }}>{t(`logdrains.type_${drain.type}`)}</span>
-      <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{drain.endpoint}</span>
-      <IconBtn label={t("common.edit")} onClick={() => setEditing(true)}><Pencil size={14} /></IconBtn>
-      <IconBtn label={t("common.delete")} danger onClick={async () => { if (await confirm({ body: t("common.deleteConfirm"), danger: true })) del.mutate(); }}>×</IconBtn>
-    </div>
-  );
-}
-
-function LogDrainCard({ id }: { id: string }) {
-  const t = useT();
-  const qc = useQueryClient();
-  const { data: drains = [] } = useQuery({ queryKey: ["logDrains", id], queryFn: () => api.listLogDrains(id) });
-  const invalidate = () => qc.invalidateQueries({ queryKey: ["logDrains", id] });
-  const [name, setName] = useState("");
-  const [type, setType] = useState<LogDrainType>("http");
-  const [endpoint, setEndpoint] = useState("");
-  const [token, setToken] = useState("");
-  const add = useMutation({
-    mutationFn: () => api.createLogDrain(id, { name, type, endpoint, token: token || undefined }),
-    onSuccess: () => { setName(""); setType("http"); setEndpoint(""); setToken(""); invalidate(); },
-  });
-
-  return (
-    <SectionCard title={t("logdrains.title")} desc={t("logdrains.desc")} style={{ marginTop: 20 }}>
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
-        {drains.map((d) => (
-          <DrainRow key={d.id} id={id} drain={d} onChanged={invalidate} />
-        ))}
-        {drains.length === 0 && <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("logdrains.empty")}</div>}
-      </div>
-
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <input style={{ ...drainField, width: 120 }} placeholder={t("logdrains.name")} value={name} onChange={(e) => setName(e.target.value)} aria-label={t("logdrains.name")} />
-        <select style={{ ...drainField, width: 100 }} value={type} onChange={(e) => setType(e.target.value as LogDrainType)} aria-label={t("logdrains.type")}>
-          {DRAIN_TYPES.map((o) => <option key={o} value={o}>{t(`logdrains.type_${o}`)}</option>)}
-        </select>
-        <input style={{ ...drainField, flex: 1, minWidth: 160 }} placeholder={t("logdrains.endpoint")} value={endpoint} onChange={(e) => setEndpoint(e.target.value)} aria-label={t("logdrains.endpoint")} />
-        <input style={{ ...drainField, width: 150 }} type="password" placeholder={t("logdrains.token")} value={token} onChange={(e) => setToken(e.target.value)} aria-label={t("logdrains.token")} />
-        <Btn onClick={() => add.mutate()} disabled={add.isPending || !name || !endpoint}>{t("logdrains.add")}</Btn>
-      </div>
-      {add.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(add.error as Error).message}</div>}
     </SectionCard>
   );
 }

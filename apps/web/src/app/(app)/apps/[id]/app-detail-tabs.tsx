@@ -15,6 +15,7 @@ import { collapseCarriageReturns, summarizeDeployLog } from "../../../../lib/log
 import { TERMINAL_PRE_STYLE } from "../../../../lib/terminal-theme";
 import { type Application, type Deployment } from "../../../../lib/types";
 import { ContainerPickerModal } from "./app-detail-misc-cards";
+import { LogDrainCard } from "../../../../components/log-drains/log-drain-card";
 import { ROLLOUT_KNOWN, rolloutColor } from "./app-detail-shared";
 
 export function LiveContainerLogsCard({ id, isCompose, neverDeployed = false }: { id: string; isCompose: boolean; neverDeployed?: boolean }) {
@@ -133,13 +134,14 @@ export function FilesTab({ id, app }: { id: string; app: Pick<Application, "sour
   );
 }
 
-export function LogsTab({ id, canWrite, isCompose, neverDeployed, streamActive, liveLines, lastDeployLog }: { id: string; canWrite: boolean; isCompose: boolean; neverDeployed: boolean; streamActive: boolean; liveLines: string; lastDeployLog: string | null | undefined }) {
+export function LogsTab({ id, canWrite, isCompose, clustered = false, neverDeployed, streamActive, liveLines, lastDeployLog }: { id: string; canWrite: boolean; isCompose: boolean; clustered?: boolean; neverDeployed: boolean; streamActive: boolean; liveLines: string; lastDeployLog: string | null | undefined }) {
   const t = useT();
   return (
     <>
       {/* During a deploy the BUILD log belongs up top; runtime container logs sit below it. */}
       {streamActive && <LiveLogCard lines={liveLines} />}
       {canWrite && <LiveContainerLogsCard id={id} isCompose={isCompose} neverDeployed={neverDeployed} />}
+      {canWrite && <LogDrainCard scope={{ kind: "app", id, isCompose, clustered }} />}
       {!streamActive &&
         (lastDeployLog ? (
           <SectionCard title={t("apps.lastDeployLog")} style={{ marginBottom: 0 }}>

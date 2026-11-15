@@ -476,9 +476,15 @@ export interface DnsManualRecords {
   records: Array<{ type: string; name: string; content: string }>;
 }
 
-// The drain targets the agent can ship to (http = Tugra batch JSON, loki = Grafana Loki push,
-// datadog = Datadog intake). Adding more needs agent-side shipping support, not just this list.
-export type LogDrainType = "http" | "loki" | "datadog";
+// The drain targets the agent can ship to: http = Tugra batch JSON, loki = Grafana Loki push, datadog = Datadog
+// intake, and (D7) the non-HTTP transports syslog (RFC 5424), gelf (GELF 1.1) and fluentd (Forward protocol).
+export type LogDrainType = "http" | "loki" | "datadog" | "syslog" | "gelf" | "fluentd";
+
+/** Delivery state the hub derives for a drain (worst-of over the servers that ship it). */
+export type DrainDelivery = "disabled" | "offline" | "agent_outdated" | "capability_revoked" | "pending" | "ok" | "error" | "invalid";
+
+/** Closed set of failure classes an agent reports (no raw error text ever crosses the wire). */
+export type DrainErrClass = "dns" | "dial" | "tls" | "timeout" | "refused" | "http" | "write" | "ack" | "policy" | "config" | "overflow";
 
 export interface LogDrain {
   id: string;
@@ -488,6 +494,38 @@ export interface LogDrain {
   enabled: boolean;
   hasToken: boolean;
   createdAt: string;
+  // D7 (per-app drains): scope + container filter + per-transport options + egress flag + delivery.
+  scope: "server" | "app";
+  appId: string | null;
+  containers: string[];
+  options: Record<string, unknown> | null;
+  allowPrivate: boolean;
+  delivery: DrainDelivery;
+  status: { sent: number; dropped: number; errClass?: DrainErrClass; lastOkAt?: string } | null;
+}
+
+/** One app drain shipping logs off a server, as the SERVER operator sees it (no endpoint/options/token). */
+export interface AppDrainSummary {
+  id: string;
+  name: string;
+  type: string;
+  enabled: boolean;
+  appId: string;
+  appName: string;
+  delivery: DrainDelivery;
+}
+
+/** Create/update body of a log drain (server or app route). `options` carry NO secrets: the token field holds
+ *  the http/loki/datadog bearer or the fluentd shared key. */
+export interface LogDrainInput {
+  name?: string;
+  type?: LogDrainType;
+  endpoint?: string;
+  token?: string | null;
+  enabled?: boolean;
+  containers?: string[];
+  options?: Record<string, unknown> | null;
+  allowPrivate?: boolean;
 }
 
 export interface UpgradablePackage {

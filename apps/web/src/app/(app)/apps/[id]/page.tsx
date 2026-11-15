@@ -549,7 +549,7 @@ export default function AppDetailPage() {
       {tab === "analytics" && <AnalyticsTab app={appData} />}
 
       {tab === "logs" && (
-        <LogsTab id={id} canWrite={appData.canWrite} isCompose={appData.source === "COMPOSE"} neverDeployed={appData.status === "NEW"} streamActive={streamActive} liveLines={live.lines} lastDeployLog={lastDep?.logs} />
+        <LogsTab id={id} canWrite={appData.canWrite} isCompose={appData.source === "COMPOSE"} clustered={!!appData.clusterId} neverDeployed={appData.status === "NEW"} streamActive={streamActive} liveLines={live.lines} lastDeployLog={lastDep?.logs} />
       )}
 
       {tab === "files" && appData.canWrite && <FilesTab id={id} app={appData} />}

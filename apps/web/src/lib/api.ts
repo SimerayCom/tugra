@@ -67,7 +67,8 @@ import type {
   DnsManualRecords,
   Monitor,
   LogDrain,
-  LogDrainType,
+  LogDrainInput,
+  AppDrainSummary,
   MyInvitation,
   InvitationPreview,
   PatchInfo,
@@ -796,14 +797,32 @@ export const api = {
   listLogDrains(serverId: string) {
     return apiFetch<LogDrain[]>(`/servers/${serverId}/log-drains`);
   },
-  createLogDrain(serverId: string, input: { name: string; type?: LogDrainType; endpoint: string; token?: string; enabled?: boolean }) {
+  createLogDrain(serverId: string, input: LogDrainInput & { name: string; endpoint: string }) {
     return apiFetch<LogDrain>(`/servers/${serverId}/log-drains`, { method: "POST", body: JSON.stringify(input) });
   },
-  updateLogDrain(serverId: string, drainId: string, input: { name?: string; type?: LogDrainType; endpoint?: string; token?: string | null; enabled?: boolean }) {
+  updateLogDrain(serverId: string, drainId: string, input: LogDrainInput) {
     return apiFetch<LogDrain>(`/servers/${serverId}/log-drains/${drainId}`, { method: "PUT", body: JSON.stringify(input) });
   },
   deleteLogDrain(serverId: string, drainId: string) {
     return apiFetch<{ ok: true }>(`/servers/${serverId}/log-drains/${drainId}`, { method: "DELETE" });
+  },
+  // App drains shipping logs off this server: name/type/app/delivery only (the operator never sees an app
+  // writer's endpoint or credentials).
+  listServerAppDrains(serverId: string) {
+    return apiFetch<AppDrainSummary[]>(`/servers/${serverId}/log-drains/apps`);
+  },
+  // Per-app log drains (D7): same shape as the server routes, scoped to one app's containers.
+  listAppLogDrains(appId: string) {
+    return apiFetch<LogDrain[]>(`/apps/${appId}/log-drains`);
+  },
+  createAppLogDrain(appId: string, input: LogDrainInput & { name: string; endpoint: string }) {
+    return apiFetch<LogDrain>(`/apps/${appId}/log-drains`, { method: "POST", body: JSON.stringify(input) });
+  },
+  updateAppLogDrain(appId: string, drainId: string, input: LogDrainInput) {
+    return apiFetch<LogDrain>(`/apps/${appId}/log-drains/${drainId}`, { method: "PUT", body: JSON.stringify(input) });
+  },
+  deleteAppLogDrain(appId: string, drainId: string) {
+    return apiFetch<{ ok: true }>(`/apps/${appId}/log-drains/${drainId}`, { method: "DELETE" });
   },
   upgradeAll(id: string) {
     return apiFetch<{ output: string; exitCode: number }>(`/servers/${id}/updates/apply`, { method: "POST" });
