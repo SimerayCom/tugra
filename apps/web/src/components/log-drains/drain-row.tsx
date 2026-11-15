@@ -71,7 +71,7 @@ export function DrainRow({ scope, drain, onChanged }: { scope: DrainScope; drain
     setEditing(false);
   };
   const save = useMutation({
-    mutationFn: () => calls.update(drain.id, draftToPayload(draft, scopeKind(scope))),
+    mutationFn: () => calls.update(drain.id, draftToPayload(draft, scopeKind(scope), { type: drain.type, hasToken: drain.hasToken })),
     onSuccess: () => {
       setEditing(false);
       onChanged();
@@ -88,7 +88,7 @@ export function DrainRow({ scope, drain, onChanged }: { scope: DrainScope; drain
   if (editing) {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "10px 0", borderTop: "1px solid var(--c-bd)" }}>
-        <DrainForm scope={scope} draft={draft} onChange={setDraft} hasToken={drain.hasToken} mode="edit" />
+        <DrainForm scope={scope} draft={draft} onChange={setDraft} hasToken={drain.hasToken} originalType={drain.type} mode="edit" />
         <div style={{ display: "flex", gap: 8 }}>
           <Btn onClick={submit} disabled={save.isPending}>{t("common.save")}</Btn>
           <Btn variant="ghost" onClick={reset} disabled={save.isPending}>{t("common.cancel")}</Btn>

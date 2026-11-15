@@ -188,7 +188,7 @@ export function ContainerLabelsCard({
                       mono
                       aria-label={t("apps.labelsKey")}
                       aria-invalid={err ? true : undefined}
-                      placeholder="key"
+                      placeholder={t("apps.labelsKeyPlaceholder")}
                       value={r.key}
                       onChange={(e) => patch(r.id, { key: e.target.value })}
                       spellCheck={false}
@@ -198,7 +198,7 @@ export function ContainerLabelsCard({
                     <TextInput
                       mono
                       aria-label={t("apps.labelsValue")}
-                      placeholder="value"
+                      placeholder={t("apps.labelsValuePlaceholder")}
                       value={r.value}
                       onChange={(e) => patch(r.id, { value: e.target.value })}
                       spellCheck={false}

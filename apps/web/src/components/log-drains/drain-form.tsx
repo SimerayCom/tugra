@@ -11,6 +11,7 @@ import {
   isNetType,
   isValidContainerEntry,
   TYPE_PROTOS,
+  tokenDropsOnTypeChange,
   withType,
   type DrainDraft,
   type DrainScopeKind,
@@ -95,12 +96,15 @@ export function DrainForm({
   draft,
   onChange,
   hasToken = false,
+  originalType,
   mode,
 }: {
   scope: DrainScope;
   draft: DrainDraft;
   onChange: (d: DrainDraft) => void;
   hasToken?: boolean;
+  /** Edit only: the stored type, to warn when a type change will drop the stored token. */
+  originalType?: string;
   mode: "create" | "edit";
 }) {
   const t = useT();
@@ -109,6 +113,7 @@ export function DrainForm({
   const protos: readonly Proto[] = net ? TYPE_PROTOS[draft.type as "syslog" | "gelf" | "fluentd"] : [];
   const sharedKey = draft.type === "fluentd";
   const uid = `${mode}-${scope.kind}-${scope.id}`;
+  const dropsToken = tokenDropsOnTypeChange(originalType ? { type: originalType, hasToken } : undefined, draft);
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, alignItems: "start" }}>
       <Field label={t("logdrains.name")}><TextInput value={draft.name} onChange={(e) => set("name", e.target.value)} /></Field>
@@ -120,6 +125,9 @@ export function DrainForm({
           options={ALL_TYPES.map((o) => ({ value: o, label: t(`logdrains.type_${o}`) }))}
         />
       </Field>
+      {dropsToken && (
+        <div role="status" style={{ gridColumn: "1 / -1", fontSize: 12, color: "var(--c-tx3)" }}>{t("logdrains.typeChangeDropsToken")}</div>
+      )}
 
       {!net && (
         <>

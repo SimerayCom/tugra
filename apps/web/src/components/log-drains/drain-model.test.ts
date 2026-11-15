@@ -8,6 +8,7 @@ import {
   isValidContainerEntry,
   joinEndpoint,
   splitEndpoint,
+  tokenDropsOnTypeChange,
   validateDraft,
   withType,
 } from "./drain-model";
@@ -161,5 +162,27 @@ describe("validateDraft", () => {
     expect(validateDraft(filled({ containers: ["a b"] }), "server")).toBe("logdrains.validation_container_server");
     expect(isValidContainerEntry("web", "app")).toBe(true);
     expect(isValidContainerEntry("a[b]", "server")).toBe(false);
+  });
+});
+
+describe("editing across token groups", () => {
+  const stored = (type: string) => ({ type, hasToken: true });
+  it("clears the stored token (token: null) when the type crosses bearer / shared key / none, unless a new one is typed", () => {
+    expect(draftToPayload(filled({ type: "syslog", host: "h.example.com" }), "server", stored("loki")).token).toBeNull();
+    expect(draftToPayload({ ...emptyDraft("gelf"), name: "g", host: "h.example.com" }, "server", stored("http")).token).toBeNull();
+    expect(draftToPayload({ ...emptyDraft("fluentd"), name: "f", host: "h.example.com" }, "server", stored("datadog")).token).toBeNull();
+    expect(draftToPayload({ ...emptyDraft("fluentd"), name: "f", host: "h.example.com", token: "newkey" }, "server", stored("http")).token).toBe("newkey");
+    expect(draftToPayload(filled({ type: "http" }), "server", stored("fluentd")).token).toBeNull();
+  });
+  it("keeps it (no token key) inside one group, with no stored token, or on create", () => {
+    expect("token" in draftToPayload(filled({ type: "loki" }), "server", stored("http"))).toBe(false);
+    expect("token" in draftToPayload({ ...emptyDraft("fluentd"), name: "f", host: "h.example.com" }, "server", stored("fluentd"))).toBe(false);
+    expect("token" in draftToPayload({ ...emptyDraft("syslog"), name: "s", host: "h.example.com" }, "server", { type: "loki", hasToken: false })).toBe(false);
+    expect("token" in draftToPayload({ ...emptyDraft("syslog"), name: "s", host: "h.example.com" }, "server")).toBe(false);
+  });
+  it("tokenDropsOnTypeChange drives the inline notice", () => {
+    expect(tokenDropsOnTypeChange(stored("loki"), emptyDraft("syslog"))).toBe(true);
+    expect(tokenDropsOnTypeChange(stored("loki"), emptyDraft("http"))).toBe(false);
+    expect(tokenDropsOnTypeChange(undefined, emptyDraft("syslog"))).toBe(false);
   });
 });

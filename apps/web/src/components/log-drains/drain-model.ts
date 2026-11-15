@@ -140,12 +140,30 @@ export function buildOptions(draft: DrainDraft): Record<string, unknown> | undef
   return o;
 }
 
+/** What a stored token MEANS per type: a bearer (http/loki/datadog), a fluentd shared key, or nothing (syslog/gelf).
+ *  A stored token only stays valid inside one group. */
+export function tokenGroup(type: string): "bearer" | "sharedKey" | "none" {
+  if (type === "fluentd") return "sharedKey";
+  if (type === "syslog" || type === "gelf") return "none";
+  return "bearer";
+}
+
+/** True when an edit moves a drain with a stored token across token groups: the old secret must not silently
+ *  change meaning (bearer -> shared key) or block the save (syslog/gelf refuse a token). */
+export function tokenDropsOnTypeChange(original: { type: string; hasToken: boolean } | undefined, draft: DrainDraft): boolean {
+  return !!original?.hasToken && tokenGroup(original.type.toLowerCase()) !== tokenGroup(draft.type);
+}
+
 /**
  * Request body for create (`mode: "create"`) or edit. Create omits an empty token; edit omits it too (blank = keep
- * the stored one). The container filter is always sent so a cleared filter clears on the hub. `allowPrivate` is
+ * the stored one) unless the type moves across token groups, which clears it (`token: null`). The container filter is always sent so a cleared filter clears on the hub. `allowPrivate` is
  * an app-scope field only. syslog/gelf never carry a token.
  */
-export function draftToPayload(draft: DrainDraft, scope: DrainScopeKind): LogDrainInput & { name: string; endpoint: string } {
+export function draftToPayload(
+  draft: DrainDraft,
+  scope: DrainScopeKind,
+  original?: { type: string; hasToken: boolean },
+): LogDrainInput & { name: string; endpoint: string } {
   const net = isNetType(draft.type);
   const payload: LogDrainInput & { name: string; endpoint: string } = {
     name: draft.name.trim(),
@@ -157,6 +175,8 @@ export function draftToPayload(draft: DrainDraft, scope: DrainScopeKind): LogDra
   if (options) payload.options = options;
   const canHaveToken = !net || draft.type === "fluentd";
   if (canHaveToken && draft.token) payload.token = draft.token;
+  // Edit across token groups: the stored secret is cleared explicitly (blank otherwise means "keep").
+  else if (tokenDropsOnTypeChange(original, draft)) payload.token = null;
   if (scope === "app") payload.allowPrivate = draft.allowPrivate;
   return payload;
 }

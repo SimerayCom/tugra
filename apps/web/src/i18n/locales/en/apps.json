@@ -512,6 +512,8 @@
   "labelsCustom": "Custom labels",
   "labelsAdd": "Add label",
   "labelsKey": "Label key",
+  "labelsKeyPlaceholder": "key",
+  "labelsValuePlaceholder": "value",
   "labelsValue": "Label value",
   "labelsRemove": "Remove label",
   "labelsPaste": "Paste KEY=VALUE lines",

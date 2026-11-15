@@ -274,8 +274,7 @@ describe("i18n coverage", () => {
       compress_: ["none", "gzip", "zlib"],
       framing_: ["octet", "newline"],
       delivery_: ["ok", "pending", "offline", "agent_outdated", "capability_revoked", "disabled", "error", "invalid"],
-      err_: ["dns", "dial", "tls", "timeout", "refused", "http", "write", "ack", "policy", "config", "overflow"],
-      scope_: ["server", "app"],
+      err_: ["dns", "dial", "tls", "timeout", "refused", "http", "write", "ack", "policy", "config", "auth", "overflow"],
     };
     for (const [prefix, vals] of Object.entries(groups)) for (const v of vals) expect(translate(en, `logdrains.${prefix}${v}`), `${prefix}${v}`).not.toBe(`logdrains.${prefix}${v}`);
   });
