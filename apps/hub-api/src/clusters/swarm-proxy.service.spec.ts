@@ -122,6 +122,15 @@ describe("SwarmProxyService.ensure", () => {
     expect(call![1]).not.toContain("s3cr3tTOKEN"); // base64'd into the secret body, never plaintext in the script
   });
 
+  it("a legacy stored token with a trailing newline renders the same swarm secret as the clean one", async () => {
+    const secretOf = async (token: string) => {
+      const { svc, send } = make({ certMode: "le-dns", dnsProvider: "cloudflare", dnsCredsEnc: "enc", decrypt: JSON.stringify({ CF_DNS_API_TOKEN: token }) });
+      await svc.ensure("c1");
+      return send.mock.calls.find((c) => (c[1] as string).includes("docker service create --detach"))![1] as string;
+    };
+    expect(await secretOf("tok\n")).toBe(await secretOf("tok"));
+  });
+
   it("with a le-dns manager but UNREADABLE creds: falls back to HTTP-01 only (fail-safe, no le-dns/secret)", async () => {
     const { svc, send } = make({ certMode: "le-dns", dnsProvider: "cloudflare", dnsCredsEnc: "enc" }); // decrypt throws
     await svc.ensure("c1");

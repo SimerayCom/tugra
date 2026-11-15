@@ -1995,6 +1995,17 @@ describe("deploy-script", () => {
       expect(pre).toContain(`v=${PROXY_SETUP_VERSION}`);
     });
 
+    it("a stored DNS token with a trailing newline renders exactly like the trimmed one (legacy rows keep working); an inner line break names the credential", () => {
+      const clean = { acmeEmail: "me@x.com", dnsProvider: "cloudflare", dnsCreds: { CF_DNS_API_TOKEN: "tok" } };
+      const legacy = { ...clean, dnsCreds: { CF_DNS_API_TOKEN: "tok\n" } };
+      expect(proxyConfigPreimage(legacy)).toBe(proxyConfigPreimage(clean));
+      expect(proxyConfigHash(legacy)).toBe(proxyConfigHash(clean));
+      expect(buildProxySetupScript(legacy)).toBe(buildProxySetupScript(clean));
+      const bad = { ...clean, dnsCreds: { CF_DNS_API_TOKEN: "a\nB=1" } };
+      expect(() => proxyConfigPreimage(bad)).toThrow(/DNS credential "CF_DNS_API_TOKEN" contains a line break or NUL \(remove it\)/);
+      expect(() => buildProxySetupScript(bad)).toThrow(/DNS credential/);
+    });
+
     it("the preimage folds DNS creds as a sha, never the plaintext token", () => {
       const pre = proxyConfigPreimage({
         acmeEmail: "me@x.com",

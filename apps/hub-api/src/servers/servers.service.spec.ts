@@ -706,6 +706,19 @@ describe("ServersService.setNetwork", () => {
     expect(JSON.stringify(data)).not.toContain("s3cr3t");
   });
 
+  it("trims DNS credential values before encrypting and refuses an inner line break (service-level, for MCP/internal callers)", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue(row("s1", "teamA")), update },
+      ...owner(Role.OWNER),
+    } as unknown as PrismaService;
+    await svcWith(prisma).setNetwork("u1", "s1", { dnsCreds: { CF_DNS_API_TOKEN: "s3cr3t\n" } });
+    expect(update.mock.calls[0][0].data.dnsCredsEnc).toBe("enc:" + Buffer.from('{"CF_DNS_API_TOKEN":"s3cr3t"}').toString("base64"));
+    update.mockClear();
+    await expect(svcWith(prisma).setNetwork("u1", "s1", { dnsCreds: { CF_DNS_API_TOKEN: "a\nINJECTED=1" } })).rejects.toThrow(/DNS credential CF_DNS_API_TOKEN must be a single line/);
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it("clears stored DNS creds when dnsCreds is null", async () => {
     const update = jest.fn().mockResolvedValue({});
     const prisma = {

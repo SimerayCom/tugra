@@ -163,7 +163,7 @@ function envHelpers(o: ServiceDeployOpts): {
   return {
     writeSteps: [
       `mkdir -p ${ENV_DIR}`,
-      `printf %s ${shq(envFileB64(env))} | base64 -d > ${path}`,
+      `printf %s ${shq(envFileB64(env, undefined, "service variable"))} | base64 -d > ${path}`,
       `chmod 600 ${path}`,
     ],
     createLoad: [`${readHead} export "$TUGRA_K=$TUGRA_V"; done < ${path}`],

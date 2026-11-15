@@ -36,6 +36,7 @@ import { normalizeTags } from "../common/tags";
 import { hubBaseUrl, agentWsUrl } from "../common/hub-url";
 import { isDockerBridgeV4, isIpv6, isLoopbackIp, isPublicIp, reconcileReportedIp } from "../common/observed-ip";
 import { filterByQuery } from "../common/query-filter";
+import { dnsCredsIssue, trimDnsCreds } from "../common/dns-creds";
 import type { NetworkSettingsInput } from "./dto/servers.schemas";
 import { MAX_BULK_SERVERS } from "./dto/servers.schemas";
 
@@ -474,10 +475,11 @@ export class ServersService {
     if (cfg.dnsProvider !== undefined) data.dnsProvider = cfg.dnsProvider;
     if (cfg.customCertResolver !== undefined) data.customCertResolver = cfg.customCertResolver;
     if (cfg.dnsCreds !== undefined) {
-      data.dnsCredsEnc =
-        cfg.dnsCreds && Object.keys(cfg.dnsCreds).length > 0
-          ? this.crypto.encrypt(JSON.stringify(cfg.dnsCreds))
-          : null;
+      // Same rule as the DTO (MCP / internal callers skip the pipe): a single-line value per credential, trimmed.
+      const creds = cfg.dnsCreds ? trimDnsCreds(cfg.dnsCreds) : null;
+      const issue = creds ? dnsCredsIssue(creds) : null;
+      if (issue) throw new BadRequestException(issue);
+      data.dnsCredsEnc = creds && Object.keys(creds).length > 0 ? this.crypto.encrypt(JSON.stringify(creds)) : null;
     }
     // Proxy bind mode — persisted here; applied when the proxy is (re)started.
     if (cfg.proxyBind !== undefined) data.proxyBind = cfg.proxyBind;

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AGENT_CAPABILITIES } from "@tugra/shared";
 import { DOMAIN_RE } from "../../applications/dto";
+import { dnsCredsIssue } from "../../common/dns-creds";
 
 export const CreateServerSchema = z.object({
   name: z.string().min(1),
@@ -38,7 +39,14 @@ export const NetworkSettingsSchema = z
     // map (encrypted server-side, never returned); a null clears the stored creds.
     certMode: z.enum(["http", "le-dns", "custom"]).optional(),
     dnsProvider: z.string().trim().max(64).nullable().optional(),
-    dnsCreds: z.record(z.string()).nullable().optional(),
+    dnsCreds: z
+      .record(z.string())
+      .superRefine((creds, ctx) => {
+        const issue = dnsCredsIssue(creds);
+        if (issue) ctx.addIssue({ code: z.ZodIssueCode.custom, message: issue });
+      })
+      .nullable()
+      .optional(),
     customCertResolver: z.string().trim().max(64).nullable().optional(),
     // How the reverse proxy publishes :80/:443. Takes effect when the proxy is RECREATED —
     // the next deploy of a domained app, or a proxy Start — NOT on a plain proxy Restart (which keeps the

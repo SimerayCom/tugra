@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import { DB_NET } from "../databases/database-script"; // single source for the managed-DB network name
 import { injectableBuildArgs, looksSensitiveKey } from "./build-args";
 import type { EnvMeta } from "../common/env-flags";
+import { trimDnsCreds } from "../common/dns-creds";
 import { assertScriptFits, mlEnvFlags, mlPrefix, mlPrelude, planEnv } from "./env-render";
 import { APPS_NETWORK, isUserNetworkNameAllowed } from "./network-names";
 import {
@@ -1204,15 +1205,16 @@ export function envFilePath(app: { id: string }): string {
  * `=`, CR, LF or NUL, or a value with CR/LF/NUL, would define an extra variable (or truncate one), so it THROWS
  * (naming the key, never the value). Keys in `b64Keys` are emitted as `KEY:b64=<base64>` (swarm multiline).
  */
-export function envFileContent(env: Record<string, string>, b64Keys?: ReadonlySet<string>): string {
+export function envFileContent(env: Record<string, string>, b64Keys?: ReadonlySet<string>, what?: string): string {
+  const label = what ?? "environment variable"; // `what` names a non-app-env caller (DNS credential, service variable)
   return Object.entries(env)
     .map(([k, v]) => {
       if (k.length === 0 || /[=\r\n\u0000]/.test(k)) {
-        throw new Error(`TUGRA: environment variable ${JSON.stringify(k.slice(0, 40))} is not valid for an env file`);
+        throw new Error(`TUGRA: ${label} ${JSON.stringify(k.slice(0, 40))} is not valid for an env file`);
       }
       if (b64Keys?.has(k)) return `${k}:b64=${Buffer.from(v, "utf8").toString("base64")}`;
       if (/[\r\n\u0000]/.test(v)) {
-        throw new Error(`TUGRA: environment variable ${JSON.stringify(k.slice(0, 40))} contains a line break or NUL (mark it multiline or remove it)`);
+        throw new Error(`TUGRA: ${label} ${JSON.stringify(k.slice(0, 40))} contains a line break or NUL (${what ? "remove it" : "mark it multiline or remove it"})`);
       }
       return `${k}=${v}`;
     })
@@ -1220,8 +1222,14 @@ export function envFileContent(env: Record<string, string>, b64Keys?: ReadonlySe
 }
 
 /** base64 of the env file, so it can be written on the host without quoting issues. */
-export function envFileB64(env: Record<string, string>, b64Keys?: ReadonlySet<string>): string {
-  return Buffer.from(envFileContent(env, b64Keys), "utf8").toString("base64");
+export function envFileB64(env: Record<string, string>, b64Keys?: ReadonlySet<string>, what?: string): string {
+  return Buffer.from(envFileContent(env, b64Keys, what), "utf8").toString("base64");
+}
+
+/** base64 env body for the proxy's DNS-01 credentials. Values are trimmed first so a legacy token stored with a
+ *  trailing newline keeps rendering (it used to be a harmless blank line); a line break INSIDE a value still throws. */
+export function dnsCredsB64(creds: Record<string, string>): string {
+  return envFileB64(trimDnsCreds(creds), undefined, "DNS credential");
 }
 
 /**
@@ -2197,7 +2205,7 @@ function resolveProxyRender(opts: ProxySetupOpts) {
 export function proxyConfigPreimage(opts: ProxySetupOpts = {}): string {
   const r = resolveProxyRender(opts);
   const dnsPart = r.dns
-    ? `dns=${r.dns.provider}:${createHash("sha256").update(envFileB64(r.dns.creds)).digest("hex")}`
+    ? `dns=${r.dns.provider}:${createHash("sha256").update(dnsCredsB64(r.dns.creds)).digest("hex")}`
     : "dns=none";
   const panelPart = opts.panel
     ? `panel=${opts.panel.domain}:${r.panelResolver}:${r.panelHttpOnly ? "http" : "tls"}`
@@ -2331,7 +2339,7 @@ export function buildProxySetupScript(opts: ProxySetupOpts = {}): string {
       ? [
           "touch /etc/tugra/letsencrypt/acme-dns.json && chmod 600 /etc/tugra/letsencrypt/acme-dns.json",
           `mkdir -p ${PROXY_DNS_ENV_DIR}`,
-          `printf %s ${shq(envFileB64(dns.creds))} | base64 -d > ${PROXY_DNS_ENV_PATH}`,
+          `printf %s ${shq(dnsCredsB64(dns.creds))} | base64 -d > ${PROXY_DNS_ENV_PATH}`,
           `chmod 600 ${PROXY_DNS_ENV_PATH}`,
         ]
       : []),

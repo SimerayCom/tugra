@@ -5,7 +5,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { InstanceSettingsService } from "../instance/instance-settings.service";
-import { envFileB64 } from "../deploy/deploy-script";
+import { dnsCredsB64 } from "../deploy/deploy-script";
 import {
   buildClassicProxyRunningScript,
   buildSwarmProxyCertDirScript,
@@ -212,7 +212,7 @@ export class SwarmProxyService {
     let dns: SwarmProxyDns | null = null;
     let confighash: string;
     if (dnsCfg) {
-      const credsB64 = envFileB64(dnsCfg.dnsCreds);
+      const credsB64 = dnsCredsB64(dnsCfg.dnsCreds);
       confighash = createHash("sha256").update(`${email}|${dnsCfg.dnsProvider}|${credsB64}|ledns|${pool.length}|${poolKey}${alKey}`).digest("hex").slice(0, 12);
       dns = { provider: dnsCfg.dnsProvider, credsB64, secretName: `${secretPrefix}-${confighash}` };
     } else {
