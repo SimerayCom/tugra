@@ -116,6 +116,10 @@ export const envSchema = z
       (v) => !v || v.split(",").every((p) => !p.trim() || isValidIpOrCidr(p.trim())),
       "every HUB_TRUSTED_PROXY_CIDRS entry must be a valid IP or CIDR (comma-separated)",
     ),
+  // Opt-in strict mode, off by default. "true" trusts ONLY the HUB_TRUSTED_PROXY_CIDRS peers for X-Forwarded-For
+  // (default mode also trusts any private/loopback/docker peer, so another host on the same LAN that reaches the raw
+  // hub port could forge its source IP). Requires HUB_TRUSTED_PROXY=true and at least one CIDR, or boot fails.
+  HUB_TRUSTED_PROXY_STRICT: z.enum(["true", "false"]).optional(),
   // Product edition (open-core): "community" (OSS, default) | "pro" | "cloud". Build/license-injected,
   // not owner-settable. Validated here for fail-fast boot; @tugra/shared also normalises it defensively.
   TUGRA_EDITION: z.enum(["community", "pro", "cloud"]).default("community"),
@@ -233,6 +237,27 @@ export const envSchema = z
         path: ["HUB_SIGNING_KEY"],
         message: "HUB_SIGNING_KEY is required unless NODE_ENV is development or test (fail-closed)",
       });
+    }
+    // Strict proxy trust with nothing to trust would silently collapse every source IP to the proxy address.
+    if (v.HUB_TRUSTED_PROXY_STRICT === "true") {
+      if (v.HUB_TRUSTED_PROXY !== "true") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["HUB_TRUSTED_PROXY_STRICT"],
+          message: "HUB_TRUSTED_PROXY_STRICT=true requires HUB_TRUSTED_PROXY=true",
+        });
+      }
+      const cidrs = (v.HUB_TRUSTED_PROXY_CIDRS ?? "")
+        .split(",")
+        .map((e) => e.trim())
+        .filter((e) => e && isValidIpOrCidr(e));
+      if (cidrs.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["HUB_TRUSTED_PROXY_CIDRS"],
+          message: "HUB_TRUSTED_PROXY_STRICT=true requires HUB_TRUSTED_PROXY_CIDRS with at least one valid IP or CIDR",
+        });
+      }
     }
     if (v.TUGRA_HOSTPORT_MIN >= v.TUGRA_HOSTPORT_MAX) {
       ctx.addIssue({

@@ -44,7 +44,7 @@ import { MetricsService } from "../metrics/metrics.service";
 import { ContainerMetricsService } from "../metrics/container-metrics.service";
 import { TrafficMetricsService } from "../traffic/traffic-metrics.service";
 import { ServersService } from "../servers/servers.service";
-import { observedIp } from "../common/observed-ip";
+import { observedIp, trustProxyEnabled } from "../common/observed-ip";
 
 /** Normalize an agent's advertised feature list (bounded, strings only). */
 function featureSet(raw: unknown): Set<string> {
@@ -52,10 +52,6 @@ function featureSet(raw: unknown): Set<string> {
   if (Array.isArray(raw)) for (const f of raw.slice(0, 32)) if (typeof f === "string" && f.length <= 64) out.add(f);
   return out;
 }
-
-// Trust X-Forwarded-For only when the hub is explicitly behind a reverse proxy;
-// otherwise the raw TCP peer address (which an agent cannot spoof) is used.
-const TRUST_PROXY = process.env.HUB_TRUSTED_PROXY === "true";
 
 // ws keepalive sweep period. Each tick pings every socket and terminates one that didn't pong since the
 // last tick — so a half-open TCP (a crashed/partitioned box that never sent a close) is detected within
@@ -259,10 +255,12 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
   private onConnection(socket: WebSocket, req?: import("node:http").IncomingMessage): void {
     const nonce = randomUUID();
     const fwd = req?.headers["x-forwarded-for"];
+    // Trust X-Forwarded-For only when the hub is explicitly behind a reverse proxy;
+    // otherwise the raw TCP peer address (which an agent cannot spoof) is used.
     const remoteIp = observedIp(
       req?.socket?.remoteAddress,
       Array.isArray(fwd) ? fwd[0] : fwd,
-      TRUST_PROXY,
+      trustProxyEnabled(),
     );
     // Close the socket if it hasn't authenticated by the deadline (an unauthenticated peer can otherwise
     // hold a connection open indefinitely). Cleared on successful enroll/auth and on close.

@@ -12,6 +12,9 @@ import {
   isTrustedProxyPeer,
   parseTrustedProxyCidrs,
   trustProxyFn,
+  parseForwardedToken,
+  strictProxyTrust,
+  trustProxyEnabled,
 } from "./observed-ip";
 
 describe("observedPublicIpFromUrl", () => {
@@ -321,5 +324,122 @@ describe("observedIp — X-Forwarded-For only from a trusted proxy peer", () => 
     expect(trustProxyFn("172.18.0.2", 0)).toBe(true);
     expect(trustProxyFn("172.18.0.2", 1)).toBe(false);
     expect(trustProxyFn("203.0.113.7", 0)).toBe(false);
+  });
+});
+
+describe("parseForwardedToken", () => {
+  it("accepts plain, quoted, port-suffixed, bracketed and mapped forms", () => {
+    expect(parseForwardedToken("1.2.3.4")).toBe("1.2.3.4");
+    expect(parseForwardedToken(" 1.2.3.4 ")).toBe("1.2.3.4");
+    expect(parseForwardedToken("1.2.3.4:5678")).toBe("1.2.3.4");
+    expect(parseForwardedToken("[2001:db8::1]:443")).toBe("2001:db8::1");
+    expect(parseForwardedToken("[::1]")).toBe("::1");
+    expect(parseForwardedToken('"1.2.3.4"')).toBe("1.2.3.4");
+    expect(parseForwardedToken("::ffff:10.0.0.5")).toBe("10.0.0.5");
+    expect(parseForwardedToken("2001:db8::1")).toBe("2001:db8::1");
+  });
+  it("rejects anything that is not an IP", () => {
+    for (const bad of ["unknown", "evil", "", "1.2.3", "1.2.3.4:", "1.2.3.4:x", "999.1.1.1", "1.2.3.4 5.6.7.8", "[1.2.3.4"]) {
+      expect(parseForwardedToken(bad)).toBeNull();
+    }
+  });
+});
+
+describe("observedIp — forwarded token validation (fail closed)", () => {
+  const prevCidrs = process.env.HUB_TRUSTED_PROXY_CIDRS;
+  afterEach(() => {
+    if (prevCidrs === undefined) delete process.env.HUB_TRUSTED_PROXY_CIDRS;
+    else process.env.HUB_TRUSTED_PROXY_CIDRS = prevCidrs;
+  });
+  it("parses a port-suffixed rightmost entry from a trusted private peer", () => {
+    expect(observedIp("10.0.0.9", "x, 9.9.9.9:1234", true)).toBe("9.9.9.9");
+  });
+  it("a malformed rightmost entry from a trusted peer yields null, never the proxy address", () => {
+    expect(observedIp("10.0.0.9", "1.2.3.4, evil", true)).toBeNull();
+    expect(observedIp("10.0.0.9", "unknown", true)).toBeNull();
+  });
+  it("trust off + garbage XFF keeps the raw peer; a public peer's forged XFF keeps the raw peer", () => {
+    expect(observedIp("10.0.0.9", "garbage", false)).toBe("10.0.0.9");
+    expect(observedIp("203.0.113.7", "garbage", true)).toBe("203.0.113.7");
+    expect(observedIp("203.0.113.7", "1.2.3.4", true)).toBe("203.0.113.7");
+  });
+});
+
+describe("HUB_TRUSTED_PROXY_STRICT", () => {
+  const prevStrict = process.env.HUB_TRUSTED_PROXY_STRICT;
+  const prevCidrs = process.env.HUB_TRUSTED_PROXY_CIDRS;
+  const prevTrust = process.env.HUB_TRUSTED_PROXY;
+  afterEach(() => {
+    for (const [k, v] of [
+      ["HUB_TRUSTED_PROXY_STRICT", prevStrict],
+      ["HUB_TRUSTED_PROXY_CIDRS", prevCidrs],
+      ["HUB_TRUSTED_PROXY", prevTrust],
+    ] as const) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+  const strict = (cidrs?: string) => {
+    process.env.HUB_TRUSTED_PROXY_STRICT = "true";
+    if (cidrs === undefined) delete process.env.HUB_TRUSTED_PROXY_CIDRS;
+    else process.env.HUB_TRUSTED_PROXY_CIDRS = cidrs;
+  };
+
+  it("strictProxyTrust / trustProxyEnabled read the env per call", () => {
+    delete process.env.HUB_TRUSTED_PROXY_STRICT;
+    expect(strictProxyTrust()).toBe(false);
+    process.env.HUB_TRUSTED_PROXY_STRICT = "false";
+    expect(strictProxyTrust()).toBe(false);
+    process.env.HUB_TRUSTED_PROXY_STRICT = "true";
+    expect(strictProxyTrust()).toBe(true);
+    delete process.env.HUB_TRUSTED_PROXY;
+    expect(trustProxyEnabled()).toBe(false);
+    process.env.HUB_TRUSTED_PROXY = "true";
+    expect(trustProxyEnabled()).toBe(true);
+    process.env.HUB_TRUSTED_PROXY = "false";
+    expect(trustProxyEnabled()).toBe(false);
+  });
+
+  it("a private peer that is not listed is NOT trusted: XFF ignored, raw peer returned", () => {
+    strict("172.18.0.0/16");
+    expect(isTrustedProxyPeer("10.0.0.9")).toBe(false);
+    expect(observedIp("10.0.0.9", "9.9.9.9", true)).toBe("10.0.0.9");
+    expect(isTrustedProxyPeer("127.0.0.1")).toBe(false);
+  });
+  it("a listed private peer and a listed public peer are trusted", () => {
+    strict("172.18.0.0/16, 198.51.100.0/24");
+    expect(isTrustedProxyPeer("172.18.0.2")).toBe(true);
+    expect(observedIp("172.18.0.2", "9.9.9.9", true)).toBe("9.9.9.9");
+    expect(isTrustedProxyPeer("198.51.100.9")).toBe(true);
+    expect(isTrustedProxyPeer("203.0.113.7")).toBe(false);
+  });
+  it("0.0.0.0/0,::/0 trusts any well-formed peer", () => {
+    strict("0.0.0.0/0,::/0");
+    expect(isTrustedProxyPeer("10.0.0.9")).toBe(true);
+    expect(isTrustedProxyPeer("203.0.113.7")).toBe(true);
+    expect(isTrustedProxyPeer("not-an-ip")).toBe(false);
+  });
+  it("strict with empty CIDRs trusts nobody at function level", () => {
+    strict(undefined);
+    expect(isTrustedProxyPeer("10.0.0.9")).toBe(false);
+    expect(isTrustedProxyPeer("127.0.0.1")).toBe(false);
+    strict("");
+    expect(isTrustedProxyPeer("172.18.0.2")).toBe(false);
+  });
+  it("unset or 'false' is identical to the default behaviour", () => {
+    delete process.env.HUB_TRUSTED_PROXY_CIDRS;
+    for (const v of [undefined, "false"]) {
+      if (v === undefined) delete process.env.HUB_TRUSTED_PROXY_STRICT;
+      else process.env.HUB_TRUSTED_PROXY_STRICT = v;
+      expect(isTrustedProxyPeer("10.0.0.9")).toBe(true);
+      expect(isTrustedProxyPeer("203.0.113.7")).toBe(false);
+      expect(observedIp("172.18.0.2", "9.9.9.9", true)).toBe("9.9.9.9");
+    }
+  });
+  it("trustProxyFn honours strict for hop 0 and never trusts hop 1", () => {
+    strict("172.18.0.0/16");
+    expect(trustProxyFn("172.18.0.2", 0)).toBe(true);
+    expect(trustProxyFn("10.0.0.9", 0)).toBe(false);
+    expect(trustProxyFn("172.18.0.2", 1)).toBe(false);
   });
 });

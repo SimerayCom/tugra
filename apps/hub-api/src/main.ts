@@ -3,7 +3,7 @@ import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
 import { configureApp } from "./app-config";
 import { setupOpenApi } from "./openapi/openapi";
-import { parseTrustedProxyCidrs, trustProxyFn } from "./common/observed-ip";
+import { parseTrustedProxyCidrs, strictProxyTrust, trustProxyEnabled, trustProxyFn } from "./common/observed-ip";
 import { applyTransferTimeouts } from "./common/http-timeouts";
 
 async function bootstrap() {
@@ -14,12 +14,12 @@ async function bootstrap() {
   // hop (req.ip = rightmost X-Forwarded-For entry, same rule as the PAT guard / agent gateway); never blanket-trust.
   // The hop is honored only when the TCP peer is itself a private/loopback/docker peer (or listed in
   // HUB_TRUSTED_PROXY_CIDRS), so a direct public hit on a raw published port cannot forge X-Forwarded-For.
-  if (process.env.HUB_TRUSTED_PROXY === "true") {
+  if (trustProxyEnabled()) {
     (app.getHttpAdapter().getInstance() as { set(k: string, v: unknown): void }).set("trust proxy", trustProxyFn);
     const cidrs = parseTrustedProxyCidrs();
     // eslint-disable-next-line no-console
     console.log(
-      `HUB_TRUSTED_PROXY=true: X-Forwarded-For honored only from private/loopback/docker peers (+HUB_TRUSTED_PROXY_CIDRS=${cidrs.length ? cidrs.join(",") : "none"}); direct public peers use the socket IP`,
+      `HUB_TRUSTED_PROXY=true: X-Forwarded-For honored only from private/loopback/docker peers (+HUB_TRUSTED_PROXY_CIDRS=${cidrs.length ? cidrs.join(",") : "none"})${strictProxyTrust() ? " strict=true (only HUB_TRUSTED_PROXY_CIDRS peers are trusted)" : ""}; direct public peers use the socket IP`,
     );
   }
   configureApp(app); // /api/v1 prefix (+ webhook/oauth/health/version exemptions)

@@ -21,8 +21,14 @@ vulnerability**, see the [security policy](../SECURITY.md) — please don't open
   on a raw published port cannot forge its own IP past the PAT allowlist, throttling or the observed server IP. A
   reverse proxy with a **public** egress IP (a proxy on another host) must be listed in `HUB_TRUSTED_PROXY_CIDRS`
   (comma-separated IPs/CIDRs; `0.0.0.0/0,::/0` trusts any peer — only when the proxy alone can reach the port).
-  This is defense in depth next to the loopback bind the installer applies; a spoof from inside the same
-  LAN/VPN is not covered (private peers stay trusted). Not yet handled: Cloudflare's orange-cloud proxy in front
+  This is defense in depth next to the loopback bind the installer applies. By default private peers stay trusted,
+  so a host on the same LAN/VPN that reaches the raw hub port could forge its source IP; set
+  `HUB_TRUSTED_PROXY_STRICT=true` to trust **only** the `HUB_TRUSTED_PROXY_CIDRS` peers (list your proxy's subnet,
+  e.g. from `docker network inspect <panel network>`; the hub refuses to boot in strict mode without
+  `HUB_TRUSTED_PROXY=true` and at least one valid CIDR, and a wrong CIDR collapses observed IPs to the proxy
+  address). The rightmost `X-Forwarded-For` entry must be a valid IP (a port suffix or IPv6 brackets are parsed);
+  a malformed one is treated as no source IP, so it is denied by the API allowlist rather than recorded. Whether the
+  web container's Next rewrites append the browser IP to `X-Forwarded-For` is not verified yet. Not yet handled: Cloudflare's orange-cloud proxy in front
   of the bundled Traefik (Traefik sees a Cloudflare edge address); allowlists are not meaningful in that mode.
 - **Two-factor auth & sessions.** TOTP 2FA with recovery codes; httpOnly session cookies with CSRF
   protection; `COOKIE_SECURE` + `HUB_TRUSTED_PROXY` for correct handling behind a TLS reverse proxy.

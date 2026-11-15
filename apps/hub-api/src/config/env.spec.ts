@@ -204,3 +204,33 @@ describe("validateEnv — HUB_TRUSTED_PROXY_CIDRS", () => {
     expect(() => validateEnv({ ...env, HUB_TRUSTED_PROXY_CIDRS: "10.0.0.0/40" })).toThrow(/HUB_TRUSTED_PROXY_CIDRS/);
   });
 });
+
+describe("validateEnv — HUB_TRUSTED_PROXY_STRICT", () => {
+  const env = { ...base, NODE_ENV: "development" };
+  it("is off by default and when false", () => {
+    expect(() => validateEnv({ ...env })).not.toThrow();
+    expect(() => validateEnv({ ...env, HUB_TRUSTED_PROXY_STRICT: "false" })).not.toThrow();
+  });
+  it("accepts true with HUB_TRUSTED_PROXY=true and at least one valid CIDR", () => {
+    expect(() =>
+      validateEnv({ ...env, HUB_TRUSTED_PROXY: "true", HUB_TRUSTED_PROXY_STRICT: "true", HUB_TRUSTED_PROXY_CIDRS: "172.18.0.0/16" }),
+    ).not.toThrow();
+  });
+  it("fails boot without HUB_TRUSTED_PROXY=true", () => {
+    expect(() => validateEnv({ ...env, HUB_TRUSTED_PROXY_STRICT: "true", HUB_TRUSTED_PROXY_CIDRS: "172.18.0.0/16" })).toThrow(
+      /HUB_TRUSTED_PROXY_STRICT/,
+    );
+  });
+  it("fails boot with no CIDRs (a strict mode that trusts nobody would collapse every source IP)", () => {
+    expect(() => validateEnv({ ...env, HUB_TRUSTED_PROXY: "true", HUB_TRUSTED_PROXY_STRICT: "true" })).toThrow(/HUB_TRUSTED_PROXY_CIDRS/);
+    expect(() =>
+      validateEnv({ ...env, HUB_TRUSTED_PROXY: "true", HUB_TRUSTED_PROXY_STRICT: "true", HUB_TRUSTED_PROXY_CIDRS: " , " }),
+    ).toThrow(/HUB_TRUSTED_PROXY_CIDRS/);
+  });
+  it("rejects a non-enum value and still rejects an invalid CIDR", () => {
+    expect(() => validateEnv({ ...env, HUB_TRUSTED_PROXY_STRICT: "yes" })).toThrow(/HUB_TRUSTED_PROXY_STRICT/);
+    expect(() =>
+      validateEnv({ ...env, HUB_TRUSTED_PROXY: "true", HUB_TRUSTED_PROXY_STRICT: "true", HUB_TRUSTED_PROXY_CIDRS: "nonsense" }),
+    ).toThrow(/HUB_TRUSTED_PROXY_CIDRS/);
+  });
+});

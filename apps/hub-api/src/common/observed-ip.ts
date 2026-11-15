@@ -198,21 +198,54 @@ export function parseTrustedProxyCidrs(raw: string | undefined = process.env.HUB
   return cidrCache;
 }
 
+/** True when the operator declared a trusted proxy in front of the hub (HUB_TRUSTED_PROXY=true). Read per call. */
+export function trustProxyEnabled(): boolean {
+  return process.env.HUB_TRUSTED_PROXY === "true";
+}
+
+/** Opt-in strict mode (HUB_TRUSTED_PROXY_STRICT=true): only peers listed in HUB_TRUSTED_PROXY_CIDRS may speak for a
+ *  client via X-Forwarded-For; a private/loopback/docker peer that is not listed is no longer trusted implicitly. */
+export function strictProxyTrust(): boolean {
+  return process.env.HUB_TRUSTED_PROXY_STRICT === "true";
+}
+
 /**
  * May this TCP peer speak for a client via X-Forwarded-For? Only a well-formed address that is NOT publicly
  * routable (loopback, RFC1918/docker bridge, CGNAT, link-local, ULA) or that is listed in
  * HUB_TRUSTED_PROXY_CIDRS (a remote proxy with a public egress IP; 0.0.0.0/0 + ::/0 = trust any). A direct
  * hit from the public internet therefore can never forge its own source IP, even with HUB_TRUSTED_PROXY=true.
+ * With HUB_TRUSTED_PROXY_STRICT=true ONLY the HUB_TRUSTED_PROXY_CIDRS entries are trusted (a same-LAN host that
+ * reaches the raw hub port can then no longer forge its source IP either).
  */
 export function isTrustedProxyPeer(remote: string | null | undefined): boolean {
   if (!remote) return false;
   const addr = normalizeIp(remote);
   if (isIP(addr) === 0) return false;
+  if (strictProxyTrust()) return ipMatchesAllowlist(addr, parseTrustedProxyCidrs());
   return !isPublicIp(addr) || ipMatchesAllowlist(addr, parseTrustedProxyCidrs());
 }
 
 /** Express `trust proxy` predicate: trust exactly ONE hop, and only when that hop is a trusted proxy peer. */
 export const trustProxyFn = (addr: string, hop: number): boolean => hop === 0 && isTrustedProxyPeer(addr);
+
+/**
+ * Parse one X-Forwarded-For token into a bare IP, or null when it is not an IP address. Accepts a quoted token,
+ * a bracketed IPv6 (with an optional port) and an IPv4 with a port; an IPv4-mapped IPv6 is folded to its IPv4.
+ * Anything else (`unknown`, a hostname, a truncated address, free text) is rejected so it is never recorded as a
+ * client IP or matched against an allowlist.
+ */
+export function parseForwardedToken(tok: string): string | null {
+  let t = tok.trim();
+  if (t.length >= 2 && t.startsWith('"') && t.endsWith('"')) t = t.slice(1, -1).trim();
+  const v6 = /^\[([^\]]+)\](?::\d+)?$/.exec(t);
+  if (v6) t = v6[1] as string;
+  else {
+    const v4 = /^(\d{1,3}(?:\.\d{1,3}){3}):\d+$/.exec(t);
+    if (v4) t = v4[1] as string;
+  }
+  const ip = normalizeIp(t);
+  return isIP(ip) !== 0 ? ip : null;
+}
 
 /**
  * The reachable source IP of an inbound connection.
@@ -227,7 +260,8 @@ export const trustProxyFn = (addr: string, hop: number): boolean => hop === 0 &&
  * With a trusted proxy we take the RIGHTMOST X-Forwarded-For entry — the peer the
  * proxy itself observed and appended. The leftmost entries are client-supplied
  * and spoofable (a proxy that appends, e.g. nginx `proxy_add_x_forwarded_for`, or
- * a CDN, would otherwise let an agent forge its own IP).
+ * a CDN, would otherwise let an agent forge its own IP). That entry must parse as an IP
+ * (parseForwardedToken); a malformed one yields null (fail closed) — never the proxy's own address.
  *
  * Normalizes IPv4-mapped IPv6 (`::ffff:1.2.3.4` -> `1.2.3.4`). Returns null when
  * nothing usable is present.
@@ -237,13 +271,10 @@ export function observedIp(
   forwardedFor: string | null | undefined,
   trustProxy: boolean,
 ): string | null {
-  let raw: string;
   if (trustProxy && forwardedFor && isTrustedProxyPeer(remoteAddress)) {
     const parts = forwardedFor.split(",");
-    raw = parts[parts.length - 1]?.trim() ?? "";
-  } else {
-    raw = remoteAddress ?? "";
+    return parseForwardedToken(parts[parts.length - 1] ?? "");
   }
-  raw = raw.replace(/^::ffff:/i, "");
+  const raw = (remoteAddress ?? "").replace(/^::ffff:/i, "");
   return raw || null;
 }

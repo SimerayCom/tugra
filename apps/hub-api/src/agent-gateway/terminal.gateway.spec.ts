@@ -107,6 +107,25 @@ describe("TerminalGateway", () => {
     expect(agentWs.sendToAgent).not.toHaveBeenCalled();
   });
 
+  it("rejects a PAT terminal when a trusted proxy sends a malformed rightmost X-Forwarded-For entry (fail closed)", async () => {
+    process.env.HUB_TRUSTED_PROXY = "true";
+    try {
+      const { gw, agentWs } = make({
+        validate: jest.fn().mockResolvedValue({ userId: "u1", scopes: ["admin"] }),
+        server: { id: "s1", teamId: "t1" },
+        apiAllowedIps: ["10.0.0.0/8"],
+      });
+      const ws = fakeWs();
+      const r = req("/terminal?server=s1", "tugra.bearer, tugra_pat_abc", "10.9.9.9");
+      r.headers["x-forwarded-for"] = "10.1.1.1, not-an-ip";
+      await connect(gw, ws, r);
+      expect(ws.close).toHaveBeenCalledWith(1008, "unauthorized");
+      expect(agentWs.sendToAgent).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.HUB_TRUSTED_PROXY;
+    }
+  });
+
   it("allows a PAT terminal from an allowlisted source IP", async () => {
     const { gw, agentWs } = make({
       validate: jest.fn().mockResolvedValue({ userId: "u1", scopes: ["admin"] }),

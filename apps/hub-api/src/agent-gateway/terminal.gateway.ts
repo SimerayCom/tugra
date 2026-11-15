@@ -18,7 +18,7 @@ import { scopeSatisfies } from "../api-tokens/scopes";
 import { AuditService } from "../audit/audit.service";
 import { isApiToken } from "../api-tokens/api-token.util";
 import { InstanceSettingsService } from "../instance/instance-settings.service";
-import { observedIp } from "../common/observed-ip";
+import { observedIp, trustProxyEnabled } from "../common/observed-ip";
 import { ipMatchesAllowlist } from "../common/ip-allowlist";
 import { parseCookies, TG_ACCESS } from "../common/cookies";
 import { webBaseUrl } from "../common/web-url";
@@ -288,7 +288,7 @@ export class TerminalGateway
         const ip = observedIp(
           req.socket?.remoteAddress,
           Array.isArray(fwd) ? fwd[0] : fwd,
-          process.env.HUB_TRUSTED_PROXY === "true",
+          trustProxyEnabled(),
         );
         if (!ip || !ipMatchesAllowlist(ip, settings.apiAllowedIps)) return null;
       }

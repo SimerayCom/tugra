@@ -11,6 +11,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   GHSA-g3hv-75wg-m249, glob GHSA-3g3m-2fjr-6pw4). The vite lock was refreshed to 8.3.8. No runtime behaviour change.
 - **Updater.** The pre-update restore point now refuses to start when the backup directory clearly lacks free space for
   the dump (nothing is changed).
+- **Security.** X-Forwarded-For entries from a trusted proxy are now validated as IP addresses (a malformed value is no
+  longer recorded as the client IP or matched against the allowlist). New opt-in `HUB_TRUSTED_PROXY_STRICT=true` trusts
+  only `HUB_TRUSTED_PROXY_CIDRS` peers; off by default.
 
 ## [0.1.0-beta.14] - 2026-11-15
 

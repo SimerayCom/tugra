@@ -63,6 +63,13 @@ describe("ApiAuthGuard — PAT-only API gating", () => {
     ).resolves.toBe(true);
   });
 
+  it("denies when a trusted proxy sends a malformed rightmost X-Forwarded-For entry (fail closed)", async () => {
+    process.env.HUB_TRUSTED_PROXY = "true";
+    await expect(
+      guard({ apiEnabled: true, apiAllowedIps: ["10.0.0.0/8"] }).canActivate(ctxFor("10.9.9.9", "1.2.3.4, unknown")),
+    ).rejects.toThrow(/not allowed/);
+  });
+
   it("ignores X-Forwarded-For when the proxy is untrusted (default)", async () => {
     // trustProxy off → the socket peer (10.9.9.9) is used, not the spoofable XFF
     await expect(
