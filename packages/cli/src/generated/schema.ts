@@ -2276,6 +2276,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/apps/{id}/compose-networks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["ApplicationsController_listComposeNetworks"];
+        put: operations["ApplicationsController_setComposeNetworks"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/apps/{id}/domain/auto-setup": {
         parameters: {
             query?: never;
@@ -4964,6 +4980,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/import/services/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["ImporterController_previewServices"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/import/apply": {
         parameters: {
             query?: never;
@@ -5007,6 +5039,38 @@ export interface paths {
         put?: never;
         post: operations["ImporterController_relinkGit"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/import/mapping/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["ImporterController_resolveMapping"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/import/sessions/{sessionId}/mapping": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["ImporterController_getMapping"];
+        put: operations["ImporterController_putMapping"];
+        post?: never;
+        delete: operations["ImporterController_deleteMapping"];
         options?: never;
         head?: never;
         patch?: never;
@@ -5150,6 +5214,102 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["ImporterController_remapEnvUndo"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/import/operations/{opId}/volumes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["ImporterController_volumes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/import/operations/{opId}/volumes/{itemRef}/disk-check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["ImporterController_volumeDiskCheck"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/import/operations/{opId}/volumes/{itemRef}/exclude": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["ImporterController_volumeExclude"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/import/operations/{opId}/volumes/{itemRef}/include": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["ImporterController_volumeInclude"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/import/operations/{opId}/volumes/{itemRef}/abort": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["ImporterController_volumeAbort"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/import/operations/{opId}/volumes/{itemRef}/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["ImporterController_volumeReset"];
         delete?: never;
         options?: never;
         head?: never;
@@ -19646,6 +19806,153 @@ export interface operations {
                         service: string;
                         hostname: string;
                         port: number;
+                    }[];
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    ApplicationsController_listComposeNetworks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    ApplicationsController_setComposeNetworks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    networks: {
+                        network: string;
+                        service: string;
+                        aliases: (string & (unknown & unknown))[];
                     }[];
                 };
             };
@@ -37386,6 +37693,7 @@ export interface operations {
                     /** Format: uri */
                     baseUrl: string;
                     token: string;
+                    scopeLabel?: string;
                 };
             };
         };
@@ -37460,15 +37768,124 @@ export interface operations {
                     /** @enum {string} */
                     sourceKind: "coolify";
                     sessionId: string;
+                    dbDataModes?: {
+                        [key: string]: "volume";
+                    };
                 } | {
                     /** @enum {string} */
                     sourceKind: "dokploy";
                     sessionId: string;
+                    dbDataModes?: {
+                        [key: string]: "volume";
+                    };
                 };
             };
         };
         responses: {
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    ImporterController_previewServices: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    sessionId: string;
+                    /** @enum {string} */
+                    sourceKind?: "coolify" | "dokploy";
+                    choices?: {
+                        [key: string]: {
+                            skip?: boolean;
+                            name?: string;
+                            environmentId?: string;
+                            targetServerId?: string;
+                            serviceDomains?: {
+                                service: string;
+                                hostname: string;
+                                port: number;
+                            }[];
+                            hostnameMap?: {
+                                [key: string]: string;
+                            };
+                            volumes?: {
+                                [key: string]: {
+                                    /** @enum {string} */
+                                    policy: "copy" | "empty" | "skip";
+                                    owner?: {
+                                        uid: number;
+                                        gid: number;
+                                    };
+                                };
+                            };
+                            dropMembers?: string[];
+                            pinImages?: boolean;
+                            pins?: {
+                                [key: string]: string;
+                            };
+                            privateNetwork?: boolean;
+                            hold?: boolean;
+                        };
+                    };
+                };
+            };
+        };
+        responses: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -37547,6 +37964,83 @@ export interface operations {
                         code: "app.env.unresolved" | "app.env.key.invalid";
                         itemRef?: string;
                     }[];
+                    serviceChoices?: {
+                        [key: string]: {
+                            skip?: boolean;
+                            name?: string;
+                            environmentId?: string;
+                            targetServerId?: string;
+                            serviceDomains?: {
+                                service: string;
+                                hostname: string;
+                                port: number;
+                            }[];
+                            hostnameMap?: {
+                                [key: string]: string;
+                            };
+                            volumes?: {
+                                [key: string]: {
+                                    /** @enum {string} */
+                                    policy: "copy" | "empty" | "skip";
+                                    owner?: {
+                                        uid: number;
+                                        gid: number;
+                                    };
+                                };
+                            };
+                            dropMembers?: string[];
+                            pinImages?: boolean;
+                            pins?: {
+                                [key: string]: string;
+                            };
+                            privateNetwork?: boolean;
+                            hold?: boolean;
+                        };
+                    };
+                    mapping?: {
+                        /** @enum {number} */
+                        version: 1;
+                        scope?: {
+                            /** @enum {string} */
+                            sourceKind: "coolify" | "dokploy";
+                            scopeKey?: string;
+                        };
+                        /** @default {} */
+                        items?: {
+                            [key: string]: {
+                                include?: boolean;
+                                name?: string;
+                                project?: string;
+                                environment?: string;
+                                containerAlias?: string | null;
+                                dbIdentifier?: string;
+                            };
+                        };
+                        /** @default {} */
+                        projects?: {
+                            [key: string]: {
+                                name?: string;
+                                environments?: {
+                                    [key: string]: string;
+                                };
+                            };
+                        };
+                        /** @default {} */
+                        gitSources?: {
+                            [key: string]: {
+                                name: string;
+                            };
+                        };
+                        /** @default [] */
+                        acks?: string[];
+                    };
+                    mappingHash?: string;
+                    reconcile?: boolean;
+                    ignoreStoredMapping?: boolean;
+                    saveMapping?: boolean;
+                    dbDataModes?: {
+                        [key: string]: "volume";
+                    };
                 } | {
                     /** @enum {string} */
                     sourceKind: "dokploy";
@@ -37559,6 +38053,83 @@ export interface operations {
                         code: "app.env.unresolved" | "app.env.key.invalid";
                         itemRef?: string;
                     }[];
+                    serviceChoices?: {
+                        [key: string]: {
+                            skip?: boolean;
+                            name?: string;
+                            environmentId?: string;
+                            targetServerId?: string;
+                            serviceDomains?: {
+                                service: string;
+                                hostname: string;
+                                port: number;
+                            }[];
+                            hostnameMap?: {
+                                [key: string]: string;
+                            };
+                            volumes?: {
+                                [key: string]: {
+                                    /** @enum {string} */
+                                    policy: "copy" | "empty" | "skip";
+                                    owner?: {
+                                        uid: number;
+                                        gid: number;
+                                    };
+                                };
+                            };
+                            dropMembers?: string[];
+                            pinImages?: boolean;
+                            pins?: {
+                                [key: string]: string;
+                            };
+                            privateNetwork?: boolean;
+                            hold?: boolean;
+                        };
+                    };
+                    mapping?: {
+                        /** @enum {number} */
+                        version: 1;
+                        scope?: {
+                            /** @enum {string} */
+                            sourceKind: "coolify" | "dokploy";
+                            scopeKey?: string;
+                        };
+                        /** @default {} */
+                        items?: {
+                            [key: string]: {
+                                include?: boolean;
+                                name?: string;
+                                project?: string;
+                                environment?: string;
+                                containerAlias?: string | null;
+                                dbIdentifier?: string;
+                            };
+                        };
+                        /** @default {} */
+                        projects?: {
+                            [key: string]: {
+                                name?: string;
+                                environments?: {
+                                    [key: string]: string;
+                                };
+                            };
+                        };
+                        /** @default {} */
+                        gitSources?: {
+                            [key: string]: {
+                                name: string;
+                            };
+                        };
+                        /** @default [] */
+                        acks?: string[];
+                    };
+                    mappingHash?: string;
+                    reconcile?: boolean;
+                    ignoreStoredMapping?: boolean;
+                    saveMapping?: boolean;
+                    dbDataModes?: {
+                        [key: string]: "volume";
+                    };
                 };
             };
         };
@@ -37718,6 +38289,362 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ApiError"];
                 };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    ImporterController_resolveMapping: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    sessionId: string;
+                    /** @enum {string} */
+                    sourceKind: "coolify" | "dokploy";
+                    planHash: string;
+                    targetServerId: string;
+                    environmentId?: string;
+                    reconcile?: boolean;
+                    mapping: {
+                        /** @enum {number} */
+                        version: 1;
+                        scope?: {
+                            /** @enum {string} */
+                            sourceKind: "coolify" | "dokploy";
+                            scopeKey?: string;
+                        };
+                        /** @default {} */
+                        items?: {
+                            [key: string]: {
+                                include?: boolean;
+                                name?: string;
+                                project?: string;
+                                environment?: string;
+                                containerAlias?: string | null;
+                                dbIdentifier?: string;
+                            };
+                        };
+                        /** @default {} */
+                        projects?: {
+                            [key: string]: {
+                                name?: string;
+                                environments?: {
+                                    [key: string]: string;
+                                };
+                            };
+                        };
+                        /** @default {} */
+                        gitSources?: {
+                            [key: string]: {
+                                name: string;
+                            };
+                        };
+                        /** @default [] */
+                        acks?: string[];
+                    };
+                };
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    ImporterController_getMapping: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    ImporterController_putMapping: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    mapping: {
+                        /** @enum {number} */
+                        version: 1;
+                        scope?: {
+                            /** @enum {string} */
+                            sourceKind: "coolify" | "dokploy";
+                            scopeKey?: string;
+                        };
+                        /** @default {} */
+                        items?: {
+                            [key: string]: {
+                                include?: boolean;
+                                name?: string;
+                                project?: string;
+                                environment?: string;
+                                containerAlias?: string | null;
+                                dbIdentifier?: string;
+                            };
+                        };
+                        /** @default {} */
+                        projects?: {
+                            [key: string]: {
+                                name?: string;
+                                environments?: {
+                                    [key: string]: string;
+                                };
+                            };
+                        };
+                        /** @default {} */
+                        gitSources?: {
+                            [key: string]: {
+                                name: string;
+                            };
+                        };
+                        /** @default [] */
+                        acks?: string[];
+                    };
+                    label?: string;
+                    expectedVersion?: number;
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    ImporterController_deleteMapping: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Missing or invalid authentication. */
             401: {
@@ -38305,6 +39232,427 @@ export interface operations {
             header?: never;
             path: {
                 opId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    ImporterController_volumes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                opId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    ImporterController_volumeDiskCheck: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                opId: string;
+                itemRef: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    rawBytes?: number;
+                };
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    ImporterController_volumeExclude: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                opId: string;
+                itemRef: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {boolean} */
+                    acknowledge: true;
+                    reason?: string;
+                };
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    ImporterController_volumeInclude: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                opId: string;
+                itemRef: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    ImporterController_volumeAbort: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                opId: string;
+                itemRef: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    ImporterController_volumeReset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                opId: string;
+                itemRef: string;
             };
             cookie?: never;
         };
