@@ -2,10 +2,14 @@ import type { ConfigService } from "@nestjs/config";
 import { InstanceController } from "./instance.controller";
 import type { InstanceSettingsService } from "./instance-settings.service";
 import type { MailService } from "../mail/mail.service";
+import type { UpdateService } from "../update/update.service";
+
+const memberVersion = { current: "0.1.0-beta.15", channel: "beta", latest: "0.1.0-beta.16", updateAvailable: true };
 
 function controllerWith(settings: Record<string, unknown>, setupCode?: string, mailConfigured = false): InstanceController {
   const config = { get: (k: string) => (k === "SETUP_CODE" ? setupCode : undefined) } as unknown as ConfigService;
-  return new InstanceController({ get: jest.fn().mockResolvedValue(settings) } as unknown as InstanceSettingsService, config, { isConfigured: () => mailConfigured } as unknown as MailService);
+  const update = { getMemberVersion: jest.fn().mockResolvedValue(memberVersion) } as unknown as UpdateService;
+  return new InstanceController({ get: jest.fn().mockResolvedValue(settings) } as unknown as InstanceSettingsService, config, { isConfigured: () => mailConfigured } as unknown as MailService, update);
 }
 
 // `edition` is env-authoritative (currentEdition() reads TUGRA_EDITION), NOT the DB column.
@@ -67,6 +71,16 @@ describe("InstanceController", () => {
     delete process.env.TUGRA_EDITION; // → community
     const res = await controllerWith({ initializedAt: new Date(), allowRegistration: false, oidcEnabled: true, oidcIssuer: "https://idp", oidcClientId: "cid", oidcClientSecretEnc: "ENC(x)" }).status();
     expect(res.ssoEnabled).toBe(false);
+  });
+
+  it("GET version returns the member slice of the update status (session-guarded, not owner-only)", async () => {
+    const ctrl = controllerWith({ initializedAt: new Date(), allowRegistration: false });
+    await expect(ctrl.version()).resolves.toEqual(memberVersion);
+    // The route is guarded by the session guard only (any member), never by the owner guard.
+    const guards = Reflect.getMetadata("__guards__", ctrl.version) as unknown[];
+    expect(guards.map((g) => (g as { name: string }).name)).toEqual(["JwtAuthGuard"]);
+    // The public status route stays unguarded.
+    expect(Reflect.getMetadata("__guards__", ctrl.status)).toBeUndefined();
   });
 
   it("mailConfigured mirrors MailService.isConfigured() and is a bare boolean", async () => {

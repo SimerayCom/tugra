@@ -10,6 +10,7 @@ import type {
   InstanceStatus,
   InstanceUpdateApply,
   InstanceUpdateStatus,
+  InstanceVersionSummary,
   TelemetryStatus,
   Branding,
   PanelTlsStatus,
@@ -564,6 +565,10 @@ export const api = {
   },
   testMailSettings(to: string) {
     return apiFetch<{ ok: boolean; reason?: string }>("/instance/mail/test", { method: "POST", body: JSON.stringify({ to }) });
+  },
+  // Running version + "newer release published" for any signed-in member (session-guarded on the hub).
+  getInstanceVersion() {
+    return apiFetch<InstanceVersionSummary>("/instance/version");
   },
   // Owner-only self-update status + preferences (session-guarded on the hub).
   getInstanceUpdate() {

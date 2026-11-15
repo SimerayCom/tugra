@@ -258,6 +258,18 @@ export interface InstanceUpdateNotice {
   url: string | null;
 }
 
+/** The member-level slice of the update status (GET /instance/version): any signed-in user. */
+export interface InstanceVersionSummary {
+  /** The running hub version. */
+  current: string;
+  /** The release channel being tracked ("stable" | "beta" | …). */
+  channel: string;
+  /** Latest published version for the tracked channel; null until the owner's hub has checked. */
+  latest: string | null;
+  /** Whether `latest` is strictly newer than `current`. */
+  updateAvailable: boolean;
+}
+
 /** Self-update status (GET /instance/update, PATCH .../update, POST .../update/check). Owner-only. */
 export interface InstanceUpdateStatus {
   /** The running hub version. */

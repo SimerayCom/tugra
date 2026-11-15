@@ -6,6 +6,7 @@
   "collapse": "Collapse",
   "expand": "Expand",
   "menu": "Menu",
+  "goToDashboard": "Go to the dashboard",
   "toggleTheme": "Toggle theme",
   "themeLabel": "Theme: {mode} (click to change)",
   "themeSystem": "System",

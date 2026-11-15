@@ -205,6 +205,69 @@
         ]
       }
     },
+    "/api/v1/instance/version": {
+      "get": {
+        "operationId": "InstanceController_version",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "current": {
+                      "type": "string"
+                    },
+                    "channel": {
+                      "type": "string"
+                    },
+                    "latest": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "updateAvailable": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "current",
+                    "channel",
+                    "latest",
+                    "updateAvailable"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "instance"
+        ]
+      }
+    },
     "/api/v1/instance/status": {
       "get": {
         "operationId": "InstanceController_status",

@@ -114,6 +114,7 @@
   "updateCurrent": "Current version",
   "updateLatest": "Latest",
   "updateAvailable": "Update available",
+  "updateOwnerApplies": "The instance owner applies updates from Settings.",
   "updateUpToDate": "Up to date",
   "updateUnknown": "Not checked yet",
   "updateChannel": "Release channel",

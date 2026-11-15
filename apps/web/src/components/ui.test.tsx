@@ -90,10 +90,23 @@ describe("Btn", () => {
     expect(onClick).not.toHaveBeenCalled(); // disabled while loading
   });
 
-  it("iconTone tints only the leading icon", () => {
-    const { container } = render(<Btn icon={FolderTree} iconTone="success">Start</Btn>);
+  it("iconTone tints only the leading icon on a ghost button", () => {
+    const { container } = render(<Btn variant="ghost" icon={FolderTree} iconTone="success">Start</Btn>);
     const svg = container.querySelector("svg") as SVGElement;
     expect(svg).toBeTruthy();
     expect(svg.style.color).toContain("--c-g"); // success → green token
+  });
+
+  it("ignores iconTone on a solid fill so the icon keeps the fill's contrast colour", () => {
+    // Amber on the gold primary fill (or red on the danger fill) made the icon vanish.
+    const { container } = render(
+      <>
+        <Btn icon={FolderTree} iconTone="warn">Restart</Btn>
+        <Btn variant="danger" icon={FolderTree} iconTone="danger">Stop</Btn>
+      </>,
+    );
+    const svgs = Array.from(container.querySelectorAll("svg")) as SVGElement[];
+    expect(svgs).toHaveLength(2);
+    for (const svg of svgs) expect(svg.style.color).toBe(""); // inherits currentColor (--c-on-a / --c-on-danger)
   });
 });

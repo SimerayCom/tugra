@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, type ReactNode } from "react";
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import type { Branding } from "../lib/types";
@@ -52,15 +53,33 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
   return <BrandingCtx.Provider value={b}>{children}</BrandingCtx.Provider>;
 }
 
-/** The logo + product name, themed. Falls back to the Tugra seal + "Tugra". */
-export function BrandMark({ size = 36, nameSize = 19, showName = true }: { size?: number; nameSize?: number; showName?: boolean }) {
+/**
+ * The logo + product name, themed. Falls back to the Tugra seal + "Tugra". With `href` the mark is a link
+ * (the sidebar logo goes home); with `version` the running version sits under the name, or in the link's
+ * title when the name is hidden (collapsed sidebar), so it is always one glance away.
+ */
+export function BrandMark({ size = 36, nameSize = 19, showName = true, href, version, linkLabel }: { size?: number; nameSize?: number; showName?: boolean; href?: string; version?: string | null; linkLabel?: string }) {
   const b = useBranding();
-  return (
+  const name = b.name || "Tugra";
+  const ver = version ? `v${version.replace(/^v/, "")}` : null;
+  const mark = (
     <>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={b.logoUrl || "/tugra-logo.svg"} alt={b.name || "Tugra"} width={size} height={size} style={{ objectFit: "contain" }} />
-      {showName && <div style={{ fontWeight: 700, fontSize: nameSize, letterSpacing: "-0.01em" }}>{b.name || "Tugra"}</div>}
+      <img src={b.logoUrl || "/tugra-logo.svg"} alt={name} width={size} height={size} style={{ objectFit: "contain", flexShrink: 0 }} />
+      {showName && (
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: nameSize, letterSpacing: "-0.01em", lineHeight: 1.1 }}>{name}</div>
+          {ver && <div className="mono" data-testid="brand-version" style={{ fontSize: 10.5, color: "var(--c-tx3)", marginTop: 2, whiteSpace: "nowrap" }}>{ver}</div>}
+        </div>
+      )}
     </>
+  );
+  if (!href) return mark;
+  const title = ver ? `${name} ${ver}` : name;
+  return (
+    <Link href={href} aria-label={linkLabel || name} title={title} data-testid="brand-link" style={{ display: "flex", alignItems: "center", gap: 9, color: "inherit", textDecoration: "none", minWidth: 0 }}>
+      {mark}
+    </Link>
   );
 }
 

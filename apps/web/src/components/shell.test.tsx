@@ -16,7 +16,7 @@ vi.mock("next/navigation", () => ({
 // result; the defaults match the rest of the suite (a non-owner fleet user, empty query data).
 const mocks = vi.hoisted(() => ({
   useAuth: vi.fn((): { logout: () => void; user: Record<string, unknown> | null } => ({ logout: () => {}, user: { uiMode: "fleet", email: "a@b.c" } })),
-  useQuery: vi.fn((): { data: unknown } => ({ data: [] })),
+  useQuery: vi.fn((_opts?: unknown): { data: unknown } => ({ data: [] })),
 }));
 vi.mock("../lib/auth", () => ({ useAuth: mocks.useAuth }));
 vi.mock("@tanstack/react-query", () => ({ useQuery: mocks.useQuery }));
@@ -27,7 +27,8 @@ afterEach(() => {
 });
 
 describe("sidebar active-route semantics", () => {
-  const links = () => screen.getAllByRole("link");
+  // The brand mark is a link too (logo → dashboard) but not a nav entry; leave it out of the nav checks.
+  const links = () => screen.getAllByRole("link").filter((a) => a.getAttribute("data-testid") !== "brand-link");
   it("marks only the current route's link with aria-current=page and the interaction class", () => {
     mockPath = "/servers/abc";
     render(<Sidebar openPalette={() => {}} />);
@@ -48,6 +49,32 @@ describe("sidebar active-route semantics", () => {
     mockPath = "/nowhere";
     render(<Sidebar openPalette={() => {}} />);
     expect(links().some((a) => a.hasAttribute("aria-current"))).toBe(false);
+  });
+});
+
+describe("sidebar brand mark", () => {
+  afterEach(() => mocks.useQuery.mockReturnValue({ data: [] }));
+  const withVersion = () =>
+    mocks.useQuery.mockImplementation((opts: unknown) => {
+      const key = (opts as { queryKey: unknown[] }).queryKey[0];
+      return key === "instanceVersion" ? { data: { current: "0.1.0-beta.15", channel: "beta", latest: null, updateAvailable: false } } : { data: [] };
+    });
+
+  it("links the logo to the dashboard and shows the running version under the name", () => {
+    withVersion();
+    mockPath = "/servers";
+    render(<I18nProvider><Sidebar openPalette={() => {}} /></I18nProvider>);
+    const home = screen.getByRole("link", { name: "Go to the dashboard" });
+    expect(home.getAttribute("href")).toBe("/dashboard");
+    expect(screen.getByTestId("brand-version").textContent).toBe("v0.1.0-beta.15");
+  });
+
+  it("keeps the version in the link title when the sidebar is collapsed (name hidden)", () => {
+    withVersion();
+    localStorage.setItem("tugra.sidebar", "1");
+    render(<I18nProvider><Sidebar openPalette={() => {}} /></I18nProvider>);
+    const home = screen.getByRole("link", { name: "Go to the dashboard" });
+    expect(home.getAttribute("title")).toContain("v0.1.0-beta.15");
   });
 });
 
@@ -247,11 +274,22 @@ describe("top-bar update badge", () => {
     expect(link.textContent).toContain("0.1.0-beta.7");
   });
 
-  it("renders nothing for a non-owner even when an update is available", () => {
+  it("shows a non-owner the same pill as a status (no link) whose title says the owner applies it", () => {
     mocks.useAuth.mockReturnValue({ logout: vi.fn(), user: { uiMode: "fleet", email: "a@b.c" } });
     mocks.useQuery.mockReturnValue({ data: { updateAvailable: true, latest: "0.1.0-beta.7" } });
     const { container } = render(<I18nProvider><UpdateBadge /></I18nProvider>);
     expect(container.querySelector("a")).toBeNull();
+    const pill = screen.getByRole("status");
+    expect(pill.textContent).toContain("0.1.0-beta.7");
+    expect(pill.getAttribute("title")).toContain("owner");
+  });
+
+  it("stays hidden for a non-owner who is up to date", () => {
+    mocks.useAuth.mockReturnValue({ logout: vi.fn(), user: { uiMode: "fleet", email: "a@b.c" } });
+    mocks.useQuery.mockReturnValue({ data: { updateAvailable: false, latest: "0.1.0-beta.7" } });
+    const { container } = render(<I18nProvider><UpdateBadge /></I18nProvider>);
+    expect(container.querySelector("a")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("renders nothing for an owner who is already up to date", () => {

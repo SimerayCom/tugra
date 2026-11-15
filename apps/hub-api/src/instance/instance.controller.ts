@@ -1,15 +1,20 @@
-import { Controller, Get } from "@nestjs/common";
+import { Controller, Get, UseGuards } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import { ConfigService } from "@nestjs/config";
 import { InstanceSettingsService } from "./instance-settings.service";
 import { MailService } from "../mail/mail.service";
+import { UpdateService } from "../update/update.service";
+import { MemberVersionViewSchema } from "../update/dto";
+import { ApiZodResponse } from "../openapi/openapi";
+import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { currentEdition, editionAtLeast } from "../common/edition";
 
 /**
- * Public onboarding/instance status. No `@UseGuards` → unauthenticated by default (auth is opt-in per
- * controller here), like Health/Version. The web root reads this before any login to decide whether a
- * fresh instance should show the welcome/onboarding flow instead of the login page. Returns only
+ * Public onboarding/instance status. No class-level `@UseGuards` → unauthenticated by default (auth is
+ * opt-in per controller here), like Health/Version. The web root reads this before any login to decide
+ * whether a fresh instance should show the welcome/onboarding flow instead of the login page. Returns only
  * non-secret bootstrap state: `{ initialized, allowRegistration, edition, ssoEnabled, setupCodeRequired, hubPublicUrl, authProviders, mailConfigured }`.
+ * The one session-guarded route here is `GET version` (any signed-in member, not owner-only).
  */
 @ApiTags("instance")
 @Controller("instance")
@@ -18,6 +23,7 @@ export class InstanceController {
     private readonly instance: InstanceSettingsService,
     private readonly config: ConfigService,
     private readonly mail: MailService,
+    private readonly update: UpdateService,
   ) {}
 
   /** Public white-label branding so the login page (and the whole app) can theme before/without auth. Only
@@ -25,6 +31,19 @@ export class InstanceController {
   @Get("branding")
   branding() {
     return this.instance.effectiveBranding();
+  }
+
+  /**
+   * Running version + whether a newer release is published, for EVERY signed-in member (session only). The
+   * shell shows the version under the logo and an "update available" hint to non-owners, who cannot open
+   * the owner-only Updates card. Deliberately not anonymous: a visitor must not learn that an instance is
+   * behind (the public /version carries only the build itself). No preferences are exposed.
+   */
+  @Get("version")
+  @UseGuards(JwtAuthGuard)
+  @ApiZodResponse(MemberVersionViewSchema)
+  version() {
+    return this.update.getMemberVersion();
   }
 
   @Get("status")

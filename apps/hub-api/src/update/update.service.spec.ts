@@ -157,6 +157,13 @@ describe("UpdateService", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
+  it("getMemberVersion exposes only version/channel/latest/updateAvailable (no preferences or notice)", async () => {
+    const st = settingsStub({ cachedLatestVersion: "0.2.0", autoUpdate: true });
+    const svc = new UpdateService(configStub({ ...CFG, UPDATE_CHANGELOG_URL: "https://get.tugra.io/changelog" }), st.service);
+    const out = await svc.getMemberVersion();
+    expect(out).toEqual({ current: "0.0.0-dev", latest: "0.2.0", channel: "stable", updateAvailable: true });
+  });
+
   it("getStatus with an empty cache reports latest=null, updateAvailable=false", async () => {
     const st = settingsStub();
     const svc = new UpdateService(configStub(CFG), st.service);

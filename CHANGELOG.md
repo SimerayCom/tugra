@@ -7,6 +7,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The running version is always in view, and the logo goes home.** The sidebar logo is now a link to the
+  dashboard, and the running version (`v0.1.0-beta.N`) sits under the product name — in the logo's tooltip when
+  the sidebar is collapsed. Every signed-in member sees it, not only the owner: a new session-guarded
+  `GET /api/v1/instance/version` returns the version, channel and whether a newer release is published (no
+  preferences, and nothing for anonymous visitors).
+- **"Update available" is shown to every member.** The top-bar pill no longer hides from non-owners; for them it
+  is a status whose tooltip says the instance owner applies updates from Settings, while the owner's pill still
+  opens the Updates card.
+- **App header: the Restart (and Start) icon is visible again.** The icon's amber/green tint was painted on the
+  gold primary fill and vanished. A tinted icon now applies only on quiet (ghost) buttons; on a solid fill the
+  icon keeps the fill's contrast colour.
+
 ## [0.1.0-beta.15] - 2026-11-15
 
 - **Migrator: a volume-mode Postgres is no longer dumped by the database arm.** With `--arms all` the database row of a

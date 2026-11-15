@@ -5,7 +5,7 @@ import { InstanceSettingsService } from "../instance/instance-settings.service";
 import { Prisma } from "@prisma/client";
 import { MAX_MANIFEST_BYTES, MAX_SIG_BYTES, UpdateVerifyError, noticeSchema, verifyUpdateManifest } from "./update-manifest";
 import type { ChannelEntry, VerifiedManifest } from "./update-manifest";
-import type { UpdateNoticeView, UpdateStatusView } from "./dto";
+import type { MemberVersionView, UpdateNoticeView, UpdateStatusView } from "./dto";
 
 export type CheckResult =
   | { status: "unconfigured" }
@@ -162,6 +162,12 @@ export class UpdateService {
       autoUpdate: s.autoUpdate,
       notice: this.liveNotice(s.cachedNotice),
     };
+  }
+
+  /** The non-owner view: running version, tracked channel and whether something newer is published. */
+  async getMemberVersion(): Promise<MemberVersionView> {
+    const { current, channel, latest, updateAvailable } = await this.getStatus();
+    return { current, channel, latest, updateAvailable };
   }
 
   private available(latest: string | null | undefined, current: string): boolean {

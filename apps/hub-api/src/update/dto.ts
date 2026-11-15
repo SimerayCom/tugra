@@ -26,6 +26,14 @@ export const UpdateStatusViewSchema = z.object({
 export type UpdateStatusView = z.infer<typeof UpdateStatusViewSchema>;
 
 /**
+ * The member-facing slice of the update status (GET /instance/version): what every signed-in user may see
+ * so the shell can show the running version under the logo and an "update available" hint. No preferences
+ * (channel policy, auto-update, notice, changelog link) — those stay owner-only.
+ */
+export const MemberVersionViewSchema = UpdateStatusViewSchema.pick({ current: true, channel: true, latest: true, updateAvailable: true });
+export type MemberVersionView = z.infer<typeof MemberVersionViewSchema>;
+
+/**
  * Result of POST /instance/update (starting the updater). `started` = the update was queued for the sidecar;
  * the terminal states report why nothing was started (never a downgrade, nothing newer, an update already
  * running, the check unconfigured/failed, or an auto-check declining a non-patch bump).

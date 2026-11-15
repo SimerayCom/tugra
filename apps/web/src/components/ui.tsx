@@ -83,7 +83,11 @@ export function Btn({
   loading?: boolean;
 }) {
   const isDisabled = rest.disabled || loading;
-  const toneColor = iconTone === "success" ? "var(--c-g)" : iconTone === "warn" ? "var(--c-am)" : iconTone === "danger" ? "var(--c-r)" : undefined;
+  // A tone only makes sense on the quiet (ghost) chromes. On a solid fill the icon must stay the fill's
+  // contrast colour: amber on the gold primary fill, or red on the danger fill, is invisible (the Restart
+  // icon vanished on the app header's gold primary button).
+  const solid = variant === "primary" || variant === "danger";
+  const toneColor = solid ? undefined : iconTone === "success" ? "var(--c-g)" : iconTone === "warn" ? "var(--c-am)" : iconTone === "danger" ? "var(--c-r)" : undefined;
   const chrome = btnChrome(variant, isDisabled);
   return (
     <button type={type} className={["tg-btn", className].filter(Boolean).join(" ")} aria-busy={loading || undefined} style={{ ...chrome, ...style }} {...rest} disabled={isDisabled}>

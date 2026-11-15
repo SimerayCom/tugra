@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import type { InstanceUpdateNotice } from "../lib/types";
@@ -231,6 +231,7 @@ export function Sidebar({ openPalette, mobile = false, open = false, onNavigate 
 
   const { data: servers = [] } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
   const offline = servers.filter((s) => s.status === "OFFLINE").length;
+  const version = useInstanceVersion();
 
   // On mobile the sidebar is a full-width off-canvas drawer (never icon-collapsed).
   const col = mobile ? false : collapsed;
@@ -256,7 +257,7 @@ export function Sidebar({ openPalette, mobile = false, open = false, onNavigate 
     >
       <div style={{ padding: col ? "16px 0" : "16px 14px", borderBottom: "1px solid var(--c-bd)" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: col ? "center" : "flex-start", gap: 9, marginBottom: 12 }}>
-          <BrandMark size={36} nameSize={19} showName={!col} />
+          <BrandMark size={36} nameSize={19} showName={!col} href="/dashboard" linkLabel={t("nav.goToDashboard")} version={version?.current ?? null} />
         </div>
         <button
           onClick={openPalette}
@@ -423,39 +424,57 @@ function NewMenu() {
   );
 }
 
-/** Owner-only top-bar pill that surfaces an available self-update automatically — without the owner having
- *  to open Settings and press "check" — and links straight to the Updates card. Shares the ["instanceUpdate"]
- *  query with the Updates card and notice banner, so it adds no request. Hidden when up to date or for
- *  non-owners. Compact (icon only) on mobile, where the header has little room. */
+/** The running version + "newer release published" flag every signed-in member may read (session-guarded
+ *  GET /instance/version). Rarely changes, so it is kept fresh for a while instead of refetched per mount. */
+export function useInstanceVersion() {
+  const { user } = useAuth();
+  const { data } = useQuery({ queryKey: ["instanceVersion"], queryFn: () => api.getInstanceVersion(), enabled: !!user, staleTime: 5 * 60_000 });
+  return data ?? null;
+}
+
+const badgeStyle = (compact?: boolean): CSSProperties => ({
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+  minHeight: 32,
+  padding: compact ? "6px 8px" : "6px 10px",
+  background: "color-mix(in srgb, var(--c-a) 14%, transparent)",
+  border: "1px solid color-mix(in srgb, var(--c-a) 40%, transparent)",
+  borderRadius: "var(--r1)",
+  color: "var(--c-tx)",
+  fontSize: 12.5,
+  fontWeight: 600,
+  textDecoration: "none",
+  whiteSpace: "nowrap",
+});
+
+/** Top-bar pill that surfaces an available self-update automatically — without anyone having to open
+ *  Settings and press "check". For the owner it links straight to the Updates card and shares the
+ *  ["instanceUpdate"] query with that card and the notice banner (no extra request). Every other member
+ *  sees the same pill from the member-level version query, as a status (not a link) whose title says the
+ *  owner applies it. Hidden when up to date. Compact (icon only) on mobile, where the header has little room. */
 export function UpdateBadge({ compact }: { compact?: boolean }) {
   const { user } = useAuth();
   const t = useT();
   const isOwner = !!user?.isInstanceOwner;
-  const { data } = useQuery({ queryKey: ["instanceUpdate"], queryFn: () => api.getInstanceUpdate(), enabled: isOwner });
-  if (!isOwner || !data?.updateAvailable) return null;
+  const { data: ownerData } = useQuery({ queryKey: ["instanceUpdate"], queryFn: () => api.getInstanceUpdate(), enabled: isOwner });
+  const member = useInstanceVersion();
+  const data = isOwner ? ownerData : member;
+  if (!data?.updateAvailable) return null;
   const label = data.latest ? `${t("settings.updateAvailable")} — ${data.latest}` : t("settings.updateAvailable");
+  const icon = <ArrowUpCircle size={15} aria-hidden style={{ color: "var(--c-a)", flexShrink: 0 }} />;
+  if (!isOwner) {
+    const hint = `${label}. ${t("settings.updateOwnerApplies")}`;
+    return (
+      <span role="status" title={hint} aria-label={hint} style={badgeStyle(compact)}>
+        {icon}
+        {!compact && <span>{label}</span>}
+      </span>
+    );
+  }
   return (
-    <Link
-      href="/settings?tab=instance&section=backups#updates"
-      title={label}
-      aria-label={label}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 6,
-        minHeight: 32,
-        padding: compact ? "6px 8px" : "6px 10px",
-        background: "color-mix(in srgb, var(--c-a) 14%, transparent)",
-        border: "1px solid color-mix(in srgb, var(--c-a) 40%, transparent)",
-        borderRadius: "var(--r1)",
-        color: "var(--c-tx)",
-        fontSize: 12.5,
-        fontWeight: 600,
-        textDecoration: "none",
-        whiteSpace: "nowrap",
-      }}
-    >
-      <ArrowUpCircle size={15} aria-hidden style={{ color: "var(--c-a)", flexShrink: 0 }} />
+    <Link href="/settings?tab=instance&section=backups#updates" title={label} aria-label={label} style={badgeStyle(compact)}>
+      {icon}
       {!compact && <span>{label}</span>}
     </Link>
   );
