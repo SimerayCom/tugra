@@ -296,7 +296,7 @@ export default function AppDetailPage() {
     volumes: () => <VolumesCard id={id} volumes={appData.volumes} />,
     hostMounts: () => <HostMountsCard id={id} hostMounts={appData.hostMounts} />,
     volumeBackups: () => (
-      <VolumeBackupsCard id={id} volumes={appData.volumes} enabled={appData.volumeBackupEnabled} intervalHours={appData.volumeBackupIntervalHours} retention={appData.volumeBackupRetention} destinationId={appData.volumeBackupDestinationId} />
+      <VolumeBackupsCard id={id} volumes={appData.volumes} />
     ),
     configMounts: () => <ConfigMountsCard id={id} onDeploy={() => onDeploy()} />,
     healthCheck: () => (

@@ -11,6 +11,9 @@ import { dbColor, engineLabel, fromDatetimeLocal, isDbTransitional, pitrAvailabl
 import type { Database, PitrState } from "../../../../lib/types";
 import { backupColor, formatSize, lastErrorLine, restoreColor } from "../../../../lib/backups";
 import { BackupRunModal } from "../../../../components/backup-run-modal";
+import { BackupPolicyCard, usageFromBackups } from "../../../../components/backups/backup-policy-card";
+import { scheduleFromFields, scheduleToFields, type ScheduleValue } from "../../../../components/backups/schedule-field";
+import { retentionFromFields, retentionToFields, type RetentionValue } from "../../../../components/backups/retention-fields";
 import { ErrorState } from "../../../../components/error-state";
 import { resourceBreadcrumb } from "../../../../lib/breadcrumb";
 import { useTabState } from "../../../../hooks/useTabState";
@@ -140,10 +143,8 @@ export default function DatabaseDetailPage() {
   const tags = useMutation({ mutationFn: (next: string[]) => api.setDatabaseTags(id, next), onSuccess: invalidate });
 
   const [schedEnabled, setSchedEnabled] = useState(false);
-  const [interval, setIntervalH] = useState("24");
-  const [cron, setCron] = useState("");
-  const [retention, setRetention] = useState("7");
-  const [retentionDays, setRetentionDays] = useState("");
+  const [schedule, setSchedule] = useState<ScheduleValue>(scheduleFromFields(null, null));
+  const [retention, setRetention] = useState<RetentionValue>(retentionFromFields(null, null, null));
   const [importUrl, setImportUrl] = useState("");
   const [importGzip, setImportGzip] = useState(true);
   const [importKey, setImportKey] = useState("");
@@ -160,10 +161,8 @@ export default function DatabaseDetailPage() {
   useEffect(() => {
     if (db) {
       setSchedEnabled(db.backupEnabled);
-      setIntervalH(String(db.backupIntervalHours ?? 24));
-      setCron(db.backupCron ?? "");
-      setRetention(String(db.backupRetention));
-      setRetentionDays(db.backupRetentionDays != null ? String(db.backupRetentionDays) : "");
+      setSchedule(scheduleFromFields(db.backupIntervalHours, db.backupCron));
+      setRetention(retentionFromFields(db.backupRetention, db.backupRetentionDays, db.backupMaxSizeGb));
       setDestinationId(db.backupDestinationId ?? "");
       setVerifyEnabled(db.verifyEnabled);
       setVerifyInterval(String(db.verifyIntervalHours ?? 24));
@@ -172,15 +171,20 @@ export default function DatabaseDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [db?.id]);
   const saveSchedule = useMutation({
-    mutationFn: () =>
-      api.setBackupConfig(id, {
+    mutationFn: () => {
+      const sch = scheduleToFields(schedule);
+      const r = retentionToFields(retention);
+      return api.setBackupConfig(id, {
         enabled: schedEnabled,
-        intervalHours: Number(interval) || 24,
-        cron: cron.trim() || null,
-        retention: Number(retention) || 7,
-        retentionDays: retentionDays.trim() ? Number(retentionDays) : null,
+        // The inactive mode sends null for its field (cron wins server-side); the interval DTO takes a number.
+        intervalHours: sch.intervalHours ?? (Number(schedule.hours) || 24),
+        cron: sch.cron,
+        retention: r.retention ?? 7,
+        retentionDays: r.retentionDays,
+        maxSizeGb: r.maxSizeGb,
         destinationId: destinationId || null,
-      }),
+      });
+    },
     onSuccess: invalidate,
   });
   const saveVerify = useMutation({
@@ -411,36 +415,21 @@ export default function DatabaseDetailPage() {
           }
         >
 
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
-            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx2)" }}>
-              <input type="checkbox" checked={schedEnabled} onChange={(e) => setSchedEnabled(e.target.checked)} />
-              {t("databases.schedule")}
-            </label>
-            <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 6 }}>
-              {t("databases.every")}
-              <input style={fieldSm} type="number" value={interval} onChange={(e) => setIntervalH(e.target.value)} disabled={!!cron.trim()} />
-            </label>
-            <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 6 }} title={t("databases.backupCronHint")}>
-              {t("databases.backupCron")}
-              <input style={{ ...fieldSm, width: 120 }} value={cron} onChange={(e) => setCron(e.target.value)} placeholder="0 3 * * *" />
-            </label>
-            <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 6 }}>
-              {t("databases.keep")}
-              <input style={fieldSm} type="number" value={retention} onChange={(e) => setRetention(e.target.value)} />
-            </label>
-            <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 6 }} title={t("databases.backupRetentionDaysHint")}>
-              {t("databases.backupRetentionDays")}
-              <input style={fieldSm} type="number" value={retentionDays} onChange={(e) => setRetentionDays(e.target.value)} placeholder="∞" />
-            </label>
-            <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 6 }}>
-              {t("databases.destination")}
-              <select style={{ ...fieldSm, width: "auto" }} value={destinationId} onChange={(e) => setDestinationId(e.target.value)}>
-                <option value="">{t("databases.localDisk")}</option>
-                {destinations.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-              </select>
-            </label>
-            <Btn variant="ghost" onClick={() => saveSchedule.mutate()} disabled={saveSchedule.isPending}>{t("databases.save")}</Btn>
-          </div>
+          <BackupPolicyCard
+            enabled={schedEnabled}
+            onEnabled={setSchedEnabled}
+            schedule={schedule}
+            onSchedule={setSchedule}
+            retention={retention}
+            onRetention={setRetention}
+            destinationId={destinationId}
+            onDestination={setDestinationId}
+            destinations={destinations}
+            usage={[usageFromBackups(backups, db.backupMaxSizeGb)]}
+            onSave={() => saveSchedule.mutate()}
+            saving={saveSchedule.isPending}
+            error={saveSchedule.isError ? (saveSchedule.error as Error).message : null}
+          />
 
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14, paddingBottom: 14, borderBottom: "1px solid var(--c-bd)" }}>
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx2)" }} title={t("databases.verifyScheduleHint")}>
@@ -783,6 +772,7 @@ function DbPitrCard({ id, db, running }: { id: string; db: Database; running: bo
           </label>
         )}
         {set.isError && <div role="alert" style={{ color: "var(--c-r)" }}>{errMsg(set.error)}</div>}
+        <div style={{ color: "var(--c-tx3)", fontSize: 11 }}>{t("backups.walNotCounted")}</div>
         {state === "ACTIVE" && (
           <div style={{ color: "var(--c-tx3)" }}>
             {running

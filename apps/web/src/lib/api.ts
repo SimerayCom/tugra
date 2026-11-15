@@ -33,6 +33,12 @@ import type {
   Backup,
   Restore,
   BackupDestination,
+  CreatedDestination,
+  DestinationTestResult,
+  VolumeBackupConfig,
+  VolumeBackupPolicy,
+  SchedulePreview,
+  SealedKeyExport,
   HubBackupView,
   HubBackupItem,
   AuditPage,
@@ -383,7 +389,7 @@ export const api = {
   getHubBackup() {
     return apiFetch<HubBackupView>("/instance/backup");
   },
-  setHubBackup(body: { enabled: boolean; intervalHours: number; retention: number; destinationId: string | null }) {
+  setHubBackup(body: { enabled: boolean; intervalHours: number; cron?: string | null; retention: number; retentionDays?: number | null; maxSizeGb?: number | null; destinationId: string | null }) {
     return apiFetch<HubBackupView>("/instance/backup", { method: "PUT", body: JSON.stringify(body) });
   },
   runHubBackup() {
@@ -394,6 +400,10 @@ export const api = {
   },
   deleteHubBackupItem(id: string) {
     return apiFetch<{ ok: true }>(`/instance/backup/items/${id}`, { method: "DELETE" });
+  },
+  // Owner-only: every encrypted destination's data key, sealed (openssl enc) under a passphrase the owner picks.
+  exportDestinationKeys(passphrase: string) {
+    return apiFetch<SealedKeyExport>("/instance/backup/destination-keys/export", { method: "POST", body: JSON.stringify({ passphrase }) });
   },
 
   // Owner-only OIDC (SSO) config — Pro edition (the hub 403s below Pro). The client secret is write-only.
@@ -1307,8 +1317,30 @@ export const api = {
   deleteVolumeBackup(appId: string, id: string) {
     return apiFetch<{ ok: true }>(`/apps/${appId}/volume-backups/${id}`, { method: "DELETE" });
   },
-  setVolumeBackupConfig(appId: string, cfg: { enabled: boolean; intervalHours?: number | null; retention?: number; destinationId?: string | null }) {
+  getVolumeBackupConfig(appId: string) {
+    return apiFetch<VolumeBackupConfig>(`/apps/${appId}/volume-backups/config`);
+  },
+  // cron / retentionDays / maxSizeGb: omitted leaves the stored value, null clears it.
+  setVolumeBackupConfig(
+    appId: string,
+    cfg: { enabled: boolean; intervalHours?: number | null; cron?: string | null; retention?: number; retentionDays?: number | null; maxSizeGb?: number | null; destinationId?: string | null },
+  ) {
     return apiFetch<Application>(`/apps/${appId}/volume-backups/config`, { method: "PUT", body: JSON.stringify(cfg) });
+  },
+  // Per-volume policy (absent/null fields inherit the app's). DELETE reverts the volume to inherit.
+  putVolumePolicy(
+    appId: string,
+    volumeName: string,
+    p: { enabled: boolean; intervalHours?: number | null; cron?: string | null; retention?: number | null; retentionDays?: number | null; maxSizeGb?: number | null },
+  ) {
+    return apiFetch<VolumeBackupPolicy>(`/apps/${appId}/volume-backups/policies/${encodeURIComponent(volumeName)}`, { method: "PUT", body: JSON.stringify(p) });
+  },
+  deleteVolumePolicy(appId: string, volumeName: string) {
+    return apiFetch<{ ok: true }>(`/apps/${appId}/volume-backups/policies/${encodeURIComponent(volumeName)}`, { method: "DELETE" });
+  },
+  // When a cron will really fire (hub timezone) + its tightest gap; an invalid cron is valid:false, never an error.
+  previewSchedule(cron: string, count = 3) {
+    return apiFetch<SchedulePreview>(`/backup-schedules/preview?cron=${encodeURIComponent(cron)}&count=${count}`);
   },
   importVolumeFromUrl(appId: string, body: { volumeName: string; url: string; gzip: boolean; encrypted: boolean; encryptionKey?: string }) {
     return apiFetch<{ ok: true }>(`/apps/${appId}/volume-backups/import-from-url`, { method: "POST", body: JSON.stringify(body) });
@@ -1758,7 +1790,7 @@ export const api = {
       body: JSON.stringify(expireHours ? { expireHours } : {}),
     });
   },
-  setBackupConfig(dbId: string, cfg: { enabled: boolean; intervalHours?: number; cron?: string | null; retention?: number; retentionDays?: number | null; destinationId?: string | null }) {
+  setBackupConfig(dbId: string, cfg: { enabled: boolean; intervalHours?: number; cron?: string | null; retention?: number; retentionDays?: number | null; maxSizeGb?: number | null; destinationId?: string | null }) {
     return apiFetch<{ ok: true }>(`/databases/${dbId}/backup-config`, {
       method: "PUT",
       body: JSON.stringify(cfg),
@@ -1858,7 +1890,7 @@ export const api = {
     s3Prefix?: string;
     encryptionEnabled?: boolean;
   }) {
-    return apiFetch<BackupDestination>("/backup-destinations", {
+    return apiFetch<CreatedDestination>("/backup-destinations", {
       method: "POST",
       body: JSON.stringify(input),
     });
@@ -1875,11 +1907,12 @@ export const api = {
   }) {
     return apiFetch<BackupDestination>(`/backup-destinations/${id}`, { method: "PUT", body: JSON.stringify(input) });
   },
-  deleteDestination(id: string) {
-    return apiFetch<{ ok: true }>(`/backup-destinations/${id}`, { method: "DELETE" });
+  // An encrypted destination that still has backups 409s unless discardBackups is true (deleting it destroys the key).
+  deleteDestination(id: string, opts?: { discardBackups?: boolean }) {
+    return apiFetch<{ ok: true }>(`/backup-destinations/${id}${opts?.discardBackups ? "?discardBackups=true" : ""}`, { method: "DELETE" });
   },
   testDestination(id: string) {
-    return apiFetch<{ ok: boolean; message: string }>(`/backup-destinations/${id}/test`, { method: "POST" });
+    return apiFetch<DestinationTestResult>(`/backup-destinations/${id}/test`, { method: "POST" });
   },
 
   // ── API tokens ──

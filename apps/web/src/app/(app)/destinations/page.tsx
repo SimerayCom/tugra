@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { ShieldAlert, ShieldCheck } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { HardDrive } from "lucide-react";
 import { api } from "../../../lib/api";
@@ -9,9 +10,18 @@ import { destSummary, destTypeLabel } from "../../../lib/destinations";
 import { useT } from "../../../i18n/provider";
 import { Btn, Card, EmptyState, Spinner } from "../../../components/ui";
 import { ErrorState } from "../../../components/error-state";
-import { useConfirm } from "../../../components/confirm";
+import { Modal } from "../../../components/modal";
+import { RecoveryKeyDialog } from "./recovery-key-dialog";
 import { useToast } from "../../../components/toast";
 import { Select } from "../../../components/form";
+
+const BANNER_KEY = "tugra.destinations.legacyBannerDismissed";
+const readDismissed = (): boolean => {
+  try { return window.localStorage.getItem(BANNER_KEY) === "1"; } catch { return false; }
+};
+const writeDismissed = () => {
+  try { window.localStorage.setItem(BANNER_KEY, "1"); } catch { /* storage unavailable: the banner just returns next visit */ }
+};
 
 const field: React.CSSProperties = {
   padding: "8px 10px",
@@ -60,9 +70,40 @@ function EditDestinationForm({ dest, onDone }: { dest: BackupDestination; onDone
   );
 }
 
+/** Delete confirmation. An encrypted destination that still has backups 409s; the message is shown here and the
+ *  checkbox re-sends the request with ?discardBackups=true (deleting destroys the key those backups need). */
+function DeleteDestinationModal({ dest, onClose, onDeleted }: { dest: BackupDestination; onClose: () => void; onDeleted: () => void }) {
+  const t = useT();
+  const [discard, setDiscard] = useState(false);
+  const del = useMutation({
+    mutationFn: () => api.deleteDestination(dest.id, { discardBackups: discard }),
+    onSuccess: onDeleted,
+  });
+  return (
+    <Modal onClose={onClose} width={460} ariaLabel={t("destinations.delete")}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ fontWeight: 700 }}>{t("destinations.delete_confirm", { name: dest.name })}</div>
+        {dest.encryptionEnabled && (
+          <>
+            <div style={{ fontSize: 13, color: "var(--c-am)", lineHeight: 1.5 }}>{t("destinations.delete_keyLoss")}</div>
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13 }}>
+              <input type="checkbox" checked={discard} onChange={(e) => setDiscard(e.target.checked)} style={{ marginTop: 2 }} />
+              {t("destinations.delete_discardAck")}
+            </label>
+          </>
+        )}
+        {del.isError && <div role="alert" style={{ color: "var(--c-r)", fontSize: 12 }}>{(del.error as Error).message}</div>}
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <Btn variant="ghost" onClick={onClose}>{t("common.cancel")}</Btn>
+          <Btn variant="danger" onClick={() => del.mutate()} disabled={del.isPending}>{t("destinations.delete")}</Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 export default function DestinationsPage() {
   const t = useT();
-  const confirm = useConfirm();
   const toast = useToast();
   const qc = useQueryClient();
   const { data: destinations = [], isLoading, isError, refetch } = useQuery({
@@ -81,10 +122,13 @@ export default function DestinationsPage() {
   const [secretKey, setSecretKey] = useState("");
   const [prefix, setPrefix] = useState("");
   const [encrypt, setEncrypt] = useState(true);
+  // The one-time recovery key lives in component state only (never the query/mutation cache or storage).
+  const [recovery, setRecovery] = useState<{ name: string; key: string } | null>(null);
+  const [bannerDismissed, setBannerDismissed] = useState<boolean>(() => (typeof window === "undefined" ? true : readDismissed()));
 
   const create = useMutation({
-    mutationFn: () =>
-      api.createDestination({
+    mutationFn: async () => {
+      const created = await api.createDestination({
         teamId: teamId || teams[0]?.id,
         name,
         type: "S3",
@@ -95,26 +139,53 @@ export default function DestinationsPage() {
         s3SecretKey: secretKey,
         s3Prefix: prefix || undefined,
         encryptionEnabled: encrypt,
-      }),
+      });
+      // Strip the key before it can sit in the mutation cache; hand it to the dialog state instead.
+      const { recoveryKey, ...dest } = created;
+      if (recoveryKey) setRecovery({ name: dest.name, key: recoveryKey });
+      return dest;
+    },
     onSuccess: () => {
       setName(""); setBucket(""); setRegion(""); setEndpoint(""); setAccessKey(""); setSecretKey(""); setPrefix("");
       qc.invalidateQueries({ queryKey: ["destinations"] });
     },
   });
   const [editId, setEditId] = useState<string | null>(null);
-  const del = useMutation({
-    mutationFn: (id: string) => api.deleteDestination(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["destinations"] }),
-  });
+  const [deleting, setDeleting] = useState<BackupDestination | null>(null);
   const test = useMutation({
     mutationFn: (id: string) => api.testDestination(id),
-    onSuccess: (r) => toast(r.message, r.ok ? "success" : "error"),
+    onSuccess: (r) => {
+      let msg = r.message;
+      if (r.encryption === "OK") msg += ` ${t("destinations.test_encryptionOk")}`;
+      else if (r.encryption === "FAILED") msg = /gpg is not installed/i.test(r.message) ? t("destinations.test_gpgMissing") : t("destinations.test_encryptionFail", { message: r.message });
+      toast(msg, r.ok ? "success" : "error");
+    },
   });
+  const hasUnencrypted = destinations.some((d) => !d.encryptionEnabled);
 
   return (
     <div style={{ padding: "var(--page-pad)" }}>
       <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 4px" }}>{t("destinations.title")}</h1>
       <p style={{ color: "var(--c-tx3)", fontSize: 14, margin: "0 0 22px" }}>{t("destinations.subtitle")}</p>
+
+      {recovery && <RecoveryKeyDialog name={recovery.name} recoveryKey={recovery.key} onClose={() => setRecovery(null)} />}
+      {deleting && (
+        <DeleteDestinationModal
+          dest={deleting}
+          onClose={() => setDeleting(null)}
+          onDeleted={() => { setDeleting(null); qc.invalidateQueries({ queryKey: ["destinations"] }); }}
+        />
+      )}
+      {hasUnencrypted && !bannerDismissed && (
+        <div role="note" style={{ display: "flex", gap: 10, alignItems: "flex-start", flexWrap: "wrap", padding: "10px 14px", marginBottom: 16, background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r2)" }}>
+          <ShieldAlert size={16} style={{ color: "var(--c-am)", marginTop: 2 }} />
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <div style={{ fontWeight: 600, fontSize: 13 }}>{t("destinations.legacyBanner_title")}</div>
+            <div style={{ fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t("destinations.legacyBanner_body")}</div>
+          </div>
+          <Btn variant="ghost" onClick={() => { writeDismissed(); setBannerDismissed(true); }}>{t("destinations.legacyBanner_dismiss")}</Btn>
+        </div>
+      )}
 
       <Card style={{ padding: 16, marginBottom: 20 }}>
         <form
@@ -139,6 +210,8 @@ export default function DestinationsPage() {
             {create.isPending ? "…" : t("destinations.create")}
           </button>
         </form>
+        <div style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 8 }}>{t("destinations.encryptHint")}</div>
+        {!encrypt && <div role="alert" style={{ fontSize: 12, color: "var(--c-am)", marginTop: 6 }}>{t("destinations.optOutWarning")}</div>}
         {create.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginTop: 8 }}>{(create.error as Error).message}</div>}
       </Card>
 
@@ -152,12 +225,18 @@ export default function DestinationsPage() {
             <div key={d.id} style={{ borderTop: "1px solid var(--c-bd)" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px" }}>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 600, fontSize: 14 }}>{d.name} <span style={{ fontSize: 11, color: "var(--c-tx3)", fontWeight: 400 }}>· {destTypeLabel(d.type)}</span></div>
+                  <div style={{ fontWeight: 600, fontSize: 14, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <span>{d.name} <span style={{ fontSize: 11, color: "var(--c-tx3)", fontWeight: 400 }}>· {destTypeLabel(d.type)}</span></span>
+                    <span data-testid={`enc-${d.id}`} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600, color: d.encryptionEnabled ? "var(--c-g)" : "var(--c-am)" }}>
+                      {d.encryptionEnabled ? <ShieldCheck size={12} /> : <ShieldAlert size={12} />}
+                      {d.encryptionEnabled ? t("destinations.state_encrypted") : t("destinations.state_unencrypted")}
+                    </span>
+                  </div>
                   <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)" }}>{destSummary(d)}</div>
                 </div>
                 {d.canWrite && d.type === "S3" && <Btn variant="ghost" onClick={() => setEditId(editId === d.id ? null : d.id)}>{editId === d.id ? t("common.cancel") : t("destinations.edit")}</Btn>}
                 {d.canWrite && <Btn variant="ghost" onClick={() => test.mutate(d.id)} disabled={test.isPending}>{test.isPending ? "…" : t("destinations.test")}</Btn>}
-                {d.canWrite && <Btn variant="danger" onClick={async () => { if (await confirm({ body: t("common.deleteNamedConfirm", { name: d.name }), danger: true })) del.mutate(d.id); }}>{t("destinations.delete")}</Btn>}
+                {d.canWrite && <Btn variant="danger" onClick={() => setDeleting(d)}>{t("destinations.delete")}</Btn>}
               </div>
               {editId === d.id && <EditDestinationForm dest={d} onDone={() => { setEditId(null); qc.invalidateQueries({ queryKey: ["destinations"] }); }} />}
             </div>

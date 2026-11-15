@@ -1,10 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { BackupRunModal } from "../../../../components/backup-run-modal";
 import { useConfirm } from "../../../../components/confirm";
+import { BackupPolicyCard } from "../../../../components/backups/backup-policy-card";
+import { VolumePolicyTable } from "../../../../components/backups/volume-policy-table";
+import { scheduleFromFields, scheduleToFields, type ScheduleValue } from "../../../../components/backups/schedule-field";
+import { retentionFromFields, retentionToFields, type RetentionValue } from "../../../../components/backups/retention-fields";
 import { CopyRow } from "../../../../components/copy-row";
 import { Btn, SectionCard } from "../../../../components/ui";
 import { useT } from "../../../../i18n/provider";
@@ -105,16 +109,25 @@ export function HostMountsCard({ id, hostMounts }: { id: string; hostMounts: Hos
   );
 }
 
-export function VolumeBackupsCard({ id, volumes, enabled, intervalHours, retention, destinationId }: { id: string; volumes: AppVolume[]; enabled: boolean; intervalHours: number | null; retention: number; destinationId: string | null }) {
+export function VolumeBackupsCard({ id, volumes }: { id: string; volumes: AppVolume[] }) {
   const t = useT();
   const qc = useQueryClient();
   const confirm = useConfirm();
   const { data: backups = [] } = useQuery({ queryKey: ["volBackups", id], queryFn: () => api.listVolumeBackups(id), refetchInterval: 5000 });
   const { data: destinations = [] } = useQuery({ queryKey: ["destinations"], queryFn: () => api.listDestinations() });
-  const [sched, setSched] = useState(enabled);
-  const [interval, setIntervalH] = useState(String(intervalHours ?? 24));
-  const [ret, setRet] = useState(String(retention));
-  const [dest, setDest] = useState(destinationId ?? "");
+  // The schedule/retention/policies/usage come from GET volume-backups/config (not the Application view).
+  const { data: cfg } = useQuery({ queryKey: ["volBackupConfig", id], queryFn: () => api.getVolumeBackupConfig(id) });
+  const [sched, setSched] = useState(false);
+  const [schedule, setSchedule] = useState<ScheduleValue>(scheduleFromFields(null, null));
+  const [retention, setRetention] = useState<RetentionValue>(retentionFromFields(null, null, null));
+  const [dest, setDest] = useState("");
+  useEffect(() => {
+    if (!cfg) return;
+    setSched(cfg.enabled);
+    setSchedule(scheduleFromFields(cfg.intervalHours, cfg.cron));
+    setRetention(retentionFromFields(cfg.retention, cfg.retentionDays, cfg.maxSizeGb));
+    setDest(cfg.destinationId ?? "");
+  }, [cfg]);
   const invalidate = () => qc.invalidateQueries({ queryKey: ["volBackups", id] });
   const backupNow = useMutation({ mutationFn: () => api.volumeBackupNow(id), onSuccess: invalidate });
   const restore = useMutation({ mutationFn: (bid: string) => api.restoreVolumeBackup(id, bid) });
@@ -129,8 +142,11 @@ export function VolumeBackupsCard({ id, volumes, enabled, intervalHours, retenti
   const [runDetailId, setRunDetailId] = useState<string | null>(null);
   const runDetail = backups.find((b) => b.id === runDetailId) ?? null;
   const save = useMutation({
-    mutationFn: () => api.setVolumeBackupConfig(id, { enabled: sched, intervalHours: Number(interval) || 24, retention: Number(ret) || 7, destinationId: dest || null }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["app", id] }),
+    mutationFn: () => {
+      const r = retentionToFields(retention);
+      return api.setVolumeBackupConfig(id, { enabled: sched, ...scheduleToFields(schedule), retention: r.retention ?? 7, retentionDays: r.retentionDays, maxSizeGb: r.maxSizeGb, destinationId: dest || null });
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["app", id] }); qc.invalidateQueries({ queryKey: ["volBackupConfig", id] }); },
     meta: { successMessage: t("apps.saved") },
   });
 
@@ -209,28 +225,24 @@ export function VolumeBackupsCard({ id, volumes, enabled, intervalHours, retenti
         </div>
       )}
 
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
-        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--c-tx2)" }}>
-          <input type="checkbox" checked={sched} onChange={(e) => setSched(e.target.checked)} />
-          {t("databases.schedule")}
-        </label>
-        <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 6 }}>
-          {t("databases.every")}
-          <input style={volField} type="number" value={interval} onChange={(e) => setIntervalH(e.target.value)} />
-        </label>
-        <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 6 }}>
-          {t("databases.keep")}
-          <input style={volField} type="number" value={ret} onChange={(e) => setRet(e.target.value)} />
-        </label>
-        <label style={{ fontSize: 12, color: "var(--c-tx3)", display: "flex", alignItems: "center", gap: 6 }}>
-          {t("databases.destination")}
-          <select style={{ ...volField, width: "auto" }} value={dest} onChange={(e) => setDest(e.target.value)}>
-            <option value="">{t("databases.localDisk")}</option>
-            {destinations.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </select>
-        </label>
-        <Btn variant="ghost" onClick={() => save.mutate()} disabled={save.isPending}>{t("databases.save")}</Btn>
-      </div>
+      <BackupPolicyCard
+        enabled={sched}
+        onEnabled={setSched}
+        schedule={schedule}
+        onSchedule={setSchedule}
+        retention={retention}
+        onRetention={setRetention}
+        destinationId={dest}
+        onDestination={setDest}
+        destinations={destinations}
+        usage={cfg?.usage}
+        minGapHours={1}
+        onSave={() => save.mutate()}
+        saving={save.isPending}
+        error={save.isError ? (save.error as Error).message : null}
+      >
+        <VolumePolicyTable appId={id} volumes={volumes} policies={cfg?.policies ?? []} />
+      </BackupPolicyCard>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {backups.map((b) => (

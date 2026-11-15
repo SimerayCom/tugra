@@ -7,6 +7,8 @@ import { useAuth } from "../../../lib/auth";
 import { useT } from "../../../i18n/provider";
 import { useToast } from "../../../components/toast";
 import { Btn, Card } from "../../../components/ui";
+import { ScheduleField, scheduleFromFields, scheduleToFields, type ScheduleValue } from "../../../components/backups/schedule-field";
+import { KeysExportModal } from "./keys-export-modal";
 
 /**
  * Owner-only scheduled backup of the HUB's OWN Postgres (control-plane DB). Runs on the local agent, always
@@ -24,20 +26,38 @@ export function HubBackupCard() {
   const { data: destinations } = useQuery({ queryKey: ["destinations"], queryFn: () => api.listDestinations(), enabled: isOwner, refetchOnWindowFocus: false });
 
   const [enabled, setEnabled] = useState(false);
-  const [intervalHours, setIntervalHours] = useState(24);
+  const [schedule, setSchedule] = useState<ScheduleValue>(scheduleFromFields(null, null));
   const [retention, setRetention] = useState(7);
+  const [retentionDays, setRetentionDays] = useState("");
+  const [maxSizeGb, setMaxSizeGb] = useState("");
   const [destinationId, setDestinationId] = useState<string>("");
+  const [showKeys, setShowKeys] = useState(false);
   useEffect(() => {
     if (!data) return;
     setEnabled(data.enabled);
-    setIntervalHours(data.intervalHours);
+    setSchedule(scheduleFromFields(data.intervalHours, data.cron));
     setRetention(data.retention);
+    setRetentionDays(data.retentionDays != null ? String(data.retentionDays) : "");
+    setMaxSizeGb(data.maxSizeGb != null ? String(data.maxSizeGb) : "");
     setDestinationId(data.destinationId ?? "");
   }, [data]);
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["hubBackup"] });
   const save = useMutation({
-    mutationFn: () => api.setHubBackup({ enabled, intervalHours, retention, destinationId: destinationId || null }),
+    mutationFn: () => {
+      const sch = scheduleToFields(schedule);
+      const posInt = (v: string) => { const n = Math.floor(Number(v)); return v.trim() !== "" && n >= 1 ? n : null; };
+      return api.setHubBackup({
+        enabled,
+        // The hub's interval is required (default 24); the inactive mode sends cron:null so switching clears it.
+        intervalHours: sch.intervalHours ?? (Number(schedule.hours) || 24),
+        cron: sch.cron,
+        retention,
+        retentionDays: posInt(retentionDays),
+        maxSizeGb: posInt(maxSizeGb),
+        destinationId: destinationId || null,
+      });
+    },
     onSuccess: () => { invalidate(); toast(t("settings.hubBackup_saved"), "success"); },
     onError: (e) => toast(e instanceof Error ? e.message : t("settings.hubBackup_saveFailed"), "error"),
   });
@@ -64,14 +84,22 @@ export function HubBackupCard() {
         {t("settings.hubBackup_enable")}
       </label>
 
+      <div style={{ marginBottom: 12 }}>
+        <ScheduleField value={schedule} onChange={setSchedule} minGapHours={1} />
+      </div>
+
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
-        <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "var(--c-tx3)" }}>
-          {t("settings.hubBackup_intervalHours")}
-          <input style={{ ...fieldStyle, width: 90 }} type="number" min={1} max={720} value={intervalHours} onChange={(e) => setIntervalHours(Number(e.target.value))} />
-        </label>
         <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "var(--c-tx3)" }}>
           {t("settings.hubBackup_retention")}
           <input style={{ ...fieldStyle, width: 90 }} type="number" min={1} max={365} value={retention} onChange={(e) => setRetention(Number(e.target.value))} />
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "var(--c-tx3)" }}>
+          {t("settings.hubBackup_retentionDays")}
+          <input style={{ ...fieldStyle, width: 90 }} type="number" min={1} max={3650} value={retentionDays} placeholder="∞" onChange={(e) => setRetentionDays(e.target.value)} />
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "var(--c-tx3)" }}>
+          {t("settings.hubBackup_maxSizeGb")}
+          <input style={{ ...fieldStyle, width: 90 }} type="number" min={1} max={100000} value={maxSizeGb} placeholder="∞" onChange={(e) => setMaxSizeGb(e.target.value)} />
         </label>
         <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "var(--c-tx3)" }}>
           {t("settings.hubBackup_destination")}
@@ -82,13 +110,16 @@ export function HubBackupCard() {
         </label>
       </div>
 
+      <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 12 }}>{t("settings.hubBackup_alwaysEncrypted")}</div>
       {warn(t("settings.hubBackup_envWarning"))}
       {!destinationId && warn(t("settings.hubBackup_localWarning"))}
 
       <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
         <Btn onClick={() => save.mutate()} disabled={save.isPending}>{t("settings.save")}</Btn>
         <Btn variant="ghost" onClick={() => run.mutate()} disabled={run.isPending}>{run.isPending ? "…" : t("settings.hubBackup_runNow")}</Btn>
+        <Btn variant="ghost" onClick={() => setShowKeys(true)}>{t("settings.keysExport_title")}</Btn>
       </div>
+      {showKeys && <KeysExportModal onClose={() => setShowKeys(false)} />}
 
       {data?.last && (
         <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 14 }}>

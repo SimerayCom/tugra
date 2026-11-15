@@ -1482,7 +1482,10 @@ export interface HubBackupItem {
 export interface HubBackupView {
   enabled: boolean;
   intervalHours: number;
+  cron: string | null;
   retention: number;
+  retentionDays: number | null;
+  maxSizeGb: number | null;
   destinationId: string | null;
   last: { status: string; at: string | null; sizeBytes: string | null } | null;
   items: HubBackupItem[];
@@ -1603,6 +1606,7 @@ export interface Database {
   backupCron: string | null;
   backupRetention: number;
   backupRetentionDays: number | null;
+  backupMaxSizeGb: number | null;
   backupDestinationId: string | null;
   backupSupported: boolean;
   verifyEnabled: boolean;
@@ -1670,6 +1674,65 @@ export interface BackupDestination {
   role: Role;
   canWrite: boolean;
   createdAt: string;
+}
+
+/** POST /backup-destinations only: the one-time plaintext data key (null when created unencrypted). */
+export type CreatedDestination = BackupDestination & { recoveryKey: string | null };
+
+export interface DestinationTestResult {
+  ok: boolean;
+  message: string;
+  encryption?: "OK" | "FAILED" | "SKIPPED";
+}
+
+export interface VolumeBackupPolicy {
+  volumeName: string;
+  enabled: boolean;
+  intervalHours: number | null;
+  cron: string | null;
+  retention: number | null;
+  retentionDays: number | null;
+  maxSizeGb: number | null;
+}
+
+export interface BackupUsage {
+  pool: string;
+  usedBytes: string;
+  backupCount: number;
+  unknownSizeCount: number;
+  budgetGb: number | null;
+  overBudget: boolean;
+}
+
+/** GET /apps/:id/volume-backups/config — app-wide volume-backup schedule/retention + per-volume policies + usage. */
+export interface VolumeBackupConfig {
+  enabled: boolean;
+  intervalHours: number | null;
+  cron: string | null;
+  retention: number;
+  retentionDays: number | null;
+  maxSizeGb: number | null;
+  destinationId: string | null;
+  destinationEncrypted: boolean | null;
+  policies: VolumeBackupPolicy[];
+  usage: BackupUsage[];
+  nextRun: string | null;
+}
+
+export interface SchedulePreview {
+  valid: boolean;
+  error?: string;
+  timezone: string;
+  nextRuns: string[];
+  minGapSeconds: number | null;
+}
+
+export interface SealedKeyExport {
+  filename: string;
+  format: string;
+  contentBase64: string;
+  destinationCount: number;
+  undecryptable: string[];
 }
 
 export type BackupStatus = "PENDING" | "RUNNING" | "SUCCESS" | "FAILED";
