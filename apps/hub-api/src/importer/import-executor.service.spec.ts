@@ -1,3 +1,4 @@
+import { Logger } from "@nestjs/common";
 import { ImportExecutorService } from "./import-executor.service";
 import { planImport } from "./import-planner";
 import type { ForeignApp, ForeignFleet } from "./foreign-fleet";
@@ -22,7 +23,7 @@ function fleet(): ForeignFleet {
 
 const DB_ITEMREF = "database:srv-a:db-1";
 
-function harness(over: { dbCreds?: (ref: string) => { user?: string; password?: string; rootPassword?: string; database?: string } | undefined | Promise<unknown>; takenHostPorts?: number[]; priorImported?: Array<{ itemRef: string; resourceId: string; resourceType: string }>; liveDbIds?: string[]; liveAppIds?: string[]; gitSources?: Array<{ id: string }>; fleet?: ForeignFleet; carriedSource?: { id: string } | null; clusterId?: string | null; upsert?: jest.Mock; secrets?: (ref: string) => { values: Record<string, string>; unresolved: [] }; findOrCreateProject?: jest.Mock; basicAuthCreds?: (ref: string) => Promise<Array<{ user: string; password: string }> | undefined> } = {}) {
+function harness(over: { dbCreds?: (ref: string) => { user?: string; password?: string; rootPassword?: string; database?: string } | undefined | Promise<unknown>; takenHostPorts?: number[]; priorImported?: Array<{ itemRef: string; resourceId: string; resourceType: string }>; liveDbIds?: string[]; liveAppIds?: string[]; gitSources?: Array<{ id: string }>; fleet?: ForeignFleet; carriedSource?: { id: string } | null; clusterId?: string | null; upsert?: jest.Mock; secrets?: (ref: string) => { values: Record<string, string>; unresolved: [] }; findOrCreateProject?: jest.Mock; basicAuthCreds?: (ref: string) => Promise<Array<{ user: string; password: string }> | undefined>; appExtras?: (ref: string) => Promise<unknown> } = {}) {
   let seq = 0;
   const created: Array<{ id: string; data: Record<string, unknown> }> = [];
   const prisma = {
@@ -56,11 +57,12 @@ function harness(over: { dbCreds?: (ref: string) => { user?: string; password?: 
     close: jest.fn().mockResolvedValue(undefined),
     ...(over.dbCreds ? { fetchDbCredentials: jest.fn().mockImplementation(async (ref: string) => over.dbCreds!(ref)) } : {}),
     ...(over.basicAuthCreds ? { fetchBasicAuthCredentials: jest.fn().mockImplementation(async (ref: string) => over.basicAuthCreds!(ref)) } : {}),
+    ...(over.appExtras ? { fetchAppExtras: jest.fn().mockImplementation(async (ref: string) => over.appExtras!(ref)) } : {}),
   };
   const access = { requirePermission: jest.fn().mockResolvedValue(undefined) };
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
   const importer = { openSession: jest.fn().mockResolvedValue({ source }) };
-  const apps = { create: jest.fn().mockResolvedValue({ id: "app-new", name: "web" }), setVolumes: jest.fn().mockResolvedValue(undefined), setBuild: jest.fn().mockResolvedValue(undefined), setWatchPaths: jest.fn().mockResolvedValue(undefined), setAutoDeploy: jest.fn().mockResolvedValue(undefined), setLimits: jest.fn().mockResolvedValue(undefined), setContainerCommand: jest.fn().mockResolvedValue(undefined), setClusterConfig: jest.fn().mockResolvedValue(undefined), setExtraDomains: jest.fn().mockResolvedValue(undefined), setDomainOptions: jest.fn().mockResolvedValue(undefined), setContainerPort: jest.fn().mockResolvedValue(undefined), setExtraPorts: jest.fn().mockResolvedValue(undefined), setServiceDomains: jest.fn().mockResolvedValue(undefined), setRedirects: jest.fn().mockResolvedValue(undefined), setBasicAuth: jest.fn().mockResolvedValue(undefined) };
+  const apps = { create: jest.fn().mockResolvedValue({ id: "app-new", name: "web" }), setVolumes: jest.fn().mockResolvedValue(undefined), setBuild: jest.fn().mockResolvedValue(undefined), setWatchPaths: jest.fn().mockResolvedValue(undefined), setAutoDeploy: jest.fn().mockResolvedValue(undefined), setLimits: jest.fn().mockResolvedValue(undefined), setContainerCommand: jest.fn().mockResolvedValue(undefined), setClusterConfig: jest.fn().mockResolvedValue(undefined), setExtraDomains: jest.fn().mockResolvedValue(undefined), setDomainOptions: jest.fn().mockResolvedValue(undefined), setContainerPort: jest.fn().mockResolvedValue(undefined), setExtraPorts: jest.fn().mockResolvedValue(undefined), setServiceDomains: jest.fn().mockResolvedValue(undefined), setRedirects: jest.fn().mockResolvedValue(undefined), setBasicAuth: jest.fn().mockResolvedValue(undefined), setCustomLabels: jest.fn().mockResolvedValue(undefined) };
   const gitSources = { upsertForImport: over.upsert ?? jest.fn().mockResolvedValue("gs-new") };
   // Tree find-or-create: in-memory + idempotent (same name → same ids), like the real ProjectsService.findOrCreateForImport.
   const treeIds = new Map<string, string>();
@@ -89,7 +91,7 @@ function harness(over: { dbCreds?: (ref: string) => { user?: string; password?: 
     gitSources as never,
     projects as never,
   );
-  return { svc, prisma, source: source as typeof source & { fetchDbCredentials?: jest.Mock; fetchBasicAuthCredentials?: jest.Mock }, apps, dbs, created, gitSources, projects };
+  return { svc, prisma, audit, source: source as typeof source & { fetchDbCredentials?: jest.Mock; fetchBasicAuthCredentials?: jest.Mock; fetchAppExtras?: jest.Mock }, apps, dbs, created, gitSources, projects };
 }
 
 function input(f: ForeignFleet = fleet()) {
@@ -1071,5 +1073,145 @@ describe("ImportExecutorService.applyRemote — env flags", () => {
     expect(apps.create).not.toHaveBeenCalled();
     expect(String(failed?.data.output)).toContain('env var "LD_PRELOAD" has a line break but its name cannot be a multiline variable');
     expect(String(failed?.data.output)).not.toContain("SECRETVALUE");
+  });
+});
+
+
+describe("ImportExecutorService — custom labels + inline Dockerfile (G3-C)", () => {
+  const LEAK_DF = "FROM node:20\nRUN echo LEAK-DOCKERFILE-TEXT\n";
+  const LEAK_VAL = "LEAK-LABEL-VALUE";
+  const extrasFull = async () => ({
+    unmapped: [],
+    labels: [
+      { key: "team", value: LEAK_VAL },
+      { key: "traefik.http.middlewares.auth.basicauth.users", value: "admin:LEAK-HASH" },
+      { key: "traefik.enable", value: "true" },
+    ],
+    dockerfile: LEAK_DF,
+  });
+  const dockerApp = (over: Partial<ForeignApp> = {}): ForeignFleet => {
+    const base = fleet();
+    return {
+      ...base,
+      databases: [],
+      apps: [{ ...base.apps[0], buildPack: "dockerfile", git: { url: "https://github.com/o/r.git", branch: "main", dockerfilePath: "/Dockerfile", baseDirectory: "/" }, dockerBuildTarget: "prod", sourceExtras: { labels: true, dockerfile: true }, ...over }],
+    };
+  };
+  const doneTask = (h: ReturnType<typeof harness>) =>
+    h.prisma.bulkTask.update.mock.calls.map((c: unknown[]) => (c[0] as { data: Record<string, unknown> }).data).find((d: Record<string, unknown>) => d.status === "DONE" && d.resourceType === "application") as {
+      result: { postCreate?: { applied: string[]; unmapped: Array<{ field: string; reason: string }> } } & Record<string, unknown>;
+      output?: string;
+    };
+
+  it("a git+Dockerfile app gets ONE setBuild (inline + target + path + base) and setCustomLabels with only the filtered labels", async () => {
+    const f = dockerApp();
+    const h = harness({ fleet: f, appExtras: extrasFull });
+    await run(h, f);
+    expect(h.source.fetchAppExtras).toHaveBeenCalledWith("app-1");
+    expect(h.apps.setBuild).toHaveBeenCalledTimes(1);
+    expect(h.apps.setBuild).toHaveBeenCalledWith("user-1", "app-new", { buildType: "DOCKERFILE", dockerfilePath: "Dockerfile", dockerBuildTarget: "prod", baseDirectory: null, inlineDockerfile: LEAK_DF });
+    expect(h.apps.setCustomLabels).toHaveBeenCalledTimes(1);
+    expect(h.apps.setCustomLabels).toHaveBeenCalledWith("user-1", "app-new", { labels: { team: LEAK_VAL } });
+    const r = doneTask(h);
+    expect(r.result.postCreate!.applied).toEqual(expect.arrayContaining(["build", "inlineDockerfile", "customLabels"]));
+    // dropped key NAMES are in the result and the note; values never
+    const fields = r.result.postCreate!.unmapped.map((u) => u.field);
+    expect(fields).toEqual(expect.arrayContaining(["customLabel:traefik.enable", "accessControl"]));
+    expect(r.output).toMatch(/config not carried: .*customLabel:traefik\.enable/);
+  });
+
+  it("a rejected setBuild names the inlineDockerfile field with the fixed reason (task still DONE, no duplicate app)", async () => {
+    const f = dockerApp();
+    const h = harness({ fleet: f, appExtras: extrasFull });
+    h.apps.setBuild.mockRejectedValue(new Error(`boom ${LEAK_DF}`));
+    await run(h, f);
+    const r = doneTask(h);
+    expect(r.result.postCreate!.unmapped).toEqual(expect.arrayContaining([
+      { field: "build", reason: "Tugra rejected the setting — set it manually" },
+      { field: "inlineDockerfile", reason: "Tugra rejected the setting. Set it manually" },
+    ]));
+    expect(r.result.postCreate!.applied).not.toContain("inlineDockerfile");
+    expect(h.apps.create).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(r)).not.toContain("LEAK-DOCKERFILE-TEXT");
+  });
+
+  it("setCustomLabels rejecting gives DONE + unmapped customLabels with the fixed reason", async () => {
+    const f = dockerApp();
+    const h = harness({ fleet: f, appExtras: extrasFull });
+    h.apps.setCustomLabels.mockRejectedValue(new Error(`bad ${LEAK_VAL}`));
+    await run(h, f);
+    const r = doneTask(h);
+    expect(r.result.postCreate!.unmapped).toContainEqual({ field: "customLabels", reason: "Tugra rejected the setting — set it manually" });
+    expect(JSON.stringify(r)).not.toContain(LEAK_VAL);
+    expect(h.prisma.bulkTask.update).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED" }) }));
+  });
+
+  it("a fetchAppExtras failure still gives DONE + unmapped sourceExtras, one app, and no error text", async () => {
+    const f = dockerApp();
+    const h = harness({ fleet: f, appExtras: async () => { throw new Error("GET https://coolify.internal/api/v1/applications/app-1 -> 403 LEAK-URL"); } });
+    await run(h, f);
+    expect(h.apps.create).toHaveBeenCalledTimes(1);
+    expect(h.apps.setCustomLabels).not.toHaveBeenCalled();
+    const r = doneTask(h);
+    expect(r.result.postCreate!.unmapped).toContainEqual({ field: "sourceExtras", reason: "could not read this app's labels or Dockerfile from the source; set them manually" });
+    expect(JSON.stringify(r)).not.toContain("LEAK-URL");
+    // the target-only build is still applied from the fleet
+    expect(h.apps.setBuild).toHaveBeenCalledWith("user-1", "app-new", expect.not.objectContaining({ inlineDockerfile: expect.anything() }));
+  });
+
+  it("no marker, a compose app, or a source without fetchAppExtras never calls it and leaves output/result byte-identical", async () => {
+    // (a) no marker
+    const f1 = dockerApp({ sourceExtras: undefined });
+    const h1 = harness({ fleet: f1, appExtras: extrasFull });
+    await run(h1, f1);
+    expect(h1.source.fetchAppExtras).not.toHaveBeenCalled();
+    // (b) compose app with a marker
+    const base = fleet();
+    const f2: ForeignFleet = { ...base, databases: [], apps: [{ ...base.apps[0], kind: "compose", buildPack: "dockercompose", composeFile: "services: {}", git: undefined, sourceExtras: { labels: true } }] };
+    const h2 = harness({ fleet: f2, appExtras: extrasFull });
+    await run(h2, f2);
+    expect(h2.source.fetchAppExtras).not.toHaveBeenCalled();
+    expect(doneTask(h2).result).not.toHaveProperty("postCreate");
+    // (c) source without the method (Dokploy / local-docker)
+    const f3 = dockerApp();
+    const h3 = harness({ fleet: f3 });
+    await run(h3, f3);
+    const r3 = doneTask(h3);
+    expect(r3.result.postCreate).toEqual({ applied: ["build"], unmapped: [] });
+    expect(r3.output).toBeUndefined();
+    expect(h3.apps.setCustomLabels).not.toHaveBeenCalled();
+  });
+
+  it("a retry after a failed create fetches extras and applies once (no duplicate setBuild)", async () => {
+    const f = dockerApp();
+    const h = harness({ fleet: f, appExtras: extrasFull });
+    h.apps.create.mockRejectedValueOnce(new Error("transient"));
+    await run(h, f);
+    expect(h.source.fetchAppExtras).not.toHaveBeenCalled(); // create failed first: nothing was fetched
+    await run(h, f);
+    expect(h.source.fetchAppExtras).toHaveBeenCalledTimes(1);
+    expect(h.apps.setBuild).toHaveBeenCalledTimes(1);
+    expect(h.apps.setCustomLabels).toHaveBeenCalledTimes(1);
+  });
+
+  it("LEAK: no label value, Dockerfile text or hash reaches the logger, the audit meta, or any task output/result", async () => {
+    const f = dockerApp();
+    const h = harness({ fleet: f, appExtras: extrasFull });
+    const sinks = (["log", "warn", "error", "debug", "verbose"] as const).map((m) => jest.spyOn(Logger.prototype, m).mockImplementation(() => undefined));
+    try {
+      await run(h, f);
+      const dump = JSON.stringify([
+        h.prisma.bulkTask.create.mock.calls,
+        h.prisma.bulkTask.update.mock.calls,
+        h.prisma.bulkOperation.create.mock.calls,
+        h.prisma.bulkOperation.update.mock.calls,
+        h.audit.log.mock.calls,
+        sinks.map((m) => m.mock.calls),
+      ]);
+      expect(dump).not.toMatch(/LEAK-LABEL-VALUE|LEAK-DOCKERFILE-TEXT|LEAK-HASH/);
+      expect(dump).toContain("customLabel:traefik.enable"); // names are reported
+    } finally {
+      sinks.forEach((m) => m.mockRestore());
+    }
   });
 });

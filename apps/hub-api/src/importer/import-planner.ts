@@ -17,7 +17,7 @@ import { foreignAppToVolumes } from "./apply-map";
 // target database is created). Exported so the preflight classifies them identically — one source, no drift.
 export const UNSUPPORTED_DB_IMPORT = new Set(["LIBSQL"]); // no logical dump/restore pipeline yet (volume-copy only)
 
-const ns = (kind: string, serverRef: string | undefined, ref: string): string => `${kind}:${serverRef ?? "_"}:${ref}`;
+export const ns = (kind: string, serverRef: string | undefined, ref: string): string => `${kind}:${serverRef ?? "_"}:${ref}`;
 const volKey = (v: ForeignVolume): string => v.name ?? v.hostPath ?? v.mountPath;
 
 /**

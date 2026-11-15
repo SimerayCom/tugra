@@ -100,7 +100,7 @@ export interface ForeignApp {
   image?: string;
   imageOrigin?: ImageOrigin;
   registry?: { host: string; secretRef?: string }; // private registry the image is pulled from
-  git?: { url: string; branch?: string; dockerfilePath?: string; dockerfileContent?: string; baseDirectory?: string; composePath?: string; provider?: string }; // composePath = the compose FILE's path within the repo (kind "compose" only; NOT a build-context dir); provider "github" = a private GitHub-App repo (needs a connected GitSource to clone)
+  git?: { url: string; branch?: string; dockerfilePath?: string; baseDirectory?: string; composePath?: string; provider?: string }; // composePath = the compose FILE's path within the repo (kind "compose" only; NOT a build-context dir); provider "github" = a private GitHub-App repo (needs a connected GitSource to clone)
   buildCommand?: string;
   startCommand?: string;
   installCommand?: string;
@@ -155,6 +155,13 @@ export interface ForeignApp {
    *  `input.environmentId` behavior. */
   projectRef?: string;
   environmentRef?: string;
+  /** Secret-free MARKER that the source holds label / Dockerfile text for this app. NEVER the text itself.
+   *  Set by the source mapper from presence (non-empty) only; read by the executor to decide whether to call
+   *  `ImportSource.fetchAppExtras`. Deliberately NOT copied into plan item `proposed`, so planHash is unchanged. */
+  sourceExtras?: { labels?: true; dockerfile?: true };
+  /** Fields PRESENT on the source that no Tugra setter carries. Field NAMES + FIXED reasons only, never values.
+   *  Feeds the plan-time coverage report. NOT copied into `proposed`; no new `risks`; planHash unchanged. */
+  notCarried?: Array<{ field: string; reason: string; level: "warn" | "info" }>;
 }
 
 export interface ForeignDb {
@@ -283,6 +290,16 @@ export type VolumeDataPlane = "hub-staged" | "manual-large" | "manual" | "unknow
  * Secret-free, advisory summary attached to a plan so the review screen can show, up front, what actually
  * moves: per-database data-movement class, the services the plan does NOT import, and the volume-data caveat.
  */
+export interface ImportCoverageApp {
+  itemRef: string; // same ns("app", serverRef, sourceRef) as the plan item
+  name: string;
+  notCarried: Array<{ field: string; reason: string; level: "warn" | "info" }>;
+}
+/** Per-app "what was not carried" report (presence-only: field names + fixed reasons, never values). Advisory. */
+export interface ImportCoverage {
+  apps: ImportCoverageApp[]; // only apps with at least one entry
+}
+
 export interface ImportPreflight {
   databases: Array<{ name: string; engine: string; dataPlane: DbDataPlane; reason: string }>;
   /** Services (compose / one-click stacks) are discovered but NOT imported yet — surfaced here so they are
@@ -295,4 +312,6 @@ export interface ImportPreflight {
    *  known when an inventory was supplied (the Go `--inventory` producer is deferred), so at plan time an
    *  eligible mount is `hub-staged` and size-unmeasured, never silently assumed small. */
   volumes?: Array<{ app: string; mountPath: string; type?: "named" | "bind"; dataPlane: VolumeDataPlane; reason: string }>;
+  /** Per-app "what is not carried over". Additive; NOT part of planHash (preflight never is). */
+  coverage?: ImportCoverage;
 }

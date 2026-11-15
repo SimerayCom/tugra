@@ -40,4 +40,21 @@ describe("toStatusView", () => {
     const api = v.tasks.find((t) => t.itemRef === "app:srv:api")!;
     expect(api).toMatchObject({ name: "api", status: "FAILED", message: "nothing to deploy" });
   });
+
+  it("returns postCreate/ingress per task (names + fixed reasons), undefined when absent, and drops malformed entries", () => {
+    const v = toStatusView(
+      op({
+        tasks: [
+          { itemRef: "app:srv:web", kind: "app", status: "DONE", resourceType: "application", resourceId: "app1", result: { name: "web", postCreate: { applied: ["build", 7, "customLabels"], unmapped: [{ field: "customLabel:traefik.enable", reason: "reserved" }, { field: 1 }, "x"] }, ingress: { applied: [], unmapped: [{ field: "ports", reason: "r" }] } }, output: null, startedAt: null, finishedAt: null },
+          { itemRef: "app:srv:api", kind: "app", status: "DONE", resourceType: "application", resourceId: "app2", result: { name: "api", postCreate: "garbage" }, output: null, startedAt: null, finishedAt: null },
+          { itemRef: "app:srv:db", kind: "database", status: "DONE", resourceType: "database", resourceId: "d1", result: { name: "db" }, output: null, startedAt: null, finishedAt: null },
+        ],
+      }),
+    );
+    expect(v.tasks[0].postCreate).toEqual({ applied: ["build", "customLabels"], unmapped: [{ field: "customLabel:traefik.enable", reason: "reserved" }] });
+    expect(v.tasks[0].ingress).toEqual({ applied: [], unmapped: [{ field: "ports", reason: "r" }] });
+    expect(v.tasks[1].postCreate).toBeUndefined();
+    expect(v.tasks[2].postCreate).toBeUndefined();
+    expect(v.tasks[2].ingress).toBeUndefined();
+  });
 });

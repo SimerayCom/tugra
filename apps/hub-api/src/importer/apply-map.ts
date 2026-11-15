@@ -1,7 +1,9 @@
-import type { CreateAppInput, SetBuildInput, SetContainerCommandInput, SetLimitsInput } from "../applications/dto";
-import { SetBuildSchema, SetContainerCommandSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetLimitsSchema, SetRedirectsSchema, SetVolumesSchema, SetWatchPathsSchema } from "../applications/dto";
+import type { CreateAppInput, SetBuildInput, SetContainerCommandInput, SetCustomLabelsInput, SetLimitsInput } from "../applications/dto";
+import { INLINE_DOCKERFILE_MAX, SetBuildSchema, SetContainerCommandSchema, SetCustomLabelsSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetLimitsSchema, SetRedirectsSchema, SetVolumesSchema, SetWatchPathsSchema, inlineDockerfileProblem } from "../applications/dto";
 import type { AppVolume } from "../deploy/deploy-script";
+import { CUSTOM_LABEL_KEY_RE, CUSTOM_LABEL_LIMITS, LABEL_NAMESPACE_WHY, reservedLabelNamespace } from "../deploy/label-namespaces";
 import type { ForeignApp, ForeignDomain } from "./foreign-fleet";
+import type { SourceAppExtras } from "./import-source";
 import { mapBuildPack } from "./buildpack-map";
 import { mapSourceEnvFlags, type SourceEnvFlags } from "./env-auto-flags";
 
@@ -96,11 +98,91 @@ export function foreignAppToCreateInput(
   return input;
 }
 
+/** Fixed reason for replicas: they convert the app to a swarm service, so an import never applies them silently.
+ *  Shared by the executor and the plan-time coverage report so the two can never drift. */
+export const REPLICAS_UNMAPPED_REASON = "replicas convert the app to a swarm service — set the replica count explicitly in Tugra after import";
+
+export interface MappedLabels {
+  labels: Record<string, string>;
+  dropped: Array<{ field: string; reason: string }>;
+  /** A DROPPED label looked like an access-control middleware (basic auth / IP allow-list / forward auth / digest). */
+  accessControlDropped: boolean;
+}
+
+const ACCESS_CONTROL_LABEL_RE = /\.(basicauth|ipallowlist|ipwhitelist|forwardauth|digestauth)\b/i;
+// eslint-disable-next-line no-control-regex
+const LABEL_CONTROL_RE = /[\x00-\x1f\x7f]/;
+const MAX_DROPPED_LABELS = 20;
+
+/**
+ * Pure, non-throwing, source-order-deterministic: filter a source's custom container labels down to the set
+ * Tugra will accept, per label, using the hub gate's own constants (`deploy/label-namespaces`) so the importer
+ * and the gate cannot drift. Everything dropped is reported by KEY name only (a key that fails the key regex is
+ * JSON-quoted and truncated, never echoed raw) with a FIXED reason: a label VALUE never appears in the output.
+ */
+export function mapCustomLabels(entries: ReadonlyArray<{ key: string; value: string }>): MappedLabels {
+  const L = CUSTOM_LABEL_LIMITS;
+  const labels: Record<string, string> = {};
+  const dropped: Array<{ field: string; reason: string }> = [];
+  let droppedCount = 0;
+  let accessControlDropped = false;
+  const seen = new Set<string>();
+  let bytes = 0;
+  let count = 0;
+  const drop = (key: string, field: string, reason: string) => {
+    droppedCount++;
+    if (ACCESS_CONTROL_LABEL_RE.test(key)) accessControlDropped = true;
+    if (dropped.length < MAX_DROPPED_LABELS) dropped.push({ field, reason });
+  };
+  for (const { key, value } of entries) {
+    if (key.length === 0 || key.length > L.keyMax || !CUSTOM_LABEL_KEY_RE.test(key)) {
+      drop(key, `customLabel:${JSON.stringify(key.slice(0, 40))}`, "invalid label key");
+      continue;
+    }
+    const field = `customLabel:${key}`;
+    const ns = reservedLabelNamespace(key);
+    if (ns) {
+      drop(key, field, `in the reserved ${ns}* namespace (${LABEL_NAMESPACE_WHY[ns]})`);
+      continue;
+    }
+    const lower = key.toLowerCase();
+    if (seen.has(lower)) {
+      drop(key, field, "duplicate (label keys are case-insensitive)");
+      continue;
+    }
+    if (value.length > L.valueMax) {
+      drop(key, field, `value is longer than ${L.valueMax} characters`);
+      continue;
+    }
+    if (LABEL_CONTROL_RE.test(value)) {
+      drop(key, field, "value contains control characters");
+      continue;
+    }
+    const size = Buffer.byteLength(key, "utf8") + Buffer.byteLength(value, "utf8");
+    if (count + 1 > L.maxCount || bytes + size > L.totalBytes) {
+      drop(key, field, "over the per-app label limit");
+      continue;
+    }
+    seen.add(lower);
+    labels[key] = value;
+    count++;
+    bytes += size;
+  }
+  if (droppedCount > dropped.length) dropped.push({ field: "customLabel:…", reason: `${droppedCount - dropped.length} more not carried` });
+  if (!SetCustomLabelsSchema.safeParse({ labels }).success) {
+    return { labels: {}, dropped: [{ field: "customLabels", reason: "Tugra rejected the label set" }], accessControlDropped };
+  }
+  return { labels, dropped, accessControlDropped };
+}
+
 /** The post-create configuration an imported app needs beyond what `CreateAppSchema` can carry — each part is
  *  the exact input of an existing ApplicationsService setter, already schema-validated. */
 export interface PostCreateConfig {
-  /** `setBuild` — only emitted for a Dockerfile app with a multi-stage target (the one build field create can't carry). */
+  /** `setBuild` — only emitted for a Dockerfile app with a multi-stage target and/or inline Dockerfile text (the build
+   *  fields create can't carry). setBuild is a FULL replace, so both live in this ONE input (never two calls). */
   build?: SetBuildInput;
+  /** `setCustomLabels` — the filtered, Tugra-safe subset of the source's container labels. */
+  customLabels?: SetCustomLabelsInput;
   /** `setWatchPaths` */
   watchPaths?: string[];
   /** `setAutoDeploy` */
@@ -121,7 +203,7 @@ export interface PostCreateConfig {
  * schema the controller enforces, and a field that fails (or has no Tugra target) is reported in `unmapped`
  * rather than silently dropped. The executor calls the setters with these (a later slice wires that).
  */
-export function foreignAppToPostCreateConfig(app: ForeignApp): PostCreateConfig {
+export function foreignAppToPostCreateConfig(app: ForeignApp, extras?: SourceAppExtras): PostCreateConfig {
   const out: PostCreateConfig = { unmapped: [] };
   const skip = (field: string, reason: string) => out.unmapped.push({ field, reason });
   const build = mapBuildPack(app);
@@ -161,20 +243,58 @@ export function foreignAppToPostCreateConfig(app: ForeignApp): PostCreateConfig 
     }
   }
 
-  if (app.dockerBuildTarget) {
-    if (isGit && build.buildType === "DOCKERFILE") {
-      const parsed = SetBuildSchema.safeParse({
+  // Inline Dockerfile text (secret-capable: in-memory only, never in `unmapped`). Pre-validated so a rejected text is
+  // dropped with a FIXED reason (the validator messages carry no source text) while the target-only build survives.
+  const isDockerfileBuild = isGit && build.buildType === "DOCKERFILE";
+  let inline: string | undefined;
+  if (extras?.dockerfile !== undefined) {
+    if (!isDockerfileBuild) {
+      skip("inlineDockerfile", "inline Dockerfile applies only to Dockerfile builds");
+    } else if (Buffer.byteLength(extras.dockerfile, "utf8") > INLINE_DOCKERFILE_MAX) {
+      skip("inlineDockerfile", "the Dockerfile is larger than 48 KiB");
+    } else {
+      const problem = inlineDockerfileProblem(extras.dockerfile);
+      if (problem) skip("inlineDockerfile", problem);
+      else inline = extras.dockerfile;
+    }
+  }
+
+  if (app.dockerBuildTarget || inline) {
+    if (isDockerfileBuild) {
+      const base: Record<string, unknown> = {
         buildType: "DOCKERFILE",
         dockerfilePath: relPath(app.git?.dockerfilePath) ?? null,
         dockerBuildTarget: app.dockerBuildTarget,
         baseDirectory: relPath(app.git?.baseDirectory) ?? null,
-      });
+      };
+      if (!app.dockerBuildTarget) delete base.dockerBuildTarget;
+      let parsed = SetBuildSchema.safeParse(inline ? { ...base, inlineDockerfile: inline } : base);
+      if (!parsed.success && inline) {
+        skip("inlineDockerfile", "Tugra would not accept the Dockerfile text");
+        inline = undefined;
+        parsed = app.dockerBuildTarget ? SetBuildSchema.safeParse(base) : parsed;
+      }
       if (parsed.success) out.build = parsed.data;
-      else skip("dockerBuildTarget", "the build target is not a valid Dockerfile stage name");
+      else if (app.dockerBuildTarget) skip("dockerBuildTarget", "the build target is not a valid Dockerfile stage name");
     } else {
       skip("dockerBuildTarget", "a build target applies only to Dockerfile builds");
     }
   }
+
+  // Custom container labels. Skipped for a compose app (its labels live in its compose file).
+  if (extras?.labels?.length) {
+    if (build.source === "COMPOSE") {
+      skip("customLabels", "compose apps declare labels in the compose file");
+    } else {
+      const mapped = mapCustomLabels(extras.labels);
+      if (Object.keys(mapped.labels).length) out.customLabels = { labels: mapped.labels };
+      out.unmapped.push(...mapped.dropped);
+      if (mapped.accessControlDropped) {
+        skip("accessControl", "an access-control middleware label (basic auth / IP allow-list / forward auth) was not carried; the imported app is not gated by it until you recreate it with Tugra basic auth or IP rules, before the first deploy");
+      }
+    }
+  }
+  if (extras?.unmapped.length) out.unmapped.push(...extras.unmapped);
 
   if (app.replicas !== undefined && app.replicas > 1) out.replicas = app.replicas;
 

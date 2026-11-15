@@ -1,3 +1,4 @@
+import { inlineDockerfileProblem } from "../../applications/dto";
 import type {
   ForeignApp,
   ForeignDb,
@@ -41,6 +42,20 @@ export interface CoolifyApp {
   start_command?: string | null;
   fqdn?: string | null; // "https://a.com,http://b.com:3000"
   docker_compose_raw?: string | null; // read:sensitive → usually absent in discover
+  // ── Presence-only / apply-time reads. Names + encodings are HAND-BUILT from Coolify v4 sources, UNVERIFIED until
+  // the live check (spec G3-C section 11); a wrong name only loses a coverage note, never produces wrong data.
+  custom_labels?: string | null; // container labels, one `key=value` per line (believed base64 over the API); read:sensitive-gated
+  dockerfile?: string | null; // inline Dockerfile text (alias `dockerfile_raw`); read:sensitive-gated
+  dockerfile_raw?: string | null;
+  dockerfile_target_build?: string | null;
+  custom_docker_run_options?: string | null;
+  pre_deployment_command?: string | null;
+  post_deployment_command?: string | null;
+  limits_memory?: string | number | null;
+  limits_cpus?: string | number | null;
+  health_check_enabled?: boolean | null;
+  is_http_basic_auth_enabled?: boolean | null;
+  watch_paths?: string | null;
 }
 export interface CoolifyDatabase {
   uuid: string;
@@ -231,6 +246,92 @@ export function versionFromImage(image: string | null | undefined): string | und
   return tag?.match(/\d+(\.\d+)*/)?.[0];
 }
 
+/** Largest label block we will decode (a Coolify block is a few KiB at most; refuse pathological input). */
+const MAX_LABEL_BLOCK_BYTES = 64 * 1024;
+
+/** Strictly base64-shaped (alphabet + padding, length multiple of 4) — never matches plain `a.b=c` text. */
+function strictBase64(s: string): boolean {
+  return s.length > 0 && s.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(s);
+}
+
+/** Decode base64 to UTF-8, or undefined when the bytes are not valid UTF-8. */
+function decodeBase64Utf8(s: string): string | undefined {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(s, "base64"));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Pure: Coolify's `custom_labels` (base64 over the API; plain text tolerated) → ordered key/value pairs. Returns
+ * `"unparsable"` when the block had content but not one `key=value` line. A line is trimmed, may carry a leading
+ * `- ` and surrounding quotes, and is split at the FIRST `=`. Values never leave this function except as data.
+ */
+export function decodeCoolifyLabels(raw: unknown): Array<{ key: string; value: string }> | "unparsable" {
+  if (typeof raw !== "string") return [];
+  const trimmed = raw.trim();
+  if (!trimmed) return [];
+  if (Buffer.byteLength(raw, "utf8") > MAX_LABEL_BLOCK_BYTES) return "unparsable";
+  let text = raw;
+  if (strictBase64(trimmed)) {
+    const decoded = decodeBase64Utf8(trimmed);
+    if (decoded !== undefined && decoded.includes("=")) text = decoded;
+  }
+  const out: Array<{ key: string; value: string }> = [];
+  let nonBlank = 0;
+  for (const rawLine of text.split("\n")) {
+    let line = rawLine.replace(/\r$/, "").trim();
+    if (!line || line.startsWith("#")) continue;
+    nonBlank++;
+    if (line.startsWith("- ")) line = line.slice(2).trim();
+    const q = line[0];
+    if ((q === '"' || q === "'") && line.length >= 2 && line.endsWith(q)) line = line.slice(1, -1);
+    const eq = line.indexOf("=");
+    if (eq <= 0) continue; // no `=` (or an empty key) → skipped
+    out.push({ key: line.slice(0, eq).trim(), value: line.slice(eq + 1) });
+  }
+  return out.length === 0 && nonBlank > 0 ? "unparsable" : out;
+}
+
+/**
+ * Pure: Coolify's inline Dockerfile text (`dockerfile`, alias `dockerfile_raw`). Plain text wins when it is already
+ * a valid Dockerfile; otherwise a base64-shaped value is decoded (and used only if the DECODED text is valid);
+ * anything else is returned raw so the apply-time validator rejects it with its fixed message.
+ */
+export function decodeCoolifyDockerfile(raw: unknown): string | undefined {
+  if (typeof raw !== "string" || !raw.trim()) return undefined;
+  if (inlineDockerfileProblem(raw) === null) return raw;
+  const trimmed = raw.trim();
+  if (strictBase64(trimmed)) {
+    const decoded = decodeBase64Utf8(trimmed);
+    if (decoded !== undefined && inlineDockerfileProblem(decoded) === null) return decoded;
+  }
+  return raw;
+}
+
+const nonEmpty = (v: unknown): boolean => typeof v === "string" && v.trim() !== "";
+/** Coolify "0" / "" / null / 0 all mean "no limit". */
+const nonZero = (v: unknown): boolean => (typeof v === "number" ? v > 0 : typeof v === "string" && v.trim() !== "" && v.trim() !== "0");
+
+/** Fixed-reason coverage rows for what is PRESENT on a Coolify app but has no Tugra carry path. Presence only. */
+function coolifyNotCarried(app: CoolifyApp, realGit: boolean, kind: ForeignApp["kind"]): NonNullable<ForeignApp["notCarried"]> {
+  const out: NonNullable<ForeignApp["notCarried"]> = [];
+  if (app.is_http_basic_auth_enabled === true) out.push({ field: "basicAuth", level: "warn", reason: "the source gated this app with HTTP basic auth; the credentials are not read, so the imported app is NOT gated until you set basic auth in Tugra before the first deploy" });
+  if (nonEmpty(app.ports_mappings)) out.push({ field: "publishedPorts", level: "warn", reason: "host-published ports are not carried; add them in the app's Ports settings" });
+  if (nonEmpty(app.custom_docker_run_options)) out.push({ field: "dockerOptions", level: "warn", reason: "custom Docker run options are owner-gated in Tugra and never auto-applied" });
+  if (nonEmpty(app.pre_deployment_command) || nonEmpty(app.post_deployment_command)) out.push({ field: "deployHooks", level: "info", reason: "set them in the app's Deploy hooks after import" });
+  if (nonZero(app.limits_memory) || nonZero(app.limits_cpus)) out.push({ field: "limits", level: "info", reason: "resource limits are not carried from Coolify yet; set them in Tugra" });
+  if (app.health_check_enabled === true) out.push({ field: "healthcheck", level: "info", reason: "health check not carried" });
+  if (nonEmpty(app.dockerfile_target_build)) out.push({ field: "dockerBuildTarget", level: "info", reason: "build target not carried from Coolify yet" });
+  if (nonEmpty(app.watch_paths)) out.push({ field: "watchPaths", level: "info", reason: "watch paths not carried from Coolify yet" });
+  // The planner's `app.git.missing` blocker case: a Dockerfile app with no real repo (and no image to fall back to).
+  if (app.build_pack === "dockerfile" && !realGit && kind !== "image") {
+    out.push({ field: "inlineDockerfile", level: "warn", reason: "an inline-Dockerfile app has no git repository; Tugra builds Dockerfile apps from a repo, so this app cannot be imported yet (repo-less Dockerfile apps are a planned feature)" });
+  }
+  return out;
+}
+
 function mapEnv(e: CoolifyEnv): ForeignEnv {
   return {
     key: e.key,
@@ -268,6 +369,11 @@ export function mapApplication(
         : `${name}${app.docker_registry_image_tag ? `:${app.docker_registry_image_tag}` : ""}`
       : undefined;
   const realGit = hasRealGit(app);
+  // Presence-only markers (never the text): label / Dockerfile text is re-read at apply time.
+  const sourceExtras: NonNullable<ForeignApp["sourceExtras"]> = {};
+  if (nonEmpty(app.custom_labels)) sourceExtras.labels = true;
+  if (app.build_pack === "dockerfile" && (nonEmpty(app.dockerfile) || nonEmpty(app.dockerfile_raw))) sourceExtras.dockerfile = true;
+  const notCarried = coolifyNotCarried(app, realGit, kind);
   return {
     sourceRef: app.uuid,
     name: app.name ?? app.uuid,
@@ -299,6 +405,8 @@ export function mapApplication(
     volumes: ctx.volumes.map((v) => mapVolume(v, app.uuid)),
     internalHost: app.uuid, // Coolify's internal docker hostname is the resource uuid
     serverRef: ctx.serverRef,
+    ...(Object.keys(sourceExtras).length ? { sourceExtras } : {}),
+    ...(notCarried.length ? { notCarried } : {}),
   };
 }
 

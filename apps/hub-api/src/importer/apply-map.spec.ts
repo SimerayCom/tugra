@@ -1,4 +1,5 @@
-import { foreignAppToCreateInput, foreignAppToIngressPlan, foreignAppToPostCreateConfig, foreignAppToVolumes } from "./apply-map";
+import { foreignAppToCreateInput, foreignAppToIngressPlan, foreignAppToPostCreateConfig, foreignAppToVolumes, mapCustomLabels } from "./apply-map";
+import type { SourceAppExtras } from "./import-source";
 import { CreateAppSchema, SetVolumesSchema } from "../applications/dto";
 import type { ForeignApp, ForeignVolume } from "./foreign-fleet";
 
@@ -432,5 +433,158 @@ describe("foreignAppToCreateInput — env flags", () => {
   });
   it("a line break on an unflaggable name fails loudly instead of corrupting the env file", () => {
     expect(() => foreignAppToCreateInput(git, { LD_PRELOAD: "a\nb" }, { serverId: "s" })).toThrow(/cannot be a multiline variable/);
+  });
+});
+
+// ── G3-C: custom labels + inline Dockerfile ─────────────────────────────────────────────────────────────
+
+const kv = (key: string, value: string) => ({ key, value });
+/** A typical Coolify-generated Traefik block (one app behind basic auth) plus the one label the user added. */
+const coolifyTraefikBlock = [
+  kv("traefik.enable", "true"),
+  kv("traefik.http.middlewares.gzip.compress", "true"),
+  kv("traefik.http.middlewares.redirect-to-https.redirectscheme.scheme", "https"),
+  kv("traefik.http.middlewares.basic-auth-abc.basicauth.users", "admin:$2y$05$SECRETHASHVALUE"),
+  kv("caddy_0", "abc.example.com"),
+];
+
+describe("mapCustomLabels", () => {
+  it("drops a Traefik block (named, reserved), flags the dropped basic-auth middleware, keeps the user's own label", () => {
+    const r = mapCustomLabels(coolifyTraefikBlock);
+    expect(r.labels).toEqual({ caddy_0: "abc.example.com" });
+    expect(r.dropped.map((d) => d.field)).toEqual([
+      "customLabel:traefik.enable",
+      "customLabel:traefik.http.middlewares.gzip.compress",
+      "customLabel:traefik.http.middlewares.redirect-to-https.redirectscheme.scheme",
+      "customLabel:traefik.http.middlewares.basic-auth-abc.basicauth.users",
+    ]);
+    expect(r.dropped[0].reason).toContain("reserved traefik.* namespace");
+    expect(r.accessControlDropped).toBe(true);
+    expect(JSON.stringify(r)).not.toContain("SECRETHASHVALUE");
+  });
+
+  it("an all-Traefik block without access control yields empty labels and no accessControl flag", () => {
+    const r = mapCustomLabels([kv("traefik.enable", "true"), kv("tugra.role", "x"), kv("com.docker.compose.project", "p")]);
+    expect(r.labels).toEqual({});
+    expect(r.dropped).toHaveLength(3);
+    expect(r.accessControlDropped).toBe(false);
+  });
+
+  it("an invalid key is reported JSON-quoted and truncated (never raw), without its value", () => {
+    const r = mapCustomLabels([kv('bad key"\n', "VALUE-SHOULD-NOT-LEAK"), kv("-lead", "x"), kv("k".repeat(300), "x")]);
+    expect(r.labels).toEqual({});
+    expect(r.dropped[0]).toEqual({ field: `customLabel:${JSON.stringify('bad key"\n')}`, reason: "invalid label key" });
+    expect(r.dropped[2].field).toBe(`customLabel:${JSON.stringify("k".repeat(40))}`);
+    expect(JSON.stringify(r)).not.toContain("VALUE-SHOULD-NOT-LEAK");
+  });
+
+  it("a case-insensitive duplicate keeps the first", () => {
+    const r = mapCustomLabels([kv("Team", "a"), kv("team", "b")]);
+    expect(r.labels).toEqual({ Team: "a" });
+    expect(r.dropped).toEqual([{ field: "customLabel:team", reason: "duplicate (label keys are case-insensitive)" }]);
+  });
+
+  it("drops a too-long value and a control-char value but keeps the valid labels around them", () => {
+    const r = mapCustomLabels([kv("a", "ok"), kv("long", "x".repeat(1025)), kv("ctl", "a\u0007b"), kv("z", "ok2")]);
+    expect(r.labels).toEqual({ a: "ok", z: "ok2" });
+    expect(r.dropped.map((d) => d.field)).toEqual(["customLabel:long", "customLabel:ctl"]);
+  });
+
+  it("caps at 32 labels (the 33rd is dropped) and by total bytes", () => {
+    const many = Array.from({ length: 33 }, (_, i) => kv(`k${i}`, "v"));
+    const r = mapCustomLabels(many);
+    expect(Object.keys(r.labels)).toHaveLength(32);
+    expect(r.dropped).toEqual([{ field: "customLabel:k32", reason: "over the per-app label limit" }]);
+    const fat = Array.from({ length: 20 }, (_, i) => kv(`k${i}`, "v".repeat(1000)));
+    const r2 = mapCustomLabels(fat);
+    expect(Object.keys(r2.labels).length).toBeLessThan(20);
+    expect(r2.dropped.every((d) => d.reason === "over the per-app label limit")).toBe(true);
+  });
+
+  it("caps the dropped list at 20 entries plus one summary row", () => {
+    const r = mapCustomLabels(Array.from({ length: 30 }, (_, i) => kv(`traefik.r${i}`, "v")));
+    expect(r.dropped).toHaveLength(21);
+    expect(r.dropped[20]).toEqual({ field: "customLabel:…", reason: "10 more not carried" });
+  });
+
+  it("is deterministic in source order, and its labels always satisfy SetCustomLabelsSchema", () => {
+    const input = [kv("b", "1"), kv("traefik.x", "2"), kv("a", "3")];
+    expect(mapCustomLabels(input)).toEqual(mapCustomLabels(input));
+    expect(Object.keys(mapCustomLabels(input).labels)).toEqual(["b", "a"]);
+  });
+});
+
+describe("foreignAppToPostCreateConfig — extras (labels + inline Dockerfile)", () => {
+  const dockerApp = (over: Partial<ForeignApp> = {}) => base({ buildPack: "dockerfile", git: { url: "g", dockerfilePath: "/docker/Dockerfile", baseDirectory: "/apps/api" }, ...over });
+  const DF = "FROM node:20\nRUN echo SECRET_BUILD_STEP\n";
+  const extras = (over: Partial<SourceAppExtras> = {}): SourceAppExtras => ({ unmapped: [], ...over });
+
+  it("merges inline text AND the build target into ONE setBuild input that keeps dockerfilePath/baseDirectory", () => {
+    const cfg = foreignAppToPostCreateConfig(dockerApp({ dockerBuildTarget: "prod" }), extras({ dockerfile: DF }));
+    expect(cfg.build).toEqual({ buildType: "DOCKERFILE", dockerfilePath: "docker/Dockerfile", dockerBuildTarget: "prod", baseDirectory: "apps/api", inlineDockerfile: DF });
+  });
+
+  it("inline text alone emits a build (no target key)", () => {
+    const cfg = foreignAppToPostCreateConfig(dockerApp(), extras({ dockerfile: DF }));
+    expect(cfg.build).toEqual({ buildType: "DOCKERFILE", dockerfilePath: "docker/Dockerfile", baseDirectory: "apps/api", inlineDockerfile: DF });
+  });
+
+  it("target-only output (no extras) is exactly the pre-change shape", () => {
+    expect(foreignAppToPostCreateConfig(dockerApp({ dockerBuildTarget: "prod" })).build).toEqual({ buildType: "DOCKERFILE", dockerfilePath: "docker/Dockerfile", dockerBuildTarget: "prod", baseDirectory: "apps/api" });
+    expect(foreignAppToPostCreateConfig(dockerApp({ dockerBuildTarget: "prod" }), extras()).build).toEqual({ buildType: "DOCKERFILE", dockerfilePath: "docker/Dockerfile", dockerBuildTarget: "prod", baseDirectory: "apps/api" });
+  });
+
+  it("an invalid Dockerfile is dropped with the FIXED validator message and the target-only build is kept", () => {
+    const cfg = foreignAppToPostCreateConfig(dockerApp({ dockerBuildTarget: "prod" }), extras({ dockerfile: "RUN echo TOPSECRET-NOT-FROM" }));
+    expect(cfg.build).toEqual({ buildType: "DOCKERFILE", dockerfilePath: "docker/Dockerfile", dockerBuildTarget: "prod", baseDirectory: "apps/api" });
+    expect(cfg.unmapped).toEqual([{ field: "inlineDockerfile", reason: "the first instruction of the Dockerfile must be FROM (only ARG may precede it)" }]);
+    expect(JSON.stringify(cfg.unmapped)).not.toContain("TOPSECRET");
+  });
+
+  it("a Dockerfile over 48 KiB is dropped with a fixed reason", () => {
+    const big = `FROM scratch\n# ${"x".repeat(49 * 1024)}\n`;
+    const cfg = foreignAppToPostCreateConfig(dockerApp(), extras({ dockerfile: big }));
+    expect(cfg.build).toBeUndefined();
+    expect(cfg.unmapped).toEqual([{ field: "inlineDockerfile", reason: "the Dockerfile is larger than 48 KiB" }]);
+  });
+
+  it("inline text on a non-Dockerfile build or an IMAGE app is reported, never applied", () => {
+    const nix = foreignAppToPostCreateConfig(base({ buildPack: "nixpacks", git: { url: "g" } }), extras({ dockerfile: DF }));
+    expect(nix.build).toBeUndefined();
+    expect(nix.unmapped).toEqual([{ field: "inlineDockerfile", reason: "inline Dockerfile applies only to Dockerfile builds" }]);
+    const img = foreignAppToPostCreateConfig(base({ kind: "image", buildPack: "image", image: "x" }), extras({ dockerfile: DF }));
+    expect(img.build).toBeUndefined();
+    expect(img.unmapped.map((u) => u.field)).toEqual(["inlineDockerfile"]);
+  });
+
+  it("maps only the Tugra-safe labels, names the dropped ones and the dropped access control, and never echoes a value", () => {
+    const cfg = foreignAppToPostCreateConfig(dockerApp(), extras({ labels: coolifyTraefikBlock }));
+    expect(cfg.customLabels).toEqual({ labels: { caddy_0: "abc.example.com" } });
+    const fields = cfg.unmapped.map((u) => u.field);
+    expect(fields).toContain("customLabel:traefik.enable");
+    expect(fields).toContain("accessControl");
+    const dump = JSON.stringify(cfg.unmapped);
+    for (const leak of ["SECRETHASHVALUE", "abc.example.com"]) expect(dump).not.toContain(leak);
+  });
+
+  it("sets nothing when every label is dropped, and passes extras.unmapped through", () => {
+    const cfg = foreignAppToPostCreateConfig(dockerApp(), extras({ labels: [kv("traefik.enable", "true")], unmapped: [{ field: "customLabels", reason: "the label block could not be parsed" }] }));
+    expect(cfg.customLabels).toBeUndefined();
+    expect(cfg.unmapped.map((u) => u.field)).toEqual(["customLabel:traefik.enable", "customLabels"]);
+  });
+
+  it("skips labels for a compose app", () => {
+    const cfg = foreignAppToPostCreateConfig(base({ kind: "compose", buildPack: "dockercompose" }), extras({ labels: [kv("a", "b")] }));
+    expect(cfg.customLabels).toBeUndefined();
+    expect(cfg.unmapped).toEqual([{ field: "customLabels", reason: "compose apps declare labels in the compose file" }]);
+  });
+
+  it("LEAK: the whole unmapped list never contains any label value or Dockerfile text", () => {
+    const cfg = foreignAppToPostCreateConfig(
+      dockerApp({ dockerBuildTarget: "bad target!" }),
+      extras({ dockerfile: DF + "RUN echo LEAKME-DOCKERFILE\n", labels: [kv("ok", "LEAKME-LABEL-VALUE"), kv("traefik.http.routers.x.rule", "Host(`LEAKME-HOST.com`)"), kv("bad key", "LEAKME-BADKEY-VALUE"), kv("ctl", "LEAKME\u0001")] }),
+    );
+    const dump = JSON.stringify(cfg.unmapped);
+    expect(dump).not.toMatch(/LEAKME|SECRET_BUILD_STEP/);
   });
 });

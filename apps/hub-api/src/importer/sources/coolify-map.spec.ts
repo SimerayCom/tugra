@@ -9,8 +9,11 @@ import {
   buildCoolifyFleet,
   normalizeGitUrl,
   isGithubAppRepo,
+  decodeCoolifyLabels,
+  decodeCoolifyDockerfile,
   type CoolifyFleetInput,
 } from "./coolify-map";
+import { planImport } from "../import-planner";
 
 describe("normalizeGitUrl", () => {
   it("normalizes a bare owner/repo (Coolify GitHub-App form) to a clone URL", () => {
@@ -231,5 +234,117 @@ describe("coolify env flag mapping", () => {
     );
     expect(a.env).toEqual([{ key: "A", buildTime: true, runtime: false, literal: true, multiline: true }]);
     expect(JSON.stringify(a)).not.toContain("SECRET");
+  });
+});
+
+// ── G3-C: custom_labels / dockerfile decoding, apply-time markers, presence-only coverage ────────────────
+// FIXTURE NOTE: the Coolify field names/encodings below (`custom_labels` base64, `dockerfile`/`dockerfile_raw`,
+// `is_http_basic_auth_enabled`, `custom_docker_run_options`, ...) are HAND-BUILT from Coolify v4 sources. They are
+// UNVERIFIED against a live instance until the lab checks in the G3-C spec (section 11) are done.
+const b64 = (s: string) => Buffer.from(s, "utf8").toString("base64");
+const TRAEFIK_BLOCK = ["traefik.enable=true", "traefik.http.routers.http-0-abc.rule=Host(`a.example.com`) && PathPrefix(`/`)", "caddy_0=a.example.com"].join("\n");
+
+describe("decodeCoolifyLabels", () => {
+  it("parses a plain multiline block in order", () => {
+    expect(decodeCoolifyLabels("a=1\nb=2")).toEqual([{ key: "a", value: "1" }, { key: "b", value: "2" }]);
+  });
+  it("decodes a base64 block (Coolify's API form)", () => {
+    expect(decodeCoolifyLabels(b64(TRAEFIK_BLOCK))).toEqual([
+      { key: "traefik.enable", value: "true" },
+      { key: "traefik.http.routers.http-0-abc.rule", value: "Host(`a.example.com`) && PathPrefix(`/`)" },
+      { key: "caddy_0", value: "a.example.com" },
+    ]);
+  });
+  it("tolerates CRLF, comments, blank lines, a `- ` prefix and surrounding quotes", () => {
+    expect(decodeCoolifyLabels('# c\r\n\r\n- a=1\r\n"b=2"\r\n\'c=3\'')).toEqual([{ key: "a", value: "1" }, { key: "b", value: "2" }, { key: "c", value: "3" }]);
+  });
+  it("splits at the FIRST = (a value may contain =)", () => {
+    expect(decodeCoolifyLabels("k=a=b=c")).toEqual([{ key: "k", value: "a=b=c" }]);
+  });
+  it("skips a line with no = but keeps the rest", () => {
+    expect(decodeCoolifyLabels("garbage\nk=v")).toEqual([{ key: "k", value: "v" }]);
+  });
+  it("non-string / empty / whitespace input gives []", () => {
+    for (const v of [undefined, null, 5, {}, "", "  \n "]) expect(decodeCoolifyLabels(v)).toEqual([]);
+  });
+  it("a base64-shaped value that decodes to non-UTF-8 or has no = is NOT decoded (read as plain text)", () => {
+    const binary = Buffer.from([0xff, 0xfe, 0xfd, 0xfc]).toString("base64"); // "//79/A==" is valid base64 of invalid UTF-8
+    expect(decodeCoolifyLabels(binary)).toEqual([{ key: "//79/A", value: "=" }]); // split as plain `key=value` (its key is later dropped as invalid)
+    const noEq = b64("no equals sign here");
+    expect(decodeCoolifyLabels(noEq)).toEqual([{ key: noEq.replace(/=+$/, ""), value: "=" }]); // decoded text has no =, so it stays as written
+  });
+  it("a block that is only garbage is unparsable; an oversized block is refused", () => {
+    expect(decodeCoolifyLabels("just words\nmore words")).toBe("unparsable");
+    expect(decodeCoolifyLabels("k=" + "x".repeat(65 * 1024))).toBe("unparsable");
+  });
+});
+
+describe("decodeCoolifyDockerfile", () => {
+  const DF = "FROM node:20\nCMD [\"node\"]\n";
+  it("returns valid plain text as-is and decodes valid base64", () => {
+    expect(decodeCoolifyDockerfile(DF)).toBe(DF);
+    expect(decodeCoolifyDockerfile(b64(DF))).toBe(DF);
+  });
+  it("base64 that decodes to a bad Dockerfile stays raw (the apply-time validator rejects it)", () => {
+    const raw = b64("RUN echo hi");
+    expect(decodeCoolifyDockerfile(raw)).toBe(raw);
+  });
+  it("whitespace-only or non-string gives undefined", () => {
+    for (const v of ["", "  \n", undefined, null, 3]) expect(decodeCoolifyDockerfile(v)).toBeUndefined();
+  });
+});
+
+describe("mapApplication — extras markers + notCarried", () => {
+  const ctx = { envs: [], volumes: [] };
+  const git = { uuid: "a", name: "api", git_repository: "https://github.com/o/r.git", git_branch: "main" };
+
+  it("sets the secret-free markers only for a non-empty label block / Dockerfile on a dockerfile app", () => {
+    const a = mapApplication({ ...git, build_pack: "dockerfile", custom_labels: b64(TRAEFIK_BLOCK), dockerfile: "FROM x\nRUN SECRET_TEXT" }, ctx);
+    expect(a.sourceExtras).toEqual({ labels: true, dockerfile: true });
+    expect(JSON.stringify(a)).not.toMatch(/SECRET_TEXT|traefik|a\.example\.com/); // presence only, never the text
+    const b = mapApplication({ ...git, build_pack: "nixpacks", custom_labels: "  ", dockerfile: "FROM x" }, ctx);
+    expect(b.sourceExtras).toBeUndefined();
+    const c = mapApplication({ ...git, build_pack: "dockerfile", dockerfile_raw: "FROM x" }, ctx);
+    expect(c.sourceExtras).toEqual({ dockerfile: true });
+  });
+
+  it("an app with none of the new fields maps exactly as before (no new keys)", () => {
+    const a = mapApplication({ ...git, build_pack: "nixpacks", ports_exposes: "3000" }, ctx);
+    expect("sourceExtras" in a).toBe(false);
+    expect("notCarried" in a).toBe(false);
+  });
+
+  it("emits one fixed-reason coverage row per present source field and none for absent / '0' / false", () => {
+    const a = mapApplication(
+      { ...git, build_pack: "dockerfile", is_http_basic_auth_enabled: true, ports_mappings: "8080:80", custom_docker_run_options: "--cap-add=NET_ADMIN --secret-flag=SUPERSECRET", pre_deployment_command: "migrate", limits_memory: "512m", health_check_enabled: true, dockerfile_target_build: "prod", watch_paths: "src/**" },
+      ctx,
+    );
+    expect(a.notCarried!.map((n) => `${n.level}:${n.field}`).sort()).toEqual([
+      "info:deployHooks", "info:dockerBuildTarget", "info:healthcheck", "info:limits", "info:watchPaths",
+      "warn:basicAuth", "warn:dockerOptions", "warn:publishedPorts",
+    ]);
+    expect(JSON.stringify(a.notCarried)).not.toMatch(/SUPERSECRET|NET_ADMIN|migrate|8080|512m/);
+    const none = mapApplication({ ...git, build_pack: "nixpacks", is_http_basic_auth_enabled: false, ports_mappings: "", limits_memory: "0", limits_cpus: "0", health_check_enabled: false, watch_paths: "" }, ctx);
+    expect(none.notCarried).toBeUndefined();
+  });
+
+  it("a repo-less inline-Dockerfile app (the planner blocker case) gets an inlineDockerfile warn; the blocker itself is unchanged", () => {
+    const placeholder = { uuid: "d", name: "df", build_pack: "dockerfile", git_repository: "coollabsio/coolify", git_branch: "main", dockerfile: "FROM x" };
+    const a = mapApplication(placeholder, ctx);
+    expect(a.notCarried).toEqual([expect.objectContaining({ field: "inlineDockerfile", level: "warn" })]);
+    const plan = planImport({ servers: [], apps: [a], databases: [], services: [], volumes: [], sharedEnv: [], warnings: [] }, { sourceKind: "coolify" });
+    expect(plan.items[0].risks).toEqual([expect.objectContaining({ level: "blocker", code: "app.git.missing" })]);
+    // an image-backed app with a dockerfile build_pack is NOT the blocker case
+    expect(mapApplication({ ...placeholder, docker_registry_image_name: "nginx" }, ctx).notCarried).toBeUndefined();
+  });
+
+  it("neither sourceExtras nor notCarried reaches the plan item `proposed` or changes planHash", () => {
+    const plain = mapApplication({ ...git, build_pack: "dockerfile" }, ctx);
+    const rich = mapApplication({ ...git, build_pack: "dockerfile", custom_labels: "a=b", dockerfile: "FROM x", is_http_basic_auth_enabled: true }, ctx);
+    const fleet = (apps: typeof plain[]) => ({ servers: [], apps, databases: [], services: [], volumes: [], sharedEnv: [], warnings: [] });
+    const p1 = planImport(fleet([plain]), { sourceKind: "coolify" });
+    const p2 = planImport(fleet([rich]), { sourceKind: "coolify" });
+    expect(p2.planHash).toBe(p1.planHash);
+    expect(JSON.stringify(p2.items)).not.toMatch(/sourceExtras|notCarried/);
   });
 });

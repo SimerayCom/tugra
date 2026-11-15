@@ -15,7 +15,7 @@ import { LocalDockerSource } from "./sources/local-docker.source";
 import { planImport } from "./import-planner";
 import { mapSourceEnvFlags } from "./env-auto-flags";
 import { mapBuildPack } from "./buildpack-map";
-import { foreignAppToCreateInput, foreignAppToIngressPlan, foreignAppToPostCreateConfig, foreignAppToVolumes } from "./apply-map";
+import { REPLICAS_UNMAPPED_REASON, foreignAppToCreateInput, foreignAppToIngressPlan, foreignAppToPostCreateConfig, foreignAppToVolumes } from "./apply-map";
 import { seedTasks, deriveOpStatus, type TaskSeed, type TaskStatus } from "./import-executor.logic";
 import { MigrationTokenService } from "./migration-token.service";
 import { assertSafeBase, buildMigrationCommand, buildMigrationCommandTemplate } from "./migration-command";
@@ -30,7 +30,7 @@ import type { DatabaseView } from "../databases/databases.service";
  *  is skipped by a plan blocker, but we re-check here so a bad engine never reaches DatabasesService. */
 const PROVISIONABLE_ENGINES = new Set(["POSTGRES", "MYSQL", "REDIS", "MONGO", "MARIADB", "KEYDB", "DRAGONFLY", "CLICKHOUSE", "LIBSQL"]);
 import { SetBasicAuthSchema } from "../applications/dto";
-import type { ImportSource, FetchedDbCredentials } from "./import-source";
+import type { ImportSource, FetchedDbCredentials, SourceAppExtras } from "./import-source";
 import { REMOTE_SOURCE_KINDS, type ImportApplyInput, type RemoteSourceKind } from "./dto";
 
 const CONCURRENCY = 5;
@@ -391,7 +391,8 @@ export class ImportExecutorService {
       }
       // Post-create config the create schema cannot carry (build target, watch paths, auto-deploy, limits, exec-form
       // command, replicas). Same best-effort contract as setVolumes: a setter failure NEVER reaches the outer catch.
-      const postCreate = await this.applyPostCreateConfig(userId, created.id, app, targetServerId);
+      const extras = await this.readExtras(source, app); // never throws; secret text stays in memory, source → setter
+      const postCreate = await this.applyPostCreateConfig(userId, created.id, app, targetServerId, extras);
       // Ingress beyond create's one primary domain + guessed port (extra domains, path routing, compose service
       // domains, raw published ports). Same best-effort, never-throw contract as applyPostCreateConfig.
       const ingress = await this.applyIngress(userId, created.id, app, source);
@@ -459,6 +460,20 @@ export class ImportExecutorService {
     }
   }
 
+  /** Re-read the app's container labels / inline Dockerfile text from the source (secret-capable, in memory only).
+   *  Returns `undefined` (old path, byte-identical output) unless the source offers `fetchAppExtras`, the app carries
+   *  the discover-time marker, and it is not a compose app. NEVER throws: a failed read must not reach runCopyApp's
+   *  outer catch (an orphan app + FAILED task would make a retry create a duplicate, see the setters' comment), so it
+   *  becomes a FIXED unmapped note — never the error text (it can carry a URL). */
+  private async readExtras(source: ImportSource, app: ForeignApp): Promise<SourceAppExtras | undefined> {
+    if (!source.fetchAppExtras || !app.sourceExtras || mapBuildPack(app).source === "COMPOSE") return undefined;
+    try {
+      return await source.fetchAppExtras(app.sourceRef);
+    } catch {
+      return { unmapped: [{ field: "sourceExtras", reason: "could not read this app's labels or Dockerfile from the source; set them manually" }] };
+    }
+  }
+
   /** Apply {@link foreignAppToPostCreateConfig} through the ApplicationsService setters. Best-effort and idempotent
    *  (every setter is a whole-value replace): each failure is recorded and NEVER thrown. The returned summary is
    *  field NAMES + fixed reasons only — never values (an exec-form command can embed credentials). */
@@ -467,9 +482,10 @@ export class ImportExecutorService {
     appId: string,
     app: ForeignApp,
     targetServerId: string,
+    extras?: SourceAppExtras,
   ): Promise<{ applied: string[]; unmapped: Array<{ field: string; reason: string }> }> {
     const applied: string[] = [];
-    const cfg = foreignAppToPostCreateConfig(app);
+    const cfg = foreignAppToPostCreateConfig(app, extras);
     const unmapped = [...cfg.unmapped];
     const run = async (field: string, fn: () => Promise<unknown>) => {
       try {
@@ -479,7 +495,16 @@ export class ImportExecutorService {
         unmapped.push({ field, reason: "Tugra rejected the setting — set it manually" });
       }
     };
-    if (cfg.build) await run("build", () => this.apps.setBuild(userId, appId, cfg.build!));
+    if (cfg.build) {
+      await run("build", () => this.apps.setBuild(userId, appId, cfg.build!));
+      if (cfg.build.inlineDockerfile) {
+        // setBuild is one call: it either carried the text or was rejected (`build` is then in `unmapped`, and the
+        // inline text is named separately so the failure says which field was lost).
+        if (applied.includes("build")) applied.push("inlineDockerfile");
+        else unmapped.push({ field: "inlineDockerfile", reason: "Tugra rejected the setting. Set it manually" });
+      }
+    }
+    if (cfg.customLabels) await run("customLabels", () => this.apps.setCustomLabels(userId, appId, cfg.customLabels!));
     if (cfg.watchPaths) await run("watchPaths", () => this.apps.setWatchPaths(userId, appId, cfg.watchPaths!));
     if (cfg.autoDeploy !== undefined) await run("autoDeploy", () => this.apps.setAutoDeploy(userId, appId, cfg.autoDeploy!));
     if (cfg.limits) await run("limits", () => this.apps.setLimits(userId, appId, cfg.limits!));
@@ -489,7 +514,7 @@ export class ImportExecutorService {
       // a stateful app to the cluster manager instead of the chosen target server, and needs apps:deploy + a
       // registry) — far too surprising to apply silently during an import. Carry it as unmapped; the planner
       // surfaces replicas as an explicit choice (next slice).
-      unmapped.push({ field: "replicas", reason: "replicas convert the app to a swarm service — set the replica count explicitly in Tugra after import" });
+      unmapped.push({ field: "replicas", reason: REPLICAS_UNMAPPED_REASON });
     }
     return { applied, unmapped };
   }
@@ -1389,6 +1414,20 @@ function sourceRefOf(itemRef: string): string | undefined {
   return ref.length ? ref : undefined;
 }
 
+/** Defensively read a persisted `{applied, unmapped}` summary: arrays of strings / {field, reason} strings only,
+ *  anything else is dropped. Undefined when absent or malformed. */
+function readApplyReport(v: unknown): { applied: string[]; unmapped: Array<{ field: string; reason: string }> } | undefined {
+  if (!v || typeof v !== "object") return undefined;
+  const r = v as { applied?: unknown; unmapped?: unknown };
+  const applied = Array.isArray(r.applied) ? r.applied.filter((x): x is string => typeof x === "string") : [];
+  const unmapped = Array.isArray(r.unmapped)
+    ? r.unmapped
+        .filter((u): u is { field: string; reason: string } => !!u && typeof u === "object" && typeof (u as { field?: unknown }).field === "string" && typeof (u as { reason?: unknown }).reason === "string")
+        .map((u) => ({ field: u.field, reason: u.reason }))
+    : [];
+  return { applied, unmapped };
+}
+
 /** Shape the owned operation into a secret-free status view (internal compensation is not exposed). Includes
  *  the persisted plan snapshot so a failed/partial import's full picture survives for a post-mortem. */
 export function toStatusView(op: {
@@ -1434,7 +1473,7 @@ export function toStatusView(op: {
       rolledBack: count("ROLLED_BACK"),
     },
     tasks: op.tasks.map((t) => {
-      const res = typeof t.result === "object" && t.result ? (t.result as { name?: string; unresolvedEnv?: number }) : null;
+      const res = typeof t.result === "object" && t.result ? (t.result as { name?: string; unresolvedEnv?: number; postCreate?: unknown; ingress?: unknown }) : null;
       return {
         itemRef: t.itemRef,
         kind: t.kind,
@@ -1445,6 +1484,9 @@ export function toStatusView(op: {
         message: t.output,
         // Count only (never values): >0 means the app was created with some env vars unresolved — fix before deploy.
         unresolvedEnv: typeof res?.unresolvedEnv === "number" ? res.unresolvedEnv : undefined,
+        // What the app could not carry (field NAMES + fixed reasons only, never values). Undefined for a task without it.
+        postCreate: readApplyReport(res?.postCreate),
+        ingress: readApplyReport(res?.ingress),
         startedAt: t.startedAt,
         finishedAt: t.finishedAt,
       };

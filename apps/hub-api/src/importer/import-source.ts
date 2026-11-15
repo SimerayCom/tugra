@@ -46,6 +46,16 @@ export interface FetchedDbCredentials {
   database?: string;
 }
 
+/** Secret-capable per-app extras, re-fetched SERVER-SIDE at apply time (same pattern as fetchBasicAuthCredentials).
+ *  NEVER part of discover()/the fleet/the plan/logs/task output. In-memory only: source -> setter -> DB.
+ *  Field names are `labels`/`dockerfile`, NOT customLabels/inlineDockerfile (those key names are scrubbed by
+ *  RedactSecretsInterceptor and the MCP sanitizer; keep them out of anything that could be serialised). */
+export interface SourceAppExtras {
+  labels?: Array<{ key: string; value: string }>; // source order
+  dockerfile?: string; // already decoded
+  unmapped: Array<{ field: string; reason: string }>; // fixed reasons only
+}
+
 /**
  * One competitor adapter. Every source (Coolify/Dokploy/CapRover/Dokku + local-docker + a pasted compose
  * file) implements this, so the planner and executor stay source-independent. The adapter is constructed
@@ -69,6 +79,10 @@ export interface ImportSource {
    *  when the app has none. A genuine read error MUST throw (the executor reports it as unmapped rather than
    *  leaving the app silently public). */
   fetchBasicAuthCredentials?(ref: string): Promise<Array<{ user: string; password: string }> | undefined>;
+  /** OPTIONAL secret path: an app's container labels / inline Dockerfile text, re-fetched server-side at apply time
+   *  and keyed by the app's `sourceRef`. A genuine read error MUST throw; the executor records it as unmapped
+   *  (fixed reason), never as a task failure. */
+  fetchAppExtras?(ref: string): Promise<SourceAppExtras | undefined>;
   /** Dump a database's contents (requires capabilities().dbDataDump). */
   dumpDb?(ref: string): Promise<DumpHandle>;
   /** Open a volume's bytes as a tar stream (requires capabilities().volumeRead). */

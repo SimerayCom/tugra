@@ -101,6 +101,7 @@ describe("DokploySource.verify", () => {
     expect((await bad.verify()).ok).toBe(false);
     const html = new DokploySource({ get: jest.fn().mockResolvedValue("<html>") } as unknown as DokployClient);
     expect((await html.verify()).ok).toBe(false);
+    expect((await html.verify()).detail).toBe("unexpected response: use the Dokploy panel address (the /api path is added for you)");
   });
 });
 

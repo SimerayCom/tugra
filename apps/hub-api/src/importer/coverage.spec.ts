@@ -1,0 +1,69 @@
+import { buildCoverage } from "./coverage";
+import { REPLICAS_UNMAPPED_REASON } from "./apply-map";
+import type { ForeignApp, ForeignFleet } from "./foreign-fleet";
+
+const app = (over: Partial<ForeignApp> = {}): ForeignApp => ({ sourceRef: "a1", name: "web", kind: "git", buildPack: "nixpacks", serverRef: "s1", git: { url: "https://git/x" }, ...over });
+const fleet = (apps: ForeignApp[]): ForeignFleet => ({ servers: [], apps, databases: [], services: [], volumes: [], sharedEnv: [], warnings: [] });
+const o = { sourceKind: "coolify" };
+
+describe("buildCoverage", () => {
+  it("is undefined for local-docker, for an empty fleet and for apps with nothing to report", () => {
+    expect(buildCoverage(fleet([app({ notCarried: [{ field: "x", level: "info", reason: "r" }] })]), { sourceKind: "local-docker" })).toBeUndefined();
+    expect(buildCoverage(fleet([]), o)).toBeUndefined();
+    expect(buildCoverage(fleet([app()]), o)).toBeUndefined();
+  });
+
+  it("aggregates post-create unmapped, ingress unmapped, replicas and the source's notCarried per app (itemRef = plan item ref)", () => {
+    const c = buildCoverage(
+      fleet([
+        app({
+          triggerType: "tag",
+          dockerContextPath: "./svc",
+          replicas: 3,
+          domains: [{ host: "a.com", primary: true, certType: "le-dns" }],
+          notCarried: [{ field: "basicAuth", level: "warn", reason: "gated" }],
+        }),
+      ]),
+      o,
+    )!;
+    expect(c.apps).toHaveLength(1);
+    expect(c.apps[0]).toMatchObject({ itemRef: "app:s1:a1", name: "web" });
+    const byField = Object.fromEntries(c.apps[0].notCarried.map((n) => [n.field, n]));
+    expect(byField.triggerType.level).toBe("warn");
+    expect(byField.dockerContextPath.level).toBe("info");
+    expect(byField["domain:a.com dns-01"].level).toBe("info");
+    expect(byField.replicas).toEqual({ field: "replicas", reason: REPLICAS_UNMAPPED_REASON, level: "info" });
+    expect(byField.basicAuth.level).toBe("warn");
+  });
+
+  it("adds the apply-time marker rows (labels always; Dockerfile only with a real repo; compose says labels live in the file)", () => {
+    const c = buildCoverage(fleet([app({ buildPack: "dockerfile", sourceExtras: { labels: true, dockerfile: true } })]), o)!;
+    expect(c.apps[0].notCarried.map((n) => n.field).sort()).toEqual(["customLabels", "inlineDockerfile"]);
+    const noRepo = buildCoverage(fleet([app({ kind: "image", buildPack: "image", image: "x", git: undefined, sourceExtras: { dockerfile: true } })]), o);
+    expect(noRepo).toBeUndefined();
+    const compose = buildCoverage(fleet([app({ kind: "compose", buildPack: "dockercompose", composeFile: "services: {}", git: undefined, sourceExtras: { labels: true } })]), o)!;
+    expect(compose.apps[0].notCarried).toEqual([{ field: "customLabels", level: "info", reason: "compose apps declare labels in the compose file" }]);
+  });
+
+  it("de-duplicates by field (first wins: the mapper's own row beats the source's)", () => {
+    const c = buildCoverage(fleet([app({ staticSpa: false, notCarried: [{ field: "staticSpa", level: "warn", reason: "from source" }] })]), o)!;
+    const rows = c.apps[0].notCarried.filter((n) => n.field === "staticSpa");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].reason).not.toBe("from source");
+  });
+
+  it("is deterministic: apps sorted by itemRef, entries warn-first then by field, independent of input order", () => {
+    const a = app({ sourceRef: "b", name: "b", notCarried: [{ field: "z", level: "info", reason: "r" }, { field: "m", level: "warn", reason: "r" }, { field: "a", level: "info", reason: "r" }] });
+    const b = app({ sourceRef: "a", name: "a", notCarried: [{ field: "q", level: "info", reason: "r" }] });
+    const c1 = buildCoverage(fleet([a, b]), o)!;
+    const c2 = buildCoverage(fleet([b, a]), o)!;
+    expect(c1).toEqual(c2);
+    expect(c1.apps.map((x) => x.itemRef)).toEqual(["app:s1:a", "app:s1:b"]);
+    expect(c1.apps[1].notCarried.map((n) => n.field)).toEqual(["m", "a", "z"]);
+  });
+
+  it("carries no value material: only the marker, never label/Dockerfile text, even when the fleet app has stray text in sourceExtras-adjacent fields", () => {
+    const c = buildCoverage(fleet([app({ buildPack: "dockerfile", sourceExtras: { labels: true, dockerfile: true } })]), o)!;
+    expect(JSON.stringify(c)).not.toMatch(/FROM |=/);
+  });
+});

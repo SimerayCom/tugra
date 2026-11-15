@@ -267,3 +267,27 @@ describe("planImport — project/environment tree (L5)", () => {
     expect(codes).not.toContain("db.project");
   });
 });
+
+describe("planHash golden (G3-C: sourceExtras / notCarried are advisory and never hashed)", () => {
+  const gf = (extra: Partial<ForeignFleet["apps"][number]> = {}): ForeignFleet => ({
+    servers: [{ ref: "srv1" }],
+    apps: [
+      { sourceRef: "a1", name: "web", kind: "git", buildPack: "dockerfile", serverRef: "srv1", git: { url: "https://git/x", branch: "main", dockerfilePath: "Dockerfile" }, domains: [{ host: "a.com", primary: true }], ports: [3000], env: [{ key: "K" }], ...extra },
+    ],
+    databases: [],
+    services: [],
+    volumes: [],
+    sharedEnv: [],
+    warnings: [],
+  });
+
+  it("equals the hash recorded BEFORE this change, and the same fleet with sourceExtras + notCarried hashes identically", () => {
+    const o: ImportOptions = { sourceKind: "coolify" };
+    const GOLDEN = "5dcb2dccbf2ed9c404f8cd762f847bbf"; // recorded on HEAD 7038aca6, BEFORE G3-C
+    const bare = planImport(gf(), o);
+    expect(bare.planHash).toBe(GOLDEN);
+    const rich = planImport(gf({ sourceExtras: { labels: true, dockerfile: true }, notCarried: [{ field: "basicAuth", level: "warn", reason: "x" }] }), o);
+    expect(rich.planHash).toBe(GOLDEN);
+    expect(JSON.stringify(rich.items)).not.toMatch(/sourceExtras|notCarried|basicAuth/);
+  });
+});

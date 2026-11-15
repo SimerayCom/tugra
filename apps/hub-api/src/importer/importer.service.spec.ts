@@ -127,3 +127,39 @@ describe("ImporterService.plan — coolify session", () => {
     expect(sources.create).not.toHaveBeenCalled();
   });
 });
+
+describe("ImporterService.plan — coverage (G3-C)", () => {
+  const session = (kind: string) => ({ id: "sess-1", sourceKind: kind, actorId: "u1", teamId: "t1", baseUrl: "https://c.example.com", tokenEnc: "enc(TOK)", status: "active", expiresAt: new Date(Date.now() + 60_000) });
+  const app = { sourceRef: "web-1", name: "web", kind: "git" as const, buildPack: "nixpacks" as const, git: { url: "https://git/x" }, serverRef: "s1", notCarried: [{ field: "registry", level: "info" as const, reason: "r" }] };
+  const stubSource = () => ({
+    discover: jest.fn().mockResolvedValue({ servers: [], apps: [app], databases: [], services: [], volumes: [], sharedEnv: [], warnings: [] }),
+    close: jest.fn().mockResolvedValue(undefined),
+  });
+
+  it.each(["coolify", "dokploy"] as const)("a %s plan carries preflight.coverage (presence-only, per app) and the planHash ignores it", async (kind) => {
+    const { svc, sources } = make({ session: session(kind) });
+    (sources.create as jest.Mock).mockReturnValue(stubSource());
+    const plan = await svc.plan("u1", { sourceKind: kind, sessionId: "sess-1" });
+    expect(plan.preflight?.coverage).toEqual({ apps: [{ itemRef: "app:s1:web-1", name: "web", notCarried: [{ field: "registry", reason: "r", level: "info" }] }] });
+    // same fleet without notCarried → identical hash
+    const { svc: svc2, sources: sources2 } = make({ session: session(kind) });
+    const bare = stubSource();
+    bare.discover.mockResolvedValue({ servers: [], apps: [{ ...app, notCarried: undefined }], databases: [], services: [], volumes: [], sharedEnv: [], warnings: [] });
+    (sources2.create as jest.Mock).mockReturnValue(bare);
+    expect((await svc2.plan("u1", { sourceKind: kind, sessionId: "sess-1" })).planHash).toBe(plan.planHash);
+  });
+
+  it("omits coverage when nothing is not carried, and for local-docker", async () => {
+    const { svc, sources } = make({ session: session("coolify") });
+    (sources.create as jest.Mock).mockReturnValue({ discover: jest.fn().mockResolvedValue({ servers: [], apps: [{ ...app, notCarried: undefined }], databases: [], services: [], volumes: [], sharedEnv: [], warnings: [] }), close: jest.fn() });
+    expect((await svc.plan("u1", { sourceKind: "coolify", sessionId: "sess-1" })).preflight).not.toHaveProperty("coverage");
+    const local = await make().svc.plan("u1", { sourceKind: "local-docker", serverId: "srv1" });
+    expect(local.preflight).not.toHaveProperty("coverage");
+  });
+
+  it("a session minted for one source still 404s through the other source's plan", async () => {
+    const { svc, sources } = make({ session: session("dokploy") });
+    await expect(svc.plan("u1", { sourceKind: "coolify", sessionId: "sess-1" })).rejects.toBeInstanceOf(NotFoundException);
+    expect(sources.create).not.toHaveBeenCalled();
+  });
+});

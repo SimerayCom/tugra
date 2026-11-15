@@ -161,7 +161,7 @@ export class DokploySource implements ImportSource {
   async verify(): Promise<{ ok: boolean; version?: string; detail?: string }> {
     try {
       const projects = await this.client.get<unknown>("/project.all");
-      if (!Array.isArray(projects)) return { ok: false, detail: "unexpected response — is the URL a Dokploy API root (…/api)?" };
+      if (!Array.isArray(projects)) return { ok: false, detail: "unexpected response: use the Dokploy panel address (the /api path is added for you)" };
       return { ok: true };
     } catch (e) {
       return { ok: false, detail: e instanceof Error ? e.message : "verification failed" };

@@ -109,6 +109,7 @@ export interface DokployApplication {
   env?: string | null; // dotenv blob
   buildArgs?: string | null; // dotenv blob (build-time)
   buildSecrets?: string | null; // dotenv blob (build-time secrets)
+  labelsSwarm?: unknown; // Swarm SERVICE labels (object or [{name,value}] array): presence-only, never read (UNVERIFIED shape)
   // git source, per provider
   repository?: string | null;
   owner?: string | null;
@@ -530,8 +531,22 @@ function withPrimary(domains: ForeignDomain[]): ForeignDomain[] {
   return domains;
 }
 
+/** Presence-only coverage rows for Dokploy app fields no Tugra setter carries. FIXED reasons, never values.
+ *  Deliberately NOT discover `warnings` (those stay byte-identical). */
+function dokployNotCarried(app: DokployApplication, kind: ForeignApp["kind"]): NonNullable<ForeignApp["notCarried"]> {
+  const out: NonNullable<ForeignApp["notCarried"]> = [];
+  if (kind === "image" && app.registryUrl) out.push({ field: "registry", level: "info", reason: "the registry credential is not carried; add the registry in Tugra before deploying a private image" });
+  if (parseDotenv(app.buildSecrets).length) out.push({ field: "buildSecrets", level: "info", reason: "build secret values are not read; re-add them as Tugra build secrets" });
+  const ls = app.labelsSwarm;
+  const hasSwarmLabels = Array.isArray(ls) ? ls.length > 0 : !!ls && typeof ls === "object" && Object.keys(ls).length > 0;
+  if (hasSwarmLabels) out.push({ field: "customLabels", level: "info", reason: "Dokploy Swarm service labels are not carried (Tugra custom labels are container labels)" });
+  if ((app.domains ?? []).some((d) => !!d.host && mapDomain(d) === undefined)) out.push({ field: "domains", level: "info", reason: "preview or disabled domains are not carried" });
+  return out;
+}
+
 export function mapApplication(app: DokployApplication, serverRef?: string): ForeignApp {
   const { kind, buildPack } = dokployBuildPack(app);
+  const notCarried = dokployNotCarried(app, kind);
   const image = kind === "image" ? app.dockerImage ?? undefined : undefined;
   const domains = withPrimary((app.domains ?? []).map(mapDomain).filter((d): d is ForeignDomain => !!d));
   const cmd = mapCommand(app.command, app.args);
@@ -572,6 +587,7 @@ export function mapApplication(app: DokployApplication, serverRef?: string): For
     dockerContextPath: app.dockerContextPath || undefined,
     staticSpa: buildPack === "static" ? app.isStaticSpa ?? undefined : undefined,
     serverRef,
+    ...(notCarried.length ? { notCarried } : {}),
   };
 }
 

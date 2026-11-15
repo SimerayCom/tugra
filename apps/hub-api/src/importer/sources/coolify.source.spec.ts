@@ -152,3 +152,47 @@ describe("CoolifySource.fetchSecrets — per-variable flags", () => {
     expect(none.flags).toBeUndefined();
   });
 });
+
+describe("CoolifySource.fetchAppExtras", () => {
+  const b64 = (t: string) => Buffer.from(t, "utf8").toString("base64");
+  // Hand-built Coolify v4 shape; field names/encodings UNVERIFIED until the live lab check (spec G3-C section 11).
+  const row = (over: Record<string, unknown>) => ({ uuid: "app-1", name: "web", build_pack: "dockerfile", ...over });
+
+  it("does ONE GET of the application and decodes labels + the Dockerfile for a dockerfile app", async () => {
+    const client = new FakeClient({ "/applications/app-1": row({ custom_labels: b64("traefik.enable=true\nteam=core"), dockerfile: "FROM node:20\nCMD [\"x\"]\n" }) });
+    const extras = await new CoolifySource(client).fetchAppExtras("app-1");
+    expect(client.calls).toEqual(["/applications/app-1"]);
+    expect(extras).toEqual({ unmapped: [], labels: [{ key: "traefik.enable", value: "true" }, { key: "team", value: "core" }], dockerfile: "FROM node:20\nCMD [\"x\"]\n" });
+  });
+
+  it("falls back to dockerfile_raw when dockerfile is empty", async () => {
+    const client = new FakeClient({ "/applications/app-1": row({ dockerfile: "", dockerfile_raw: "FROM x" }) });
+    expect((await new CoolifySource(client).fetchAppExtras("app-1"))?.dockerfile).toBe("FROM x");
+  });
+
+  it("reads the Dockerfile only for build_pack dockerfile", async () => {
+    const client = new FakeClient({ "/applications/app-1": row({ build_pack: "nixpacks", dockerfile: "FROM x" }) });
+    expect((await new CoolifySource(client).fetchAppExtras("app-1"))?.dockerfile).toBeUndefined();
+  });
+
+  it("an unparsable label block becomes a fixed unmapped note, never an error", async () => {
+    const client = new FakeClient({ "/applications/app-1": row({ custom_labels: "just words with no pairs" }) });
+    expect(await new CoolifySource(client).fetchAppExtras("app-1")).toEqual({ unmapped: [{ field: "customLabels", reason: "the label block could not be parsed" }] });
+  });
+
+  it("a plain-token response with the text stripped yields an empty result", async () => {
+    const client = new FakeClient({ "/applications/app-1": row({ custom_labels: null, dockerfile: null }) });
+    expect(await new CoolifySource(client).fetchAppExtras("app-1")).toEqual({ unmapped: [] });
+  });
+
+  it("a non-object response gives undefined; a client error propagates", async () => {
+    expect(await new CoolifySource(new FakeClient({ "/applications/app-1": "oops" })).fetchAppExtras("app-1")).toBeUndefined();
+    await expect(new CoolifySource(new FakeClient({ "/applications/app-1": new Error("403 Forbidden") })).fetchAppExtras("app-1")).rejects.toThrow("403");
+  });
+
+  it("encodes the ref in the path", async () => {
+    const client = new FakeClient({ "/applications/a%2Fb": row({}) });
+    await new CoolifySource(client).fetchAppExtras("a/b");
+    expect(client.calls).toEqual(["/applications/a%2Fb"]);
+  });
+});

@@ -9,6 +9,7 @@ import { ImportSourceFactory } from "./sources/import-source.factory";
 import { assertAllowedUrl } from "./sources/ssrf-guard";
 import { planImport } from "./import-planner";
 import { buildPreflight } from "./preflight";
+import { buildCoverage } from "./coverage";
 import type { ImportPlan } from "./foreign-fleet";
 import type { ImportSource } from "./import-source";
 import { isRemoteSourceKind, type ImportConnectInput, type ImportPlanRequestInput, type RemoteSourceKind } from "./dto";
@@ -75,7 +76,8 @@ export class ImporterService {
       try {
         const fleet = await source.discover();
         const opts = { sourceKind: "local-docker", targetServerId: input.serverId };
-        return { ...planImport(fleet, opts), preflight: buildPreflight(fleet, opts) };
+        const coverage = buildCoverage(fleet, opts); // undefined for local-docker (adopts in place); kept for symmetry
+        return { ...planImport(fleet, opts), preflight: { ...buildPreflight(fleet, opts), ...(coverage ? { coverage } : {}) } };
       } finally {
         await source.close();
       }
@@ -91,7 +93,8 @@ export class ImporterService {
       );
       await this.prisma.importSession.update({ where: { id: session.id }, data: { lastUsedAt: new Date() } });
       const opts = { sourceKind: input.sourceKind };
-      return { ...planImport(fleet, opts), preflight: buildPreflight(fleet, opts) };
+      const coverage = buildCoverage(fleet, opts);
+      return { ...planImport(fleet, opts), preflight: { ...buildPreflight(fleet, opts), ...(coverage ? { coverage } : {}) } };
     } finally {
       await source.close();
     }

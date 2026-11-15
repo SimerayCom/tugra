@@ -350,3 +350,48 @@ describe("dokploy-map — L7 stripPath / redirects / basic-auth carry", () => {
     expect(mapApplication(baseApp({ ports: [{ publishedPort: null, targetPort: 2 }] })).publishedPorts).toBeUndefined();
   });
 });
+
+// ── G3-C: presence-only coverage (notCarried); discover `warnings` stay untouched ──────────────────────────
+describe("dokploy-map — notCarried (presence-only coverage)", () => {
+  it("an app with none of the fields has no notCarried key at all", () => {
+    expect("notCarried" in mapApplication(baseApp())).toBe(false);
+  });
+
+  it("an image app with a registry host reports registry (the credential is not read)", () => {
+    const a = mapApplication(baseApp({ sourceType: "docker", dockerImage: "ghcr.io/acme/x:1", registryUrl: "ghcr.io" }));
+    expect(a.notCarried).toEqual([{ field: "registry", level: "info", reason: "the registry credential is not carried; add the registry in Tugra before deploying a private image" }]);
+  });
+
+  it("buildSecrets keys are reported by presence; the values never appear", () => {
+    const a = mapApplication(baseApp({ buildSecrets: "NPM_TOKEN=npm_SUPERSECRET\nOTHER=x" }));
+    expect(a.notCarried).toEqual([{ field: "buildSecrets", level: "info", reason: "build secret values are not read; re-add them as Tugra build secrets" }]);
+    expect(JSON.stringify(a.notCarried)).not.toContain("SUPERSECRET");
+  });
+
+  it("labelsSwarm (object or array) is reported as not carried; empty / absent is not", () => {
+    const reason = "Dokploy Swarm service labels are not carried (Tugra custom labels are container labels)";
+    expect(mapApplication(baseApp({ labelsSwarm: { "traefik.enable": "true" } })).notCarried).toEqual([{ field: "customLabels", level: "info", reason }]);
+    expect(mapApplication(baseApp({ labelsSwarm: [{ name: "a", value: "b" }] })).notCarried).toEqual([{ field: "customLabels", level: "info", reason }]);
+    for (const empty of [{}, [], null, undefined, "x"]) expect("notCarried" in mapApplication(baseApp({ labelsSwarm: empty }))).toBe(false);
+  });
+
+  it("a dropped preview or disabled domain is reported; a plain domain is not", () => {
+    const withPreview = mapApplication(baseApp({ domains: [{ host: "a.example.com" }, { host: "pr-1.example.com", domainType: "preview" }] }));
+    expect(withPreview.notCarried).toEqual([{ field: "domains", level: "info", reason: "preview or disabled domains are not carried" }]);
+    expect(mapApplication(baseApp({ domains: [{ host: "x.com", enabled: false }] })).notCarried).toHaveLength(1);
+    expect("notCarried" in mapApplication(baseApp({ domains: [{ host: "a.example.com" }] }))).toBe(false);
+  });
+
+  it("does not add discover warnings for any of it", () => {
+    const input: DokployFleetInput = {
+      servers: [],
+      apps: [{ detail: baseApp({ buildSecrets: "A=b", labelsSwarm: { a: "b" } }) }],
+      composes: [],
+      databases: [],
+      sharedEnvBlobs: [],
+    };
+    const fleet = buildDokployFleet(input);
+    expect(fleet.warnings).toEqual([]);
+    expect(fleet.apps[0].notCarried?.map((n) => n.field).sort()).toEqual(["buildSecrets", "customLabels"]);
+  });
+});

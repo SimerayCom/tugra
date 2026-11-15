@@ -1,8 +1,10 @@
 import type { ForeignEnv, ForeignFleet } from "../foreign-fleet";
-import type { ImportSource, ImportSourceCapabilities, FetchedSecrets } from "../import-source";
+import type { ImportSource, ImportSourceCapabilities, FetchedSecrets, SourceAppExtras } from "../import-source";
 import { mapLimit } from "./map-limit";
 import {
   buildCoolifyFleet,
+  decodeCoolifyDockerfile,
+  decodeCoolifyLabels,
   type CoolifyApp,
   type CoolifyDatabase,
   type CoolifyEnv,
@@ -134,8 +136,32 @@ export class CoolifySource implements ImportSource {
     return { values, unresolved, ...(Object.keys(flags).length ? { flags } : {}) };
   }
 
+  /**
+   * Re-read one application's container labels and inline Dockerfile text at apply time (both `read:sensitive`-gated
+   * on Coolify; absent for a plain token → nothing carried). ONE guarded GET; a transport/permission error PROPAGATES
+   * (the executor turns it into a fixed unmapped note). The text lives in memory only — never in the fleet, plan or
+   * task output. Compose apps are never queried (the executor does not call this for them).
+   */
+  async fetchAppExtras(ref: string): Promise<SourceAppExtras | undefined> {
+    const row = await this.client.get<unknown>(`/applications/${encodeURIComponent(ref)}`);
+    if (!row || typeof row !== "object" || Array.isArray(row)) return undefined;
+    const r = row as CoolifyApp;
+    const out: SourceAppExtras = { unmapped: [] };
+    const labels = decodeCoolifyLabels(r.custom_labels);
+    if (labels === "unparsable") out.unmapped.push({ field: "customLabels", reason: "the label block could not be parsed" });
+    else if (labels.length) out.labels = labels;
+    if (r.build_pack === "dockerfile") {
+      const dockerfile = decodeCoolifyDockerfile(nonEmptyStr(r.dockerfile) ?? r.dockerfile_raw);
+      if (dockerfile !== undefined) out.dockerfile = dockerfile;
+    }
+    return out;
+  }
+
   async close(): Promise<void> {}
 }
+
+/** The value when it is a non-empty string, else undefined (so `??` falls through an empty `dockerfile` to `dockerfile_raw`). */
+const nonEmptyStr = (v: unknown): string | undefined => (typeof v === "string" && v.trim() !== "" ? v : undefined);
 
 /** Max concurrent enrichment GETs during discover — fast enough for a large fleet without hammering Coolify. */
 const DISCOVER_CONCURRENCY = 8;
