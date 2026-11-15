@@ -27,7 +27,7 @@ const base = (id: string) => `/object-migrations/${encodeURIComponent(id)}`;
 
 export function register(program: Command): void {
   // ── import git-links ──
-  const imp = program.command("import").description("Fleet import helpers");
+  const imp = program.commands.find((c) => c.name() === "import") ?? program.command("import").description("Fleet import (Coolify / Dokploy): follow-ups, object migration, cutover");
   imp
     .command("git-links")
     .description("Show how each git app of a connected import source would be linked on the target server's team (repo-visibility matching)")

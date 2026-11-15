@@ -99,7 +99,7 @@ export function buildRequest(action: Action, opId: string, o: Opts): { method: "
 }
 
 export function register(program: Command): void {
-  const imp = program.commands.find((c) => c.name() === "import") ?? program.command("import").description("Import from another PaaS");
+  const imp = program.commands.find((c) => c.name() === "import") ?? program.command("import").description("Fleet import (Coolify / Dokploy): follow-ups, object migration, cutover");
   imp
     .command("cutover <opId> <action>")
     .description(`SSL/DNS cutover of an imported operation: ${CUTOVER_ACTIONS.join(" | ")}`)

@@ -45,7 +45,7 @@ export function importVolumeRows(view: ImportVolumesView): Row[] {
 
 export function register(program: Command): void {
   // ── fleet import follow-ups ──
-  const imp = program.command("import").description("Fleet import (Coolify / Dokploy) follow-ups");
+  const imp = program.commands.find((c) => c.name() === "import") ?? program.command("import").description("Fleet import (Coolify / Dokploy): follow-ups, object migration, cutover");
   imp
     .command("volumes <opId>")
     .description("Show the streamed volume copies of an import; abort or reset one (deploy scope for the actions)")
