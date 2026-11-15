@@ -222,3 +222,49 @@ func TestTrafficMetricsRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+func TestCanonicalLogDrainsGolden(t *testing.T) {
+	// Identical vector to the TS test in packages/shared (any drift rejects every log_drains_v2 frame).
+	got := CanonicalLogDrains("srv1", 1731672000000, `[{"id":"d1"}]`, "logs")
+	if got != "ldrn\nsrv1\n1731672000000\n[{\"id\":\"d1\"}]\nlogs" {
+		t.Fatalf("CanonicalLogDrains mismatch: %q", got)
+	}
+	if CanonicalLogDrains("srv2", 1, "[]", "logs") == CanonicalLogDrains("srv1", 1, "[]", "logs") {
+		t.Fatal("serverId must be bound into the signed bytes")
+	}
+}
+
+func TestFeaturesAdvertiseLogDrains(t *testing.T) {
+	want := map[string]bool{FeatureCmdJournal: false, FeatureLogDrainsV2: false, FeatureDrainSyslog: false, FeatureDrainGelf: false, FeatureDrainFluentd: false}
+	for _, f := range Features {
+		if _, ok := want[f]; ok {
+			want[f] = true
+		}
+	}
+	for f, ok := range want {
+		if !ok {
+			t.Fatalf("Features is missing %s: %v", f, Features)
+		}
+	}
+	if FeatureLogDrainsV2 != "log_drains_v2" || FeatureDrainSyslog != "log_drain_syslog_v1" || FeatureDrainGelf != "log_drain_gelf_v1" || FeatureDrainFluentd != "log_drain_fluentd_v1" {
+		t.Fatal("feature flag names must match packages/shared")
+	}
+}
+
+func TestDrainCfgLegacyShapeUnchanged(t *testing.T) {
+	// A legacy log_drains entry round-trips with only the four original keys (new fields are omitempty).
+	b, err := json.Marshal(DrainCfg{ID: "d1", Type: "http", Endpoint: "https://x", Token: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != `{"id":"d1","type":"http","endpoint":"https://x","token":"t"}` {
+		t.Fatalf("legacy DrainCfg JSON changed: %s", b)
+	}
+	var d DrainCfg
+	if err := json.Unmarshal([]byte(`{"id":"d2","scope":"app","appId":"a1","match":{"svcPrefixes":["tugra_a1-web-"]},"host":"h","options":{"proto":"udp","facility":5},"egress":"public"}`), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Scope != "app" || d.Match == nil || d.Match.SvcPrefixes[0] != "tugra_a1-web-" || d.Options == nil || d.Options.Facility == nil || *d.Options.Facility != 5 || d.Egress != "public" {
+		t.Fatalf("v2 DrainCfg decode wrong: %+v", d)
+	}
+}

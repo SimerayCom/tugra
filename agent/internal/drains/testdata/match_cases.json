@@ -1,0 +1,47 @@
+{
+  "scenarios": [
+    {
+      "name": "whole app (no service filter)",
+      "appId": "ck1app",
+      "services": [],
+      "cases": [
+        { "container": "tugra_ck1app", "want": true },
+        { "container": "tugra_ck1app__rollout", "want": true },
+        { "container": "tugra_ck1app-web-1", "want": true },
+        { "container": "tugra_ck1app-web-2-1", "want": true },
+        { "container": "tugra_ck1app.1.x9y8z7", "want": true },
+        { "container": "tugra_ck1app2", "want": false },
+        { "container": "tugra_ck1app2-web-1", "want": false },
+        { "container": "tugra_ck1appX.1.abc", "want": false },
+        { "container": "tugra_db_ck1app", "want": false },
+        { "container": "tugra_ck1app__prev", "want": false },
+        { "container": "tugra_other", "want": false },
+        { "container": "nginx", "want": false }
+      ]
+    },
+    {
+      "name": "compose service web",
+      "appId": "ck1app",
+      "services": ["web"],
+      "cases": [
+        { "container": "tugra_ck1app-web-1", "want": true },
+        { "container": "tugra_ck1app-web-12", "want": true },
+        { "container": "tugra_ck1app-web-2-1", "want": false },
+        { "container": "tugra_ck1app-web-", "want": false },
+        { "container": "tugra_ck1app-worker-1", "want": false },
+        { "container": "tugra_ck1app", "want": false },
+        { "container": "tugra_ck1app__rollout", "want": false },
+        { "container": "tugra_ck1app2-web-1", "want": false }
+      ]
+    },
+    {
+      "name": "compose service web-2",
+      "appId": "ck1app",
+      "services": ["web-2"],
+      "cases": [
+        { "container": "tugra_ck1app-web-2-1", "want": true },
+        { "container": "tugra_ck1app-web-1", "want": false }
+      ]
+    }
+  ]
+}

@@ -1,16 +1,14 @@
-// Package drains forwards container logs to external HTTP sinks (log drains).
-// Best-effort: it tails `docker logs -f` for each tugra_ container and POSTs
-// batched lines to every configured drain. No retry/queue (MVP).
+// Package drains forwards container logs to external sinks (log drains): HTTP (generic/Loki/Datadog), syslog
+// (RFC 5424), GELF and fluentd Forward. Best-effort: it tails `docker logs -f` for the containers some drain
+// wants and hands every batch to each drain's own bounded queue + sender goroutine, so a dead sink never stalls
+// the tails or another sink. No persistence: lines emitted while the agent is disconnected are lost.
 package drains
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
-	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,6 +35,10 @@ const (
 type LogLine struct {
 	Container string `json:"container"`
 	Message   string `json:"message"`
+	// TS is the docker log timestamp (`-t`), zero when unparsable. Stream is "stdout" or "stderr". Both are
+	// excluded from the http/loki/datadog JSON so those wire formats stay byte-identical to before D7.
+	TS     time.Time `json:"-"`
+	Stream string    `json:"-"`
 }
 
 // Batcher accumulates log lines and flushes them by size, by entry count, or on a timer.
@@ -191,7 +193,7 @@ func postBatch(client *http.Client, serverID string, d protocol.DrainCfg, lines 
 		if code >= 200 && code < 300 {
 			return nil
 		}
-		lastErr = fmt.Errorf("drain %s returned HTTP %d", d.Endpoint, code)
+		lastErr = &httpStatusErr{endpoint: d.Endpoint, code: code}
 		if !retriable(code) {
 			return lastErr // permanent client error — retrying won't help
 		}
@@ -199,133 +201,165 @@ func postBatch(client *http.Client, serverID string, d protocol.DrainCfg, lines 
 	return lastErr
 }
 
-// Forwarder owns the docker-log tails + batching for a server's drains.
+// Option configures a Forwarder.
+type Option func(*Forwarder)
+
+// WithStatusReporter makes the forwarder report per-sink status (every 30 s and on state change, debounced 1 s).
+func WithStatusReporter(fn func(protocol.DrainStatusMsg)) Option {
+	return func(f *Forwarder) { f.report = fn }
+}
+
+// Forwarder owns the docker-log tails + the per-drain sinks for a server.
 type Forwarder struct {
 	serverID string
-	client   *http.Client
+	report   func(protocol.DrainStatusMsg)
+	// docker / sender hooks, captured from the package vars at New() so background goroutines never race a
+	// test that swaps the package vars.
+	ps         func(context.Context) []psEntry
+	tail       func(context.Context, string, time.Time, func(LogLine)) <-chan struct{}
+	makeSender func(protocol.DrainCfg, string) (Sender, error)
 
-	mu     sync.Mutex
-	drains []protocol.DrainCfg
-	cancel context.CancelFunc // lifecycle of the reconcile+batch loops
+	mu      sync.Mutex
+	sinks   map[string]*sink
+	invalid map[string]string // drain id -> error class, for drains that could not be built
+	parent  context.Context
+	tailCtx context.CancelFunc // lifecycle of the reconcile + batcher loops
+	statCtx context.CancelFunc // lifecycle of the status loop
+	changed chan struct{}      // status "something changed" (cap 1)
 }
 
 // New creates a forwarder for the given server.
-func New(serverID string) *Forwarder {
-	return &Forwarder{serverID: serverID, client: &http.Client{Timeout: 10 * time.Second}}
+func New(serverID string, opts ...Option) *Forwarder {
+	f := &Forwarder{serverID: serverID, ps: psFn, tail: tailFn, makeSender: senderFactory, sinks: map[string]*sink{}, invalid: map[string]string{}, changed: make(chan struct{}, 1)}
+	for _, o := range opts {
+		o(f)
+	}
+	return f
 }
 
-// SetDrains applies a new drain config: starts forwarding when non-empty,
-// stops it when empty. Safe to call repeatedly (e.g. on config_update).
+// SetDrains applies a LEGACY drain set (plain server-wide http/loki/datadog from the unsigned "log_drains"
+// frame): starts forwarding when non-empty, stops it when empty. Safe to call repeatedly.
 func (f *Forwarder) SetDrains(parent context.Context, drains []protocol.DrainCfg) {
+	f.apply(parent, drains)
+}
+
+// SetDrainsV2 applies the full drain set of a verified, capability-gated "log_drains_v2" frame. nil/empty stops
+// every sink (also how a revoked `logs` capability takes effect).
+func (f *Forwarder) SetDrainsV2(parent context.Context, drains []protocol.DrainCfg) {
+	f.apply(parent, drains)
+}
+
+// apply reconciles the live sinks with a new drain set. An unchanged drain (same fingerprint) keeps its sink and
+// connection; a changed one is rebuilt; a removed one is closed; one that cannot be built (unknown type, bad
+// options, bad endpoint) is skipped and reported "invalid". An empty set stops everything.
+func (f *Forwarder) apply(parent context.Context, drains []protocol.DrainCfg) {
 	f.mu.Lock()
-	f.drains = drains
-	if len(drains) == 0 {
-		if f.cancel != nil {
-			f.cancel()
-			f.cancel = nil
+	defer f.mu.Unlock()
+	f.parent = parent
+	next := map[string]*sink{}
+	invalid := map[string]string{}
+	for _, cfg := range drains {
+		if cfg.ID == "" {
+			continue
 		}
-		f.mu.Unlock()
+		fp := fingerprint(cfg)
+		if old, ok := f.sinks[cfg.ID]; ok && old.fp == fp {
+			next[cfg.ID] = old
+			delete(f.sinks, cfg.ID)
+			continue
+		}
+		sender, err := f.makeSender(cfg, f.serverID)
+		if err != nil {
+			logf("drain %s invalid: %s", cfg.ID, errConfig)
+			invalid[cfg.ID] = errConfig
+			continue
+		}
+		s := newSink(parent, cfg, sender, nil, f.notifyChange)
+		s.start()
+		next[cfg.ID] = s
+	}
+	for _, old := range f.sinks { // removed, changed or now-invalid
+		old.close()
+	}
+	f.sinks, f.invalid = next, invalid
+
+	if len(next) == 0 {
+		f.stopTailsLocked()
+	} else {
+		f.startTailsLocked(parent)
+	}
+	if len(next) == 0 && len(invalid) == 0 {
+		f.stopStatusLocked()
 		return
 	}
-	if f.cancel != nil {
-		f.mu.Unlock() // already running; reconcile/batcher read the latest drains
+	f.startStatusLocked(parent)
+	f.notifyChange()
+}
+
+// Stop tears down all tails, sinks and the status loop.
+func (f *Forwarder) Stop() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, s := range f.sinks {
+		s.close()
+	}
+	f.sinks, f.invalid = map[string]*sink{}, map[string]string{}
+	f.stopTailsLocked()
+	f.stopStatusLocked()
+}
+
+func (f *Forwarder) stopTailsLocked() {
+	if f.tailCtx != nil {
+		f.tailCtx()
+		f.tailCtx = nil
+	}
+}
+
+func (f *Forwarder) startTailsLocked(parent context.Context) {
+	if f.tailCtx != nil || f.ps == nil { // already running (reconcile/dispatch read the latest sinks), or no docker hook (tests)
 		return
 	}
 	ctx, cancel := context.WithCancel(parent)
-	f.cancel = cancel
-	f.mu.Unlock()
-
-	batcher := NewBatcher(maxBatchBytes, maxBatchLines, flushInterval, func(lines []LogLine) {
-		f.mu.Lock()
-		current := f.drains
-		f.mu.Unlock()
-		for _, d := range current {
-			_ = postBatch(f.client, f.serverID, d, lines)
-		}
-	})
+	f.tailCtx = cancel
+	batcher := NewBatcher(maxBatchBytes, maxBatchLines, flushInterval, f.dispatch)
 	go batcher.Run(ctx)
 	go f.reconcile(ctx, batcher)
 }
 
-// Stop tears down all tails.
-func (f *Forwarder) Stop() {
+// snapshot returns the live sinks.
+func (f *Forwarder) snapshot() []*sink {
 	f.mu.Lock()
-	if f.cancel != nil {
-		f.cancel()
-		f.cancel = nil
+	defer f.mu.Unlock()
+	out := make([]*sink, 0, len(f.sinks))
+	for _, s := range f.sinks {
+		out = append(out, s)
 	}
-	f.mu.Unlock()
+	return out
 }
 
-// reconcile keeps one `docker logs -f` tail per running tugra_ container.
-func (f *Forwarder) reconcile(ctx context.Context, b *Batcher) {
-	tails := map[string]context.CancelFunc{}
-	defer func() {
-		for _, c := range tails {
-			c()
-		}
-	}()
-	run := func() {
-		names := dockerPs(ctx)
-		seen := map[string]bool{}
-		for _, n := range names {
-			seen[n] = true
-			if _, ok := tails[n]; !ok {
-				tctx, tcancel := context.WithCancel(ctx)
-				tails[n] = tcancel
-				go tailContainer(tctx, n, b)
+// dispatch fans one batch out to every sink whose matcher wants each line. Non-blocking: each sink has its own
+// bounded queue.
+func (f *Forwarder) dispatch(lines []LogLine) {
+	for _, s := range f.snapshot() {
+		var sel []LogLine
+		for _, l := range lines {
+			if s.m.allows(l.Container) {
+				sel = append(sel, l)
 			}
 		}
-		for n, c := range tails {
-			if !seen[n] {
-				c()
-				delete(tails, n)
-			}
-		}
-	}
-	run()
-	t := time.NewTicker(reconcileInterval)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			run()
+		if len(sel) > 0 {
+			s.enqueue(sel)
 		}
 	}
 }
 
-// dockerPs lists running tugra_ container names (best-effort, empty on error).
-func dockerPs(ctx context.Context) []string {
-	out, err := exec.CommandContext(ctx, "docker", "ps", "--format", "{{.Names}}", "--filter", "name=tugra_").Output()
-	if err != nil {
-		return nil
-	}
-	var names []string
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if l := strings.TrimSpace(line); l != "" {
-			names = append(names, l)
+// wants reports whether ANY sink wants a container's logs (a server with only app drains tails only those apps'
+// containers).
+func (f *Forwarder) wants(container string) bool {
+	for _, s := range f.snapshot() {
+		if s.m.allows(container) {
+			return true
 		}
 	}
-	return names
-}
-
-// tailContainer streams a container's logs into the batcher until ctx ends.
-func tailContainer(ctx context.Context, name string, b *Batcher) {
-	cmd := exec.CommandContext(ctx, "docker", "logs", "-f", "--tail", "0", name)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return
-	}
-	cmd.Stderr = cmd.Stdout // merge stderr into the same stream
-	if err := cmd.Start(); err != nil {
-		return
-	}
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		b.Add(LogLine{Container: name, Message: scanner.Text()})
-	}
-	_ = cmd.Wait()
+	return false
 }

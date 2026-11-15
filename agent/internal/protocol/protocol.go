@@ -84,8 +84,19 @@ type Auth struct {
 // AGENT_FEATURE_CMD_JOURNAL in packages/shared.
 const FeatureCmdJournal = "cmd_journal_v1"
 
+// FeatureLogDrainsV2: this agent accepts the signed, `logs`-capability-gated "log_drains_v2" frame (per-app
+// scope, container match, per-transport options, egress policy) and reports "drain_status". Mirrors
+// AGENT_FEATURE_LOG_DRAINS_V2 in packages/shared. The three transport flags tell the hub which NET drain types
+// this agent can deliver (a drain of a type the agent lacks is withheld and shown as "agent update required").
+const (
+	FeatureLogDrainsV2  = "log_drains_v2"
+	FeatureDrainSyslog  = "log_drain_syslog_v1"
+	FeatureDrainGelf    = "log_drain_gelf_v1"
+	FeatureDrainFluentd = "log_drain_fluentd_v1"
+)
+
 // Features is the list this agent advertises in enroll/auth.
-var Features = []string{FeatureCmdJournal}
+var Features = []string{FeatureCmdJournal, FeatureLogDrainsV2, FeatureDrainSyslog, FeatureDrainGelf, FeatureDrainFluentd}
 
 // CommandState: Agent -> Hub, reply to command_status (what happened to a durable command).
 type CommandState struct {
@@ -316,6 +327,11 @@ type ServerMsg struct {
 	Op     string `json:"op,omitempty"`
 	Volume string `json:"volume,omitempty"`
 	Path   string `json:"path,omitempty"`
+	// Signed log-drain set (type "log_drains_v2"): Rev is monotonic per hub process, DrainsJSON the pre-serialised
+	// JSON array of DrainCfg (signed byte-for-byte via CanonicalLogDrains). ServerID is signed too, but the agent
+	// verifies against its OWN stored server id, never this field.
+	Rev        int64  `json:"rev,omitempty"`
+	DrainsJSON string `json:"drainsJson,omitempty"`
 }
 
 // FsEntry: one listing entry (metadata only — never content; a symlink is reported, never dereferenced).
@@ -338,13 +354,71 @@ type FsResult struct {
 }
 
 // DrainCfg is one external log sink. Type selects the payload format: "http" (Tugra batch JSON, the default),
-// "loki" (Grafana Loki push) or "datadog" (Datadog logs intake). Token is a Bearer for http/loki and the
-// DD-API-KEY header for datadog.
+// "loki" (Grafana Loki push), "datadog" (Datadog logs intake), or — in a log_drains_v2 frame from a hub that knows
+// the transport — "syslog" (RFC 5424), "gelf" (GELF 1.1) or "fluentd" (Forward). Token is a Bearer for http/loki,
+// the DD-API-KEY header for datadog and the shared key for fluentd. Every field after Token is additive and
+// omitempty, so a legacy "log_drains" frame decodes (and is re-encoded in tests) exactly as before.
 type DrainCfg struct {
 	ID       string `json:"id"`
 	Type     string `json:"type"`
 	Endpoint string `json:"endpoint"`
 	Token    string `json:"token"`
+	// Scope is "app" (Match is mandatory; an app drain with no match forwards NOTHING) or ""/"server".
+	Scope string `json:"scope,omitempty"`
+	// AppID is set for app-scope drains; it is only a record label (_app_id / app_id), never used for matching.
+	AppID string      `json:"appId,omitempty"`
+	Match *DrainMatch `json:"match,omitempty"`
+	// Host is the sanitised server name used as the syslog HOST / GELF host / fluentd host label.
+	Host    string        `json:"host,omitempty"`
+	Options *DrainOptions `json:"options,omitempty"`
+	// Egress is the dial policy computed by the hub: "public" (also blocks loopback/RFC1918/CGNAT/ULA), "any"
+	// (blocks only metadata/link-local/unspecified/multicast) or "" (legacy unguarded http, as before).
+	Egress string `json:"egress,omitempty"`
+}
+
+// DrainMatch is the hub-resolved container selector of a drain. A container matches when its name is in Names, or
+// starts with any Prefixes entry, or starts with a SvcPrefixes entry followed ONLY by ASCII digits (a compose
+// replica index), or matches any Globs entry (path.Match). Mirrors resolveAppMatch in the hub.
+type DrainMatch struct {
+	Names       []string `json:"names,omitempty"`
+	Prefixes    []string `json:"prefixes,omitempty"`
+	SvcPrefixes []string `json:"svcPrefixes,omitempty"`
+	Globs       []string `json:"globs,omitempty"`
+}
+
+// DrainOptions are the per-transport options of a syslog/gelf/fluentd drain (never a secret).
+type DrainOptions struct {
+	Proto      string `json:"proto,omitempty"`      // udp | tcp | tls
+	Framing    string `json:"framing,omitempty"`    // syslog tcp/tls: octet | newline
+	Compress   string `json:"compress,omitempty"`   // gelf udp: none | gzip | zlib
+	Tag        string `json:"tag,omitempty"`        // fluentd tag prefix
+	AppName    string `json:"appName,omitempty"`    // syslog APP-NAME override
+	CACert     string `json:"caCert,omitempty"`     // PEM bundle added to the system roots (tls only)
+	ServerName string `json:"serverName,omitempty"` // TLS SNI/verification name (tls only)
+	Facility   *int   `json:"facility,omitempty"`   // syslog facility 0..23 (default 16)
+	RequireAck *bool  `json:"requireAck,omitempty"` // fluentd: wait for the {"ack":chunk} reply (default true)
+}
+
+// DrainStatus is one sink's delivery status (Agent -> Hub). No error text: only the enum class.
+type DrainStatus struct {
+	ID       string `json:"id"`
+	State    string `json:"state"` // ok | error | idle | invalid
+	ErrClass string `json:"errClass,omitempty"`
+	Sent     int64  `json:"sent"`
+	Dropped  int64  `json:"dropped"`
+	LastOkAt int64  `json:"lastOkAt,omitempty"` // unix ms
+}
+
+// DrainStatusMsg: Agent -> Hub, per-sink status every 30 s and on state change.
+type DrainStatusMsg struct {
+	Type   string        `json:"type"` // "drain_status"
+	Drains []DrainStatus `json:"drains"`
+}
+
+// CanonicalLogDrains mirrors @tugra/shared canonicalLogDrains (byte-identical input). The agent verifies it with
+// its OWN stored server id so a frame captured for another server (the hub key is fleet-wide) never verifies.
+func CanonicalLogDrains(serverID string, rev int64, drainsJSON, capability string) string {
+	return "ldrn\n" + serverID + "\n" + strconv.FormatInt(rev, 10) + "\n" + drainsJSON + "\n" + capability
 }
 
 // CanonicalCommand mirrors @tugra/shared canonicalCommand (byte-identical input).

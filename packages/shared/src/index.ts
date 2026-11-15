@@ -111,6 +111,17 @@ export function canonicalCommandStatus(reqId: string): string {
  *   `command_status` with `command_state`. Deploys dispatched to such an agent can be adopted after a hub restart.
  */
 export const AGENT_FEATURE_CMD_JOURNAL = "cmd_journal_v1";
+/** `log_drains_v2`: the agent accepts the signed, `logs`-capability-gated `log_drains_v2` frame (per-app scope,
+ *  container match, per-transport options, egress policy) and reports `drain_status`. */
+export const AGENT_FEATURE_LOG_DRAINS_V2 = "log_drains_v2";
+/** Per-transport features: a drain of that type is only sent to an agent advertising the matching flag. */
+export const AGENT_FEATURE_DRAIN_SYSLOG = "log_drain_syslog_v1";
+export const AGENT_FEATURE_DRAIN_GELF = "log_drain_gelf_v1";
+export const AGENT_FEATURE_DRAIN_FLUENTD = "log_drain_fluentd_v1";
+/** Signed payload of a `log_drains_v2` frame. Byte-identical to the Go agent's CanonicalLogDrains. */
+export function canonicalLogDrains(serverId: string, rev: number, drainsJson: string, capability: string): string {
+  return `ldrn\n${serverId}\n${rev}\n${drainsJson}\n${capability}`;
+}
 export function canonicalTermStart(
   sessionId: string,
   target: string,
@@ -579,15 +590,62 @@ export interface LogExitMsg {
   exitCode: number;
 }
 
-/** Hub -> Agent: the server's active log drains (container logs are forwarded here). */
+/** Hub -> Agent (D7, agents advertising `log_drains_v2`): the FULL set of log drains for the server, as a
+ *  pre-serialised JSON STRING (`drainsJson`) so the signature covers the exact bytes (no TS/Go canonical-JSON
+ *  divergence). Signed with canonicalLogDrains and gated on the `logs` capability. The serverId in the signature
+ *  stops a frame captured for server A being replayed to server B (the hub key is fleet-wide). */
+export interface LogDrainsV2Msg {
+  type: "log_drains_v2";
+  serverId: string;
+  rev: number;
+  capability: "logs";
+  drainsJson: string;
+  /** base64(ed25519 signature over canonicalLogDrains) — agent rejects if invalid. */
+  sig?: string;
+}
+
+/** Legacy Hub -> Agent drain push (unsigned, ungated): ONLY plain server-wide http/loki/datadog drains, sent to
+ *  agents without `log_drains_v2`. Byte-identical to the pre-D7 frame. */
 export interface LogDrainCfg {
   id: string;
+  type: string;
   endpoint: string;
-  token?: string;
+  token: string;
 }
 export interface LogDrainsMsg {
   type: "log_drains";
   drains: LogDrainCfg[];
+}
+
+/** Error class of a failing drain sink: an enum only, never raw error text (no endpoint/token can leak). */
+export type DrainErrClass =
+  | "dns"
+  | "dial"
+  | "tls"
+  | "timeout"
+  | "refused"
+  | "http"
+  | "write"
+  | "ack"
+  | "policy"
+  | "config"
+  | "overflow";
+export const DRAIN_ERR_CLASSES: readonly DrainErrClass[] = [
+  "dns", "dial", "tls", "timeout", "refused", "http", "write", "ack", "policy", "config", "overflow",
+];
+export const DRAIN_STATES = ["ok", "error", "idle", "invalid"] as const;
+export interface DrainStatusEntry {
+  id: string;
+  state: (typeof DRAIN_STATES)[number];
+  errClass?: DrainErrClass;
+  sent: number;
+  dropped: number;
+  lastOkAt?: number;
+}
+/** Agent -> Hub: per-sink delivery status (in-memory on the hub; no error text, only the enum class). */
+export interface DrainStatusMsg {
+  type: "drain_status";
+  drains: DrainStatusEntry[];
 }
 
 /** Pushed when a server's granted capabilities change, so a connected agent updates its
@@ -638,7 +696,8 @@ export type AgentMessage =
   | LogChunkMsg
   | LogExitMsg
   | FsResultMsg
-  | CommandStateMsg;
+  | CommandStateMsg
+  | DrainStatusMsg;
 export type HubMessage =
   | ChallengeMsg
   | EnrolledMsg
@@ -653,6 +712,7 @@ export type HubMessage =
   | LogStartMsg
   | LogStopMsg
   | LogDrainsMsg
+  | LogDrainsV2Msg
   | CapabilitiesMsg
   | FsReqMsg
   | CommandStatusMsg;

@@ -208,8 +208,9 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 	defer hostTicker.Stop()
 
 	// Log-drain forwarder: starts/stops on hub "log_drains" config messages.
-	fwd := drains.New(store.ServerID)
+	fwd := drains.New(store.ServerID, drains.WithStatusReporter(func(m protocol.DrainStatusMsg) { _ = send(m) }))
 	defer fwd.Stop()
+	drainCtl := newDrainFrames(hubPub, store.ServerID, cs.allows, fwd)
 
 	// Reader: handle commands + terminal + log-follow sessions from the hub.
 	sessions := map[string]*terminal.Session{}
@@ -429,11 +430,14 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 				if stream != nil {
 					stream.Close()
 				}
+			case "log_drains_v2":
+				drainCtl.handleV2(ctx, m)
 			case "log_drains":
-				fwd.SetDrains(ctx, m.Drains)
+				drainCtl.handleLegacy(ctx, m)
 			case "capabilities":
 				// Hub pushed an updated granted set → refresh the fail-closed allowlist live.
 				cs.set(m.Capabilities)
+				drainCtl.capabilitiesChanged(ctx) // `logs` revoked → stop every v2 drain sink
 			case "agent_update":
 				// Same fail-closed order as command: verify the hub signature, then the capability.
 				if !protocol.VerifySig(hubPub, protocol.CanonicalAgentUpdate(m.ReqID, m.TargetVersion, m.Image, m.Sha256, m.Capability), m.Sig) {

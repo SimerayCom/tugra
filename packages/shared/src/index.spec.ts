@@ -3,6 +3,11 @@ import {
   canonicalCommandCancel,
   canonicalCommandStatus,
   AGENT_FEATURE_CMD_JOURNAL,
+  AGENT_FEATURE_LOG_DRAINS_V2,
+  AGENT_FEATURE_DRAIN_SYSLOG,
+  AGENT_FEATURE_DRAIN_GELF,
+  AGENT_FEATURE_DRAIN_FLUENTD,
+  canonicalLogDrains,
   PROTOCOL_VERSION, TRAFFIC_LATENCY_BUCKETS_MS, canonicalLogStart, canonicalAgentUpdate, canonicalFs } from "./index";
 import type {
   MetricsSample,
@@ -168,5 +173,20 @@ describe("shared protocol", () => {
     expect(AGENT_FEATURE_CMD_JOURNAL).toBe("cmd_journal_v1");
     // the durable flag is NOT signed: canonicalCommand's input is unchanged by it
     expect(canonicalCommand("r1", "echo hi", 5000, "deploy")).toBe("cmd\nr1\necho hi\n5000\ndeploy");
+  });
+
+  it("canonicalLogDrains golden is byte-identical to the Go agent's CanonicalLogDrains", () => {
+    expect(canonicalLogDrains("srv1", 1731672000000, '[{"id":"d1"}]', "logs")).toBe(
+      'ldrn\nsrv1\n1731672000000\n[{"id":"d1"}]\nlogs',
+    );
+    // the serverId is bound into the signed bytes (replay to another server changes them)
+    expect(canonicalLogDrains("srv2", 1, "[]", "logs")).not.toBe(canonicalLogDrains("srv1", 1, "[]", "logs"));
+  });
+
+  it("pins the log-drain feature flag names", () => {
+    expect(AGENT_FEATURE_LOG_DRAINS_V2).toBe("log_drains_v2");
+    expect(AGENT_FEATURE_DRAIN_SYSLOG).toBe("log_drain_syslog_v1");
+    expect(AGENT_FEATURE_DRAIN_GELF).toBe("log_drain_gelf_v1");
+    expect(AGENT_FEATURE_DRAIN_FLUENTD).toBe("log_drain_fluentd_v1");
   });
 });
