@@ -62,10 +62,31 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version: "1.25"
       - run: go build ./...
       - run: go vet ./...
       - run: go test ./...
+
+  # FILES-6 gate: the sandboxed file helper and the container-FS driver are security boundaries (os.Root, dropped
+  # caps, a read-write volume mount), so they are exercised against a REAL Docker daemon, not a stubbed one. Gated
+  # behind the `dockerit` build tag so a plain `go test ./...` (above, and on any dev box) never needs Docker.
+  agent-docker-it:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - name: Build the agent image (the file helper re-invokes it)
+        working-directory: .
+        run: docker build -f deploy/Dockerfile.agent -t tugra-agent:it .
+      - name: Real-docker integration tests
+        env:
+          TUGRA_AGENT_IMAGE: tugra-agent:it
+        run: go test -count=1 -timeout 15m -tags dockerit ./internal/fsd/... ./internal/ctrfs/...
 
   # Backward-compatibility guard for the public API: fail a PR that makes a BREAKING change to the committed
   # OpenAPI contract vs the base branch. (The node job's drift-guard already proves the spec matches the code.)
@@ -78,7 +99,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version: "1.25"
       - run: go install github.com/oasdiff/oasdiff@latest
       - run: echo "$HOME/go/bin" >> "$GITHUB_PATH"
       # base_ref goes through env (not interpolated into the script) to avoid run-step expression injection.
