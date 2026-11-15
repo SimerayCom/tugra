@@ -1338,7 +1338,12 @@ model Application {
   volumeBackupIntervalHours    Int?
   volumeBackupRetention        Int                @default(7)
   volumeBackupDestinationId    String?
+  // Optional 5-field cron (wins over volumeBackupIntervalHours) + age / total-size (GiB) retention.
+  volumeBackupCron             String?
+  volumeBackupRetentionDays    Int?
+  volumeBackupMaxSizeGb        Int?
   volumeBackups                VolumeBackup[]
+  volumeBackupPolicies         VolumeBackupPolicy[]
   parent                       Application?       @relation("AppPreviews", fields: [parentAppId], references: [id], onDelete: Cascade)
   previews                     Application[]      @relation("AppPreviews")
   deployments                  Deployment[]
@@ -1591,6 +1596,8 @@ model Database {
   backupRetention         Int               @default(7)
   // Optional age-based retention: also delete SUCCESS backups older than N days (alongside the keep-N count).
   backupRetentionDays     Int?
+  // Optional total-size retention (GiB) over this database's SUCCESS logical backups; oldest go first, the newest is kept.
+  backupMaxSizeGb         Int?
   backupDestinationId     String?
   // Scheduled restore-verify drill (prove a backup actually RESTORES). Independent of the backup schedule:
   // each run provisions a disposable DB, restores the latest SUCCESS backup into it, then tears it down.
@@ -1742,7 +1749,32 @@ model HubBackupConfig {
   intervalHours Int      @default(24)
   retention     Int      @default(7)
   destinationId String?
+  // Optional 5-field cron (wins over intervalHours) + age / total-size (GiB) retention. All nullable.
+  cron          String?
+  retentionDays Int?
+  maxSizeGb     Int?
   updatedAt     DateTime @updatedAt
+}
+
+// Per-volume backup policy: overrides the app's volume-backup schedule/retention for ONE named volume.
+// Null fields inherit the app's values. A row with its own schedule (or enabled=false) is "carved out" of the
+// app-wide job. Cascade-deleted with the app.
+model VolumeBackupPolicy {
+  id            String      @id @default(cuid())
+  appId         String
+  app           Application @relation(fields: [appId], references: [id], onDelete: Cascade)
+  volumeName    String
+  enabled       Boolean     @default(true)
+  intervalHours Int?
+  cron          String?
+  retention     Int?
+  retentionDays Int?
+  maxSizeGb     Int?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@unique([appId, volumeName])
+  @@index([appId])
 }
 
 // Hub-backup run history. Mirrors Backup minus the database FK; reuses BackupStatus. errorTail is
