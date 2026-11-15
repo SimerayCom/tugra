@@ -27,6 +27,7 @@ function make(opts: { app?: Partial<typeof baseApp>; dest?: unknown; policies?: 
     application: { findUnique: jest.fn().mockResolvedValue(app) },
     backupDestination: { findUnique: jest.fn().mockResolvedValue(opts.dest ?? null) },
     volumeBackupPolicy: { findMany: jest.fn().mockResolvedValue(opts.policies ?? []) },
+    appMove: { findFirst: jest.fn().mockResolvedValue(null) }, // no app move in flight (D guard)
     volumeBackup: {
       create: jest.fn().mockImplementation(({ data }) => {
         created.push(data);

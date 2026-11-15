@@ -6698,6 +6698,7 @@ describe("ApplicationsService — container ops + networking", () => {
           server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1", publicIp: null, publicIpv6: null, wildcardDomain: null, magicSuffix: null, certMode: "http", proxyBind: "public" }) },
           appIcon: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
           scheduledTask: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
+          volumeBackupPolicy: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() }, // clone copies policies (A)
         } as unknown as PrismaService;
         await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", {});
         expect(create.mock.calls[0][0].data.postCutoverSoakSec).toBe(v);
