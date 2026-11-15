@@ -130,6 +130,11 @@ migrator:
   UUID (renamed / compose-managed), point the itemRef at a container name or id. The engine must still match.
 - `--resync` — re-dump and overwrite an already-restored destination (use for the final cutover dump).
 - `--allow-insecure-http` — permit a non-loopback `http://` hub (cleartext; avoid).
+- `--certs` — **opt-in, off by default.** Also copy the Coolify proxy's Let's Encrypt certificates for the
+  hostnames of this import, for zones where Tugra cannot pre-issue a DNS-01 certificate (a non-Cloudflare
+  zone). **The certificates' private keys travel to your hub** (they are encrypted at rest and purged once
+  applied; the ACME account key is never sent). See [`runbooks/cutover.md`](runbooks/cutover.md#seeding-source-certificates-optional).
+  `--proxy-container <name>` names the Coolify proxy container (default `coolify-proxy`).
 
 If some databases live on a **different Coolify server**, run the same command (same token, within the hour)
 on that server too — the migrator only sees containers on the host it runs on.
@@ -326,7 +331,10 @@ migrator too — read its JSON result **and** compare counts.
    If `connectionUri`/`password` come back `null`, your token is missing `read:secrets`.
 3. **App volumes:** copy by hand while the app is stopped on both sides (`docker run --rm -v <vol>:/data alpine
    tar czf - -C /data .` on the source, untar into the Tugra volume).
-4. **Deploy** on Tugra and smoke-test on its temporary `*.sslip.io` URL before touching DNS.
+4. **Deploy** on Tugra and smoke-test through the Tugra proxy before touching DNS. An imported app has no
+   temporary `sslip.io` hostname (it is created with its real domain), so use the cutover panel's check (it
+   handshakes with the Tugra server's IP using your hostname as SNI and fetches the health path with your
+   `Host` header) or do the same by hand: `curl --resolve <your-domain>:443:<tugra-server-ip> https://<your-domain>/`.
 
 ## The cutover window (do not skip — this is where data is lost otherwise)
 
@@ -338,24 +346,26 @@ writes are lost:
    writers) so its database takes no more writes.
 3. Take the **final** dump now (step 1 above, or re-run the one-click migrator with `--resync`), import into
    the fresh Tugra DB, and verify counts.
-4. Point DNS at Tugra:
+4. **Cut over SSL and DNS with the cutover panel** (import wizard, once the import has settled), or the CLI
+   `tugra import cutover <opId> ...`. It tracks every hostname through *certificate ready, DNS at source,
+   switched, verified*, pre-issues the certificate on Tugra before DNS moves where it can, and switches
+   Cloudflare records in paced batches. Follow the order in the [cutover runbook](runbooks/cutover.md).
+   For a host you switch by hand (any non-Cloudflare DNS), the panel prints the exact records and the TTL
+   guidance; `tugra apps domain <appId> <your-domain> --dry-run` remains available for single native apps.
+5. Verify the domain resolves and serves correctly, then **stop the Coolify app** (not just DNS-switch it)
+   so stale-DNS clients can't keep writing to the old database and diverge. Tugra's Coolify token is
+   read-only, so the panel **prints the steps** for stopping the source and never does it for you.
 
-   ```bash
-   tugra apps domain <appId> <your-domain> --dry-run      # preview the DNS plan
-   tugra apps domain <appId> <your-domain> --overwrite     # apex A/AAAA + www; repoints records that
-                                                            # currently point at Coolify; issues HTTPS
-   ```
-
-   This needs a Cloudflare DNS credential stored in Tugra (add `--credential <id>` if the team has more than
-   one). For any other DNS provider, get the copy-paste records instead:
-   `tugra api GET "/apps/<appId>/domain/manual-records?domain=<your-domain>"`.
-5. Verify the domain resolves and serves correctly, then **keep the Coolify app stopped** (not just
-   DNS-switched) so stale-DNS clients can't keep writing to the old database and diverge.
+What this does and does not promise: with a Cloudflare zone and DNS-01 the certificate is valid on the first
+request after the switch; stale resolvers keep reaching Coolify for at most the old TTL (or 60 s if you lowered
+it in time). It is **not zero downtime**: a stateful app is down for the data move, and a zone Tugra cannot
+write to has a bounded gap while the certificate is issued after the switch.
 
 ## Rollback & order
 
-- **Rollback** (before Tugra has taken real writes): point DNS back and restart the Coolify app — its copy is
-  untouched. **After** Tugra has taken writes, rolling back means dumping Tugra back to Coolify first, or you
+- **Rollback** (before Tugra has taken real writes): in the cutover panel, *Revert* restores each DNS record
+  exactly as it was (it refuses to overwrite a record changed since the flip unless you force it), then restart
+  the Coolify app — its copy is untouched. Auto-revert is **off**: the panel never reverts on its own. **After** Tugra has taken writes, rolling back means dumping Tugra back to Coolify first, or you
   lose those writes.
 - Stateless apps first, then small DBs, then large/critical DBs last. One app + its DB at a time; verify each.
 - Keep Coolify around for at least a few clean days. Never delete anything on Coolify until the Tugra copy has

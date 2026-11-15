@@ -169,3 +169,14 @@ Behavior worth knowing:
 | `proxyBind` change ignored | Only applied when the proxy is recreated | `POST proxy/start` or deploy a domained app |
 | `409` from auto-setup | Existing DNS record points elsewhere | Review the listed records; use `--overwrite` if intended |
 | Port 80/443 already used on the box | Another web server owns them | Set `proxyBind` to `loopback` (behind your own proxy) or `none` (tunnel-only) |
+
+## Per-host DNS-01 certificates (custom domains)
+
+By default a custom domain gets its certificate with HTTP-01, which needs DNS to already point at the server. To have
+the certificate issued *before* DNS moves (for example while migrating from another PaaS), enable *Issue the
+certificate with DNS-01* in the app's domain options (or `tugra apps domain-options <id> --dns-challenge on`). It needs
+the server's proxy to hold DNS-01 credentials (server network settings, or `tugra servers dns-credential`), and it is
+refused for a clustered app, a tunnel-exposed app, a non-HTTPS domain and an app with an uploaded certificate. Each host
+(primary, aliases, compose service domains) requests its own certificate; no wildcard is involved. If the server later
+loses its DNS-01 credentials the deploy falls back to HTTP-01 and says so in the deploy log. Redeploy after changing it.
+See [the cutover runbook](../runbooks/cutover.md) for the migration flow.

@@ -55,6 +55,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   volumes, domains and variable names (never values), with per-service choices, and the timeline ends with a post-import
   checklist. An internal-only service joins a private network under a stable alias: a new `PUT /apps/{id}/compose-networks`
   attaches a compose service to a hub-owned network (one additive migration). Service data is still copied by hand.
+- **SSL/DNS cutover for imported apps.** A new cutover step in the import wizard (and `tugra import cutover <opId>`)
+  moves each imported hostname through *certificate ready, DNS at source, switched, verified*: it checks the app
+  through the Tugra proxy (Host header + SNI at the server IP), switches Cloudflare records in paced batches
+  (5 hosts, 30 s apart, target TTL 60 s, proxied kept, SSL mode checked) with a rollback ledger, verifies after the
+  switch and reverts only on request (auto-revert is off). Coolify-generated hostnames and tunnel-routed hosts are
+  excluded/blocked, a stateful app needs an explicit `acceptDataRisk`, and the steps to stop the source app are
+  printed (the Coolify token is read-only). It does not promise zero downtime; see `docs/runbooks/cutover.md`.
+- **Per-host DNS-01 for custom domains.** A new app domain option issues the certificate with DNS-01 per host (no
+  wildcard) so it exists before DNS points at the server. A server can reuse a team Cloudflare DNS credential for its
+  DNS-01 resolver (`tugra servers dns-credential`); the token is copied, so re-apply it after rotating the credential.
+  Existing apps' deploys and labels are unchanged.
+- **Opt-in `--certs` for the migrator.** `migrate --certs` also copies the source proxy's ACME certificates for the
+  op's hostnames (private keys travel to the hub, are encrypted at rest and purged after they are applied to the
+  target proxy's own `acme.json`; the ACME account key is never sent). Off by default.
 - **Dependencies.** The glob override moved to 14 (minimatch 11), clearing two dev-tooling advisories (minimatch
   GHSA-g3hv-75wg-m249, glob GHSA-3g3m-2fjr-6pw4). The vite lock was refreshed to 8.3.8. No runtime behaviour change.
 - **Updater.** The pre-update restore point now refuses to start when the backup directory clearly lacks free space for
