@@ -94,6 +94,10 @@ Either way, `--domain` sets `COOKIE_SECURE=true` and `HUB_TRUSTED_PROXY=true`. R
 | `/agent`, `/terminal` (WebSocket), `/install`, `/webhooks`, `/auth/oauth`, `/auth/oidc`, `/health`, `/version` | hub `:3000` |
 | everything else (`/`, `/api/*`) | web `:3001` |
 
+File uploads and downloads are streamed through the web service, so any body size limit in your proxy must allow the
+largest file you want to move (the hub's default cap is 256 MiB per upload, `FILES_MAX_UPLOAD_BYTES`). Optionally route
+`/api/v1/agent-fs/` straight to the hub `:3000`: it is only ever called by agents and carries whole file bodies.
+
 "Sign in with GitHub" works only in this single-origin proxy deployment (the hub and web share one
 public origin so the session cookie is visible to the SPA); it isn't available in the two-port quick start.
 

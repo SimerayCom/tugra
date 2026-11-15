@@ -15,14 +15,20 @@ const nextConfig = {
   // on the hub (its callback URL is registered externally), so it gets its own bare-path proxy rule.
   async rewrites() {
     const hub = process.env.HUB_INTERNAL_URL ?? "http://localhost:3000";
-    return [
-      { source: "/api/v1/:path*", destination: `${hub}/api/v1/:path*` },
-      { source: "/api/auth/oauth/:path*", destination: `${hub}/auth/oauth/:path*` },
-      // OIDC SSO start/callback are likewise exempt from the /api/v1 prefix (the callback is registered
-      // with the external IdP), so they get their own bare-path proxy.
-      { source: "/api/auth/oidc/:path*", destination: `${hub}/auth/oidc/:path*` },
-      { source: "/api/auth/oidc", destination: `${hub}/auth/oidc` },
-    ];
+    return {
+      afterFiles: [
+        { source: "/api/auth/oauth/:path*", destination: `${hub}/auth/oauth/:path*` },
+        // OIDC SSO start/callback are likewise exempt from the /api/v1 prefix (the callback is registered
+        // with the external IdP), so they get their own bare-path proxy.
+        { source: "/api/auth/oidc/:path*", destination: `${hub}/auth/oidc/:path*` },
+        { source: "/api/auth/oidc", destination: `${hub}/auth/oidc` },
+      ],
+      // The generic API proxy is a `fallback` rewrite so the dynamic route handlers under src/app/api/v1 (the streaming
+      // file-upload and agent-transfer routes) take precedence over it: a rewrite buffers the request body in memory and
+      // truncates it at 10 MiB (experimental.middlewareClientMaxBodySize), which hangs any larger upload. See
+      // src/lib/hub-stream-proxy.ts.
+      fallback: [{ source: "/api/v1/:path*", destination: `${hub}/api/v1/:path*` }],
+    };
   },
 };
 
