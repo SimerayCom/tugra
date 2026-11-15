@@ -95,7 +95,7 @@ function make(
   panelDomain: string | null = null, // when set, the reserved control-panel hostname (collision guard)
   secretRefs: { resolveSecretEnv?: jest.Mock } = {},
   lease: { bootId: string; bootAt: Date } = { bootId: TEST_BOOT_ID, bootAt: new Date() },
-  imageUpdate: { checkApp?: jest.Mock } = {},
+  imageUpdate: { checkApp?: jest.Mock; intervalMin?: jest.Mock } = {},
 ) {
   // createFromTemplate v2 probes listening ports (outside the tx) before allocating.
   portAlloc.probeUsedPorts = portAlloc.probeUsedPorts ?? jest.fn().mockResolvedValue(new Set());
@@ -222,7 +222,7 @@ function make(
       }),
     } as unknown as import("@nestjs/core").ModuleRef,
     lease as unknown as import("./deploy-lease.service").DeployLeaseService,
-    { checkApp: imageUpdate.checkApp ?? jest.fn() } as unknown as import("./image-update.service").ImageUpdateService,
+    { checkApp: imageUpdate.checkApp ?? jest.fn(), intervalMin: imageUpdate.intervalMin ?? jest.fn().mockReturnValue(360) } as unknown as import("./image-update.service").ImageUpdateService,
   );
 }
 
