@@ -20,6 +20,7 @@ import {
   type TraefikLabelInput,
 } from "./deploy-script";
 import { assertScriptFits, mlPrefix, mlPrelude, planEnv } from "./env-render";
+import { composeHookPlan, composeHookPostSteps, composeHookPreSteps } from "./compose-hooks";
 
 /** A named volume declared in a compose app's docker-compose.yml. `dockerName` is the real docker
  *  volume: `<project>_<key>` for a normal declaration, the explicit `name:` when set, or the key
@@ -340,6 +341,11 @@ export function buildComposeUpScript(app: AppSpec, noCache = false): string {
   lines.push(...registryLoginPrelude(app.registryAuth));
   const envArg = hasEnv ? `--env-file ${envPath} ` : "";
   const overrideArg = writeOverride ? `-f ${overridePath} ` : "";
+  // Pre/post-deploy hooks (null -> nothing emitted, byte-identical). Throws BadRequestException (a pre-swap failure)
+  // when the hook service is not in the stored file.
+  const hooks = composeHookPlan(app, app.composeFile ?? "");
+  const hookOpts = { proj, files: `-f ${file} ${overrideArg}`, envArg, prefix: mlPrefix(plan.shell), noCache };
+  if (hooks) lines.push(...composeHookPreSteps(app, hooks, hookOpts));
   lines.push(
     // `--progress plain`: emit clean, append-only pull/build status (no TTY `\r`-animated "Downloading
     // [===>] MB" bars) so the deploy log reads like a tidy build log, not hundreds of progress frames.
@@ -349,8 +355,9 @@ export function buildComposeUpScript(app: AppSpec, noCache = false): string {
     // port / image would otherwise fail the final step of an otherwise successful deploy).
     `${mlPrefix(plan.shell)}docker compose -p ${proj} -f ${file} ${overrideArg}ps`,
   );
+  if (hooks) lines.push(...composeHookPostSteps(app, hooks, hookOpts));
   const script = lines.join("\n");
-  if (plan.shell.length > 0) assertScriptFits(script);
+  if (plan.shell.length > 0 || hooks) assertScriptFits(script);
   return script;
 }
 

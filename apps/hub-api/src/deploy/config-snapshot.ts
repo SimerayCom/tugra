@@ -63,6 +63,16 @@ export interface ConfigSnapshot {
   /** Per-service compose domains: hostname → the service + port it routes to (diffed by hostname). */
   serviceDomains?: { service: string; hostname: string; port: number }[];
   volumes: { name: string; path: string }[];
+  // D4: emitted only when set (an old snapshot and a new one with them unset both read "—": no spurious diff).
+  /** Custom pushed repo name / alias tag template — not secret, stored verbatim. */
+  pushImageName?: string;
+  pushImageTag?: string;
+  /** Inline Dockerfile as "<byteLen>:<fp12>": it can embed secrets, so NEVER verbatim (unlike composeFile). */
+  inlineDockerfile?: string;
+  /** COMPOSE hook service (verbatim) and the hook commands as "<len>:<fp12>" (commands are never recorded). */
+  composeHookService?: string;
+  preDeployHook?: string;
+  postDeployHook?: string;
   /** config mount target → 12-hex fingerprint of its (placeholder) content — never stored verbatim. */
   configMounts?: { target: string; mode?: string; fp: string }[];
   /** Operator custom container label key → 12-hex fingerprint of its value (value never stored; values can be
@@ -132,6 +142,12 @@ const SCALAR_FIELDS = [
   "stopGracePeriodSec",
   "drainSec",
   "containerAlias",
+  "pushImageName",
+  "pushImageTag",
+  "inlineDockerfile",
+  "composeHookService",
+  "preDeployHook",
+  "postDeployHook",
 ] as const;
 
 /** Defaults of the git/build toggles: a snapshot taken before they existed (undefined) must not diff as a change
@@ -210,6 +226,13 @@ export function buildConfigSnapshot(spec: AppSpec): ConfigSnapshot {
     ...(spec.stopGracePeriodSec ? { stopGracePeriodSec: spec.stopGracePeriodSec } : {}),
     ...(spec.drainSec ? { drainSec: spec.drainSec } : {}),
     ...(spec.containerAlias ? { containerAlias: spec.containerAlias } : {}),
+    ...(spec.pushImageName ? { pushImageName: spec.pushImageName } : {}),
+    ...(spec.pushImageTag ? { pushImageTag: spec.pushImageTag } : {}),
+    ...(spec.inlineDockerfile ? { inlineDockerfile: `${Buffer.byteLength(spec.inlineDockerfile, "utf8")}:${fingerprint(spec.inlineDockerfile)}` } : {}),
+    // Hook keys are COMPOSE-only: a classic snapshot never emits them, so it stays byte-identical.
+    ...(spec.source === "COMPOSE" && spec.composeHookService ? { composeHookService: spec.composeHookService } : {}),
+    ...(spec.source === "COMPOSE" && spec.preDeployCommand?.trim() ? { preDeployHook: `${spec.preDeployCommand.trim().length}:${fingerprint(spec.preDeployCommand.trim())}` } : {}),
+    ...(spec.source === "COMPOSE" && spec.postDeployCommand?.trim() ? { postDeployHook: `${spec.postDeployCommand.trim().length}:${fingerprint(spec.postDeployCommand.trim())}` } : {}),
     ...(spec.networks && spec.networks.length ? { networks: [...spec.networks].sort() } : {}),
     ...(spec.extraDomains && spec.extraDomains.length ? { extraDomains: [...spec.extraDomains].sort() } : {}),
     ...(spec.serviceDomains && spec.serviceDomains.length

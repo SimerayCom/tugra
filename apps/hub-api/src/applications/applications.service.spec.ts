@@ -13,6 +13,7 @@ import { DeployLogHub } from "../agent-gateway/deploy-log.hub";
 import { CryptoService } from "../crypto/crypto.service";
 import { TEMPLATES, templateMetaList } from "../templates/catalog";
 import type { TemplateCatalogService } from "../catalog/template-catalog.service";
+import { COMPOSE_RENDERED_MARKER, COMPOSE_SHA_MARKER } from "../deploy/compose-git";
 
 // listDomains probes TLS over the network; stub it so the unit test stays offline.
 jest.mock("./ssl-probe", () => ({
@@ -7489,6 +7490,524 @@ describe("ApplicationsService custom container labels (D5)", () => {
       expect(v.custom).toEqual([{ key: "team", value: "core" }]);
       const blob = JSON.stringify(v);
       for (const s of ["HASHSECRET", "FASTOKEN", "ENVSECRET", "GITSECRET"]) expect(blob).not.toContain(s);
+    });
+  });
+});
+
+// ── D4: custom pushed image name + alias, COMPOSE hooks, resolved compose preview, inline Dockerfile ──
+describe("ApplicationsService — D4 build / registry / hooks", () => {
+  const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+  const auditLog = audit.log as jest.Mock;
+  const reg = { id: "reg1", teamId: "t1", url: "ghcr.io", username: "bot", passwordEnc: "tok", imagePrefix: "org" };
+  const pushApp = { ...app, source: "IMAGE", registryId: "reg1", pushToRegistry: true, buildServerId: null, pushImageName: null, pushImageTag: null };
+  const lastAudit = () => auditLog.mock.calls[auditLog.mock.calls.length - 1][0];
+
+  beforeEach(() => auditLog.mockClear());
+
+  describe("setBuildConfig: pushImageName / pushImageTag", () => {
+    const mk = (row: Record<string, unknown>, updateImpl?: jest.Mock) => {
+      const update = updateImpl ?? jest.fn().mockResolvedValue({});
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue({ ...pushApp, ...row }), update },
+        registry: { findUnique: jest.fn().mockResolvedValue(reg) },
+      } as unknown as PrismaService;
+      return { svc: make(prisma, access, {} as AgentWsServer), update };
+    };
+
+    it("persists a valid name + alias for an app that pushes to a registry, and audits them (non-secret)", async () => {
+      const { svc, update } = mk({});
+      await svc.setBuildConfig("u1", "app1", { pushImageName: "team/web", pushImageTag: "stable" });
+      expect(update.mock.calls[0][0].data).toEqual({ pushImageName: "team/web", pushImageTag: "stable" });
+      expect(lastAudit()).toMatchObject({ action: "app.buildconfig.update", meta: { pushImageName: "team/web", pushImageTag: "stable" } });
+    });
+
+    it("needs an effective registry AND push (or a build server): 400 otherwise", async () => {
+      await expect(mk({ registryId: null }).svc.setBuildConfig("u1", "app1", { pushImageName: "web" })).rejects.toThrow(/needs a registry and push/);
+      await expect(mk({ pushToRegistry: false }).svc.setBuildConfig("u1", "app1", { pushImageTag: "latest" })).rejects.toThrow(/needs a registry and push/);
+      // the MERGED state counts: enabling push in the same request makes it valid
+      await expect(mk({ pushToRegistry: false }).svc.setBuildConfig("u1", "app1", { pushToRegistry: true, pushImageTag: "latest" })).resolves.toBeUndefined();
+      // a build server implies push
+      await expect(mk({ pushToRegistry: false, buildServerId: "bs1" }).svc.setBuildConfig("u1", "app1", { pushImageName: "web" })).resolves.toBeUndefined();
+    });
+
+    it("is rejected for COMPOSE apps", async () => {
+      await expect(mk({ source: "COMPOSE" }).svc.setBuildConfig("u1", "app1", { pushImageName: "web" })).rejects.toThrow(/does not apply to compose/);
+    });
+
+    it("rejects a bad name (reserved tugra_ prefix) and a bad tag template with the reason code", async () => {
+      await expect(mk({}).svc.setBuildConfig("u1", "app1", { pushImageName: "tugra_other" })).rejects.toThrow(/invalid image name \(reserved\)/);
+      await expect(mk({}).svc.setBuildConfig("u1", "app1", { pushImageTag: "{sha}" })).rejects.toThrow(/invalid alias tag \(needs_git\)/);
+      await expect(mk({}).svc.setBuildConfig("u1", "app1", { pushImageTag: "c" + "a".repeat(24) })).rejects.toThrow(/invalid alias tag \(reserved\)/);
+      // a GIT app may use the tokens
+      await expect(mk({ source: "GIT" }).svc.setBuildConfig("u1", "app1", { pushImageTag: "{branch}-{sha}" })).resolves.toBeUndefined();
+    });
+
+    it("maps the unique index (P2002) to a 409", async () => {
+      const err = new Prisma.PrismaClientKnownRequestError("dup", { code: "P2002", clientVersion: "x" });
+      const { svc } = mk({}, jest.fn().mockRejectedValue(err));
+      await expect(svc.setBuildConfig("u1", "app1", { pushImageName: "web" })).rejects.toBeInstanceOf(ConflictException);
+      // any other error is not swallowed
+      await expect(mk({}, jest.fn().mockRejectedValue(new Error("db down"))).svc.setBuildConfig("u1", "app1", { pushImageName: "web" })).rejects.toThrow("db down");
+    });
+
+    it("clearing the registry (or push) clears a stored name and alias; undefined leaves them alone", async () => {
+      const stored = { pushImageName: "team/web", pushImageTag: "stable" };
+      const a = mk(stored);
+      await a.svc.setBuildConfig("u1", "app1", { registryId: null });
+      expect(a.update.mock.calls[0][0].data).toEqual({ registryId: null, pushImageName: null, pushImageTag: null });
+      const b = mk(stored);
+      await b.svc.setBuildConfig("u1", "app1", { pushToRegistry: false });
+      expect(b.update.mock.calls[0][0].data).toEqual({ pushToRegistry: false, pushImageName: null, pushImageTag: null });
+      // still pushing: an unrelated update leaves both alone
+      const c = mk(stored);
+      await c.svc.setBuildConfig("u1", "app1", { registryId: "reg1" });
+      expect("pushImageName" in c.update.mock.calls[0][0].data).toBe(false);
+      expect("pushImageTag" in c.update.mock.calls[0][0].data).toBe(false);
+      // an explicit null clears just that field
+      const d = mk(stored);
+      await d.svc.setBuildConfig("u1", "app1", { pushImageTag: null });
+      expect(d.update.mock.calls[0][0].data).toEqual({ pushImageTag: null });
+    });
+
+    it("an old payload (pushToRegistry:true, no registry) behaves exactly as before: no new key, no 400", async () => {
+      const { svc, update } = mk({ registryId: null, pushToRegistry: false });
+      await svc.setBuildConfig("u1", "app1", { pushToRegistry: true });
+      expect(update.mock.calls[0][0].data).toEqual({ pushToRegistry: true });
+    });
+  });
+
+  describe("executeDeploy / cleanup with a custom name", () => {
+    const deployFixture = (row: Record<string, unknown>, opts: { exitCode?: number; deploymentRows?: { id: string }[] } = {}) => {
+      const depUpdate = jest.fn().mockResolvedValue({});
+      const findMany = jest.fn().mockResolvedValue(opts.deploymentRows ?? [{ id: "d1" }]);
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue({ ...pushApp, ...row }), update: jest.fn().mockResolvedValue({}) },
+        deployment: {
+          create: jest.fn().mockResolvedValue({ id: "d1" }),
+          update: depUpdate,
+          findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "SUCCESS" }),
+          findFirst: jest.fn().mockResolvedValue(null),
+          findMany,
+        },
+        registry: { findFirst: jest.fn().mockResolvedValue(reg) },
+        sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+      } as unknown as PrismaService;
+      const sent: { cap: string; cmd: string }[] = [];
+      const agentWs = {
+        sendCommand: jest.fn().mockImplementation((_s: string, cmd: string, cap: string) => {
+          sent.push({ cap, cmd });
+          return Promise.resolve({ exitCode: cap === "deploy" ? opts.exitCode ?? 0 : 0, output: "" });
+        }),
+      } as unknown as AgentWsServer;
+      return { svc: make(prisma, access, agentWs), sent, depUpdate, findMany };
+    };
+
+    it("pushes the custom immutable ref and the alias, and records the immutable ref on the deployment", async () => {
+      const f = deployFixture({ pushImageName: "team/web", pushImageTag: "stable" });
+      await f.svc.deploy("u1", "app1");
+      const cmd = f.sent.find((s) => s.cap === "deploy")!.cmd;
+      expect(cmd).toContain("docker push 'ghcr.io/org/team/web:d1'");
+      expect(cmd).toContain("TUGRA_ALIAS='ghcr.io/org/team/web:stable'");
+      expect(cmd).toContain('docker push "$TUGRA_ALIAS"');
+      const snap = f.depUpdate.mock.calls.map((c) => c[0].data).find((d) => d.configSnapshot)!.configSnapshot;
+      expect(snap).toMatchObject({ pushImageName: "team/web", pushImageTag: "stable" });
+    });
+
+    it("an unresolvable alias fails the deploy BEFORE anything runs on the agent (pre-swap) and logs why", async () => {
+      const f = deployFixture({ pushImageTag: "{sha}" }); // stored bypassing the DTO: IMAGE apps cannot use {sha}
+      await f.svc.deploy("u1", "app1");
+      expect(f.sent.filter((s) => s.cap === "deploy")).toHaveLength(0);
+      expect(f.depUpdate.mock.calls.some((c) => c[0].data.status === "FAILED")).toBe(true);
+    });
+
+    it("a hostile stored name is re-validated at deploy time and never reaches a script", async () => {
+      const f = deployFixture({ pushImageName: "x'; rm -rf /; '" });
+      await f.svc.deploy("u1", "app1");
+      expect(f.sent.filter((s) => s.cap === "deploy")).toHaveLength(0);
+    });
+
+    it("computes ownedVersions (one deployment.findMany) ONLY when pushImageName is set, and the failed-deploy cleanup uses it", async () => {
+      const custom = deployFixture({ pushImageName: "team/web" }, { exitCode: 1 });
+      await custom.svc.deploy("u1", "app1");
+      expect(custom.findMany).toHaveBeenCalledWith({ where: { appId: "app1" }, select: { id: true } });
+      const cleanup = custom.sent.find((s) => s.cap === "cleanup")!.cmd;
+      expect(cleanup).toContain("docker rmi 'ghcr.io/org/team/web:d1'");
+      const plain = deployFixture({}, { exitCode: 1 });
+      await plain.svc.deploy("u1", "app1");
+      expect(plain.findMany).not.toHaveBeenCalled(); // no extra query for an app without a custom name
+      expect(plain.sent.find((s) => s.cap === "cleanup")!.cmd).toContain("docker rmi 'ghcr.io/org/tugra_app1:d1'");
+    });
+
+    it("pruneImages passes the owned ids (custom repo tags are removed) and never touches a non-owned version", async () => {
+      const prune = (svc: unknown) => (svc as { pruneImages: (a: unknown) => Promise<void> }).pruneImages.bind(svc);
+      const rows = Array.from({ length: 6 }, (_, i) => ({ id: `d${i}`, status: "SUCCESS", imageTag: `tugra_app1:d${i}`, registryImage: i === 5 ? "ghcr.io/org/team/web:d5" : `ghcr.io/org/team/web:d${i}`, createdAt: new Date(6 - i) }));
+      const findMany = jest.fn().mockImplementation((args: { select?: unknown }) => Promise.resolve(args?.select ? rows.map((r) => ({ id: r.id })) : rows));
+      const update = jest.fn().mockResolvedValue({});
+      const prisma = { deployment: { count: jest.fn().mockResolvedValue(0), findMany, update } } as unknown as PrismaService;
+      const sent: string[] = [];
+      const agentWs = { sendCommand: jest.fn().mockImplementation((_s: string, cmd: string) => { sent.push(cmd); return Promise.resolve({ exitCode: 0, output: "" }); }) } as unknown as AgentWsServer;
+      const svc = make(prisma, {} as TeamAccessService, agentWs);
+      await prune(svc)({ ...app, id: "app1", serverId: "s1", pushImageName: "team/web" });
+      expect(sent.join("\n")).toContain("docker rmi 'ghcr.io/org/team/web:d5'");
+      // a registryImage whose version is NOT one of this app's deployment ids is dropped by the guard
+      const foreign = [...rows.slice(0, 5), { ...rows[5], registryImage: "ghcr.io/org/team/web:cforeign" }];
+      const findMany2 = jest.fn().mockImplementation((args: { select?: unknown }) => Promise.resolve(args?.select ? rows.map((r) => ({ id: r.id })) : foreign));
+      const sent2: string[] = [];
+      const svc2 = make({ deployment: { count: jest.fn().mockResolvedValue(0), findMany: findMany2, update } } as unknown as PrismaService, {} as TeamAccessService, { sendCommand: jest.fn().mockImplementation((_s: string, cmd: string) => { sent2.push(cmd); return Promise.resolve({ exitCode: 0, output: "" }); }) } as unknown as AgentWsServer);
+      await prune(svc2)({ ...app, id: "app1", serverId: "s1", pushImageName: "team/web" });
+      expect(sent2.join("\n")).not.toContain("cforeign");
+      expect(sent2.join("\n")).toContain("'tugra_app1:d5'");
+    });
+
+    it("the adoption reap (finalizeAdopted, cancelled) passes the owned ids for a custom-name app", async () => {
+      const findMany = jest.fn().mockResolvedValue([{ id: "d1" }]);
+      const sent: string[] = [];
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue({ ...pushApp, pushImageName: "team/web" }) },
+        deployment: { updateMany: jest.fn().mockResolvedValue({ count: 1 }), findMany },
+      } as unknown as PrismaService;
+      const agentWs = { sendCommand: jest.fn().mockImplementation((_s: string, cmd: string) => { sent.push(cmd); return Promise.resolve({ exitCode: 0, output: "" }); }) } as unknown as AgentWsServer;
+      const dep = {
+        id: "d1",
+        appId: "app1",
+        dispatchPlan: { v: 1, rolling: false, recreate: false, isCompose: false, isGitCompose: false, hadPrev: false, gitSourced: false, runTag: "tugra_app1:d1", registryRef: "ghcr.io/org/team/web:d1", wasRunning: false, postDeploy: false, buildLogHead: null },
+        createdAt: new Date(),
+        startedAt: new Date(),
+      } as never;
+      await make(prisma, access, agentWs).finalizeAdopted(dep, { exitCode: 137, output: "", killed: true });
+      expect(findMany).toHaveBeenCalledWith({ where: { appId: "app1" }, select: { id: true } });
+      expect(sent.join("\n")).toContain("docker rmi 'ghcr.io/org/team/web:d1'");
+    });
+  });
+
+  describe("setDeployHooks for COMPOSE", () => {
+    const YAML = "services:\n  web:\n    image: nginx\n  api:\n    image: app\n";
+    const mk = (row: Record<string, unknown>) => {
+      const update = jest.fn().mockResolvedValue({});
+      const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...app, source: "COMPOSE", composeFile: YAML, composePath: null, ...row }), update } } as unknown as PrismaService;
+      return { svc: make(prisma, access, {} as AgentWsServer), update };
+    };
+
+    it("requires a service when any hook is set", async () => {
+      await expect(mk({}).svc.setDeployHooks("u1", "app1", "migrate", null)).rejects.toThrow(/a service is required for a compose hook/);
+      await expect(mk({}).svc.setDeployHooks("u1", "app1", null, "warm", "")).rejects.toThrow(/a service is required/);
+    });
+
+    it("a pasted compose's service must exist (the error lists the services); a valid one persists with the service", async () => {
+      await expect(mk({}).svc.setDeployHooks("u1", "app1", "migrate", null, "nope")).rejects.toThrow(/service "nope" is not in the compose file \(services: web, api\)/);
+      const ok = mk({});
+      await ok.svc.setDeployHooks("u1", "app1", "  migrate ", "warm", "api");
+      expect(ok.update.mock.calls[0][0].data).toEqual({ preDeployCommand: "migrate", postDeployCommand: "warm", composeHookService: "api" });
+    });
+
+    it("a stored service is reused when the request omits it; an explicit one replaces it", async () => {
+      const a = mk({ composeHookService: "api" });
+      await a.svc.setDeployHooks("u1", "app1", "migrate", null);
+      expect(a.update.mock.calls[0][0].data.composeHookService).toBe("api");
+      const b = mk({ composeHookService: "api" });
+      await b.svc.setDeployHooks("u1", "app1", "migrate", null, "web");
+      expect(b.update.mock.calls[0][0].data.composeHookService).toBe("web");
+    });
+
+    it("a git-compose service is NOT checked at save time (validated at deploy against the rendered stack)", async () => {
+      const g = mk({ composeFile: null, composePath: "docker-compose.yml", gitUrl: "https://github.com/u/r.git" });
+      await expect(g.svc.setDeployHooks("u1", "app1", "migrate", null, "anything")).resolves.toBeUndefined();
+    });
+
+    it("clearing both hooks also nulls the service; cluster and preview apps still reject a hook", async () => {
+      const c = mk({ composeHookService: "api" });
+      await c.svc.setDeployHooks("u1", "app1", null, "");
+      expect(c.update.mock.calls[0][0].data).toEqual({ preDeployCommand: null, postDeployCommand: null, composeHookService: null });
+      await expect(mk({ clusterId: "c1" }).svc.setDeployHooks("u1", "app1", "x", null, "api")).rejects.toBeInstanceOf(BadRequestException);
+      await expect(mk({ isPreview: true }).svc.setDeployHooks("u1", "app1", null, "x", "api")).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it("a non-compose app rejects a hook service", async () => {
+      await expect(mk({ source: "IMAGE" }).svc.setDeployHooks("u1", "app1", "migrate", null, "api")).rejects.toThrow(/applies only to compose/);
+    });
+
+    it("the audit carries the service and lengths, never the commands", async () => {
+      await mk({}).svc.setDeployHooks("u1", "app1", "SECRET_PRE_CMD", "SECRET_POST_CMD", "api");
+      expect(lastAudit().meta).toEqual({ preLen: 14, postLen: 15, service: "api" });
+      expect(JSON.stringify(auditLog.mock.calls)).not.toContain("SECRET_PRE_CMD");
+      expect(JSON.stringify(auditLog.mock.calls)).not.toContain("SECRET_POST_CMD");
+    });
+
+    it("setComposeFile rejects a file that drops the hooked service, and accepts one that keeps it", async () => {
+      const row = { composeHookService: "api", preDeployCommand: "migrate", postDeployCommand: null };
+      const mkFile = () => {
+        const update = jest.fn().mockResolvedValue({});
+        const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...app, source: "COMPOSE", composeFile: YAML, ...row }), update }, deployment: { findFirst: jest.fn().mockResolvedValue(null) } } as unknown as PrismaService;
+        return { svc: make(prisma, access, {} as AgentWsServer), update };
+      };
+      await expect(mkFile().svc.setComposeFile("u1", "app1", "services:\n  web:\n    image: nginx\n")).rejects.toThrow(/removes service "api" used by a deploy hook/);
+      const ok = mkFile();
+      await ok.svc.setComposeFile("u1", "app1", "services:\n  api:\n    image: app2\n");
+      expect(ok.update).toHaveBeenCalled();
+    });
+
+    it("a compose deploy dispatches ONE command (hooks inside it) and never a separate post-deploy command", async () => {
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue({ ...app, source: "COMPOSE", composeFile: YAML, composePath: null, composeHookService: "api", preDeployCommand: "migrate", postDeployCommand: "warm", env: {} }), update: jest.fn().mockResolvedValue({}) },
+        deployment: { create: jest.fn().mockResolvedValue({ id: "d1" }), update: jest.fn().mockResolvedValue({}), findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "SUCCESS" }), findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
+        sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+      } as unknown as PrismaService;
+      const cmds: string[] = [];
+      const agentWs = { sendCommand: jest.fn().mockImplementation((_s: string, cmd: string, cap: string) => { if (cap === "deploy") cmds.push(cmd); return Promise.resolve({ exitCode: 0, output: "" }); }) } as unknown as AgentWsServer;
+      await make(prisma, access, agentWs).deploy("u1", "app1");
+      expect(cmds).toHaveLength(1);
+      expect(cmds[0]).toContain("TUGRA_PREDEPLOY: running");
+      expect(cmds[0]).toContain("TUGRA_POSTDEPLOY: running");
+      expect(cmds[0].indexOf("TUGRA_PREDEPLOY: running")).toBeLessThan(cmds[0].indexOf(" up -d "));
+    });
+
+    it("a hook service missing from the stored compose fails the deploy pre-swap (nothing runs on the agent)", async () => {
+      const depUpdate = jest.fn().mockResolvedValue({});
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue({ ...app, source: "COMPOSE", composeFile: YAML, composePath: null, composeHookService: "gone", preDeployCommand: "migrate", postDeployCommand: null, env: {} }), update: jest.fn().mockResolvedValue({}) },
+        deployment: { create: jest.fn().mockResolvedValue({ id: "d1" }), update: depUpdate, findUnique: jest.fn().mockResolvedValue({ id: "d1", status: "FAILED" }), findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
+        sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+      } as unknown as PrismaService;
+      const send = jest.fn().mockResolvedValue({ exitCode: 0, output: "" });
+      await make(prisma, access, { sendCommand: send } as unknown as AgentWsServer).deploy("u1", "app1");
+      expect(send).not.toHaveBeenCalled();
+      expect(depUpdate.mock.calls.some((c) => c[0].data.status === "FAILED")).toBe(true);
+    });
+
+    it("a rollback emits no hook markers for a compose app", async () => {
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue({ ...app, source: "COMPOSE", composeFile: YAML, composePath: null, composeHookService: "api", preDeployCommand: "migrate", postDeployCommand: "warm", env: {} }), update: jest.fn().mockResolvedValue({}) },
+        deployment: {
+          create: jest.fn().mockResolvedValue({ id: "d2" }),
+          update: jest.fn().mockResolvedValue({}),
+          findUnique: jest.fn().mockResolvedValue({ id: "d2", status: "SUCCESS" }),
+          findFirst: jest.fn().mockImplementation(({ where }: { where: { status: string } }) =>
+            Promise.resolve(where.status === "RUNNING" ? null : { id: "target", status: "SUCCESS", configSnapshot: { composeFile: YAML, env: {}, volumes: [] } }),
+          ),
+          findMany: jest.fn().mockResolvedValue([]),
+        },
+        sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+      } as unknown as PrismaService;
+      const cmds: string[] = [];
+      const agentWs = { sendCommand: jest.fn().mockImplementation((_s: string, cmd: string) => { cmds.push(cmd); return Promise.resolve({ exitCode: 0, output: "" }); }) } as unknown as AgentWsServer;
+      await make(prisma, access, agentWs).rollback("u1", "app1", "target");
+      expect(cmds.some((c) => c.includes(" up -d "))).toBe(true);
+      for (const c of cmds) {
+        expect(c).not.toContain("TUGRA_PREDEPLOY");
+        expect(c).not.toContain("TUGRA_POSTDEPLOY");
+      }
+    });
+  });
+
+  describe("setBuild: inline Dockerfile", () => {
+    const gitApp = { ...app, source: "GIT", image: null, gitUrl: "https://github.com/acme/app.git", buildType: "DOCKERFILE", dockerfilePath: "docker/Dockerfile", disableBuildCache: false };
+    const mk = (row: Record<string, unknown> = {}) => {
+      const update = jest.fn().mockResolvedValue({});
+      const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...gitApp, ...row }), update }, deployment: { findFirst: jest.fn().mockResolvedValue(null) } } as unknown as PrismaService;
+      return { svc: make(prisma, access, {} as AgentWsServer), update };
+    };
+    const text = "FROM alpine:3.20\nRUN echo hi\n";
+
+    it("persists the text for DOCKERFILE (replace semantics), leaves dockerfilePath stored, and audits only the byte length", async () => {
+      const m = mk();
+      await m.svc.setBuild("u1", "app1", { buildType: "DOCKERFILE", dockerfilePath: "docker/Dockerfile", inlineDockerfile: text });
+      const data = m.update.mock.calls[0][0].data;
+      expect(data.inlineDockerfile).toBe(text);
+      expect(data.dockerfilePath).toBe("docker/Dockerfile");
+      expect(lastAudit().meta).toMatchObject({ inlineDockerfile: Buffer.byteLength(text) });
+      expect(JSON.stringify(auditLog.mock.calls)).not.toContain("alpine");
+    });
+
+    it("omitting it clears a stored one (the card resends every field); switching away from DOCKERFILE clears it too", async () => {
+      const a = mk({ inlineDockerfile: text });
+      await a.svc.setBuild("u1", "app1", { buildType: "DOCKERFILE", dockerfilePath: "docker/Dockerfile" });
+      expect(a.update.mock.calls[0][0].data.inlineDockerfile).toBeNull();
+      const b = mk({ inlineDockerfile: text });
+      await b.svc.setBuild("u1", "app1", { buildType: "NIXPACKS" });
+      expect(b.update.mock.calls[0][0].data.inlineDockerfile).toBeNull();
+      // an app that never used it writes nothing for the column
+      const c = mk();
+      await c.svc.setBuild("u1", "app1", { buildType: "DOCKERFILE" });
+      expect(c.update.mock.calls[0][0].data.inlineDockerfile).toBeUndefined();
+    });
+
+    it("the DTO refuses NUL, a missing FROM, an oversized text and a non-DOCKERFILE build type", async () => {
+      const { SetBuildSchema } = await import("./dto");
+      const ok = (o: object) => SetBuildSchema.safeParse({ buildType: "DOCKERFILE", ...o }).success;
+      expect(ok({ inlineDockerfile: text })).toBe(true);
+      expect(ok({ inlineDockerfile: "# syntax=docker/dockerfile:1\nARG V=1\nFROM alpine:${V}\n" })).toBe(true);
+      expect(ok({ inlineDockerfile: "﻿from alpine\n" })).toBe(true); // BOM + case-insensitive
+      expect(ok({ inlineDockerfile: "FROM a\0b" })).toBe(false);
+      expect(ok({ inlineDockerfile: "RUN echo hi\n" })).toBe(false);
+      expect(ok({ inlineDockerfile: "# only a comment\n" })).toBe(false);
+      expect(ok({ inlineDockerfile: "FROM alpine\n" + "#".repeat(49 * 1024) })).toBe(false);
+      expect(ok({ inlineDockerfile: "FROM alpine\n" + "é".repeat(25000) })).toBe(false); // 48 KiB counts BYTES
+      expect(SetBuildSchema.safeParse({ buildType: "NIXPACKS", inlineDockerfile: text }).success).toBe(false);
+      expect(SetBuildSchema.safeParse({ buildType: "DOCKERFILE", inlineDockerfile: null }).success).toBe(true);
+    });
+  });
+
+  describe("copies: clone and preview", () => {
+    it("clone copies the inline Dockerfile and the hook service, but NOT pushImageName / pushImageTag", async () => {
+      const src = { ...app, id: "src1", name: "shop", source: "IMAGE", image: "nginx", isPreview: false, volumes: null, pushImageName: "team/web", pushImageTag: "stable", inlineDockerfile: "FROM x", composeHookService: "api", registryId: "reg1", pushToRegistry: true, envEnc: null };
+      const create = jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ ...data, id: "clone1", createdAt: new Date() }));
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue(src), create },
+        server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1", publicIp: null, publicIpv6: null, wildcardDomain: null, magicSuffix: null, certMode: "http", proxyBind: "public" }) },
+        appIcon: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
+        scheduledTask: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
+      } as unknown as PrismaService;
+      await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", {});
+      const data = create.mock.calls[0][0].data;
+      expect(data.inlineDockerfile).toBe("FROM x");
+      expect(data.composeHookService).toBe("api");
+      expect(data.registryId).toBe("reg1");
+      expect("pushImageName" in data).toBe(false);
+      expect("pushImageTag" in data).toBe(false);
+    });
+
+    it("a PR preview copies the inline Dockerfile only (no push fields, no hooks)", async () => {
+      const create = jest.fn().mockResolvedValue({ id: "pv1", teamId: "t1", serverId: "s1", source: "GIT", isPreview: true });
+      const prisma = { application: { findFirst: jest.fn().mockResolvedValue(null), create } } as unknown as PrismaService;
+      const svc = make(prisma, {} as TeamAccessService, {} as AgentWsServer);
+      jest.spyOn(svc as unknown as { submitDeploy: (...a: unknown[]) => Promise<unknown> }, "submitDeploy").mockResolvedValue(undefined);
+      const parent = { id: "app1", name: "web", teamId: "t1", serverId: "s1", environmentId: "e1", source: "GIT", gitUrl: "https://github.com/u/r.git", previewEnabled: true, domain: "app.example.com", envEnc: JSON.stringify({}), buildType: "DOCKERFILE", inlineDockerfile: "FROM y", pushImageName: "team/web", pushImageTag: "stable", composeHookService: "api", preDeployCommand: "x" } as unknown as Parameters<typeof svc.upsertPreview>[0];
+      await svc.upsertPreview(parent, 7, "feature-7");
+      const data = create.mock.calls[0][0].data;
+      expect(data.inlineDockerfile).toBe("FROM y");
+      for (const k of ["pushImageName", "pushImageTag", "composeHookService", "preDeployCommand"]) expect(k in data).toBe(false);
+    });
+  });
+
+  describe("view(): visibility", () => {
+    const listOne = async (row: Record<string, unknown>, perms: Set<string>) => {
+      const prisma = {
+        application: { findMany: jest.fn().mockResolvedValue([{ ...app, teamId: "t1", source: "IMAGE", environmentId: "e1", networks: [], networkAliases: [], dockerOptions: null, ...row }]) },
+        environment: { findMany: jest.fn().mockResolvedValue([{ id: "e1", name: "production", project: { id: "p1", name: "Default" } }]) },
+      } as unknown as PrismaService;
+      const acc = {
+        accessByTeam: jest.fn().mockResolvedValue(new Map([["t1", { role: Role.OWNER, restrictedAccess: false, accessedProjects: [], accessedResources: [] }]])),
+        permissionsByTeam: jest.fn().mockResolvedValue(new Map([["t1", perms]])),
+        membershipPermissions: jest.fn().mockResolvedValue(perms),
+      } as unknown as TeamAccessService;
+      return (await make(prisma, acc, {} as AgentWsServer).list("u1"))[0];
+    };
+    const row = { source: "COMPOSE", composeFile: "services:\n  web:\n    image: n\n  api:\n    image: a\n", composePath: null, inlineDockerfile: "FROM secret_tok", composeHookService: "api", pushImageName: "team/web", pushImageTag: "stable" };
+
+    it("a writer sees the inline text, the hook service and the pasted-compose service list", async () => {
+      const v = await listOne(row, OWNER_PERMS());
+      expect(v.inlineDockerfile).toBe("FROM secret_tok");
+      expect(v.hasInlineDockerfile).toBe(true);
+      expect(v.composeHookService).toBe("api");
+      expect(v.composeServices).toEqual(["web", "api"]);
+    });
+
+    it("a read-only member sees only the booleans / non-secret push fields", async () => {
+      const v = await listOne(row, new Set());
+      expect(v.inlineDockerfile).toBeNull();
+      expect(v.hasInlineDockerfile).toBe(true);
+      expect(v.composeHookService).toBeNull();
+      expect(v.composeServices).toEqual([]);
+      expect(v.pushImageName).toBe("team/web");
+      expect(v.pushImageTag).toBe("stable");
+    });
+
+    it("a git-compose app has no service list (the names are unknown on the hub)", async () => {
+      const v = await listOne({ ...row, composeFile: null, composePath: "docker-compose.yml", gitUrl: "https://x/r.git" }, OWNER_PERMS());
+      expect(v.composeServices).toEqual([]);
+    });
+  });
+
+  describe("previewCompose", () => {
+    const YAML = "services:\n  web:\n    image: nginx\n    environment:\n      A: ${A}\n";
+    const render = (text: string) => `${COMPOSE_RENDERED_MARKER}${Buffer.from(text).toString("base64")}\n${COMPOSE_SHA_MARKER}${createHash("sha256").update(text).digest("hex")}\n`;
+    const mk = (row: Record<string, unknown>, send: jest.Mock, sharedRows: { key: string; valueEnc: string }[] = []) => {
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue({ ...app, source: "COMPOSE", composeFile: YAML, composePath: null, env: {}, ...row }) },
+        sharedVariable: { findMany: jest.fn().mockResolvedValue(sharedRows) },
+      } as unknown as PrismaService;
+      return make(prisma, access, { sendCommand: send } as unknown as AgentWsServer);
+    };
+
+    it("returns the redacted resolved compose, services, sha256 and audits only the byte size", async () => {
+      const resolved = "services:\n  web:\n    image: nginx\n    command: run SHAREDSECRET_value_1\n    environment:\n      A: ${A}\n      PW: hunter2hunter2\n";
+      const send = jest.fn().mockResolvedValue({ exitCode: 0, output: render(resolved) });
+      const svc = mk({}, send, [{ key: "TOKEN", valueEnc: "SHAREDSECRET_value_1" }]);
+      const r = await svc.previewCompose("u1", "app1");
+      expect(r.services).toEqual(["web"]);
+      expect(r.resolvedCompose).not.toContain("hunter2");
+      expect(r.resolvedCompose).not.toContain("SHAREDSECRET_value_1");
+      expect(r.resolvedCompose).toContain("${A}");
+      expect(r.redactions).toBe(2);
+      expect(r.sha256).toBe(createHash("sha256").update(r.resolvedCompose).digest("hex"));
+      expect(send).toHaveBeenCalledWith("s1", expect.stringContaining("config --no-interpolate"), "deploy", 120_000);
+      expect(lastAudit()).toMatchObject({ action: "app.compose.preview", target: "app1", meta: { bytes: Buffer.byteLength(r.resolvedCompose) } });
+      expect(JSON.stringify(auditLog.mock.calls)).not.toContain("nginx");
+    });
+
+    it("400 for a non-compose app, a preview app and a pasted app with no file; the agent is never called", async () => {
+      const send = jest.fn();
+      await expect(mk({ source: "IMAGE" }, send).previewCompose("u1", "app1")).rejects.toBeInstanceOf(BadRequestException);
+      await expect(mk({ isPreview: true }, send).previewCompose("u1", "app1")).rejects.toBeInstanceOf(BadRequestException);
+      await expect(mk({ composeFile: null }, send).previewCompose("u1", "app1")).rejects.toBeInstanceOf(BadRequestException);
+      expect(send).not.toHaveBeenCalled();
+    });
+
+    it("a non-writer is refused (apps:config)", async () => {
+      const deny = { requirePermission: jest.fn().mockRejectedValue(new ForbiddenException()) } as unknown as TeamAccessService;
+      const prisma = { application: { findUnique: jest.fn().mockResolvedValue({ ...app, source: "COMPOSE", composeFile: YAML }) } } as unknown as PrismaService;
+      const send = jest.fn();
+      await expect(make(prisma, deny, { sendCommand: send } as unknown as AgentWsServer).previewCompose("u1", "app1")).rejects.toBeInstanceOf(ForbiddenException);
+      expect(send).not.toHaveBeenCalled();
+    });
+
+    it("409 while another preview of the same app is in flight, and the slot is released afterwards", async () => {
+      let release!: (v: unknown) => void;
+      const send = jest.fn().mockImplementationOnce(() => new Promise((r) => (release = r))).mockResolvedValue({ exitCode: 0, output: render("services:\n  web:\n    image: n\n") });
+      const svc = mk({}, send);
+      const first = svc.previewCompose("u1", "app1");
+      await flushMicrotasks();
+      await expect(svc.previewCompose("u1", "app1")).rejects.toBeInstanceOf(ConflictException);
+      release({ exitCode: 0, output: render("services:\n  web:\n    image: n\n") });
+      await first;
+      await expect(svc.previewCompose("u1", "app1")).resolves.toBeDefined();
+    });
+
+    it("an offline agent surfaces as the typed error (and still releases the slot)", async () => {
+      const { AgentOfflineException } = await import("../agent-gateway/agent-offline.exception");
+      const send = jest.fn().mockRejectedValueOnce(new AgentOfflineException("offline")).mockResolvedValue({ exitCode: 0, output: render("services:\n  web:\n    image: n\n") });
+      const svc = mk({}, send);
+      await expect(svc.previewCompose("u1", "app1")).rejects.toBeInstanceOf(AgentOfflineException);
+      await expect(svc.previewCompose("u1", "app1")).resolves.toBeDefined();
+    });
+
+    it("422 when the agent's compose lacks --no-interpolate, when the compose is unrenderable, and when the output is unreadable", async () => {
+      const { UnprocessableEntityException } = await import("@nestjs/common");
+      const unsupported = mk({}, jest.fn().mockResolvedValue({ exitCode: 2, output: "TUGRA_PREVIEW: unsupported\n" }));
+      await expect(unsupported.previewCompose("u1", "app1")).rejects.toThrow(/update Docker Compose on the agent/);
+      const err = mk({}, jest.fn().mockResolvedValue({ exitCode: 1, output: `TUGRA_PREVIEW_ERR_B64=${Buffer.from("yaml: line 3: bad").toString("base64")}\n` }));
+      await expect(err.previewCompose("u1", "app1")).rejects.toThrow(/could not be rendered: yaml: line 3: bad/);
+      const junk = mk({}, jest.fn().mockResolvedValue({ exitCode: 0, output: "nothing useful" }));
+      await expect(junk.previewCompose("u1", "app1")).rejects.toBeInstanceOf(UnprocessableEntityException);
+      const big = mk({ composeFile: "services:\n" + "# x\n".repeat(60_000) }, jest.fn());
+      await expect(big.previewCompose("u1", "app1")).rejects.toThrow(/too large to preview/);
+    });
+
+    it("git-compose: clones with the source token, and a rendered stack that escapes the clone is a WARNING (display only)", async () => {
+      const resolved = "services:\n  web:\n    image: n\n    volumes:\n      - /etc:/host\n";
+      const send = jest.fn().mockResolvedValue({ exitCode: 0, output: render(resolved) });
+      const svc = mk({ composeFile: null, composePath: "docker-compose.yml", gitUrl: "https://github.com/u/r.git", gitBranch: "main" }, send);
+      const r = await svc.previewCompose("u1", "app1");
+      expect(send.mock.calls[0][1]).toContain("git clone");
+      expect(r.warnings.length).toBeGreaterThan(0);
+      expect(r.services).toEqual(["web"]);
+    });
+
+    it("never exposes a tool in the MCP surface and the response field name is denied by the sanitizer", async () => {
+      const { sanitizeToolResult } = await import("../mcp/tool-result-sanitizer");
+      expect((sanitizeToolResult({ resolvedCompose: "x" }) as Record<string, unknown>).resolvedCompose).toBeNull();
+      const tools = readFileSync(join(__dirname, "../mcp/mcp.service.ts"), "utf8");
+      expect(tools).not.toMatch(/compose-preview|previewCompose|compose_preview/);
     });
   });
 });

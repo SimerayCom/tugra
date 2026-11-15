@@ -26,6 +26,7 @@ import {
 } from "./deploy-script";
 import { assertScriptFits, mlPrefix, mlPrelude, planEnv } from "./env-render";
 import { composeOverride, composeProject, composeGitDir, composeGitCloneDir, composeOpFile } from "./compose-script";
+import { composeHookPostSteps, composeHookPreSteps, type ComposeHookPlan } from "./compose-hooks";
 
 // Re-export the shared path helpers (defined in compose-script.ts so the lifecycle builders there can reuse
 // them without a circular import) for this module's callers and tests.
@@ -49,7 +50,7 @@ function composeFileArg(app: AppSpec): string {
 
 /** Refuse the deploy if any symlink in the clone resolves outside it (host-reach via a build context or a
  *  bind). Uses readlink -f / realpath (fail-closed if the agent has neither). `$CLONE` is set by the caller. */
-function symlinkGuardSteps(): string[] {
+export function symlinkGuardSteps(): string[] {
   return [
     `command -v readlink >/dev/null 2>&1 || command -v realpath >/dev/null 2>&1 || { echo "TUGRA: this agent lacks readlink/realpath — update it to deploy a git compose stack"; exit 1; }`,
     `CLONE_REAL=$(cd "$CLONE" && pwd -P)`,
@@ -117,7 +118,7 @@ export function buildComposeGitRenderScript(app: AppSpec): string {
  * `sha` (the digest the hub already validated), then brings the stack up (building from the clone). When
  * the app has per-service domains, the Tugra routing override is layered with a second `-f`.
  */
-export function buildComposeGitUpScript(app: AppSpec, sha: string, noCache = false): string {
+export function buildComposeGitUpScript(app: AppSpec, sha: string, noCache = false, hooks: ComposeHookPlan | null = null): string {
   const { lines, envArg, prefix, fits } = cloneAndEnvSteps(app);
   const proj = composeProject(app);
   const file = composeFileArg(app);
@@ -137,14 +138,19 @@ export function buildComposeGitUpScript(app: AppSpec, sha: string, noCache = fal
   }
   lines.push(...registryLoginPrelude(app.registryAuth));
   const overrideArg = writeOverride ? `-f ${overridePath} ` : "";
+  // Hooks run inside this already-cloned, sha-locked tree (never a re-clone). The caller validated the hook service
+  // against the RENDERED stack; the same envArg as `up` is passed explicitly (`ps` below only carries it with a prefix).
+  const hookOpts = { proj, files: `-f ${shq(file)} ${overrideArg}`, envArg, prefix, noCache };
+  if (hooks) lines.push(...composeHookPreSteps(app, hooks, hookOpts));
   lines.push(
     `${prefix}docker compose --progress plain -p ${proj} -f ${shq(file)} ${overrideArg}${envArg}up -d --build ${noCache ? "--pull always --no-cache " : ""}--force-recreate --remove-orphans`,
     ...registryLogoutSteps(app.registryAuth),
     // `ps` interpolates the same config as `up`: same prefix (and env file) when literal / multiline variables exist.
     `${prefix}docker compose -p ${proj} -f ${shq(file)} ${overrideArg}${prefix ? envArg : ""}ps`,
   );
+  if (hooks) lines.push(...composeHookPostSteps(app, hooks, hookOpts));
   const script = lines.join("\n");
-  if (fits) assertScriptFits(script);
+  if (fits || hooks) assertScriptFits(script);
   return script;
 }
 

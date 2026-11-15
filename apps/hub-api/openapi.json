@@ -11197,6 +11197,13 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "inlineDockerfile": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "hasInlineDockerfile": {
+                        "type": "boolean"
+                      },
                       "baseDirectory": {
                         "type": "string",
                         "nullable": true
@@ -11392,6 +11399,16 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "composeHookService": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "composeServices": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
                       "containerEntrypoint": {
                         "type": "array",
                         "items": {
@@ -11527,6 +11544,14 @@
                       },
                       "pushToRegistry": {
                         "type": "boolean"
+                      },
+                      "pushImageName": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "pushImageTag": {
+                        "type": "string",
+                        "nullable": true
                       },
                       "buildServerId": {
                         "type": "string",
@@ -12146,6 +12171,8 @@
                       "nixpacksStartCmd",
                       "dockerfilePath",
                       "dockerBuildTarget",
+                      "inlineDockerfile",
+                      "hasInlineDockerfile",
                       "baseDirectory",
                       "watchPaths",
                       "autoDeploy",
@@ -12180,6 +12207,8 @@
                       "allowPrivilegedDockerOptions",
                       "preDeployCommand",
                       "postDeployCommand",
+                      "composeHookService",
+                      "composeServices",
                       "containerEntrypoint",
                       "containerCommand",
                       "customLabels",
@@ -12196,6 +12225,8 @@
                       "registryUser",
                       "registryId",
                       "pushToRegistry",
+                      "pushImageName",
+                      "pushImageTag",
                       "buildServerId",
                       "clusterId",
                       "replicas",
@@ -12597,6 +12628,13 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "inlineDockerfile": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "hasInlineDockerfile": {
+                      "type": "boolean"
+                    },
                     "baseDirectory": {
                       "type": "string",
                       "nullable": true
@@ -12792,6 +12830,16 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "composeHookService": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "composeServices": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "containerEntrypoint": {
                       "type": "array",
                       "items": {
@@ -12927,6 +12975,14 @@
                     },
                     "pushToRegistry": {
                       "type": "boolean"
+                    },
+                    "pushImageName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "pushImageTag": {
+                      "type": "string",
+                      "nullable": true
                     },
                     "buildServerId": {
                       "type": "string",
@@ -13546,6 +13602,8 @@
                     "nixpacksStartCmd",
                     "dockerfilePath",
                     "dockerBuildTarget",
+                    "inlineDockerfile",
+                    "hasInlineDockerfile",
                     "baseDirectory",
                     "watchPaths",
                     "autoDeploy",
@@ -13580,6 +13638,8 @@
                     "allowPrivilegedDockerOptions",
                     "preDeployCommand",
                     "postDeployCommand",
+                    "composeHookService",
+                    "composeServices",
                     "containerEntrypoint",
                     "containerCommand",
                     "customLabels",
@@ -13596,6 +13656,8 @@
                     "registryUser",
                     "registryId",
                     "pushToRegistry",
+                    "pushImageName",
+                    "pushImageTag",
                     "buildServerId",
                     "clusterId",
                     "replicas",
@@ -14043,6 +14105,13 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "inlineDockerfile": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "hasInlineDockerfile": {
+                      "type": "boolean"
+                    },
                     "baseDirectory": {
                       "type": "string",
                       "nullable": true
@@ -14238,6 +14307,16 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "composeHookService": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "composeServices": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "containerEntrypoint": {
                       "type": "array",
                       "items": {
@@ -14373,6 +14452,14 @@
                     },
                     "pushToRegistry": {
                       "type": "boolean"
+                    },
+                    "pushImageName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "pushImageTag": {
+                      "type": "string",
+                      "nullable": true
                     },
                     "buildServerId": {
                       "type": "string",
@@ -14992,6 +15079,8 @@
                     "nixpacksStartCmd",
                     "dockerfilePath",
                     "dockerBuildTarget",
+                    "inlineDockerfile",
+                    "hasInlineDockerfile",
                     "baseDirectory",
                     "watchPaths",
                     "autoDeploy",
@@ -15026,6 +15115,8 @@
                     "allowPrivilegedDockerOptions",
                     "preDeployCommand",
                     "postDeployCommand",
+                    "composeHookService",
+                    "composeServices",
                     "containerEntrypoint",
                     "containerCommand",
                     "customLabels",
@@ -15042,6 +15133,8 @@
                     "registryUser",
                     "registryId",
                     "pushToRegistry",
+                    "pushImageName",
+                    "pushImageTag",
                     "buildServerId",
                     "clusterId",
                     "replicas",
@@ -15493,6 +15586,13 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "inlineDockerfile": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "hasInlineDockerfile": {
+                      "type": "boolean"
+                    },
                     "baseDirectory": {
                       "type": "string",
                       "nullable": true
@@ -15688,6 +15788,16 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "composeHookService": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "composeServices": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "containerEntrypoint": {
                       "type": "array",
                       "items": {
@@ -15823,6 +15933,14 @@
                     },
                     "pushToRegistry": {
                       "type": "boolean"
+                    },
+                    "pushImageName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "pushImageTag": {
+                      "type": "string",
+                      "nullable": true
                     },
                     "buildServerId": {
                       "type": "string",
@@ -16442,6 +16560,8 @@
                     "nixpacksStartCmd",
                     "dockerfilePath",
                     "dockerBuildTarget",
+                    "inlineDockerfile",
+                    "hasInlineDockerfile",
                     "baseDirectory",
                     "watchPaths",
                     "autoDeploy",
@@ -16476,6 +16596,8 @@
                     "allowPrivilegedDockerOptions",
                     "preDeployCommand",
                     "postDeployCommand",
+                    "composeHookService",
+                    "composeServices",
                     "containerEntrypoint",
                     "containerCommand",
                     "customLabels",
@@ -16492,6 +16614,8 @@
                     "registryUser",
                     "registryId",
                     "pushToRegistry",
+                    "pushImageName",
+                    "pushImageTag",
                     "buildServerId",
                     "clusterId",
                     "replicas",
@@ -20772,6 +20896,12 @@
                     "type": "string",
                     "maxLength": 4000,
                     "nullable": true
+                  },
+                  "composeHookService": {
+                    "type": "string",
+                    "maxLength": 63,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+                    "nullable": true
                   }
                 },
                 "required": [
@@ -21300,6 +21430,12 @@
                     "maxLength": 1000,
                     "nullable": true
                   },
+                  "inlineDockerfile": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 49152,
+                    "nullable": true
+                  },
                   "baseDirectory": {
                     "type": "string",
                     "minLength": 1,
@@ -21826,6 +21962,126 @@
                   },
                   "required": [
                     "imageUpdate"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
+    "/api/v1/apps/{id}/compose-preview": {
+      "post": {
+        "operationId": "ApplicationsController_previewCompose",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "resolvedCompose": {
+                      "type": "string"
+                    },
+                    "services": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "sha256": {
+                      "type": "string"
+                    },
+                    "redactions": {
+                      "type": "integer"
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "generatedAt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "resolvedCompose",
+                    "services",
+                    "sha256",
+                    "redactions",
+                    "warnings",
+                    "generatedAt"
                   ],
                   "additionalProperties": false
                 }
@@ -22996,6 +23252,19 @@
                   "buildServerId": {
                     "type": "string",
                     "minLength": 1,
+                    "nullable": true
+                  },
+                  "pushImageName": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "pattern": "^[a-z0-9]+(?:(?:\\.|_|__|-+)[a-z0-9]+)*(?:\\/[a-z0-9]+(?:(?:\\.|_|__|-+)[a-z0-9]+)*){0,3}$",
+                    "nullable": true
+                  },
+                  "pushImageTag": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160,
+                    "pattern": "^(?:[A-Za-z0-9_.-]|\\{(?:sha|branch)\\})+$",
                     "nullable": true
                   }
                 },
@@ -26044,6 +26313,13 @@
                           "type": "string",
                           "nullable": true
                         },
+                        "inlineDockerfile": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "hasInlineDockerfile": {
+                          "type": "boolean"
+                        },
                         "baseDirectory": {
                           "type": "string",
                           "nullable": true
@@ -26239,6 +26515,16 @@
                           "type": "string",
                           "nullable": true
                         },
+                        "composeHookService": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "composeServices": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
                         "containerEntrypoint": {
                           "type": "array",
                           "items": {
@@ -26374,6 +26660,14 @@
                         },
                         "pushToRegistry": {
                           "type": "boolean"
+                        },
+                        "pushImageName": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "pushImageTag": {
+                          "type": "string",
+                          "nullable": true
                         },
                         "buildServerId": {
                           "type": "string",
@@ -26993,6 +27287,8 @@
                         "nixpacksStartCmd",
                         "dockerfilePath",
                         "dockerBuildTarget",
+                        "inlineDockerfile",
+                        "hasInlineDockerfile",
                         "baseDirectory",
                         "watchPaths",
                         "autoDeploy",
@@ -27027,6 +27323,8 @@
                         "allowPrivilegedDockerOptions",
                         "preDeployCommand",
                         "postDeployCommand",
+                        "composeHookService",
+                        "composeServices",
                         "containerEntrypoint",
                         "containerCommand",
                         "customLabels",
@@ -27043,6 +27341,8 @@
                         "registryUser",
                         "registryId",
                         "pushToRegistry",
+                        "pushImageName",
+                        "pushImageTag",
                         "buildServerId",
                         "clusterId",
                         "replicas",
@@ -27353,6 +27653,13 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "inlineDockerfile": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "hasInlineDockerfile": {
+                      "type": "boolean"
+                    },
                     "baseDirectory": {
                       "type": "string",
                       "nullable": true
@@ -27548,6 +27855,16 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "composeHookService": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "composeServices": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "containerEntrypoint": {
                       "type": "array",
                       "items": {
@@ -27683,6 +28000,14 @@
                     },
                     "pushToRegistry": {
                       "type": "boolean"
+                    },
+                    "pushImageName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "pushImageTag": {
+                      "type": "string",
+                      "nullable": true
                     },
                     "buildServerId": {
                       "type": "string",
@@ -28302,6 +28627,8 @@
                     "nixpacksStartCmd",
                     "dockerfilePath",
                     "dockerBuildTarget",
+                    "inlineDockerfile",
+                    "hasInlineDockerfile",
                     "baseDirectory",
                     "watchPaths",
                     "autoDeploy",
@@ -28336,6 +28663,8 @@
                     "allowPrivilegedDockerOptions",
                     "preDeployCommand",
                     "postDeployCommand",
+                    "composeHookService",
+                    "composeServices",
                     "containerEntrypoint",
                     "containerCommand",
                     "customLabels",
@@ -28352,6 +28681,8 @@
                     "registryUser",
                     "registryId",
                     "pushToRegistry",
+                    "pushImageName",
+                    "pushImageTag",
                     "buildServerId",
                     "clusterId",
                     "replicas",
@@ -28732,6 +29063,13 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "inlineDockerfile": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "hasInlineDockerfile": {
+                        "type": "boolean"
+                      },
                       "baseDirectory": {
                         "type": "string",
                         "nullable": true
@@ -28927,6 +29265,16 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "composeHookService": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "composeServices": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
                       "containerEntrypoint": {
                         "type": "array",
                         "items": {
@@ -29062,6 +29410,14 @@
                       },
                       "pushToRegistry": {
                         "type": "boolean"
+                      },
+                      "pushImageName": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "pushImageTag": {
+                        "type": "string",
+                        "nullable": true
                       },
                       "buildServerId": {
                         "type": "string",
@@ -29681,6 +30037,8 @@
                       "nixpacksStartCmd",
                       "dockerfilePath",
                       "dockerBuildTarget",
+                      "inlineDockerfile",
+                      "hasInlineDockerfile",
                       "baseDirectory",
                       "watchPaths",
                       "autoDeploy",
@@ -29715,6 +30073,8 @@
                       "allowPrivilegedDockerOptions",
                       "preDeployCommand",
                       "postDeployCommand",
+                      "composeHookService",
+                      "composeServices",
                       "containerEntrypoint",
                       "containerCommand",
                       "customLabels",
@@ -29731,6 +30091,8 @@
                       "registryUser",
                       "registryId",
                       "pushToRegistry",
+                      "pushImageName",
+                      "pushImageTag",
                       "buildServerId",
                       "clusterId",
                       "replicas",
@@ -30196,6 +30558,13 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "inlineDockerfile": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "hasInlineDockerfile": {
+                      "type": "boolean"
+                    },
                     "baseDirectory": {
                       "type": "string",
                       "nullable": true
@@ -30391,6 +30760,16 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "composeHookService": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "composeServices": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "containerEntrypoint": {
                       "type": "array",
                       "items": {
@@ -30526,6 +30905,14 @@
                     },
                     "pushToRegistry": {
                       "type": "boolean"
+                    },
+                    "pushImageName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "pushImageTag": {
+                      "type": "string",
+                      "nullable": true
                     },
                     "buildServerId": {
                       "type": "string",
@@ -31145,6 +31532,8 @@
                     "nixpacksStartCmd",
                     "dockerfilePath",
                     "dockerBuildTarget",
+                    "inlineDockerfile",
+                    "hasInlineDockerfile",
                     "baseDirectory",
                     "watchPaths",
                     "autoDeploy",
@@ -31179,6 +31568,8 @@
                     "allowPrivilegedDockerOptions",
                     "preDeployCommand",
                     "postDeployCommand",
+                    "composeHookService",
+                    "composeServices",
                     "containerEntrypoint",
                     "containerCommand",
                     "customLabels",
@@ -31195,6 +31586,8 @@
                     "registryUser",
                     "registryId",
                     "pushToRegistry",
+                    "pushImageName",
+                    "pushImageTag",
                     "buildServerId",
                     "clusterId",
                     "replicas",
@@ -32903,6 +33296,13 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "inlineDockerfile": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "hasInlineDockerfile": {
+                      "type": "boolean"
+                    },
                     "baseDirectory": {
                       "type": "string",
                       "nullable": true
@@ -33098,6 +33498,16 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "composeHookService": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "composeServices": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "containerEntrypoint": {
                       "type": "array",
                       "items": {
@@ -33233,6 +33643,14 @@
                     },
                     "pushToRegistry": {
                       "type": "boolean"
+                    },
+                    "pushImageName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "pushImageTag": {
+                      "type": "string",
+                      "nullable": true
                     },
                     "buildServerId": {
                       "type": "string",
@@ -33852,6 +34270,8 @@
                     "nixpacksStartCmd",
                     "dockerfilePath",
                     "dockerBuildTarget",
+                    "inlineDockerfile",
+                    "hasInlineDockerfile",
                     "baseDirectory",
                     "watchPaths",
                     "autoDeploy",
@@ -33886,6 +34306,8 @@
                     "allowPrivilegedDockerOptions",
                     "preDeployCommand",
                     "postDeployCommand",
+                    "composeHookService",
+                    "composeServices",
                     "containerEntrypoint",
                     "containerCommand",
                     "customLabels",
@@ -33902,6 +34324,8 @@
                     "registryUser",
                     "registryId",
                     "pushToRegistry",
+                    "pushImageName",
+                    "pushImageTag",
                     "buildServerId",
                     "clusterId",
                     "replicas",

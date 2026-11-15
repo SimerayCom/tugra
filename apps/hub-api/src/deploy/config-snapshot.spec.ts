@@ -284,3 +284,60 @@ describe("custom labels in the snapshot (D5)", () => {
     expect(diffSnapshots(mk({ team: "core" }), mk({ team: "core" }))).toEqual([]);
   });
 });
+
+describe("build / registry / hook settings in the snapshot (D4)", () => {
+  const gitSpec = (over: Partial<AppSpec> = {}) => spec({ source: "GIT", image: null, buildType: "DOCKERFILE", ...over });
+  const composeSpec = (over: Partial<AppSpec> = {}) => spec({ source: "COMPOSE", image: null, ...over });
+
+  it("emits the new keys only when set (unset apps produce a byte-identical snapshot)", () => {
+    const plain = buildConfigSnapshot(spec());
+    for (const k of ["pushImageName", "pushImageTag", "inlineDockerfile", "composeHookService", "preDeployHook", "postDeployHook"]) {
+      expect(Object.prototype.hasOwnProperty.call(plain, k)).toBe(false);
+    }
+    expect(buildConfigSnapshot(spec({ pushImageName: null, pushImageTag: "", inlineDockerfile: null, composeHookService: null }))).toEqual(plain);
+  });
+
+  it("records the push name and alias verbatim (not secret)", () => {
+    const snap = buildConfigSnapshot(spec({ pushImageName: "org/web", pushImageTag: "{branch}-{sha}" }));
+    expect(snap.pushImageName).toBe("org/web");
+    expect(snap.pushImageTag).toBe("{branch}-{sha}");
+  });
+
+  it("records the inline Dockerfile only as <bytes>:<fp12> and the fingerprint tracks the content", () => {
+    const text = "FROM alpine\nARG TOKEN=ghp_super_secret\n";
+    const a = buildConfigSnapshot(gitSpec({ inlineDockerfile: text }));
+    expect(a.inlineDockerfile).toMatch(new RegExp(`^${Buffer.byteLength(text)}:[0-9a-f]{12}$`));
+    expect(JSON.stringify(a)).not.toContain("ghp_super_secret");
+    const b = buildConfigSnapshot(gitSpec({ inlineDockerfile: text.replace("alpine", "debian") }));
+    expect(b.inlineDockerfile).not.toBe(a.inlineDockerfile);
+    expect(diffSnapshots(a, b).map((c) => c.field)).toEqual(["inlineDockerfile"]);
+  });
+
+  it("COMPOSE hook keys: the service verbatim, the commands only as <len>:<fp12>, never the text", () => {
+    const snap = buildConfigSnapshot(composeSpec({ composeHookService: "api", preDeployCommand: "  npm run migrate ", postDeployCommand: "curl http://secret.internal/warm" }));
+    expect(snap.composeHookService).toBe("api");
+    expect(snap.preDeployHook).toMatch(/^\d+:[0-9a-f]{12}$/);
+    expect(snap.preDeployHook!.startsWith(`${"npm run migrate".length}:`)).toBe(true);
+    const blob = JSON.stringify(snap);
+    expect(blob).not.toContain("migrate");
+    expect(blob).not.toContain("secret.internal");
+  });
+
+  it("a classic (non-compose) snapshot never emits the hook keys, even with hooks set", () => {
+    const snap = buildConfigSnapshot(spec({ composeHookService: "x", preDeployCommand: "migrate", postDeployCommand: "warm" }));
+    expect(snap).toEqual(buildConfigSnapshot(spec()));
+  });
+
+  it("an old snapshot against a new one with everything unset yields no changes; setting a field is one diff entry", () => {
+    const old = buildConfigSnapshot(spec());
+    expect(diffSnapshots(old, buildConfigSnapshot(spec()))).toEqual([]);
+    const changes = diffSnapshots(old, buildConfigSnapshot(spec({ pushImageTag: "latest" })));
+    expect(changes).toEqual([{ field: "pushImageTag", kind: "changed", before: "—", after: "latest" }]);
+  });
+
+  it("a hook change on a compose app surfaces as a fingerprint diff", () => {
+    const a = buildConfigSnapshot(composeSpec({ composeHookService: "api", preDeployCommand: "a" }));
+    const b = buildConfigSnapshot(composeSpec({ composeHookService: "api", preDeployCommand: "b" }));
+    expect(diffSnapshots(a, b).map((c) => c.field)).toEqual(["preDeployHook"]);
+  });
+});

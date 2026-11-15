@@ -20,6 +20,8 @@ import {
   buildBuildCachePruneScript,
   buildRunScript,
   buildRegistryPushSteps,
+  registryLoginPrelude,
+  registryLogoutSteps,
   buildBuildOnlyScript,
   registryImageRef,
   buildRollingDeployScript,
@@ -2970,5 +2972,184 @@ describe("custom container labels (D5)", () => {
       expect(classicAliasLabelLine({ ...base, containerAlias: "web" })).toBe("tugra.alias=web"); // no domain -> tugra-apps
       expect(classicAliasLabelLine({ ...base, containerAlias: "web", dockerOptions: "--network host" })).toBeNull();
     });
+  });
+});
+
+describe("custom pushed image name + alias tag (D4 feature A)", () => {
+  const auth = { url: "ghcr.io", user: "bot", token: "s3cr3t" };
+  const gitApp: AppSpec = { ...base, source: "GIT", image: null, gitUrl: "https://x/r.git", gitBranch: "main", buildType: "DOCKERFILE" };
+
+  it("registryImageRef uses a custom name, a nested name, trims slashes, falls back to the username", () => {
+    expect(registryImageRef({ url: "ghcr.io", imagePrefix: "myorg" }, { id: "abc", pushImageName: "web" }, "v1")).toBe("ghcr.io/myorg/web:v1");
+    expect(registryImageRef({ url: "ghcr.io", imagePrefix: "myorg" }, { id: "abc", pushImageName: "team/api" }, "v1")).toBe("ghcr.io/myorg/team/api:v1");
+    expect(registryImageRef({ url: "reg.example.com/", imagePrefix: "team/" }, { id: "abc", pushImageName: "web" }, "v2")).toBe("reg.example.com/team/web:v2");
+    expect(registryImageRef({ url: null, imagePrefix: null, username: "me" }, { id: "abc", pushImageName: "web" }, "v1")).toBe("me/web:v1"); // Docker Hub namespace fallback
+    // null / undefined / "" name -> the default repo, byte-identical to today
+    for (const name of [null, undefined, ""]) {
+      expect(registryImageRef({ url: "ghcr.io", imagePrefix: "myorg" }, { id: "abc", pushImageName: name }, "v1")).toBe("ghcr.io/myorg/tugra_abc:v1");
+    }
+  });
+
+  it("buildRegistryPushSteps without an alias is the exact legacy output", () => {
+    const legacy = [
+      "docker tag tugra_abc:v1 'ghcr.io/org/tugra_abc:v1'",
+      ...registryLoginPrelude(auth),
+      "docker push 'ghcr.io/org/tugra_abc:v1'",
+      ...registryLogoutSteps(auth),
+    ];
+    expect(buildRegistryPushSteps("tugra_abc:v1", "ghcr.io/org/tugra_abc:v1", auth)).toEqual(legacy);
+    expect(buildRegistryPushSteps("tugra_abc:v1", "ghcr.io/org/tugra_abc:v1", auth, undefined)).toEqual(legacy);
+  });
+
+  it("a literal alias emits the exact ordered sequence (tag, alias tag, login, push both, rmi, marker, logout)", () => {
+    const steps = buildRegistryPushSteps("tugra_abc:v1", "ghcr.io/org/web:v1", auth, { parts: ["latest"] });
+    expect(steps).toEqual([
+      "docker tag tugra_abc:v1 'ghcr.io/org/web:v1'",
+      "TUGRA_ALIAS='ghcr.io/org/web:latest'",
+      'docker tag tugra_abc:v1 "$TUGRA_ALIAS"',
+      ...registryLoginPrelude(auth),
+      "docker push 'ghcr.io/org/web:v1'",
+      'docker push "$TUGRA_ALIAS" || { echo "TUGRA_REGISTRY_ALIAS: push failed ($TUGRA_ALIAS) - the immutable tag was pushed; registries with immutable tags reject a moving alias, clear the alias tag to avoid this"; docker rmi "$TUGRA_ALIAS" >/dev/null 2>&1 || true; docker --config "$sd" logout \'ghcr.io\' || true; exit 1; }',
+      'docker rmi "$TUGRA_ALIAS" >/dev/null 2>&1 || true',
+      'echo "TUGRA_REGISTRY_ALIAS: pushed $TUGRA_ALIAS"',
+      ...registryLogoutSteps(auth),
+    ]);
+    expect(steps.join("\n")).not.toContain("TUGRA_SHA12");
+  });
+
+  it("an alias with {sha} guards the unknown commit BEFORE any login and splices $TUGRA_SHA12 outside the quotes", () => {
+    const steps = buildRegistryPushSteps("tugra_abc:v1", "ghcr.io/org/web:v1", auth, { parts: ["main-", "-x"] });
+    const i = (needle: string) => steps.findIndex((l) => l.includes(needle));
+    expect(steps[1]).toBe('TUGRA_SHA12=$(printf %s "$TUGRA_C" | cut -c1-12)');
+    expect(steps[2]).toBe('[ -n "$TUGRA_SHA12" ] || { echo "TUGRA: the alias tag needs the commit sha but it is unknown"; exit 1; }');
+    expect(steps[3]).toBe(`TUGRA_ALIAS='ghcr.io/org/web:main-'"$TUGRA_SHA12"'-x'`);
+    expect(i("TUGRA_SHA12=")).toBeLessThan(i("login"));
+    expect(i("docker push 'ghcr.io/org/web:v1'")).toBeLessThan(i('docker push "$TUGRA_ALIAS"'));
+    expect(i('docker push "$TUGRA_ALIAS"')).toBeLessThan(steps.indexOf('docker rmi "$TUGRA_ALIAS" >/dev/null 2>&1 || true'));
+  });
+
+  it("the alias failure branch removes the local alias, logs out and exits 1; no registry auth -> no logout in it", () => {
+    const failLine = buildRegistryPushSteps("l:v", "r/a:v", auth, { parts: ["x"] }).find((l) => l.startsWith('docker push "$TUGRA_ALIAS"'))!;
+    expect(failLine).toContain('docker rmi "$TUGRA_ALIAS"');
+    expect(failLine).toContain("logout");
+    expect(failLine.endsWith("exit 1; }")).toBe(true);
+  });
+
+  it("shq()s a hostile repo/alias value so it can never break out of the assignment", () => {
+    const steps = buildRegistryPushSteps("tugra_abc:v1", "ghcr.io/o'; rm -rf /; '/web:v1", auth, { parts: ["a"] });
+    expect(steps.find((l) => l.startsWith("TUGRA_ALIAS="))).toBe(`TUGRA_ALIAS='ghcr.io/o'\\''; rm -rf /; '\\''/web:a'`);
+  });
+
+  it("prepSteps (GIT) pushes the alias too, after the build and before the clone cleanup", () => {
+    const s = buildRunScript({ ...gitApp, registryPush: { auth, tag: "ghcr.io/org/web:v1", alias: { parts: ["main-", ""] } } }, "v1");
+    expect(s.indexOf("docker build")).toBeLessThan(s.indexOf("TUGRA_ALIAS="));
+    expect(s.indexOf('docker push "$TUGRA_ALIAS"')).toBeLessThan(s.indexOf("rm -rf /etc/tugra/builds/abc\n"));
+    expect(s).toContain('TUGRA_SHA12=$(printf %s "$TUGRA_C"');
+  });
+
+  it("an IMAGE app re-push carries a literal alias (no TUGRA_C needed)", () => {
+    const s = buildBuildOnlyScript({ ...base, registryPush: { auth, tag: "ghcr.io/org/web:v1", alias: { parts: ["stable"] } } }, "v1");
+    expect(s).toContain("TUGRA_ALIAS='ghcr.io/org/web:stable'");
+    expect(s).not.toContain("TUGRA_SHA12");
+  });
+
+  it("with no alias the GIT build script is byte-identical to the legacy push", () => {
+    const a = buildRunScript({ ...gitApp, registryPush: { auth, tag: "ghcr.io/org/tugra_abc:v1" } }, "v1");
+    const b = buildRunScript({ ...gitApp, registryPush: { auth, tag: "ghcr.io/org/tugra_abc:v1", alias: undefined } }, "v1");
+    expect(a).toBe(b);
+    expect(a).not.toContain("TUGRA_ALIAS");
+  });
+});
+
+describe("buildImageRemoveScriptForTags with ownedVersions (custom pushed name)", () => {
+  const owned = new Set(["cdep1", "cdep2"]);
+
+  it("legacy inputs are byte-identical with or without the third argument", () => {
+    const tags = ["tugra_abc:v1", "ghcr.io/org/tugra_abc:v1", "nginx:latest"];
+    expect(buildImageRemoveScriptForTags("abc", tags, owned)).toBe(buildImageRemoveScriptForTags("abc", tags));
+    expect(buildImageRemoveScriptForTags("abc", ["nginx:latest"], owned)).toBe("exit 0");
+  });
+
+  it("a custom-name tag is kept ONLY when its version is one of the app's deployment ids", () => {
+    const tag = "ghcr.io/org/web:cdep1";
+    expect(buildImageRemoveScriptForTags("abc", [tag])).toBe("exit 0"); // no ownedVersions -> dropped (legacy)
+    const s = buildImageRemoveScriptForTags("abc", [tag, "ghcr.io/org/web:cdep2"], owned);
+    expect(s).toContain("docker rmi 'ghcr.io/org/web:cdep1'");
+    expect(s).toContain("docker rmi 'ghcr.io/org/web:cdep2'");
+    expect(s).not.toContain("rmi -f");
+  });
+
+  it("drops nginx:latest, a foreign repo with a non-owned version, and shell metacharacters", () => {
+    const s = buildImageRemoveScriptForTags(
+      "abc",
+      ["nginx:latest", "ghcr.io/org/web:cother", "repo;rm -rf /:cdep1", "ghcr.io/o$(x)/web:cdep1", "UPPER/web:cdep1", "ghcr.io/org/web", "web:cdep1:"],
+      owned,
+    );
+    expect(s).toBe("exit 0");
+  });
+
+  it("accepts a registry host with a port and a bare custom name", () => {
+    const s = buildImageRemoveScriptForTags("abc", ["localhost:5000/ns/web:cdep1", "web:cdep2"], owned);
+    expect(s).toContain("'localhost:5000/ns/web:cdep1'");
+    expect(s).toContain("'web:cdep2'");
+  });
+});
+
+describe("inline Dockerfile (D4 feature D)", () => {
+  const BD = "/etc/tugra/builds/abc";
+  const IP = "/etc/tugra/builds/abc.Dockerfile";
+  const gitApp: AppSpec = { ...base, source: "GIT", image: null, gitUrl: "https://x/r.git", gitBranch: "main", buildType: "DOCKERFILE" };
+  const text = "FROM alpine:3.20\nRUN echo 'it''s'\n";
+
+  it("with the field null/unset the script is byte-identical to the repository-Dockerfile build", () => {
+    const plain = buildRunScript(gitApp, "v1");
+    expect(buildRunScript({ ...gitApp, inlineDockerfile: null }, "v1")).toBe(plain);
+    expect(plain).toContain(`docker build -t tugra_abc:v1 -f '${BD}/Dockerfile' ${BD}`);
+    expect(plain).not.toContain(".Dockerfile");
+  });
+
+  it("writes the text OUTSIDE the clone (sibling path), rm -f first, umask 077, base64, and builds with -f of that path", () => {
+    const s = buildRunScript({ ...gitApp, dockerfilePath: "docker/Dockerfile", dockerBuildTarget: "prod", buildArgs: { A: "1" }, inlineDockerfile: text }, "v1");
+    const lines = s.split("\n");
+    const w = lines.findIndex((l) => l === `rm -f '${IP}'`);
+    expect(w).toBeGreaterThan(-1);
+    expect(lines[w + 1]).toBe(`( umask 077; printf %s '${Buffer.from(text).toString("base64")}' | base64 -d > '${IP}' )`);
+    const build = lines[w + 2];
+    expect(build).toBe(`docker build --target 'prod' --build-arg 'A=1' -t tugra_abc:v1 -f '${IP}' ${BD} || { rc=$?; rm -f '${IP}'; exit $rc; }`);
+    expect(lines[w + 3]).toBe(`rm -f '${IP}'`); // after a successful build
+    expect(s).not.toContain("docker/Dockerfile"); // the repo path is not used while inline is active
+    expect(s.indexOf(IP)).toBeLessThan(s.indexOf(`rm -rf ${BD}\n`)); // the sibling is not the clone dir
+    expect(IP.startsWith(`${BD}/`)).toBe(false);
+  });
+
+  it("keeps the secrets, the commit arg and installs no second trap", () => {
+    const s = buildRunScript(
+      { ...gitApp, sourceCommitMode: "BUILD", buildSecrets: { TOKEN: "x" }, inlineDockerfile: text },
+      "v1",
+    );
+    expect(s).toContain("DOCKER_BUILDKIT=1 docker build");
+    expect(s).toContain('--build-arg "SOURCE_COMMIT=$TUGRA_C"');
+    expect(s).toContain('--secret id=TOKEN,src="$sd/bs_TOKEN"');
+    expect((s.match(/trap '/g) ?? []).length).toBe((buildRunScript({ ...gitApp, sourceCommitMode: "BUILD", buildSecrets: { TOKEN: "x" } }, "v1").match(/trap '/g) ?? []).length);
+  });
+
+  it("applies to every deploy path that prepares the build (build-only script) and a monorepo base", () => {
+    const s = buildBuildOnlyScript({ ...gitApp, baseDirectory: "apps/api", inlineDockerfile: text }, "v1");
+    expect(s).toContain(`-f '${IP}' ${BD}/apps/api`);
+  });
+
+  it("only the DOCKERFILE build type consults it", () => {
+    const s = buildRunScript({ ...gitApp, buildType: "NIXPACKS", inlineDockerfile: text }, "v1");
+    expect(s).not.toContain(".Dockerfile");
+  });
+
+  it("asserts the script fits when an inline Dockerfile is set (oversized text trips the guard)", () => {
+    expect(() => buildRunScript({ ...gitApp, inlineDockerfile: "FROM alpine\n" + "# x\n".repeat(60_000) }, "v1")).toThrow();
+  });
+
+  it("the delete cleanup removes the sibling file ONLY when an inline Dockerfile is set", () => {
+    expect(buildRemoveScript({ id: "abc" })).toContain("rm -rf /etc/tugra/builds/abc /etc/tugra/builds/abc.plan.json\n".trimEnd());
+    expect(buildRemoveScript({ id: "abc" })).not.toContain(".Dockerfile");
+    expect(buildRemoveScript({ id: "abc", inlineDockerfile: text })).toContain("rm -rf /etc/tugra/builds/abc /etc/tugra/builds/abc.plan.json /etc/tugra/builds/abc.Dockerfile");
   });
 });

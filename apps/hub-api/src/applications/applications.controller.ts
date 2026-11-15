@@ -33,6 +33,7 @@ import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
 import { DeploymentDetailSchema, DeploymentRowSchema } from "./deployment-view";
 import { ApplicationsService, AppViewSchema, CloneAppResultSchema, GitSshKeyResultSchema, DomainViewSchema } from "./applications.service";
 import { ImageUpdateCheckResultSchema } from "./image-update";
+import { ComposePreviewResultSchema } from "../deploy/compose-preview";
 import { AppDatabaseLinksService } from "./app-database-links.service";
 import { AppSecretRefsService } from "./app-secret-refs.service";
 import { CreateSecretRefInput, CreateSecretRefSchema } from "../secret-providers/dto";
@@ -142,7 +143,7 @@ import {
 @ApiSecurity("pat")
 @Controller("apps")
 @UseGuards(ApiAuthGuard, ScopesGuard)
-@UseInterceptors(new RedactSecretsInterceptor(["webhookSecret"]))
+@UseInterceptors(new RedactSecretsInterceptor(["webhookSecret", "inlineDockerfile"]))
 export class ApplicationsController {
   constructor(
     private readonly apps: ApplicationsService,
@@ -567,7 +568,7 @@ export class ApplicationsController {
     @Param("id") id: string,
     @Body(new ZodValidationPipe(SetDeployHooksSchema)) body: SetDeployHooksInput,
   ) {
-    await this.apps.setDeployHooks(user.userId, id, body.preDeployCommand, body.postDeployCommand);
+    await this.apps.setDeployHooks(user.userId, id, body.preDeployCommand, body.postDeployCommand, body.composeHookService);
     return { ok: true };
   }
 
@@ -661,6 +662,17 @@ export class ApplicationsController {
   @ApiZodResponse(ImageUpdateCheckResultSchema)
   checkImageUpdate(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.apps.checkImageUpdate(user.userId, id);
+  }
+
+  /** Resolved compose preview: `docker compose config --no-interpolate` run by the app's agent, redacted on the hub.
+   *  POST because it executes on the agent, must never be cached, and a git preview costs a clone. read:secrets
+   *  because it exposes repository content. No body. */
+  @Post(":id/compose-preview")
+  @RequireScopes("read:secrets")
+  @HttpCode(200)
+  @ApiZodResponse(ComposePreviewResultSchema)
+  previewCompose(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.apps.previewCompose(user.userId, id);
   }
 
   @Put(":id/extra-ports")

@@ -7,6 +7,7 @@ import { BUILD_KEY_RE, isValidUserEnvKey, isSafeEnvValue } from "../common/env-k
 import { normalizeFlags, validateEnvFlags } from "../common/env-flags";
 import { isUserNetworkNameAllowed } from "../deploy/network-names";
 import { CUSTOM_LABEL_KEY_RE, CUSTOM_LABEL_LIMITS } from "../deploy/label-namespaces";
+import { PUSH_NAME_MAX, PUSH_NAME_RE, PUSH_TAG_TPL_MAX, PUSH_TAG_TPL_RE } from "../deploy/push-ref";
 
 // Every ingress for user-supplied env goes through this: it closes the `--env-file` line-injection
 // boundary (a key with '=', whitespace or a newline, or a value with a newline, would define an extra
@@ -228,6 +229,13 @@ export const SetDeployHooksSchema = z
       .max(4000)
       .nullable()
       .refine((s) => s === null || !s.includes("\0"), "command must not contain a NUL byte"),
+    // COMPOSE only: the service the hook runs in (a compose service key). Replace semantics when present.
+    composeHookService: z
+      .string()
+      .max(63)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9_.-]*$/, "invalid service name")
+      .nullable()
+      .optional(),
   })
   .strict();
 export type SetDeployHooksInput = z.infer<typeof SetDeployHooksSchema>;
@@ -318,6 +326,10 @@ export const SetBuildConfigSchema = z
     registryId: z.string().min(1).nullable().optional(),
     pushToRegistry: z.boolean().optional(),
     buildServerId: z.string().min(1).nullable().optional(),
+    // Custom pushed repo path (relative to the registry namespace) + mutable ALIAS tag template. undefined =
+    // unchanged, null = clear. The service re-validates both against the effective registry/source.
+    pushImageName: z.string().max(PUSH_NAME_MAX).regex(PUSH_NAME_RE, "invalid image name").nullable().optional(),
+    pushImageTag: z.string().min(1).max(PUSH_TAG_TPL_MAX).regex(PUSH_TAG_TPL_RE, "invalid alias tag").nullable().optional(),
   })
   .strict();
 export type SetBuildConfigInput = z.infer<typeof SetBuildConfigSchema>;
@@ -631,6 +643,29 @@ const BRANCH = z.string().min(1).max(255).regex(/^[A-Za-z0-9._#/-]+$/).refine((b
 const IMAGE = z.string().min(1).max(512).refine((s) => !/\s/.test(s) && !s.startsWith("-"), "invalid image reference");
 // (REPO_PATH + BASE_DIR are declared above CreateAppSchema — shared with the create path.)
 // A build command injected into a generated Dockerfile — reject newlines/NUL (which would add instructions).
+/** Inline Dockerfile sanity: no NUL, and the first non-ARG instruction must be FROM (BOM, blank lines, comments and
+ *  parser directives are skipped). Returns a reason, or null when acceptable. Shared shape with the web check. */
+export function inlineDockerfileProblem(text: string): string | null {
+  if (text.includes("\0")) return "Dockerfile must not contain a NUL byte";
+  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/);
+  let cont = false;
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (cont) {
+      cont = line.endsWith("\\");
+      continue;
+    }
+    if (line === "" || line.startsWith("#")) continue;
+    if (/^ARG(\s|$)/i.test(line)) {
+      cont = line.endsWith("\\");
+      continue;
+    }
+    return /^FROM(\s|$)/i.test(line) ? null : "the first instruction of the Dockerfile must be FROM (only ARG may precede it)";
+  }
+  return "the Dockerfile has no FROM instruction";
+}
+export const INLINE_DOCKERFILE_MAX = 48 * 1024;
+
 const BUILD_CMD = z.string().min(1).max(1000).refine((s) => !/[\r\n\0]/.test(s), "must be a single line");
 
 // Change where the app's code/image comes from (same source TYPE only — the service enforces by app.source).
@@ -662,6 +697,18 @@ export const SetBuildSchema = z
     nixpacksInstallCmd: BUILD_CMD.nullable().optional(),
     nixpacksBuildCmd: BUILD_CMD.nullable().optional(),
     nixpacksStartCmd: BUILD_CMD.nullable().optional(),
+    // DOCKERFILE build only: Dockerfile text used with `-f` (written outside the clone; the repo is still the build
+    // context). null/absent = the repository's Dockerfile. Replace semantics. 48 KiB so the base64 fits SCRIPT_MAX_BYTES.
+    inlineDockerfile: z
+      .string()
+      .min(1)
+      .max(INLINE_DOCKERFILE_MAX)
+      .superRefine((s, ctx) => {
+        const why = Buffer.byteLength(s, "utf8") > INLINE_DOCKERFILE_MAX ? "Dockerfile is larger than 48 KiB" : inlineDockerfileProblem(s);
+        if (why) ctx.addIssue({ code: "custom", message: why });
+      })
+      .nullable()
+      .optional(),
     // Monorepo build root — valid for every build type, so no type-gated refine (unlike the fields above).
     baseDirectory: BASE_DIR.nullable().optional(),
     // Git clone + build behaviour. All optional: omitted = keep the stored value (importer / old clients).
@@ -673,7 +720,7 @@ export const SetBuildSchema = z
     sourceCommitMode: z.enum(["OFF", "RUNTIME", "BUILD"]).optional(),
   })
   .strict()
-  .refine((d) => d.buildType === "DOCKERFILE" || (d.dockerfilePath == null && d.dockerBuildTarget == null), { message: "dockerfilePath/dockerBuildTarget apply only to the DOCKERFILE build type" })
+  .refine((d) => d.buildType === "DOCKERFILE" || (d.dockerfilePath == null && d.dockerBuildTarget == null && d.inlineDockerfile == null), { message: "dockerfilePath/dockerBuildTarget/inlineDockerfile apply only to the DOCKERFILE build type" })
   .refine((d) => d.buildType === "STATIC" || (d.buildCommand == null && d.outputDir == null), { message: "buildCommand/outputDir apply only to the STATIC build type" })
   .refine((d) => d.buildType === "NIXPACKS" || (d.nixpacksInstallCmd == null && d.nixpacksBuildCmd == null && d.nixpacksStartCmd == null), { message: "nixpacks command overrides apply only to the NIXPACKS build type" })
   .refine((d) => d.buildType === "DOCKERFILE" || d.injectEnvAsBuildArgs !== true, { message: "injectEnvAsBuildArgs applies only to the DOCKERFILE build type" })

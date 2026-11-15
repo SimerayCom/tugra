@@ -13,6 +13,7 @@ import { BUILD_KEY_RE } from "../common/env-key";
 import { assertScriptFits, mlEnvFlags, mlPrefix, mlPrelude, planEnv } from "./env-render";
 import { APPS_NETWORK, isUserNetworkNameAllowed } from "./network-names";
 import { customLabelArgs } from "./custom-labels";
+import { registryRepoOf, type PushAlias } from "./push-ref";
 import {
   buildPanelRouterYaml,
   validateAcmeEmail,
@@ -180,7 +181,15 @@ export interface AppSpec {
    *  logged but never rolls back (the new version is already serving). null/empty → no hook. */
   postDeployCommand?: string | null;
   /** When set, the built image is tagged + pushed to this registry after building. */
-  registryPush?: { auth: RegistryAuth; tag: string } | null;
+  registryPush?: { auth: RegistryAuth; tag: string; alias?: PushAlias } | null;
+  /** Config-only (never read by a script): the custom pushed repo name / alias template, recorded in the config snapshot. */
+  pushImageName?: string | null;
+  pushImageTag?: string | null;
+  /** COMPOSE only: the service the pre/post-deploy hook (preDeployCommand / postDeployCommand) runs in. */
+  composeHookService?: string | null;
+  /** DOCKERFILE builds only: Dockerfile text written OUTSIDE the clone and passed with `docker build -f`. The repo
+   *  stays the build context. null/undefined = the repository's own Dockerfile (byte-identical script). */
+  inlineDockerfile?: string | null;
   /** When set, the local tag is produced by PULLING this registry ref (built elsewhere),
    *  not by building — for a build-server deploy, a registry-backed rollback, or a digest-pinned
    *  IMAGE rollback. `auth` is optional (a public image digest needs none). */
@@ -468,14 +477,14 @@ export function parseCommit(output: string): { sha: string; message: string | nu
  *  denied. */
 export function registryImageRef(
   reg: { url?: string | null; imagePrefix?: string | null; username?: string | null },
-  app: { id: string },
+  app: { id: string; pushImageName?: string | null },
   version: string,
 ): string {
   const trim = (s: string) => s.replace(/\/+$/, "");
   const host = reg.url ? `${trim(reg.url)}/` : "";
   const ns = reg.imagePrefix ? trim(reg.imagePrefix) : trim(reg.username ?? "");
   const prefix = ns ? `${ns}/` : "";
-  return `${host}${prefix}${containerName(app)}:${version}`;
+  return `${host}${prefix}${app.pushImageName || containerName(app)}:${version}`;
 }
 
 /** Build (+ push, if the spec carries registryPush) the image WITHOUT running it — for a
@@ -486,11 +495,38 @@ export function buildBuildOnlyScript(app: AppSpec, version: string, noCache = fa
 
 /** Tag the locally-built image under the registry ref and push it, reusing the stdin login
  *  (isolated DOCKER_CONFIG, token never in argv) + logout. */
-export function buildRegistryPushSteps(localTag: string, pushTag: string, auth: RegistryAuth): string[] {
+export function buildRegistryPushSteps(localTag: string, pushTag: string, auth: RegistryAuth, alias?: PushAlias): string[] {
+  if (!alias) {
+    return [
+      `docker tag ${localTag} ${shq(pushTag)}`,
+      ...registryLoginPrelude(auth),
+      `docker push ${shq(pushTag)}`,
+      ...registryLogoutSteps(auth),
+    ];
+  }
+  // Mutable ALIAS next to the immutable tag. The alias exists registry-side only: its local tag is removed right
+  // after the push. Every shell value goes through shq(); the only unquoted expansion is the hub-derived
+  // `$TUGRA_SHA12` (12 chars of `git rev-parse` hex, set from TUGRA_C by gitCloneSteps).
+  const repo = registryRepoOf(pushTag);
+  const usesSha = alias.parts.length > 1;
+  let aliasExpr = shq(`${repo}:${alias.parts[0]}`);
+  for (const lit of alias.parts.slice(1)) aliasExpr += `"$TUGRA_SHA12"${lit ? shq(lit) : ""}`;
+  const logout = registryLogoutSteps(auth).join("; ");
   return [
     `docker tag ${localTag} ${shq(pushTag)}`,
+    ...(usesSha
+      ? [
+          'TUGRA_SHA12=$(printf %s "$TUGRA_C" | cut -c1-12)',
+          '[ -n "$TUGRA_SHA12" ] || { echo "TUGRA: the alias tag needs the commit sha but it is unknown"; exit 1; }',
+        ]
+      : []),
+    `TUGRA_ALIAS=${aliasExpr}`,
+    `docker tag ${localTag} "$TUGRA_ALIAS"`,
     ...registryLoginPrelude(auth),
     `docker push ${shq(pushTag)}`,
+    `docker push "$TUGRA_ALIAS" || { echo "TUGRA_REGISTRY_ALIAS: push failed ($TUGRA_ALIAS) - the immutable tag was pushed; registries with immutable tags reject a moving alias, clear the alias tag to avoid this"; docker rmi "$TUGRA_ALIAS" >/dev/null 2>&1 || true; ${logout ? `${logout}; ` : ""}exit 1; }`,
+    `docker rmi "$TUGRA_ALIAS" >/dev/null 2>&1 || true`,
+    `echo "TUGRA_REGISTRY_ALIAS: pushed $TUGRA_ALIAS"`,
     ...registryLogoutSteps(auth),
   ];
 }
@@ -1109,7 +1145,20 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
             ...(inj.skipped ? [`echo ${shq(`TUGRA: injectEnvAsBuildArgs skipped ${inj.skipped} variable(s) (not valid build-arg names, or build secrets)`)}`] : []),
           ]
         : [];
-      steps.push(...secretSteps, ...injNote, `${buildKit}docker build ${nc}${targetFlag}${dfArgFlags}${commitArg}${secretFlags}-t ${tag} -f ${shq(`${base}/${df}`)} ${base}`);
+      // Inline Dockerfile override: the text is written to a SIBLING of the clone dir (`<bd>.Dockerfile`) — outside the
+      // untrusted clone, so a symlink planted in the repo can never redirect the write, and the `rm -rf` of the clone
+      // never touches it. The path is built only from the hub cuid. The repo is still the build context (`${base}`).
+      const ip = app.inlineDockerfile ? `/etc/tugra/builds/${app.id}.Dockerfile` : null;
+      const dfFlag = ip ? shq(ip) : shq(`${base}/${df}`);
+      const inlineWrite = ip ? [`rm -f ${shq(ip)}`, `( umask 077; printf %s ${shq(b64(app.inlineDockerfile as string))} | base64 -d > ${shq(ip)} )`] : [];
+      const inlineFail = ip ? ` || { rc=$?; rm -f ${shq(ip)}; exit $rc; }` : "";
+      steps.push(
+        ...secretSteps,
+        ...injNote,
+        ...inlineWrite,
+        `${buildKit}docker build ${nc}${targetFlag}${dfArgFlags}${commitArg}${secretFlags}-t ${tag} -f ${dfFlag} ${base}${inlineFail}`,
+      );
+      if (ip) steps.push(`rm -f ${shq(ip)}`);
       // The secret files are needed only by the build: shred them at once rather than at script exit (the rest of
       // the deploy — push, health gate, soak — can run for minutes). The EXIT trap remains the backstop.
       if (secretKeys.length) steps.push('rm -f "$sd"/bs_*');
@@ -1173,7 +1222,7 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
       );
     }
     // Push the freshly-built image to the team registry when requested.
-    if (app.registryPush) steps.push(...buildRegistryPushSteps(tag, app.registryPush.tag, app.registryPush.auth));
+    if (app.registryPush) steps.push(...buildRegistryPushSteps(tag, app.registryPush.tag, app.registryPush.auth, app.registryPush.alias));
     // The image is built (and pushed); the clone is dead weight now. Reclaim the working tree + .git so a
     // build dir doesn't linger per GIT app between deploys (the next deploy re-clones anyway) or after an app
     // is deleted. Runs only on success — set -e aborts earlier on a build failure, leaving the tree to debug.
@@ -1193,7 +1242,7 @@ function prepSteps(app: AppSpec, version: string, noCache = false): string[] {
     `docker tag ${shq(imageRef(app))} ${tag}`,
     ...registryLogoutSteps(app.registryAuth),
   ];
-  if (app.registryPush) imgSteps.push(...buildRegistryPushSteps(tag, app.registryPush.tag, app.registryPush.auth));
+  if (app.registryPush) imgSteps.push(...buildRegistryPushSteps(tag, app.registryPush.tag, app.registryPush.auth, app.registryPush.alias));
   return imgSteps;
 }
 
@@ -1321,7 +1370,7 @@ function envRunFlags(app: AppSpec): { flags: string; prefix: string } {
  *  is shell-quoted into it (each `'` costs 4 bytes), so fail early and clearly (only when one of those transports is
  *  in use: an unflagged oversize env keeps today's behaviour). */
 function fitIfFlagged(app: AppSpec, script: string): string {
-  if ((app.envMeta && Object.values(app.envMeta).some((f) => f.multiline)) || (app.buildFlagKeys?.length ?? 0) > 0) assertScriptFits(script);
+  if ((app.envMeta && Object.values(app.envMeta).some((f) => f.multiline)) || (app.buildFlagKeys?.length ?? 0) > 0 || app.inlineDockerfile) assertScriptFits(script);
   return script;
 }
 
@@ -2099,9 +2148,25 @@ export function buildAppImagesRemoveScript(app: { id: string }): string {
  *  `docker rmi` refuses to drop the last tag of an image a running container still uses (a free safety net),
  *  and an already-absent tag is a no-op, so retrying is idempotent. Exits non-zero ONLY when a tag that was
  *  present failed to remove, so the caller can gate on success. */
-export function buildImageRemoveScriptForTags(appId: string, tags: Array<string | null | undefined>): string {
+export function buildImageRemoveScriptForTags(
+  appId: string,
+  tags: Array<string | null | undefined>,
+  ownedVersions?: ReadonlySet<string>,
+): string {
   const seg = `${containerName({ id: appId })}:`; // tugra_<id>:
-  const uniq = [...new Set(tags.filter((t): t is string => !!t && (t.startsWith(seg) || t.includes(`/${seg}`))))];
+  // An app with a CUSTOM pushed name (Application.pushImageName) has refs outside the `tugra_<id>:` namespace.
+  // Those are accepted ONLY when the caller passes the app's own deployment ids AND the tag's version (the part
+  // after the last ":") is one of them: versions are Tugra-generated cuids, so `nginx:latest`, a foreign repo and a
+  // tampered row can never match. The repo part is charset-checked as well (it is shq'd regardless).
+  const ownedCustom = (t: string): boolean => {
+    if (!ownedVersions) return false;
+    const i = t.lastIndexOf(":");
+    if (i < 0 || i < t.lastIndexOf("/")) return false;
+    return ownedVersions.has(t.slice(i + 1)) && /^[a-z0-9][a-z0-9._\/:-]*$/.test(t.slice(0, i));
+  };
+  const uniq = [
+    ...new Set(tags.filter((t): t is string => !!t && (t.startsWith(seg) || t.includes(`/${seg}`) || ownedCustom(t)))),
+  ];
   if (uniq.length === 0) return "exit 0";
   // Try the rmi; treat ONLY an explicit "No such image" as success (the tag is already gone → idempotent).
   // Any other failure — the daemon is down/unreachable, a permission error, or the image is in use by a
@@ -2483,7 +2548,7 @@ export const NETWORK_OWNER_LABEL = "tugra.managed=true";
  * nothing is attached (docker refuses otherwise). Reserved and shared names are re-filtered here, so a buggy
  * caller still can't remove tugra-proxy / tugra-net / tugra-apps or a docker built-in.
  */
-export function buildRemoveScript(app: { id: string }, volumes: AppVolume[] = [], opts: { networks?: string[] } = {}): string {
+export function buildRemoveScript(app: { id: string; inlineDockerfile?: string | null }, volumes: AppVolume[] = [], opts: { networks?: string[] } = {}): string {
   // Removing an app destroys its container and its named volumes (intentional).
   const nets = [...new Set(opts.networks ?? [])].filter((n) => n !== APPS_NETWORK && isUserNetworkNameAllowed(n));
   return [
@@ -2494,6 +2559,6 @@ export function buildRemoveScript(app: { id: string }, volumes: AppVolume[] = []
     ),
     // Reclaim any leftover build working tree + Nixpacks plan (GIT apps clone into /etc/tugra/builds/<id>);
     // nothing references these once the app is gone, so they'd otherwise be orphaned on disk forever.
-    `rm -rf /etc/tugra/builds/${app.id} /etc/tugra/builds/${app.id}.plan.json`,
+    `rm -rf /etc/tugra/builds/${app.id} /etc/tugra/builds/${app.id}.plan.json${app.inlineDockerfile ? ` /etc/tugra/builds/${app.id}.Dockerfile` : ""}`,
   ].join("\n");
 }

@@ -1924,6 +1924,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/apps/{id}/compose-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["ApplicationsController_previewCompose"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/apps/{id}/extra-ports": {
         parameters: {
             query?: never;
@@ -11875,6 +11891,8 @@ export interface operations {
                         nixpacksStartCmd: string | null;
                         dockerfilePath: string | null;
                         dockerBuildTarget: string | null;
+                        inlineDockerfile: string | null;
+                        hasInlineDockerfile: boolean;
                         baseDirectory: string | null;
                         watchPaths: string[];
                         autoDeploy: boolean;
@@ -11920,6 +11938,8 @@ export interface operations {
                         allowPrivilegedDockerOptions: boolean;
                         preDeployCommand: string | null;
                         postDeployCommand: string | null;
+                        composeHookService: string | null;
+                        composeServices: string[];
                         containerEntrypoint: string[] | null;
                         containerCommand: string[] | null;
                         customLabels: {
@@ -11952,6 +11972,8 @@ export interface operations {
                         registryUser: string | null;
                         registryId: string | null;
                         pushToRegistry: boolean;
+                        pushImageName: string | null;
+                        pushImageTag: string | null;
                         buildServerId: string | null;
                         clusterId: string | null;
                         replicas: number | null;
@@ -12227,6 +12249,8 @@ export interface operations {
                         nixpacksStartCmd: string | null;
                         dockerfilePath: string | null;
                         dockerBuildTarget: string | null;
+                        inlineDockerfile: string | null;
+                        hasInlineDockerfile: boolean;
                         baseDirectory: string | null;
                         watchPaths: string[];
                         autoDeploy: boolean;
@@ -12272,6 +12296,8 @@ export interface operations {
                         allowPrivilegedDockerOptions: boolean;
                         preDeployCommand: string | null;
                         postDeployCommand: string | null;
+                        composeHookService: string | null;
+                        composeServices: string[];
                         containerEntrypoint: string[] | null;
                         containerCommand: string[] | null;
                         customLabels: {
@@ -12304,6 +12330,8 @@ export interface operations {
                         registryUser: string | null;
                         registryId: string | null;
                         pushToRegistry: boolean;
+                        pushImageName: string | null;
+                        pushImageTag: string | null;
                         buildServerId: string | null;
                         clusterId: string | null;
                         replicas: number | null;
@@ -12682,6 +12710,8 @@ export interface operations {
                         nixpacksStartCmd: string | null;
                         dockerfilePath: string | null;
                         dockerBuildTarget: string | null;
+                        inlineDockerfile: string | null;
+                        hasInlineDockerfile: boolean;
                         baseDirectory: string | null;
                         watchPaths: string[];
                         autoDeploy: boolean;
@@ -12727,6 +12757,8 @@ export interface operations {
                         allowPrivilegedDockerOptions: boolean;
                         preDeployCommand: string | null;
                         postDeployCommand: string | null;
+                        composeHookService: string | null;
+                        composeServices: string[];
                         containerEntrypoint: string[] | null;
                         containerCommand: string[] | null;
                         customLabels: {
@@ -12759,6 +12791,8 @@ export interface operations {
                         registryUser: string | null;
                         registryId: string | null;
                         pushToRegistry: boolean;
+                        pushImageName: string | null;
+                        pushImageTag: string | null;
                         buildServerId: string | null;
                         clusterId: string | null;
                         replicas: number | null;
@@ -13092,6 +13126,8 @@ export interface operations {
                         nixpacksStartCmd: string | null;
                         dockerfilePath: string | null;
                         dockerBuildTarget: string | null;
+                        inlineDockerfile: string | null;
+                        hasInlineDockerfile: boolean;
                         baseDirectory: string | null;
                         watchPaths: string[];
                         autoDeploy: boolean;
@@ -13137,6 +13173,8 @@ export interface operations {
                         allowPrivilegedDockerOptions: boolean;
                         preDeployCommand: string | null;
                         postDeployCommand: string | null;
+                        composeHookService: string | null;
+                        composeServices: string[];
                         containerEntrypoint: string[] | null;
                         containerCommand: string[] | null;
                         customLabels: {
@@ -13169,6 +13207,8 @@ export interface operations {
                         registryUser: string | null;
                         registryId: string | null;
                         pushToRegistry: boolean;
+                        pushImageName: string | null;
+                        pushImageTag: string | null;
                         buildServerId: string | null;
                         clusterId: string | null;
                         replicas: number | null;
@@ -16076,6 +16116,7 @@ export interface operations {
                 "application/json": {
                     preDeployCommand: string | null;
                     postDeployCommand: string | null;
+                    composeHookService?: string | null;
                 };
             };
         };
@@ -16406,6 +16447,7 @@ export interface operations {
                     nixpacksInstallCmd?: string | null;
                     nixpacksBuildCmd?: string | null;
                     nixpacksStartCmd?: string | null;
+                    inlineDockerfile?: string | null;
                     baseDirectory?: string | null;
                     gitSubmodules?: boolean;
                     gitLfs?: boolean;
@@ -16746,6 +16788,79 @@ export interface operations {
                             upstreamDigest: string | null;
                             deployedDigest: string | null;
                         };
+                    };
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    ApplicationsController_previewCompose: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        resolvedCompose: string;
+                        services: string[];
+                        sha256: string;
+                        redactions: number;
+                        warnings: string[];
+                        generatedAt: string;
                     };
                 };
             };
@@ -17462,6 +17577,8 @@ export interface operations {
                     registryId?: string | null;
                     pushToRegistry?: boolean;
                     buildServerId?: string | null;
+                    pushImageName?: string | null;
+                    pushImageTag?: string | null;
                 };
             };
         };
@@ -19462,6 +19579,8 @@ export interface operations {
                             nixpacksStartCmd: string | null;
                             dockerfilePath: string | null;
                             dockerBuildTarget: string | null;
+                            inlineDockerfile: string | null;
+                            hasInlineDockerfile: boolean;
                             baseDirectory: string | null;
                             watchPaths: string[];
                             autoDeploy: boolean;
@@ -19507,6 +19626,8 @@ export interface operations {
                             allowPrivilegedDockerOptions: boolean;
                             preDeployCommand: string | null;
                             postDeployCommand: string | null;
+                            composeHookService: string | null;
+                            composeServices: string[];
                             containerEntrypoint: string[] | null;
                             containerCommand: string[] | null;
                             customLabels: {
@@ -19539,6 +19660,8 @@ export interface operations {
                             registryUser: string | null;
                             registryId: string | null;
                             pushToRegistry: boolean;
+                            pushImageName: string | null;
+                            pushImageTag: string | null;
                             buildServerId: string | null;
                             clusterId: string | null;
                             replicas: number | null;
@@ -19801,6 +19924,8 @@ export interface operations {
                         nixpacksStartCmd: string | null;
                         dockerfilePath: string | null;
                         dockerBuildTarget: string | null;
+                        inlineDockerfile: string | null;
+                        hasInlineDockerfile: boolean;
                         baseDirectory: string | null;
                         watchPaths: string[];
                         autoDeploy: boolean;
@@ -19846,6 +19971,8 @@ export interface operations {
                         allowPrivilegedDockerOptions: boolean;
                         preDeployCommand: string | null;
                         postDeployCommand: string | null;
+                        composeHookService: string | null;
+                        composeServices: string[];
                         containerEntrypoint: string[] | null;
                         containerCommand: string[] | null;
                         customLabels: {
@@ -19878,6 +20005,8 @@ export interface operations {
                         registryUser: string | null;
                         registryId: string | null;
                         pushToRegistry: boolean;
+                        pushImageName: string | null;
+                        pushImageTag: string | null;
                         buildServerId: string | null;
                         clusterId: string | null;
                         replicas: number | null;
@@ -20209,6 +20338,8 @@ export interface operations {
                         nixpacksStartCmd: string | null;
                         dockerfilePath: string | null;
                         dockerBuildTarget: string | null;
+                        inlineDockerfile: string | null;
+                        hasInlineDockerfile: boolean;
                         baseDirectory: string | null;
                         watchPaths: string[];
                         autoDeploy: boolean;
@@ -20254,6 +20385,8 @@ export interface operations {
                         allowPrivilegedDockerOptions: boolean;
                         preDeployCommand: string | null;
                         postDeployCommand: string | null;
+                        composeHookService: string | null;
+                        composeServices: string[];
                         containerEntrypoint: string[] | null;
                         containerCommand: string[] | null;
                         customLabels: {
@@ -20286,6 +20419,8 @@ export interface operations {
                         registryUser: string | null;
                         registryId: string | null;
                         pushToRegistry: boolean;
+                        pushImageName: string | null;
+                        pushImageTag: string | null;
                         buildServerId: string | null;
                         clusterId: string | null;
                         replicas: number | null;
@@ -20675,6 +20810,8 @@ export interface operations {
                         nixpacksStartCmd: string | null;
                         dockerfilePath: string | null;
                         dockerBuildTarget: string | null;
+                        inlineDockerfile: string | null;
+                        hasInlineDockerfile: boolean;
                         baseDirectory: string | null;
                         watchPaths: string[];
                         autoDeploy: boolean;
@@ -20720,6 +20857,8 @@ export interface operations {
                         allowPrivilegedDockerOptions: boolean;
                         preDeployCommand: string | null;
                         postDeployCommand: string | null;
+                        composeHookService: string | null;
+                        composeServices: string[];
                         containerEntrypoint: string[] | null;
                         containerCommand: string[] | null;
                         customLabels: {
@@ -20752,6 +20891,8 @@ export interface operations {
                         registryUser: string | null;
                         registryId: string | null;
                         pushToRegistry: boolean;
+                        pushImageName: string | null;
+                        pushImageTag: string | null;
                         buildServerId: string | null;
                         clusterId: string | null;
                         replicas: number | null;
@@ -21962,6 +22103,8 @@ export interface operations {
                         nixpacksStartCmd: string | null;
                         dockerfilePath: string | null;
                         dockerBuildTarget: string | null;
+                        inlineDockerfile: string | null;
+                        hasInlineDockerfile: boolean;
                         baseDirectory: string | null;
                         watchPaths: string[];
                         autoDeploy: boolean;
@@ -22007,6 +22150,8 @@ export interface operations {
                         allowPrivilegedDockerOptions: boolean;
                         preDeployCommand: string | null;
                         postDeployCommand: string | null;
+                        composeHookService: string | null;
+                        composeServices: string[];
                         containerEntrypoint: string[] | null;
                         containerCommand: string[] | null;
                         customLabels: {
@@ -22039,6 +22184,8 @@ export interface operations {
                         registryUser: string | null;
                         registryId: string | null;
                         pushToRegistry: boolean;
+                        pushImageName: string | null;
+                        pushImageTag: string | null;
                         buildServerId: string | null;
                         clusterId: string | null;
                         replicas: number | null;

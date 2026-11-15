@@ -7,6 +7,7 @@ import {
   Logger,
   NotFoundException,
   ServiceUnavailableException,
+  UnprocessableEntityException,
 } from "@nestjs/common";
 import { Observable } from "rxjs";
 import { createHash } from "node:crypto";
@@ -48,6 +49,7 @@ import { SwarmDeployService } from "../clusters/swarm-deploy.service";
 import { SwarmService } from "../clusters/swarm.service";
 import { DnsAutomationService } from "../dns/dns-automation.service";
 import type { PlacementConstraint } from "../deploy/deploy-script";
+import type { PushAlias } from "../deploy/push-ref";
 import { injectableBuildArgs } from "../deploy/build-args";
 import { APPS_NETWORK, isUserNetworkNameAllowed } from "../deploy/network-names";
 import type { SetPlacementInput } from "./dto";
@@ -126,6 +128,16 @@ import { publicManifest, toManifest, validateConfigMountServiceName, validateCon
 import { resolveVariables } from "../templates/template-resolver";
 import { rewriteHostPorts, substituteSelfUrls } from "../templates/install-compose";
 import { assertSafeCompose } from "../deploy/compose-safety";
+import { resolveAlias, validatePushName, validateTagTemplate } from "../deploy/push-ref";
+import { composeHookPlan } from "../deploy/compose-hooks";
+import {
+  buildComposePreviewScript,
+  composePreviewCloneRoot,
+  parsePreviewError,
+  PREVIEW_UNSUPPORTED_MARKER,
+  redactResolvedCompose,
+  type ComposePreviewResult,
+} from "../deploy/compose-preview";
 import {
   buildComposeGitRenderScript,
   buildComposeGitUpScript,
@@ -200,6 +212,8 @@ export const AppViewSchema = z.object({
   nixpacksStartCmd: z.string().nullable(),
   dockerfilePath: z.string().nullable(), // DOCKERFILE build: path to the Dockerfile inside the repo
   dockerBuildTarget: z.string().nullable(), // DOCKERFILE build: multi-stage target stage
+  inlineDockerfile: z.string().nullable(), // DOCKERFILE build: inline Dockerfile text — WRITER-ONLY in view() (may embed tokens)
+  hasInlineDockerfile: z.boolean(), // visible to everyone: an inline Dockerfile overrides the repository's
   baseDirectory: z.string().nullable(), // GIT: repo-relative build context/root for monorepos (null = repo root)
   watchPaths: z.array(z.string()), // monorepo deploy-trigger globs (empty = deploy on every push)
   autoDeploy: z.boolean(), // per-app push-to-deploy switch
@@ -234,6 +248,8 @@ export const AppViewSchema = z.object({
   allowPrivilegedDockerOptions: z.boolean(),
   preDeployCommand: z.string().nullable(), // write-gated in view() (exec-power, may embed internal paths)
   postDeployCommand: z.string().nullable(),
+  composeHookService: z.string().nullable(), // COMPOSE: the service the hooks run in — write-gated in view()
+  composeServices: z.array(z.string()), // COMPOSE (pasted) service names for the hook picker — write-gated; [] for git-compose / other
   // Container command override (exec-form argv) — write-gated in view() (args can embed credentials).
   containerEntrypoint: z.array(z.string()).nullable(),
   containerCommand: z.array(z.string()).nullable(),
@@ -261,6 +277,8 @@ export const AppViewSchema = z.object({
   registryUser: z.string().nullable(),
   registryId: z.string().nullable(),
   pushToRegistry: z.boolean(),
+  pushImageName: z.string().nullable(), // custom pushed repo path (null = tugra_<id>)
+  pushImageTag: z.string().nullable(), // mutable alias tag template (null = no alias)
   buildServerId: z.string().nullable(),
   clusterId: z.string().nullable(),
   replicas: z.number().nullable(),
@@ -887,6 +905,7 @@ export class ApplicationsService {
           buildType: src.buildType,
           dockerfilePath: src.dockerfilePath,
           dockerBuildTarget: src.dockerBuildTarget,
+          inlineDockerfile: src.inlineDockerfile, // the clone builds the same way (pushImageName/pushImageTag are NOT copied: unique repo + a mutable alias must not be shared)
           baseDirectory: src.baseDirectory,
           gitSubmodules: src.gitSubmodules,
           gitLfs: src.gitLfs,
@@ -928,6 +947,7 @@ export class ApplicationsService {
           gpus: src.gpus,
           deployTimeoutSec: src.deployTimeoutSec,
           preDeployCommand: src.preDeployCommand,
+          composeHookService: src.composeHookService,
           postDeployCommand: src.postDeployCommand,
           containerEntrypoint: jsonOrNull(src.containerEntrypoint),
           containerCommand: jsonOrNull(src.containerCommand),
@@ -1397,6 +1417,7 @@ export class ApplicationsService {
           buildType: parent.buildType,
           dockerfilePath: parent.dockerfilePath,
           dockerBuildTarget: parent.dockerBuildTarget,
+          inlineDockerfile: parent.inlineDockerfile, // a preview must build with the parent's inline Dockerfile, not the repo default
           baseDirectory: parent.baseDirectory, // a monorepo preview must build the same subdirectory as its parent
           // a preview builds the parent's way (shallow/no-cache/build-args/source-commit) EXCEPT submodules and LFS:
           // the preview builds a PR author's head, and its .gitmodules / .lfsconfig can point at attacker-chosen
@@ -1953,7 +1974,25 @@ export class ApplicationsService {
         const reg = await this.prisma.registry.findFirst({ where: { id: app.registryId, teamId: app.teamId } });
         if (reg) {
           const auth: RegistryAuth = { url: reg.url ?? undefined, user: reg.username, token: this.crypto.decrypt(reg.passwordEnc) };
-          spec.registryPush = { auth, tag: registryImageRef(reg, app, dep.id) };
+          // Optional mutable alias next to the immutable :<deploymentId> tag (resolved + re-validated now; a throw is a
+          // pre-swap FAILED because swapAttempted is still false).
+          let alias: PushAlias | undefined;
+          if (app.pushImageTag) {
+            try {
+              alias = resolveAlias(app.pushImageTag, { branch: app.gitBranch || "main", source: app.source === "GIT" ? "GIT" : "IMAGE" }, dep.id);
+            } catch (e) {
+              this.deployLogs.push(app.id, `${(e as Error).message}\n`);
+              throw e;
+            }
+          }
+          if (app.pushImageName) {
+            const bad = validatePushName(app.pushImageName);
+            if (bad) {
+              this.deployLogs.push(app.id, `TUGRA: the custom image name is not valid (${bad})\n`);
+              throw new Error(`TUGRA: the custom image name is not valid (${bad})`);
+            }
+          }
+          spec.registryPush = { auth, tag: registryImageRef(reg, app, dep.id), ...(alias ? { alias } : {}) };
         }
       }
       // Capture the pushed ref before it is cleared (build-server path nulls registryPush) so
@@ -2077,7 +2116,10 @@ export class ApplicationsService {
           }
           spec.serviceDomains = kept;
         }
-        gitComposeUp = buildComposeGitUpScript(spec, rendered.sha, noCache);
+        // COMPOSE pre/post-deploy hooks: validate the hook service against the RENDERED stack (hard gate; a missing
+        // service throws -> FAILED with the message in the deploy log). The up script is sha-locked to this render.
+        const hooks = composeHookPlan(spec, rendered.compose);
+        gitComposeUp = buildComposeGitUpScript(spec, rendered.sha, noCache, hooks);
       }
       const command = isGitCompose
         ? gitComposeUp!
@@ -2165,7 +2207,7 @@ export class ApplicationsService {
           },
         });
         this.deployLogs.finish(app.id, { status: "FAILED", exitCode: r.exitCode, deploymentId: dep.id });
-        if (!isCompose) await this.agentWs.sendCommand(app.serverId, buildImageRemoveScriptForTags(app.id, [runTag(app, dep.id), registryRef]), "cleanup").catch(() => undefined);
+        if (!isCompose) await this.agentWs.sendCommand(app.serverId, buildImageRemoveScriptForTags(app.id, [runTag(app, dep.id), registryRef], await this.ownedVersionsFor(app)), "cleanup").catch(() => undefined);
         await this.audit.log({ actor, action: "app.deploy.cancel", target: app.id });
         return this.prisma.deployment.findUnique({ where: { id: dep.id } });
       }
@@ -2258,7 +2300,7 @@ export class ApplicationsService {
         // never went live → reap BOTH local tags so repeated failed push-enabled deploys don't leak a full
         // image each (the row records neither tag, so no later prune can find them).
         await this.agentWs
-          .sendCommand(app.serverId, buildImageRemoveScriptForTags(app.id, [runTag(app, dep.id), registryRef]), "cleanup")
+          .sendCommand(app.serverId, buildImageRemoveScriptForTags(app.id, [runTag(app, dep.id), registryRef], await this.ownedVersionsFor(app)), "cleanup")
           .catch(() => undefined);
       }
     } catch (e) {
@@ -2367,7 +2409,7 @@ export class ApplicationsService {
       });
       if (count !== 1) return;
       this.deployLogs.finish(app.id, { status: "FAILED", exitCode: result.exitCode, deploymentId: dep.id });
-      if (tagsToReap.length) await this.agentWs.sendCommand(app.serverId, buildImageRemoveScriptForTags(app.id, tagsToReap), "cleanup").catch(() => undefined);
+      if (tagsToReap.length) await this.agentWs.sendCommand(app.serverId, buildImageRemoveScriptForTags(app.id, tagsToReap, await this.ownedVersionsFor(app)), "cleanup").catch(() => undefined);
       await this.audit.log({ actor: dep.requestedBy ?? "system", action: "app.deploy.cancel", target: app.id });
       void this.drain(app.id);
       return;
@@ -2405,7 +2447,7 @@ export class ApplicationsService {
     this.deployLogs.finish(app.id, { status: ok ? "SUCCESS" : "FAILED", exitCode: result.exitCode, deploymentId: dep.id });
     this.notifyDeploy(app, dep, ok ? "deploy_success" : rolledBack ? "deploy_rolled_back" : "deploy_failed").catch(() => {});
     if (ok && !plan.isCompose) void this.pruneImages(app).catch(() => undefined);
-    else if (tagsToReap.length) await this.agentWs.sendCommand(app.serverId, buildImageRemoveScriptForTags(app.id, tagsToReap), "cleanup").catch(() => undefined);
+    else if (tagsToReap.length) await this.agentWs.sendCommand(app.serverId, buildImageRemoveScriptForTags(app.id, tagsToReap, await this.ownedVersionsFor(app)), "cleanup").catch(() => undefined);
     await this.audit.log({ actor: dep.requestedBy ?? "system", action: "app.deploy", target: app.id });
     void this.drain(app.id);
   }
@@ -2555,6 +2597,7 @@ export class ApplicationsService {
       // registry/digest rollback is build=true, which would otherwise emit the pre-deploy step.
       spec.preDeployCommand = null;
       spec.postDeployCommand = null;
+      spec.composeHookService = null;
       let command: string;
       if (isCompose) {
         command = buildComposeUpScript(spec);
@@ -2730,6 +2773,7 @@ export class ApplicationsService {
       if (w.imageTag) protectedTags.add(w.imageTag);
       if (w.registryImage) protectedTags.add(w.registryImage);
     }
+    const owned = await this.ownedVersionsFor(app); // undefined (no query) unless the app has a custom pushed name
     for (const d of stale) {
       try {
         // A pushed build leaves TWO local tags on the host — the local tugra_<id>:<v> and the registry ref —
@@ -2738,7 +2782,7 @@ export class ApplicationsService {
         const targets = [d.imageTag, d.registryImage].filter((t): t is string => !!t && !protectedTags.has(t));
         if (targets.length > 0) {
           const r = await this.agentWs
-            .sendCommand(app.serverId, buildImageRemoveScriptForTags(app.id, targets), "cleanup", 60_000)
+            .sendCommand(app.serverId, buildImageRemoveScriptForTags(app.id, targets, owned), "cleanup", 60_000)
             .catch(() => null);
           // Forget the local tag only on a confirmed success, so a transient offline/timeout/non-zero doesn't
           // lose the rollback record while the image is still on disk — the next prune re-selects this stale
@@ -2750,6 +2794,16 @@ export class ApplicationsService {
         // one stale row's failure must never abort the rest or throw out of the (detached) prune
       }
     }
+  }
+
+  /** The app's OWN deployment ids, for `buildImageRemoveScriptForTags`' custom-name guard: with a custom pushed repo
+   *  name the local registry tags no longer sit in `tugra_<id>:`, so a tag is only removable when its version (the
+   *  part after the last ":") is one of these Tugra-generated ids. Apps without a custom name get `undefined` and
+   *  issue no query (their cleanup scripts stay byte-identical). */
+  private async ownedVersionsFor(app: { id: string; pushImageName?: string | null }): Promise<ReadonlySet<string> | undefined> {
+    if (!app.pushImageName) return undefined;
+    const rows = await this.prisma.deployment.findMany({ where: { appId: app.id }, select: { id: true } });
+    return new Set(rows.map((r) => r.id));
   }
 
   async regenerateWebhook(userId: string, id: string): Promise<AppView> {
@@ -3559,7 +3613,13 @@ export class ApplicationsService {
   /** Set the pre/post-deploy hook commands. Arbitrary shell, so: write-gated, trimmed (empty → null to
    *  clear the hook), and the audit record carries only lengths — never the command text. Execution runs
    *  in a container of the app image at deploy time (shell-quoted, exit-normalized), never on the host. */
-  async setDeployHooks(userId: string, id: string, pre: string | null, post: string | null): Promise<void> {
+  async setDeployHooks(
+    userId: string,
+    id: string,
+    pre: string | null,
+    post: string | null,
+    composeHookService?: string | null,
+  ): Promise<void> {
     const app = await this.requireWrite(userId, id);
     const norm = (s: string | null) => {
       const trimmed = (s ?? "").trim();
@@ -3567,18 +3627,44 @@ export class ApplicationsService {
     };
     const preDeployCommand = norm(pre);
     const postDeployCommand = norm(post);
-    // Hooks only execute on the classic single-server path (preDeploySteps / buildPostDeployScript). Reject
-    // setting them where they'd silently never run — but always allow clearing (both null) so stale values
-    // can be removed after an app is moved to a cluster.
-    if ((preDeployCommand || postDeployCommand) && (app.clusterId || app.source === "COMPOSE" || app.isPreview)) {
-      throw new BadRequestException("deploy hooks are only supported on single-server, non-compose apps");
+    const hooked = !!(preDeployCommand || postDeployCommand);
+    const isCompose = app.source === "COMPOSE";
+    // Hooks only execute on the single-server path (classic: preDeploySteps / buildPostDeployScript; compose: the
+    // compose up script). Reject setting them where they'd silently never run — but always allow clearing (both
+    // null) so stale values can be removed after an app is moved to a cluster.
+    if (hooked && (app.clusterId || app.isPreview)) {
+      throw new BadRequestException("deploy hooks are only supported on single-server, non-preview apps");
     }
-    await this.prisma.application.update({ where: { id }, data: { preDeployCommand, postDeployCommand } });
+    if (!isCompose && composeHookService != null) {
+      throw new BadRequestException("a hook service applies only to compose apps");
+    }
+    const data: Prisma.ApplicationUncheckedUpdateInput = { preDeployCommand, postDeployCommand };
+    let service: string | null = null;
+    if (isCompose) {
+      if (hooked) {
+        service = composeHookService !== undefined ? composeHookService : app.composeHookService;
+        if (!service) throw new BadRequestException("a service is required for a compose hook");
+        // A pasted compose is stored on the hub, so the service can be checked now; a git-compose is validated at
+        // deploy time (the names are only known from the rendered repo file).
+        if (!app.composePath) {
+          const names = composeServiceNames(app.composeFile);
+          if (!names.includes(service)) {
+            throw new BadRequestException(`service "${service}" is not in the compose file (services: ${names.join(", ") || "none"})`);
+          }
+        }
+      }
+      data.composeHookService = service; // clearing both hooks also clears the service
+    }
+    await this.prisma.application.update({ where: { id }, data });
     await this.audit.log({
       actor: userId,
       action: "app.deploy_hooks.update",
       target: id,
-      meta: { preLen: preDeployCommand?.length ?? 0, postLen: postDeployCommand?.length ?? 0 },
+      meta: {
+        preLen: preDeployCommand?.length ?? 0,
+        postLen: postDeployCommand?.length ?? 0,
+        ...(isCompose ? { service } : {}),
+      },
     });
   }
 
@@ -3634,6 +3720,10 @@ export class ApplicationsService {
     const app = await this.requireWrite(userId, id);
     if (app.source !== "COMPOSE") throw new BadRequestException("not a compose app");
     assertSafeCompose(composeFile);
+    // A saved deploy hook targets one service: refuse a file that drops it (the hook would fail every deploy).
+    if ((app.preDeployCommand || app.postDeployCommand) && app.composeHookService && !composeServiceNames(composeFile).includes(app.composeHookService)) {
+      throw new BadRequestException(`the compose file removes service "${app.composeHookService}" used by a deploy hook`);
+    }
     await this.ensureNoActiveDeploy(id);
     await this.prisma.application.update({ where: { id }, data: { composeFile } });
     await this.audit.log({
@@ -3784,6 +3874,10 @@ export class ApplicationsService {
         buildType: input.buildType,
         dockerfilePath: input.buildType === "DOCKERFILE" ? input.dockerfilePath ?? null : null,
         dockerBuildTarget: input.buildType === "DOCKERFILE" ? input.dockerBuildTarget ?? null : null,
+        // Inline Dockerfile: DOCKERFILE only, replace semantics (omitted = cleared). dockerfilePath stays stored untouched, so
+        // clearing the inline text restores the repository Dockerfile.
+        // (written only when it changes: `undefined` is ignored by Prisma, so an app that never used it sees an identical update)
+        inlineDockerfile: (input.buildType === "DOCKERFILE" ? input.inlineDockerfile ?? null : null) ?? (app.inlineDockerfile ? null : undefined),
         buildCommand: input.buildType === "STATIC" ? input.buildCommand ?? null : null,
         outputDir: input.buildType === "STATIC" ? input.outputDir ?? null : null,
         // Nixpacks command overrides — only for the NIXPACKS pack (nulled otherwise, like the per-type fields above).
@@ -3809,7 +3903,7 @@ export class ApplicationsService {
     for (const k of ["gitSubmodules", "gitLfs", "gitShallowClone", "disableBuildCache", "injectEnvAsBuildArgs", "sourceCommitMode"] as const) {
       if (input[k] !== undefined) toggles[k] = input[k];
     }
-    await this.audit.log({ actor: userId, action: "app.build.update", target: id, meta: { buildType: input.buildType, baseDirectory: input.baseDirectory ?? null, ...toggles } });
+    await this.audit.log({ actor: userId, action: "app.build.update", target: id, meta: { buildType: input.buildType, baseDirectory: input.baseDirectory ?? null, ...toggles, ...(input.buildType === "DOCKERFILE" && input.inlineDockerfile ? { inlineDockerfile: Buffer.byteLength(input.inlineDockerfile, "utf8") } : {}) } });
   }
 
   /** Toggle the per-app push-to-deploy switch (a matching git push auto-deploys). Off acknowledges the push
@@ -3837,6 +3931,80 @@ export class ApplicationsService {
     const result = await this.imageUpdate.checkApp(app, perms?.has("apps:config") ?? false);
     await this.audit.log({ actor: userId, action: "app.image_update_check.run", target: id, meta: { state: result.imageUpdate.state } });
     return result;
+  }
+
+  /** In-flight compose previews (a git preview costs a clone): one at a time per app, in this process. */
+  private readonly composePreviewBusy = new Set<string>();
+
+  /**
+   * Resolved compose preview. The agent runs `docker compose config --no-interpolate` (no env value is sent to it),
+   * the hub parses the verified output, redacts literal environment / build-arg values and any known env value, and
+   * returns the redacted YAML. Writer-only (apps:config) and `read:secrets`-scoped at the controller. The audit
+   * record carries the byte size only, never the YAML. Never touches a live compose or clone directory.
+   */
+  async previewCompose(userId: string, id: string): Promise<ComposePreviewResult> {
+    const app = await this.requireWrite(userId, id);
+    if (app.source !== "COMPOSE") throw new BadRequestException("only compose apps have a compose file to preview");
+    if (app.isPreview) throw new BadRequestException("a preview app's compose is controlled by its parent");
+    const gitCompose = !!app.composePath && !!app.gitUrl;
+    if (!gitCompose && !app.composeFile) throw new BadRequestException("this app has no compose file to preview");
+    if (this.composePreviewBusy.has(id)) throw new ConflictException("a compose preview is already running for this app");
+    this.composePreviewBusy.add(id);
+    try {
+      const spec = this.toSpec(app);
+      if (app.gitSourceId && gitCompose) spec.gitToken = await this.gitSources.cloneToken(app.gitSourceId, app.gitUrl);
+      let script: string;
+      try {
+        script = buildComposePreviewScript(spec);
+      } catch (e) {
+        if (e instanceof Error && /limit/.test(e.message)) throw new UnprocessableEntityException("compose file too large to preview");
+        throw e;
+      }
+      // Offline / disconnected agents surface as the same typed 503/504 as every other agent-bound call.
+      const r = await this.agentWs.sendCommand(app.serverId, script, "deploy", 120_000);
+      if (r.exitCode === 2 && r.output.includes(PREVIEW_UNSUPPORTED_MARKER)) {
+        throw new UnprocessableEntityException("update Docker Compose on the agent (it does not support `config --no-interpolate`)");
+      }
+      if (r.exitCode !== 0) {
+        const why = parsePreviewError(r.output);
+        throw new UnprocessableEntityException(why ? `the compose could not be rendered: ${why}` : `the compose preview failed (exit ${r.exitCode})`);
+      }
+      const rendered = parseRenderedCompose(r.output);
+      if (!rendered) throw new UnprocessableEntityException("the resolved compose could not be read (it may be too large to preview)");
+      const warnings: string[] = [];
+      if (gitCompose) {
+        // Display-only: the real assertSafeCompose still gates the deploy. A `${VAR}` bind can show a false warning.
+        try {
+          assertSafeCompose(rendered.compose, { gitCloneRoot: composePreviewCloneRoot(app) });
+        } catch (e) {
+          if (e instanceof BadRequestException) warnings.push(e.message);
+          else throw e;
+        }
+      }
+      // Values to scrub wherever they appear: the app's resolved env layers + build args. A failure to read them
+      // degrades to literal-only redaction (said so in `warnings`), never to returning anything unredacted.
+      const known: string[] = [];
+      try {
+        const { merged } = await this.resolveEnvLayers(app);
+        known.push(...Object.values(merged));
+        known.push(...Object.values(this.appBuildArgs(app)), ...Object.values(this.appBuildSecrets(app)));
+      } catch {
+        warnings.push("the app environment could not be read; only literal environment and build-arg values were redacted");
+      }
+      const red = redactResolvedCompose(rendered.compose, known);
+      const result: ComposePreviewResult = {
+        resolvedCompose: red.yaml,
+        services: composeServiceNames(red.yaml),
+        sha256: createHash("sha256").update(red.yaml, "utf8").digest("hex"),
+        redactions: red.redactions,
+        warnings,
+        generatedAt: new Date().toISOString(),
+      };
+      await this.audit.log({ actor: userId, action: "app.compose.preview", target: id, meta: { bytes: Buffer.byteLength(red.yaml, "utf8") } });
+      return result;
+    } finally {
+      this.composePreviewBusy.delete(id);
+    }
   }
 
   /** Replace the app's extra published ports (raw host:container TCP/UDP maps beyond the ingress port).
@@ -4185,7 +4353,13 @@ export class ApplicationsService {
   async setBuildConfig(
     userId: string,
     id: string,
-    cfg: { registryId?: string | null; pushToRegistry?: boolean; buildServerId?: string | null },
+    cfg: {
+      registryId?: string | null;
+      pushToRegistry?: boolean;
+      buildServerId?: string | null;
+      pushImageName?: string | null;
+      pushImageTag?: string | null;
+    },
   ): Promise<void> {
     const app = await this.requireWrite(userId, id);
     // A registry must belong to the app's own team (no cross-team credential use).
@@ -4214,8 +4388,50 @@ export class ApplicationsService {
       }
       data.buildServerId = cfg.buildServerId;
     }
-    await this.prisma.application.update({ where: { id }, data });
-    await this.audit.log({ actor: userId, action: "app.buildconfig.update", target: id });
+    // Custom pushed repo name + mutable alias tag. Evaluated against the MERGED final state (the immutable
+    // :<deploymentId> tag is always pushed regardless). undefined = untouched, null = clear.
+    const effRegistry = cfg.registryId !== undefined ? cfg.registryId : app.registryId;
+    const effBuildServer = cfg.buildServerId !== undefined ? cfg.buildServerId : app.buildServerId;
+    const effPush = (cfg.pushToRegistry ?? app.pushToRegistry) || !!effBuildServer;
+    const pushReady = !!effRegistry && effPush;
+    const settingName = cfg.pushImageName != null;
+    const settingTag = cfg.pushImageTag != null;
+    if (settingName || settingTag) {
+      if (app.source === "COMPOSE") throw new BadRequestException("a custom image name or alias tag does not apply to compose apps");
+      if (!pushReady) throw new BadRequestException("a custom image name or alias tag needs a registry and push-to-registry (or a build server)");
+    }
+    if (settingName) {
+      const bad = validatePushName(cfg.pushImageName as string);
+      if (bad) throw new BadRequestException(`invalid image name (${bad})`);
+    }
+    if (settingTag) {
+      const bad = validateTagTemplate(cfg.pushImageTag as string, app.source);
+      if (bad) throw new BadRequestException(`invalid alias tag (${bad})`);
+    }
+    if (cfg.pushImageName !== undefined) data.pushImageName = cfg.pushImageName;
+    if (cfg.pushImageTag !== undefined) data.pushImageTag = cfg.pushImageTag;
+    // Clearing the registry (or push) clears a stored name/alias: they only mean something while pushing.
+    if (!pushReady) {
+      if (app.pushImageName && cfg.pushImageName === undefined) data.pushImageName = null;
+      if (app.pushImageTag && cfg.pushImageTag === undefined) data.pushImageTag = null;
+    }
+    try {
+      await this.prisma.application.update({ where: { id }, data });
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+        throw new ConflictException("another app already pushes to that repository in this registry");
+      }
+      throw e;
+    }
+    await this.audit.log({
+      actor: userId,
+      action: "app.buildconfig.update",
+      target: id,
+      meta: {
+        pushImageName: data.pushImageName !== undefined ? (data.pushImageName as string | null) : app.pushImageName,
+        pushImageTag: data.pushImageTag !== undefined ? (data.pushImageTag as string | null) : app.pushImageTag,
+      },
+    });
   }
 
   /** Deploy this app as a Docker Swarm service across a cluster, or clear it back to classic
@@ -5173,6 +5389,7 @@ export class ApplicationsService {
       buildType: app.buildType,
       dockerfilePath: app.dockerfilePath,
       dockerBuildTarget: app.dockerBuildTarget,
+      inlineDockerfile: app.inlineDockerfile,
       baseDirectory: app.baseDirectory,
       buildCommand: app.buildCommand,
       nixpacksInstallCmd: app.nixpacksInstallCmd,
@@ -5222,6 +5439,9 @@ export class ApplicationsService {
       containerAlias: classic ? app.containerAlias : null,
       preDeployCommand: app.preDeployCommand,
       postDeployCommand: app.postDeployCommand,
+      composeHookService: app.composeHookService,
+      pushImageName: app.pushImageName,
+      pushImageTag: app.pushImageTag,
       // Attach to the node-local managed-DB network only for a classic (non-swarm) deploy — a clustered app
       // runs as a swarm service on the overlay, where a node-local bridge is meaningless.
       dbNetwork: !!app.dbNetwork && !app.clusterId,
@@ -5522,6 +5742,8 @@ export class ApplicationsService {
       nixpacksStartCmd: app.nixpacksStartCmd,
       dockerfilePath: app.dockerfilePath,
       dockerBuildTarget: app.dockerBuildTarget,
+      inlineDockerfile: canWrite ? app.inlineDockerfile : null, // a Dockerfile can embed tokens -> writer-only
+      hasInlineDockerfile: !!app.inlineDockerfile,
       baseDirectory: app.baseDirectory,
       watchPaths: app.watchPaths ?? [],
       autoDeploy: app.autoDeploy ?? true,
@@ -5558,6 +5780,8 @@ export class ApplicationsService {
       // Hooks are deploy-time exec power and may embed internal paths → writer-only (like composeFile).
       preDeployCommand: canWrite ? app.preDeployCommand : null,
       postDeployCommand: canWrite ? app.postDeployCommand : null,
+      composeHookService: canWrite ? app.composeHookService : null,
+      composeServices: canWrite && app.source === "COMPOSE" && !app.composePath ? composeServiceNames(app.composeFile) : [],
       // Container argv can embed credentials (e.g. --password=…) → writer-only, like the hooks above.
       containerEntrypoint: canWrite ? this.argv(app.containerEntrypoint) : null,
       containerCommand: canWrite ? this.argv(app.containerCommand) : null,
@@ -5581,6 +5805,8 @@ export class ApplicationsService {
       registryUser: this.appRegistryAuth(app)?.user ?? null,
       registryId: app.registryId,
       pushToRegistry: app.pushToRegistry,
+      pushImageName: app.pushImageName,
+      pushImageTag: app.pushImageTag,
       buildServerId: app.buildServerId,
       clusterId: app.clusterId,
       replicas: app.replicas,

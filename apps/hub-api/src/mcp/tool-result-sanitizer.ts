@@ -45,6 +45,8 @@ const SECRET_FIELD_NAMES = new Set([
   "dockerOptions",
   "preDeployCommand",
   "postDeployCommand",
+  "inlineDockerfile", // an inline Dockerfile can embed tokens
+  "resolvedCompose", // the resolved compose preview (repo content; redacted but never needed by an MCP client)
   "webhookToken",
   // operator custom container labels: values can be tokens (e.g. a monitoring/auth key), writer-only in the app view.
   "customLabels",

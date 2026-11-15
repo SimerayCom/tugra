@@ -22,6 +22,23 @@ describe("sanitizeToolResult", () => {
     expect(out.customLabels).toBeNull();
   });
 
+  it("masks the inline Dockerfile and the resolved compose preview; the push name/alias/hook service are not secret", () => {
+    const out = sanitizeToolResult({
+      inlineDockerfile: "FROM x\nARG T=ghp_secret",
+      resolvedCompose: "services: {}",
+      composeHookService: "web",
+      pushImageName: "org/web",
+      pushImageTag: "{branch}",
+      hasInlineDockerfile: true,
+    }) as Record<string, unknown>;
+    expect(out.inlineDockerfile).toBeNull();
+    expect(out.resolvedCompose).toBeNull();
+    expect(out.composeHookService).toBe("web");
+    expect(out.pushImageName).toBe("org/web");
+    expect(out.pushImageTag).toBe("{branch}");
+    expect(out.hasInlineDockerfile).toBe(true);
+  });
+
   it("does NOT over-redact generic fields like `value` (metric/monitor values survive)", () => {
     const out = sanitizeToolResult({ metric: "cpu", value: 42, status: "ok" }) as Record<string, unknown>;
     expect(out.value).toBe(42);
