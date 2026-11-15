@@ -186,6 +186,36 @@ describe("AppMoveBanner — terminal states", () => {
     expect(screen.queryByRole("button", { name: "Dismiss" })).toBeNull();
   });
 
+  it("the Clear alert confirm says what it really does (never the 'remove the old copy' text)", async () => {
+    latest(mv({ phase: "FAILED", canCancel: false, needsAttention: true, finishedAt: "2020-01-01T00:00:00.000Z", failureReason: "source_restart_failed" }));
+    show({ move: null });
+    fireEvent.click(await screen.findByRole("button", { name: "Clear alert" }));
+    expect(await screen.findByText(/only when the app is back on the original server/)).toBeTruthy();
+    expect(screen.queryByText(/Remove the old copy of this app's data/)).toBeNull();
+  });
+
+  it("a kept apply recovery copy stays on the card for writers (even for an old rolled-back move) with its own button and note", async () => {
+    latest(mv({ phase: "ROLLED_BACK", canCancel: false, finishedAt: "2020-01-01T00:00:00.000Z", failureReason: "apply_rollback_failed", snapshotKept: true, warnings: [{ code: "apply_snapshot_kept" }] }));
+    const purge = vi.spyOn(api, "purgeMoveSource").mockResolvedValue({ ok: true });
+    show({ move: null });
+    expect(await screen.findByText(/A copy of data the transfer replaced is kept on the new server/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Remove kept copy" }));
+    expect(await screen.findByText(/Remove the kept copy of the replaced data/)).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(purge).toHaveBeenCalledWith("a1", "mv1"));
+    cleanup();
+    latest(mv({ phase: "ROLLED_BACK", canCancel: false, finishedAt: new Date().toISOString(), snapshotKept: true }));
+    show({ move: null, canWrite: false });
+    await screen.findByText(/A copy of data the transfer replaced is kept/);
+    expect(screen.queryByRole("button", { name: "Remove kept copy" })).toBeNull();
+  });
+
+  it("a warning without its details (a read-only member never gets the env variable names) still reads cleanly", async () => {
+    latest(mv({ phase: "COMPLETED", canCancel: false, finishedAt: new Date().toISOString(), archiveUntil: null, warnings: [{ code: "env_may_reference_old_host" }] }));
+    show({ move: null, canWrite: false });
+    expect(await screen.findByText("Some environment variables mention the old server; they are NOT rewritten.")).toBeTruthy();
+  });
+
   it("an old finished move is not shown at all; a recent rolled-back one can be dismissed", async () => {
     latest(mv({ phase: "ROLLED_BACK", canCancel: false, finishedAt: "2020-01-01T00:00:00.000Z", failureReason: "cancelled" }));
     const { container } = show({ move: null });

@@ -76,6 +76,7 @@ export function bannerWorthy(m: AppMove | undefined, now = Date.now()): boolean 
   if (!m) return false;
   if (!isTerminalPhase(m.phase)) return true;
   if (m.phase === "FAILED") return m.needsAttention;
+  if (m.phase === "ROLLED_BACK" && m.snapshotKept) return true; // a kept recovery copy waits for the operator
   if (m.phase === "COMPLETED" && m.archiveUntil && !m.sourcePurgedAt) return true; // the archive card (with Purge now)
   const done = m.finishedAt ? new Date(m.finishedAt).getTime() : 0;
   return now - done < 24 * 3600_000;
@@ -109,4 +110,11 @@ export function detailVars(details: Record<string, unknown> | undefined): Record
 export function ackLabelKey(a: MoveAckKey): string {
   const base = a === "dropPrivilegedOptions" ? "dropPrivileged" : a;
   return `apps.moveAck${base.charAt(0).toUpperCase()}${base.slice(1)}`;
+}
+
+/** The translated text of a move warning. A read-only member gets the bare code (the hub withholds env variable names), so
+ *  the env warning has a variant without its key list. */
+export function warningText(t: (k: string, v?: Record<string, string | number>) => string, w: { code: string; details?: Record<string, unknown> }): string {
+  if (w.code === "env_may_reference_old_host" && !Array.isArray(w.details?.keys)) return codeText(t, "Warn", "env_may_reference_old_host_nokeys");
+  return codeText(t, "Warn", w.code, "", detailVars(w.details));
 }

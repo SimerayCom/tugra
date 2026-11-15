@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { api } from "../lib/api";
 import { fmtBytes } from "../lib/fleet";
-import { bannerWorthy, codeText, detailVars, isTerminalPhase, moveSteps, pollInterval, volumeProgress } from "../lib/app-move";
+import { bannerWorthy, codeText, isTerminalPhase, moveSteps, pollInterval, volumeProgress, warningText } from "../lib/app-move";
 import type { AppMove, AppMovePhase } from "../lib/types";
 import { useT } from "../i18n/provider";
 import { useToast } from "./toast";
@@ -95,13 +95,16 @@ export function AppMoveBanner({ appId, teamId, move, canWrite }: { appId: string
   const steps = moveSteps(current.phase, current.failurePhase);
   const date = current.archiveUntil ? new Date(current.archiveUntil).toLocaleDateString() : "";
   const showArchive = current.phase === "COMPLETED" && !!current.archiveUntil && !current.sourcePurgedAt;
+  const keptSnapshot = terminal && current.phase !== "COMPLETED" && !!current.snapshotKept;
 
   const onCancel = async (): Promise<void> => {
     if (confirm && !(await confirm({ body: t("apps.moveCancelConfirm"), danger: true }))) return;
     cancel.mutate();
   };
   const onPurge = async (): Promise<void> => {
-    if (confirm && !(await confirm({ body: t("apps.movePurgeConfirm"), danger: true }))) return;
+    // each button says what it will really remove: the old copy (COMPLETED), the alert (FAILED), a kept recovery copy (ROLLED_BACK)
+    const body = current.phase === "FAILED" ? t("apps.moveFailedClearConfirm") : current.phase === "ROLLED_BACK" ? t("apps.moveSnapshotPurgeConfirm") : t("apps.movePurgeConfirm");
+    if (confirm && !(await confirm({ body, danger: true }))) return;
     purge.mutate();
   };
 
@@ -137,6 +140,7 @@ export function AppMoveBanner({ appId, teamId, move, canWrite }: { appId: string
           <Btn variant="ghost" onClick={() => void onCancel()} loading={cancel.isPending}>{t("apps.moveCancelMove")}</Btn>
         )}
         {showArchive && canWrite && <Btn variant="ghost" onClick={() => void onPurge()} loading={purge.isPending}>{t("apps.movePurgeSource")}</Btn>}
+        {current.phase === "ROLLED_BACK" && keptSnapshot && canWrite && <Btn variant="ghost" onClick={() => void onPurge()} loading={purge.isPending}>{t("apps.moveSnapshotPurge")}</Btn>}
         {current.phase === "FAILED" && canWrite && <Btn variant="ghost" onClick={() => void onPurge()} loading={purge.isPending}>{t("apps.moveFailedClear")}</Btn>}
         {terminal && current.phase !== "FAILED" && <Btn variant="ghost" onClick={() => setDismissed(current.id)}>{t("apps.moveDismiss")}</Btn>}
       </div>
@@ -168,12 +172,13 @@ export function AppMoveBanner({ appId, teamId, move, canWrite }: { appId: string
         </>
       )}
 
+      {keptSnapshot && <p role="note" style={{ fontSize: 12, color: "var(--c-am)", margin: "8px 0 0" }}>{t("apps.moveSnapshotKeptNote")}</p>}
       {current.warnings.length > 0 && terminal && (
         <details style={{ marginTop: 8, fontSize: 12 }}>
           <summary style={{ cursor: "pointer", color: "var(--c-tx2)" }}>{t("apps.moveWarningsHeading")} ({current.warnings.length})</summary>
           <ul style={{ margin: "6px 0 0", paddingLeft: 18, color: "var(--c-tx3)", lineHeight: 1.5 }}>
             {current.warnings.map((w, i) => (
-              <li key={`${w.code}-${i}`}>{codeText(t, "Warn", w.code, "", detailVars(w.details))}</li>
+              <li key={`${w.code}-${i}`}>{warningText(t, w)}</li>
             ))}
           </ul>
         </details>

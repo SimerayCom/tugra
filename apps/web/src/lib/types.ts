@@ -2138,6 +2138,8 @@ export interface AppMove {
   createdAt: string;
   canCancel: boolean;
   needsAttention: boolean;
+  /** An apply rollback snapshot is kept on the new server (the only intact copy of data an apply wiped). */
+  snapshotKept?: boolean;
   /** writer-only (null for read-only members) */
   plan: Record<string, unknown> | null;
   acks: Record<string, boolean> | null;

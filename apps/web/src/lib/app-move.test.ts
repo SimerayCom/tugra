@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import apps from "../i18n/locales/en/apps.json";
-import { ackLabelKey, ackPayload, bannerWorthy, canContinue, codeText, detailVars, fmtSeconds, isTerminalPhase, moveSteps, pollInterval, splitBlockers, targetChoices, volumeProgress } from "./app-move";
+import { ackLabelKey, ackPayload, bannerWorthy, canContinue, codeText, detailVars, fmtSeconds, isTerminalPhase, moveSteps, pollInterval, splitBlockers, targetChoices, volumeProgress, warningText } from "./app-move";
 import type { AppMove, MoveAckKey, MovePreflightResult } from "./types";
 
 const pf = (over: Partial<MovePreflightResult> = {}): MovePreflightResult => ({
@@ -80,6 +80,13 @@ describe("misc helpers", () => {
     expect(bannerWorthy(mv({ archiveUntil: new Date(Date.now() + 86400000).toISOString(), finishedAt: "2020-01-01T00:00:00Z" }))).toBe(true);
     expect(bannerWorthy(mv({ phase: "ROLLED_BACK", finishedAt: "2020-01-01T00:00:00Z" }))).toBe(false);
     expect(bannerWorthy(mv({ phase: "ROLLED_BACK" }))).toBe(true);
+    expect(bannerWorthy(mv({ phase: "ROLLED_BACK", finishedAt: "2020-01-01T00:00:00Z", snapshotKept: true }))).toBe(true); // a kept recovery copy waits for the operator
+  });
+
+  it("warningText drops the key list for the env warning when the hub withheld it", () => {
+    const t = (k: string, v?: Record<string, string | number>) => (k === "apps.moveWarn_env_may_reference_old_host" ? `with ${v?.keys}` : k === "apps.moveWarn_env_may_reference_old_host_nokeys" ? "no keys" : k);
+    expect(warningText(t, { code: "env_may_reference_old_host", details: { keys: ["A", "B"] } })).toBe("with A, B");
+    expect(warningText(t, { code: "env_may_reference_old_host" })).toBe("no keys");
   });
 
   it("codeText falls back to the hub's own message (then the raw code) for an unknown code; detailVars flattens arrays", () => {
