@@ -162,7 +162,6 @@ function planApp(app: ForeignApp, dbByRef: Map<string, ForeignDb>, volumesCarrie
     risks.push({ level: "blocker", code: "app.env.unresolvable", message: "some env values are vault/encrypted references the source cannot expand — provide them at import time" });
   }
   if (app.envReport) risks.push(...envReportRisks(app.envReport));
-  if (app.serviceRef) risks.push({ level: "info", code: "app.service.member", message: "part of a multi-container service — imported with its stack" });
 
   // Ordering: the app waits for its linked databases and its volumes. Volume refs are sorted + de-duped so the
   // item (hence planHash) is independent of the source's mount discovery order — the apply-time stale-guard

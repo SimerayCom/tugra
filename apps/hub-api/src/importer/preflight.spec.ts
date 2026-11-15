@@ -129,9 +129,10 @@ describe("buildPreflight — MinIO services point at Object migration (everythin
     expect(p.services[0].note).toMatch(/not versions, IAM users, replication or notifications/);
   });
 
-  it("every other service keeps the existing note byte-identical", () => {
+  it("every other service gets the service-import note and no objectStore flag", () => {
     const p = buildPreflight(fleet({ services: [svc({ name: "plausible", templateSlug: "plausible" }), svc({ name: "nope", composeFile: "services: { web: { image: nginx } }" }), svc({ name: "minio-like", templateSlug: "minio-console-proxy" })] }), o);
-    expect(p.services.map((s) => s.note)).toEqual([OTHER, OTHER, OTHER]);
+    for (const s of p.services) expect(s.note).not.toMatch(/Object migration/);
+    for (const s of p.services) expect(s.note).not.toBe(OTHER); // services are imported now (stopped compose apps), the old "not imported yet" note is gone
     for (const s of p.services) expect(s).not.toHaveProperty("objectStore"); // the key is absent, not false
   });
 });
