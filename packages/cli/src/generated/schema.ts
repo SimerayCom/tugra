@@ -38354,6 +38354,9 @@ export interface operations {
                     targetServerId: string;
                     environmentId?: string;
                     reconcile?: boolean;
+                    dbDataModes?: {
+                        [key: string]: "volume";
+                    };
                     mapping: {
                         /** @enum {number} */
                         version: 1;

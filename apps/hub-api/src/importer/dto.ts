@@ -164,6 +164,8 @@ export const ImportMappingResolveSchema = z.object({
   targetServerId: z.string().min(1),
   environmentId: z.string().min(1).optional(),
   reconcile: z.boolean().optional(),
+  /** The same per-database data modes the plan was made with — the resolve re-plans with them so its planHash matches. */
+  dbDataModes: dbDataModes.optional(),
   mapping: ImportMappingDocSchema,
 });
 export type ImportMappingResolveInput = z.infer<typeof ImportMappingResolveSchema>;

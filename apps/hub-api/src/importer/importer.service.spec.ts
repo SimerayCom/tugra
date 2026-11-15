@@ -280,6 +280,19 @@ describe("ImporterService — editable mapping (additive)", () => {
     expect(resolve).toHaveBeenCalledWith("u1", expect.objectContaining({ id: "sess-1", scopeKey: "team-3" }), expect.anything(), expect.objectContaining({ planHash: plain.planHash }), { id: "srv", teamId: "t1" }, good);
   });
 
+  it("resolveMapping re-plans with the plan's dbDataModes: a volume-mode plan resolves with them and 409s without", async () => {
+    const resolve = jest.fn().mockResolvedValue({ mappingHash: "m" });
+    const base = make({ session: liveSession });
+    const pgFleet = { servers: [], apps: [], databases: [{ sourceRef: "pg", name: "pg", engine: "POSTGRES", version: "16", image: "postgres:16", serverRef: "srv-a" }], services: [], volumes: [], sharedEnv: [], warnings: [] };
+    (base.sources.create as jest.Mock).mockReturnValue({ discover: jest.fn().mockResolvedValue(pgFleet), close: jest.fn() });
+    const svc = new ImporterService({} as never, { importSession: base.importSession, server: { findUnique: jest.fn().mockResolvedValue({ id: "srv", teamId: "t1" }) } } as never, base.crypto as never, base.access as never, base.audit as never, base.sources as never, { planBlock: jest.fn(), resolve } as never);
+    const dbDataModes = { "database:srv-a:pg": "volume" as const };
+    const volPlan = await svc.plan("u1", { sourceKind: "coolify", sessionId: "sess-1", dbDataModes });
+    const body = { sessionId: "sess-1", sourceKind: "coolify" as const, planHash: volPlan.planHash, targetServerId: "srv", mapping: { version: 1 as const, items: {}, projects: {}, gitSources: {}, acks: [] } };
+    await expect(svc.resolveMapping("u1", { ...body, dbDataModes })).resolves.toEqual({ mappingHash: "m" });
+    await expect(svc.resolveMapping("u1", body)).rejects.toBeInstanceOf(ConflictException);
+  });
+
   it("requireSession enforces ownership, kind and expiry exactly like openSession, without building a source client", async () => {
     const { svc, sources } = withMappings({});
     await expect(svc.requireSession("u1", "sess-1")).resolves.toMatchObject({ teamId: "t1", scopeKey: "team-3" });

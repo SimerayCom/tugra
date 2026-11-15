@@ -59332,6 +59332,15 @@
                   "reconcile": {
                     "type": "boolean"
                   },
+                  "dbDataModes": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string",
+                      "enum": [
+                        "volume"
+                      ]
+                    }
+                  },
                   "mapping": {
                     "type": "object",
                     "properties": {
