@@ -101,6 +101,51 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   members who can edit the app, is never part of the config snapshot or MCP results (only its size and a
   fingerprint), and is copied by clone and by PR previews. `PUT /apps/{id}/build` takes `inlineDockerfile`.
 
+- **File manager: upload, edit, rename, permissions and delete on app volumes.** A new opt-in server capability,
+  `files_write`, adds write access next to the existing read-only `files` (it requires `files`; the web capabilities
+  card unchecks it when you uncheck `files`). With it, an app's **Files** tab can upload files (multi-select or drag
+  and drop, three at a time, with progress, cancel and retry; a file that already exists asks Overwrite or Skip),
+  create folders and files, edit text files up to 1 MiB in place (a concurrent change shows Reload or Overwrite
+  anyway), download, rename, change permissions (an rwx grid kept in sync with the octal value; setuid, setgid and
+  sticky bits cannot be set) and delete (a folder is a recursive delete and asks you to type its name). Writes run in
+  a short-lived, network-less helper container with only that one volume mounted read-write and only the CHOWN,
+  DAC_OVERRIDE and FOWNER capabilities; new files get the owner of the folder they land in, so the app user can read
+  them, and an overwrite keeps the file's owner and mode. An upload is hashed by the hub, pulled by the agent over a
+  single-use signed URL, written to a temporary file in the same folder and renamed into place, so an interrupted or
+  tampered upload leaves nothing behind. Symbolic links are never followed or written through. Every change is
+  audited with its path and shape, never its content, and a refused or failed attempt leaves an `app.file.failed`
+  row. Changes are paused while a deploy is queued or running, and writing into a running database or broker volume
+  (detected from its image or template) needs an explicit acknowledgement. API: `GET /apps/{id}/files/meta`,
+  `GET /apps/{id}/files/stat`, `GET|PUT /apps/{id}/files/content`, `POST /apps/{id}/files/mkdir|rename|chmod` and
+  `DELETE /apps/{id}/files`; a token needs `write` and `read:secrets` for writes and `admin` for delete. Needs an
+  agent that advertises `fs2_v1` (update the agent first; older agents answer `agent_too_old`). `fs2_v1` is a new
+  signed, expiring, replay-protected agent message; the legacy list request is unchanged.
+
+- **`files` now also covers file content.** The existing `files` capability used to allow only directory listings.
+  It now also allows stat and downloading a file's content (`read:secrets` for tokens), still through the read-only
+  helper. Grant it only where you are comfortable with writers of the team reading that application data.
+
+- **`files` can be granted from the web.** The server capabilities card now lists **Files** and **File changes**;
+  `files` was previously settable only through the API.
+
+- **Container filesystem browser and editor.** For users with the `terminal` team permission on a server that has
+  the `files`, `files_write` and `terminal` capabilities, an app's Files tab gains a **Container (ephemeral)**
+  source: browse, download, replace and upload files in the running container (for example `/app` and `/etc`), with
+  an editable path field and quick links. It works through `docker cp`, so it also works on stopped and distroless
+  containers; rename, permissions and delete run `mv`, `chmod` and `rm` inside the container and report
+  `no_binary` when the image does not ship them. Changes are lost when the container is recreated, writes are not
+  atomic, and a very large directory lists only its first part. Clustered apps are not supported. Every change needs
+  the `admin` token scope. API: `GET /apps/{id}/container-files[/stat|/content]`, `PUT /apps/{id}/container-files/content`,
+  `POST /apps/{id}/container-files/mkdir|rename|chmod`, `DELETE /apps/{id}/container-files`.
+
+- **Large uploads through the web origin.** The web server's generic `/api/v1` rewrite buffered request bodies in
+  memory and cut them at 10 MiB, so a larger upload hung. File uploads and the agent transfer URLs now stream
+  through dedicated routes with real backpressure, and the generic proxy is a fallback rewrite.
+
+- **Agent toolchain.** The agent now builds with Go 1.25 (the file helper needs `os.Root` operations that arrived in
+  that release). Overwriting a file replaces its inode, so hard links, extended attributes and ACLs of the old file
+  are not carried over.
+
 - **GPU detection.** A server's page has a **Detected GPUs** card: GPUs found on the PCI bus, the NVIDIA driver
   and the Docker `nvidia` runtime, and one verdict (ready, driver missing, runtime missing, non-NVIDIA, none, probe
   failed). The result is stored per server, so read-only members see the last snapshot; a member with the

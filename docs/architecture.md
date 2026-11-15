@@ -67,6 +67,41 @@ as "interrupted", and the application's status is left untouched. Agents without
 build-server and rollback paths — keep the previous behaviour: a deploy still running at hub boot is marked
 failed and must be re-deployed.
 
+## File manager and the container filesystem
+
+An app's **Files** tab talks to the hub's `/apps/{id}/files*` and `/apps/{id}/container-files*` routes. The hub resolves
+the target (one of the app's declared volumes, or the running container of a single-container or Compose app), checks
+the team permission (`apps:config`, plus `terminal` for the container filesystem), the policy (no changes while a deploy
+is queued or running; a running database or broker volume needs an acknowledgement) and the server's capabilities, then
+sends the agent a signed **`fs2_req`** (advertised by the agent as the `fs2_v1` feature). The signature covers every field
+(length-prefixed, so no value can forge another), carries an expiry, and the agent keeps a replay cache; the agent
+re-derives the capability set itself and drops anything the hub could not have been allowed to send.
+
+| scope | operation | server capabilities required |
+|---|---|---|
+| volume | stat, read | `files` |
+| volume | write, mkdir, rename, chmod, delete | `files`, `files_write` |
+| container | list, stat, read | `files`, `terminal` |
+| container | write, mkdir, rename, chmod, delete | `files`, `files_write`, `terminal` |
+
+**Volumes.** The agent runs the operation in a one-shot helper container started from the agent's own image: no
+network, read-only root, only the one named volume mounted at `/data`, and every path confined with `os.Root` (symbolic
+links in a path are refused). Reads run with `DAC_READ_SEARCH` and the volume mounted read-only; writes run with `CHOWN`,
+`DAC_OVERRIDE` and `FOWNER` and the volume mounted read-write. An upload never travels over the WebSocket: the hub
+streams the browser's body to a private staging file while hashing it, hands the agent a relative, HMAC-signed,
+single-use URL (the agent builds the host from its own configured hub address), and the agent writes the file through a
+temporary file in the destination folder and renames it into place. A download is the reverse: the agent pushes the file
+to a signed URL and the hub pipes it straight into the browser response, so nothing is stored on the hub.
+
+**Container filesystem.** The agent uses `docker cp` (daemon-side, so it works on stopped and distroless containers; the
+tar stream is parsed header by header and never extracted) for list, stat, read, write and mkdir, and a fixed-argument
+`docker exec` for rename, chmod and delete. Changes are ephemeral and not atomic, and a very large directory lists only
+its first part.
+
+The web server streams file bodies through dedicated routes (Next's generic rewrite buffers and truncates request
+bodies above 10 MiB); a hub behind a reverse proxy must also allow large request bodies on `/api/v1/apps/*/files/content`
+and `/api/v1/agent-fs/t/*`.
+
 ## Deployment
 
 The [`deploy/docker-compose.yml`](../deploy/docker-compose.yml) stack is hub + web + PostgreSQL + Redis +
