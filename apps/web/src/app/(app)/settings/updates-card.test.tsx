@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import { I18nProvider } from "../../../i18n/provider";
 import { api } from "../../../lib/api";
+import { subscribeToast, type ToastInput } from "../../../lib/toast-bus";
 import type { InstanceUpdateStatus, PublicUser } from "../../../lib/types";
 
 const h = vi.hoisted(() => ({ user: { isInstanceOwner: false } as Partial<PublicUser> }));
@@ -230,5 +231,120 @@ describe("UpdatesCard", () => {
     wrap();
     await screen.findByText("Updates");
     expect(screen.queryByRole("button", { name: "Update now" })).toBeNull();
+  });
+
+  it("manual check toasts the result: up to date, update available, and the failure reason", async () => {
+    h.user = { isInstanceOwner: true };
+    const toasts: ToastInput[] = [];
+    const off = subscribeToast((t) => toasts.push(t));
+    try {
+      wrap();
+      await screen.findByText("Updates");
+      const click = () => fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
+
+      vi.mocked(api.checkInstanceUpdate).mockResolvedValue({ ...STATUS, updateAvailable: false, latest: "0.1.0" });
+      click();
+      await waitFor(() => expect(toasts).toHaveLength(1));
+      expect(toasts[0]).toMatchObject({ message: "Up to date (v0.1.0)", type: "success" });
+
+      vi.mocked(api.checkInstanceUpdate).mockResolvedValue({ ...STATUS, updateAvailable: true, latest: "0.2.0" });
+      click();
+      await waitFor(() => expect(toasts).toHaveLength(2));
+      expect(toasts[1]).toMatchObject({ message: "v0.2.0 available", type: "info" });
+
+      vi.mocked(api.checkInstanceUpdate).mockResolvedValue({ ...STATUS, lastCheckError: "fetch" });
+      click();
+      await waitFor(() => expect(toasts).toHaveLength(3));
+      expect(toasts[2]).toMatchObject({ message: "Update check failed: fetch", type: "error" });
+    } finally {
+      off();
+    }
+  });
+
+  it("saving carries the success-toast meta (shown by the global MutationCache)", async () => {
+    h.user = { isInstanceOwner: true };
+    wrap();
+    await screen.findByText("Updates");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(api.updateInstanceUpdate).toHaveBeenCalled());
+    const metas = qc.getMutationCache().getAll().map((m) => m.meta?.successMessage);
+    expect(metas).toContain("Update settings saved");
+  });
+
+  it("Update now shows the 4-step stepper, hides the button for the whole run, then offers Reload", async () => {
+    h.user = { isInstanceOwner: true };
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+    const savedFetch = global.fetch;
+    const toasts: ToastInput[] = [];
+    const off = subscribeToast((t) => toasts.push(t));
+    try {
+      let status = { ...STATUS, current: "0.1.0" };
+      vi.spyOn(api, "getInstanceUpdate").mockImplementation(async () => ({ ...status }));
+      vi.spyOn(api, "applyInstanceUpdate").mockResolvedValue({ status: "started", targetVersion: "0.2.0" });
+      // SSE that reports `pulling` then stays open until aborted.
+      global.fetch = vi.fn(async () => {
+        const stream = new ReadableStream<Uint8Array>({
+          start(c) {
+            c.enqueue(new TextEncoder().encode('data: {"phase":"pulling"}\n\n'));
+            // closes after the hub "restarts"
+            setTimeout(() => c.close(), 5000);
+          },
+        });
+        return new Response(stream, { status: 200 });
+      }) as unknown as typeof fetch;
+
+      wrap();
+      await act(async () => { await vi.advanceTimersByTimeAsync(50); });
+      fireEvent.click(screen.getByRole("button", { name: "Update now" }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+
+      const li = (id: string) => screen.getByTestId("update-progress").querySelector(`[data-step="${id}"]`)!;
+      expect(screen.getByText("Updating to 0.2.0")).toBeTruthy();
+      expect(li("queued").getAttribute("data-state")).toBe("done");
+      expect(li("pulling").getAttribute("data-state")).toBe("active");
+      expect(li("recreating").getAttribute("data-state")).toBe("pending");
+      expect(screen.queryByRole("button", { name: "Update now" })).toBeNull(); // no double-fire
+      expect(screen.getByTestId("update-elapsed").textContent).toBe("Elapsed 00:01");
+
+      // stream drops (hub restarting) → reconnecting; version still old
+      await act(async () => { await vi.advanceTimersByTimeAsync(4100); });
+      expect(li("reconnecting").getAttribute("data-state")).toBe("active");
+      expect(screen.queryByRole("button", { name: "Update now" })).toBeNull();
+
+      status = { ...status, current: "0.2.0" };
+      await act(async () => { await vi.advanceTimersByTimeAsync(3100); });
+      expect(screen.getByTestId("update-progress").querySelectorAll('[data-state="done"]')).toHaveLength(4);
+      expect(screen.getByText(/Updated to 0\.2\.0/)).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Reload" })).toBeTruthy();
+      expect(screen.getByText(/still running the old version/)).toBeTruthy();
+      expect(toasts.some((x) => x.message.startsWith("Updated to 0.2.0") && x.type === "success")).toBe(true);
+      // the elapsed counter froze at the end
+      const frozen = screen.getByTestId("update-elapsed").textContent;
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      expect(screen.getByTestId("update-elapsed").textContent).toBe(frozen);
+    } finally {
+      off();
+      global.fetch = savedFetch;
+      vi.useRealTimers();
+    }
+  });
+
+  it("a terminal failure marks the step that was running red and shows the existing message", async () => {
+    h.user = { isInstanceOwner: true };
+    vi.spyOn(api, "applyInstanceUpdate").mockResolvedValue({ status: "started", targetVersion: "0.2.0" });
+    const savedFetch = global.fetch;
+    global.fetch = vi.fn(async () => sseResponse(['{"phase":"pulling"}', '{"phase":"failed"}'])) as unknown as typeof fetch;
+    try {
+      wrap();
+      fireEvent.click(await screen.findByRole("button", { name: "Update now" }));
+      await waitFor(() => expect(screen.getByText(/The update failed\. Check the server logs/)).toBeTruthy());
+      const prog = screen.getByTestId("update-progress");
+      expect(prog.querySelector('[data-step="pulling"]')!.getAttribute("data-state")).toBe("failed");
+      expect(prog.querySelector('[data-step="queued"]')!.getAttribute("data-state")).toBe("done");
+      expect(prog.querySelector('[data-step="recreating"]')!.getAttribute("data-state")).toBe("pending");
+      expect(screen.getByRole("button", { name: "Update now" })).toBeTruthy(); // a failed run may be retried
+    } finally {
+      global.fetch = savedFetch;
+    }
   });
 });

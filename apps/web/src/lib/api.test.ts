@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { apiFetch, api } from "./api";
+import { apiFetch, api, ApiError } from "./api";
+import { HUB_UNREACHABLE_CODE, subscribeHubDown } from "./hub-connection";
 
 function jsonRes(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -168,5 +169,64 @@ describe("container labels client", () => {
     expect(calls[0][1].method).toBe("PUT");
     expect(JSON.parse(String(calls[0][1].body))).toEqual({ labels: { team: "core" } });
     expect(JSON.parse(String(calls[1][1].body))).toEqual({ labels: {} });
+  });
+});
+
+describe("hub unreachable / restarting mapping", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const FRIENDLY = "Hub is restarting or unreachable — retrying…";
+
+  it("maps a network failure (TypeError: Failed to fetch) to the friendly message and signals the banner", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("Failed to fetch"); }));
+    const seen = vi.fn();
+    const off = subscribeHubDown(seen);
+    const err = await apiFetch("/servers").catch((e: unknown) => e);
+    off();
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).message).toBe(FRIENDLY);
+    expect((err as ApiError).code).toBe(HUB_UNREACHABLE_CODE);
+    expect(seen).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps a non-deliberate abort (timeout) but passes a caller-initiated abort through untouched", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new DOMException("timed out", "AbortError"); }));
+    const timeout = await apiFetch("/x").catch((e: unknown) => e);
+    expect((timeout as ApiError).message).toBe(FRIENDLY);
+
+    const ctrl = new AbortController();
+    ctrl.abort();
+    const seen = vi.fn();
+    const off = subscribeHubDown(seen);
+    const deliberate = await apiFetch("/x", { signal: ctrl.signal }).catch((e: unknown) => e);
+    off();
+    expect(deliberate).toBeInstanceOf(DOMException);
+    expect(seen).not.toHaveBeenCalled();
+  });
+
+  it.each([502, 503, 504])("maps a proxy HTTP %i (non-JSON body) to the friendly message", async (status) => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("<html>Bad Gateway</html>", { status, headers: { "content-type": "text/html" } })));
+    const seen = vi.fn();
+    const off = subscribeHubDown(seen);
+    const err = await apiFetch("/servers").catch((e: unknown) => e);
+    off();
+    expect((err as ApiError).status).toBe(status);
+    expect((err as ApiError).message).toBe(FRIENDLY);
+    expect(seen).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the hub's own JSON 503 message and does not trip the banner", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonRes(503, { message: "agent gateway timeout" })));
+    const seen = vi.fn();
+    const off = subscribeHubDown(seen);
+    const err = await apiFetch("/servers").catch((e: unknown) => e);
+    off();
+    expect((err as ApiError).message).toBe("agent gateway timeout");
+    expect(seen).not.toHaveBeenCalled();
+  });
+
+  it("leaves ordinary errors alone (404 keeps its status text)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonRes(404, { message: "nope" })));
+    const err = await apiFetch("/servers").catch((e: unknown) => e);
+    expect((err as ApiError).message).toBe("nope");
   });
 });

@@ -370,12 +370,15 @@ function SessionsCard() {
   const t = useT();
   const router = useRouter();
   const confirm = useConfirm();
-  const [busy, setBusy] = useState(false);
+  // useMutation: a failure is toasted by the global MutationCache and the button is always released.
+  const logout = useMutation({
+    mutationFn: () => api.logoutAll(),
+    onSuccess: () => router.replace("/login"),
+  });
+  const busy = logout.isPending;
   const logoutEverywhere = async () => {
     if (!(await confirm({ body: t("settings.logoutEverywhereConfirm"), danger: true }))) return;
-    setBusy(true);
-    await api.logoutAll();
-    router.replace("/login");
+    logout.mutate();
   };
   return (
     <Card style={{ padding: 18, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>

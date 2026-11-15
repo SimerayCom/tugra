@@ -5,7 +5,54 @@ import { useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "../lib/api";
 import { consumeSseStream } from "../lib/sse";
 
-export type UpdatePhase = "idle" | "starting" | "queued" | "pulling" | "recreating" | "done" | "failed" | "recovery_required";
+/** `reconnecting` is client-side only: the stream dropped (hub restarting) and we're polling the version. */
+export type UpdatePhase = "idle" | "starting" | "queued" | "pulling" | "recreating" | "reconnecting" | "done" | "failed" | "recovery_required";
+
+export type UpdateStepId = "queued" | "pulling" | "recreating" | "reconnecting";
+export type UpdateStepState = "pending" | "active" | "done" | "failed";
+export const UPDATE_STEP_IDS: readonly UpdateStepId[] = ["queued", "pulling", "recreating", "reconnecting"];
+
+/** The stepper step a working phase belongs to (`starting` is the pre-queue handshake, shown as step 1). */
+export function stepOfPhase(phase: UpdatePhase): UpdateStepId | null {
+  switch (phase) {
+    case "starting":
+    case "queued":
+      return "queued";
+    case "pulling":
+    case "recreating":
+    case "reconnecting":
+      return phase;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Pure phase → stepper mapping. Working phases: earlier steps done, the current one active, later ones
+ * pending. `done`: everything done. `failed`/`recovery_required`: steps before `failedStep` are done, that
+ * step is failed, the rest pending (`failedStep` defaults to the first step). `idle`: all pending.
+ */
+export function updateSteps(phase: UpdatePhase, failedStep: UpdateStepId | null = null): { id: UpdateStepId; state: UpdateStepState }[] {
+  const idx = (id: UpdateStepId) => UPDATE_STEP_IDS.indexOf(id);
+  return UPDATE_STEP_IDS.map((id) => {
+    if (phase === "done") return { id, state: "done" as const };
+    if (phase === "failed" || phase === "recovery_required") {
+      const f = idx(failedStep ?? "queued");
+      return { id, state: idx(id) < f ? ("done" as const) : idx(id) === f ? ("failed" as const) : ("pending" as const) };
+    }
+    const cur = stepOfPhase(phase);
+    if (!cur) return { id, state: "pending" as const };
+    return { id, state: idx(id) < idx(cur) ? ("done" as const) : idx(id) === idx(cur) ? ("active" as const) : ("pending" as const) };
+  });
+}
+
+/** mm:ss (minutes keep growing past 59 — an update never needs an hours field). */
+export function formatElapsed(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(total / 60);
+  const sec = total % 60;
+  return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+}
 
 const APPLY_MESSAGE: Record<string, string> = {
   "up-to-date": "settings.updateUpToDate",
@@ -33,7 +80,17 @@ export function useUpdateStream() {
   const [phase, setPhase] = useState<UpdatePhase>("idle");
   const [target, setTarget] = useState<string | null>(null);
   const [messageKey, setMessageKey] = useState<string>("");
+  const [failedStep, setFailedStep] = useState<UpdateStepId | null>(null);
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [endedAt, setEndedAt] = useState<number | null>(null);
   const abort = useRef<AbortController | null>(null);
+  // The last working step reached, so a failure can mark WHICH step failed.
+  const lastStep = useRef<UpdateStepId>("queued");
+  const finish = useCallback((p: UpdatePhase, failed?: boolean) => {
+    if (failed) setFailedStep(lastStep.current);
+    setPhase(p);
+    setEndedAt(Date.now());
+  }, []);
 
   const reconcile = useCallback(
     async (targetVersion: string | null): Promise<void> => {
@@ -41,7 +98,7 @@ export function useUpdateStream() {
         try {
           const st = await api.getInstanceUpdate();
           if (targetVersion && st.current === targetVersion) {
-            setPhase("done");
+            finish("done");
             qc.invalidateQueries({ queryKey: ["instanceUpdate"] });
             return;
           }
@@ -50,14 +107,18 @@ export function useUpdateStream() {
         }
         await sleep(3000);
       }
-      setPhase("failed");
+      finish("failed", true);
       setMessageKey("settings.updateFailed");
     },
-    [qc],
+    [qc, finish],
   );
 
   const start = useCallback(async () => {
     setMessageKey("");
+    setFailedStep(null);
+    setEndedAt(null);
+    setStartedAt(Date.now());
+    lastStep.current = "queued";
     setPhase("starting");
     let res: Awaited<ReturnType<typeof api.applyInstanceUpdate>>;
     try {
@@ -65,7 +126,7 @@ export function useUpdateStream() {
     } catch (e) {
       setPhase("idle");
       setMessageKey(e instanceof ApiError && e.status === 409 ? "settings.updateInProgress" : "settings.updateFailed");
-      if (!(e instanceof ApiError && e.status === 409)) setPhase("failed");
+      if (!(e instanceof ApiError && e.status === 409)) finish("failed", true);
       return;
     }
     setTarget(res.targetVersion);
@@ -77,6 +138,7 @@ export function useUpdateStream() {
 
     setPhase("queued");
     // Best-effort live progress. The stream is torn down when hub-api is recreated — that's expected.
+    let sawDone = false;
     let terminal: UpdatePhase | null = null; // failed OR recovery_required — a terminal non-success
     const ctrl = new AbortController();
     abort.current = ctrl;
@@ -92,6 +154,9 @@ export function useUpdateStream() {
             try {
               const p = JSON.parse(raw) as { phase?: UpdatePhase };
               if (p.phase === "failed" || p.phase === "recovery_required") terminal = p.phase;
+              if (p.phase === "done") sawDone = true;
+              const step = p.phase ? stepOfPhase(p.phase) : null;
+              if (step) lastStep.current = step;
               if (p.phase && p.phase !== "idle") setPhase(p.phase);
             } catch {
               /* ignore malformed frame */
@@ -113,13 +178,17 @@ export function useUpdateStream() {
     if (terminal) {
       // Don't reconcile a terminal failure as if it might still succeed. recovery_required keeps its own
       // message (the stack may be partly updated — manual recovery needed).
-      setPhase(terminal);
+      finish(terminal, true);
       setMessageKey(terminal === "recovery_required" ? "settings.updateRecoveryRequired" : "settings.updateFailed");
       return;
     }
     // Reconcile via the running version — survives the recreate the SSE couldn't.
+    if (!sawDone) {
+      lastStep.current = "reconnecting";
+      setPhase("reconnecting");
+    }
     await reconcile(res.targetVersion);
-  }, [reconcile]);
+  }, [reconcile, finish]);
 
-  return { phase, target, messageKey, start };
+  return { phase, target, messageKey, failedStep, startedAt, endedAt, start };
 }

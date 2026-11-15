@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "../../../lib/api";
 import { copyText } from "../../../lib/clipboard";
 import { useAuth } from "../../../lib/auth";
@@ -401,7 +401,6 @@ function WaitForServer({ t, serverId, onNext, onSkip }: { t: Tr; serverId: strin
   });
   const [waited, setWaited] = useState(0);
   const [copied, setCopied] = useState(false);
-  const [reissuing, setReissuing] = useState(false);
 
   useEffect(() => {
     const iv = setInterval(() => setWaited((w) => w + 5000), 5000);
@@ -422,15 +421,13 @@ function WaitForServer({ t, serverId, onNext, onSkip }: { t: Tr; serverId: strin
     }
   };
 
-  const reissue = async () => {
-    setReissuing(true);
-    try {
-      await api.reissueServerEnroll(serverId);
-    } finally {
-      setReissuing(false);
-      setWaited(0);
-    }
-  };
+  // useMutation: a failure is toasted by the global MutationCache and `isPending` is always released.
+  const reissueM = useMutation({
+    mutationFn: () => api.reissueServerEnroll(serverId),
+    onSuccess: () => setWaited(0),
+  });
+  const reissuing = reissueM.isPending;
+  const reissue = () => reissueM.mutate();
 
   if (online) {
     return (

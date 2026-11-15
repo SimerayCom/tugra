@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **"Update now" shows what it is doing.** Settings → Updates has a four-step progress view (queued, pulling,
+  recreating services, reconnecting and verifying the version) with an elapsed timer and the target version, and
+  a Reload button once it finishes. "Check for updates" and saving the update settings now confirm with a toast.
+- **No more raw "Failed to fetch" while the hub restarts.** A network failure or proxy 502/503/504 now reads
+  "Hub is restarting or unreachable", an amber banner watches for the hub to answer and refreshes the page data,
+  identical error toasts within two seconds show once, and the enroll-token re-issue and "Log out everywhere"
+  buttons report failures instead of hanging.
 - **Updates reach beta testers.** Signed update checks are now on by default (hourly and whenever the panel is
   opened; `--no-update-checks` or `TUGRA_UPDATE_CHECKS=0` opts out, `UPDATE_CHECK_INTERVAL_MIN` tunes the interval),
   the release channel follows the running build (a beta hub tracks beta, shown as "Automatic (Beta)" in Settings →

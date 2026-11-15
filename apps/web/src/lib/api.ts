@@ -1,3 +1,4 @@
+import { HUB_UNREACHABLE_CODE, hubUnreachableMessage, isHubDownStatus, isNetworkFailure, reportHubDown } from "./hub-connection";
 import type {
   AppMove,
   AppMovePhase,
@@ -306,10 +307,25 @@ export async function apiFetch<T>(
     if (csrf) headers.set("x-csrf-token", csrf);
   }
 
-  const res = await fetch(`${API_BASE}${path}`, { ...init, headers, credentials: "include" });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, { ...init, headers, credentials: "include" });
+  } catch (e) {
+    // Network failure / timeout abort: the hub is restarting or unreachable. Say that instead of a raw
+    // "Failed to fetch", and let the shell banner start watching for it to come back.
+    if (!isNetworkFailure(e, init.signal)) throw e;
+    reportHubDown();
+    throw new ApiError(0, hubUnreachableMessage(), HUB_UNREACHABLE_CODE);
+  }
 
   if (res.status === 401 && retry && (await tryRefresh())) {
     return apiFetch<T>(path, init, false);
+  }
+  if (isHubDownStatus(res.status) && !(res.headers.get("content-type") ?? "").includes("json")) {
+    // A proxy 502/503/504 (HTML/empty body) means the upstream hub is down, typically mid-restart. A JSON body
+    // is the hub's own deliberate error (e.g. an agent gateway timeout) and keeps its message.
+    reportHubDown();
+    throw new ApiError(res.status, hubUnreachableMessage(), HUB_UNREACHABLE_CODE);
   }
   if (!res.ok) {
     // HTTP/2 carries no reason phrase, so `res.statusText` is often "" (a 502 from the proxy while it restarts,

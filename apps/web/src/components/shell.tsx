@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
+import { subscribeHubDown } from "../lib/hub-connection";
 import type { InstanceUpdateNotice } from "../lib/types";
 import { useAuth } from "../lib/auth";
 import { DOCS_URL, SPONSOR_URL, whatsNewUrl } from "../lib/help-links";
@@ -12,7 +13,7 @@ import { navForMode, uiMode, isHomeAllowed } from "../lib/ui-mode";
 import { useT } from "../i18n/provider";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { nextThemeChoice, resolveThemeChoice, useAppearance, type ThemeChoice } from "../lib/appearance";
-import { Spinner, Btn } from "./ui";
+import { Spinner, ActivitySpinner, Btn } from "./ui";
 import { useToast } from "./toast";
 import { CommandPalette, type CommandDest } from "./command-palette";
 import { TeamScopeSelect } from "./team-scope";
@@ -684,6 +685,82 @@ function NoticeBanner() {
   );
 }
 
+/** First wait before pinging the hub again, and the cap the backoff grows to. */
+export const HUB_PING_BASE_MS = 3000;
+export const HUB_PING_MAX_MS = 15000;
+/** Backoff: 3s, 4.5s, 6.75s … capped at 15s, so a long outage doesn't hammer the proxy. */
+export function nextHubPingDelay(prev: number): number {
+  return Math.min(HUB_PING_MAX_MS, Math.round(prev * 1.5));
+}
+
+/**
+ * Amber, non-blocking strip above the header while the hub is restarting/unreachable. It appears when an API
+ * request hit that condition (apiFetch → reportHubDown), pings the public /instance/status (no auth) with
+ * backoff until it answers, then hides and refetches every query so stale/errored screens heal themselves.
+ */
+export function HubConnectionBanner() {
+  const t = useT();
+  const qc = useQueryClient();
+  const [down, setDown] = useState(false);
+  const [attempt, setAttempt] = useState(0); // bumping it restarts the ping loop ("Retry now")
+
+  useEffect(() => subscribeHubDown(() => setDown(true)), []);
+
+  useEffect(() => {
+    if (!down) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const ping = async (delay: number) => {
+      let alive = false;
+      try {
+        const res = await fetch("/api/v1/instance/status", { cache: "no-store" });
+        alive = res.ok;
+      } catch {
+        /* still down */
+      }
+      if (cancelled) return;
+      if (alive) {
+        setDown(false);
+        void qc.invalidateQueries();
+        return;
+      }
+      const next = nextHubPingDelay(delay);
+      timer = setTimeout(() => void ping(next), next);
+    };
+    // "Retry now" (attempt > 0) pings immediately; the first detection waits one base interval.
+    const first = attempt === 0 ? HUB_PING_BASE_MS : 0;
+    timer = setTimeout(() => void ping(HUB_PING_BASE_MS), first);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [down, attempt, qc]);
+
+  if (!down) return null;
+  return (
+    <div
+      role="status"
+      data-testid="hub-connection-banner"
+      style={{
+        flexShrink: 0,
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        flexWrap: "wrap",
+        padding: "8px 18px",
+        background: "color-mix(in srgb, var(--c-am) 16%, var(--c-bg))",
+        borderBottom: "1px solid var(--c-am)",
+        color: "var(--c-tx)",
+        fontSize: 13,
+      }}
+    >
+      <ActivitySpinner size={14} />
+      <span style={{ flex: 1, minWidth: 0 }}>{t("errors.hubBannerTitle")}</span>
+      <Btn variant="ghost" onClick={() => setAttempt((a) => a + 1)}>{t("errors.hubBannerRetry")}</Btn>
+    </div>
+  );
+}
+
 export function AppShell({ children }: { children: ReactNode }) {
   const [palette, setPalette] = useState(false);
   const [drawer, setDrawer] = useState(false);
@@ -714,6 +791,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <div onClick={() => setDrawer(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", zIndex: 55 }} />
       )}
       <div className="tg-content" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <HubConnectionBanner />
         <TopHeader onMenu={() => setDrawer(true)} showMenu={isMobile} />
         <VerifyBanner />
         <NoticeBanner />

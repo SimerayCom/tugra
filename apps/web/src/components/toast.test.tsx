@@ -78,4 +78,36 @@ describe("ToastProvider auto-dismiss, pause and actions", () => {
     expect(onClick).toHaveBeenCalledOnce();
     expect(screen.queryByText("Deleted")).toBeNull();
   });
+
+  it("de-duplicates an identical message+type within 2s and extends the one toast's lifetime", () => {
+    wrap(<div />);
+    act(() => emitToast("Boom", "error"));
+    act(() => vi.advanceTimersByTime(1500));
+    act(() => emitToast("Boom", "error")); // the local onError twin of the global MutationCache toast
+    expect(screen.getAllByText("Boom")).toHaveLength(1);
+    act(() => vi.advanceTimersByTime(9000)); // past the original 10s expiry (1.5s + 9s) — the timer was extended
+    expect(screen.getByText("Boom")).toBeTruthy();
+    act(() => vi.advanceTimersByTime(1500));
+    expect(screen.queryByText("Boom")).toBeNull();
+  });
+
+  it("does not de-duplicate after the 2s window, across types, or different messages", () => {
+    wrap(<div />);
+    act(() => emitToast("Same", "error"));
+    act(() => emitToast("Same", "success")); // different type
+    act(() => emitToast("Other", "error")); // different message
+    expect(screen.getAllByText("Same")).toHaveLength(2);
+    expect(screen.getAllByText("Other")).toHaveLength(1);
+    act(() => vi.advanceTimersByTime(2500));
+    act(() => emitToast("Same", "error")); // window elapsed → a fresh toast
+    expect(screen.getAllByText("Same")).toHaveLength(3);
+  });
+
+  it("never merges toasts that carry an action (Undo)", () => {
+    wrap(<div />);
+    const action = { label: "Undo", onClick: () => {} };
+    act(() => emitToast("Deleted", "info", { action }));
+    act(() => emitToast("Deleted", "info", { action }));
+    expect(screen.getAllByText("Deleted")).toHaveLength(2);
+  });
 });

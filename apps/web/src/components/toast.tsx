@@ -24,6 +24,9 @@ const ICON: Record<ToastType, LucideIcon> = {
   info: Info,
 };
 // Errors linger (easy to miss a flash); success/info clear quickly. Hover/focus pauses either (below).
+// An identical message+type arriving within this window of the previous one is the same event reported twice
+// (the global MutationCache.onError plus a local onError) — show it once and extend its timer instead.
+const DEDUPE_MS = 2000;
 const TTL: Record<ToastType, number> = {
   error: 10000,
   success: 4000,
@@ -48,6 +51,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const remaining = useRef(new Map<number, number>());
   const startAt = useRef(new Map<number, number>());
   const paused = useRef(false);
+  // Last emission per message+type → the toast id showing it and when it last arrived (for de-duplication).
+  const recent = useRef(new Map<string, { id: number; at: number }>());
 
   const dismiss = useCallback((id: number) => {
     const h = timers.current.get(id);
@@ -55,6 +60,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     timers.current.delete(id);
     remaining.current.delete(id);
     startAt.current.delete(id);
+    for (const [k, v] of recent.current) if (v.id === id) recent.current.delete(k);
     setToasts((ts) => ts.filter((x) => x.id !== id));
   }, []);
 
@@ -91,7 +97,21 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     return subscribeToast(({ message, type, action, durationMs }) => {
+      const now = Date.now();
+      const key = `${type}\u0000${message}`;
+      const prev = action ? undefined : recent.current.get(key);
+      if (prev && now - prev.at < DEDUPE_MS && remaining.current.has(prev.id)) {
+        // Duplicate: keep the one toast, refresh its lifetime (and the window) rather than stacking another.
+        prev.at = now;
+        remaining.current.set(prev.id, durationMs ?? TTL[type]);
+        const h = timers.current.get(prev.id);
+        if (h) clearTimeout(h);
+        timers.current.delete(prev.id);
+        if (!paused.current) startTimer(prev.id);
+        return;
+      }
       const id = ++seq.current;
+      if (!action) recent.current.set(key, { id, at: now });
       setToasts((ts) => [...ts, { id, message, type, action }]);
       remaining.current.set(id, durationMs ?? TTL[type]);
       // A toast arriving while the stack is hovered/focused waits (banked), so it isn't missed.

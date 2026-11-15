@@ -4,5 +4,8 @@
   "backHome": "Back to dashboard",
   "errorTitle": "Something went wrong",
   "errorDesc": "An unexpected error occurred while loading this page.",
-  "retry": "Try again"
+  "retry": "Try again",
+  "hubUnreachable": "Hub is restarting or unreachable — retrying…",
+  "hubBannerTitle": "Can't reach the Tugra hub — it may be restarting. Reconnecting automatically…",
+  "hubBannerRetry": "Retry now"
 }
