@@ -11847,7 +11847,7 @@ export interface operations {
                         imageUpdate: {
                             enabled: boolean;
                             /** @enum {string} */
-                            state: "disabled" | "pinned" | "no_baseline" | "pending" | "up_to_date" | "update_available" | "error";
+                            state: "disabled" | "pinned" | "unsupported" | "no_baseline" | "pending" | "up_to_date" | "update_available" | "error";
                             updateAvailable: boolean;
                             checkedAt: string | null;
                             changedAt: string | null;
@@ -12061,6 +12061,7 @@ export interface operations {
                         volumeBackupDestinationId: string | null;
                         envCount: number;
                         canWrite: boolean;
+                        canDeploy: boolean;
                         /** Format: date-time */
                         iconUpdatedAt: string | null;
                         /** Format: date-time */
@@ -12195,7 +12196,7 @@ export interface operations {
                         imageUpdate: {
                             enabled: boolean;
                             /** @enum {string} */
-                            state: "disabled" | "pinned" | "no_baseline" | "pending" | "up_to_date" | "update_available" | "error";
+                            state: "disabled" | "pinned" | "unsupported" | "no_baseline" | "pending" | "up_to_date" | "update_available" | "error";
                             updateAvailable: boolean;
                             checkedAt: string | null;
                             changedAt: string | null;
@@ -12409,6 +12410,7 @@ export interface operations {
                         volumeBackupDestinationId: string | null;
                         envCount: number;
                         canWrite: boolean;
+                        canDeploy: boolean;
                         /** Format: date-time */
                         iconUpdatedAt: string | null;
                         /** Format: date-time */
@@ -12646,7 +12648,7 @@ export interface operations {
                         imageUpdate: {
                             enabled: boolean;
                             /** @enum {string} */
-                            state: "disabled" | "pinned" | "no_baseline" | "pending" | "up_to_date" | "update_available" | "error";
+                            state: "disabled" | "pinned" | "unsupported" | "no_baseline" | "pending" | "up_to_date" | "update_available" | "error";
                             updateAvailable: boolean;
                             checkedAt: string | null;
                             changedAt: string | null;
@@ -12860,6 +12862,7 @@ export interface operations {
                         volumeBackupDestinationId: string | null;
                         envCount: number;
                         canWrite: boolean;
+                        canDeploy: boolean;
                         /** Format: date-time */
                         iconUpdatedAt: string | null;
                         /** Format: date-time */
@@ -13052,7 +13055,7 @@ export interface operations {
                         imageUpdate: {
                             enabled: boolean;
                             /** @enum {string} */
-                            state: "disabled" | "pinned" | "no_baseline" | "pending" | "up_to_date" | "update_available" | "error";
+                            state: "disabled" | "pinned" | "unsupported" | "no_baseline" | "pending" | "up_to_date" | "update_available" | "error";
                             updateAvailable: boolean;
                             checkedAt: string | null;
                             changedAt: string | null;
@@ -13266,6 +13269,7 @@ export interface operations {
                         volumeBackupDestinationId: string | null;
                         envCount: number;
                         canWrite: boolean;
+                        canDeploy: boolean;
                         /** Format: date-time */
                         iconUpdatedAt: string | null;
                         /** Format: date-time */
@@ -16507,7 +16511,7 @@ export interface operations {
                         imageUpdate: {
                             enabled: boolean;
                             /** @enum {string} */
-                            state: "disabled" | "pinned" | "no_baseline" | "pending" | "up_to_date" | "update_available" | "error";
+                            state: "disabled" | "pinned" | "unsupported" | "no_baseline" | "pending" | "up_to_date" | "update_available" | "error";
                             updateAvailable: boolean;
                             checkedAt: string | null;
                             changedAt: string | null;
@@ -19238,7 +19242,7 @@ export interface operations {
                             imageUpdate: {
                                 enabled: boolean;
                                 /** @enum {string} */
-                                state: "disabled" | "pinned" | "no_baseline" | "pending" | "up_to_date" | "update_available" | "error";
+                                state: "disabled" | "pinned" | "unsupported" | "no_baseline" | "pending" | "up_to_date" | "update_available" | "error";
                                 updateAvailable: boolean;
                                 checkedAt: string | null;
                                 changedAt: string | null;
@@ -19452,6 +19456,7 @@ export interface operations {
                             volumeBackupDestinationId: string | null;
                             envCount: number;
                             canWrite: boolean;
+                            canDeploy: boolean;
                             /** Format: date-time */
                             iconUpdatedAt: string | null;
                             /** Format: date-time */
@@ -19573,7 +19578,7 @@ export interface operations {
                         imageUpdate: {
                             enabled: boolean;
                             /** @enum {string} */
-                            state: "disabled" | "pinned" | "no_baseline" | "pending" | "up_to_date" | "update_available" | "error";
+                            state: "disabled" | "pinned" | "unsupported" | "no_baseline" | "pending" | "up_to_date" | "update_available" | "error";
                             updateAvailable: boolean;
                             checkedAt: string | null;
                             changedAt: string | null;
@@ -19787,6 +19792,7 @@ export interface operations {
                         volumeBackupDestinationId: string | null;
                         envCount: number;
                         canWrite: boolean;
+                        canDeploy: boolean;
                         /** Format: date-time */
                         iconUpdatedAt: string | null;
                         /** Format: date-time */
@@ -19977,7 +19983,7 @@ export interface operations {
                         imageUpdate: {
                             enabled: boolean;
                             /** @enum {string} */
-                            state: "disabled" | "pinned" | "no_baseline" | "pending" | "up_to_date" | "update_available" | "error";
+                            state: "disabled" | "pinned" | "unsupported" | "no_baseline" | "pending" | "up_to_date" | "update_available" | "error";
                             updateAvailable: boolean;
                             checkedAt: string | null;
                             changedAt: string | null;
@@ -20191,6 +20197,7 @@ export interface operations {
                         volumeBackupDestinationId: string | null;
                         envCount: number;
                         canWrite: boolean;
+                        canDeploy: boolean;
                         /** Format: date-time */
                         iconUpdatedAt: string | null;
                         /** Format: date-time */
@@ -20439,7 +20446,7 @@ export interface operations {
                         imageUpdate: {
                             enabled: boolean;
                             /** @enum {string} */
-                            state: "disabled" | "pinned" | "no_baseline" | "pending" | "up_to_date" | "update_available" | "error";
+                            state: "disabled" | "pinned" | "unsupported" | "no_baseline" | "pending" | "up_to_date" | "update_available" | "error";
                             updateAvailable: boolean;
                             checkedAt: string | null;
                             changedAt: string | null;
@@ -20653,6 +20660,7 @@ export interface operations {
                         volumeBackupDestinationId: string | null;
                         envCount: number;
                         canWrite: boolean;
+                        canDeploy: boolean;
                         /** Format: date-time */
                         iconUpdatedAt: string | null;
                         /** Format: date-time */
@@ -21722,7 +21730,7 @@ export interface operations {
                         imageUpdate: {
                             enabled: boolean;
                             /** @enum {string} */
-                            state: "disabled" | "pinned" | "no_baseline" | "pending" | "up_to_date" | "update_available" | "error";
+                            state: "disabled" | "pinned" | "unsupported" | "no_baseline" | "pending" | "up_to_date" | "update_available" | "error";
                             updateAvailable: boolean;
                             checkedAt: string | null;
                             changedAt: string | null;
@@ -21936,6 +21944,7 @@ export interface operations {
                         volumeBackupDestinationId: string | null;
                         envCount: number;
                         canWrite: boolean;
+                        canDeploy: boolean;
                         /** Format: date-time */
                         iconUpdatedAt: string | null;
                         /** Format: date-time */

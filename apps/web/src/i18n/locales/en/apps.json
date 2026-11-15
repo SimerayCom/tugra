@@ -901,6 +901,7 @@
   "iuStatePending": "Not checked yet",
   "iuStateNoBaseline": "Redeploy once so Tugra can record this image's digest",
   "iuStatePinned": "Pinned to a digest — nothing to update",
+  "iuStateUnsupported": "This image reference can't be checked for updates",
   "iuStateDisabled": "Update checks are off",
   "iuStateError": "Last check failed: {reason}",
   "iuErr_auth": "the registry rejected the credentials",

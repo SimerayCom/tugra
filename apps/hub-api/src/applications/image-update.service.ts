@@ -14,9 +14,9 @@ import {
   computeImageUpdateView,
   isCheckableRef,
   isImageCheckSubject,
+  liveBaselineDigest,
   loadLiveImageMany,
-  parseRecordedDigest,
-  refRepoKey,
+  parseImageRef,
   type ImageUpdateView,
   type LiveImage,
 } from "./image-update";
@@ -199,8 +199,8 @@ export class ImageUpdateService {
   /** Is this app due for a probe now? */
   private isDue(app: ImageCheckCandidate, live: LiveImage | undefined, intervalMin: number, now: number): boolean {
     if (!app.image || !isCheckableRef(app.image)) return false;
-    const rec = live ? parseRecordedDigest(live.digest) : null;
-    if (!live || !rec || rec.repoKey !== refRepoKey(app.image)) return false; // no baseline: nothing to compare against
+    const ref = parseImageRef(app.image)!;
+    if (!live || !liveBaselineDigest(ref, live)) return false; // no baseline (or the tag was edited since the deploy): nothing to compare against
     const checkedAt = app.imageUpstreamCheckedAt;
     if (!checkedAt) return true;
     if (checkedAt.getTime() < live.finishedAt.getTime()) return true; // deployed / rolled back since the last probe
@@ -223,13 +223,12 @@ export class ImageUpdateService {
     const view = async (): Promise<{ imageUpdate: ImageUpdateView }> => {
       const fresh = await this.prisma.application.findUnique({ where: { id: app.id } });
       const live = (await loadLiveImageMany(this.prisma, [app.id])).get(app.id);
-      return { imageUpdate: computeImageUpdateView(fresh ?? app, live, canWrite) ?? this.fallbackView(app) };
+      return { imageUpdate: computeImageUpdateView(fresh ?? app, live, canWrite, this.intervalMin() === 0) ?? this.fallbackView(app) };
     };
 
     const live = (await loadLiveImageMany(this.prisma, [app.id])).get(app.id);
-    const rec = live ? parseRecordedDigest(live.digest) : null;
-    // Nothing recorded to compare against (or the repo changed): a probe could not produce a verdict anyway.
-    if (!live || !rec || rec.repoKey !== refRepoKey(app.image!)) return view();
+    // Nothing recorded to compare against (or the repo/tag changed since the deploy): a probe could not produce a verdict anyway.
+    if (!live || !liveBaselineDigest(parseImageRef(app.image!)!, live)) return view();
     const recent = app.imageUpstreamCheckedAt && Date.now() - app.imageUpstreamCheckedAt.getTime() < MANUAL_THROTTLE_MS;
     if (recent && app.imageUpstreamCheckedAt!.getTime() >= live.finishedAt.getTime()) return view(); // cached
 

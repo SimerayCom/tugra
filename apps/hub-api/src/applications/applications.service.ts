@@ -339,6 +339,7 @@ export const AppViewSchema = z.object({
   volumeBackupDestinationId: z.string().nullable(),
   envCount: z.number(),
   canWrite: z.boolean(),
+  canDeploy: z.boolean(), // apps:deploy — the viewer may trigger deploys / run the image-update check (gates those UI actions)
   // Set when the app has a user-uploaded custom icon; also cache-busts the GET /apps/:id/icon URL. Null
   // means "no custom icon" (fall back to the template/source logo). Bytes are never carried in this view.
   iconUpdatedAt: z.date().nullable(),
@@ -5355,7 +5356,7 @@ export class ApplicationsService {
       baseDirectory: app.baseDirectory,
       watchPaths: app.watchPaths ?? [],
       autoDeploy: app.autoDeploy ?? true,
-      imageUpdate: computeImageUpdateView(app, extras?.imageLive, canWrite),
+      imageUpdate: computeImageUpdateView(app, extras?.imageLive, canWrite, this.imageUpdate.intervalMin() === 0),
       outputDir: app.outputDir,
       composeFile: canWrite ? app.composeFile : null,
       composePath: app.composePath,
@@ -5495,6 +5496,7 @@ export class ApplicationsService {
       volumeBackupDestinationId: app.volumeBackupDestinationId,
       envCount: Object.keys(this.appEnv(app)).length,
       canWrite,
+      canDeploy,
       createdAt: app.createdAt,
     };
   }

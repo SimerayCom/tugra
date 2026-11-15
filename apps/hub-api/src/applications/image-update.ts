@@ -11,7 +11,7 @@ import type { PrismaService } from "../prisma/prisma.service";
 export const IMAGE_CHECK_ERRORS = ["auth", "notfound", "unsupported", "timeout", "failed"] as const;
 export type ImageCheckError = (typeof IMAGE_CHECK_ERRORS)[number];
 
-export const IMAGE_UPDATE_STATES = ["disabled", "pinned", "no_baseline", "pending", "up_to_date", "update_available", "error"] as const;
+export const IMAGE_UPDATE_STATES = ["disabled", "pinned", "unsupported", "no_baseline", "pending", "up_to_date", "update_available", "error"] as const;
 
 export const ImageUpdateViewSchema = z.object({
   enabled: z.boolean(),
@@ -29,7 +29,7 @@ export const ImageUpdateCheckResultSchema = z.object({ imageUpdate: ImageUpdateV
 
 /** Strict allow-list for a ref that will reach a shell (even though every use is shq()-quoted): no whitespace,
  *  quotes, `$`, backticks, `;`, a leading `-`, or more than 255 chars. */
-const SAFE_REF = /^[a-z0-9][a-zA-Z0-9._/:@-]{0,254}$/;
+const SAFE_REF = /^[a-zA-Z0-9][a-zA-Z0-9._/:@-]{0,254}$/;
 const DIGEST_SUFFIX = /^(.*)@(sha256:[0-9a-f]{64})$/;
 const HOST_RE = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]{1,5})?$/;
 const REPO_PART_RE = /^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*$/;
@@ -58,7 +58,7 @@ export function parseImageRef(ref: string): ParsedImageRef | null {
   if (segs.some((p) => p === "")) return null;
   let host = "docker.io";
   if (segs.length > 1 && (segs[0]!.includes(".") || segs[0]!.includes(":") || segs[0] === "localhost")) {
-    host = segs.shift()!;
+    host = segs.shift()!.toLowerCase(); // DNS names are case-insensitive (Docker allows an uppercase domain)
     if (!HOST_RE.test(host)) return null;
   }
   // The tag is the text after the last ":" of the LAST path component only (a ":" earlier is a host port).
@@ -112,6 +112,24 @@ export function liveFinishedAt(row: { startedAt: Date | null; createdAt: Date; d
 export interface LiveImage {
   digest: string | null;
   finishedAt: Date;
+  /** The image ref the live deploy ran with (its config snapshot); null for legacy rows that never recorded it. */
+  image?: string | null;
+}
+
+/**
+ * The digest the live deploy recorded for `configured`, or null when there is no usable baseline: nothing recorded,
+ * a different repo, or (when the deploy recorded its ref) a different TAG. Editing `nginx:1.25` to `nginx:1.27`
+ * therefore has no baseline until the next deploy, instead of comparing the new tag's upstream against the old
+ * tag's digest. Legacy rows without a recorded ref keep the repo-only comparison.
+ */
+export function liveBaselineDigest(configured: ParsedImageRef, live: LiveImage | null | undefined): string | null {
+  const rec = live ? parseRecordedDigest(live.digest) : null;
+  if (!live || !rec || rec.repoKey !== repoKey(configured.host, configured.repo)) return null;
+  if (live.image) {
+    const deployed = parseImageRef(live.image);
+    if (deployed && (deployed.digest !== null || repoKey(deployed.host, deployed.repo) !== rec.repoKey || deployed.tag !== configured.tag)) return null;
+  }
+  return rec.digest;
 }
 
 type ViewApp = Pick<
@@ -136,7 +154,7 @@ export function isImageCheckSubject(app: Pick<Application, "source" | "isPreview
 
 /** Decision order: first match wins. null = the feature does not apply to this app. Never yields
  *  `update_available` from a null, stale, mismatched or failed probe. */
-export function computeImageUpdateView(app: ViewApp, live: LiveImage | null | undefined, canWrite: boolean): ImageUpdateView | null {
+export function computeImageUpdateView(app: ViewApp, live: LiveImage | null | undefined, canWrite: boolean, operatorOff = false): ImageUpdateView | null {
   if (!isImageCheckSubject(app)) return null;
   const checkedAt = iso(app.imageUpstreamCheckedAt);
   const changedAt = iso(app.imageUpstreamChangedAt);
@@ -150,12 +168,12 @@ export function computeImageUpdateView(app: ViewApp, live: LiveImage | null | un
     upstreamDigest: canWrite ? app.imageUpstreamDigest : null,
     deployedDigest: canWrite ? (extra.deployed ?? null) : null,
   });
-  if (!app.imageUpdateCheck) return mk("disabled");
+  if (!app.imageUpdateCheck || operatorOff) return mk("disabled"); // per-app opt-out, or the operator kill switch (no probe will ever run)
   const ref = parseImageRef(app.image!);
-  if (!ref || ref.digest !== null) return mk("pinned");
-  const rec = live ? parseRecordedDigest(live.digest) : null;
-  if (!live || !rec || rec.repoKey !== repoKey(ref.host, ref.repo)) return mk("no_baseline");
-  const deployed = rec.digest;
+  if (!ref) return mk("unsupported"); // not a reference we can parse — never claimed to be "pinned"
+  if (ref.digest !== null) return mk("pinned");
+  const deployed = liveBaselineDigest(ref, live);
+  if (!live || !deployed) return mk("no_baseline");
   if (!app.imageUpstreamCheckedAt) return mk("pending", { deployed });
   if (app.imageUpstreamCheckedAt.getTime() < live.finishedAt.getTime()) return mk("pending", { deployed }); // post-deploy/rollback staleness guard
   if (app.imageCheckError) {
@@ -175,7 +193,7 @@ export async function loadLiveImageMany(prisma: Pick<PrismaService, "$queryRaw">
   const out = new Map<string, LiveImage>();
   if (!appIds.length) return out;
   const rows: unknown = await prisma.$queryRaw(Prisma.sql`
-    SELECT DISTINCT ON ("appId") "appId", "imageDigest", "createdAt", "startedAt", "durationMs"
+    SELECT DISTINCT ON ("appId") "appId", "imageDigest", "createdAt", "startedAt", "durationMs", "configSnapshot"->>'image' AS "image"
     FROM "Deployment"
     WHERE "appId" = ANY(${appIds}::text[]) AND "status" = 'SUCCESS' AND "kind" IN ('DEPLOY', 'ROLLBACK')
     ORDER BY "appId", "createdAt" DESC`);
@@ -189,6 +207,7 @@ export async function loadLiveImageMany(prisma: Pick<PrismaService, "$queryRaw">
     out.set(r.appId, {
       digest: typeof r.imageDigest === "string" ? r.imageDigest : null,
       finishedAt: liveFinishedAt({ startedAt, createdAt, durationMs }),
+      ...(typeof r.image === "string" && r.image ? { image: r.image } : {}),
     });
   }
   return out;

@@ -148,6 +148,12 @@ describe("ImageUpdateService.runTick — due-gating", () => {
     expect(await probes({ imageCheckFailures: 3, imageUpstreamCheckedAt: new Date(Date.now() - 25 * HOUR) })).toBe(1);
     expect(await probes({ imageCheckFailures: 2, imageUpstreamCheckedAt: new Date(Date.now() - 7 * HOUR) })).toBe(1);
   });
+  it("an app whose tag was edited since the live deploy has no baseline and is not probed", async () => {
+    const { svc, send, prisma } = make({ apps: [cand({ image: "nginx:1.27" })] });
+    (prisma.$queryRaw as jest.Mock).mockResolvedValue([{ ...liveRow("a1", `nginx@${D("a")}`), image: "nginx:1.25" }]);
+    await svc.runTick();
+    expect(send).not.toHaveBeenCalled();
+  });
   it("an app with no baseline (no live digest / repo mismatch) is not probed", async () => {
     expect(await probes({}, { a1: null })).toBe(0);
     expect(await probes({}, { a1: `redis@${D("a")}` })).toBe(0);

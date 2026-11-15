@@ -502,7 +502,7 @@ export default function AppDetailPage() {
             <>
               <AppOverview app={appData} deployments={deployments} />
               {appData.imageUpdate && (
-                <ImageUpdateCard app={appData} canWrite={appData.canWrite} canDeploy={appData.canWrite} onRedeploy={() => onDeploy({ noCache: true })} />
+                <ImageUpdateCard app={appData} canWrite={appData.canWrite} canDeploy={appData.canDeploy} onRedeploy={() => onDeploy({ noCache: true })} />
               )}
             </>
           );

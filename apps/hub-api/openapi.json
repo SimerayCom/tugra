@@ -11213,6 +11213,7 @@
                             "enum": [
                               "disabled",
                               "pinned",
+                              "unsupported",
                               "no_baseline",
                               "pending",
                               "up_to_date",
@@ -12094,6 +12095,9 @@
                       "canWrite": {
                         "type": "boolean"
                       },
+                      "canDeploy": {
+                        "type": "boolean"
+                      },
                       "iconUpdatedAt": {
                         "type": "string",
                         "format": "date-time",
@@ -12246,6 +12250,7 @@
                       "volumeBackupDestinationId",
                       "envCount",
                       "canWrite",
+                      "canDeploy",
                       "iconUpdatedAt",
                       "createdAt"
                     ],
@@ -12600,6 +12605,7 @@
                           "enum": [
                             "disabled",
                             "pinned",
+                            "unsupported",
                             "no_baseline",
                             "pending",
                             "up_to_date",
@@ -13481,6 +13487,9 @@
                     "canWrite": {
                       "type": "boolean"
                     },
+                    "canDeploy": {
+                      "type": "boolean"
+                    },
                     "iconUpdatedAt": {
                       "type": "string",
                       "format": "date-time",
@@ -13633,6 +13642,7 @@
                     "volumeBackupDestinationId",
                     "envCount",
                     "canWrite",
+                    "canDeploy",
                     "iconUpdatedAt",
                     "createdAt"
                   ],
@@ -14033,6 +14043,7 @@
                           "enum": [
                             "disabled",
                             "pinned",
+                            "unsupported",
                             "no_baseline",
                             "pending",
                             "up_to_date",
@@ -14914,6 +14925,9 @@
                     "canWrite": {
                       "type": "boolean"
                     },
+                    "canDeploy": {
+                      "type": "boolean"
+                    },
                     "iconUpdatedAt": {
                       "type": "string",
                       "format": "date-time",
@@ -15066,6 +15080,7 @@
                     "volumeBackupDestinationId",
                     "envCount",
                     "canWrite",
+                    "canDeploy",
                     "iconUpdatedAt",
                     "createdAt"
                   ],
@@ -15470,6 +15485,7 @@
                           "enum": [
                             "disabled",
                             "pinned",
+                            "unsupported",
                             "no_baseline",
                             "pending",
                             "up_to_date",
@@ -16351,6 +16367,9 @@
                     "canWrite": {
                       "type": "boolean"
                     },
+                    "canDeploy": {
+                      "type": "boolean"
+                    },
                     "iconUpdatedAt": {
                       "type": "string",
                       "format": "date-time",
@@ -16503,6 +16522,7 @@
                     "volumeBackupDestinationId",
                     "envCount",
                     "canWrite",
+                    "canDeploy",
                     "iconUpdatedAt",
                     "createdAt"
                   ],
@@ -21352,6 +21372,7 @@
                           "enum": [
                             "disabled",
                             "pinned",
+                            "unsupported",
                             "no_baseline",
                             "pending",
                             "up_to_date",
@@ -25647,6 +25668,7 @@
                               "enum": [
                                 "disabled",
                                 "pinned",
+                                "unsupported",
                                 "no_baseline",
                                 "pending",
                                 "up_to_date",
@@ -26528,6 +26550,9 @@
                         "canWrite": {
                           "type": "boolean"
                         },
+                        "canDeploy": {
+                          "type": "boolean"
+                        },
                         "iconUpdatedAt": {
                           "type": "string",
                           "format": "date-time",
@@ -26680,6 +26705,7 @@
                         "volumeBackupDestinationId",
                         "envCount",
                         "canWrite",
+                        "canDeploy",
                         "iconUpdatedAt",
                         "createdAt"
                       ],
@@ -26943,6 +26969,7 @@
                           "enum": [
                             "disabled",
                             "pinned",
+                            "unsupported",
                             "no_baseline",
                             "pending",
                             "up_to_date",
@@ -27824,6 +27851,9 @@
                     "canWrite": {
                       "type": "boolean"
                     },
+                    "canDeploy": {
+                      "type": "boolean"
+                    },
                     "iconUpdatedAt": {
                       "type": "string",
                       "format": "date-time",
@@ -27976,6 +28006,7 @@
                     "volumeBackupDestinationId",
                     "envCount",
                     "canWrite",
+                    "canDeploy",
                     "iconUpdatedAt",
                     "createdAt"
                   ],
@@ -28309,6 +28340,7 @@
                             "enum": [
                               "disabled",
                               "pinned",
+                              "unsupported",
                               "no_baseline",
                               "pending",
                               "up_to_date",
@@ -29190,6 +29222,9 @@
                       "canWrite": {
                         "type": "boolean"
                       },
+                      "canDeploy": {
+                        "type": "boolean"
+                      },
                       "iconUpdatedAt": {
                         "type": "string",
                         "format": "date-time",
@@ -29342,6 +29377,7 @@
                       "volumeBackupDestinationId",
                       "envCount",
                       "canWrite",
+                      "canDeploy",
                       "iconUpdatedAt",
                       "createdAt"
                     ],
@@ -29760,6 +29796,7 @@
                           "enum": [
                             "disabled",
                             "pinned",
+                            "unsupported",
                             "no_baseline",
                             "pending",
                             "up_to_date",
@@ -30641,6 +30678,9 @@
                     "canWrite": {
                       "type": "boolean"
                     },
+                    "canDeploy": {
+                      "type": "boolean"
+                    },
                     "iconUpdatedAt": {
                       "type": "string",
                       "format": "date-time",
@@ -30793,6 +30833,7 @@
                     "volumeBackupDestinationId",
                     "envCount",
                     "canWrite",
+                    "canDeploy",
                     "iconUpdatedAt",
                     "createdAt"
                   ],
@@ -32454,6 +32495,7 @@
                           "enum": [
                             "disabled",
                             "pinned",
+                            "unsupported",
                             "no_baseline",
                             "pending",
                             "up_to_date",
@@ -33335,6 +33377,9 @@
                     "canWrite": {
                       "type": "boolean"
                     },
+                    "canDeploy": {
+                      "type": "boolean"
+                    },
                     "iconUpdatedAt": {
                       "type": "string",
                       "format": "date-time",
@@ -33487,6 +33532,7 @@
                     "volumeBackupDestinationId",
                     "envCount",
                     "canWrite",
+                    "canDeploy",
                     "iconUpdatedAt",
                     "createdAt"
                   ],

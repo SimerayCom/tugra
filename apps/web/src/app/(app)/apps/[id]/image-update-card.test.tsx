@@ -43,6 +43,7 @@ describe("ImageUpdateCard — states", () => {
     [{ state: "pending", checkedAt: null }, "Not checked yet"],
     [{ state: "no_baseline", checkedAt: null }, "Redeploy once so Tugra can record this image's digest"],
     [{ state: "pinned" }, "Pinned to a digest — nothing to update"],
+    [{ state: "unsupported" }, "This image reference can't be checked for updates"],
     [{ state: "disabled", enabled: false }, "Update checks are off"],
     [{ state: "error", error: "auth" }, "Last check failed: the registry rejected the credentials"],
   ];
@@ -112,7 +113,7 @@ describe("ImageUpdateCard — permissions", () => {
     show(app(iu({ state: "up_to_date" })));
     expect(screen.getByRole("button", { name: "Check now" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Pull/ })).toBeNull();
-    for (const state of ["disabled", "pinned", "no_baseline"] as const) {
+    for (const state of ["disabled", "pinned", "unsupported", "no_baseline"] as const) {
       cleanup();
       show(app(iu({ state })));
       expect(screen.queryByRole("button", { name: "Check now" })).toBeNull();

@@ -38,6 +38,13 @@ describe("parseImageRef", () => {
     }
     expect(parseImageRef("a".repeat(255))).not.toBeNull();
   });
+  it("accepts an uppercase registry host (normalised to lowercase) but still rejects uppercase repo paths", () => {
+    expect(parseImageRef("GHCR.io/org/app:1")).toEqual({ host: "ghcr.io", repo: "org/app", tag: "1", digest: null });
+    expect(parseImageRef("Registry.Example.com:5000/app")).toMatchObject({ host: "registry.example.com:5000", repo: "app" });
+    expect(parseImageRef("Docker.IO/library/nginx")).toMatchObject({ host: "docker.io", repo: "library/nginx" });
+    expect(parseImageRef("Org/App")).toBeNull();
+    expect(isCheckableRef("GHCR.io/org/app:1")).toBe(true);
+  });
   it("isCheckableRef excludes digest-pinned refs", () => {
     expect(isCheckableRef("nginx")).toBe(true);
     expect(isCheckableRef(`nginx@${D("a")}`)).toBe(false);
@@ -82,7 +89,7 @@ describe("computeImageUpdateView", () => {
     imageCheckError: null as string | null,
     ...over,
   });
-  const live = (digest: string | null = `nginx@${D("a")}`, at = finished) => ({ digest, finishedAt: at });
+  const live = (digest: string | null = `nginx@${D("a")}`, at = finished): { digest: string | null; finishedAt: Date; image?: string | null } => ({ digest, finishedAt: at });
   const view = (a: ReturnType<typeof app>, l: ReturnType<typeof live> | null | undefined = live(), w = true) => computeImageUpdateView(a, l, w);
 
   it("is null for GIT, COMPOSE, previews, NEW and apps without an image", () => {
@@ -95,9 +102,22 @@ describe("computeImageUpdateView", () => {
   it("disabled wins before anything else (even a stored error)", () => {
     expect(view(app({ imageUpdateCheck: false, imageCheckError: "auth" }))).toMatchObject({ state: "disabled", enabled: false, updateAvailable: false, error: null });
   });
-  it("pinned for a digest-pinned or unparsable ref", () => {
+  it("pinned for a digest-pinned ref; an unparsable ref is a distinct state, never claimed to be pinned", () => {
     expect(view(app({ image: `nginx@${D("a")}` }))?.state).toBe("pinned");
-    expect(view(app({ image: "bad ref" }))?.state).toBe("pinned");
+    expect(view(app({ image: "bad ref" }))).toMatchObject({ state: "unsupported", updateAvailable: false });
+    expect(view(app({ image: "Org/App" }))?.state).toBe("unsupported");
+  });
+  it("operator kill switch: state disabled (not pending), never an update", () => {
+    expect(computeImageUpdateView(app({ imageUpstreamCheckedAt: null }), live(), true, true)).toMatchObject({ state: "disabled", updateAvailable: false });
+    expect(computeImageUpdateView(app(), live(), true, true)?.state).toBe("disabled");
+    expect(computeImageUpdateView(app(), live(), true, false)?.state).toBe("update_available");
+  });
+  it("editing the tag of the same repo has no baseline until the next deploy (no false update_available)", () => {
+    const l = { ...live(), image: "nginx:1.25" };
+    expect(view(app({ image: "nginx:1.27" }), l)?.state).toBe("no_baseline");
+    expect(view(app({ image: "nginx:1.25" }), l)?.state).toBe("update_available"); // same tag: normal comparison
+    expect(view(app({ image: "nginx:1.27" }), { ...live(), image: null })?.state).toBe("update_available"); // legacy row: repo-only, unchanged
+    expect(view(app({ image: "nginx" }), { ...live(), image: "docker.io/library/nginx:latest" })?.state).toBe("update_available");
   });
   it("no_baseline: no live row, null digest, unparsable digest, repo mismatch — never an update", () => {
     expect(view(app(), null)?.state).toBe("no_baseline");
@@ -167,7 +187,13 @@ describe("loadLiveImageMany", () => {
     expect(sql.sql).toContain("DISTINCT ON");
     expect(out.get("a1")).toEqual({ digest: `nginx@${D("a")}`, finishedAt: t("2026-11-01T10:00:05Z") });
     expect(out.get("a2")).toEqual({ digest: null, finishedAt: created });
+    expect(sql.sql).toContain("configSnapshot");
     expect(out.has("a3")).toBe(false);
+  });
+  it("carries the live deploy's recorded ref when the snapshot has one", async () => {
+    const created = t("2026-11-01T09:00:00Z");
+    const { prisma } = mk([{ appId: "a1", imageDigest: `nginx@${D("a")}`, createdAt: created, startedAt: null, durationMs: null, image: "nginx:1.25" }]);
+    expect((await loadLiveImageMany(prisma, ["a1"])).get("a1")?.image).toBe("nginx:1.25");
   });
   it("treats a non-array or malformed result as empty (other specs mock $queryRaw for the deploy claim)", async () => {
     expect((await loadLiveImageMany(mk(undefined).prisma, ["a"])).size).toBe(0);

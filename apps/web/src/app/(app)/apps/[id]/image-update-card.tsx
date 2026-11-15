@@ -40,6 +40,7 @@ const STATE_KEY: Record<Exclude<ImageUpdate["state"], "error">, string> = {
   pending: "apps.iuStatePending",
   no_baseline: "apps.iuStateNoBaseline",
   pinned: "apps.iuStatePinned",
+  unsupported: "apps.iuStateUnsupported",
   disabled: "apps.iuStateDisabled",
 };
 
@@ -121,7 +122,7 @@ export function ImageUpdateCard({
           )}
         </div>
       )}
-      {canWrite && iu.state !== "pinned" && (
+      {canWrite && iu.state !== "pinned" && iu.state !== "unsupported" && (
         <div style={{ marginTop: 12 }}>
           <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--c-tx2)" }}>
             <input type="checkbox" checked={iu.enabled} disabled={toggle.isPending} onChange={(e) => toggle.mutate(e.target.checked)} />
