@@ -4,6 +4,7 @@ import { AppModule } from "./app.module";
 import { configureApp } from "./app-config";
 import { setupOpenApi } from "./openapi/openapi";
 import { parseTrustedProxyCidrs, trustProxyFn } from "./common/observed-ip";
+import { applyTransferTimeouts } from "./common/http-timeouts";
 
 async function bootstrap() {
   // rawBody is needed to verify HMAC webhook signatures over the exact payload bytes.
@@ -38,6 +39,8 @@ async function bootstrap() {
       "X-Tugra-Audit-Truncated", // the Pro audit export flags a capped result here (readable cross-origin)
     ],
   });
+  // File uploads/downloads can take minutes: don't let Node's 300 s request timeout cut a large body mid-stream.
+  applyTransferTimeouts(app.getHttpServer());
   const port = process.env.HUB_PORT ? Number(process.env.HUB_PORT) : 3000;
   await app.listen(port);
   // eslint-disable-next-line no-console

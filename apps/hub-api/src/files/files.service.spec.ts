@@ -231,6 +231,17 @@ describe("FilesService", () => {
     expect(sent()).toEqual(["s1", { ...base, op: "delete", path: "a", flags: "r" }, 5 * 60_000]);
   });
 
+  it("an applied mkdir/rename/chmod whose follow-up stat is missing is still a success (nominal stat), never a doomed-retry error", async () => {
+    const { svc, agentWs } = build();
+    agentWs.sendFs2.mockResolvedValue({ type: "fs2_result", reqId: "r", ok: true } as never);
+    const nominal = (name: string, type: string) => ({ name, type, size: 0, mode: "", mtime: 0, mtimeNs: 0, uid: 0, gid: 0, etag: "" });
+    await expect(svc.mkdir("u1", "app1", { volume: "data" }, { path: "a/newdir" })).resolves.toEqual(nominal("newdir", "dir"));
+    await expect(svc.rename("u1", "app1", { volume: "data" }, { from: "a", to: "b/moved.txt" })).resolves.toEqual(nominal("moved.txt", "other"));
+    await expect(svc.chmod("u1", "app1", { volume: "data" }, { path: "f.txt", mode: "0600" })).resolves.toEqual(nominal("f.txt", "other"));
+    // ...but stat itself (a read) still requires the agent's answer
+    await expect(svc.stat("u1", "app1", { volume: "data" }, "f")).rejects.toBeInstanceOf(FsRemoteException);
+  });
+
   it("stat resolves read-only, allows the root, and the container list uses the legacy entry shape", async () => {
     const { svc, agentWs, apps } = build();
     await svc.stat("u1", "app1", { volume: "data" }, "");

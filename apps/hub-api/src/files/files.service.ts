@@ -4,6 +4,7 @@ import { AGENT_FEATURE_FS2, type Fs2Fields, type Fs2Op, type Fs2ResultMsg, type 
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { ApplicationsService } from "../applications/applications.service";
 import { AuditService } from "../audit/audit.service";
+import { containerName } from "../deploy/deploy-script";
 import { assertSafeCtrPath, assertSafeFsPathV2 } from "../common/fs-path";
 import { looksLikeDatastore } from "./datastore-guard";
 import { FsPolicyException, FsRemoteException } from "./fs-errors";
@@ -154,7 +155,7 @@ export class FilesService {
       agentSupportsFs2: fs2,
       datastore,
       volumes,
-      container: { available: containerAvailable, writable: containerWritable, reason: containerReason, names: app.source === "COMPOSE" ? [] : [`tugra_${app.id}`] },
+      container: { available: containerAvailable, writable: containerWritable, reason: containerReason, names: app.source === "COMPOSE" ? [] : [containerName(app)] },
       limits: filesLimits(),
     };
   }
@@ -227,19 +228,19 @@ export class FilesService {
     const flags = b.parents ? "p" : "";
     const t = await this.prepare(userId, appId, target, "mkdir", { acknowledgeRisk: b.acknowledgeRisk, paths: [b.path], meta: { path: b.path, ...(b.mode ? { mode: b.mode } : {}), flags } });
     const r = await this.dispatch(userId, t, "mkdir", () => this.agentWs.sendFs2(t.serverId, this.req(t.scope, "mkdir", t.subject, b.path, { mode: b.mode ?? "", flags }), 30_000));
-    return this.statOrFail(r);
+    return this.statOrNominal(r, b.path, "dir");
   }
 
   async rename(userId: string, appId: string, target: FsTarget, b: { from: string; to: string; acknowledgeRisk?: boolean }): Promise<Fs2Stat> {
     const t = await this.prepare(userId, appId, target, "rename", { acknowledgeRisk: b.acknowledgeRisk, paths: [b.from, b.to], meta: { path: b.from, path2: b.to, flags: "" } });
     const r = await this.dispatch(userId, t, "rename", () => this.agentWs.sendFs2(t.serverId, this.req(t.scope, "rename", t.subject, b.from, { path2: b.to }), 30_000));
-    return this.statOrFail(r);
+    return this.statOrNominal(r, b.to, "other");
   }
 
   async chmod(userId: string, appId: string, target: FsTarget, b: { path: string; mode: string; acknowledgeRisk?: boolean }): Promise<Fs2Stat> {
     const t = await this.prepare(userId, appId, target, "chmod", { acknowledgeRisk: b.acknowledgeRisk, paths: [b.path], meta: { path: b.path, mode: b.mode, flags: "" } });
     const r = await this.dispatch(userId, t, "chmod", () => this.agentWs.sendFs2(t.serverId, this.req(t.scope, "chmod", t.subject, b.path, { mode: b.mode }), 30_000));
-    return this.statOrFail(r);
+    return this.statOrNominal(r, b.path, "other");
   }
 
   async remove(userId: string, appId: string, target: FsTarget, b: { path: string; recursive?: boolean; acknowledgeRisk?: boolean }): Promise<void> {
@@ -248,9 +249,13 @@ export class FilesService {
     await this.dispatch(userId, t, "delete", () => this.agentWs.sendFs2(t.serverId, this.req(t.scope, "delete", t.subject, b.path, { flags }), b.recursive ? 5 * 60_000 : 30_000));
   }
 
-  private statOrFail(r: Fs2ResultMsg): Fs2Stat {
-    if (!r.stat) throw new FsRemoteException("failed", "the agent returned no stat");
-    return r.stat;
+  /**
+   * mkdir/rename/chmod return the entry's stat. The change is ALREADY APPLIED when this runs, so a missing stat (the
+   * agent's best-effort follow-up failed) must not turn a success into an error and invite a doomed retry: answer with a
+   * nominal stat (zeroed numbers, empty etag) instead.
+   */
+  private statOrNominal(r: Fs2ResultMsg, p: string, type: Fs2Stat["type"]): Fs2Stat {
+    return r.stat ?? { name: p.slice(p.lastIndexOf("/") + 1), type, size: 0, mode: "", mtime: 0, mtimeNs: 0, uid: 0, gid: 0, etag: "" };
   }
 
   // ── upload ─────────────────────────────────────────────────────────────────────────────────────────────────
