@@ -64,8 +64,15 @@ to them at runtime, those writes are lost on the next deploy unless that path is
 - List files in a declared volume (read-only metadata, never content): `GET /apps/<appId>/files?volume=<name>&path=`
   (requires the `read:secrets` scope; only volumes the app declares can be listed).
 - Back up: the `apps/<appId>/volume-backups` API (`volume-backups.controller.ts`) offers backup-now, restore,
-  a scheduled config (`PUT .../volume-backups/config`), import-from-URL and a migration export URL. Only an S3
-  destination can produce an export URL.
+  a scheduled config (`PUT .../volume-backups/config`, an interval or a cron, plus keep-N, `retentionDays` and
+  `maxSizeGb` retention), per-volume policies (`PUT/DELETE .../volume-backups/policies/<volume>`), import-from-URL and a
+  migration export URL. Only an S3 destination can produce an export URL.
+- **Encryption:** a destination created without opting out encrypts its backups (`.gpg`), on S3 and on a LOCAL
+  destination. The "server disk" default (no destination) is not encrypted. An encrypted backup needs `gpg` on the
+  server that runs it; if it is missing the run fails with `TUGRA_GPG_MISSING: gpg not found on this host (install
+  gnupg)`. A restore decrypts by the `.gpg` suffix, so older cleartext backups keep working.
+- **Retention:** prune keeps the newest backup of every volume no matter what. The size budget (GiB) is shared by all
+  volumes without their own budget; a volume policy with its own `maxSizeGb` is its own pool.
 - **Consistency:** a volume backup archives the **running** volume with `tar` (`buildVolumeBackupScript`); the
   app is not stopped or paused and this is **not** a point-in-time snapshot, so the result is a **file-level
   copy that may be inconsistent** (files are read at different moments) — not transaction-consistent. For a

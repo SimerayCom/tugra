@@ -147,6 +147,34 @@ The `/api/v1` prefix applies to all REST routes except a few bare, unversioned e
 — which external systems call at fixed paths. The `/agent` and `/terminal` WebSocket upgrades are separate
 and unprefixed.
 
+## Backup destinations and schedules
+
+- `POST /backup-destinations` **encrypts by default** (AES-256, gpg symmetric; S3 and LOCAL): omit
+  `encryptionEnabled` or send `true` and a random data key is generated. The response is the destination plus
+  `recoveryKey`, the plaintext key, **returned exactly once**. It is `null` when you send `encryptionEnabled: false`,
+  it is never part of `GET` responses, and the response is sent with `Cache-Control: no-store`. A personal access
+  token gets it too, so automation can capture it. (Responses replayed through an `Idempotency-Key` are kept
+  encrypted in Redis for 24 hours and carry the same key to the same caller.) Encryption cannot be changed after
+  creation.
+- `POST /backup-destinations/{id}/test` checks S3 reachability and, for an encrypted destination, round-trips a
+  canary through gpg on an online server; the result has `encryption: "OK" | "FAILED" | "SKIPPED"`.
+- `DELETE /backup-destinations/{id}` returns 409 while an encrypted destination still has successful backups; pass
+  `?discardBackups=true` to confirm that the key will be destroyed.
+- `PUT /apps/{id}/volume-backups/config` takes `enabled`, `intervalHours` or `cron` (an enabled schedule needs one;
+  a cron wins and may fire at most hourly), `retention`, `retentionDays`, `maxSizeGb` and `destinationId`. `null`
+  clears `cron`, `retentionDays` and `maxSizeGb`; leaving them out keeps the stored value. `GET` on the same path
+  returns the config, the per-volume policies, the next cron run and the storage usage per size pool.
+  `PUT`/`DELETE /apps/{id}/volume-backups/policies/{volumeName}` set or remove one volume's own schedule, on/off
+  state and retention (empty fields inherit the app's).
+- Database backup config (`PUT /databases/{id}/backup-config`) and the hub backup (`PUT /instance/backup`) accept
+  `maxSizeGb`; the hub backup also accepts `cron` and `retentionDays`. Size limits are in GiB. Prune removes the
+  oldest backups beyond the count, age or size limit and always keeps the newest.
+- `GET /backup-schedules/preview?cron=<expr>&count=<1..10>` returns `{ valid, error?, timezone, nextRuns, minGapSeconds }`
+  (an invalid cron is `valid: false`, not an error). Cron schedules fire in the hub's timezone.
+- `POST /instance/backup/destination-keys/export` (instance owner session, 5 per hour) takes `{ passphrase }`
+  (12+ characters) and returns a sealed key file as `contentBase64`; see
+  [disaster recovery](disaster-recovery.md#recovering-destination-keys).
+
 ## DNS auto-setup (custom domains)
 
 Point a custom domain at an app in one call, using a team Cloudflare credential (Cloudflare only in this

@@ -34,6 +34,45 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Rollback caveat for rotated keys.** After the first rotation, a Tugra release that predates the key ring cannot read values stored under a data key. Before rolling back to an older release (or relying on `update.sh` recovery across such a version), use **Back to .env key** on the same card and let the re-encrypt finish (the card then shows the downgrade is safe).
 - **Changed (behaviour): post-cutover soak is on by default for new apps.** New apps now default to a 30-second post-cutover soak on zero-downtime rolling deploys: the previous version is kept for 30 s and restored automatically if the new one fails 3 health checks in a row. Existing apps are unchanged (still off unless you set it); set 0 in Deploy settings to turn it off. Imported apps count as new. PR previews and compose/swarm apps are excluded. Each eligible deploy, and each fleet-rollout wave per app, takes about 30 s longer and holds the app's deploy slot for that time; a revert restarts the previous container (brief downtime). A soak-enabled app's first deploy no longer waits out the window.
 
+- **Changed (behaviour): backup destinations are encrypted by default.** `POST /backup-destinations` (and the CLI and
+  MCP tools that call it) without `encryptionEnabled` now creates an AES-256 (gpg symmetric) encrypted destination, S3
+  or LOCAL. Send `encryptionEnabled: false` to opt out; an explicit `false` is honoured and audited as unencrypted. The
+  web form already defaulted on. Existing destinations are unchanged. The implicit "server disk" path (no destination
+  chosen) is still unencrypted.
+- **Changed (behaviour): the create response carries a one-time `recoveryKey`.** The plaintext data key is returned
+  exactly once, by the create call (`Cache-Control: no-store`), and is never returned by `GET`, never logged and never
+  audited. The web app shows it in a "save this key" dialog with copy and download.
+- **Changed (behaviour): deleting an encrypted destination is guarded.** `DELETE /backup-destinations/{id}` returns 409
+  while the destination still has successful database, volume or base backups, because deleting it destroys the key
+  they need; pass `?discardBackups=true` to confirm. Deleting a destination now also clears the app volume-backup and
+  hub-backup pointers (it already cleared databases), in one transaction.
+- **Changed (behaviour): an enabled volume schedule needs an interval or a cron.** `PUT /apps/{id}/volume-backups/config`
+  with `enabled: true` and neither now returns 400 instead of silently never running. The destination must belong to the
+  app's team. Existing stored schedules are untouched.
+- **Fixed: LOCAL-type encrypted destinations stored volume backups in cleartext.** Volume backups resolved a LOCAL
+  destination without its encryption settings. Backups now go through one shared destination resolver (also used by
+  database and hub backups) that fails closed when encryption is on but the key is missing, never running gpg with an
+  empty passphrase. Volume restore decides decryption by the `.gpg` suffix, so cleartext backups written before the fix
+  keep restoring, and an encrypted LOCAL volume backup is written to a `.part` file and renamed.
+- **Fixed: a missing gpg on the backup host is now an explicit failure.** Encrypted backup and restore scripts check for
+  gpg first and fail with `TUGRA_GPG_MISSING` (exit 5), which becomes the backup's error message and the failure
+  notification, instead of an opaque pipe error.
+- **Added: cron schedules and age/size retention.** Volume backups and the hub backup accept a 5-field cron (at most
+  hourly), `retentionDays` and `maxSizeGb`; database logical backups accept `maxSizeGb`. Prune removes whatever exceeds
+  the keep-N count, the age, or the total size (oldest first, sizes in GiB), always keeps the newest backup of each
+  volume, and logs when only protected backups remain over budget. Base backups and WAL stay under the existing
+  WAL-aware cleanup, and objects whose remote delete failed are not counted.
+- **Added: per-volume backup policies.** `PUT` and `DELETE /apps/{id}/volume-backups/policies/{volumeName}` give one
+  volume its own cron or interval, switch it off, or override retention. The app-wide job skips such volumes, the
+  missing-backup watchdog alerts per policy volume, and cloning an app copies its policies (inert until volume backups
+  are enabled on the clone). `GET /apps/{id}/volume-backups/config` returns the schedule, policies, next run and storage
+  usage per size pool.
+- **Added: schedule preview and encryption-key export.** `GET /backup-schedules/preview?cron=` shows the next runs (in
+  the hub's timezone) and the shortest gap. The instance owner can download every encrypted destination's key in a
+  sealed file (`POST /instance/backup/destination-keys/export`, opens with `openssl enc -d -aes-256-cbc -pbkdf2 -iter
+  600000 -md sha256`), and `scripts/hub-migrate.sh pack` now includes `destination-keys.json` (mode 600) when hub-api is
+  running. The destination test also round-trips a canary through gpg with the stored key.
+
 ## [0.1.0-beta.14] - 2026-11-15
 
 - **Container labels.** The app's Configuration tab has a **Container labels** card. It lists, read-only, every label

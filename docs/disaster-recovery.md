@@ -13,6 +13,7 @@ The hub stores everything in one Docker volume plus the repo-root `.env`:
 | Postgres volume (`tugra_pg`) | Users, teams, projects, servers, apps, deploy history, backup metadata, GitHub App connections, **encrypted** secrets/env/tokens | **Critical** — losing it loses your whole fleet's configuration |
 | Redis volume (`tugra_redis`) | Job queues, live-metric cache, rate-limit counters | Rebuildable — schedules re-register on boot; safe to lose |
 | `.env` (repo root) | `SECRETS_ENCRYPTION_KEY`, `POSTGRES_PASSWORD`, `HUB_SIGNING_KEY`, JWT secrets | **Critical** — the Postgres data is unusable without it (see below) |
+| Backup destination keys | The data key of every encrypted backup destination (stored in Postgres, encrypted under `SECRETS_ENCRYPTION_KEY`) | **Critical for offsite backups** — without the key an encrypted S3 backup cannot be read; see [Recovering destination keys](#recovering-destination-keys) |
 
 > ⚠️ **The `.env` is part of your backup.** Secrets in Postgres are encrypted with data keys, and those data keys
 > are stored in the same database **wrapped under `SECRETS_ENCRYPTION_KEY`**: a restored dump carries its
@@ -41,6 +42,8 @@ history — comes across and the hub continues exactly where it left off.
 ```sh
 scripts/hub-migrate.sh pack --encrypt
 # → writes tugra-hub-<date>.tar.enc (0600). Briefly stops the stack for a consistent copy, then restarts.
+# While hub-api is still running it also exports destination-keys.json (plaintext backup keys, mode 600) into
+# the bundle; if hub-api is down it warns and carries on (the keys are still in the Postgres volume).
 # (use --no-restart for a real move, to leave the old hub down and avoid two hubs commanding the same agents.)
 ```
 
@@ -87,7 +90,10 @@ migrates forward automatically.
 database to a destination (this server's disk, or an S3 bucket) and prunes to a retention count. It runs on
 the local agent and is **always gpg-encrypted** with a key derived from `SECRETS_ENCRYPTION_KEY` — so the
 dump is safe to ship to S3, but it **can only be decrypted with your `.env`** (keep it offsite). Restoring an
-in-app backup: decrypt first (see below). The `.env` is deliberately never bundled.
+in-app backup: decrypt first (see below). The `.env` is deliberately never bundled. The schedule can be an
+interval or a cron (at most hourly), and old dumps are pruned by count, age (`retentionDays`) and total size
+(`maxSizeGb`, newest always kept). The dump contains your destination rows, whose data keys are protected by the same
+`.env` key, so that key unlocks `.env -> hub dump -> destination keys -> S3 objects`.
 
 Or do it yourself with a plain `pg_dump` (version/arch independent, smaller), from the install directory
 without stopping Tugra:
@@ -145,6 +151,37 @@ gpg --batch --passphrase "$PASS" -d tugra-hub-<ts>.dump.gz.gpg | gunzip \
   | docker compose --env-file .env -f deploy/docker-compose.yml exec -T postgres \
       pg_restore -U tugra -d tugra --clean --if-exists
 ```
+
+## Recovering destination keys
+
+Encrypted backup destinations are the default for new destinations. Each has its own random data key, shown once
+when the destination is created ("save this key" dialog, or the `recoveryKey` field of the create response). You
+have three ways to get a key back later:
+
+1. **Sealed export (instance owner).** Settings → Instance → Control-plane backup → **Export encryption keys**
+   asks for a passphrase (12+ characters) and downloads `tugra-destination-keys-<date>.enc`. It holds every
+   encrypted destination's key and the hub-backup passphrase, but no S3 credentials. Open it with:
+
+   ```sh
+   openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -md sha256 -in tugra-destination-keys-<date>.enc | jq
+   ```
+
+2. **The migration bundle.** `scripts/hub-migrate.sh pack` includes `destination-keys.json` (mode 600) when hub-api
+   is running; `unpack` puts it next to the restored `.env` (delete it after verifying a restore).
+3. **From the database.** The keys are in Postgres, encrypted under `SECRETS_ENCRYPTION_KEY`; on a running hub run
+   `docker compose --env-file .env -f deploy/docker-compose.yml exec -T hub-api node dist/scripts/export-destination-keys.js`.
+
+Treat all of these like the `.env`. To decrypt a backup by hand with a key (`$KEY`):
+
+```sh
+# S3 object (MinIO client)
+mc cat <alias>/<bucket>/<prefix>/<id>/<file>.gpg | gpg --batch --passphrase "$KEY" -d | gunzip > restored.dump
+# local file
+gpg --batch --passphrase "$KEY" -d /etc/tugra/backups/<id>/<file>.gpg | gunzip > restored.dump
+```
+
+Deleting an encrypted destination destroys its key, so Tugra refuses (409) while it still has successful backups
+unless you pass `?discardBackups=true`. The "server disk" default (no destination) is not encrypted.
 
 ## Notes
 

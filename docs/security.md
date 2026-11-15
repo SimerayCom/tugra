@@ -145,6 +145,19 @@ Changing the root passphrase itself is still a manual, restart-based flow:
    changing the passphrase is wrapped under the old passphrase only: **Restore** reports `no_root` until the
    old passphrase is back in `SECRETS_ENCRYPTION_KEY_PREVIOUS`.
 
+Three different keys protect backups; do not confuse them:
+
+| Key | What it is | Protects | Where it lives |
+|---|---|---|---|
+| Master key (`SECRETS_ENCRYPTION_KEY`) | Your `.env` passphrase | Every secret stored in Postgres, including the destination data keys below | `.env` (you) |
+| Destination data key | Random 256-bit key generated when an encrypted backup destination is created (on by default) | The database and volume backups written to that destination (gpg AES-256) | Postgres, encrypted under the master key; shown once at creation; exportable by the instance owner |
+| Hub backup key | `HMAC-SHA256(SECRETS_ENCRYPTION_KEY, "tugra-hub-backup-v1")`, derived on demand | The in-app control-plane (hub) backup | Never stored; recomputed from `.env` |
+
+The hub backup contains the destination rows, so the chain is `.env -> hub dump -> destination rows -> destination
+keys -> S3 objects`. Losing the `.env` loses all of it, so keep it offsite (see [disaster recovery](disaster-recovery.md)).
+The gpg passphrase is passed on the command line of the backup process on the backup host (visible to other root
+processes there); that is unchanged.
+
 Notes:
 - Two-factor **recovery codes** are stored as keyed hashes and cannot be rewritten (the code itself is never
   stored). They keep working while the previous key is configured; users should regenerate them before it is
