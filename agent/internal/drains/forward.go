@@ -11,6 +11,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -280,10 +281,11 @@ func asBytes(v any) ([]byte, bool) {
 // handshake runs the shared-key authentication right after the connection is established:
 //
 //	server -> client: ["HELO", {"nonce": <bin>, "auth": <bin>, "keepalive": <bool>}]
-//	client -> server: ["PING", hostname, salt, sha512hex(salt + hostname + nonce + key), username, password_digest]
+//	client -> server: ["PING", hostname, salt(str), sha512hex(salt + hostname + nonce + key), "", ""]
 //	server -> client: ["PONG", ok(bool), reason, server_hostname, sha512hex(salt + server_hostname + nonce + key)]
 //
-// The PONG digest is verified (constant time) so a server that does not know the key cannot pose as the sink. A
+// The HELO `auth` salt is ignored (servers send it whenever <security> exists); user authentication is only
+// discoverable from a PONG failure. The PONG digest is verified (constant time) so a server that does not know the key cannot pose as the sink. A
 // server that sends no HELO (no <security> block) while a key is configured, a rejected PING or a bad PONG digest
 // is a permanent failure: nothing is ever shipped to a sink that did not prove the shared key.
 func (f *fluentSender) handshake(ctx context.Context, c net.Conn) error {
@@ -307,22 +309,21 @@ func (f *fluentSender) handshake(ctx context.Context, c net.Conn) error {
 		return newDrainErr(errConfig, true, errors.New("bad HELO options"))
 	}
 	nonce, _ := asBytes(opts["nonce"])
-	// A non-empty `auth` is the salt of USER authentication: the server wants a username + password digest too.
-	// The drain only carries a shared key, so refuse up front with a clear class instead of letting the server
-	// answer PONG false (which would read as "wrong shared key").
-	if a, _ := asBytes(opts["auth"]); len(a) > 0 {
-		return newDrainErr(errAuth, true, errors.New("server requires user authentication"))
-	}
+	// `auth` is NOT a user-auth signal: real fluentd and fluent-bit send a non-empty auth salt whenever shared-key
+	// security is on. The drain carries only a shared key, so an empty username/password digest is sent and the
+	// server's PONG decides (a user-auth server answers PONG false with a user/authentication reason: class auth).
 
-	salt := make([]byte, 16)
-	if _, err := rand.Read(salt); err != nil {
+	// The salt travels as a msgpack STR of printable bytes (fluent-bit rejects BIN); the digest hashes the same bytes.
+	var saltRaw [8]byte
+	if _, err := rand.Read(saltRaw[:]); err != nil {
 		return newDrainErr(errConfig, true, err)
 	}
+	salt := []byte(hex.EncodeToString(saltRaw[:]))
 	var e mpEnc
 	e.arrayHeader(6)
 	e.str("PING")
 	e.str(f.host)
-	e.bin(salt)
+	e.str(string(salt))
 	e.str(sha512Hex(salt, []byte(f.host), nonce, []byte(f.key)))
 	e.str("") // no user authentication: username + password digest are empty
 	e.str("")
@@ -342,6 +343,11 @@ func (f *fluentSender) handshake(ctx context.Context, c net.Conn) error {
 		return newDrainErr(errConfig, true, errors.New("expected PONG"))
 	}
 	if okv, _ := pong[1].(bool); !okv {
+		reason, _ := asBytes(pong[2])
+		low := strings.ToLower(string(reason))
+		if strings.Contains(low, "user") || strings.Contains(low, "authentication") || strings.Contains(low, "password") {
+			return newDrainErr(errAuth, true, errors.New("server requires user authentication"))
+		}
 		return newDrainErr(errConfig, true, errors.New("server rejected the shared key"))
 	}
 	srvHost, _ := asBytes(pong[3])

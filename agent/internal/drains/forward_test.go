@@ -82,7 +82,7 @@ type fakeFluent struct {
 	// handshake fault injection
 	closeAfterHelo bool // send HELO, then close (a flapping / restarting sink)
 	silentPong     bool // read PING and never answer
-	userAuth       bool // HELO carries a non-empty `auth` salt (the server wants user authentication)
+	userAuth       bool // <security> has user_auth true: PONG false with a username reason (HELO's auth salt is ALWAYS non-empty with a key)
 }
 
 func startFakeFluent(t *testing.T, mut func(f *fakeFluent)) *fakeFluent {
@@ -119,11 +119,7 @@ func (f *fakeFluent) serve(c net.Conn, n int) {
 		e.str("nonce")
 		e.bin(nonce)
 		e.str("auth")
-		if f.userAuth {
-			e.bin([]byte("user-salt"))
-		} else {
-			e.bin(nil)
-		}
+		e.bin([]byte("auth-salt-0123456")) // real fluentd/fluent-bit: non-empty whenever shared-key security is on
 		e.str("keepalive")
 		e.bool_(true)
 		_, _ = c.Write(e.b)
@@ -139,16 +135,33 @@ func (f *fakeFluent) serve(c net.Conn, n int) {
 			return
 		}
 		ping := v.([]any)
-		salt, _ := asBytes(ping[2])
+		// fluent-bit requires the shared_key_salt to be a msgpack STR (BIN is "Invalid shared_key_salt type")
+		saltStr, isStr := ping[2].(string)
+		if !isStr {
+			return
+		}
+		for _, b := range []byte(saltStr) {
+			if b < 0x20 || b > 0x7e {
+				return
+			}
+		}
+		salt := []byte(saltStr)
+		if user, _ := ping[4].(string); user != "" {
+			return
+		}
 		host, _ := ping[1].(string)
 		wantDigest := sha512Hex(salt, []byte(host), nonce, []byte(f.key))
 		clientDigest, _ := ping[3].(string)
 		var pong mpEnc
 		pong.arrayHeader(5)
 		pong.str("PONG")
-		if ping[0] != "PING" || clientDigest != wantDigest || f.reject {
+		if ping[0] != "PING" || clientDigest != wantDigest || f.reject || f.userAuth {
 			pong.bool_(false)
-			pong.str("shared key mismatch")
+			if f.userAuth {
+				pong.str("username/password mismatch")
+			} else {
+				pong.str("shared key mismatch")
+			}
 			pong.str("fluentd-host")
 			pong.str("")
 			_, _ = c.Write(pong.b)
@@ -433,13 +446,13 @@ func TestFluentdPongTimeoutIsRetriableTimeout(t *testing.T) {
 	}
 }
 
-func TestFluentdUserAuthHeloIsAClearPermanentClass(t *testing.T) {
+func TestFluentdUserAuthPongIsAClearPermanentClass(t *testing.T) {
 	f := startFakeFluent(t, func(f *fakeFluent) { f.key = "k"; f.userAuth = true })
 	s, _ := newFluentSender(fluentCfg(f.addr(), nil, "k"))
 	defer s.Close()
 	err := s.Send(context.Background(), batchOf("x"))
 	if de := classifyErr(err); de == nil || de.class != errAuth || !de.permanent {
-		t.Fatalf("a user-auth HELO must be a permanent auth-class error (not 'wrong shared key'), got %v", err)
+		t.Fatalf("a user-auth PONG failure must be a permanent auth-class error (not 'wrong shared key'), got %v", err)
 	}
 	if f.conns.Load() != 1 {
 		t.Fatalf("a permanent failure must not be retried, conns=%d", f.conns.Load())
@@ -458,5 +471,76 @@ func TestHandshakeReadErrClassification(t *testing.T) {
 	}
 	if de := handshakeReadErr(os.ErrDeadlineExceeded, false); de.class != errTimeout || de.permanent {
 		t.Fatalf("a PONG timeout is transient: %+v", de)
+	}
+}
+
+// Real fluentd/fluent-bit always send a non-empty HELO auth salt with shared-key security: the correct key must
+// deliver, and the wrong key must stay a config-class (not auth-class) failure.
+func TestFluentdSharedKeyOnlyServerWithNonEmptyAuthSaltDelivers(t *testing.T) {
+	f := startFakeFluent(t, func(f *fakeFluent) { f.key = "k" })
+	s, _ := newFluentSender(fluentCfg(f.addr(), nil, "k"))
+	defer s.Close()
+	if err := s.Send(context.Background(), batchOf("x")); err != nil {
+		t.Fatalf("correct shared key against a real-shaped server: %v", err)
+	}
+	recvMsg(t, f)
+}
+
+func TestFluentdWrongSharedKeyIsConfigNotAuth(t *testing.T) {
+	f := startFakeFluent(t, func(f *fakeFluent) { f.key = "server-key" })
+	s, _ := newFluentSender(fluentCfg(f.addr(), nil, "wrong"))
+	defer s.Close()
+	err := s.Send(context.Background(), batchOf("x"))
+	if de := classifyErr(err); de == nil || de.class != errConfig || !de.permanent {
+		t.Fatalf("a wrong shared key must be a permanent config-class error, got %v", err)
+	}
+}
+
+func TestFluentdPingSaltIsPrintableStrAndHashedAsSent(t *testing.T) {
+	// the fake replies PONG ok only when the salt is a msgpack STR of printable bytes and the digest hashes those
+	// exact bytes; a second run proves the salt is fresh per connection
+	shortHandshake(t)
+	var salts []string
+	for i := 0; i < 2; i++ {
+		l, _ := listenLoopback(t)
+		done := make(chan string, 1)
+		go func() {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			defer c.Close()
+			var e mpEnc
+			e.arrayHeader(2)
+			e.str("HELO")
+			e.mapHeader(2)
+			e.str("nonce")
+			e.bin([]byte("nonce-0123456789"))
+			e.str("auth")
+			e.bin([]byte("auth-salt-0123456"))
+			_, _ = c.Write(e.b)
+			v, err := mpDecode(bufio.NewReader(c))
+			if err != nil {
+				return
+			}
+			salt, _ := v.([]any)[2].(string)
+			done <- salt
+		}()
+		s, _ := newFluentSender(fluentCfg(l.Addr().String(), nil, "k"))
+		_ = s.Send(context.Background(), batchOf("x"))
+		s.Close()
+		select {
+		case salt := <-done:
+			if len(salt) < 16 || strings.Trim(salt, "0123456789abcdef") != "" {
+				t.Fatalf("salt must be printable hex text, got %q", salt)
+			}
+			salts = append(salts, salt)
+		case <-time.After(3 * time.Second):
+			t.Fatal("no PING received (salt sent as a non-STR?)")
+		}
+		l.Close()
+	}
+	if salts[0] == salts[1] {
+		t.Fatal("salt must be random per handshake")
 	}
 }
