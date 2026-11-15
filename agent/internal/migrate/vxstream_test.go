@@ -628,11 +628,16 @@ func TestStreamVolumeMemoryIsBounded(t *testing.T) {
 		defer close(done)
 		var ms runtime.MemStats
 		for atomic.LoadInt32(&stop) == 0 {
+			// Measure LIVE memory: collect first, then read. Without the collection the sample includes whatever
+			// garbage (dropped part bodies, finished gzip members) piled up since the last cycle, and on a slow
+			// shared runner that alone reached the limit (a 20 MiB "growth" with nothing retained), while an
+			// implementation that buffers the archive still shows its ~48 MiB after a collection.
+			runtime.GC()
 			runtime.ReadMemStats(&ms)
 			if ms.HeapAlloc > peak {
 				peak = ms.HeapAlloc
 			}
-			time.Sleep(2 * time.Millisecond)
+			time.Sleep(5 * time.Millisecond)
 		}
 	}()
 	f.dropBodies = true
