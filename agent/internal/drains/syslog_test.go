@@ -294,6 +294,13 @@ func TestSyslogUDPRoundTrip(t *testing.T) {
 	if s.(*syslogSender).truncated.Load() != 1 {
 		t.Fatal("the truncation must be counted")
 	}
+	// ...and surfaced to the sink (status) through takeLoss, then reset
+	if d, tr := s.(*syslogSender).takeLoss(); d != 0 || tr != 1 {
+		t.Fatalf("takeLoss: dropped=%d truncated=%d", d, tr)
+	}
+	if _, tr := s.(*syslogSender).takeLoss(); tr != 0 {
+		t.Fatal("takeLoss must reset the counter")
+	}
 }
 
 // ---- TLS ----

@@ -296,3 +296,37 @@ func TestDispatchFiltersPerSinkMatcher(t *testing.T) {
 		t.Fatalf("server-wide sink got %+v", g)
 	}
 }
+
+// lossySender is a fakeSender that reports lines it skipped (dropped) or cut (truncated) although Send succeeded.
+type lossySender struct {
+	fakeSender
+	dropped, truncated int64
+}
+
+func (l *lossySender) takeLoss() (int64, int64) {
+	d, tr := l.dropped, l.truncated
+	l.dropped, l.truncated = 0, 0
+	return d, tr
+}
+
+func TestSinkCountsSenderSideLossAsDroppedAndTruncatedNotSent(t *testing.T) {
+	ls := &lossySender{dropped: 1, truncated: 2}
+	s := newSink(context.Background(), protocol.DrainCfg{ID: "d"}, ls, nil, nil)
+	s.deliver([]LogLine{{Message: "a"}, {Message: "b"}, {Message: "c"}})
+	st := s.status()
+	if st.Sent != 2 || st.Dropped != 1 || st.Truncated != 2 || st.State != "ok" {
+		t.Fatalf("1 skipped line must count as dropped (not sent), truncations separately, state stays ok: %+v", st)
+	}
+	// the counters are per Send: a clean follow-up batch adds nothing
+	s.deliver([]LogLine{{Message: "d"}})
+	if st := s.status(); st.Sent != 3 || st.Dropped != 1 || st.Truncated != 2 {
+		t.Fatalf("second batch: %+v", st)
+	}
+	// a failed Send discards the sender's counters (the whole batch is already dropped once)
+	bad := &lossySender{fakeSender: fakeSender{err: errors.New("x")}, dropped: 1}
+	s2 := newSink(context.Background(), protocol.DrainCfg{ID: "d"}, bad, nil, nil)
+	s2.deliver([]LogLine{{Message: "a"}, {Message: "b"}})
+	if st := s2.status(); st.Dropped != 2 || st.Sent != 0 {
+		t.Fatalf("no double counting on failure: %+v", st)
+	}
+}

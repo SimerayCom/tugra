@@ -201,8 +201,25 @@ func (g *gelfSender) Send(ctx context.Context, lines []LogLine) error {
 				return newDrainErr(errWrite, false, err)
 			}
 			chunks, err := chunkGelf(payload, g.newID())
+			// The 64 KiB pre-cap is on the RAW text; JSON escaping can grow it up to 6x ('<', '&', control
+			// characters), so an uncompressed message can still need more than 128 chunks. Shorten the text
+			// (halving, on a rune boundary) until it fits before giving up on the line.
+			for try := 0; err != nil && try < 8 && len(l.Message) > 1; try++ {
+				cut := len(l.Message) / 2
+				for cut > 0 && !utf8.RuneStart(l.Message[cut]) {
+					cut--
+				}
+				l.Message = l.Message[:cut]
+				if js, err = buildGelf(g.host, g.appID, l, flush); err != nil {
+					return newDrainErr(errConfig, true, err)
+				}
+				if payload, err = compressGelf(g.compress, js); err != nil {
+					return newDrainErr(errWrite, false, err)
+				}
+				chunks, err = chunkGelf(payload, g.newID())
+			}
 			if err != nil {
-				g.oversized.Add(1)
+				g.oversized.Add(1) // surfaced through takeLoss as a dropped line (never as sent)
 				continue
 			}
 			dgrams = append(dgrams, chunks...)
@@ -223,5 +240,8 @@ func (g *gelfSender) Send(ctx context.Context, lines []LogLine) error {
 		return err
 	})
 }
+
+// takeLoss implements lossReporter: the oversized messages skipped since the last call.
+func (g *gelfSender) takeLoss() (dropped, truncated int64) { return g.oversized.Swap(0), 0 }
 
 func (g *gelfSender) Close() { g.cs.Close() }

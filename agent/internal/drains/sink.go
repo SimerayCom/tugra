@@ -37,6 +37,14 @@ type Sender interface {
 	Close()
 }
 
+// lossReporter is an optional Sender facet: lines the sender itself could not deliver although Send returned nil
+// (a GELF message over the 128-chunk limit is skipped, a syslog record cut to the transport cap is delivered
+// truncated). takeLoss returns and resets the counts since the last call; the sink moves `dropped` lines out of
+// `sent` into `dropped` and adds `truncated` to its own counter.
+type lossReporter interface {
+	takeLoss() (dropped, truncated int64)
+}
+
 // senderFactory is overridable so tests can inject fake senders into Forwarder.apply.
 var senderFactory = newSender
 
@@ -59,6 +67,7 @@ type sink struct {
 	mu            sync.Mutex
 	sent          int64
 	dropped       int64
+	truncated     int64
 	state         string // idle | ok | error
 	errClass      string
 	lastOK        time.Time
@@ -157,10 +166,19 @@ func (s *sink) deliver(batch []LogLine) {
 		return
 	}
 	err := s.sender.Send(s.ctx, batch)
+	var lostDropped, lostTruncated int64
+	if lr, ok := s.sender.(lossReporter); ok {
+		lostDropped, lostTruncated = lr.takeLoss()
+	}
 	s.mu.Lock()
 	prevState, prevClass := s.state, s.errClass
 	if err == nil {
-		s.sent += int64(len(batch))
+		if lostDropped > int64(len(batch)) {
+			lostDropped = int64(len(batch))
+		}
+		s.sent += int64(len(batch)) - lostDropped
+		s.dropped += lostDropped // skipped by the sender itself: counted as dropped, never as sent
+		s.truncated += lostTruncated
 		s.state, s.errClass = "ok", ""
 		s.lastOK = now
 		s.failures = 0
@@ -206,7 +224,7 @@ func (s *sink) logDrops() {
 func (s *sink) status() protocol.DrainStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	st := protocol.DrainStatus{ID: s.cfg.ID, State: s.state, ErrClass: s.errClass, Sent: s.sent, Dropped: s.dropped}
+	st := protocol.DrainStatus{ID: s.cfg.ID, State: s.state, ErrClass: s.errClass, Sent: s.sent, Dropped: s.dropped, Truncated: s.truncated}
 	if !s.lastOK.IsZero() {
 		st.LastOkAt = s.lastOK.UnixMilli()
 	}

@@ -201,4 +201,7 @@ func (s *syslogSender) Send(ctx context.Context, lines []LogLine) error {
 	})
 }
 
+// takeLoss implements lossReporter: records cut to the transport cap (still delivered) since the last call.
+func (s *syslogSender) takeLoss() (dropped, truncated int64) { return 0, s.truncated.Swap(0) }
+
 func (s *syslogSender) Close() { s.cs.Close() }

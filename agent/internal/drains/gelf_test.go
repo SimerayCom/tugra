@@ -189,7 +189,29 @@ func TestGelfOversizedMessageIsCountedNotSent(t *testing.T) {
 		t.Fatalf("pre-cap must bound the payload, got %d", len(js))
 	}
 	if ch, err := chunkGelf(js, [8]byte{}); err != nil || len(ch) > gelfMaxChunks {
-		t.Fatalf("a capped message always fits in 128 chunks: %d %v", len(ch), err)
+		t.Fatalf("a capped plain message fits in 128 chunks: %d %v", len(ch), err)
+	}
+	// ...but the cap is on the RAW text: '<' escapes to \u003c (6x), so 64 KiB of them is ~384 KB of JSON
+	esc, _ := buildGelf("h", "", LogLine{Container: "c", Message: strings.Repeat("<", gelfMaxMessage), TS: time.Unix(1, 0)}, time.Time{})
+	if _, err := chunkGelf(esc, [8]byte{}); err == nil {
+		t.Fatal("expected an escaped 64 KiB message to exceed 128 chunks uncompressed (the premise of the shrink loop)")
+	}
+}
+
+func TestGelfUDPShrinksAnEscapedMessageInsteadOfDropping(t *testing.T) {
+	l, addr := listenLoopback(t)
+	_ = l.Close()
+	s, err := newGelfSender(protocol.DrainCfg{Type: "gelf", Endpoint: addr, Host: "srv", Egress: egressAny,
+		Options: &protocol.DrainOptions{Proto: "udp", Compress: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	gs := s.(*gelfSender)
+	// UDP to a closed port: the datagrams go out (or ICMP refuse later); only the accounting matters here
+	_ = s.Send(context.Background(), []LogLine{{Container: "c", Message: strings.Repeat("<", gelfMaxMessage), TS: time.Unix(1, 0)}})
+	if d, tr := gs.takeLoss(); d != 0 || tr != 0 {
+		t.Fatalf("an escape-heavy message must be shortened to fit, not dropped: dropped=%d truncated=%d", d, tr)
 	}
 }
 

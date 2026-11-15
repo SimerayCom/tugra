@@ -406,7 +406,9 @@ type DrainStatus struct {
 	ErrClass string `json:"errClass,omitempty"`
 	Sent     int64  `json:"sent"`
 	Dropped  int64  `json:"dropped"`
-	LastOkAt int64  `json:"lastOkAt,omitempty"` // unix ms
+	// Truncated counts lines that WERE delivered but cut to the transport's size cap (syslog); omitted when zero.
+	Truncated int64 `json:"truncated,omitempty"`
+	LastOkAt  int64 `json:"lastOkAt,omitempty"` // unix ms
 }
 
 // DrainStatusMsg: Agent -> Hub, per-sink status every 30 s and on state change.
