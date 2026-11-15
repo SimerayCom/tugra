@@ -19,6 +19,8 @@ export interface RelinkResult {
   outcome: RelinkOutcome;
   status: GitLinkStatus;
   sourceName?: string;
+  /** For an ambiguous app with no (valid) pick yet: the sources that can see the repo (ids + names), so the UI can offer a choice. */
+  candidates?: { id: string; name: string }[];
 }
 
 /**
@@ -99,14 +101,14 @@ export class ImportGitLinksService {
       } else if (row.status === "ambiguous" && choice !== undefined) {
         const picked = row.candidates?.find((c) => c.id === choice);
         if (!picked) {
-          results.push({ itemRef: item.itemRef, name: item.name, outcome: "invalid_choice", status: row.status });
+          results.push({ itemRef: item.itemRef, name: item.name, outcome: "invalid_choice", status: row.status, ...(row.candidates ? { candidates: row.candidates } : {}) });
           continue;
         }
         sourceId = picked.id;
         sourceName = picked.name;
       }
       if (!sourceId) {
-        results.push({ itemRef: item.itemRef, name: item.name, outcome: "not_linked", status: row.status });
+        results.push({ itemRef: item.itemRef, name: item.name, outcome: "not_linked", status: row.status, ...(row.status === "ambiguous" && row.candidates ? { candidates: row.candidates } : {}) });
         continue;
       }
       try {

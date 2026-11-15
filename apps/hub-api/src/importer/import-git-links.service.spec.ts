@@ -98,7 +98,7 @@ describe("ImportGitLinksService.relink", () => {
     const h = make({ resolveReposRows: new Map([["ap1", amb]]) });
     const none = await h.svc.relink("u1", "op-1", {});
     expect(h.apps.setSource).not.toHaveBeenCalled();
-    expect(none.results.find((r) => r.itemRef === "app:s1:a1")).toMatchObject({ outcome: "not_linked", status: "ambiguous" });
+    expect(none.results.find((r) => r.itemRef === "app:s1:a1")).toMatchObject({ outcome: "not_linked", status: "ambiguous", candidates: [{ id: "g1", name: "One" }, { id: "g2", name: "Two" }] });
     const bad = await h.svc.relink("u1", "op-1", { choices: { "app:s1:a1": "g-evil" } });
     expect(h.apps.setSource).not.toHaveBeenCalled();
     expect(bad.results.find((r) => r.itemRef === "app:s1:a1")).toMatchObject({ outcome: "invalid_choice" });

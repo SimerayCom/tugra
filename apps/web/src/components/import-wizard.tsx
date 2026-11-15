@@ -11,6 +11,7 @@ import { useConfirm } from "./confirm";
 import { CopyBtn } from "./copy-row";
 import { planSummary, itemsByKind, riskTone, opProgress, coverageApps, coverageCounts, hasDeferredCoverage, reasonText, ackableItems, buildAcks, runnableAfterAcks } from "../lib/import";
 import { EnvBlockers } from "./import/env-blockers";
+import { GitLinksPanel, GitRelinkCard, DeployKeyBlock } from "./import/git-links-panel";
 import type { ImportPlan, ImportPlanItem, ImportRiskLevel, ImportOperation, ImportOpTask, ImportRemoteKind, ImportTaskStatus, MintedMigrationToken, ImportRemapPlan, ImportRemapResult } from "../lib/types";
 
 const toneColor: Record<"danger" | "warning" | "info", string> = {
@@ -281,6 +282,7 @@ function PlanView({
       </SectionCard>
 
       <EnvBlockers plan={plan} acked={acked} onChange={setAcked} />
+      {target && (plan.preflight?.git?.hosts.length ?? 0) > 0 && <GitLinksPanel sessionId={sessionId} targetServerId={target} plan={plan} />}
       <CoverageCard plan={plan} />
       <Section title={t("import.appsSection")} items={groups.app} />
       <Section title={t("import.databasesSection")} items={groups.database} />
@@ -368,6 +370,7 @@ function Timeline({ opId, onReset }: { opId: string; onReset: () => void }) {
               </span>
             )}
             {task.message && <span style={{ color: "var(--c-tx3)", flexBasis: "100%", paddingLeft: 98 }}>{task.message}</span>}
+            {task.git?.deployKeyPublic && <DeployKeyBlock publicKey={task.git.deployKeyPublic} />}
             <TaskNotCarried task={task} />
           </div>
         ))}
@@ -377,6 +380,7 @@ function Timeline({ opId, onReset }: { opId: string; onReset: () => void }) {
       <>
         <MigrateDataCard opId={opId} sourceKind={asRemoteKind(op.sourceKind)} />
         <RemapEnvCard opId={opId} sourceKind={asRemoteKind(op.sourceKind)} />
+        {op.tasks.some((task) => task.git && task.git.status !== "linked" && task.git.status !== "public_ok") && <GitRelinkCard opId={opId} />}
       </>
     )}
     </>

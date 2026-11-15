@@ -187,5 +187,53 @@
   },
   "remap": {
     "serviceLinkReview": "points at an old service (e.g. MinIO); set the new endpoint after migrating its data"
+  },
+  "git": {
+    "title": "Git repositories",
+    "body": "Private repositories are linked to the connected GitHub/Gitea source that can actually see them. Connect a GitHub App once, then re-check: every app it covers is linked in one step.",
+    "loading": "Checking which connected sources can see each repository…",
+    "error": "Could not check the repositories",
+    "group": {
+      "linked": "Will be linked",
+      "publicOk": "Public (no source needed)",
+      "needsSource": "No connected source can see these",
+      "ambiguous": "Several sources can see these (pick one after import)",
+      "sshDeployKey": "SSH (deploy key)",
+      "unsupportedHost": "Unsupported host",
+      "unknown": "Could not be checked"
+    },
+    "appsCount": "{n} app(s)",
+    "connectGithub": "Connect GitHub",
+    "recheck": "Re-check",
+    "relink": "Link now",
+    "relinking": "Linking…",
+    "relinkTitle": "Git links",
+    "relinkBody": "Link the imported apps that a connected source can now see.",
+    "relinkDone": "{n} app(s) linked",
+    "pickSource": "Pick a source",
+    "pickLink": "Link",
+    "sshConverted": "SSH URL will be converted to https",
+    "deployKey": {
+      "title": "Add this public deploy key to the repository",
+      "copy": "Copy key"
+    },
+    "gitlabNote": "GitLab and Bitbucket sources are not supported yet. These repositories are created unlinked.",
+    "hosts": "Git hosts: {list}",
+    "outcome": {
+      "linked": "linked",
+      "already_linked": "already linked",
+      "not_linked": "not linked",
+      "invalid_choice": "invalid choice",
+      "failed": "failed"
+    },
+    "status": {
+      "linked": "linked",
+      "public_ok": "public",
+      "needs_source": "needs a source",
+      "ambiguous": "ambiguous",
+      "ssh_deploy_key": "deploy key",
+      "unsupported_host": "unsupported host",
+      "unknown": "unknown"
+    }
   }
 }

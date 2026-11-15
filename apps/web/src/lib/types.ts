@@ -1013,6 +1013,31 @@ export interface ImportUnmapped {
   reasonParams?: Record<string, string | number>;
 }
 export type ImportGitStatus = "linked" | "public_ok" | "needs_source" | "ambiguous" | "ssh_deploy_key" | "unsupported_host" | "unknown";
+/** One git app's link resolution (before apply: `POST /import/git-links`). Names + fixed text only, never a credential. */
+export interface ImportGitLinkRow {
+  itemRef: string;
+  name: string;
+  repo: { host: string; owner: string; name: string } | null;
+  status: ImportGitStatus;
+  sourceId?: string;
+  sourceName?: string;
+  candidates?: { id: string; name: string }[];
+  rewriteUrl?: string;
+  reason: string;
+}
+export interface ImportGitLinksView {
+  rows: ImportGitLinkRow[];
+  groups: Array<{ host: string; owner: string; apps: number; status: ImportGitStatus; sourceName?: string }>;
+}
+export type ImportRelinkOutcome = "linked" | "already_linked" | "not_linked" | "invalid_choice" | "failed";
+export interface ImportRelinkResult {
+  itemRef: string;
+  name: string;
+  outcome: ImportRelinkOutcome;
+  status: ImportGitStatus;
+  sourceName?: string;
+  candidates?: { id: string; name: string }[];
+}
 export interface ImportTaskGit {
   status: ImportGitStatus;
   sourceName?: string;

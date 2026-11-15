@@ -107,6 +107,8 @@ import type {
   TeamMember,
   TeamRole,
   ImportAck,
+  ImportGitLinksView,
+  ImportRelinkResult,
   ImportPlan,
   ImportRemoteKind,
   ImportSession,
@@ -1988,6 +1990,14 @@ export const api = {
       | { sourceKind: ImportRemoteKind; sessionId: string; targetServerId: string; environmentId?: string; planHash: string; acks?: ImportAck[] },
   ) {
     return apiFetch<{ opId: string }>("/import/apply", { method: "POST", body: JSON.stringify(input) });
+  },
+  // Resolve how each git app of the connected source would be linked on the target server's team (read-only).
+  importGitLinks(input: { sessionId: string; targetServerId: string }) {
+    return apiFetch<ImportGitLinksView>("/import/git-links", { method: "POST", body: JSON.stringify(input) });
+  },
+  // After an import: link the created apps that a connected source now covers (choices pick a source for ambiguous apps).
+  relinkImportGit(opId: string, choices?: Record<string, string>) {
+    return apiFetch<{ results: ImportRelinkResult[]; linked: number }>(`/import/operations/${encodeURIComponent(opId)}/git-links/relink`, { method: "POST", body: JSON.stringify(choices && Object.keys(choices).length ? { choices } : {}) });
   },
   getImportOperation(opId: string) {
     return apiFetch<ImportOperation>(`/import/operations/${encodeURIComponent(opId)}`);
