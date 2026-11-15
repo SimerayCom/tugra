@@ -4,7 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { SwarmProxyService } from "./swarm-proxy.service";
 import { createHash } from "node:crypto";
-import { planEnv } from "../deploy/env-render";
+import { assertScriptFits, planEnv } from "../deploy/env-render";
 import { appVolumeName, buildBuildOnlyScript, constraintExpr, envFileB64, imageRef, spreadPrefExpr, traefikLabels, type AppSpec, type RegistryAuth } from "../deploy/deploy-script";
 import {
   SWARM_OVERLAY,
@@ -251,6 +251,8 @@ export class SwarmDeployService {
         pollSec,
       }),
     ].join("\n");
+    // multiline values are base64'd into this one `bash -c` argument (twice, via the secret body): fail clearly up front
+    if (mlKeys.length > 0) assertScriptFits(script);
     return this.agentWs.sendCommand(managerId, script, "swarm", (pollSec + 30) * 1000, onChunk);
   }
 

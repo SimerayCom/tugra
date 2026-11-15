@@ -2783,6 +2783,27 @@ describe("per-variable env flags — docker run transport", () => {
     expect(s).toContain('env PEM_KEY="$TUGRA_ML_0" docker run -d');
   });
 
+  it("when every variable is multiline or build-only the previous plaintext env file is removed; flag-free apps never emit an rm", () => {
+    const allMl = buildRunScript({ ...base, env: { PEM_KEY: PEM }, envMeta: { PEM_KEY: { multiline: true } } }, "v1", true);
+    expect(allMl).toContain("rm -f /etc/tugra/env/abc.env");
+    expect(allMl.indexOf("rm -f /etc/tugra/env/abc.env")).toBeLessThan(allMl.indexOf("docker run -d"));
+    const allBuildOnly = buildRunScript({ ...base, env: {}, envMeta: { T: { buildTime: true, runtime: false } } }, "v1", true);
+    expect(allBuildOnly).toContain("rm -f /etc/tugra/env/abc.env");
+    // a plain variable remains: the file is rewritten, never removed
+    expect(buildRunScript(mlApp, "v1", true)).not.toContain("rm -f /etc/tugra/env/abc.env");
+    expect(buildRunScript({ ...base, env: {} }, "v1", true)).not.toContain("rm -f /etc/tugra/env/abc.env");
+    expect(buildRunScript({ ...base, env: { A: "1" } }, "v1", true)).not.toContain("rm -f /etc/tugra/env/abc.env");
+  });
+
+  it("the script-size preflight also guards build-time values (shell-quoted into the script) and the build-only script", () => {
+    const huge = "'".repeat(40 * 1024); // each ' costs 4 bytes once quoted
+    const buildApp: AppSpec = { ...base, source: "GIT", gitUrl: "https://github.com/a/b.git", buildType: "DOCKERFILE", env: { B: huge }, envMeta: { B: { buildTime: true } }, buildArgs: { B: huge }, buildFlagKeys: ["B"] };
+    expect(() => buildRunScript(buildApp, "v1", true)).toThrow(/limit 122880/);
+    expect(() => buildBuildOnlyScript(buildApp, "v1")).toThrow(/limit 122880/);
+    // unflagged oversize env keeps today's behaviour
+    expect(() => buildBuildOnlyScript({ ...buildApp, envMeta: undefined, buildFlagKeys: undefined }, "v1")).not.toThrow();
+  });
+
   it("EVERY docker run -d carries the prefix: normal, rolling (incl. relabel), recreate (incl. rollback)", () => {
     const check = (s: string) => {
       const runs = s.match(/docker run -d/g) ?? [];

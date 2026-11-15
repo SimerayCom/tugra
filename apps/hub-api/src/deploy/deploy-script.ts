@@ -461,7 +461,7 @@ export function registryImageRef(
 /** Build (+ push, if the spec carries registryPush) the image WITHOUT running it — for a
  *  build server that builds and pushes so a separate deploy server can pull and run. */
 export function buildBuildOnlyScript(app: AppSpec, version: string, noCache = false): string {
-  return ["set -e", ...prepSteps(app, version, noCache)].join("\n");
+  return fitIfFlagged(app, ["set -e", ...prepSteps(app, version, noCache)].join("\n"));
 }
 
 /** Tag the locally-built image under the registry ref and push it, reusing the stdin login
@@ -1264,12 +1264,17 @@ function buildFlagNote(app: AppSpec): string[] {
  *  Secrets go through a file, never -e, so they never hit the process list. */
 function envPreludeFor(app: AppSpec): string[] {
   const env = app.env && typeof app.env === "object" ? app.env : {};
-  if (Object.keys(env).length === 0) return [];
+  // An app whose flags moved EVERY variable out of the file (multiline / build-only) must not keep the previous
+  // deploy's plaintext file on the host: remove it. Gated on flags being present, so a flag-free app is unchanged.
+  const hasFlags = !!app.envMeta && Object.keys(app.envMeta).length > 0;
+  if (Object.keys(env).length === 0) return hasFlags ? [`rm -f ${envFilePath(app)}`] : [];
   const plan = planEnv(env, app.envMeta, "docker");
   const lines: string[] = [];
   if (Object.keys(plan.fileEnv).length > 0) {
     const envPath = envFilePath(app);
     lines.push(`mkdir -p ${ENV_DIR}`, `printf %s ${shq(envFileB64(plan.fileEnv))} | base64 -d > ${envPath}`, `chmod 600 ${envPath}`);
+  } else if (hasFlags) {
+    lines.push(`rm -f ${envFilePath(app)}`);
   }
   // Multiline values never ride the env file: decoded into UNEXPORTED shell variables and attached to the one
   // `docker run` by scoped prefix assignment (see env-render).
@@ -1286,10 +1291,11 @@ function envRunFlags(app: AppSpec): { flags: string; prefix: string; shell: bool
   return { flags, prefix: mlPrefix(plan.shell), shell: plan.shell.length > 0 };
 }
 
-/** The script travels as ONE `bash -c` argument; a multiline value is base64-embedded in it, so fail early and
- *  clearly (only when that transport is in use: an unflagged oversize env keeps today's behaviour). */
-function fitIfMultiline(app: AppSpec, script: string): string {
-  if (app.envMeta && Object.values(app.envMeta).some((f) => f.multiline)) assertScriptFits(script);
+/** The script travels as ONE `bash -c` argument; a multiline value is base64-embedded in it and a build-time value
+ *  is shell-quoted into it (each `'` costs 4 bytes), so fail early and clearly (only when one of those transports is
+ *  in use: an unflagged oversize env keeps today's behaviour). */
+function fitIfFlagged(app: AppSpec, script: string): string {
+  if ((app.envMeta && Object.values(app.envMeta).some((f) => f.multiline)) || (app.buildFlagKeys?.length ?? 0) > 0) assertScriptFits(script);
   return script;
 }
 
@@ -1616,7 +1622,7 @@ export function buildPostDeployScript(app: AppSpec): string {
 export function buildRunScript(app: AppSpec, version: string, build = true, noCache = false): string {
   const name = containerName(app);
   const ref = runTag(app, version);
-  return fitIfMultiline(app, [
+  return fitIfFlagged(app, [
     "set -e",
     ...(build ? prepSteps(app, version, noCache) : []),
     ...envPreludeFor(app),
@@ -1904,7 +1910,7 @@ export function buildRollingDeployScript(
             "  fi",
           ]
         : [];
-    return fitIfMultiline(app, [
+    return fitIfFlagged(app, [
       ...head,
       `if [ "$healthy" = 1 ]; then`,
       ...drainLines("  "),
@@ -1934,7 +1940,7 @@ export function buildRollingDeployScript(
           `  fi`,
         ]
       : [`  if docker rename ${rollout} ${canonical}; then :; else echo "TUGRA_ROLLOUT: rename_failed"; exit 1; fi`];
-  return fitIfMultiline(app, [
+  return fitIfFlagged(app, [
     ...head,
     `if [ "$healthy" = 1 ]; then`,
     ...drainLines("  "),
@@ -1998,7 +2004,7 @@ export function buildRecreateDeployScript(
   const rollback = opts.prevVersion
     ? `  if ${runContainerArgs(prevApp, opts.prevVersion, canonical)}; then echo "TUGRA_ROLLOUT: rolled_back"; exit 3; else echo "TUGRA_ROLLOUT: rollback_failed"; exit 1; fi`
     : `  echo "TUGRA_ROLLOUT: failed"; exit 1`;
-  return fitIfMultiline(app, [
+  return fitIfFlagged(app, [
     "set -e",
     ...(build ? prepSteps(app, version, opts.noCache ?? false) : []),
     ...envPreludeFor(app),

@@ -169,6 +169,22 @@ describe("compose-git — per-variable env flags", () => {
     expect(envBody).toBe("PLAIN=p");
   });
 
+  it("the trailing ps carries the prefix and the env file like up; flag-free ps is unchanged", () => {
+    const up = buildComposeGitUpScript(flagged, "a".repeat(64));
+    const ps = up.split("\n").filter((l) => l.includes(" ps") && l.includes("docker compose") && !l.includes("--progress"));
+    expect(ps).toHaveLength(1);
+    expect(ps[0]).toBe(`env PEM="$TUGRA_ML_0" PW="$TUGRA_ML_1" docker compose -p tugra_abc -f '${CLONE}/docker-compose.yml' --env-file /etc/tugra/compose-git/abc/.env ps`);
+    const plain = buildComposeGitUpScript({ ...base, env: { A: "1" } }, "a".repeat(64));
+    expect(plain).toContain(`docker compose -p tugra_abc -f '${CLONE}/docker-compose.yml' ps`);
+  });
+
+  it("when every variable moved out of .env the previous git-compose .env is removed", () => {
+    const all = buildComposeGitUpScript({ ...base, env: { PEM: "x\ny" }, envMeta: { PEM: { multiline: true } } }, "a".repeat(64));
+    expect(all).toContain("rm -f /etc/tugra/compose-git/abc/.env");
+    expect(all).not.toContain("--env-file");
+    expect(buildComposeGitUpScript({ ...base, env: {} }, "a".repeat(64))).not.toContain("rm -f /etc/tugra/compose-git/abc/.env");
+  });
+
   it("preflight applies when multiline transport is used", () => {
     expect(() => buildComposeGitRenderScript({ ...base, env: { A: "y".repeat(130 * 1024), PEM: "x\ny" }, envMeta: { PEM: { multiline: true } } })).toThrow(/limit 122880/);
   });

@@ -336,6 +336,18 @@ describe("SwarmDeployService — multiline env variables", () => {
     expect(send.mock.calls[1][1]).not.toContain("base64 -d; printf x");
   });
 
+  it("the script-size preflight applies to the swarm deploy when multiline variables are used (and only then)", async () => {
+    const big = "y".repeat(100 * 1024); // plain env of this size base64s past the bash -c argument limit
+    const send = sendWith(IMG + "\nTUGRA_HAS_BASE64=yes");
+    const { svc } = make({ sendImpl: send });
+    await expect(svc.deploy(app(), spec({ env: { BIG: big, PEM_KEY: "a\nb" }, envMeta: { PEM_KEY: { multiline: true } } }), "dep1", { timeoutMs: 1000 })).rejects.toThrow(/deploy script is \d+ bytes; limit 122880/);
+    expect(send).toHaveBeenCalledTimes(1); // only the inspect ran; the oversize deploy script was never dispatched
+    const send2 = sendWith(IMG);
+    const { svc: svc2 } = make({ sendImpl: send2 });
+    await svc2.deploy(app(), spec({ env: { BIG: big } }), "dep1", { timeoutMs: 1000 }); // unflagged: today's behaviour
+    expect(send2).toHaveBeenCalledTimes(2);
+  });
+
   it("a key ending in :b64 is refused when multiline variables are used", async () => {
     const { svc } = make({ sendImpl: sendWith(IMG + "\nTUGRA_HAS_BASE64=yes") });
     await expect(svc.deploy(app(), spec({ env: { "x:b64": "1", PEM: "a\nb" }, envMeta: { PEM: { multiline: true } } }), "dep1", { timeoutMs: 1000 })).rejects.toThrow(/:b64/);

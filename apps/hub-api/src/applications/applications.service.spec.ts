@@ -4743,6 +4743,20 @@ describe("ApplicationsService.clone", () => {
     expect(res.warnings).toEqual(expect.arrayContaining(["domain_reset", "custom_cert_dropped", "host_port_reset"]));
   });
 
+  it("copies the encrypted per-variable flags blob verbatim (a cloned multiline / build-only variable keeps its flags)", async () => {
+    const blob = 'enc({"v":1,"flags":{"PEM":{"multiline":true},"TOK":{"buildTime":true,"runtime":false}}})';
+    const create = jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ ...data, id: "clone1", createdAt: new Date() }));
+    const { prisma } = clonePrisma({ application: { findUnique: jest.fn().mockResolvedValue({ ...src, envMetaEnc: blob }), create } });
+    await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", {});
+    expect(create.mock.calls[0][0].data.envMetaEnc).toBe(blob);
+    expect(create.mock.calls[0][0].data.envEnc).toBe("ENVENC");
+    // a flag-free source stays flag-free
+    const plain = jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ ...data, id: "clone2", createdAt: new Date() }));
+    const p2 = clonePrisma({ application: { findUnique: jest.fn().mockResolvedValue({ ...src, envMetaEnc: null }), create: plain } });
+    await make(p2.prisma, {}, {} as AgentWsServer).clone("u1", "src1", {});
+    expect(plain.mock.calls[0][0].data.envMetaEnc).toBeNull();
+  });
+
   it("rejects cloning a preview app", async () => {
     const { prisma } = clonePrisma({ application: { findUnique: jest.fn().mockResolvedValue({ ...src, isPreview: true }), create: jest.fn() } });
     await expect(make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", {})).rejects.toBeInstanceOf(BadRequestException);
@@ -7045,6 +7059,79 @@ describe("ApplicationsService — per-variable env flags", () => {
       const b = mk();
       await b.svc.upsertPreview({ ...parent, previewExcludeKeys: ["SECRET"] } as never, 7, "f");
       expect(b.create.mock.calls[0][0].data.envMetaEnc).toBe('enc({"v":1,"flags":{"PEM":{"multiline":true}}})');
+    });
+  });
+
+  describe("compose lifecycle and swarm rollback", () => {
+    const composeApp = { ...baseApp, source: "COMPOSE", image: null, composeFile: "services:\n  web:\n    image: nginx\n", status: "RUNNING", envEnc: JSON.stringify({ PLAIN: "p", PW: "pa$$word", PEM: "RAWSECRET\nL2" }), envMetaEnc: meta({ PW: { literal: true }, PEM: { multiline: true } }) };
+    const lifecycleDeps = (row: Record<string, unknown>) => {
+      const sent: string[] = [];
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue(row), update: jest.fn().mockResolvedValue({}), delete: jest.fn().mockResolvedValue({}) },
+        sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+        server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1", certMode: "http" }) },
+      } as unknown as PrismaService;
+      const agentWs = {
+        isOnline: jest.fn().mockReturnValue(true),
+        sendCommand: jest.fn().mockImplementation((_s: string, cmd: string) => { sent.push(cmd); return Promise.resolve({ exitCode: 0, output: "" }); }),
+      } as unknown as AgentWsServer;
+      const svc = make(prisma, accessWith({}), agentWs, makeDeployLogs(), makeMonitors());
+      (svc as unknown as { audit: { log: jest.Mock } }).audit = { log: jest.fn().mockResolvedValue(undefined) };
+      return { svc, sent };
+    };
+    const prefix = 'env PEM="$TUGRA_ML_0" PW="$TUGRA_ML_1" ';
+
+    it("stop / start / restart / logs / remove of a compose app with literal or multiline variables carry the prefix and prelude", async () => {
+      const d = lifecycleDeps(composeApp);
+      await d.svc.stop("u1", "app1");
+      await d.svc.start("u1", "app1");
+      await d.svc.restart("u1", "app1");
+      await d.svc.appLogs("u1", "app1", 10);
+      await d.svc.remove("u1", "app1");
+      expect(d.sent).toHaveLength(5);
+      for (const cmd of d.sent) {
+        const composeLines = cmd.split("\n").filter((l) => l.includes("docker compose"));
+        expect(composeLines.length).toBeGreaterThan(0);
+        for (const l of composeLines) expect(l.startsWith(prefix)).toBe(true);
+        expect(cmd).toContain("TUGRA_ML_0=$(printf %s ");
+        expect(cmd).not.toContain("RAWSECRET");
+      }
+    });
+
+    it("an app without flags, and an app whose flagged env cannot be resolved, run the bare commands (stop / remove never depend on the env)", async () => {
+      const plain = lifecycleDeps({ ...composeApp, envEnc: '{"A":"1"}', envMetaEnc: null });
+      await plain.svc.stop("u1", "app1");
+      expect(plain.sent[0]).toBe("docker compose -p tugra_app1 -f /etc/tugra/compose/app1/docker-compose.yml stop");
+      const broken = lifecycleDeps({ ...composeApp, envMetaEnc: "garbage" });
+      await broken.svc.stop("u1", "app1");
+      await broken.svc.remove("u1", "app1");
+      expect(broken.sent[0]).toBe("docker compose -p tugra_app1 -f /etc/tugra/compose/app1/docker-compose.yml stop");
+      expect(broken.sent[1]).toContain("down");
+    });
+
+    it("swarm rollback applies the flags: a build-only variable is not attached, a multiline one is marked", async () => {
+      const row = { ...baseApp, source: "GIT", image: null, gitUrl: "https://github.com/acme/app.git", gitBranch: "main", buildType: "DOCKERFILE", clusterId: "c1", envEnc: JSON.stringify({ A: "1", BUILDONLY: "b", PEM: "l1\nl2\n" }), envMetaEnc: meta({ BUILDONLY: { buildTime: true, runtime: false }, PEM: { multiline: true } }) };
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue(row), update: jest.fn().mockResolvedValue({}) },
+        deployment: {
+          findFirst: jest.fn().mockImplementation(({ where }: { where: { status: string } }) => Promise.resolve(where.status === "RUNNING" ? null : { id: "target", status: "SUCCESS", imageTag: null, registryImage: "ghcr.io/o/a:1", imageDigest: null, commitSha: null, commitMessage: null })),
+          create: jest.fn().mockResolvedValue({ id: "roll1", createdAt: new Date() }),
+          update: jest.fn().mockResolvedValue({}),
+          findUnique: jest.fn().mockResolvedValue({ id: "roll1", status: "SUCCESS" }),
+          count: jest.fn().mockResolvedValue(0),
+          findMany: jest.fn().mockResolvedValue([]),
+        },
+        sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+      } as unknown as PrismaService;
+      const svc = make(prisma, accessWith({}), {} as AgentWsServer);
+      (svc as unknown as { audit: { log: jest.Mock } }).audit = { log: jest.fn().mockResolvedValue(undefined) };
+      const rollbackTo = jest.fn().mockResolvedValue({ exitCode: 0, output: "ok", digest: null });
+      (svc as unknown as { swarmDeploy: { rollbackTo: jest.Mock } }).swarmDeploy = { rollbackTo };
+      await svc.rollback("u1", "app1", "target");
+      expect(rollbackTo).toHaveBeenCalledTimes(1);
+      const spec = rollbackTo.mock.calls[0][1] as { env: Record<string, string>; envMeta: Record<string, unknown> };
+      expect(spec.env).toEqual({ A: "1", PEM: "l1\nl2\n" }); // BUILDONLY removed
+      expect(spec.envMeta).toEqual({ BUILDONLY: { buildTime: true, runtime: false }, PEM: { multiline: true } });
     });
   });
 

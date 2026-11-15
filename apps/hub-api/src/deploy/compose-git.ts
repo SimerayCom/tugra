@@ -80,6 +80,8 @@ function cloneAndEnvSteps(app: AppSpec): { lines: string[]; envArg: string; pref
       `printf %s ${shq(envFileB64(plan.fileEnv))} | base64 -d > ${envPath}`,
       `chmod 600 ${envPath}`,
     );
+  } else if (app.envMeta && Object.keys(app.envMeta).length > 0) {
+    lines.push(`rm -f ${envPath}`); // every variable moved out of .env: drop the previous deploy's plaintext file
   }
   lines.push(...mlPrelude(plan.shell));
   return { lines, envArg: hasEnv ? `--env-file ${envPath} ` : "", prefix: mlPrefix(plan.shell), fits: plan.shell.length > 0 };
@@ -138,7 +140,8 @@ export function buildComposeGitUpScript(app: AppSpec, sha: string, noCache = fal
   lines.push(
     `${prefix}docker compose --progress plain -p ${proj} -f ${shq(file)} ${overrideArg}${envArg}up -d --build ${noCache ? "--pull always --no-cache " : ""}--force-recreate --remove-orphans`,
     ...registryLogoutSteps(app.registryAuth),
-    `docker compose -p ${proj} -f ${shq(file)} ${overrideArg}ps`,
+    // `ps` interpolates the same config as `up`: same prefix (and env file) when literal / multiline variables exist.
+    `${prefix}docker compose -p ${proj} -f ${shq(file)} ${overrideArg}${prefix ? envArg : ""}ps`,
   );
   const script = lines.join("\n");
   if (fits) assertScriptFits(script);

@@ -416,6 +416,62 @@ describe("compose-script — per-variable env flags", () => {
     expect(() => buildComposeUpScript({ ...base, env: { DOCKER_HOST: "x" }, envMeta: { DOCKER_HOST: { literal: true } } })).toThrow(/cannot be a multiline or literal/);
   });
 
+  it("EVERY compose lifecycle script (stop, start, restart, logs, down) and the trailing ps carry the same prefix and decode prelude", () => {
+    const prefix = 'env PEM_KEY="$TUGRA_ML_0" PW="$TUGRA_ML_1" ';
+    const git: AppSpec = { ...base, composePath: "deploy/stack.yaml", gitUrl: "https://github.com/u/r.git", gitBranch: "main" };
+    for (const app of [flagged, { ...flagged, composePath: git.composePath, gitUrl: git.gitUrl, gitBranch: git.gitBranch }]) {
+      const scripts: Record<string, string> = {
+        stop: buildComposeStopScript(app),
+        start: buildComposeStartScript(app),
+        restart: buildComposeRestartScript(app),
+        logs: buildLogsScript(app, 50),
+        down: buildComposeDownScript(app, { volumes: true }),
+      };
+      for (const [name, script] of Object.entries(scripts)) {
+        const composeLines = script.split("\n").filter((l) => l.includes("docker compose"));
+        expect(composeLines.length).toBeGreaterThan(0);
+        for (const l of composeLines) expect(l.startsWith(prefix)).toBe(true);
+        expect(script).toContain("TUGRA_ML_0=$(printf %s ");
+        expect(script).not.toContain("RAWSECRET");
+        expect(`${name}:${script.includes("pa$$word")}`).toBe(`${name}:false`);
+      }
+    }
+    // the up script: up AND ps are prefixed
+    const up = buildComposeUpScript(flagged);
+    const composeCmds = up.split("\n").filter((l) => /docker compose .* (up|ps)\b/.test(l) && !l.startsWith("echo"));
+    expect(composeCmds).toHaveLength(2);
+    for (const l of composeCmds) expect(l.startsWith(prefix)).toBe(true);
+  });
+
+  it("lifecycle scripts are byte-identical for an app without flags (and for flags that ride no shell)", () => {
+    const plain: AppSpec = { ...base, env: { A: "1" } };
+    expect(buildComposeStopScript(plain)).toBe("docker compose -p tugra_abc -f /etc/tugra/compose/abc/docker-compose.yml stop");
+    expect(buildComposeStopScript({ ...plain, envMeta: {} })).toBe(buildComposeStopScript(plain));
+    expect(buildComposeRestartScript({ ...plain, envMeta: { A: { buildTime: true } } })).toBe(buildComposeRestartScript(plain));
+    expect(buildLogsScript(plain, 50)).toBe("docker compose -p tugra_abc -f /etc/tugra/compose/abc/docker-compose.yml logs --no-color --tail 50 2>&1");
+    expect(buildComposeDownScript(plain)).not.toContain("TUGRA_ML");
+    expect(buildComposeUpScript(plain)).toContain("-f /etc/tugra/compose/abc/docker-compose.yml ps");
+    expect(buildComposeUpScript(plain)).not.toContain("TUGRA_ML");
+  });
+
+  it("a lifecycle script never throws for an env that cannot be planned (stop / down must not depend on it)", () => {
+    const broken: AppSpec = { ...base, env: { DOCKER_HOST: "x" }, envMeta: { DOCKER_HOST: { literal: true } } };
+    expect(buildComposeStopScript(broken)).toBe("docker compose -p tugra_abc -f /etc/tugra/compose/abc/docker-compose.yml stop");
+    expect(buildComposeDownScript(broken)).toContain("down");
+  });
+
+  it("when every variable moved out of .env the previous plaintext .env is removed (not left behind); flag-free apps keep today's output", () => {
+    const allShell = buildComposeUpScript({ ...flagged, env: { PW: "x$y" }, envMeta: { PW: { literal: true } } });
+    expect(allShell).toContain("rm -f /etc/tugra/compose/abc/.env");
+    expect(allShell.indexOf("rm -f /etc/tugra/compose/abc/.env")).toBeLessThan(allShell.indexOf("docker compose --progress"));
+    // an all-build-only env leaves no .env either
+    expect(buildComposeUpScript({ ...base, env: {}, envMeta: { B: { buildTime: true, runtime: false } } })).toContain("rm -f /etc/tugra/compose/abc/.env");
+    // a plain .env is still written, not removed
+    expect(buildComposeUpScript(flagged)).not.toContain("rm -f");
+    // flag-free: no rm
+    expect(buildComposeUpScript({ ...base, env: {} })).not.toContain("rm -f");
+  });
+
   it("config mounts still interpolate ${KEY} from the FULL env", () => {
     const s = buildComposeUpScript({ ...flagged, configMounts: [{ containerPath: "/c", content: "pw=${PW}", mode: "0444" } as never] });
     expect(s).toContain(Buffer.from("pw=pa$$word${X}").toString("base64"));

@@ -2769,7 +2769,7 @@ export class ApplicationsService {
       // reported success (HTTP 200 + audit + UI toast all lied). Pre-check online for a clean 503, then verify
       // the command itself succeeded. (Classic stop ends `|| true` so it always exits 0 — this is a no-op there.)
       if (!this.agentWs.isOnline(app.serverId)) throw new ServiceUnavailableException("agent offline");
-      const cmd = app.source === "COMPOSE" ? buildComposeStopScript(this.toSpec(app)) : buildStopScript(app);
+      const cmd = app.source === "COMPOSE" ? buildComposeStopScript(await this.composeOpSpec(app)) : buildStopScript(app);
       const res = await this.agentWs.sendCommand(app.serverId, cmd, "deploy", this.lifecycleTimeoutMs(app));
       if (res.exitCode !== 0) throw new ServiceUnavailableException(`stop failed (exit ${res.exitCode}) — the app's status is unchanged`);
     }
@@ -2789,7 +2789,7 @@ export class ApplicationsService {
       // `docker start`/`compose start` exit non-zero when the container/project is gone — verify instead of
       // falsely reporting RUNNING (see stop()). Pre-check online for a clean 503 rather than an opaque 500.
       if (!this.agentWs.isOnline(app.serverId)) throw new ServiceUnavailableException("agent offline");
-      const cmd = app.source === "COMPOSE" ? buildComposeStartScript(this.toSpec(app)) : buildStartScript(app);
+      const cmd = app.source === "COMPOSE" ? buildComposeStartScript(await this.composeOpSpec(app)) : buildStartScript(app);
       const res = await this.agentWs.sendCommand(app.serverId, cmd, "deploy", LIFECYCLE_TIMEOUT_MS);
       if (res.exitCode !== 0) throw new ServiceUnavailableException(`start failed (exit ${res.exitCode}) — the app's status is unchanged`);
     }
@@ -2807,7 +2807,7 @@ export class ApplicationsService {
       // `docker restart`/`compose restart` exit non-zero when the container/project is gone — verify instead of
       // falsely reporting RUNNING (see stop()). Pre-check online for a clean 503 rather than an opaque 500.
       if (!this.agentWs.isOnline(app.serverId)) throw new ServiceUnavailableException("agent offline");
-      const cmd = app.source === "COMPOSE" ? buildComposeRestartScript(this.toSpec(app)) : buildRestartScript(app);
+      const cmd = app.source === "COMPOSE" ? buildComposeRestartScript(await this.composeOpSpec(app)) : buildRestartScript(app);
       const res = await this.agentWs.sendCommand(app.serverId, cmd, "deploy", this.lifecycleTimeoutMs(app));
       if (res.exitCode !== 0) throw new ServiceUnavailableException(`restart failed (exit ${res.exitCode}) — the app's status is unchanged`);
     }
@@ -2860,7 +2860,7 @@ export class ApplicationsService {
       // their data). Default removes them — deleting an app frees its disk, as before.
       let cmd =
         app.source === "COMPOSE"
-          ? buildComposeDownScript(this.toSpec(app), { volumes: !opts.keepVolumes })
+          ? buildComposeDownScript(await this.composeOpSpec(app), { volumes: !opts.keepVolumes })
           : buildRemoveScript(app, opts.keepVolumes ? [] : this.appVolumes(app), { networks: prunedNetworks });
       // removeImages: also drop the app's OWN locally-stored image tags (tugra_<appId>:*) to reclaim disk.
       // IMAGE/GIT only — a COMPOSE app's images are its upstream/compose-built tags, not in this namespace,
@@ -3041,7 +3041,7 @@ export class ApplicationsService {
     }
     const r = await this.agentWs.sendCommand(
       app.serverId,
-      buildLogsScript(this.toSpec(app), tail),
+      buildLogsScript(app.source === "COMPOSE" ? await this.composeOpSpec(app) : this.toSpec(app), tail),
       "deploy",
       60_000,
     );
@@ -4909,6 +4909,28 @@ export class ApplicationsService {
       if (r.droppedForBuildSecret.length) spec.buildFlagDropped = r.droppedForBuildSecret;
     }
     return { autoMultiline: legacy.keys };
+  }
+
+  /**
+   * The spec for a compose lifecycle command (stop / start / restart / logs / down). Every `docker compose`
+   * subcommand interpolates the project config, and literal / multiline variables ride the CLI process environment
+   * rather than the auto-read `.env`, so those commands need exactly those values. Only an app that carries flags
+   * is touched (the rest is byte-identical to before); only the literal / multiline values are kept; and any failure
+   * to resolve them degrades to the bare spec, because stopping or removing an app must never depend on its env.
+   */
+  private async composeOpSpec(app: Application): Promise<AppSpec> {
+    const spec = this.toSpec(app);
+    if (!app.envMetaEnc) return spec;
+    try {
+      await this.attachResolvedEnv(app, spec, { withBuild: false });
+      const meta = spec.envMeta ?? {};
+      spec.env = Object.fromEntries(Object.entries(spec.env ?? {}).filter(([k]) => meta[k]?.literal || meta[k]?.multiline));
+    } catch (e) {
+      this.logger.warn(`compose lifecycle for app ${app.id}: flagged env unavailable (${e instanceof Error ? e.message : "error"}); running without it`);
+      spec.env = {};
+      spec.envMeta = undefined;
+    }
+    return spec;
   }
 
   /** One deploy-log line per value that was delivered as multiline without the flag (legacy data). Key names only. */

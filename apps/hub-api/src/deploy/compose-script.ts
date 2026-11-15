@@ -296,6 +296,8 @@ export function buildComposeUpScript(app: AppSpec, noCache = false): string {
       `printf %s ${shq(envFileB64(plan.fileEnv))} | base64 -d > ${envPath}`,
       `chmod 600 ${envPath}`,
     );
+  } else if (hasFlags(app)) {
+    lines.push(`rm -f ${envPath}`); // every variable moved out of .env: drop the previous deploy's plaintext file
   }
   lines.push(...mlPrelude(plan.shell));
   // Private registry: log in (isolated config) before pulling, log out after.
@@ -307,23 +309,56 @@ export function buildComposeUpScript(app: AppSpec, noCache = false): string {
     // [===>] MB" bars) so the deploy log reads like a tidy build log, not hundreds of progress frames.
     `${mlPrefix(plan.shell)}docker compose --progress plain -p ${proj} -f ${file} ${overrideArg}${envArg}up -d ${noCache ? "--pull always " : ""}--remove-orphans`,
     ...registryLogoutSteps(app.registryAuth),
-    `docker compose -p ${proj} -f ${file} ${overrideArg}ps`,
+    // `ps` interpolates the same config as `up`, so it carries the same prefix (a `${VAR:?}` or a flagged value in a
+    // port / image would otherwise fail the final step of an otherwise successful deploy).
+    `${mlPrefix(plan.shell)}docker compose -p ${proj} -f ${file} ${overrideArg}ps`,
   );
   const script = lines.join("\n");
   if (plan.shell.length > 0) assertScriptFits(script);
   return script;
 }
 
+function hasFlags(app: AppSpec): boolean {
+  return !!app.envMeta && Object.keys(app.envMeta).length > 0;
+}
+
+/**
+ * EVERY `docker compose` subcommand interpolates the project config, and literal / multiline variables no longer
+ * live in the auto-read `.env` (they ride the CLI process environment). So each lifecycle command carries the same
+ * decode prelude + `env KEY=...` prefix as `up`. Empty - the command stays byte-identical - when the app has none.
+ * Tolerant on purpose: a stop / down must never fail because the stored env cannot be planned.
+ */
+function composeOpEnv(app: AppSpec): { pre: string[]; prefix: string } {
+  const env = app.env && typeof app.env === "object" ? app.env : {};
+  if (Object.keys(env).length === 0 || !hasFlags(app)) return { pre: [], prefix: "" };
+  try {
+    const plan = planEnv(env, app.envMeta, "compose");
+    return { pre: mlPrelude(plan.shell), prefix: mlPrefix(plan.shell) };
+  } catch {
+    return { pre: [], prefix: "" };
+  }
+}
+
+/** `<prelude>\n<prefix>docker compose -p P -f F <sub>`; just the command when there is nothing to carry. */
+function composeOpScript(app: AppSpec, sub: string, after = ""): string {
+  const { pre, prefix } = composeOpEnv(app);
+  const cmd = `${prefix}docker compose -p ${composeProject(app)} -f ${composeOpFile(app)} ${sub}${after}`;
+  if (pre.length === 0) return cmd;
+  const script = [...pre, cmd].join("\n");
+  assertScriptFits(script);
+  return script;
+}
+
 export function buildComposeStopScript(app: AppSpec): string {
-  return `docker compose -p ${composeProject(app)} -f ${composeOpFile(app)} stop`;
+  return composeOpScript(app, "stop");
 }
 
 export function buildComposeStartScript(app: AppSpec): string {
-  return `docker compose -p ${composeProject(app)} -f ${composeOpFile(app)} start`;
+  return composeOpScript(app, "start");
 }
 
 export function buildComposeRestartScript(app: AppSpec): string {
-  return `docker compose -p ${composeProject(app)} -f ${composeOpFile(app)} restart`;
+  return composeOpScript(app, "restart");
 }
 
 export interface ContainerInfo {
@@ -357,7 +392,7 @@ export function parseContainers(output: string): ContainerInfo[] {
 export function buildLogsScript(app: AppSpec, tail = 200): string {
   const n = Math.max(1, Math.min(2000, Math.floor(tail)));
   if (app.source === "COMPOSE") {
-    return `docker compose -p ${composeProject(app)} -f ${composeOpFile(app)} logs --no-color --tail ${n} 2>&1`;
+    return composeOpScript(app, `logs --no-color --tail ${n}`, " 2>&1");
   }
   return `docker logs --tail ${n} ${containerName(app)} 2>&1`;
 }
@@ -367,8 +402,10 @@ export function buildComposeDownScript(
   opts: { volumes?: boolean } = {},
 ): string {
   const vol = opts.volumes ? " -v" : "";
+  const { pre, prefix } = composeOpEnv(app);
   return [
-    `docker compose -p ${composeProject(app)} -f ${composeOpFile(app)} down${vol} 2>/dev/null || true`,
+    ...pre,
+    `${prefix}docker compose -p ${composeProject(app)} -f ${composeOpFile(app)} down${vol} 2>/dev/null || true`,
     `rm -rf ${composeOpDir(app)} 2>/dev/null || true`,
   ].join("\n");
 }

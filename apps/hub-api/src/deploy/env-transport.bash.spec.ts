@@ -3,7 +3,7 @@
  * docker CLI PROCESS ENVIRONMENT intact (so `-e KEY` can copy it), never argv, and never leak to later commands.
  */
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildRunScript, type AppSpec } from "./deploy-script";
@@ -117,6 +117,18 @@ d("multiline env transport (real bash + stub docker)", () => {
     expect(r.log).toMatch(/ARGV:run -d --name tugra_abc [^\n]*--env-file [^ ]+abc\.env -e PEM_KEY /);
     const envFile = readFileSync(join(dir, "env", "abc.env"), "utf8");
     expect(envFile).toBe("PLAIN=1");
+  });
+
+  it("flipping the last plain variable to multiline removes the previous env file on the host", () => {
+    const first: AppSpec = { id: "flip", image: "nginx:1", env: { PEM_KEY: "old-plain-secret" }, hostPort: null, containerPort: 80 };
+    const redirect = (s: string) => s.replaceAll("/etc/tugra/env", join(dir, "env"));
+    expect(run(redirect(buildRunScript(first, "v1", true))).status).toBe(0);
+    expect(readFileSync(join(dir, "env", "flip.env"), "utf8")).toBe("PEM_KEY=old-plain-secret");
+    const flipped: AppSpec = { ...first, env: { PEM_KEY: "l1\nl2\n" }, envMeta: { PEM_KEY: { multiline: true } } };
+    const r = run(redirect(buildRunScript(flipped, "v2", true)));
+    expect(r.status).toBe(0);
+    expect(existsSync(join(dir, "env", "flip.env"))).toBe(false);
+    expect(r.log).toContain(`VAL PEM_KEY ${hex("l1\nl2\n")}\n`);
   });
 
   it("compose: a literal value keeps its $ and a multiline value stays intact in the compose process environment", () => {
