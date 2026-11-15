@@ -122,6 +122,12 @@ export const AGENT_FEATURE_DRAIN_FLUENTD = "log_drain_fluentd_v1";
 export function canonicalLogDrains(serverId: string, rev: number, drainsJson: string, capability: string): string {
   return `ldrn\n${serverId}\n${rev}\n${drainsJson}\n${capability}`;
 }
+/**
+ * `fs2_v1`: the agent understands the signed `fs2_req` file protocol (write-capable volume ops, container
+ * filesystem ops, bounded transfers). The hub refuses to send `fs2_req` to an agent without it (409 `agent_too_old`).
+ * The legacy `fs_req` list path is unaffected.
+ */
+export const AGENT_FEATURE_FS2 = "fs2_v1";
 export function canonicalTermStart(
   sessionId: string,
   target: string,
@@ -198,11 +204,149 @@ export interface FsResultMsg {
   truncated?: boolean; // true when the listing was capped at the agent's maxEntries limit
 }
 
+/** Where an fs2 op runs: a declared app volume (sandboxed helper) or the live container filesystem. */
+export type Fs2Scope = "volume" | "container";
+/** `list` is container-scope only (volume listing stays on the legacy fs_req path). */
+export type Fs2Op = "list" | "stat" | "read" | "write" | "mkdir" | "rename" | "chmod" | "delete";
+export const FS2_MUTATING_OPS: readonly Fs2Op[] = ["write", "mkdir", "rename", "chmod", "delete"];
+/** Closed set of machine-readable file-op failure codes (agent -> hub -> HTTP -> UI). */
+export const FS_ERROR_CODES = [
+  "not_found",
+  "exists",
+  "not_dir",
+  "is_dir",
+  "not_regular",
+  "not_empty",
+  "denied",
+  "read_only",
+  "no_space",
+  "too_large",
+  "changed",
+  "integrity",
+  "bad_request",
+  "unsupported",
+  "not_configured",
+  "busy",
+  "expired",
+  "not_running",
+  "no_binary",
+  "failed",
+] as const;
+export type FsErrorCode = (typeof FS_ERROR_CODES)[number];
+
+/** Every signed field of an fs2_req, in canonical order (see canonicalFs2). */
+export interface Fs2Fields {
+  reqId: string;
+  op: Fs2Op;
+  scope: Fs2Scope;
+  /** docker volume name (scope volume) | container name (scope container) */
+  subject: string;
+  path: string;
+  path2: string;
+  /** "" | ^[0-7]{3,4}$ (octal permission bits, never setuid/setgid/sticky) */
+  mode: string;
+  /** sorted-unique subset of "o" (overwrite) "r" (recursive) "p" (parents) */
+  flags: string;
+  size: number;
+  sha256: string;
+  /** "" | "<size>-<mtimeNs>" optimistic-concurrency token */
+  ifMatch: string;
+  /** "" | relative hub transfer path the agent GETs from (write) or PUTs to (read) */
+  xfer: string;
+  timeoutMs: number;
+  /** unix seconds; the agent rejects a request past it */
+  exp: number;
+  capability: string;
+}
+
+// This package compiles without DOM/node typings (lib ES2022) yet runs in node and the browser, where
+// TextEncoder is a global. Declare only the slice we use (module-scoped, so it never clashes with a consumer's lib).
+declare const TextEncoder: new () => { encode(input: string): { length: number } };
+const FS2_ENC = new TextEncoder();
+function fs2Field(v: string | number): string {
+  const s = String(v);
+  return `${FS2_ENC.encode(s).length}:${s}`;
+}
+/**
+ * Signed payload for an fs2 file operation: "fs2\n" + the 15 fields in EXACT interface order, each rendered as
+ * `<utf8ByteLength>:<value>` and joined by "\n". Length-prefixing means a value containing a newline can never
+ * forge or shift another field (no reliance on rejecting bytes). `capability` is last and binds the grant into
+ * the signature. Must stay byte-identical to the Go `protocol.CanonicalFs2`.
+ */
+export function canonicalFs2(f: Fs2Fields): string {
+  return (
+    "fs2\n" +
+    [
+      f.reqId, f.op, f.scope, f.subject, f.path, f.path2, f.mode, f.flags,
+      f.size, f.sha256, f.ifMatch, f.xfer, f.timeoutMs, f.exp, f.capability,
+    ]
+      .map(fs2Field)
+      .join("\n")
+  );
+}
+
+/**
+ * The capability SET an fs2 op needs, in order; the LAST element is the signed `capability`. Both the hub
+ * (before sending) and the agent (before running) enforce every element. Unknown (scope, op) => [].
+ *   volume    stat, read                              [files]
+ *   volume    write, mkdir, rename, chmod, delete     [files, files_write]
+ *   container list, stat, read                        [files, terminal]
+ *   container write, mkdir, rename, chmod, delete     [files, files_write, terminal]
+ */
+export function fs2RequiredCapabilities(scope: Fs2Scope, op: Fs2Op): AgentCapability[] {
+  const mutating = FS2_MUTATING_OPS.includes(op);
+  if (scope === "volume") {
+    if (op === "stat" || op === "read") return ["files"];
+    return mutating ? ["files", "files_write"] : [];
+  }
+  if (scope === "container") {
+    if (op === "list" || op === "stat" || op === "read") return ["files", "terminal"];
+    return mutating ? ["files", "files_write", "terminal"] : [];
+  }
+  return [];
+}
+
+/** Hub -> Agent: a signed fs2 file operation. */
+export interface Fs2ReqMsg extends Fs2Fields {
+  type: "fs2_req";
+  sig?: string;
+}
+/** stat of one filesystem object (never dereferences a symlink). */
+export interface Fs2Stat {
+  name: string;
+  type: "file" | "dir" | "symlink" | "other";
+  size: number;
+  mode: string; // octal permission bits, e.g. "0644"
+  mtime: number; // unix seconds
+  mtimeNs: number;
+  uid: number;
+  gid: number;
+  etag: string; // "<size>-<mtimeNs>"
+  linkTarget?: string;
+  uname?: string;
+  gname?: string;
+}
+/** Agent -> Hub: the result of an fs2_req. */
+export interface Fs2ResultMsg {
+  type: "fs2_result";
+  reqId: string;
+  ok: boolean;
+  code?: FsErrorCode;
+  error?: string;
+  stat?: Fs2Stat;
+  entries?: FsEntry[];
+  truncated?: boolean;
+  bytes?: number;
+  sha256?: string;
+  etag?: string;
+  created?: boolean;
+}
+
 /**
  * Every capability the hub can grant a server (and the agent can locally allowlist). This is the SINGLE
  * SOURCE OF TRUTH: the hub's grantable set and the grant-API validation schema both derive from it, so a
- * new capability can never be added in one place and silently rejected by the other. "terminal", "swarm"
- * and "files" are opt-in (granted explicitly per server), never in a default grant.
+ * new capability can never be added in one place and silently rejected by the other. "terminal", "swarm",
+ * "files" and "files_write" are opt-in (granted explicitly per server), never in a default grant.
  */
 export const AGENT_CAPABILITIES = [
   "deploy",
@@ -215,7 +359,8 @@ export const AGENT_CAPABILITIES = [
   "patch",
   "logs",
   "swarm",
-  "files", // read/list an app volume's files via the sandboxed fsd helper; default-off
+  "files", // read/list/stat/download an app volume's files via the sandboxed fsd helper; default-off
+  "files_write", // opt-in, requires "files": upload/create/edit/rename/chmod/delete (volume write profile); never default
 ] as const;
 
 /** What a command is for — the agent can locally allowlist these. */
@@ -699,6 +844,7 @@ export type AgentMessage =
   | LogChunkMsg
   | LogExitMsg
   | FsResultMsg
+  | Fs2ResultMsg
   | CommandStateMsg
   | DrainStatusMsg;
 export type HubMessage =
@@ -718,4 +864,5 @@ export type HubMessage =
   | LogDrainsV2Msg
   | CapabilitiesMsg
   | FsReqMsg
+  | Fs2ReqMsg
   | CommandStatusMsg;

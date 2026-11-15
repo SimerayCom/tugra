@@ -195,6 +195,9 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 	if resp.Capabilities != nil {
 		cs.set(resp.Capabilities)
 	}
+	// fs2 (write-capable file ops + container FS): its own fail-closed gate (see fs2.go). The legacy fs_req
+	// case below is untouched.
+	fs2 := newFs2Gate(cfg, hubPub, cs, send)
 
 	// Send host inventory right after auth, and refresh it periodically so it
 	// stays current across server upgrades / kernel patches on long sessions.
@@ -499,6 +502,8 @@ func runOnce(ctx context.Context, cfg config.Config, kp *keys.KeyPair, store *co
 					}
 					_ = send(protocol.FsResult{Type: "fs_result", ReqID: reqID, OK: true, Entries: entries, Truncated: truncated})
 				}(m.ReqID, m.Op, m.Volume, m.Path)
+			case "fs2_req":
+				fs2.handle(ctx, m)
 			}
 		}
 	}()

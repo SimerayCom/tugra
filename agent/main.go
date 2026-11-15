@@ -35,6 +35,12 @@ func main() {
 		os.Exit(fsd.RunCLI(os.Args[2:]))
 	}
 
+	// `fsd2` is the write-capable sibling of `fsd` (internal/fsd/ops2.go): same sandboxed-container contract,
+	// `--key=value` argv, JSON (or raw file bytes for `read`) on stdout, a typed "fsd: [code] msg" on stderr.
+	if len(os.Args) > 1 && os.Args[1] == "fsd2" {
+		os.Exit(fsd.RunCLI2(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+	}
+
 	// The `migrate` subcommand is the one-click data migrator (S4-3). Like fsd it runs before
 	// flag.Parse, opens NO hub WebSocket, installs its own signals, and exits with its own code.
 	if len(os.Args) > 1 && os.Args[1] == "migrate" {

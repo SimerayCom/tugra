@@ -25,8 +25,14 @@ var knownOps = map[string]bool{"list": true}
 //   - op must be in the known allowlist.
 //   - image must not start with '-' (docker option injection) and must be non-empty.
 //
-// DAC_READ_SEARCH only matters to an attacker who can already execute code inside the helper; the helper
-// runs ONLY this list code with no shell, no network and a read-only root, so it is not a usable primitive.
+// Trust model (both helper profiles, see also BuildHelperArgs2): the capabilities below only matter to an
+// attacker who can already execute code inside the helper. The helper runs ONLY agent code (`fsd`/`fsd2`) with no
+// shell, no network, a read-only root and a single named volume, so none of them is a usable primitive on its own.
+//   - read profile (this function; fsd2 stat/read): DAC_READ_SEARCH only, volume mounted READ-ONLY.
+//   - mutating profile (fsd2 write/mkdir/rename/chmod/delete): CHOWN + DAC_OVERRIDE + FOWNER and the volume
+//     mounted READ-WRITE. That is real write power over ONE volume, so it is gated by the opt-in `files_write`
+//     capability and the signed fs2 protocol, every path is os.Root-confined with symlinks refused, and the
+//     real-docker suite (-tags dockerit) is the regression gate for these claims.
 //
 // name is a caller-generated container name (--name): it gives the launcher a handle to force-remove the
 // daemon-owned container if the op times out (exec.CommandContext kills only the `docker run` CLI, not the

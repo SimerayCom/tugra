@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -266,5 +267,132 @@ func TestDrainCfgLegacyShapeUnchanged(t *testing.T) {
 	}
 	if d.Scope != "app" || d.Match == nil || d.Match.SvcPrefixes[0] != "tugra_a1-web-" || d.Options == nil || d.Options.Facility == nil || *d.Options.Facility != 5 || d.Egress != "public" {
 		t.Fatalf("v2 DrainCfg decode wrong: %+v", d)
+	}
+}
+
+// goldenFs2 is pinned identically in packages/shared/src/index.spec.ts. Any drift means every signed fs2_req is
+// rejected by the agent.
+func goldenFs2() Fs2Fields {
+	return Fs2Fields{
+		ReqID: "00000000-0000-4000-8000-000000000001", Op: "write", Scope: "volume", Subject: "tugra_appv_c1_data",
+		Path: "dir/héllo\n.txt", Path2: "", Mode: "0644", Flags: "o", Size: 5,
+		Sha256:    "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+		IfMatch:   "",
+		Xfer:      "/api/v1/agent-fs/t/AAAAAAAAAAAAAAAAAAAAAAAA?exp=1800000000&sig=BBBBBBBBBBBBBBBBBBBBBBBB",
+		TimeoutMs: 30000, Exp: 1800000000, Capability: "files_write",
+	}
+}
+
+const goldenFs2Canonical = "fs2\n36:00000000-0000-4000-8000-000000000001\n5:write\n6:volume\n18:tugra_appv_c1_data\n15:dir/héllo\n.txt\n0:\n4:0644\n1:o\n1:5\n64:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824\n0:\n87:/api/v1/agent-fs/t/AAAAAAAAAAAAAAAAAAAAAAAA?exp=1800000000&sig=BBBBBBBBBBBBBBBBBBBBBBBB\n5:30000\n10:1800000000\n11:files_write"
+
+func TestCanonicalFs2Golden(t *testing.T) {
+	if got := CanonicalFs2(goldenFs2()); got != goldenFs2Canonical {
+		t.Fatalf("CanonicalFs2 mismatch:\n got %q\nwant %q", got, goldenFs2Canonical)
+	}
+	// The legacy builder stays pinned (the fs2 work must never touch it).
+	if got := CanonicalFs("r1", "list", "tugra_appv_x_data", "sub/dir", "files"); got != "fs\nr1\nlist\ntugra_appv_x_data\nsub/dir\nfiles" {
+		t.Fatalf("CanonicalFs changed: %q", got)
+	}
+}
+
+func TestCanonicalFs2TamperEveryField(t *testing.T) {
+	base := CanonicalFs2(goldenFs2())
+	mut := []func(*Fs2Fields){
+		func(f *Fs2Fields) { f.ReqID = "00000000-0000-4000-8000-000000000002" },
+		func(f *Fs2Fields) { f.Op = "mkdir" },
+		func(f *Fs2Fields) { f.Scope = "container" },
+		func(f *Fs2Fields) { f.Subject = "tugra_appv_c1_data2" },
+		func(f *Fs2Fields) { f.Path = "dir/other" },
+		func(f *Fs2Fields) { f.Path2 = "x" },
+		func(f *Fs2Fields) { f.Mode = "0600" },
+		func(f *Fs2Fields) { f.Flags = "or" },
+		func(f *Fs2Fields) { f.Size = 6 },
+		func(f *Fs2Fields) { f.Sha256 = strings.Repeat("0", 64) },
+		func(f *Fs2Fields) { f.IfMatch = "5-1" },
+		func(f *Fs2Fields) { f.Xfer = "" },
+		func(f *Fs2Fields) { f.TimeoutMs = 30001 },
+		func(f *Fs2Fields) { f.Exp = 1800000001 },
+		func(f *Fs2Fields) { f.Capability = "files" },
+	}
+	if n := reflect.TypeOf(Fs2Fields{}).NumField(); n != len(mut) {
+		t.Fatalf("Fs2Fields has %d fields but %d tamper cases", n, len(mut))
+	}
+	for i, m := range mut {
+		f := goldenFs2()
+		m(&f)
+		if CanonicalFs2(f) == base {
+			t.Fatalf("tamper case %d left the canonical string unchanged", i)
+		}
+	}
+}
+
+func TestCanonicalFs2NewlineCannotForge(t *testing.T) {
+	a, b, c := goldenFs2(), goldenFs2(), goldenFs2()
+	a.Path, a.Path2 = "a\nb", ""
+	b.Path, b.Path2 = "a", "b"
+	c.Path, c.Path2 = "a\n1:b", ""
+	seen := map[string]bool{CanonicalFs2(a): true, CanonicalFs2(b): true, CanonicalFs2(c): true}
+	if len(seen) != 3 {
+		t.Fatal("embedded newline produced a colliding canonical string")
+	}
+}
+
+func TestFs2RequiredCapsMatrix(t *testing.T) {
+	eq := func(a, b []string) bool { return strings.Join(a, ",") == strings.Join(b, ",") }
+	cases := []struct {
+		scope, op string
+		want      []string
+	}{
+		{"volume", "stat", []string{"files"}},
+		{"volume", "read", []string{"files"}},
+		{"volume", "write", []string{"files", "files_write"}},
+		{"volume", "mkdir", []string{"files", "files_write"}},
+		{"volume", "rename", []string{"files", "files_write"}},
+		{"volume", "chmod", []string{"files", "files_write"}},
+		{"volume", "delete", []string{"files", "files_write"}},
+		{"volume", "list", nil},
+		{"container", "list", []string{"files", "terminal"}},
+		{"container", "stat", []string{"files", "terminal"}},
+		{"container", "read", []string{"files", "terminal"}},
+		{"container", "write", []string{"files", "files_write", "terminal"}},
+		{"container", "mkdir", []string{"files", "files_write", "terminal"}},
+		{"container", "rename", []string{"files", "files_write", "terminal"}},
+		{"container", "chmod", []string{"files", "files_write", "terminal"}},
+		{"container", "delete", []string{"files", "files_write", "terminal"}},
+		{"host", "read", nil},
+		{"volume", "exec", nil},
+	}
+	for _, c := range cases {
+		if got := Fs2RequiredCaps(c.scope, c.op); !eq(got, c.want) {
+			t.Errorf("Fs2RequiredCaps(%s,%s) = %v, want %v", c.scope, c.op, got, c.want)
+		}
+	}
+}
+
+func TestFeaturesAdvertiseFs2(t *testing.T) {
+	// Membership, not position: other features (cmd_journal, log drains) share the list.
+	found := false
+	for _, f := range Features {
+		if f == FeatureFs2 {
+			found = true
+		}
+	}
+	if !found || FeatureFs2 != "fs2_v1" {
+		t.Fatalf("Features must advertise fs2_v1: %v", Features)
+	}
+}
+
+func TestServerMsgFs2JSONKeys(t *testing.T) {
+	raw := `{"type":"fs2_req","reqId":"r","op":"write","scope":"volume","subject":"v","path":"p","path2":"q","mode":"0644","flags":"o","size":5,"sha256":"h","ifMatch":"1-2","xfer":"/x","timeoutMs":30000,"exp":1800000000,"capability":"files_write","sig":"s"}`
+	var m ServerMsg
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		t.Fatal(err)
+	}
+	f := Fs2Fields{ReqID: m.ReqID, Op: m.Op, Scope: m.Scope, Subject: m.Subject, Path: m.Path, Path2: m.Path2, Mode: m.Mode,
+		Flags: m.Flags, Size: m.Size, Sha256: m.Sha256, IfMatch: m.IfMatch, Xfer: m.Xfer, TimeoutMs: m.TimeoutMs, Exp: m.Exp, Capability: m.Capability}
+	want := Fs2Fields{ReqID: "r", Op: "write", Scope: "volume", Subject: "v", Path: "p", Path2: "q", Mode: "0644", Flags: "o", Size: 5,
+		Sha256: "h", IfMatch: "1-2", Xfer: "/x", TimeoutMs: 30000, Exp: 1800000000, Capability: "files_write"}
+	if f != want {
+		t.Fatalf("decoded %+v, want %+v", f, want)
 	}
 }

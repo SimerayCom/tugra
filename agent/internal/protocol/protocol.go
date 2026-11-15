@@ -95,8 +95,12 @@ const (
 	FeatureDrainFluentd = "log_drain_fluentd_v1"
 )
 
+// FeatureFs2: this agent understands the signed fs2_req file protocol (write-capable volume ops, container
+// filesystem ops, bounded transfers). Mirrors AGENT_FEATURE_FS2 in packages/shared.
+const FeatureFs2 = "fs2_v1"
+
 // Features is the list this agent advertises in enroll/auth.
-var Features = []string{FeatureCmdJournal, FeatureLogDrainsV2, FeatureDrainSyslog, FeatureDrainGelf, FeatureDrainFluentd}
+var Features = []string{FeatureCmdJournal, FeatureLogDrainsV2, FeatureDrainSyslog, FeatureDrainGelf, FeatureDrainFluentd, FeatureFs2}
 
 // CommandState: Agent -> Hub, reply to command_status (what happened to a durable command).
 type CommandState struct {
@@ -332,6 +336,17 @@ type ServerMsg struct {
 	// verifies against its OWN stored server id, never this field.
 	Rev        int64  `json:"rev,omitempty"`
 	DrainsJSON string `json:"drainsJson,omitempty"`
+	// fs2_req additions (see Fs2Fields / CanonicalFs2). reqId, op, path, sha256, timeoutMs and capability reuse the
+	// fields above (same JSON keys and types). Additive: every other message type leaves these empty.
+	Scope   string `json:"scope,omitempty"`
+	Subject string `json:"subject,omitempty"`
+	Path2   string `json:"path2,omitempty"`
+	Mode    string `json:"mode,omitempty"`
+	Flags   string `json:"flags,omitempty"`
+	Size    int64  `json:"size,omitempty"`
+	IfMatch string `json:"ifMatch,omitempty"`
+	Xfer    string `json:"xfer,omitempty"`
+	Exp     int64  `json:"exp,omitempty"`
 }
 
 // FsEntry: one listing entry (metadata only — never content; a symlink is reported, never dereferenced).
@@ -351,6 +366,38 @@ type FsResult struct {
 	Error     string    `json:"error,omitempty"`
 	Entries   []FsEntry `json:"entries,omitempty"`
 	Truncated bool      `json:"truncated,omitempty"` // true when the listing was capped (maxEntries)
+}
+
+// FsStat mirrors @tugra/shared Fs2Stat: one filesystem object, never dereferencing a symlink.
+type FsStat struct {
+	Name       string `json:"name"`
+	Type       string `json:"type"` // file | dir | symlink | other
+	Size       int64  `json:"size"`
+	Mode       string `json:"mode"` // octal permission bits, e.g. "0644"
+	Mtime      int64  `json:"mtime"`
+	MtimeNs    int64  `json:"mtimeNs"`
+	UID        int    `json:"uid"`
+	GID        int    `json:"gid"`
+	Etag       string `json:"etag"` // "<size>-<mtimeNs>"
+	LinkTarget string `json:"linkTarget,omitempty"`
+	Uname      string `json:"uname,omitempty"`
+	Gname      string `json:"gname,omitempty"`
+}
+
+// Fs2Result: Agent -> Hub, the result of an fs2_req. Code is one of the closed set in FS_ERROR_CODES.
+type Fs2Result struct {
+	Type      string    `json:"type"` // "fs2_result"
+	ReqID     string    `json:"reqId"`
+	OK        bool      `json:"ok"`
+	Code      string    `json:"code,omitempty"`
+	Error     string    `json:"error,omitempty"`
+	Stat      *FsStat   `json:"stat,omitempty"`
+	Entries   []FsEntry `json:"entries,omitempty"`
+	Truncated bool      `json:"truncated,omitempty"`
+	Bytes     int64     `json:"bytes,omitempty"`
+	Sha256    string    `json:"sha256,omitempty"`
+	Etag      string    `json:"etag,omitempty"`
+	Created   bool      `json:"created,omitempty"`
 }
 
 // DrainCfg is one external log sink. Type selects the payload format: "http" (Tugra batch JSON, the default),
@@ -462,6 +509,81 @@ func CanonicalAgentUpdate(reqID, targetVersion, image, sha256, capability string
 // CanonicalFs mirrors @tugra/shared canonicalFs (byte-identical input).
 func CanonicalFs(reqID, op, volume, path, capability string) string {
 	return "fs\n" + reqID + "\n" + op + "\n" + volume + "\n" + path + "\n" + capability
+}
+
+// Fs2Fields are every signed field of an fs2_req, in canonical order (mirrors @tugra/shared Fs2Fields).
+type Fs2Fields struct {
+	ReqID      string
+	Op         string
+	Scope      string
+	Subject    string
+	Path       string
+	Path2      string
+	Mode       string
+	Flags      string
+	Size       int64
+	Sha256     string
+	IfMatch    string
+	Xfer       string
+	TimeoutMs  int
+	Exp        int64
+	Capability string
+}
+
+// CanonicalFs2 mirrors @tugra/shared canonicalFs2: "fs2\n" + the 15 fields in order, each `<utf8ByteLength>:<value>`,
+// joined by "\n". Length-prefixing makes an embedded newline unable to forge or shift another field.
+func CanonicalFs2(f Fs2Fields) string {
+	parts := []string{
+		f.ReqID, f.Op, f.Scope, f.Subject, f.Path, f.Path2, f.Mode, f.Flags,
+		strconv.FormatInt(f.Size, 10), f.Sha256, f.IfMatch, f.Xfer,
+		strconv.Itoa(f.TimeoutMs), strconv.FormatInt(f.Exp, 10), f.Capability,
+	}
+	out := "fs2\n"
+	for i, p := range parts {
+		if i > 0 {
+			out += "\n"
+		}
+		out += strconv.Itoa(len(p)) + ":" + p
+	}
+	return out
+}
+
+// Capability names used by the fs2 matrix.
+const (
+	capFiles      = "files"
+	capFilesWrite = "files_write"
+	capTerminal   = "terminal"
+)
+
+// Fs2MutatingOp reports whether op changes state.
+func Fs2MutatingOp(op string) bool {
+	switch op {
+	case "write", "mkdir", "rename", "chmod", "delete":
+		return true
+	}
+	return false
+}
+
+// Fs2RequiredCaps mirrors @tugra/shared fs2RequiredCapabilities. The LAST element is the signed capability.
+// An empty result means an unknown (scope, op) pair.
+func Fs2RequiredCaps(scope, op string) []string {
+	switch scope {
+	case "volume":
+		if op == "stat" || op == "read" {
+			return []string{capFiles}
+		}
+		if Fs2MutatingOp(op) {
+			return []string{capFiles, capFilesWrite}
+		}
+	case "container":
+		if op == "list" || op == "stat" || op == "read" {
+			return []string{capFiles, capTerminal}
+		}
+		if Fs2MutatingOp(op) {
+			return []string{capFiles, capFilesWrite, capTerminal}
+		}
+	}
+	return nil
 }
 
 // ParseHubKey decodes a base64 SPKI ed25519 public key (delivered at enroll/auth).

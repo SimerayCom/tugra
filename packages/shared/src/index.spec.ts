@@ -8,8 +8,14 @@ import {
   AGENT_FEATURE_DRAIN_GELF,
   AGENT_FEATURE_DRAIN_FLUENTD,
   canonicalLogDrains,
+  AGENT_FEATURE_FS2,
+  AGENT_CAPABILITIES,
+  FS_ERROR_CODES,
+  canonicalFs2,
+  fs2RequiredCapabilities,
   PROTOCOL_VERSION, TRAFFIC_LATENCY_BUCKETS_MS, canonicalLogStart, canonicalAgentUpdate, canonicalFs } from "./index";
 import type {
+  Fs2Fields,
   MetricsSample,
   EnrollMsg,
   ContainerMetricsMsg,
@@ -188,5 +194,89 @@ describe("shared protocol", () => {
     expect(AGENT_FEATURE_DRAIN_SYSLOG).toBe("log_drain_syslog_v1");
     expect(AGENT_FEATURE_DRAIN_GELF).toBe("log_drain_gelf_v1");
     expect(AGENT_FEATURE_DRAIN_FLUENTD).toBe("log_drain_fluentd_v1");
+  });
+});
+
+describe("fs2 protocol", () => {
+  // Pinned identically in agent/internal/protocol/protocol_test.go (TestCanonicalFs2Golden). Any drift => every
+  // signed fs2_req is rejected by the agent.
+  const golden: Fs2Fields = {
+    reqId: "00000000-0000-4000-8000-000000000001",
+    op: "write",
+    scope: "volume",
+    subject: "tugra_appv_c1_data",
+    path: "dir/h\u00e9llo\n.txt",
+    path2: "",
+    mode: "0644",
+    flags: "o",
+    size: 5,
+    sha256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+    ifMatch: "",
+    xfer: "/api/v1/agent-fs/t/AAAAAAAAAAAAAAAAAAAAAAAA?exp=1800000000&sig=BBBBBBBBBBBBBBBBBBBBBBBB",
+    timeoutMs: 30000,
+    exp: 1800000000,
+    capability: "files_write",
+  };
+  const goldenCanonical =
+    "fs2\n36:00000000-0000-4000-8000-000000000001\n5:write\n6:volume\n18:tugra_appv_c1_data\n15:dir/h\u00e9llo\n.txt\n0:\n4:0644\n1:o\n1:5\n64:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824\n0:\n87:/api/v1/agent-fs/t/AAAAAAAAAAAAAAAAAAAAAAAA?exp=1800000000&sig=BBBBBBBBBBBBBBBBBBBBBBBB\n5:30000\n10:1800000000\n11:files_write";
+
+  it("builds the pinned golden canonical string (byte-identical to the Go CanonicalFs2)", () => {
+    expect(canonicalFs2(golden)).toBe(goldenCanonical);
+  });
+
+  it("covers every field: tampering any one changes the signed string", () => {
+    const base = canonicalFs2(golden);
+    const tampered: Fs2Fields[] = [
+      { ...golden, reqId: "00000000-0000-4000-8000-000000000002" },
+      { ...golden, op: "mkdir" },
+      { ...golden, scope: "container" },
+      { ...golden, subject: "tugra_appv_c1_data2" },
+      { ...golden, path: "dir/other" },
+      { ...golden, path2: "x" },
+      { ...golden, mode: "0600" },
+      { ...golden, flags: "or" },
+      { ...golden, size: 6 },
+      { ...golden, sha256: "0".repeat(64) },
+      { ...golden, ifMatch: "5-1" },
+      { ...golden, xfer: "" },
+      { ...golden, timeoutMs: 30001 },
+      { ...golden, exp: 1800000001 },
+      { ...golden, capability: "files" },
+    ];
+    expect(tampered).toHaveLength(Object.keys(golden).length);
+    for (const t of tampered) expect(canonicalFs2(t)).not.toBe(base);
+  });
+
+  it("cannot be forged by an embedded newline (length prefix, not a delimiter)", () => {
+    // Under a plain newline join, path="a\nb"+path2="" and path="a"+path2="b" would render alike.
+    const a = canonicalFs2({ ...golden, path: "a\nb", path2: "" });
+    const b = canonicalFs2({ ...golden, path: "a", path2: "b" });
+    const c = canonicalFs2({ ...golden, path: "a\n1:b", path2: "" });
+    expect(new Set([a, b, c]).size).toBe(3);
+  });
+
+  it("derives the required capability set per (scope, op) exactly as the matrix says", () => {
+    expect(fs2RequiredCapabilities("volume", "stat")).toEqual(["files"]);
+    expect(fs2RequiredCapabilities("volume", "read")).toEqual(["files"]);
+    for (const op of ["write", "mkdir", "rename", "chmod", "delete"] as const) {
+      expect(fs2RequiredCapabilities("volume", op)).toEqual(["files", "files_write"]);
+      expect(fs2RequiredCapabilities("container", op)).toEqual(["files", "files_write", "terminal"]);
+    }
+    for (const op of ["list", "stat", "read"] as const) {
+      expect(fs2RequiredCapabilities("container", op)).toEqual(["files", "terminal"]);
+    }
+    // volume list is NOT an fs2 op (legacy fs_req keeps it) => empty = unknown
+    expect(fs2RequiredCapabilities("volume", "list")).toEqual([]);
+  });
+
+  it("ships files_write as an opt-in capability and a closed error-code set", () => {
+    expect(AGENT_CAPABILITIES).toContain("files_write");
+    expect(AGENT_CAPABILITIES.indexOf("files_write")).toBe(AGENT_CAPABILITIES.indexOf("files") + 1);
+    expect(AGENT_FEATURE_FS2).toBe("fs2_v1");
+    expect([...FS_ERROR_CODES]).toEqual([
+      "not_found", "exists", "not_dir", "is_dir", "not_regular", "not_empty", "denied", "read_only", "no_space",
+      "too_large", "changed", "integrity", "bad_request", "unsupported", "not_configured", "busy", "expired",
+      "not_running", "no_binary", "failed",
+    ]);
   });
 });
