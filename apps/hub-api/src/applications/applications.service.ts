@@ -2210,7 +2210,7 @@ export class ApplicationsService {
           },
         });
         this.deployLogs.finish(app.id, { status: "FAILED", exitCode: r.exitCode, deploymentId: dep.id });
-        if (!isCompose) await this.agentWs.sendCommand(app.serverId, buildImageRemoveScriptForTags(app.id, [runTag(app, dep.id), registryRef], await this.ownedVersionsFor(app)), "cleanup").catch(() => undefined);
+        if (!isCompose) await this.agentWs.sendCommand(app.serverId, buildImageRemoveScriptForTags(app.id, [runTag(app, dep.id), registryRef], await this.ownedVersionsFor(app, [runTag(app, dep.id), registryRef])), "cleanup").catch(() => undefined);
         await this.audit.log({ actor, action: "app.deploy.cancel", target: app.id });
         return this.prisma.deployment.findUnique({ where: { id: dep.id } });
       }
@@ -2303,7 +2303,7 @@ export class ApplicationsService {
         // never went live → reap BOTH local tags so repeated failed push-enabled deploys don't leak a full
         // image each (the row records neither tag, so no later prune can find them).
         await this.agentWs
-          .sendCommand(app.serverId, buildImageRemoveScriptForTags(app.id, [runTag(app, dep.id), registryRef], await this.ownedVersionsFor(app)), "cleanup")
+          .sendCommand(app.serverId, buildImageRemoveScriptForTags(app.id, [runTag(app, dep.id), registryRef], await this.ownedVersionsFor(app, [runTag(app, dep.id), registryRef])), "cleanup")
           .catch(() => undefined);
       }
     } catch (e) {
@@ -2412,7 +2412,7 @@ export class ApplicationsService {
       });
       if (count !== 1) return;
       this.deployLogs.finish(app.id, { status: "FAILED", exitCode: result.exitCode, deploymentId: dep.id });
-      if (tagsToReap.length) await this.agentWs.sendCommand(app.serverId, buildImageRemoveScriptForTags(app.id, tagsToReap, await this.ownedVersionsFor(app)), "cleanup").catch(() => undefined);
+      if (tagsToReap.length) await this.agentWs.sendCommand(app.serverId, buildImageRemoveScriptForTags(app.id, tagsToReap, await this.ownedVersionsFor(app, tagsToReap)), "cleanup").catch(() => undefined);
       await this.audit.log({ actor: dep.requestedBy ?? "system", action: "app.deploy.cancel", target: app.id });
       void this.drain(app.id);
       return;
@@ -2450,7 +2450,7 @@ export class ApplicationsService {
     this.deployLogs.finish(app.id, { status: ok ? "SUCCESS" : "FAILED", exitCode: result.exitCode, deploymentId: dep.id });
     this.notifyDeploy(app, dep, ok ? "deploy_success" : rolledBack ? "deploy_rolled_back" : "deploy_failed").catch(() => {});
     if (ok && !plan.isCompose) void this.pruneImages(app).catch(() => undefined);
-    else if (tagsToReap.length) await this.agentWs.sendCommand(app.serverId, buildImageRemoveScriptForTags(app.id, tagsToReap, await this.ownedVersionsFor(app)), "cleanup").catch(() => undefined);
+    else if (tagsToReap.length) await this.agentWs.sendCommand(app.serverId, buildImageRemoveScriptForTags(app.id, tagsToReap, await this.ownedVersionsFor(app, tagsToReap)), "cleanup").catch(() => undefined);
     await this.audit.log({ actor: dep.requestedBy ?? "system", action: "app.deploy", target: app.id });
     void this.drain(app.id);
   }
@@ -2776,7 +2776,7 @@ export class ApplicationsService {
       if (w.imageTag) protectedTags.add(w.imageTag);
       if (w.registryImage) protectedTags.add(w.registryImage);
     }
-    const owned = await this.ownedVersionsFor(app); // undefined (no query) unless the app has a custom pushed name
+    const owned = await this.ownedVersionsFor(app, stale.flatMap((d) => [d.imageTag, d.registryImage])); // undefined (no query) unless a custom ref / name is involved
     for (const d of stale) {
       try {
         // A pushed build leaves TWO local tags on the host — the local tugra_<id>:<v> and the registry ref —
@@ -2801,10 +2801,17 @@ export class ApplicationsService {
 
   /** The app's OWN deployment ids, for `buildImageRemoveScriptForTags`' custom-name guard: with a custom pushed repo
    *  name the local registry tags no longer sit in `tugra_<id>:`, so a tag is only removable when its version (the
-   *  part after the last ":") is one of these Tugra-generated ids. Apps without a custom name get `undefined` and
-   *  issue no query (their cleanup scripts stay byte-identical). */
-  private async ownedVersionsFor(app: { id: string; pushImageName?: string | null }): Promise<ReadonlySet<string> | undefined> {
-    if (!app.pushImageName) return undefined;
+   *  part after the last ":") is one of these Tugra-generated ids. Driven by the CANDIDATE tags, not by the app's
+   *  current pushImageName: clearing the name must not strand the old custom-named tags (their rows keep the old
+   *  registry ref). No custom ref among the tags and no custom name -> `undefined` and no query, so every other
+   *  cleanup script stays byte-identical. */
+  private async ownedVersionsFor(
+    app: { id: string; pushImageName?: string | null },
+    tags: Array<string | null | undefined> = [],
+  ): Promise<ReadonlySet<string> | undefined> {
+    const seg = `${containerName({ id: app.id })}:`;
+    const custom = !!app.pushImageName || tags.some((t) => !!t && !t.startsWith(seg) && !t.includes(`/${seg}`));
+    if (!custom) return undefined;
     const rows = await this.prisma.deployment.findMany({ where: { appId: app.id }, select: { id: true } });
     return new Set(rows.map((r) => r.id));
   }

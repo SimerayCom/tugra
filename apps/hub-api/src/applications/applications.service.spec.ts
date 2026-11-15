@@ -7709,6 +7709,19 @@ describe("ApplicationsService — D4 build / registry / hooks", () => {
       expect(sent2.join("\n")).toContain("'tugra_app1:d5'");
     });
 
+    it("pruneImages still reclaims old custom-named tags after pushImageName was CLEARED (the rows keep the old ref)", async () => {
+      const prune = (svc: unknown) => (svc as { pruneImages: (a: unknown) => Promise<void> }).pruneImages.bind(svc);
+      const rows = Array.from({ length: 6 }, (_, i) => ({ id: `d${i}`, status: "SUCCESS", imageTag: `tugra_app1:d${i}`, registryImage: `ghcr.io/org/team/web:d${i}`, createdAt: new Date(6 - i) }));
+      const findMany = jest.fn().mockImplementation((args: { select?: unknown }) => Promise.resolve(args?.select ? rows.map((r) => ({ id: r.id })) : rows));
+      const update = jest.fn().mockResolvedValue({});
+      const prisma = { deployment: { count: jest.fn().mockResolvedValue(0), findMany, update } } as unknown as PrismaService;
+      const sent: string[] = [];
+      const agentWs = { sendCommand: jest.fn().mockImplementation((_s: string, cmd: string) => { sent.push(cmd); return Promise.resolve({ exitCode: 0, output: "" }); }) } as unknown as AgentWsServer;
+      await prune(make(prisma, {} as TeamAccessService, agentWs))({ ...app, id: "app1", serverId: "s1", pushImageName: null });
+      expect(sent.join("\n")).toContain("docker rmi 'ghcr.io/org/team/web:d5'");
+      expect(sent.join("\n")).toContain("docker rmi 'tugra_app1:d5'");
+    });
+
     it("the adoption reap (finalizeAdopted, cancelled) passes the owned ids for a custom-name app", async () => {
       const findMany = jest.fn().mockResolvedValue([{ id: "d1" }]);
       const sent: string[] = [];
