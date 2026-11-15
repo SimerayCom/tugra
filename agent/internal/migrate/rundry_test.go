@@ -14,7 +14,7 @@ import (
 	"testing"
 )
 
-const testToken = "tugra_mig_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+// testToken: shared with acme_test.go
 
 // stubDockerOnPath makes `lookDocker` succeed; every docker call the code makes goes through the stubbed runDocker.
 func stubDockerOnPath(t *testing.T) {

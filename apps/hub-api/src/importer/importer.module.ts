@@ -5,7 +5,6 @@ import { ApplicationsModule } from "../applications/applications.module";
 import { DatabasesModule } from "../databases/databases.module";
 import { GitSourcesModule } from "../git-sources/git-sources.module";
 import { ProjectsModule } from "../projects/projects.module";
-import { AgentGatewayModule } from "../agent-gateway/agent-gateway.module";
 import { CutoverCertService } from "../cutover/cutover-cert.service";
 import { BackupsModule } from "../backups/backups.module";
 import { VolumeBackupsModule } from "../volume-backups/volume-backups.module";

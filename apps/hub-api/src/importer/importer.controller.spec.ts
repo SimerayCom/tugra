@@ -7,7 +7,7 @@ const user = { userId: "u1" } as never;
 function make() {
   const executor = { apply: jest.fn().mockResolvedValue({ opId: "op-1" }) };
   const gitLinks = { list: jest.fn().mockResolvedValue({ rows: [], groups: [] }), relink: jest.fn().mockResolvedValue({ results: [], linked: 0 }) };
-  const ctl = new ImporterController({} as never, executor as never, gitLinks as never);
+  const ctl = new ImporterController({} as never, executor as never, gitLinks as never, {} as never);
   return { ctl, executor, gitLinks };
 }
 
