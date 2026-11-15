@@ -4,6 +4,7 @@ import { CLI_VERSION } from "./version";
 import { printError } from "./output";
 import * as auth from "./commands/auth";
 import * as resources from "./commands/resources";
+import * as cutover from "./commands/cutover";
 import * as api from "./commands/api";
 import * as objects from "./commands/objects";
 import * as version from "./commands/version";
@@ -18,6 +19,7 @@ auth.register(program);
 resources.register(program);
 api.register(program);
 objects.register(program);
+cutover.register(program);
 version.register(program);
 
 program.parseAsync(process.argv).catch((err) => {

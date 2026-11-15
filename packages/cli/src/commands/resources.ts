@@ -46,6 +46,16 @@ export function register(program: Command): void {
       ]);
     });
 
+  servers
+    .command("dns-credential <id> <credential>")
+    .description("Use a team Cloudflare DNS credential as the server's DNS-01 resolver token (copied, encrypted; re-run after rotating it)")
+    .option("--json", "output as JSON")
+    .action(async (id: string, credential: string, opts: { json?: boolean }) => {
+      const res = await activeClient().client.requestRaw("PUT", `/servers/${encodeURIComponent(id)}/network`, { dnsFromCredentialId: credential });
+      if (opts.json) printJson(res ?? { ok: true });
+      else printLine(`server ${id} now uses DNS credential ${credential} for DNS-01`);
+    });
+
   // ── apps ──
   const apps = program.command("apps").description("Manage applications");
   apps
@@ -115,6 +125,18 @@ export function register(program: Command): void {
       if (opts.json) printJson(logs);
       else if (typeof logs === "string") printLine(logs);
       else printJson(logs);
+    });
+
+  apps
+    .command("domain-options <id>")
+    .description("Change domain options (currently: per-host DNS-01 certificates)")
+    .requiredOption("--dns-challenge <on|off>", "issue the app's custom-domain certificate with DNS-01 per host")
+    .option("--json", "output as JSON")
+    .action(async (id: string, opts: { dnsChallenge: string; json?: boolean }) => {
+      if (opts.dnsChallenge !== "on" && opts.dnsChallenge !== "off") throw new Error("--dns-challenge must be on or off");
+      const res = await activeClient().client.requestRaw("PUT", `/apps/${encodeURIComponent(id)}/domain-options`, { dnsChallenge: opts.dnsChallenge === "on" });
+      if (opts.json) printJson(res ?? { ok: true });
+      else printLine(`DNS-01 per host ${opts.dnsChallenge} for app ${id}`);
     });
 
   // ── app container labels ──
