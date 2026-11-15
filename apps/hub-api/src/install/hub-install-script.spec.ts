@@ -401,7 +401,11 @@ describe("scripts/install.sh", () => {
       expect(lines.filter((l) => /^(\*\*\/)?backups\/?$/.test(l))).toEqual([]);
       expect(lines).toContain("**/pre-update-*.dump");
       expect(lines).toContain("**/pre-update-*.env");
-      expect(readFileSync(join(REPO_ROOT, ".gitignore"), "utf8").split("\n")).toContain("backups/");
+      // .gitignore is root-anchored for the same reason: an unanchored `backups/` silently ignored new source
+      // files under apps/hub-api/src/backups and apps/web/src/components/backups.
+      const gi = readFileSync(join(REPO_ROOT, ".gitignore"), "utf8").split("\n").map((l) => l.trim());
+      expect(gi).toContain("/backups/");
+      expect(gi.filter((l) => /^(\*\*\/)?backups\/?$/.test(l))).toEqual([]);
     });
     it("never puts the DNS token in argv: no `-e ACME_DNS_TOKEN=`, no `Bearer` in a curl -H argument", () => {
       expect(src).not.toContain("-e ACME_DNS_TOKEN=");
