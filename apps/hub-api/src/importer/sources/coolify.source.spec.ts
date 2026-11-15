@@ -290,3 +290,74 @@ describe("CoolifySource.fetchSecrets — strict reason tags", () => {
     expect(res).toEqual({ values: { A: "1" }, unresolved: [], flags: undefined } as never);
   });
 });
+
+describe("CoolifySource.fetchServiceBundle", () => {
+  const SECRET = "SYNTH-SECRET-1";
+  const httpErr = (status: number) => Object.assign(new Error(`Coolify API error ${status} body-with-${SECRET}`), { status });
+
+  it("carries real_value over value, the magic secrets and user vars; drops preview twins, SERVICE_URL/FQDN and other is_coolify rows", async () => {
+    const client = new FakeClient({
+      "/services/svc-1/envs": [
+        { key: "SERVICE_PASSWORD_MEILI", value: "pw", is_coolify: true },
+        { key: "SERVICE_USER_MINIO", value: "root" },
+        { key: "SERVICE_URL_MEILI_7700", value: "http://x", is_coolify: true },
+        { key: "SERVICE_FQDN_MEILI", value: "x", is_coolify: true },
+        { key: "COOLIFY_RESOURCE_UUID", value: "u", is_coolify: true },
+        { key: "MINIO_SERVER_URL", value: "raw", real_value: "resolved", is_literal: true },
+        { key: "MINIO_SERVER_URL", value: "preview", is_preview: true },
+        { key: "EMPTY", value: "" },
+        { key: "NOVALUE" },
+        { key: "__proto__", value: "p" },
+      ],
+      "/services/svc-1/storages": { file_storages: [{ fs_path: "/data/coolify/services/svc-1/clickhouse/config.xml", content: "<a/>", is_directory: false }, { fs_path: "/data/coolify/services/svc-1/dir", is_directory: true }, { fs_path: "/x/nocontent" }], persistent_storages: [] },
+    });
+    const b = (await new CoolifySource(client).fetchServiceBundle("svc-1"))!;
+    expect(Object.getPrototypeOf(b.values)).toBeNull();
+    expect(Object.keys(b.values).sort()).toEqual(["EMPTY", "MINIO_SERVER_URL", "SERVICE_PASSWORD_MEILI", "SERVICE_USER_MINIO", "__proto__"]);
+    expect(b.values.MINIO_SERVER_URL).toBe("resolved");
+    expect(b.values.EMPTY).toBe("");
+    expect(b.unresolved).toEqual(["NOVALUE"]);
+    expect(b.flags!.MINIO_SERVER_URL).toEqual({ literal: true });
+    expect(b.files).toEqual([{ path: "clickhouse/config.xml", content: "<a/>" }]);
+  });
+
+  it("403/404 on the envs endpoint returns undefined (not a throw)", async () => {
+    for (const status of [401, 403, 404]) {
+      const client = new FakeClient({ "/services/svc-1/envs": httpErr(status) });
+      await expect(new CoolifySource(client).fetchServiceBundle("svc-1")).resolves.toBeUndefined();
+    }
+    await expect(new CoolifySource(new FakeClient({})).fetchServiceBundle("svc-1")).resolves.toBeUndefined(); // FakeClient: "404 <path>"
+  });
+
+  it("any other error is re-thrown with the FIXED message and never echoes the client error", async () => {
+    const client = new FakeClient({ "/services/svc-1/envs": httpErr(500) });
+    const err = await new CoolifySource(client).fetchServiceBundle("svc-1").catch((e: Error) => e);
+    expect((err as Error).message).toBe("service variables could not be read");
+    expect(String((err as Error).message)).not.toContain(SECRET);
+    const storagesFail = new FakeClient({ "/services/svc-1/envs": [], "/services/svc-1/storages": httpErr(500) });
+    await expect(new CoolifySource(storagesFail).fetchServiceBundle("svc-1")).rejects.toThrow("service variables could not be read");
+  });
+
+  it("a missing /storages endpoint leaves files undefined; the envs still carry", async () => {
+    const client = new FakeClient({ "/services/svc-1/envs": [{ key: "A", value: "1" }], "/services/svc-1/storages": httpErr(404) });
+    const b = (await new CoolifySource(client).fetchServiceBundle("svc-1"))!;
+    expect(b.files).toBeUndefined();
+    expect(b.values.A).toBe("1");
+  });
+
+  it("discover: a /services list row that already has its members and raw compose skips the detail GET (fallback kept)", async () => {
+    const client = new FakeClient({
+      "/servers": [{ uuid: "srv-a" }],
+      "/servers/srv-a/resources": [],
+      "/applications": [],
+      "/databases": [],
+      "/services": [{ uuid: "s1", name: "full", applications: [], databases: [], docker_compose_raw: "services:\n  a:\n    image: x:1\n" }, { uuid: "s2", name: "bare" }],
+      "/services/s2": { uuid: "s2", name: "bare", applications: [{ uuid: "m1", name: "a" }], databases: [] },
+    });
+    const fleet = await new CoolifySource(client).discover();
+    expect(client.calls).not.toContain("/services/s1");
+    expect(client.calls).toContain("/services/s2");
+    expect(fleet.services.map((x) => x.name)).toEqual(["full", "bare"]);
+    expect(fleet.services[0].composeFile).toContain("services:");
+  });
+});

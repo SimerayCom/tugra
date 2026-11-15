@@ -12,7 +12,7 @@ import type { BackupsService } from "../backups/backups.service";
 import type { MonitorsService } from "../monitors/monitors.service";
 import type { ImporterService } from "../importer/importer.service";
 import type { ImportExecutorService } from "../importer/import-executor.service";
-import { REMOTE_SOURCE_KINDS, isRemoteSourceKind } from "../importer/dto";
+import { REMOTE_SOURCE_KINDS, ServiceChoicesSchema, isRemoteSourceKind } from "../importer/dto";
 import type { LicenseService } from "../license/license.service";
 import type { MetricsService } from "../metrics/metrics.service";
 import { rangeToMs, type AppContainerMetrics } from "../metrics/container-metrics.service";
@@ -702,6 +702,11 @@ export const MCP_TOOLS: McpTool[] = [
         targetServerId: { type: "string" },
         environmentId: { type: "string" },
         planHash: { type: "string" },
+        serviceChoices: {
+          type: "object",
+          description:
+            "Coolify services only: per-service choices keyed by the plan item's itemRef (skip, name, environmentId, targetServerId, serviceDomains, hostnameMap, volumes {policy copy|empty|skip}, dropMembers, pinImages, pins, privateNetwork, hold). A choice can only narrow or rename what the importer does.",
+        },
       },
       required: ["sourceKind", "planHash"],
     },
@@ -716,6 +721,7 @@ export const MCP_TOOLS: McpTool[] = [
           targetServerId: reqStr(a, "targetServerId"),
           environmentId: optStr(a, "environmentId"),
           planHash,
+          ...(a.serviceChoices !== undefined ? { serviceChoices: ServiceChoicesSchema.parse(a.serviceChoices) } : {}),
         });
       }
       throw new Error(`sourceKind must be "local-docker" or one of: ${REMOTE_SOURCE_KINDS.join(", ")}`);

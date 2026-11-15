@@ -171,3 +171,68 @@ describe("ImporterService.plan — coverage (G3-C)", () => {
     expect(sources.create).not.toHaveBeenCalled();
   });
 });
+
+describe("ImporterService.previewServices", () => {
+  const liveSession = { id: "sess-1", sourceKind: "coolify", actorId: "u1", teamId: "t1", baseUrl: "https://c.example.com", tokenEnc: "enc(TOK)", status: "active", expiresAt: new Date(Date.now() + 60_000) };
+  const SECRET = "SYNTH-SECRET-VALUE";
+  const raw = "services:\n  meilisearch:\n    image: 'getmeili/meilisearch:latest'\n    environment:\n      - SERVICE_URL_MEILISEARCH_7700\n      - 'MEILI_MASTER_KEY=${SERVICE_PASSWORD_MEILISEARCH}'\n    volumes:\n      - 'meilisearch-data:/meili_data'\n";
+  const routes = (envs: unknown): Record<string, unknown> => ({
+    "/servers": [{ uuid: "srv-a", name: "box" }],
+    "/servers/srv-a/resources": [{ uuid: "svc1" }],
+    "/applications": [],
+    "/databases": [],
+    "/services": [{ uuid: "svc1", name: "search", service_type: "meilisearch", docker_compose_raw: raw, applications: [{ uuid: "m1", name: "meilisearch", fqdn: null }], databases: [] }],
+    "/services/svc1/envs": envs,
+    "/services/svc1/storages": { file_storages: [] },
+  });
+  const getFrom = (r: Record<string, unknown>) => jest.fn(async (p: string) => {
+    if (p in r) {
+      if (r[p] instanceof Error) throw r[p];
+      return r[p];
+    }
+    throw new Error(`404 ${p}`);
+  });
+
+  it("returns a secret-free card per service: verdict, members, env NAMES resolved, volumes, hints", async () => {
+    const { svc } = make({ session: liveSession, clientGet: getFrom(routes([{ key: "SERVICE_PASSWORD_MEILISEARCH", value: SECRET }])) });
+    const res = await svc.previewServices("u1", { sessionId: "sess-1" });
+    expect(res.services).toHaveLength(1);
+    const card = res.services[0];
+    expect(card).toMatchObject({ name: "search", verdict: "importable", compat: "template", hold: false, floating: ["meilisearch"] });
+    expect(card.env).toEqual({ resolved: ["SERVICE_PASSWORD_MEILISEARCH"], missing: [], secretsAvailable: true });
+    expect(card.members).toEqual([{ name: "meilisearch", status: "kept" }]);
+    expect(card.volumes).toEqual([{ key: "meilisearch-data", origin: "named", policy: "copy", dataPlane: "hub-staged", mounts: [{ service: "meilisearch", path: "/meili_data" }] }]);
+    expect(card.domainHints).toEqual([{ service: "meilisearch", port: 7700 }]);
+    expect(JSON.stringify(res)).not.toContain(SECRET);
+  });
+
+  it("when the token cannot read the variables the card says so and lists the NAMES it would need", async () => {
+    const { svc } = make({ session: liveSession, clientGet: getFrom(routes(Object.assign(new Error("Coolify API error 403"), { status: 403 }))) });
+    const card = (await svc.previewServices("u1", { sessionId: "sess-1" })).services[0];
+    expect(card.env).toEqual({ resolved: [], missing: ["SERVICE_PASSWORD_MEILISEARCH"], secretsAvailable: false });
+  });
+
+  it("a read error degrades to secretsAvailable:false and never echoes the error text", async () => {
+    const { svc } = make({ session: liveSession, clientGet: getFrom(routes(new Error(`boom ${SECRET}`))) });
+    const res = await svc.previewServices("u1", { sessionId: "sess-1" });
+    expect(res.services[0].env.secretsAvailable).toBe(false);
+    expect(JSON.stringify(res)).not.toContain(SECRET);
+  });
+
+  it("applies the choices (rename, volume policy, hostname rows) and rejects unknown keys with a 400", async () => {
+    const { svc } = make({ session: liveSession, clientGet: getFrom(routes([])) });
+    const ref = "service:srv-a:svc1";
+    const card = (await svc.previewServices("u1", { sessionId: "sess-1", choices: { [ref]: { name: "My Search", volumes: { "meilisearch-data": { policy: "skip" } }, serviceDomains: [{ service: "meilisearch", hostname: "s.example.test", port: 7700 }] } } })).services[0];
+    expect(card.name).toBe("My Search");
+    expect(card.verdict).toBe("partial");
+    expect(card.volumes[0]).toMatchObject({ policy: "skip", dataPlane: "not-carried" });
+    expect(card.domains).toEqual([{ service: "meilisearch", hostname: "s.example.test", port: 7700 }]);
+    await expect(svc.previewServices("u1", { sessionId: "sess-1", choices: { "service:x:y": { skip: true } } })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.previewServices("u1", { sessionId: "sess-1", choices: { [ref]: { volumes: { nope: { policy: "skip" } } } } })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("enforces session ownership like plan", async () => {
+    await expect(make({ session: { ...liveSession, actorId: "u2" }, clientGet: getFrom(routes([])) }).svc.previewServices("u1", { sessionId: "sess-1" })).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(make({ session: null }).svc.previewServices("u1", { sessionId: "x" })).rejects.toBeInstanceOf(NotFoundException);
+  });
+});

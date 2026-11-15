@@ -83,7 +83,7 @@ export const ServiceChoiceSchema = z
   })
   .strict();
 export type ServiceChoice = z.infer<typeof ServiceChoiceSchema>;
-const serviceChoices = z.record(z.string().min(1).max(256), ServiceChoiceSchema).refine((r) => Object.keys(r).length <= 64, "at most 64 service choices");
+export const ServiceChoicesSchema = z.record(z.string().min(1).max(256), ServiceChoiceSchema).refine((r) => Object.keys(r).length <= 64, "at most 64 service choices");
 
 const remoteApplyFields = {
   sessionId: z.string().min(1),
@@ -91,7 +91,7 @@ const remoteApplyFields = {
   environmentId: z.string().min(1).optional(),
   planHash,
   acks: z.array(ImportAckSchema).max(2000).optional(),
-  serviceChoices: serviceChoices.optional(),
+  serviceChoices: ServiceChoicesSchema.optional(),
 };
 export const ImportApplySchema = z.discriminatedUnion("sourceKind", [
   z.object({ sourceKind: z.literal("local-docker"), serverId: z.string().min(1), planHash }),
@@ -105,7 +105,7 @@ export type ImportApplyInput = z.infer<typeof ImportApplySchema>;
 export const ImportServicesPreviewSchema = z.object({
   sessionId: z.string().min(1),
   sourceKind: z.enum(REMOTE_SOURCE_KINDS).optional(),
-  choices: serviceChoices.optional(),
+  choices: ServiceChoicesSchema.optional(),
 });
 export type ImportServicesPreviewInput = z.infer<typeof ImportServicesPreviewSchema>;
 

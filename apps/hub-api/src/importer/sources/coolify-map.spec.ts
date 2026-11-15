@@ -6,6 +6,7 @@ import {
   versionFromImage,
   mapApplication,
   mapDatabase,
+  mapService,
   buildCoolifyFleet,
   normalizeGitUrl,
   isGithubAppRepo,
@@ -346,5 +347,50 @@ describe("mapApplication — extras markers + notCarried", () => {
     const p2 = planImport(fleet([rich]), { sourceKind: "coolify" });
     expect(p2.planHash).toBe(p1.planHash);
     expect(JSON.stringify(p2.items)).not.toMatch(/sourceExtras|notCarried/);
+  });
+});
+
+
+describe("mapService — members, domains, placement (G4-C)", () => {
+  const row = {
+    uuid: "svc1",
+    name: "stack",
+    service_type: "signoz",
+    docker_compose_raw: "services:\n  a:\n    image: x:1\n",
+    server: { uuid: "srv-row", name: "box" },
+    applications: [
+      { uuid: "m2", name: "zeta", fqdn: "https://z.example.test:8080,http://z.example.test:8080", image: "z:1" },
+      { uuid: "m1", name: "alpha", fqdn: null, image: "a:1" },
+      { uuid: "m3", name: "mid", fqdn: "" },
+    ],
+    databases: [{ uuid: "d1", name: "init", image: "i:1" }],
+  };
+
+  it("maps members sorted by name, db members as kind db without domains, fqdn via parseFqdns (pair deduped, port kept, serviceRef set)", () => {
+    const s = mapService(row, {});
+    expect(s.members!.map((m) => `${m.kind}:${m.name}`)).toEqual(["app:alpha", "db:init", "app:mid", "app:zeta"]);
+    expect(s.members!.find((m) => m.name === "zeta")).toMatchObject({ ref: "m2", image: "z:1", domains: [{ host: "z.example.test", https: true, port: 8080, serviceRef: "zeta", primary: false }] });
+    expect(s.members!.find((m) => m.name === "init")!.domains).toEqual([]);
+    expect(s.members!.find((m) => m.name === "mid")!.domains).toEqual([]);
+    expect(s.memberApps).toEqual(["m2", "m1", "m3"]);
+    expect(s.memberDbs).toEqual(["d1"]);
+  });
+
+  it("serverRef falls back to the row's own server; the listing wins when it names the service; serverName is display only", () => {
+    expect(mapService(row, {}).serverRef).toBe("srv-row");
+    expect(mapService(row, { serverRef: "srv-list" }).serverRef).toBe("srv-list");
+    expect(mapService(row, {}).serverName).toBe("box");
+    expect(mapService({ ...row, server: null }, {}).serverRef).toBeUndefined();
+  });
+
+  it("keeps the raw compose on the service and the templateSlug", () => {
+    const s = mapService(row, {});
+    expect(s.composeFile).toContain("services:");
+    expect(s.templateSlug).toBe("signoz");
+  });
+
+  it("the need-read:sensitive warning stays only for a service WITHOUT a raw compose", () => {
+    const fleet = buildCoolifyFleet({ servers: [], resourcesByServer: {}, apps: [], databases: [], services: [row, { uuid: "svc2", name: "x" }], envsByResource: {}, volumesByResource: {} });
+    expect(fleet.warnings.filter((w) => /service\(s\) need a read:sensitive/.test(w))).toEqual(["1 service(s) need a read:sensitive token to fetch their compose file before import"]);
   });
 });

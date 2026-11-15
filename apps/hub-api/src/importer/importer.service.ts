@@ -7,12 +7,15 @@ import { MigratorService } from "../migrator/migrator.service";
 import { LocalDockerSource } from "./sources/local-docker.source";
 import { ImportSourceFactory } from "./sources/import-source.factory";
 import { assertAllowedUrl } from "./sources/ssrf-guard";
-import { planImport } from "./import-planner";
+import { ns, planImport } from "./import-planner";
 import { buildPreflight } from "./preflight";
 import { buildCoverage } from "./coverage";
 import type { ImportPlan } from "./foreign-fleet";
 import type { ImportSource } from "./import-source";
-import { isRemoteSourceKind, type ImportConnectInput, type ImportPlanRequestInput, type RemoteSourceKind } from "./dto";
+import { isRemoteSourceKind, type ImportConnectInput, type ImportPlanRequestInput, type ImportServicesPreviewInput, type RemoteSourceKind } from "./dto";
+import { mapLimit } from "./sources/map-limit";
+import { validateServiceChoices } from "./service-choices";
+import { buildServicePreview, type ServicePreview } from "./service-preview";
 
 const SESSION_TTL_MS = 60 * 60_000; // 1h — long enough to review → apply, short enough to limit a stored token
 
@@ -95,6 +98,35 @@ export class ImporterService {
       const opts = { sourceKind: input.sourceKind };
       const coverage = buildCoverage(fleet, opts);
       return { ...planImport(fleet, opts), preflight: { ...buildPreflight(fleet, opts), ...(coverage ? { coverage } : {}) } };
+    } finally {
+      await source.close();
+    }
+  }
+
+  /**
+   * Preview the SERVICE import: per discovered service, what the pure transform would do given the operator's choices and
+   * (when the token can read them) the live variables and config files. Read-only; nothing is created. The response carries
+   * variable NAMES, compose keys, volume keys, hostnames and fixed reasons only, never a value or a file's content. A choice
+   * that names something the plan does not have is a 400 (the same validation the apply runs).
+   */
+  async previewServices(userId: string, input: ImportServicesPreviewInput): Promise<{ services: ServicePreview[] }> {
+    const { source, session } = await this.openSession(userId, input.sessionId, input.sourceKind);
+    try {
+      const fleet = await source.discover();
+      const plan = planImport(fleet, { sourceKind: session.sourceKind });
+      const choices = validateServiceChoices(fleet, plan.items, input.choices);
+      const services = [...fleet.services].sort((a, b) => (ns("service", a.serverRef, a.sourceRef) < ns("service", b.serverRef, b.sourceRef) ? -1 : 1));
+      const cards = await mapLimit(services, 4, async (svc) => {
+        let bundle;
+        try {
+          bundle = await source.fetchServiceBundle?.(svc.sourceRef);
+        } catch {
+          bundle = undefined; // a FIXED degrade: the card shows secretsAvailable:false, never the error text
+        }
+        return buildServicePreview(svc, choices[ns("service", svc.serverRef, svc.sourceRef)], bundle);
+      });
+      await this.prisma.importSession.update({ where: { id: session.id }, data: { lastUsedAt: new Date() } });
+      return { services: cards };
     } finally {
       await source.close();
     }

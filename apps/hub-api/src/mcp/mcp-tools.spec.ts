@@ -818,3 +818,20 @@ describe("read: metrics (get_server_metrics / get_container_metrics)", () => {
     expect(d.kind).toBe("database");
   });
 });
+
+describe("import_apply serviceChoices (Coolify services)", () => {
+  const args = { sourceKind: "coolify", sessionId: "s1", targetServerId: "t", planHash: "h" };
+  it("validates and forwards serviceChoices; a malformed choice is rejected before the executor is called", async () => {
+    const exec = jest.fn().mockResolvedValue({ opId: "o1" });
+    const deps = { executor: { apply: exec } } as unknown as McpDeps;
+    await tool("import_apply").execute(deps, "u1", { ...args, serviceChoices: { "service:a:b": { skip: true } } });
+    expect(exec).toHaveBeenCalledWith("u1", expect.objectContaining({ serviceChoices: { "service:a:b": { skip: true } } }));
+    await expect(Promise.resolve().then(() => tool("import_apply").execute(deps, "u1", { ...args, serviceChoices: { x: { unknownKey: 1 } } }))).rejects.toThrow();
+    expect(exec).toHaveBeenCalledTimes(1);
+  });
+  it("without serviceChoices the executor input is unchanged", async () => {
+    const exec = jest.fn().mockResolvedValue({ opId: "o1" });
+    await tool("import_apply").execute({ executor: { apply: exec } } as unknown as McpDeps, "u1", args);
+    expect(exec.mock.calls[0][1]).not.toHaveProperty("serviceChoices");
+  });
+});

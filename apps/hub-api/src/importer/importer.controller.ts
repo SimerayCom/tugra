@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Param, Post, Req, UseGuards } from "@nestjs/common";
 import { ApiTags, ApiSecurity } from "@nestjs/swagger";
 import { ApiZodBody } from "../openapi/openapi";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
@@ -23,6 +23,8 @@ import {
   type ImportGitLinksInput,
   ImportGitRelinkSchema,
   type ImportGitRelinkInput,
+  ImportServicesPreviewSchema,
+  type ImportServicesPreviewInput,
 } from "./dto";
 import { ImportGitLinksService } from "./import-git-links.service";
 
@@ -62,6 +64,23 @@ export class ImporterController {
     @Body(new ZodValidationPipe(ImportPlanRequestSchema)) body: ImportPlanRequestInput,
   ) {
     return this.importer.plan(user.userId, body);
+  }
+
+  /**
+   * Preview the SERVICE import (Coolify services → stopped compose apps): per service, its verdict, kept/dropped members,
+   * variable NAMES (resolved / missing), the domain rows, the volumes with their data class, the config files and what is
+   * not carried. Read-only and secret-free (names and fixed reasons only). It reads the source's variables server-side to
+   * resolve key names, so it needs `read:secrets` like plan.
+   */
+  @Post("services/preview")
+  @HttpCode(200)
+  @RequireScopes("read:secrets")
+  @ApiZodBody(ImportServicesPreviewSchema)
+  previewServices(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(ImportServicesPreviewSchema)) body: ImportServicesPreviewInput,
+  ) {
+    return this.importer.previewServices(user.userId, body);
   }
 
   /** Apply a reviewed plan (bulk-adopts the host's standalone containers). Deploy-tier: it takes over

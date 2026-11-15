@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, HttpException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -24,7 +24,12 @@ import { seedTasks, deriveOpStatus, type TaskSeed, type TaskStatus } from "./imp
 import { MigrationTokenService } from "./migration-token.service";
 import { assertSafeBase, buildMigrationCommand, buildMigrationCommandTemplate } from "./migration-command";
 import { cleanupOpStaging } from "./migration-staging";
-import type { ForeignApp, ForeignDb, ForeignFleet, ForeignGitProvider } from "./foreign-fleet";
+import type { ForeignApp, ForeignDb, ForeignFleet, ForeignGitProvider, ForeignService, ServiceBundle } from "./foreign-fleet";
+import { transformServiceCompose, type ServiceTransformResult } from "./import-service-map";
+import { buildServiceChecklist, type ChecklistItem } from "./service-checklist";
+import { validateServiceChoices } from "./service-choices";
+import { generatedOnlyTemplate } from "../templates/catalog";
+import { composeProject } from "../deploy/compose-script";
 import { createHash } from "node:crypto";
 import { remapEnv, credsFromUrlForHost, type DbRemapTarget, type AppRemapTarget } from "./env-rewrite";
 import { tokenizeDockerOptions } from "../deploy/deploy-script";
@@ -35,7 +40,7 @@ import type { DatabaseView } from "../databases/databases.service";
 const PROVISIONABLE_ENGINES = new Set(["POSTGRES", "MYSQL", "REDIS", "MONGO", "MARIADB", "KEYDB", "DRAGONFLY", "CLICKHOUSE", "LIBSQL"]);
 import { SetBasicAuthSchema } from "../applications/dto";
 import type { ImportSource, FetchedDbCredentials, SourceAppExtras } from "./import-source";
-import { REMOTE_SOURCE_KINDS, type ImportAck, type ImportApplyInput, type RemoteSourceKind } from "./dto";
+import { REMOTE_SOURCE_KINDS, type ImportAck, type ImportApplyInput, type RemoteSourceKind, type ServiceChoice } from "./dto";
 
 const CONCURRENCY = 5;
 const STALE_RUNNING_MS = 10 * 60_000; // a RUNNING task older than this is treated as a dead worker's leftover
@@ -52,6 +57,11 @@ const remapHostShapeFor = (sourceKind: string | undefined): RegExp | undefined =
 /** A DB_IDENT_RE-safe database name derived from a display name (fallback when the source has no database name). */
 const safeDbIdent = (name: string): string => name.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 63) || "app";
 const msg = (e: unknown): string => (e instanceof Error ? e.message : "failed");
+/** The private network a single-service import joins: `svc-<app name slug>` (a DNS label, at most 63 chars), or undefined. */
+function privateNetworkName(appName: string): string | undefined {
+  const slug = appName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 58).replace(/-+$/g, "");
+  return slug ? `svc-${slug}` : undefined;
+}
 
 /** Sources whose variables are imported STRICTLY: an unresolved/invalid key blocks (ackably) instead of being
  *  silently dropped. Dokploy/local keep their lenient behaviour (byte-identical). */
@@ -142,12 +152,18 @@ export class ImportExecutorService {
       if (plan.planHash !== input.planHash) {
         throw new ConflictException("the plan changed since it was previewed — re-run the plan and review again");
       }
+      // Per-service choices are validated against the FRESHLY re-planned service items: an unknown itemRef, volume key or
+      // member name is a 400 BEFORE any op or task row is written (a choice can only narrow or rename, never add).
+      const serviceChoices = validateServiceChoices(fleet, plan.items, input.serviceChoices);
       // Authorize the TARGET server up front (fail fast with 403/404, before taking the per-server lock or
       // writing any op/task rows) — openSession only vouches for the session's team, not the import target.
       const server = await this.prisma.server.findUnique({ where: { id: input.targetServerId } });
       if (!server) throw new NotFoundException("target server not found");
       await this.access.requirePermission(userId, server.teamId, "apps:config");
       await this.assertNoInflight(input.targetServerId);
+      // A service may be placed on a different server by its choice: each distinct target is re-authorised (same team as
+      // the op) and gets its own in-flight check.
+      const svcTargets = await this.authorizeServiceTargets(userId, server.teamId, input.targetServerId, serviceChoices);
 
       // Carry each discovered GitHub App into a Tugra GitSource on the TARGET team (credentials flow
       // source → memory → GitSourcesService, encrypted at rest; never a task/plan/log). Done BEFORE the op row so
@@ -182,11 +198,20 @@ export class ImportExecutorService {
         ...(input.sourceKind === "coolify" && fleet.services.length
           ? { services: fleet.services.map((sv) => ({ itemRef: ns("service", sv.serverRef, sv.sourceRef), name: sv.name.slice(0, 120), oldHost: sv.sourceRef })) }
           : {}),
+        // Secret-free: names, hostnames, volume policies. Never a value.
+        ...(Object.keys(serviceChoices).length ? { serviceChoices } : {}),
       });
       // Idempotency: skip app refs a prior op already imported onto this target (and whose app still exists),
       // so a re-apply after a partial/cancelled run does not create duplicate Tugra apps.
       const already = await this.alreadyImported(input.targetServerId, plan.items.map((i) => i.itemRef), op.id);
 
+      const svcByRef = new Map(fleet.services.map((sv) => [ns("service", sv.serverRef, sv.sourceRef), sv]));
+      // Idempotency per placement target: a service placed on another server is matched against THAT server's prior imports.
+      const alreadyOnTarget = new Map<string, Set<string>>([[input.targetServerId, already]]);
+      for (const t of svcTargets) {
+        if (alreadyOnTarget.has(t)) continue;
+        alreadyOnTarget.set(t, await this.alreadyImported(t, plan.items.filter((i) => i.kind === "service").map((i) => i.itemRef), op.id));
+      }
       const appByRef = new Map(fleet.apps.map((a) => [`app:${a.serverRef ?? "_"}:${a.sourceRef}`, a]));
       const dbByRef = new Map(fleet.databases.map((d) => [`database:${d.serverRef ?? "_"}:${d.sourceRef}`, d]));
       // Per task, the exact work to run. Apps are copied; databases are provisioned as empty resources
@@ -197,10 +222,15 @@ export class ImportExecutorService {
       for (const item of plan.items) {
         const app = item.kind === "app" ? appByRef.get(item.itemRef) : undefined;
         const db = item.kind === "database" ? dbByRef.get(item.itemRef) : undefined;
-        const dup = already.has(item.itemRef);
+        const service = item.kind === "service" ? svcByRef.get(item.itemRef) : undefined;
+        const choice = item.kind === "service" ? serviceChoices[item.itemRef] : undefined;
+        // targetFor(item): the service choice's own target, else the op target (the serverMap lane is not in this slice).
+        const targetServerId = choice?.targetServerId ?? input.targetServerId;
+        const dup = (alreadyOnTarget.get(targetServerId) ?? already).has(item.itemRef);
         const hasBlocker = item.risks.some((r) => r.level === "blocker" && !isAcked(input.acks, item.itemRef, r.code));
         const provisionableDb = !!db && PROVISIONABLE_ENGINES.has(db.engine);
-        const runnable = !dup && !hasBlocker && ((item.kind === "app" && !!app) || (item.kind === "database" && provisionableDb));
+        const serviceRunnable = !!service && !choice?.skip && item.proposed.verdict !== "skipped" && typeof service.composeFile === "string" && typeof source.fetchServiceBundle === "function";
+        const runnable = !dup && !hasBlocker && ((item.kind === "app" && !!app) || (item.kind === "database" && provisionableDb) || (item.kind === "service" && serviceRunnable));
         const reason = dup
           ? "already imported onto this server in a previous run"
           : hasBlocker
@@ -209,11 +239,17 @@ export class ImportExecutorService {
               ? "handled with its owning app (declared there when eligible); its data is not copied by this import yet"
               : item.kind === "database" && !provisionableDb
                 ? "database engine has no Tugra equivalent"
-                : "could not resolve the source resource";
+                : item.kind === "service"
+                  ? choice?.skip
+                    ? "skipped by your choice"
+                    : item.proposed.verdict === "skipped"
+                      ? "this service is not imported (see its plan note)"
+                      : "this source cannot read the service's variables"
+                  : "could not resolve the source resource";
         const task = await this.prisma.bulkTask.create({
           data: {
             opId: op.id,
-            serverId: input.targetServerId,
+            serverId: targetServerId,
             kind: item.kind,
             itemRef: item.itemRef,
             status: runnable ? "PENDING" : "SKIPPED",
@@ -223,10 +259,11 @@ export class ImportExecutorService {
           },
         });
         // The resource's own source environment when the tree resolved it; else the single selected environment.
-        const environmentId = resolveTreeEnvironment(tree.envByRef, app ?? db) ?? input.environmentId;
+        const environmentId = (item.kind === "service" ? choice?.environmentId : undefined) ?? resolveTreeEnvironment(tree.envByRef, app ?? db) ?? input.environmentId;
         // Ack codes that actually cover a risk THIS item carries (an ack for a code the plan never raised for it grants nothing).
         const ackedCodes = new Set(item.risks.filter((r) => isAcked(input.acks, item.itemRef, r.code)).map((r) => r.code));
-        if (runnable && app) runners.set(task.id, () => this.runCopyApp(task.id, source, app, userId, input.targetServerId, input.sourceKind, environmentId, gitSourceByRef, ackedCodes, gitLinks));
+        if (runnable && service) runners.set(task.id, () => this.runCopyService(task.id, source, service, userId, targetServerId, input.sourceKind, environmentId, choice));
+        else if (runnable && app) runners.set(task.id, () => this.runCopyApp(task.id, source, app, userId, input.targetServerId, input.sourceKind, environmentId, gitSourceByRef, ackedCodes, gitLinks));
         else if (runnable && db) runners.set(task.id, () => this.runCreateDb(task.id, source, db, userId, input.targetServerId, environmentId));
       }
       await this.audit.log({ actor: userId, action: "import.apply", target: op.id, meta: { sourceKind: input.sourceKind, serverId: input.targetServerId, run: runners.size, total: plan.items.length } });
@@ -238,6 +275,159 @@ export class ImportExecutorService {
       // Any failure before the fan-out is handed the source → close it here (the fan-out's finally won't run).
       await source.close();
       throw e;
+    }
+  }
+
+  /** Authorise every distinct placement target a service choice names: it must exist, belong to the SAME team as the op's
+   *  target, grant the actor `apps:config`, and have no import in flight. Returns the distinct extra targets. */
+  private async authorizeServiceTargets(userId: string, teamId: string, opTarget: string, choices: Record<string, ServiceChoice>): Promise<string[]> {
+    const targets = [...new Set(Object.values(choices).map((c) => c.targetServerId).filter((t): t is string => !!t && t !== opTarget))].sort();
+    for (const t of targets) {
+      const srv = await this.prisma.server.findUnique({ where: { id: t } });
+      if (!srv) throw new NotFoundException("target server not found");
+      if (srv.teamId !== teamId) throw new ForbiddenException("a service target must be in the same team as the import target");
+      await this.access.requirePermission(userId, srv.teamId, "apps:config");
+      await this.assertNoInflight(t);
+    }
+    return targets;
+  }
+
+  /**
+   * Copy ONE Coolify service onto the target as a STOPPED Tugra compose app. The source's own raw compose is rewritten by the
+   * pure transform; secrets are carried (never regenerated); nothing is deployed. Order matters:
+   *  1. everything that can fail the item is decided BEFORE anything is created (secrets, safety gate, config files, name),
+   *     so a retry can never duplicate an app;
+   *  2. once the app exists, every further step is best-effort with its own try/catch and a FIXED note (the orphan-app rule).
+   * Task rows, audit rows and logs carry names and counts only, never a value or a file's content.
+   */
+  private async runCopyService(taskId: string, source: ImportSource, svc: ForeignService, userId: string, targetServerId: string, sourceKind: RemoteSourceKind, environmentId: string | undefined, choice: ServiceChoice | undefined): Promise<void> {
+    if (!(await this.claim(taskId))) return;
+    const fail = (output: string) => this.prisma.bulkTask.update({ where: { id: taskId }, data: { status: "FAILED", output, finishedAt: new Date() } });
+    try {
+      // 1. Secrets + files (server-side only). A source that throws is a FIXED message (a client error can echo a body).
+      let bundle: ServiceBundle | undefined;
+      try {
+        bundle = await source.fetchServiceBundle?.(svc.sourceRef);
+      } catch {
+        await fail("service variables could not be read from the source — retry the import");
+        return;
+      }
+      const res = transformServiceCompose({ svc, raw: svc.composeFile ?? "", bundle: { values: bundle?.values ?? {}, files: bundle?.files }, choice });
+      if (res.gate !== "ok") {
+        await fail(`the compose is refused by the safety gate (${res.gate.code}) — it is never carried or overridden`);
+        return;
+      }
+      if (res.verdict === "skipped" && res.neededFiles.length === 0) {
+        await fail("this service has nothing Tugra can import");
+        return;
+      }
+      if (res.missingEnv.length) {
+        await fail(`service secrets unavailable — the Coolify token needs read:sensitive (missing: ${res.missingEnv.slice(0, 10).join(", ")}${res.missingEnv.length > 10 ? ", …" : ""})`);
+        return;
+      }
+      if (res.neededFiles.length) {
+        await fail(`config files are needed from the source and could not be read (${res.neededFiles.slice(0, 10).join(", ")})`);
+        return;
+      }
+      // 2. Name: the source's own (or the operator's). A clash is a hard failure, never an auto-suffix.
+      const name = choice?.name ?? svc.name;
+      const server = await this.prisma.server.findUnique({ where: { id: targetServerId }, select: { teamId: true, publicIp: true } });
+      if (!server) {
+        await fail("target server not found");
+        return;
+      }
+      const clash = await this.prisma.application.findFirst({ where: { teamId: server.teamId, name }, select: { id: true } });
+      if (clash) {
+        await fail("an app with this name already exists — rename it in the import screen");
+        return;
+      }
+      // 3. Create: a synthetic compose ForeignApp through the SAME mapper every import uses. serviceImport leaves the domain
+      //    unset and exposeMode none. deploy:false, tags imported + coolify-service. The template link is logo/search only.
+      const domainRows = res.domains.map((d) => ({ host: d.hostname, https: true, port: d.port, serviceRef: d.service, primary: false }));
+      const synthetic: ForeignApp = { sourceRef: svc.sourceRef, name, kind: "compose", buildPack: "dockercompose", composeFile: res.compose, domains: domainRows };
+      const mappedFlags = mapSourceEnvFlags(res.env, bundle?.flags, "COMPOSE");
+      const tpl = svc.templateSlug && generatedOnlyTemplate(svc.templateSlug) && !generatedOnlyTemplate(svc.templateSlug)!.web ? svc.templateSlug : undefined;
+      const createInput = foreignAppToCreateInput(synthetic, res.env, { serverId: targetServerId, environmentId, sourceTag: "coolify-service", serviceImport: true, templateSlug: tpl }, bundle?.flags, mappedFlags);
+      const created = await this.apps.create(userId, createInput); // re-checks apps:config on the TARGET team and the safety gate
+
+      // 4. Best-effort steps, each in its own try/catch (FIXED notes, never the error text).
+      const unmapped: Array<{ field: string; reason: string }> = [];
+      const steps: Array<{ name: string; status: string }> = [{ name: "prepare", status: "DONE" }, { name: "create", status: "DONE" }];
+      const domains = { applied: 0, unmapped: [] as Array<{ field: string; reason: string }> };
+      try {
+        const plan = foreignAppToIngressPlan(synthetic, { noPrimary: true });
+        domains.unmapped.push(...plan.unmapped);
+        if (plan.serviceDomains.length) {
+          await this.apps.setServiceDomains(userId, created.id, plan.serviceDomains);
+          domains.applied = plan.serviceDomains.length;
+        }
+        steps.push({ name: "domains", status: "DONE" });
+      } catch {
+        domains.unmapped.push({ field: "serviceDomains", reason: "Tugra rejected the service domains — set them in the app's domain settings" });
+        steps.push({ name: "domains", status: "FAILED" });
+      }
+      let configMounts = 0;
+      if (res.configMounts.length) {
+        try {
+          await this.apps.setConfigMountsForImport(userId, created.id, res.configMounts);
+          configMounts = res.configMounts.length;
+          steps.push({ name: "config-files", status: "DONE" });
+        } catch {
+          unmapped.push({ field: "configMounts", reason: "Tugra rejected the config files — add them in the app's config files" });
+          steps.push({ name: "config-files", status: "FAILED" });
+        }
+      }
+      // D2 = B: an internal-only single-service stack stays PRIVATE: it joins a hub-owned network under a stable alias, so
+      // dependents attach to it instead of a public Traefik domain. Never a public domain, never auto-wired to dependents.
+      let network: { network: string; alias: string } | undefined;
+      const internalOnly = res.domains.length === 0 && !res.hold && res.membersKept.length === 1;
+      if (internalOnly && choice?.privateNetwork !== false) {
+        const member = res.membersKept[0];
+        const net = privateNetworkName(name);
+        const alias = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(member) && member.length <= 63 && !/^tugra[-_]/i.test(member) ? member : undefined;
+        try {
+          if (!net || !alias) throw new Error("no usable network name");
+          await this.apps.setComposeNetworks(userId, created.id, [{ network: net, service: member, aliases: [alias] }]);
+          network = { network: net, alias };
+        } catch {
+          unmapped.push({ field: "composeNetworks", reason: "the private network could not be set up — attach it in the app's network settings" });
+        }
+      }
+      steps.push({ name: "volumes", status: res.volumes.length ? "PENDING_DATA" : "SKIPPED" }, { name: "done", status: "DONE" });
+
+      const outcome = { network, targetIp: server.publicIp ?? undefined };
+      const checklist: ChecklistItem[] = buildServiceChecklist(svc, res, choice, outcome);
+      const result = {
+        kind: "service",
+        name: created.name,
+        appId: created.id,
+        members: res.membersKept,
+        dropped: res.dropped.map((d) => ({ field: d.field, reason: d.reason })),
+        configMounts,
+        unresolvedEnv: bundle?.unresolved.length ?? 0,
+        serviceDomains: domains,
+        ...(network ? { privateNetwork: network } : {}),
+        volumes: res.volumes.map((v) => ({ key: v.key, dockerName: `${composeProject({ id: created.id })}_${v.key}`, policy: v.policy, dataPlane: v.dataPlane, state: "pending-data" })),
+        hold: res.hold,
+        checklist,
+      };
+      const notes = [domains.unmapped.length ? `domains not carried: ${domains.unmapped.map((u) => u.field).join(", ")}` : undefined, unmapped.length ? `not carried: ${unmapped.map((u) => u.field).join(", ")}` : undefined, mappedFlags.warnings.length ? `env flags not carried: ${mappedFlags.warnings.join("; ")}` : undefined].filter(Boolean).join("; ");
+      await this.prisma.bulkTask.update({
+        where: { id: taskId },
+        data: {
+          status: "DONE",
+          resourceType: "application",
+          resourceId: created.id,
+          result: { ...result, ...(unmapped.length ? { unmapped } : {}) } as unknown as Prisma.InputJsonValue,
+          steps,
+          ...(notes ? { output: notes } : {}),
+          finishedAt: new Date(),
+        },
+      });
+      await this.audit.log({ actor: userId, action: "import.service.copy", target: created.id, meta: { name: created.name, members: res.membersKept.length, volumes: res.volumes.length, configMounts, unresolvedEnv: bundle?.unresolved.length ?? 0 } });
+    } catch (e) {
+      // A create failure surfaces our own (validation/gate) message; anything else is a FIXED text (a Prisma/transport error can echo data).
+      await fail(e instanceof HttpException ? msg(e).slice(0, 300) : "the service could not be created");
     }
   }
 

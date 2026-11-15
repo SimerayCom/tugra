@@ -588,3 +588,54 @@ describe("foreignAppToPostCreateConfig — extras (labels + inline Dockerfile)",
     expect(dump).not.toMatch(/LEAKME|SECRET_BUILD_STEP/);
   });
 });
+
+describe("service import flags (serviceImport / noPrimary / templateSlug)", () => {
+  const composeApp = (domains: ForeignApp["domains"]): ForeignApp =>
+    base({ name: "svc", kind: "compose", buildPack: "dockercompose", composeFile: "services:\n  web:\n    image: x:1\n", domains });
+  const domains = [
+    { host: "a.example.test", https: true, port: 8080, serviceRef: "web", primary: false },
+    { host: "b.example.test", https: true, port: 4318, serviceRef: "otel", primary: false },
+  ];
+
+  it("with the flags absent the create input and the ingress plan are byte-identical to before", () => {
+    const app = base({ name: "web", kind: "git", buildPack: "nixpacks", git: { url: "https://git/x" }, ports: [3000], domains: [{ host: "a.com", https: true, primary: true }, { host: "b.com", https: true, port: 3000 }] });
+    const a = foreignAppToCreateInput(app, { K: "v" }, { serverId: "s" });
+    expect(foreignAppToCreateInput(app, { K: "v" }, { serverId: "s", serviceImport: undefined, templateSlug: undefined })).toEqual(a);
+    expect(JSON.stringify(a)).toBe(JSON.stringify(foreignAppToCreateInput(app, { K: "v" }, { serverId: "s", serviceImport: false })));
+    expect(a).toMatchObject({ domain: "a.com", https: true, exposeMode: "custom" });
+    expect(a).not.toHaveProperty("templateSlug");
+    expect(foreignAppToIngressPlan(app)).toEqual(foreignAppToIngressPlan(app, {}));
+    expect(foreignAppToIngressPlan(app)).toEqual(foreignAppToIngressPlan(app, { noPrimary: false }));
+  });
+
+  it("serviceImport leaves the domain unset and exposeMode none, even when the app has domains; passes the template link", () => {
+    const input = foreignAppToCreateInput(composeApp(domains), { K: "v" }, { serverId: "s", serviceImport: true, templateSlug: "meilisearch" });
+    expect(input).toMatchObject({ source: "COMPOSE", exposeMode: "none", deploy: false, templateSlug: "meilisearch" });
+    expect(input.domain).toBeUndefined();
+    expect(input.https).toBeUndefined();
+    expect(CreateAppSchema.safeParse({ ...input, serverId: "s" }).success).toBe(true);
+  });
+
+  it("noPrimary turns every service-bound domain with a port into a service-domain row (nothing swallowed as a primary)", () => {
+    const withPrimary = foreignAppToIngressPlan(composeApp(domains));
+    expect(withPrimary.serviceDomains).toEqual([{ service: "otel", hostname: "b.example.test", port: 4318 }]); // the trap: the first is an unrouted primary
+    const plan = foreignAppToIngressPlan(composeApp(domains), { noPrimary: true });
+    expect(plan.serviceDomains).toEqual([
+      { service: "web", hostname: "a.example.test", port: 8080 },
+      { service: "otel", hostname: "b.example.test", port: 4318 },
+    ]);
+    expect(plan.extraDomains).toEqual([]);
+  });
+
+  it("noPrimary: a domain without a port is reported unmapped, not routed", () => {
+    const plan = foreignAppToIngressPlan(composeApp([{ host: "c.example.test", https: true, serviceRef: "web", primary: false }]), { noPrimary: true });
+    expect(plan.serviceDomains).toEqual([]);
+    expect(plan.unmapped.map((u) => u.field)).toContain("domain:c.example.test port");
+  });
+
+  it("noPrimary keeps the 20-row cap and the service-name check", () => {
+    const many = Array.from({ length: 22 }, (_, i) => ({ host: `h${i}.example.test`, https: true, port: 80, serviceRef: "web", primary: false }));
+    expect(foreignAppToIngressPlan(composeApp(many), { noPrimary: true }).serviceDomains).toHaveLength(20);
+    expect(foreignAppToIngressPlan(composeApp([{ host: "x.example.test", port: 80, serviceRef: "bad name", primary: false }]), { noPrimary: true }).serviceDomains).toEqual([]);
+  });
+});

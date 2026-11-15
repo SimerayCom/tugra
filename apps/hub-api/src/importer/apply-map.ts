@@ -15,6 +15,11 @@ export interface AppCreateOptions {
   environmentId?: string;
   sourceTag?: string; // e.g. "coolify" — added alongside "imported" for traceability
   gitSourceId?: string; // a connected GitHub App (GitSource) to link a private-repo import to; create() re-checks the team
+  /** A Coolify SERVICE imported as a stopped compose app: no primary domain at create (its domains are per-service rows
+   *  applied afterwards) and never a magic domain: `domain` stays unset and `exposeMode` is "none". */
+  serviceImport?: boolean;
+  /** Link the created app to an app-store template (logo + search only); set by the service importer when safe. */
+  templateSlug?: string;
 }
 
 /**
@@ -59,10 +64,11 @@ export function foreignAppToCreateInput(
     deploy: false,
     tags: ["imported", ...(opts.sourceTag ? [opts.sourceTag] : [])],
     containerPort: app.ports?.[0],
-    domain: domain?.host,
-    https: domain?.https,
-    exposeMode: domain ? "custom" : "none",
+    domain: opts.serviceImport ? undefined : domain?.host,
+    https: opts.serviceImport ? undefined : domain?.https,
+    exposeMode: opts.serviceImport ? "none" : domain ? "custom" : "none",
   };
+  if (opts.templateSlug) input.templateSlug = opts.templateSlug;
 
   if (build.source === "IMAGE") {
     input.image = opt(app.image);
@@ -354,14 +360,16 @@ const MAX_REDIRECTS = 20;
  * domain Tugra cannot route correctly is NOT applied — a mis-routed host is worse than a reported one).
  * Out of scope here (reported): DNS-01 / custom-cert bindings and https-off domains.
  */
-export function foreignAppToIngressPlan(app: ForeignApp): IngressPlan {
+export function foreignAppToIngressPlan(app: ForeignApp, opts?: { noPrimary?: boolean }): IngressPlan {
   const out: IngressPlan = { extraDomains: [], serviceDomains: [], extraPorts: [], unmapped: [] };
   const skip = (field: string, reason: Reasoned) => out.unmapped.push({ field, ...reason });
   /** Bound a source-supplied string interpolated into a persisted field/reason. */
   const cl = (v: string): string => v.slice(0, 200);
   const isCompose = mapBuildPack(app).source === "COMPOSE";
   const domains = app.domains ?? [];
-  const primary = domains.find((d) => d.primary) ?? domains[0]; // same pick as foreignAppToCreateInput
+  // `noPrimary` (a service import): there is no create-time primary, so EVERY domain with a service binding and a port
+  // becomes a service-domain row (otherwise the first would be picked as an unrouted primary and silently dropped).
+  const primary = opts?.noPrimary ? undefined : domains.find((d) => d.primary) ?? domains[0]; // same pick as foreignAppToCreateInput
   const lc = (h: string) => h.trim().replace(/\.+$/, "").toLowerCase();
   const primaryHost = primary ? lc(primary.host) : undefined;
   const primaryBase = primaryHost?.replace(/^www\./, "");
