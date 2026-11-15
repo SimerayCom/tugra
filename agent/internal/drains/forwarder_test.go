@@ -1,6 +1,7 @@
 package drains
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -70,7 +71,7 @@ func TestPostBatchSendsJSONAndBearer(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	err := postBatch(srv.Client(), "s1", protocol.DrainCfg{Endpoint: srv.URL, Token: "secret"},
+	err := postBatch(context.Background(), srv.Client(), "s1", protocol.DrainCfg{Endpoint: srv.URL, Token: "secret"},
 		[]LogLine{{Container: "tugra_a", Message: "hello"}})
 	if err != nil {
 		t.Fatalf("postBatch error: %v", err)
@@ -83,7 +84,7 @@ func TestPostBatchSendsJSONAndBearer(t *testing.T) {
 
 func TestPostBatchUnreachableIsError(t *testing.T) {
 	// best-effort: caller ignores the error, but it must not panic
-	err := postBatch(&http.Client{Timeout: time.Millisecond}, "s1",
+	err := postBatch(context.Background(), &http.Client{Timeout: time.Millisecond}, "s1",
 		protocol.DrainCfg{Endpoint: "http://127.0.0.1:0"}, []LogLine{{Message: "x"}})
 	if err == nil {
 		t.Fatal("expected an error for an unreachable endpoint")
@@ -162,7 +163,7 @@ func TestPostBatchRetriesTransientThenSucceeds(t *testing.T) {
 		}
 		return 200
 	})
-	if err := postBatch(srv.Client(), "s1", protocol.DrainCfg{Endpoint: srv.URL}, []LogLine{{Message: "x"}}); err != nil {
+	if err := postBatch(context.Background(), srv.Client(), "s1", protocol.DrainCfg{Endpoint: srv.URL}, []LogLine{{Message: "x"}}); err != nil {
 		t.Fatalf("expected success after one retry: %v", err)
 	}
 	if got := atomic.LoadInt32(n); got != 2 {
@@ -177,7 +178,7 @@ func TestPostBatchRetries429(t *testing.T) {
 		}
 		return 202
 	})
-	if err := postBatch(srv.Client(), "s1", protocol.DrainCfg{Endpoint: srv.URL}, []LogLine{{Message: "x"}}); err != nil {
+	if err := postBatch(context.Background(), srv.Client(), "s1", protocol.DrainCfg{Endpoint: srv.URL}, []LogLine{{Message: "x"}}); err != nil {
 		t.Fatalf("429 should be retried: %v", err)
 	}
 	if got := atomic.LoadInt32(n); got != 2 {
@@ -187,7 +188,7 @@ func TestPostBatchRetries429(t *testing.T) {
 
 func TestPostBatchDoesNotRetryPermanent4xx(t *testing.T) {
 	srv, n := drainSrv(t, func(int32) int { return 400 })
-	if err := postBatch(srv.Client(), "s1", protocol.DrainCfg{Endpoint: srv.URL}, []LogLine{{Message: "x"}}); err == nil {
+	if err := postBatch(context.Background(), srv.Client(), "s1", protocol.DrainCfg{Endpoint: srv.URL}, []LogLine{{Message: "x"}}); err == nil {
 		t.Fatal("expected an error for a 400")
 	}
 	if got := atomic.LoadInt32(n); got != 1 {
@@ -197,7 +198,7 @@ func TestPostBatchDoesNotRetryPermanent4xx(t *testing.T) {
 
 func TestPostBatchExhaustsRetries(t *testing.T) {
 	srv, n := drainSrv(t, func(int32) int { return 500 })
-	if err := postBatch(srv.Client(), "s1", protocol.DrainCfg{Endpoint: srv.URL}, []LogLine{{Message: "x"}}); err == nil {
+	if err := postBatch(context.Background(), srv.Client(), "s1", protocol.DrainCfg{Endpoint: srv.URL}, []LogLine{{Message: "x"}}); err == nil {
 		t.Fatal("expected an error after exhausting retries")
 	}
 	if got := atomic.LoadInt32(n); got != maxAttempts {
@@ -233,5 +234,72 @@ func TestFormatDatadog(t *testing.T) {
 	}
 	if _, hasBearer := h["authorization"]; hasBearer {
 		t.Fatalf("datadog must not send a bearer")
+	}
+}
+
+func TestPostBatchStopsWhenItsContextIsCancelled(t *testing.T) {
+	var hits atomic.Int32
+	started := make(chan struct{}, 4)
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		started <- struct{}{}
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+		w.WriteHeader(503) // retriable: would be retried if the context were not honoured
+	}))
+	defer srv.Close()
+	defer close(release)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- postBatch(ctx, srv.Client(), "s1", protocol.DrainCfg{Endpoint: srv.URL}, []LogLine{{Message: "x"}})
+	}()
+	<-started // the request is in flight
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a cancelled send must return an error")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("postBatch kept going after its context was cancelled")
+	}
+	time.Sleep(700 * time.Millisecond) // a retry (300 ms backoff) would have hit the server again by now
+	if hits.Load() != 1 {
+		t.Fatalf("no retry may follow a cancellation, hits=%d", hits.Load())
+	}
+}
+
+func TestHTTPSinkCloseCancelsAnInFlightSend(t *testing.T) {
+	started := make(chan struct{}, 4)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body) // the server only notices a closed client after the body is read
+		started <- struct{}{}
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	snd, err := newHTTPSender(protocol.DrainCfg{ID: "d", Type: "http", Endpoint: srv.URL}, "s1") // legacy unguarded client
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := newSink(context.Background(), protocol.DrainCfg{ID: "d"}, snd, nil, nil)
+	done := make(chan struct{})
+	go func() { s.deliver([]LogLine{{Message: "x"}}); close(done) }()
+	<-started
+	s.close()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("sink.close() must abort the in-flight HTTP send promptly")
+	}
+	// a batch dequeued after close is not shipped at all
+	before := len(started)
+	s.deliver([]LogLine{{Message: "late"}})
+	if len(started) != before {
+		t.Fatal("a closed sink must not start a new request")
 	}
 }

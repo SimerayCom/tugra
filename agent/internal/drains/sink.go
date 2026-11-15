@@ -157,6 +157,11 @@ func (s *sink) changed() {
 // deliver sends one batch through the circuit breaker: 3 consecutive failed batches open it for
 // min(2^n s, 60 s), during which batches are dropped (counted) instead of tried; one success closes it.
 func (s *sink) deliver(batch []LogLine) {
+	// A closed sink (drain removed, `logs` revoked) must not ship a batch it already dequeued: select picks a ready
+	// queue item at random even when ctx is done.
+	if s.ctx.Err() != nil {
+		return
+	}
 	now := s.now()
 	s.mu.Lock()
 	cooling := now.Before(s.cooldownUntil)
@@ -280,8 +285,8 @@ func newHTTPSender(cfg protocol.DrainCfg, serverID string) (Sender, error) {
 	return &httpSender{client: &http.Client{Timeout: 10 * time.Second, Transport: tr}, serverID: serverID, cfg: cfg, tr: tr}, nil
 }
 
-func (h *httpSender) Send(_ context.Context, lines []LogLine) error {
-	return postBatch(h.client, h.serverID, h.cfg, lines)
+func (h *httpSender) Send(ctx context.Context, lines []LogLine) error {
+	return postBatch(ctx, h.client, h.serverID, h.cfg, lines)
 }
 
 func (h *httpSender) Close() {

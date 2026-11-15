@@ -156,13 +156,15 @@ func retriable(code int) bool {
 // postBatch ships a batch to one drain, formatted for its type, with a few bounded retries. Best-effort — a
 // permanent 4xx (bad config) is NOT retried; a network error, a 5xx, or a 429/408 is, then the final error is
 // returned (ignored by the caller). The whole send shares one budget (batchSendBudget) via a context deadline,
-// so a dead or slow drain can't wedge the log-tail goroutine for longer than that regardless of retries.
-func postBatch(client *http.Client, serverID string, d protocol.DrainCfg, lines []LogLine) error {
+// so a dead or slow drain can't wedge the log-tail goroutine for longer than that regardless of retries. The budget
+// derives from `parent` (the sink's context): removing the drain or revoking `logs` cancels an in-flight request
+// and stops the retry loop at once.
+func postBatch(parent context.Context, client *http.Client, serverID string, d protocol.DrainCfg, lines []LogLine) error {
 	body, headers, err := format(d, serverID, lines, time.Now())
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), batchSendBudget)
+	ctx, cancel := context.WithTimeout(parent, batchSendBudget)
 	defer cancel()
 	var lastErr error
 	for attempt := 0; attempt < maxAttempts; attempt++ {
