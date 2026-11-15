@@ -145,11 +145,12 @@ func TestIntegrationRunningContainerRoundTrip(t *testing.T) {
 		t.Fatalf("a rejected write left a file: %q", got)
 	}
 
-	// mkdir -p: every level owned like its nearest existing ancestor
+	// mkdir -p: every level owned like its nearest existing ancestor; only the leaf takes the requested mode,
+	// intermediate levels stay 0755 (like `mkdir -p -m`) so they remain traversable
 	if err := Mkdir(c, name, "/srv/app/d1/d2", 0o750, true); err != nil {
 		t.Fatalf("mkdir -p: %v", err)
 	}
-	if got := ex(t, name, "stat -c '%n %u:%g %a' /srv/app/d1 /srv/app/d1/d2"); got != "/srv/app/d1 1234:4321 750\n/srv/app/d1/d2 1234:4321 750" {
+	if got := ex(t, name, "stat -c '%n %u:%g %a' /srv/app/d1 /srv/app/d1/d2"); got != "/srv/app/d1 1234:4321 755\n/srv/app/d1/d2 1234:4321 750" {
 		t.Fatalf("mkdir -p = %q", got)
 	}
 	if err := Mkdir(c, name, "/srv/app/d1", 0o755, false); code2(err) != "exists" {
@@ -284,7 +285,7 @@ func TestIntegrationStoppedContainer(t *testing.T) {
 func TestIntegrationCreatedNeverStartedDistrolessContainer(t *testing.T) {
 	_ = itImage(t)
 	name := "tugra_it_" + randName()[:12]
-	dk(t, "create", "--name", name, "gcr.io/distroless/static-debian12")
+	dk(t, "create", "--name", name, "gcr.io/distroless/static-debian12", "/nonexistent") // the image has no ENTRYPOINT/CMD
 	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", name).Run() })
 	c := ctx(t)
 	// distroless: no shell, no coreutils — everything that does not need an exec still works
@@ -322,8 +323,18 @@ func TestIntegrationReadOnlyRootfsAndTmpfs(t *testing.T) {
 		t.Fatalf("write to a read-only rootfs: %v", err)
 	}
 	t.Logf("write to a read-only rootfs => %v", err)
-	if _, err := Write(c, name, "/scratch/ok", WriteOpts{Size: 1, Sha256: sha("x")}, strings.NewReader("x")); err != nil {
-		t.Fatalf("write to a tmpfs inside a read-only container: %v", err)
+	// docker cp cannot write a tmpfs (and Docker refuses every cp write into a read-only-rootfs container), so this
+	// is refused rather than silently landing somewhere else
+	_, err = Write(c, name, "/scratch/ok", WriteOpts{Size: 1, Sha256: sha("x")}, strings.NewReader("x"))
+	if code := code2(err); code != "read_only" && code != "denied" {
+		t.Fatalf("write via docker cp into a tmpfs: %v", err)
+	}
+	t.Logf("write via docker cp into a tmpfs => %v", err)
+	// ...but a file that exists in the tmpfs (created from inside) is invisible to docker cp and must still be
+	// deletable: the exec ops fall back to an in-container `test -e` instead of relying on a docker cp stat
+	ex(t, name, "echo x > /scratch/ok")
+	if _, err := Stat(c, name, "/scratch/ok"); code2(err) != "not_found" {
+		t.Logf("docker cp now sees the tmpfs file (daemon behaviour changed): %v", err)
 	}
 	if err := ExecOp(c, name, "delete", "/etc/hostname", "", "", false); code2(err) != "read_only" && code2(err) != "denied" {
 		t.Fatalf("delete on a read-only rootfs: %v", err)
