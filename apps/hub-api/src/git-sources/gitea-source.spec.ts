@@ -236,3 +236,75 @@ describe("clone wiring (cloneToken → deploy script)", () => {
     expect(cloneLine).not.toMatch(/:[^@/]*@git\.example\.com/); // no password in the URL
   });
 });
+
+describe("installationRepoSet / tokenSourceCanSee — team-scoped visibility (importer link resolver)", () => {
+  const gh = row({ id: "g1", provider: "github", appId: "1", apiUrl: null, tokenEnc: null, privateKeyEnc: "x", installationId: "9" });
+  const ghRepo = (i: number) => ({ full_name: `Acme/Repo${i}` });
+  const mkGh = () => {
+    const svc = make({ gitSource: { findUnique: jest.fn().mockResolvedValue(gh) } }); // NO access dependency: team-scoped, no user check
+    jest.spyOn(svc, "installationToken").mockResolvedValue("ghs_t");
+    return svc;
+  };
+
+  it("paginates /installation/repositories (100 per page), lower-cases names, host-pinned to api.github.com with the installation token", async () => {
+    const svc = mkGh();
+    const page1 = { total_count: 130, repositories: Array.from({ length: 100 }, (_, i) => ghRepo(i)) };
+    const page2 = { total_count: 130, repositories: Array.from({ length: 30 }, (_, i) => ghRepo(100 + i)) };
+    const fetchMock = jest.fn().mockResolvedValueOnce({ ok: true, json: async () => page1 }).mockResolvedValueOnce({ ok: true, json: async () => page2 });
+    (global as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+    const set = await svc.installationRepoSet("g1");
+    expect(set.size).toBe(130);
+    expect(set.has("acme/repo129")).toBe(true);
+    expect(fetchMock.mock.calls.map((c) => c[0])).toEqual([
+      "https://api.github.com/installation/repositories?per_page=100&page=1",
+      "https://api.github.com/installation/repositories?per_page=100&page=2",
+    ]);
+    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe("Bearer ghs_t");
+  });
+
+  it("caps the listing at 2000 repositories", async () => {
+    const svc = mkGh();
+    const full = (n: number) => ({ total_count: 99999, repositories: Array.from({ length: 100 }, (_, i) => ({ full_name: `o/r${n}-${i}` })) });
+    const fetchMock = jest.fn().mockImplementation(async () => ({ ok: true, json: async () => full(fetchMock.mock.calls.length) }));
+    (global as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+    const set = await svc.installationRepoSet("g1");
+    expect(set.size).toBe(2000);
+    expect(fetchMock).toHaveBeenCalledTimes(20);
+  });
+
+  it("a non-OK page THROWS (the resolver reports unknown, never 'sees nothing')", async () => {
+    const svc = mkGh();
+    (global as unknown as { fetch: typeof fetch }).fetch = jest.fn().mockResolvedValue({ ok: false, status: 403 }) as unknown as typeof fetch;
+    await expect(svc.installationRepoSet("g1")).rejects.toThrow(/HTTP 403/);
+  });
+
+  it("listRepos (the picker) is unchanged: one page, per_page=100 only", async () => {
+    const svc = make({ gitSource: { findUnique: jest.fn().mockResolvedValue(gh) } }, { teamRole: jest.fn().mockResolvedValue("OWNER") } as never);
+    jest.spyOn(svc, "installationToken").mockResolvedValue("ghs_t");
+    const fetchMock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ repositories: [] }) });
+    (global as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+    await svc.listRepos("u1", "g1");
+    expect(fetchMock.mock.calls[0][0]).toBe("https://api.github.com/installation/repositories?per_page=100");
+  });
+
+  it("gitea canSeeRepo: 200 yes, 404/403 no, other failures unknown (never guessed)", async () => {
+    const svc = make({ gitSource: { findUnique: jest.fn().mockResolvedValue(row()) } });
+    const get = jest.spyOn(GuardedHttpGet.prototype, "get");
+    get.mockResolvedValueOnce({ id: 1 });
+    await expect(svc.tokenSourceCanSee("s1", "o", "r")).resolves.toBe("yes");
+    expect(get.mock.calls[0][0]).toBe("/repos/o/r");
+    get.mockRejectedValueOnce(new Error("Gitea API error 404 (not found)"));
+    await expect(svc.tokenSourceCanSee("s1", "o", "r")).resolves.toBe("no");
+    get.mockRejectedValueOnce(new Error("Gitea API error 403"));
+    await expect(svc.tokenSourceCanSee("s1", "o", "r")).resolves.toBe("no");
+    get.mockRejectedValueOnce(new Error("Gitea API error 500"));
+    await expect(svc.tokenSourceCanSee("s1", "o", "r")).resolves.toBe("unknown");
+    get.mockRejectedValueOnce(new Error("socket hang up"));
+    await expect(svc.tokenSourceCanSee("s1", "o", "r")).resolves.toBe("unknown");
+  });
+
+  it("tokenSourceCanSee on a GitHub source or a missing row is unknown", async () => {
+    await expect(make({ gitSource: { findUnique: jest.fn().mockResolvedValue(gh) } }).tokenSourceCanSee("g1", "o", "r")).resolves.toBe("unknown");
+    await expect(make({ gitSource: { findUnique: jest.fn().mockResolvedValue(null) } }).tokenSourceCanSee("x", "o", "r")).resolves.toBe("unknown");
+  });
+});

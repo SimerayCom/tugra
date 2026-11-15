@@ -23,7 +23,7 @@ function fleet(): ForeignFleet {
 
 const DB_ITEMREF = "database:srv-a:db-1";
 
-function harness(over: { dbCreds?: (ref: string) => { user?: string; password?: string; rootPassword?: string; database?: string } | undefined | Promise<unknown>; takenHostPorts?: number[]; priorImported?: Array<{ itemRef: string; resourceId: string; resourceType: string }>; liveDbIds?: string[]; liveAppIds?: string[]; gitSources?: Array<{ id: string }>; fleet?: ForeignFleet; carriedSource?: { id: string } | null; clusterId?: string | null; upsert?: jest.Mock; secrets?: (ref: string) => { values: Record<string, string>; unresolved: [] }; findOrCreateProject?: jest.Mock; basicAuthCreds?: (ref: string) => Promise<Array<{ user: string; password: string }> | undefined>; appExtras?: (ref: string) => Promise<unknown> } = {}) {
+function harness(over: { dbCreds?: (ref: string) => { user?: string; password?: string; rootPassword?: string; database?: string } | undefined | Promise<unknown>; takenHostPorts?: number[]; priorImported?: Array<{ itemRef: string; resourceId: string; resourceType: string }>; liveDbIds?: string[]; liveAppIds?: string[]; gitSources?: Array<{ id: string }>; fleet?: ForeignFleet; carriedSource?: { id: string } | null; clusterId?: string | null; upsert?: jest.Mock; secrets?: (ref: string) => { values: Record<string, string>; unresolved: [] }; findOrCreateProject?: jest.Mock; basicAuthCreds?: (ref: string) => Promise<Array<{ user: string; password: string }> | undefined>; appExtras?: (ref: string) => Promise<unknown>; gitLinkRows?: jest.Mock } = {}) {
   let seq = 0;
   const created: Array<{ id: string; data: Record<string, unknown> }> = [];
   const prisma = {
@@ -64,6 +64,8 @@ function harness(over: { dbCreds?: (ref: string) => { user?: string; password?: 
   const importer = { openSession: jest.fn().mockResolvedValue({ source }) };
   const apps = { create: jest.fn().mockResolvedValue({ id: "app-new", name: "web" }), setVolumes: jest.fn().mockResolvedValue(undefined), setBuild: jest.fn().mockResolvedValue(undefined), setWatchPaths: jest.fn().mockResolvedValue(undefined), setAutoDeploy: jest.fn().mockResolvedValue(undefined), setLimits: jest.fn().mockResolvedValue(undefined), setContainerCommand: jest.fn().mockResolvedValue(undefined), setClusterConfig: jest.fn().mockResolvedValue(undefined), setExtraDomains: jest.fn().mockResolvedValue(undefined), setDomainOptions: jest.fn().mockResolvedValue(undefined), setContainerPort: jest.fn().mockResolvedValue(undefined), setExtraPorts: jest.fn().mockResolvedValue(undefined), setServiceDomains: jest.fn().mockResolvedValue(undefined), setRedirects: jest.fn().mockResolvedValue(undefined), setBasicAuth: jest.fn().mockResolvedValue(undefined), setCustomLabels: jest.fn().mockResolvedValue(undefined) };
   const gitSources = { upsertForImport: over.upsert ?? jest.fn().mockResolvedValue("gs-new") };
+  // Visibility resolver: tests that exercise linking inject rows; default = nothing resolved (apps are created unlinked).
+  const gitLinks = { resolve: over.gitLinkRows ?? jest.fn().mockResolvedValue(new Map()) };
   // Tree find-or-create: in-memory + idempotent (same name → same ids), like the real ProjectsService.findOrCreateForImport.
   const treeIds = new Map<string, string>();
   const projects = {
@@ -90,8 +92,9 @@ function harness(over: { dbCreds?: (ref: string) => { user?: string; password?: 
     {} as never, // crypto (unused on this path)
     gitSources as never,
     projects as never,
+    gitLinks as never,
   );
-  return { svc, prisma, audit, source: source as typeof source & { fetchDbCredentials?: jest.Mock; fetchBasicAuthCredentials?: jest.Mock; fetchAppExtras?: jest.Mock }, apps, dbs, created, gitSources, projects };
+  return { svc, prisma, audit, source: source as typeof source & { fetchDbCredentials?: jest.Mock; fetchBasicAuthCredentials?: jest.Mock; fetchAppExtras?: jest.Mock }, apps, dbs, created, gitSources, projects, gitLinks };
 }
 
 function input(f: ForeignFleet = fleet()) {
@@ -157,7 +160,7 @@ function rollbackHarness(opts: { dbStatus?: string; restores?: number; backups?:
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
   const dbs = { remove: jest.fn().mockResolvedValue(undefined), create: jest.fn() };
   const migrationTokens = { revoke: jest.fn().mockResolvedValue(false) };
-  const svc = new ImportExecutorService(prisma as never, {} as never, access as never, audit as never, {} as never, {} as never, dbs as never, migrationTokens as never, {} as never, {} as never, {} as never);
+  const svc = new ImportExecutorService(prisma as never, {} as never, access as never, audit as never, {} as never, {} as never, dbs as never, migrationTokens as never, {} as never, {} as never, {} as never, {} as never);
   return { svc, prisma, dbs, migrationTokens };
 }
 
@@ -299,7 +302,7 @@ function appRollbackHarness(sourceKind: string, compensation: unknown) {
   const migrator = { unadopt: jest.fn().mockResolvedValue(undefined) };
   const apps = { remove: jest.fn().mockResolvedValue(undefined) };
   const migrationTokens = { revoke: jest.fn().mockResolvedValue(false) };
-  const svc = new ImportExecutorService(prisma as never, migrator as never, access as never, audit as never, {} as never, apps as never, {} as never, migrationTokens as never, {} as never, {} as never, {} as never);
+  const svc = new ImportExecutorService(prisma as never, migrator as never, access as never, audit as never, {} as never, apps as never, {} as never, migrationTokens as never, {} as never, {} as never, {} as never, {} as never);
   return { svc, apps, migrator, prisma };
 }
 
@@ -320,58 +323,108 @@ describe("ImportExecutorService.rollback — copy-mode vs adopt-in-place teardow
   });
 });
 
-describe("ImportExecutorService.resolveGitSourceId — private GitHub-App auto-link (İş 2)", () => {
+describe("ImportExecutorService.resolveGitSourceId — repo-visibility link policy (D7)", () => {
   const ghApp = { sourceRef: "a", name: "web", kind: "git", buildPack: "nixpacks", git: { url: "https://github.com/o/r.git", provider: "github" } };
+  const row = (over: Record<string, unknown> = {}) => ({ itemRef: "app:srv-a:a", name: "web", repo: { host: "github.com", owner: "o", name: "r" }, status: "linked", sourceId: "gs-1", sourceName: "My App", reason: "r", ...over });
   // resolveGitSourceId is private — call it directly for a focused unit test of the link policy.
-  const resolve = (svc: ImportExecutorService, app: unknown): Promise<string | undefined> =>
-    (svc as unknown as { resolveGitSourceId(s: string, a: unknown): Promise<string | undefined> }).resolveGitSourceId("srv-tugra", app);
+  const resolve = (svc: ImportExecutorService, app: unknown, link?: unknown): Promise<string | undefined> =>
+    (svc as unknown as { resolveGitSourceId(s: string, a: unknown, m: Map<string, string>, l?: unknown): Promise<string | undefined> }).resolveGitSourceId("srv-tugra", app, new Map(), link);
 
-  it("auto-links to the team's single GitSource for a github-provider repo", async () => {
-    const { svc, prisma } = harness({ gitSources: [{ id: "gs-1" }] });
-    await expect(resolve(svc, ghApp)).resolves.toBe("gs-1");
-    // scoped to the TARGET server's team AND only installed sources (an un-installed one would break deploy).
-    expect(prisma.gitSource.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ teamId: "team-1", installationId: { not: null } }) }));
+  it("links to the source the resolver PROVED can see the repo", async () => {
+    const { svc } = harness();
+    await expect(resolve(svc, ghApp, row())).resolves.toBe("gs-1");
   });
 
-  it("does not link when the team has NO GitSource (the plan's warning covers it)", async () => {
-    const { svc } = harness({ gitSources: [] });
-    await expect(resolve(svc, ghApp)).resolves.toBeUndefined();
-  });
-
-  it("does not auto-pick when the team has MULTIPLE GitSources (ambiguous → left for manual link)", async () => {
-    const { svc } = harness({ gitSources: [{ id: "gs-1" }, { id: "gs-2" }] });
-    await expect(resolve(svc, ghApp)).resolves.toBeUndefined();
-  });
-
-  it("never links a non-github git app (full URL / public clone) — no GitSource lookup at all", async () => {
-    const { svc, prisma } = harness({ gitSources: [{ id: "gs-1" }] });
-    await expect(resolve(svc, { ...ghApp, git: { url: "https://github.com/o/r.git" } })).resolves.toBeUndefined();
+  it("every non-linked status leaves the app unlinked, with no GitSource table lookup at all", async () => {
+    const { svc, prisma } = harness({ gitSources: [{ id: "gs-only" }] });
+    for (const status of ["public_ok", "needs_source", "ambiguous", "ssh_deploy_key", "unsupported_host", "unknown"]) {
+      await expect(resolve(svc, ghApp, row({ status, sourceId: undefined }))).resolves.toBeUndefined();
+    }
     expect(prisma.gitSource.findMany).not.toHaveBeenCalled();
   });
 
-  it("is best-effort: a lookup failure yields no link so the import still proceeds", async () => {
-    const { svc, prisma } = harness({ gitSources: [{ id: "gs-1" }] });
-    prisma.server.findUnique.mockRejectedValueOnce(new Error("db down"));
-    await expect(resolve(svc, ghApp)).resolves.toBeUndefined();
+  it("NEVER falls back to the old exactly-one-installed heuristic: no resolver row => unlinked even with a single installed source (unrelated-App regression)", async () => {
+    const { svc, prisma } = harness({ gitSources: [{ id: "gs-only" }] });
+    await expect(resolve(svc, ghApp, undefined)).resolves.toBeUndefined();
+    await expect(resolve(svc, ghApp, row({ status: "needs_source", sourceId: undefined }))).resolves.toBeUndefined();
+    expect(prisma.gitSource.findMany).not.toHaveBeenCalled();
   });
 
-  it("end-to-end: runCopyApp passes the resolved gitSourceId into apps.create for a github-provider import", async () => {
-    const { svc, apps, source } = harness({ gitSources: [{ id: "gs-1" }] });
+  it("end-to-end: a linked resolver row passes the gitSourceId into apps.create, for an https repo that is NOT a bare owner/repo (provider unset)", async () => {
     const base = fleet();
-    const ghFleet = { ...base, databases: [], apps: [{ ...base.apps[0], git: { url: "https://github.com/o/r.git", provider: "github" } }] };
-    source.discover.mockResolvedValue(ghFleet);
-    const planHash = planImport(ghFleet, { sourceKind: "coolify" }).planHash;
-    await svc.apply("user-1", { sourceKind: "coolify" as const, sessionId: "sess-1", targetServerId: "srv-tugra", planHash });
+    const f = { ...base, databases: [], apps: [{ ...base.apps[0], git: { url: "https://github.com/o/r.git" } }] };
+    const rows = new Map([["app-1", row({ itemRef: "app:srv-a:app-1" })]]);
+    const { svc, apps, gitLinks, writes } = (() => {
+      const h = harness({ fleet: f, gitLinkRows: jest.fn().mockResolvedValue(rows) });
+      return { ...h, writes: h.prisma.bulkTask.update.mock.calls };
+    })();
+    await svc.apply("user-1", input(f));
     await flush();
+    expect(gitLinks.resolve).toHaveBeenCalledWith("team-1", f.apps);
     expect(apps.create).toHaveBeenCalledWith("user-1", expect.objectContaining({ gitSourceId: "gs-1" }));
+    const done = writes.map((c) => c[0].data).find((d: { status?: string }) => d.status === "DONE");
+    expect(done.result.git).toEqual({ status: "linked", sourceName: "My App" });
+    expect(done.output).toBe('git: linked to "My App"');
   });
 
-  it("end-to-end: an ordinary (non-github) import never sends a gitSourceId to apps.create", async () => {
-    const { svc, apps } = harness({ gitSources: [{ id: "gs-1" }] });
+  it("end-to-end: an app the resolver could not link stays unlinked and the task says so loudly", async () => {
+    const rows = new Map([["app-1", row({ itemRef: "app:srv-a:app-1", status: "needs_source", sourceId: undefined, sourceName: undefined })]]);
+    const h = harness({ gitLinkRows: jest.fn().mockResolvedValue(rows) });
+    await h.svc.apply("user-1", input());
+    await flush();
+    expect(h.apps.create.mock.calls[0][1].gitSourceId).toBeUndefined();
+    const done = h.prisma.bulkTask.update.mock.calls.map((c) => c[0].data).find((d: { status?: string; resourceType?: string }) => d.resourceType === "application");
+    expect(done.output).toBe("git: NOT LINKED (needs_source) - a private repo will fail its first clone; connect a GitHub source then use Re-check");
+    expect(done.result.git).toEqual({ status: "needs_source" });
+  });
+
+  it("end-to-end: an ordinary import with no resolver rows never sends a gitSourceId and records no git outcome", async () => {
+    const { svc, apps, prisma } = harness({ gitSources: [{ id: "gs-1" }] });
     await svc.apply("user-1", input());
     await flush();
     expect(apps.create).toHaveBeenCalledTimes(1);
     expect(apps.create.mock.calls[0][1].gitSourceId).toBeUndefined();
+    const done = prisma.bulkTask.update.mock.calls.map((c) => c[0].data).find((d: { resourceType?: string }) => d.resourceType === "application");
+    expect(done.result).not.toHaveProperty("git");
+  });
+
+  it("a resolver FAILURE degrades to unlinked apps plus a fixed op warning; the import still proceeds", async () => {
+    const h = harness({ gitLinkRows: jest.fn().mockRejectedValue(new Error("boom: secret-ish")) });
+    await h.svc.apply("user-1", input());
+    await flush();
+    expect(h.apps.create).toHaveBeenCalledTimes(1);
+    const meta = h.prisma.bulkOperation.create.mock.calls[0][0].data.meta;
+    expect(meta.warnings).toEqual([expect.stringContaining("repository visibility could not be checked")]);
+    expect(JSON.stringify(meta)).not.toContain("secret-ish");
+  });
+
+  it("rewriteUrl creates the app from the https twin WITHOUT mutating the shared fleet object", async () => {
+    const base = fleet();
+    const f = { ...base, databases: [], apps: [{ ...base.apps[0], git: { url: "git@github.com:o/r.git" } }] };
+    const rows = new Map([["app-1", row({ itemRef: "app:srv-a:app-1", rewriteUrl: "https://github.com/o/r.git" })]]);
+    const h = harness({ fleet: f, gitLinkRows: jest.fn().mockResolvedValue(rows) });
+    const before = JSON.stringify(f);
+    await h.svc.apply("user-1", input(f));
+    await flush();
+    expect(h.apps.create).toHaveBeenCalledWith("user-1", expect.objectContaining({ gitUrl: "https://github.com/o/r.git", gitSourceId: "gs-1" }));
+    expect(JSON.stringify(f)).toBe(before);
+    const done = h.prisma.bulkTask.update.mock.calls.map((c) => c[0].data).find((d: { resourceType?: string }) => d.resourceType === "application");
+    expect(done.result.git).toEqual({ status: "linked", sourceName: "My App", rewritten: true });
+    expect(done.output).toBe('git: linked to "My App" (ssh URL converted to https)');
+  });
+
+  it("an ssh deploy-key app reports the app's PUBLIC key only (never the private key)", async () => {
+    const base = fleet();
+    const f = { ...base, databases: [], apps: [{ ...base.apps[0], git: { url: "git@gitlab.example.com:o/r.git" } }] };
+    const rows = new Map([["app-1", row({ itemRef: "app:srv-a:app-1", status: "ssh_deploy_key", sourceId: undefined, sourceName: undefined })]]);
+    const h = harness({ fleet: f, gitLinkRows: jest.fn().mockResolvedValue(rows) });
+    (h.prisma.application as unknown as { findUnique: jest.Mock }).findUnique = jest.fn().mockResolvedValue({ gitSshPublicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPUBLICKEY tugra" });
+    await h.svc.apply("user-1", input(f));
+    await flush();
+    expect((h.prisma.application as unknown as { findUnique: jest.Mock }).findUnique).toHaveBeenCalledWith({ where: { id: "app-new" }, select: { gitSshPublicKey: true } });
+    const done = h.prisma.bulkTask.update.mock.calls.map((c) => c[0].data).find((d: { resourceType?: string }) => d.resourceType === "application");
+    expect(done.result.git).toEqual({ status: "ssh_deploy_key", deployKeyPublic: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPUBLICKEY tugra" });
+    expect(done.output).toContain("SSH deploy key generated - add this PUBLIC key to the repo: ssh-ed25519 AAAAC3");
   });
 });
 
@@ -423,12 +476,12 @@ describe("ImportExecutorService — GitHub App carry + link (L2-APPLY)", () => {
     expect(input.baseDirectory).toBeUndefined();
   });
 
-  it("falls back to the exactly-one-installed heuristic when the app has no gitProviderRef", async () => {
+  it("no gitProviderRef: the exactly-one-installed heuristic is GONE (a lone installed source is not linked unless visibility is proven)", async () => {
     const f = ghFleet({ gitProviderRef: undefined }, []);
     const h = harness({ fleet: f, gitSources: [{ id: "gs-only" }] });
     await run(h, f);
     expect(h.gitSources.upsertForImport).not.toHaveBeenCalled();
-    expect(h.apps.create).toHaveBeenCalledWith("user-1", expect.objectContaining({ gitSourceId: "gs-only" }));
+    expect(h.apps.create.mock.calls[0][1].gitSourceId).toBeUndefined();
   });
 
   it("stays UNLINKED when a ref'd app's carried GitSource is not on the target team / not installed (never links to an unrelated App)", async () => {

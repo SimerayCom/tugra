@@ -8,6 +8,7 @@ import { ApplicationsService } from "../applications/applications.service";
 import { DatabasesService } from "../databases/databases.service";
 import { CryptoService } from "../crypto/crypto.service";
 import { GitSourcesService } from "../git-sources/git-sources.service";
+import { GitLinkResolverService, type GitLinkRow } from "./git-link-resolver.service";
 import { ProjectsService } from "../projects/projects.service";
 import type { CreateDatabaseInput } from "../databases/dto";
 import { ImporterService } from "./importer.service";
@@ -91,6 +92,7 @@ export class ImportExecutorService {
     private readonly crypto: CryptoService,
     private readonly gitSources: GitSourcesService,
     private readonly projects: ProjectsService,
+    private readonly gitLinkResolver: GitLinkResolverService,
   ) {}
 
   apply(userId: string, input: ImportApplyInput): Promise<{ opId: string }> {
@@ -151,6 +153,16 @@ export class ImportExecutorService {
       // source → memory → GitSourcesService, encrypted at rest; never a task/plan/log). Done BEFORE the op row so
       // any skipped-provider warning is persisted with it; per-provider failures degrade, never abort the import.
       const { gitSourceByRef, warnings: providerWarnings } = await this.carryGitProviders(userId, server.teamId, source, fleet.gitProviders ?? []);
+
+      // Repo-visibility link resolution (D7): per git app, which connected source can actually see the repo. Computed
+      // ONCE here (before the op row, so a failure note persists with it). A resolver failure degrades to "no links":
+      // the apps are created unlinked and the task notes say so; it never aborts the import and never guesses.
+      let gitLinks: ReadonlyMap<string, GitLinkRow> = new Map();
+      try {
+        gitLinks = await this.gitLinkResolver.resolve(server.teamId, fleet.apps);
+      } catch {
+        providerWarnings.push("git: repository visibility could not be checked - git apps are created unlinked; link them afterwards from the import timeline");
+      }
 
       // Mirror the source's project → environment tree on the TARGET team (find-or-create by name, so a re-import
       // reuses it). Also before the op row, so the created names + any degrade warning persist with it. A source
@@ -214,7 +226,7 @@ export class ImportExecutorService {
         const environmentId = resolveTreeEnvironment(tree.envByRef, app ?? db) ?? input.environmentId;
         // Ack codes that actually cover a risk THIS item carries (an ack for a code the plan never raised for it grants nothing).
         const ackedCodes = new Set(item.risks.filter((r) => isAcked(input.acks, item.itemRef, r.code)).map((r) => r.code));
-        if (runnable && app) runners.set(task.id, () => this.runCopyApp(task.id, source, app, userId, input.targetServerId, input.sourceKind, environmentId, gitSourceByRef, ackedCodes));
+        if (runnable && app) runners.set(task.id, () => this.runCopyApp(task.id, source, app, userId, input.targetServerId, input.sourceKind, environmentId, gitSourceByRef, ackedCodes, gitLinks));
         else if (runnable && db) runners.set(task.id, () => this.runCreateDb(task.id, source, db, userId, input.targetServerId, environmentId));
       }
       await this.audit.log({ actor: userId, action: "import.apply", target: op.id, meta: { sourceKind: input.sourceKind, serverId: input.targetServerId, run: runners.size, total: plan.items.length } });
@@ -383,7 +395,7 @@ export class ImportExecutorService {
     }
   }
 
-  private async runCopyApp(taskId: string, source: ImportSource, app: ForeignApp, userId: string, targetServerId: string, sourceKind: RemoteSourceKind, environmentId?: string, gitSourceByRef: ReadonlyMap<string, string> = new Map(), ackedCodes: ReadonlySet<string> = new Set()): Promise<void> {
+  private async runCopyApp(taskId: string, source: ImportSource, app: ForeignApp, userId: string, targetServerId: string, sourceKind: RemoteSourceKind, environmentId?: string, gitSourceByRef: ReadonlyMap<string, string> = new Map(), ackedCodes: ReadonlySet<string> = new Set(), gitLinks: ReadonlyMap<string, GitLinkRow> = new Map()): Promise<void> {
     if (!(await this.claim(taskId))) return;
     try {
       const fetched = await source.fetchSecrets(app.sourceRef); // real env values (server-side only)
@@ -417,10 +429,14 @@ export class ImportExecutorService {
         ];
         if (missing.length) throw new Error(`env not carried: ${keyList(missing, 20)}`);
       }
-      const gitSourceId = await this.resolveGitSourceId(targetServerId, app, gitSourceByRef);
+      const link = gitLinks.get(app.sourceRef);
+      const gitSourceId = await this.resolveGitSourceId(targetServerId, app, gitSourceByRef, link);
+      // An SSH GitHub URL that a connected installation covers is created as its https twin (an App token never
+      // authenticates ssh). A COPY: the shared fleet object is never mutated.
+      const createApp: ForeignApp = link?.status === "linked" && link.rewriteUrl && app.git ? { ...app, git: { ...app.git, url: link.rewriteUrl } } : app;
       // Flags that could not be carried are reported by key name (never silently dropped); mapped once, used for both.
       const mappedFlags = mapSourceEnvFlags(values, flags, mapBuildPack(app).source);
-      const createInput = foreignAppToCreateInput(app, values, { serverId: targetServerId, environmentId, sourceTag: sourceKind, gitSourceId }, flags, mappedFlags);
+      const createInput = foreignAppToCreateInput(createApp, values, { serverId: targetServerId, environmentId, sourceTag: sourceKind, gitSourceId }, flags, mappedFlags);
       const flagWarnings = mappedFlags.warnings;
       const created = await this.apps.create(userId, createInput); // re-checks apps:config on the TARGET team; deploy:false
       // Declare the app's volumes as EMPTY named mounts (their DATA is copied by a later slice). Best-effort,
@@ -468,7 +484,8 @@ export class ImportExecutorService {
       const flagNote = flagWarnings.length ? `env flags not carried: ${flagWarnings.join("; ")}` : undefined;
       const notCarriedKeys = [...unresolvedKeys, ...droppedInvalid.filter((k) => !unresolvedKeys.includes(k))];
       const envNote = notCarriedKeys.length ? `env not carried (acknowledged): ${keyList(notCarriedKeys, 20)}` : undefined;
-      const note = [volNote, cfgNote, ingressNote, flagNote, envNote].filter(Boolean).join("; ") || undefined;
+      const git = link ? await this.gitOutcome(created.id, link) : undefined;
+      const note = [volNote, cfgNote, ingressNote, flagNote, envNote, git?.note].filter(Boolean).join("; ") || undefined;
       await this.prisma.bulkTask.update({
         where: { id: taskId },
         data: {
@@ -476,7 +493,7 @@ export class ImportExecutorService {
           resourceType: "application",
           resourceId: created.id,
           // count only — never the values; `volumes` omitted entirely for an app with no mounts (byte-identical to before)
-          result: { name: created.name, appId: created.id, unresolvedEnv: unresolved.length, ...(unresolvedKeys.length ? { unresolvedKeys: unresolvedKeys.slice(0, 50) } : {}), ...(droppedInvalid.length ? { droppedInvalidKeys: droppedInvalid.slice(0, 50) } : {}), ...(volumes ? { volumes } : {}), ...(postCreate.applied.length || postCreate.unmapped.length ? { postCreate } : {}), ...(ingress.applied.length || ingress.unmapped.length ? { ingress } : {}) },
+          result: { name: created.name, appId: created.id, unresolvedEnv: unresolved.length, ...(unresolvedKeys.length ? { unresolvedKeys: unresolvedKeys.slice(0, 50) } : {}), ...(droppedInvalid.length ? { droppedInvalidKeys: droppedInvalid.slice(0, 50) } : {}), ...(git ? { git: git.result } : {}), ...(volumes ? { volumes } : {}), ...(postCreate.applied.length || postCreate.unmapped.length ? { postCreate } : {}), ...(ingress.applied.length || ingress.unmapped.length ? { ingress } : {}) },
           ...(note ? { output: note } : {}),
           finishedAt: new Date(),
         },
@@ -486,36 +503,49 @@ export class ImportExecutorService {
     }
   }
 
-  /** For a private GitHub-App repo (git.provider === "github"), link the imported app to a connected GitHub
-   *  App so its first deploy can clone it. Conservative: only auto-links when the TARGET team has EXACTLY one
-   *  GitSource (an unambiguous, safe pick); with zero or several it stays unlinked — the plan's
-   *  `app.git.private` warning tells the user to connect/pick one, and create() would reject a cross-team id
-   *  anyway. Best-effort: never throws (a lookup failure just means no auto-link). */
-  private async resolveGitSourceId(targetServerId: string, app: ForeignApp, gitSourceByRef: ReadonlyMap<string, string> = new Map()): Promise<string | undefined> {
+  /** The Tugra GitSource an imported app is created linked to. Two disjoint paths:
+   *  - an app that cloned through a SPECIFIC source GitHub App (`gitProviderRef`, Dokploy): link only to that exact
+   *    carried source (re-verified on the TARGET team + installed). Absent/un-installed => UNLINKED, never a guess;
+   *  - everything else: the repo-visibility resolution (`link.status === "linked"`), which only proves a source that
+   *    can actually see the repo. The old "exactly one installed source" heuristic is gone (D7).
+   *  Best-effort: never throws (a lookup failure just means no auto-link). */
+  private async resolveGitSourceId(targetServerId: string, app: ForeignApp, gitSourceByRef: ReadonlyMap<string, string> = new Map(), link?: GitLinkRow): Promise<string | undefined> {
+    if (!app.gitProviderRef) return link?.status === "linked" ? link.sourceId : undefined;
     if (app.git?.provider !== "github") return undefined;
     try {
       const server = await this.prisma.server.findUnique({ where: { id: targetServerId }, select: { teamId: true } });
       if (!server) return undefined;
-      // Preferred: the exact GitHub App this app cloned through at the source, carried into a Tugra GitSource by
-      // carryGitProviders. Re-verified on the TARGET team + installed (an un-installed source would fail at token
-      // mint on the first deploy); otherwise fall through to the conservative exactly-one heuristic.
-      if (app.gitProviderRef) {
-        // This app cloned through a SPECIFIC GitHub App at the source. Link only to that exact carried source
-        // (re-verified on the target team + installed). If it is absent or un-installed, stay UNLINKED — never
-        // fall through to the heuristic below, which could link it to an UNRELATED App that cannot see the repo.
-        const carried = gitSourceByRef.get(app.gitProviderRef);
-        if (!carried) return undefined;
-        const row = await this.prisma.gitSource.findFirst({ where: { id: carried, teamId: server.teamId, installationId: { not: null } }, select: { id: true } });
-        return row ? row.id : undefined;
-      }
-      // No specific provider ref: the conservative exactly-one heuristic. Only INSTALLED sources are usable —
-      // linking one whose GitHub App was never installed would make the first deploy throw at token mint
-      // ("git source is not installed yet") instead of cloning, worse than leaving a public repo unlinked.
-      const sources = await this.prisma.gitSource.findMany({ where: { teamId: server.teamId, installationId: { not: null } }, select: { id: true } });
-      return sources.length === 1 ? sources[0].id : undefined;
+      // This app cloned through a SPECIFIC GitHub App at the source. Link only to that exact carried source
+      // (re-verified on the target team + installed). If it is absent or un-installed, stay UNLINKED.
+      const carried = gitSourceByRef.get(app.gitProviderRef);
+      if (!carried) return undefined;
+      const row = await this.prisma.gitSource.findFirst({ where: { id: carried, teamId: server.teamId, installationId: { not: null } }, select: { id: true } });
+      return row ? row.id : undefined;
     } catch {
       return undefined;
     }
+  }
+
+  /** The per-task git outcome (status + source NAME + the app's PUBLIC deploy key) and its note. Never a credential.
+   *  Best-effort: a failed deploy-key read degrades the note, it never throws (the app row already exists). */
+  private async gitOutcome(appId: string, link: GitLinkRow): Promise<{ result: { status: GitLinkRow["status"]; sourceName?: string; rewritten?: boolean; deployKeyPublic?: string }; note: string }> {
+    const result: { status: GitLinkRow["status"]; sourceName?: string; rewritten?: boolean; deployKeyPublic?: string } = { status: link.status };
+    if (link.sourceName) result.sourceName = link.sourceName;
+    if (link.rewriteUrl) result.rewritten = true;
+    if (link.status === "linked") return { result, note: `git: linked to "${link.sourceName ?? "source"}"${link.rewriteUrl ? " (ssh URL converted to https)" : ""}` };
+    if (link.status === "public_ok") return { result, note: "git: public repository, cloned without a connected source" };
+    if (link.status === "ssh_deploy_key") {
+      let pub: string | undefined;
+      try {
+        const row = await this.prisma.application.findUnique({ where: { id: appId }, select: { gitSshPublicKey: true } });
+        pub = row?.gitSshPublicKey ?? undefined; // PUBLIC key only; the private key never leaves the encrypted column
+      } catch {
+        pub = undefined;
+      }
+      if (pub) result.deployKeyPublic = pub;
+      return { result, note: pub ? `git: SSH deploy key generated - add this PUBLIC key to the repo: ${pub}` : "git: SSH deploy key generated - copy its public key from the app's Git settings and add it to the repo" };
+    }
+    return { result, note: `git: NOT LINKED (${link.status}) - a private repo will fail its first clone; connect a GitHub source then use Re-check` };
   }
 
   /** Re-read the app's container labels / inline Dockerfile text from the source (secret-capable, in memory only).

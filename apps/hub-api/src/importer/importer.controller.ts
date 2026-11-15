@@ -19,7 +19,12 @@ import {
   type ImportApplyInput,
   ImportRemapEnvSchema,
   type ImportRemapEnvInput,
+  ImportGitLinksSchema,
+  type ImportGitLinksInput,
+  ImportGitRelinkSchema,
+  type ImportGitRelinkInput,
 } from "./dto";
+import { ImportGitLinksService } from "./import-git-links.service";
 
 @ApiTags("import")
 @ApiSecurity("pat")
@@ -29,6 +34,7 @@ export class ImporterController {
   constructor(
     private readonly importer: ImporterService,
     private readonly executor: ImportExecutorService,
+    private readonly gitLinks: ImportGitLinksService,
   ) {}
 
   /** Connect an external source PaaS (Coolify): verify reachability + store an encrypted, expiring session. */
@@ -68,6 +74,31 @@ export class ImporterController {
     @Body(new ZodValidationPipe(ImportApplySchema)) body: ImportApplyInput,
   ) {
     return this.executor.apply(user.userId, body);
+  }
+
+  /** Resolve, for the target server's team, how each git app of the connected source would be linked (repo-visibility
+   *  matching against the team's connected GitHub/Gitea sources). Read-only: returns repo names, source names and
+   *  fixed status text, never a credential. Powers "connect GitHub once, link N apps" before apply. */
+  @Post("git-links")
+  @ApiZodBody(ImportGitLinksSchema)
+  gitLinksPreview(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(ImportGitLinksSchema)) body: ImportGitLinksInput,
+  ) {
+    return this.gitLinks.list(user.userId, body);
+  }
+
+  /** After an import: re-resolve the created apps that are still unlinked and link the covered ones (optionally with an
+   *  explicit source pick per ambiguous app). Uses the app Git-source setter, so its team + host checks apply. */
+  @Post("operations/:opId/git-links/relink")
+  @RequireScopes("deploy")
+  @ApiZodBody(ImportGitRelinkSchema)
+  relinkGit(
+    @CurrentUser() user: AuthUser,
+    @Param("opId") opId: string,
+    @Body(new ZodValidationPipe(ImportGitRelinkSchema)) body: ImportGitRelinkInput,
+  ) {
+    return this.gitLinks.relink(user.userId, opId, body);
   }
 
   /** Poll an import operation's progress (read-only). */

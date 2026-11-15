@@ -111,6 +111,19 @@ export class GiteaClient {
     return out;
   }
 
+  /** Can this token see `owner/repo`? `GET /repos/{o}/{r}`: 200 → "yes", 404/403 → "no" (a private repo the token cannot
+   *  reach looks like a 404), any other failure → "unknown" (never guessed). */
+  async canSeeRepo(owner: string, repo: string): Promise<"yes" | "no" | "unknown"> {
+    try {
+      await this.http.get<unknown>(`/repos/${enc(owner)}/${enc(repo)}`);
+      return "yes";
+    } catch (e) {
+      const m = /API error (\d{3})/.exec(e instanceof Error ? e.message : "");
+      const status = m ? Number(m[1]) : 0;
+      return status === 404 || status === 403 ? "no" : "unknown";
+    }
+  }
+
   async listBranches(owner: string, repo: string): Promise<string[]> {
     const out: string[] = [];
     for (let page = 1; page <= MAX_PAGES; page++) {

@@ -57,4 +57,25 @@ describe("toStatusView", () => {
     expect(v.tasks[2].postCreate).toBeUndefined();
     expect(v.tasks[2].ingress).toBeUndefined();
   });
+
+  it("returns the strict-env key NAMES and the git outcome (status, source name, PUBLIC key) and drops malformed entries", () => {
+    const v = toStatusView(
+      op({
+        tasks: [
+          { itemRef: "app:srv:web", kind: "app", status: "DONE", resourceType: "application", resourceId: "a1", result: { name: "web", unresolvedKeys: ["A", 7, "B"], droppedInvalidKeys: ["X Y"], git: { status: "ssh_deploy_key", deployKeyPublic: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 tugra", privateKey: "LEAK" } }, output: null, startedAt: null, finishedAt: null },
+          { itemRef: "app:srv:api", kind: "app", status: "DONE", resourceType: "application", resourceId: "a2", result: { name: "api", git: { status: "linked", sourceName: "Acme", rewritten: true } }, output: null, startedAt: null, finishedAt: null },
+          { itemRef: "app:srv:bad", kind: "app", status: "DONE", resourceType: "application", resourceId: "a3", result: { name: "bad", git: { status: "weird" }, unresolvedKeys: [] }, output: null, startedAt: null, finishedAt: null },
+          { itemRef: "app:srv:plain", kind: "app", status: "DONE", resourceType: "application", resourceId: "a4", result: { name: "plain" }, output: null, startedAt: null, finishedAt: null },
+        ],
+      }),
+    );
+    expect(v.tasks[0].unresolvedKeys).toEqual(["A", "B"]);
+    expect(v.tasks[0].droppedInvalidKeys).toEqual(["X Y"]);
+    expect(v.tasks[0].git).toEqual({ status: "ssh_deploy_key", deployKeyPublic: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 tugra" });
+    expect(JSON.stringify(v)).not.toContain("LEAK");
+    expect(v.tasks[1].git).toEqual({ status: "linked", sourceName: "Acme", rewritten: true });
+    expect(v.tasks[2].git).toBeUndefined();
+    expect(v.tasks[2].unresolvedKeys).toBeUndefined();
+    expect(v.tasks[3].git).toBeUndefined();
+  });
 });

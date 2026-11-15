@@ -10,6 +10,8 @@ import type { CreateGitSourceInput, CreateGithubAppSourceInput, CreateTokenSourc
 import { GiteaClient, apiUrlHost, isTokenKind, normalizeApiUrl, parseRepoFullName, type GitKind, type TokenGitKind } from "./gitea-client";
 
 const GH_API = "https://api.github.com";
+/** Hard cap on how many installation repositories one resolve reads (20 pages of 100). */
+const INSTALLATION_REPO_CAP = 2000;
 const GH_HEADERS = { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" };
 
 export interface GitSourceView {
@@ -267,6 +269,38 @@ export class GitSourcesService {
       repositories: { full_name: string; clone_url: string; private: boolean; default_branch?: string | null }[];
     };
     return data.repositories.map((r) => ({ fullName: r.full_name, cloneUrl: r.clone_url, private: r.private, defaultBranch: r.default_branch ?? null }));
+  }
+
+  /**
+   * Every repository a GitHub App installation can see, as lowercase `owner/name`. TEAM-SCOPED by the caller (the
+   * importer resolver has already authorized the team) so there is no per-user check here. The call is pinned to
+   * api.github.com with the installation token (never a user-supplied host), paginated (100 per page) and capped at
+   * 2000 repositories. A non-OK answer throws: the caller treats that source as "unknown", never as "sees nothing".
+   * `listRepos` (the user-facing picker) is deliberately untouched.
+   */
+  async installationRepoSet(sourceId: string): Promise<Set<string>> {
+    const token = await this.installationToken(sourceId);
+    const out = new Set<string>();
+    for (let page = 1; out.size < INSTALLATION_REPO_CAP && page <= INSTALLATION_REPO_CAP / 100; page++) {
+      const res = await fetch(`${GH_API}/installation/repositories?per_page=100&page=${page}`, {
+        headers: { ...GH_HEADERS, Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new BadRequestException(`github: list repos failed (HTTP ${res.status})`);
+      const data = (await res.json()) as { repositories?: { full_name?: string }[]; total_count?: number };
+      const rows = Array.isArray(data.repositories) ? data.repositories : [];
+      for (const r of rows) if (typeof r?.full_name === "string") out.add(r.full_name.toLowerCase());
+      if (rows.length < 100) break;
+      if (typeof data.total_count === "number" && out.size >= data.total_count) break;
+    }
+    return out;
+  }
+
+  /** Can a token source (Gitea / Forgejo / Codeberg) see `owner/name`? Team-scoped like {@link installationRepoSet}. */
+  async tokenSourceCanSee(sourceId: string, owner: string, name: string): Promise<"yes" | "no" | "unknown"> {
+    const s = await this.prisma.gitSource.findUnique({ where: { id: sourceId } });
+    if (!s || !isTokenKind(s.provider)) return "unknown";
+    const { client } = this.giteaFor(s);
+    return client.canSeeRepo(owner, name);
   }
 
   /** Branches of one repo (`owner/name`) reachable through the source. Dispatches by kind. */
