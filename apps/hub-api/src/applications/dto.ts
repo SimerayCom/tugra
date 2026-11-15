@@ -134,7 +134,13 @@ export const SetEnvSchema = z
     flags: EnvFlagsInputSchema.optional(),
   })
   .strict()
-  .superRefine((b, ctx) => envFlagsSuperRefine(b, ctx));
+  // With `flags` omitted the DTO layer cannot know the stored flags, so a line break in a value that is already
+  // marked multiline must not be refused here (an old client doing read-modify-write would be locked out).
+  // The service validates against the stored flags with the same rules and messages; only an explicit `flags`
+  // object is checked up front.
+  .superRefine((b, ctx) => {
+    if (b.flags !== undefined) envFlagsSuperRefine(b, ctx);
+  });
 export type SetEnvInput = z.infer<typeof SetEnvSchema>;
 
 // GET /apps/:id/env-flags: sparse by key, FULL booleans per entry; `applicable` says which flags mean something for this app type.

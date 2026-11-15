@@ -544,7 +544,10 @@ describe("SetEnvSchema — per-variable flags", () => {
     expect(ok({ env: { A: "1" }, flags: { B: { multiline: true } } }).success).toBe(false);
   });
   it("a newline without multiline is rejected with the exact legacy message; with multiline it is accepted", () => {
-    expect(msg({ env: { A: "a\nb" } })).toBe("environment value must not contain a newline");
+    expect(msg({ env: { A: "a\nb" }, flags: {} })).toBe("environment value must not contain a newline");
+    // flags OMITTED: the DTO cannot see the stored flags, so the service decides (an old client re-sending a
+    // stored multiline value must not be refused here); the service applies the same message when no flag exists.
+    expect(ok({ env: { A: "a\nb" } }).success).toBe(true);
     expect(ok({ env: { A: "a\nb" }, flags: { A: { multiline: false } } }).success).toBe(false);
     expect(ok({ env: { A: "a\nb" }, flags: { A: { multiline: true } } }).success).toBe(true);
   });
