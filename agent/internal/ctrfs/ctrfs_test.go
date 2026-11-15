@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -627,6 +628,8 @@ type ctrWorld struct {
 	writes  []call
 	stderr  string
 	err     error
+	// dots maps a symlinked directory to the entry key "<link>/." resolves to (absent: the link is dangling).
+	dots map[string]string
 }
 
 func (w *ctrWorld) handler(c call) reply {
@@ -639,6 +642,15 @@ func (w *ctrWorld) handler(c call) reply {
 	}
 	if len(c.args) == 3 && c.args[0] == "cp" && c.args[2] == "-" {
 		p := strings.SplitN(c.args[1], ":", 2)[1]
+		if strings.HasSuffix(p, "/.") {
+			if tgt, ok := w.dots[strings.TrimSuffix(p, "/.")]; ok {
+				if e := w.entries[tgt]; e.typ == tar.TypeDir {
+					e.name = "./"
+					return reply{stdout: mkTar(w.t, e)}
+				}
+			}
+			return reply{stderr: "Error response from daemon: Could not find the file " + p + " in container tugra_a", err: exitErr{1}}
+		}
 		if e, ok := w.entries[p]; ok {
 			e.name = filepath.Base(p)
 			if e.typ == tar.TypeDir {
@@ -1035,5 +1047,75 @@ func TestEveryArgvElementIsSafeFromOptionParsing(t *testing.T) {
 	}
 	if len(w.execs) != 1 {
 		t.Fatal("exec not run")
+	}
+}
+
+func TestWriteAndMkdirAcceptASymlinkedParentDirectory(t *testing.T) {
+	stage := withStage(t)
+	_ = stage
+	w := &ctrWorld{t: t,
+		entries: map[string]ent{
+			"/app":         {typ: tar.TypeSymlink, link: "/usr/src/app"},
+			"/usr/src/app": {typ: tar.TypeDir, mode: 0o755, uid: 1000, gid: 1001},
+			"/":            {typ: tar.TypeDir, mode: 0o755},
+		},
+		dots: map[string]string{"/app": "/usr/src/app"},
+	}
+	f := &fakeDocker{handler: w.handler}
+	f.install(t)
+	if _, err := Write(bg, "tugra_a", "/app/x.txt", WriteOpts{Size: 2, Sha256: sum("hi")}, strings.NewReader("hi")); err != nil {
+		t.Fatal(err)
+	}
+	h, _ := readTarEntry(t, w.writes[0].stdin)
+	if got := strings.Join(w.writes[0].args, " "); got != "cp -a - tugra_a:/app" || h.Uid != 1000 || h.Gid != 1001 {
+		t.Fatalf("argv %q hdr %+v (owner must come from the resolved directory)", got, h)
+	}
+	w.writes = nil
+	if err := Mkdir(bg, "tugra_a", "/app/sub", 0o755, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.writes) != 1 || strings.Join(w.writes[0].args, " ") != "cp -a - tugra_a:/app" {
+		t.Fatalf("writes %v", w.writes)
+	}
+	// a link that does not lead to a directory is not_dir, for both ops
+	w.entries["/lnk"] = ent{typ: tar.TypeSymlink, link: "/etc/hosts"}
+	w.entries["/etc/hosts"] = ent{typ: tar.TypeReg}
+	w.dots["/lnk"] = "/etc/hosts"
+	w.entries["/dangling"] = ent{typ: tar.TypeSymlink, link: "/nowhere"}
+	for _, d := range []string{"/lnk", "/dangling"} {
+		if _, err := Write(bg, "tugra_a", d+"/x", WriteOpts{Size: 2, Sha256: sum("hi")}, strings.NewReader("hi")); code(err) != "not_dir" {
+			t.Fatalf("write under %s: %v", d, err)
+		}
+		if err := Mkdir(bg, "tugra_a", d+"/sub", 0o755, false); code(err) != "not_dir" {
+			t.Fatalf("mkdir under %s: %v", d, err)
+		}
+	}
+}
+
+func TestListFlagsTruncationWhenTheByteBudgetEndsOnAnEntryBoundary(t *testing.T) {
+	ents := []ent{{name: "./", typ: tar.TypeDir}}
+	for i := 0; i < 100; i++ {
+		ents = append(ents, ent{name: fmt.Sprintf("./d%03d/", i), typ: tar.TypeDir})
+	}
+	tarball := mkTar(t, ents...)
+	f := &fakeDocker{handler: func(call) reply { return reply{stdout: tarball} }}
+	f.install(t)
+	ob := listMaxBytes
+	listMaxBytes = 512 * 20
+	defer func() { listMaxBytes = ob }()
+	es, trunc, err := List(bg, "tugra_a", "/data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !trunc || len(es) != 19 {
+		t.Fatalf("truncated=%v entries=%d", trunc, len(es))
+	}
+	// a stream that ENDS exactly at the budget is complete
+	only := mkTar(t, ents[:3]...)
+	g := &fakeDocker{handler: func(call) reply { return reply{stdout: only[:512*3]} }}
+	g.install(t)
+	listMaxBytes = 512 * 3
+	if es, trunc, err := List(bg, "tugra_a", "/data"); err != nil || trunc || len(es) != 2 {
+		t.Fatalf("complete stream: %v %v %d", err, trunc, len(es))
 	}
 }

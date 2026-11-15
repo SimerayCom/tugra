@@ -349,7 +349,8 @@ func listOnce(ctx context.Context, name, src string) (entries []protocol.FsEntry
 		cancel()
 		_ = finish(ctx, pr, true)
 	}()
-	tr := tar.NewReader(io.LimitReader(pr.Stdout, listMaxBytes))
+	lr := &io.LimitedReader{R: pr.Stdout, N: listMaxBytes}
+	tr := tar.NewReader(lr)
 
 	first, nerr := tr.Next()
 	if nerr != nil {
@@ -384,6 +385,14 @@ func listOnce(ctx context.Context, name, src string) (entries []protocol.FsEntry
 		h, herr := tr.Next()
 		if herr != nil {
 			if errors.Is(herr, io.EOF) {
+				// A cut that lands exactly on an entry boundary also reads as a clean EOF: if the byte budget was
+				// spent, only a stream that really ended there is complete.
+				if lr.N <= 0 {
+					var b [1]byte
+					if n, _ := pr.Stdout.Read(b[:]); n > 0 {
+						truncated = true
+					}
+				}
 				break
 			}
 			// Budget exhausted mid-stream (byte limit / wall clock / killed): what we have is a partial listing.

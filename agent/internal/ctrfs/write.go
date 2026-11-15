@@ -209,12 +209,9 @@ func Write(ctx context.Context, name, p string, o WriteOpts, src io.Reader) (Wri
 	} else if o.IfMatch != "" {
 		return zero, typed(fsd.CodeChanged, "file no longer exists")
 	}
-	pst, err := Stat(ctx, name, parent)
+	pst, err := statDir(ctx, name, parent)
 	if err != nil {
 		return zero, err
-	}
-	if pst.Type != "dir" {
-		return zero, typed(fsd.CodeNotDir, "parent is not a directory")
 	}
 
 	// Verify the whole body BEFORE the container sees a byte.
@@ -260,6 +257,33 @@ func Write(ctx context.Context, name, p string, o WriteOpts, src io.Reader) (Wri
 	return res, nil
 }
 
+// statDir stats p and requires it to be a directory, following ONE symlink the way List does: docker cp answers a
+// symlinked directory (/app -> /usr/src/app, usr-merged /bin) with a bare symlink header, and "<p>/." makes it resolve
+// the link. A link that does not lead to a directory (a file, a dangling link) is not_dir. The caller keeps the
+// logical, unresolved path: docker cp resolves a symlinked destination itself.
+func statDir(ctx context.Context, name, p string) (protocol.FsStat, error) {
+	st, err := Stat(ctx, name, p)
+	if err != nil {
+		return st, err
+	}
+	if st.Type == "symlink" {
+		h, _, pr, cancel, herr := firstHeader(ctx, name, strings.TrimSuffix(p, "/")+"/.")
+		if herr != nil {
+			var te *fsd.Error
+			if errors.As(herr, &te) && te.Code == fsd.CodeNotFound {
+				return st, typed(fsd.CodeNotDir, "not a directory")
+			}
+			return st, herr
+		}
+		defer kill(ctx, pr, cancel)
+		st = statFromHeader(st.Name, h)
+	}
+	if st.Type != "dir" {
+		return st, typed(fsd.CodeNotDir, "not a directory")
+	}
+	return st, nil
+}
+
 // Mkdir creates a directory with one tar dir entry per missing level, each owned like its nearest existing ancestor.
 func Mkdir(ctx context.Context, name, p string, mode fs.FileMode, parents bool) error {
 	if err := ValidateName(name); err != nil {
@@ -289,16 +313,13 @@ func Mkdir(ctx context.Context, name, p string, mode fs.FileMode, parents bool) 
 	}
 	for i, s := range segs {
 		next := path.Join(cur, s)
-		st, serr := Stat(ctx, name, next)
+		st, serr := statDir(ctx, name, next)
 		if serr != nil {
 			var te *fsd.Error
 			if errors.As(serr, &te) && te.Code == fsd.CodeNotFound {
 				break
 			}
 			return serr
-		}
-		if st.Type != "dir" {
-			return typed(fsd.CodeNotDir, "a path component is not a directory")
 		}
 		ancestor, cur, existingUpTo = st, next, i+1
 	}
