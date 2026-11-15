@@ -8036,7 +8036,7 @@ describe("ApplicationsService — D4 build / registry / hooks", () => {
       const unsupported = mk({}, jest.fn().mockResolvedValue({ exitCode: 2, output: "TUGRA_PREVIEW: unsupported\n" }));
       await expect(unsupported.previewCompose("u1", "app1")).rejects.toThrow(/update Docker Compose on the agent/);
       const err = mk({}, jest.fn().mockResolvedValue({ exitCode: 1, output: `TUGRA_PREVIEW_ERR_B64=${Buffer.from("yaml: line 3: bad").toString("base64")}\n` }));
-      await expect(err.previewCompose("u1", "app1")).rejects.toThrow(/could not be rendered: yaml: line 3: bad/);
+      await expect(err.previewCompose("u1", "app1")).rejects.toThrow(/could not be rendered: the file is not valid YAML \(near line 3\)/);
       const junk = mk({}, jest.fn().mockResolvedValue({ exitCode: 0, output: "nothing useful" }));
       await expect(junk.previewCompose("u1", "app1")).rejects.toBeInstanceOf(UnprocessableEntityException);
       const big = mk({ composeFile: "services:\n" + "# x\n".repeat(60_000) }, jest.fn());

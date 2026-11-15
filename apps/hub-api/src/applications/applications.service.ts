@@ -127,13 +127,14 @@ import { TemplateCatalogService } from "../catalog/template-catalog.service";
 import { publicManifest, toManifest, validateConfigMountServiceName, validateConfigMountTarget, validateInstallFields, type FormField, type PublicManifest } from "../templates/template-manifest";
 import { resolveVariables } from "../templates/template-resolver";
 import { rewriteHostPorts, substituteSelfUrls } from "../templates/install-compose";
-import { assertSafeCompose } from "../deploy/compose-safety";
+import { assertSafeCompose, assertSafeEnvFiles } from "../deploy/compose-safety";
 import { resolveAlias, validatePushName, validateTagTemplate } from "../deploy/push-ref";
 import { composeHookPlan } from "../deploy/compose-hooks";
 import {
   buildComposePreviewScript,
   composePreviewCloneRoot,
   parsePreviewError,
+  classifyPreviewError,
   PREVIEW_UNSUPPORTED_MARKER,
   redactResolvedCompose,
   type ComposePreviewResult,
@@ -3954,6 +3955,9 @@ export class ApplicationsService {
     if (app.isPreview) throw new BadRequestException("a preview app's compose is controlled by its parent");
     const gitCompose = !!app.composePath && !!app.gitUrl;
     if (!gitCompose && !app.composeFile) throw new BadRequestException("this app has no compose file to preview");
+    // The preview renders a stored compose on the host: refuse a host-reaching env_file (a compose stored before the
+    // create-time gate existed would otherwise read it through the renderer).
+    if (!gitCompose) assertSafeEnvFiles(app.composeFile as string);
     if (this.composePreviewBusy.has(id)) throw new ConflictException("a compose preview is already running for this app");
     this.composePreviewBusy.add(id);
     try {
@@ -3973,7 +3977,7 @@ export class ApplicationsService {
       }
       if (r.exitCode !== 0) {
         const why = parsePreviewError(r.output);
-        throw new UnprocessableEntityException(why ? `the compose could not be rendered: ${why}` : `the compose preview failed (exit ${r.exitCode})`);
+        throw new UnprocessableEntityException(why ? `the compose could not be rendered: ${classifyPreviewError(why)}` : `the compose preview failed (exit ${r.exitCode})`);
       }
       const rendered = parseRenderedCompose(r.output);
       if (!rendered) throw new UnprocessableEntityException("the resolved compose could not be read (it may be too large to preview)");

@@ -91,6 +91,20 @@ export function parsePreviewError(output: string): string | null {
   return null;
 }
 
+/** Maps the raw `docker compose config` stderr to a CLOSED message set. The raw text is never returned: with an
+ *  `env_file` pointing at a host path the error can echo a line of that file (or confirm it exists). The set:
+ *  an unreadable env_file, invalid YAML (with the line number only), or a generic rejection. */
+export function classifyPreviewError(raw: string): string {
+  if (/env[_ -]?file|dotenv|failed to read|no such file|permission denied|unexpected character|\.env\b/i.test(raw)) {
+    return "an env_file could not be read";
+  }
+  if (/yaml|did not find expected|mapping values|cannot unmarshal|line \d+/i.test(raw)) {
+    const line = /line (\d{1,6})/i.exec(raw)?.[1];
+    return line ? `the file is not valid YAML (near line ${line})` : "the file is not valid YAML";
+  }
+  return "docker compose rejected the file";
+}
+
 // A value that is only an interpolation reference is not a secret (the preview shows variables UNRESOLVED).
 const PURE_REF = /^(?:\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*)$/;
 const MIN_KNOWN_LEN = 6;

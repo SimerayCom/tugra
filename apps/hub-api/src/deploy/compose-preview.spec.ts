@@ -8,6 +8,7 @@ import {
   buildComposePreviewScript,
   composePreviewDir,
   parsePreviewError,
+  classifyPreviewError,
   PREVIEW_ERR_MARKER,
   redactResolvedCompose,
 } from "./compose-preview";
@@ -117,6 +118,19 @@ describe("variant specifics", () => {
     expect(parsePreviewError(`${PREVIEW_ERR_MARKER}${Buffer.from("e".repeat(5000)).toString("base64")}`)).toHaveLength(2000);
     expect(parsePreviewError("nothing")).toBeNull();
     expect(parsePreviewError(`${PREVIEW_ERR_MARKER}!!!`)).toBeNull();
+  });
+});
+
+describe("classifyPreviewError", () => {
+  it("returns only a closed message and never echoes the raw stderr", () => {
+    expect(classifyPreviewError("yaml: line 3: mapping values are not allowed")).toBe("the file is not valid YAML (near line 3)");
+    expect(classifyPreviewError("failed to read /etc/shadow: line 2: unexpected character \"$\" in variable name \"root:x\"")).toBe("an env_file could not be read");
+    expect(classifyPreviewError("env file /root/.env not found: stat /root/.env: no such file or directory")).toBe("an env_file could not be read");
+    expect(classifyPreviewError("services.web.image must be a string")).toBe("docker compose rejected the file");
+    for (const raw of ["failed to read /etc/shadow: line 2: root:x:0", "services.web.image must be a string"]) {
+      expect(classifyPreviewError(raw)).not.toContain("root:x");
+      expect(classifyPreviewError(raw)).not.toContain("services.web");
+    }
   });
 });
 
