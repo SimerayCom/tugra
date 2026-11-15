@@ -1588,6 +1588,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/apps/{id}/env-flags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["ApplicationsController_getEnvFlags"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/apps/{id}/build-args": {
         parameters: {
             query?: never;
@@ -12121,6 +12137,14 @@ export interface operations {
                     env?: {
                         [key: string]: string;
                     };
+                    envFlags?: {
+                        [key: string]: {
+                            buildTime?: boolean;
+                            runtime?: boolean;
+                            literal?: boolean;
+                            multiline?: boolean;
+                        };
+                    };
                     environmentId?: string;
                     deploy?: boolean;
                     hostPort?: number;
@@ -14495,6 +14519,14 @@ export interface operations {
                     env: {
                         [key: string]: string;
                     };
+                    flags?: {
+                        [key: string]: {
+                            buildTime?: boolean;
+                            runtime?: boolean;
+                            literal?: boolean;
+                            multiline?: boolean;
+                        };
+                    };
                 };
             };
         };
@@ -14512,6 +14544,91 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    ApplicationsController_getEnvFlags: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        flags: {
+                            [key: string]: {
+                                buildTime: boolean;
+                                runtime: boolean;
+                                literal: boolean;
+                                multiline: boolean;
+                            };
+                        };
+                        applicable: {
+                            buildTime: boolean;
+                            literal: boolean;
+                        };
+                        limits: {
+                            multilineValueBytes: number;
+                            multilineKeys: number;
+                            multilineTotalBytes: number;
+                            buildTotalBytes: number;
+                        };
+                    };
                 };
             };
             /** @description Missing or invalid authentication. */

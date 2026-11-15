@@ -12401,6 +12401,27 @@
                       "type": "string"
                     }
                   },
+                  "envFlags": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "object",
+                      "properties": {
+                        "buildTime": {
+                          "type": "boolean"
+                        },
+                        "runtime": {
+                          "type": "boolean"
+                        },
+                        "literal": {
+                          "type": "boolean"
+                        },
+                        "multiline": {
+                          "type": "boolean"
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
                   "environmentId": {
                     "type": "string",
                     "minLength": 1
@@ -18514,6 +18535,27 @@
                     "additionalProperties": {
                       "type": "string"
                     }
+                  },
+                  "flags": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "object",
+                      "properties": {
+                        "buildTime": {
+                          "type": "boolean"
+                        },
+                        "runtime": {
+                          "type": "boolean"
+                        },
+                        "literal": {
+                          "type": "boolean"
+                        },
+                        "multiline": {
+                          "type": "boolean"
+                        }
+                      },
+                      "additionalProperties": false
+                    }
                   }
                 },
                 "required": [
@@ -18534,6 +18576,166 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "apps"
+        ]
+      }
+    },
+    "/api/v1/apps/{id}/env-flags": {
+      "get": {
+        "operationId": "ApplicationsController_getEnvFlags",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "flags": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "buildTime": {
+                            "type": "boolean"
+                          },
+                          "runtime": {
+                            "type": "boolean"
+                          },
+                          "literal": {
+                            "type": "boolean"
+                          },
+                          "multiline": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "buildTime",
+                          "runtime",
+                          "literal",
+                          "multiline"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "applicable": {
+                      "type": "object",
+                      "properties": {
+                        "buildTime": {
+                          "type": "boolean"
+                        },
+                        "literal": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "buildTime",
+                        "literal"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "limits": {
+                      "type": "object",
+                      "properties": {
+                        "multilineValueBytes": {
+                          "type": "number"
+                        },
+                        "multilineKeys": {
+                          "type": "number"
+                        },
+                        "multilineTotalBytes": {
+                          "type": "number"
+                        },
+                        "buildTotalBytes": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "multilineValueBytes",
+                        "multilineKeys",
+                        "multilineTotalBytes",
+                        "buildTotalBytes"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "flags",
+                    "applicable",
+                    "limits"
+                  ],
+                  "additionalProperties": false
                 }
               }
             }
