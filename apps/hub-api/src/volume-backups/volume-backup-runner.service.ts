@@ -6,7 +6,7 @@ import { CryptoService } from "../crypto/crypto.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { NotificationsService } from "../notifications/notifications.service";
 import { appVolumeName, type AppVolume } from "../deploy/deploy-script";
-import { objectKey, type DestinationSpec } from "../backups/destination";
+import { LOCAL_DEST, objectKey, type DestinationSpec } from "../backups/destination";
 import { resolveDestinationSpec } from "../backups/destination-resolver";
 import { gpgMissingTail, scrubRunOutput } from "../backups/backup-script";
 import { GIB, planRetention, type RetentionRow } from "../backups/retention";
@@ -75,7 +75,19 @@ export class VolumeBackupRunnerService {
     }
     // A per-volume run keys its alert state on app+volume so two jobs of one app can never flap a shared key.
     const alertId = opts?.only && opts.only.length === 1 ? policyAlertId(app.id, opts.only[0]) : app.id;
-    const dest = await this.destinationSpec(app);
+    // A destination that cannot be resolved (encryption key missing/unreadable) fails closed. A manual run is told
+    // why (a typed 422); a scheduled one has no caller, so it is recorded as a FAILED row per volume (against the
+    // implicit LOCAL path, no key involved) and goes through the normal failure alert instead of dying silently.
+    let dest: DestinationSpec;
+    let destError: string | null = null;
+    try {
+      dest = await this.destinationSpec(app);
+    } catch (e) {
+      if (actor !== "scheduler") throw e;
+      destError = e instanceof Error ? e.message : String(e);
+      dest = LOCAL_DEST;
+      this.logger.warn(`scheduled volume backup of app ${app.id} cannot resolve its destination: ${destError}`);
+    }
     const out: VolumeBackup[] = [];
     // Aggregate the run so a single notification reports the whole app's backup (one fire per runBackup,
     // not one per volume). Any per-volume failure downgrades the run to failed (conservative).
@@ -104,6 +116,7 @@ export class VolumeBackupRunnerService {
       });
       const startedAt = Date.now();
       try {
+        if (destError) throw new Error(destError);
         const r = await this.agentWs.sendCommand(
           app.serverId,
           buildVolumeBackupScript(app.id, v.name, appVolumeName(app, v.name), filename, dest),

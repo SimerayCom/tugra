@@ -39,6 +39,45 @@ function make(sendCommand: jest.Mock) {
   return { svc: new BackupRunnerService(prisma, audit, crypto, agentWs, notifications, noAlerts(), noDbs()), fireForEvent };
 }
 
+describe("BackupRunnerService.runBackup — unresolvable destination (fail closed)", () => {
+  function withBrokenDest(sendCommand: jest.Mock) {
+    const prisma = {
+      database: { findUnique: jest.fn().mockResolvedValue({ ...db, backupDestinationId: "d1" }) },
+      backupDestination: { findUnique: jest.fn().mockResolvedValue({ id: "d1", type: "LOCAL", encryptionEnabled: true, encryptionKey: null }) },
+      backup: {
+        create: jest.fn().mockResolvedValue({ id: "b1" }),
+        update: jest.fn().mockResolvedValue({}),
+        findUnique: jest.fn().mockResolvedValue({ id: "b1" }),
+        findMany: jest.fn().mockResolvedValue([]),
+        delete: jest.fn(),
+      },
+    } as unknown as PrismaService;
+    const crypto = { decrypt: () => JSON.stringify({ username: "u", password: "p", database: "d" }) } as unknown as CryptoService;
+    const fireForEvent = jest.fn().mockResolvedValue(undefined);
+    const alerts = noAlerts();
+    const svc = new BackupRunnerService(prisma, { log: jest.fn() } as unknown as AuditService, crypto, { sendCommand } as unknown as AgentWsServer, { fireForEvent } as unknown as NotificationsService, alerts, noDbs());
+    return { svc, prisma, fireForEvent, alerts };
+  }
+
+  it("a manual run gets a typed 422 and no row", async () => {
+    const send = jest.fn();
+    const { svc, prisma } = withBrokenDest(send);
+    await expect(svc.runBackup("db1", "u1")).rejects.toMatchObject({ status: 422, response: expect.objectContaining({ code: "destination_key_missing" }) });
+    expect((prisma.backup.create as jest.Mock)).not.toHaveBeenCalled();
+  });
+
+  it("a SCHEDULED run records a FAILED row, sends nothing and fires backup_failed", async () => {
+    const send = jest.fn();
+    const { svc, prisma, fireForEvent, alerts } = withBrokenDest(send);
+    await svc.runBackup("db1");
+    expect(send).not.toHaveBeenCalled();
+    expect((prisma.backup.create as jest.Mock).mock.calls[0][0].data).toMatchObject({ destinationId: "d1", status: "RUNNING" });
+    expect((prisma.backup.update as jest.Mock).mock.calls[0][0].data).toMatchObject({ status: "FAILED", errorTail: expect.stringContaining("key is missing") });
+    expect(alerts.shouldNotifyFailure).toHaveBeenCalledWith("database", "db1");
+    expect(fireForEvent).toHaveBeenCalledWith("t1", "backup_failed", expect.objectContaining({ errorTail: expect.stringContaining("key is missing") }));
+  });
+});
+
 describe("BackupRunnerService backup-failure notification", () => {
   it("fires backup_failed when the dump command exits non-zero", async () => {
     const { svc, fireForEvent } = make(jest.fn().mockResolvedValue({ exitCode: 1, output: "" }));

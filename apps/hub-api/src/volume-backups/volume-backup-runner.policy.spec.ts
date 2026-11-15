@@ -78,10 +78,30 @@ describe("VolumeBackupRunnerService — encryption on every destination type (vo
     expect(String(updates[0].errorTail).includes("\n")).toBe(false);
   });
 
-  it("fails closed when the destination is encrypted but its key is missing (no row is created)", async () => {
+it("fails closed when the destination is encrypted but its key is missing (manual run: no row is created)", async () => {
     const { svc, created } = make({ app: { volumeBackupDestinationId: "d1" }, dest: { ...localEnc, encryptionKey: null } });
     await expect(svc.runBackup("app1", "u1")).rejects.toThrow(/key is missing/);
     expect(created).toHaveLength(0);
+  });
+});
+
+describe("VolumeBackupRunnerService.runBackup — unresolvable destination", () => {
+  const noKey = { id: "d1", type: "LOCAL", encryptionEnabled: true, encryptionKey: null };
+
+  it("a manual run is told why with a typed 422 (not a bare 500)", async () => {
+    const { svc } = make({ app: { volumeBackupDestinationId: "d1" }, dest: noKey });
+    await expect(svc.runBackup("app1", "u1")).rejects.toMatchObject({ status: 422, response: expect.objectContaining({ code: "destination_key_missing" }) });
+  });
+
+  it("a SCHEDULED run records a FAILED row per volume, sends nothing, and fires the failure alert", async () => {
+    const { svc, created, updates, send, alerts } = make({ app: { volumeBackupDestinationId: "d1" }, dest: noKey });
+    const rows = await svc.runBackup("app1", "scheduler", { only: ["data"] });
+    expect(rows).toHaveLength(1);
+    expect(created).toHaveLength(1);
+    expect(created[0]).toMatchObject({ volumeName: "data", destinationId: "d1", filename: expect.stringMatching(/\.tar\.gz$/) });
+    expect(send).not.toHaveBeenCalled();
+    expect(updates[0]).toMatchObject({ status: "FAILED", errorTail: expect.stringContaining("key is missing") });
+    expect(alerts.shouldNotifyFailure).toHaveBeenCalledWith("volume", "app1:data");
   });
 });
 

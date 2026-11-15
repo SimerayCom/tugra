@@ -24,7 +24,7 @@ import {
   scrubRunOutput,
 } from "./backup-script";
 import { BackupAlertsService } from "./backup-alerts.service";
-import { objectKey, type DestinationSpec } from "./destination";
+import { LOCAL_DEST, objectKey, type DestinationSpec } from "./destination";
 import { resolveDestinationSpec } from "./destination-resolver";
 import { GIB, planRetention } from "./retention";
 
@@ -245,7 +245,19 @@ export class BackupRunnerService {
       throw new Error(`backup not supported for ${db.engine}`);
     }
 
-    const dest = await this.destinationSpec(db);
+    // A destination that cannot be resolved (encryption key missing/unreadable) fails closed. A manual run is told
+    // why (a typed 422); a scheduled one has no caller, so it is recorded as a FAILED row (against the implicit
+    // LOCAL path, no key involved) and goes through the normal failure alert instead of dying silently.
+    let dest: DestinationSpec;
+    let destError: string | null = null;
+    try {
+      dest = await this.destinationSpec(db);
+    } catch (e) {
+      if (actor !== "scheduler") throw e;
+      destError = e instanceof Error ? e.message : String(e);
+      dest = LOCAL_DEST;
+      this.logger.warn(`scheduled backup of database ${db.id} cannot resolve its destination: ${destError}`);
+    }
     const ts = new Date().toISOString().replace(/[:.]/g, "-");
     const filename = backupFilename(db.engine as DbEngine, ts, dest);
     const path = `/etc/tugra/backups/${db.id}/${filename}`;
@@ -276,6 +288,7 @@ export class BackupRunnerService {
     let exitCode: number | null = null;
     let sizeBytes: bigint | null = null;
     try {
+      if (destError) throw new Error(destError);
       const r = await this.agentWs.sendCommand(
         db.serverId,
         buildBackupScript(this.toSpec(db), filename, dest),
