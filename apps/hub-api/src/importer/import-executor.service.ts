@@ -1733,6 +1733,52 @@ function readGitResult(v: unknown): { status: string; sourceName?: string; rewri
   };
 }
 
+/** The secret-free summary of an applied SERVICE task, read defensively from the persisted result: only the known fields,
+ *  only strings / numbers / booleans / arrays of them. Undefined for a non-service task. */
+export interface ServiceTaskView {
+  members: string[];
+  dropped: Array<{ field: string; reason: string }>;
+  configMounts: number;
+  serviceDomains: { applied: number; unmapped: Array<{ field: string; reason: string }> };
+  privateNetwork?: { network: string; alias: string };
+  volumes: Array<{ key: string; dockerName: string; policy: string; dataPlane: string; state: string }>;
+  hold: boolean;
+  checklist: Array<{ kind: string; severity: "info" | "warn"; params: Record<string, string | number | string[]> }>;
+}
+const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+const reasons = (v: unknown): Array<{ field: string; reason: string }> =>
+  Array.isArray(v) ? v.filter((u): u is { field: string; reason: string } => !!u && typeof u === "object" && typeof (u as { field?: unknown }).field === "string" && typeof (u as { reason?: unknown }).reason === "string").map((u) => ({ field: u.field, reason: u.reason })) : [];
+function readServiceResult(v: unknown): ServiceTaskView | undefined {
+  if (!v || typeof v !== "object" || (v as { kind?: unknown }).kind !== "service") return undefined;
+  const r = v as Record<string, unknown>;
+  const sd = (r.serviceDomains && typeof r.serviceDomains === "object" ? r.serviceDomains : {}) as { applied?: unknown; unmapped?: unknown };
+  const pn = r.privateNetwork as { network?: unknown; alias?: unknown } | undefined;
+  const volumes = Array.isArray(r.volumes)
+    ? r.volumes
+        .filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
+        .map((x) => ({ key: String(x.key ?? ""), dockerName: String(x.dockerName ?? ""), policy: String(x.policy ?? ""), dataPlane: String(x.dataPlane ?? ""), state: String(x.state ?? "") }))
+    : [];
+  const checklist = Array.isArray(r.checklist)
+    ? r.checklist
+        .filter((x): x is { kind: string; severity: string; params: Record<string, unknown> } => !!x && typeof x === "object" && typeof (x as { kind?: unknown }).kind === "string")
+        .map((x) => ({
+          kind: x.kind,
+          severity: (x.severity === "warn" ? "warn" : "info") as "info" | "warn",
+          params: Object.fromEntries(Object.entries(x.params && typeof x.params === "object" ? x.params : {}).filter(([, val]) => typeof val === "string" || typeof val === "number" || (Array.isArray(val) && val.every((e) => typeof e === "string")))) as Record<string, string | number | string[]>,
+        }))
+    : [];
+  return {
+    members: strs(r.members),
+    dropped: reasons(r.dropped),
+    configMounts: typeof r.configMounts === "number" ? r.configMounts : 0,
+    serviceDomains: { applied: typeof sd.applied === "number" ? sd.applied : 0, unmapped: reasons(sd.unmapped) },
+    ...(pn && typeof pn.network === "string" && typeof pn.alias === "string" ? { privateNetwork: { network: pn.network, alias: pn.alias } } : {}),
+    volumes,
+    hold: r.hold === true,
+    checklist,
+  };
+}
+
 /** Shape the owned operation into a secret-free status view (internal compensation is not exposed). Includes
  *  the persisted plan snapshot so a failed/partial import's full picture survives for a post-mortem. */
 export function toStatusView(op: {
@@ -1797,6 +1843,7 @@ export function toStatusView(op: {
         // What the app could not carry (field NAMES + fixed reasons only, never values). Undefined for a task without it.
         postCreate: readApplyReport(res?.postCreate),
         ingress: readApplyReport(res?.ingress),
+        ...(res && (res as { kind?: unknown }).kind === "service" ? { service: readServiceResult(res) } : {}),
         startedAt: t.startedAt,
         finishedAt: t.finishedAt,
       };

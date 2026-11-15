@@ -79,3 +79,18 @@ describe("toStatusView", () => {
     expect(v.tasks[3].git).toBeUndefined();
   });
 });
+
+describe("toStatusView — service tasks", () => {
+  const mk = (result: unknown) => ({ id: "op", planId: "h", meta: { sourceKind: "coolify" }, cancelRequestedAt: null, createdAt: new Date(), tasks: [{ itemRef: "service:s:1", kind: "service", status: "DONE", resourceType: "application", resourceId: "a1", output: null, result, startedAt: null, finishedAt: null }] });
+  it("projects only the known secret-free fields of a service result", () => {
+    const view = toStatusView(mk({ kind: "service", name: "svc", appId: "a1", members: ["a"], dropped: [{ field: "a.ports", reason: "r" }], configMounts: 2, serviceDomains: { applied: 1, unmapped: [] }, privateNetwork: { network: "svc-x", alias: "a" }, volumes: [{ key: "v", dockerName: "tugra_a1_v", policy: "copy", dataPlane: "hub-staged", state: "pending-data" }], hold: true, checklist: [{ kind: "tunnel", severity: "warn", params: { name: "svc", bad: { nested: 1 } } }], leaked: "SECRET" }) as never);
+    const task = view.tasks[0] as { service?: Record<string, unknown> };
+    expect(task.service).toMatchObject({ members: ["a"], configMounts: 2, hold: true, privateNetwork: { network: "svc-x", alias: "a" } });
+    expect((task.service as { checklist: Array<{ params: object }> }).checklist[0].params).toEqual({ name: "svc" });
+    expect(JSON.stringify(view)).not.toContain("SECRET");
+  });
+  it("a non-service task carries no service field", () => {
+    const view = toStatusView(mk({ name: "web", appId: "a1" }) as never);
+    expect(view.tasks[0]).not.toHaveProperty("service");
+  });
+});
