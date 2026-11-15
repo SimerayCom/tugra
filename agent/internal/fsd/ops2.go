@@ -118,12 +118,28 @@ type WriteResult struct {
 
 func etagOf(size, mtimeNs int64) string { return fmt.Sprintf("%d-%d", size, mtimeNs) }
 
+// unixMode is the 12-bit chmod(2) value of m: the permission bits plus setuid (04000), setgid (02000) and sticky
+// (01000), so stat reports them (a setgid upload directory reads "2775", not "0775").
+func unixMode(m fs.FileMode) uint32 {
+	v := uint32(m.Perm())
+	if m&fs.ModeSetuid != 0 {
+		v |= 0o4000
+	}
+	if m&fs.ModeSetgid != 0 {
+		v |= 0o2000
+	}
+	if m&fs.ModeSticky != 0 {
+		v |= 0o1000
+	}
+	return v
+}
+
 func statOf(name string, fi fs.FileInfo) protocol.FsStat {
 	st := protocol.FsStat{
 		Name:    name,
 		Type:    kind(fi.Mode()),
 		Size:    fi.Size(),
-		Mode:    fmt.Sprintf("%04o", uint32(fi.Mode().Perm())),
+		Mode:    fmt.Sprintf("%04o", unixMode(fi.Mode())),
 		Mtime:   fi.ModTime().Unix(),
 		MtimeNs: fi.ModTime().UnixNano(),
 	}
@@ -646,6 +662,9 @@ func Chmod(rootPath, rel string, mode fs.FileMode) error {
 	case !fi.Mode().IsRegular() && !fi.IsDir():
 		return errf(CodeNotRegular, "not a regular file or directory")
 	}
+	// The caller cannot SET special bits, but changing the permissions of an entry that already carries setuid,
+	// setgid or sticky (a group-shared 2775 directory) must not silently clear them.
+	mode |= fi.Mode() & (fs.ModeSetuid | fs.ModeSetgid | fs.ModeSticky)
 	if err := root.Chmod(rel, mode); err != nil {
 		return classify(err)
 	}

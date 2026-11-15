@@ -563,3 +563,32 @@ func TestLinkUnsupportedClassification(t *testing.T) {
 		}
 	}
 }
+
+func TestChmodKeepsSetgidAndStickyAndStatReportsThem(t *testing.T) {
+	root := t.TempDir()
+	d := filepath.Join(root, "shared")
+	if err := os.Mkdir(d, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(d, 0o755|os.ModeSetgid|os.ModeSticky); err != nil {
+		t.Skipf("filesystem refuses special bits: %v", err)
+	}
+	fi, _ := os.Stat(d)
+	if got := statOf("shared", fi).Mode; got != "3755" {
+		t.Fatalf("stat mode %q, want 3755", got)
+	}
+	if err := Chmod(root, "shared", 0o775); err != nil {
+		t.Fatal(err)
+	}
+	fi, _ = os.Stat(d)
+	if fi.Mode()&os.ModeSetgid == 0 || fi.Mode()&os.ModeSticky == 0 || fi.Mode().Perm() != 0o775 {
+		t.Fatalf("mode %v lost its special bits", fi.Mode())
+	}
+	// a plain entry still cannot gain them
+	put(t, root, "f", "x")
+	wantCode(t, Chmod(root, "f", 0o2755), CodeBadRequest)
+	fi, _ = os.Stat(filepath.Join(root, "f"))
+	if got := statOf("f", fi).Mode; len(got) != 4 || got[0] != '0' {
+		t.Fatalf("plain file mode %q", got)
+	}
+}
