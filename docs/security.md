@@ -81,6 +81,20 @@ and serves the staged dump to the target agent only over a signed, sha256-bound,
 origin. The honest caveats (a `curl | sh` bootstrap, a root-equivalent socket mount on the source host) are
 spelled out in the [migration runbook](coolify-migration.md#security-model).
 
+## App move security
+
+An [app move](../CHANGELOG.md) copies a volume from one agent to another through the hub, in bounded, memory-only relayed
+parts. Each part is moved over a **signed relay path** (an id, an expiry of at most 10 minutes and an HMAC), single use per
+role and bound to the part's exact size and SHA-256; the hub never persists the data, and both ends verify length and
+hash. The credential is handed to `curl` through a private (0600) config file that is removed on exit, never as a curl
+argument. **Known limit:** the agent runs every hub command as `bash -c <script>`, so the script text, and with it the
+(base64-encoded) relay path, is still visible in the shell's command line to a local user of the agent host until the
+part finishes. Such a user could fetch a part first (the transfer then fails and the move rolls back, the app is
+restored) or push junk (a SHA-256 mismatch), and would obtain one unencrypted gzipped volume part. Closing this needs the
+agent to receive the credential out of band (a signed command field exported as an environment variable); until then,
+treat the agent hosts of a move as trusted, as you already do for anything an agent runs. The agent's own hub origin
+(`TUGRA_HUB_ORIGIN`) is derived from its configuration, never from the hub's message.
+
 ## Editions & licensing boundary
 
 The proprietary Pro/Cloud layer lives outside this repository; the edition is a build-time signal, not a

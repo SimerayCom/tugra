@@ -380,15 +380,34 @@ export interface PartTransferInput {
 
 const DEFAULT_CURL_MAX_SEC = 14 * 60;
 
+/**
+ * Keeps the signed relay path (the credential of a transfer) out of curl's argv: it is written to a private (0600,
+ * mktemp) curl config file and read with `-K`, the way the deploy scripts hand a git token to GIT_ASKPASS through a
+ * file. The path travels base64-encoded into a `printf | base64 -d` pipeline of shell builtins plus `base64` (no
+ * relay path on any child's command line), and the file is removed by the EXIT trap. Known limit, documented in
+ * docs/security.md: the agent runs the whole script as `bash -c <script>`, so the script text itself is still on that
+ * shell's argv; closing that needs the credential delivered out of band by the agent.
+ */
+function relayCredentialLines(path: string): { setup: string[]; arg: string } {
+  const b64 = Buffer.from(assertRelayPath(path), "utf8").toString("base64");
+  return {
+    setup: ["K=$(mktemp)", `printf 'url = "%s%s"\\n' "$O" "$(printf %s ${shq(b64)} | base64 -d)" > "$K"`],
+    arg: '-K "$K"',
+  };
+}
+
 /** (source) PUT one part to the signed relay path. The hub's origin comes from the agent's own env (TUGRA_HUB_ORIGIN). */
 export function buildMoveSendScript(i: PartTransferInput): string {
   const f = `${volDir(i.moveId, i.idx)}/${partName(i.part)}`;
   const secs = assertBytes(i.maxTimeSec ?? DEFAULT_CURL_MAX_SEC, 30, 3600, "curl max-time");
+  const cred = relayCredentialLines(i.path);
   return [
     "set -e",
     'O="$TUGRA_HUB_ORIGIN"; [ -n "$O" ] || { echo "no hub origin" >&2; exit 64; }',
     `F=${f}; [ -f "$F" ]`,
-    `curl -fsS --max-time ${secs} -X PUT -H 'Expect:' -H 'Content-Type: application/octet-stream' -T "$F" "$O"${shq(assertRelayPath(i.path))} >/dev/null`,
+    ...cred.setup,
+    `trap 'rm -f "$K"' EXIT`,
+    `curl -fsS --max-time ${secs} -X PUT -H 'Expect:' -H 'Content-Type: application/octet-stream' -T "$F" ${cred.arg} >/dev/null`,
     "echo TUGRA_VX_SEND_OK",
   ].join("\n");
 }
@@ -403,13 +422,15 @@ export function buildMoveRecvScript(i: RecvInput): string {
   const dir = volDir(i.moveId, i.idx);
   const name = partName(i.part);
   const secs = assertBytes(i.maxTimeSec ?? DEFAULT_CURL_MAX_SEC, 30, 3600, "curl max-time");
+  const cred = relayCredentialLines(i.path);
   return [
     "set -e",
     "set -o pipefail",
     'O="$TUGRA_HUB_ORIGIN"; [ -n "$O" ] || { echo "no hub origin" >&2; exit 64; }',
     `D=${dir}; umask 077; mkdir -p "$D"; F="$D/${name}"; rm -f "$F.tmp"`,
-    `trap 'rm -f "$F.tmp"' EXIT`,
-    `curl -fsS --no-buffer --max-time ${secs} "$O"${shq(assertRelayPath(i.path))} -o "$F.tmp"`,
+    ...cred.setup,
+    `trap 'rm -f "$F.tmp" "$K"' EXIT`,
+    `curl -fsS --no-buffer --max-time ${secs} ${cred.arg} -o "$F.tmp"`,
     `[ "$(stat -c %s "$F.tmp")" = "${assertSize(i.size)}" ] || { echo "size mismatch" >&2; exit 65; }`,
     `[ "$(sha256sum "$F.tmp" | cut -d' ' -f1)" = "${assertSha256(i.sha256)}" ] || { echo "sha mismatch" >&2; exit 66; }`,
     'mv "$F.tmp" "$F"; echo TUGRA_VX_RECV_OK',

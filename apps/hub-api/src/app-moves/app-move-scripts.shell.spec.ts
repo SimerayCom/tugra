@@ -73,7 +73,7 @@ exit 1
 `;
 const CURL = `#!/bin/bash
 file=""; out=""; url=""
-while [ $# -gt 0 ]; do case "$1" in -T) file="$2"; shift 2 ;; -o) out="$2"; shift 2 ;; --max-time|-X|-H) shift 2 ;; -*) shift ;; *) url="$1"; shift ;; esac; done
+while [ $# -gt 0 ]; do case "$1" in -T) file="$2"; shift 2 ;; -o) out="$2"; shift 2 ;; -K) url=$(sed -n 's/^url = "\\(.*\\)"$/\\1/p' "$2"); shift 2 ;; --max-time|-X|-H) shift 2 ;; -*) shift ;; *) url="$1"; shift ;; esac; done
 id=$(echo "$url" | sed -n 's#.*/agent-vx/t/\\([A-Za-z0-9_-]*\\)?.*#\\1#p')
 [ -n "$id" ] || { echo "curl: (3) URL rejected" >&2; exit 3; }
 [ -n "$RELAY_DOWN" ] && { echo "curl: (7) Failed to connect" >&2; exit 7; }

@@ -302,13 +302,26 @@ describe("part stat / send / recv / drop", () => {
     }
   });
 
+  const CRED = ["K=$(mktemp)", `printf 'url = "%s%s"\\n' "$O" "$(printf %s '${Buffer.from(RELAY).toString("base64")}' | base64 -d)" > "$K"`];
+
+  it("the signed relay path is never a curl argument: it goes through a private config file (-K), and not even verbatim into the script", () => {
+    for (const s of [buildMoveSendScript({ moveId: MOVE_ID, idx: 0, part: 7, path: RELAY }), buildMoveRecvScript({ moveId: MOVE_ID, idx: 0, part: 7, path: RELAY, size: 1000, sha256: SHA })]) {
+      expect(s).not.toContain(RELAY);
+      expect(s).not.toMatch(/sig=|exp=|agent-vx/);
+      expect(s).toMatch(/curl [^\n]*-K "\$K"/);
+      expect(s).toContain('rm -f');
+    }
+  });
+
   it("send golden: PUT of one part to the signed path under the agent's own origin, 14 min curl limit", () => {
     expect(buildMoveSendScript({ moveId: MOVE_ID, idx: 0, part: 7, path: RELAY })).toBe(
       [
         "set -e",
         'O="$TUGRA_HUB_ORIGIN"; [ -n "$O" ] || { echo "no hub origin" >&2; exit 64; }',
         `F=${D0}/p.00007; [ -f "$F" ]`,
-        `curl -fsS --max-time 840 -X PUT -H 'Expect:' -H 'Content-Type: application/octet-stream' -T "$F" "$O"'${RELAY}' >/dev/null`,
+        ...CRED,
+        `trap 'rm -f "$K"' EXIT`,
+        `curl -fsS --max-time 840 -X PUT -H 'Expect:' -H 'Content-Type: application/octet-stream' -T "$F" -K "$K" >/dev/null`,
         "echo TUGRA_VX_SEND_OK",
       ].join("\n"),
     );
@@ -321,8 +334,9 @@ describe("part stat / send / recv / drop", () => {
         "set -o pipefail",
         'O="$TUGRA_HUB_ORIGIN"; [ -n "$O" ] || { echo "no hub origin" >&2; exit 64; }',
         `D=${D0}; umask 077; mkdir -p "$D"; F="$D/p.00007"; rm -f "$F.tmp"`,
-        `trap 'rm -f "$F.tmp"' EXIT`,
-        `curl -fsS --no-buffer --max-time 840 "$O"'${RELAY}' -o "$F.tmp"`,
+        ...CRED,
+        `trap 'rm -f "$F.tmp" "$K"' EXIT`,
+        `curl -fsS --no-buffer --max-time 840 -K "$K" -o "$F.tmp"`,
         '[ "$(stat -c %s "$F.tmp")" = "1000" ] || { echo "size mismatch" >&2; exit 65; }',
         `[ "$(sha256sum "$F.tmp" | cut -d' ' -f1)" = "${SHA}" ] || { echo "sha mismatch" >&2; exit 66; }`,
         'mv "$F.tmp" "$F"; echo TUGRA_VX_RECV_OK',
@@ -342,8 +356,8 @@ describe("part stat / send / recv / drop", () => {
     ];
     for (const s of others) expect(s).not.toMatch(/agent-vx|TUGRA_HUB_ORIGIN|curl/);
     expect(buildMoveProbeScript({ dockerVolumes: ["v"] })).not.toMatch(/agent-vx|TUGRA_HUB_ORIGIN/); // it only checks that curl EXISTS
-    expect(buildMoveSendScript({ moveId: MOVE_ID, idx: 0, part: 0, path: RELAY })).toContain("agent-vx");
-    expect(buildMoveRecvScript({ moveId: MOVE_ID, idx: 0, part: 0, path: RELAY, size: 1, sha256: SHA })).toContain("agent-vx");
+    expect(buildMoveSendScript({ moveId: MOVE_ID, idx: 0, part: 0, path: RELAY })).toContain(Buffer.from(RELAY).toString("base64"));
+    expect(buildMoveRecvScript({ moveId: MOVE_ID, idx: 0, part: 0, path: RELAY, size: 1, sha256: SHA })).toContain(Buffer.from(RELAY).toString("base64"));
   });
 
   it("send/recv only accept the exact relay path shape (no host, no traversal, no extra query, no shell metacharacters)", () => {
