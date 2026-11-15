@@ -30,6 +30,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   a failure is reported on the task, never thrown. The token hint now notes that labels and Dockerfile text are read
   at apply time (needs `read:sensitive`).
 
+- **Changed (behaviour): post-cutover soak is on by default for new apps.** New apps now default to a 30-second post-cutover soak on zero-downtime rolling deploys: the previous version is kept for 30 s and restored automatically if the new one fails 3 health checks in a row. Existing apps are unchanged (still off unless you set it); set 0 in Deploy settings to turn it off. Imported apps count as new. PR previews and compose/swarm apps are excluded. Each eligible deploy, and each fleet-rollout wave per app, takes about 30 s longer and holds the app's deploy slot for that time; a revert restarts the previous container (brief downtime). A soak-enabled app's first deploy no longer waits out the window.
+
 ## [0.1.0-beta.14] - 2026-11-15
 
 - **Container labels.** The app's Configuration tab has a **Container labels** card. It lists, read-only, every label

@@ -1774,6 +1774,15 @@ export function resolveHealthGate(app: AppSpec): HealthGate {
  *  failure (never a single blip) trips the revert. */
 export const SOAK_FAIL_THRESHOLD = 3;
 
+/** Post-cutover soak window (seconds) a NEW app starts with. Existing rows are deliberately not backfilled. */
+export const DEFAULT_POST_CUTOVER_SOAK_SEC = 30;
+
+/** Default soak for a newly created app of the given source. A COMPOSE app never rolls (the soak only applies to
+ *  rolling single-container deploys), so showing 30 for it would mislead. */
+export function defaultSoakFor(source: string): number {
+  return source === "COMPOSE" ? 0 : DEFAULT_POST_CUTOVER_SOAK_SEC;
+}
+
 /** Post-cutover soak timings. windowSec is the bounded watch after traffic switched (0 = off); intervalSec
  *  reuses the gate interval. soakRetries() derives the loop count. */
 export interface SoakWindow {
@@ -2043,9 +2052,15 @@ export function buildRollingDeployScript(
     `  docker rm -f ${prev} 2>/dev/null || true`, // reap a __prev orphaned by a prior SIGKILLed soak
     `  docker stop${graceN ? ` -t ${graceN}` : ""} ${canonical} 2>/dev/null || true`, // graceful stop → Traefik deregisters it (no crash/oom episode)
     `  docker rename ${canonical} ${prev} 2>/dev/null || true`, // keep it, stopped (|| true: a first-ever deploy has no old container)
+    // First-ever deploy guard: with no previous generation there is nothing to revert to, so waiting out the window
+    // would only delay the deploy. Remember whether __prev exists and skip the watch when it does not.
+    `  had_prev=0; docker inspect ${prev} >/dev/null 2>&1 && had_prev=1`,
     ...cutover,
     // POST-CUTOVER SOAK: re-probe the now-live canonical container; a SUSTAINED failure reverts to __prev.
-    ...buildSoakWatchFragment(canonical, opts.probe, soak).map((l) => "  " + l),
+    `  if [ "$had_prev" = 1 ]; then`,
+    `    echo "TUGRA: post-cutover soak: watching the new version for ${soak.windowSec}s; reverting automatically after ${SOAK_FAIL_THRESHOLD} consecutive failed checks"`,
+    ...buildSoakWatchFragment(canonical, opts.probe, soak).map((l) => "    " + l),
+    `  else soak_ok=1; fi`,
     `  if [ "$soak_ok" = 1 ]; then`,
     `    docker rm -f ${prev} 2>/dev/null || true`, // survived the window → drop the retained old generation
     `    echo "TUGRA_ROLLOUT: healthy"; exit 0`,

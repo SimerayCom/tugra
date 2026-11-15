@@ -196,6 +196,54 @@ describe("DeploySettingsCard — stop grace + drain", () => {
   });
 });
 
+describe("DeploySettingsCard — post-cutover soak", () => {
+  const props = { id: "a1", deployStrategy: "ROLLING", rollbackOnFailure: true, imagesToKeep: null, stopGracePeriodSec: null, drainSec: null };
+  const soakInput = () => screen.getByLabelText("Post-cutover soak (seconds)") as HTMLInputElement;
+
+  it("renders 0 as 0 and a stored 30 as 30", () => {
+    const { unmount } = wrap(<DeploySettingsCard {...props} postCutoverSoakSec={0} />);
+    expect(soakInput().value).toBe("0");
+    unmount();
+    wrap(<DeploySettingsCard {...props} postCutoverSoakSec={30} />);
+    expect(soakInput().value).toBe("30");
+  });
+
+  it("saves numbers (and a blank field as 0)", async () => {
+    const set = vi.spyOn(api, "setAppDeploySettings").mockResolvedValue({ ok: true });
+    wrap(<DeploySettingsCard {...props} postCutoverSoakSec={30} />);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(set).toHaveBeenCalledTimes(1));
+    expect(set.mock.calls[0][1]).toMatchObject({ postCutoverSoakSec: 30 });
+    fireEvent.change(soakInput(), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(set).toHaveBeenCalledTimes(2));
+    expect(set.mock.calls[1][1]).toMatchObject({ postCutoverSoakSec: 0 });
+  });
+
+  it("shows the inactive hint when the app is not zero-downtime, and for a swarm app", () => {
+    const a = wrap(<DeploySettingsCard {...props} postCutoverSoakSec={30} zeroDowntime={false} />);
+    expect(screen.getByRole("status").textContent).toMatch(/Not active: this app does not use a zero-downtime rolling deploy/);
+    a.unmount();
+    wrap(<DeploySettingsCard {...props} postCutoverSoakSec={30} zeroDowntime clustered />);
+    expect(screen.getByRole("status").textContent).toMatch(/Not active/);
+  });
+
+  it("shows the probe count from the health interval, and warns when the window cannot trip a revert", () => {
+    const a = wrap(<DeploySettingsCard {...props} postCutoverSoakSec={30} zeroDowntime healthInterval={3} />);
+    expect(screen.getByRole("status").textContent).toMatch(/About 10 health checks/);
+    expect(screen.queryByText(/can never trigger a revert/)).toBeNull();
+    a.unmount();
+    wrap(<DeploySettingsCard {...props} postCutoverSoakSec={10} zeroDowntime healthInterval={5} />);
+    expect(screen.getByText(/About 2 health checks/)).toBeTruthy();
+    expect(screen.getByText("10s is under 3 health-check intervals, so it can never trigger a revert.")).toBeTruthy();
+  });
+
+  it("shows no soak hint when the soak is off", () => {
+    wrap(<DeploySettingsCard {...props} postCutoverSoakSec={0} zeroDowntime />);
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+});
+
 describe("RestartPolicyCard — max retries", () => {
   it("shows the retries input only for on-failure, and clears it when switching away", async () => {
     const set = vi.spyOn(api, "setAppRestartPolicy").mockResolvedValue({ ok: true });

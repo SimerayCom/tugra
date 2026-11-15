@@ -56,6 +56,10 @@ describe("classifyDeployment", () => {
     expect(classifyDeployment(dep({ status: "QUEUED", startedAt: null, createdAt: new Date(NOW - 600_001) }), ctx)).toBe("queue_timeout");
     expect(classifyDeployment(dep({ status: "QUEUED", startedAt: null, createdAt: new Date(NOW - 10_000) }), ctx)).toBe("running");
   });
+  it("a RUNNING deployment that is soaking (created longer ago than dispatchTimeoutSec) is running, never queue_timeout", () => {
+    // post-cutover soak keeps the deployment RUNNING well past its creation; queue_timeout only ever applies to QUEUED rows
+    expect(classifyDeployment(dep({ status: "RUNNING", startedAt: new Date(NOW - 700_000), createdAt: new Date(NOW - 900_000) }), ctx)).toBe("running");
+  });
 });
 
 describe("decide — dispatch", () => {

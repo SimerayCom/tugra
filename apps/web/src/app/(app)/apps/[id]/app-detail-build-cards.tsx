@@ -411,15 +411,25 @@ export function BuildArgsCard({ id }: { id: string }) {
   );
 }
 
-export function DeploySettingsCard({ id, deployStrategy, rollbackOnFailure, imagesToKeep, postCutoverSoakSec, stopGracePeriodSec, drainSec, clustered = false }: { id: string; deployStrategy: string; rollbackOnFailure: boolean; imagesToKeep: number | null; postCutoverSoakSec: number; stopGracePeriodSec: number | null; drainSec: number | null; clustered?: boolean }) {
+export function DeploySettingsCard({ id, deployStrategy, rollbackOnFailure, imagesToKeep, postCutoverSoakSec, stopGracePeriodSec, drainSec, clustered = false, zeroDowntime = true, healthInterval = null }: { id: string; deployStrategy: string; rollbackOnFailure: boolean; imagesToKeep: number | null; postCutoverSoakSec: number; stopGracePeriodSec: number | null; drainSec: number | null; clustered?: boolean; zeroDowntime?: boolean; healthInterval?: number | null }) {
   const t = useT();
   const qc = useQueryClient();
   const [strategy, setStrategy] = useState<"ROLLING" | "RECREATE">(deployStrategy === "RECREATE" ? "RECREATE" : "ROLLING");
   const [rollback, setRollback] = useState(rollbackOnFailure);
   const [keep, setKeep] = useState(imagesToKeep == null ? "" : String(imagesToKeep)); // blank = default (5)
-  const [soak, setSoak] = useState(postCutoverSoakSec ? String(postCutoverSoakSec) : ""); // blank = 0 (off)
+  const [soak, setSoak] = useState(String(postCutoverSoakSec)); // 0 shows "0" (off); blank still saves as 0
   const [grace, setGrace] = useState(stopGracePeriodSec == null ? "" : String(stopGracePeriodSec)); // blank = Docker default (10s)
   const [drain, setDrain] = useState(drainSec ? String(drainSec) : ""); // blank = off
+  // Soak hint lines (role="status"): the soak only runs for a zero-downtime rolling deploy, and a window shorter than 3
+  // health-check intervals can never trip a revert (the hub reverts after 3 consecutive failed probes).
+  const soakSec = soak.trim() === "" ? 0 : Number(soak);
+  const soakProbes = Math.floor(soakSec / Math.max(1, healthInterval ?? 3));
+  const soakHints: string[] =
+    !zeroDowntime || clustered
+      ? [t("apps.postCutoverSoakInactive")]
+      : soakSec > 0
+        ? [t("apps.postCutoverSoakProbes", { count: soakProbes }), ...(soakProbes < 3 ? [t("apps.postCutoverSoakCannotTrip", { sec: soakSec })] : [])]
+        : [];
   const save = useMutation({
     mutationFn: () =>
       api.setAppDeploySettings(id, {
@@ -470,6 +480,9 @@ export function DeploySettingsCard({ id, deployStrategy, rollbackOnFailure, imag
       </div>
       <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("apps.imagesToKeepDesc")}</div>
       <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("apps.postCutoverSoakDesc")}</div>
+      {soakHints.map((h) => (
+        <div key={h} role="status" style={{ fontSize: 12, color: "var(--c-am)", marginTop: 8 }}>{h}</div>
+      ))}
       {!clustered && <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("apps.stopGracePeriodHint")}</div>}
       {!clustered && <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("apps.drainSecondsHint")}</div>}
       {!rollback && <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 8 }}>{t("apps.rollbackOnFailureDesc")}</div>}

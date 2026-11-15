@@ -1,5 +1,11 @@
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   constraintExpr,
+  DEFAULT_POST_CUTOVER_SOAK_SEC,
+  defaultSoakFor,
   spreadPrefExpr,
   buildImageRemoveScript,
   buildAppImagesRemoveScript,
@@ -915,6 +921,33 @@ describe("deploy-script", () => {
       // no __prev (e.g. a first-ever deploy): KEEP the gate-passed new running rather than remove it with
       // nothing to fall back to — a distinct marker + exit 0 (app stays up, same as today's no-soak outcome)
       expect(revert).toContain('echo "TUGRA_ROLLOUT: soak_failed_no_prev"; exit 0');
+    });
+
+    it("soak ON emits the first-deploy guard: had_prev recorded after the __prev rename, the watch only runs when it is 1", () => {
+      const s = buildRollingDeployScript(domained, "v2", { probe: httpProbe, soak: { windowSec: 30, intervalSec: 3 }, ...gate });
+      const renameIdx = s.indexOf("docker rename tugra_abc tugra_abc__prev 2>/dev/null || true");
+      const guardIdx = s.indexOf("had_prev=0; docker inspect tugra_abc__prev >/dev/null 2>&1 && had_prev=1");
+      expect(renameIdx).toBeGreaterThan(-1);
+      expect(guardIdx).toBeGreaterThan(renameIdx);
+      const ifIdx = s.indexOf('if [ "$had_prev" = 1 ]; then');
+      const echoIdx = s.indexOf("TUGRA: post-cutover soak: watching the new version for 30s; reverting automatically after 3 consecutive failed checks");
+      const loopIdx = s.indexOf("for i in $(seq 1 10); do", echoIdx);
+      const elseIdx = s.indexOf("else soak_ok=1; fi");
+      // the cutover runs between the guard and the watch; echo then loop sit inside the had_prev branch
+      expect(s.indexOf("if docker rename tugra_abc__rollout tugra_abc; then :;")).toBeGreaterThan(guardIdx);
+      expect(ifIdx).toBeGreaterThan(s.indexOf("if docker rename tugra_abc__rollout tugra_abc; then :;"));
+      expect(echoIdx).toBeGreaterThan(ifIdx);
+      expect(loopIdx).toBeGreaterThan(echoIdx);
+      expect(elseIdx).toBeGreaterThan(loopIdx);
+      // the defensive no-prev arm is kept and the markers are unchanged
+      expect(s).toContain('echo "TUGRA_ROLLOUT: soak_failed_no_prev"; exit 0');
+      for (const m of ["TUGRA_ROLLOUT: healthy", "TUGRA_ROLLOUT: reverted", "TUGRA_ROLLOUT: revert_failed"]) expect(s).toContain(m);
+    });
+
+    it("soak OFF scripts carry none of the first-deploy guard (byte-identical contract)", () => {
+      const off = buildRollingDeployScript(domained, "v2", { probe: httpProbe, ...gate });
+      expect(off).not.toContain("had_prev");
+      expect(off).not.toContain("post-cutover soak");
     });
 
     it("soak ON keeps the PRE-cutover gate-fail behaviour (old untouched, exit 3) unchanged", () => {
@@ -2408,7 +2441,7 @@ describe("container ops + networking", () => {
       expect(sha(buildRollingDeployScript({ ...dom, ...unset }, "v2", rollingOpts))).toBe("e06315e0a60affaf7ec73d20397cde5837cf8937fdef4aa1aee32a9e65b0052d");
       expect(
         sha(buildRollingDeployScript({ ...dom, ...unset }, "v2", { ...rollingOpts, soak: { windowSec: 30, intervalSec: 5 } })),
-      ).toBe("71207a530ddddaaa2fb71a7c71b29f5dea670fbd0378022c6ca93ce165df135a");
+      ).toBe("11959680e14e95aec9e60587388a28fde1897d550ebc0f68e3d5458c15c4987e");
       expect(
         sha(buildRecreateDeployScript({ ...withEnv, dbNetwork: true, hostPort: 8080, ...unset }, "v2", { probe: { kind: "stableWait" }, prevVersion: "v1", ...gate })),
       ).toBe("b0368331d6cd6a95a1f6d642dfedfdf44a8ed8ad9decd41c9cee694b611ee2b1");
@@ -3151,5 +3184,87 @@ describe("inline Dockerfile (D4 feature D)", () => {
     expect(buildRemoveScript({ id: "abc" })).toContain("rm -rf /etc/tugra/builds/abc /etc/tugra/builds/abc.plan.json\n".trimEnd());
     expect(buildRemoveScript({ id: "abc" })).not.toContain(".Dockerfile");
     expect(buildRemoveScript({ id: "abc", inlineDockerfile: text })).toContain("rm -rf /etc/tugra/builds/abc /etc/tugra/builds/abc.plan.json /etc/tugra/builds/abc.Dockerfile");
+  });
+});
+
+describe("soak default + first-deploy guard (real bash, stub docker)", () => {
+  const bashOk = spawnSync("bash", ["-c", "echo ok"]).stdout?.toString().trim() === "ok";
+  const d = bashOk ? describe : describe.skip;
+  const app: AppSpec = { ...({ id: "abc", name: "n", source: "IMAGE", image: "nginx", containerPort: 80, domain: "app.example.com" } as unknown as AppSpec) };
+  const gate = { retries: 3, intervalSec: 3, startPeriodSec: 0 };
+
+  it("DEFAULT_POST_CUTOVER_SOAK_SEC is 30 and only COMPOSE defaults to 0", () => {
+    expect(DEFAULT_POST_CUTOVER_SOAK_SEC).toBe(30);
+    expect(defaultSoakFor("IMAGE")).toBe(30);
+    expect(defaultSoakFor("GIT")).toBe(30);
+    expect(defaultSoakFor("COMPOSE")).toBe(0);
+  });
+
+  it("schema.prisma and the migration agree with DEFAULT_POST_CUTOVER_SOAK_SEC", () => {
+    const schema = readFileSync(join(__dirname, "../../prisma/schema.prisma"), "utf8");
+    const m = /postCutoverSoakSec\s+Int\s+@default\((\d+)\)/.exec(schema);
+    expect(Number(m?.[1])).toBe(DEFAULT_POST_CUTOVER_SOAK_SEC);
+    const sql = readFileSync(join(__dirname, "../../prisma/migrations/20261119095000_app_soak_default_on/migration.sql"), "utf8");
+    const ddl = sql.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+    expect(Number(/ALTER COLUMN "postCutoverSoakSec" SET DEFAULT (\d+)/.exec(ddl)?.[1])).toBe(DEFAULT_POST_CUTOVER_SOAK_SEC);
+    expect(sql).toContain("existing rows are deliberately NOT backfilled");
+    expect(ddl).not.toMatch(/UPDATE/i);
+  });
+
+  d("exec", () => {
+    let dir: string;
+    beforeAll(() => {
+      dir = mkdtempSync(join(tmpdir(), "tugra-soak-"));
+      // docker stub: `inspect` fails for __prev unless HAVE_PREV=1; the health probe (`run --rm`) prints 200 until the
+      // rollout was renamed into place, then 500 (so any post-cutover probe fails). Everything else succeeds.
+      writeFileSync(
+        join(dir, "docker"),
+        [
+          "#!/bin/bash",
+          'echo "docker $*" >> "$LOG"',
+          'case "$1" in',
+          '  inspect) case "$*" in *__prev*) [ "$HAVE_PREV" = 1 ] && exit 0 || exit 1;; esac; echo true; exit 0;;',
+          '  run) case "$*" in *"--rm"*) if [ -f "$FLAG" ]; then echo 500; else echo 200; fi;; esac; exit 0;;',
+          '  rename) case "$2" in *__rollout) touch "$FLAG";; esac; exit 0;;',
+          "esac",
+          "exit 0",
+        ].join("\n") + "\n",
+      );
+      writeFileSync(join(dir, "sleep"), '#!/bin/bash\necho "sleep $*" >> "$LOG"\nexit 0\n');
+      chmodSync(join(dir, "docker"), 0o755);
+      chmodSync(join(dir, "sleep"), 0o755);
+    });
+    afterAll(() => rmSync(dir, { recursive: true, force: true }));
+    const exec = (script: string, havePrev: boolean) => {
+      const log = join(dir, "log");
+      const flag = join(dir, "flag");
+      writeFileSync(log, "");
+      rmSync(flag, { force: true });
+      const r = spawnSync("bash", ["-c", script], {
+        env: { PATH: `${dir}:${process.env.PATH}`, LOG: log, FLAG: flag, HAVE_PREV: havePrev ? "1" : "0" },
+        encoding: "utf8",
+      });
+      return { status: r.status, out: r.stdout, log: readFileSync(log, "utf8") };
+    };
+    const script = (soakSec: number) =>
+      buildRollingDeployScript(app, "v2", { build: false, probe: { kind: "httpExternal", port: 80, path: "/" }, soak: { windowSec: soakSec, intervalSec: 3 }, ...gate });
+    const soakSleeps = (log: string) => log.split("\n").filter((l) => l === "sleep 3").length;
+
+    it("a first-ever deploy (no __prev) finishes healthy without waiting out the soak window", () => {
+      const r = exec(script(30), false);
+      expect(r.out).toContain("TUGRA_ROLLOUT: healthy");
+      expect(r.status).toBe(0);
+      expect(r.out).not.toContain("post-cutover soak: watching");
+      expect(r.out).not.toContain("soak_failed_no_prev");
+      // the only `sleep 3` calls are the pre-cutover gate's, never the 10-iteration soak loop
+      expect(soakSleeps(r.log)).toBeLessThan(10);
+    });
+
+    it("with a __prev the watch runs the full loop (a sustained 500 after cutover reverts, exit 4)", () => {
+      const r = exec(script(30), true);
+      expect(r.out).toContain("post-cutover soak: watching the new version for 30s");
+      expect(r.out).toContain("TUGRA_ROLLOUT: reverted");
+      expect(r.status).toBe(4);
+    });
   });
 });

@@ -75,6 +75,7 @@ import {
   resolveHealthGate,
   resolveSoak,
   soakRetries,
+  defaultSoakFor,
   buildStartScript,
   buildStopScript,
   runTag,
@@ -751,6 +752,7 @@ export class ApplicationsService {
         templateSlug: dto.templateSlug ?? null,
         environmentId,
         source,
+        postCutoverSoakSec: defaultSoakFor(source), // new apps soak by default (30 s; compose never rolls → 0); existing rows untouched
         image: dto.image ?? null,
         gitUrl: dto.gitUrl ?? null,
         gitBranch: dto.gitBranch ?? "main",
@@ -1169,6 +1171,7 @@ export class ApplicationsService {
           environmentId,
           source: "COMPOSE",
           composeFile: finalCompose,
+          postCutoverSoakSec: 0, // a compose app never rolls, so a soak window would only mislead
           serverId: server.id,
           teamId: server.teamId,
           env: {} as Prisma.InputJsonValue,
@@ -1412,6 +1415,7 @@ export class ApplicationsService {
           serverId: parent.serverId,
           environmentId: parent.environmentId,
           source: parent.source,
+          postCutoverSoakSec: 0, // a preview is disposable and redeploys per push; a default soak would only slow every PR push
           image: parent.image,
           gitUrl: parent.gitUrl,
           gitSourceId: parent.gitSourceId, // keep the GitHub-App link so a private-repo preview can mint a clone token
@@ -4733,9 +4737,10 @@ export class ApplicationsService {
       actor: userId,
       action: "app.deploysettings.update",
       target: id,
-      ...(cfg.stopGracePeriodSec !== undefined || cfg.drainSec !== undefined
+      ...(cfg.stopGracePeriodSec !== undefined || cfg.drainSec !== undefined || cfg.postCutoverSoakSec !== undefined
         ? {
             meta: {
+              ...(cfg.postCutoverSoakSec !== undefined ? { postCutoverSoakSec: cfg.postCutoverSoakSec } : {}),
               ...(cfg.stopGracePeriodSec !== undefined ? { stopGracePeriodSec: cfg.stopGracePeriodSec } : {}),
               ...(cfg.drainSec !== undefined ? { drainSec: cfg.drainSec } : {}),
             },

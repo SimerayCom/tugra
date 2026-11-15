@@ -352,7 +352,7 @@ export const SetDeploySettingsSchema = z
     imagesToKeep: z.number().int().min(1).max(20).nullable().optional(),
     // ROLLING path: seconds to keep the previous container after cutover and re-probe the new one; a
     // sustained failure in that window auto-reverts to the previous version. 0 = off (<= the deploy-timeout
-    // headroom). A per-app setting with a safe default (0), so existing deploys gain no latency.
+    // headroom). A per-app setting: new apps default to 30 (0 for compose), existing apps keep their stored value.
     postCutoverSoakSec: z.number().int().min(0).max(600).optional(),
     // Graceful-stop window (--stop-timeout / docker stop -t). null clears to Docker's default (10s).
     stopGracePeriodSec: z.number().int().min(1).max(3600).nullable().optional(),

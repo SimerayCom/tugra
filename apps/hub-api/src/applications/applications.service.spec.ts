@@ -288,6 +288,18 @@ describe("ApplicationsService", () => {
     expect(submitDeploy).toHaveBeenCalledWith(expect.objectContaining({ id: "app1" }), "u1");
   });
 
+  it("a new image/git app starts with the 30 s post-cutover soak, a COMPOSE app with 0", async () => {
+    for (const [body, expected] of [
+      [{ name: "web", serverId: "s1", image: "nginx" }, 30],
+      [{ name: "web", serverId: "s1", source: "GIT", gitUrl: "https://github.com/u/r.git" }, 30],
+      [{ name: "web", serverId: "s1", source: "COMPOSE", composeFile: "services:\n  web:\n    image: nginx\n" }, 0],
+    ] as const) {
+      const { prisma, access } = createDeps();
+      await make(prisma, access, {} as AgentWsServer).create("u1", body as never);
+      expect((prisma.application.create as jest.Mock).mock.calls[0][0].data.postCutoverSoakSec).toBe(expected);
+    }
+  });
+
   it("does not deploy when the deploy flag is absent", async () => {
     const { prisma, access } = createDeps();
     const svc = make(prisma, access, {} as AgentWsServer);
@@ -2479,6 +2491,17 @@ describe("ApplicationsService", () => {
     expect(data.envEnc).toContain("DB_PASSWORD");
     // No environment chosen -> resolved to the team default, never null.
     expect(data.environmentId).toBe("env-default");
+  });
+
+  it("a template-installed compose app is created with soak 0 (compose never rolls)", async () => {
+    const create = jest.fn().mockResolvedValue({ ...app, source: "COMPOSE" });
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) },
+      application: { create },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined), membershipPermissions: jest.fn().mockResolvedValue(OWNER_PERMS()) } as unknown as TeamAccessService;
+    await make(prisma, access, {} as AgentWsServer).createFromTemplate("u1", "wordpress", { name: "blog", serverId: "s1" });
+    expect(create.mock.calls[0][0].data.postCutoverSoakSec).toBe(0);
   });
 
   function templatePrisma() {
@@ -5928,6 +5951,21 @@ describe("ApplicationsService — durable dispatch + hub-crash adoption (ACTION-
     expect(d.depUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "SUCCESS", exitCode: 0 }) }));
   });
 
+  it("a soak-enabled rolling app's DISPATCHED deadlineAt covers deploy timeout + soak budget + the 120 s slack", async () => {
+    const d = deps({ domain: "app.example.com", deployStrategy: "ROLLING", rollbackOnFailure: true, volumes: null, extraPorts: null, postCutoverSoakSec: 30 });
+    const sendCommand = jest.fn().mockImplementation(async (_s: string, _c: string, _cap: string, _t: number, _chunk: unknown, _start: unknown, opts?: { reqId?: string; beforeSend?: (r: string) => Promise<void> }) => {
+      if (opts?.beforeSend) await opts.beforeSend(opts.reqId ?? "x");
+      return { exitCode: 0, output: "deployed" };
+    });
+    const before = Date.now();
+    await make(d.prisma, d.access, { sendCommand, agentSupports: jest.fn().mockReturnValue(true) }).deploy("u1", "app1");
+    const cas = dispatchCalls(d.updateMany)[0];
+    // 30 s window at the 3 s default interval = 10 probes x (3 s + 5 s probe timeout) + 30 s tail = 110 s
+    const soakBudgetMs = (10 * (3 + 5) + 30) * 1000;
+    expect(cas.data.deadlineAt.getTime()).toBeGreaterThanOrEqual(before + 300_000 + soakBudgetMs + 120_000);
+    expect(sendCommand.mock.calls[0][3]).toBeGreaterThanOrEqual(300_000 + soakBudgetMs);
+  });
+
   it("a lost lease (CAS count 0) aborts BEFORE anything reaches the agent", async () => {
     const d = deps();
     d.updateMany.mockImplementation(async (args: { data?: { phase?: string } }) => ({ count: args.data?.phase === "DISPATCHED" ? 0 : 1 }));
@@ -6482,6 +6520,16 @@ describe("ApplicationsService — container ops + networking", () => {
       expect(update.mock.calls[2][0].data).toEqual({ stopGracePeriodSec: null, drainSec: null });
     });
 
+    it("audits postCutoverSoakSec (and only when it was part of the update)", async () => {
+      const { svc } = mk({});
+      await svc.setDeploySettings("u1", "app1", { postCutoverSoakSec: 45 });
+      expect(audit.log).toHaveBeenLastCalledWith(expect.objectContaining({ action: "app.deploysettings.update", meta: { postCutoverSoakSec: 45 } }));
+      await svc.setDeploySettings("u1", "app1", { postCutoverSoakSec: 0, drainSec: 5 });
+      expect(audit.log).toHaveBeenLastCalledWith(expect.objectContaining({ meta: { postCutoverSoakSec: 0, drainSec: 5 } }));
+      await svc.setDeploySettings("u1", "app1", { imagesToKeep: 3 });
+      expect((audit.log as jest.Mock).mock.calls.at(-1)![0].meta).toBeUndefined();
+    });
+
     it("refuses a non-null value on COMPOSE and cluster apps, but allows clearing", async () => {
       await expect(mk({ source: "COMPOSE" }).svc.setDeploySettings("u1", "app1", { stopGracePeriodSec: 30 })).rejects.toThrow(/compose file/);
       await expect(mk({ clusterId: "c1" }).svc.setDeploySettings("u1", "app1", { drainSec: 5 })).rejects.toThrow(/swarm/);
@@ -6587,6 +6635,7 @@ describe("ApplicationsService — container ops + networking", () => {
       expect("containerAlias" in data).toBe(false);
       expect("networks" in data).toBe(false);
       expect("drainSec" in data).toBe(false);
+      expect(data.postCutoverSoakSec).toBe(0); // a preview never inherits the 30 s default (or the parent's value)
     });
   });
 
@@ -6603,6 +6652,20 @@ describe("ApplicationsService — container ops + networking", () => {
       await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", {});
       const data = create.mock.calls[0][0].data;
       expect(data).toMatchObject({ stopGracePeriodSec: 30, drainSec: 4, restartMaxRetries: 2, networks: ["a"], containerAlias: null });
+    });
+    it("copies the source's post-cutover soak value verbatim (an existing 0 stays 0, a custom value is kept)", async () => {
+      for (const v of [0, 90]) {
+        const src = { ...classic, id: "src1", name: "shop", image: "nginx", isPreview: false, volumes: null, postCutoverSoakSec: v };
+        const create = jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ ...data, id: "clone1", createdAt: new Date() }));
+        const prisma = {
+          application: { findUnique: jest.fn().mockResolvedValue(src), create },
+          server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1", publicIp: null, publicIpv6: null, wildcardDomain: null, magicSuffix: null, certMode: "http", proxyBind: "public" }) },
+          appIcon: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
+          scheduledTask: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
+        } as unknown as PrismaService;
+        await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", {});
+        expect(create.mock.calls[0][0].data.postCutoverSoakSec).toBe(v);
+      }
     });
   });
 });

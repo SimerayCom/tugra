@@ -117,6 +117,16 @@ describe("Applications / deploy (e2e)", () => {
     expect(persisted?.environmentId).toBeTruthy();
     expect(persisted?.environmentId).toBe(defEnv?.id);
 
+    // SOAK DEFAULT: a new app created through the service starts with the 30 s post-cutover soak, and the migration
+    // only moved the column default (existing rows were not backfilled).
+    const soakRow = await prisma.application.findUnique({ where: { id: appId }, select: { postCutoverSoakSec: true } });
+    expect(soakRow?.postCutoverSoakSec).toBe(30);
+    const colDefault = await prisma.$queryRaw<{ column_default: string }[]>`SELECT column_default FROM information_schema.columns WHERE table_name = 'Application' AND column_name = 'postCutoverSoakSec'`;
+    expect(colDefault[0]?.column_default).toBe("30");
+    // a row written with an explicit 0 (an existing opt-out) stays 0
+    await prisma.application.update({ where: { id: appId }, data: { postCutoverSoakSec: 0 } });
+    expect((await prisma.application.findUnique({ where: { id: appId }, select: { postCutoverSoakSec: true } }))?.postCutoverSoakSec).toBe(0);
+
     await request(app.getHttpServer())
       .post(`/apps/${appId}/deploy`)
       .set("Authorization", `Bearer ${token}`)
