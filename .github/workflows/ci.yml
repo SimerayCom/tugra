@@ -83,6 +83,22 @@ jobs:
       - name: Build the agent image (the file helper re-invokes it)
         working-directory: .
         run: docker build -f deploy/Dockerfile.agent -t tugra-agent:it .
+      # The pinned MinIO client is vendored into the agent image (object migration helper containers run it). Assert the
+      # shipped binary reports the release that destination.ts / the Dockerfile pin (the sha256 is verified at build time).
+      - name: Pinned mc ships in the agent image (amd64)
+        run: |
+          want="$(sed -n 's/^export const MC_VERSION = "\(.*\)";/\1/p' apps/hub-api/src/backups/destination.ts)"
+          test -n "$want"
+          docker run --rm --entrypoint mc tugra-agent:it --version | tee /dev/stderr | grep -q "$want"
+        working-directory: .
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Pinned mc ships in the agent image (arm64)
+        working-directory: .
+        run: |
+          want="$(sed -n 's/^export const MC_VERSION = "\(.*\)";/\1/p' apps/hub-api/src/backups/destination.ts)"
+          docker buildx build --platform linux/arm64 -f deploy/Dockerfile.agent -t tugra-agent:it-arm64 --load .
+          docker run --rm --platform linux/arm64 --entrypoint mc tugra-agent:it-arm64 --version | tee /dev/stderr | grep -q "$want"
       - name: Real-docker integration tests
         env:
           TUGRA_AGENT_IMAGE: tugra-agent:it

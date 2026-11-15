@@ -150,6 +150,7 @@ model Team {
   savedViews         SavedView[]
   customRoles        TeamRole[]
   clusters           Cluster[]
+  objectMigrations   ObjectMigration[]
   createdAt          DateTime              @default(now())
 }
 
@@ -2051,4 +2052,66 @@ model AppMove {
   @@index([phase])
   @@index([sourceServerId])
   @@index([targetServerId])
+}
+
+/// S3->S3 bucket mirror run by the TARGET server's agent (mc mirror in a detached helper container). Credentials are
+/// encrypted (CryptoService) and appear in NO view, audit row or log. No object keys are stored: only counts, fixed codes
+/// and a classified error.
+model ObjectMigration {
+  id                String    @id @default(cuid())
+  team              Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId            String
+  createdById       String
+  name              String
+  targetServerId    String
+  status            String    @default("DRAFT") // DRAFT|PREFLIGHTED|SEEDING|SEEDED|FINALIZING|FINAL|VERIFYING|DONE|FAILED
+  phase             String? // seed|final while helpers are live
+  srcEndpoint       String // scheme://host[:port]
+  srcAccessKeyEnc   String
+  srcSecretKeyEnc   String
+  dstEndpoint       String
+  dstAccessKeyEnc   String
+  dstSecretKeyEnc   String
+  preserve          Boolean   @default(true) // mc mirror --preserve
+  removeExtraneous  Boolean   @default(false) // final pass --remove (explicit ack)
+  mergeIntoExisting Boolean   @default(false) // explicit ack when a destination bucket already has objects
+  cancelRequested   Boolean   @default(false)
+  warnings          Json? // [{code, level, bucket?}] fixed codes, secret-free
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  finishedAt        DateTime?
+  buckets           ObjectMigrationBucket[]
+
+  @@index([teamId, createdAt])
+  @@index([targetServerId, status])
+}
+
+model ObjectMigrationBucket {
+  id           String          @id @default(cuid())
+  migration    ObjectMigration @relation(fields: [migrationId], references: [id], onDelete: Cascade)
+  migrationId  String
+  idx          Int
+  srcBucket    String
+  dstBucket    String
+  exclude      String[]        @default([]) // mc --exclude globs (charset-validated)
+  selected     Boolean         @default(false) // nothing is pre-selected
+  status       String          @default("PENDING") // PENDING|QUEUED|SEEDING|SEEDED|FINALIZING|FINAL|VERIFIED|DIFFERS|FAILED
+  srcObjects   BigInt?
+  srcBytes     BigInt?
+  dstObjects   BigInt?
+  dstBytes     BigInt?
+  doneObjects  BigInt?
+  doneBytes    BigInt?
+  diffMissing  Int?
+  diffDiffer   Int?
+  diffExtra    Int?
+  versioning   String? // informational; versions are NOT carried
+  config       Json? // exported anonymous policy / ilm / tags, each <=64 KiB, secret-free
+  configStatus String? // NONE|EXPORTED|APPLIED|FAILED
+  lastError    String? // fixed classification code, <=1 KiB, never creds, never object keys
+  startedAt    DateTime?
+  finishedAt   DateTime?
+
+  @@unique([migrationId, srcBucket])
+  @@unique([migrationId, idx])
 }

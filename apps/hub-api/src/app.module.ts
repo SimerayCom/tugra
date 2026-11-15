@@ -27,6 +27,7 @@ import { RolloutsModule } from "./rollouts/rollouts.module";
 import { AgentUpdateModule } from "./agent-update/agent-update.module";
 import { ApplicationsModule } from "./applications/applications.module";
 import { AppMovesModule } from "./app-moves/app-moves.module";
+import { ObjectMigrationsModule } from "./object-migrations/object-migrations.module";
 import { FilesModule } from "./files/files.module";
 import { DatabasesModule } from "./databases/databases.module";
 import { BackupsModule } from "./backups/backups.module";
@@ -97,6 +98,7 @@ import { ApiExceptionFilter } from "./common/api-exception.filter";
     AgentUpdateModule,
     ApplicationsModule,
     AppMovesModule, // move an app (same id, data included) to another server
+    ObjectMigrationsModule, // S3/MinIO bucket mirror (mc) run by the target agent
     FilesModule,
     DatabasesModule,
     BackupsModule,

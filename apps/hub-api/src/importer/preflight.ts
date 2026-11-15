@@ -11,6 +11,13 @@ const DEFAULT_CAP_MIB = Math.round(DEFAULT_MAX_ARTIFACT_BYTES / (1024 * 1024));
 // Mirrors apply-map's canonMountPath so a type lookup matches the mapper's declared path exactly.
 const canonMount = (raw?: string): string => (raw ?? "").trim().replace(/\/{2,}/g, "/").replace(/(.)\/+$/, "$1");
 
+/** A MinIO object-store service: by its one-click template slug, or by a MinIO image in its compose file. */
+export function isMinioService(s: { templateSlug?: string; composeFile?: string }): boolean {
+  return s.templateSlug === "minio" || /minio\/minio/.test(s.composeFile ?? "");
+}
+export const MINIO_SERVICE_NOTE =
+  "object data is not copied by this import - use Object migration (keys, sizes, metadata, timestamps; not versions, IAM users, replication or notifications)";
+
 type VolumeRow = NonNullable<ImportPreflight["volumes"]>[number];
 
 /**
@@ -88,7 +95,9 @@ export function buildPreflight(fleet: ForeignFleet, options: ImportOptions, inve
   const services = fleet.services.map((s) => ({
     name: s.name,
     members: s.memberApps.length + s.memberDbs.length,
-    note: "service stack (compose / one-click) — not imported yet; recreate it on Tugra and copy its volume data manually (rsync; quiesce the source first)",
+    note: isMinioService(s)
+      ? MINIO_SERVICE_NOTE
+      : "service stack (compose / one-click) — not imported yet; recreate it on Tugra and copy its volume data manually (rsync; quiesce the source first)",
   }));
 
   const appsWithVolumeData = carried ? 0 : fleet.apps.filter((a) => (a.volumes ?? []).length > 0).length;

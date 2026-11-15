@@ -32,8 +32,9 @@ export const LOCAL_DEST: DestinationSpec = {
   encryption: { enabled: false, key: "" },
 };
 
-/** Single-quote a value for safe interpolation into an `sh -c` command string. */
-function shq(v: string): string {
+/** Single-quote a value for safe interpolation into an `sh -c` command string. Exported so the object-migration
+ *  script builders share this ONE quoting routine (never a copy). */
+export function shq(v: string): string {
   return `'${v.replaceAll("'", "'\\''")}'`;
 }
 
@@ -44,8 +45,12 @@ export const MC_ALIAS = "tdest";
 // sha256 (supply-chain integrity — the old install curl'd the mutable "latest" with no check), and detect
 // the host arch so arm64 servers get the right binary (the old install was amd64-only → broken on arm64).
 // Source: GitHub Releases — MinIO discontinued the free dl.min.io binary mirror (it now returns 410 Gone),
-// which silently broke every S3 backup. The GitHub asset is byte-identical (same sha256) and keeps mc out
-// of the agent image (license separation: mc is AGPL, the agent is MIT).
+// which silently broke every S3 backup. The GitHub asset is byte-identical (same sha256).
+// The SAME pinned release is also vendored into the agent image (deploy/Dockerfile.agent, a separate unmodified
+// binary = mere aggregation; see NOTICE) so object migration can run mc in a helper container of the agent's own
+// image. MC_INSTALL below still works unchanged: `command -v mc` now short-circuits on an image that ships it, and it
+// stays the fallback for an agent run outside the image. dockerfile-agent-mc.spec.ts keeps the Dockerfile pins equal
+// to the constants here.
 // To bump: pick a RELEASE from github.com/minio/mc/releases, and copy the matching `.sha256sum` for
 // linux-amd64 + linux-arm64 into the constants below.
 export const MC_VERSION = "RELEASE.2025-08-13T08-35-41Z";
@@ -85,10 +90,27 @@ export function endpointUrl(s3: S3Config): string {
  *  shell-quoted — encodeURIComponent leaves ' ! ~ * ( ) raw, which would otherwise break/inject the
  *  command line when the creds contain one (this env prefix is spliced into an `sh -c` string). */
 export function mcHostEnv(s3: S3Config): string {
-  const url = new URL(endpointUrl(s3));
+  const raw = mcHostEnvFor(MC_ALIAS, s3);
+  const eq = raw.indexOf("=");
+  return `${raw.slice(0, eq + 1)}${shq(raw.slice(eq + 1))}`;
+}
+
+/** The RAW `MC_HOST_<alias>=<url>` pair (creds URL-encoded into the userinfo), NOT shell-quoted: the caller quotes the
+ *  value (see {@link shq}). Shared by the backup scripts (alias `tdest`, via {@link mcHostEnv}) and the object-migration
+ *  scripts (aliases `src` / `dst`). */
+export function mcHostEnvFor(alias: string, s3: { endpoint: string; accessKey: string; secretKey: string }): string {
+  const url = new URL(endpointUrl(s3 as S3Config));
   url.username = encodeURIComponent(s3.accessKey);
   url.password = encodeURIComponent(s3.secretKey);
-  return `MC_HOST_${MC_ALIAS}=${shq(url.toString())}`;
+  return `MC_HOST_${alias}=${url.toString()}`;
+}
+
+/** Like {@link endpointUrl} but with NO implicit `https://` fallback: the endpoint must already carry a scheme (the object
+ *  migration DTO guarantees it). Throws otherwise, so a malformed value can never silently become https. */
+export function endpointUrlStrict(endpoint: string): string {
+  const ep = endpoint.trim();
+  if (!/^https?:\/\//i.test(ep)) throw new Error("endpoint must start with http:// or https://");
+  return ep.replace(/\/+$/, "");
 }
 
 /** The object key (path) inside the bucket for a given db + filename. */

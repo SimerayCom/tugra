@@ -32,3 +32,20 @@ describe("mc install (supply-chain pinned + arch-aware)", () => {
     expect(MC_INSTALL).toContain('curl -fsSL "https://github.com/minio/mc/releases/download/');
   });
 });
+
+describe("object-migration helpers share the backup quoting (no copy)", () => {
+  it("mcHostEnv stays byte-identical to the pre-refactor output (alias tdest, whole value shq-quoted)", async () => {
+    const { mcHostEnv, mcHostEnvFor, shq, endpointUrlStrict } = await import("./destination");
+    const s3 = { bucket: "b", region: "r", endpoint: "s3.example.com", accessKey: "A'K!~", secretKey: "S$K`\\", prefix: "" };
+    const url = new URL("https://s3.example.com");
+    url.username = encodeURIComponent(s3.accessKey);
+    url.password = encodeURIComponent(s3.secretKey);
+    expect(mcHostEnv(s3)).toBe(`MC_HOST_tdest='${url.toString().replaceAll("'", "'\\''")}'`);
+    // the raw pair carries the same URL, unquoted
+    expect(mcHostEnvFor("tdest", s3)).toBe(`MC_HOST_tdest=${url.toString()}`);
+    expect(shq("a'b")).toBe("'a'\\''b'");
+    // an https default for scheme-less endpoints is kept for backups, refused for object migration
+    expect(() => endpointUrlStrict("s3.example.com")).toThrow(/http/);
+    expect(endpointUrlStrict("http://h:9000///")).toBe("http://h:9000");
+  });
+});

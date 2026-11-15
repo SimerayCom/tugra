@@ -37,6 +37,17 @@ dashboard-icons project.
 Individual brand logos are trademarks of their respective owners and are used
 here only to identify the corresponding software.
 
+MinIO client (mc)
+-----------------
+The agent container image bundles the MinIO client (/usr/local/bin/mc) so object migration can mirror buckets between
+two S3 endpoints in a helper container of the agent's own image. It is the unmodified upstream release binary, pinned to
+a release and verified against a sha256 at image build time (see deploy/Dockerfile.agent), and it is only executed as a
+separate program (never linked into Tugra code).
+  Source:  https://github.com/minio/mc (release RELEASE.2025-08-13T08-35-41Z)
+  License: GNU Affero General Public License v3.0, https://www.gnu.org/licenses/agpl-3.0.html
+           (source for the shipped binary: https://github.com/minio/mc/tree/RELEASE.2025-08-13T08-35-41Z)
+MinIO is a trademark of MinIO, Inc.; the name is used here only to identify the software.
+
 IP geolocation database
 -----------------------
 The agent container image bundles the DB-IP Lite Country database

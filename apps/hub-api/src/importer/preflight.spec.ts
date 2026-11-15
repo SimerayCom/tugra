@@ -116,3 +116,20 @@ describe("buildPreflight — strict env + git hosts (additive, outside planHash)
     expect(buildPreflight(fleet({ apps: [app()] }), o)).not.toHaveProperty("git");
   });
 });
+
+describe("buildPreflight — MinIO services point at Object migration (everything else byte-identical)", () => {
+  const o: ImportOptions = { sourceKind: "coolify" };
+  const OTHER = "service stack (compose / one-click) — not imported yet; recreate it on Tugra and copy its volume data manually (rsync; quiesce the source first)";
+  const svc = (over: Partial<ForeignFleet["services"][number]>): ForeignFleet["services"][number] => ({ sourceRef: "x", name: "svc", memberApps: ["a"], memberDbs: [], ...over });
+
+  it("a service with templateSlug minio, or a minio/minio image in its compose file, gets the Object migration note", () => {
+    const p = buildPreflight(fleet({ services: [svc({ name: "simeray-storage", templateSlug: "minio" }), svc({ name: "storage-xcinex", composeFile: "services:\n  minio:\n    image: minio/minio:RELEASE.2025\n" })] }), o);
+    for (const s of p.services) expect(s.note).toMatch(/^object data is not copied by this import - use Object migration/);
+    expect(p.services[0].note).toMatch(/not versions, IAM users, replication or notifications/);
+  });
+
+  it("every other service keeps the existing note byte-identical", () => {
+    const p = buildPreflight(fleet({ services: [svc({ name: "plausible", templateSlug: "plausible" }), svc({ name: "nope", composeFile: "services: { web: { image: nginx } }" }), svc({ name: "minio-like", templateSlug: "minio-console-proxy" })] }), o);
+    expect(p.services.map((s) => s.note)).toEqual([OTHER, OTHER, OTHER]);
+  });
+});

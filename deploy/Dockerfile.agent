@@ -44,6 +44,26 @@ RUN mkdir -p /out /tmp/geoip \
       echo "WARNING: could not fetch a valid DB-IP Lite Country database from ${DBIP_COUNTRY_URL}; building without a baked GeoIP database" >&2; \
     fi
 
+# MinIO client (mc): a pinned, sha256-verified, UNMODIFIED release binary vendored into the agent image so object
+# migration can run `mc mirror` in a helper container of the agent's own image (hub-built scripts,
+# apps/hub-api/src/object-migrations). It is a separate executable that is only invoked, never linked: aggregation, not
+# a combined work (mc is AGPL-3.0; see NOTICE). The three pins below MUST equal MC_VERSION / MC_SHA256 in
+# apps/hub-api/src/backups/destination.ts (a jest drift test enforces it). Download URL (GitHub Releases, byte-identical to
+# the former dl.min.io mirror):
+#   https://github.com/minio/mc/releases/download/${MC_VERSION}/mc.linux-${TARGETARCH}.${MC_VERSION}
+# To bump: pick a RELEASE at github.com/minio/mc/releases, copy the matching .sha256sum for linux-amd64 + linux-arm64.
+FROM debian:bookworm-slim AS mc
+ARG TARGETARCH
+ARG MC_VERSION=RELEASE.2025-08-13T08-35-41Z
+ARG MC_SHA256_AMD64=01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891
+ARG MC_SHA256_ARM64=14c8c9616cfce4636add161304353244e8de383b2e2752c0e9dad01d4c27c12c
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/* \
+ && case "$TARGETARCH" in amd64) S="$MC_SHA256_AMD64";; arm64) S="$MC_SHA256_ARM64";; *) echo "unsupported arch: $TARGETARCH" >&2; exit 1;; esac \
+ && mkdir -p /out \
+ && curl -fsSL "https://github.com/minio/mc/releases/download/${MC_VERSION}/mc.linux-${TARGETARCH}.${MC_VERSION}" -o /out/mc \
+ && echo "$S  /out/mc" | sha256sum -c - \
+ && chmod 0755 /out/mc
+
 FROM debian:bookworm-slim
 # OCI metadata so the GHCR package links to the repo (and shows its README + logo) with license/vendor.
 LABEL org.opencontainers.image.source="https://github.com/SimerayCom/tugra" \
@@ -67,6 +87,8 @@ COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=dockercli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
 COPY --from=dockercli /usr/local/libexec/docker/cli-plugins/docker-buildx /usr/local/libexec/docker/cli-plugins/docker-buildx
 COPY --from=build /tugra-agent /usr/local/bin/tugra-agent
+# Pinned MinIO client (see the `mc` stage). Used by object-migration helper containers: `docker run --entrypoint mc <agent image>`.
+COPY --from=mc /out/mc /usr/local/bin/mc
 # Baked DB-IP Lite Country database (may be absent if the build-time download failed; copying the directory
 # contents never fails on an empty source). Path must match traffic.BakedGeoIPPath.
 COPY --from=geoip /out/ /usr/share/tugra/geoip/
