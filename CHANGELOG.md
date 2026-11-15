@@ -7,6 +7,43 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **GPU detection.** A server's page has a **Detected GPUs** card: GPUs found on the PCI bus, the NVIDIA driver
+  and the Docker `nvidia` runtime, and one verdict (ready, driver missing, runtime missing, non-NVIDIA, none, probe
+  failed). The result is stored per server, so read-only members see the last snapshot; a member with the
+  `servers:ops` permission refreshes an unknown or stale one automatically and can re-run detection with a button
+  (`GET /servers/{id}/gpus`, `POST /servers/{id}/gpus/refresh`, capability `bulk`). The probe is a fixed script
+  that starts an unprivileged `nvidia-smi` helper container from the agent image (no network, read-only, `--pull
+  never`) under its own timeout. BMC and hypervisor display adapters (ASPEED, Matrox, VMware, virtio, QEMU, Hyper-V
+  and similar) are listed as virtual displays, not as GPUs. On an app's **Resources** card the GPUs field now shows
+  what was detected on its server, one-click values (`all`, a count, `device=<index or UUID>`) and a soft warning
+  when the value does not match; it never blocks saving. Cloning an app that requests GPUs to a server with no
+  detected NVIDIA GPU keeps the setting and warns. Servers that were never checked read "Not checked yet", never
+  "no GPU".
+
+- **Pull request previews from GitLab, Gitea, Forgejo and Bitbucket.** The per-app webhook now recognises
+  merge/pull-request events from GitLab, Gitea, Forgejo and Bitbucket (Cloud and Server) as well as GitHub, by
+  their own event headers, and creates, updates and removes the preview like the GitHub path. Responses carry a
+  `reason` (shown in the provider's delivery log) when nothing happens. Behaviour changes: pull requests from a
+  fork (or with an unknown head repository) are now ignored on every provider, including GitHub, because the
+  preview builds a branch of the parent repository with the parent's environment and credentials; previews are
+  created only for Git-built apps (a close event still removes an existing preview); for non-GitHub providers the
+  event's repository must match the app's repository; a Bitbucket "updated" event rebuilds only when the head
+  commit changed. Push webhooks are unchanged.
+
+- **Image update check for Image apps.** An app deployed from a registry image now shows whether its tag has a newer
+  image upstream: an **Image updates** card on the overview (Up to date, A newer image is available, Pinned,
+  Redeploy once to record the digest, and so on), an **Update available** badge, and a **Pull & redeploy** button for
+  members who can deploy. The server the app runs on asks the registry for the tag's manifest digest (the hub never
+  contacts a registry) and compares it with the digest recorded at the last successful deploy; credentials stored
+  on the app are used. Apps are checked every `IMAGE_UPDATE_CHECK_INTERVAL_MIN` minutes (default 360, `0` turns the
+  feature off for the whole hub) and again after each deploy; repeated failures back off to once a day.
+  `POST /apps/{id}/image-update-check` checks now (deploy permission, throttled to one probe per 30 seconds) and
+  `PUT /apps/{id}/image-update-check` turns it off or on for one app. A new notification event,
+  `image_update_available`, fires once per new upstream digest; the first check after an upgrade only records the
+  baseline, so upgrading produces no notifications. Digest-pinned references are never checked, and editing the tag
+  shows no verdict until the next deploy. The app view also gains `canDeploy` and the server view `canOps`, so the
+  UI can hide actions the API would refuse.
+
 - **Per-variable environment flags.** Each variable of an Image, Git or Compose app can now be marked
   **Build time** (Git apps: passed to the image build as `--build-arg` / builder `--env`; with **Available at runtime**
   off it is build-only and never reaches the running container), **Literal** (Compose: the value is not expanded,
