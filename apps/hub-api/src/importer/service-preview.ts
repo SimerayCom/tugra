@@ -12,6 +12,8 @@ import type { ServiceChoice } from "./dto";
 export interface ServicePreview {
   itemRef: string;
   name: string;
+  /** The source server's display name, when the source gave one (Coolify names its own host `localhost`). */
+  sourceServer?: string;
   verdict: "importable" | "partial" | "skipped";
   compat: "template" | "passthrough" | "blocked";
   members: Array<{ name: string; status: "kept" | "dropped"; reason?: string }>;
@@ -32,7 +34,7 @@ export function buildServicePreview(svc: ForeignService, choice: ServiceChoice |
   const itemRef = ns("service", svc.serverRef, svc.sourceRef);
   const blockers = a.risks.filter((r) => r.level === "blocker").map((r) => ({ code: r.code, message: r.message }));
   if (!svc.composeFile) {
-    return { itemRef, name: choice?.name ?? svc.name, verdict: "skipped", compat: "blocked", members: [], env: { resolved: [], missing: [], secretsAvailable: false }, domains: [], domainHints: [], volumes: [], files: { needed: [], available: [] }, notCarried: [], blockers, floating: [], pinned: [], hold: false };
+    return { itemRef, name: choice?.name ?? svc.name, ...(svc.serverName ? { sourceServer: svc.serverName } : {}), verdict: "skipped", compat: "blocked", members: [], env: { resolved: [], missing: [], secretsAvailable: false }, domains: [], domainHints: [], volumes: [], files: { needed: [], available: [] }, notCarried: [], blockers, floating: [], pinned: [], hold: false };
   }
   const r = transformServiceCompose({ svc, raw: svc.composeFile, bundle: bundle ? { values: bundle.values, files: bundle.files } : undefined, choice });
   const kept = new Set(r.membersKept);
@@ -42,6 +44,7 @@ export function buildServicePreview(svc: ForeignService, choice: ServiceChoice |
   return {
     itemRef,
     name: choice?.name ?? svc.name,
+    ...(svc.serverName ? { sourceServer: svc.serverName } : {}),
     verdict,
     compat: verdict === "skipped" ? "blocked" : a.compat,
     members: memberNames.map((n) => (kept.has(n) ? { name: n, status: "kept" as const } : { name: n, status: "dropped" as const, reason: droppedBy.get(n) ?? "not part of the imported compose" })),

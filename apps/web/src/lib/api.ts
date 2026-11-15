@@ -113,6 +113,8 @@ import type {
   ImportGitLinksView,
   ImportRelinkResult,
   ImportPlan,
+  ImportServiceChoice,
+  ImportServicePreview,
   ImportRemoteKind,
   ImportSession,
   ImportOperation,
@@ -1990,7 +1992,7 @@ export const api = {
   importApply(
     input:
       | { sourceKind: "local-docker"; serverId: string; planHash: string }
-      | { sourceKind: ImportRemoteKind; sessionId: string; targetServerId: string; environmentId?: string; planHash: string; acks?: ImportAck[] },
+      | { sourceKind: ImportRemoteKind; sessionId: string; targetServerId: string; environmentId?: string; planHash: string; acks?: ImportAck[]; serviceChoices?: Record<string, ImportServiceChoice> },
   ) {
     return apiFetch<{ opId: string }>("/import/apply", { method: "POST", body: JSON.stringify(input) });
   },
@@ -2001,6 +2003,10 @@ export const api = {
   // After an import: link the created apps that a connected source now covers (choices pick a source for ambiguous apps).
   relinkImportGit(opId: string, choices?: Record<string, string>) {
     return apiFetch<{ results: ImportRelinkResult[]; linked: number }>(`/import/operations/${encodeURIComponent(opId)}/git-links/relink`, { method: "POST", body: JSON.stringify(choices && Object.keys(choices).length ? { choices } : {}) });
+  },
+  // Preview the SERVICE import (read-only, secret-free): per service its verdict, members, variable names, volumes, domains.
+  previewImportServices(input: { sessionId: string; sourceKind?: ImportRemoteKind; choices?: Record<string, ImportServiceChoice> }) {
+    return apiFetch<{ services: ImportServicePreview[] }>("/import/services/preview", { method: "POST", body: JSON.stringify(input) });
   },
   getImportOperation(opId: string) {
     return apiFetch<ImportOperation>(`/import/operations/${encodeURIComponent(opId)}`);

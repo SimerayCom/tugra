@@ -9,10 +9,12 @@ import { Card, SectionCard, Btn, EmptyState, Spinner } from "./ui";
 import { useToast } from "./toast";
 import { useConfirm } from "./confirm";
 import { CopyBtn } from "./copy-row";
-import { planSummary, itemsByKind, riskTone, opProgress, coverageApps, coverageCounts, hasDeferredCoverage, reasonText, ackableItems, buildAcks, runnableAfterAcks } from "../lib/import";
+import { planSummary, itemsByKind, riskTone, opProgress, coverageApps, coverageCounts, hasDeferredCoverage, reasonText, ackableItems, buildAcks, runnableAfterAcks, serviceChoicesPayload } from "../lib/import";
 import { EnvBlockers } from "./import/env-blockers";
 import { GitLinksPanel, GitRelinkCard, DeployKeyBlock } from "./import/git-links-panel";
-import type { ImportPlan, ImportPlanItem, ImportRiskLevel, ImportOperation, ImportOpTask, ImportRemoteKind, ImportTaskStatus, MintedMigrationToken, ImportRemapPlan, ImportRemapResult } from "../lib/types";
+import { ImportServicesPanel } from "./import-services-panel";
+import { ImportChecklist } from "./import-checklist";
+import type { ImportPlan, ImportPlanItem, ImportRiskLevel, ImportOperation, ImportOpTask, ImportRemoteKind, ImportServiceChoice, ImportTaskStatus, MintedMigrationToken, ImportRemapPlan, ImportRemapResult } from "../lib/types";
 
 const toneColor: Record<"danger" | "warning" | "info", string> = {
   danger: "var(--c-r)",
@@ -191,10 +193,22 @@ function PlanView({
   const unackedCount = ackableItems(plan).filter((it) => !acked.has(it.itemRef)).length;
   const runnable = runnableAfterAcks(plan, acked);
 
+  // Per-service choices (keyed by plan itemRef). Only what the operator changed is sent; an untouched card sends nothing.
+  const [choices, setChoices] = useState<Record<string, ImportServiceChoice>>({});
+  const [missingTargets, setMissingTargets] = useState(0);
+  const onChoice = (ref: string, patch: ImportServiceChoice | null) =>
+    setChoices((prev) => {
+      const next = { ...prev };
+      if (patch === null) delete next[ref];
+      else next[ref] = patch;
+      return next;
+    });
+  const serviceChoices = serviceChoicesPayload(plan, choices);
+
   const apply = useMutation({
     mutationFn: () => {
       const acks = buildAcks(plan, acked);
-      return api.importApply({ sourceKind: kind, sessionId, targetServerId: target, planHash: plan.planHash, ...(acks.length ? { acks } : {}) });
+      return api.importApply({ sourceKind: kind, sessionId, targetServerId: target, planHash: plan.planHash, ...(acks.length ? { acks } : {}), ...(serviceChoices ? { serviceChoices } : {}) });
     },
     onSuccess: (r) => onApplied(r.opId),
     onError: (e) => toast((e as Error).message, "error"),
@@ -246,15 +260,15 @@ function PlanView({
                 ))}
               </ul>
             )}
-            {plan.preflight.services.length > 0 && (
+            {plan.preflight.services.some((sv) => sv.verdict !== "skipped") && (
               <div style={{ marginTop: 10 }}>
-                <div style={{ fontSize: 12, color: "var(--c-am)", marginBottom: 4 }}>
-                  {t("import.servicesNotImported", { count: String(plan.preflight.services.length) })}
+                <div style={{ fontSize: 12, color: "var(--c-g)", marginBottom: 4 }}>
+                  {t("import.servicesImported", { count: String(plan.preflight.services.filter((sv) => sv.verdict !== "skipped").length) })}
                 </div>
                 <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: "var(--c-tx3)" }}>
-                  {plan.preflight.services.map((sv, i) => (
+                  {plan.preflight.services.filter((sv) => sv.verdict !== "skipped").map((sv, i) => (
                     <li key={i}>
-                      <span className="mono">{sv.name}{sv.members > 0 ? ` (${sv.members})` : ""}</span>
+                      <span className="mono">{sv.name}{sv.members > 0 ? ` (${sv.members})` : ""}</span> — {sv.note}
                       {sv.objectStore && (
                         <>
                           {" "}
@@ -262,6 +276,18 @@ function PlanView({
                         </>
                       )}
                     </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {plan.preflight.services.some((sv) => sv.verdict === "skipped") && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontSize: 12, color: "var(--c-am)", marginBottom: 4 }}>
+                  {t("import.servicesSkipped", { count: String(plan.preflight.services.filter((sv) => sv.verdict === "skipped").length) })}
+                </div>
+                <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: "var(--c-tx3)" }}>
+                  {plan.preflight.services.filter((sv) => sv.verdict === "skipped").map((sv, i) => (
+                    <li key={i}><span className="mono">{sv.name}{sv.members > 0 ? ` (${sv.members})` : ""}</span> — {sv.note}</li>
                   ))}
                 </ul>
               </div>
@@ -284,7 +310,8 @@ function PlanView({
           </select>
         )}
         <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "-4px 0 12px" }}>{t("import.targetHint")}</p>
-        <Btn onClick={() => apply.mutate()} disabled={apply.isPending || !target || runnable === 0 || unackedCount > 0}>
+        {missingTargets > 0 && <p role="alert" style={{ fontSize: 12, color: "var(--c-am)", margin: "0 0 8px" }}>{t("import.services.needsTarget")}</p>}
+        <Btn onClick={() => apply.mutate()} disabled={apply.isPending || !target || runnable === 0 || unackedCount > 0 || missingTargets > 0}>
           {apply.isPending ? t("import.applying") : t("import.apply")}
         </Btn>
       </SectionCard>
@@ -292,6 +319,7 @@ function PlanView({
       <EnvBlockers plan={plan} acked={acked} onChange={setAcked} />
       {target && (plan.preflight?.git?.hosts.length ?? 0) > 0 && <GitLinksPanel sessionId={sessionId} targetServerId={target} plan={plan} />}
       <CoverageCard plan={plan} />
+      <ImportServicesPanel sessionId={sessionId} kind={kind} plan={plan} servers={servers} choices={choices} onChoice={onChoice} onMissingTargets={setMissingTargets} />
       <Section title={t("import.appsSection")} items={groups.app} />
       <Section title={t("import.databasesSection")} items={groups.database} />
       {groups.volume.length > 0 && <Section title={t("import.volumesSection")} items={groups.volume} />}
@@ -380,6 +408,7 @@ function Timeline({ opId, onReset }: { opId: string; onReset: () => void }) {
             {task.message && <span style={{ color: "var(--c-tx3)", flexBasis: "100%", paddingLeft: 98 }}>{task.message}</span>}
             {task.git?.deployKeyPublic && <DeployKeyBlock publicKey={task.git.deployKeyPublic} />}
             <TaskNotCarried task={task} />
+            {task.service && <ServiceTaskDetails task={task} />}
           </div>
         ))}
       </div>
@@ -558,6 +587,54 @@ function CoverageCard({ plan }: { plan: ImportPlan }) {
         {hasDeferredCoverage(plan) && <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "10px 0 0" }}>{t("import.coverageDeferred")}</p>}
       </details>
     </SectionCard>
+  );
+}
+
+const STEP_KEY: Record<string, string> = {
+  prepare: "import.services.steps.prepare",
+  create: "import.services.steps.create",
+  domains: "import.services.steps.domains",
+  "config-files": "import.services.steps.config-files",
+  volumes: "import.services.steps.volumes",
+  done: "import.services.steps.done",
+};
+
+/** An applied service task: its members, config files, private network, what it could not carry, and the post-import
+ *  checklist (what to do before the stopped app is deployed). Names and fixed reasons only. */
+function ServiceTaskDetails({ task }: { task: ImportOpTask }) {
+  const t = useT();
+  const sv = task.service;
+  if (!sv) return null;
+  const name = task.name ?? task.itemRef ?? "";
+  const unmapped = [...sv.dropped, ...sv.serviceDomains.unmapped];
+  return (
+    <div style={{ flexBasis: "100%", paddingLeft: 98, color: "var(--c-tx3)" }}>
+      {sv.steps.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 2 }}>
+          {sv.steps.map((st) => (
+            <span key={st.name} style={{ color: st.status === "FAILED" ? "var(--c-r)" : st.status === "DONE" ? "var(--c-g)" : "var(--c-tx3)" }}>
+              {STEP_KEY[st.name] ? t(STEP_KEY[st.name]) : st.name}
+            </span>
+          ))}
+        </div>
+      )}
+      <div>{t("import.services.timeline.members", { list: sv.members.join(", ") })}</div>
+      {sv.configMounts > 0 && <div>{t("import.services.timeline.configMounts", { n: sv.configMounts })}</div>}
+      {sv.privateNetwork && <div>{t("import.services.timeline.network", { network: sv.privateNetwork.network, alias: sv.privateNetwork.alias })}</div>}
+      {unmapped.length > 0 && (
+        <details>
+          <summary style={{ cursor: "pointer" }}>{t("import.notCarriedCount", { n: unmapped.length })}</summary>
+          <ul style={{ margin: "4px 0 0", paddingLeft: 16 }}>
+            {unmapped.map((u, i) => (
+              <li key={`${u.field}-${i}`} style={{ wordBreak: "break-word" }}>
+                <span className="mono" style={{ wordBreak: "break-all" }}>{u.field}</span>: {u.reason}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      <ImportChecklist name={name} items={sv.checklist} />
+    </div>
   );
 }
 

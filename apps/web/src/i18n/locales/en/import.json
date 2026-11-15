@@ -34,7 +34,8 @@
   "dataAuto": "migrator",
   "dataManual": "manual",
   "dataBlocked": "blocked",
-  "servicesNotImported": "{count} service stack(s) are NOT imported yet (recreate on Tugra, copy their data):",
+  "servicesImported": "{count} service stack(s) will be imported as stopped compose apps (nothing is deployed):",
+  "servicesSkipped": "{count} service stack(s) are NOT imported:",
   "appsSection": "Applications",
   "databasesSection": "Databases",
   "volumesSection": "Volumes",
@@ -234,6 +235,132 @@
       "ssh_deploy_key": "deploy key",
       "unsupported_host": "unsupported host",
       "unknown": "unknown"
+    }
+  },
+  "services": {
+    "title": "Service stacks",
+    "desc": "Each Coolify service becomes one stopped Tugra compose app built from the service's own compose file. Secrets are carried, never regenerated, and nothing is deployed until you do it.",
+    "loading": "Reading the services…",
+    "previewFailed": "Could not read the service details",
+    "summary": "{importable} ready · {partial} partial · {skipped} not imported",
+    "include": "Import this service",
+    "rename": "App name",
+    "sourceServer": "Runs on {server}",
+    "targetServer": "Target server",
+    "targetDefault": "Same as the import target",
+    "targetPick": "Choose a server",
+    "needsTarget": "This service runs on the source's own host: choose its target server.",
+    "verdict": {
+      "importable": "Ready",
+      "partial": "Partial",
+      "skipped": "Not imported"
+    },
+    "compat": {
+      "template": "An app-store template exists; imported with its own compose",
+      "passthrough": "Imported with its own compose",
+      "blocked": "Blocked"
+    },
+    "member": {
+      "kept": "imported",
+      "dropped": "not imported"
+    },
+    "members": "Members",
+    "memberSkip": "Do not import {name}",
+    "volumes": "Volumes",
+    "noVolumes": "No volumes",
+    "volume": {
+      "policy": "Data",
+      "copy": "Copy the data",
+      "empty": "Start empty",
+      "skip": "Do not carry",
+      "hostBind": "Host folder, carried as a named volume",
+      "owner": "Owner uid:gid",
+      "uid": "uid",
+      "gid": "gid",
+      "sizeUnknown": "Size not measured"
+    },
+    "dataplane": {
+      "hubStaged": "hub copy",
+      "manualLarge": "copy by hand",
+      "notCarried": "not carried",
+      "configFile": "config file",
+      "stateless": "starts empty"
+    },
+    "domains": "Domains",
+    "domain": {
+      "add": "Add a domain",
+      "remove": "Remove",
+      "none": "No domain is mapped: the service stays private and joins a private network.",
+      "service": "Service",
+      "hostname": "Hostname",
+      "port": "Port"
+    },
+    "hold": {
+      "label": "Created stopped",
+      "why": "Running it next to the source would split live traffic. Stop the source and repoint its routes by hand first."
+    },
+    "env": {
+      "carried": "{n} variables carried",
+      "missing": "{n} missing: {names}",
+      "unavailable": "The token cannot read this service's variables (it needs read:sensitive). Needed: {names}"
+    },
+    "files": {
+      "needed": "Config files needed: {list}",
+      "available": "{n} config files carried"
+    },
+    "notCarried": "Not carried ({n})",
+    "image": {
+      "pin": "Pin {service} to",
+      "pinPlaceholder": "repository:version",
+      "unpinned": "{services} run a floating tag. Pin the version the source runs, or the registry's latest is pulled.",
+      "keepFloating": "Do not pin the images"
+    },
+    "blockers": "Why it is not imported",
+    "risk": {
+      "compose-unavailable": "The source did not return the compose file.",
+      "compose-unparsed": "The compose file could not be read.",
+      "gate": "The safety gate refuses something in the compose; it is never carried or overridden.",
+      "volume-name": "A volume has a name the data step cannot address.",
+      "member-dropped": "Some members are imported without.",
+      "volume-hostbind": "A host folder is carried as a named volume.",
+      "volume-size-unknown": "The size of the data is not measured yet.",
+      "image-floating": "An image runs a floating tag.",
+      "files-needed": "Config files are needed from the source.",
+      "data-manual-large": "A volume is too large for the hub copy: copy it by hand.",
+      "data-not-carried": "Some data is intentionally not carried.",
+      "hold": "Created stopped and held until you repoint its routes.",
+      "deploy-manual": "Created stopped: you deploy it yourself.",
+      "reach": "No domain is mapped: other apps must be repointed.",
+      "container-name": "The container name is not carried.",
+      "secrets-unverified": "Variables are read from the source when you apply.",
+      "type-unsupported": "Not imported: every member needs something Tugra never carries."
+    },
+    "checklist": {
+      "title": "Next steps for {name}",
+      "deploy-after-data": "Nothing was deployed. Copy the data first, then deploy {name} yourself.",
+      "data-step": "Copy the data of {volumes} into the new volume(s) before the first deploy.",
+      "quiesce": "Stop the source ({members}) while you copy: a live copy of an embedded database is not crash-consistent.",
+      "dns": "Point {hosts} at the target server{ip}.",
+      "tunnel": "Stop the source connector and repoint the Cloudflare public-hostname origins by hand before you start {name}. Running both splits live traffic.",
+      "repoint-dependents": "Apps that used {name}'s old internal host must be repointed to its new address.",
+      "unpinned-image": "{services} run a floating image tag: pin the version the source runs.",
+      "not-carried": "Not carried: {members} {volumes}",
+      "reach": "{name} is private. Join network {network} and use the name {alias} to reach it.",
+      "reachManual": "{name} is private. No network was attached: add one in the app's network settings.",
+      "copy": "Copy"
+    },
+    "steps": {
+      "prepare": "Prepare",
+      "create": "Create",
+      "domains": "Domains",
+      "config-files": "Config files",
+      "volumes": "Volumes",
+      "done": "Done"
+    },
+    "timeline": {
+      "members": "Members: {list}",
+      "configMounts": "{n} config files carried",
+      "network": "Private network {network} as {alias}"
     }
   }
 }

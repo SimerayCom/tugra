@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import importMessages from "../i18n/locales/en/import.json";
 import { describe, it, expect } from "vitest";
-import { hasBlocker, blockingRisks, planSummary, itemsByKind, canApply, riskTone, opProgress, coverageApps, coverageCounts, hasDeferredCoverage, reasonText } from "./import";
+import { hasBlocker, blockingRisks, planSummary, itemsByKind, canApply, riskTone, opProgress, coverageApps, coverageCounts, hasDeferredCoverage, reasonText, serviceVerdictOf, serviceChoicesPayload, needsExplicitTarget } from "./import";
 import type { ImportPlan, ImportPlanItem, ImportOperation } from "./types";
 
 const item = (over: Partial<ImportPlanItem>): ImportPlanItem => ({
@@ -129,5 +129,53 @@ describe("every shared importer reason code has an i18n key", () => {
     expect(codes.length).toBeGreaterThan(60);
     const I = importMessages as unknown as Record<string, string>;
     for (const c of codes) expect(typeof I[`reason_${c}`], `reason_${c}`).toBe("string");
+  });
+});
+
+describe("service import helpers", () => {
+  const svcItem = (ref: string, verdict: unknown, risks: ImportPlanItem["risks"] = []): ImportPlanItem => ({ itemRef: ref, kind: "service", name: ref, proposed: { verdict }, risks, dependsOn: [] });
+  const planOf = (items: ImportPlanItem[]): ImportPlan => ({ sourceKind: "coolify", mode: "copy", items, totals: { apps: 0, databases: 0, volumes: 0, blockers: 0 }, warnings: [], planHash: "a".repeat(32) });
+
+  it("itemsByKind groups services (the old three-key map would have crashed on one)", () => {
+    expect(itemsByKind(planOf([svcItem("service:a:1", "importable")])).service).toHaveLength(1);
+  });
+
+  it("serviceVerdictOf reads the hub's verdict; anything unknown is skipped", () => {
+    expect(serviceVerdictOf(svcItem("s", "importable"))).toBe("importable");
+    expect(serviceVerdictOf(svcItem("s", "partial"))).toBe("partial");
+    expect(serviceVerdictOf(svcItem("s", "skipped"))).toBe("skipped");
+    expect(serviceVerdictOf(svcItem("s", undefined))).toBe("skipped");
+  });
+
+  it("canApply: a plan with only importable services can apply; only skipped or blocked services cannot", () => {
+    expect(canApply(planOf([svcItem("s", "importable")]))).toBe(true);
+    expect(canApply(planOf([svcItem("s", "partial")]))).toBe(true);
+    expect(canApply(planOf([svcItem("s", "skipped")]))).toBe(false);
+    expect(canApply(planOf([svcItem("s", "importable", [{ level: "blocker", code: "x", message: "m" }])]))).toBe(false);
+  });
+
+  it("serviceChoicesPayload sends nothing for an untouched card and drops empty fields, other kinds and unknown refs", () => {
+    const plan = planOf([svcItem("service:a:1", "importable"), { ...svcItem("app:a:2", "x"), kind: "app" }]);
+    expect(serviceChoicesPayload(plan, {})).toBeUndefined();
+    expect(serviceChoicesPayload(plan, { "service:a:1": { name: "  ", pins: {}, dropMembers: [], skip: false, pinImages: true } })).toBeUndefined();
+    // an emptied domain list is meaningful (the operator removed every row): it is sent as an explicit empty replace
+    expect(serviceChoicesPayload(plan, { "service:a:1": { serviceDomains: [{ service: "web", hostname: " ", port: 80 }] } })).toEqual({ "service:a:1": { serviceDomains: [] } });
+    expect(serviceChoicesPayload(plan, { "app:a:2": { skip: true }, "service:zzz": { skip: true } })).toBeUndefined();
+    expect(
+      serviceChoicesPayload(plan, {
+        "service:a:1": { skip: true, name: " My Svc ", targetServerId: "srv2", serviceDomains: [{ service: "web", hostname: " A.Example.Test ", port: 80 }, { service: "web", hostname: "", port: 81 }], volumes: { v: { policy: "skip" } }, dropMembers: ["agent"], pins: { web: "x/y:1" }, pinImages: false, privateNetwork: false, hold: false },
+      }),
+    ).toEqual({
+      "service:a:1": { skip: true, name: "My Svc", targetServerId: "srv2", serviceDomains: [{ service: "web", hostname: "a.example.test", port: 80 }], volumes: { v: { policy: "skip" } }, dropMembers: ["agent"], pins: { web: "x/y:1" }, pinImages: false, privateNetwork: false, hold: false },
+    });
+  });
+
+  it("needsExplicitTarget: only a service on the source's own host that will import and has no target yet", () => {
+    expect(needsExplicitTarget({ sourceServer: "localhost", verdict: "partial" }, undefined)).toBe(true);
+    expect(needsExplicitTarget({ sourceServer: "localhost", verdict: "partial" }, { targetServerId: "s" })).toBe(false);
+    expect(needsExplicitTarget({ sourceServer: "localhost", verdict: "partial" }, { skip: true })).toBe(false);
+    expect(needsExplicitTarget({ sourceServer: "localhost", verdict: "skipped" }, undefined)).toBe(false);
+    expect(needsExplicitTarget({ sourceServer: "server-a", verdict: "importable" }, undefined)).toBe(false);
+    expect(needsExplicitTarget({ verdict: "importable" }, undefined)).toBe(false);
   });
 });

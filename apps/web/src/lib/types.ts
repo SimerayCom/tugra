@@ -928,13 +928,67 @@ export interface ImportRisk {
 }
 export interface ImportPlanItem {
   itemRef: string;
-  kind: "app" | "database" | "volume";
+  kind: "app" | "database" | "volume" | "service";
   name: string;
   proposed: Record<string, unknown>;
   risks: ImportRisk[];
   dependsOn: string[];
 }
 export type DbDataPlane = "one-click" | "manual" | "blocked";
+/** How a Coolify service stack imports: ready, imported without some members / data, or not imported at all. */
+export type ImportServiceVerdict = "importable" | "partial" | "skipped";
+/** Per-service operator choices, keyed by plan itemRef (mirrors the hub's ServiceChoice). They can only narrow or rename. */
+export interface ImportServiceChoice {
+  skip?: boolean;
+  name?: string;
+  environmentId?: string;
+  targetServerId?: string;
+  serviceDomains?: Array<{ service: string; hostname: string; port: number }>;
+  hostnameMap?: Record<string, string>;
+  volumes?: Record<string, { policy: "copy" | "empty" | "skip"; owner?: { uid: number; gid: number } }>;
+  dropMembers?: string[];
+  pinImages?: boolean;
+  pins?: Record<string, string>;
+  privateNetwork?: boolean;
+  hold?: boolean;
+}
+/** One service's review card (variable NAMES, compose keys, volume keys, hostnames and fixed reasons only: never a value). */
+export interface ImportServicePreview {
+  itemRef: string;
+  name: string;
+  sourceServer?: string;
+  verdict: ImportServiceVerdict;
+  compat: "template" | "passthrough" | "blocked";
+  members: Array<{ name: string; status: "kept" | "dropped"; reason?: string }>;
+  env: { resolved: string[]; missing: string[]; secretsAvailable: boolean };
+  domains: Array<{ service: string; hostname: string; port: number }>;
+  domainHints: Array<{ service: string; port: number }>;
+  volumes: Array<{ key: string; origin: "named" | "host-bind"; policy: "copy" | "empty" | "skip"; dataPlane: string; mounts: Array<{ service: string; path: string }> }>;
+  files: { needed: string[]; available: string[] };
+  notCarried: ImportCoverageEntry[];
+  blockers: Array<{ code: string; message: string }>;
+  floating: string[];
+  pinned: string[];
+  hold: boolean;
+}
+/** A post-import checklist row: i18n kind + short params only (no source free text). */
+export interface ImportChecklistItem {
+  kind: "deploy-after-data" | "data-step" | "quiesce" | "dns" | "tunnel" | "repoint-dependents" | "unpinned-image" | "not-carried" | "reach";
+  severity: "info" | "warn";
+  params: Record<string, string | number | string[]>;
+}
+/** An applied service task's secret-free summary. */
+export interface ImportServiceTaskView {
+  members: string[];
+  dropped: Array<{ field: string; reason: string }>;
+  configMounts: number;
+  serviceDomains: { applied: number; unmapped: Array<{ field: string; reason: string }> };
+  privateNetwork?: { network: string; alias: string };
+  volumes: Array<{ key: string; dockerName: string; policy: string; dataPlane: string; state: string }>;
+  hold: boolean;
+  checklist: ImportChecklistItem[];
+  steps: Array<{ name: string; status: string }>;
+}
 /** The remote PaaS sources the wizard can connect to (local-docker adoption has its own UI on a server's page). */
 export type ImportRemoteKind = "coolify" | "dokploy";
 /** One field present on the source that Tugra does not carry: a field NAME + a fixed reason, never a value. */
@@ -973,7 +1027,7 @@ export interface ImportAck {
 }
 export interface ImportPreflight {
   databases: Array<{ name: string; engine: string; dataPlane: DbDataPlane; reason: string }>;
-  services: Array<{ name: string; members: number; note: string; objectStore?: true }>;
+  services: Array<{ name: string; members: number; note: string; objectStore?: true; verdict?: ImportServiceVerdict; hold?: boolean; volumes?: Array<{ key: string; dataPlane: string }> }>;
   appsWithVolumeData: number;
   volumeDataNote?: string;
   volumes?: Array<{ app: string; mountPath: string; type?: "named" | "bind"; dataPlane: "hub-staged" | "manual-large" | "manual" | "unknown-size"; reason: string }>;
@@ -988,7 +1042,7 @@ export interface ImportPlan {
   sourceKind: string;
   mode: "copy" | "takeover";
   items: ImportPlanItem[];
-  totals: { apps: number; databases: number; volumes: number; blockers: number };
+  totals: { apps: number; databases: number; volumes: number; blockers: number; services?: number };
   warnings: string[];
   planHash: string;
   preflight?: ImportPreflight;
@@ -1060,6 +1114,8 @@ export interface ImportOpTask {
   git?: ImportTaskGit;
   postCreate?: ImportApplyReport;
   ingress?: ImportApplyReport;
+  /** Set for an applied Coolify service: its members, volumes and the post-import checklist. */
+  service?: ImportServiceTaskView;
   startedAt: string | null;
   finishedAt: string | null;
 }

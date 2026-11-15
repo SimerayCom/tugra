@@ -1,4 +1,4 @@
-import type { ImportPlan, ImportPlanItem, ImportRisk, ImportRiskLevel, ImportOperation, ImportCoverageApp, ImportAck } from "./types";
+import type { ImportPlan, ImportPlanItem, ImportRisk, ImportRiskLevel, ImportOperation, ImportCoverageApp, ImportAck, ImportServiceChoice, ImportServicePreview, ImportServiceVerdict } from "./types";
 
 // Pure view helpers for the import wizard. No network, no React — the data shaping the plan-review and
 // apply-timeline screens render from (and the only part worth unit-testing).
@@ -36,14 +36,53 @@ export function planSummary(plan: ImportPlan): PlanSummary {
 
 /** Group plan items by kind for sectioned display (empty arrays kept so the UI can show "0 databases"). */
 export function itemsByKind(plan: ImportPlan): Record<ImportPlanItem["kind"], ImportPlanItem[]> {
-  const out: Record<ImportPlanItem["kind"], ImportPlanItem[]> = { app: [], database: [], volume: [] };
+  const out: Record<ImportPlanItem["kind"], ImportPlanItem[]> = { app: [], database: [], volume: [], service: [] };
   for (const it of plan.items) out[it.kind].push(it);
   return out;
 }
 
-/** The apply button is enabled only when at least one app will actually be imported. */
+/** The verdict a service plan item carries in its `proposed` (the hub puts it there); anything else reads as skipped. */
+export function serviceVerdictOf(item: ImportPlanItem): ImportServiceVerdict {
+  const v = item.proposed?.verdict;
+  return v === "importable" || v === "partial" ? v : "skipped";
+}
+
+/** The apply button is enabled only when at least one app (or one importable service stack) will actually be imported. */
 export function canApply(plan: ImportPlan): boolean {
-  return plan.items.some((it) => it.kind === "app" && !hasBlocker(it));
+  return plan.items.some((it) => (it.kind === "app" && !hasBlocker(it)) || (it.kind === "service" && !hasBlocker(it) && serviceVerdictOf(it) !== "skipped"));
+}
+
+/**
+ * The `serviceChoices` an apply sends: only entries for service items of THIS plan, with every empty field dropped, so a
+ * card the operator never touched sends nothing (the apply then behaves exactly as the plan said). Undefined when empty.
+ */
+export function serviceChoicesPayload(plan: ImportPlan, choices: Record<string, ImportServiceChoice>): Record<string, ImportServiceChoice> | undefined {
+  const refs = new Set(plan.items.filter((i) => i.kind === "service").map((i) => i.itemRef));
+  const out: Record<string, ImportServiceChoice> = {};
+  for (const [ref, c] of Object.entries(choices)) {
+    if (!refs.has(ref)) continue;
+    const clean: ImportServiceChoice = {};
+    if (c.skip) clean.skip = true;
+    if (c.name?.trim()) clean.name = c.name.trim();
+    if (c.targetServerId) clean.targetServerId = c.targetServerId;
+    if (c.environmentId) clean.environmentId = c.environmentId;
+    if (c.serviceDomains) clean.serviceDomains = c.serviceDomains.filter((d) => d.hostname.trim() !== "").map((d) => ({ service: d.service, hostname: d.hostname.trim().toLowerCase(), port: d.port }));
+    if (c.hostnameMap && Object.keys(c.hostnameMap).length) clean.hostnameMap = c.hostnameMap;
+    if (c.volumes && Object.keys(c.volumes).length) clean.volumes = c.volumes;
+    if (c.dropMembers?.length) clean.dropMembers = c.dropMembers;
+    if (c.pinImages === false) clean.pinImages = false;
+    if (c.pins && Object.keys(c.pins).length) clean.pins = c.pins;
+    if (c.privateNetwork === false) clean.privateNetwork = false;
+    if (c.hold === false) clean.hold = false;
+    if (Object.keys(clean).length) out[ref] = clean;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** A service that sits on the source's own host (Coolify names it `localhost`) has no sensible default placement: the
+ *  operator must pick its target server explicitly (no silent default). */
+export function needsExplicitTarget(card: Pick<ImportServicePreview, "sourceServer" | "verdict">, choice: ImportServiceChoice | undefined): boolean {
+  return card.sourceServer === "localhost" && card.verdict !== "skipped" && !choice?.skip && !choice?.targetServerId;
 }
 
 /** UI tone token for a risk level (a class/color key, not a display string). */
