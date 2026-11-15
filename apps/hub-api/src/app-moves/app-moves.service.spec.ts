@@ -1,4 +1,5 @@
-import { ForbiddenException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { AGENT_FEATURE_HUB_ORIGIN_ENV } from "@tugra/shared";
 import { AppMovesService } from "./app-moves.service";
 import { MovePreflightService } from "./move-preflight.service";
@@ -43,14 +44,24 @@ function make(opts: { transfer?: jest.Mock; app?: Record<string, unknown> | null
     appDatabaseLink: { count: jest.fn().mockResolvedValue(0) },
     rolloutTarget: { count: jest.fn().mockResolvedValue(0) },
     deployment: { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]) },
-    appMove: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue(opts.moves ?? []) },
+    appMove: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue(opts.moves ?? []),
+      create: jest.fn(async ({ data }: { data: Record<string, unknown> }) => ({ id: "mvNEW", createdAt: new Date(), ...data })),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      update: jest.fn().mockResolvedValue({}),
+    },
     database: { findMany: jest.fn().mockResolvedValue([]) },
     volumeBackup: { findMany: jest.fn().mockResolvedValue([]) },
     backupDestination: { findMany: jest.fn().mockResolvedValue([]) },
     domain: { count: jest.fn().mockResolvedValue(0) },
     appServiceDomain: { count: jest.fn().mockResolvedValue(0) },
     environment: { findUnique: jest.fn().mockResolvedValue({ id: "env1", projectId: "p1" }) },
+    $queryRaw: jest.fn().mockResolvedValue([]),
+    $transaction: undefined as unknown as jest.Mock,
   };
+  prisma.$transaction = jest.fn((cb: (tx: unknown) => unknown) => cb(prisma));
+
   const perms = opts.perms ?? new Set(["apps:config", "apps:deploy", "backups"]);
   const access = {
     requirePermission: jest.fn(async (_u: string, _t: string, p: string) => {
@@ -77,8 +88,10 @@ function make(opts: { transfer?: jest.Mock; app?: Record<string, unknown> | null
   const crypto = { decrypt: (s: string) => s };
   const config = { get: (k: string) => ({ MOVE_PART_MIB: 256, TUGRA_HOSTPORT_MIN: 20000, TUGRA_HOSTPORT_MAX: 45000, MAGIC_DOMAIN_SUFFIX: "sslip.io" } as Record<string, unknown>)[k] };
   const pre = new MovePreflightService(prisma as never, agentWs as never, crypto as never, config as never, transfers as never);
-  const svc = new AppMovesService(prisma as never, access as never, { log: jest.fn() } as never, pre);
-  return { svc, pre, prisma, access, agentWs, send, transfers };
+  const runner = { run: jest.fn().mockResolvedValue(undefined), requestCancel: jest.fn() };
+  const audit = { log: jest.fn().mockResolvedValue(undefined) };
+  const svc = new AppMovesService(prisma as never, access as never, audit as never, pre, runner as never, agentWs as never);
+  return { svc, pre, prisma, access, agentWs, send, transfers, runner, audit };
 }
 
 const input = { targetServerId: "s2", acknowledge: {}, probeLink: false } as never;
@@ -316,5 +329,201 @@ describe("AppMovesService views", () => {
     const [v] = await t.svc.list("u1", "capp");
     expect(v.plan).toBeNull();
     expect(v.logTail).toBeNull();
+  });
+});
+
+
+describe("AppMovesService.start", () => {
+  const startInput = { targetServerId: "s2", acknowledge: {}, repointDns: false, archiveRetainDays: 7, confirmName: "blog" } as never;
+
+  it("re-runs the FULL preflight, inserts a frozen QUEUED job, audits (ids only) and kicks the runner in-process", async () => {
+    const t = make();
+    const r = await t.svc.start("u1", "capp", startInput);
+    expect(r).toEqual({ moveId: "mvNEW", phase: "QUEUED" });
+    expect(t.send).toHaveBeenCalledTimes(2); // both hosts probed again server-side
+    const data = (t.prisma.appMove.create as jest.Mock).mock.calls[0][0].data;
+    expect(data).toMatchObject({ appId: "capp", appName: "blog", teamId: "t1", requestedBy: "u1", sourceServerId: "s1", targetServerId: "s2", prevStatus: "RUNNING", repointDns: false, retainDays: 7 });
+    expect(data.plan).toMatchObject({ cheap: false, totalBytes: 2048 * 1024, partBytes: 256 * 1024 * 1024 });
+    expect(data.volumes).toEqual([expect.objectContaining({ name: "data", dockerName: "tugra_appv_capp_data", state: "PENDING", parts: 0, partsDone: 0, bytesDone: 0, entries: null, createdOnTarget: false })]);
+    expect(data.warnings).toEqual(expect.arrayContaining([expect.objectContaining({ code: "history_splits" })]));
+    expect(t.runner.run).toHaveBeenCalledWith("mvNEW");
+    expect(t.audit.log).toHaveBeenCalledWith(expect.objectContaining({ actor: "u1", action: "app.move.start", target: "capp", meta: expect.objectContaining({ moveId: "mvNEW", from: "s1", to: "s2" }) }));
+    expect(JSON.stringify(t.audit.log.mock.calls)).not.toMatch(/hunter2|envEnc/);
+  });
+
+  it("rows are inserted under the app's FOR UPDATE lock", async () => {
+    const t = make();
+    await t.svc.start("u1", "capp", startInput);
+    expect(String((t.prisma.$queryRaw as jest.Mock).mock.calls[0][0].join(""))).toContain('FOR UPDATE');
+  });
+
+  it("confirmName must equal the app name (400 confirm_name_mismatch) and nothing is probed", async () => {
+    const t = make();
+    const e = await t.svc.start("u1", "capp", { ...(startInput as object), confirmName: "Blog" } as never).catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(BadRequestException);
+    expect((e as BadRequestException).getResponse()).toMatchObject({ code: "confirm_name_mismatch" });
+    expect(t.send).not.toHaveBeenCalled();
+    expect(t.runner.run).not.toHaveBeenCalled();
+  });
+
+  it("a preflight with blockers is 409 preflight_failed carrying the FRESH result; a stale/missing ack is one too; nothing is inserted", async () => {
+    const t = make({ app: { hostMounts: [{ hostPath: "/mnt/x", containerPath: "/x" }] } });
+    const e = (await t.svc.start("u1", "capp", startInput).catch((x: unknown) => x)) as ConflictException;
+    expect(e).toBeInstanceOf(ConflictException);
+    const body = e.getResponse() as { code: string; preflight: { ok: boolean; blockers: { code: string }[] } };
+    expect(body.code).toBe("preflight_failed");
+    expect(body.preflight.ok).toBe(false);
+    expect(body.preflight.blockers.map((b) => b.code)).toContain("host_mounts");
+    expect(t.prisma.appMove.create).not.toHaveBeenCalled();
+    expect(t.runner.run).not.toHaveBeenCalled();
+    // with the ack it starts (the target probe also reports the bind-mount path)
+    const withHostPath = jest.fn(async (id: string) => ({ exitCode: 0, output: id === "s1" ? PROBE_OUT("tugra_appv_capp_data", 2048) : TARGET_PROBE("tugra_appv_capp_data").replace("TUGRA_PROBE_END", "TUGRA_HOSTPATH /mnt/x 1\nTUGRA_PROBE_END") }));
+    const ok = await make({ send: withHostPath as never, app: { hostMounts: [{ hostPath: "/mnt/x", containerPath: "/x" }] } }).svc.start("u1", "capp", { ...(startInput as object), acknowledge: { hostMounts: true } } as never);
+    expect(ok.moveId).toBe("mvNEW");
+  });
+
+  it("two concurrent starts: the partial unique index (P2002) is 409 move_active", async () => {
+    const t = make();
+    (t.prisma.appMove.create as jest.Mock).mockRejectedValue(new Prisma.PrismaClientKnownRequestError("dup", { code: "P2002", clientVersion: "x" }));
+    const e = (await t.svc.start("u1", "capp", startInput).catch((x: unknown) => x)) as ConflictException;
+    expect(e).toBeInstanceOf(ConflictException);
+    expect(e.getResponse()).toMatchObject({ code: "move_active" });
+    expect(t.runner.run).not.toHaveBeenCalled();
+  });
+
+  it("the locked re-check refuses a deploy that slipped in (409 deploy_active) or an app that changed (409 changed_under_us)", async () => {
+    const busy = make();
+    (busy.prisma.deployment.count as jest.Mock).mockImplementation(({ where }: { where: { status?: unknown } }) => Promise.resolve(where.status ? 1 : 0));
+    // the preflight's own deploy count would block first; make ONLY the in-tx count see it
+    (busy.prisma.deployment.count as jest.Mock).mockResolvedValueOnce(0).mockResolvedValue(1);
+    expect(((await busy.svc.start("u1", "capp", startInput).catch((x: unknown) => x)) as ConflictException).getResponse()).toMatchObject({ code: "deploy_active" });
+
+    const changed = make();
+    (changed.prisma.application.findUnique as jest.Mock).mockResolvedValueOnce(APP).mockResolvedValue({ serverId: "other", status: "RUNNING" });
+    expect(((await changed.svc.start("u1", "capp", startInput).catch((x: unknown) => x)) as ConflictException).getResponse()).toMatchObject({ code: "changed_under_us" });
+  });
+
+  it("authorization: a reader/other-permission member is 403; a cross-team target is 404; no probe, no row", async () => {
+    const reader = make({ perms: new Set(["apps:config", "apps:deploy"]) }); // lacks backups
+    await expect(reader.svc.start("u1", "capp", startInput)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(make({ targetTeam: "t2" }).svc.start("u1", "capp", startInput)).rejects.toBeInstanceOf(NotFoundException);
+    expect(reader.send).not.toHaveBeenCalled();
+    expect(reader.prisma.appMove.create).not.toHaveBeenCalled();
+  });
+
+  it("a NEW app starts without touching any agent (cheap path)", async () => {
+    const t = make({ app: { status: "NEW" }, online: { s1: false, s2: false } });
+    const r = await t.svc.start("u1", "capp", startInput);
+    expect(r.phase).toBe("QUEUED");
+    expect(t.send).not.toHaveBeenCalled();
+    expect((t.prisma.appMove.create as jest.Mock).mock.calls[0][0].data.plan.cheap).toBe(true);
+  });
+});
+
+describe("AppMovesService.cancel", () => {
+  const mv = (phase: string) => ({ id: "mv1", appId: "capp", phase });
+  it.each(["QUEUED", "PRECHECK", "STOPPING_SOURCE", "TRANSFERRING"])("%s: flags the row (compare-and-set), kills in-flight work and audits", async (phase) => {
+    const t = make();
+    (t.prisma.appMove.findFirst as jest.Mock).mockResolvedValue(mv(phase));
+    await t.svc.cancel("u1", "capp", "mv1");
+    expect(t.prisma.appMove.updateMany).toHaveBeenCalledWith({ where: { id: "mv1", phase: { in: ["QUEUED", "PRECHECK", "STOPPING_SOURCE", "TRANSFERRING"] } }, data: { cancelRequested: true } });
+    expect(t.runner.requestCancel).toHaveBeenCalledWith("mv1");
+    expect(t.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "app.move.cancel" }));
+  });
+
+  it.each(["DEPLOYING", "FINALIZING"])("%s: 409 move_past_cutover (nothing is flagged or killed)", async (phase) => {
+    const t = make();
+    (t.prisma.appMove.findFirst as jest.Mock).mockResolvedValue(mv(phase));
+    const e = (await t.svc.cancel("u1", "capp", "mv1").catch((x: unknown) => x)) as ConflictException;
+    expect(e.getResponse()).toMatchObject({ code: "move_past_cutover" });
+    expect(t.prisma.appMove.updateMany).not.toHaveBeenCalled();
+    expect(t.runner.requestCancel).not.toHaveBeenCalled();
+  });
+
+  it("losing the race to the cutover is also 409 move_past_cutover; a finished move is move_not_active; an unknown move 404", async () => {
+    const raced = make();
+    (raced.prisma.appMove.findFirst as jest.Mock).mockResolvedValue(mv("TRANSFERRING"));
+    (raced.prisma.appMove.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
+    expect(((await raced.svc.cancel("u1", "capp", "mv1").catch((x: unknown) => x)) as ConflictException).getResponse()).toMatchObject({ code: "move_past_cutover" });
+    for (const phase of ["COMPLETED", "ROLLED_BACK", "FAILED", "ROLLING_BACK"]) {
+      const t = make();
+      (t.prisma.appMove.findFirst as jest.Mock).mockResolvedValue(mv(phase));
+      expect(((await t.svc.cancel("u1", "capp", "mv1").catch((x: unknown) => x)) as ConflictException).getResponse()).toMatchObject({ code: "move_not_active" });
+    }
+    await expect(make().svc.cancel("u1", "capp", "nope")).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it("needs the mutation permissions (a reader cannot cancel)", async () => {
+    await expect(make({ perms: new Set() }).svc.cancel("u1", "capp", "mv1")).rejects.toBeInstanceOf(ForbiddenException);
+  });
+});
+
+describe("AppMovesService.purgeSource", () => {
+  const MVID = "ckmv1abcdefghijklmnopqrst";
+  const vols = [{ name: "data", dockerName: "tugra_appv_capp_data", kind: "app", state: "APPLIED", createdOnTarget: true, archiveOverwritten: false }];
+  const move = (over: Record<string, unknown> = {}) => ({ id: MVID, appId: "capp", phase: "COMPLETED", sourceServerId: "s1", targetServerId: "s2", volumes: vols, sourcePurgedAt: null, targetPurgedAt: null, ...over });
+  const purgeOut = (state: string) => ({ exitCode: 0, output: `TUGRA_VX_VOL tugra_appv_capp_data ${state}\nTUGRA_VX_CLEANUP_DONE\n` });
+
+  function setup(m: Record<string, unknown>, opts: { appServer?: string; sendOut?: { exitCode: number; output: string }; online?: Record<string, boolean> } = {}) {
+    const t = make({ online: opts.online ?? { s1: true, s2: true }, send: jest.fn().mockResolvedValue(opts.sendOut ?? purgeOut("removed")) as never });
+    (t.prisma.appMove.findFirst as jest.Mock).mockImplementation(async ({ where }: { where: Record<string, unknown> }) => (where.id === MVID && where.appId === "capp" ? m : null));
+    (t.prisma.application.findUnique as jest.Mock).mockResolvedValue({ ...APP, serverId: opts.appServer ?? "s2" });
+    return t;
+  }
+
+  it("COMPLETED: removes the archived source volumes on the SOURCE host and stamps sourcePurgedAt", async () => {
+    const t = setup(move());
+    await t.svc.purgeSource("u1", "capp", MVID);
+    expect(t.send).toHaveBeenCalledWith("s1", expect.stringContaining("docker volume rm 'tugra_appv_capp_data'"), "backup", expect.any(Number));
+    expect(t.prisma.appMove.update).toHaveBeenCalledWith({ where: { id: MVID }, data: { sourcePurgedAt: expect.any(Date) } });
+    expect(t.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "app.move.purge_source" }));
+  });
+
+  it("409 archive_in_use when the app currently runs on that server (nothing removed, nothing stamped)", async () => {
+    const t = setup(move(), { appServer: "s1" });
+    expect(((await t.svc.purgeSource("u1", "capp", MVID).catch((x: unknown) => x)) as ConflictException).getResponse()).toMatchObject({ code: "archive_in_use" });
+    expect(t.send).not.toHaveBeenCalled();
+    expect(t.prisma.appMove.update).not.toHaveBeenCalled();
+  });
+
+  it("409 archive_in_use when another live move targets/uses that server for the app", async () => {
+    const t = setup(move());
+    (t.prisma.appMove.findFirst as jest.Mock).mockImplementation(async ({ where }: { where: Record<string, unknown> }) => (where.id === MVID ? move() : { id: "other" }));
+    expect(((await t.svc.purgeSource("u1", "capp", MVID).catch((x: unknown) => x)) as ConflictException).getResponse()).toMatchObject({ code: "archive_in_use" });
+    expect(t.send).not.toHaveBeenCalled();
+  });
+
+  it("an offline source is 503; a volume docker refused to remove (in use) is 409 purge_incomplete with NO stamp", async () => {
+    await expect(setup(move(), { online: { s1: false, s2: true } }).svc.purgeSource("u1", "capp", MVID)).rejects.toBeInstanceOf(ServiceUnavailableException);
+    const t = setup(move(), { sendOut: purgeOut("kept") });
+    expect(((await t.svc.purgeSource("u1", "capp", MVID).catch((x: unknown) => x)) as ConflictException).getResponse()).toMatchObject({ code: "purge_incomplete" });
+    expect(t.prisma.appMove.update).not.toHaveBeenCalled();
+  });
+
+  it("an already-purged archive is 409 nothing_to_purge", async () => {
+    const t = setup(move({ sourcePurgedAt: new Date() }));
+    expect(((await t.svc.purgeSource("u1", "capp", MVID).catch((x: unknown) => x)) as ConflictException).getResponse()).toMatchObject({ code: "nothing_to_purge" });
+  });
+
+  it("FAILED: a human clears 'needs attention' — the target cleanup runs and BOTH stamps are written", async () => {
+    const t = setup(move({ phase: "FAILED" }), { sendOut: { exitCode: 0, output: `TUGRA_VX_VOL tugra_appv_capp_data removed\nTUGRA_VX_VOL tugra_restore_rb_${MVID}_0 absent\nTUGRA_VX_CLEANUP_DONE\n` } });
+    await t.svc.purgeSource("u1", "capp", MVID);
+    expect(t.send).toHaveBeenCalledWith("s2", expect.stringContaining(`rm -rf /etc/tugra/app-moves/${MVID}`), "backup", expect.any(Number));
+    const stamps = (t.prisma.appMove.update as jest.Mock).mock.calls.map((c) => c[0].data);
+    expect(stamps).toEqual(expect.arrayContaining([expect.objectContaining({ sourcePurgedAt: expect.any(Date), targetPurgedAt: expect.any(Date) })]));
+  });
+
+  it("FAILED with the target offline is still cleared (the leftovers are the human's to remove)", async () => {
+    const t = setup(move({ phase: "FAILED" }), { online: { s1: true, s2: false } });
+    await t.svc.purgeSource("u1", "capp", MVID);
+    expect(t.prisma.appMove.update).toHaveBeenCalledWith({ where: { id: MVID }, data: { sourcePurgedAt: expect.any(Date), targetPurgedAt: expect.any(Date) } });
+  });
+
+  it("ROLLED_BACK leftovers are retried; an active move is refused", async () => {
+    const t = setup(move({ phase: "ROLLED_BACK" }), { sendOut: { exitCode: 0, output: `TUGRA_VX_VOL tugra_appv_capp_data removed\nTUGRA_VX_VOL tugra_restore_rb_${MVID}_0 absent\nTUGRA_VX_CLEANUP_DONE\n` } });
+    await t.svc.purgeSource("u1", "capp", MVID);
+    expect(t.prisma.appMove.update).toHaveBeenCalledWith({ where: { id: MVID }, data: { targetPurgedAt: expect.any(Date) } });
+    const live = setup(move({ phase: "TRANSFERRING" }));
+    expect(((await live.svc.purgeSource("u1", "capp", MVID).catch((x: unknown) => x)) as ConflictException).getResponse()).toMatchObject({ code: "move_active" });
   });
 });

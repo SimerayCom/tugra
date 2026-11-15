@@ -103,6 +103,7 @@ export const APP_MOVE_WARNING_CODES = [
   "source_cleanup_failed",
   "staging_cleanup_failed",
   "post_cutover_sync_failed",
+  "target_stop_failed",
 ] as const;
 export type AppMoveWarningCode = (typeof APP_MOVE_WARNING_CODES)[number];
 

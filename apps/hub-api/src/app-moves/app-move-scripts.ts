@@ -560,6 +560,22 @@ export function buildMoveLinkProbeFileScript(probeId: string): string {
   ].join("\n");
 }
 
+/** An app id (cuid) as it appears in container names. */
+const APP_ID_RE = /^[a-z0-9]{20,32}$/;
+
+/**
+ * (source or target) Prove nothing of the app is running: no container whose name starts with `tugra_<appId>` (the classic
+ * container, its rolling twin and every compose service container). Prints `TUGRA_VX_QUIESCED`, else `TUGRA_VX_RUNNING`
+ * and exits 1. Read-only. Stop-before-read is the consistency guarantee of the copy, so this is checked, not assumed.
+ */
+export function buildMoveVerifyStoppedScript(appId: string): string {
+  if (typeof appId !== "string" || !APP_ID_RE.test(appId)) throw new Error(`invalid app id: ${JSON.stringify(appId)}`);
+  return [
+    `R=$(docker ps -q --filter 'name=^/tugra_${appId}')`,
+    'if [ -z "$R" ]; then echo TUGRA_VX_QUIESCED; else echo TUGRA_VX_RUNNING; exit 1; fi',
+  ].join("\n");
+}
+
 // ───────────────────────────── timeouts + output scrubbing ─────────────────────────────
 
 const clampMs = (ms: number): number => Math.min(Math.max(ms, 1), DAY_MS);

@@ -54,7 +54,7 @@ import { APPLICATIONS_SERVICE } from "./applications.tokens";
     // without a static module import (which would form a dependency cycle).
     { provide: APPLICATIONS_SERVICE, useExisting: ApplicationsService },
   ],
-  exports: [ApplicationsService, AppDatabaseLinksService, AppSecretRefsService, APPLICATIONS_SERVICE, PortAllocatorService],
+  exports: [ApplicationsService, AppDatabaseLinksService, AppSecretRefsService, APPLICATIONS_SERVICE, PortAllocatorService, DeployLeaseService],
 })
 export class ApplicationsModule implements OnModuleInit {
   constructor(

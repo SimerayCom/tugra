@@ -168,6 +168,25 @@ export function hostMountPaths(hostMounts: unknown): string[] {
     .filter((p): p is string => typeof p === "string" && p.startsWith("/"));
 }
 
+/** Host ports other apps (hostPort, portMappings, extraPorts) and managed databases already reserve on a server. */
+export function collectReservedPorts(
+  apps: { id: string; hostPort: number | null; portMappings: unknown; extraPorts: unknown }[],
+  dbs: { hostPort: number | null }[],
+  excludeAppId: string,
+): Set<number> {
+  const reserved = new Set<number>();
+  const portsOf = (raw: unknown): number[] =>
+    (Array.isArray(raw) ? (raw as { hostPort?: unknown }[]) : []).map((m) => m?.hostPort).filter((p): p is number => typeof p === "number");
+  for (const a of apps) {
+    if (a.id === excludeAppId) continue;
+    if (typeof a.hostPort === "number") reserved.add(a.hostPort);
+    for (const p of portsOf(a.portMappings)) reserved.add(p);
+    for (const p of portsOf(a.extraPorts)) reserved.add(p);
+  }
+  for (const d of dbs) if (typeof d.hostPort === "number") reserved.add(d.hostPort);
+  return reserved;
+}
+
 /** The lowest free port in [min,max] not in `used`, or null. */
 export function pickFreePort(used: Set<number>, min: number, max: number): number | null {
   for (let p = min; p <= max; p++) if (!used.has(p)) return p;

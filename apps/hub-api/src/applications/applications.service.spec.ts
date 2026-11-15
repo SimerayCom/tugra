@@ -8389,12 +8389,12 @@ describe("ApplicationsService — app move guards", () => {
         deployment: {
           count: jest.fn().mockResolvedValue(0),
           findFirst: jest.fn(async ({ where }: { where: Record<string, unknown> }) => {
-            const key = where.idempotencyKey as string | undefined;
+            const key = where.idempotencyKey as { in: string[] } | undefined;
             const notIn = (where.id as { notIn: string[] }).notIn;
             return (
               rows
                 .filter((r) => r.status === "QUEUED" && !notIn.includes(r.id))
-                .filter((r) => (key ? r.idempotencyKey === key : (r.idempotencyKey ?? "") .startsWith("move:") === false))
+                .filter((r) => (key ? key.in.includes(r.idempotencyKey ?? "") : (r.idempotencyKey ?? "").startsWith("move:") === false))
                 .sort((a, b) => a.createdAt - b.createdAt)[0] ?? null
             );
           }),
@@ -8425,6 +8425,12 @@ describe("ApplicationsService — app move guards", () => {
 
     it("with a live move but no move deploy queued yet, nothing is claimed", async () => {
       const q = queue([R("old-webhook", null, 1)], LIVE);
+      expect(await q.claimNext("app1")).toBeNull();
+    });
+
+    it("the move's rollback deploy (move:<id>:rb) is claimable too, ahead of every other queued row", async () => {
+      const q = queue([R("old", null, 1), R("rb", "move:mv1:rb", 5)], LIVE);
+      expect((await q.claimNext("app1"))?.id).toBe("rb");
       expect(await q.claimNext("app1")).toBeNull();
     });
 
@@ -8492,6 +8498,52 @@ describe("ApplicationsService — app move guards", () => {
       const out = await svc.list("u1");
       expect(prisma.appMove.findMany as jest.Mock).toHaveBeenCalledTimes(1);
       expect(Object.fromEntries(out.map((v) => [v.id, v.move]))).toEqual({ a1: null, a2: { id: "mvX", phase: "DEPLOYING" } });
+    });
+  });
+
+  describe("remove() and move archives", () => {
+    const archive = { id: "ckmoveabcdefghijklmnopqrs", appId: "app1", phase: "COMPLETED", sourceServerId: "s0", targetServerId: "s1", sourcePurgedAt: null, volumes: [{ name: "data", dockerName: "tugra_appv_app1_data", state: "APPLIED" }] };
+    function mkRemove(archives: unknown[]) {
+      const sent: { host: string; cmd: string }[] = [];
+      const update = jest.fn().mockResolvedValue({});
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue({ ...movingApp, serverId: "s1", source: "IMAGE", clusterId: null, networks: [], dockerOptions: null, buildServerId: null }), delete: jest.fn().mockResolvedValue({}), findMany: jest.fn().mockResolvedValue([]) },
+        appMove: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue(archives), update },
+      } as unknown as PrismaService;
+      const agentWs = {
+        sendCommand: jest.fn().mockImplementation((host: string, cmd: string) => {
+          sent.push({ host, cmd });
+          return Promise.resolve({ exitCode: 0, output: cmd.includes("TUGRA_VX_CLEANUP_DONE") ? "TUGRA_VX_VOL tugra_appv_app1_data removed\nTUGRA_VX_CLEANUP_DONE\n" : "" });
+        }),
+        isOnline: jest.fn().mockReturnValue(true),
+      } as unknown as AgentWsServer;
+      return { sent, update, prisma, svc: make(prisma, okAccess(), agentWs, makeDeployLogs(), makeMonitors()) };
+    }
+
+    it("deleting an app best-effort purges the archived data a COMPLETED move left on the old server (before the row is deleted)", async () => {
+      const t = mkRemove([archive]);
+      await t.svc.remove("u1", "app1");
+      const purge = t.sent.find((s) => s.host === "s0");
+      expect(purge?.cmd).toContain("docker volume rm 'tugra_appv_app1_data'");
+      expect(t.update).toHaveBeenCalledWith({ where: { id: archive.id }, data: { sourcePurgedAt: expect.any(Date) } });
+      expect((t.prisma.application.delete as jest.Mock)).toHaveBeenCalled();
+      expect(t.prisma.appMove.findMany).toHaveBeenCalledWith({ where: { appId: "app1", phase: "COMPLETED", sourcePurgedAt: null } });
+    });
+
+    it("an unreachable old server never blocks the delete (the move's sweeper keeps the archive; AppMove has no FK to the app)", async () => {
+      const t = mkRemove([archive]);
+      (t.prisma as unknown as { appMove: { findMany: jest.Mock } }).appMove.findMany.mockResolvedValue([{ ...archive }]);
+      const agentWs = (t.svc as unknown as { agentWs: { sendCommand: jest.Mock } }).agentWs;
+      agentWs.sendCommand.mockImplementation((host: string, cmd: string) => (host === "s0" ? Promise.reject(new Error("agent offline")) : Promise.resolve({ exitCode: 0, output: cmd })));
+      await t.svc.remove("u1", "app1");
+      expect((t.prisma.application.delete as jest.Mock)).toHaveBeenCalled();
+      expect(t.update).not.toHaveBeenCalled();
+    });
+
+    it("an app with no archive deletes exactly as before", async () => {
+      const t = mkRemove([]);
+      await t.svc.remove("u1", "app1");
+      expect(t.sent.every((s) => s.host === "s1")).toBe(true);
     });
   });
 

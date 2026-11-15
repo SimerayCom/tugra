@@ -21,6 +21,7 @@ import {
 import { PartTransferService } from "./part-transfer.service";
 import {
   assemblePreflight,
+  collectReservedPorts,
   declaredVolumes,
   hostMountPaths,
   partBytesFromEnv,
@@ -61,10 +62,10 @@ export class MovePreflightService {
   }
 
   /** The whole preflight for (app, target): gather DB facts, probe both agents, assemble. Also what `start` re-runs. */
-  async computePreflight(app: Application, target: Server, acks: Partial<MoveAckInput>, userId: string, probeLink: boolean): Promise<MoveAppPreflightResult> {
+  async computePreflight(app: Application, target: Server, acks: Partial<MoveAckInput>, userId: string, probeLink: boolean, excludeMoveId?: string): Promise<MoveAppPreflightResult> {
     const source = await this.prisma.server.findUnique({ where: { id: app.serverId } });
     if (!source) throw new NotFoundException("server not found");
-    const facts = await this.gatherFacts(app, source, target, acks, userId);
+    const facts = await this.gatherFacts(app, source, target, acks, userId, excludeMoveId);
     const cheap = app.status === "NEW";
     if (!cheap) {
       const { vols } = declaredVolumes(facts.app);
@@ -151,7 +152,7 @@ export class MovePreflightService {
   }
 
   /** Everything the pure assembly needs that comes from the database (and the agents' liveness). */
-  async gatherFacts(app: Application, source: Server, target: Server, acks: Partial<MoveAckInput>, userId: string): Promise<PreflightFacts> {
+  async gatherFacts(app: Application, source: Server, target: Server, acks: Partial<MoveAckInput>, userId: string, excludeMoveId?: string): Promise<PreflightFacts> {
     const [previews, dbLinkCount, rolloutActive, deployActive, active, activeOnServer, latest, targetApps, targetDbs, archives, backupRows, recentDeploys, domainRows, serviceDomainCount, callerIsOwner] = await Promise.all([
       this.prisma.application.findMany({ where: { parentAppId: app.id }, select: { prNumber: true } }),
       this.prisma.appDatabaseLink.count({ where: { appId: app.id } }),
@@ -159,7 +160,7 @@ export class MovePreflightService {
       this.prisma.deployment.count({
         where: { appId: app.id, status: { in: ["QUEUED", "RUNNING"] }, OR: [{ idempotencyKey: null }, { NOT: { idempotencyKey: { startsWith: "move:" } } }] },
       }),
-      this.prisma.appMove.findFirst({ where: { appId: app.id, phase: { notIn: APP_MOVE_TERMINAL } }, select: { id: true } }),
+      this.prisma.appMove.findFirst({ where: { appId: app.id, phase: { notIn: APP_MOVE_TERMINAL }, ...(excludeMoveId ? { id: { not: excludeMoveId } } : {}) }, select: { id: true } }),
       this.prisma.appMove.findFirst({
         where: {
           appId: { not: app.id },
@@ -168,7 +169,7 @@ export class MovePreflightService {
         },
         select: { id: true },
       }),
-      this.prisma.appMove.findFirst({ where: { appId: app.id }, orderBy: { createdAt: "desc" }, select: { phase: true, sourcePurgedAt: true, targetPurgedAt: true } }),
+      this.prisma.appMove.findFirst({ where: { appId: app.id, ...(excludeMoveId ? { id: { not: excludeMoveId } } : {}) }, orderBy: { createdAt: "desc" }, select: { phase: true, sourcePurgedAt: true, targetPurgedAt: true } }),
       this.prisma.application.findMany({
         where: { serverId: target.id },
         select: { id: true, teamId: true, hostPort: true, portMappings: true, extraPorts: true, containerAlias: true, networkAliases: true, networks: true, domain: true },
@@ -193,13 +194,7 @@ export class MovePreflightService {
     const networkAliasConflict =
       app.networkAliases.some((a) => otherNetworkAliases.has(a)) ||
       (app.networks.length > 0 && others.some((o) => o.teamId !== app.teamId && o.networks.some((n) => app.networks.includes(n))));
-    const reserved = new Set<number>();
-    for (const o of others) {
-      if (typeof o.hostPort === "number") reserved.add(o.hostPort);
-      for (const m of asArray<{ hostPort?: unknown }>(o.portMappings)) if (typeof m?.hostPort === "number") reserved.add(m.hostPort);
-      for (const p of parseExtraPorts(o.extraPorts)) reserved.add(p.hostPort);
-    }
-    for (const d of targetDbs) if (typeof d.hostPort === "number") reserved.add(d.hostPort);
+    const reserved = collectReservedPorts(targetApps, targetDbs, app.id);
 
     // LOCAL backups: no destination, or a non-S3 destination.
     const destIds = [...new Set(backupRows.map((b) => b.destinationId).filter((x): x is string => !!x))];

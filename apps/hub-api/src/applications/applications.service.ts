@@ -156,6 +156,7 @@ import { appLinks, appUrl, primaryHostPort } from "../common/app-url";
 import { magicDomain } from "./magic-domain";
 import { inferComposeWeb } from "../deploy/compose-web";
 import { appIdOfContainer, liveContainerOf, reduceHealth, UNKNOWN_HEALTH, CONTAINER_STATE_MAX_AGE_MS, type AppContainerHealth } from "./container-health";
+import { purgeMoveSource } from "../app-moves/app-move-archive";
 import { cpusetExceedsTarget, gpusUnavailableOnTarget, hasHostMounts, privilegedOptionsCarried } from "../app-moves/move-target-fit";
 import { cpusetMax } from "./dto";
 import { computeImageUpdateView, isImageCheckSubject, ImageUpdateViewSchema, loadLiveImageMany, type LiveImage } from "./image-update";
@@ -1783,6 +1784,70 @@ export class ApplicationsService {
     return dep;
   }
 
+  // ── app move seams (app-moves/app-move-runner.service.ts) ──
+  // The move runner never edits deploy rows or builds lifecycle scripts itself: it asks for the SAME builders and the SAME
+  // queue the rest of the app uses, so a moved app deploys/stops/starts exactly like an unmoved one.
+
+  /** The stop / start / remove-container-keep-volumes scripts for the app on whichever host it currently lives, built by the
+   *  same builders stop()/start()/remove() use, and the timeout the lifecycle actions use. */
+  async moveLifecycle(app: Application): Promise<{ stop: string; start: string; removeContainer: string; timeoutMs: number }> {
+    const compose = app.source === "COMPOSE";
+    const spec = compose ? await this.composeOpSpec(app) : null;
+    return {
+      stop: compose ? buildComposeStopScript(spec!) : buildStopScript(app),
+      start: compose ? buildComposeStartScript(spec!) : buildStartScript(app),
+      // keep the volumes: the source's data is the archive until the move's retention ends
+      removeContainer: compose ? buildComposeDownScript(spec!, { volumes: false }) : buildRemoveScript(app, [], {}),
+      timeoutMs: this.lifecycleTimeoutMs(app),
+    };
+  }
+
+  /** Enqueue the deploy a move runs (on the target after the cutover; `move:<id>:rb` on the source after a rollback).
+   *  The key is the move's own: claimNext admits ONLY move deploys while the move is live. Returns the QUEUED/RUNNING row. */
+  async submitMoveDeploy(appId: string, actor: string, key: string): Promise<Deployment> {
+    const app = await this.prisma.application.findUnique({ where: { id: appId } });
+    if (!app) throw new NotFoundException("application not found");
+    const dep = await this.submitDeploy(app, actor, false, key, { detach: true, trigger: "move" });
+    if (!dep) throw new NotFoundException("deployment not found");
+    return dep;
+  }
+
+  /** After a move ends, run whatever deploys queued up while the app was locked. Fire-and-forget safe. */
+  async drainApp(appId: string): Promise<void> {
+    await this.drain(appId);
+  }
+
+  /** Re-sync everything derived from "which server is the app on": log drains, tunnel ingress (when exposed) and the
+   *  uptime monitor. Best-effort per step; returns the failed step names so the move can record a warning. */
+  async syncAfterMove(appId: string, serverIds: string[]): Promise<string[]> {
+    const failed: string[] = [];
+    const app = await this.prisma.application.findUnique({ where: { id: appId } });
+    if (!app) return failed;
+    await this.logDrainPush.pushForServers(serverIds).catch(() => failed.push("log_drains"));
+    if (app.tunnelExposed) {
+      for (const id of [...new Set(serverIds)]) await this.syncTunnelIngress(id).catch(() => failed.push("tunnel"));
+    }
+    await this.syncMonitor(appId).catch(() => failed.push("monitor"));
+    return failed;
+  }
+
+  /** System-side cancel of ANY non-terminal deploy of a move (the move's authority replaces a user's): a QUEUED row is
+   *  cancelled by CAS; a RUNNING one has its in-flight agent command killed (executeDeploy then records CANCELLED).
+   *  Returns true when the row was cancelled or its kill was delivered. */
+  async cancelMoveDeployment(depId: string, note: string): Promise<boolean> {
+    if (await this.cancelQueuedDeploymentSystem(depId, note)) return true;
+    const live = this.activeDeployCommands.get(depId);
+    if (live) {
+      this.cancelRequested.add(depId);
+      return this.agentWs.cancelCommand(live.serverId, live.reqId);
+    }
+    const row = await this.prisma.deployment.findUnique({ where: { id: depId } });
+    if (row?.status === "RUNNING" && row.agentReqId && row.agentServerId && (row.phase === "DISPATCHED" || row.phase === "RECOVERING")) {
+      return this.agentWs.cancelCommand(row.agentServerId, row.agentReqId);
+    }
+    return false;
+  }
+
   /** System-side cancel of a still-QUEUED deploy (the caller's authority is the rollout row that dispatched it).
    *  Compare-and-set on QUEUED: a row that already started is left alone and false is returned. */
   async cancelQueuedDeploymentSystem(depId: string, note: string): Promise<boolean> {
@@ -1827,7 +1892,7 @@ export class ApplicationsService {
       // run (a stale row from a rolled-back move).
       const mv = await findActiveMove(tx, appId);
       const moveFilter: Prisma.DeploymentWhereInput = mv
-        ? { idempotencyKey: `move:${mv.id}` }
+        ? { idempotencyKey: { in: [`move:${mv.id}`, `move:${mv.id}:rb`] } }
         : { OR: [{ idempotencyKey: null }, { NOT: { idempotencyKey: { startsWith: "move:" } } }] };
       const tried: string[] = []; // rows whose CAS lost to a cancel — skip them so the loop always terminates
       for (;;) {
@@ -3014,6 +3079,11 @@ export class ApplicationsService {
       await this.agentWs.sendCommand(app.serverId, buildCustomCertRemoveScript(app.id), "deploy").catch(() => undefined);
     }
     await this.monitors.removeForApp(id).catch(() => undefined);
+    // A COMPLETED app move keeps the app's old data on its previous server until the archive is purged; deleting the
+    // app must not strand it (best-effort: an offline server is simply left to the move's own sweeper, which keeps
+    // running because AppMove rows have no foreign key to the app).
+    const archives = await this.prisma.appMove.findMany({ where: { appId: id, phase: "COMPLETED", sourcePurgedAt: null } });
+    for (const m of archives) await purgeMoveSource({ prisma: this.prisma as never, agentWs: this.agentWs as never }, m, { stampWhenLive: false }).catch(() => undefined);
     // Best-effort: remove the Cloudflare records Tugra auto-created for this app BEFORE the Domain rows cascade
     // away (otherwise they'd dangle at the provider). Never blocks deletion — the user already passed requireWrite.
     await this.dns.purgeDomains(userId, id).catch(() => undefined);

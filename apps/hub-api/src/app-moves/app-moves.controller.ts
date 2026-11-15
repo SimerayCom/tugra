@@ -12,7 +12,11 @@ import {
   AppMoveViewSchema,
   MoveAppPreflightResultSchema,
   MoveAppPreflightSchema,
+  OkSchema,
+  StartAppMoveResultSchema,
+  StartAppMoveSchema,
   type MoveAppPreflightInput,
+  type StartAppMoveInput,
 } from "./dto";
 
 /**
@@ -40,6 +44,20 @@ export class AppMovesController {
     return this.moves.preflight(user.userId, id, body);
   }
 
+  /** Start the move (202): the preflight is re-run server-side. Wrapped by the Idempotency-Key interceptor like any POST. */
+  @Post(":id/move")
+  @HttpCode(202)
+  @RequireScopes("write")
+  @ApiZodBody(StartAppMoveSchema)
+  @ApiZodResponse(StartAppMoveResultSchema, { status: 202 })
+  start(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(StartAppMoveSchema)) body: StartAppMoveInput,
+  ) {
+    return this.moves.start(user.userId, id, body);
+  }
+
   @Get(":id/moves")
   @ApiZodResponse(AppMoveViewSchema, { isArray: true })
   list(@CurrentUser() user: AuthUser, @Param("id") id: string, @Query("active") active?: string, @Query("limit") limit?: string) {
@@ -51,5 +69,25 @@ export class AppMovesController {
   @ApiZodResponse(AppMoveViewSchema)
   get(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("moveId") moveId: string) {
     return this.moves.get(user.userId, id, moveId);
+  }
+
+  /** Cancel before the cutover (409 move_past_cutover afterwards). */
+  @Post(":id/moves/:moveId/cancel")
+  @HttpCode(200)
+  @RequireScopes("write")
+  @ApiZodResponse(OkSchema)
+  async cancel(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("moveId") moveId: string) {
+    await this.moves.cancel(user.userId, id, moveId);
+    return { ok: true as const };
+  }
+
+  /** Remove the move's archived source volumes (or a rolled-back/failed move's target leftovers) now. */
+  @Post(":id/moves/:moveId/purge-source")
+  @HttpCode(200)
+  @RequireScopes("write")
+  @ApiZodResponse(OkSchema)
+  async purgeSource(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("moveId") moveId: string) {
+    await this.moves.purgeSource(user.userId, id, moveId);
+    return { ok: true as const };
   }
 }
