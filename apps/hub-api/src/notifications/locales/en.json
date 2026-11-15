@@ -45,6 +45,7 @@
       "lastSuccess": "Last successful backup",
       "never": "Never",
       "window": "Alert window",
+      "volume": "Volume",
       "engine": "Engine",
       "destination": "Destination",
       "bucket": "Bucket",

@@ -12,7 +12,10 @@ import { buildVolumeDeleteScript, buildVolumeExportUrlScript, buildVolumeImportS
 import { VolumeBackupRunnerService } from "./volume-backup-runner.service";
 import { VolumeBackupSchedulerService } from "./volume-backups.scheduler.service";
 import { BackupAlertsService } from "../backups/backup-alerts.service";
-import type { VolumeBackupConfigInput, VolumeImportFromUrlInput } from "./dto";
+import { GIB, planRetention } from "../backups/retention";
+import { nextRuns } from "../common/cron";
+import type { VolumeBackupConfigInput, VolumeImportFromUrlInput, VolumePolicyInput } from "./dto";
+import { policyAlertId } from "./policy";
 
 export const VolumeBackupViewSchema = z.object({
   id: z.string(),
@@ -32,6 +35,44 @@ export const VolumeBackupViewSchema = z.object({
   errorTail: z.string().nullable(),
 });
 export type VolumeBackupView = z.infer<typeof VolumeBackupViewSchema>;
+
+export const VolumePolicyViewSchema = z.object({
+  volumeName: z.string(),
+  enabled: z.boolean(),
+  intervalHours: z.number().nullable(),
+  cron: z.string().nullable(),
+  retention: z.number().nullable(),
+  retentionDays: z.number().nullable(),
+  maxSizeGb: z.number().nullable(),
+});
+export type VolumePolicyView = z.infer<typeof VolumePolicyViewSchema>;
+
+// GET apps/:appId/volume-backups/config — the app-wide schedule + retention, its per-volume policies, and the
+// storage meter per size pool. No secrets. (Deliberately NOT folded into the huge Application view.)
+export const VolumeBackupConfigViewSchema = z.object({
+  enabled: z.boolean(),
+  intervalHours: z.number().nullable(),
+  cron: z.string().nullable(),
+  retention: z.number(),
+  retentionDays: z.number().nullable(),
+  maxSizeGb: z.number().nullable(),
+  destinationId: z.string().nullable(),
+  // null = the implicit server-disk path (unencrypted); else whether the chosen destination encrypts.
+  destinationEncrypted: z.boolean().nullable(),
+  policies: z.array(VolumePolicyViewSchema),
+  usage: z.array(
+    z.object({
+      pool: z.string(), // "app" or a volume name that has its own size budget
+      usedBytes: z.string(),
+      backupCount: z.number(),
+      unknownSizeCount: z.number(),
+      budgetGb: z.number().nullable(),
+      overBudget: z.boolean(),
+    }),
+  ),
+  nextRun: z.string().nullable(), // next cron fire (ISO); null for an interval schedule
+});
+export type VolumeBackupConfigView = z.infer<typeof VolumeBackupConfigViewSchema>;
 
 @Injectable()
 export class VolumeBackupsService {
@@ -221,25 +262,143 @@ export class VolumeBackupsService {
   }
 
   async setSchedule(userId: string, appId: string, cfg: VolumeBackupConfigInput): Promise<Application> {
-    await this.requireWrite(userId, appId);
+    const cur = await this.requireWrite(userId, appId);
+    // The destination must belong to the app's team (a foreign destination id would store this team's data in
+    // another team's bucket).
+    if (cfg.destinationId) {
+      const dest = await this.prisma.backupDestination.findFirst({ where: { id: cfg.destinationId, teamId: cur.teamId }, select: { id: true } });
+      if (!dest) throw new BadRequestException("backup destination not found in this team");
+    }
+    // cron / retentionDays / maxSizeGb: absent leaves the stored value, null clears it. intervalHours keeps its
+    // historical "absent = cleared" semantics. A cron wins over the interval.
+    const cron = cfg.cron !== undefined ? cfg.cron : cur.volumeBackupCron;
+    const intervalHours = cfg.intervalHours ?? null;
+    if (cfg.enabled && !cron && !intervalHours) {
+      throw new BadRequestException("an enabled schedule needs intervalHours or cron");
+    }
     const app = await this.prisma.application.update({
       where: { id: appId },
       data: {
         volumeBackupEnabled: cfg.enabled,
-        volumeBackupIntervalHours: cfg.intervalHours ?? null,
+        volumeBackupIntervalHours: intervalHours,
+        ...(cfg.cron !== undefined ? { volumeBackupCron: cfg.cron } : {}),
         volumeBackupRetention: cfg.retention ?? undefined,
+        ...(cfg.retentionDays !== undefined ? { volumeBackupRetentionDays: cfg.retentionDays } : {}),
+        ...(cfg.maxSizeGb !== undefined ? { volumeBackupMaxSizeGb: cfg.maxSizeGb } : {}),
         ...(cfg.destinationId !== undefined ? { volumeBackupDestinationId: cfg.destinationId || null } : {}),
       },
     });
-    if (app.volumeBackupEnabled && app.volumeBackupIntervalHours) {
+    if (app.volumeBackupEnabled && app.volumeBackupCron) {
+      await this.scheduler.scheduleCron(appId, app.volumeBackupCron);
+    } else if (app.volumeBackupEnabled && app.volumeBackupIntervalHours) {
       await this.scheduler.schedule(appId, app.volumeBackupIntervalHours * 3600);
     } else {
       await this.scheduler.unschedule(appId);
     }
+    // Per-volume jobs follow the app's enabled flag and their own policy rows.
+    await this.scheduler.syncPolicyJobs(appId);
     // Re-arm the missing-backup watchdog from now + clear stale alerts (see BackupAlertsService.onScheduleChanged).
     await this.alerts.onScheduleChanged("volume", appId);
     await this.audit.log({ actor: userId, action: "app.volume_backup.schedule", target: appId });
     return app;
+  }
+
+  /** The app-wide schedule/retention, per-volume policies and per-pool storage usage (read access). */
+  async getConfig(userId: string, appId: string): Promise<VolumeBackupConfigView> {
+    const app = await this.require(userId, appId);
+    const policies = await this.prisma.volumeBackupPolicy.findMany({ where: { appId }, orderBy: { volumeName: "asc" } });
+    const declared = new Set(this.runner.volumesOf(app).map((v) => v.name));
+    const rows = (await this.prisma.volumeBackup.findMany({ where: { appId, status: "SUCCESS" }, orderBy: { createdAt: "desc" } })).filter((b) => declared.has(b.volumeName));
+    const polBy = new Map(policies.map((p) => [p.volumeName, p]));
+    const pools = new Map<string, typeof rows>([["app", []]]);
+    for (const p of policies) if (p.maxSizeGb != null && declared.has(p.volumeName)) pools.set(p.volumeName, []);
+    for (const b of rows) {
+      const k = polBy.get(b.volumeName)?.maxSizeGb != null ? b.volumeName : "app";
+      pools.get(k)!.push(b);
+    }
+    const usage = [...pools].map(([pool, rs]) => {
+      const gb = pool === "app" ? app.volumeBackupMaxSizeGb : polBy.get(pool)?.maxSizeGb ?? null;
+      const plan = planRetention(
+        rs.map((b) => ({ id: b.id, series: b.volumeName, createdAt: b.createdAt, sizeBytes: b.sizeBytes })),
+        { keep: app.volumeBackupRetention, maxAgeDays: app.volumeBackupRetentionDays, maxBytes: gb != null ? BigInt(gb) * GIB : null },
+        Date.now(),
+        (series) => ({ keep: polBy.get(series)?.retention ?? app.volumeBackupRetention, maxAgeDays: polBy.get(series)?.retentionDays ?? app.volumeBackupRetentionDays }),
+      );
+      const used = rs.reduce((n, b) => n + (b.sizeBytes ?? 0n), 0n);
+      return {
+        pool,
+        usedBytes: used.toString(),
+        backupCount: rs.length,
+        unknownSizeCount: rs.filter((b) => b.sizeBytes == null).length,
+        budgetGb: gb,
+        overBudget: plan.overBudget,
+      };
+    });
+    let destinationEncrypted: boolean | null = null;
+    if (app.volumeBackupDestinationId) {
+      const d = await this.prisma.backupDestination.findUnique({ where: { id: app.volumeBackupDestinationId }, select: { encryptionEnabled: true } });
+      destinationEncrypted = d ? d.encryptionEnabled : null;
+    }
+    return {
+      enabled: app.volumeBackupEnabled,
+      intervalHours: app.volumeBackupIntervalHours,
+      cron: app.volumeBackupCron,
+      retention: app.volumeBackupRetention,
+      retentionDays: app.volumeBackupRetentionDays,
+      maxSizeGb: app.volumeBackupMaxSizeGb,
+      destinationId: app.volumeBackupDestinationId,
+      destinationEncrypted,
+      policies: policies.map((p) => this.policyView(p)),
+      usage,
+      nextRun: app.volumeBackupCron ? (nextRuns(app.volumeBackupCron, 1)[0]?.toISOString() ?? null) : null,
+    };
+  }
+
+  /** Create/replace the per-volume policy. Absent fields mean "inherit the app's" (stored null). */
+  async putPolicy(userId: string, appId: string, volumeName: string, input: VolumePolicyInput): Promise<VolumePolicyView> {
+    const app = await this.requireWrite(userId, appId);
+    if (!this.runner.volumesOf(app).some((v) => v.name === volumeName)) throw new NotFoundException("unknown volume for this app");
+    const data = {
+      enabled: input.enabled,
+      intervalHours: input.intervalHours ?? null,
+      cron: input.cron ?? null,
+      retention: input.retention ?? null,
+      retentionDays: input.retentionDays ?? null,
+      maxSizeGb: input.maxSizeGb ?? null,
+    };
+    const row = await this.prisma.volumeBackupPolicy.upsert({
+      where: { appId_volumeName: { appId, volumeName } },
+      create: { appId, volumeName, ...data },
+      update: data,
+    });
+    await this.scheduler.syncPolicyJobs(appId);
+    await this.alerts.onScheduleChanged("volume", policyAlertId(appId, volumeName));
+    await this.audit.log({ actor: userId, action: "app.volume_backup.policy", target: appId, meta: { volumeName } });
+    return this.policyView(row);
+  }
+
+  /** Remove the per-volume policy (the volume reverts to the app's schedule + retention). */
+  async deletePolicy(userId: string, appId: string, volumeName: string): Promise<void> {
+    await this.requireWrite(userId, appId);
+    const row = await this.prisma.volumeBackupPolicy.findUnique({ where: { appId_volumeName: { appId, volumeName } } });
+    if (!row) throw new NotFoundException("no policy for this volume");
+    await this.prisma.volumeBackupPolicy.delete({ where: { id: row.id } });
+    await this.scheduler.unschedulePolicy(row.id);
+    await this.scheduler.syncPolicyJobs(appId);
+    await this.alerts.onScheduleChanged("volume", policyAlertId(appId, volumeName));
+    await this.audit.log({ actor: userId, action: "app.volume_backup.policy", target: appId, meta: { volumeName, removed: true } });
+  }
+
+  private policyView(p: { volumeName: string; enabled: boolean; intervalHours: number | null; cron: string | null; retention: number | null; retentionDays: number | null; maxSizeGb: number | null }): VolumePolicyView {
+    return {
+      volumeName: p.volumeName,
+      enabled: p.enabled,
+      intervalHours: p.intervalHours,
+      cron: p.cron,
+      retention: p.retention,
+      retentionDays: p.retentionDays,
+      maxSizeGb: p.maxSizeGb,
+    };
   }
 
   private view(b: VolumeBackup, destinationType: string | null, canWrite: boolean): VolumeBackupView {

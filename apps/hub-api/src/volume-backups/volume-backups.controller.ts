@@ -7,7 +7,7 @@ import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
-import { VolumeBackupsService, VolumeBackupViewSchema } from "./volume-backups.service";
+import { VolumeBackupConfigViewSchema, VolumeBackupsService, VolumeBackupViewSchema, VolumePolicyViewSchema } from "./volume-backups.service";
 import {
   ExportUrlInput,
   ExportUrlSchema,
@@ -15,6 +15,8 @@ import {
   VolumeBackupConfigSchema,
   VolumeImportFromUrlInput,
   VolumeImportFromUrlSchema,
+  VolumePolicyInput,
+  VolumePolicySchema,
 } from "./dto";
 
 @ApiTags("volume-backups")
@@ -76,6 +78,33 @@ export class VolumeBackupsController {
   @HttpCode(200)
   async remove(@CurrentUser() user: AuthUser, @Param("appId") appId: string, @Param("id") id: string) {
     await this.svc.remove(user.userId, appId, id);
+    return { ok: true };
+  }
+
+  @Get("config")
+  @ApiZodResponse(VolumeBackupConfigViewSchema)
+  getConfig(@CurrentUser() user: AuthUser, @Param("appId") appId: string) {
+    return this.svc.getConfig(user.userId, appId);
+  }
+
+  // Per-volume policy: its own cron/interval (or off) and retention, overriding the app-wide schedule.
+  @Put("policies/:volumeName")
+  @HttpCode(200)
+  @ApiZodBody(VolumePolicySchema)
+  @ApiZodResponse(VolumePolicyViewSchema)
+  putPolicy(
+    @CurrentUser() user: AuthUser,
+    @Param("appId") appId: string,
+    @Param("volumeName") volumeName: string,
+    @Body(new ZodValidationPipe(VolumePolicySchema)) body: VolumePolicyInput,
+  ) {
+    return this.svc.putPolicy(user.userId, appId, volumeName, body);
+  }
+
+  @Delete("policies/:volumeName")
+  @HttpCode(200)
+  async deletePolicy(@CurrentUser() user: AuthUser, @Param("appId") appId: string, @Param("volumeName") volumeName: string) {
+    await this.svc.deletePolicy(user.userId, appId, volumeName);
     return { ok: true };
   }
 

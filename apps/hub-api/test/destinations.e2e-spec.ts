@@ -105,6 +105,34 @@ describe("Backup destinations + offsite (e2e)", () => {
     expect(row?.s3SecretKey).not.toBe("topsecret");
   });
 
+  it("encrypts by default when the flag is omitted: recoveryKey is returned once on POST and never on GET; explicit false opts out", async () => {
+    const body = { teamId, type: "S3", s3Bucket: "b2", s3Endpoint: "s3.example.com", s3AccessKey: "AK", s3SecretKey: "SK" };
+    const def = await request(app.getHttpServer())
+      .post("/backup-destinations")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ ...body, name: "default-enc" })
+      .expect(201);
+    expect(def.body.encryptionEnabled).toBe(true);
+    expect(typeof def.body.recoveryKey).toBe("string");
+    expect(def.headers["cache-control"]).toBe("no-store");
+    const got = await request(app.getHttpServer())
+      .get(`/backup-destinations/${def.body.id}`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(got.body).not.toHaveProperty("recoveryKey");
+    expect(JSON.stringify(got.body)).not.toContain(def.body.recoveryKey);
+    const row = await prisma.backupDestination.findUnique({ where: { id: def.body.id } });
+    expect(row?.encryptionKey).not.toBe(def.body.recoveryKey); // stored encrypted
+
+    const off = await request(app.getHttpServer())
+      .post("/backup-destinations")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ ...body, name: "opt-out", encryptionEnabled: false })
+      .expect(201);
+    expect(off.body.encryptionEnabled).toBe(false);
+    expect(off.body.recoveryKey).toBeNull();
+  });
+
   it("validates S3 destinations require bucket + creds", async () => {
     await request(app.getHttpServer())
       .post("/backup-destinations")

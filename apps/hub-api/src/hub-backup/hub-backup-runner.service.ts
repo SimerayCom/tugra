@@ -8,6 +8,8 @@ import { NotificationsService } from "../notifications/notifications.service";
 import { BackupRunnerService, parseSize } from "../backups/backup-runner.service";
 import { backupPath, buildDeleteBackupScript, scrubRestoreOutput } from "../backups/backup-script";
 import { objectKey, type DestinationSpec } from "../backups/destination";
+import { GIB, planRetention } from "../backups/retention";
+import { gpgMissingTail } from "../backups/backup-script";
 import {
   HUB_NS,
   buildHubBackupScript,
@@ -84,7 +86,7 @@ export class HubBackupRunnerService {
       sizeBytes = succeeded ? parseSize(r.output) : null;
       await this.prisma.hubBackup.update({
         where: { id: row.id },
-        data: { status: succeeded ? "SUCCESS" : "FAILED", sizeBytes, errorTail: succeeded ? null : scrubRestoreOutput(r.output), completedAt: new Date() },
+        data: { status: succeeded ? "SUCCESS" : "FAILED", sizeBytes, errorTail: succeeded ? null : gpgMissingTail(r.output, r.exitCode, true, [passphrase]) ?? scrubRestoreOutput(r.output), completedAt: new Date() },
       });
     } catch (e) {
       // Dump may have run (exit 0) but persisting threw → the row is FAILED now, so force succeeded=false.
@@ -108,16 +110,29 @@ export class HubBackupRunnerService {
         succeeded ? { ...ctx, sizeBytes: sizeBytes != null ? sizeBytes.toString() : "" } : { ...ctx, errorTail: scrubRestoreOutput(errorText) },
       )
       .catch(() => undefined);
-    await this.prune(cfg?.retention ?? 7, local.id);
+    await this.prune({ retention: cfg?.retention ?? 7, retentionDays: cfg?.retentionDays ?? null, maxSizeGb: cfg?.maxSizeGb ?? null }, local.id);
     return (await this.prisma.hubBackup.findUnique({ where: { id: row.id } })) as HubBackup;
   }
 
-  /** Keep the newest `retention` SUCCESS backups (delete older objects + rows). FAILED rows are kept for
-   *  visibility but capped so the table stays bounded. */
-  async prune(retention: number, localServerId: string): Promise<void> {
-    const stale = (await this.prisma.hubBackup.findMany({ where: { status: "SUCCESS" }, orderBy: { createdAt: "desc" } })).slice(retention);
-    for (const b of stale) {
-      const spec = await this.backups.destinationSpecById(b.destinationId);
+  /** Prune SUCCESS backups via the shared planner (keep-N, age, total size; the newest is always kept), deleting
+   *  older objects + rows. FAILED rows are kept for visibility but capped so the table stays bounded. */
+  async prune(cfg: { retention: number; retentionDays: number | null; maxSizeGb: number | null }, localServerId: string): Promise<void> {
+    const rows = await this.prisma.hubBackup.findMany({ where: { status: "SUCCESS" }, orderBy: { createdAt: "desc" } });
+    const plan = planRetention(
+      rows.map((b) => ({ id: b.id, series: "hub", createdAt: b.createdAt, sizeBytes: b.sizeBytes })),
+      { keep: cfg.retention, maxAgeDays: cfg.retentionDays, maxBytes: cfg.maxSizeGb != null ? BigInt(cfg.maxSizeGb) * GIB : null },
+    );
+    if (plan.overBudget) this.logger.warn(`hub backups exceed the ${cfg.maxSizeGb} GiB budget with only the newest backup left`);
+    const byId = new Map(rows.map((b) => [b.id, b]));
+    for (const { id } of plan.remove) {
+      const b = byId.get(id)!;
+      let spec: DestinationSpec;
+      try {
+        spec = await this.backups.destinationSpecById(b.destinationId);
+      } catch (e) {
+        this.logger.warn(`prune skipped hub backup ${b.id}: ${e instanceof Error ? e.message : e}`);
+        continue;
+      }
       await this.agentWs.sendCommand(localServerId, buildDeleteBackupScript(HUB_NS, b.filename, spec), "backup").catch(() => undefined);
       await this.prisma.hubBackup.delete({ where: { id: b.id } });
     }

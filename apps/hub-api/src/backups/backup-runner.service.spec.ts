@@ -256,6 +256,36 @@ describe("BackupRunnerService.prune — per-backup destination", () => {
     expect(del).not.toHaveBeenCalledWith({ where: { id: "new" } });
   });
 
+  it("size retention: removes the oldest backups beyond backupMaxSizeGb, never the newest", async () => {
+    const day = 86_400_000;
+    const now = Date.now();
+    const gib = 1024n ** 3n;
+    const rows = [
+      { id: "new", filename: "n", destinationId: null, createdAt: new Date(now - 1 * day), sizeBytes: 4n * gib },
+      { id: "mid", filename: "m", destinationId: null, createdAt: new Date(now - 2 * day), sizeBytes: 4n * gib },
+      { id: "old", filename: "o", destinationId: null, createdAt: new Date(now - 3 * day), sizeBytes: 4n * gib },
+    ];
+    const del = jest.fn().mockResolvedValue({});
+    const prisma = {
+      backup: { findMany: jest.fn().mockResolvedValue(rows), delete: del },
+      backupDestination: { findUnique: jest.fn().mockResolvedValue(null) },
+    } as unknown as PrismaService;
+    const svc = new BackupRunnerService(
+      prisma,
+      { log: jest.fn() } as unknown as AuditService,
+      {} as unknown as CryptoService,
+      { sendCommand: jest.fn().mockResolvedValue({ exitCode: 0, output: "" }) } as unknown as AgentWsServer,
+      {} as unknown as NotificationsService,
+      noAlerts(),
+      noDbs(),
+    );
+    await svc.prune({ id: "db1", serverId: "s1", backupRetention: 100, backupMaxSizeGb: 9 } as never);
+    expect(del.mock.calls.map((c) => c[0].where.id)).toEqual(["old"]);
+    del.mockClear();
+    await svc.prune({ id: "db1", serverId: "s1", backupRetention: 100, backupMaxSizeGb: 1 } as never);
+    expect(del.mock.calls.map((c) => c[0].where.id).sort()).toEqual(["mid", "old"]); // newest survives the 1 GiB cap
+  });
+
   it("destinationSpecById: a LOCAL destination carries its encryption config (not collapsed to cleartext)", async () => {
     const prisma = {
       backupDestination: {

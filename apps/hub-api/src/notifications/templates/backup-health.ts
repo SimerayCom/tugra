@@ -26,6 +26,8 @@ export const backupMissingTemplate: EventTemplate = {
         { label: env.t("backup.field.engine"), value: [s(c, "engine"), s(c, "version")].filter(Boolean).join(" "), inline: true },
         { label: env.t("backup.field.lastSuccess"), value: fmtDate(s(c, "lastSuccessAt")) || env.t("backup.field.never"), inline: true },
         { label: env.t("backup.field.window"), value: s(c, "windowHours") ? `${s(c, "windowHours")}h` : "", inline: true },
+        // Per-volume policy alert: name the volume; empty (app-wide / database alerts) drops the line.
+        { label: env.t("backup.field.volume"), value: s(c, "volumeName"), inline: true },
       ]),
       links: link,
     });

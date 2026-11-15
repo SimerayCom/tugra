@@ -67,7 +67,9 @@ describe("buildHubBackupScript", () => {
   it("LOCAL: pipefail, existence prelude, pg_dump | gzip | gpg AES256 → /etc/tugra/backups/hub, size via stat", () => {
     const s = buildHubBackupScript(target, filename, hubDest(LOCAL_DEST, "pp"));
     expect(s).toContain("set -o pipefail");
-    expect(s).toContain("exit 3"); // prelude runs first
+    expect(s).toContain("TUGRA_GPG_MISSING"); // the hub backup is always encrypted -> gpg preflight is the first guard
+    expect(s.indexOf("TUGRA_GPG_MISSING")).toBeLessThan(s.indexOf("exit 3"));
+    expect(s).toContain("exit 3"); // prelude runs next
     expect(s).toContain("gzip | gpg --batch --yes --passphrase 'pp' --symmetric --cipher-algo AES256");
     expect(s).toContain(`/etc/tugra/backups/hub/${filename}`);
     expect(s).toContain(`stat -c %s /etc/tugra/backups/hub/${filename}`);

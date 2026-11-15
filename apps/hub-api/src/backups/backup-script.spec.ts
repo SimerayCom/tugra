@@ -7,6 +7,9 @@ import {
   buildDumpUploadScript,
   buildImportScript,
   buildRestoreScript,
+  buildEncryptionCheckScript,
+  gpgMissingTail,
+  GPG_PREFLIGHT,
   scrubRestoreOutput,
   scrubRunOutput,
 } from "./backup-script";
@@ -428,5 +431,45 @@ describe("scrubRunOutput — credential-free run output (backup errorTail)", () 
   it("ignores empty / very short secrets (no mangling) and tolerates no secrets", () => {
     expect(scrubRunOutput("abc abc", ["", null, undefined, "ab"])).toBe("abc abc");
     expect(scrubRunOutput("plain failure")).toBe("plain failure");
+  });
+});
+
+describe("GPG preflight + encryption check", () => {
+  it("is the FIRST line of an encrypted dump script and absent for unencrypted ones", () => {
+    const enc = buildDumpUploadScript("DUMP", "db1", "f.gz.gpg", s3Encrypted);
+    expect(enc.split("\n")[2]).toBe(GPG_PREFLIGHT);
+    expect(enc).toContain("TUGRA_GPG_MISSING");
+    expect(buildDumpUploadScript("DUMP", "db1", "f.gz", s3Dest)).not.toContain("TUGRA_GPG_MISSING");
+    expect(buildDumpUploadScript("DUMP", "db1", "f.gz", LOCAL_DEST)).not.toContain("gpg");
+  });
+
+  it("unencrypted LOCAL / S3 dump scripts are byte-identical to the pre-change output", () => {
+    expect(buildDumpUploadScript("DUMP", "db1", "f.gz", LOCAL_DEST)).toBe(
+      ["set -e", "set -o pipefail", "mkdir -p /etc/tugra/backups/db1", "DUMP | gzip > /etc/tugra/backups/db1/f.gz", "stat -c %s /etc/tugra/backups/db1/f.gz"].join("\n"),
+    );
+    const s3 = buildDumpUploadScript("DUMP", "db1", "f.gz", s3Dest);
+    expect(s3.split("\n").slice(0, 2)).toEqual(["set -e", "set -o pipefail"]);
+    expect(s3).toContain("bash -o pipefail -c 'DUMP | gzip | mc pipe tdest/my-bucket/tugra/db1/f.gz'");
+  });
+
+  it("a key containing a single quote is shq-safe in the dump and the encryption check", () => {
+    const dest: DestinationSpec = { type: "LOCAL", encryption: { enabled: true, key: "a'b; rm -rf /" } };
+    const s = buildDumpUploadScript("DUMP", "db1", "f.gz.gpg", dest);
+    expect(s).toContain(`--passphrase 'a'\\''b; rm -rf /'`);
+    const chk = buildEncryptionCheckScript("a'b; rm -rf /");
+    expect(chk).toContain(`--passphrase 'a'\\''b; rm -rf /'`);
+    expect(chk).toContain("TUGRA_ENC_OK");
+    expect(chk).toContain("exit 5");
+    expect(chk).toContain("exit 6");
+  });
+
+  it("gpgMissingTail maps the marker (or exit 5 on an encrypted destination) to a one-line scrubbed message", () => {
+    expect(gpgMissingTail("noise\nTUGRA_GPG_MISSING: gpg not found on this host (install gnupg)\n", 5, true)).toBe(
+      "TUGRA_GPG_MISSING: gpg not found on this host (install gnupg)",
+    );
+    expect(gpgMissingTail("", 5, true)).toContain("TUGRA_GPG_MISSING");
+    expect(gpgMissingTail("", 5, false)).toBeNull();
+    expect(gpgMissingTail("some other failure", 1, true)).toBeNull();
+    expect(gpgMissingTail("TUGRA_GPG_MISSING key=hunter22secret", 5, true, ["hunter22secret"])).not.toContain("hunter22secret");
   });
 });

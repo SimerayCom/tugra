@@ -37843,6 +37843,10 @@
                         "type": "number",
                         "nullable": true
                       },
+                      "backupMaxSizeGb": {
+                        "type": "number",
+                        "nullable": true
+                      },
                       "backupDestinationId": {
                         "type": "string",
                         "nullable": true
@@ -37960,6 +37964,7 @@
                       "backupCron",
                       "backupRetention",
                       "backupRetentionDays",
+                      "backupMaxSizeGb",
                       "backupDestinationId",
                       "backupSupported",
                       "verifyEnabled",
@@ -38218,6 +38223,10 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "backupMaxSizeGb": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "backupDestinationId": {
                       "type": "string",
                       "nullable": true
@@ -38335,6 +38344,7 @@
                     "backupCron",
                     "backupRetention",
                     "backupRetentionDays",
+                    "backupMaxSizeGb",
                     "backupDestinationId",
                     "backupSupported",
                     "verifyEnabled",
@@ -38560,6 +38570,10 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "backupMaxSizeGb": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "backupDestinationId": {
                       "type": "string",
                       "nullable": true
@@ -38677,6 +38691,7 @@
                     "backupCron",
                     "backupRetention",
                     "backupRetentionDays",
+                    "backupMaxSizeGb",
                     "backupDestinationId",
                     "backupSupported",
                     "verifyEnabled",
@@ -39096,6 +39111,10 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "backupMaxSizeGb": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "backupDestinationId": {
                       "type": "string",
                       "nullable": true
@@ -39213,6 +39232,7 @@
                     "backupCron",
                     "backupRetention",
                     "backupRetentionDays",
+                    "backupMaxSizeGb",
                     "backupDestinationId",
                     "backupSupported",
                     "verifyEnabled",
@@ -40695,6 +40715,10 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "backupMaxSizeGb": {
+                      "type": "number",
+                      "nullable": true
+                    },
                     "backupDestinationId": {
                       "type": "string",
                       "nullable": true
@@ -40818,6 +40842,7 @@
                     "backupCron",
                     "backupRetention",
                     "backupRetentionDays",
+                    "backupMaxSizeGb",
                     "backupDestinationId",
                     "backupSupported",
                     "verifyEnabled",
@@ -47000,6 +47025,12 @@
                     "maximum": 3650,
                     "nullable": true
                   },
+                  "maxSizeGb": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100000,
+                    "nullable": true
+                  },
                   "destinationId": {
                     "type": "string",
                     "nullable": true
@@ -47993,6 +48024,118 @@
         ]
       }
     },
+    "/api/v1/backup-schedules/preview": {
+      "get": {
+        "operationId": "SchedulePreviewController_preview",
+        "parameters": [
+          {
+            "name": "count",
+            "required": false,
+            "in": "query",
+            "description": "1..10, default 3",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "cron",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "valid": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "timezone": {
+                      "type": "string"
+                    },
+                    "nextRuns": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "minGapSeconds": {
+                      "type": "number",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "valid",
+                    "timezone",
+                    "nextRuns",
+                    "minGapSeconds"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "backups"
+        ]
+      }
+    },
     "/api/v1/instance/backup": {
       "get": {
         "operationId": "HubBackupController_get",
@@ -48070,11 +48213,28 @@
                     "maximum": 720,
                     "default": 24
                   },
+                  "cron": {
+                    "type": "string",
+                    "pattern": "^\\s*(\\S+\\s+){4}\\S+\\s*$",
+                    "nullable": true
+                  },
                   "retention": {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 365,
                     "default": 7
+                  },
+                  "retentionDays": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3650,
+                    "nullable": true
+                  },
+                  "maxSizeGb": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100000,
+                    "nullable": true
                   },
                   "destinationId": {
                     "type": "string",
@@ -48371,6 +48531,131 @@
           },
           "404": {
             "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "cookie": []
+          }
+        ],
+        "tags": [
+          "instance"
+        ]
+      }
+    },
+    "/api/v1/instance/backup/destination-keys/export": {
+      "post": {
+        "operationId": "HubBackupController_exportKeys",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "passphrase": {
+                    "type": "string",
+                    "minLength": 12,
+                    "maxLength": 256
+                  }
+                },
+                "required": [
+                  "passphrase"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "filename": {
+                      "type": "string"
+                    },
+                    "format": {
+                      "type": "string"
+                    },
+                    "contentBase64": {
+                      "type": "string"
+                    },
+                    "destinationCount": {
+                      "type": "number"
+                    },
+                    "undecryptable": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "filename",
+                    "format",
+                    "contentBase64",
+                    "destinationCount",
+                    "undecryptable"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
             "content": {
               "application/json": {
                 "schema": {
@@ -49128,6 +49413,219 @@
       }
     },
     "/api/v1/apps/{appId}/volume-backups/config": {
+      "get": {
+        "operationId": "VolumeBackupsController_getConfig",
+        "parameters": [
+          {
+            "name": "appId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "intervalHours": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "cron": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "retention": {
+                      "type": "number"
+                    },
+                    "retentionDays": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "maxSizeGb": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "destinationId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "destinationEncrypted": {
+                      "type": "boolean",
+                      "nullable": true
+                    },
+                    "policies": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "volumeName": {
+                            "type": "string"
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "intervalHours": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "cron": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "retention": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "retentionDays": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "maxSizeGb": {
+                            "type": "number",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "volumeName",
+                          "enabled",
+                          "intervalHours",
+                          "cron",
+                          "retention",
+                          "retentionDays",
+                          "maxSizeGb"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "usage": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "pool": {
+                            "type": "string"
+                          },
+                          "usedBytes": {
+                            "type": "string"
+                          },
+                          "backupCount": {
+                            "type": "number"
+                          },
+                          "unknownSizeCount": {
+                            "type": "number"
+                          },
+                          "budgetGb": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "overBudget": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "pool",
+                          "usedBytes",
+                          "backupCount",
+                          "unknownSizeCount",
+                          "budgetGb",
+                          "overBudget"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "nextRun": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "enabled",
+                    "intervalHours",
+                    "cron",
+                    "retention",
+                    "retentionDays",
+                    "maxSizeGb",
+                    "destinationId",
+                    "destinationEncrypted",
+                    "policies",
+                    "usage",
+                    "nextRun"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "volume-backups"
+        ]
+      },
       "put": {
         "operationId": "VolumeBackupsController_setConfig",
         "parameters": [
@@ -49156,10 +49654,27 @@
                     "maximum": 720,
                     "nullable": true
                   },
+                  "cron": {
+                    "type": "string",
+                    "pattern": "^\\s*(\\S+\\s+){4}\\S+\\s*$",
+                    "nullable": true
+                  },
                   "retention": {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 365
+                  },
+                  "retentionDays": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3650,
+                    "nullable": true
+                  },
+                  "maxSizeGb": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100000,
+                    "nullable": true
                   },
                   "destinationId": {
                     "type": "string",
@@ -49187,6 +49702,277 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "volume-backups"
+        ]
+      }
+    },
+    "/api/v1/apps/{appId}/volume-backups/policies/{volumeName}": {
+      "put": {
+        "operationId": "VolumeBackupsController_putPolicy",
+        "parameters": [
+          {
+            "name": "appId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "volumeName",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "default": true
+                  },
+                  "intervalHours": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 720,
+                    "nullable": true
+                  },
+                  "cron": {
+                    "type": "string",
+                    "pattern": "^\\s*(\\S+\\s+){4}\\S+\\s*$",
+                    "nullable": true
+                  },
+                  "retention": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 365,
+                    "nullable": true
+                  },
+                  "retentionDays": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3650,
+                    "nullable": true
+                  },
+                  "maxSizeGb": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100000,
+                    "nullable": true
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "volumeName": {
+                      "type": "string"
+                    },
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "intervalHours": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "cron": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "retention": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "retentionDays": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "maxSizeGb": {
+                      "type": "number",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "volumeName",
+                    "enabled",
+                    "intervalHours",
+                    "cron",
+                    "retention",
+                    "retentionDays",
+                    "maxSizeGb"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "volume-backups"
+        ]
+      },
+      "delete": {
+        "operationId": "VolumeBackupsController_deletePolicy",
+        "parameters": [
+          {
+            "name": "appId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "volumeName",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
           },
           "401": {
             "description": "Missing or invalid authentication.",
@@ -49472,7 +50258,8 @@
                     "pattern": "^[a-zA-Z0-9._/-]*$"
                   },
                   "encryptionEnabled": {
-                    "type": "boolean"
+                    "type": "boolean",
+                    "description": "defaults to true; send false to opt out"
                   }
                 },
                 "required": [
@@ -49544,6 +50331,10 @@
                     "createdAt": {
                       "type": "string",
                       "format": "date-time"
+                    },
+                    "recoveryKey": {
+                      "type": "string",
+                      "nullable": true
                     }
                   },
                   "required": [
@@ -49559,7 +50350,8 @@
                     "hasCredentials",
                     "role",
                     "canWrite",
-                    "createdAt"
+                    "createdAt",
+                    "recoveryKey"
                   ],
                   "additionalProperties": false
                 }
@@ -49986,6 +50778,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "discardBackups",
+            "required": false,
+            "in": "query",
+            "description": "confirm deleting an encrypted destination that still has backups",
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -50068,7 +50869,35 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "encryption": {
+                      "type": "string",
+                      "enum": [
+                        "OK",
+                        "FAILED",
+                        "SKIPPED"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
           },
           "401": {
             "description": "Missing or invalid authentication.",

@@ -6,6 +6,7 @@
  * → sink, never through the 64KB exec channel.
  */
 import { mcHostEnv, mcTarget, MC_INSTALL, type DestinationSpec } from "../backups/destination";
+import { GPG_PREFLIGHT } from "../backups/backup-script";
 // Shared mc-output parser (also used by DB backups) — re-exported so existing importers keep working.
 export { parseShareUrl } from "../backups/destination";
 
@@ -56,6 +57,7 @@ export function buildVolumeBackupScript(
   dest: DestinationSpec,
 ): string {
   const lines = ["set -e", "set -o pipefail"];
+  if (dest.encryption.enabled) lines.push(GPG_PREFLIGHT);
   const pipe = [`docker run --rm -v ${shq(dockerVolume)}:/data:ro ${BACKUP_HELPER_IMAGE} tar -C /data -cf - .`, "gzip"];
   if (dest.encryption.enabled) pipe.push(gpgEncrypt(dest));
 
@@ -70,7 +72,14 @@ export function buildVolumeBackupScript(
     const dir = volumeBackupDir(appId, volumeName);
     const file = volumeBackupPath(appId, volumeName, filename);
     lines.push(`mkdir -p ${dir}`);
-    lines.push(`${pipe.join(" | ")} > ${file}`);
+    if (dest.encryption.enabled) {
+      // Encrypted object: stream to `<file>.part` then `mv`, so a crash mid-write never leaves a truncated
+      // .gpg at the real path. (Unencrypted LOCAL stays a direct write — that script is byte-identical.)
+      lines.push(`${pipe.join(" | ")} > ${file}.part`);
+      lines.push(`mv ${file}.part ${file}`);
+    } else {
+      lines.push(`${pipe.join(" | ")} > ${file}`);
+    }
     lines.push(`stat -c %s ${file}`);
   }
   return lines.join("\n");
@@ -142,8 +151,16 @@ export function buildVolumeRestoreScript(
   } else {
     source = `cat ${volumeBackupPath(appId, volumeName, filename)}`;
   }
+  // Decryption is driven by the OBJECT's suffix, not the destination's current flag: rows written before the
+  // LOCAL-encryption fix are cleartext even on an encrypted destination and must keep restoring, while a
+  // `.gpg` object always needs its key — and a missing key (destination deleted) must fail loud, never run
+  // `gpg --passphrase ''`.
+  const encrypted = filename.endsWith(".gpg");
+  if (encrypted && !dest.encryption.key) {
+    throw new Error("backup is encrypted but the destination has no key (destination deleted?)");
+  }
   const decode = [source];
-  if (dest.encryption.enabled) decode.push(gpgDecrypt(dest));
+  if (encrypted) decode.push(gpgDecrypt(dest));
   decode.push("gunzip");
 
   // Stage the decoded archive to a temp file FIRST. With `set -e` + `set -o pipefail`, a failed/expired
@@ -153,6 +170,7 @@ export function buildVolumeRestoreScript(
   return [
     "set -e",
     "set -o pipefail",
+    ...(encrypted ? [GPG_PREFLIGHT] : []),
     "TMP=$(mktemp)",
     `trap 'rm -f "$TMP" "$TMP.list"' EXIT`,
     `${decode.join(" | ")} > "$TMP"`,

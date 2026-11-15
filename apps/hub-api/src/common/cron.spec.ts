@@ -1,4 +1,4 @@
-import { isValidCron, minCronGapMs } from "./cron";
+import { isValidCron, minCronGapMs, nextRuns } from "./cron";
 
 describe("isValidCron", () => {
   it("accepts valid 5-field expressions (including steps, ranges and names)", () => {
@@ -34,5 +34,17 @@ describe("minCronGapMs", () => {
   });
   it("returns null for an unparsable expression", () => {
     expect(minCronGapMs("0 25 * * *", 24, from)).toBeNull();
+  });
+});
+
+describe("nextRuns", () => {
+  it("returns the next n fire times in order", () => {
+    const runs = nextRuns("0 3 * * *", 3, new Date("2026-11-15T12:00:00Z"));
+    expect(runs).toHaveLength(3);
+    expect(runs[1].getTime() - runs[0].getTime()).toBe(86_400_000);
+    expect(runs[0].getTime()).toBeGreaterThan(new Date("2026-11-15T12:00:00Z").getTime());
+  });
+  it("is empty for an unparsable expression", () => {
+    expect(nextRuns("nope", 3)).toEqual([]);
   });
 });

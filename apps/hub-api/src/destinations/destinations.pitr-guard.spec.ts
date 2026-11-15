@@ -14,6 +14,9 @@ function make(pinnedCount: number) {
   const prisma = {
     backupDestination: { findUnique: jest.fn().mockResolvedValue(dest), delete: del },
     database: { count: jest.fn().mockResolvedValue(pinnedCount), updateMany },
+    application: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+    hubBackupConfig: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+    $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
   } as unknown as PrismaService;
   const access = {
     requirePermission: jest.fn().mockResolvedValue(undefined),

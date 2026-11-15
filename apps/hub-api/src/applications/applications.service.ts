@@ -1024,12 +1024,32 @@ export class ApplicationsService {
           volumeBackupIntervalHours: src.volumeBackupIntervalHours,
           volumeBackupRetention: src.volumeBackupRetention,
           volumeBackupDestinationId: src.volumeBackupDestinationId,
+          volumeBackupCron: src.volumeBackupCron,
+          volumeBackupRetentionDays: src.volumeBackupRetentionDays,
+          volumeBackupMaxSizeGb: src.volumeBackupMaxSizeGb,
           // Defaults left as-is: status NEW (not deployed), isPreview/previewEnabled false, cert* null,
           // tunnelExposed false, volumeBackupEnabled false.
         },
       });
       if (icon) {
         await tx.appIcon.create({ data: { appId: app.id, mime: icon.mime, data: icon.data, sizeBytes: icon.sizeBytes } });
+      }
+      // Per-volume backup policies come along; the clone itself stays volumeBackupEnabled:false, so they are inert
+      // (no job is scheduled for them until the operator enables volume backups on the clone).
+      const policies = await tx.volumeBackupPolicy.findMany({ where: { appId: src.id } });
+      if (policies.length > 0) {
+        await tx.volumeBackupPolicy.createMany({
+          data: policies.map((p) => ({
+            appId: app.id,
+            volumeName: p.volumeName,
+            enabled: p.enabled,
+            intervalHours: p.intervalHours,
+            cron: p.cron,
+            retention: p.retention,
+            retentionDays: p.retentionDays,
+            maxSizeGb: p.maxSizeGb,
+          })),
+        });
       }
       const tasks = await tx.scheduledTask.findMany({ where: { appId: src.id } });
       if (tasks.length > 0) {

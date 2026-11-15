@@ -32,16 +32,31 @@ export class HubBackupSchedulerService implements OnApplicationBootstrap, OnModu
     this.queue = new Queue(QUEUE, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
     this.worker = new Worker(QUEUE, async () => { await this.runner.runBackup("scheduler"); }, { connection });
     const cfg = await this.prisma.hubBackupConfig.findUnique({ where: { id: "singleton" } });
-    await this.apply(cfg ?? null);
+    await this.applySafe(cfg ?? null);
+  }
+
+  /** {@link apply} that never throws: a bad stored cron must not crash the hub at boot (BullMQ throws inside queue.add). */
+  async applySafe(cfg: { enabled: boolean; intervalHours: number; cron?: string | null } | null): Promise<void> {
+    try {
+      await this.apply(cfg);
+    } catch (e) {
+      this.logger.warn(`skipped hub backup schedule (cron "${cfg?.cron}"): ${e instanceof Error ? e.message : e}`);
+    }
   }
 
   /** (Re)apply the schedule from the current config: unschedule, then schedule a repeatable job if enabled. */
-  async apply(cfg: { enabled: boolean; intervalHours: number } | null): Promise<void> {
+  async apply(cfg: { enabled: boolean; intervalHours: number; cron?: string | null } | null): Promise<void> {
     if (!this.queue) return;
     await this.unschedule();
     if (cfg?.enabled) {
-      await this.queue.add(JOB, {}, { repeat: { every: cfg.intervalHours * 3600_000 } });
-      this.logger.log(`hub backup scheduled every ${cfg.intervalHours}h`);
+      // A cron expression wins over the plain interval.
+      if (cfg.cron) {
+        await this.queue.add(JOB, {}, { repeat: { pattern: cfg.cron } });
+        this.logger.log(`hub backup scheduled on cron "${cfg.cron}"`);
+      } else {
+        await this.queue.add(JOB, {}, { repeat: { every: cfg.intervalHours * 3600_000 } });
+        this.logger.log(`hub backup scheduled every ${cfg.intervalHours}h`);
+      }
     }
   }
 

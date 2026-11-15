@@ -20,6 +20,7 @@ describe("VolumeBackupRunnerService.prune — per-backup destination", () => {
     const del = jest.fn().mockResolvedValue({});
     const prisma = {
       volumeBackup: { findMany: jest.fn().mockResolvedValue(rows), delete: del },
+      volumeBackupPolicy: { findMany: jest.fn().mockResolvedValue([]) },
       backupDestination: { findUnique: jest.fn().mockResolvedValue(null) }, // → LOCAL
     } as unknown as PrismaService;
     const svc = new VolumeBackupRunnerService(
@@ -57,6 +58,7 @@ describe("VolumeBackupRunnerService.runBackup — aggregated notification", () =
         findMany: jest.fn().mockResolvedValue([]), // prune finds nothing to delete
         delete: jest.fn(),
       },
+      volumeBackupPolicy: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
     const fireForEvent = jest.fn().mockResolvedValue(undefined);
     const svc = new VolumeBackupRunnerService(

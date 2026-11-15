@@ -349,3 +349,18 @@ describe("build / registry / hook settings in the snapshot (D4)", () => {
     expect(diffSnapshots(a, b).map((c) => c.field)).toEqual(["preDeployHook"]);
   });
 });
+
+describe("buildConfigSnapshot — backup config is not deploy config", () => {
+  it("is identical whatever the backup schedule/retention/policy fields are", () => {
+    const a = buildConfigSnapshot(spec());
+    const b = buildConfigSnapshot({
+      ...spec(),
+      volumeBackupCron: "0 3 * * *",
+      volumeBackupRetentionDays: 30,
+      volumeBackupMaxSizeGb: 10,
+      backupMaxSizeGb: 5,
+    } as unknown as AppSpec);
+    expect(JSON.stringify(b)).toBe(JSON.stringify(a));
+    expect(JSON.stringify(b)).not.toMatch(/ackup/);
+  });
+});

@@ -44,4 +44,14 @@ describe("HubBackupSchedulerService", () => {
     expect(removeRepeatableByKey).toHaveBeenCalledWith("k");
     expect(add).not.toHaveBeenCalled();
   });
+
+  it("apply() schedules on a cron pattern (wins over the interval) and boot enrolment survives a bad cron", async () => {
+    const svc = make();
+    const add = jest.fn().mockResolvedValue(undefined);
+    (svc as unknown as { queue: unknown }).queue = { add, getRepeatableJobs: jest.fn().mockResolvedValue([]), removeRepeatableByKey: jest.fn() };
+    await svc.apply({ enabled: true, intervalHours: 6, cron: "0 3 * * *" });
+    expect(add).toHaveBeenCalledWith("hub-backup", {}, { repeat: { pattern: "0 3 * * *" } });
+    add.mockRejectedValueOnce(new Error("Invalid pattern"));
+    await expect(svc.applySafe({ enabled: true, intervalHours: 6, cron: "bad" })).resolves.toBeUndefined();
+  });
 });

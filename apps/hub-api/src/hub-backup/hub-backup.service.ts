@@ -13,7 +13,10 @@ import type { HubBackupConfigInput } from "./dto";
 export interface HubBackupView {
   enabled: boolean;
   intervalHours: number;
+  cron: string | null;
   retention: number;
+  retentionDays: number | null;
+  maxSizeGb: number | null;
   destinationId: string | null;
   last: { status: string; at: string | null; sizeBytes: string | null } | null;
   items: HubBackupItem[];
@@ -54,7 +57,10 @@ export class HubBackupService {
     return {
       enabled: cfg?.enabled ?? false,
       intervalHours: cfg?.intervalHours ?? 24,
+      cron: cfg?.cron ?? null,
       retention: cfg?.retention ?? 7,
+      retentionDays: cfg?.retentionDays ?? null,
+      maxSizeGb: cfg?.maxSizeGb ?? null,
       destinationId: cfg?.destinationId ?? null,
       last: latest ? { status: latest.status, at: (latest.completedAt ?? latest.createdAt).toISOString(), sizeBytes: latest.sizeBytes != null ? latest.sizeBytes.toString() : null } : null,
       items: items.map((b) => this.item(b)),
@@ -67,7 +73,16 @@ export class HubBackupService {
       const dest = await this.prisma.backupDestination.findUnique({ where: { id: input.destinationId } });
       if (!dest || dest.teamId !== local.teamId) throw new BadRequestException("backup destination not found in this team");
     }
-    const data = { enabled: input.enabled, intervalHours: input.intervalHours, retention: input.retention, destinationId: input.destinationId ?? null };
+    const data = {
+      enabled: input.enabled,
+      intervalHours: input.intervalHours,
+      retention: input.retention,
+      destinationId: input.destinationId ?? null,
+      // absent leaves the stored value, null clears it
+      ...(input.cron !== undefined ? { cron: input.cron } : {}),
+      ...(input.retentionDays !== undefined ? { retentionDays: input.retentionDays } : {}),
+      ...(input.maxSizeGb !== undefined ? { maxSizeGb: input.maxSizeGb } : {}),
+    };
     const cfg = await this.prisma.hubBackupConfig.upsert({ where: { id: "singleton" }, create: { id: "singleton", ...data }, update: data });
     await this.scheduler.apply(cfg);
     await this.audit.log({ actor: userId, action: "hub.backup.config", target: "hub" });

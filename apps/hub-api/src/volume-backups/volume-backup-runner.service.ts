@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { Application, VolumeBackup } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -6,8 +6,11 @@ import { CryptoService } from "../crypto/crypto.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { NotificationsService } from "../notifications/notifications.service";
 import { appVolumeName, type AppVolume } from "../deploy/deploy-script";
-import { LOCAL_DEST, objectKey, type DestinationSpec } from "../backups/destination";
-import { scrubRunOutput } from "../backups/backup-script";
+import { objectKey, type DestinationSpec } from "../backups/destination";
+import { resolveDestinationSpec } from "../backups/destination-resolver";
+import { gpgMissingTail, scrubRunOutput } from "../backups/backup-script";
+import { GIB, planRetention, type RetentionRow } from "../backups/retention";
+import { isCarvedOut, policyAlertId } from "./policy";
 import { BackupAlertsService } from "../backups/backup-alerts.service";
 import {
   buildVolumeBackupScript,
@@ -20,6 +23,8 @@ const BACKUP_TIMEOUT_MS = 300_000;
 
 @Injectable()
 export class VolumeBackupRunnerService {
+  private readonly logger = new Logger(VolumeBackupRunnerService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
@@ -38,28 +43,31 @@ export class VolumeBackupRunnerService {
   }
 
   async destinationSpecById(destinationId: string | null): Promise<DestinationSpec> {
-    if (!destinationId) return LOCAL_DEST;
-    const d = await this.prisma.backupDestination.findUnique({ where: { id: destinationId } });
-    if (!d || d.type !== "S3") return LOCAL_DEST;
-    return {
-      type: "S3",
-      s3: {
-        bucket: d.s3Bucket ?? "",
-        region: d.s3Region ?? "",
-        endpoint: d.s3Endpoint ?? "",
-        accessKey: d.s3AccessKey ? this.crypto.decrypt(d.s3AccessKey) : "",
-        secretKey: d.s3SecretKey ? this.crypto.decrypt(d.s3SecretKey) : "",
-        prefix: d.s3Prefix ?? "",
-      },
-      encryption: { enabled: d.encryptionEnabled, key: d.encryptionKey ? this.crypto.decrypt(d.encryptionKey) : "" },
-    };
+    return resolveDestinationSpec(this.prisma, this.crypto, destinationId);
   }
 
-  /** Back up every named volume of the app, then prune to retention. */
-  async runBackup(appId: string, actor = "scheduler"): Promise<VolumeBackup[]> {
+  /**
+   * Back up the app's named volumes, then prune to retention. No `opts` backs up ALL volumes (manual "Back up
+   * now"). `only` restricts to those volume names (a per-volume policy job); `excludePolicied` skips volumes
+   * carved out of the app-wide job (disabled or running their own schedule).
+   */
+  async runBackup(
+    appId: string,
+    actor = "scheduler",
+    opts?: { only?: string[]; excludePolicied?: boolean },
+  ): Promise<VolumeBackup[]> {
     const app = await this.prisma.application.findUnique({ where: { id: appId } });
     if (!app) throw new Error("app not found");
-    const vols = this.volumesOf(app);
+    let vols = this.volumesOf(app);
+    if (opts?.only) vols = vols.filter((v) => opts.only!.includes(v.name));
+    if (opts?.excludePolicied) {
+      const carved = new Set(
+        (await this.prisma.volumeBackupPolicy.findMany({ where: { appId } })).filter(isCarvedOut).map((p) => p.volumeName),
+      );
+      vols = vols.filter((v) => !carved.has(v.name));
+    }
+    // A per-volume run keys its alert state on app+volume so two jobs of one app can never flap a shared key.
+    const alertId = opts?.only && opts.only.length === 1 ? policyAlertId(app.id, opts.only[0]) : app.id;
     const dest = await this.destinationSpec(app);
     const out: VolumeBackup[] = [];
     // Aggregate the run so a single notification reports the whole app's backup (one fire per runBackup,
@@ -110,7 +118,7 @@ export class VolumeBackupRunnerService {
             status: ok ? "SUCCESS" : "FAILED",
             sizeBytes: sz,
             exitCode: r.exitCode,
-            errorTail: ok ? null : scrubRunOutput(r.output, secrets),
+            errorTail: ok ? null : gpgMissingTail(r.output, r.exitCode, dest.encryption.enabled, secrets) ?? scrubRunOutput(r.output, secrets),
             durationMs: completedAt.getTime() - startedAt,
             completedAt,
           },
@@ -150,29 +158,61 @@ export class VolumeBackupRunnerService {
       if (anyFail) {
         // Throttled: first failure, then at most daily while it keeps failing; recovery is announced on the
         // next fully-successful run. Every failed row is still recorded regardless.
-        if (await this.alerts.shouldNotifyFailure("volume", app.id)) {
+        if (await this.alerts.shouldNotifyFailure("volume", alertId)) {
           await this.notifications.fireForEvent(app.teamId, "volume_backup_failed", ctx).catch(() => undefined);
         }
       } else {
         await this.notifications.fireForEvent(app.teamId, "volume_backup_success", ctx).catch(() => undefined);
-        await this.alerts.recover("volume", app.id, app.teamId, { appId: app.id, appName: app.name }).catch(() => undefined);
+        await this.alerts.recover("volume", alertId, app.teamId, { appId: app.id, appName: app.name }).catch(() => undefined);
       }
     }
     return out;
   }
 
-  /** Keep the newest `volumeBackupRetention` SUCCESS backups per volume. */
+  /**
+   * Prune the WHOLE app (whichever run triggered it) by keep-N, age and total size, via the shared planner.
+   * Per-volume policies override keep/age per volume; a volume whose policy sets its own `maxSizeGb` is its own
+   * size pool, every other volume shares the app pool. The newest SUCCESS of each volume is never removed.
+   */
   async prune(app: Application): Promise<void> {
-    for (const v of this.volumesOf(app)) {
-      const all = await this.prisma.volumeBackup.findMany({
-        where: { appId: app.id, volumeName: v.name, status: "SUCCESS" },
-        orderBy: { createdAt: "desc" },
-      });
-      for (const b of all.slice(app.volumeBackupRetention)) {
-        // Each stale backup may live in its own destination — delete from it.
-        const spec = await this.destinationSpecById(b.destinationId);
+    const declared = new Set(this.volumesOf(app).map((v) => v.name));
+    const rows = (
+      await this.prisma.volumeBackup.findMany({ where: { appId: app.id, status: "SUCCESS" }, orderBy: { createdAt: "desc" } })
+    ).filter((b) => declared.has(b.volumeName));
+    if (!rows.length) return;
+    const policies = new Map((await this.prisma.volumeBackupPolicy.findMany({ where: { appId: app.id } })).map((p) => [p.volumeName, p]));
+    const poolOf = (vol: string) => (policies.get(vol)?.maxSizeGb != null ? vol : "app");
+    const pools = new Map<string, typeof rows>();
+    for (const b of rows) {
+      const k = poolOf(b.volumeName);
+      pools.set(k, [...(pools.get(k) ?? []), b]);
+    }
+    const byId = new Map(rows.map((b) => [b.id, b]));
+    for (const [pool, poolRows] of pools) {
+      const gb = pool === "app" ? app.volumeBackupMaxSizeGb : policies.get(pool)?.maxSizeGb ?? null;
+      const plan = planRetention(
+        poolRows.map<RetentionRow>((b) => ({ id: b.id, series: b.volumeName, createdAt: b.createdAt, sizeBytes: b.sizeBytes })),
+        { keep: app.volumeBackupRetention, maxAgeDays: app.volumeBackupRetentionDays, maxBytes: gb != null ? BigInt(gb) * GIB : null },
+        Date.now(),
+        (series) => {
+          const p = policies.get(series);
+          return { keep: p?.retention ?? app.volumeBackupRetention, maxAgeDays: p?.retentionDays ?? app.volumeBackupRetentionDays };
+        },
+      );
+      if (plan.overBudget) this.logger.warn(`volume backups of app ${app.id} (${pool}) exceed the ${gb} GiB budget with only protected backups left`);
+      for (const { id } of plan.remove) {
+        const b = byId.get(id)!;
+        // Each stale backup may live in its own destination — delete from it. A destination that cannot be
+        // resolved (e.g. its key is gone) leaves the row + object alone rather than orphaning silently.
+        let spec: DestinationSpec;
+        try {
+          spec = await this.destinationSpecById(b.destinationId);
+        } catch (e) {
+          this.logger.warn(`prune skipped backup ${b.id}: ${e instanceof Error ? e.message : e}`);
+          continue;
+        }
         await this.agentWs
-          .sendCommand(app.serverId, buildVolumeDeleteScript(app.id, v.name, b.filename, spec), "backup")
+          .sendCommand(app.serverId, buildVolumeDeleteScript(app.id, b.volumeName, b.filename, spec), "backup")
           .catch(() => undefined);
         await this.prisma.volumeBackup.delete({ where: { id: b.id } });
       }

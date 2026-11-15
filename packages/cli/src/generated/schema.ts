@@ -3908,6 +3908,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/backup-schedules/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["SchedulePreviewController_preview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/instance/backup": {
         parameters: {
             query?: never;
@@ -3983,6 +3999,22 @@ export interface paths {
         put?: never;
         post?: never;
         delete: operations["HubBackupController_deleteItem"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/instance/backup/destination-keys/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["HubBackupController_exportKeys"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -4075,10 +4107,26 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        get: operations["VolumeBackupsController_getConfig"];
         put: operations["VolumeBackupsController_setConfig"];
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/apps/{appId}/volume-backups/policies/{volumeName}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["VolumeBackupsController_putPolicy"];
+        post?: never;
+        delete: operations["VolumeBackupsController_deletePolicy"];
         options?: never;
         head?: never;
         patch?: never;
@@ -25012,6 +25060,7 @@ export interface operations {
                         backupCron: string | null;
                         backupRetention: number;
                         backupRetentionDays: number | null;
+                        backupMaxSizeGb: number | null;
                         backupDestinationId: string | null;
                         backupSupported: boolean;
                         verifyEnabled: boolean;
@@ -25135,6 +25184,7 @@ export interface operations {
                         backupCron: string | null;
                         backupRetention: number;
                         backupRetentionDays: number | null;
+                        backupMaxSizeGb: number | null;
                         backupDestinationId: string | null;
                         backupSupported: boolean;
                         verifyEnabled: boolean;
@@ -25257,6 +25307,7 @@ export interface operations {
                         backupCron: string | null;
                         backupRetention: number;
                         backupRetentionDays: number | null;
+                        backupMaxSizeGb: number | null;
                         backupDestinationId: string | null;
                         backupSupported: boolean;
                         verifyEnabled: boolean;
@@ -25514,6 +25565,7 @@ export interface operations {
                         backupCron: string | null;
                         backupRetention: number;
                         backupRetentionDays: number | null;
+                        backupMaxSizeGb: number | null;
                         backupDestinationId: string | null;
                         backupSupported: boolean;
                         verifyEnabled: boolean;
@@ -26533,6 +26585,7 @@ export interface operations {
                         backupCron: string | null;
                         backupRetention: number;
                         backupRetentionDays: number | null;
+                        backupMaxSizeGb: number | null;
                         backupDestinationId: string | null;
                         backupSupported: boolean;
                         verifyEnabled: boolean;
@@ -30412,6 +30465,7 @@ export interface operations {
                     cron?: string | null;
                     retention?: number;
                     retentionDays?: number | null;
+                    maxSizeGb?: number | null;
                     destinationId?: string | null;
                 };
             };
@@ -31049,6 +31103,71 @@ export interface operations {
             };
         };
     };
+    SchedulePreviewController_preview: {
+        parameters: {
+            query: {
+                /** @description 1..10, default 3 */
+                count?: number;
+                cron: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        valid: boolean;
+                        error?: string;
+                        timezone: string;
+                        nextRuns: string[];
+                        minGapSeconds: number | null;
+                    };
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
     HubBackupController_get: {
         parameters: {
             query?: never;
@@ -31115,8 +31234,11 @@ export interface operations {
                     enabled: boolean;
                     /** @default 24 */
                     intervalHours?: number;
+                    cron?: string | null;
                     /** @default 7 */
                     retention?: number;
+                    retentionDays?: number | null;
+                    maxSizeGb?: number | null;
                     destinationId?: string | null;
                 };
             };
@@ -31371,6 +31493,82 @@ export interface operations {
             };
             /** @description Resource not found. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    HubBackupController_exportKeys: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    passphrase: string;
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        filename: string;
+                        format: string;
+                        contentBase64: string;
+                        destinationCount: number;
+                        undecryptable: string[];
+                    };
+                };
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -31858,6 +32056,99 @@ export interface operations {
             };
         };
     };
+    VolumeBackupsController_getConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                appId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        enabled: boolean;
+                        intervalHours: number | null;
+                        cron: string | null;
+                        retention: number;
+                        retentionDays: number | null;
+                        maxSizeGb: number | null;
+                        destinationId: string | null;
+                        destinationEncrypted: boolean | null;
+                        policies: {
+                            volumeName: string;
+                            enabled: boolean;
+                            intervalHours: number | null;
+                            cron: string | null;
+                            retention: number | null;
+                            retentionDays: number | null;
+                            maxSizeGb: number | null;
+                        }[];
+                        usage: {
+                            pool: string;
+                            usedBytes: string;
+                            backupCount: number;
+                            unknownSizeCount: number;
+                            budgetGb: number | null;
+                            overBudget: boolean;
+                        }[];
+                        nextRun: string | null;
+                    };
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
     VolumeBackupsController_setConfig: {
         parameters: {
             query?: never;
@@ -31872,7 +32163,10 @@ export interface operations {
                 "application/json": {
                     enabled: boolean;
                     intervalHours?: number | null;
+                    cron?: string | null;
                     retention?: number;
+                    retentionDays?: number | null;
+                    maxSizeGb?: number | null;
                     destinationId?: string | null;
                 };
             };
@@ -31892,6 +32186,167 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ApiError"];
                 };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    VolumeBackupsController_putPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                appId: string;
+                volumeName: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @default true */
+                    enabled?: boolean;
+                    intervalHours?: number | null;
+                    cron?: string | null;
+                    retention?: number | null;
+                    retentionDays?: number | null;
+                    maxSizeGb?: number | null;
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        volumeName: string;
+                        enabled: boolean;
+                        intervalHours: number | null;
+                        cron: string | null;
+                        retention: number | null;
+                        retentionDays: number | null;
+                        maxSizeGb: number | null;
+                    };
+                };
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    VolumeBackupsController_deletePolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                appId: string;
+                volumeName: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Missing or invalid authentication. */
             401: {
@@ -32042,6 +32497,7 @@ export interface operations {
                     s3AccessKey?: string;
                     s3SecretKey?: string;
                     s3Prefix?: string;
+                    /** @description defaults to true; send false to opt out */
                     encryptionEnabled?: boolean;
                 };
             };
@@ -32069,6 +32525,7 @@ export interface operations {
                         canWrite: boolean;
                         /** Format: date-time */
                         createdAt: string;
+                        recoveryKey: string | null;
                     };
                 };
             };
@@ -32305,7 +32762,10 @@ export interface operations {
     };
     DestinationsController_remove: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description confirm deleting an encrypted destination that still has backups */
+                discardBackups?: boolean;
+            };
             header?: never;
             path: {
                 id: string;
@@ -32382,7 +32842,14 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        ok: boolean;
+                        message: string;
+                        /** @enum {string} */
+                        encryption?: "OK" | "FAILED" | "SKIPPED";
+                    };
+                };
             };
             /** @description Missing or invalid authentication. */
             401: {

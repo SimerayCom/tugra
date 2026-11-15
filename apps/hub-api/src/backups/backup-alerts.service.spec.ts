@@ -25,7 +25,7 @@ function fakeRedis() {
   };
 }
 
-function make(opts: { dbs?: unknown[]; apps?: unknown[]; lastOk?: unknown; firstRow?: unknown } = {}) {
+function make(opts: { dbs?: unknown[]; apps?: unknown[]; policies?: unknown[]; lastOk?: unknown; firstRow?: unknown } = {}) {
   const redis = fakeRedis();
   const fireForEvent = jest.fn().mockResolvedValue(undefined);
   const findFirst = jest.fn(async (args: { where: { status?: string }; orderBy: { createdAt: string } }) =>
@@ -36,6 +36,7 @@ function make(opts: { dbs?: unknown[]; apps?: unknown[]; lastOk?: unknown; first
     application: { findMany: jest.fn().mockResolvedValue(opts.apps ?? []) },
     backup: { findFirst },
     volumeBackup: { findFirst },
+    volumeBackupPolicy: { findMany: jest.fn().mockResolvedValue(opts.policies ?? []) },
   } as unknown as PrismaService;
   const svc = new BackupAlertsService(prisma, redis as unknown as RedisService, { fireForEvent } as unknown as NotificationsService);
   return { svc, redis, fireForEvent, prisma, findFirst };
@@ -207,6 +208,43 @@ describe("BackupAlertsService.checkApps — volume watchdog", () => {
     await svc.checkApps(now);
     await svc.recover("volume", "app1", "t1", { appId: "app1", appName: "blog" });
     expect(fireForEvent).toHaveBeenLastCalledWith("t1", "backup_recovered", expect.objectContaining({ kind: "volume", reason: "missing", appId: "app1" }));
+  });
+});
+
+describe("BackupAlertsService.checkApps — cron schedules and per-volume policies", () => {
+  const baseApp = { id: "app1", name: "blog", teamId: "t1", volumes: [{ name: "data" }, { name: "media" }], volumeBackupIntervalHours: null, volumeBackupCron: "0 3 * * *" };
+  const pol = (over: Record<string, unknown>) => ({ appId: "app1", volumeName: "media", enabled: true, intervalHours: null, cron: null, ...over });
+
+  it("watches a cron-only app (no interval)", async () => {
+    const { svc, fireForEvent, prisma } = make({ apps: [baseApp], lastOk: { createdAt: ago(5 * DAY), completedAt: null } });
+    expect(await svc.checkApps(now)).toBe(1);
+    expect((prisma.application.findMany as jest.Mock).mock.calls[0][0].where.OR).toEqual(
+      expect.arrayContaining([{ volumeBackupCron: { not: null } }]),
+    );
+    expect(fireForEvent.mock.calls[0][2]).not.toHaveProperty("volumeName");
+  });
+
+  it("checks a policy volume with its own schedule on the composite key and names the volume", async () => {
+    const { svc, fireForEvent, redis, findFirst } = make({
+      apps: [{ ...baseApp, volumeBackupCron: null, volumeBackupIntervalHours: 24 }],
+      policies: [pol({ cron: "0 */6 * * *" })],
+      lastOk: { createdAt: ago(3 * DAY), completedAt: null },
+    });
+    // app-wide check (data only) + the policy volume check → two alerts
+    expect(await svc.checkApps(now)).toBe(2);
+    const vol = fireForEvent.mock.calls.find((c) => (c[2] as { volumeName?: string }).volumeName === "media");
+    expect(vol).toBeTruthy();
+    expect(redis.firstInWindow).toHaveBeenCalledWith("backupalert:missing:volume:app1:media", expect.anything());
+    expect(redis.firstInWindow).toHaveBeenCalledWith("backupalert:missing:volume:app1", expect.anything());
+    // the app-wide check excludes the carved-out volume
+    expect(findFirst.mock.calls[0][0].where).toMatchObject({ appId: "app1", volumeName: { in: ["data"] } });
+  });
+
+  it("skips the app-level check when every volume is carved out; a disabled policy is not watched", async () => {
+    const all = [pol({ volumeName: "data", cron: "0 * * * *" }), pol({ enabled: false })];
+    const { svc, fireForEvent } = make({ apps: [baseApp], policies: all, lastOk: { createdAt: ago(5 * DAY), completedAt: null } });
+    expect(await svc.checkApps(now)).toBe(1); // only "data" (own schedule)
+    expect((fireForEvent.mock.calls[0][2] as { volumeName: string }).volumeName).toBe("data");
   });
 });
 

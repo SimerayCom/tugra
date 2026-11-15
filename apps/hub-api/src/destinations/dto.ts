@@ -17,7 +17,9 @@ export const CreateDestinationSchema = z
     s3AccessKey: z.string().min(1).optional(),
     s3SecretKey: z.string().min(1).optional(),
     s3Prefix: z.string().max(200).regex(prefixRe, "invalid prefix").optional(),
-    encryptionEnabled: z.boolean().optional(),
+    // Defaults to TRUE when omitted (applied in the service, not via .default(), so the inferred input type stays
+    // optional for internal callers). Send false to opt out. Applies to LOCAL and S3 destinations.
+    encryptionEnabled: z.boolean().optional().describe("defaults to true; send false to opt out"),
   })
   .refine((d) => (d.type === "S3" ? !!d.s3Bucket && !!d.s3Endpoint && !!d.s3AccessKey && !!d.s3SecretKey : true), {
     message: "S3 destinations require bucket, endpoint, accessKey and secretKey",
@@ -43,3 +45,12 @@ export const UpdateDestinationSchema = z
   .strict() // reject bucket/endpoint/prefix/encryption/type/teamId loudly — they are not editable (see above)
   .refine((d) => Object.values(d).some((v) => v !== undefined), { message: "provide at least one field to update" });
 export type UpdateDestinationInput = z.infer<typeof UpdateDestinationSchema>;
+
+// DELETE /backup-destinations/:id?discardBackups=true — confirms that deleting an encrypted destination (which
+// destroys the key its existing backups need) is intended.
+export const DeleteDestinationQuerySchema = z.object({
+  discardBackups: z
+    .enum(["true", "false"])
+    .optional()
+    .transform((v) => v === "true"),
+});

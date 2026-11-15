@@ -18,6 +18,53 @@ const S3: DestinationSpec = {
 };
 const ENC: DestinationSpec = { type: "LOCAL", encryption: { enabled: true, key: "pass" } };
 
+describe("volume-backup-script — encryption, suffix-driven restore, atomic local write", () => {
+  it("encrypted backup: gpg preflight is the first guard (after set -e/pipefail) and the key is shq-safe", () => {
+    const s = buildVolumeBackupScript("a1", "data", "v", "t.tar.gz.gpg", { type: "LOCAL", encryption: { enabled: true, key: "k'ey" } });
+    expect(s.split("\n").slice(0, 3)).toEqual(["set -e", "set -o pipefail", expect.stringContaining("TUGRA_GPG_MISSING")]);
+    expect(s).toContain(`--passphrase 'k'\\''ey'`);
+  });
+
+  it("unencrypted LOCAL / S3 backup scripts stay byte-identical (no preflight, direct write)", () => {
+    expect(buildVolumeBackupScript("a1", "data", "v", "t.tar.gz", LOCAL)).toBe(
+      [
+        "set -e",
+        "set -o pipefail",
+        "mkdir -p /etc/tugra/volume-backups/a1/data",
+        `docker run --rm -v 'v':/data:ro ${BACKUP_HELPER_IMAGE} tar -C /data -cf - . | gzip > /etc/tugra/volume-backups/a1/data/t.tar.gz`,
+        "stat -c %s /etc/tugra/volume-backups/a1/data/t.tar.gz",
+      ].join("\n"),
+    );
+    expect(buildVolumeBackupScript("a1", "data", "v", "t.tar.gz", S3)).not.toContain("TUGRA_GPG_MISSING");
+  });
+
+  it("an encrypted LOCAL write is atomic: .part then mv, stat on the final path", () => {
+    const s = buildVolumeBackupScript("a1", "data", "v", "t.tar.gz.gpg", ENC);
+    const f = "/etc/tugra/volume-backups/a1/data/t.tar.gz.gpg";
+    expect(s).toContain(`> ${f}.part`);
+    expect(s).toContain(`mv ${f}.part ${f}`);
+    expect(s.indexOf(`> ${f}.part`)).toBeLessThan(s.indexOf("mv "));
+    expect(s).toContain(`stat -c %s ${f}`);
+  });
+
+  it("restore decrypts by the .gpg SUFFIX, not the destination flag", () => {
+    const gpgFile = buildVolumeRestoreScript("a1", "data", "v", "t.tar.gz.gpg", ENC, "r1");
+    expect(gpgFile).toContain("--decrypt");
+    expect(gpgFile).toContain("TUGRA_GPG_MISSING");
+    // a pre-fix CLEARTEXT row on an encrypted destination still restores, with no gpg stage
+    const plain = buildVolumeRestoreScript("a1", "data", "v", "t.tar.gz", ENC, "r1");
+    expect(plain).not.toContain("--decrypt");
+    expect(plain).not.toContain("TUGRA_GPG_MISSING");
+    expect(plain).toContain("gunzip");
+  });
+
+  it("a .gpg object whose destination has no key fails loud before any script is built", () => {
+    expect(() => buildVolumeRestoreScript("a1", "data", "v", "t.tar.gz.gpg", LOCAL, "r1")).toThrow(
+      "backup is encrypted but the destination has no key (destination deleted?)",
+    );
+  });
+});
+
 describe("volume-backup-script", () => {
   it("LOCAL: tars the docker volume → gzip → file, prints size", () => {
     const s = buildVolumeBackupScript("a1", "data", "tugra_appv_a1_data", "20260101.tar.gz", LOCAL);

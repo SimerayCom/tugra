@@ -4894,10 +4894,32 @@ describe("ApplicationsService.clone", () => {
       server: { findUnique: jest.fn().mockResolvedValue(server) },
       appIcon: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
       scheduledTask: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
+      volumeBackupPolicy: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
       ...over,
     } as unknown as PrismaService;
     return { prisma, create };
   };
+
+  it("copies the volume-backup cron/retention/size and per-volume policies, but the clone stays disabled", async () => {
+    const createMany = jest.fn();
+    const policies = [{ appId: "src1", volumeName: "data", enabled: true, intervalHours: null, cron: "0 4 * * *", retention: 3, retentionDays: 10, maxSizeGb: 5 }];
+    const { prisma, create } = clonePrisma({
+      application: {
+        findUnique: jest.fn().mockResolvedValue({ ...src, volumeBackupEnabled: true, volumeBackupCron: "0 3 * * *", volumeBackupRetentionDays: 30, volumeBackupMaxSizeGb: 20 }),
+        create: jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ ...data, id: "clone1", createdAt: new Date() })),
+      },
+      volumeBackupPolicy: { findMany: jest.fn().mockResolvedValue(policies), createMany },
+    });
+    void create;
+    const res = await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", {});
+    const data = (prisma.application.create as jest.Mock).mock.calls[0][0].data;
+    expect(data).toMatchObject({ volumeBackupCron: "0 3 * * *", volumeBackupRetentionDays: 30, volumeBackupMaxSizeGb: 20 });
+    expect(data.volumeBackupEnabled).toBeUndefined(); // DB default false -> inert, no jobs scheduled
+    expect(createMany).toHaveBeenCalledWith({
+      data: [{ appId: "clone1", volumeName: "data", enabled: true, intervalHours: null, cron: "0 4 * * *", retention: 3, retentionDays: 10, maxSizeGb: 5 }],
+    });
+    expect(res.app).toBeDefined();
+  });
 
   it("emits unknown container health for a fresh clone (no containers yet)", async () => {
     const { prisma } = clonePrisma();
@@ -4958,6 +4980,7 @@ describe("ApplicationsService.clone", () => {
     const createMany = jest.fn();
     const { prisma } = clonePrisma({
       scheduledTask: { findMany: jest.fn().mockResolvedValue([{ id: "t1", appId: "src1", name: "cron", schedule: "0 3 * * *", command: "echo hi", enabled: true, timeoutSec: 1800 }]), createMany },
+      volumeBackupPolicy: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
     });
     const res = await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", {});
     expect(createMany).toHaveBeenCalledWith({ data: [expect.objectContaining({ appId: "clone1", enabled: false, command: "echo hi", timeoutSec: 1800 })] }); // per-task timeout carried
@@ -4978,6 +5001,7 @@ describe("ApplicationsService.clone", () => {
       server: { findUnique: jest.fn().mockResolvedValue({ ...server, id: "s2", teamId: "t1" }) },
       appIcon: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
       scheduledTask: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
+      volumeBackupPolicy: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
     } as unknown as PrismaService;
     const res = await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", { serverId: "s2" });
     const data = create.mock.calls[0][0].data;
@@ -4997,6 +5021,7 @@ describe("ApplicationsService.clone", () => {
         server: { findUnique: jest.fn().mockResolvedValue(target ? { ...server, id: target, teamId: "t1", cpuCores: cores } : { ...server, cpuCores: cores }) },
         appIcon: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
         scheduledTask: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
+        volumeBackupPolicy: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
       } as unknown as PrismaService;
       const res = await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", target ? { serverId: target } : {});
       return { cpuset: create.mock.calls[0][0].data.cpusetCpus, warnings: res.warnings };
@@ -5024,6 +5049,7 @@ describe("ApplicationsService.clone", () => {
         server: { findUnique: jest.fn().mockResolvedValue(target ? { ...server, id: target, teamId: "t1", gpuInventory } : { ...server, gpuInventory }) },
         appIcon: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
         scheduledTask: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
+        volumeBackupPolicy: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
       } as unknown as PrismaService;
       const res = await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", target ? { serverId: target } : {});
       return { gpus: create.mock.calls[0][0].data.gpus, warnings: res.warnings };
@@ -5049,6 +5075,7 @@ describe("ApplicationsService.clone", () => {
       server: { findUnique: jest.fn().mockResolvedValue(server) },
       appIcon: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
       scheduledTask: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
+      volumeBackupPolicy: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
     } as unknown as PrismaService;
     const res = await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", {});
     expect(res.warnings).toContain("privileged_options_dropped");
@@ -5062,6 +5089,7 @@ describe("ApplicationsService.clone", () => {
       server: { findUnique: jest.fn().mockResolvedValue(server) },
       appIcon: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
       scheduledTask: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
+      volumeBackupPolicy: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
     } as unknown as PrismaService;
     const res = await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", {});
     expect(create.mock.calls[0][0].data.clusterId).toBe("c1");
@@ -6300,6 +6328,7 @@ describe("ApplicationsService — git/build settings", () => {
       server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1", certMode: "http", proxyBind: "public" }) },
       appIcon: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
       scheduledTask: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
+      volumeBackupPolicy: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
     } as unknown as PrismaService;
     await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", {});
     expect(create.mock.calls[0][0].data).toMatchObject(allSix);
@@ -6648,6 +6677,7 @@ describe("ApplicationsService — container ops + networking", () => {
         server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1", publicIp: null, publicIpv6: null, wildcardDomain: null, magicSuffix: null, certMode: "http", proxyBind: "public" }) },
         appIcon: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
         scheduledTask: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
+        volumeBackupPolicy: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
       } as unknown as PrismaService;
       await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", {});
       const data = create.mock.calls[0][0].data;
@@ -6819,6 +6849,7 @@ describe("ApplicationsService.setLimits — extra limits", () => {
       server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1", certMode: "http", proxyBind: "public" }) },
       appIcon: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
       scheduledTask: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
+      volumeBackupPolicy: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
     } as unknown as PrismaService;
     const svc = make(prisma, {}, {} as AgentWsServer);
     await svc.clone("u1", "src1", {});
@@ -7151,6 +7182,7 @@ describe("ApplicationsService — image update available (IMAGE apps)", () => {
       server: { findUnique: jest.fn().mockResolvedValue(server) },
       appIcon: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
       scheduledTask: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
+      volumeBackupPolicy: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
     } as unknown as PrismaService;
     const res = await make(prisma, {}, {} as AgentWsServer).clone("u1", "app1", {});
     const data = create.mock.calls[0][0].data as Record<string, unknown>;
@@ -7674,6 +7706,7 @@ describe("ApplicationsService custom container labels (D5)", () => {
         server: { findUnique: jest.fn().mockResolvedValue(server) },
         appIcon: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
         scheduledTask: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
+        volumeBackupPolicy: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
       } as unknown as PrismaService;
       const res = await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", {});
       return { data: create.mock.calls[0][0].data, warnings: res.warnings };
@@ -8094,6 +8127,7 @@ describe("ApplicationsService — D4 build / registry / hooks", () => {
         server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1", publicIp: null, publicIpv6: null, wildcardDomain: null, magicSuffix: null, certMode: "http", proxyBind: "public" }) },
         appIcon: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
         scheduledTask: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
+        volumeBackupPolicy: { findMany: jest.fn().mockResolvedValue([]), createMany: jest.fn() },
       } as unknown as PrismaService;
       await make(prisma, {}, {} as AgentWsServer).clone("u1", "src1", {});
       const data = create.mock.calls[0][0].data;

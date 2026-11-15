@@ -4,6 +4,7 @@ import { parseExpression } from "cron-parser";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { hasOwnSchedule, isCarvedOut, policyAlertId } from "../volume-backups/policy";
 
 /** Which backup family an alert is about. Database backups, app-volume backups, the restore-verify drill and
  *  the physical base backup all share one state machine (the Redis keys namespace on the kind, so one kind's
@@ -156,42 +157,71 @@ export class BackupAlertsService {
     return fired;
   }
 
-  /** Watchdog for app volume backups (one alert per app, not per volume). Returns the fired count. */
+  /**
+   * Watchdog for app volume backups. One alert per app for the volumes on the app-wide job, plus one alert per
+   * volume that has its OWN schedule (a per-volume policy), keyed on the composite id `appId:volumeName`.
+   * Volumes carved out of the app job (disabled, or on their own schedule) are excluded from the app-level
+   * check. Returns the fired count.
+   */
   async checkApps(now: Date = new Date()): Promise<number> {
     const apps = await this.prisma.application.findMany({
-      where: { volumeBackupEnabled: true, volumeBackupIntervalHours: { not: null } },
-      select: { id: true, name: true, teamId: true, volumes: true, volumeBackupIntervalHours: true },
+      where: { volumeBackupEnabled: true, OR: [{ volumeBackupIntervalHours: { not: null } }, { volumeBackupCron: { not: null } }] },
+      select: { id: true, name: true, teamId: true, volumes: true, volumeBackupIntervalHours: true, volumeBackupCron: true },
     });
     let fired = 0;
     for (const a of apps) {
       // An app with no declared volumes has nothing to back up, so a missing backup is not an anomaly.
       if (!Array.isArray(a.volumes) || a.volumes.length === 0) continue;
-      const window = missingWindowMs({ intervalHours: a.volumeBackupIntervalHours }, now);
-      if (window == null) continue;
-      const lastOk = await this.prisma.volumeBackup.findFirst({
-        where: { appId: a.id, status: "SUCCESS" },
-        orderBy: { createdAt: "desc" },
-        select: { createdAt: true, completedAt: true },
-      });
-      const first = lastOk
-        ? null
-        : await this.prisma.volumeBackup.findFirst({ where: { appId: a.id }, orderBy: { createdAt: "asc" }, select: { createdAt: true } });
-      const ref = await this.referenceTime("volume", a.id, lastOk, first, now);
-      if (ref == null || now.getTime() - ref.getTime() <= window) continue;
-      if (!(await this.claimMissing("volume", a.id))) continue;
-      await this.notifications
-        .fireForEvent(a.teamId, "backup_missing", {
-          kind: "volume",
-          appId: a.id,
-          appName: a.name,
-          lastSuccessAt: lastOk ? (lastOk.completedAt ?? lastOk.createdAt).toISOString() : "",
-          windowHours: String(Math.round(window / HOUR_MS)),
-        })
-        .catch(() => undefined);
-      fired++;
+      const declared = (a.volumes as Array<{ name?: string }>).map((v) => v?.name).filter((n): n is string => !!n);
+      const policies = await this.prisma.volumeBackupPolicy.findMany({ where: { appId: a.id } });
+      const carved = new Set(policies.filter(isCarvedOut).map((p) => p.volumeName));
+      const appVols = declared.filter((n) => !carved.has(n));
+      if (appVols.length > 0) {
+        const window = missingWindowMs({ intervalHours: a.volumeBackupIntervalHours, cron: a.volumeBackupCron }, now);
+        const scope = carved.size > 0 ? { volumeName: { in: appVols } } : {};
+        if (window != null && (await this.checkVolumeScope(a, a.id, scope, window, now, ""))) fired++;
+      }
+      for (const p of policies) {
+        if (!p.enabled || !hasOwnSchedule(p) || !declared.includes(p.volumeName)) continue;
+        const window = missingWindowMs({ intervalHours: p.intervalHours, cron: p.cron }, now);
+        if (window != null && (await this.checkVolumeScope(a, policyAlertId(a.id, p.volumeName), { volumeName: p.volumeName }, window, now, p.volumeName))) fired++;
+      }
     }
-    if (fired) this.logger.warn(`backup watchdog: ${fired} app(s) with no recent successful volume backup`);
+    if (fired) this.logger.warn(`backup watchdog: ${fired} app volume schedule(s) with no recent successful volume backup`);
     return fired;
+  }
+
+  /** One volume-backup missing check (app-wide scope or one policy volume); true when an alert fired. */
+  private async checkVolumeScope(
+    a: { id: string; name: string; teamId: string },
+    alertId: string,
+    scope: { volumeName?: string | { in: string[] } },
+    window: number,
+    now: Date,
+    volumeName: string,
+  ): Promise<boolean> {
+    const lastOk = await this.prisma.volumeBackup.findFirst({
+      where: { appId: a.id, ...scope, status: "SUCCESS" },
+      orderBy: { createdAt: "desc" },
+      select: { createdAt: true, completedAt: true },
+    });
+    const first = lastOk
+      ? null
+      : await this.prisma.volumeBackup.findFirst({ where: { appId: a.id, ...scope }, orderBy: { createdAt: "asc" }, select: { createdAt: true } });
+    const ref = await this.referenceTime("volume", alertId, lastOk, first, now);
+    if (ref == null || now.getTime() - ref.getTime() <= window) return false;
+    if (!(await this.claimMissing("volume", alertId))) return false;
+    await this.notifications
+      .fireForEvent(a.teamId, "backup_missing", {
+        kind: "volume",
+        appId: a.id,
+        appName: a.name,
+        ...(volumeName ? { volumeName } : {}),
+        lastSuccessAt: lastOk ? (lastOk.completedAt ?? lastOk.createdAt).toISOString() : "",
+        windowHours: String(Math.round(window / HOUR_MS)),
+      })
+      .catch(() => undefined);
+    return true;
   }
 
   /**

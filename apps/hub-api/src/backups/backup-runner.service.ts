@@ -19,11 +19,14 @@ import {
   buildBackupScript,
   buildDeleteBackupScript,
   buildRestoreScript,
+  gpgMissingTail,
   scrubRestoreOutput,
   scrubRunOutput,
 } from "./backup-script";
 import { BackupAlertsService } from "./backup-alerts.service";
-import { LOCAL_DEST, objectKey, type DestinationSpec } from "./destination";
+import { objectKey, type DestinationSpec } from "./destination";
+import { resolveDestinationSpec } from "./destination-resolver";
+import { GIB, planRetention } from "./retention";
 
 const BACKUP_TIMEOUT_MS = 300_000; // dumps can be slow
 const RESTORE_TIMEOUT_MS = 300_000;
@@ -231,33 +234,7 @@ export class BackupRunnerService {
   /** Resolve a destination by id (or LOCAL when none). Used by cross-resource restore
    *  to read the backup from the destination it was WRITTEN to, not the target's. */
   async destinationSpecById(destinationId: string | null): Promise<DestinationSpec> {
-    if (!destinationId) return LOCAL_DEST;
-    const d = await this.prisma.backupDestination.findUnique({
-      where: { id: destinationId },
-    });
-    if (!d) return LOCAL_DEST;
-    // Encryption is configurable on LOCAL destinations too (the dump is gpg-encrypted on the server's own
-    // disk). Carry it through for every type — collapsing a non-S3 destination to the unencrypted LOCAL_DEST
-    // silently dropped encryptionEnabled/encryptionKey, so a "LOCAL + encrypted" backup was stored in cleartext.
-    const encryption = {
-      enabled: d.encryptionEnabled,
-      key: d.encryptionKey ? this.crypto.decrypt(d.encryptionKey) : "",
-    };
-    if (d.type !== "S3") {
-      return { type: "LOCAL", encryption };
-    }
-    return {
-      type: "S3",
-      s3: {
-        bucket: d.s3Bucket ?? "",
-        region: d.s3Region ?? "",
-        endpoint: d.s3Endpoint ?? "",
-        accessKey: d.s3AccessKey ? this.crypto.decrypt(d.s3AccessKey) : "",
-        secretKey: d.s3SecretKey ? this.crypto.decrypt(d.s3SecretKey) : "",
-        prefix: d.s3Prefix ?? "",
-      },
-      encryption,
-    };
+    return resolveDestinationSpec(this.prisma, this.crypto, destinationId);
   }
 
   /** Run a dump for the database, record it, then prune to the retention limit. */
@@ -316,7 +293,7 @@ export class BackupRunnerService {
           status: succeeded ? "SUCCESS" : "FAILED",
           sizeBytes,
           exitCode,
-          errorTail: succeeded ? null : scrubRunOutput(errorText, secrets),
+          errorTail: succeeded ? null : gpgMissingTail(errorText, exitCode, dest.encryption.enabled, secrets) ?? scrubRunOutput(errorText, secrets),
           durationMs: completedAt.getTime() - startedAt,
           completedAt,
         },
@@ -384,20 +361,35 @@ export class BackupRunnerService {
     return this.prisma.backup.findUnique({ where: { id: backup.id } }) as Promise<Backup>;
   }
 
-  /** Prune successful backups: delete any beyond the newest `backupRetention` (count) OR — when
-   *  backupRetentionDays is set — older than that many days. The single newest backup is always kept. */
+  /** Prune successful backups via the shared planner: delete any beyond the newest `backupRetention` (count),
+   *  older than `backupRetentionDays`, or — oldest first — beyond the `backupMaxSizeGb` total. The single newest
+   *  backup is always kept. With no age and no size set this is exactly the original keep-N rule. */
   async prune(db: Database): Promise<void> {
     const all = await this.prisma.backup.findMany({
       where: { databaseId: db.id, status: "SUCCESS" },
       orderBy: { createdAt: "desc" },
     });
-    const cutoff = db.backupRetentionDays != null ? Date.now() - db.backupRetentionDays * 86_400_000 : null;
-    const stale = all.filter(
-      (b, i) => i !== 0 && (i >= db.backupRetention || (cutoff != null && b.createdAt.getTime() < cutoff)),
+    const plan = planRetention(
+      all.map((b) => ({ id: b.id, series: "db", createdAt: b.createdAt, sizeBytes: b.sizeBytes })),
+      {
+        keep: db.backupRetention,
+        maxAgeDays: db.backupRetentionDays,
+        maxBytes: db.backupMaxSizeGb != null ? BigInt(db.backupMaxSizeGb) * GIB : null,
+      },
     );
-    for (const b of stale) {
-      // Each stale backup may live in a different destination — delete from its own.
-      const spec = await this.destinationSpecById(b.destinationId);
+    if (plan.overBudget) this.logger.warn(`database ${db.id} backups exceed the ${db.backupMaxSizeGb} GiB budget with only the newest backup left`);
+    const byId = new Map(all.map((b) => [b.id, b]));
+    for (const { id } of plan.remove) {
+      const b = byId.get(id)!;
+      // Each stale backup may live in a different destination — delete from its own. An unresolvable
+      // destination (e.g. its key is gone) leaves the row + object alone instead of orphaning silently.
+      let spec: DestinationSpec;
+      try {
+        spec = await this.destinationSpecById(b.destinationId);
+      } catch (e) {
+        this.logger.warn(`prune skipped backup ${b.id}: ${e instanceof Error ? e.message : e}`);
+        continue;
+      }
       await this.agentWs
         .sendCommand(db.serverId, buildDeleteBackupScript(db.id, b.filename, spec), "backup")
         .catch(() => undefined);

@@ -5,6 +5,7 @@ import { DatabasesModule } from "../databases/databases.module";
 import { NotificationsModule } from "../notifications/notifications.module";
 import { BackupsController } from "./backups.controller";
 import { FleetBackupsController } from "./fleet-backups.controller";
+import { SchedulePreviewController } from "./schedule-preview.controller";
 import { BackupsService } from "./backups.service";
 import { BackupRunnerService } from "./backup-runner.service";
 import { BaseBackupRunnerService } from "./base-backup-runner.service";
@@ -18,7 +19,7 @@ import { PitrClaimsService } from "./pitr-claims.service";
 
 @Module({
   imports: [AgentGatewayModule, CryptoModule, DatabasesModule, NotificationsModule],
-  controllers: [BackupsController, FleetBackupsController],
+  controllers: [BackupsController, FleetBackupsController, SchedulePreviewController],
   providers: [
     BackupsService,
     BackupRunnerService,

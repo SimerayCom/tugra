@@ -185,6 +185,12 @@ function shqInner(v: string): string {
   return `'${v.replaceAll("'", "'\\''")}'`;
 }
 
+/** First line of every encrypted backup/restore script: fail fast with a greppable marker (exit 5) when the host
+ *  has no gpg, instead of an opaque "gpg: command not found" buried in a pipe. Added ONLY for encrypted
+ *  destinations, so unencrypted scripts stay byte-identical. */
+export const GPG_PREFLIGHT =
+  `command -v gpg >/dev/null 2>&1 || { echo "TUGRA_GPG_MISSING: gpg not found on this host (install gnupg)" >&2; exit 5; }`;
+
 function gpgEncrypt(dest: DestinationSpec): string {
   return `gpg --batch --yes --passphrase ${shq(dest.encryption.key)} --symmetric --cipher-algo AES256`;
 }
@@ -215,6 +221,7 @@ export function buildDumpUploadScript(
   opts?: { atomicLocal?: boolean },
 ): string {
   const lines = ["set -e", "set -o pipefail"];
+  if (dest.encryption.enabled) lines.push(GPG_PREFLIGHT);
   if (prelude) lines.push(prelude);
   const pipe = [dumpCmd, "gzip"];
   if (dest.encryption.enabled) pipe.push(gpgEncrypt(dest));
@@ -471,6 +478,28 @@ export function buildBackupExportUrlScript(dbId: string, filename: string, dest:
 /** Reachability/credentials check for an S3 destination: `mc ls <alias>/<bucket>`. Exit 0 = OK. */
 export function buildDestinationTestScript(s3: S3Config): string {
   return [MC_INSTALL, `${mcHostEnv(s3)} mc ls ${MC_ALIAS}/${s3.bucket}`].join("\n");
+}
+
+/** If a backup run's output shows the host had no gpg (the {@link GPG_PREFLIGHT} marker, or exit 5 on an
+ *  encrypted destination), the one-line scrubbed message to store as errorTail; otherwise null. */
+export function gpgMissingTail(
+  output: string,
+  exitCode: number | null,
+  encrypted: boolean,
+  secrets: ReadonlyArray<string | null | undefined> = [],
+): string | null {
+  const line = (output ?? "").split("\n").find((l) => l.includes("TUGRA_GPG_MISSING"));
+  if (!line && !(encrypted && exitCode === 5)) return null;
+  return scrubRunOutput((line ?? "TUGRA_GPG_MISSING: gpg not found on this host (install gnupg)").trim(), secrets);
+}
+
+/** Round-trips a canary through the destination's gpg stage (encrypt → decrypt) on the agent host, proving gpg is
+ *  installed and the stored key works. Exit 5 = no gpg, 6 = round-trip mismatch. The key goes only through shq(). */
+export function buildEncryptionCheckScript(key: string): string {
+  return [
+    `command -v gpg >/dev/null 2>&1 || { echo TUGRA_GPG_MISSING; exit 5; }`,
+    `[ "$(printf %s tugra-canary | gzip | gpg --batch --yes --passphrase ${shq(key)} --symmetric --cipher-algo AES256 | gpg --batch --yes --passphrase ${shq(key)} --decrypt | gunzip)" = tugra-canary ] && echo TUGRA_ENC_OK || { echo TUGRA_ENC_FAIL; exit 6; }`,
+  ].join("\n");
 }
 
 /**

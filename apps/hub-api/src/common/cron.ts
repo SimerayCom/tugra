@@ -36,3 +36,15 @@ export function minCronGapMs(expr: string, samples = 24, from: Date = new Date()
     return null;
   }
 }
+
+/** The next `n` fire times of `expr` after `from` (empty for an unparsable expression). Preview-only helper. */
+export function nextRuns(expr: string, n: number, from: Date = new Date()): Date[] {
+  try {
+    const it = parseExpression(expr, { currentDate: from });
+    const out: Date[] = [];
+    for (let i = 0; i < n; i++) out.push(it.next().toDate());
+    return out;
+  } catch {
+    return [];
+  }
+}

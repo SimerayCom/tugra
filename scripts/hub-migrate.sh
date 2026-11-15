@@ -193,6 +193,21 @@ cmd_pack() {
   if [ -d "$ETC_TUGRA" ]; then (umask 077; docker run --rm -v "$ETC_TUGRA":/s:ro -v "$BDIR":/out "$HELPER_IMAGE" \
       sh -c 'set -e; cd /s; tar cf /out/etc-tugra.tar .; gzip -f /out/etc-tugra.tar') || warn "could not pack /etc/tugra"; fi
 
+  # Destination encryption keys (plaintext, from the running hub-api) so the bundle can decrypt offsite backups
+  # even if the database is later lost. Best-effort: the stack must be up to exec; a failure never blocks the pack.
+  DEST_KEYS=0
+  _dk_rc=0
+  (umask 077; compose exec -T hub-api node dist/scripts/export-destination-keys.js > "$BDIR/destination-keys.json") 2>/dev/null || _dk_rc=$?
+  if [ "$_dk_rc" = 0 ]; then
+    DEST_KEYS=1; ok "Destination encryption keys exported (destination-keys.json)."
+  elif [ "$_dk_rc" = 2 ] && [ -s "$BDIR/destination-keys.json" ]; then
+    # exit 2 = some destination key could not be decrypted; the manifest is still written, but incomplete.
+    DEST_KEYS=1; warn "some destination keys could not be decrypted — destination-keys.json is incomplete."
+  else
+    rm -f "$BDIR/destination-keys.json"
+    warn "could not export destination keys (is hub-api running?). The bundle still holds .env + the Postgres volume, from which they are recoverable."
+  fi
+
   log "Stopping the stack for a consistent copy…"
   compose --profile updater stop -t 120 >/dev/null 2>&1 || true
   STOPPED=1
@@ -225,6 +240,7 @@ cmd_pack() {
     printf 'pg_major=%s\n' "$(pg_major)"; printf 'helper_image=%s\n' "$HELPER_IMAGE"
     printf 'hub_public_url=%s\n' "$(env_get HUB_PUBLIC_URL)"
     printf 'include_redis=%s\n' "$INCLUDE_REDIS"; printf 'local_apps=%s\n' "$LOCAL_APPS"
+    printf 'destination_keys=%s\n' "$DEST_KEYS"
     for f in "$BDIR"/*.tar.gz; do printf 'sha256_%s=%s\n' "$(basename "$f")" "$(sha256_of "$f")"; done
   } > "$BDIR/manifest"
 
@@ -242,6 +258,7 @@ cmd_pack() {
   printf '\n'; log "Next: copy this bundle to the NEW host, then on an installed Tugra checkout run:"
   printf '      scripts/hub-migrate.sh unpack %s\n\n' "$(basename "$OUT")"
   warn "This file holds every hub secret — transfer it over a secure channel and delete it afterwards."
+  if [ "$DEST_KEYS" = "1" ]; then warn "It also includes the plaintext backup destination keys (destination-keys.json)."; fi
 }
 
 # --------------------------------------------------------------------------------------------------- unpack
@@ -315,6 +332,12 @@ cmd_unpack() {
   if [ -f "$BDIR/etc-tugra.tar.gz" ]; then
     mkdir -p "$ETC_TUGRA" 2>/dev/null && docker run --rm -v "$ETC_TUGRA":/d -v "$BDIR":/in "$HELPER_IMAGE" \
       sh -c 'set -e; cd /d; gunzip -c /in/etc-tugra.tar.gz | tar xf -' || warn "could not restore /etc/tugra (not fatal)"
+  fi
+
+  if [ -f "$BDIR/destination-keys.json" ]; then
+    (umask 077; cp "$BDIR/destination-keys.json" "$(dirname "$ENV_FILE")/destination-keys.json") 2>/dev/null \
+      && note "destination-keys.json restored next to .env; delete it after verifying a restore." \
+      || warn "could not restore destination-keys.json (not fatal; the keys are also in the restored database)."
   fi
 
   _mklabels="--label com.docker.compose.project=$PROJECT"

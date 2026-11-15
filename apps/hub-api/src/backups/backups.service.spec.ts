@@ -145,6 +145,20 @@ describe("BackupsService", () => {
     expect(update.mock.calls[0][0].data).toMatchObject({ backupCron: "0 3 * * *", backupRetentionDays: 30 });
   });
 
+  it("maxSizeGb: absent leaves backupMaxSizeGb, a value sets it, null clears it", async () => {
+    const update = jest.fn().mockResolvedValue({ ...db, backupEnabled: true, backupIntervalHours: 6 });
+    const prisma = { database: { findUnique: jest.fn().mockResolvedValue(db), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const scheduler = { schedule: jest.fn(), unschedule: jest.fn() } as unknown as BackupSchedulerService;
+    const svc = make(prisma, access, {}, scheduler);
+    await svc.setSchedule("u1", "db1", { enabled: true, intervalHours: 6 });
+    expect(update.mock.calls[0][0].data).not.toHaveProperty("backupMaxSizeGb");
+    await svc.setSchedule("u1", "db1", { enabled: true, intervalHours: 6, maxSizeGb: 50 });
+    expect(update.mock.calls[1][0].data.backupMaxSizeGb).toBe(50);
+    await svc.setSchedule("u1", "db1", { enabled: true, intervalHours: 6, maxSizeGb: null });
+    expect(update.mock.calls[2][0].data.backupMaxSizeGb).toBeNull();
+  });
+
   it("refuses to enable a schedule for an engine with no backup pipeline (libSQL) and never persists it", async () => {
     const update = jest.fn();
     const prisma = {

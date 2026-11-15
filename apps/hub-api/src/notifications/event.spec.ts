@@ -428,6 +428,13 @@ describe("renderEvent — backup health (backup_missing / backup_recovered)", ()
     expect(linkUrl(m, "Open app")).toBe("https://web.test/apps/app1");
   });
 
+  it("backup_missing (per-volume policy): names the volume; an app-wide alert has no Volume line", () => {
+    const m = render("backup_missing", { kind: "volume", appId: "app1", appName: "blog", volumeName: "media", lastSuccessAt: "", windowHours: "6" });
+    expect(fieldVal(m, "Volume")).toBe("media");
+    const plain = render("backup_missing", { kind: "volume", appId: "app1", appName: "blog", lastSuccessAt: "", windowHours: "24" });
+    expect(fieldVal(plain, "Volume")).toBeUndefined();
+  });
+
   it("backup_recovered: success + not critical; wording follows the reason", () => {
     const failed = render("backup_recovered", { kind: "database", dbId: "db1", dbName: "shop", reason: "failed" });
     expect(failed.level).toBe("success");

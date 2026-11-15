@@ -384,6 +384,7 @@ export class BackupsService {
         ...(cfg.cron !== undefined ? { backupCron: cfg.cron } : {}),
         backupRetention: cfg.retention ?? undefined,
         ...(cfg.retentionDays !== undefined ? { backupRetentionDays: cfg.retentionDays } : {}),
+        ...(cfg.maxSizeGb !== undefined ? { backupMaxSizeGb: cfg.maxSizeGb } : {}),
         ...(cfg.destinationId !== undefined ? { backupDestinationId: cfg.destinationId || null } : {}),
       },
     });

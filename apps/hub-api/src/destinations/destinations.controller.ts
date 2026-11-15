@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   HttpCode,
   Param,
   Post,
@@ -10,7 +11,8 @@ import {
   Query,
   UseGuards,
 } from "@nestjs/common";
-import { ApiTags, ApiSecurity } from "@nestjs/swagger";
+import { ApiTags, ApiSecurity, ApiQuery } from "@nestjs/swagger";
+import { z } from "zod";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
@@ -18,8 +20,19 @@ import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { ApiZodBody, ApiZodResponse } from "../openapi/openapi";
 import { Paginated } from "../common/pagination.decorator";
-import { DestinationsService, DestinationViewSchema } from "./destinations.service";
-import { CreateDestinationInput, CreateDestinationSchema, UpdateDestinationInput, UpdateDestinationSchema } from "./dto";
+import {
+  CreateDestinationResponseSchema,
+  DestinationsService,
+  DestinationTestResultSchema,
+  DestinationViewSchema,
+} from "./destinations.service";
+import {
+  CreateDestinationInput,
+  CreateDestinationSchema,
+  DeleteDestinationQuerySchema,
+  UpdateDestinationInput,
+  UpdateDestinationSchema,
+} from "./dto";
 
 @ApiTags("backup-destinations")
 @ApiSecurity("pat")
@@ -37,7 +50,9 @@ export class DestinationsController {
 
   @Post()
   @ApiZodBody(CreateDestinationSchema)
-  @ApiZodResponse(DestinationViewSchema, { status: 201 })
+  @ApiZodResponse(CreateDestinationResponseSchema, { status: 201 })
+  // The response carries the one-time plaintext recoveryKey: never let a proxy or browser cache it.
+  @Header("Cache-Control", "no-store")
   create(
     @CurrentUser() user: AuthUser,
     @Body(new ZodValidationPipe(CreateDestinationSchema)) body: CreateDestinationInput,
@@ -64,14 +79,20 @@ export class DestinationsController {
 
   @Post(":id/test")
   @HttpCode(200)
+  @ApiZodResponse(DestinationTestResultSchema)
   test(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.destinations.testConnection(user.userId, id);
   }
 
   @Delete(":id")
   @HttpCode(200)
-  async remove(@CurrentUser() user: AuthUser, @Param("id") id: string) {
-    await this.destinations.remove(user.userId, id);
+  @ApiQuery({ name: "discardBackups", required: false, type: Boolean, description: "confirm deleting an encrypted destination that still has backups" })
+  async remove(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Query(new ZodValidationPipe(DeleteDestinationQuerySchema)) query: z.infer<typeof DeleteDestinationQuerySchema>,
+  ) {
+    await this.destinations.remove(user.userId, id, { discardBackups: query.discardBackups });
     return { ok: true };
   }
 }

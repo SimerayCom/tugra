@@ -17,6 +17,8 @@ export const BackupConfigSchema = z.object({
   retention: z.number().int().min(1).max(365).optional(),
   // Also delete SUCCESS backups older than N days (alongside the keep-N count); null clears it.
   retentionDays: z.number().int().min(1).max(3650).nullable().optional(),
+  // Also delete the oldest SUCCESS backups beyond this total size (GiB); absent leaves it, null clears it.
+  maxSizeGb: z.number().int().min(1).max(100000).nullable().optional(),
   destinationId: z.string().nullable().optional(),
 });
 export type BackupConfigInput = z.infer<typeof BackupConfigSchema>;

@@ -10,6 +10,7 @@ import { flagsToken } from "../common/env-flags";
  *
  * Per-app log drains (LogDrain.appId) are deliberately NOT part of the snapshot: they are runtime egress that can
  * carry a credential, not deploy config, so rollback and drift diffs stay unchanged. Do not "fix" this.
+ * Likewise backup schedules/retention/policies (volume + database) are operational config, never snapshotted.
  */
 export interface ConfigSnapshot {
   /** Schema marker. 2 = records restartPolicy (always, even the default). Absent = an older snapshot that never did. */
