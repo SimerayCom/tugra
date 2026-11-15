@@ -8,6 +8,8 @@
  *  - PRE  (after the registry login, before `up`): pull|build the hook service's image, then a one-shot
  *    `compose run --rm` of that service. A non-zero exit aborts the deploy BEFORE `up` (the old stack keeps serving).
  *    `run` deliberately omits `--no-deps`: a migration hook must reach its database, including on a first deploy.
+ *    `run` keeps the service's labels and networks, so the one-off container would register as a Traefik backend of
+ *    the live router (a container with no listener): `-l traefik.enable=false` overrides the label for that container.
  *  - POST (after `up`, the registry logout and `ps`): wait for the service to be running (and healthy when it has a
  *    healthcheck), then `compose exec`. Best-effort: it always exits 0, so a failure never marks the deploy FAILED.
  *
@@ -82,7 +84,7 @@ export function composeHookPreSteps(app: AppSpec, p: ComposeHookPlan, o: Compose
     `echo "TUGRA_PREDEPLOY: running"`,
     p.prepare === "build" ? `${stem(o, true)}build ${o.noCache ? "--no-cache " : ""}${svc}` : `${stem(o, true)}pull --quiet ${svc}`,
     `docker rm -f ${name} >/dev/null 2>&1 || true`,
-    `if ${stem(o)}run --rm -T --name ${name} --entrypoint sh ${svc} -c ${shq(p.pre)}; then echo "TUGRA_PREDEPLOY: ok"; else echo "TUGRA_PREDEPLOY: failed"; exit 1; fi`,
+    `if ${stem(o)}run --rm -T -l traefik.enable=false --name ${name} --entrypoint sh ${svc} -c ${shq(p.pre)}; then echo "TUGRA_PREDEPLOY: ok"; else echo "TUGRA_PREDEPLOY: failed"; exit 1; fi`,
   ];
 }
 

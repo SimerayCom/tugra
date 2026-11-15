@@ -63,8 +63,16 @@ describe("pasted compose up script with hooks", () => {
     expect(lines).toContain(`docker compose --progress plain -p tugra_abc -f ${FILE} pull --quiet 'api'`);
     expect(lines).toContain("docker rm -f tugra_abc_hook >/dev/null 2>&1 || true");
     expect(lines).toContain(
-      `if docker compose -p tugra_abc -f ${FILE} run --rm -T --name tugra_abc_hook --entrypoint sh 'api' -c 'npm run migrate'; then echo "TUGRA_PREDEPLOY: ok"; else echo "TUGRA_PREDEPLOY: failed"; exit 1; fi`,
+      `if docker compose -p tugra_abc -f ${FILE} run --rm -T -l traefik.enable=false --name tugra_abc_hook --entrypoint sh 'api' -c 'npm run migrate'; then echo "TUGRA_PREDEPLOY: ok"; else echo "TUGRA_PREDEPLOY: failed"; exit 1; fi`,
     );
+  });
+
+  it("the one-off container is never routable: -l traefik.enable=false on run, nothing on the post-hook exec", () => {
+    const run = lines.find((l) => l.includes(" run --rm"))!;
+    expect(run).toContain(" run --rm -T -l traefik.enable=false --name tugra_abc_hook ");
+    const exec = lines.find((l) => l.includes(" exec -T "))!;
+    expect(exec).not.toContain("traefik.enable");
+    expect(exec).toContain("exec -T 'api' sh -c 'npm run warm'");
   });
 
   it("run omits --no-deps (a migration must reach its database) and the failure branch is exit 1, never 3", () => {
@@ -195,7 +203,7 @@ describe("git compose up script with hooks", () => {
     ];
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     expect(order.every((i) => i >= 0)).toBe(true);
-    expect(s).toContain(`-f '${CLONE}/docker-compose.yml' run --rm -T --name tugra_abc_hook --entrypoint sh 'api' -c 'migrate'`);
+    expect(s).toContain(`-f '${CLONE}/docker-compose.yml' run --rm -T -l traefik.enable=false --name tugra_abc_hook --entrypoint sh 'api' -c 'migrate'`);
   });
 
   it("carries the override file and env-file (even though ps only does with a prefix) on every hook call", () => {
