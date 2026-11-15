@@ -25,7 +25,7 @@ import (
 const (
 	fs2DefaultTimeout = 30 * time.Second
 	fs2MinTimeout     = 5 * time.Second
-	fs2MaxTimeout     = 10 * time.Minute // matches the web proxy's 600s ceiling
+	fs2MaxTimeout     = 10 * time.Minute // the web service's hub hop idles out after 11 min
 	fs2MaxInFlight    = 4                // process-wide concurrent fs2 ops
 	fs2SemWait        = 2 * time.Second  // how long an op waits for a slot before `busy`
 	fs2ReplayMax      = 4096             // replay-cache bound

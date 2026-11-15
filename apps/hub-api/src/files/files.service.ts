@@ -52,7 +52,7 @@ export interface WriteResultBody {
 
 const KIB512 = 512 * 1024;
 
-/** write/read budget: 30s + 1s per 512 KiB, within [30s, 10min] (10 min matches the web proxy's 600s ceiling). */
+/** write/read budget: 30s + 1s per 512 KiB, within [30s, 10min] (the web service's hub hop idles out after 11 min, HUB_PROXY_TIMEOUT_MS). */
 export function transferTimeoutMs(size: number): number {
   return Math.min(10 * 60_000, Math.max(30_000, 30_000 + Math.ceil(size / KIB512) * 1000));
 }

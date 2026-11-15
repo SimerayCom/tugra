@@ -27,7 +27,7 @@ export interface UploadItem {
   throttled: number;
 }
 
-export const MAX_PARALLEL_UPLOADS = 3;
+export const MAX_PARALLEL_UPLOADS = 2; // matches the hub's per-user concurrent-upload cap (FILES_MAX_CONCURRENT_UPLOADS)
 /** How many times one file is automatically retried after a 429 before it is shown as failed. */
 export const MAX_THROTTLE_RETRIES = 30;
 

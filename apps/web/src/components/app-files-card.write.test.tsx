@@ -334,14 +334,15 @@ describe("AppFilesCard uploads", () => {
     await waitFor(() => expect(list.mock.calls.length).toBeGreaterThan(before));
   });
 
-  it("runs at most 3 uploads in parallel and starts the next as one finishes", async () => {
+  it("runs at most 2 uploads in parallel and starts the next as one finishes", async () => {
     setup();
     const calls = fakeUploads();
     await pick(["1", "2", "3", "4", "5"].map((n) => file(`f${n}.txt`)));
-    await waitFor(() => expect(calls).toHaveLength(3));
+    await waitFor(() => expect(calls).toHaveLength(2));
     await act(async () => calls[0].resolve({ created: true }));
-    await waitFor(() => expect(calls).toHaveLength(4));
+    await waitFor(() => expect(calls).toHaveLength(3));
     await act(async () => calls[1].resolve({ created: true }));
+    await waitFor(() => expect(calls).toHaveLength(4));
     await act(async () => calls[2].resolve({ created: true }));
     await waitFor(() => expect(calls).toHaveLength(5));
     expect(calls.map((c) => c.o.path)).toEqual(["f1.txt", "f2.txt", "f3.txt", "f4.txt", "f5.txt"]);
@@ -437,10 +438,10 @@ describe("AppFilesCard uploads", () => {
     setup();
     const calls = fakeUploads();
     await pick(["1", "2", "3", "4"].map((n) => file(`q${n}.txt`)));
-    await waitFor(() => expect(calls).toHaveLength(3));
+    await waitFor(() => expect(calls).toHaveLength(2));
     fireEvent.click(screen.getByRole("button", { name: "Cancel upload of q4.txt" }));
     await waitFor(() => expect(screen.queryByRole("progressbar", { name: "q4.txt" })).toBeNull());
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(2);
   });
 
   it("drag-and-drop shows the drop overlay and uploads the dropped files", async () => {

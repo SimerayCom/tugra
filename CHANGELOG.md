@@ -104,7 +104,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **File manager: upload, edit, rename, permissions and delete on app volumes.** A new opt-in server capability,
   `files_write`, adds write access next to the existing read-only `files` (it requires `files`; the web capabilities
   card unchecks it when you uncheck `files`). With it, an app's **Files** tab can upload files (multi-select or drag
-  and drop, three at a time, with progress, cancel and retry; a file that already exists asks Overwrite or Skip),
+  and drop, two at a time, with progress, cancel and retry; a file that already exists asks Overwrite or Skip),
   create folders and files, edit text files up to 1 MiB in place (a concurrent change shows Reload or Overwrite
   anyway), download, rename, change permissions (an rwx grid kept in sync with the octal value; setuid, setgid and
   sticky bits cannot be set) and delete (a folder is a recursive delete and asks you to type its name). Writes run in
