@@ -254,6 +254,8 @@ export function buildConfigSnapshot(spec: AppSpec): ConfigSnapshot {
   };
 }
 
+const has = (o: object, k: string): boolean => Object.prototype.hasOwnProperty.call(o, k);
+
 function show(v: unknown): string {
   if (v === null || v === undefined) return "—";
   return String(v);
@@ -334,21 +336,21 @@ export function diffSnapshots(
   const pcl = prev.customLabels ?? {};
   const ncl = next.customLabels ?? {};
   for (const k of Object.keys(ncl)) {
-    if (!(k in pcl)) changes.push({ field: `customLabel.${k}`, kind: "added", after: SECRET });
+    if (!has(pcl, k)) changes.push({ field: `customLabel.${k}`, kind: "added", after: SECRET });
     else if (pcl[k] !== ncl[k]) changes.push({ field: `customLabel.${k}`, kind: "changed", before: SECRET, after: SECRET });
   }
-  for (const k of Object.keys(pcl)) if (!(k in ncl)) changes.push({ field: `customLabel.${k}`, kind: "removed", before: SECRET });
+  for (const k of Object.keys(pcl)) if (!has(ncl, k)) changes.push({ field: `customLabel.${k}`, kind: "removed", before: SECRET });
 
   // env: presence + fingerprint changes, never revealing values
   const pe = prev.env ?? {};
   const ne = next.env ?? {};
   for (const k of Object.keys(ne)) {
-    if (!(k in pe)) changes.push({ field: `env.${k}`, kind: "added", after: SECRET });
+    if (!has(pe, k)) changes.push({ field: `env.${k}`, kind: "added", after: SECRET });
     else if (pe[k] !== ne[k])
       changes.push({ field: `env.${k}`, kind: "changed", before: SECRET, after: SECRET });
   }
   for (const k of Object.keys(pe)) {
-    if (!(k in ne)) changes.push({ field: `env.${k}`, kind: "removed", before: SECRET });
+    if (!has(ne, k)) changes.push({ field: `env.${k}`, kind: "removed", before: SECRET });
   }
 
   // env flags: readable tokens (flags are not secrets), so a flag-only edit shows up. A snapshot from before the
@@ -356,19 +358,19 @@ export function diffSnapshots(
   const pf = prev.envFlags ?? {};
   const nf = next.envFlags ?? {};
   for (const k of Object.keys(nf)) {
-    if (!(k in pf)) changes.push({ field: `envFlags.${k}`, kind: "added", after: nf[k] });
+    if (!has(pf, k)) changes.push({ field: `envFlags.${k}`, kind: "added", after: nf[k] });
     else if (pf[k] !== nf[k]) changes.push({ field: `envFlags.${k}`, kind: "changed", before: pf[k], after: nf[k] });
   }
-  for (const k of Object.keys(pf)) if (!(k in nf)) changes.push({ field: `envFlags.${k}`, kind: "removed", before: pf[k] });
+  for (const k of Object.keys(pf)) if (!has(nf, k)) changes.push({ field: `envFlags.${k}`, kind: "removed", before: pf[k] });
 
   // build-time variables: fingerprint changes, value never revealed (SECRET placeholder like env)
   const pb = prev.buildEnv ?? {};
   const nb = next.buildEnv ?? {};
   for (const k of Object.keys(nb)) {
-    if (!(k in pb)) changes.push({ field: `buildEnv.${k}`, kind: "added", after: SECRET });
+    if (!has(pb, k)) changes.push({ field: `buildEnv.${k}`, kind: "added", after: SECRET });
     else if (pb[k] !== nb[k]) changes.push({ field: `buildEnv.${k}`, kind: "changed", before: SECRET, after: SECRET });
   }
-  for (const k of Object.keys(pb)) if (!(k in nb)) changes.push({ field: `buildEnv.${k}`, kind: "removed", before: SECRET });
+  for (const k of Object.keys(pb)) if (!has(nb, k)) changes.push({ field: `buildEnv.${k}`, kind: "removed", before: SECRET });
 
   // credential presence
   if (prev.hasGitToken !== next.hasGitToken)

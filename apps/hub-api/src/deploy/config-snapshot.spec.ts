@@ -283,6 +283,14 @@ describe("custom labels in the snapshot (D5)", () => {
     ]);
     expect(diffSnapshots(mk({ team: "core" }), mk({ team: "core" }))).toEqual([]);
   });
+  it("a label key that names an Object.prototype member is a real addition, not a change", () => {
+    const mk = (l?: Record<string, string>) => buildConfigSnapshot(spec({ customLabels: l }));
+    expect(diffSnapshots(mk({ a: "1" }), mk({ a: "1", constructor: "x", toString: "y" }))).toEqual([
+      { field: "customLabel.constructor", kind: "added", after: "•••" },
+      { field: "customLabel.toString", kind: "added", after: "•••" },
+    ]);
+    expect(diffSnapshots(mk({ constructor: "x" }), mk({ constructor: "x" }))).toEqual([]);
+  });
 });
 
 describe("build / registry / hook settings in the snapshot (D4)", () => {
