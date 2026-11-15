@@ -22,6 +22,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Cutover certificate transfer: staged hosts come from the certificate itself.** The `sans` list sent by the
   migrator is no longer trusted or stored; the hosts of a staged certificate (and what gets written into the target's
   `acme.json`) are taken from the certificate's own names only, each checked as a valid hostname.
+- **Import wizard: "Review & rename" now carries what you chose on the plan step.** Environment-variable acknowledgements,
+  per-service choices (skip, rename, placement, volumes) and the PostgreSQL "Volume copy" modes were dropped when you
+  continued into the review step, so acknowledged apps were skipped as blocked, a skipped service was imported anyway,
+  and a plan with a Volume-copy database was refused as changed. They are now sent with both the preview and the apply,
+  and Continue stays disabled while an acknowledgeable blocker is open or a service has no target, like the one-click
+  apply. The mapping preview also treats an acknowledged item as importable (its project and environment are created
+  and it lands there), the mapping hash now covers the acknowledgements, a plan hash no longer depends on the order the
+  data modes were toggled in, and the MCP `import_apply` tool accepts `acks`.
 - **Backup destinations: the encryption test no longer fails at random on a fresh agent.** The test's encrypt and
   decrypt gpg processes run at the same time and both tried to create the gpg home on first use; on an agent that had
   just started (or self-updated) one of them could die with `can't create directory '/root/.gnupg': File exists` and

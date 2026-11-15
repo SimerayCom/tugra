@@ -17,7 +17,7 @@ import { EnvBlockers } from "./import/env-blockers";
 import { GitLinksPanel, GitRelinkCard, DeployKeyBlock } from "./import/git-links-panel";
 import { ImportServicesPanel } from "./import-services-panel";
 import { ImportChecklist } from "./import-checklist";
-import type { Team, ImportPlan, ImportPlanItem, ImportRiskLevel, ImportOperation, ImportOpTask, ImportRemoteKind, ImportServiceChoice, ImportTaskStatus, MintedMigrationToken, ImportRemapPlan, ImportRemapResult, VxCommands } from "../lib/types";
+import type { Team, ImportApplyExtras, ImportPlan, ImportPlanItem, ImportRiskLevel, ImportOperation, ImportOpTask, ImportRemoteKind, ImportServiceChoice, ImportTaskStatus, MintedMigrationToken, ImportRemapPlan, ImportRemapResult, VxCommands } from "../lib/types";
 
 const toneColor: Record<"danger" | "warning" | "info", string> = {
   danger: "var(--c-r)",
@@ -255,18 +255,19 @@ function PlanView({
   // An older hub omits the feature flag: keep the original one-click apply, no review step.
   const mappingSupported = !!plan.mapping?.features?.includes("mapping-v1");
 
+  // What every apply (this one-click one AND the review step's) must carry from this screen.
+  const acks = buildAcks(plan, acked);
+  const modes = selectedDbModes(plan);
+  const applyExtras: ImportApplyExtras = { ...(acks.length ? { acks } : {}), ...(serviceChoices ? { serviceChoices } : {}), ...(Object.keys(modes).length ? { dbDataModes: modes } : {}) };
+
   const apply = useMutation({
-    mutationFn: () => {
-      const acks = buildAcks(plan, acked);
-      const modes = selectedDbModes(plan);
-      return api.importApply({ sourceKind: kind, sessionId, targetServerId: target, planHash: plan.planHash, ...(acks.length ? { acks } : {}), ...(serviceChoices ? { serviceChoices } : {}), ...(Object.keys(modes).length ? { dbDataModes: modes } : {}) });
-    },
+    mutationFn: () => api.importApply({ sourceKind: kind, sessionId, targetServerId: target, planHash: plan.planHash, ...applyExtras }),
     onSuccess: (r) => onApplied(r.opId),
     onError: (e) => toast((e as Error).message, "error"),
   });
 
   if (reviewing && mappingSupported) {
-    return <ImportReviewStep plan={plan} kind={kind} sessionId={sessionId} servers={writableServers} teams={teams} onApplied={onApplied} onBack={() => setReviewing(false)} />;
+    return <ImportReviewStep plan={plan} kind={kind} sessionId={sessionId} servers={writableServers} teams={teams} applyExtras={applyExtras} onApplied={onApplied} onBack={() => setReviewing(false)} />;
   }
 
   return (
@@ -360,7 +361,10 @@ function PlanView({
 
         <div style={{ borderTop: "1px solid var(--c-bd)", margin: "16px 0 14px" }} />
         {mappingSupported ? (
-          <Btn onClick={() => setReviewing(true)} disabled={!s.runnable}>{t("import.review.continue")}</Btn>
+          <>
+            {missingTargets > 0 && <p role="alert" style={{ fontSize: 12, color: "var(--c-am)", margin: "0 0 8px" }}>{t("import.services.needsTarget")}</p>}
+            <Btn onClick={() => setReviewing(true)} disabled={replanning || runnable === 0 || unackedCount > 0 || missingTargets > 0}>{t("import.review.continue")}</Btn>
+          </>
         ) : (
         <>
         <label style={label} htmlFor="imp-target">{t("import.target")}</label>

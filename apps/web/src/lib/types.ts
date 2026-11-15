@@ -1027,6 +1027,14 @@ export interface ImportAck {
   code: "app.env.unresolved" | "app.env.key.invalid";
   itemRef?: string;
 }
+
+/** The plan-step choices an apply must carry whichever screen sends it (one-click or "Review & rename"): env acks,
+ *  per-service choices and the physical-copy data modes. Computed once in the plan view; each part only when set. */
+export interface ImportApplyExtras {
+  acks?: ImportAck[];
+  serviceChoices?: Record<string, ImportServiceChoice>;
+  dbDataModes?: Record<string, "volume">;
+}
 export interface ImportPreflight {
   databases: Array<{ name: string; engine: string; dataPlane: DbDataPlane; reason: string }>;
   services: Array<{ name: string; members: number; note: string; objectStore?: true; verdict?: ImportServiceVerdict; hold?: boolean; volumes?: Array<{ key: string; dataPlane: string }> }>;

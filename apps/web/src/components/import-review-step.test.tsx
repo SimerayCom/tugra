@@ -7,7 +7,7 @@ import { ConfirmProvider } from "./confirm";
 import { ImportReviewStep } from "./import-review-step";
 import { api } from "../lib/api";
 import { subscribeToast } from "../lib/toast-bus";
-import type { ImportMappingDoc, ImportPlan, ImportResolved, ImportEffectiveItem, ImportConflict } from "../lib/types";
+import type { ImportApplyExtras, ImportMappingDoc, ImportPlan, ImportResolved, ImportEffectiveItem, ImportConflict } from "../lib/types";
 
 afterEach(cleanup);
 
@@ -69,7 +69,8 @@ const teams = [
   { id: "t2", name: "Team Two", role: "OWNER" },
 ] as never;
 
-const mount = (p: ImportPlan = plan(), over: { onApplied?: (id: string) => void } = {}) => wrap(<ImportReviewStep plan={p} kind="coolify" sessionId="s1" servers={servers} teams={teams} onApplied={over.onApplied ?? (() => undefined)} onBack={() => undefined} />);
+const mount = (p: ImportPlan = plan(), over: { onApplied?: (id: string) => void; applyExtras?: ImportApplyExtras } = {}) =>
+  wrap(<ImportReviewStep plan={p} kind="coolify" sessionId="s1" servers={servers} teams={teams} applyExtras={over.applyExtras} onApplied={over.onApplied ?? (() => undefined)} onBack={() => undefined} />);
 
 describe("ImportReviewStep", () => {
   let resolveSpy: ReturnType<typeof vi.spyOn>;
@@ -126,6 +127,36 @@ describe("ImportReviewStep", () => {
     expect(sent.ignoreStoredMapping).toBeUndefined();
     await waitFor(() => expect(onApplied).toHaveBeenCalledWith("op1"));
   }, 15000);
+
+  it("the plan step's acks, service choices and data modes ride along on the resolve and on the mapped apply", async () => {
+    const applySpy = vi.spyOn(api, "importApply").mockResolvedValue({ opId: "op1", mappingApplied: true });
+    const applyExtras: ImportApplyExtras = { acks: [{ code: "app.env.unresolved", itemRef: APP }], serviceChoices: { "service:srv:x": { skip: true } }, dbDataModes: { [DB]: "volume" } };
+    mount(plan(), { applyExtras });
+    const apply = await screen.findByRole("button", { name: /^Apply 2 apps/ });
+    await waitFor(() => expect((apply as HTMLButtonElement).disabled).toBe(false));
+    expect(resolveSpy.mock.calls[0][0]).toMatchObject({ acks: applyExtras.acks, dbDataModes: applyExtras.dbDataModes });
+    expect(resolveSpy.mock.calls[0][0]).not.toHaveProperty("serviceChoices");
+    fireEvent.click(apply);
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(applySpy).toHaveBeenCalledTimes(1));
+    expect(applySpy.mock.calls[0][0]).toMatchObject({ ...applyExtras, mapping: expect.anything(), mappingHash: expect.any(String) });
+  });
+
+  it("the extras also ride along on the 'ignore the saved mapping' apply", async () => {
+    const stored: ImportMappingDoc = { version: 1, items: { [APP]: { name: "Storefront" } }, projects: {}, gitSources: {}, acks: [] };
+    vi.spyOn(api, "importMappingGet").mockResolvedValue({ doc: stored, version: 3, label: null, lastAppliedAt: "2026-11-01T10:00:00.000Z" });
+    const applySpy = vi.spyOn(api, "importApply").mockResolvedValue({ opId: "op2" });
+    const applyExtras: ImportApplyExtras = { acks: [{ code: "app.env.unresolved", itemRef: APP }], dbDataModes: { [DB]: "volume" } };
+    mount(plan({ mapping: { features: ["mapping-v1"], stored, storedVersion: 3, scopeKey: "team-3" } }), { applyExtras });
+    await screen.findByText(/Saved mapping loaded/);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Ignore the saved mapping and import with source names" }));
+    const apply = screen.getByRole("button", { name: "Apply" });
+    await waitFor(() => expect((apply as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(apply);
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(applySpy).toHaveBeenCalledTimes(1));
+    expect(applySpy.mock.calls[0][0]).toEqual({ sourceKind: "coolify", sessionId: "s1", targetServerId: "srv1", planHash: "a".repeat(32), ...applyExtras, ignoreStoredMapping: true });
+  });
 
   it("an apply the hub did not echo as applied (an old hub) is reported, and the op is still followed", async () => {
     const onApplied = vi.fn();

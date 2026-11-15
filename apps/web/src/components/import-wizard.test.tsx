@@ -484,6 +484,49 @@ describe("ImportWizard — editable mapping", () => {
     await screen.findByText("Import preview");
   });
 
+  it("the plan step's env acks and Volume-copy data modes survive into the review step's resolve and apply; Continue stays disabled until the blocker is acknowledged", async () => {
+    const ENV = "app:srv:envapp";
+    const mappingBlock = { features: ["mapping-v1"], stored: null, storedVersion: null, scopeKey: "team-3" };
+    const base: ImportPlan = {
+      ...plan,
+      totals: { apps: 1, databases: 1, volumes: 0, blockers: 1 },
+      items: [
+        { itemRef: ENV, kind: "app", name: "envapp", proposed: {}, risks: [{ level: "blocker", code: "app.env.unresolved", message: "1 variable cannot be read" }], dependsOn: [] },
+        { itemRef: "database:srv:pg", kind: "database", name: "orders-db", proposed: { engine: "POSTGRES", version: "16", image: "postgres:16-alpine" }, risks: [], dependsOn: [] },
+      ],
+      mapping: mappingBlock,
+    };
+    const volPlan: ImportPlan = { ...base, planHash: "b".repeat(32), items: base.items.map((it) => (it.kind === "database" ? { ...it, proposed: { ...it.proposed, dataMode: "volume" } } : it)) };
+    vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s1", expiresAt: "2026-01-01T00:00:00.000Z" });
+    vi.spyOn(api, "importPlan").mockResolvedValueOnce(base).mockResolvedValue(volPlan);
+    vi.spyOn(api, "importMappingGet").mockResolvedValue({ doc: null, version: null, label: null, lastAppliedAt: null });
+    const eff = (itemRef: string, kind: "app" | "database", name: string) => ({ itemRef, kind, sourceName: name, include: true, name, project: null, environment: null, origin: { name: "source" as const, placement: "default" as const }, status: "pending" as const, changed: [] });
+    const resolveSpy = vi.spyOn(api, "importResolve").mockResolvedValue({ version: 1, effective: [eff(ENV, "app", "envapp"), eff("database:srv:pg", "database", "orders-db")], projects: [], gitSources: [], conflicts: [], orphans: [], mappingHash: "m".repeat(32), counts: { renamed: 0, moved: 0, excluded: 0, aliased: 0, newProjects: 0, newEnvironments: 0 } });
+    const applySpy = vi.spyOn(api, "importApply").mockResolvedValue({ opId: "op1", mappingApplied: true });
+    vi.spyOn(api, "getImportOperation").mockResolvedValue(settledOp);
+    wrap(<ImportWizard />);
+    await screen.findByRole("option", { name: "Team One" });
+    fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://c.example.com" } });
+    fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
+    const group = await screen.findByRole("radiogroup", { name: "Data mode: orders-db" });
+    fireEvent.click(within(group).getByRole("radio", { name: "Volume copy" }));
+    await screen.findByText(/Volume copy keeps the source image/);
+    // the un-acked ackable blocker gates Continue (like the legacy Apply)
+    const cont = screen.getByRole("button", { name: "Review & rename" }) as HTMLButtonElement;
+    expect(cont.disabled).toBe(true);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Create envapp without these variables" }));
+    await waitFor(() => expect((screen.getByRole("button", { name: "Review & rename" }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: "Review & rename" }));
+    const apply = await screen.findByRole("button", { name: /^Apply 1 apps/ });
+    await waitFor(() => expect((apply as HTMLButtonElement).disabled).toBe(false));
+    expect(resolveSpy).toHaveBeenLastCalledWith(expect.objectContaining({ planHash: "b".repeat(32), acks: [{ code: "app.env.unresolved", itemRef: ENV }], dbDataModes: { "database:srv:pg": "volume" } }));
+    fireEvent.click(apply);
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(applySpy).toHaveBeenCalledTimes(1));
+    expect(applySpy.mock.calls[0][0]).toMatchObject({ planHash: "b".repeat(32), acks: [{ code: "app.env.unresolved", itemRef: ENV }], dbDataModes: { "database:srv:pg": "volume" }, mapping: expect.anything(), mappingHash: "m".repeat(32) });
+  }, 15000);
+
   it("an older hub (no mapping feature flag) keeps the legacy one-click apply and never sends mapping fields", async () => {
     vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s1", expiresAt: "2026-01-01T00:00:00.000Z" });
     vi.spyOn(api, "importPlan").mockResolvedValue(plan); // no `mapping` block

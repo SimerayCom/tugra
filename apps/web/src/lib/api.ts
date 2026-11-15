@@ -2126,7 +2126,7 @@ export const api = {
     return apiFetch<{ opId: string; mappingApplied?: boolean }>("/import/apply", { method: "POST", body: JSON.stringify(input) });
   },
   // Authoritative mapping preview: effective names/placement, every conflict, and the mappingHash apply must carry.
-  importResolve(input: { sessionId: string; sourceKind: ImportRemoteKind; planHash: string; targetServerId: string; environmentId?: string; reconcile?: boolean; mapping: ImportMappingDoc }) {
+  importResolve(input: { sessionId: string; sourceKind: ImportRemoteKind; planHash: string; targetServerId: string; environmentId?: string; reconcile?: boolean; acks?: ImportAck[]; dbDataModes?: Record<string, "volume">; mapping: ImportMappingDoc }) {
     return apiFetch<ImportResolved>("/import/mapping/resolve", { method: "POST", body: JSON.stringify(input) });
   },
   importMappingGet(sessionId: string) {

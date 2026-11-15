@@ -28,7 +28,7 @@ import {
   setAck,
   setItemField,
 } from "../lib/import-mapping";
-import type { ImportMappingDoc, ImportPlan, ImportRemoteKind, ImportResolved, Team } from "../lib/types";
+import type { ImportApplyExtras, ImportMappingDoc, ImportPlan, ImportRemoteKind, ImportResolved, Team } from "../lib/types";
 
 const label: React.CSSProperties = { display: "block", fontSize: 12, color: "var(--c-tx3)", margin: "0 0 4px" };
 const field: React.CSSProperties = { width: "100%", minHeight: 44, padding: "8px 10px", fontSize: 14, background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx)", fontFamily: "inherit", boxSizing: "border-box" };
@@ -50,6 +50,7 @@ export function ImportReviewStep({
   sessionId,
   servers,
   teams,
+  applyExtras,
   onApplied,
   onBack,
 }: {
@@ -58,6 +59,9 @@ export function ImportReviewStep({
   sessionId: string;
   servers: Array<{ id: string; name: string; teamId: string }>;
   teams: Team[];
+  /** The plan step's env acks / service choices / data modes: sent with the resolve (acks, data modes) and with BOTH
+   *  applies so the hub re-plans to the same hash and honours what the operator chose there. */
+  applyExtras?: ImportApplyExtras;
   onApplied: (opId: string) => void;
   onBack: () => void;
 }) {
@@ -98,7 +102,7 @@ export function ImportReviewStep({
     const handle = setTimeout(
       () => {
         api
-          .importResolve({ sessionId, sourceKind: kind, planHash: plan.planHash, targetServerId: serverId, reconcile, mapping: doc })
+          .importResolve({ sessionId, sourceKind: kind, planHash: plan.planHash, targetServerId: serverId, reconcile, ...(applyExtras?.acks ? { acks: applyExtras.acks } : {}), ...(applyExtras?.dbDataModes ? { dbDataModes: applyExtras.dbDataModes } : {}), mapping: doc })
           .then((r) => !cancelled && setRs({ resolved: r, key: docKey, pending: false, error: null }))
           .catch((e) => !cancelled && setRs((s) => ({ ...s, pending: false, error: (e as Error).message })));
       },
@@ -143,8 +147,8 @@ export function ImportReviewStep({
   const apply = useMutation({
     mutationFn: () =>
       ignoreSaved
-        ? api.importApply({ sourceKind: kind, sessionId, targetServerId: serverId, planHash: plan.planHash, ignoreStoredMapping: true })
-        : api.importApply({ sourceKind: kind, sessionId, targetServerId: serverId, planHash: plan.planHash, mapping: doc, mappingHash: resolved!.mappingHash, ...(reconcile ? { reconcile: true } : {}) }),
+        ? api.importApply({ sourceKind: kind, sessionId, targetServerId: serverId, planHash: plan.planHash, ...applyExtras, ignoreStoredMapping: true })
+        : api.importApply({ sourceKind: kind, sessionId, targetServerId: serverId, planHash: plan.planHash, ...applyExtras, mapping: doc, mappingHash: resolved!.mappingHash, ...(reconcile ? { reconcile: true } : {}) }),
     onSuccess: (r) => {
       // The hub echoes whether it applied the mapping; an old hub that ignored it must not pass silently.
       if (!ignoreSaved && r.mappingApplied !== true) toast(t("import.review.notApplied"), "error");
