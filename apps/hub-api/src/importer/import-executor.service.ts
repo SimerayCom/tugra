@@ -35,9 +35,6 @@ import { remapEnv, credsFromUrlForHost, type DbRemapTarget, type AppRemapTarget 
 import { tokenizeDockerOptions } from "../deploy/deploy-script";
 import type { DatabaseView } from "../databases/databases.service";
 
-/** Engines Tugra can provision a resource for — a discovered DB with any other engine (e.g. UNKNOWN)
- *  is skipped by a plan blocker, but we re-check here so a bad engine never reaches DatabasesService. */
-const PROVISIONABLE_ENGINES = new Set(["POSTGRES", "MYSQL", "REDIS", "MONGO", "MARIADB", "KEYDB", "DRAGONFLY", "CLICKHOUSE", "LIBSQL"]);
 import { SetBasicAuthSchema } from "../applications/dto";
 import type { ImportSource, FetchedDbCredentials, SourceAppExtras } from "./import-source";
 import { REMOTE_SOURCE_KINDS, type ImportAck, type ImportApplyInput, type RemoteSourceKind, type ServiceChoice } from "./dto";

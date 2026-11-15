@@ -1,4 +1,4 @@
-import type { ForeignFleet, ImportPlan } from "./foreign-fleet";
+import type { ForeignApp, ForeignDb, ForeignFleet, ImportPlan, ImportPlanItem } from "./foreign-fleet";
 
 /** The BulkTaskStatus values, as a string union (the logic here does not import Prisma). */
 export type TaskStatus =
@@ -79,4 +79,34 @@ export function deriveOpStatus(statuses: TaskStatus[]): OpStatus {
   if (anyFailed) return anyDone ? "PARTIAL" : "FAILED";
   if (statuses.some((s) => s === "CANCELLED")) return "CANCELLED";
   return "SUCCEEDED";
+}
+
+/** Engines Tugra can provision a resource for — a discovered DB with any other engine (e.g. UNKNOWN)
+ *  is skipped by a plan blocker, but we re-check at apply so a bad engine never reaches DatabasesService. */
+export const PROVISIONABLE_ENGINES = new Set(["POSTGRES", "MYSQL", "REDIS", "MONGO", "MARIADB", "KEYDB", "DRAGONFLY", "CLICKHOUSE", "LIBSQL"]);
+
+/**
+ * Pure: will the remote-copy apply actually create a Tugra resource for this plan item? One predicate shared by
+ * the apply loop and the mapping resolver, so the preview can never disagree with what apply does. `dup` = the
+ * item was already imported onto the target server by a prior op (and its resource still exists).
+ */
+export function isRunnable(item: Pick<ImportPlanItem, "kind" | "risks">, app: ForeignApp | undefined, db: ForeignDb | undefined, dup: boolean): boolean {
+  const hasBlocker = item.risks.some((r) => r.level === "blocker");
+  const provisionableDb = !!db && PROVISIONABLE_ENGINES.has(db.engine);
+  return !dup && !hasBlocker && ((item.kind === "app" && !!app) || (item.kind === "database" && provisionableDb));
+}
+
+/** Pure: why a non-runnable item is skipped (the exact text apply has always written). */
+export function skipReason(item: Pick<ImportPlanItem, "kind" | "risks">, db: ForeignDb | undefined, dup: boolean): string {
+  const hasBlocker = item.risks.some((r) => r.level === "blocker");
+  const provisionableDb = !!db && PROVISIONABLE_ENGINES.has(db.engine);
+  return dup
+    ? "already imported onto this server in a previous run"
+    : hasBlocker
+      ? "blocked by a plan risk"
+      : item.kind === "volume"
+        ? "handled with its owning app (declared there when eligible); its data is not copied by this import yet"
+        : item.kind === "database" && !provisionableDb
+          ? "database engine has no Tugra equivalent"
+          : "could not resolve the source resource";
 }

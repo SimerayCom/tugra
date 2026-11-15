@@ -151,6 +151,7 @@ model Team {
   customRoles        TeamRole[]
   clusters           Cluster[]
   objectMigrations   ObjectMigration[]
+  importMappings     ImportMapping[]
   createdAt          DateTime              @default(now())
 }
 
@@ -1031,10 +1032,35 @@ model ImportSession {
   baseUrl    String // the external instance base URL (non-secret)
   tokenEnc   String // CryptoService-encrypted API token — never returned by any endpoint
   status     String    @default("active") // active | revoked
+  scopeKey   String    @default("") // user label of the source team/token (Coolify tokens are team-scoped) — keys the mapping profile
   expiresAt  DateTime
   createdAt  DateTime  @default(now())
   lastUsedAt DateTime?
 
+  @@index([teamId])
+}
+
+/// A persisted, editable import mapping profile: ONE per (team, source kind, normalized base URL, scope label).
+/// Names and placement only — never a secret. Reloaded as the editable default on the next import from the same
+/// source; the apply must re-send it explicitly (a stored profile is never applied implicitly).
+model ImportMapping {
+  id              String    @id @default(cuid())
+  team            Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId          String
+  sourceKind      String // coolify | dokploy
+  baseUrl         String // normalizeBaseUrl(): lowercase scheme+host, default port and trailing slash stripped, no creds/query/hash
+  scopeKey        String    @default("")
+  label           String?
+  mapping         Json // the mapping document (names only, never secrets)
+  mappingHash     String // hash of the normalized doc alone (display; apply uses the bound hash)
+  version         Int       @default(1) // optimistic concurrency for PUT
+  lastAppliedOpId String?
+  lastAppliedAt   DateTime?
+  createdById     String
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([teamId, sourceKind, baseUrl, scopeKey])
   @@index([teamId])
 }
 
