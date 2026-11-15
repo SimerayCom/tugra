@@ -1,11 +1,11 @@
-import { Module, type OnModuleInit } from "@nestjs/common";
+import { Module } from "@nestjs/common";
 import { AgentGatewayModule } from "../agent-gateway/agent-gateway.module";
-import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { MetricsModule } from "../metrics/metrics.module";
 import { CryptoModule } from "../crypto/crypto.module";
 import { NotificationsModule } from "../notifications/notifications.module";
 import { ServersModule } from "../servers/servers.module";
 import { ClustersModule } from "../clusters/clusters.module";
+import { LogDrainsModule } from "../log-drains/log-drains.module";
 import { ServerOpsController } from "./server-ops.controller";
 import { FleetController } from "./fleet.controller";
 import { CleanupService } from "./cleanup.service";
@@ -21,20 +21,8 @@ import { ContainerHealthRunnerService } from "./container-health.runner.service"
 import { ContainerHealthSchedulerService } from "./container-health.scheduler.service";
 
 @Module({
-  imports: [AgentGatewayModule, MetricsModule, CryptoModule, NotificationsModule, ServersModule, ClustersModule],
+  imports: [AgentGatewayModule, MetricsModule, CryptoModule, NotificationsModule, ServersModule, ClustersModule, LogDrainsModule],
   controllers: [ServerOpsController, FleetController],
   providers: [CleanupService, GpuInventoryService, CleanupRunnerService, CleanupSchedulerService, PatchService, LogDrainService, ProxyOpsService, ContainerOpsService, ContainerLogStreamGuard, ContainerHealthRunnerService, ContainerHealthSchedulerService],
 })
-export class ServerOpsModule implements OnModuleInit {
-  constructor(
-    private readonly agentWs: AgentWsServer,
-    private readonly logDrains: LogDrainService,
-  ) {}
-
-  onModuleInit(): void {
-    // Re-push a server's log-drain config whenever its agent (re)connects.
-    this.agentWs.setLogDrainProvider((serverId) => {
-      void this.logDrains.pushToAgent(serverId).catch(() => undefined);
-    });
-  }
-}
+export class ServerOpsModule {}

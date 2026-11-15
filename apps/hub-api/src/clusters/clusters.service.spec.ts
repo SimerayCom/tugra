@@ -4,6 +4,7 @@ import { ClustersService } from "./clusters.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TeamAccessService } from "../common/team-access.service";
 import { AuditService } from "../audit/audit.service";
+import type { LogDrainPushService } from "../log-drains/log-drain-push.service";
 
 const CLUSTER = { id: "c1", teamId: "t1", name: "eu-west", description: null, swarmStatus: "NONE", createdAt: new Date() };
 
@@ -43,7 +44,9 @@ function make(over: {
     permissionsByTeam: jest.fn().mockResolvedValue(new Map([["t1", new Set(["servers:manage"])]])),
     ...over.access,
   } as unknown as TeamAccessService;
-  return { svc: new ClustersService(prisma, access, audit), prisma, access, audit };
+  const logDrainPush = { pushForServers: jest.fn().mockResolvedValue(undefined) };
+  const svc = new ClustersService(prisma, access, audit, logDrainPush as unknown as LogDrainPushService);
+  return { svc, prisma, access, audit, logDrainPush };
 }
 
 describe("ClustersService", () => {
@@ -124,6 +127,19 @@ describe("ClustersService", () => {
     const { svc, prisma } = make();
     await svc.remove("u1", "c1");
     expect(prisma.cluster!.delete).toHaveBeenCalledWith({ where: { id: "c1" } });
+  });
+
+  it("setServers re-pushes log drains to the previous members AND the new ones", async () => {
+    const { svc, logDrainPush } = make({ server: { count: jest.fn().mockResolvedValue(2), findMany: jest.fn().mockResolvedValue([{ id: "old1" }, { id: "s1" }]), updateMany: jest.fn().mockResolvedValue({ count: 0 }) } });
+    await svc.setServers("u1", "c1", { serverIds: ["s1", "s2"] });
+    expect(logDrainPush.pushForServers).toHaveBeenCalledWith(["old1", "s1", "s1", "s2"]);
+  });
+
+  it("remove re-pushes log drains to the members that were freed", async () => {
+    const { svc, prisma, logDrainPush } = make({ server: { findMany: jest.fn().mockResolvedValue([{ id: "m1" }, { id: "m2" }]) } });
+    await svc.remove("u1", "c1");
+    expect(prisma.server!.findMany).toHaveBeenCalledWith({ where: { clusterId: "c1" }, select: { id: true } }); // read BEFORE the delete
+    expect(logDrainPush.pushForServers).toHaveBeenCalledWith(["m1", "m2"]);
   });
 
   it("remove refuses (409) while a swarm is still formed, and never deletes", async () => {

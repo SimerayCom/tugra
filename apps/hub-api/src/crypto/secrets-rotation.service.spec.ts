@@ -69,6 +69,12 @@ describe("ENCRYPTED_COLUMNS registry — completeness against prisma/schema.pris
   });
 });
 
+describe("logDrain secrets (D7)", () => {
+  it("the only LogDrain ciphertext column is authTokenEnc: the per-transport `options` Json never holds a secret", () => {
+    expect(ENCRYPTED_COLUMNS.find((e) => e.model === "logDrain")?.columns).toEqual(["authTokenEnc"]);
+  });
+});
+
 describe("SecretsRotationService", () => {
   async function make(opts: { current: string; previous?: string; seed: (old: CryptoService) => Record<string, Array<Record<string, unknown>>> }) {
     const old = await crypto(OLD);

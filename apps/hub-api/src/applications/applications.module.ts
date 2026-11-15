@@ -9,6 +9,7 @@ import { GitSourcesModule } from "../git-sources/git-sources.module";
 import { TeamDefaultsModule } from "../teams/team-defaults.module";
 import { CatalogModule } from "../catalog/catalog.module";
 import { ClustersModule } from "../clusters/clusters.module";
+import { LogDrainsModule } from "../log-drains/log-drains.module";
 import { DnsModule } from "../dns/dns.module";
 import { DatabasesModule } from "../databases/databases.module";
 import { SecretProvidersModule } from "../secret-providers/secret-providers.module";
@@ -32,7 +33,7 @@ import { ContainerLogStreamGuard } from "./log-stream.guard";
 import { APPLICATIONS_SERVICE } from "./applications.tokens";
 
 @Module({
-  imports: [AgentGatewayModule, MetricsModule, CryptoModule, MonitorsModule, NotificationsModule, GitSourcesModule, TeamDefaultsModule, CatalogModule, ClustersModule, DnsModule, DatabasesModule, SecretProvidersModule],
+  imports: [AgentGatewayModule, MetricsModule, CryptoModule, MonitorsModule, NotificationsModule, GitSourcesModule, TeamDefaultsModule, CatalogModule, ClustersModule, DnsModule, DatabasesModule, SecretProvidersModule, LogDrainsModule],
   controllers: [ApplicationsController, PanelTlsController, AppPrivilegedController],
   providers: [
     ApplicationsService,

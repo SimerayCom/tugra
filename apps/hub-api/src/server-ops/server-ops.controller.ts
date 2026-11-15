@@ -206,6 +206,13 @@ export class ServerOpsController {
     return this.logDrains.list(user.userId, id);
   }
 
+  // App-scoped drains shipping logs off this server (summary only: no endpoint/options/containers/token).
+  @Get("log-drains/apps")
+  @RequireScopes("read:secrets")
+  listAppLogDrains(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.logDrains.listApps(user.userId, id);
+  }
+
   @Post("log-drains")
   @ApiZodBody(CreateLogDrainSchema)
   createLogDrain(
@@ -221,16 +228,17 @@ export class ServerOpsController {
   @ApiZodBody(UpdateLogDrainSchema)
   updateLogDrain(
     @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
     @Param("drainId") drainId: string,
     @Body(new ZodValidationPipe(UpdateLogDrainSchema)) body: UpdateLogDrainInput,
   ) {
-    return this.logDrains.update(user.userId, drainId, body);
+    return this.logDrains.update(user.userId, drainId, body, id);
   }
 
   @Delete("log-drains/:drainId")
   @HttpCode(200)
-  async deleteLogDrain(@CurrentUser() user: AuthUser, @Param("drainId") drainId: string) {
-    await this.logDrains.remove(user.userId, drainId);
+  async deleteLogDrain(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("drainId") drainId: string) {
+    await this.logDrains.remove(user.userId, drainId, id);
     return { ok: true };
   }
 

@@ -123,6 +123,16 @@ describe("Servers + Agent (e2e)", () => {
       .set("Authorization", `Bearer ${accessToken}`)
       .expect(200);
     expect(list.body.some((d: { id: string }) => d.id === created.body.id)).toBe(true);
+    // D7: additive view keys (a server-wide drain is scope "server", no app, no filter)
+    const view = list.body.find((d: { id: string }) => d.id === created.body.id);
+    expect(view).toMatchObject({ scope: "server", appId: null, containers: [], options: null, allowPrivate: false });
+    expect(typeof view.delivery).toBe("string");
+
+    // D7: the URL's server id must own the drain (was ignored before)
+    await request(app.getHttpServer())
+      .delete(`/servers/some-other-server/log-drains/${created.body.id}`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(404);
 
     await request(app.getHttpServer())
       .delete(`/servers/${serverId}/log-drains/${created.body.id}`)

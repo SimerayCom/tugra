@@ -427,17 +427,25 @@ model Cluster {
 }
 
 model LogDrain {
-  id           String   @id @default(cuid())
-  server       Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  id           String       @id @default(cuid())
+  server       Server       @relation(fields: [serverId], references: [id], onDelete: Cascade)
   serverId     String
   name         String
-  type         String   @default("HTTP")
+  type         String       @default("HTTP")
   endpoint     String
   authTokenEnc String?
-  enabled      Boolean  @default(true)
-  createdAt    DateTime @default(now())
+  enabled      Boolean      @default(true)
+  createdAt    DateTime     @default(now())
+  // D7 per-app scope. appId NULL = a server-wide drain (every pre-D7 row). For an app drain serverId is the app's
+  // serverId (the anchor); the effective target servers (cluster members) are resolved at push time.
+  appId        String?
+  app          Application? @relation(fields: [appId], references: [id], onDelete: Cascade)
+  containers   String[]     @default([]) // app scope: compose service names; server scope: container-name globs; [] = no filter
+  options      Json? // per-transport options (syslog/gelf/fluentd), zod-validated, NEVER secrets
+  allowPrivate Boolean      @default(false) // app scope only: lets the drain reach private/loopback ranges (needs servers:ops)
 
   @@index([serverId])
+  @@index([appId])
 }
 
 // Cloudflare Tunnel binding for a server (zero-IP expose). 1:1 with Server. Secrets
@@ -1340,6 +1348,7 @@ model Application {
   databaseLinks                AppDatabaseLink[]
   secretRefs                   SecretRef[]
   icon                         AppIcon?
+  logDrains                    LogDrain[]
   createdAt                    DateTime           @default(now())
 
   @@index([environmentId])

@@ -97,27 +97,47 @@ export const ContainerActionSchema = z.object({
 export type ContainerActionInput = z.infer<typeof ContainerActionSchema>;
 
 // The drain target format the agent ships to. "http" = Tugra's generic batch JSON; "loki" = Grafana Loki
-// push API; "datadog" = Datadog logs intake (token is sent as DD-API-KEY, not a Bearer). syslog (a non-HTTP
-// transport) is planned. For loki/datadog the `endpoint` is that provider's push/intake URL.
-export const LOG_DRAIN_TYPES = ["http", "loki", "datadog"] as const;
+// push API; "datadog" = Datadog logs intake (token is sent as DD-API-KEY, not a Bearer). The three NET types
+// are non-HTTP transports: "syslog" (RFC 5424 over UDP/TCP/TLS), "gelf" (GELF 1.1 over UDP/TCP/TLS) and "fluentd"
+// (Forward protocol over TCP/TLS); their `endpoint` is `host:port` and their per-transport `options` are required
+// and validated per type in log-drains/log-drain-shape.ts. For loki/datadog the `endpoint` is that provider's URL.
+export const LOG_DRAIN_TYPES = ["http", "loki", "datadog", "syslog", "gelf", "fluentd"] as const;
+export const HTTP_DRAIN_TYPES = ["http", "loki", "datadog"] as const;
+export const NET_DRAIN_TYPES = ["syslog", "gelf", "fluentd"] as const;
+export type LogDrainType = (typeof LOG_DRAIN_TYPES)[number];
+
+// Container filter: compose service names for an app drain, container-name globs for a server drain (the
+// charset/semantics per scope are enforced in validateContainers).
+const containersField = z.array(z.string().min(1).max(128)).max(32);
 
 export const CreateLogDrainSchema = z.object({
   name: z.string().min(1),
   type: z.enum(LOG_DRAIN_TYPES).default("http"),
-  endpoint: z.string().url(),
-  token: z.string().min(1).optional(),
+  endpoint: z.string().min(1).max(2048),
+  token: z.string().min(1).max(4096).optional(),
   enabled: z.boolean().optional(),
+  containers: containersField.optional(),
+  options: z.record(z.string(), z.unknown()).optional(),
 });
 export type CreateLogDrainInput = z.infer<typeof CreateLogDrainSchema>;
 
 export const UpdateLogDrainSchema = z.object({
   name: z.string().min(1).optional(),
   type: z.enum(LOG_DRAIN_TYPES).optional(),
-  endpoint: z.string().url().optional(),
-  token: z.string().min(1).nullable().optional(),
+  endpoint: z.string().min(1).max(2048).optional(),
+  token: z.string().min(1).max(4096).nullable().optional(),
   enabled: z.boolean().optional(),
+  containers: containersField.optional(),
+  options: z.record(z.string(), z.unknown()).nullable().optional(),
 });
 export type UpdateLogDrainInput = z.infer<typeof UpdateLogDrainSchema>;
+
+// App-scoped drains add the egress policy flag: `allowPrivate` lets the drain reach private/loopback ranges and
+// needs servers:ops on the app's server team (an app writer alone can never point host egress at the LAN).
+export const CreateAppLogDrainSchema = CreateLogDrainSchema.extend({ allowPrivate: z.boolean().optional() });
+export type CreateAppLogDrainInput = z.infer<typeof CreateAppLogDrainSchema>;
+export const UpdateAppLogDrainSchema = UpdateLogDrainSchema.extend({ allowPrivate: z.boolean().optional() });
+export type UpdateAppLogDrainInput = z.infer<typeof UpdateAppLogDrainSchema>;
 
 // Operator-authored Traefik dynamic-config file (Coolify "Proxy > Dynamic Configurations" parity). The name
 // is a slug (lowercase alnum + `-`, no dots/slashes/extension) — the file on disk is `user-<name>.yml`, so it

@@ -157,6 +157,7 @@ import { classifyReadiness, parseStoredInventory } from "../server-ops/gpu-inven
 import { cpusetMax } from "./dto";
 import { computeImageUpdateView, isImageCheckSubject, ImageUpdateViewSchema, loadLiveImageMany, type LiveImage } from "./image-update";
 import { ImageUpdateService } from "./image-update.service";
+import { LogDrainPushService } from "../log-drains/log-drain-push.service";
 import type { CreateAppInput, SetLimitsInput, SetSourceInput, SetBuildInput, SetContainerCommandInput, SetCustomLabelsInput, AppLabelsView, AppRuntimeState } from "./dto";
 
 const DEPLOY_TIMEOUT_MS = 300_000; // builds can be slow
@@ -516,6 +517,7 @@ export class ApplicationsService {
     private readonly moduleRef: ModuleRef,
     private readonly lease: DeployLeaseService,
     private readonly imageUpdate: ImageUpdateService,
+    private readonly logDrainPush: LogDrainPushService,
   ) {}
 
   /** DeployRecoveryService registers here (see leaseReleasedHook). */
@@ -2955,7 +2957,11 @@ export class ApplicationsService {
     // Best-effort: remove the Cloudflare records Tugra auto-created for this app BEFORE the Domain rows cascade
     // away (otherwise they'd dangle at the provider). Never blocks deletion — the user already passed requireWrite.
     await this.dns.purgeDomains(userId, id).catch(() => undefined);
+    // The app's log drains cascade away with the row: resolve the servers they were shipping from BEFORE the
+    // delete, re-push their (now smaller) drain sets AFTER it.
+    const drainTargets = await this.logDrainPush.targetServerIds(app).catch(() => [] as string[]);
     await this.prisma.application.delete({ where: { id } });
+    void this.logDrainPush.pushForServers(drainTargets).catch(() => undefined);
     let buildCacheDispatched = false;
     if (pruneHost && this.agentWs.isOnline(pruneHost)) {
       buildCacheDispatched = true;
@@ -4534,7 +4540,15 @@ export class ApplicationsService {
     if (cfg.replicas !== undefined) {
       data.replicas = cfg.replicas === null ? null : Math.max(1, Math.floor(cfg.replicas));
     }
+    // Per-app log drains follow the app's target servers (cluster members vs its own server): resolve the old
+    // targets before the update, the new ones after, and re-push to both so a server that no longer ships the
+    // app's logs stops and the new member set starts.
+    const drainTargetsBefore = cfg.clusterId !== undefined ? await this.logDrainPush.targetServerIds(app).catch(() => [] as string[]) : [];
     await this.prisma.application.update({ where: { id }, data });
+    if (cfg.clusterId !== undefined && cfg.clusterId !== app.clusterId) {
+      const drainTargetsAfter = await this.logDrainPush.targetServerIds({ id: app.id, serverId: app.serverId, clusterId: cfg.clusterId }).catch(() => [] as string[]);
+      void this.logDrainPush.pushForServers([...drainTargetsBefore, ...drainTargetsAfter]).catch(() => undefined);
+    }
     await this.audit.log({ actor: userId, action: "app.clusterconfig.update", target: id });
   }
 

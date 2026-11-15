@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TeamAccessService } from "../common/team-access.service";
+import { LogDrainPushService } from "../log-drains/log-drain-push.service";
 import type { CreateClusterInput, SetServersInput, UpdateClusterInput } from "./dto";
 
 export interface ClusterHealth {
@@ -43,6 +44,7 @@ export class ClustersService {
     private readonly prisma: PrismaService,
     private readonly access: TeamAccessService,
     private readonly audit: AuditService,
+    private readonly logDrainPush: LogDrainPushService,
   ) {}
 
   async list(userId: string, teamId?: string): Promise<ClusterView[]> {
@@ -135,8 +137,11 @@ export class ClustersService {
     if (cluster.swarmStatus !== "NONE") {
       throw new ConflictException("dissolve the swarm before deleting the cluster");
     }
+    // Members of a swarm cluster carried its apps' log drains; read them before the cluster (and the link) goes.
+    const previousMembers = await this.memberIds(id);
     // onDelete: SetNull frees the member servers rather than deleting them.
     await this.prisma.cluster.delete({ where: { id: cluster.id } });
+    void this.logDrainPush.pushForServers(previousMembers).catch(() => undefined);
     await this.audit.log({ actor: userId, action: "cluster.remove", target: id });
   }
 
@@ -160,14 +165,22 @@ export class ClustersService {
         throw new ConflictException("dissolve the swarm (or leave these nodes) before changing membership");
       }
     }
+    // Membership decides which servers ship a clustered app's log drains: re-push to old + new members after.
+    const previousMembers = await this.memberIds(id);
     await this.prisma.$transaction([
       // Release servers currently in the cluster that are no longer selected.
       this.prisma.server.updateMany({ where: { clusterId: id, id: { notIn: ids.length ? ids : ["__none__"] } }, data: { clusterId: null } }),
       // Assign the selected servers to the cluster.
       ...(ids.length ? [this.prisma.server.updateMany({ where: { id: { in: ids }, teamId: cluster.teamId }, data: { clusterId: id } })] : []),
     ]);
+    void this.logDrainPush.pushForServers([...previousMembers, ...ids]).catch(() => undefined);
     await this.audit.log({ actor: userId, action: "cluster.set_servers", target: id, meta: { count: ids.length } });
     return this.get(userId, id);
+  }
+
+  private async memberIds(clusterId: string): Promise<string[]> {
+    const rows = await this.prisma.server.findMany({ where: { clusterId }, select: { id: true } });
+    return rows.map((r) => r.id);
   }
 
   /** Load a cluster and require servers:manage on its team; 404 for non-members. */

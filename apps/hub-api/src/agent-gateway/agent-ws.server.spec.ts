@@ -1,4 +1,5 @@
 import { ServiceUnavailableException } from "@nestjs/common";
+import { canonicalLogDrains } from "@tugra/shared";
 import { AgentWsServer } from "./agent-ws.server";
 import { AgentCommandTimeoutException, AgentDisconnectedException, AgentOfflineException } from "./agent-offline.exception";
 
@@ -936,4 +937,57 @@ describe("AgentWsServer durable commands + adoption (cmd_journal_v1)", () => {
     await expect(d).rejects.toBeInstanceOf(Disconnected);
     expect((h4.server as any).pending.size).toBe(0);
   }, 20_000);
+});
+
+describe("AgentWsServer log drains (D7)", () => {
+  it("signs log_drains_v2 with canonicalLogDrains (serverId bound into the signed bytes)", () => {
+    const { server, lastSent } = harness();
+    hubSign.sign.mockClear();
+    expect(server.sendToAgent("s1", { type: "log_drains_v2", serverId: "s1", rev: 1731672000000, capability: "logs", drainsJson: '[{"id":"d1"}]' })).toBe(true);
+    expect(hubSign.sign).toHaveBeenCalledWith('ldrn\ns1\n1731672000000\n[{"id":"d1"}]\nlogs');
+    expect(hubSign.sign).toHaveBeenCalledWith(canonicalLogDrains("s1", 1731672000000, '[{"id":"d1"}]', "logs"));
+    const sent = lastSent();
+    expect(sent).toMatchObject({ type: "log_drains_v2", serverId: "s1", rev: 1731672000000, capability: "logs", drainsJson: '[{"id":"d1"}]', sig: "SIG" });
+  });
+
+  it("leaves the legacy log_drains frame unsigned (old agents only)", () => {
+    const { server, lastSent } = harness();
+    server.sendToAgent("s1", { type: "log_drains", drains: [] });
+    expect(lastSent()).toEqual({ type: "log_drains", drains: [] });
+  });
+
+  it("routes drain_status to the sink with the AUTHENTICATED socket's serverId, never one from the body", async () => {
+    const { server, deliver } = harness();
+    const sink = jest.fn();
+    server.setDrainStatusSink(sink);
+    await deliver({ type: "drain_status", serverId: "attacker", drains: [{ id: "d1", state: "ok", sent: 1, dropped: 0 }] });
+    expect(sink).toHaveBeenCalledTimes(1);
+    expect(sink).toHaveBeenCalledWith("s1", [{ id: "d1", state: "ok", sent: 1, dropped: 0 }]);
+  });
+
+  it("ignores drain_status from an unauthenticated socket", async () => {
+    const { server, socket } = harness();
+    const sink = jest.fn();
+    server.setDrainStatusSink(sink);
+    (server as any).state.set(socket, { nonce: "n", authed: false });
+    await (server as any).onMessage(socket, JSON.stringify({ type: "drain_status", drains: [{ id: "d1", state: "ok", sent: 1, dropped: 0 }] }));
+    expect(sink).not.toHaveBeenCalled();
+  });
+
+  it("re-invokes the log-drain provider after a capability change (revoke / re-grant re-drives drains)", () => {
+    const setCapabilityPusher = jest.fn();
+    const servers = { markOffline: jest.fn(), healOnline: jest.fn(), setCapabilityPusher } as any;
+    const fakeHttp = { on: jest.fn() };
+    const httpAdapterHost = { httpAdapter: { getHttpServer: () => fakeHttp } } as any;
+    const server = new AgentWsServer(httpAdapterHost, servers, {} as any, {} as any, hubSign, {} as any);
+    const provider = jest.fn();
+    server.setLogDrainProvider(provider);
+    server.onApplicationBootstrap();
+    const socket = { readyState: 1, send: jest.fn() } as any;
+    (server as any).sockets.set("s1", socket);
+    (setCapabilityPusher.mock.calls[0][0] as (id: string, caps: string[]) => void)("s1", ["deploy"]);
+    expect(JSON.parse(socket.send.mock.calls.at(-1)![0])).toEqual({ type: "capabilities", capabilities: ["deploy"] });
+    expect(provider).toHaveBeenCalledWith("s1");
+    void server.onModuleDestroy();
+  });
 });

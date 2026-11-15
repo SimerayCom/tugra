@@ -7,6 +7,9 @@ import { flagsToken } from "../common/env-flags";
  * Deployments view can show "what changed since the last deploy". SECRETS NEVER
  * ENTER THE SNAPSHOT: env values become short fingerprints (sha256 prefix) used
  * only for change detection, and git/registry credentials collapse to booleans.
+ *
+ * Per-app log drains (LogDrain.appId) are deliberately NOT part of the snapshot: they are runtime egress that can
+ * carry a credential, not deploy config, so rollback and drift diffs stay unchanged. Do not "fix" this.
  */
 export interface ConfigSnapshot {
   /** Schema marker. 2 = records restartPolicy (always, even the default). Absent = an older snapshot that never did. */

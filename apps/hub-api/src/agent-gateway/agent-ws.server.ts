@@ -16,7 +16,7 @@ import type {
   TermExitMsg,
   TermOutputMsg,
 } from "@tugra/shared";
-import { PROTOCOL_VERSION, checkAgentCompat, canonicalCommand, canonicalCommandCancel, canonicalCommandStatus, canonicalTermStart, canonicalLogStart, canonicalAgentUpdate, canonicalFs } from "@tugra/shared";
+import { PROTOCOL_VERSION, checkAgentCompat, canonicalCommand, canonicalCommandCancel, canonicalCommandStatus, canonicalTermStart, canonicalLogStart, canonicalAgentUpdate, canonicalFs, canonicalLogDrains } from "@tugra/shared";
 import { HubSigningService } from "./hub-signing.service";
 import { AgentCommandTimeoutException, AgentDisconnectedException, AgentOfflineException } from "./agent-offline.exception";
 
@@ -145,6 +145,8 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
   private terminalDelegate?: TerminalDelegate;
   // Called when a server comes online so log-drain config can be (re)pushed.
   private logDrainProvider?: (serverId: string) => void;
+  // Receives an authed agent's drain_status (D7): serverId comes from the socket, never from the message body.
+  private drainStatusSink?: (serverId: string, drains: unknown) => void;
   // Called when a server's agent (re)connects so its QUEUED deploys can be re-driven now that the agent is
   // online again (a hub restart no longer drops queued deploys). Mirrors logDrainProvider's on-online
   // piggyback; invoked AFTER this.sockets.set(...), so isOnline(serverId) is already true in the callback.
@@ -182,9 +184,12 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
     // agent's fail-closed allowlist updates live (no re-enrollment). On (re)connect the set is
     // (re)sent inside enrolled/auth_ok above. Registered here to avoid a servers→agentWs require
     // cycle (agentWs already depends on servers; servers just holds the callback).
-    this.servers.setCapabilityPusher((serverId, capabilities) =>
-      this.sendToAgent(serverId, { type: "capabilities", capabilities }),
-    );
+    this.servers.setCapabilityPusher((serverId, capabilities) => {
+      this.sendToAgent(serverId, { type: "capabilities", capabilities });
+      // Log drains are gated on the `logs` capability: re-drive them after every change so a revoke is
+      // reflected (the agent clears its v2 sinks) and a re-grant restores them.
+      this.logDrainProvider?.(serverId);
+    });
 
     // ws keepalive: ping every socket each interval; terminate one that didn't pong since the last tick.
     // terminate() fires `close`, which runs the same teardown as a graceful drop (markOffline + reject
@@ -366,6 +371,11 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           if (!st.authed || !st.serverId) return this.fail(socket, "not authed");
           // serverId is the authenticated socket's, never the message body's. ingest() never throws.
           await this.traffic.ingest(st.serverId, msg);
+          return;
+        }
+        case "drain_status": {
+          if (!st.authed || !st.serverId) return; // ignored (not authed)
+          this.drainStatusSink?.(st.serverId, (msg as { drains?: unknown }).drains);
           return;
         }
         case "heartbeat": {
@@ -732,6 +742,12 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
           msg.capability as string,
         ),
       );
+    } else if (msg.type === "log_drains_v2") {
+      // Signed (and capability-gated on the agent) so only the hub can set an app's log egress; the serverId is
+      // inside the signature so a frame captured for server A cannot be replayed to server B.
+      msg.sig = this.hubSign.sign(
+        canonicalLogDrains(msg.serverId as string, msg.rev as number, msg.drainsJson as string, msg.capability as string),
+      );
     } else if (msg.type === "fs_req") {
       msg.sig = this.hubSign.sign(
         canonicalFs(
@@ -834,6 +850,11 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
   /** Register a provider that pushes a server's log-drain config when it connects. */
   setLogDrainProvider(fn: (serverId: string) => void): void {
     this.logDrainProvider = fn;
+  }
+
+  /** Register the sink for agent drain_status messages (LogDrainPushService). */
+  setDrainStatusSink(fn: (serverId: string, drains: unknown) => void): void {
+    this.drainStatusSink = fn;
   }
 
   /** Register a provider that re-drives a server's QUEUED deploys when its agent (re)connects. Invoked on

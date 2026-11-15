@@ -97,6 +97,7 @@ function make(
   secretRefs: { resolveSecretEnv?: jest.Mock } = {},
   lease: { bootId: string; bootAt: Date } = { bootId: TEST_BOOT_ID, bootAt: new Date() },
   imageUpdate: { checkApp?: jest.Mock; intervalMin?: jest.Mock } = {},
+  logDrainPush: { targetServerIds?: jest.Mock; pushForServers?: jest.Mock } = {},
 ) {
   // createFromTemplate v2 probes listening ports (outside the tx) before allocating.
   portAlloc.probeUsedPorts = portAlloc.probeUsedPorts ?? jest.fn().mockResolvedValue(new Set());
@@ -224,6 +225,10 @@ function make(
     } as unknown as import("@nestjs/core").ModuleRef,
     lease as unknown as import("./deploy-lease.service").DeployLeaseService,
     { checkApp: imageUpdate.checkApp ?? jest.fn(), intervalMin: imageUpdate.intervalMin ?? jest.fn().mockReturnValue(360) } as unknown as import("./image-update.service").ImageUpdateService,
+    {
+      targetServerIds: logDrainPush.targetServerIds ?? jest.fn().mockResolvedValue([]),
+      pushForServers: logDrainPush.pushForServers ?? jest.fn().mockResolvedValue(undefined),
+    } as unknown as import("../log-drains/log-drain-push.service").LogDrainPushService,
   );
 }
 
@@ -3863,6 +3868,32 @@ describe("ApplicationsService", () => {
     expect(monitors.removeForApp).toHaveBeenCalledWith("app1");
   });
 
+  it("remove resolves the log-drain target servers BEFORE the delete (the drains cascade) and re-pushes AFTER it", async () => {
+    const order: string[] = [];
+    const targetServerIds = jest.fn(async () => {
+      order.push("targets");
+      return ["s1", "s2"];
+    });
+    const pushForServers = jest.fn(async () => {
+      order.push("push");
+    });
+    const prisma = {
+      application: {
+        findUnique: jest.fn().mockResolvedValue({ ...app, clusterId: "c1" }),
+        delete: jest.fn(async () => {
+          order.push("delete");
+          return {};
+        }),
+      },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    const agentWs = { sendCommand: jest.fn().mockResolvedValue({ exitCode: 0, output: "" }) } as unknown as AgentWsServer;
+    await make(prisma, access, agentWs, makeDeployLogs(), makeMonitors(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, { targetServerIds, pushForServers }).remove("u1", "app1");
+    expect(targetServerIds).toHaveBeenCalledWith(expect.objectContaining({ id: "app1", serverId: "s1", clusterId: "c1" }));
+    expect(order).toEqual(["targets", "delete", "push"]);
+    expect(pushForServers).toHaveBeenCalledWith(["s1", "s2"]);
+  });
+
   it("normalizes and stores tags on setTags", async () => {
     const update = jest.fn().mockResolvedValue({});
     const prisma = {
@@ -4097,6 +4128,25 @@ describe("ApplicationsService.setClusterConfig le-dns re-home", () => {
     expect(data.certType).toBe("http");
     expect(data.https).toBe(false);
     expect(data.domain).toMatch(/^web-a1b2c3\.203-0-113-9\.sslip\.io$/); // manager IP magic
+  });
+
+  it("re-pushes log drains to the OLD and NEW target servers when the cluster changes", async () => {
+    const { prisma, access } = deps(magicApp, {
+      id: "mgr1", publicIp: "203.0.113.9", publicIpv6: null, wildcardDomain: "swarm.example.com", magicSuffix: null, certMode: "le-dns",
+    });
+    const targetServerIds = jest.fn().mockResolvedValueOnce(["s1"]).mockResolvedValueOnce(["s1", "mgr1", "n2"]);
+    const pushForServers = jest.fn().mockResolvedValue(undefined);
+    await make(prisma, access, {} as AgentWsServer, makeDeployLogs(), makeMonitors(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, { targetServerIds, pushForServers }).setClusterConfig("u1", "app1", { clusterId: "c1" });
+    expect(targetServerIds).toHaveBeenNthCalledWith(1, expect.objectContaining({ id: "app1", serverId: "s1" })); // before: the app as it was (its own server)
+    expect(targetServerIds).toHaveBeenNthCalledWith(2, { id: "app1", serverId: "s1", clusterId: "c1" }); // after
+    expect(pushForServers).toHaveBeenCalledWith(["s1", "s1", "mgr1", "n2"]);
+  });
+
+  it("does not touch log drains when only replicas change", async () => {
+    const { prisma, access } = deps(magicApp, { id: "mgr1", publicIp: null, publicIpv6: null, wildcardDomain: null, magicSuffix: null, certMode: "http" });
+    const pushForServers = jest.fn();
+    await make(prisma, access, {} as AgentWsServer, makeDeployLogs(), makeMonitors(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, { pushForServers }).setClusterConfig("u1", "app1", { replicas: 2 });
+    expect(pushForServers).not.toHaveBeenCalled();
   });
 
   it("leaves a custom-domain app's cert untouched (server-agnostic le-http)", async () => {
