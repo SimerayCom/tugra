@@ -32,8 +32,13 @@ describe("buildCoverage", () => {
     expect(byField.triggerType.level).toBe("warn");
     expect(byField.dockerContextPath.level).toBe("info");
     expect(byField["domain:a.com dns-01"].level).toBe("info");
-    expect(byField.replicas).toEqual({ field: "replicas", reason: REPLICAS_UNMAPPED_REASON, level: "info" });
+    expect(byField.replicas).toMatchObject({ field: "replicas", reason: REPLICAS_UNMAPPED_REASON, level: "info" });
     expect(byField.basicAuth.level).toBe("warn");
+    // every row the hub itself derives carries a stable code the web translates (the source's own row here is a plain fixture)
+    for (const [field, n] of Object.entries(byField)) if (field !== "basicAuth") expect(n.reasonCode).toEqual(expect.any(String));
+    expect(byField.replicas).toMatchObject({ reasonCode: "replicas" });
+    expect(byField["domain:a.com dns-01"]).toMatchObject({ reasonCode: "domain_dns01" });
+    expect(byField.triggerType).toMatchObject({ reasonCode: "trigger_tag" });
   });
 
   it("adds the apply-time marker rows (labels always; Dockerfile only with a real repo; compose says labels live in the file)", () => {
@@ -42,7 +47,7 @@ describe("buildCoverage", () => {
     const noRepo = buildCoverage(fleet([app({ kind: "image", buildPack: "image", image: "x", git: undefined, sourceExtras: { dockerfile: true } })]), o);
     expect(noRepo).toBeUndefined();
     const compose = buildCoverage(fleet([app({ kind: "compose", buildPack: "dockercompose", composeFile: "services: {}", git: undefined, sourceExtras: { labels: true } })]), o)!;
-    expect(compose.apps[0].notCarried).toEqual([{ field: "customLabels", level: "info", reason: "compose apps declare labels in the compose file" }]);
+    expect(compose.apps[0].notCarried).toMatchObject([{ field: "customLabels", level: "info", reason: "compose apps declare labels in the compose file" }]);
   });
 
   it("de-duplicates by field (first wins: the mapper's own row beats the source's)", () => {

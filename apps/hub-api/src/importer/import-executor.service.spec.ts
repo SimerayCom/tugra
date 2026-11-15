@@ -736,7 +736,7 @@ describe("ImportExecutorService — ingress apply (L7)", () => {
       expect(h.apps.create).toHaveBeenCalledTimes(1);
       const r = lastResult(h);
       expect(r.result.ingress!.applied).toEqual([]);
-      expect(r.result.ingress!.unmapped).toEqual([{ field: "basicAuth", reason: "basic-auth not carried — re-protect the app before cutover" }]);
+      expect(r.result.ingress!.unmapped).toMatchObject([{ field: "basicAuth", reason: "basic-auth not carried — re-protect the app before cutover" }]);
       expect(r.output).toMatch(/ingress not carried: basicAuth/);
       expect(JSON.stringify(r)).not.toContain(PW);
       expect(JSON.stringify(r)).not.toContain("boom");
@@ -1127,8 +1127,8 @@ describe("ImportExecutorService — custom labels + inline Dockerfile (G3-C)", (
     await run(h, f);
     const r = doneTask(h);
     expect(r.result.postCreate!.unmapped).toEqual(expect.arrayContaining([
-      { field: "build", reason: "Tugra rejected the setting — set it manually" },
-      { field: "inlineDockerfile", reason: "Tugra rejected the setting. Set it manually" },
+      { field: "build", reason: "Tugra rejected the setting — set it manually", reasonCode: "setting_rejected" },
+      { field: "inlineDockerfile", reason: "Tugra rejected the setting. Set it manually", reasonCode: "inline_dockerfile_rejected" },
     ]));
     expect(r.result.postCreate!.applied).not.toContain("inlineDockerfile");
     expect(h.apps.create).toHaveBeenCalledTimes(1);
@@ -1141,7 +1141,7 @@ describe("ImportExecutorService — custom labels + inline Dockerfile (G3-C)", (
     h.apps.setCustomLabels.mockRejectedValue(new Error(`bad ${LEAK_VAL}`));
     await run(h, f);
     const r = doneTask(h);
-    expect(r.result.postCreate!.unmapped).toContainEqual({ field: "customLabels", reason: "Tugra rejected the setting — set it manually" });
+    expect(r.result.postCreate!.unmapped).toContainEqual({ field: "customLabels", reason: "Tugra rejected the setting — set it manually", reasonCode: "setting_rejected" });
     expect(JSON.stringify(r)).not.toContain(LEAK_VAL);
     expect(h.prisma.bulkTask.update).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED" }) }));
   });
@@ -1153,7 +1153,7 @@ describe("ImportExecutorService — custom labels + inline Dockerfile (G3-C)", (
     expect(h.apps.create).toHaveBeenCalledTimes(1);
     expect(h.apps.setCustomLabels).not.toHaveBeenCalled();
     const r = doneTask(h);
-    expect(r.result.postCreate!.unmapped).toContainEqual({ field: "sourceExtras", reason: "could not read this app's labels or Dockerfile from the source; set them manually" });
+    expect(r.result.postCreate!.unmapped).toContainEqual({ field: "sourceExtras", reason: "could not read this app's labels or Dockerfile from the source; set them manually", reasonCode: "extras_read_failed" });
     expect(JSON.stringify(r)).not.toContain("LEAK-URL");
     // the target-only build is still applied from the fleet
     expect(h.apps.setBuild).toHaveBeenCalledWith("user-1", "app-new", expect.not.objectContaining({ inlineDockerfile: expect.anything() }));

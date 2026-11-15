@@ -1,4 +1,5 @@
 import type { ForeignEnv, ForeignFleet } from "./foreign-fleet";
+import type { Unmapped } from "./reason";
 
 /** What transports/data a source adapter offers, so the planner/UI can adapt (e.g. warn that volume data
  *  cannot move without SSH, or that DB passwords need a `read:sensitive` token). */
@@ -53,7 +54,7 @@ export interface FetchedDbCredentials {
 export interface SourceAppExtras {
   labels?: Array<{ key: string; value: string }>; // source order
   dockerfile?: string; // already decoded
-  unmapped: Array<{ field: string; reason: string }>; // fixed reasons only
+  unmapped: Unmapped[]; // fixed reasons only
 }
 
 /**

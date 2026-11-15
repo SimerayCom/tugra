@@ -1,5 +1,6 @@
 import type { ForeignApp, ForeignFleet, ImportCoverage, ImportCoverageApp, ImportOptions } from "./foreign-fleet";
-import { REPLICAS_UNMAPPED_REASON, foreignAppToIngressPlan, foreignAppToPostCreateConfig } from "./apply-map";
+import { foreignAppToIngressPlan, foreignAppToPostCreateConfig } from "./apply-map";
+import { why } from "./reason";
 import { mapBuildPack } from "./buildpack-map";
 import { ns } from "./import-planner";
 
@@ -28,20 +29,20 @@ export function buildCoverage(fleet: ForeignFleet, options: ImportOptions): Impo
 
 function coverageFor(app: ForeignApp): Entry[] {
   const all: Entry[] = [];
-  for (const u of foreignAppToPostCreateConfig(app).unmapped) all.push({ field: u.field, reason: u.reason, level: WARN_POST_CREATE.has(u.field) ? "warn" : "info" });
-  for (const u of foreignAppToIngressPlan(app).unmapped) all.push({ field: u.field, reason: u.reason, level: u.field.startsWith("basicAuth") ? "warn" : "info" });
-  if (app.replicas !== undefined && app.replicas > 1) all.push({ field: "replicas", reason: REPLICAS_UNMAPPED_REASON, level: "info" });
+  for (const u of foreignAppToPostCreateConfig(app).unmapped) all.push({ ...u, level: WARN_POST_CREATE.has(u.field) ? "warn" : "info" });
+  for (const u of foreignAppToIngressPlan(app).unmapped) all.push({ ...u, level: u.field.startsWith("basicAuth") ? "warn" : "info" });
+  if (app.replicas !== undefined && app.replicas > 1) all.push({ field: "replicas", ...why("replicas"), level: "info" });
   all.push(...(app.notCarried ?? []));
   const isCompose = mapBuildPack(app).source === "COMPOSE";
   if (app.sourceExtras?.labels) {
     all.push(
       isCompose
-        ? { field: "customLabels", level: "info", reason: "compose apps declare labels in the compose file" }
-        : { field: "customLabels", level: "info", reason: "read when you apply: Tugra-safe labels are carried; reserved ones (traefik.*, tugra.*, com.docker.*) cannot be and are named in the import timeline" },
+        ? { field: "customLabels", level: "info", ...why("labels_compose") }
+        : { field: "customLabels", level: "info", ...why("custom_labels_deferred") },
     );
   }
   if (app.sourceExtras?.dockerfile && app.git?.url && !isCompose) {
-    all.push({ field: "inlineDockerfile", level: "info", reason: "read when you apply and set as the app's inline Dockerfile" });
+    all.push({ field: "inlineDockerfile", level: "info", ...why("dockerfile_deferred") });
   }
   // De-duplicate by field (first wins), then order deterministically: warn first, then field name.
   const seen = new Set<string>();

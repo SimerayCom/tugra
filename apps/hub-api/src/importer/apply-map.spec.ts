@@ -330,11 +330,11 @@ describe("foreignAppToIngressPlan", () => {
       { hostPort: 5353, containerPort: 53, protocol: "udp" as const },
     ];
     const withDomain = foreignAppToIngressPlan(base({ ports: [3000], domains: [d("a.com", { primary: true })], publishedPorts: pub }));
-    expect(withDomain).toEqual({
+    expect(withDomain).toMatchObject({
       extraDomains: [],
       serviceDomains: [],
       extraPorts: [pub[1], pub[2]],
-      unmapped: [{ field: "port:8080/tcp", reason: expect.stringContaining("HTTP ingress port") }],
+      unmapped: [{ field: "port:8080/tcp", reason: expect.stringContaining("HTTP ingress port"), reasonCode: "port_is_ingress", reasonParams: { port: 3000 } }],
     });
     const noDomain = foreignAppToIngressPlan(base({ ports: [3000], publishedPorts: pub }));
     expect(noDomain.extraPorts).toEqual(pub);
@@ -473,7 +473,7 @@ describe("mapCustomLabels", () => {
   it("an invalid key is reported JSON-quoted and truncated (never raw), without its value", () => {
     const r = mapCustomLabels([kv('bad key"\n', "VALUE-SHOULD-NOT-LEAK"), kv("-lead", "x"), kv("k".repeat(300), "x")]);
     expect(r.labels).toEqual({});
-    expect(r.dropped[0]).toEqual({ field: `customLabel:${JSON.stringify('bad key"\n')}`, reason: "invalid label key" });
+    expect(r.dropped[0]).toMatchObject({ field: `customLabel:${JSON.stringify('bad key"\n')}`, reason: "invalid label key" });
     expect(r.dropped[2].field).toBe(`customLabel:${JSON.stringify("k".repeat(40))}`);
     expect(JSON.stringify(r)).not.toContain("VALUE-SHOULD-NOT-LEAK");
   });
@@ -481,7 +481,7 @@ describe("mapCustomLabels", () => {
   it("a case-insensitive duplicate keeps the first", () => {
     const r = mapCustomLabels([kv("Team", "a"), kv("team", "b")]);
     expect(r.labels).toEqual({ Team: "a" });
-    expect(r.dropped).toEqual([{ field: "customLabel:team", reason: "duplicate (label keys are case-insensitive)" }]);
+    expect(r.dropped).toMatchObject([{ field: "customLabel:team", reason: "duplicate (label keys are case-insensitive)" }]);
   });
 
   it("drops a too-long value and a control-char value but keeps the valid labels around them", () => {
@@ -494,7 +494,7 @@ describe("mapCustomLabels", () => {
     const many = Array.from({ length: 33 }, (_, i) => kv(`k${i}`, "v"));
     const r = mapCustomLabels(many);
     expect(Object.keys(r.labels)).toHaveLength(32);
-    expect(r.dropped).toEqual([{ field: "customLabel:k32", reason: "over the per-app label limit" }]);
+    expect(r.dropped).toMatchObject([{ field: "customLabel:k32", reason: "over the per-app label limit" }]);
     const fat = Array.from({ length: 20 }, (_, i) => kv(`k${i}`, "v".repeat(1000)));
     const r2 = mapCustomLabels(fat);
     expect(Object.keys(r2.labels).length).toBeLessThan(20);
@@ -504,7 +504,7 @@ describe("mapCustomLabels", () => {
   it("caps the dropped list at 20 entries plus one summary row", () => {
     const r = mapCustomLabels(Array.from({ length: 30 }, (_, i) => kv(`traefik.r${i}`, "v")));
     expect(r.dropped).toHaveLength(21);
-    expect(r.dropped[20]).toEqual({ field: "customLabel:…", reason: "10 more not carried" });
+    expect(r.dropped[20]).toMatchObject({ field: "customLabel:…", reason: "10 more not carried" });
   });
 
   it("is deterministic in source order, and its labels always satisfy SetCustomLabelsSchema", () => {
@@ -537,7 +537,7 @@ describe("foreignAppToPostCreateConfig — extras (labels + inline Dockerfile)",
   it("an invalid Dockerfile is dropped with the FIXED validator message and the target-only build is kept", () => {
     const cfg = foreignAppToPostCreateConfig(dockerApp({ dockerBuildTarget: "prod" }), extras({ dockerfile: "RUN echo TOPSECRET-NOT-FROM" }));
     expect(cfg.build).toEqual({ buildType: "DOCKERFILE", dockerfilePath: "docker/Dockerfile", dockerBuildTarget: "prod", baseDirectory: "apps/api" });
-    expect(cfg.unmapped).toEqual([{ field: "inlineDockerfile", reason: "the first instruction of the Dockerfile must be FROM (only ARG may precede it)" }]);
+    expect(cfg.unmapped).toMatchObject([{ field: "inlineDockerfile", reason: "the first instruction of the Dockerfile must be FROM (only ARG may precede it)" }]);
     expect(JSON.stringify(cfg.unmapped)).not.toContain("TOPSECRET");
   });
 
@@ -545,13 +545,13 @@ describe("foreignAppToPostCreateConfig — extras (labels + inline Dockerfile)",
     const big = `FROM scratch\n# ${"x".repeat(49 * 1024)}\n`;
     const cfg = foreignAppToPostCreateConfig(dockerApp(), extras({ dockerfile: big }));
     expect(cfg.build).toBeUndefined();
-    expect(cfg.unmapped).toEqual([{ field: "inlineDockerfile", reason: "the Dockerfile is larger than 48 KiB" }]);
+    expect(cfg.unmapped).toMatchObject([{ field: "inlineDockerfile", reason: "the Dockerfile is larger than 48 KiB" }]);
   });
 
   it("inline text on a non-Dockerfile build or an IMAGE app is reported, never applied", () => {
     const nix = foreignAppToPostCreateConfig(base({ buildPack: "nixpacks", git: { url: "g" } }), extras({ dockerfile: DF }));
     expect(nix.build).toBeUndefined();
-    expect(nix.unmapped).toEqual([{ field: "inlineDockerfile", reason: "inline Dockerfile applies only to Dockerfile builds" }]);
+    expect(nix.unmapped).toMatchObject([{ field: "inlineDockerfile", reason: "inline Dockerfile applies only to Dockerfile builds" }]);
     const img = foreignAppToPostCreateConfig(base({ kind: "image", buildPack: "image", image: "x" }), extras({ dockerfile: DF }));
     expect(img.build).toBeUndefined();
     expect(img.unmapped.map((u) => u.field)).toEqual(["inlineDockerfile"]);
@@ -576,7 +576,7 @@ describe("foreignAppToPostCreateConfig — extras (labels + inline Dockerfile)",
   it("skips labels for a compose app", () => {
     const cfg = foreignAppToPostCreateConfig(base({ kind: "compose", buildPack: "dockercompose" }), extras({ labels: [kv("a", "b")] }));
     expect(cfg.customLabels).toBeUndefined();
-    expect(cfg.unmapped).toEqual([{ field: "customLabels", reason: "compose apps declare labels in the compose file" }]);
+    expect(cfg.unmapped).toMatchObject([{ field: "customLabels", reason: "compose apps declare labels in the compose file" }]);
   });
 
   it("LEAK: the whole unmapped list never contains any label value or Dockerfile text", () => {

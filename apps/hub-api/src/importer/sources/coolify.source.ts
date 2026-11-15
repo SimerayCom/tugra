@@ -1,5 +1,6 @@
 import type { ForeignEnv, ForeignFleet } from "../foreign-fleet";
 import type { ImportSource, ImportSourceCapabilities, FetchedSecrets, SourceAppExtras } from "../import-source";
+import { why } from "../reason";
 import { mapLimit } from "./map-limit";
 import {
   buildCoolifyFleet,
@@ -148,7 +149,7 @@ export class CoolifySource implements ImportSource {
     const r = row as CoolifyApp;
     const out: SourceAppExtras = { unmapped: [] };
     const labels = decodeCoolifyLabels(r.custom_labels);
-    if (labels === "unparsable") out.unmapped.push({ field: "customLabels", reason: "the label block could not be parsed" });
+    if (labels === "unparsable") out.unmapped.push({ field: "customLabels", ...why("labels_unparsable") });
     else if (labels.length) out.labels = labels;
     if (r.build_pack === "dockerfile") {
       const dockerfile = decodeCoolifyDockerfile(nonEmptyStr(r.dockerfile) ?? r.dockerfile_raw);

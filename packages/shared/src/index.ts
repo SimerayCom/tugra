@@ -11,6 +11,7 @@ export * from "./version";
 // shared by the hub's requireEdition gate and any web edition display.
 export * from "./editions";
 export * from "./app-move";
+export * from "./import-reasons";
 
 /**
  * Notification event types — single source of truth for the hub (Zod enum) and the web UI (served via

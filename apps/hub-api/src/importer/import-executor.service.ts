@@ -15,7 +15,9 @@ import { LocalDockerSource } from "./sources/local-docker.source";
 import { planImport } from "./import-planner";
 import { mapSourceEnvFlags } from "./env-auto-flags";
 import { mapBuildPack } from "./buildpack-map";
-import { REPLICAS_UNMAPPED_REASON, foreignAppToCreateInput, foreignAppToIngressPlan, foreignAppToPostCreateConfig, foreignAppToVolumes } from "./apply-map";
+import { IMPORT_REASON_CODES, type ImportReasonCode } from "@tugra/shared";
+import { why, type Reasoned, type Unmapped } from "./reason";
+import { foreignAppToCreateInput, foreignAppToIngressPlan, foreignAppToPostCreateConfig, foreignAppToVolumes } from "./apply-map";
 import { seedTasks, deriveOpStatus, type TaskSeed, type TaskStatus } from "./import-executor.logic";
 import { MigrationTokenService } from "./migration-token.service";
 import { assertSafeBase, buildMigrationCommand, buildMigrationCommandTemplate } from "./migration-command";
@@ -470,7 +472,7 @@ export class ImportExecutorService {
     try {
       return await source.fetchAppExtras(app.sourceRef);
     } catch {
-      return { unmapped: [{ field: "sourceExtras", reason: "could not read this app's labels or Dockerfile from the source; set them manually" }] };
+      return { unmapped: [{ field: "sourceExtras", ...why("extras_read_failed") }] };
     }
   }
 
@@ -483,7 +485,7 @@ export class ImportExecutorService {
     app: ForeignApp,
     targetServerId: string,
     extras?: SourceAppExtras,
-  ): Promise<{ applied: string[]; unmapped: Array<{ field: string; reason: string }> }> {
+  ): Promise<{ applied: string[]; unmapped: Unmapped[] }> {
     const applied: string[] = [];
     const cfg = foreignAppToPostCreateConfig(app, extras);
     const unmapped = [...cfg.unmapped];
@@ -492,7 +494,7 @@ export class ImportExecutorService {
         await fn();
         applied.push(field);
       } catch {
-        unmapped.push({ field, reason: "Tugra rejected the setting — set it manually" });
+        unmapped.push({ field, ...why("setting_rejected") });
       }
     };
     if (cfg.build) {
@@ -501,7 +503,7 @@ export class ImportExecutorService {
         // setBuild is one call: it either carried the text or was rejected (`build` is then in `unmapped`, and the
         // inline text is named separately so the failure says which field was lost).
         if (applied.includes("build")) applied.push("inlineDockerfile");
-        else unmapped.push({ field: "inlineDockerfile", reason: "Tugra rejected the setting. Set it manually" });
+        else unmapped.push({ field: "inlineDockerfile", ...why("inline_dockerfile_rejected") });
       }
     }
     if (cfg.customLabels) await run("customLabels", () => this.apps.setCustomLabels(userId, appId, cfg.customLabels!));
@@ -514,7 +516,7 @@ export class ImportExecutorService {
       // a stateful app to the cluster manager instead of the chosen target server, and needs apps:deploy + a
       // registry) — far too surprising to apply silently during an import. Carry it as unmapped; the planner
       // surfaces replicas as an explicit choice (next slice).
-      unmapped.push({ field: "replicas", reason: REPLICAS_UNMAPPED_REASON });
+      unmapped.push({ field: "replicas", ...why("replicas") });
     }
     return { applied, unmapped };
   }
@@ -530,23 +532,23 @@ export class ImportExecutorService {
     appId: string,
     app: ForeignApp,
     source: ImportSource,
-  ): Promise<{ applied: string[]; unmapped: Array<{ field: string; reason: string }> }> {
+  ): Promise<{ applied: string[]; unmapped: Unmapped[] }> {
     const applied: string[] = [];
     let plan: ReturnType<typeof foreignAppToIngressPlan>;
     try {
       plan = foreignAppToIngressPlan(app);
     } catch {
-      return { applied, unmapped: [{ field: "ingress", reason: "the source ingress could not be interpreted — configure domains and ports manually" }] };
+      return { applied, unmapped: [{ field: "ingress", ...why("ingress_uninterpretable") }] };
     }
     const unmapped = [...plan.unmapped];
-    const rejected = "Tugra rejected the setting — set it manually";
-    const run = async (field: string, fn: () => Promise<unknown>, reason = rejected) => {
+    const rejected = why("setting_rejected");
+    const run = async (field: string, fn: () => Promise<unknown>, reason: Reasoned = rejected) => {
       try {
         await fn();
         applied.push(field);
       } catch {
         // FIXED reason only — never the error text (it could echo a credential).
-        unmapped.push({ field, reason });
+        unmapped.push({ field, ...reason });
       }
     };
     /** Replace-set list: try it whole; if rejected, rebuild it item by item (each call replaces the whole set,
@@ -566,7 +568,7 @@ export class ImportExecutorService {
           await set([...kept, it]);
           kept.push(it);
         } catch {
-          unmapped.push({ field: `${field}:${label(it)}`, reason: rejected });
+          unmapped.push({ field: `${field}:${label(it)}`, ...rejected });
         }
       }
       if (kept.length) applied.push(field);
@@ -602,9 +604,9 @@ export class ImportExecutorService {
           dropped += usable.length - capped.length;
           await this.apps.setBasicAuth(userId, appId, capped);
         },
-        "basic-auth not carried — re-protect the app before cutover",
+        why("basic_auth_not_carried"),
       );
-      if (dropped > 0) unmapped.push({ field: "basicAuth users", reason: "some basic-auth users could not be stored in Tugra — re-add them before cutover" });
+      if (dropped > 0) unmapped.push({ field: "basicAuth users", ...why("basic_auth_users_dropped") });
     }
     return { applied, unmapped };
   }
@@ -1414,16 +1416,21 @@ function sourceRefOf(itemRef: string): string | undefined {
   return ref.length ? ref : undefined;
 }
 
-/** Defensively read a persisted `{applied, unmapped}` summary: arrays of strings / {field, reason} strings only,
- *  anything else is dropped. Undefined when absent or malformed. */
-function readApplyReport(v: unknown): { applied: string[]; unmapped: Array<{ field: string; reason: string }> } | undefined {
+/** Defensively read a persisted `{applied, unmapped}` summary: arrays of strings / {field, reason} strings only (plus a
+ *  known `reasonCode` and its string/number `reasonParams` when present), anything else is dropped. Rows persisted before
+ *  the codes existed have none and keep their English `reason`. Undefined when absent or malformed. */
+function readApplyReport(v: unknown): { applied: string[]; unmapped: Unmapped[] } | undefined {
   if (!v || typeof v !== "object") return undefined;
   const r = v as { applied?: unknown; unmapped?: unknown };
   const applied = Array.isArray(r.applied) ? r.applied.filter((x): x is string => typeof x === "string") : [];
-  const unmapped = Array.isArray(r.unmapped)
+  const unmapped: Unmapped[] = Array.isArray(r.unmapped)
     ? r.unmapped
-        .filter((u): u is { field: string; reason: string } => !!u && typeof u === "object" && typeof (u as { field?: unknown }).field === "string" && typeof (u as { reason?: unknown }).reason === "string")
-        .map((u) => ({ field: u.field, reason: u.reason }))
+        .filter((u): u is Record<string, unknown> & { field: string; reason: string } => !!u && typeof u === "object" && typeof (u as { field?: unknown }).field === "string" && typeof (u as { reason?: unknown }).reason === "string")
+        .map((u) => {
+          const code = (IMPORT_REASON_CODES as readonly unknown[]).includes(u.reasonCode) ? (u.reasonCode as ImportReasonCode) : undefined;
+          const params = u.reasonParams && typeof u.reasonParams === "object" ? Object.fromEntries(Object.entries(u.reasonParams).filter(([, x]) => typeof x === "string" || typeof x === "number")) : undefined;
+          return { field: u.field, reason: u.reason, ...(code ? { reasonCode: code } : {}), ...(code && params && Object.keys(params).length ? { reasonParams: params as Record<string, string | number> } : {}) };
+        })
     : [];
   return { applied, unmapped };
 }

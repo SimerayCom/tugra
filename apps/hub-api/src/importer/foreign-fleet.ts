@@ -1,3 +1,4 @@
+import type { Unmapped } from "./reason";
 /**
  * Neutral, source-agnostic description of what a competitor PaaS (Coolify/Dokploy/CapRover/Dokku) is
  * running, produced by an {@link ImportSource}'s `discover()`. Every adapter maps its own data model onto
@@ -161,7 +162,7 @@ export interface ForeignApp {
   sourceExtras?: { labels?: true; dockerfile?: true };
   /** Fields PRESENT on the source that no Tugra setter carries. Field NAMES + FIXED reasons only, never values.
    *  Feeds the plan-time coverage report. NOT copied into `proposed`; no new `risks`; planHash unchanged. */
-  notCarried?: Array<{ field: string; reason: string; level: "warn" | "info" }>;
+  notCarried?: Array<Unmapped & { level: "warn" | "info" }>;
 }
 
 export interface ForeignDb {
@@ -293,7 +294,7 @@ export type VolumeDataPlane = "hub-staged" | "manual-large" | "manual" | "unknow
 export interface ImportCoverageApp {
   itemRef: string; // same ns("app", serverRef, sourceRef) as the plan item
   name: string;
-  notCarried: Array<{ field: string; reason: string; level: "warn" | "info" }>;
+  notCarried: Array<Unmapped & { level: "warn" | "info" }>;
 }
 /** Per-app "what was not carried" report (presence-only: field names + fixed reasons, never values). Advisory. */
 export interface ImportCoverage {

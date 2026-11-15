@@ -1,3 +1,4 @@
+import { why } from "../reason";
 import type {
   ForeignApp,
   ForeignDb,
@@ -535,12 +536,12 @@ function withPrimary(domains: ForeignDomain[]): ForeignDomain[] {
  *  Deliberately NOT discover `warnings` (those stay byte-identical). */
 function dokployNotCarried(app: DokployApplication, kind: ForeignApp["kind"]): NonNullable<ForeignApp["notCarried"]> {
   const out: NonNullable<ForeignApp["notCarried"]> = [];
-  if (kind === "image" && app.registryUrl) out.push({ field: "registry", level: "info", reason: "the registry credential is not carried; add the registry in Tugra before deploying a private image" });
-  if (parseDotenv(app.buildSecrets).length) out.push({ field: "buildSecrets", level: "info", reason: "build secret values are not read; re-add them as Tugra build secrets" });
+  if (kind === "image" && app.registryUrl) out.push({ field: "registry", level: "info", ...why("dokploy_registry") });
+  if (parseDotenv(app.buildSecrets).length) out.push({ field: "buildSecrets", level: "info", ...why("dokploy_build_secrets") });
   const ls = app.labelsSwarm;
   const hasSwarmLabels = Array.isArray(ls) ? ls.length > 0 : !!ls && typeof ls === "object" && Object.keys(ls).length > 0;
-  if (hasSwarmLabels) out.push({ field: "customLabels", level: "info", reason: "Dokploy Swarm service labels are not carried (Tugra custom labels are container labels)" });
-  if ((app.domains ?? []).some((d) => !!d.host && mapDomain(d) === undefined)) out.push({ field: "domains", level: "info", reason: "preview or disabled domains are not carried" });
+  if (hasSwarmLabels) out.push({ field: "customLabels", level: "info", ...why("dokploy_swarm_labels") });
+  if ((app.domains ?? []).some((d) => !!d.host && mapDomain(d) === undefined)) out.push({ field: "domains", level: "info", ...why("dokploy_domains") });
   return out;
 }
 

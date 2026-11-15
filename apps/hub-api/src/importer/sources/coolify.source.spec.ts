@@ -177,7 +177,7 @@ describe("CoolifySource.fetchAppExtras", () => {
 
   it("an unparsable label block becomes a fixed unmapped note, never an error", async () => {
     const client = new FakeClient({ "/applications/app-1": row({ custom_labels: "just words with no pairs" }) });
-    expect(await new CoolifySource(client).fetchAppExtras("app-1")).toEqual({ unmapped: [{ field: "customLabels", reason: "the label block could not be parsed" }] });
+    expect(await new CoolifySource(client).fetchAppExtras("app-1")).toMatchObject({ unmapped: [{ field: "customLabels", reason: "the label block could not be parsed" }] });
   });
 
   it("a plain-token response with the text stripped yields an empty result", async () => {

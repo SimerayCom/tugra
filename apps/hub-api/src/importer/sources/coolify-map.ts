@@ -1,3 +1,4 @@
+import { why } from "../reason";
 import { inlineDockerfileProblem } from "../../applications/dto";
 import type {
   ForeignApp,
@@ -317,17 +318,17 @@ const nonZero = (v: unknown): boolean => (typeof v === "number" ? v > 0 : typeof
 /** Fixed-reason coverage rows for what is PRESENT on a Coolify app but has no Tugra carry path. Presence only. */
 function coolifyNotCarried(app: CoolifyApp, realGit: boolean, kind: ForeignApp["kind"]): NonNullable<ForeignApp["notCarried"]> {
   const out: NonNullable<ForeignApp["notCarried"]> = [];
-  if (app.is_http_basic_auth_enabled === true) out.push({ field: "basicAuth", level: "warn", reason: "the source gated this app with HTTP basic auth; the credentials are not read, so the imported app is NOT gated until you set basic auth in Tugra before the first deploy" });
-  if (nonEmpty(app.ports_mappings)) out.push({ field: "publishedPorts", level: "warn", reason: "host-published ports are not carried; add them in the app's Ports settings" });
-  if (nonEmpty(app.custom_docker_run_options)) out.push({ field: "dockerOptions", level: "warn", reason: "custom Docker run options are owner-gated in Tugra and never auto-applied" });
-  if (nonEmpty(app.pre_deployment_command) || nonEmpty(app.post_deployment_command)) out.push({ field: "deployHooks", level: "info", reason: "set them in the app's Deploy hooks after import" });
-  if (nonZero(app.limits_memory) || nonZero(app.limits_cpus)) out.push({ field: "limits", level: "info", reason: "resource limits are not carried from Coolify yet; set them in Tugra" });
-  if (app.health_check_enabled === true) out.push({ field: "healthcheck", level: "info", reason: "health check not carried" });
-  if (nonEmpty(app.dockerfile_target_build)) out.push({ field: "dockerBuildTarget", level: "info", reason: "build target not carried from Coolify yet" });
-  if (nonEmpty(app.watch_paths)) out.push({ field: "watchPaths", level: "info", reason: "watch paths not carried from Coolify yet" });
+  if (app.is_http_basic_auth_enabled === true) out.push({ field: "basicAuth", level: "warn", ...why("coolify_basic_auth") });
+  if (nonEmpty(app.ports_mappings)) out.push({ field: "publishedPorts", level: "warn", ...why("coolify_published_ports") });
+  if (nonEmpty(app.custom_docker_run_options)) out.push({ field: "dockerOptions", level: "warn", ...why("coolify_docker_options") });
+  if (nonEmpty(app.pre_deployment_command) || nonEmpty(app.post_deployment_command)) out.push({ field: "deployHooks", level: "info", ...why("coolify_deploy_hooks") });
+  if (nonZero(app.limits_memory) || nonZero(app.limits_cpus)) out.push({ field: "limits", level: "info", ...why("coolify_limits") });
+  if (app.health_check_enabled === true) out.push({ field: "healthcheck", level: "info", ...why("coolify_healthcheck") });
+  if (nonEmpty(app.dockerfile_target_build)) out.push({ field: "dockerBuildTarget", level: "info", ...why("coolify_build_target") });
+  if (nonEmpty(app.watch_paths)) out.push({ field: "watchPaths", level: "info", ...why("coolify_watch_paths") });
   // The planner's `app.git.missing` blocker case: a Dockerfile app with no real repo (and no image to fall back to).
   if (app.build_pack === "dockerfile" && !realGit && kind !== "image") {
-    out.push({ field: "inlineDockerfile", level: "warn", reason: "an inline-Dockerfile app has no git repository; Tugra builds Dockerfile apps from a repo, so this app cannot be imported yet (repo-less Dockerfile apps are a planned feature)" });
+    out.push({ field: "inlineDockerfile", level: "warn", ...why("coolify_inline_dockerfile") });
   }
   return out;
 }

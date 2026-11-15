@@ -1,9 +1,11 @@
 import type { CreateAppInput, SetBuildInput, SetContainerCommandInput, SetCustomLabelsInput, SetLimitsInput } from "../applications/dto";
 import { INLINE_DOCKERFILE_MAX, SetBuildSchema, SetContainerCommandSchema, SetCustomLabelsSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetLimitsSchema, SetRedirectsSchema, SetVolumesSchema, SetWatchPathsSchema, inlineDockerfileProblem } from "../applications/dto";
 import type { AppVolume } from "../deploy/deploy-script";
-import { CUSTOM_LABEL_KEY_RE, CUSTOM_LABEL_LIMITS, LABEL_NAMESPACE_WHY, reservedLabelNamespace } from "../deploy/label-namespaces";
+import { CUSTOM_LABEL_KEY_RE, CUSTOM_LABEL_LIMITS, reservedLabelNamespace } from "../deploy/label-namespaces";
+import type { ImportReasonCode } from "@tugra/shared";
 import type { ForeignApp, ForeignDomain } from "./foreign-fleet";
 import type { SourceAppExtras } from "./import-source";
+import { REASON_EN, why, type Reasoned, type Unmapped } from "./reason";
 import { mapBuildPack } from "./buildpack-map";
 import { mapSourceEnvFlags, type SourceEnvFlags } from "./env-auto-flags";
 
@@ -98,13 +100,29 @@ export function foreignAppToCreateInput(
   return input;
 }
 
+/** The reserved label namespace -> its reason code (the per-namespace "why" text lives in the translated string). */
+const RESERVED_NS_REASON: Record<string, ImportReasonCode> = {
+  "traefik.": "label_reserved_traefik",
+  "tugra.": "label_reserved_tugra",
+  "com.docker.compose.": "label_reserved_compose",
+  "com.docker.swarm.": "label_reserved_swarm",
+  "com.docker.stack.": "label_reserved_stack",
+};
+
+/** `inlineDockerfileProblem` returns one of a few fixed texts: each gets a code (anything else is `dockerfile_invalid`). */
+const DOCKERFILE_PROBLEM_REASON: Record<string, ImportReasonCode> = {
+  [REASON_EN.dockerfile_nul]: "dockerfile_nul",
+  [REASON_EN.dockerfile_not_from]: "dockerfile_not_from",
+  [REASON_EN.dockerfile_no_from]: "dockerfile_no_from",
+};
+
 /** Fixed reason for replicas: they convert the app to a swarm service, so an import never applies them silently.
  *  Shared by the executor and the plan-time coverage report so the two can never drift. */
-export const REPLICAS_UNMAPPED_REASON = "replicas convert the app to a swarm service — set the replica count explicitly in Tugra after import";
+export const REPLICAS_UNMAPPED_REASON = REASON_EN.replicas;
 
 export interface MappedLabels {
   labels: Record<string, string>;
-  dropped: Array<{ field: string; reason: string }>;
+  dropped: Unmapped[];
   /** A DROPPED label looked like an access-control middleware (basic auth / IP allow-list / forward auth / digest). */
   accessControlDropped: boolean;
 }
@@ -123,44 +141,44 @@ const MAX_DROPPED_LABELS = 20;
 export function mapCustomLabels(entries: ReadonlyArray<{ key: string; value: string }>): MappedLabels {
   const L = CUSTOM_LABEL_LIMITS;
   const labels: Record<string, string> = {};
-  const dropped: Array<{ field: string; reason: string }> = [];
+  const dropped: Unmapped[] = [];
   let droppedCount = 0;
   let accessControlDropped = false;
   const seen = new Set<string>();
   let bytes = 0;
   let count = 0;
-  const drop = (key: string, field: string, reason: string) => {
+  const drop = (key: string, field: string, reason: Reasoned) => {
     droppedCount++;
     if (ACCESS_CONTROL_LABEL_RE.test(key)) accessControlDropped = true;
-    if (dropped.length < MAX_DROPPED_LABELS) dropped.push({ field, reason });
+    if (dropped.length < MAX_DROPPED_LABELS) dropped.push({ field, ...reason });
   };
   for (const { key, value } of entries) {
     if (key.length === 0 || key.length > L.keyMax || !CUSTOM_LABEL_KEY_RE.test(key)) {
-      drop(key, `customLabel:${JSON.stringify(key.slice(0, 40))}`, "invalid label key");
+      drop(key, `customLabel:${JSON.stringify(key.slice(0, 40))}`, why("label_invalid_key"));
       continue;
     }
     const field = `customLabel:${key}`;
     const ns = reservedLabelNamespace(key);
     if (ns) {
-      drop(key, field, `in the reserved ${ns}* namespace (${LABEL_NAMESPACE_WHY[ns]})`);
+      drop(key, field, why(RESERVED_NS_REASON[ns] ?? "label_reserved_tugra"));
       continue;
     }
     const lower = key.toLowerCase();
     if (seen.has(lower)) {
-      drop(key, field, "duplicate (label keys are case-insensitive)");
+      drop(key, field, why("label_duplicate"));
       continue;
     }
     if (value.length > L.valueMax) {
-      drop(key, field, `value is longer than ${L.valueMax} characters`);
+      drop(key, field, why("label_value_too_long", { max: L.valueMax }));
       continue;
     }
     if (LABEL_CONTROL_RE.test(value)) {
-      drop(key, field, "value contains control characters");
+      drop(key, field, why("label_value_control"));
       continue;
     }
     const size = Buffer.byteLength(key, "utf8") + Buffer.byteLength(value, "utf8");
     if (count + 1 > L.maxCount || bytes + size > L.totalBytes) {
-      drop(key, field, "over the per-app label limit");
+      drop(key, field, why("label_over_limit"));
       continue;
     }
     seen.add(lower);
@@ -168,9 +186,9 @@ export function mapCustomLabels(entries: ReadonlyArray<{ key: string; value: str
     count++;
     bytes += size;
   }
-  if (droppedCount > dropped.length) dropped.push({ field: "customLabel:…", reason: `${droppedCount - dropped.length} more not carried` });
+  if (droppedCount > dropped.length) dropped.push({ field: "customLabel:…", ...why("labels_more", { n: droppedCount - dropped.length }) });
   if (!SetCustomLabelsSchema.safeParse({ labels }).success) {
-    return { labels: {}, dropped: [{ field: "customLabels", reason: "Tugra rejected the label set" }], accessControlDropped };
+    return { labels: {}, dropped: [{ field: "customLabels", ...why("labels_rejected") }], accessControlDropped };
   }
   return { labels, dropped, accessControlDropped };
 }
@@ -194,7 +212,7 @@ export interface PostCreateConfig {
   /** `setClusterConfig.replicas` — only meaningful when the import targets a swarm cluster. */
   replicas?: number;
   /** Source fields that were present but could NOT be carried (no Tugra target, or invalid for Tugra's schema). */
-  unmapped: Array<{ field: string; reason: string }>;
+  unmapped: Unmapped[];
 }
 
 /**
@@ -205,41 +223,41 @@ export interface PostCreateConfig {
  */
 export function foreignAppToPostCreateConfig(app: ForeignApp, extras?: SourceAppExtras): PostCreateConfig {
   const out: PostCreateConfig = { unmapped: [] };
-  const skip = (field: string, reason: string) => out.unmapped.push({ field, reason });
+  const skip = (field: string, reason: Reasoned) => out.unmapped.push({ field, ...reason });
   const build = mapBuildPack(app);
   const isGit = build.source === "GIT";
 
   // autoDeploy — a tag-triggered source must NOT become push-to-deploy, so it is turned off (and reported).
   if (app.triggerType === "tag") {
     out.autoDeploy = false;
-    skip("triggerType", "tag-triggered deploys have no Tugra equivalent (push only) — auto-deploy turned off");
+    skip("triggerType", why("trigger_tag"));
   } else if (app.autoDeploy !== undefined) {
     out.autoDeploy = app.autoDeploy;
   }
-  if (app.triggerType && app.triggerType !== "tag" && app.triggerType !== "push") skip("triggerType", `unknown trigger "${app.triggerType}"`);
+  if (app.triggerType && app.triggerType !== "tag" && app.triggerType !== "push") skip("triggerType", why("trigger_unknown", { trigger: app.triggerType }));
 
   if (app.watchPaths?.length) {
     const parsed = SetWatchPathsSchema.safeParse({ watchPaths: app.watchPaths });
     if (parsed.success) out.watchPaths = parsed.data.watchPaths;
-    else skip("watchPaths", "a pattern is not a valid Tugra watch-path glob — none carried");
+    else skip("watchPaths", why("watch_paths_invalid"));
   }
 
   if (app.limits) {
     const parsed = SetLimitsSchema.safeParse(app.limits);
     if (parsed.success) out.limits = parsed.data;
-    else skip("limits", "CPU/memory limits are outside Tugra's accepted range — none carried");
+    else skip("limits", why("limits_invalid"));
   }
 
   if (app.containerEntrypoint?.length || app.containerCommand?.length) {
     if (build.source === "COMPOSE") {
-      skip("containerCommand", "a compose app declares its command in its compose file");
+      skip("containerCommand", why("command_compose"));
     } else {
       const parsed = SetContainerCommandSchema.safeParse({
         containerEntrypoint: app.containerEntrypoint?.length ? app.containerEntrypoint : null,
         containerCommand: app.containerCommand?.length ? app.containerCommand : null,
       });
       if (parsed.success) out.containerCommand = parsed.data;
-      else skip("containerCommand", "the command/args are not valid for Tugra's exec-form override");
+      else skip("containerCommand", why("command_invalid"));
     }
   }
 
@@ -249,12 +267,12 @@ export function foreignAppToPostCreateConfig(app: ForeignApp, extras?: SourceApp
   let inline: string | undefined;
   if (extras?.dockerfile !== undefined) {
     if (!isDockerfileBuild) {
-      skip("inlineDockerfile", "inline Dockerfile applies only to Dockerfile builds");
+      skip("inlineDockerfile", why("dockerfile_not_build"));
     } else if (Buffer.byteLength(extras.dockerfile, "utf8") > INLINE_DOCKERFILE_MAX) {
-      skip("inlineDockerfile", "the Dockerfile is larger than 48 KiB");
+      skip("inlineDockerfile", why("dockerfile_too_large"));
     } else {
       const problem = inlineDockerfileProblem(extras.dockerfile);
-      if (problem) skip("inlineDockerfile", problem);
+      if (problem) skip("inlineDockerfile", why(DOCKERFILE_PROBLEM_REASON[problem] ?? "dockerfile_invalid"));
       else inline = extras.dockerfile;
     }
   }
@@ -270,27 +288,27 @@ export function foreignAppToPostCreateConfig(app: ForeignApp, extras?: SourceApp
       if (!app.dockerBuildTarget) delete base.dockerBuildTarget;
       let parsed = SetBuildSchema.safeParse(inline ? { ...base, inlineDockerfile: inline } : base);
       if (!parsed.success && inline) {
-        skip("inlineDockerfile", "Tugra would not accept the Dockerfile text");
+        skip("inlineDockerfile", why("dockerfile_rejected"));
         inline = undefined;
         parsed = app.dockerBuildTarget ? SetBuildSchema.safeParse(base) : parsed;
       }
       if (parsed.success) out.build = parsed.data;
-      else if (app.dockerBuildTarget) skip("dockerBuildTarget", "the build target is not a valid Dockerfile stage name");
+      else if (app.dockerBuildTarget) skip("dockerBuildTarget", why("build_target_invalid"));
     } else {
-      skip("dockerBuildTarget", "a build target applies only to Dockerfile builds");
+      skip("dockerBuildTarget", why("build_target_not_dockerfile"));
     }
   }
 
   // Custom container labels. Skipped for a compose app (its labels live in its compose file).
   if (extras?.labels?.length) {
     if (build.source === "COMPOSE") {
-      skip("customLabels", "compose apps declare labels in the compose file");
+      skip("customLabels", why("labels_compose"));
     } else {
       const mapped = mapCustomLabels(extras.labels);
       if (Object.keys(mapped.labels).length) out.customLabels = { labels: mapped.labels };
       out.unmapped.push(...mapped.dropped);
       if (mapped.accessControlDropped) {
-        skip("accessControl", "an access-control middleware label (basic auth / IP allow-list / forward auth) was not carried; the imported app is not gated by it until you recreate it with Tugra basic auth or IP rules, before the first deploy");
+        skip("accessControl", why("access_control_dropped"));
       }
     }
   }
@@ -299,8 +317,8 @@ export function foreignAppToPostCreateConfig(app: ForeignApp, extras?: SourceApp
   if (app.replicas !== undefined && app.replicas > 1) out.replicas = app.replicas;
 
   // Present on the source, but Tugra has no target — surfaced, never silently dropped.
-  if (app.dockerContextPath && !/^\.?\/?$/.test(app.dockerContextPath)) skip("dockerContextPath", "Tugra has no separate docker build context (base directory only)");
-  if (app.staticSpa === false) skip("staticSpa", "Tugra's static builds always serve an SPA fallback");
+  if (app.dockerContextPath && !/^\.?\/?$/.test(app.dockerContextPath)) skip("dockerContextPath", why("context_path"));
+  if (app.staticSpa === false) skip("staticSpa", why("static_spa"));
   return out;
 }
 
@@ -321,7 +339,7 @@ export interface IngressPlan {
   redirects?: Array<{ regex: string; replacement: string; permanent: boolean }>;
   /** Source ingress that could NOT be carried — reported, never silently dropped. Field names are
    *  `domain:<host> <aspect>` / `port:<host>/<proto>`; hosts and port numbers are not secret. */
-  unmapped: Array<{ field: string; reason: string }>;
+  unmapped: Unmapped[];
 }
 
 const MAX_EXTRA_DOMAINS = 10;
@@ -338,7 +356,7 @@ const MAX_REDIRECTS = 20;
  */
 export function foreignAppToIngressPlan(app: ForeignApp): IngressPlan {
   const out: IngressPlan = { extraDomains: [], serviceDomains: [], extraPorts: [], unmapped: [] };
-  const skip = (field: string, reason: string) => out.unmapped.push({ field, reason });
+  const skip = (field: string, reason: Reasoned) => out.unmapped.push({ field, ...reason });
   /** Bound a source-supplied string interpolated into a persisted field/reason. */
   const cl = (v: string): string => v.slice(0, 200);
   const isCompose = mapBuildPack(app).source === "COMPOSE";
@@ -355,11 +373,11 @@ export function foreignAppToIngressPlan(app: ForeignApp): IngressPlan {
 
   // ── Per-domain honesty notes (every domain, primary included).
   for (const d of domains) {
-    if (d.certType === "le-dns") skip(`domain:${cl(d.host)} dns-01`, "uses a DNS-01 certificate — needs a DNS-provider credential binding in Tugra; it will use Let's Encrypt HTTP-01 once DNS points here");
-    else if (d.certType === "custom") skip(`domain:${cl(d.host)} custom-cert`, "uses an uploaded certificate — upload it in Tugra (the certificate itself is not carried yet)");
-    if (d.https === false || d.certType === "none") skip(`domain:${cl(d.host)} https`, "was served without HTTPS — Tugra serves custom domains over HTTPS (Let's Encrypt) and will upgrade it");
-    if (d.redirectTo) skip(`domain:${cl(d.host)} redirect`, `redirects to ${cl(d.redirectTo)} — configure the redirect in Tugra`);
-    if (d.serviceRef && !isCompose) skip(`domain:${cl(d.host)} serviceRef`, "targets a named service, but this is not a compose app — Tugra routes the single app container");
+    if (d.certType === "le-dns") skip(`domain:${cl(d.host)} dns-01`, why("domain_dns01"));
+    else if (d.certType === "custom") skip(`domain:${cl(d.host)} custom-cert`, why("domain_custom_cert"));
+    if (d.https === false || d.certType === "none") skip(`domain:${cl(d.host)} https`, why("domain_no_https"));
+    if (d.redirectTo) skip(`domain:${cl(d.host)} redirect`, why("domain_redirect", { to: cl(d.redirectTo) }));
+    if (d.serviceRef && !isCompose) skip(`domain:${cl(d.host)} serviceRef`, why("domain_service_not_compose"));
   }
 
   // ── Primary path routing (Tugra's pathPrefix is app-wide, so it mirrors the primary domain's path only).
@@ -371,7 +389,7 @@ export function foreignAppToIngressPlan(app: ForeignApp): IngressPlan {
       primaryPath = rawPrimaryPath;
       out.domainOptions = { pathPrefix: rawPrimaryPath, stripPrefix };
     } else {
-      skip(`domain:${cl(primary.host)} path`, "the path is not a valid Tugra path prefix — served at the host root");
+      skip(`domain:${cl(primary.host)} path`, why("domain_path_invalid"));
     }
   }
 
@@ -387,31 +405,31 @@ export function foreignAppToIngressPlan(app: ForeignApp): IngressPlan {
     const key = lc(d.host);
     const first = seen.get(key);
     if (first !== undefined) {
-      if (first !== tuple(d)) skip(`domain:${cl(d.host)} dup`, "same host with a different path/port/service — Tugra serves one route per host");
+      if (first !== tuple(d)) skip(`domain:${cl(d.host)} dup`, why("domain_dup_route"));
       continue;
     }
     seen.set(key, tuple(d));
     const hostParsed = SetExtraDomainsSchema.safeParse({ domains: [d.host] });
     if (!hostParsed.success) {
-      skip(`domain:${cl(d.host)} host`, "not a hostname Tugra can serve");
+      skip(`domain:${cl(d.host)} host`, why("domain_host_invalid"));
       continue;
     }
     const host = hostParsed.data.domains[0];
     // Tugra already serves the primary's www/bare counterpart, and rejects it as an extra/service domain.
     if (host === primaryBase || host === `www.${primaryBase}`) {
-      skip(`domain:${cl(d.host)} alias`, "is the www/bare counterpart of the primary domain — Tugra already serves it there");
+      skip(`domain:${cl(d.host)} alias`, why("domain_alias"));
       continue;
     }
     if (isCompose && d.serviceRef) {
       const svc = d.serviceRef.trim();
       if (!d.port || !Number.isInteger(d.port) || d.port < 1 || d.port > 65535) {
-        skip(`domain:${cl(d.host)} port`, "no routing port on the source — add this service domain in Tugra");
+        skip(`domain:${cl(d.host)} port`, why("domain_service_no_port"));
       } else if (d.path) {
-        skip(`domain:${cl(d.host)} path`, "per-service domains have no path routing in Tugra — add it manually");
+        skip(`domain:${cl(d.host)} path`, why("domain_service_path"));
       } else if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/.test(svc)) {
-        skip(`domain:${cl(d.host)} serviceRef`, "not a valid compose service name");
+        skip(`domain:${cl(d.host)} serviceRef`, why("domain_service_name_invalid"));
       } else if (out.serviceDomains.length >= MAX_SERVICE_DOMAINS) {
-        skip(`domain:${cl(d.host)} limit`, `Tugra allows at most ${MAX_SERVICE_DOMAINS} service domains`);
+        skip(`domain:${cl(d.host)} limit`, why("domain_service_limit", { max: MAX_SERVICE_DOMAINS }));
       } else {
         out.serviceDomains.push({ service: svc, hostname: host, port: d.port });
       }
@@ -419,22 +437,22 @@ export function foreignAppToIngressPlan(app: ForeignApp): IngressPlan {
     }
     // Plain alias host (classic app, or a compose domain with no service binding).
     if (!isCompose && primaryPort !== undefined && d.port !== undefined && d.port !== primaryPort) {
-      skip(`domain:${cl(d.host)} port`, `routes to container port ${d.port}, but Tugra serves one container port per app (${primaryPort})`);
+      skip(`domain:${cl(d.host)} port`, why("domain_port_differs", { port: d.port, primaryPort }));
       continue;
     }
     if (normPath(d.path) !== primaryPath) {
-      skip(`domain:${cl(d.host)} path`, "uses a different path than the primary domain — Tugra's path prefix is app-wide");
+      skip(`domain:${cl(d.host)} path`, why("domain_path_differs"));
       continue;
     }
     if (out.extraDomains.length >= MAX_EXTRA_DOMAINS) {
-      skip(`domain:${cl(d.host)} limit`, `Tugra allows at most ${MAX_EXTRA_DOMAINS} extra domains`);
+      skip(`domain:${cl(d.host)} limit`, why("domain_extra_limit", { max: MAX_EXTRA_DOMAINS }));
       continue;
     }
     out.extraDomains.push(host);
   }
   // ── Compose primary bound to a named service: create-time routing uses the compose-inferred web service.
   if (isCompose && primary?.serviceRef) {
-    skip(`domain:${cl(primary.host)} serviceRef`, `bound to compose service "${cl(primary.serviceRef)}" — Tugra routes the primary domain to the web service it infers from the compose file; verify it`);
+    skip(`domain:${cl(primary.host)} serviceRef`, why("domain_primary_service", { service: cl(primary.serviceRef) }));
   }
 
   // ── Corrected ingress container port (IMAGE/GIT only; COMPOSE infers it from its YAML).
@@ -445,7 +463,7 @@ export function foreignAppToIngressPlan(app: ForeignApp): IngressPlan {
   // ── Raw host-published ports.
   const published = app.publishedPorts ?? [];
   if (isCompose) {
-    if (published.length) skip("ports", "a compose app declares its published ports in its compose file");
+    if (published.length) skip("ports", why("ports_compose"));
   } else {
     // The HTTP ingress port is already published by the proxy; re-publishing it on the host is skipped (a
     // domain-less app has no ingress, so its first published port is kept).
@@ -454,11 +472,11 @@ export function foreignAppToIngressPlan(app: ForeignApp): IngressPlan {
     for (const p of published) {
       const field = `port:${p.hostPort}/${p.protocol}`;
       if (httpPort !== undefined && p.protocol === "tcp" && p.containerPort === httpPort) {
-        skip(field, `container port ${p.containerPort} is the HTTP ingress port, already served through the proxy — publish it on the host manually if it is needed`);
+        skip(field, why("port_is_ingress", { port: p.containerPort }));
       } else if (taken.has(`${p.hostPort}/${p.protocol}`)) {
-        skip(field, "host port + protocol already published by another mapping");
+        skip(field, why("port_duplicate"));
       } else if (out.extraPorts.length >= MAX_EXTRA_PORTS) {
-        skip(field, `Tugra allows at most ${MAX_EXTRA_PORTS} extra published ports`);
+        skip(field, why("ports_limit", { max: MAX_EXTRA_PORTS }));
       } else {
         taken.add(`${p.hostPort}/${p.protocol}`);
         out.extraPorts.push({ hostPort: p.hostPort, containerPort: p.containerPort, protocol: p.protocol });
@@ -474,9 +492,9 @@ export function foreignAppToIngressPlan(app: ForeignApp): IngressPlan {
       // One invalid rule must not cost the rest: keep each rule that validates on its own.
       const good = app.redirects.slice(0, MAX_REDIRECTS).filter((r) => SetRedirectsSchema.safeParse({ redirects: [r] }).success);
       if (good.length) out.redirects = good;
-      skip("redirects", "some redirect rules are not valid in Tugra (single-line regex/replacement, max 1024 chars) — re-create them manually");
+      skip("redirects", why("redirects_invalid"));
     }
-    if (app.redirects.length > MAX_REDIRECTS) skip("redirects limit", `Tugra allows at most ${MAX_REDIRECTS} redirect rules`);
+    if (app.redirects.length > MAX_REDIRECTS) skip("redirects limit", why("redirects_limit", { max: MAX_REDIRECTS }));
   }
   return out;
 }
