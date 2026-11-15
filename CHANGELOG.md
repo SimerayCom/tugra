@@ -7,6 +7,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Restart, Start and Stop now say what they did.** A restart finishes with the app still "Running", so the
+  click looked like nothing happened; each lifecycle action now ends in a named toast ("Gitea restarted.") or an
+  error toast, never silence.
+- **Sidebar footer is two short rows and the scrollbars follow the theme.** Sponsor is a small distinct pill,
+  What's new and Documentation are icon buttons beside it, and Log out and Collapse share a row, so the
+  navigation above keeps its room (five stacked rows before). Scrollbars everywhere are thin and tinted from the
+  theme tokens instead of the browser's grey default.
+
 ## [0.1.0-beta.16] - 2026-11-15
 
 - **Settings → Appearance: make the panel look the way you like.** A new tab holds per-user, browser-local choices:
