@@ -4,7 +4,7 @@ import { mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs
 import os from "node:os";
 import path from "node:path";
 import { PassThrough, Readable } from "node:stream";
-import { assertDiskHeadroom, discardStaged, filesLimits, stageUpload, StagedTooLargeError, StagingBudget, stagingDir, sweepStaging } from "./fs-staging";
+import { assertDiskHeadroom, defaultStallPolicy, discardStaged, filesLimits, stageUpload, StagedStalledError, StagedTooLargeError, StagingBudget, stagingDir, sweepStaging } from "./fs-staging";
 
 describe("fs-staging", () => {
   let dir: string;
@@ -45,6 +45,50 @@ describe("fs-staging", () => {
     body.destroy(new Error("client aborted"));
     await expect(p).rejects.toThrow();
     expect(await readdir(dir)).toEqual([]);
+  });
+
+  it("cancels a trickled body (one byte per window beats an idle timeout, not the throughput floor) and removes the partial file", async () => {
+    const body = new PassThrough();
+    const p = stageUpload(body, 1000, { graceMs: 30, windowMs: 10, minBytesPerWindow: 100, deadlineMs: 10_000 });
+    const tick = setInterval(() => body.write("x"), 3);
+    try {
+      await expect(p).rejects.toBeInstanceOf(StagedStalledError);
+    } finally {
+      clearInterval(tick);
+    }
+    expect(body.destroyed).toBe(true);
+    expect(await readdir(dir)).toEqual([]);
+  });
+
+  it("cancels a body that overruns its overall deadline even when it keeps meeting the floor", async () => {
+    const body = new PassThrough();
+    const p = stageUpload(body, 10_000_000, { graceMs: 1000, windowMs: 10, minBytesPerWindow: 1, deadlineMs: 60 });
+    const tick = setInterval(() => body.write("xxxx"), 2);
+    try {
+      await expect(p).rejects.toMatchObject({ message: "upload deadline exceeded" });
+    } finally {
+      clearInterval(tick);
+    }
+    expect(await readdir(dir)).toEqual([]);
+  });
+
+  it("lets a body that keeps up with the floor finish", async () => {
+    const body = new PassThrough();
+    const p = stageUpload(body, 1000, { graceMs: 20, windowMs: 10, minBytesPerWindow: 10, deadlineMs: 5000 });
+    for (let i = 0; i < 20; i++) {
+      body.write("0123456789");
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    body.end();
+    const r = await p;
+    expect(r.bytes).toBe(200);
+    await discardStaged(r.path);
+  });
+
+  it("derives the default floor: 20 s grace, 16 KiB per 10 s, deadline = size / 64 KiB/s + 60 s capped at 10 min", () => {
+    expect(defaultStallPolicy(0)).toEqual({ graceMs: 20_000, windowMs: 10_000, minBytesPerWindow: 16 * 1024, deadlineMs: 60_000 });
+    expect(defaultStallPolicy(6.4 * 1024 * 1024).deadlineMs).toBe(60_000 + 102_400);
+    expect(defaultStallPolicy(256 * 1024 * 1024).deadlineMs).toBe(10 * 60_000);
   });
 
   it("reserves staging bytes from the declared length and 507s when full; release is idempotent", () => {

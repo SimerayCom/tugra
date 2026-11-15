@@ -105,22 +105,66 @@ export interface StagedUpload {
   path: string;
 }
 
+/** Thrown when an upload is too slow (below the throughput floor) or overruns its deadline; the request is destroyed. */
+export class StagedStalledError extends Error {}
+
+/**
+ * Minimum-throughput policy for a body being staged. An idle-only timeout is bypassable (one byte every N-1 seconds),
+ * so the floor is a RATE: after `graceMs`, every `windowMs` window must deliver at least `minBytesPerWindow` bytes. On
+ * top, the whole upload must finish within `deadlineMs`. Both stay well under the 15-minute HTTP request timeout.
+ */
+export interface StallPolicy {
+  graceMs: number;
+  windowMs: number;
+  minBytesPerWindow: number;
+  deadlineMs: number;
+}
+
+const MIN_RATE_BYTES_PER_SEC = 64 * 1024;
+const DEADLINE_SLACK_MS = 60_000;
+const DEADLINE_CAP_MS = 10 * 60_000;
+
+/** The default floor: 20 s grace, then >= 16 KiB per 10 s; deadline = declared / 64 KiB/s + 60 s, capped at 10 min. */
+export function defaultStallPolicy(declaredBytes: number): StallPolicy {
+  return {
+    graceMs: 20_000,
+    windowMs: 10_000,
+    minBytesPerWindow: 16 * 1024,
+    deadlineMs: Math.min(DEADLINE_CAP_MS, DEADLINE_SLACK_MS + Math.ceil((declaredBytes / MIN_RATE_BYTES_PER_SEC) * 1000)),
+  };
+}
+
 /**
  * Stream `src` into a UNIQUE `.part` file (mode 0600, exclusive create) under the staging dir, hashing and
- * counting as it goes. On any failure (cap exceeded, client abort, disk error) the partial file is removed.
+ * counting as it goes. On any failure (cap exceeded, client abort, too slow, disk error) the partial file is removed.
+ * A body below the throughput floor, or past its deadline, destroys `src` so the caller's `finally` releases its slot,
+ * its staging reservation and the partial file.
  */
-export async function stageUpload(src: Readable, cap: number): Promise<StagedUpload> {
+export async function stageUpload(src: Readable, cap: number, policy: Partial<StallPolicy> = {}): Promise<StagedUpload> {
   // An abort between now and the pipeline attaching its own listeners (the dir creation below is async) must not
   // surface as an unhandled 'error'; pipeline() still fails on the destroyed source.
   src.on("error", () => undefined);
   await ensureDir();
   const filePath = path.join(stagingDir(), `${randomUUID()}.part`);
   const counter = new ByteCapSha256(cap);
+  const pol: StallPolicy = { ...defaultStallPolicy(cap), ...policy };
+  const startedAt = Date.now();
+  let lastBytes = 0;
+  const watchdog = setInterval(() => {
+    const elapsed = Date.now() - startedAt;
+    const got = counter.bytes - lastBytes;
+    lastBytes = counter.bytes;
+    if (elapsed >= pol.deadlineMs) return src.destroy(new StagedStalledError("upload deadline exceeded"));
+    if (elapsed >= pol.graceMs && got < pol.minBytesPerWindow) src.destroy(new StagedStalledError("upload below the minimum throughput"));
+  }, Math.max(1, Math.min(pol.windowMs, pol.deadlineMs)));
+  watchdog.unref?.();
   try {
     await pipeline(src, counter, createWriteStream(filePath, { flags: "wx", mode: 0o600 }));
   } catch (e) {
     await rm(filePath, { force: true });
     throw e;
+  } finally {
+    clearInterval(watchdog);
   }
   return { bytes: counter.bytes, sha256: counter.digest(), path: filePath };
 }
