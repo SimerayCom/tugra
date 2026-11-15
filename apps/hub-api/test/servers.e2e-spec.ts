@@ -281,7 +281,9 @@ describe("Servers + Agent (e2e)", () => {
       .get(`/servers/${serverId}/install`)
       .set("Authorization", `Bearer ${accessToken}`)
       .expect(200);
-    expect(inst.body.status).toBe("ONLINE");
+    // The previous test closed the agent socket; its close handler marks the server OFFLINE asynchronously, so under
+    // load the row may already read OFFLINE here. What this test asserts is "enrolled": no longer PENDING.
+    expect(["ONLINE", "OFFLINE"]).toContain(inst.body.status);
     expect(inst.body.installCommand).toBeNull();
     await request(app.getHttpServer())
       .post(`/servers/${serverId}/reissue`)
