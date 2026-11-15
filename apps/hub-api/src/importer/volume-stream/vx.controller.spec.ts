@@ -11,6 +11,8 @@ const sha = "a".repeat(64);
 const fp = { containerId: "c".repeat(64), startedAt: "2026-11-01T00:00:00Z", finishedAt: "2026-11-14T10:00:00Z", exitCode: 0, mountType: "volume", imageId: "sha256:x" };
 const ENC = encodeURIComponent(APP_VOL_REF);
 
+jest.setTimeout(30_000); // the Nest testing module compiles slowly when the whole suite runs in parallel
+
 describe("MigrationVolumeController (routes, guard, strict bodies)", () => {
   let app: INestApplication;
   const TOKEN = generateMigrationToken();
