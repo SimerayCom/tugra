@@ -345,6 +345,22 @@ describe("assemblePreflight — disk sizing boundaries", () => {
     expect(codes(assemblePreflight(facts({ sourceProbe: big(kb), targetProbe: withFree(probe(), stage, dock - 1024, false) })))).toEqual(["disk_insufficient"]);
   });
 
+  it("an unknown device id on the target is sized as same-device (the stricter 2.05*B + 1 GiB), never as separate disks", () => {
+    const need = Math.ceil((2.05 * B + GiB) / 1024);
+    const stage = Math.ceil((1.02 * B + 512 * MiB) / 1024); // enough for separate disks, not for a shared one
+    const unknownDock = (kb: number): MoveProbe => ({ ...probe(), df: { [MOVE_STAGING_ROOT]: { availKb: kb, dev: "2049" }, [DOCKER_ROOT]: { availKb: kb, dev: null } } });
+    const unknownStage = (kb: number): MoveProbe => ({ ...probe(), df: { [MOVE_STAGING_ROOT]: { availKb: kb, dev: null }, [DOCKER_ROOT]: { availKb: kb, dev: "2049" } } });
+    for (const mk of [unknownDock, unknownStage]) {
+      expect(codes(assemblePreflight(facts({ sourceProbe: big(kb), targetProbe: mk(stage) })))).toEqual(["disk_insufficient"]);
+      expect(codes(assemblePreflight(facts({ sourceProbe: big(kb), targetProbe: mk(need) })))).toEqual([]);
+      const r = assemblePreflight(facts({ sourceProbe: big(kb), targetProbe: mk(stage) }));
+      expect(r.blockers.find((b) => b.code === "disk_insufficient")!.details).toMatchObject({ targetSameDevice: true });
+    }
+    // and the lab's real case: one disk (2049) under both → same-device
+    const same = assemblePreflight(facts({ sourceProbe: big(kb), targetProbe: { ...probe(), df: { [MOVE_STAGING_ROOT]: { availKb: stage, dev: "2049" }, [DOCKER_ROOT]: { availKb: stage, dev: "2049" } } } }));
+    expect(codes(same)).toEqual(["disk_insufficient"]);
+  });
+
   it("the source needs staging >= 1.02*B + 512MiB", () => {
     const srcOk = Math.ceil((1.02 * B + 512 * MiB) / 1024);
     const mk = (free: number) => {

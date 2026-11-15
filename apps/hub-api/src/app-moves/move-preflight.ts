@@ -440,7 +440,9 @@ export function assemblePreflight(f: PreflightFacts): MoveAppPreflightResult {
         sourceStagingFreeBytes: sourceStagingFree,
         targetStagingFreeBytes: targetFree,
         targetDockerFreeBytes: tDock?.availKb != null ? tDock.availKb * 1024 : null,
-        targetSameDevice: !!tStage?.dev && !!tDock?.dev && tStage.dev === tDock.dev,
+        // Host device ids from the probe. An UNKNOWN id (the probe had no image to look at the host with) is sized as
+        // same-device: the stricter rule, so a shared disk is never under-sized by a guess.
+        targetSameDevice: !tStage?.dev || !tDock?.dev || tStage.dev === tDock.dev,
       });
       if (v.unknown) hard("probe_failed", "Could not read free disk space on the source/target.", { subject: "df" });
       else if (!v.ok) hard("disk_insufficient", "Not enough free disk space for the transfer.", v.details);
