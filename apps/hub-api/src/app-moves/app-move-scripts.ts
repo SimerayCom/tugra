@@ -10,7 +10,8 @@ import { scrubRunOutput } from "../backups/backup-script";
 
 /** Staging root on BOTH hosts (same /etc/tugra tree the volume backups use). */
 export const MOVE_STAGING_ROOT = "/etc/tugra/app-moves";
-/** Docker's data root: the other disk-space subject of the sizing rule. */
+/** Docker's data root: the other disk-space subject of the sizing rule. This is the marker KEY the hub looks up; the
+ *  probe measures the daemon's real `DockerRootDir` on the host under this fixed key. */
 export const DOCKER_ROOT = "/var/lib/docker";
 
 /** A docker volume name we are willing to hand to a shell (also what docker itself accepts). */
@@ -71,10 +72,12 @@ export type MoveTool = (typeof MOVE_TOOLS)[number];
 
 /** Result of one probe, or null when the output was missing/malformed (the caller fails closed). */
 export interface MoveProbe {
-  /** Free KB + the device id of the filesystem backing each probed path (null = could not be read). */
+  /** Free KB + the device id of the filesystem backing each probed path, as seen from the HOST (null = could not be
+   *  read; an unknown device id is sized conservatively by the preflight). */
   df: Record<string, { availKb: number | null; dev: string | null }>;
   tools: Record<MoveTool, boolean>;
   vols: Record<string, { exists: boolean; kb: number | null; label: string | null }>;
+  /** Every TCP port listening in the HOST network namespace (a probe that could not list them parses to null). */
   ports: Set<number>;
   hostPaths: Record<string, boolean>;
 }
@@ -91,12 +94,40 @@ function assertAbsPath(p: string): string {
   return p;
 }
 
+/** awk program: `netstat -tln` rows (BusyBox in the helper image, or net-tools) → one listening port per line. The port
+ *  is the last `:`-field of Local Address, so both `0.0.0.0:22` and BusyBox's IPv6 form `:::80` work; headers are
+ *  skipped by the `tcp` prefix. */
+export const NETSTAT_PORTS_AWK = `$1 ~ /^tcp/ {n=split($4,a,":"); if (a[n] ~ /^[0-9]+$/) print a[n]}`;
+/** awk program: `/proc/net/tcp` + `/proc/net/tcp6` rows in state 0A (LISTEN) → the local port, hex → decimal by hand
+ *  (no gawk `strtonum`: it has to run on BusyBox awk and mawk alike). Header rows fail the state test. */
+export const PROC_TCP_PORTS_AWK = `$4=="0A" {split($2,a,":"); h=a[2]; n=0; for(i=1;i<=length(h);i++) n=n*16+index("0123456789ABCDEF",toupper(substr(h,i,1)))-1; print n}`;
+/** Printed by the in-container port listing only when a source worked; its absence = fail closed (`TUGRA_PORT -`). */
+export const PORTS_END_MARKER = "TUGRA_PORTS_END";
+
+/** POSIX sh run INSIDE a `--network host` container: the host's listening ports from netstat (BusyBox helper) or, in an
+ *  image without netstat (the agent image), from the host's /proc/net/tcp{,6}. Ends with the marker only on success. */
+const PORTS_INNER_SH = [
+  `if command -v netstat >/dev/null 2>&1 && L=$(netstat -tln 2>/dev/null) && [ -n "$L" ]; then printf '%s\\n' "$L" | awk '${NETSTAT_PORTS_AWK}'; echo ${PORTS_END_MARKER};`,
+  `elif [ -r /proc/net/tcp ]; then cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | awk '${PROC_TCP_PORTS_AWK}'; echo ${PORTS_END_MARKER}; fi`,
+].join(" ");
+
+/** POSIX sh run inside a container with the HOST path bound at /x: `<availKB> <devId>` of that host filesystem. */
+const HOST_DF_INNER_SH = `a=$(df -Pk /x 2>/dev/null | awk 'NR==2{print $4}'); d=$(stat -c %d /x 2>/dev/null); echo "\${a:--} \${d:--}"`;
+
 /**
- * READ-ONLY probe: no mkdir, no pull, nothing written. Same fixed template on both hosts. Markers:
- *   TUGRA_DF <path> <availKB|-> <devId|->      for /var/lib/docker and /etc/tugra/app-moves (nearest existing parent)
+ * READ-ONLY probe: no mkdir, no pull, nothing written. Same fixed template on both hosts. The agent runs in a container
+ * of its own (overlay root, own network namespace, only /etc/tugra and the docker socket bound), so everything about the
+ * HOST is measured through a throwaway container the daemon starts: a bind of the host path for df/stat (the daemon
+ * resolves `src=` on the host, and a bind keeps the host filesystem's device id), `--network host` for the listening
+ * ports. That container runs the pinned helper image when the host has it, else the agent's own image
+ * (`TUGRA_AGENT_IMAGE`, present on every host that runs an agent); never a pull. Markers:
+ *   TUGRA_DF <key> <availKB|-> <devId|->       keys /var/lib/docker (= the daemon's DockerRootDir) and /etc/tugra/app-moves
+ *                                              (= host /etc/tugra); without any image: the agent's own view, device id `-`
+ *                                              when the path is not in the agent's tree (sized conservatively)
  *   TUGRA_TOOL <curl|split|sha256sum|gzip|helper> <0|1>
  *   TUGRA_VOL <dockerName> ABSENT | EXISTS <kb|-> <label|->
- *   TUGRA_PORT <n>                              every listening TCP port
+ *   TUGRA_PORT <n>                              every TCP port listening on the HOST (netstat, else /proc/net/tcp{,6})
+ *   TUGRA_PORT -                                the ports could NOT be listed: the parser fails closed (probe_failed)
  *   TUGRA_HOSTPATH <path> <0|1>
  *   TUGRA_PROBE_END                             always last (a truncated output is detected by its absence)
  */
@@ -106,24 +137,39 @@ export function buildMoveProbeScript(input: MoveProbeInput): string {
   const lines = [
     "set +e",
     "export LC_ALL=C",
+    // The image the host-view containers run: the pinned helper, else the agent's own image (never pulled here).
+    `HI=; HELPER=0`,
+    `if docker image inspect ${IMG} >/dev/null 2>&1; then HI=${IMG}; HELPER=1; elif [ -n "$TUGRA_AGENT_IMAGE" ] && docker image inspect "$TUGRA_AGENT_IMAGE" >/dev/null 2>&1; then HI="$TUGRA_AGENT_IMAGE"; fi`,
+    // In-agent fallback (no image at all): nearest existing parent. Walking out to "/" means the path is not in the
+    // agent's own tree: the overlay root's free space IS the docker root's (its upper dir lives there), but its
+    // anonymous device id says nothing about the host, so it is reported unknown.
     "probe_df() {",
     '  p="$1"',
     '  while [ ! -e "$p" ] && [ "$p" != "/" ]; do p=$(dirname "$p"); done',
     `  a=$(df -Pk "$p" 2>/dev/null | awk 'NR==2{print $4}')`,
     '  d=$(stat -c %d "$p" 2>/dev/null)',
+    '  [ "$p" = "/" ] && d=',
     '  echo "TUGRA_DF $1 \${a:--} \${d:--}"',
     "}",
-    `probe_df ${DOCKER_ROOT}`,
-    `probe_df ${MOVE_STAGING_ROOT}`,
+    // Host view: $1 = marker key, $2 = the HOST path (a --mount bind never creates a missing host dir, unlike -v).
+    "host_df() {",
+    "  o=",
+    `  [ -n "$HI" ] && o=$(docker run --rm --pull=never --mount "type=bind,src=$2,dst=/x,readonly" "$HI" sh -c ${shq(HOST_DF_INNER_SH)} 2>/dev/null)`,
+    `  if printf '%s\\n' "$o" | grep -Eq '^[0-9]+ [0-9]+$'; then echo "TUGRA_DF $1 $o"; else probe_df "$1"; fi`,
+    "}",
+    `DR=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null); [ -n "$DR" ] || DR=${DOCKER_ROOT}`,
+    `host_df ${DOCKER_ROOT} "$DR"`,
+    `host_df ${MOVE_STAGING_ROOT} /etc/tugra`,
     'for t in curl split sha256sum gzip; do if command -v "$t" >/dev/null 2>&1; then echo "TUGRA_TOOL $t 1"; else echo "TUGRA_TOOL $t 0"; fi; done',
-    `if docker image inspect ${IMG} >/dev/null 2>&1; then echo "TUGRA_TOOL helper 1"; else echo "TUGRA_TOOL helper 0"; fi`,
+    'echo "TUGRA_TOOL helper $HELPER"',
   ];
   for (const v of vols) {
     const q = shq(v);
     lines.push(
       `if docker volume inspect ${q} >/dev/null 2>&1; then`,
-      `  kb=$(docker run --rm --pull=never -v ${q}:/d:ro ${IMG} du -sk /d 2>/dev/null | awk '{print $1}')`,
-      // The helper image may not be on this host yet (probing never pulls): fall back to du on the volume's mountpoint.
+      // Sized through the host-view image (helper, else the agent's own image; probing never pulls); last resort: du on
+      // the volume's mountpoint, which only an agent that can see the docker root (not a stock container) can read.
+      `  kb=; [ -n "$HI" ] && kb=$(docker run --rm --pull=never -v ${q}:/d:ro "$HI" du -sk /d 2>/dev/null | awk '{print $1}')`,
       `  [ -n "$kb" ] || kb=$(du -sk "$(docker volume inspect -f '{{.Mountpoint}}' ${q} 2>/dev/null)" 2>/dev/null | awk '{print $1}')`,
       `  lb=$(docker volume inspect -f '{{index .Labels "tugra.move"}}' ${q} 2>/dev/null)`,
       `  echo "TUGRA_VOL ${v} EXISTS \${kb:--} \${lb:--}"`,
@@ -132,8 +178,11 @@ export function buildMoveProbeScript(input: MoveProbeInput): string {
       `fi`,
     );
   }
+  // Ports of the HOST namespace, through the host-view container; the agent's own namespace is not the host's and the
+  // agent image ships neither ss nor netstat. No image, or neither source worked → `TUGRA_PORT -` (fail closed).
   lines.push(
-    `if command -v ss >/dev/null 2>&1; then ss -ltnH 2>/dev/null; else netstat -ltn 2>/dev/null | tail -n +3; fi | awk '{n=split($4,a,":"); p=a[n]; if (p ~ /^[0-9]+$/) print p}' | sort -un | head -n 4000 | while read -r p; do echo "TUGRA_PORT $p"; done`,
+    `PL=; [ -n "$HI" ] && PL=$(docker run --rm --pull=never --network host "$HI" sh -c ${shq(PORTS_INNER_SH)} 2>/dev/null)`,
+    `case "$PL" in *${PORTS_END_MARKER}) printf '%s\\n' "$PL" | grep -E '^[0-9]+$' | sort -un | head -n 4000 | while read -r p; do echo "TUGRA_PORT $p"; done ;; *) echo "TUGRA_PORT -" ;; esac`,
   );
   for (const h of hostPaths) lines.push(`if [ -e ${shq(h)} ]; then echo "TUGRA_HOSTPATH ${h.replace(/[\s"\\$`]/g, "_")} 1"; else echo "TUGRA_HOSTPATH ${h.replace(/[\s"\\$`]/g, "_")} 0"; fi`);
   lines.push("echo TUGRA_PROBE_END");
@@ -184,6 +233,8 @@ export function parseMoveProbe(output: string, expected: MoveProbeInput): MovePr
     } else if ((m = VOL_EXISTS_RE.exec(line))) {
       if (!wantVols.has(m[1]) || m[1] in probe.vols) return null;
       probe.vols[m[1]] = { exists: true, kb: m[2] === "-" ? null : Number(m[2]), label: m[3] === "-" ? null : m[3] };
+    } else if (line === "TUGRA_PORT -") {
+      return null; // the host's listening ports could not be listed: never assume "no ports" (fail closed)
     } else if ((m = PORT_RE.exec(line))) {
       const n = Number(m[1]);
       if (n < 1 || n > 65535) return null;

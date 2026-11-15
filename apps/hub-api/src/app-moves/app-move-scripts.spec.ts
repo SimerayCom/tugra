@@ -1,11 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, chmodSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, chmodSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   DOCKER_NAME_RE,
   MOVE_STAGING_ROOT,
   MOVE_TIMEOUTS,
+  NETSTAT_PORTS_AWK,
+  PROC_TCP_PORTS_AWK,
   assertDockerName,
   assertIdx,
   assertMoveId,
@@ -83,12 +85,20 @@ describe("buildMoveProbeScript", () => {
 
   it("golden: the fixed template with one volume and one host path", () => {
     const s = buildMoveProbeScript({ dockerVolumes: ["tugra_appv_a1_data"], hostPaths: ["/mnt/media"] });
-    expect(s).toContain("probe_df /var/lib/docker\nprobe_df /etc/tugra/app-moves\n");
+    // host view: the daemon's real docker root and host /etc/tugra, measured through a bind into the host-view image
+    expect(s).toContain(`DR=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null); [ -n "$DR" ] || DR=/var/lib/docker\nhost_df /var/lib/docker "$DR"\nhost_df /etc/tugra/app-moves /etc/tugra\n`);
+    expect(s).toContain(`docker run --rm --pull=never --mount "type=bind,src=$2,dst=/x,readonly" "$HI" sh -c 'a=$(df -Pk /x 2>/dev/null | awk '\\''NR==2{print $4}'\\''); d=$(stat -c %d /x 2>/dev/null); echo "\${a:--} \${d:--}"' 2>/dev/null`);
+    expect(s).toContain(`if docker image inspect ${BACKUP_HELPER_IMAGE} >/dev/null 2>&1; then HI=${BACKUP_HELPER_IMAGE}; HELPER=1; elif [ -n "$TUGRA_AGENT_IMAGE" ] && docker image inspect "$TUGRA_AGENT_IMAGE" >/dev/null 2>&1; then HI="$TUGRA_AGENT_IMAGE"; fi`);
     expect(s).toContain(`echo "TUGRA_VOL tugra_appv_a1_data EXISTS \${kb:--} \${lb:--}"`);
     expect(s).toContain(`echo "TUGRA_VOL tugra_appv_a1_data ABSENT"`);
     expect(s).toContain(`if [ -e '/mnt/media' ]; then echo "TUGRA_HOSTPATH /mnt/media 1"; else echo "TUGRA_HOSTPATH /mnt/media 0"; fi`);
-    expect(s).toContain("ss -ltnH");
-    expect(s).toContain("netstat -ltn");
+    // ports: host namespace through the host-view image, netstat first, /proc/net/tcp{,6} second, fail closed third
+    expect(s).toContain(`PL=; [ -n "$HI" ] && PL=$(docker run --rm --pull=never --network host "$HI" sh -c '`);
+    expect(s).toContain(`netstat -tln 2>/dev/null) && [ -n "$L" ]; then printf '\\''%s\\n'\\'' "$L" | awk '\\''${NETSTAT_PORTS_AWK}'\\''; echo TUGRA_PORTS_END;`);
+    expect(s).toContain(`elif [ -r /proc/net/tcp ]; then cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | awk '\\''${PROC_TCP_PORTS_AWK}'\\''; echo TUGRA_PORTS_END; fi' 2>/dev/null`);
+    expect(s).toContain(`case "$PL" in *TUGRA_PORTS_END) printf '%s\\n' "$PL" | grep -E '^[0-9]+$' | sort -un | head -n 4000 | while read -r p; do echo "TUGRA_PORT $p"; done ;; *) echo "TUGRA_PORT -" ;; esac`);
+    expect(s).not.toMatch(/\bss -ltnH\b/); // the agent image has no ss and its namespace is not the host's
+    expect(s).not.toContain("docker pull");
   });
 
   it("rejects a hostile volume name or host path before building anything", () => {
@@ -101,40 +111,106 @@ describe("buildMoveProbeScript", () => {
   });
 });
 
+// The lab's real host numbers (demo server, 2026-11-15): one sda1 disk (device 2049) under both the docker root and
+// /etc/tugra, 36.5 GB free; the host's listeners as `ss -ltnH` showed them.
 const GOOD = [
-  "TUGRA_DF /var/lib/docker 40000000 2049",
-  "TUGRA_DF /etc/tugra/app-moves 40000000 2049",
+  "TUGRA_DF /var/lib/docker 36547504 2049",
+  "TUGRA_DF /etc/tugra/app-moves 36547500 2049",
   "TUGRA_TOOL curl 1",
   "TUGRA_TOOL split 1",
   "TUGRA_TOOL sha256sum 1",
   "TUGRA_TOOL gzip 1",
   "TUGRA_TOOL helper 0",
-  "TUGRA_VOL tugra_appv_a1_data EXISTS 2048 -",
+  "TUGRA_VOL tugra_appv_a1_data EXISTS 297816 -",
   "TUGRA_VOL tugra_appv_a1_cache ABSENT",
   "TUGRA_PORT 22",
+  "TUGRA_PORT 53",
+  "TUGRA_PORT 80",
+  "TUGRA_PORT 443",
+  "TUGRA_PORT 3000",
+  "TUGRA_PORT 3001",
+  "TUGRA_PORT 20000",
   "TUGRA_PORT 20001",
+  "TUGRA_PORT 20002",
   "TUGRA_HOSTPATH /mnt/media 1",
   "TUGRA_PROBE_END",
 ];
+const LAB_PORTS = [22, 53, 80, 443, 3000, 3001, 20000, 20001, 20002];
+
+// `netstat -tln` as BusyBox v1.37 (the helper image, alpine:3.21) prints it with `--network host` on that host: two
+// header lines, IPv6 wildcards as `:::<port>`, a loopback-only listener, and the lab's stand-in relay on 18765.
+const BUSYBOX_NETSTAT = [
+  "Active Internet connections (only servers)",
+  "Proto Recv-Q Send-Q Local Address           Foreign Address         State       ",
+  "tcp        0      0 0.0.0.0:22              0.0.0.0:*               LISTEN      ",
+  "tcp        0      0 127.0.0.53:53           0.0.0.0:*               LISTEN      ",
+  "tcp        0      0 0.0.0.0:80              0.0.0.0:*               LISTEN      ",
+  "tcp        0      0 0.0.0.0:443             0.0.0.0:*               LISTEN      ",
+  "tcp        0      0 127.0.0.1:3000          0.0.0.0:*               LISTEN      ",
+  "tcp        0      0 127.0.0.1:3001          0.0.0.0:*               LISTEN      ",
+  "tcp        0      0 0.0.0.0:20000           0.0.0.0:*               LISTEN      ",
+  "tcp        0      0 0.0.0.0:20001           0.0.0.0:*               LISTEN      ",
+  "tcp        0      0 0.0.0.0:20002           0.0.0.0:*               LISTEN      ",
+  "tcp        0      0 127.0.0.1:18765         0.0.0.0:*               LISTEN      ",
+  "tcp        0      0 :::22                   :::*                    LISTEN      ",
+  "tcp        0      0 :::80                   :::*                    LISTEN      ",
+  "tcp        0      0 :::443                  :::*                    LISTEN      ",
+  "tcp        0      0 :::20000                :::*                    LISTEN      ",
+].join("\n");
+
+// `/proc/net/tcp` + `/proc/net/tcp6` of the same host (kernel format: hex `addr:port`, `st` 0A = LISTEN). Rows in
+// other states (01 ESTABLISHED, 06 TIME_WAIT) and both header rows must be ignored; 18765 = 0x494D.
+const PROC_NET_TCP = [
+  "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode",
+  "   0: 00000000:0016 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 20971 1 0000000000000000 100 0 0 10 0",
+  "   1: 3500007F:0035 00000000:0000 0A 00000000:00000000 00:00000000 00000000   991        0 19552 1 0000000000000000 100 0 0 10 0",
+  "   2: 00000000:0050 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 31337 1 0000000000000000 100 0 0 10 0",
+  "   3: 00000000:01BB 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 31338 1 0000000000000000 100 0 0 10 0",
+  "   4: 0100007F:0BB8 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 31400 1 0000000000000000 100 0 0 10 0",
+  "   5: 0100007F:0BB9 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 31401 1 0000000000000000 100 0 0 10 0",
+  "   6: 00000000:4E20 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 31500 1 0000000000000000 100 0 0 10 0",
+  "   7: 00000000:4E21 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 31501 1 0000000000000000 100 0 0 10 0",
+  "   8: 00000000:4E22 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 31502 1 0000000000000000 100 0 0 10 0",
+  "   9: 0100007F:494D 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 99001 1 0000000000000000 100 0 0 10 0",
+  "  10: 0A00000A:0016 1400000A:C7A2 01 00000000:00000000 02:000A3B14 00000000     0        0 22010 4 0000000000000000 20 4 31 10 -1",
+  "  11: 0100007F:0BB8 0100007F:A1E6 06 00000000:00000000 03:00000F44 00000000     0        0 0 3 0000000000000000",
+  "  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode",
+  "   0: 00000000000000000000000000000000:0016 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 20973 1 0000000000000000 100 0 0 10 0",
+  "   1: 00000000000000000000000000000000:0050 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 31339 1 0000000000000000 100 0 0 10 0",
+  "   2: 00000000000000000000000000000000:01BB 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 31340 1 0000000000000000 100 0 0 10 0",
+  "   3: 00000000000000000000000000000000:4E20 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 31503 1 0000000000000000 100 0 0 10 0",
+].join("\n");
+const LAB_PORTS_WITH_RELAY = [...LAB_PORTS, 18765].sort((a, b) => a - b);
 const EXPECT = { dockerVolumes: ["tugra_appv_a1_data", "tugra_appv_a1_cache"], hostPaths: ["/mnt/media"] };
 const join_ = (lines: string[]) => lines.join("\n") + "\n";
 
 describe("parseMoveProbe — strict", () => {
   it("parses a complete, well-formed probe", () => {
     const p = parseMoveProbe(`noise before\n${join_(GOOD)}`, EXPECT)!;
-    expect(p.df["/var/lib/docker"]).toEqual({ availKb: 40000000, dev: "2049" });
+    expect(p.df["/var/lib/docker"]).toEqual({ availKb: 36547504, dev: "2049" });
     expect(p.tools).toEqual({ curl: true, split: true, sha256sum: true, gzip: true, helper: false });
-    expect(p.vols.tugra_appv_a1_data).toEqual({ exists: true, kb: 2048, label: null });
+    expect(p.vols.tugra_appv_a1_data).toEqual({ exists: true, kb: 297816, label: null });
     expect(p.vols.tugra_appv_a1_cache).toEqual({ exists: false, kb: null, label: null });
-    expect([...p.ports].sort((a, b) => a - b)).toEqual([22, 20001]);
+    expect([...p.ports].sort((a, b) => a - b)).toEqual(LAB_PORTS);
     expect(p.hostPaths["/mnt/media"]).toBe(true);
   });
 
   it("keeps a move label and unknown sizes/devices as nulls", () => {
-    const lines = GOOD.map((l) => (l.startsWith("TUGRA_VOL tugra_appv_a1_data") ? "TUGRA_VOL tugra_appv_a1_data EXISTS - ck123" : l.replace("40000000 2049", "- -")));
+    const lines = GOOD.map((l) => (l.startsWith("TUGRA_VOL tugra_appv_a1_data") ? "TUGRA_VOL tugra_appv_a1_data EXISTS - ck123" : l.replace(/^(TUGRA_DF \S+) \d+ \d+$/, "$1 - -")));
     const p = parseMoveProbe(join_(lines), EXPECT)!;
     expect(p.vols.tugra_appv_a1_data).toEqual({ exists: true, kb: null, label: "ck123" });
     expect(p.df["/var/lib/docker"]).toEqual({ availKb: null, dev: null });
+  });
+
+  it("an in-agent fallback df (free KB known, device id unknown) parses with dev null", () => {
+    const lines = GOOD.map((l) => (l.startsWith("TUGRA_DF /var/lib/docker") ? "TUGRA_DF /var/lib/docker 36547504 -" : l));
+    expect(parseMoveProbe(join_(lines), EXPECT)!.df["/var/lib/docker"]).toEqual({ availKb: 36547504, dev: null });
+  });
+
+  it("a host with no TUGRA_PORT line at all is valid (nothing listening), `TUGRA_PORT -` is not (ports unknown → fail closed)", () => {
+    const none = GOOD.filter((l) => !l.startsWith("TUGRA_PORT"));
+    expect(parseMoveProbe(join_(none), EXPECT)!.ports.size).toBe(0);
+    expect(parseMoveProbe(join_([...none.slice(0, -1), "TUGRA_PORT -", "TUGRA_PROBE_END"]), EXPECT)).toBeNull();
   });
 
   it("fails closed (null) when the end marker is missing (truncated output)", () => {
@@ -164,42 +240,140 @@ describe("parseMoveProbe — strict", () => {
   });
 });
 
+const uniqSorted = (lines: string): number[] => [...new Set(lines.split("\n").filter(Boolean).map(Number))].sort((a, b) => a - b);
+
+describe("probe port listing — the awk programs against the real formats", () => {
+  it("NETSTAT_PORTS_AWK: BusyBox `netstat -tln` → the listening ports (v4 + `:::` v6 forms, headers skipped)", () => {
+    const out = execFileSync("awk", [NETSTAT_PORTS_AWK], { input: BUSYBOX_NETSTAT + "\n", encoding: "utf8" });
+    expect(uniqSorted(out)).toEqual(LAB_PORTS_WITH_RELAY);
+  });
+
+  it("PROC_TCP_PORTS_AWK: /proc/net/tcp + tcp6 → only state 0A rows, hex ports decoded", () => {
+    const out = execFileSync("awk", [PROC_TCP_PORTS_AWK], { input: PROC_NET_TCP + "\n", encoding: "utf8" });
+    expect(uniqSorted(out)).toEqual(LAB_PORTS_WITH_RELAY);
+    expect(out).not.toContain("51106"); // 0xC7A2, the ESTABLISHED peer port, must not leak in
+  });
+});
+
 describe("probe script, executed against stubbed tools (shell semantics)", () => {
-  // The probe is plain POSIX-ish shell; run the REAL script with stub `docker`/`stat`/`ss` on PATH so the markers it
-  // prints (and our parser's view of them) are verified end to end without a docker host.
+  // The probe is plain POSIX-ish shell; run the REAL script with a stub `docker` on PATH that answers `info`,
+  // `image inspect`, `volume inspect` and the three `run` shapes (host df bind, --network host port listing, du) the
+  // way the real daemon did in the lab, so the markers it prints (and our parser's view of them) are verified end to
+  // end without a docker host. The --network host run really executes the inner `sh -c` program, with a stub BusyBox
+  // `netstat` on its PATH, so the netstat → awk → marker chain is exercised for real.
   const dir = mkdtempSync(join(tmpdir(), "tugra-probe-"));
+  const innerBin = join(dir, "innerbin");
+  mkdirSync(innerBin);
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
-  const stub = (name: string, body: string) => {
-    writeFileSync(join(dir, name), `#!/bin/bash\n${body}\n`);
-    chmodSync(join(dir, name), 0o755);
+  const stub = (where: string, name: string, body: string) => {
+    writeFileSync(join(where, name), `#!/bin/bash\n${body}\n`);
+    chmodSync(join(where, name), 0o755);
   };
+  const AGENT_IMG = "ghcr.io/example/tugra-agent:test";
   stub(
+    dir,
     "docker",
-    `case "$1 $2" in
-  "image inspect") exit 1 ;;
+    `STUB=${dir}
+case "$1 $2" in
+  "info --format") echo /var/lib/docker; exit 0 ;;
+  "image inspect")
+    [ -e "$STUB/helper-present" ] && [ "$3" = "${BACKUP_HELPER_IMAGE}" ] && exit 0
+    [ -e "$STUB/agent-present" ] && [ "$3" = "${AGENT_IMG}" ] && exit 0
+    exit 1 ;;
   "volume inspect")
     if [ "$3" = "-f" ]; then
       case "$4" in *Labels*) echo "ckmovelabel"; exit 0;; *Mountpoint*) echo "/nonexistent-mp"; exit 0;; esac
     fi
     [ "$3" = "tugra_appv_a1_data" ] && exit 0 || exit 1 ;;
-  "run --rm") echo "2048	/d"; exit 0 ;;
+  "run --rm")
+    echo "$*" >> "$STUB/docker.log"
+    case "$*" in
+      *"--mount type=bind,src=/var/lib/docker,dst=/x,readonly"*) echo "36547504 2049"; exit 0 ;;
+      *"--mount type=bind,src=/etc/tugra,dst=/x,readonly"*) echo "36547500 2049"; exit 0 ;;
+      *"--network host"*)
+        [ -e "$STUB/ports-broken" ] && exit 1
+        PATH="$STUB/innerbin:/usr/bin:/bin" sh -c "\${!#}"; exit $? ;;
+      *" du -sk /d") echo "2048	/d"; exit 0 ;;
+    esac ;;
 esac
 exit 1`,
   );
-  stub("stat", `echo 2049`);
-  stub("ss", `printf 'LISTEN 0 4096 0.0.0.0:22 0.0.0.0:*\\nLISTEN 0 4096 [::]:20001 [::]:*\\nLISTEN 0 4096 127.0.0.53%%lo:53 0.0.0.0:*\\n'`);
+  stub(dir, "stat", `echo 2049`);
+  stub(innerBin, "netstat", `printf '%s\\n' ${shq(BUSYBOX_NETSTAT)}`);
+  const INPUT = { dockerVolumes: ["tugra_appv_a1_data", "tugra_appv_a1_cache"], hostPaths: ["/definitely/not/here"] };
+  const run = (flags: string[], env: Record<string, string> = {}): { out: string; log: string } => {
+    for (const f of ["helper-present", "agent-present", "ports-broken", "docker.log"]) rmSync(join(dir, f), { force: true });
+    for (const f of flags) writeFileSync(join(dir, f), "");
+    const e = { ...process.env, PATH: `${dir}:${process.env.PATH}`, ...env };
+    delete (e as Record<string, string | undefined>).TUGRA_AGENT_IMAGE;
+    Object.assign(e, env);
+    const out = execFileSync("bash", ["-c", buildMoveProbeScript(INPUT)], { env: e, encoding: "utf8" });
+    let log = "";
+    try {
+      log = readFileSync(join(dir, "docker.log"), "utf8");
+    } catch {
+      /* no docker run happened */
+    }
+    return { out, log };
+  };
 
-  it("prints markers our strict parser accepts, with the right sizes/labels/ports", () => {
-    const script = buildMoveProbeScript({ dockerVolumes: ["tugra_appv_a1_data", "tugra_appv_a1_cache"], hostPaths: ["/definitely/not/here"] });
-    const out = execFileSync("bash", ["-c", script], { env: { ...process.env, PATH: `${dir}:${process.env.PATH}` }, encoding: "utf8" });
-    const p = parseMoveProbe(out, { dockerVolumes: ["tugra_appv_a1_data", "tugra_appv_a1_cache"], hostPaths: ["/definitely/not/here"] });
+  it("helper present: host df/dev through the helper bind, host ports through `--network host` netstat", () => {
+    const { out, log } = run(["helper-present"]);
+    const p = parseMoveProbe(out, INPUT);
     expect(p).not.toBeNull();
+    expect(p!.df["/var/lib/docker"]).toEqual({ availKb: 36547504, dev: "2049" });
+    expect(p!.df["/etc/tugra/app-moves"]).toEqual({ availKb: 36547500, dev: "2049" });
+    expect(p!.tools.helper).toBe(true);
     expect(p!.vols.tugra_appv_a1_data).toEqual({ exists: true, kb: 2048, label: "ckmovelabel" });
     expect(p!.vols.tugra_appv_a1_cache.exists).toBe(false);
-    expect(p!.tools.helper).toBe(false);
-    expect([...p!.ports].sort((a, b) => a - b)).toEqual([22, 53, 20001]);
+    expect([...p!.ports].sort((a, b) => a - b)).toEqual(LAB_PORTS_WITH_RELAY);
     expect(p!.hostPaths["/definitely/not/here"]).toBe(false);
-    expect(p!.df["/var/lib/docker"].dev).toBe("2049");
+    expect(out).not.toContain("TUGRA_PORT -");
+    expect(log).toContain(`--network host ${BACKUP_HELPER_IMAGE} sh -c`);
+    expect(log).toContain(`--pull=never --mount type=bind,src=/var/lib/docker,dst=/x,readonly ${BACKUP_HELPER_IMAGE} sh -c`);
+    expect(log).not.toContain("pull ");
+  });
+
+  it("helper absent but the agent's own image present: it is the host-view image (helper still reported 0)", () => {
+    const { out, log } = run(["agent-present"], { TUGRA_AGENT_IMAGE: AGENT_IMG });
+    const p = parseMoveProbe(out, INPUT);
+    expect(p).not.toBeNull();
+    expect(p!.tools.helper).toBe(false);
+    expect(p!.df["/var/lib/docker"]).toEqual({ availKb: 36547504, dev: "2049" });
+    expect([...p!.ports].sort((a, b) => a - b)).toEqual(LAB_PORTS_WITH_RELAY);
+    expect(log).toContain(`--network host ${AGENT_IMG} sh -c`);
+    expect(log).toContain(`src=/etc/tugra,dst=/x,readonly ${AGENT_IMG} sh -c`);
+    expect(log).toContain(`-v tugra_appv_a1_data:/d:ro ${AGENT_IMG} du -sk /d`); // volume sizing too, not just df/ports
+    expect(log).not.toContain(BACKUP_HELPER_IMAGE);
+    expect(p!.vols.tugra_appv_a1_data.kb).toBe(2048);
+  });
+
+  it("no image at all: df falls back to the agent's own view, ports are `TUGRA_PORT -` and the parser fails closed", () => {
+    const { out, log } = run([]);
+    expect(out).toMatch(/^TUGRA_DF \/var\/lib\/docker (\d+|-) (\d+|-)$/m);
+    expect(out).toMatch(/^TUGRA_DF \/etc\/tugra\/app-moves (\d+|-) (\d+|-)$/m);
+    expect(out).toContain("\nTUGRA_PORT -\n");
+    expect(out.trimEnd().endsWith("TUGRA_PROBE_END")).toBe(true);
+    expect(log).toBe(""); // no image → no `docker run` at all (and still no pull)
+    expect(out).toContain("TUGRA_VOL tugra_appv_a1_data EXISTS - ckmovelabel"); // mountpoint du is not readable from a container
+    expect(parseMoveProbe(out, INPUT)).toBeNull();
+  });
+
+  it("helper present but the port listing fails inside the container: `TUGRA_PORT -`, never an empty port list", () => {
+    const { out } = run(["helper-present", "ports-broken"]);
+    expect(out).toContain("\nTUGRA_PORT -\n");
+    expect(out).toContain("TUGRA_DF /var/lib/docker 36547504 2049");
+    expect(parseMoveProbe(out, INPUT)).toBeNull();
+  });
+
+  it("in-agent fallback df: a path outside the agent's tree reports its device id as unknown, never the overlay root's", () => {
+    // probe_df alone, with a path that cannot exist here: the walk ends at "/" → dev "-"; free KB still read.
+    const fn = buildMoveProbeScript({ dockerVolumes: [] }).split("\n").filter((l) => /^(probe_df\(\) \{|  |\})/.test(l));
+    const start = fn.indexOf("probe_df() {");
+    const end = fn.indexOf("}", start);
+    const script = [...fn.slice(start, end + 1), 'probe_df /no_such_root_dir_for_tugra_probe/x'].join("\n");
+    const out = execFileSync("bash", ["-c", script], { env: { ...process.env, PATH: `${dir}:${process.env.PATH}` }, encoding: "utf8" });
+    expect(out.trim()).toMatch(/^TUGRA_DF \/no_such_root_dir_for_tugra_probe\/x \d+ -$/);
   });
 });
 
