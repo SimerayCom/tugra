@@ -2,7 +2,7 @@ import type { ForeignApp, ForeignFleet, ImportCoverage, ImportCoverageApp, Impor
 import { foreignAppToIngressPlan, foreignAppToPostCreateConfig } from "./apply-map";
 import { why } from "./reason";
 import { mapBuildPack } from "./buildpack-map";
-import { ns } from "./import-planner";
+import { analyzeService, ns } from "./import-planner";
 import { isSshGitUrl } from "../deploy/deploy-script";
 
 type Entry = ImportCoverageApp["notCarried"][number];
@@ -22,6 +22,20 @@ export function buildCoverage(fleet: ForeignFleet, options: ImportOptions): Impo
   for (const app of fleet.apps) {
     const notCarried = coverageFor(app);
     if (notCarried.length) apps.push({ itemRef: ns("app", app.serverRef, app.sourceRef), name: app.name, notCarried });
+  }
+  // Services: what each one does not carry as-is (dropped members, stripped container names / ports / labels, host-bind
+  // rewrites, config files, volumes whose data is skipped). Names + fixed reasons only. Advisory: not hashed.
+  for (const svc of fleet.services ?? []) {
+    const a = analyzeService(svc);
+    const r = a.result;
+    if (!r) continue;
+    const entries: Entry[] = r.dropped.map((d) => ({ field: d.field, reason: d.reason, level: d.level }));
+    for (const v of r.volumes) if (v.policy === "empty") entries.push({ field: `volume:${v.key}`, reason: "starts empty on the target (coordination state is rebuilt)", level: "info" });
+    for (const f of r.neededFiles) entries.push({ field: `file:${f}`, reason: "config file needed from the source; the service is not imported without it", level: "warn" });
+    if (r.configMounts.length) entries.push({ field: "configMounts", reason: `${r.configMounts.length} config file(s) are carried as Tugra config mounts`, level: "info" });
+    if (!entries.length) continue;
+    entries.sort((x, y) => (x.level === y.level ? (x.field < y.field ? -1 : x.field > y.field ? 1 : 0) : x.level === "warn" ? -1 : 1));
+    apps.push({ itemRef: a.itemRef, name: svc.name, notCarried: entries });
   }
   const env = envCoverage(fleet);
   const git = options.sourceKind === "coolify" ? gitCoverage(fleet) : undefined; // other sources keep their output byte-identical

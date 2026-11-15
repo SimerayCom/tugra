@@ -1,5 +1,5 @@
 import { MIGRATOR_ENGINES } from "./migrator-recipe";
-import { UNSUPPORTED_DB_IMPORT } from "./import-planner";
+import { UNSUPPORTED_DB_IMPORT, analyzeService } from "./import-planner";
 import { foreignAppToVolumes } from "./apply-map";
 import { gitUrlHost } from "../deploy/deploy-script";
 import { DEFAULT_MAX_ARTIFACT_BYTES } from "./migration-staging";
@@ -80,6 +80,21 @@ export function classifyDbDataPlane(engine: string): { dataPlane: DbDataPlane; r
   return { dataPlane: "manual", reason: "config imports, but the data has no automated dump yet — dump and restore it manually" };
 }
 
+/** The per-service note, derived from the verdict. `/not imported/i` appears ONLY for a skipped service. Never claims
+ *  anything the import does not do (no "dependents repointed", no "DNS updated", no "tunnel routes rewritten"). */
+function serviceNote(a: ReturnType<typeof analyzeService>): string {
+  const r = a.result;
+  if (a.verdict === "skipped") return `not imported: ${a.skipReason ?? "the service could not be imported"}`;
+  if (a.verdict === "partial" && r) {
+    const parts: string[] = [];
+    if (r.membersDropped.length) parts.push(`imported without: ${r.membersDropped.map((m) => m.name).join(", ")}`);
+    const skipped = r.volumes.filter((v) => v.policy === "skip").map((v) => v.key);
+    if (skipped.length) parts.push(`the data of ${skipped.join(", ")} is not carried`);
+    return `${parts.join("; ")}; created as a stopped compose app, volume data is copied separately and you deploy it yourself`;
+  }
+  return "imported as a stopped compose app; volume data is copied separately and you deploy it yourself";
+}
+
 /**
  * Build the advisory preflight for a discovered fleet: per-DB data-movement class, the services the plan does
  * NOT import (so they are never a silent drop), and the volume-data caveat. Pure and secret-free.
@@ -92,15 +107,20 @@ export function buildPreflight(fleet: ForeignFleet, options: ImportOptions, inve
     return { name: d.name, engine: d.engine, dataPlane: c.dataPlane, reason: c.reason };
   });
 
-  const services = fleet.services.map((s) => ({
-    name: s.name,
-    members: s.memberApps.length + s.memberDbs.length,
-    note: isMinioService(s)
-      ? MINIO_SERVICE_NOTE
-      : "service stack (compose / one-click) — not imported yet; recreate it on Tugra and copy its volume data manually (rsync; quiesce the source first)",
-    // Only a MinIO service carries the flag (the key is ABSENT otherwise, so every other row stays byte-identical).
-    ...(isMinioService(s) ? { objectStore: true as const } : {}),
-  }));
+  const services = fleet.services.map((s) => {
+    const a = analyzeService(s);
+    const r = a.result;
+    return {
+      name: s.name,
+      members: s.memberApps.length + s.memberDbs.length,
+      note: isMinioService(s) ? MINIO_SERVICE_NOTE : serviceNote(a),
+      // Only a MinIO service carries the flag (the key is ABSENT otherwise).
+      ...(isMinioService(s) ? { objectStore: true as const } : {}),
+      verdict: a.verdict,
+      ...(r?.hold ? { hold: true } : {}),
+      ...(r?.volumes.length ? { volumes: r.volumes.map((v) => ({ key: v.key, dataPlane: v.dataPlane })) } : {}),
+    };
+  });
 
   const appsWithVolumeData = carried ? 0 : fleet.apps.filter((a) => (a.volumes ?? []).length > 0).length;
   // Does ANY app actually get an empty volume declared? (A compose-only / all-skipped fleet declares none, so the

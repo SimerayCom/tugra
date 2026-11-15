@@ -12,6 +12,9 @@ import type {
 } from "./foreign-fleet";
 import { mapBuildPack } from "./buildpack-map";
 import { foreignAppToVolumes } from "./apply-map";
+import { transformServiceCompose, type ServiceTransformResult } from "./import-service-map";
+import type { ForeignService } from "./foreign-fleet";
+import { TEMPLATES } from "../templates/catalog";
 
 // Engines whose CONFIG cannot be imported (the planner emits a blocker; the executor skips the item, so NO
 // target database is created). Exported so the preflight classifies them identically — one source, no drift.
@@ -48,12 +51,17 @@ export function planImport(fleet: ForeignFleet, options: ImportOptions): ImportP
 
   const appItems = fleet.apps.map((app) => planApp(app, dbByRef, carried, treeRisk(fleet.projects, app, "app.project")));
 
-  const items = [...dbItems, ...volItems.values(), ...appItems];
+  // Services (Coolify stacks) become stopped compose apps. Only the sources that implement `fetchServiceBundle` can carry
+  // them, but the plan classifies every discovered service honestly. A fleet without services adds nothing here.
+  const serviceItems = (fleet.services ?? []).map((svc) => planService(svc));
+
+  const items = [...dbItems, ...volItems.values(), ...appItems, ...serviceItems];
   const totals = {
     apps: fleet.apps.length,
     databases: fleet.databases.length,
     volumes: volItems.size,
     blockers: items.reduce((n, it) => n + it.risks.filter((r) => r.level === "blocker").length, 0),
+    ...(serviceItems.length ? { services: serviceItems.length } : {}),
   };
   // Deterministic: depends only on the plan content + options (no time/random). Items are sorted by their
   // itemRef first, so the hash is independent of discovery order (two scans of an unchanged host hash equal
@@ -145,7 +153,7 @@ function planApp(app: ForeignApp, dbByRef: Map<string, ForeignDb>, volumesCarrie
       const svcDomains = [...new Set((app.domains ?? []).map((d) => d.serviceRef).filter((s): s is string => !!s))];
       if (svcDomains.length) risks.push({ level: "warn", code: "app.compose.domains", message: `per-service domains are not carried for a git compose yet — after import, set each service's domain (source services: ${svcDomains.join(", ")})` });
     } else {
-      risks.push({ level: "info", code: "app.compose", message: "compose file is rewritten (magic vars) and validated (assertSafeCompose) on import" });
+      risks.push({ level: "info", code: "app.compose", message: "the compose file is stored as-is and validated (assertSafeCompose) when the app is created; Coolify magic variables (SERVICE_*) are not rewritten for app composes. A compose that fails the gate fails this item." });
     }
   }
   if (app.privileged || app.mountsDockerSock) risks.push({ level: "warn", code: "app.privileged", message: "source uses privileged mode or mounts the docker socket — requires explicit acknowledgement to import" });
@@ -252,6 +260,115 @@ function planVolume(vol: ForeignVolume, serverRef: string | undefined, carried: 
     name: vol.name ?? vol.mountPath,
     proposed: { mountPath: vol.mountPath, type: vol.type, owner: vol.ownerRef ?? null },
     risks,
+    dependsOn: [],
+  };
+}
+
+
+// ── Services (Coolify stacks → ONE stopped Tugra COMPOSE app each) ───────────────────────────────────────────────
+
+/** Everything the plan, the preflight and the coverage report derive from one service, computed in one place so the
+ *  three can never drift. Pure; plan time (no secrets), so `bundle` is never passed. */
+export interface ServiceAnalysis {
+  itemRef: string;
+  result: ServiceTransformResult | undefined; // undefined when the source gave no compose
+  risks: ImportRisk[];
+  verdict: "importable" | "partial" | "skipped";
+  compat: "template" | "passthrough" | "blocked";
+  /** A one-sentence, fixed-text reason for a skipped service. */
+  skipReason?: string;
+}
+
+const GATE_RISK: Record<string, { code: string; message: string }> = {
+  "compose-unparsed": { code: "service.compose.unparsed", message: "the source's compose file could not be parsed as a compose document" },
+  "compose-too-large": { code: "service.compose.unparsed", message: "the source's compose file is larger than the 256 KiB import limit" },
+  "service-name": { code: "service.compose.unparsed", message: "a compose service has a name Tugra cannot use" },
+  "volume-name": { code: "service.volume.name", message: "a named volume has a name the data step cannot address (lowercase letters, digits, - and _ only, at most 41 characters)" },
+};
+
+export function analyzeService(svc: ForeignService): ServiceAnalysis {
+  const itemRef = ns("service", svc.serverRef, svc.sourceRef);
+  const risks: ImportRisk[] = [];
+  const tplMatch = !!svc.templateSlug && Object.prototype.hasOwnProperty.call(TEMPLATES, svc.templateSlug);
+  if (!svc.composeFile) {
+    risks.push({ level: "blocker", code: "service.compose.unavailable", message: "the source did not return this service's compose file (the token may need read:sensitive)" });
+    return { itemRef, result: undefined, risks, verdict: "skipped", compat: "blocked", skipReason: "the source did not return the service's compose file" };
+  }
+  const r = transformServiceCompose({ svc, raw: svc.composeFile });
+  const names = (xs: string[]) => xs.join(", ");
+
+  if (r.gate !== "ok") {
+    const known = GATE_RISK[r.gate.code];
+    if (known) risks.push({ level: "blocker", code: known.code, message: known.message });
+    else risks.push({ level: "blocker", code: "service.gate", message: `the compose uses something Tugra's safety gate refuses (${r.gate.code}${r.gate.detail ? `: ${r.gate.detail}` : ""}); it is never carried or overridden` });
+    return { itemRef, result: r, risks, verdict: "skipped", compat: "blocked", skipReason: "the compose is refused by the safety gate" };
+  }
+  if (r.membersKept.length === 0) {
+    risks.push({ level: "info", code: "service.type.unsupported", message: `not imported: every member needs something Tugra never carries (${names(r.membersDropped.map((m) => `${m.name}: ${m.reason}`))}) — Tugra monitors the host itself` });
+    return { itemRef, result: r, risks, verdict: "skipped", compat: "blocked", skipReason: "every member needs something Tugra never carries" };
+  }
+  if (r.membersDropped.length) {
+    risks.push({ level: "warn", code: "service.member.dropped", message: `imported without: ${names(r.membersDropped.map((m) => `${m.name} (${m.reason})`))}` });
+  }
+  const hostBinds = r.volumes.filter((v) => v.origin === "host-bind");
+  if (hostBinds.length) {
+    risks.push({ level: "warn", code: "service.volume.hostbind", message: `host folder bind(s) are carried as named volume(s) (${names(hostBinds.map((v) => v.key))}); the host folder itself is not mounted on the target` });
+  }
+  const copyVols = r.volumes.filter((v) => v.policy === "copy");
+  if (copyVols.length) {
+    risks.push({ level: "warn", code: "service.volume.size-unknown", message: `the size of ${names(copyVols.map((v) => v.key))} is not measured at plan time; a volume over the hub-staging cap is copied by hand` });
+  }
+  if (r.floating.length) {
+    risks.push({ level: "warn", code: "service.image.floating", message: `floating image tag on ${names(r.floating)}: pin it to the version the source runs, or the registry's current latest is pulled (a data directory can be version-bound)` });
+  }
+  if (r.neededFiles.length) {
+    risks.push({ level: "warn", code: "service.files.needed", message: `${r.neededFiles.length} config file(s) are carried only if the token can read them (${names(r.neededFiles)}); without them the service is not imported` });
+  }
+  if (r.volumes.some((v) => v.dataPlane === "manual-large")) {
+    risks.push({ level: "warn", code: "service.data.manual-large", message: "a volume is over the hub-staging cap: copy it with the big-volume pipeline or by hand" });
+  }
+  const skipVols = r.volumes.filter((v) => v.policy === "skip");
+  if (skipVols.length) {
+    risks.push({ level: "warn", code: "service.data.not-carried", message: `the data of ${names(skipVols.map((v) => v.key))} is intentionally not carried (Compose creates it empty on the first deploy)` });
+  }
+  if (r.hold) {
+    risks.push({ level: "warn", code: "service.hold", message: "created stopped and never deployed by the import: running it next to the source would split live traffic. Stop the source and repoint its routes by hand first" });
+  }
+  risks.push({ level: "warn", code: "service.deploy.manual", message: "created stopped; nothing is deployed by the import. Copy the data (if any), then deploy it yourself" });
+  if (r.domains.length === 0 && !r.hold) {
+    risks.push({ level: "warn", code: "service.reach", message: "no domain is mapped: other apps keep reaching it by its old internal host until they are repointed (the app joins a private network instead of a public domain)" });
+  }
+  if (r.dropped.some((d) => d.field.endsWith(".container_name"))) {
+    risks.push({ level: "warn", code: "service.container-name", message: "container names are not carried; the compose service key is the DNS name inside the app" });
+  }
+  if (r.unverifiedKeys.length) {
+    risks.push({ level: "info", code: "service.secrets.unverified", message: `${r.unverifiedKeys.length} variable(s) are read from the source when you apply (never shown here)` });
+  }
+  return { itemRef, result: r, risks, verdict: r.verdict, compat: tplMatch ? "template" : "passthrough" };
+}
+
+function planService(svc: ForeignService): ImportPlanItem {
+  const a = analyzeService(svc);
+  const r = a.result;
+  const keptSet = new Set(r?.membersKept ?? []);
+  return {
+    itemRef: a.itemRef,
+    kind: "service",
+    name: svc.name,
+    proposed: {
+      name: svc.name,
+      source: "COMPOSE",
+      members: [...(svc.members ?? [])].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)).map((m) => ({ name: m.name, kind: m.kind, kept: keptSet.has(m.name) })),
+      volumes: (r?.volumes ?? []).map((v) => ({ key: v.key, origin: v.origin, policy: v.policy, dataPlane: v.dataPlane })),
+      serviceDomains: (r?.domains ?? []).map((d) => ({ service: d.service, host: d.hostname, port: d.port })),
+      deployed: false,
+      verdict: a.verdict,
+      compat: a.compat,
+      templateSlug: svc.templateSlug ?? null,
+      imageFloating: r?.floating ?? [],
+      hold: r?.hold ?? false,
+    },
+    risks: a.risks,
     dependsOn: [],
   };
 }

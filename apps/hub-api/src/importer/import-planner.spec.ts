@@ -204,6 +204,7 @@ describe("planImport — compose source blocker (git-sourced compose)", () => {
     const it2 = compose({ composeFile: "services: {}" });
     expect(codes(it2)).not.toContain("app.compose.missing");
     expect(codes(it2)).toContain("app.compose");
+    expect(it2.risks.find((r) => r.code === "app.compose")?.message).toMatch(/stored as-is and validated \(assertSafeCompose\).*not rewritten/i); // honest: no magic-var rewrite for app composes
   });
 
   it("a git-compose is honest: deploy-time validation note, and warns per-service domains aren't carried; no path warn when composePath is known", () => {

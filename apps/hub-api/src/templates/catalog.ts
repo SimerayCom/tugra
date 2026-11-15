@@ -758,6 +758,14 @@ volumes:
 const GENERATED = (generated as unknown as { templates: Record<string, TemplateDef> })
   .templates;
 
+/** The BUNDLED generated (non-curated) template for a slug, or undefined. A curated slug always wins in the assembled
+ *  catalog, so it is never returned here: the importer links a service to a template for its logo/search only when the
+ *  template is a plain generated one (no curated `web` routing override). */
+export function generatedOnlyTemplate(slug: string): TemplateDef | undefined {
+  if (!Object.prototype.hasOwnProperty.call(GENERATED, slug) || Object.prototype.hasOwnProperty.call(CURATED, slug)) return undefined;
+  return GENERATED[slug];
+}
+
 /**
  * Assemble the full catalog: bundled generated bulk, overlaid by a (signed, verified) `remote` set,
  * with the curated overrides ALWAYS winning. Precedence (last wins): generated < remote < curated —

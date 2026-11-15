@@ -56,7 +56,7 @@ describe("buildPreflight", () => {
       { name: "pg", engine: "POSTGRES", dataPlane: "one-click", reason: expect.any(String) },
       { name: "ch", engine: "CLICKHOUSE", dataPlane: "manual", reason: expect.any(String) },
     ]);
-    expect(pf.services).toEqual([{ name: "signoz", members: 2, note: expect.stringMatching(/not imported/i) }]);
+    expect(pf.services).toEqual([{ name: "signoz", members: 2, note: expect.stringMatching(/not imported/i), verdict: "skipped" }]);
     expect(pf.appsWithVolumeData).toBe(1);
     expect(pf.volumeDataNote).toMatch(/upload their DATA to the hub/i); // v1: manual upload before first deploy
     expect(pf.volumeDataNote).not.toMatch(/the migrator copies/i); // never claim an automated migrator volume step (not shipped)
