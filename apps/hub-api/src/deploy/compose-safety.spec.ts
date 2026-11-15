@@ -1,4 +1,4 @@
-import { assertSafeCompose, isUnderRoot } from "./compose-safety";
+import { assertSafeCompose, assertSafeEnvFiles, isUnderRoot } from "./compose-safety";
 
 const wrap = (svcBody: string) => `services:\n  app:\n    image: nginx\n${svcBody}\n`;
 
@@ -316,6 +316,49 @@ describe("assertSafeCompose — reserved labels and Tugra networks (D5b)", () =>
   });
 });
 
+describe("assertSafeCompose — interpolation bypass of the reserved gates (pasted compose)", () => {
+  const wrapSvc = (body: string) => `services:\n  app:\n    image: nginx\n${body}\n`;
+  it("rejects interpolation in a label KEY but keeps ${VAR} label VALUES", () => {
+    expect(() => assertSafeCompose(wrapSvc('    labels:\n      - "${P:-traefik.}http.routers.x.rule=Host(`a.b`)"'))).toThrow(/label key/);
+    expect(() => assertSafeCompose(wrapSvc('    labels:\n      - "$${P}x=1"'))).toThrow(/label key/);
+    expect(() => assertSafeCompose(wrapSvc('    labels:\n      "${P:-traefik.}x": "1"'))).toThrow(/label key/);
+    expect(() => assertSafeCompose(wrapSvc('    deploy:\n      labels:\n        - "${P:-traefik.}x=1"'))).toThrow(/label key/);
+    expect(() => assertSafeCompose(wrapSvc('    labels:\n      - "com.example.token=${TOKEN}"'))).not.toThrow();
+    expect(() => assertSafeCompose(wrapSvc('    labels:\n      com.example.v: "${V:-x}"'))).not.toThrow();
+  });
+  it("rejects an interpolated container_name", () => {
+    expect(() => assertSafeCompose(wrapSvc('    container_name: "${N:-tugra-hub}"'))).toThrow(/interpolation/);
+    expect(() => assertSafeCompose(wrapSvc("    container_name: mydb"))).not.toThrow();
+  });
+  it("rejects an interpolated top-level network name / external.name", () => {
+    const net = (body: string) => `services:\n  app:\n    image: nginx\nnetworks:\n${body}\n`;
+    expect(() => assertSafeCompose(net('  x:\n    external: true\n    name: "${N:-tugra-proxy}"'))).toThrow(/interpolation/);
+    expect(() => assertSafeCompose(net('  x:\n    external:\n      name: "${N:-tugra-proxy}"'))).toThrow(/interpolation/);
+    expect(() => assertSafeCompose(net('  x:\n    name: "${N:-tugra-proxy}"'))).toThrow(/interpolation/);
+  });
+  it("does not apply the interpolation rejection to a rendered git stack", () => {
+    const g = (c: string) => () => assertSafeCompose(c, { gitCloneRoot: "/etc/tugra/compose-git/abc/src" });
+    expect(g(wrapSvc('    labels:\n      - "${P:-x}.k=1"'))).not.toThrow();
+  });
+  it("gates service env_file / label_file of a pasted compose", () => {
+    expect(() => assertSafeCompose(wrapSvc("    env_file: /etc/shadow"))).toThrow(/env_file/);
+    expect(() => assertSafeCompose(wrapSvc("    env_file:\n      - ../x.env"))).toThrow(/env_file/);
+    expect(() => assertSafeCompose(wrapSvc("    env_file:\n      - path: /root/.env"))).toThrow(/env_file/);
+    expect(() => assertSafeCompose(wrapSvc('    env_file: "${F}"'))).toThrow(/env_file/);
+    expect(() => assertSafeCompose(wrapSvc("    label_file: ./l"))).toThrow(/label_file/);
+    expect(() => assertSafeCompose(wrapSvc("    env_file: .env"))).not.toThrow();
+    expect(() => assertSafeCompose(wrapSvc("    env_file:\n      - ./app.env"))).not.toThrow();
+  });
+});
+
+describe("assertSafeEnvFiles (preview of a stored compose)", () => {
+  it("refuses a sensitive env_file and passes a relative one or a broken YAML", () => {
+    expect(() => assertSafeEnvFiles(wrap("    env_file: /etc/shadow"))).toThrow(/env_file/);
+    expect(() => assertSafeEnvFiles(wrap("    env_file: ./app.env"))).not.toThrow();
+    expect(() => assertSafeEnvFiles("services: [")).not.toThrow();
+  });
+});
+
 describe("bundled templates vs the reserved-label / Tugra-network rules", () => {
   it("no bundled template trips the new rules", () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -325,7 +368,7 @@ describe("bundled templates vs the reserved-label / Tugra-network rules", () => 
       try {
         assertSafeCompose(t.composeFile);
       } catch (e) {
-        if (/reserved .*namespace|Tugra-managed network/.test(String((e as Error).message))) tripped.push(slug);
+        if (/reserved .*namespace|Tugra-managed network|interpolation|env_file|label_file/.test(String((e as Error).message))) tripped.push(slug);
       }
     }
     expect(tripped).toEqual([]);

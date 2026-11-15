@@ -103,6 +103,43 @@ export function isSensitivePath(raw: string): boolean {
   return SENSITIVE_PREFIXES.some((pre) => p === pre || p.startsWith(`${pre}/`));
 }
 
+/** True when the string carries a compose `${VAR}` / `$VAR` interpolation (the grammar isSensitivePath refuses;
+ *  it also matches `$${...}`, whose second `$` starts a reference-shaped token). */
+function hasInterpolation(s: string): boolean {
+  return /\$\{?\w/.test(s);
+}
+
+/** Service `env_file` of a PASTED compose: string, list of strings or `{path}` entries. A relative path stays in
+ *  the Tugra compose dir (it holds this app's own `.env`); an absolute host path must not be a sensitive one, a
+ *  `..` traversal or an interpolation (which could point anywhere at deploy time). */
+function checkEnvFile(v: unknown): void {
+  for (const e of toArray(v)) {
+    const path = typeof e === "string" ? e : e && typeof e === "object" ? (e as { path?: unknown }).path : null;
+    if (typeof path !== "string") continue;
+    if (hasInterpolation(path)) throw disallowed("env_file path uses variable interpolation");
+    const p = posix.normalize(path.trim().replace(/\/{2,}/g, "/"));
+    if (p.startsWith("..") || p.includes("/../")) throw disallowed(`env_file outside the compose directory (${path})`);
+    if (posix.isAbsolute(p) && isSensitivePath(p)) throw disallowed(`env_file from sensitive host path ${path}`);
+  }
+}
+
+/** Reject a sensitive / traversing / interpolated service `env_file` in a stored (pasted) compose. Used by the
+ *  preview, which renders the file on the host: a compose stored before the gate existed must not read host files
+ *  through it. A YAML that does not parse is left to the renderer. */
+export function assertSafeEnvFiles(compose: string): void {
+  let doc: unknown;
+  try {
+    doc = parse(compose, { merge: true });
+  } catch {
+    return;
+  }
+  const services = doc && typeof doc === "object" && !Array.isArray(doc) ? (doc as { services?: unknown }).services : null;
+  if (!services || typeof services !== "object" || Array.isArray(services)) return;
+  for (const svc of Object.values(services)) {
+    if (svc && typeof svc === "object" && !Array.isArray(svc)) checkEnvFile((svc as Record<string, unknown>).env_file);
+  }
+}
+
 function checkVolume(v: unknown, gitCloneRoot: string | null): void {
   let source: unknown;
   if (typeof v === "string") {
@@ -165,9 +202,13 @@ function composeLabelKeys(labels: unknown): string[] {
  *  a `traefik.*` label declares a router on the shared proxy that can hijack another team's hostname, and a
  *  `tugra.*` / `com.docker.compose.*` label spoofs Tugra's own lookups. Checked on service labels and on
  *  `deploy.labels` (swarm-style service labels), over the YAML-merged structure. */
-function checkServiceLabels(svc: Record<string, unknown>): void {
+function checkServiceLabels(svc: Record<string, unknown>, gitCloneRoot: string | null): void {
   const deploy = svc.deploy && typeof svc.deploy === "object" && !Array.isArray(svc.deploy) ? (svc.deploy as Record<string, unknown>) : {};
   for (const key of [...composeLabelKeys(svc.labels), ...composeLabelKeys(deploy.labels)]) {
+    // A pasted/stored compose is checked BEFORE compose interpolates it, so `"${P:-traefik.}x=1"` would build a
+    // reserved key the check below never sees. The KEY must be literal (values stay free: `${VAR}` is legitimate).
+    // A rendered git stack has no interpolation left, so it is not subject to this.
+    if (!gitCloneRoot && hasInterpolation(key)) throw disallowed(`label key "${key.trim()}" uses variable interpolation (a label key must be literal)`);
     const ns = reservedLabelNamespace(key);
     if (ns) throw disallowed(`service label "${key.trim()}" is in the reserved ${ns}* namespace`);
   }
@@ -175,7 +216,16 @@ function checkServiceLabels(svc: Record<string, unknown>): void {
 
 function checkService(svc: Record<string, unknown>, gitCloneRoot: string | null): void {
   if (isTrue(svc.privileged)) throw disallowed("privileged: true");
-  checkServiceLabels(svc);
+  checkServiceLabels(svc, gitCloneRoot);
+  if (!gitCloneRoot) {
+    // Same bypass for the reserved container-name prefix: `container_name: "${N:-tugra-hub}"`.
+    if (typeof svc.container_name === "string" && hasInterpolation(svc.container_name)) {
+      throw disallowed(`container_name "${svc.container_name}" uses variable interpolation (it must be literal)`);
+    }
+    // `label_file` / `env_file` read a host file the label/volume gates never see (a rendered git stack inlines both).
+    if (svc.label_file != null) throw disallowed("label_file (labels read from a host file)");
+    checkEnvFile(svc.env_file);
+  }
   if (typeof svc.container_name === "string" && RESERVED_CONTAINER_NAME.test(svc.container_name)) {
     throw disallowed(`container_name "${svc.container_name}" (the tugra-/tugra_ prefix is reserved for Tugra-managed containers)`);
   }
@@ -257,6 +307,8 @@ export function assertSafeCompose(compose: string, opts: SafeComposeOpts = {}): 
       const explicitName = typeof entry.name === "string" ? entry.name : typeof extObj?.name === "string" ? (extObj.name as string) : null;
       if (!external && (explicitName === null || gitCloneRoot)) continue;
       const effective = (explicitName ?? key).trim();
+      // `name: "${N:-tugra-proxy}"` renders to the reserved name only at `up` time (pasted compose only).
+      if (!gitCloneRoot && hasInterpolation(effective)) throw disallowed(`network name "${effective}" uses variable interpolation (it must be literal)`);
       if (RESERVED_CONTAINER_NAME.test(effective)) throw disallowed(`attaching to a Tugra-managed network (${effective})`);
     }
   }
