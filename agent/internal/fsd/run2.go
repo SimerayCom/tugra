@@ -48,10 +48,24 @@ func (l *limitedBuffer) Write(p []byte) (int, error) {
 var runHelper2 = func(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) (stderr string, err error) {
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	if stdin != nil {
-		cmd.Stdin = stdin
+		// A non-*os.File stdin makes os/exec run its own copier goroutine, and Go's WaitDelay then closes the
+		// pipes but still blocks on that goroutine while the source is stalled in Read. So the child gets a real
+		// os.Pipe read end (no os/exec goroutine) and we copy in our own goroutine; both ends are closed on return,
+		// so the ctx timeout / WaitDelay always reap the helper even when the source never yields.
+		pr, pw, perr := os.Pipe()
+		if perr != nil {
+			return "", perr
+		}
+		defer pr.Close()
+		defer pw.Close()
+		cmd.Stdin = pr
+		go func() {
+			_, _ = io.Copy(pw, stdin)
+			_ = pw.Close() // EOF for the helper once the body is fully copied
+		}()
 	}
 	cmd.Stdout = stdout
-	cmd.WaitDelay = 5 * time.Second // never hang on a stdin/stdout copy goroutine after the child is killed
+	cmd.WaitDelay = 5 * time.Second // bounds the stdout/stderr copy goroutines after the child is killed
 	eb := &limitedBuffer{max: maxHelperStderr}
 	cmd.Stderr = eb
 	err = cmd.Run()

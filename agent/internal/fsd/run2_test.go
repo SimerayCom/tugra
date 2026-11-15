@@ -232,3 +232,43 @@ func TestRunCLI2UsageErrors(t *testing.T) {
 		t.Fatalf("dash path: %d %q", code, errs)
 	}
 }
+
+// stalledReader never yields until released, modelling a hub upload body that never arrives.
+type stalledReader struct{ release chan struct{} }
+
+func (s *stalledReader) Read(p []byte) (int, error) {
+	<-s.release
+	return 0, io.EOF
+}
+
+// The real runHelper2 must return within ctx timeout + WaitDelay even when the stdin producer never yields
+// (os/exec alone blocks forever on its stdin copier goroutine in that case).
+func TestRunHelper2ReturnsWhenStdinProducerStalls(t *testing.T) {
+	sr := &stalledReader{release: make(chan struct{})}
+	t.Cleanup(func() { close(sr.release) })
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := runHelper2(ctx, []string{"cat"}, sr, io.Discard)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected an error from the killed helper")
+		}
+	case <-time.After(10 * time.Second): // 300ms ctx + 5s WaitDelay + slack
+		t.Fatal("runHelper2 hung on a stalled stdin producer")
+	}
+}
+
+func TestRunHelper2DeliversStdinAndEOF(t *testing.T) {
+	var out bytes.Buffer
+	if _, err := runHelper2(context.Background(), []string{"cat"}, strings.NewReader("hello"), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != "hello" {
+		t.Fatalf("got %q", out.String())
+	}
+}
