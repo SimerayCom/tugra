@@ -316,6 +316,19 @@ func sweepStaleParts(root *os.Root, dir string) {
 	}
 }
 
+// linkUnsupported reports a link(2) failure caused by the filesystem rather than by a name clash.
+func linkUnsupported(err error) bool {
+	var en syscall.Errno
+	if !errors.As(err, &en) {
+		return false
+	}
+	switch en {
+	case syscall.EPERM, syscall.ENOTSUP, syscall.EOPNOTSUPP, syscall.ENOSYS, syscall.EMLINK, syscall.EXDEV:
+		return true
+	}
+	return false
+}
+
 func randHex16() string {
 	var b [8]byte
 	_, _ = rand.Read(b[:])
@@ -441,10 +454,22 @@ func WriteFile(rootPath string, o WriteOpts, src io.Reader) (WriteResult, error)
 		committed = true
 	} else {
 		if err := root.Link(tmp, o.Path); err != nil {
-			return zero, classify(err)
+			if !linkUnsupported(err) {
+				return zero, classify(err)
+			}
+			// The volume's filesystem (NFS/CIFS/FUSE drivers, ...) has no hard links. Fall back to a checked rename: the
+			// stdlib has no RENAME_NOREPLACE, so a race against the app itself inside the volume is accepted (documented).
+			if _, lerr := root.Lstat(o.Path); lerr == nil {
+				return zero, errf(CodeExists, "already exists")
+			}
+			if rerr := root.Rename(tmp, o.Path); rerr != nil {
+				return zero, classify(rerr)
+			}
+			committed = true
+		} else {
+			committed = true // the final name exists now; only the temp name is left to drop
+			_ = root.Remove(tmp)
 		}
-		committed = true // the final name exists now; only the temp name is left to drop
-		_ = root.Remove(tmp)
 	}
 	res := WriteResult{Bytes: n, Sha256: sum, Created: created}
 	if fi, ferr := root.Lstat(o.Path); ferr == nil {
@@ -456,7 +481,8 @@ func WriteFile(rootPath string, o WriteOpts, src io.Reader) (WriteResult, error)
 }
 
 // Mkdir creates a directory. With parents every missing level is created individually (root.Mkdir + Chown to
-// the nearest existing ancestor's owner + explicit Chmod), so ownership is right at every level.
+// the nearest existing ancestor's owner + explicit Chmod), so ownership is right at every level. Intermediate
+// levels are 0755; only the final directory takes the requested mode.
 func Mkdir(rootPath, rel string, mode fs.FileMode, parents bool) (protocol.FsStat, error) {
 	if err := validatePath2(rel, false); err != nil {
 		return protocol.FsStat{}, errf(CodeBadRequest, "%s", err.Error())
@@ -478,7 +504,7 @@ func Mkdir(rootPath, rel string, mode fs.FileMode, parents bool) (protocol.FsSta
 		return protocol.FsStat{}, classify(derr)
 	}
 
-	makeOne := func(p string, ownerFrom fs.FileInfo) error {
+	makeOne := func(p string, ownerFrom fs.FileInfo, mode fs.FileMode) error {
 		if err := root.Mkdir(p, 0o700); err != nil {
 			return classify(err)
 		}
@@ -503,7 +529,7 @@ func Mkdir(rootPath, rel string, mode fs.FileMode, parents bool) (protocol.FsSta
 		if !pi.IsDir() {
 			return protocol.FsStat{}, errf(CodeNotDir, "parent is not a directory")
 		}
-		if err := makeOne(rel, pi); err != nil {
+		if err := makeOne(rel, pi, mode); err != nil {
 			return protocol.FsStat{}, err
 		}
 		return statIn(root, rel)
@@ -514,7 +540,8 @@ func Mkdir(rootPath, rel string, mode fs.FileMode, parents bool) (protocol.FsSta
 	if err != nil {
 		return protocol.FsStat{}, classify(err)
 	}
-	for _, seg := range strings.Split(rel, "/") {
+	segsAll := strings.Split(rel, "/")
+	for i, seg := range segsAll {
 		if cur == "" {
 			cur = seg
 		} else {
@@ -531,7 +558,13 @@ func Mkdir(rootPath, rel string, mode fs.FileMode, parents bool) (protocol.FsSta
 			}
 			anc = fi
 		case errors.Is(lerr, fs.ErrNotExist):
-			if err := makeOne(cur, anc); err != nil {
+			// Intermediate levels get a traversable 0755 (like `mkdir -p -m`): only the LEAF takes the requested mode,
+			// so a restrictive mode can never leave the app uid unable to reach it.
+			lvl := fs.FileMode(0o755)
+			if i == len(segsAll)-1 {
+				lvl = mode
+			}
+			if err := makeOne(cur, anc, lvl); err != nil {
 				return protocol.FsStat{}, err
 			}
 			if ni, nerr := root.Lstat(cur); nerr == nil {

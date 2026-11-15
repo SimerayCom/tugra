@@ -326,15 +326,15 @@ func TestMkdir(t *testing.T) {
 	wantCode(t, err, CodeExists)
 	_, err = Mkdir(root, "x/y", 0o755, false)
 	wantCode(t, err, CodeNotFound)
-	// parents creates every level with the mode, and is a no-op on an existing dir
-	st, err = Mkdir(root, "p/q/r", 0o755, true)
+	// parents creates every level: intermediates are traversable 0755, only the leaf takes the requested mode
+	st, err = Mkdir(root, "p/q/r", 0o700, true)
 	if err != nil || st.Name != "r" {
 		t.Fatalf("mkdir -p: %+v %v", st, err)
 	}
-	for _, d := range []string{"p", "p/q", "p/q/r"} {
+	for d, want := range map[string]os.FileMode{"p": 0o755, "p/q": 0o755, "p/q/r": 0o700} {
 		fi, serr := os.Stat(filepath.Join(root, d))
-		if serr != nil || !fi.IsDir() || fi.Mode().Perm() != 0o755 {
-			t.Fatalf("%s: %v %v", d, fi, serr)
+		if serr != nil || !fi.IsDir() || fi.Mode().Perm() != want {
+			t.Fatalf("%s: %v %v (want %v)", d, fi, serr, want)
 		}
 	}
 	if _, err = Mkdir(root, "p/q/r", 0o755, true); err != nil {
@@ -548,5 +548,18 @@ func TestClassify(t *testing.T) {
 	}
 	if classify(nil) != nil {
 		t.Error("nil must stay nil")
+	}
+}
+
+func TestLinkUnsupportedClassification(t *testing.T) {
+	for _, en := range []syscall.Errno{syscall.EPERM, syscall.ENOTSUP, syscall.EOPNOTSUPP, syscall.ENOSYS, syscall.EMLINK, syscall.EXDEV} {
+		if !linkUnsupported(&os.LinkError{Op: "link", Err: en}) {
+			t.Errorf("%v must trigger the no-hard-link fallback", en)
+		}
+	}
+	for _, err := range []error{&os.LinkError{Op: "link", Err: syscall.EEXIST}, &os.LinkError{Op: "link", Err: syscall.ENOSPC}, &os.LinkError{Op: "link", Err: syscall.EACCES}, errors.New("x")} {
+		if linkUnsupported(err) {
+			t.Errorf("%v must NOT fall back", err)
+		}
 	}
 }
