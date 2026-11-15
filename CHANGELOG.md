@@ -155,6 +155,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   already-stored ones with a trailing newline are trimmed when the proxy is rendered, so they keep working. Shared
   variables reject line breaks when saved.
 
+- **Per-app log drains, container filter and syslog / GELF / fluentd targets.** An app's **Logs** tab has a **Log
+  drains** card: a drain scoped to one app ships only that app's containers (its container, its rolling-deploy
+  twin, compose services, swarm tasks on every member server), never other apps or databases. Compose apps that
+  are not deployed to a swarm can narrow a drain to named services; a server-wide drain can narrow itself with
+  container name patterns. New targets next to HTTP, Loki and Datadog: syslog (RFC 5424 over UDP, TCP or TLS),
+  GELF 1.1 (UDP with gzip/zlib and chunking, TCP, TLS) and fluentd Forward (TCP or TLS, acknowledgements, optional
+  shared-key handshake), all written without third-party libraries, with per-sink queues so a dead sink never
+  stalls the others. Each drain shows a delivery state (delivering, waiting, agent offline, agent update required,
+  failing with a failure class, and so on) from the agent's own reports, and a server's **Log drains** tab lists the
+  app drains shipping from it (name, type, app, delivery; never the endpoint). Egress is restricted: cloud metadata
+  and link-local addresses are never reachable, and per-app drains cannot reach loopback, private or CGNAT ranges
+  unless **Allow private network targets** is set, which needs `servers:ops` on the app's server team in addition to
+  `apps:config`. Drains travel to the agent in a signed `log_drains_v2` frame gated on the `logs` capability; an agent
+  without it receives only plain server-wide http/loki/datadog drains (exactly as before) and shows **Agent update
+  required** for the rest. Upgrade the hub first. See [Log drains](docs/log-drains.md) for the guarantees: delivery
+  is best-effort and at-least-once, lines emitted while the agent is disconnected are lost, UDP cannot confirm
+  delivery, boundary lines can repeat after a tail restart, a container using a log driver `docker logs` cannot
+  read is not forwarded, and previews, clones, importers and config snapshots never include drains. Behaviour
+  changes: server drain `PUT`/`DELETE` now return 404 when the URL's server id does not own the drain (it was
+  ignored); http, loki and datadog endpoints written through create/update must be `http(s)` URLs (stored rows are
+  not re-validated); on agents with `log_drains_v2`, revoking the `logs` capability now actually stops drain egress
+  (`logs` is granted by default, so default setups are unaffected); the agent keys log tails by container id, reads
+  stdout and stderr as separate streams and may reorder lines slightly inside a batch; the drain views gain
+  additive keys (`scope`, `appId`, `containers`, `options`, `allowPrivate`, `delivery`, `status`).
+
+- **Log drains: fixes.** A container that restarts quickly is tailed again (the old tail was never removed), a
+  line longer than 1 MiB no longer stops its tail, and deleting an app re-pushes the drains of the servers it was
+  shipping from.
+
 ## [0.1.0-beta.13] - 2026-11-15
 
 - **No container-log stream before the first deploy.** The Logs tab of a never-deployed app no longer opens a

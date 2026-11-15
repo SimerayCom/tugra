@@ -207,7 +207,7 @@ Live logs, metrics and the terminal stream over WebSockets. Full breakdown in [d
 - [x] Rolling deploys with a health gate + opt-in post-cutover soak and auto-revert · fleet rollouts (canary → waves → health gate → halt/resume/rollback)
 - [x] Deploys survive a hub restart (agent command journal + outcome adoption) · per-deployment detail page (timeline · live log · config diff)
 - [x] Build secrets via BuildKit `--secret` (Dockerfile builds) · master-key rotation (resumable re-encrypt job, nothing re-entered, apps untouched; the hub restarts twice) · digest-pinned, signed self-updates with a pre-update restore point
-- [x] Cloud server provisioning (Hetzner · DigitalOcean · Vultr) · Cloudflare Tunnel · built-in traffic analytics (local GeoIP, no phone-home) · log drains · private registries · Vault secret provider (Pro)
+- [x] Cloud server provisioning (Hetzner · DigitalOcean · Vultr) · Cloudflare Tunnel · built-in traffic analytics (local GeoIP, no phone-home) · [log drains](docs/log-drains.md) · private registries · Vault secret provider (Pro)
 
 **Next**
 
