@@ -2743,7 +2743,7 @@ describe("per-variable env flags — docker run transport", () => {
   const mlApp: AppSpec = { ...base, env: { A: "1", PEM_KEY: PEM }, envMeta: { PEM_KEY: { multiline: true } } };
   const gate = { retries: 1, intervalSec: 1, startPeriodSec: 0 };
   const probe = { kind: "stableWait" as const };
-  const dockerRuns = (s: string) => s.split("\n").flatMap((l) => l.match(/(?:\S+="\$TUGRA_ML_\d+" )*docker run -d[^\n]*/g) ?? []);
+  const dockerRuns = (s: string) => s.split("\n").flatMap((l) => l.match(/(?:env (?:\S+="\$TUGRA_ML_\d+" )+)?docker run -d[^\n]*/g) ?? []);
 
   it("flag-free apps are byte-identical (golden)", () => {
     const flagFree: AppSpec = { ...base, env: { A: "1", B: "two" } };
@@ -2759,7 +2759,7 @@ describe("per-variable env flags — docker run transport", () => {
     expect(Buffer.from(filePayload[1], "base64").toString()).toBe("A=1"); // PEM_KEY is NOT in the env file
     expect(s).toContain("--env-file /etc/tugra/env/abc.env");
     expect(s).toContain("-e PEM_KEY");
-    expect(s).toContain('PEM_KEY="$TUGRA_ML_0" docker run -d --name tugra_abc');
+    expect(s).toContain('env PEM_KEY="$TUGRA_ML_0" docker run -d --name tugra_abc');
     expect(s).not.toContain("RAWPEMBODY"); // only base64 ever appears
     expect(s).toContain("TUGRA_ENV_ML: 1 multiline variable(s)");
     expect(s).not.toMatch(/export /); // never exported script-wide
@@ -2769,13 +2769,13 @@ describe("per-variable env flags — docker run transport", () => {
     const s = buildRunScript({ ...base, env: { PEM_KEY: PEM }, envMeta: { PEM_KEY: { multiline: true } } }, "v1", true);
     expect(s).not.toContain("--env-file");
     expect(s).not.toContain("mkdir -p /etc/tugra/env");
-    expect(s).toContain('PEM_KEY="$TUGRA_ML_0" docker run -d');
+    expect(s).toContain('env PEM_KEY="$TUGRA_ML_0" docker run -d');
   });
 
   it("EVERY docker run -d carries the prefix: normal, rolling (incl. relabel), recreate (incl. rollback)", () => {
     const check = (s: string) => {
       const runs = s.match(/docker run -d/g) ?? [];
-      const prefixed = s.match(/PEM_KEY="\$TUGRA_ML_0" docker run -d/g) ?? [];
+      const prefixed = s.match(/env PEM_KEY="\$TUGRA_ML_0" docker run -d/g) ?? [];
       expect(runs.length).toBeGreaterThan(0);
       expect(prefixed).toHaveLength(runs.length);
     };
@@ -2790,12 +2790,12 @@ describe("per-variable env flags — docker run transport", () => {
 
   it("the pre-deploy hook container sees the multiline var too (prefix + -e on its docker run)", () => {
     const s = buildRunScript({ ...mlApp, source: "GIT", gitUrl: "https://github.com/a/b.git", buildType: "NIXPACKS", preDeployCommand: "migrate" }, "v1", true);
-    expect(s).toMatch(/if PEM_KEY="\$TUGRA_ML_0" docker run --rm --env-file \/etc\/tugra\/env\/abc\.env -e PEM_KEY /);
+    expect(s).toMatch(/if env PEM_KEY="\$TUGRA_ML_0" docker run --rm --env-file \/etc\/tugra\/env\/abc\.env -e PEM_KEY /);
   });
 
   it("two multiline vars are indexed by sorted key", () => {
     const s = buildRunScript({ ...base, env: { ZED: "z\n", ALPHA: "a\n" }, envMeta: { ZED: { multiline: true }, ALPHA: { multiline: true } } }, "v1", true);
-    expect(s).toContain('ALPHA="$TUGRA_ML_0" ZED="$TUGRA_ML_1" docker run -d');
+    expect(s).toContain('env ALPHA="$TUGRA_ML_0" ZED="$TUGRA_ML_1" docker run -d');
     expect(s).toContain("-e ALPHA -e ZED");
   });
 

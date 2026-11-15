@@ -10,8 +10,14 @@ describe("autoFlagMultiline", () => {
   it("no line breaks -> no flags", () => {
     expect(autoFlagMultiline({ A: "x" })).toEqual({});
   });
+  it("common PEM variable names are accepted as multiline (the deny list only covers names that steer the docker CLI)", () => {
+    const names = ["SSH_PRIVATE_KEY", "GIT_SSH_KEY", "GIT_DEPLOY_KEY", "SSL_KEY", "SSL_CERT"];
+    const out = autoFlagMultiline(Object.fromEntries(names.map((k) => [k, "-----BEGIN-----\nx\n-----END-----\n"])));
+    expect(Object.keys(out).sort()).toEqual([...names].sort());
+    for (const k of names) expect(out[k]).toEqual({ multiline: true });
+  });
   it("a line break on a name that cannot be multiline throws, naming the key only", () => {
-    for (const k of ["LD_PRELOAD", "a.b", "http_proxy"]) {
+    for (const k of ["LD_PRELOAD", "a.b", "http_proxy", "SSH_AUTH_SOCK", "UID"]) {
       expect(() => autoFlagMultiline({ [k]: "SECRETVALUE\nx" })).toThrow(`env var "${k}" has a line break but its name cannot be a multiline variable`);
     }
     try {

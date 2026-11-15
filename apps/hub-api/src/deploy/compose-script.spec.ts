@@ -398,9 +398,9 @@ describe("compose-script — per-variable env flags", () => {
     const s = buildComposeUpScript(flagged);
     expect(envOf(s)).toBe("PLAIN=p");
     expect(s).toContain("--env-file /etc/tugra/compose/abc/.env");
-    expect(s).toContain('PEM_KEY="$TUGRA_ML_0" PW="$TUGRA_ML_1" docker compose --progress plain');
+    expect(s).toContain('env PEM_KEY="$TUGRA_ML_0" PW="$TUGRA_ML_1" docker compose --progress plain');
     const ups = s.match(/docker compose --progress/g) ?? [];
-    expect(s.match(/PEM_KEY="\$TUGRA_ML_0" PW="\$TUGRA_ML_1" docker compose --progress/g) ?? []).toHaveLength(ups.length);
+    expect(s.match(/env PEM_KEY="\$TUGRA_ML_0" PW="\$TUGRA_ML_1" docker compose --progress/g) ?? []).toHaveLength(ups.length);
     expect(s).not.toContain("pa$$word");
     expect(s).not.toMatch(/export /);
   });
@@ -409,7 +409,7 @@ describe("compose-script — per-variable env flags", () => {
     const s = buildComposeUpScript({ ...flagged, env: { PW: "x$y" }, envMeta: { PW: { literal: true } } });
     expect(envOf(s)).toBeNull();
     expect(s).not.toContain("--env-file");
-    expect(s).toContain('PW="$TUGRA_ML_0" docker compose');
+    expect(s).toContain('env PW="$TUGRA_ML_0" docker compose');
   });
 
   it("a reserved name cannot be literal/multiline on compose", () => {

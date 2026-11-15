@@ -75,7 +75,7 @@ describe("mlPrelude / mlPrefix / mlEnvFlags", () => {
     expect(lines).toHaveLength(3);
     expect(lines[0]).toBe("echo 'TUGRA_ENV_ML: 2 multiline variable(s) via the docker CLI environment (never argv, never the env file): A, B_B'");
     expect(lines[1]).toBe(`TUGRA_ML_0=$(printf %s '${Buffer.from("x\ny").toString("base64")}' | base64 -d; printf x); TUGRA_ML_0=\${TUGRA_ML_0%x}`);
-    expect(mlPrefix(shell)).toBe('A="$TUGRA_ML_0" B_B="$TUGRA_ML_1" ');
+    expect(mlPrefix(shell)).toBe('env A="$TUGRA_ML_0" B_B="$TUGRA_ML_1" ');
     expect(mlEnvFlags(shell)).toBe("-e A -e B_B");
   });
   it("the marker carries key names only, never values", () => {

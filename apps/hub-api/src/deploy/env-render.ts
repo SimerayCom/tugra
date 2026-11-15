@@ -4,7 +4,7 @@
  * Those values are base64-embedded in the hub-built deploy script, decoded into UNEXPORTED shell variables and attached
  * to exactly ONE command by scoped prefix assignment:
  *
- *   KEY="$TUGRA_ML_0" docker run ... -e KEY
+ *   env KEY="$TUGRA_ML_0" docker run ... -e KEY
  *
  * (`-e KEY` with no `=` copies the value from the docker CLI process environment: never argv, never the env file,
  * never exported to a later script step.) Swarm instead emits `KEY:b64=<base64>` lines that an in-container wrapper
@@ -72,11 +72,15 @@ function assertBareKeys(shell: EnvPlan["shell"]): void {
   for (const s of shell) if (!ENV_KEY_RE.test(s.key)) throw new Error(`TUGRA: env var ${JSON.stringify(s.key.slice(0, 40))} cannot be passed by name`);
 }
 
-/** `A="$TUGRA_ML_0" B="$TUGRA_ML_1" ` (trailing space) or ''. Scoped to the one command that follows. */
+/**
+ * `env A="$TUGRA_ML_0" B="$TUGRA_ML_1" ` (trailing space) or ''. Scoped to the one command that follows. Going through
+ * `env` (not a bare assignment prefix) means bash never evaluates the assignment, so a readonly or special shell
+ * variable name can neither abort the script nor be silently dropped; the names are also denied at the policy layer.
+ */
 export function mlPrefix(shell: EnvPlan["shell"]): string {
   if (shell.length === 0) return "";
   assertBareKeys(shell);
-  return shell.map((s, i) => `${s.key}="$TUGRA_ML_${i}"`).join(" ") + " ";
+  return "env " + shell.map((s, i) => `${s.key}="$TUGRA_ML_${i}"`).join(" ") + " ";
 }
 
 /** `-e A -e B` or ''. */

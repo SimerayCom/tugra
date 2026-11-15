@@ -60,27 +60,44 @@ export function isLinkEnvKeyAllowed(k: string): boolean {
 /** Max utf8 size of ONE multiline value (the deploy script carries it base64-encoded inside one `bash -c` argument). */
 export const ML_VALUE_MAX_BYTES = 16 * 1024;
 
-/** Exact (upper-cased) names that must never be placed in the environment of the root `docker` / `docker compose` process. */
+/**
+ * Exact (upper-cased) names that must never be placed in the environment of the root `docker` / `docker compose`
+ * process. The multiline / compose-literal transport scopes the variable to that ONE CLI process
+ * (`env KEY="$TUGRA_ML_0" docker ...`), so only names that change how that process (or the shell that launches it)
+ * behaves are denied: shell-special and readonly names, locale/timezone/Go-runtime knobs, and the ssh/git names that
+ * make a child process exec an arbitrary program. Ordinary secret names (SSH_PRIVATE_KEY, GIT_DEPLOY_KEY, SSL_KEY,
+ * SSL_CERT, CURL_*) are allowed.
+ */
 const HOST_DENY_EXACT = new Set([
+  // shell internals (readonly or special in bash; the `env` prefix keeps bash from ever evaluating them, this is defence in depth)
   "ENV", "BASH_ENV", "BASHOPTS", "SHELLOPTS", "PS1", "PS2", "PS3", "PS4", "PROMPT_COMMAND", "CDPATH", "GLOBIGNORE",
-  "TMPDIR", "LANG", "LANGUAGE", "TZ", "MAIL", "OPTIND", "POSIXLY_CORRECT", "SHLVL", "OLDPWD", "_", "GODEBUG", "NODE_OPTIONS",
+  "UID", "EUID", "PPID", "GROUPS", "RANDOM", "SECONDS", "LINENO", "FUNCNAME", "MAIL", "OPTIND", "OPTARG", "OPTERR",
+  "POSIXLY_CORRECT", "SHLVL", "OLDPWD", "_",
+  // process behaviour: locale, timezone, Go runtime
+  "TMPDIR", "LANG", "LANGUAGE", "TZ", "GODEBUG",
+  // TLS trust roots
+  "SSL_CERT_FILE", "SSL_CERT_DIR", "SSLKEYLOGFILE",
+  // ssh / git: names that make a child process run an arbitrary program or load an arbitrary config
+  "SSH_AUTH_SOCK", "SSH_ASKPASS", "SSH_ASKPASS_REQUIRE", "SSH_AGENT_PID",
+  "GIT_SSH", "GIT_SSH_COMMAND", "GIT_ASKPASS", "GIT_PROXY_COMMAND", "GIT_EXEC_PATH", "GIT_DIR", "GIT_WORK_TREE",
+  "GIT_TEMPLATE_DIR", "GIT_EXTERNAL_DIFF", "GIT_EDITOR", "GIT_PAGER", "GIT_SEQUENCE_EDITOR",
 ]);
 
-/** Upper-cased prefixes with the same meaning (shell internals, locale, BuildKit/buildx, XDG, git/ssh/ssl/curl/sudo tooling). */
-const HOST_DENY_PREFIX = ["BASH", "LC_", "BUILDKIT_", "BUILDX_", "XDG_", "GIT_", "SSH_", "SSL_", "CURL_", "SUDO_"];
+/** Upper-cased prefixes with the same meaning (bash internals, locale, BuildKit/buildx, XDG dirs, git config injection). */
+const HOST_DENY_PREFIX = ["BASH", "LC_", "BUILDKIT_", "BUILDX_", "XDG_", "GIT_CONFIG"];
 
 /**
  * A name that may be placed in the environment of the root `docker` / `docker compose` process (multiline and
- * compose-literal transport: `KEY="$TUGRA_ML_0" docker run ... -e KEY`). SECURITY-CRITICAL: a name that changes how
- * bash, docker, git, ssh, curl or the dynamic linker behave must never pass, because the value would then steer the
- * host-side command instead of the container. Case-insensitive. Strict POSIX on top of the link deny list.
+ * compose-literal transport: `env KEY="$TUGRA_ML_0" docker run ... -e KEY`). SECURITY-CRITICAL: a name that changes
+ * how bash, docker, the dynamic linker or the proxy/TLS stack behave must never pass, because the value would then
+ * steer the host-side command instead of the container. Case-insensitive. Strict POSIX on top of the link deny list.
  */
 export function isHostExportSafeKey(k: string): boolean {
   if (!ENV_KEY_RE.test(k) || !isLinkEnvKeyAllowed(k)) return false;
   const u = k.toUpperCase();
   if (HOST_DENY_EXACT.has(u)) return false;
   if (HOST_DENY_PREFIX.some((p) => u.startsWith(p))) return false;
-  if (/_PROXY$/i.test(k)) return false;
+  if (u.endsWith("_PROXY")) return false; // HTTP_PROXY, HTTPS_PROXY, NO_PROXY, ALL_PROXY, ...
   // link-deny is case-sensitive on purpose for legacy callers; for host export the lower-case spellings matter too.
   if (["PATH", "HOME", "SHELL", "PORT", "HOSTNAME", "IFS", "USER", "PWD"].includes(u)) return false;
   if (["LD_", "DYLD_", "COMPOSE_", "DOCKER_", "TUGRA_"].some((p) => u.startsWith(p))) return false;

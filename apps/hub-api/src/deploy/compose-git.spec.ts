@@ -143,7 +143,7 @@ describe("compose-git — git/build toggles (raw specs only)", () => {
 
 describe("compose-git — per-variable env flags", () => {
   const flagged: AppSpec = { ...base, env: { PLAIN: "p", PW: "a$b", PEM: "x\ny" }, envMeta: { PW: { literal: true }, PEM: { multiline: true } } };
-  const composeLines = (s: string) => s.split("\n").flatMap((l) => l.match(/(?:\S+="\$TUGRA_ML_\d+" )*docker compose [^\n]*/g) ?? []);
+  const composeLines = (s: string) => s.split("\n").flatMap((l) => l.match(/(?:env (?:\S+="\$TUGRA_ML_\d+" )+)?docker compose [^\n]*/g) ?? []);
 
   it("flag-free: identical to no meta", () => {
     expect(buildComposeGitRenderScript({ ...base, env: { A: "1" }, envMeta: {} })).toBe(buildComposeGitRenderScript({ ...base, env: { A: "1" } }));
@@ -155,14 +155,14 @@ describe("compose-git — per-variable env flags", () => {
     const prelude = (s: string) => s.split("\n").filter((l) => l.startsWith("TUGRA_ML_") || l.startsWith("echo 'TUGRA_ENV_ML"));
     expect(prelude(render)).toHaveLength(3);
     expect(prelude(up)).toEqual(prelude(render));
-    const prefix = 'PEM="$TUGRA_ML_0" PW="$TUGRA_ML_1" ';
+    const prefix = 'env PEM="$TUGRA_ML_0" PW="$TUGRA_ML_1" ';
     expect(render).toContain(`$(${prefix}docker compose -p tugra_abc`);
     expect(up).toContain(`$(${prefix}docker compose -p tugra_abc`);
     expect(up).toContain(`${prefix}docker compose --progress plain`);
     for (const s of [render, up]) {
       const withEnvFile = composeLines(s).filter((l) => l.includes("--env-file"));
       expect(withEnvFile.length).toBeGreaterThan(0);
-      for (const l of withEnvFile) expect(l).toContain(prefix.trim().split(" ")[0]);
+      for (const l of withEnvFile) expect(l).toContain(prefix.trim().split(" ")[1]);
       expect(s).not.toContain("a$b");
     }
     const envBody = Buffer.from(up.match(/printf %s '([A-Za-z0-9+/=]+)' \| base64 -d > \/etc\/tugra\/compose-git\/abc\/\.env/)![1], "base64").toString();

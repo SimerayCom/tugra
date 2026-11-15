@@ -10,6 +10,7 @@ import { buildRunScript, type AppSpec } from "./deploy-script";
 import { buildComposeUpScript } from "./compose-script";
 import { mlEnvFlags, mlPrefix, mlPrelude, planEnv } from "./env-render";
 import { normalizeFlags } from "../common/env-flags";
+import { isHostExportSafeKey } from "../common/env-key";
 
 const hex = (s: string) => Buffer.from(s, "utf8").toString("hex");
 const bashAvailable = spawnSync("bash", ["-c", "echo ok"]).stdout?.toString().trim() === "ok";
@@ -83,6 +84,23 @@ d("multiline env transport (real bash + stub docker)", () => {
     const argv = r.log.split("\n").filter((l) => l.startsWith("ARGV:")).join("\n");
     expect(argv).toBe("ARGV:run -d --name x -e V0 -e V1 -e V2 -e V3 -e V4 -e V5 -e V6 -e V7 img");
     expect(r.log).not.toContain("pwned");
+  });
+
+  it("bash special / readonly names are refused by the policy, and the `env` prefix never lets bash evaluate them anyway", () => {
+    const names = ["UID", "EUID", "PPID", "GROUPS", "RANDOM", "SECONDS", "LINENO", "FUNCNAME", "BASHPID", "SHELLOPTS", "BASHOPTS"];
+    for (const k of names) {
+      expect(isHostExportSafeKey(k)).toBe(false);
+      expect(() => planEnv({ [k]: "a\nb" }, normalizeFlags({ [k]: { multiline: true } }, [k]), "docker")).toThrow(/cannot be a multiline or literal/);
+    }
+    // defence in depth: even if a name slipped past the policy, a bare `UID="..." cmd` aborts under set -e ("readonly
+    // variable") and `GROUPS="..." cmd` is silently dropped; through `env` the value reaches the child intact.
+    const shell = [{ key: "UID", value: "v1" }, { key: "GROUPS", value: "v2" }];
+    const bare = run(["set -e", ...mlPrelude(shell), 'UID="$TUGRA_ML_0" docker run -e UID img'].join("\n"));
+    expect(bare.status).not.toBe(0);
+    const viaEnv = run(["set -e", ...mlPrelude(shell), `${mlPrefix(shell)}docker run ${mlEnvFlags(shell)} img`].join("\n"));
+    expect(viaEnv.status).toBe(0);
+    expect(viaEnv.log).toContain(`VAL UID ${hex("v1")}\n`);
+    expect(viaEnv.log).toContain(`VAL GROUPS ${hex("v2")}\n`);
   });
 
   it("the generated script text carries base64 only, never a raw value", () => {
