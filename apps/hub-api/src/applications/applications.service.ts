@@ -32,7 +32,7 @@ import { TUNNEL_SERVICE } from "../tunnel/tunnel.tokens";
 import { loadProjectCtx, loadProjectCtxMany, type ResourceProjectCtx } from "../common/resource-project";
 import { filterByQuery } from "../common/query-filter";
 import {
-  applyEnvFlags, BUILD_FLAG_TOTAL_MAX_BYTES, encodeEnvMeta, EnvMetaCorruptError, ML_KEYS_MAX, ML_TOTAL_MAX_BYTES, ML_VALUE_MAX_BYTES,
+  applyEnvFlags, autoMultilineLegacy, BUILD_FLAG_TOTAL_MAX_BYTES, encodeEnvMeta, EnvMetaCorruptError, ML_KEYS_MAX, ML_TOTAL_MAX_BYTES, ML_VALUE_MAX_BYTES,
   normalizeFlags, parseEnvMeta, pruneMeta, validateEnvFlags, type EnvMeta, type FlagInput,
 } from "../common/env-flags";
 import { validatePngIcon } from "../common/png-icon";
@@ -1927,7 +1927,7 @@ export class ApplicationsService {
       if ((app.domain || serviceDomains.length > 0) && !app.clusterId && (!isCompose || composeRoutable)) await this.proxy.ensureProxy(app.serverId);
       const spec = this.toSpec(app);
       if (isCompose && serviceDomains.length > 0) spec.serviceDomains = serviceDomains;
-      await this.attachResolvedEnv(app, spec, { withBuild: true }); // shared vars + app env (app wins) + flags; build-time vars
+      this.logAutoMultiline(app.id, (await this.attachResolvedEnv(app, spec, { withBuild: true })).autoMultiline); // shared vars + app env (app wins) + flags; build-time vars
       spec.buildSecrets = this.appBuildSecrets(app); // BuildKit secret mounts (DOCKERFILE builds)
       // injectEnvAsBuildArgs: fail early (pre-swap, any path) if the env cannot ride argv; prepSteps recomputes the same pure result.
       if (app.source === "GIT" && app.buildType === "DOCKERFILE" && app.injectEnvAsBuildArgs) injectableBuildArgs(spec);
@@ -2534,7 +2534,7 @@ export class ApplicationsService {
       // point at the CURRENT version's service/port against the old container (silent 502 / phantom service).
       const spec = this.toSpec(isCompose ? { ...app, composeFile: composeFile! } : app);
       if (isCompose) spec.serviceDomains = await this.loadServiceDomains(app.id); // keep per-service routes on rollback
-      await this.attachResolvedEnv(app, spec, { withBuild: false });
+      this.logAutoMultiline(app.id, (await this.attachResolvedEnv(app, spec, { withBuild: false })).autoMultiline);
       await this.hydrateCertSpec(app, spec); // le-dns wildcard labels must match a normal deploy
       // A rollback re-runs a PRIOR image; never re-run deploy hooks (e.g. a migration) against it — a
       // registry/digest rollback is build=true, which would otherwise emit the pre-deploy step.
@@ -2658,7 +2658,7 @@ export class ApplicationsService {
     this.deployLogs.begin(app.id);
     try {
       const spec = this.toSpec(app);
-      await this.attachResolvedEnv(app, spec, { withBuild: false });
+      this.logAutoMultiline(app.id, (await this.attachResolvedEnv(app, spec, { withBuild: false })).autoMultiline);
       const sd = await this.swarmDeploy.rollbackTo(app, spec, ref, auth, {
         onChunk: (chunk) => this.deployLogs.push(app.id, chunk),
       });
@@ -4879,7 +4879,7 @@ export class ApplicationsService {
    * flagged values (the app's OWN env only) are merged into `spec.buildArgs` under the explicit build args.
    * A corrupt/unreadable flag blob FAILS CLOSED: defaulting could expose a build-only variable at runtime.
    */
-  private async attachResolvedEnv(app: Application, spec: AppSpec, opts: { withBuild: boolean }): Promise<void> {
+  private async attachResolvedEnv(app: Application, spec: AppSpec, opts: { withBuild: boolean }): Promise<{ autoMultiline: string[] }> {
     const { merged, appEnv, secretRefKeys } = await this.resolveEnvLayers(app);
     let meta: EnvMeta;
     try {
@@ -4888,8 +4888,17 @@ export class ApplicationsService {
       if (e instanceof EnvMetaCorruptError) throw new Error(`TUGRA: env flags unreadable for app ${app.id}`);
       throw e;
     }
+    // Values stored before the Multiline flag existed (any layer) travel as multiline instead of failing the deploy;
+    // the flags are NOT persisted, so the write-time rule (a line break needs the flag) is unchanged.
+    const legacy = autoMultilineLegacy(merged, meta);
+    if (legacy.issue) throw new Error(legacy.issue.message);
+    meta = legacy.meta;
     const buildSecretKeys = new Set(Object.keys(this.appBuildSecrets(app)));
-    const issues = validateEnvFlags(appEnv, meta, { source: app.source, buildSecretKeys, mode: "deploy" });
+    // Validate the app's own values plus any auto-flagged shared/linked/secret value, so the multiline count and
+    // total budgets cover every value that will actually ride the multiline transport.
+    const toValidate: Record<string, string> = { ...appEnv };
+    for (const k of legacy.keys) toValidate[k] = merged[k];
+    const issues = validateEnvFlags(toValidate, meta, { source: app.source, buildSecretKeys, mode: "deploy" });
     if (issues.length) throw new Error(`TUGRA: invalid environment flags${issues[0].key ? ` (${issues[0].key})` : ""}: ${issues[0].message}`); // names keys only
     const r = applyEnvFlags({ merged, appEnv, meta, secretRefKeys, buildSecretKeys, builds: opts.withBuild && app.source === "GIT" });
     spec.env = r.env;
@@ -4899,6 +4908,12 @@ export class ApplicationsService {
       if (r.buildFlagKeys.length) spec.buildFlagKeys = r.buildFlagKeys;
       if (r.droppedForBuildSecret.length) spec.buildFlagDropped = r.droppedForBuildSecret;
     }
+    return { autoMultiline: legacy.keys };
+  }
+
+  /** One deploy-log line per value that was delivered as multiline without the flag (legacy data). Key names only. */
+  private logAutoMultiline(appId: string, keys: string[]): void {
+    for (const k of keys) this.deployLogs.push(appId, `TUGRA: auto multiline: ${k}\n`);
   }
 
   /** Decrypt + parse the stored flag blob. Throws EnvMetaCorruptError on any decrypt/parse failure (fail closed). */

@@ -200,6 +200,39 @@ export function validateEnvFlags(env: Record<string, string>, meta: EnvMeta, ctx
   return issues;
 }
 
+/**
+ * Render-time upgrade for values stored BEFORE the Multiline flag existed (shared variables, linked-DB and secret
+ * values and app env all reach the env file as plain lines). Such a value that holds a line break and is not flagged
+ * is delivered as a multiline variable instead of failing every deploy and rollback, provided its name passes the
+ * host-export policy and it fits the multiline limits. Nothing is persisted: the returned meta is for rendering only.
+ * `issue` is set (naming the key) for the first value that cannot ride that transport. Build-only keys never reach the
+ * runtime, so they are left alone.
+ */
+export function autoMultilineLegacy(merged: Record<string, string>, meta: EnvMeta): { meta: EnvMeta; keys: string[]; issue: FlagIssue | null } {
+  const keys: string[] = [];
+  const next: [string, EnvFlags][] = Object.keys(meta).map((k) => [k, meta[k]]);
+  for (const k of Object.keys(merged).sort()) {
+    const v = merged[k];
+    if (!/[\r\n]/.test(v) || meta[k]?.multiline || meta[k]?.runtime === false) continue;
+    if (v.includes("\u0000") || b(v) > ML_VALUE_MAX_BYTES || !isHostExportSafeKey(k)) {
+      return {
+        meta,
+        keys: [],
+        issue: {
+          key: k,
+          code: "VALUE_NEWLINE",
+          message: `TUGRA: environment variable ${JSON.stringify(k.slice(0, 40))} contains a line break and cannot be delivered as a multiline variable (reserved name, NUL or over ${ML_VALUE_MAX_BYTES / 1024} KiB); rename it or remove the line break`,
+        },
+      };
+    }
+    keys.push(k);
+    const i = next.findIndex(([nk]) => nk === k);
+    if (i >= 0) next[i] = [k, { ...next[i][1], multiline: true }];
+    else next.push([k, { multiline: true }]);
+  }
+  return keys.length === 0 ? { meta, keys, issue: null } : { meta: sortedMeta(next), keys, issue: null };
+}
+
 export interface ApplyEnvFlagsInput {
   merged: Record<string, string>;
   appEnv: Record<string, string>;

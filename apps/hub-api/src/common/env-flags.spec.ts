@@ -1,5 +1,5 @@
 import {
-  applyEnvFlags, BUILD_FLAG_TOTAL_MAX_BYTES, encodeEnvMeta, EnvMeta, EnvMetaCorruptError, flagsToken, ML_KEYS_MAX, ML_TOTAL_MAX_BYTES,
+  applyEnvFlags, autoMultilineLegacy, BUILD_FLAG_TOTAL_MAX_BYTES, encodeEnvMeta, EnvMeta, EnvMetaCorruptError, flagsToken, ML_KEYS_MAX, ML_TOTAL_MAX_BYTES,
   ML_VALUE_MAX_BYTES, NEWLINE_MESSAGE, normalizeFlags, parseEnvMeta, pruneMeta, validateEnvFlags,
 } from "./env-flags";
 import { BUILD_ARG_KEY } from "../deploy/build-args";
@@ -167,5 +167,32 @@ describe("applyEnvFlags", () => {
     expect(r.buildArgs).toEqual({ J: "w" });
     expect(r.droppedForBuildSecret).toEqual(["K"]);
     expect(r.buildFlagKeys).toEqual(["J"]);
+  });
+});
+
+describe("autoMultilineLegacy (render-time upgrade of values stored before the Multiline flag)", () => {
+  it("flags every unflagged line-break value whose name is host-export safe, merging with existing flags, never mutating the input", () => {
+    const given = meta({ PEM: { literal: true } });
+    const r = autoMultilineLegacy({ PEM: "a\nb", SSH_PRIVATE_KEY: "x\r\ny", OK: "plain" }, given);
+    expect(r.issue).toBeNull();
+    expect(r.keys).toEqual(["PEM", "SSH_PRIVATE_KEY"]);
+    expect(r.meta).toEqual({ PEM: { literal: true, multiline: true }, SSH_PRIVATE_KEY: { multiline: true } });
+    expect(given).toEqual({ PEM: { literal: true } });
+  });
+  it("returns the SAME meta (no change) when nothing needs upgrading, and skips already-multiline and build-only keys", () => {
+    const m = meta({ ML: { multiline: true }, B: { buildTime: true, runtime: false } });
+    const r = autoMultilineLegacy({ ML: "a\nb", B: "c\nd", P: "p" }, m);
+    expect(r.keys).toEqual([]);
+    expect(r.meta).toBe(m);
+    expect(r.issue).toBeNull();
+  });
+  it("a name that cannot be multiline, a NUL or an oversize value is an issue naming the key (never the value)", () => {
+    for (const [k, v] of [["PATH", "SECRETVAL\nx"], ["a.b", "SECRETVAL\nx"], ["K", "SECRETVAL\u0000\nx"], ["K", "SECRETVAL\n" + "a".repeat(ML_VALUE_MAX_BYTES)]] as const) {
+      const r = autoMultilineLegacy({ [k]: v }, meta({}));
+      expect(r.issue?.key).toBe(k);
+      expect(r.issue?.message).toContain(JSON.stringify(k));
+      expect(r.issue?.message).toContain("rename it or remove the line break");
+      expect(r.issue?.message).not.toContain("SECRETVAL");
+    }
   });
 });

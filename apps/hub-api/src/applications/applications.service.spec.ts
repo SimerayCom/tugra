@@ -7141,6 +7141,31 @@ describe("ApplicationsService — per-variable env flags", () => {
       expect(d.calls).toHaveLength(1);
     });
 
+    it("legacy data: an unflagged value with a line break (app env or shared variable) is delivered as multiline at deploy time and logged by key", async () => {
+      const d = deployDeps({ ...baseApp, envEnc: JSON.stringify({ SSH_PRIVATE_KEY: "RAWKEY\nLINE2\n", A: "1" }) }, [{ key: "SHARED_CERT", valueEnc: "RAWCERT\nLINE2" }]);
+      await d.svc.deploy("u1", "app1");
+      expect(failed(d)).toBe(false);
+      expect(d.calls[0]).toContain('env SHARED_CERT="$TUGRA_ML_0" SSH_PRIVATE_KEY="$TUGRA_ML_1" docker run -d');
+      expect(d.calls[0]).toContain("-e SHARED_CERT -e SSH_PRIVATE_KEY");
+      expect(d.calls[0]).not.toContain("RAWKEY");
+      expect(d.calls[0]).not.toContain("RAWCERT");
+      const logged = ((d.svc as unknown as { deployLogs: { push: jest.Mock } }).deployLogs.push.mock.calls as unknown[][]).map((c) => String(c[1])).join("");
+      expect(logged).toContain("TUGRA: auto multiline: SSH_PRIVATE_KEY");
+      expect(logged).toContain("TUGRA: auto multiline: SHARED_CERT");
+      expect(logged).not.toContain("RAWKEY");
+    });
+
+    it("legacy data: a line break on a name that cannot be multiline fails the deploy naming the key (rename or remove the line break), never the value", async () => {
+      const d = deployDeps({ ...baseApp, envEnc: JSON.stringify({ PATH: "TOPSECRETVALUE\nx", A: "1" }) });
+      await d.svc.deploy("u1", "app1");
+      expect(failed(d)).toBe(true);
+      expect(d.calls).toHaveLength(0);
+      const err = JSON.stringify(d.depUpdate.mock.calls) + JSON.stringify((d.svc as unknown as { deployLogs: { push: jest.Mock } }).deployLogs.push.mock.calls);
+      expect(err).toContain('environment variable \\"PATH\\" contains a line break');
+      expect(err).toContain("rename it or remove the line break");
+      expect(err).not.toContain("TOPSECRETVALUE");
+    });
+
     it("a multiline variable rides the deploy script as base64 in an unexported prefix assignment, never the raw value", async () => {
       const d = deployDeps({ ...baseApp, envEnc: JSON.stringify({ PEM: "RAWSECRET\nLINE2", A: "1" }), envMetaEnc: meta({ PEM: { multiline: true } }) });
       await d.svc.deploy("u1", "app1");
