@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -34,6 +35,9 @@ type streamHub struct {
 	manifest     []VxManifestEntry
 	resumeFrom   int
 	state        string
+	speedEnds    int32
+	speedCommits int
+	speedFail    bool
 }
 
 func (s *streamHub) serve(t *testing.T) *httptest.Server {
@@ -96,6 +100,30 @@ func (s *streamHub) serve(t *testing.T) *httptest.Server {
 				n = len(seq) - 1
 			}
 			io.WriteString(w, seq[n])
+		case strings.HasSuffix(p, "/speedtest-end"):
+			atomic.AddInt32(&s.speedEnds, 1)
+			io.WriteString(w, `{"ok":true}`)
+		case strings.Contains(p, "/speedtest/") && strings.HasSuffix(p, "/commit"):
+			s.mu2.Lock()
+			s.speedCommits++
+			s.mu2.Unlock()
+			if s.speedFail {
+				io.WriteString(w, `{"done":false,"retryable":true,"reason":"target exit 22"}`)
+				return
+			}
+			io.WriteString(w, `{"done":true,"bytes":1,"ms":10}`)
+		case strings.Contains(p, "/speedtest/"):
+			b, _ := io.ReadAll(r.Body)
+			var req VxPartReq
+			_ = json.Unmarshal(b, &req)
+			i := strings.Index(p, "/speedtest/")
+			idx, _ := strconv.Atoi(p[i+len("/speedtest/"):])
+			s.fakeRelayHub.mu.Lock()
+			s.fakeRelayHub.registered[idx] = req
+			id := fmt.Sprintf("speedid%019d", len(s.fakeRelayHub.srcPaths)+1)
+			s.fakeRelayHub.srcPaths[id] = idx
+			s.fakeRelayHub.mu.Unlock()
+			fmt.Fprintf(w, `{"srcPath":"/api/v1/agent-vx/t/%s?exp=1999999999&sig=%s"}`, id, strings.Repeat("s", 43))
 		case strings.HasSuffix(p, "/reset"):
 			atomic.AddInt32(&s.resets, 1)
 			io.WriteString(w, `{"state":"PENDING","attempt":2}`)
@@ -506,4 +534,64 @@ func TestVolumeRunTokenMargin(t *testing.T) {
 
 func nowPlus(sec int) string {
 	return time.Now().Add(time.Duration(sec) * time.Second).UTC().Format(time.RFC3339)
+}
+
+func TestSpeedtestMeasuresTheRealLinkAndThrowsTheBytesAway(t *testing.T) {
+	hub := streamHubWith(t, withPolicy(appRow))
+	d := &volDocker{ctrs: []*vctr{stoppedApp()}, invOut: invFor(10 * 1024 * 1024)}
+	// the 'volume' is 10 MiB; ask for 4 MiB: exactly 4 MiB must cross the relay
+	out, code, stderr := runStream(t, hub, d, streamBytes(10*1024*1024), "--dry-run", "--speedtest-mib", "4")
+	if code != exitOK {
+		t.Fatalf("exit=%d %+v %s", code, out, stderr)
+	}
+	it := out.Items[0]
+	if it.State != "planned" || it.Reason != "speedtest" || it.SpeedMBps <= 0 || it.EstimateSeconds < 15*60 {
+		t.Errorf("item: %+v", it)
+	}
+	var got int
+	for _, bodies := range hub.putBodies {
+		for _, b := range bodies {
+			zr := mustGzip(t, b)
+			dec, _ := io.ReadAll(zr)
+			got += len(dec)
+		}
+	}
+	if got != 4*1024*1024 {
+		t.Errorf("the relay should carry exactly the requested first 4 MiB, got %d", got)
+	}
+	if atomic.LoadInt32(&hub.speedEnds) != 1 {
+		t.Errorf("the throwaway staging must be removed (speedtest-end called %d times)", hub.speedEnds)
+	}
+	for _, c := range []string{"/begin", "/finish", "/parts/"} {
+		if hub.sawCall(c) {
+			t.Errorf("a speed test is not a copy: %s was called", c)
+		}
+	}
+	if len(d.stopCalls) != 0 {
+		t.Error("a speed test never stops anything")
+	}
+}
+
+func TestSpeedtestFailureIsReportedNotFatalAndStillCleansUp(t *testing.T) {
+	hub := streamHubWith(t, withPolicy(appRow))
+	hub.speedFail = true
+	d := &volDocker{ctrs: []*vctr{stoppedApp()}, invOut: invFor(1024 * 1024)}
+	out, code, _ := runStream(t, hub, d, streamBytes(1024*1024), "--speedtest-mib", "1")
+	if code != exitOK || out.Items[0].Reason != "speedtest-failed" || out.Items[0].SpeedMBps != 0 {
+		t.Errorf("code=%d %+v", code, out.Items[0])
+	}
+	if atomic.LoadInt32(&hub.speedEnds) != 1 {
+		t.Error("cleanup must run after a failed test too")
+	}
+}
+
+func TestSpeedtestMiBBounds(t *testing.T) {
+	stubDockerOnPath(t)
+	t.Setenv("TUGRA_MIGRATION_TOKEN", testToken)
+	for _, v := range []string{"-1", "1025"} {
+		var stdout, stderr bytes.Buffer
+		if code := RunCLI([]string{"--hub", "https://hub.example", "--speedtest-mib", v}, "test", &stdout, &stderr); code != exitUsage {
+			t.Errorf("%s: exit=%d", v, code)
+		}
+	}
 }

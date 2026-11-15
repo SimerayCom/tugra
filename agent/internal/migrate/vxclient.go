@@ -447,3 +447,63 @@ func (h *Hub) VxReset(ctx context.Context, itemRef, runID string) error {
 func (h *Hub) VxAbort(ctx context.Context, itemRef, runID string) error {
 	return h.doBody(ctx, http.MethodPost, h.vxPath(itemRef, "abort"), vxRunReq{RunID: runID}, nil, 2, 0)
 }
+
+// ---- link speed test ----------------------------------------------------------------------------------------------
+
+type vxSpeedReq struct {
+	RunID  string `json:"runId"`
+	Size   int    `json:"size"`
+	Sha256 string `json:"sha256"`
+}
+
+// VxSpeedCommitResp is the hub's answer for a throwaway part: bytes confirmed by the target and the hub-timed duration.
+type VxSpeedCommitResp struct {
+	Done      bool   `json:"done"`
+	Pending   bool   `json:"pending"`
+	Retryable bool   `json:"retryable"`
+	Reason    string `json:"reason"`
+	Bytes     int64  `json:"bytes"`
+	Ms        int64  `json:"ms"`
+}
+
+// VxSpeedtestPart registers one throwaway part (the volume's first MiB, compressed) for the link speed test.
+func (h *Hub) VxSpeedtestPart(ctx context.Context, itemRef string, idx int, runID string, size int, sha string) (*VxPartResp, error) {
+	deadline := httpNow().Add(10 * time.Minute)
+	for {
+		var r VxPartResp
+		if err := h.doBody(ctx, http.MethodPost, h.vxPath(itemRef, "speedtest/"+strconv.Itoa(idx)), vxSpeedReq{RunID: runID, Size: size, Sha256: sha}, &r, 3, 0); err != nil {
+			return nil, err
+		}
+		if !r.Busy {
+			return &r, nil
+		}
+		if !httpNow().Before(deadline) {
+			return nil, &HubError{Status: 503, Kind: KindServer, Msg: "the hub's relay stayed busy"}
+		}
+		if err := waitRetry(ctx, 2*time.Second+time.Duration(httpNow().UnixNano()%3000)*time.Millisecond); err != nil {
+			return nil, err
+		}
+	}
+}
+
+// VxSpeedtestCommit waits for the target to confirm the throwaway part.
+func (h *Hub) VxSpeedtestCommit(ctx context.Context, itemRef string, idx int, runID string) (*VxSpeedCommitResp, error) {
+	deadline := httpNow().Add(15 * time.Minute)
+	for {
+		var r VxSpeedCommitResp
+		if err := h.doBody(ctx, http.MethodPost, h.vxPath(itemRef, "speedtest/"+strconv.Itoa(idx)+"/commit"), vxRunReq{RunID: runID}, &r, 3, 0); err != nil {
+			return nil, err
+		}
+		if !r.Pending {
+			return &r, nil
+		}
+		if !httpNow().Before(deadline) {
+			return &VxSpeedCommitResp{Reason: "the target did not confirm the part in time"}, nil
+		}
+	}
+}
+
+// VxSpeedtestEnd removes the test's throwaway staging on the target (best effort).
+func (h *Hub) VxSpeedtestEnd(ctx context.Context, itemRef, runID string) error {
+	return h.doBody(ctx, http.MethodPost, vxPrefix+url.PathEscape(itemRef)+"/speedtest-end", vxRunReq{RunID: runID}, nil, 2, 0)
+}

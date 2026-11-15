@@ -1,10 +1,12 @@
 package migrate
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"io"
 	"sort"
 	"strconv"
 	"strings"
@@ -298,6 +300,9 @@ func (v *volRunner) dryRun(ctx context.Context, scope []Target) []itemResult {
 			default:
 				res.Disk = "ok"
 			}
+		}
+		if res.State == "planned" && v.c.speedtestMiB > 0 && f.src != nil {
+			v.speedtest(ctx, tg, f, &res)
 		}
 		results = append(results, res)
 	}
@@ -622,3 +627,99 @@ func errMsg(err error) string {
 	return err.Error()
 }
 
+// speedtest streams the first --speedtest-mib MiB of the REAL volume through the relay to the target's throwaway staging
+// (discarded afterwards) and reports the measured end-to-end rate, so the downtime window is measured BEFORE anything is
+// stopped. Read-only for the source (a running source is fine: the bytes are thrown away). Failures are reported, never fatal.
+func (v *volRunner) speedtest(ctx context.Context, tg Target, f volumeFacts, res *itemResult) {
+	partRaw, err := v.partRawBytes()
+	if err != nil {
+		res.Reason = "speedtest-part-size"
+		return
+	}
+	want := int64(v.c.speedtestMiB) * mib
+	if want > f.inv.RawBytes && f.inv.RawBytes > 0 {
+		want = f.inv.RawBytes
+	}
+	src, serr := f.src.mountSrc()
+	if serr != nil {
+		res.Reason = "speedtest-failed"
+		return
+	}
+	name := "tugra-vx-speed-" + shortRun(v.runID) + "-" + shortID(f.src.ContainerID)
+	argv := buildTarArgv(v.dockerPath, v.c.helperImage, src, name, excludesFor(tg))
+	sctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stdout, wait, serr2 := startTarFn(sctx, argv, v.dockerEnv)
+	if serr2 != nil {
+		res.Reason = "speedtest-failed"
+		return
+	}
+	defer func() {
+		cancel()
+		_ = stdout.Close()
+		_ = wait() // tar is cut short on purpose: its exit status means nothing here
+		removeHelper(v.dockerPath, v.dockerEnv, name)
+		ectx, ecancel := context.WithTimeout(context.Background(), 30*time.Second)
+		_ = v.hub.VxSpeedtestEnd(ectx, tg.ItemRef, v.runID)
+		ecancel()
+	}()
+
+	buf := make([]byte, partRaw)
+	mw := newMemberWriter()
+	var member bytes.Buffer
+	var raw int64
+	started := time.Now()
+	for idx := 0; raw < want; idx++ {
+		n := int64(partRaw)
+		if want-raw < n {
+			n = want - raw
+		}
+		got, _, rerr := readSlice(stdout, buf[:n])
+		if got == 0 {
+			break // the archive was shorter than the test size
+		}
+		if rerr != nil && rerr != io.EOF {
+			res.Reason = "speedtest-failed"
+			return
+		}
+		msum, cerr := mw.compress(buf[:got], &member)
+		if cerr != nil {
+			res.Reason = "speedtest-failed"
+			return
+		}
+		ok := false
+		for attempt := 0; attempt < 2 && !ok; attempt++ {
+			reg, rgerr := v.hub.VxSpeedtestPart(ctx, tg.ItemRef, idx, v.runID, member.Len(), hex.EncodeToString(msum[:]))
+			if rgerr != nil {
+				v.logf("speedtest: %v", rgerr)
+				res.Reason = "speedtest-failed"
+				return
+			}
+			if perr := v.hub.VxPutPart(ctx, reg.SrcPath, member.Bytes()); perr != nil {
+				continue
+			}
+			c, cerr2 := v.hub.VxSpeedtestCommit(ctx, tg.ItemRef, idx, v.runID)
+			ok = cerr2 == nil && c.Done
+		}
+		if !ok {
+			res.Reason = "speedtest-failed"
+			return
+		}
+		raw += int64(got)
+		if got < int(n) {
+			break
+		}
+	}
+	secs := time.Since(started).Seconds()
+	if raw == 0 || secs <= 0 {
+		res.Reason = "speedtest-failed"
+		return
+	}
+	rate := float64(raw) / secs / 1e6
+	res.SpeedMBps = float64(int64(rate*10)) / 10
+	res.Reason = "speedtest"
+	if f.inv.RawBytes > 0 && rate > 0 {
+		res.EstimateSeconds = int64(float64(f.inv.RawBytes)/(rate*1e6)) + 15*60 // + the extraction allowance
+	}
+	v.logf("speedtest %s: %.1f MB/s raw over %d MiB; estimated window %d min (estimate, not a promise)", tg.ItemRef, rate, raw/mib, res.EstimateSeconds/60)
+}

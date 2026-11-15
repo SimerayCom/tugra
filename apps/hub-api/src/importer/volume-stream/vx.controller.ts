@@ -16,12 +16,14 @@ import {
   VxMigratorDiskCheckBodySchema,
   VxPartBodySchema,
   VxRunBodySchema,
+  VxSpeedtestBodySchema,
   type VxBeginBody,
   type VxFinishBody,
   type VxInventoryBody,
   type VxMigratorDiskCheckBody,
   type VxPartBody,
   type VxRunBody,
+  type VxSpeedtestBody,
 } from "./vx.dto";
 
 /**
@@ -114,5 +116,36 @@ export class MigrationVolumeController {
   @HttpCode(200)
   abort(@MigrationOp() op: MigrationTokenContext, @Param("itemRef") itemRef: string, @Body(new ZodValidationPipe(VxRunBodySchema)) body: VxRunBody) {
     return this.vx.abort(op, itemRef, body);
+  }
+
+  /** Link speed test (read-only for the source): register one throwaway part of the volume's first MiB. */
+  @Post(":itemRef/speedtest/:idx")
+  @HttpCode(200)
+  speedtestPart(
+    @MigrationOp() op: MigrationTokenContext,
+    @Param("itemRef") itemRef: string,
+    @Param("idx", ParseIntPipe) idx: number,
+    @Body(new ZodValidationPipe(VxSpeedtestBodySchema)) body: VxSpeedtestBody,
+  ) {
+    return this.vx.speedtestPart(op, itemRef, idx, body);
+  }
+
+  /** Wait for the target to confirm the throwaway part; answers the hub-measured time. */
+  @Post(":itemRef/speedtest/:idx/commit")
+  @HttpCode(200)
+  speedtestCommit(
+    @MigrationOp() op: MigrationTokenContext,
+    @Param("itemRef") itemRef: string,
+    @Param("idx", ParseIntPipe) idx: number,
+    @Body(new ZodValidationPipe(VxRunBodySchema)) body: VxRunBody,
+  ) {
+    return this.vx.speedtestCommit(op, itemRef, idx, body);
+  }
+
+  /** End the test: remove its throwaway staging on the target. */
+  @Post(":itemRef/speedtest-end")
+  @HttpCode(200)
+  speedtestEnd(@MigrationOp() op: MigrationTokenContext, @Param("itemRef") itemRef: string, @Body(new ZodValidationPipe(VxRunBodySchema)) body: VxRunBody) {
+    return this.vx.speedtestEnd(op, itemRef, body);
   }
 }

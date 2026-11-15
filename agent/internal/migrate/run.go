@@ -63,6 +63,10 @@ type itemResult struct {
 	PgMajor  string `json:"pgMajor,omitempty"`
 	PgLayout string `json:"pgLayout,omitempty"`
 	Disk     string `json:"disk,omitempty"`
+
+	// --speedtest-mib: the measured end-to-end rate and the window it implies for this volume (an ESTIMATE).
+	SpeedMBps       float64 `json:"speedMBps,omitempty"`
+	EstimateSeconds int64   `json:"estimateSeconds,omitempty"`
 }
 
 type output struct {
@@ -326,7 +330,7 @@ func RunCLI(args []string, version string, stdout, stderr io.Writer) (code int) 
 			policy: *targets.Vx, overrides: mapOverrides, usedIDs: map[string]string{}, expiry: probe.expiresAt}
 	}
 
-	if c.dryRun {
+	if c.dryRun || c.speedtestMiB > 0 {
 		out.DryRun = true
 		bad := false
 		for _, tg := range inScope {
@@ -720,8 +724,8 @@ func (c *cli) validateVolumeFlags() error {
 	if c.hubOutageWait < 0 || c.hubOutageWait > time.Hour {
 		return fmt.Errorf("--hub-outage-wait must be between 0 and 1h")
 	}
-	if c.speedtestMiB < 0 || c.speedtestMiB > 4096 {
-		return fmt.Errorf("--speedtest-mib must be between 0 and 4096")
+	if c.speedtestMiB < 0 || c.speedtestMiB > 1024 {
+		return fmt.Errorf("--speedtest-mib must be between 0 and 1024")
 	}
 	if c.helperImage != "" && !helperImageRe.MatchString(c.helperImage) {
 		return fmt.Errorf("--helper-image has an unsafe charset")

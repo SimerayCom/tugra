@@ -85,3 +85,7 @@ export type VxDiskCheckBody = z.infer<typeof VxDiskCheckBodySchema>;
 /** Explicit "this volume is NOT migrated" decision: needs the acknowledgement, never implied. */
 export const VxExcludeBodySchema = z.object({ acknowledge: z.literal(true), reason: shortStr(200).optional() }).strict();
 export type VxExcludeBody = z.infer<typeof VxExcludeBodySchema>;
+
+/** Link speed test: a throwaway part of the REAL volume's first MiB, relayed to the target's staging and discarded. */
+export const VxSpeedtestBodySchema = z.object({ runId: runIdSchema, size: posInt, sha256: hex64 }).strict();
+export type VxSpeedtestBody = z.infer<typeof VxSpeedtestBodySchema>;

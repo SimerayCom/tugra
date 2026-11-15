@@ -4,7 +4,8 @@ import { Prisma, type MigrationVolumeTransfer } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { TeamAccessService } from "../../common/team-access.service";
 import { AgentWsServer } from "../../agent-gateway/agent-ws.server";
-import { DOCKER_ROOT, MOVE_STAGING_ROOT, MOVE_TIMEOUTS, buildMoveProbeScript, buildMoveRecvScript, hasMarker, parseMovePart, parseMoveProbe, scrubMoveOutput, type MoveProbe } from "../../app-moves/app-move-scripts";
+import { DOCKER_ROOT, MOVE_STAGING_ROOT, MOVE_TIMEOUTS, buildMoveCleanupScript, buildMoveProbeScript, buildMoveRecvScript, hasMarker, parseMovePart, parseMoveProbe, scrubMoveOutput, type MoveProbe } from "../../app-moves/app-move-scripts";
+import { createHash } from "node:crypto";
 import { VolumeRelayService } from "../../app-moves/volume-relay.service";
 import { diskVerdict } from "../../app-moves/move-preflight";
 import { appVolumeName } from "../../deploy/deploy-script";
@@ -20,7 +21,7 @@ import { buildMigrationPartStatScript } from "./vx-scripts";
 import { firstGate } from "./vx-dest-gate";
 import { volDataRef } from "../migration-volume";
 import { buildVolumeTargets, dbVolumeModeRefs, parseVolumeItemRef, type VxDbLite, type VxExclusion, type VxVolumeTarget } from "./vx-targets";
-import type { VxBeginBody, VxFinishBody, VxFingerprint, VxInventoryBody, VxInventoryItem, VxPartBody, VxRunBody } from "./vx.dto";
+import type { VxBeginBody, VxFinishBody, VxFingerprint, VxInventoryBody, VxInventoryItem, VxPartBody, VxRunBody, VxSpeedtestBody } from "./vx.dto";
 import { buildVolumeView, type VolumeTransferView } from "./vx-view";
 
 /** A fully resolved, re-authorized destination of ONE volume itemRef. Everything here is hub-derived, never from the migrator. */
@@ -741,6 +742,86 @@ export class VxService {
     ]);
     await this.prisma.bulkTask.updateMany({ where: { opId: t.opId, itemRef: vxDataRef(t.itemRef) }, data: { status: "FAILED", output: "reset: the copy starts over", finishedAt: new Date() } });
     return { state: "PENDING", attempt: t.attempt + 1 };
+  }
+
+  // ───────────────────────────── link speed test ─────────────────────────────
+
+  /** The throwaway staging id of one speed test: matches the move id charset and can never collide with a transfer's cuid. */
+  private speedKey(opId: string, itemRef: string, runId: string): string {
+    return `speed${createHash("sha256").update(`${opId}|${itemRef}|${runId}`).digest("hex").slice(0, 20)}`;
+  }
+
+  /**
+   * Measure the real link: a part of the volume's FIRST MiB goes through the SAME relay and receive script a copy uses,
+   * lands in a throwaway staging dir on the target (never the destination volume) and is discarded by `speedtestEnd`.
+   * Read-only for the source, no lease, capped at 1 GiB staged per test. The hub times register -> target confirmation.
+   */
+  async speedtestPart(op: MigrationTokenContext, itemRef: string, idx: number, body: VxSpeedtestBody): Promise<Record<string, unknown>> {
+    const ctx = await this.resolve(op.opId, op.actorId, itemRef);
+    if (ctx.target.excluded) throw new ConflictException("this volume was excluded from the migration by its owner");
+    if (idx < 0 || idx > 99_999) throw new BadRequestException("part index out of range");
+    const t = await this.findTransfer(op.opId, itemRef);
+    if (t && t.state === "COPYING" && t.runId !== body.runId && t.lastBeatAt && t.lastBeatAt.getTime() >= Date.now() - vxStaleMs()) throw new ConflictException(VX_409.otherRun);
+    if (body.size > vxPartRawBytes() + Math.floor(vxPartRawBytes() / 100) + 1024) throw new BadRequestException("size exceeds the part bound");
+    const key = this.speedKey(op.opId, itemRef, body.runId);
+    if (this.registry.speedtestBytes(key) + body.size > 1024 * 1024 ** 2) throw new PayloadTooLargeException("a speed test stages at most 1 GiB on the target");
+    if (!this.agentWs.isOnline(ctx.targetServerId) || !this.agentWs.agentSupports(ctx.targetServerId, AGENT_FEATURE_HUB_ORIGIN_ENV) || !ctx.server.capabilities.includes("backup")) {
+      throw new ConflictException(`${VX_409.diskInsufficient}: the target agent cannot take part in a speed test (offline, too old or no backup capability)`);
+    }
+    this.registry.getSpeed(key)?.cancel(new Error("speed test part re-registered"));
+    const reg = this.relay.register({ moveId: key, volIdx: VX_VOL_IDX, part: idx, size: body.size, sha256: body.sha256, srcServerId: vxPrincipal(op.opId), dstServerId: ctx.targetServerId });
+    if (reg.busy) return { busy: true };
+    const recvScript = buildMoveRecvScript({ moveId: key, idx: VX_VOL_IDX, part: idx, path: reg.dstPath, size: body.size, sha256: body.sha256 });
+    let dstReq: string | undefined;
+    let aborted = false;
+    const cancelDst = (): void => {
+      if (dstReq) this.agentWs.cancelCommand(ctx.targetServerId, dstReq);
+    };
+    const recv = this.agentWs.sendCommand(ctx.targetServerId, recvScript, "backup", MOVE_TIMEOUTS.transfer, undefined, (reqId) => {
+      dstReq = reqId;
+      if (aborted) cancelDst();
+    });
+    recv.catch(() => undefined);
+    reg.done.catch(() => cancelDst());
+    this.registry.setSpeed({
+      key,
+      idx,
+      size: body.size,
+      reg,
+      settled: this.settlePart({ reg, size: body.size, sha256: body.sha256 }, recv),
+      startedAt: Date.now(),
+      cancel: (reason: Error) => {
+        aborted = true;
+        reg.cancel(reason);
+        cancelDst();
+      },
+    });
+    return { srcPath: reg.srcPath, expiresAt: await this.expiry(op) };
+  }
+
+  async speedtestCommit(op: MigrationTokenContext, itemRef: string, idx: number, body: VxRunBody): Promise<Record<string, unknown>> {
+    await this.resolve(op.opId, op.actorId, itemRef);
+    const key = this.speedKey(op.opId, itemRef, body.runId);
+    const part = this.registry.getSpeed(key);
+    if (!part || part.idx !== idx) throw new ConflictException(VX_409.partLost);
+    const outcome = await Promise.race([part.settled, new Promise<"pending">((r) => setTimeout(() => r("pending"), vxCommitWaitMs()).unref?.())]);
+    if (outcome === "pending") return { pending: true };
+    this.registry.deleteSpeed(key);
+    if (!outcome.ok) return { done: false, retryable: outcome.retryable, reason: outcome.reason };
+    return { done: true, bytes: outcome.bytes, ms: Math.max(1, Date.now() - part.startedAt) };
+  }
+
+  /** End a speed test: drop anything in flight and remove its throwaway staging on the target. */
+  async speedtestEnd(op: MigrationTokenContext, itemRef: string, body: VxRunBody): Promise<{ ok: boolean }> {
+    const ctx = await this.resolve(op.opId, op.actorId, itemRef);
+    const key = this.speedKey(op.opId, itemRef, body.runId);
+    this.registry.endSpeed(key);
+    try {
+      const r = await this.agentWs.sendCommand(ctx.targetServerId, buildMoveCleanupScript(key), "backup", MOVE_TIMEOUTS.drop);
+      return { ok: r.exitCode === 0 };
+    } catch {
+      return { ok: false };
+    }
   }
 
   // ───────────────────────────── user-authed abort / reset ─────────────────────────────

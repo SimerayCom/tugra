@@ -21,6 +21,17 @@ export interface InflightPart {
   startedAt: number;
 }
 
+/** One throwaway part of a link speed test (never recorded, never applied; its staging is removed at the end). */
+export interface SpeedtestPart {
+  key: string;
+  idx: number;
+  size: number;
+  reg: RelayRegistration;
+  settled: Promise<PartOutcome>;
+  startedAt: number;
+  cancel(reason: Error): void;
+}
+
 /**
  * In-memory map of the parts being relayed (one per transfer: parts are strictly sequential) plus the last idx this
  * process registered per transfer. Memory is the point: the relay itself is memory-only, so a hub restart loses both
@@ -30,6 +41,28 @@ export interface InflightPart {
 export class VxPartRegistry {
   private readonly inflight = new Map<string, InflightPart>();
   private readonly seen = new Map<string, number>();
+  private readonly speed = new Map<string, SpeedtestPart>();
+  private readonly speedBytes = new Map<string, number>();
+
+  getSpeed(key: string): SpeedtestPart | undefined {
+    return this.speed.get(key);
+  }
+  setSpeed(p: SpeedtestPart): void {
+    this.speed.set(p.key, p);
+    this.speedBytes.set(p.key, (this.speedBytes.get(p.key) ?? 0) + p.size);
+  }
+  deleteSpeed(key: string): void {
+    this.speed.delete(key);
+  }
+  /** Total compressed bytes this test has staged on the target so far (the hub caps it). */
+  speedtestBytes(key: string): number {
+    return this.speedBytes.get(key) ?? 0;
+  }
+  endSpeed(key: string): void {
+    this.speed.get(key)?.cancel(new Error("speed test ended"));
+    this.speed.delete(key);
+    this.speedBytes.delete(key);
+  }
 
   get(transferId: string): InflightPart | undefined {
     return this.inflight.get(transferId);

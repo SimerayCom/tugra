@@ -260,6 +260,7 @@ hub-side disk use: every part crosses the hub in memory only.
 | `--part-mib N` | raw MiB per part, 32..512, must equal the hub policy |
 | `--reset-volume <itemRef>` | discard a volume's staged parts and start it over (repeatable) |
 | `--hub-outage-wait D` | how long to wait for a restarting hub (default 15m, up to 1h) |
+| `--speedtest-mib N` | measure the real link before you stop anything: streams the first N MiB (1 to 1024) of the volume through the relay to a throwaway directory on the target, discards it and prints the measured MB/s and the window it implies (an **estimate**) |
 | `--restart-on-failure=false` | leave a container this run stopped stopped when the copy fails |
 
 Result states per volume: `volume-applied`, `volume-copied` (copied, apply not confirmed), `volume-skipped-running`,
@@ -292,7 +293,8 @@ numeric ids are preserved on purpose; the source is your own host.
 
 - **Downtime** is source stop → end of copy → apply → target start (DNS is yours). For about 30 GB expect 20 to 60
   minutes depending on the link; **that is an estimate, not a promise**: the dry run measures size and space, and
-  the first parts give the real rate. A block-level pre-seed (near-zero downtime) is a separate, later feature.
+  `--speedtest-mib 512` measures the real end-to-end rate (the result reports `speedMBps` and `estimateSeconds`:
+  size divided by the rate, plus about 15 minutes to extract) before you stop anything. A block-level pre-seed (near-zero downtime) is a separate, later feature.
 - **Target disk:** the compressed parts are staged on the target (about 1x) and the apply needs about 1.05x the
   data again; with staging and Docker on one filesystem both add up, so a 30 GB volume wants about **65 GB free**.
   The hub checks this (`vx-disk-insufficient` names the numbers) before and after the copy.

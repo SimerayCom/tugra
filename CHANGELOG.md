@@ -81,7 +81,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`--arms volumes|all`) that copies a stopped source container's declared volumes to the target in resumable ~128 MiB
   parts through the hub's memory relay: no size cap, no hub disk, owner/group/mode preserved, resumable by part (a
   changed source is `volume-diverged`, never overwritten), `--dry-run` inventory with the target's free space,
-  `--stop-source` (only that container, restarted on failure) and explicit `volume-not-migrated` exclusions. A
+  `--stop-source` (only that container, restarted on failure), `--speedtest-mib` (measures the real link before a window is chosen) and explicit `volume-not-migrated` exclusions. A
   PostgreSQL database can opt into a physical **Volume copy** data mode behind strict gates (same image and major,
   credentials carried, data at the volume root, never-started destination); the dry run reports the image, major and
   mount so the answer is known before any window. New Import wizard panel, `tugra import volumes`, hub env

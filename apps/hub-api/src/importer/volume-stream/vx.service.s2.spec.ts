@@ -523,3 +523,65 @@ describe("authorization across the lifecycle", () => {
     await expect(h.svc.registerPart(ctxOp, APP_VOL_REF, 0, partBody(mkPart(R, "a"), 0))).rejects.toThrow("role lost");
   });
 });
+
+describe("link speed test (throwaway part of the real volume)", () => {
+  const member = Buffer.from("speed-member-".repeat(80));
+  const body = (runId = RUN) => ({ runId, size: member.length, sha256: sha(member) });
+
+  it("relays a throwaway part through the same relay to a THROWAWAY staging dir, times it, never touches the transfer or the destination", async () => {
+    const h = harness();
+    const reg = (await h.svc.speedtestPart(ctxOp, APP_VOL_REF, 0, body())) as { srcPath: string };
+    const commit = h.svc.speedtestCommit(ctxOp, APP_VOL_REF, 0, { runId: RUN });
+    await h.put(reg.srcPath, member);
+    const c = (await commit) as { done: boolean; bytes: number; ms: number };
+    expect(c).toMatchObject({ done: true, bytes: member.length });
+    expect(c.ms).toBeGreaterThanOrEqual(1);
+    const recv = h.cmds.find((s) => s.includes("TUGRA_VX_RECV_OK"))!;
+    expect(recv).toMatch(/\/etc\/tugra\/app-moves\/speed[0-9a-f]{20}\/0/); // a throwaway id, not a transfer's
+    expect(h.transfers.rows).toHaveLength(0); // no transfer, no lease, no part row
+    expect(h.parts.rows).toHaveLength(0);
+    expect(h.prisma.deployment.count).not.toHaveBeenCalled(); // the destination is never inspected nor written
+  });
+
+  it("end removes the throwaway staging dir on the target (and only that one)", async () => {
+    const h = harness();
+    await h.svc.speedtestEnd(ctxOp, APP_VOL_REF, { runId: RUN });
+    const cleanup = h.cmds.find((s) => s.includes("TUGRA_VX_CLEANUP_DONE"))!;
+    expect(cleanup).toMatch(/rm -rf \/etc\/tugra\/app-moves\/speed[0-9a-f]{20}$/m);
+    expect(cleanup).not.toContain(h.transfers.rows[0]?.id ?? "no-such");
+  });
+
+  it("is capped at 1 GiB staged per test, busy when the pool is full, and offline/old/no-capability targets are refused", async () => {
+    const h = harness({ relayConcurrency: 16 });
+    const big = { runId: RUN, size: 128 * 1024 ** 2, sha256: sha("x") };
+    for (let i = 0; i < 8; i++) await expect(h.svc.speedtestPart(ctxOp, APP_VOL_REF, i, big)).resolves.toHaveProperty("srcPath"); // 8 x 128 MiB = 1 GiB
+    await expect(h.svc.speedtestPart(ctxOp, APP_VOL_REF, 8, big)).rejects.toBeInstanceOf(PayloadTooLargeException);
+    await h.svc.speedtestEnd(ctxOp, APP_VOL_REF, { runId: RUN }); // end resets the tally
+    await expect(h.svc.speedtestPart(ctxOp, APP_VOL_REF, 0, big)).resolves.toHaveProperty("srcPath");
+    await h.svc.speedtestEnd(ctxOp, APP_VOL_REF, { runId: RUN });
+    const busy = harness({ relayConcurrency: 1 });
+    const squat = busy.relay.register({ moveId: "cksquatter0000000000000001", volIdx: 0, part: 0, size: 1, sha256: sha("x"), srcServerId: vxPrincipal("x"), dstServerId: "d" });
+    await expect(busy.svc.speedtestPart(ctxOp, APP_VOL_REF, 0, body())).resolves.toEqual({ busy: true });
+    if (!squat.busy) squat.cancel(new Error("done"));
+    for (const o of [{ online: false }, { supportsOrigin: false }, { server: { capabilities: ["deploy"] } }]) {
+      await expect(harness(o).svc.speedtestPart(ctxOp, APP_VOL_REF, 0, body())).rejects.toThrow(/cannot take part in a speed test/);
+    }
+  });
+
+  it("refuses an excluded volume, an oversize part, and a live transfer owned by another run; commit of an unknown part is `vx-part-lost`", async () => {
+    const ex = harness({ op: { meta: { sourceKind: "coolify", serverId: SERVER_ID, plan: { items: [] }, vxExcluded: { [APP_VOL_REF]: { reason: "x", at: "a", by: "u" } } } } });
+    await expect(ex.svc.speedtestPart(ctxOp, APP_VOL_REF, 0, body())).rejects.toBeInstanceOf(ConflictException);
+    const h = harness();
+    await expect(h.svc.speedtestPart(ctxOp, APP_VOL_REF, 0, { runId: RUN, size: 200 * 1024 ** 2, sha256: sha("x") })).rejects.toBeInstanceOf(BadRequestException);
+    await h.svc.begin(ctxOp, APP_VOL_REF, beginBody({ runId: "run_other_000001" }));
+    await expect(h.svc.speedtestPart(ctxOp, APP_VOL_REF, 0, body())).rejects.toThrow(VX_409.otherRun);
+    await expect(h.svc.speedtestCommit(ctxOp, APP_VOL_REF, 3, { runId: RUN })).rejects.toThrow(VX_409.partLost);
+  });
+
+  it("a failed receive is reported, not timed", async () => {
+    const h = harness();
+    h.recvOverride.fail = { exitCode: 22, output: "curl: (22) The requested URL returned error: 404" };
+    await h.svc.speedtestPart(ctxOp, APP_VOL_REF, 0, body());
+    await expect(h.svc.speedtestCommit(ctxOp, APP_VOL_REF, 0, { runId: RUN })).resolves.toMatchObject({ done: false, retryable: true });
+  });
+});
