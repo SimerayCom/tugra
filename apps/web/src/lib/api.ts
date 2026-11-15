@@ -2093,6 +2093,12 @@ export const api = {
       body: JSON.stringify({ name, scopes, expiresInDays }),
     });
   },
+  renameApiToken(id: string, name: string) {
+    return apiFetch<ApiToken>(`/api-tokens/${id}`, { method: "PATCH", body: JSON.stringify({ name }) });
+  },
+  rotateApiToken(id: string) {
+    return apiFetch<{ token: string; view: ApiToken }>(`/api-tokens/${id}/rotate`, { method: "POST" });
+  },
   deleteApiToken(id: string) {
     return apiFetch<{ ok: true }>(`/api-tokens/${id}`, { method: "DELETE" });
   },

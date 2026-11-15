@@ -53,5 +53,9 @@
   "noneInScope": "None in the current team scope. Switch team scope to see others.",
   "mailNotConfigured": "Email isn't set up on this hub.",
   "mailNotConfiguredSetup": "Set it up in Settings → Email.",
-  "mailNotConfiguredAskAdmin": "Ask an administrator to set it up in Settings → Email."
+  "mailNotConfiguredAskAdmin": "Ask an administrator to set it up in Settings → Email.",
+  "sortBy": "Sort by",
+  "sortedAsc": "(sorted ascending)",
+  "sortedDesc": "(sorted descending)",
+  "disabled": "Disabled"
 }

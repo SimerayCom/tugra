@@ -44,5 +44,8 @@
   "environment": "Environment",
   "assignTitle": "Project / Environment",
   "unassigned": "Unassigned",
-  "moveDesc": "Assign this resource to a project environment."
+  "moveDesc": "Assign this resource to a project environment.",
+  "sortName": "Name",
+  "sortResources": "Resources",
+  "sortCreated": "Created"
 }

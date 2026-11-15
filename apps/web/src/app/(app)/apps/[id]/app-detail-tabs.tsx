@@ -8,9 +8,10 @@ import { AppFilesCard } from "../../../../components/app-files-card";
 import { AppMetricsCard } from "../../../../components/app-metrics-card";
 import { type ChartEvent } from "../../../../components/charts";
 import { LiveLogsCard } from "../../../../components/live-logs-card";
-import { Btn, Card, EmptyState, SectionCard, Spinner } from "../../../../components/ui";
+import { ActivitySpinner, Btn, Card, EmptyState, SectionCard, Spinner } from "../../../../components/ui";
 import { useT } from "../../../../i18n/provider";
 import { deploymentColor, shortDigest } from "../../../../lib/apps";
+import { LevelLog } from "../../../../components/level-log";
 import { collapseCarriageReturns, summarizeDeployLog } from "../../../../lib/log-lines";
 import { TERMINAL_PRE_STYLE } from "../../../../lib/terminal-theme";
 import { type Application, type Deployment } from "../../../../lib/types";
@@ -89,7 +90,7 @@ export function LiveLogCard({ lines }: { lines: string }) {
           className="mono"
           style={{ ...TERMINAL_PRE_STYLE, maxHeight: 360 }}
         >
-          {collapseCarriageReturns(lines) || <span style={{ color: "var(--c-term-mute)" }}>{t("apps.waitingForBuild")}</span>}
+          {collapseCarriageReturns(lines) ? <LevelLog text={collapseCarriageReturns(lines)} /> : <span style={{ color: "var(--c-term-mute)" }}>{t("apps.waitingForBuild")}</span>}
         </pre>
         {!following && (
           <Btn
@@ -150,7 +151,7 @@ export function LogsTab({ id, canWrite, isCompose, clustered = false, neverDeplo
       {!streamActive &&
         (lastDeployLog ? (
           <SectionCard title={t("apps.lastDeployLog")} style={{ marginBottom: 0 }}>
-            <pre className="mono" style={{ ...TERMINAL_PRE_STYLE, maxHeight: 420 }}>{collapseCarriageReturns(lastDeployLog)}</pre>
+            <pre className="mono" style={{ ...TERMINAL_PRE_STYLE, maxHeight: 420 }}><LevelLog text={collapseCarriageReturns(lastDeployLog)} /></pre>
           </SectionCard>
         ) : (
           !canWrite && <Card style={{ padding: 16 }}><EmptyState>{t("apps.noLogs")}</EmptyState></Card>
@@ -194,7 +195,10 @@ export function DeploymentsTab({
               className="dep-row"
               style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", flex: 1, minWidth: 0, textAlign: "left", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "10px 12px", background: "transparent", color: "inherit", font: "inherit", cursor: "pointer", textDecoration: "none", transition: "background .12s, border-color .12s" }}
             >
-              <span style={{ fontSize: 11, fontWeight: 700, color: deploymentColor(d.status) }}>{d.status}</span>
+              <span style={{ fontSize: 11, fontWeight: 700, color: deploymentColor(d.status), display: "inline-flex", alignItems: "center", gap: 6 }}>
+                {(d.status === "RUNNING" || d.status === "QUEUED") && <ActivitySpinner size={11} />}
+                {d.status}
+              </span>
               {d.kind && d.kind !== "DEPLOY" && <span style={{ fontSize: 11, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{t(`apps.kind_${d.kind}`)}</span>}
               {rollout && (
                 <span style={{ fontSize: 11, fontWeight: 700, color: rolloutColor(rollout), border: `1px solid ${rolloutColor(rollout)}`, borderRadius: "999px", padding: "1px 7px", letterSpacing: "0.02em" }}>

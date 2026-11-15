@@ -6,7 +6,7 @@ import { I18nProvider } from "../../../../i18n/provider";
 import type { Application, AppLink } from "../../../../lib/types";
 import { ConfirmProvider } from "../../../../components/confirm";
 import { api, ApiError } from "../../../../lib/api";
-import { ComposeEditorCard, ComposePreviewPanel, GitComposeSourceCard, AppOverview, PreviewBadge, PreviewCard, WebhookEventHelp } from "./app-detail-misc-cards";
+import { TaskRow, ComposeEditorCard, ComposePreviewPanel, GitComposeSourceCard, AppOverview, PreviewBadge, PreviewCard, WebhookEventHelp } from "./app-detail-misc-cards";
 
 afterEach(cleanup);
 afterEach(() => vi.restoreAllMocks());
@@ -209,5 +209,28 @@ describe("ComposePreviewPanel", () => {
     cleanup();
     wrap(<GitComposeSourceCard app={{ ...gitApp, canWrite: false }} />);
     expect(screen.queryByRole("button", { name: "Preview resolved compose" })).toBeNull();
+  });
+});
+
+describe("TaskRow disabled badge", () => {
+  const task = (enabled: boolean) => ({ id: "t1", name: "nightly", schedule: "0 3 * * *", command: "run", enabled, timeoutSec: null, lastRunAt: null }) as unknown as import("../../../../lib/types").ScheduledTask;
+  const show = (enabled: boolean) =>
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <I18nProvider>
+          <ConfirmProvider>
+            <TaskRow appId="a1" task={task(enabled)} />
+          </ConfirmProvider>
+        </I18nProvider>
+      </QueryClientProvider>,
+    );
+
+  it("marks a disabled scheduled task", () => {
+    show(false);
+    expect(screen.getByText("Disabled")).toBeTruthy();
+  });
+  it("shows no badge for an enabled task", () => {
+    show(true);
+    expect(screen.queryByText("Disabled")).toBeNull();
   });
 });

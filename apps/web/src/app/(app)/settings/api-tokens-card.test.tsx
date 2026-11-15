@@ -81,3 +81,68 @@ describe("ApiTokensCard scope selector", () => {
     await waitFor(() => expect(api.createApiToken).toHaveBeenCalledWith("readonly", ["read"]));
   });
 });
+
+describe("ApiTokensCard expiry, rename and rotate", () => {
+  const day = 86_400_000;
+  const tok = (id: string, name: string, expiresInMs: number | null) => ({
+    id, name, prefix: "tugra_pat_", scopes: ["read" as const], expiresAt: expiresInMs === null ? null : new Date(Date.now() + expiresInMs).toISOString(), lastUsedAt: null, createdAt: "2026-01-01T00:00:00Z",
+  });
+  beforeEach(() => {
+    qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    h.user = { isInstanceOwner: false };
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    cleanup();
+  });
+
+  it("shows an amber 'N days left' badge at <=14 days, a plain date beyond, 'Expired' when past, and nothing alarming without expiry", async () => {
+    vi.spyOn(api, "listApiTokens").mockResolvedValue([tok("a", "soon", 3 * day - 1000), tok("b", "later", 60 * day), tok("c", "dead", -day), tok("d", "forever", null), tok("e", "tomorrow", day / 2)]);
+    wrap();
+    expect(await screen.findByText("3 days left")).toBeTruthy();
+    expect(screen.getByText("1 day left")).toBeTruthy();
+    expect(screen.getByText("Expired")).toBeTruthy();
+    expect(screen.getByText("no expiry")).toBeTruthy();
+    expect(screen.getByText(/^expires /)).toBeTruthy();
+    expect(screen.queryByText("60 days left")).toBeNull();
+  });
+
+  it("does not offer Rotate on an expired token (the hub refuses it)", async () => {
+    vi.spyOn(api, "listApiTokens").mockResolvedValue([tok("c", "dead", -day), tok("a", "alive", 30 * day)]);
+    wrap();
+    await screen.findByText("dead");
+    expect(screen.queryByRole("button", { name: "Rotate token dead" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Rotate token alive" })).toBeTruthy();
+  });
+
+  it("renames inline via PATCH and refreshes the list", async () => {
+    const list = vi.spyOn(api, "listApiTokens").mockResolvedValue([tok("a", "ci-old", null)]);
+    const rename = vi.spyOn(api, "renameApiToken").mockResolvedValue(tok("a", "ci-new", null));
+    wrap();
+    fireEvent.click(await screen.findByRole("button", { name: "Rename token ci-old" }));
+    const input = screen.getByLabelText("New token name");
+    fireEvent.change(input, { target: { value: "  ci-new " } });
+    fireEvent.submit(input.closest("form")!);
+    await waitFor(() => expect(rename).toHaveBeenCalledWith("a", "ci-new"));
+    await waitFor(() => expect(list.mock.calls.length).toBeGreaterThan(1));
+  });
+
+  it("rotates after confirmation and shows the new secret once", async () => {
+    vi.spyOn(api, "listApiTokens").mockResolvedValue([tok("a", "ci", null)]);
+    const rotate = vi.spyOn(api, "rotateApiToken").mockResolvedValue({ token: "tugra_pat_rotated", view: tok("a", "ci", null) });
+    wrap();
+    fireEvent.click(await screen.findByRole("button", { name: "Rotate token ci" }));
+    await waitFor(() => expect(rotate).toHaveBeenCalledWith("a"));
+    expect(await screen.findByText("tugra_pat_rotated")).toBeTruthy();
+  });
+
+  it("sends the optional expiry only when filled in", async () => {
+    vi.spyOn(api, "listApiTokens").mockResolvedValue([]);
+    const create = vi.spyOn(api, "createApiToken").mockResolvedValue({ token: "t", view: tok("n", "x", null) });
+    wrap();
+    fireEvent.change(screen.getByPlaceholderText(/Token name/), { target: { value: "ci" } });
+    fireEvent.change(screen.getByLabelText("Expires in (days, optional)"), { target: { value: "30" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(create).toHaveBeenCalledWith("ci", ["read"], 30));
+  });
+});

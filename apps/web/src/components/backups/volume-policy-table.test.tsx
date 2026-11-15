@@ -30,6 +30,13 @@ beforeEach(() => {
 });
 afterEach(() => { vi.restoreAllMocks(); cleanup(); });
 
+describe("VolumePolicyTable disabled badge", () => {
+  it("shows a Disabled badge only on rows whose policy is switched off", () => {
+    show([pol({ volumeName: "cache", enabled: false }), pol({ volumeName: "media", cron: "0 4 * * *" })]);
+    expect(screen.getAllByText("Disabled")).toHaveLength(1);
+  });
+});
+
 describe("VolumePolicyTable", () => {
   it("one row per volume: inherits, custom cron / interval, or off", () => {
     show([pol({ volumeName: "media", cron: "0 4 * * *" }), pol({ volumeName: "cache", enabled: false })]);

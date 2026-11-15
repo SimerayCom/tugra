@@ -26,16 +26,40 @@ const chip: CSSProperties = {
   color: "var(--c-tx2)",
 };
 
-/** Read-only inline tag chips, e.g. on a list row. */
-export function TagChips({ tags }: { tags: string[] }) {
+/**
+ * Inline tag chips, e.g. on a list row. Read-only by default; pass `onSelect` to make each chip a real button
+ * that toggles that tag as a list filter (`selected` marks the active ones). Only use the interactive form
+ * where the chips are NOT nested inside a link.
+ */
+export function TagChips({ tags, onSelect, selected = [] }: { tags: string[]; onSelect?: (tag: string) => void; selected?: string[] }) {
+  const t = useT();
   if (!tags.length) return null;
   return (
     <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap" }}>
-      {tags.map((t) => (
-        <span key={t} style={{ ...chip, fontSize: 11, padding: "1px 7px" }}>
-          {t}
-        </span>
-      ))}
+      {tags.map((tag) => {
+        const small = { ...chip, fontSize: 11, padding: "1px 7px" };
+        if (!onSelect) {
+          return (
+            <span key={tag} style={small}>
+              {tag}
+            </span>
+          );
+        }
+        const on = selected.includes(tag);
+        return (
+          <button
+            key={tag}
+            type="button"
+            className="tg-row"
+            onClick={() => onSelect(tag)}
+            aria-pressed={on}
+            aria-label={t("tags.filterBy", { tag })}
+            style={{ ...small, cursor: "pointer", fontFamily: "inherit", ...(on ? { background: "var(--c-a)", color: "var(--c-on-a)", borderColor: "var(--c-a)", fontWeight: 700 } : {}) }}
+          >
+            {tag}
+          </button>
+        );
+      })}
     </span>
   );
 }

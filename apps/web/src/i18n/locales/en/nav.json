@@ -60,5 +60,8 @@
     "integrations": "Integrations",
     "account": "Account"
   },
-  "activeInGroup": "Current page is in this group"
+  "activeInGroup": "Current page is in this group",
+  "whatsNew": "What's new",
+  "docs": "Documentation",
+  "sponsor": "Sponsor"
 }

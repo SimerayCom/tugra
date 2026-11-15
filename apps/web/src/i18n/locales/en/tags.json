@@ -6,5 +6,6 @@
   "save": "Save",
   "none": "No tags yet.",
   "filter": "Filter by tag",
-  "clear": "Clear"
+  "clear": "Clear",
+  "filterBy": "Filter by tag {tag}"
 }

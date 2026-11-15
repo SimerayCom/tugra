@@ -7,6 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import type { InstanceUpdateNotice } from "../lib/types";
 import { useAuth } from "../lib/auth";
+import { DOCS_URL, SPONSOR_URL, whatsNewUrl } from "../lib/help-links";
 import { navForMode, uiMode, isHomeAllowed } from "../lib/ui-mode";
 import { useT } from "../i18n/provider";
 import { useIsMobile } from "../hooks/useIsMobile";
@@ -46,6 +47,9 @@ import {
   Search,
   Server,
   Boxes,
+  BookOpen,
+  Heart,
+  Sparkles,
   Rocket,
   Settings,
   Store,
@@ -312,6 +316,25 @@ export function Sidebar({ openPalette, mobile = false, open = false, onNavigate 
       </nav>
 
       <div style={{ padding: 8, borderTop: "1px solid var(--c-bd)", display: "flex", flexDirection: "column", gap: 2 }}>
+        {([
+          { key: "whatsNew", href: whatsNewUrl(version?.current), icon: Sparkles },
+          { key: "docs", href: DOCS_URL, icon: BookOpen },
+          { key: "sponsor", href: SPONSOR_URL, icon: Heart },
+        ] as const).map((l) => (
+          <a
+            key={l.key}
+            href={l.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            data-testid={`help-${l.key}`}
+            title={col ? t(`nav.${l.key}`) : undefined}
+            aria-label={col ? t(`nav.${l.key}`) : undefined}
+            style={{ display: "flex", alignItems: "center", justifyContent: col ? "center" : "flex-start", gap: 9, width: "100%", boxSizing: "border-box", padding: "6px 10px", color: "var(--c-tx3)", fontSize: 13, textDecoration: "none" }}
+          >
+            <l.icon size={15} aria-hidden style={{ flexShrink: 0 }} />
+            {!col && t(`nav.${l.key}`)}
+          </a>
+        ))}
         <button
           onClick={async () => {
             await logout();

@@ -1360,5 +1360,8 @@
     "desc": "Issues this domain's certificate through a DNS challenge instead of HTTP-01, so it can be ready before the domain points at this server. Applied on the next deploy.",
     "noCreds": "This server has no DNS-01 credentials. Set them up in the server's network settings first.",
     "loadingServer": "Checking the server's DNS-01 credentials…"
-  }
+  },
+  "sortName": "Name",
+  "sortStatus": "Status",
+  "sortProject": "Project"
 }

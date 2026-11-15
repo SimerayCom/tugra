@@ -13,6 +13,8 @@ import { PageTitle } from "../../../components/page-header";
 import { SkeletonTable } from "../../../components/skeleton";
 import { ErrorState } from "../../../components/error-state";
 import { TeamBadge, useTeamScope } from "../../../components/team-scope";
+import { SortBar } from "../../../components/sort-bar";
+import { sortProjects, toggleSort, defaultProjectSortDir, type ProjectSortKey, type SortState } from "../../../lib/list-sort";
 import { scopeByTeam, defaultTeamId } from "../../../lib/team-scope";
 
 const field: React.CSSProperties = {
@@ -49,7 +51,9 @@ export default function ProjectsPage() {
 
   const [name, setName] = useState("");
   // List follows the global scope (filter); create needs a concrete target team.
-  const visible = scopeByTeam(projects, scope);
+  const scoped = scopeByTeam(projects, scope);
+  const [sort, setSort] = useState<SortState<ProjectSortKey>>(null);
+  const visible = sort ? sortProjects(scoped, sort.key, sort.dir) : scoped;
   const [createTeam, setCreateTeam] = useState("");
   const target = createTeam || defaultTeamId(scope, teams);
   useEffect(() => setCreateTeam(""), [scope]);
@@ -89,6 +93,20 @@ export default function ProjectsPage() {
       ) : isLoading ? (
         <SkeletonTable detailed />
       ) : (
+        <>
+        {projects.length > 1 && (
+          <div style={{ marginBottom: 12 }}>
+            <SortBar
+              options={[
+                { key: "name", label: t("projects.sortName") },
+                { key: "resources", label: t("projects.sortResources") },
+                { key: "created", label: t("projects.sortCreated") },
+              ]}
+              sort={sort}
+              onSort={(key) => setSort((prev) => toggleSort(prev, key, defaultProjectSortDir(key)))}
+            />
+          </div>
+        )}
         <ListCard>
           {visible.map((p, i) => {
             const apps = p.environments.reduce((n, e) => n + e.appCount, 0);
@@ -125,6 +143,7 @@ export default function ProjectsPage() {
               <EmptyState icon={SearchX} title={t("common.noResults")}>{t("projects.noneInScope")}</EmptyState>
             ))}
         </ListCard>
+        </>
       )}
     </div>
   );

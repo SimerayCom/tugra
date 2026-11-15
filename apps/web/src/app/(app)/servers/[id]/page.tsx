@@ -36,6 +36,8 @@ import { Skeleton, SkeletonCard } from "../../../../components/skeleton";
 import type { ProxyStatus } from "../../../../lib/types";
 import { PageHeader } from "../../../../components/page-header";
 import { Tabs } from "../../../../components/tabs-nav";
+import { RuntimeUpdateWarning } from "../../../../components/runtime-update-warning";
+import { containerRuntimeUpdates } from "../../../../lib/patching";
 import { usePatchLogStream } from "../../../../hooks/useDeployLogStream";
 import { useMetricsStream } from "../../../../hooks/useMetricsStream";
 import { useServerReconnect } from "../../../../hooks/useServerReconnect";
@@ -614,6 +616,7 @@ function PatchCard({ id }: { id: string }) {
                   {upgradeAll.isPending ? t("patching.running") : t("patching.updateAll")}
                 </Btn>
               </div>
+              <RuntimeUpdateWarning packages={containerRuntimeUpdates(info.packages)} />
               <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
                 {info.packages.map((p) => (
                   <div key={p.name} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12 }}>

@@ -366,5 +366,18 @@
   "appearanceChartTimesHint": "Chart tooltips and deployment timestamps show your local time, optionally with the same moment in UTC.",
   "appearanceTimesLocal": "Your time",
   "appearanceTimesLocalUtc": "Your time + UTC",
-  "sectionAppearance": "Appearance"
+  "sectionAppearance": "Appearance",
+  "tokenExpiryDays": "Expires in (days, optional)",
+  "tokenNoExpiry": "no expiry",
+  "tokenExpired": "Expired",
+  "tokenDayLeft": "1 day left",
+  "tokenDaysLeft": "{n} days left",
+  "tokenExpires": "expires {date}",
+  "tokenRename": "Rename",
+  "tokenRenameNamed": "Rename token {name}",
+  "tokenRenameLabel": "New token name",
+  "tokenRotate": "Rotate",
+  "tokenRotateNamed": "Rotate token {name}",
+  "tokenRotateTitle": "Rotate this token?",
+  "tokenRotateBody": "A new secret is issued for \"{name}\" and the current one stops working immediately. Update every script or CI job that uses it."
 }

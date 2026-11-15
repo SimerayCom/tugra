@@ -406,6 +406,7 @@ export function TaskRow({ appId, task }: { appId: string; task: ScheduledTask })
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <input type="checkbox" aria-label={t("apps.taskEnabled")} checked={task.enabled} onChange={(e) => toggle.mutate(e.target.checked)} />
         <span style={{ fontSize: 13, width: 120, overflow: "hidden", textOverflow: "ellipsis" }}>{task.name}</span>
+        {!task.enabled && <Badge>{t("common.disabled")}</Badge>}
         <span className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", width: 110 }}>{task.schedule}</span>
         <span className="mono" style={{ fontSize: 11, color: "var(--c-tx2)", flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{task.command}</span>
         {task.timeoutSec != null && <span style={{ fontSize: 11, color: "var(--c-tx3)" }} title={t("apps.taskTimeoutHint")}>{t("apps.taskTimeoutShort", { n: task.timeoutSec })}</span>}

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { I18nProvider } from "../i18n/provider";
-import { TagFilter, TagsCard } from "./tags";
+import { TagChips, TagFilter, TagsCard } from "./tags";
 
 afterEach(cleanup);
 
@@ -39,5 +39,23 @@ describe("TagsCard", () => {
   it("hides the editor for read-only members", () => {
     wrap(<TagsCard tags={["prod"]} canWrite={false} onSave={vi.fn()} />);
     expect(screen.queryByPlaceholderText(/add a tag/i)).toBeNull();
+  });
+});
+
+describe("TagChips", () => {
+  it("is read-only text without onSelect", () => {
+    wrap(<TagChips tags={["prod", "api"]} />);
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+    expect(screen.getByText("prod")).toBeTruthy();
+  });
+
+  it("renders real buttons with onSelect: click selects, aria-pressed follows `selected`", () => {
+    const onSelect = vi.fn();
+    wrap(<TagChips tags={["prod", "api"]} selected={["api"]} onSelect={onSelect} />);
+    const prod = screen.getByRole("button", { name: "Filter by tag prod" });
+    fireEvent.click(prod);
+    expect(onSelect).toHaveBeenCalledWith("prod");
+    expect(prod.getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("button", { name: "Filter by tag api" }).getAttribute("aria-pressed")).toBe("true");
   });
 });

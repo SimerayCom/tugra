@@ -165,6 +165,26 @@ export function Spinner() {
   );
 }
 
+/** Small decorative spinner for in-progress rows (RUNNING / QUEUED); the row's text label carries the meaning. */
+export function ActivitySpinner({ size = 12 }: { size?: number }) {
+  return (
+    <span
+      aria-hidden
+      data-testid="activity-spinner"
+      style={{
+        display: "inline-block",
+        width: size,
+        height: size,
+        flexShrink: 0,
+        border: "2px solid currentColor",
+        borderTopColor: "transparent",
+        borderRadius: "50%",
+        animation: "spin 0.8s linear infinite",
+      }}
+    />
+  );
+}
+
 const STATUS_COLOR: Record<ServerStatus, string> = {
   ONLINE: "var(--c-g)",
   PENDING: "var(--c-am)",

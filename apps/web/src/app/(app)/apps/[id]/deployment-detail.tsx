@@ -3,7 +3,8 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { ArrowDown, ExternalLink, Lock } from "lucide-react";
 import { useToast } from "../../../../components/toast";
-import { Btn, Card } from "../../../../components/ui";
+import { LevelLog } from "../../../../components/level-log";
+import { ActivitySpinner, Btn, Card } from "../../../../components/ui";
 import { useT } from "../../../../i18n/provider";
 import { useChartTimes } from "../../../../lib/appearance";
 import { formatClock, formatDateTime } from "../../../../lib/format-time";
@@ -117,7 +118,10 @@ export function DeploymentDetailView({
     <Card style={{ padding: 16 }}>
       {/* Header: status, kind, rollout, current-version badge, actions */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
-        <span style={{ fontSize: 15, fontWeight: 700, color: deploymentColor(d.status) }}>{d.status}</span>
+        <span style={{ fontSize: 15, fontWeight: 700, color: deploymentColor(d.status), display: "inline-flex", alignItems: "center", gap: 7 }}>
+          {(d.status === "RUNNING" || d.status === "QUEUED") && <ActivitySpinner size={13} />}
+          {d.status}
+        </span>
         {d.kind && d.kind !== "DEPLOY" && <span style={{ fontSize: 11, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{t(`apps.kind_${d.kind}`)}</span>}
         {d.rollout && <span style={chip(rolloutColor(d.rollout))}>{ROLLOUT_KNOWN.has(d.rollout) ? t(`apps.rollout_${d.rollout}`) : d.rollout}</span>}
         {d.isCurrent && <span style={chip("var(--c-g)")}>{t("apps.depCurrentVersion")}</span>}
@@ -227,7 +231,7 @@ export function DeploymentDetailView({
           <button type="button" onClick={copy} disabled={!shown} style={{ background: "transparent", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx2)", font: "inherit", fontSize: 11, padding: "2px 10px", cursor: shown ? "pointer" : "default" }}>{t("apps.copy")}</button>
         </div>
         <pre ref={pre} onScroll={onScroll} tabIndex={0} role="region" aria-label={t("apps.buildLog")} className="mono" style={{ ...TERMINAL_PRE_STYLE, borderRadius: 0, minHeight: 300, maxHeight: "62vh", overflow: "auto" }}>
-          {shown || <span style={{ color: "var(--c-term-mute)" }}>{isLive || d.status === "QUEUED" ? t("apps.depLogPending") : liveUnavailable ? t("apps.depLiveUnavailable") : t("apps.noBuildOutput")}</span>}
+          {shown ? <LevelLog text={shown} /> : <span style={{ color: "var(--c-term-mute)" }}>{isLive || d.status === "QUEUED" ? t("apps.depLogPending") : liveUnavailable ? t("apps.depLiveUnavailable") : t("apps.noBuildOutput")}</span>}
         </pre>
         {isLive && !following && (
           <button type="button" onClick={() => { setFollowing(true); if (pre.current) pre.current.scrollTop = pre.current.scrollHeight; }} style={{ position: "absolute", right: 14, bottom: 14, display: "inline-flex", alignItems: "center", gap: 6, background: "var(--c-lapis-fill)", color: "var(--c-on-lapis)", border: "none", borderRadius: "999px", padding: "5px 12px", font: "inherit", fontSize: 11, cursor: "pointer" }}>

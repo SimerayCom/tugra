@@ -12,6 +12,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   surface-tint pickers), UI scale (80 / 90 / 100 %, always 100 % on phones), page width (Full or Centered),
   navigation style (Default or a Floating framed sidebar), a 3D or Flat style, and "Your time + UTC" for chart
   tooltips and deployment timestamps. Everything is applied before first paint, so a reload never flashes the defaults.
+- **Deployments show progress and readable logs.** RUNNING and QUEUED deployment rows (list and detail header) now
+  carry a spinning icon, and build/deploy logs tint ERROR and WARN lines the same way the live container logs do
+  (the text is untouched, so copy still yields the original log).
+- **Apps and Projects lists can be sorted, and tags filter.** A sort bar (name, status, project for apps; name,
+  resources, created for projects) toggles direction on a second click and is keyboard-operable. Tag chips on the
+  apps list are now buttons that filter the list to that tag (the app name remains the link into the app), and a
+  project's environment resources get the same tag filter bar.
+- **API tokens show expiry and can be renamed or rotated.** Each token lists when it expires, with an amber "N days
+  left" badge at 14 days or fewer and an "Expired" badge once past; tokens can be renamed inline and rotated (the
+  new secret is shown once, the old one stops immediately) from the existing endpoints, and the create form takes an
+  optional expiry in days.
+- **Patching warns before restarting the container engine.** When the pending updates include `docker-ce`,
+  `containerd.io` or `runc`, the server's patching card says applying them restarts Docker and with it every app
+  and database on that server.
+- **"Disabled" is visible on scheduled tasks and per-volume backup policies.** Switched-off rows now carry a
+  Disabled badge instead of relying on an unchecked box or muted text.
+- **What's new, Documentation and Sponsor in the sidebar.** Three links above Log out: the GitHub release notes of
+  the running version, the in-repo docs, and the sponsor page.
 - **The running version is always in view, and the logo goes home.** The sidebar logo is now a link to the
   dashboard, and the running version (`v0.1.0-beta.N`) sits under the product name — in the logo's tooltip when
   the sidebar is collapsed. Every signed-in member sees it, not only the owner: a new session-guarded

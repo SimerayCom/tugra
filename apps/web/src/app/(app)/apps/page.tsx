@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Box, SearchX } from "lucide-react";
+import Link from "next/link";
+import { useGuardedPush } from "../../../hooks/useUnsavedChanges";
 import { api, appIconUrl } from "../../../lib/api";
 import { appStatusDisplay, appSourceSummary } from "../../../lib/apps";
 import { ImageUpdateBadge } from "./[id]/image-update-card";
@@ -16,11 +18,14 @@ import { AppLogo } from "../../../components/app-logo";
 import { TextInput } from "../../../components/form";
 import { ErrorState } from "../../../components/error-state";
 import { TagChips, TagFilter } from "../../../components/tags";
+import { SortBar } from "../../../components/sort-bar";
+import { sortApps, toggleSort, defaultAppSortDir, type AppSortKey, type SortState } from "../../../lib/list-sort";
 import { scopeByTeam } from "../../../lib/team-scope";
 import { useTeamScope } from "../../../components/team-scope";
 
 export default function AppsPage() {
   const t = useT();
+  const push = useGuardedPush();
   const { teamId } = useTeamScope();
   const { data: apps = [], isLoading, isError, refetch } = useQuery({
     queryKey: ["apps"],
@@ -33,9 +38,12 @@ export default function AppsPage() {
   const scoped = scopeByTeam(apps, teamId);
   const allTags = [...new Set(scoped.flatMap((a) => a.tags))].sort();
   const ql = q.trim().toLowerCase();
-  const visibleApps = scoped.filter(
+  const [sort, setSort] = useState<SortState<AppSortKey>>(null);
+  const filtered = scoped.filter(
     (a) => selectedTags.every((tag) => a.tags.includes(tag)) && (ql === "" || a.name.toLowerCase().includes(ql)),
   );
+  const visibleApps = sort ? sortApps(filtered, sort.key, sort.dir) : filtered;
+  const toggleTag = (tag: string) => setSelectedTags((cur) => (cur.includes(tag) ? cur.filter((x) => x !== tag) : [...cur, tag]));
 
   return (
     <div style={{ padding: "var(--page-pad)" }}>
@@ -53,18 +61,28 @@ export default function AppsPage() {
         <>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
             <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("apps.searchApps")} aria-label={t("apps.searchApps")} style={{ maxWidth: 260 }} />
-            <TagFilter all={allTags} selected={selectedTags} onChange={setSelectedTags} />
+            <SortBar
+              options={[
+                { key: "name", label: t("apps.sortName") },
+                { key: "status", label: t("apps.sortStatus") },
+                { key: "project", label: t("apps.sortProject") },
+              ]}
+              sort={sort}
+              onSort={(key) => setSort((prev) => toggleSort(prev, key, defaultAppSortDir(key)))}
+            />
           </div>
+          <TagFilter all={allTags} selected={selectedTags} onChange={setSelectedTags} />
           <ListCard>
             {visibleApps.map((a, i) => (
-              <ListRow key={a.id} index={i} href={`/apps/${a.id}`}>
+              // Whole row navigates on click; the name link is the keyboard path, so the tag chips (real buttons) can live inside.
+              <ListRow key={a.id} index={i} onClick={() => push(`/apps/${a.id}`)} tabbable={false}>
                 <span style={{ width: 36, height: 36, borderRadius: 8, background: "var(--c-tile)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                   <AppLogo iconUrl={appIconUrl(a.id, a.iconUpdatedAt)} templateSlug={a.templateSlug} templateLogo={a.templateLogo} source={a.source} name={a.name} size={18} />
                 </span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}>
-                    {a.name}
-                    <TagChips tags={a.tags} />
+                    <Link href={`/apps/${a.id}`} style={{ color: "var(--c-tx)", textDecoration: "none" }}>{a.name}</Link>
+                    <TagChips tags={a.tags} onSelect={toggleTag} selected={selectedTags} />
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
                     <div className="mono" style={{ fontSize: 11, color: "var(--c-tx3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{appSourceSummary(a)}</div>

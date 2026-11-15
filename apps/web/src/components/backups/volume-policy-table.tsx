@@ -5,7 +5,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { useT } from "../../i18n/provider";
 import type { AppVolume, VolumeBackupPolicy } from "../../lib/types";
-import { Btn } from "../ui";
+import { Badge, Btn } from "../ui";
 import { Modal } from "../modal";
 import { ScheduleField, scheduleComplete, scheduleFromFields, scheduleToFields, type ScheduleValue } from "./schedule-field";
 import { RetentionFields, retentionFromFields, retentionToFields, type RetentionValue } from "./retention-fields";
@@ -85,6 +85,7 @@ export function VolumePolicyTable({ appId, volumes, policies, canWrite = true }:
           <div key={v.name} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "8px 12px" }}>
             <span className="mono" style={{ fontSize: 12, minWidth: 90 }}>{v.name}</span>
             <span style={{ fontSize: 12, color: p && !p.enabled ? "var(--c-am)" : "var(--c-tx3)", flex: 1, minWidth: 140 }}>{stateOf(p)}</span>
+            {p && !p.enabled && <Badge>{t("common.disabled")}</Badge>}
             {canWrite && (
               <>
                 <button type="button" style={linkBtn} onClick={() => setEditing(v.name)} aria-label={`${t("backups.volumes.edit")} ${v.name}`}>{t("backups.volumes.edit")}</button>

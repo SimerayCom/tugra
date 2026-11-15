@@ -27,8 +27,8 @@ afterEach(() => {
 });
 
 describe("sidebar active-route semantics", () => {
-  // The brand mark is a link too (logo → dashboard) but not a nav entry; leave it out of the nav checks.
-  const links = () => screen.getAllByRole("link").filter((a) => a.getAttribute("data-testid") !== "brand-link");
+  // The brand mark (logo → dashboard) and the footer help links are links too but not nav entries; leave them out of the nav checks.
+  const links = () => screen.getAllByRole("link").filter((a) => a.getAttribute("data-testid") !== "brand-link" && !a.getAttribute("data-testid")?.startsWith("help-"));
   it("marks only the current route's link with aria-current=page and the interaction class", () => {
     mockPath = "/servers/abc";
     render(<Sidebar openPalette={() => {}} />);
@@ -75,6 +75,36 @@ describe("sidebar brand mark", () => {
     render(<I18nProvider><Sidebar openPalette={() => {}} /></I18nProvider>);
     const home = screen.getByRole("link", { name: "Go to the dashboard" });
     expect(home.getAttribute("title")).toContain("v0.1.0-beta.15");
+  });
+});
+
+describe("sidebar help links", () => {
+  afterEach(() => mocks.useQuery.mockReturnValue({ data: [] }));
+  const withVersion = () =>
+    mocks.useQuery.mockImplementation((opts: unknown) => {
+      const key = (opts as { queryKey: unknown[] }).queryKey[0];
+      return key === "instanceVersion" ? { data: { current: "0.1.0-beta.15", channel: "beta", latest: null, updateAvailable: false } } : { data: [] };
+    });
+
+  it("offers What's new (the running version's release), Documentation and Sponsor in new tabs", () => {
+    withVersion();
+    render(<I18nProvider><Sidebar openPalette={() => {}} /></I18nProvider>);
+    const whatsNew = screen.getByRole("link", { name: "What's new" }) as HTMLAnchorElement;
+    expect(whatsNew.getAttribute("href")).toBe("https://github.com/SimerayCom/tugra/releases/tag/v0.1.0-beta.15");
+    const docs = screen.getByRole("link", { name: "Documentation" }) as HTMLAnchorElement;
+    expect(docs.getAttribute("href")).toBe("https://github.com/SimerayCom/tugra/tree/main/docs");
+    const sponsor = screen.getByRole("link", { name: "Sponsor" }) as HTMLAnchorElement;
+    expect(sponsor.getAttribute("href")).toBe("https://github.com/sponsors/mrcandev");
+    for (const a of [whatsNew, docs, sponsor]) {
+      expect(a.getAttribute("target")).toBe("_blank");
+      expect(a.getAttribute("rel")).toBe("noopener noreferrer");
+    }
+  });
+
+  it("falls back to the releases index until the version is known, and keeps labels when collapsed", () => {
+    localStorage.setItem("tugra.sidebar", "1");
+    render(<I18nProvider><Sidebar openPalette={() => {}} /></I18nProvider>);
+    expect(screen.getByRole("link", { name: "What's new" }).getAttribute("href")).toBe("https://github.com/SimerayCom/tugra/releases");
   });
 });
 

@@ -19,7 +19,7 @@ import { useT } from "../../../../i18n/provider";
 import { Badge, Btn, Card, StatusPill } from "../../../../components/ui";
 import { Skeleton, SkeletonCard } from "../../../../components/skeleton";
 import { PageHeader } from "../../../../components/page-header";
-import { TagChips } from "../../../../components/tags";
+import { TagChips, TagFilter } from "../../../../components/tags";
 import { useConfirm } from "../../../../components/confirm";
 import { useScrollToHash } from "../../../../hooks/useScrollToHash";
 
@@ -233,10 +233,12 @@ function EnvironmentBlock({ env, projectId, canWrite, onChange }: { env: Environ
   const t = useT();
   const toast = useToast();
   const [query, setQuery] = useState("");
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const all = env.resources ?? [];
+  const envTags = [...new Set(all.flatMap((r) => r.tags))].sort();
   const empty = all.length === 0;
   const q = query.toLowerCase();
-  const match = (r: ProjectResource) => r.name.toLowerCase().includes(q) || (r.url ?? "").toLowerCase().includes(q);
+  const match = (r: ProjectResource) => (r.name.toLowerCase().includes(q) || (r.url ?? "").toLowerCase().includes(q)) && selectedTags.every((tag) => r.tags.includes(tag));
   const apps = all.filter((r) => r.kind === "app" && r.source !== "COMPOSE" && match(r));
   const services = all.filter((r) => r.kind === "app" && r.source === "COMPOSE" && match(r));
   const dbs = all.filter((r) => r.kind === "database" && match(r));
@@ -294,6 +296,7 @@ function EnvironmentBlock({ env, projectId, canWrite, onChange }: { env: Environ
           style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", marginBottom: 12, background: "var(--c-el)", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", color: "var(--c-tx)", fontSize: 13, fontFamily: "inherit" }}
         />
       )}
+      {!empty && <TagFilter all={envTags} selected={selectedTags} onChange={setSelectedTags} />}
       {empty && <div style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("projects.noResources")}</div>}
       <ResourceGroup title={t("projects.applications")} items={apps} icon={Box} />
       <ResourceGroup title={t("projects.services")} items={services} icon={Layers} />
