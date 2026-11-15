@@ -96,6 +96,7 @@ import type {
   TeamMember,
   TeamRole,
   ImportPlan,
+  ImportRemoteKind,
   ImportSession,
   ImportOperation,
   MigrateCommand,
@@ -1893,20 +1894,20 @@ export const api = {
     return apiFetch<{ ok: true }>(`/api-tokens/${id}`, { method: "DELETE" });
   },
 
-  // ── fleet importer (Coolify / local-docker) ──
+  // ── fleet importer (Coolify / Dokploy / local-docker) ──
   // Store an encrypted, short-lived connection to a source PaaS (the token is never returned/logged).
-  importConnect(input: { sourceKind: "coolify"; teamId: string; baseUrl: string; token: string }) {
+  importConnect(input: { sourceKind: ImportRemoteKind; teamId: string; baseUrl: string; token: string }) {
     return apiFetch<ImportSession>("/import/connect", { method: "POST", body: JSON.stringify(input) });
   },
   // Dry-run preview (secret-free) — local server to adopt, or a connected remote session.
-  importPlan(input: { sourceKind: "local-docker"; serverId: string } | { sourceKind: "coolify"; sessionId: string }) {
+  importPlan(input: { sourceKind: "local-docker"; serverId: string } | { sourceKind: ImportRemoteKind; sessionId: string }) {
     return apiFetch<ImportPlan>("/import/plan", { method: "POST", body: JSON.stringify(input) });
   },
   // Apply a reviewed plan (planHash binds it to that exact preview).
   importApply(
     input:
       | { sourceKind: "local-docker"; serverId: string; planHash: string }
-      | { sourceKind: "coolify"; sessionId: string; targetServerId: string; environmentId?: string; planHash: string },
+      | { sourceKind: ImportRemoteKind; sessionId: string; targetServerId: string; environmentId?: string; planHash: string },
   ) {
     return apiFetch<{ opId: string }>("/import/apply", { method: "POST", body: JSON.stringify(input) });
   },

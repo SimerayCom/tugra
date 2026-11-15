@@ -935,11 +935,30 @@ export interface ImportPlanItem {
   dependsOn: string[];
 }
 export type DbDataPlane = "one-click" | "manual" | "blocked";
+/** The remote PaaS sources the wizard can connect to (local-docker adoption has its own UI on a server's page). */
+export type ImportRemoteKind = "coolify" | "dokploy";
+/** One field present on the source that Tugra does not carry: a field NAME + a fixed reason, never a value. */
+export interface ImportCoverageEntry {
+  field: string;
+  reason: string;
+  level: "warn" | "info";
+}
+export interface ImportCoverageApp {
+  itemRef: string;
+  name: string;
+  notCarried: ImportCoverageEntry[];
+}
+export interface ImportCoverage {
+  apps: ImportCoverageApp[];
+}
 export interface ImportPreflight {
   databases: Array<{ name: string; engine: string; dataPlane: DbDataPlane; reason: string }>;
   services: Array<{ name: string; members: number; note: string }>;
   appsWithVolumeData: number;
   volumeDataNote?: string;
+  volumes?: Array<{ app: string; mountPath: string; type?: "named" | "bind"; dataPlane: "hub-staged" | "manual-large" | "manual" | "unknown-size"; reason: string }>;
+  /** Per-app "what is not carried over" (advisory; presence-only). */
+  coverage?: ImportCoverage;
 }
 export interface ImportPlan {
   sourceKind: string;
@@ -957,6 +976,11 @@ export interface ImportSession {
 }
 export type ImportTaskStatus =
   | "PENDING" | "RUNNING" | "DONE" | "FAILED" | "SKIPPED" | "ROLLED_BACK" | "FAILED_VERIFY" | "AWAITING_CUTOVER" | "CANCELLED";
+/** What an applied app could (applied) and could not (unmapped) carry — field names + fixed reasons only. */
+export interface ImportApplyReport {
+  applied: string[];
+  unmapped: Array<{ field: string; reason: string }>;
+}
 export interface ImportOpTask {
   itemRef: string | null;
   kind: string;
@@ -966,6 +990,8 @@ export interface ImportOpTask {
   resourceId: string | null;
   message: string | null;
   unresolvedEnv?: number;
+  postCreate?: ImportApplyReport;
+  ingress?: ImportApplyReport;
   startedAt: string | null;
   finishedAt: string | null;
 }

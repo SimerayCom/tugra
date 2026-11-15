@@ -15,6 +15,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   longer recorded as the client IP or matched against the allowlist). New opt-in `HUB_TRUSTED_PROXY_STRICT=true` trusts
   only `HUB_TRUSTED_PROXY_CIDRS` peers; off by default.
 
+- **Dokploy in the Import wizard.** The wizard has a source picker (Coolify or Dokploy); the URL, key and hint
+  wording follow the source, and the same source is used to connect, preview and apply.
+- **The import preview lists what is not carried over.** Per app, a collapsed "What isn't carried over" list names the
+  fields the source has that Tugra does not carry (field names and fixed reasons, never values), including a warning
+  when a Coolify app was gated by HTTP basic auth, which now imports ungated. The apply timeline shows what each app
+  could not carry and what was applied.
+- **Changed (behaviour, new imports only): Coolify imports carry custom container labels and the inline Dockerfile.**
+  Coolify imports now carry the app's custom container labels (labels in reserved namespaces such as `traefik.*` are
+  dropped and named in the timeline; a dropped access-control middleware label is flagged for review) and, for
+  Dockerfile apps with a repository, the inline Dockerfile text. It affects only new import operations: apps that were
+  already imported and existing rows are never rewritten (the executor skips DONE tasks). Imported apps are created
+  with `deploy:false`, so labels and the Dockerfile take effect only at the first deploy. Each setter is best-effort:
+  a failure is reported on the task, never thrown. The token hint now notes that labels and Dockerfile text are read
+  at apply time (needs `read:sensitive`).
+
 ## [0.1.0-beta.14] - 2026-11-15
 
 - **Container labels.** The app's Configuration tab has a **Container labels** card. It lists, read-only, every label

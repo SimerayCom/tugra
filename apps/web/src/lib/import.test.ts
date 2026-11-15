@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { hasBlocker, blockingRisks, planSummary, itemsByKind, canApply, riskTone, opProgress } from "./import";
+import { hasBlocker, blockingRisks, planSummary, itemsByKind, canApply, riskTone, opProgress, coverageApps, coverageCounts } from "./import";
 import type { ImportPlan, ImportPlanItem, ImportOperation } from "./types";
 
 const item = (over: Partial<ImportPlanItem>): ImportPlanItem => ({
@@ -77,5 +77,28 @@ describe("opProgress", () => {
   });
   it("empty op → 100% (nothing to do)", () => {
     expect(opProgress(op({ total: 0 }, "SUCCEEDED")).pct).toBe(100);
+  });
+});
+
+describe("coverage helpers", () => {
+  const withCoverage = (apps: NonNullable<ImportPlan["preflight"]>["coverage"]): ImportPlan => ({
+    ...plan,
+    preflight: { databases: [], services: [], appsWithVolumeData: 0, coverage: apps },
+  });
+  it("are empty / zero when the plan has no coverage report", () => {
+    expect(coverageApps(plan)).toEqual([]);
+    expect(coverageCounts(plan)).toEqual({ apps: 0, warn: 0, info: 0 });
+    expect(coverageApps({ ...plan, preflight: { databases: [], services: [], appsWithVolumeData: 0 } })).toEqual([]);
+  });
+  it("count apps and warn vs info entries, skipping apps with no entries", () => {
+    const p = withCoverage({
+      apps: [
+        { itemRef: "app:s:a", name: "a", notCarried: [{ field: "basicAuth", level: "warn", reason: "r" }, { field: "limits", level: "info", reason: "r" }] },
+        { itemRef: "app:s:b", name: "b", notCarried: [{ field: "healthcheck", level: "info", reason: "r" }] },
+        { itemRef: "app:s:c", name: "c", notCarried: [] },
+      ],
+    });
+    expect(coverageApps(p).map((a) => a.name)).toEqual(["a", "b"]);
+    expect(coverageCounts(p)).toEqual({ apps: 2, warn: 1, info: 2 });
   });
 });

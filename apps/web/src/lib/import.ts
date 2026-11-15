@@ -1,4 +1,4 @@
-import type { ImportPlan, ImportPlanItem, ImportRisk, ImportRiskLevel, ImportOperation } from "./types";
+import type { ImportPlan, ImportPlanItem, ImportRisk, ImportRiskLevel, ImportOperation, ImportCoverageApp } from "./types";
 
 // Pure view helpers for the import wizard. No network, no React — the data shaping the plan-review and
 // apply-timeline screens render from (and the only part worth unit-testing).
@@ -74,4 +74,18 @@ export function opProgress(op: ImportOperation): OpProgress {
     pct: t.total > 0 ? Math.round((terminal / t.total) * 100) : 100,
     settled: op.status !== "RUNNING",
   };
+}
+
+/** The apps with at least one "not carried over" entry (empty when the plan has no coverage report). */
+export function coverageApps(plan: ImportPlan): ImportCoverageApp[] {
+  return plan.preflight?.coverage?.apps.filter((a) => a.notCarried.length > 0) ?? [];
+}
+
+/** Counts for the coverage badge: apps listed, and entries needing a review (warn) vs plain notes (info). */
+export function coverageCounts(plan: ImportPlan): { apps: number; warn: number; info: number } {
+  const apps = coverageApps(plan);
+  let warn = 0;
+  let info = 0;
+  for (const a of apps) for (const n of a.notCarried) (n.level === "warn" ? warn++ : info++);
+  return { apps: apps.length, warn, info };
 }

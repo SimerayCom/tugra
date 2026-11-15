@@ -9,8 +9,8 @@ import { Card, SectionCard, Btn, EmptyState, Spinner } from "./ui";
 import { useToast } from "./toast";
 import { useConfirm } from "./confirm";
 import { CopyBtn } from "./copy-row";
-import { planSummary, itemsByKind, riskTone, opProgress } from "../lib/import";
-import type { ImportPlan, ImportPlanItem, ImportRiskLevel, ImportOperation, ImportTaskStatus, MintedMigrationToken, ImportRemapPlan, ImportRemapResult } from "../lib/types";
+import { planSummary, itemsByKind, riskTone, opProgress, coverageApps, coverageCounts } from "../lib/import";
+import type { ImportPlan, ImportPlanItem, ImportRiskLevel, ImportOperation, ImportOpTask, ImportRemoteKind, ImportTaskStatus, MintedMigrationToken, ImportRemapPlan, ImportRemapResult } from "../lib/types";
 
 const toneColor: Record<"danger" | "warning" | "info", string> = {
   danger: "var(--c-r)",
@@ -25,14 +25,24 @@ function statusColor(s: ImportTaskStatus): string {
   return "var(--c-am)"; // PENDING | RUNNING | AWAITING_CUTOVER
 }
 
-/** The Coolify import wizard: connect → preview (secret-free plan) → apply onto a target Tugra server →
- *  watch the live timeline. Local-docker container adoption keeps its own UI on a server's page. */
+/** Per-source copy, addressed through literal keys (so static key-usage checks keep working). */
+const SRC = {
+  coolify: { title: "import.sourceCoolify", hint: "import.sourceCoolifyHint", url: "import.baseUrl", ph: "import.baseUrlPlaceholder", tok: "import.token", tokHint: "import.tokenHint", fail: "import.connectFailed", name: "import.sourceNameCoolify", option: "import.sourceCoolifyOption" },
+  dokploy: { title: "import.sourceDokploy", hint: "import.sourceDokployHint", url: "import.baseUrlDokploy", ph: "import.baseUrlPlaceholderDokploy", tok: "import.tokenDokploy", tokHint: "import.tokenHintDokploy", fail: "import.connectFailedDokploy", name: "import.sourceNameDokploy", option: "import.sourceDokployOption" },
+} as const;
+const SOURCE_KINDS: readonly ImportRemoteKind[] = ["coolify", "dokploy"];
+/** An operation's source kind (a string from the hub) narrowed to a wizard source; anything unknown reads as Coolify. */
+const asRemoteKind = (k: string | null | undefined): ImportRemoteKind => (k === "dokploy" ? "dokploy" : "coolify");
+
+/** The import wizard: pick a source (Coolify / Dokploy) → connect → preview (secret-free plan) → apply onto a
+ *  target Tugra server → watch the live timeline. Local-docker container adoption keeps its own UI on a server's page. */
 export function ImportWizard() {
   const t = useT();
   const toast = useToast();
   const { data: teams = [] } = useQuery({ queryKey: ["teams"], queryFn: () => api.listTeams() });
   const { data: servers = [] } = useQuery({ queryKey: ["servers"], queryFn: () => api.listServers() });
 
+  const [kind, setKind] = useState<ImportRemoteKind>("coolify");
   const [teamId, setTeamId] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [token, setToken] = useState("");
@@ -41,20 +51,31 @@ export function ImportWizard() {
   const [opId, setOpId] = useState<string | null>(null);
 
   const effectiveTeam = teamId || teams[0]?.id || "";
+  const src = SRC[kind];
 
   const planM = useMutation({
-    mutationFn: (sid: string) => api.importPlan({ sourceKind: "coolify", sessionId: sid }),
+    mutationFn: (sid: string) => api.importPlan({ sourceKind: kind, sessionId: sid }),
     onSuccess: setPlan,
     onError: (e) => toast((e as Error).message, "error"),
   });
   const connect = useMutation({
-    mutationFn: () => api.importConnect({ sourceKind: "coolify", teamId: effectiveTeam, baseUrl: baseUrl.trim(), token: token.trim() }),
+    mutationFn: () => api.importConnect({ sourceKind: kind, teamId: effectiveTeam, baseUrl: baseUrl.trim(), token: token.trim() }),
     onSuccess: (s) => {
       setSessionId(s.sessionId);
       planM.mutate(s.sessionId);
     },
-    onError: (e) => toast((e as Error).message || t("import.connectFailed"), "error"),
+    onError: (e) => toast((e as Error).message || t(src.fail), "error"),
   });
+
+  /** Switching source clears the URL and token (a Coolify token must never be sent to a Dokploy URL) and any stale error. */
+  const pickKind = (next: ImportRemoteKind) => {
+    if (next === kind) return;
+    setKind(next);
+    setBaseUrl("");
+    setToken("");
+    connect.reset();
+    planM.reset();
+  };
 
   const reset = () => {
     setPlan(null);
@@ -65,12 +86,14 @@ export function ImportWizard() {
     planM.reset();
   };
 
+  const busy = connect.isPending || planM.isPending;
   if (opId) return <Timeline opId={opId} onReset={reset} />;
 
   if (plan && sessionId) {
     return (
       <PlanView
         plan={plan}
+        kind={kind}
         servers={servers.filter((s) => s.teamId === effectiveTeam).map((s) => ({ id: s.id, name: s.name }))}
         sessionId={sessionId}
         onApplied={setOpId}
@@ -79,9 +102,40 @@ export function ImportWizard() {
     );
   }
 
-  const busy = connect.isPending || planM.isPending;
   return (
-    <SectionCard title={t("import.sourceCoolify")} desc={t("import.sourceCoolifyHint")} style={{ padding: 20, maxWidth: 560, marginBottom: 0 }}>
+    <SectionCard title={t(src.title)} desc={t(src.hint)} style={{ padding: 20, maxWidth: 560, marginBottom: 0 }}>
+
+      <div id="imp-source-label" style={label}>{t("import.sourcePicker")}</div>
+      <div role="radiogroup" aria-labelledby="imp-source-label" style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
+        {SOURCE_KINDS.map((k) => {
+          const checked = k === kind;
+          return (
+            <button
+              key={k}
+              type="button"
+              role="radio"
+              aria-checked={checked}
+              disabled={busy}
+              onClick={() => pickKind(k)}
+              style={{
+                flex: "1 1 200px",
+                fontFamily: "inherit",
+                fontSize: 13,
+                fontWeight: 600,
+                padding: "8px 14px",
+                borderRadius: "var(--r1)",
+                cursor: busy ? "not-allowed" : "pointer",
+                opacity: busy ? 0.6 : 1,
+                border: "1px solid var(--c-bd)",
+                background: checked ? "var(--c-a)" : "var(--c-el)",
+                color: checked ? "var(--c-on-a)" : "var(--c-tx)",
+              }}
+            >
+              {t(SRC[k].option)}
+            </button>
+          );
+        })}
+      </div>
 
       <label style={label} htmlFor="imp-team">{t("import.team")}</label>
       <select id="imp-team" style={field} value={effectiveTeam} onChange={(e) => setTeamId(e.target.value)}>
@@ -90,12 +144,12 @@ export function ImportWizard() {
         ))}
       </select>
 
-      <label style={label} htmlFor="imp-url">{t("import.baseUrl")}</label>
-      <input id="imp-url" style={field} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder={t("import.baseUrlPlaceholder")} inputMode="url" autoComplete="off" spellCheck={false} />
+      <label style={label} htmlFor="imp-url">{t(src.url)}</label>
+      <input id="imp-url" style={field} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder={t(src.ph)} inputMode="url" autoComplete="off" spellCheck={false} />
 
-      <label style={label} htmlFor="imp-token">{t("import.token")}</label>
+      <label style={label} htmlFor="imp-token">{t(src.tok)}</label>
       <input id="imp-token" style={field} type="password" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off" />
-      <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "-6px 0 16px" }}>{t("import.tokenHint")}</p>
+      <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "-6px 0 16px" }}>{t(src.tokHint)}</p>
 
       {connect.isError && <div style={{ color: "var(--c-r)", fontSize: 12, marginBottom: 10 }}>{(connect.error as Error).message}</div>}
 
@@ -110,12 +164,14 @@ export function ImportWizard() {
 
 function PlanView({
   plan,
+  kind,
   servers,
   sessionId,
   onApplied,
   onReset,
 }: {
   plan: ImportPlan;
+  kind: ImportRemoteKind;
   servers: { id: string; name: string }[];
   sessionId: string;
   onApplied: (opId: string) => void;
@@ -129,7 +185,7 @@ function PlanView({
   const target = targetServerId || servers[0]?.id || "";
 
   const apply = useMutation({
-    mutationFn: () => api.importApply({ sourceKind: "coolify", sessionId, targetServerId: target, planHash: plan.planHash }),
+    mutationFn: () => api.importApply({ sourceKind: kind, sessionId, targetServerId: target, planHash: plan.planHash }),
     onSuccess: (r) => onApplied(r.opId),
     onError: (e) => toast((e as Error).message, "error"),
   });
@@ -215,6 +271,7 @@ function PlanView({
         </Btn>
       </SectionCard>
 
+      <CoverageCard plan={plan} />
       <Section title={t("import.appsSection")} items={groups.app} />
       <Section title={t("import.databasesSection")} items={groups.database} />
       {groups.volume.length > 0 && <Section title={t("import.volumesSection")} items={groups.volume} />}
@@ -296,14 +353,15 @@ function Timeline({ opId, onReset }: { opId: string; onReset: () => void }) {
               <span style={{ color: "var(--c-am)" }}>{t("import.unresolvedEnv", { n: task.unresolvedEnv })}</span>
             )}
             {task.message && <span style={{ color: "var(--c-tx3)", flexBasis: "100%", paddingLeft: 98 }}>{task.message}</span>}
+            <TaskNotCarried task={task} />
           </div>
         ))}
       </div>
     </Card>
     {showPostSteps && (
       <>
-        <MigrateDataCard opId={opId} />
-        <RemapEnvCard opId={opId} />
+        <MigrateDataCard opId={opId} sourceKind={asRemoteKind(op.sourceKind)} />
+        <RemapEnvCard opId={opId} sourceKind={asRemoteKind(op.sourceKind)} />
       </>
     )}
     </>
@@ -323,7 +381,7 @@ function CommandBox({ cmd, muted }: { cmd: string; muted?: boolean }) {
 /** Post-import step 1 — database DATA migration: mint the one-time token and show the one-liner the operator
  *  pastes on the SOURCE host to pull each database's data over. The live command is shown once; after that the
  *  read-only state shows active/expiry + a Reissue. */
-function MigrateDataCard({ opId }: { opId: string }) {
+function MigrateDataCard({ opId, sourceKind = "coolify" }: { opId: string; sourceKind?: ImportRemoteKind }) {
   const t = useT();
   const toast = useToast();
   const [minted, setMinted] = useState<MintedMigrationToken | null>(null);
@@ -335,7 +393,7 @@ function MigrateDataCard({ opId }: { opId: string }) {
   });
   const active = !!state?.active;
   return (
-    <SectionCard title={t("import.migrateTitle")} desc={t("import.migrateDesc")} style={{ padding: 20, maxWidth: 720, marginTop: 16, marginBottom: 0 }}>
+    <SectionCard title={t("import.migrateTitle")} desc={t("import.migrateDesc", { source: t(SRC[sourceKind].name) })} style={{ padding: 20, maxWidth: 720, marginTop: 16, marginBottom: 0 }}>
       {minted ? (
         <>
           <div style={{ fontSize: 12, color: "var(--c-am)", marginBottom: 6 }}>{t("import.migrateTokenOnce")}</div>
@@ -359,7 +417,7 @@ function MigrateDataCard({ opId }: { opId: string }) {
 
 /** Post-import step 2 — env remap: preview the (secret-masked) rewrites that point each migrated app at its new
  *  Tugra database, then apply (confirm-gated by the planHash) or undo. Pure wiring over the importer API. */
-function RemapEnvCard({ opId }: { opId: string }) {
+function RemapEnvCard({ opId, sourceKind = "coolify" }: { opId: string; sourceKind?: ImportRemoteKind }) {
   const t = useT();
   const toast = useToast();
   const confirm = useConfirm();
@@ -388,7 +446,7 @@ function RemapEnvCard({ opId }: { opId: string }) {
   const changeCount = plan?.apps.reduce((n, a) => n + a.changes.length, 0) ?? 0;
   const manualCount = plan?.apps.reduce((n, a) => n + a.needsManual.length, 0) ?? 0;
   return (
-    <SectionCard title={t("import.remapTitle")} desc={t("import.remapDesc")} style={{ padding: 20, maxWidth: 720, marginTop: 16, marginBottom: 0 }}>
+    <SectionCard title={t("import.remapTitle")} desc={t("import.remapDesc", { source: t(SRC[sourceKind].name) })} style={{ padding: 20, maxWidth: 720, marginTop: 16, marginBottom: 0 }}>
 
       {!plan && !result && (
         <Btn onClick={() => preview.mutate()} disabled={preview.isPending}>{preview.isPending ? "…" : t("import.remapPreview")}</Btn>
@@ -439,6 +497,61 @@ function RemapEnvCard({ opId }: { opId: string }) {
         </>
       )}
     </SectionCard>
+  );
+}
+
+/** "What isn't carried over": per app, the fields the source has that Tugra does not carry (field names + fixed reasons,
+ *  never values). Collapsed by default; a Review row is marked by a text prefix as well as colour. */
+function CoverageCard({ plan }: { plan: ImportPlan }) {
+  const t = useT();
+  const apps = coverageApps(plan);
+  if (apps.length === 0) return null;
+  const counts = coverageCounts(plan);
+  return (
+    <SectionCard title={t("import.coverageTitle")} style={{ padding: 16, marginBottom: 0 }}>
+      <details>
+        <summary style={{ cursor: "pointer", fontSize: 12, color: counts.warn > 0 ? "var(--c-am)" : "var(--c-tx3)" }}>
+          {t("import.notCarriedCount", { n: counts.warn + counts.info })}
+        </summary>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
+          {apps.map((a) => (
+            <div key={a.itemRef}>
+              <div className="mono" style={{ fontSize: 13, fontWeight: 600, wordBreak: "break-all" }}>{a.name}</div>
+              <ul style={{ margin: "4px 0 0", paddingLeft: 16, fontSize: 11 }}>
+                {a.notCarried.map((n) => (
+                  <li key={n.field} style={{ color: n.level === "warn" ? "var(--c-am)" : "var(--c-tx3)", wordBreak: "break-word" }}>
+                    <strong>{n.level === "warn" ? t("import.coverageWarn") : t("import.coverageInfo")}</strong>{" "}
+                    <span className="mono" style={{ wordBreak: "break-all" }}>{n.field}</span>: {n.reason}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+        <p style={{ fontSize: 11, color: "var(--c-tx3)", margin: "10px 0 0" }}>{t("import.coverageDeferred")}</p>
+      </details>
+    </SectionCard>
+  );
+}
+
+/** The per-app "Not carried (n)" disclosure of an apply timeline row (postCreate + ingress). Null when nothing is unmapped. */
+function TaskNotCarried({ task }: { task: ImportOpTask }) {
+  const t = useT();
+  const unmapped = [...(task.postCreate?.unmapped ?? []), ...(task.ingress?.unmapped ?? [])];
+  if (unmapped.length === 0) return null;
+  const applied = [...(task.postCreate?.applied ?? []), ...(task.ingress?.applied ?? [])];
+  return (
+    <details style={{ flexBasis: "100%", paddingLeft: 98, color: "var(--c-tx3)" }}>
+      <summary style={{ cursor: "pointer" }}>{t("import.notCarriedCount", { n: unmapped.length })}</summary>
+      <ul style={{ margin: "4px 0 0", paddingLeft: 16 }}>
+        {unmapped.map((u, i) => (
+          <li key={`${u.field}-${i}`} style={{ wordBreak: "break-word" }}>
+            <span className="mono" style={{ wordBreak: "break-all" }}>{u.field}</span>: {u.reason}
+          </li>
+        ))}
+      </ul>
+      {applied.length > 0 && <div style={{ marginTop: 4 }}>{t("import.appliedList", { list: applied.join(", ") })}</div>}
+    </details>
   );
 }
 
