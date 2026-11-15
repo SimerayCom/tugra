@@ -129,6 +129,38 @@ body {
   outline: 2px solid var(--c-a);
   outline-offset: 2px;
 }
+/* Scrollbars follow the theme everywhere (sidebar nav, main column, tables, log panes): thin, a quiet
+   token-tinted thumb, no track. `scrollbar-width`/`scrollbar-color` is the standard (Firefox, Chrome 121+);
+   the ::-webkit-scrollbar rules cover older WebKit. Panes that hide their bar (.tpl-chips, .cfg-nav) still win. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--c-tx3) 35%, transparent) transparent;
+}
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--c-tx3) 35%, transparent);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--c-tx3) 60%, transparent);
+}
+/* Sidebar footer: quiet icon buttons that light up on hover; the Sponsor pill brightens like a button. */
+.tg-foot-icon:hover {
+  background: var(--c-el);
+  color: var(--c-tx);
+}
+.tg-foot-sponsor:hover {
+  filter: brightness(1.12);
+}
 /* Live feedback on every Btn (component adds class "tg-btn"): brighten on hover, press down on click.
    Coolify-style affordance so actions don't feel dead. Disabled buttons stay inert. */
 .tg-btn:not(:disabled):hover {

@@ -315,49 +315,68 @@ export function Sidebar({ openPalette, mobile = false, open = false, onNavigate 
         })}
       </nav>
 
-      <div style={{ padding: 8, borderTop: "1px solid var(--c-bd)", display: "flex", flexDirection: "column", gap: 2 }}>
-        {([
-          { key: "whatsNew", href: whatsNewUrl(version?.current), icon: Sparkles },
-          { key: "docs", href: DOCS_URL, icon: BookOpen },
-          { key: "sponsor", href: SPONSOR_URL, icon: Heart },
-        ] as const).map((l) => (
+      {/* Pinned footer, kept to two short rows so the nav above keeps its room (Coolify pins the same block:
+          a distinct "Sponsor" pill, the help links as icons, then sign-out). Collapsed: one icon column. */}
+      <div className="tg-sidebar-foot" style={{ padding: col ? "8px 0" : 8, borderTop: "1px solid var(--c-bd)", display: "flex", flexDirection: "column", gap: 4, alignItems: col ? "center" : "stretch" }}>
+        <div style={{ display: "flex", flexDirection: col ? "column" : "row", alignItems: "center", gap: 4 }}>
           <a
-            key={l.key}
-            href={l.href}
+            href={SPONSOR_URL}
             target="_blank"
             rel="noopener noreferrer"
-            data-testid={`help-${l.key}`}
-            title={col ? t(`nav.${l.key}`) : undefined}
-            aria-label={col ? t(`nav.${l.key}`) : undefined}
-            style={{ display: "flex", alignItems: "center", justifyContent: col ? "center" : "flex-start", gap: 9, width: "100%", boxSizing: "border-box", padding: "6px 10px", color: "var(--c-tx3)", fontSize: 13, textDecoration: "none" }}
+            data-testid="help-sponsor"
+            title={t("nav.sponsorHint")}
+            aria-label={t("nav.sponsor")}
+            className="tg-foot-sponsor"
+            style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, flex: col ? undefined : 1, minWidth: 0, height: 30, padding: col ? 0 : "0 10px", width: col ? 32 : undefined, borderRadius: "var(--r1)", background: "color-mix(in srgb, var(--c-a) 12%, transparent)", border: "1px solid color-mix(in srgb, var(--c-a) 35%, transparent)", color: "var(--c-tx)", fontSize: 12.5, fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap" }}
           >
-            <l.icon size={15} aria-hidden style={{ flexShrink: 0 }} />
-            {!col && t(`nav.${l.key}`)}
+            <Heart size={14} aria-hidden style={{ flexShrink: 0, color: "var(--c-a)" }} />
+            {!col && t("nav.sponsor")}
           </a>
-        ))}
-        <button
-          onClick={async () => {
-            await logout();
-            router.replace("/login");
-          }}
-          title={col ? t("nav.logout") : undefined}
-          aria-label={col ? t("nav.logout") : undefined}
-          style={{ display: "flex", alignItems: "center", justifyContent: col ? "center" : "flex-start", gap: 9, width: "100%", padding: "6px 10px", background: "transparent", border: "none", color: "var(--c-tx3)", fontSize: 13, cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}
-        >
-          <LogOut size={15} style={{ flexShrink: 0 }} />
-          {!col && t("nav.logout")}
-        </button>
-        {!mobile && (
+          {([
+            { key: "whatsNew", href: whatsNewUrl(version?.current), icon: Sparkles },
+            { key: "docs", href: DOCS_URL, icon: BookOpen },
+          ] as const).map((l) => (
+            <a
+              key={l.key}
+              href={l.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid={`help-${l.key}`}
+              title={t(`nav.${l.key}`)}
+              aria-label={t(`nav.${l.key}`)}
+              className="tg-foot-icon"
+              style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 32, height: 30, flexShrink: 0, borderRadius: "var(--r1)", color: "var(--c-tx3)", textDecoration: "none" }}
+            >
+              <l.icon size={15} aria-hidden />
+            </a>
+          ))}
+        </div>
+        <div style={{ display: "flex", flexDirection: col ? "column" : "row", alignItems: "center", gap: 4 }}>
           <button
-            onClick={toggleCollapsed}
-            title={col ? t("nav.expand") : t("nav.collapse")}
-            aria-label={col ? t("nav.expand") : t("nav.collapse")}
-            style={{ display: "flex", alignItems: "center", justifyContent: col ? "center" : "flex-start", gap: 9, width: "100%", padding: "6px 10px", background: "transparent", border: "none", color: "var(--c-tx3)", fontSize: 13, cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}
+            onClick={async () => {
+              await logout();
+              router.replace("/login");
+            }}
+            title={t("nav.logout")}
+            aria-label={t("nav.logout")}
+            className="tg-foot-icon"
+            style={{ display: "inline-flex", alignItems: "center", justifyContent: col ? "center" : "flex-start", gap: 8, flex: col ? undefined : 1, width: col ? 32 : undefined, height: 30, padding: col ? 0 : "0 8px", background: "transparent", border: "none", borderRadius: "var(--r1)", color: "var(--c-tx3)", fontSize: 12.5, cursor: "pointer", fontFamily: "inherit" }}
           >
-            {col ? <ChevronsRight size={15} /> : <ChevronsLeft size={15} />}
-            {!col && t("nav.collapse")}
+            <LogOut size={15} aria-hidden style={{ flexShrink: 0 }} />
+            {!col && t("nav.logout")}
           </button>
-        )}
+          {!mobile && (
+            <button
+              onClick={toggleCollapsed}
+              title={col ? t("nav.expand") : t("nav.collapse")}
+              aria-label={col ? t("nav.expand") : t("nav.collapse")}
+              className="tg-foot-icon"
+              style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, width: 32, height: 30, flexShrink: 0, background: "transparent", border: "none", borderRadius: "var(--r1)", color: "var(--c-tx3)", cursor: "pointer", fontFamily: "inherit" }}
+            >
+              {col ? <ChevronsRight size={15} aria-hidden /> : <ChevronsLeft size={15} aria-hidden />}
+            </button>
+          )}
+        </div>
       </div>
     </aside>
   );

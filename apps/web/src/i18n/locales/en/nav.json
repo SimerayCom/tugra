@@ -63,5 +63,6 @@
   "activeInGroup": "Current page is in this group",
   "whatsNew": "What's new",
   "docs": "Documentation",
-  "sponsor": "Sponsor"
+  "sponsor": "Sponsor",
+  "sponsorHint": "Sponsor Tugra's development on GitHub"
 }

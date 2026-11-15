@@ -105,9 +105,15 @@ export default function AppDetailPage() {
     onSuccess: invalidate,
     onError: (e) => { setOptimisticDeploy(false); toast(errMsg(e), "error"); },
   });
-  const stop = useMutation({ mutationFn: () => api.stopApp(id), onSuccess: invalidate, onError: (e) => toast(errMsg(e), "error") });
-  const start = useMutation({ mutationFn: () => api.startApp(id), onSuccess: invalidate, onError: (e) => toast(errMsg(e), "error") });
-  const restart = useMutation({ mutationFn: () => api.restartApp(id), onSuccess: invalidate, onError: (e) => toast(errMsg(e), "error") });
+  // The lifecycle calls return only once the agent has done the work, and a restart leaves the status at
+  // RUNNING, so without a toast the click looks like it did nothing. Name the app: the toast outlives the page.
+  const lifecycleDone = (key: "apps.stopped" | "apps.started" | "apps.restarted") => () => {
+    invalidate();
+    toast(t(key, { name: appData?.name ?? "" }), "success");
+  };
+  const stop = useMutation({ mutationFn: () => api.stopApp(id), onSuccess: lifecycleDone("apps.stopped"), onError: (e) => toast(errMsg(e), "error") });
+  const start = useMutation({ mutationFn: () => api.startApp(id), onSuccess: lifecycleDone("apps.started"), onError: (e) => toast(errMsg(e), "error") });
+  const restart = useMutation({ mutationFn: () => api.restartApp(id), onSuccess: lifecycleDone("apps.restarted"), onError: (e) => toast(errMsg(e), "error") });
   // Read at mutate() time (a stable ref, not a captured state value) so the keep-volumes choice the user
   // ticked in the confirm dialog isn't lost to a stale closure inside the async handler.
   const keepVolumes = useRef(false);
