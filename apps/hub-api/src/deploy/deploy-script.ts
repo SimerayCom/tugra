@@ -279,6 +279,17 @@ export interface AppSpec {
    *  into their service. buildComposeUpScript writes each under the app's compose dir + adds the bind
    *  to the Tugra override. */
   configMounts?: AppConfigMount[] | null;
+  /** For a COMPOSE app: hub-owned extra network attachments. Each row attaches ONE compose service to a user network
+   *  (created by the deploy, labelled tugra.managed) under the given DNS aliases, so sibling apps that join the same
+   *  network reach a stateful service privately by a stable name. Validated at the DTO boundary (DNS labels). */
+  composeNetworks?: ComposeNetworkRow[] | null;
+}
+
+/** One hub-owned network attachment of a compose service (see {@link AppSpec.composeNetworks}). */
+export interface ComposeNetworkRow {
+  network: string;
+  service: string;
+  aliases: string[];
 }
 
 /** A structured Swarm placement rule. Never a raw docker expression from the client — the hub

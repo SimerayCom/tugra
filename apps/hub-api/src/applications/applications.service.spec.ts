@@ -2002,6 +2002,101 @@ describe("ApplicationsService", () => {
     expect(update.mock.calls[1][0].data.baseDirectory).toBeNull(); // omitted -> cleared
   });
 
+  describe("setConfigMountsForImport", () => {
+    const composeApp = { ...app, source: "COMPOSE", gitUrl: null, configMounts: null, composeFile: "services:\n  signoz:\n    image: a:1\n  clickhouse:\n    image: b:1\n" };
+    const mount = (over = {}) => ({ serviceName: "signoz", target: "/root/config/prometheus.yml", content: "scrape: {}\n", ...over });
+    function svcFor(appOver: Record<string, unknown> = {}, deployments = 0) {
+      const update = jest.fn().mockResolvedValue({});
+      const log = jest.fn().mockResolvedValue(undefined);
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue({ ...composeApp, ...appOver }), update },
+        deployment: { count: jest.fn().mockResolvedValue(deployments) },
+      } as unknown as PrismaService;
+      const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+      const svc = make(prisma, access, {} as AgentWsServer);
+      (svc as unknown as { audit: { log: jest.Mock } }).audit = { log };
+      return { svc, update, log };
+    }
+
+    it("seeds the mounts of a never-deployed stored-compose app and audits size + sha256 only", async () => {
+      const { svc, update, log } = svcFor();
+      await svc.setConfigMountsForImport("u1", "app1", [mount(), mount({ serviceName: "clickhouse", target: "/etc/c.xml", mode: "0640", content: "<x/>" })]);
+      expect(update).toHaveBeenCalledWith({ where: { id: "app1" }, data: { configMounts: [{ serviceName: "signoz", target: "/root/config/prometheus.yml", content: "scrape: {}\n" }, { serviceName: "clickhouse", target: "/etc/c.xml", content: "<x/>", mode: "0640" }] } });
+      const meta = log.mock.calls[0][0].meta;
+      expect(log.mock.calls[0][0].action).toBe("app.config_mounts.import");
+      expect(Object.keys(meta).sort()).toEqual(["bytes", "count", "sha256"]);
+      expect(JSON.stringify(log.mock.calls)).not.toContain("scrape");
+    });
+    it("is idempotent for an equal retry and refuses different existing mounts", async () => {
+      const same = [{ serviceName: "signoz", target: "/root/config/prometheus.yml", content: "scrape: {}\n" }];
+      const a = svcFor({ configMounts: same });
+      await a.svc.setConfigMountsForImport("u1", "app1", [mount()]);
+      expect(a.update).not.toHaveBeenCalled();
+      const b = svcFor({ configMounts: [{ serviceName: "signoz", target: "/other", content: "x" }] });
+      await expect(b.svc.setConfigMountsForImport("u1", "app1", [mount()])).rejects.toBeInstanceOf(BadRequestException);
+    });
+    it("rejects a deployed app, a non-compose or git-compose app, a bad target/service/mode, over-cap and duplicates", async () => {
+      await expect(svcFor({}, 1).svc.setConfigMountsForImport("u1", "app1", [mount()])).rejects.toBeInstanceOf(BadRequestException);
+      await expect(svcFor({ source: "GIT" }).svc.setConfigMountsForImport("u1", "app1", [mount()])).rejects.toBeInstanceOf(BadRequestException);
+      await expect(svcFor({ gitUrl: "https://x/y.git" }).svc.setConfigMountsForImport("u1", "app1", [mount()])).rejects.toBeInstanceOf(BadRequestException);
+      await expect(svcFor().svc.setConfigMountsForImport("u1", "app1", [mount({ target: "relative/x" })])).rejects.toBeInstanceOf(BadRequestException);
+      await expect(svcFor().svc.setConfigMountsForImport("u1", "app1", [mount({ target: "/a/../b" })])).rejects.toBeInstanceOf(BadRequestException);
+      await expect(svcFor().svc.setConfigMountsForImport("u1", "app1", [mount({ serviceName: "ghost" })])).rejects.toBeInstanceOf(BadRequestException);
+      await expect(svcFor().svc.setConfigMountsForImport("u1", "app1", [mount({ serviceName: "a b" })])).rejects.toBeInstanceOf(BadRequestException);
+      await expect(svcFor().svc.setConfigMountsForImport("u1", "app1", [mount({ mode: "rwx" })])).rejects.toBeInstanceOf(BadRequestException);
+      await expect(svcFor().svc.setConfigMountsForImport("u1", "app1", [mount(), mount()])).rejects.toBeInstanceOf(BadRequestException);
+      await expect(svcFor().svc.setConfigMountsForImport("u1", "app1", [mount({ content: "x".repeat(256 * 1024 + 1) })])).rejects.toBeInstanceOf(BadRequestException);
+      const many = Array.from({ length: 17 }, (_, i) => mount({ target: `/f/${i}` }));
+      await expect(svcFor().svc.setConfigMountsForImport("u1", "app1", many)).rejects.toBeInstanceOf(BadRequestException);
+    });
+    it("is not reachable from any controller route", () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "applications.controller.ts"), "utf8") as string;
+      expect(src).not.toContain("setConfigMountsForImport");
+    });
+  });
+
+  describe("setComposeNetworks", () => {
+    const composeApp = { ...app, source: "COMPOSE", gitUrl: null, clusterId: null, composeFile: "services:\n  meilisearch:\n    image: a:1\n" };
+    function svcFor(appOver: Record<string, unknown> = {}) {
+      const update = jest.fn().mockResolvedValue({});
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue({ ...composeApp, ...appOver }), update },
+        deployment: { findFirst: jest.fn().mockResolvedValue(null) },
+      } as unknown as PrismaService;
+      const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+      const svc = make(prisma, access, {} as AgentWsServer);
+      const log = jest.fn().mockResolvedValue(undefined);
+      (svc as unknown as { audit: { log: jest.Mock } }).audit = { log };
+      return { svc, update, log };
+    }
+    const row = (over = {}) => ({ network: "svc-search", service: "meilisearch", aliases: ["meilisearch"], ...over });
+
+    it("persists the rows and audits", async () => {
+      const { svc, update, log } = svcFor();
+      await svc.setComposeNetworks("u1", "app1", [row()]);
+      expect(update).toHaveBeenCalledWith({ where: { id: "app1" }, data: { composeNetworks: [row()] } });
+      expect(log.mock.calls[0][0]).toMatchObject({ action: "app.compose_networks.update", meta: { count: 1, networks: ["svc-search"] } });
+    });
+    it("an empty list clears the column", async () => {
+      const { svc, update } = svcFor({ composeNetworks: [row()] });
+      await svc.setComposeNetworks("u1", "app1", []);
+      expect(update.mock.calls[0][0].data.composeNetworks).toBeDefined();
+      expect(await svc.listComposeNetworks("u1", "app1")).toEqual([row()]);
+    });
+    it("rejects non-compose, git-compose, clustered and unknown-service rows", async () => {
+      await expect(svcFor({ source: "IMAGE" }).svc.setComposeNetworks("u1", "app1", [row()])).rejects.toBeInstanceOf(BadRequestException);
+      await expect(svcFor({ gitUrl: "https://x/y.git" }).svc.setComposeNetworks("u1", "app1", [row()])).rejects.toBeInstanceOf(BadRequestException);
+      await expect(svcFor({ clusterId: "c1" }).svc.setComposeNetworks("u1", "app1", [row()])).rejects.toBeInstanceOf(BadRequestException);
+      await expect(svcFor().svc.setComposeNetworks("u1", "app1", [row({ service: "ghost" })])).rejects.toBeInstanceOf(BadRequestException);
+    });
+    it("toSpec carries the rows for a stored compose app", () => {
+      const { svc } = svcFor();
+      const spec = (svc as unknown as { toSpec: (a: unknown) => { composeNetworks: unknown } }).toSpec({ ...composeApp, composeNetworks: [row()] });
+      expect(spec.composeNetworks).toEqual([row()]);
+    });
+  });
+
   it("setConfigMountContent rejects a non-compose app before any write", async () => {
     const update = jest.fn();
     const prisma = { application: { findUnique: jest.fn().mockResolvedValue(app), update } } as unknown as PrismaService;

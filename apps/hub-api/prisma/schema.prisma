@@ -1228,6 +1228,7 @@ model Application {
   portMappings                 Json? // [{serviceName, containerPort, hostPort, mode}] — install-time allocated host ports
   installConfig                Json? // redacted user field selections captured at template install (never secret values)
   configMounts                 Json? // [{serviceName, target, content, mode}] — template config files materialized + bound at deploy (${KEY} placeholders, never resolved secrets)
+  composeNetworks              Json? // [{ network, service, aliases[] }] — hub-owned extra network attachments of a COMPOSE app's services (never user-compose), so sibling apps reach a service by a stable alias
   gitTokenEnc                  String?
   // SSH deploy key for cloning a private repo over git@/ssh:// — a generated ed25519 keypair. gitSshKeyEnc
   // is the encrypted OpenSSH private key (never returned); gitSshPublicKey is the public line the operator

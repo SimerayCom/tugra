@@ -108,6 +108,8 @@ import {
   SetExtraDomainsSchema,
   SetServiceDomainsInput,
   SetServiceDomainsSchema,
+  SetComposeNetworksInput,
+  SetComposeNetworksSchema,
   AutoSetupDomainSchema,
   AutoSetupDomainInput,
   ExposeInput,
@@ -927,6 +929,24 @@ export class ApplicationsController {
     @Body(new ZodValidationPipe(SetServiceDomainsSchema)) body: SetServiceDomainsInput,
   ) {
     await this.apps.setServiceDomains(user.userId, id, body.domains);
+    return { ok: true };
+  }
+
+  // Hub-owned extra network attachments of a COMPOSE app's services (private reachability). Applied on the next deploy.
+  @Get(":id/compose-networks")
+  listComposeNetworks(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.apps.listComposeNetworks(user.userId, id);
+  }
+
+  @Put(":id/compose-networks")
+  @HttpCode(200)
+  @ApiZodBody(SetComposeNetworksSchema)
+  async setComposeNetworks(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(SetComposeNetworksSchema)) body: SetComposeNetworksInput,
+  ) {
+    await this.apps.setComposeNetworks(user.userId, id, body.networks);
     return { ok: true };
   }
 

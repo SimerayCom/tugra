@@ -790,7 +790,7 @@ export type SetNetworkAliasesInput = z.infer<typeof SetNetworkAliasesSchema>;
 // also excludes compose default networks and docker_gwbridge) and never a Docker built-in or a Tugra-managed
 // network (except the shared per-server `tugra-apps` bridge). The alias reuses the DNS_LABEL guard (incl. the
 // tugra- prefix refusal). undefined = keep, null (alias) = clear.
-const NETWORK_NAME = z
+export const NETWORK_NAME = z
   .string()
   .min(1)
   .max(63)
@@ -808,6 +808,28 @@ export const SetNetworksSchema = z
   .strict()
   .refine((d) => d.networks !== undefined || d.containerAlias !== undefined, { message: "nothing to update" });
 export type SetNetworksInput = z.infer<typeof SetNetworksSchema>;
+
+// Hub-owned extra network attachments of a COMPOSE app's services: attach ONE compose service to a user network (created
+// by the deploy) under DNS aliases, so sibling apps that join the same network reach a stateful service privately.
+// Replace-set (the whole list each time); empty clears. At most 8 rows. The shared `tugra-apps` bridge is refused here
+// (its lifecycle is not the compose deploy's).
+export const SetComposeNetworksSchema = z
+  .object({
+    networks: z
+      .array(
+        z
+          .object({
+            network: NETWORK_NAME.refine((n) => n !== "tugra-apps", "the shared tugra-apps bridge cannot be attached to a compose service"),
+            service: z.string().trim().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/, "invalid compose service name"),
+            aliases: z.array(DNS_LABEL).max(4).refine((a) => new Set(a).size === a.length, { message: "an alias can't repeat" }),
+          })
+          .strict(),
+      )
+      .max(8, "at most 8 network attachments")
+      .refine((rows) => new Set(rows.map((r) => `${r.network}\u0000${r.service}`)).size === rows.length, { message: "a service can join a network only once" }),
+  })
+  .strict();
+export type SetComposeNetworksInput = z.infer<typeof SetComposeNetworksSchema>;
 
 // The ingress container port an IMAGE/GIT app listens on inside the container (proxy routes here). Editable
 // after create so a wrong imported value (default 80) can be fixed without recreating the app. COMPOSE apps

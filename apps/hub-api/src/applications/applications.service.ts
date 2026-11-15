@@ -94,6 +94,7 @@ import {
   type AppVolume,
   type HostMount,
   type AppConfigMount,
+  type ComposeNetworkRow,
   type RegistryAuth,
 } from "../deploy/deploy-script";
 import { parseCustomCert, certCoversHost } from "./custom-cert";
@@ -4399,6 +4400,54 @@ export class ApplicationsService {
     });
   }
 
+  /**
+   * INTERNAL (no controller route; only the importer calls it): seed a freshly imported stored-compose app with the config
+   * files its source kept next to the compose (`./clickhouse/config.xml`, ...). It is the ONLY way config mounts are ever
+   * added to an existing app: the editor (`setConfigMountContent`) can only change the content of a mount that exists.
+   * Rules: stored-compose app, never deployed, no mounts yet (an equal retry is a no-op), every row validated like a
+   * template's (`validateConfigMountTarget` / `validateConfigMountServiceName` / known service / octal mode), at most 16
+   * rows and 256 KiB in total. Audits size + sha256 only, never the content.
+   */
+  async setConfigMountsForImport(
+    userId: string,
+    id: string,
+    mounts: Array<{ serviceName: string; target: string; content: string; mode?: string }>,
+  ): Promise<void> {
+    const app = await this.requireWrite(userId, id);
+    if (app.source !== "COMPOSE" || !app.composeFile || app.gitUrl) throw new BadRequestException("config mounts apply only to a compose app with a stored compose file");
+    if (mounts.length === 0) return;
+    if (mounts.length > 16) throw new BadRequestException("too many config mounts (at most 16)");
+    const services = new Set(composeServiceNames(app.composeFile));
+    const seen = new Set<string>();
+    let total = 0;
+    for (const m of mounts) {
+      validateConfigMountServiceName(m.serviceName);
+      validateConfigMountTarget(m.target);
+      if (!services.has(m.serviceName)) throw new BadRequestException(`compose service "${m.serviceName}" is not defined in the compose file`);
+      if (m.mode !== undefined && !/^0?[0-7]{3,4}$/.test(m.mode)) throw new BadRequestException("invalid config mount file mode");
+      if (typeof m.content !== "string") throw new BadRequestException("invalid config mount content");
+      const key = `${m.serviceName}\u0000${m.target}`;
+      if (seen.has(key)) throw new BadRequestException("duplicate config mount target");
+      seen.add(key);
+      total += m.content.length;
+    }
+    if (total > 256 * 1024) throw new BadRequestException("config mounts exceed the total size limit");
+    const clean = mounts.map((m) => ({ serviceName: m.serviceName, target: m.target, content: m.content, ...(m.mode ? { mode: m.mode } : {}) }));
+    const existing = this.appConfigMounts(app);
+    if (existing.length > 0) {
+      if (JSON.stringify(existing) === JSON.stringify(clean)) return; // idempotent retry
+      throw new BadRequestException("this app already has config mounts");
+    }
+    if ((await this.prisma.deployment.count({ where: { appId: id } })) > 0) throw new BadRequestException("config mounts can only be imported into an app that has never been deployed");
+    await this.prisma.application.update({ where: { id }, data: { configMounts: clean as unknown as Prisma.InputJsonValue } });
+    await this.audit.log({
+      actor: userId,
+      action: "app.config_mounts.import",
+      target: id,
+      meta: { count: clean.length, bytes: total, sha256: createHash("sha256").update(JSON.stringify(clean)).digest("hex") },
+    });
+  }
+
   /** Per-app deploy/rollback timeout in ms (default 5 min). */
   private deployTimeoutMs(app: Application): number {
     return (app.deployTimeoutSec ?? 300) * 1000;
@@ -5010,6 +5059,37 @@ export class ApplicationsService {
       this.prisma.appServiceDomain.createMany({ data: rows.map((r) => ({ applicationId: id, service: r.service, hostname: r.hostname, port: r.port })) }),
     ]);
     await this.audit.log({ actor: userId, action: "app.service_domains.update", target: id, meta: { count: rows.length } });
+  }
+
+  /** The hub-owned network attachments of a COMPOSE app's services (empty when none). */
+  async listComposeNetworks(userId: string, id: string): Promise<ComposeNetworkRow[]> {
+    const app = await this.requireWrite(userId, id);
+    if (app.source !== "COMPOSE") throw new BadRequestException("compose networks apply only to compose apps");
+    return this.appComposeNetworks(app);
+  }
+
+  /**
+   * Replace the app's hub-owned compose network attachments: each row joins ONE compose service to a user network under
+   * DNS aliases (the deploy creates the network, labelled tugra.managed), so sibling apps that join the same network
+   * reach a stateful service privately. Stored-compose apps only (a git compose renders its own override), never a
+   * clustered app, never while a deploy is running. The service must exist in the stored YAML. Applied on the next deploy.
+   */
+  async setComposeNetworks(userId: string, id: string, rows: ComposeNetworkRow[]): Promise<void> {
+    const app = await this.requireMutate(userId, id);
+    if (app.source !== "COMPOSE" || !app.composeFile || app.gitUrl) throw new BadRequestException("compose networks apply only to a compose app with a stored compose file");
+    if (app.clusterId) throw new BadRequestException("compose networks aren't supported for clustered apps");
+    const services = new Set(composeServiceNames(app.composeFile));
+    for (const r of rows) {
+      if (!services.has(r.service)) throw new BadRequestException(`compose service "${r.service}" is not defined in the compose file`);
+    }
+    await this.ensureNoActiveDeploy(id);
+    const clean = rows.map((r) => ({ network: r.network, service: r.service, aliases: [...r.aliases] }));
+    await this.prisma.application.update({ where: { id }, data: { composeNetworks: clean.length ? (clean as unknown as Prisma.InputJsonValue) : Prisma.DbNull } });
+    await this.audit.log({ actor: userId, action: "app.compose_networks.update", target: id, meta: { count: clean.length, networks: [...new Set(clean.map((r) => r.network))] } });
+  }
+
+  private appComposeNetworks(app: Application): ComposeNetworkRow[] {
+    return Array.isArray(app.composeNetworks) ? (app.composeNetworks as unknown as ComposeNetworkRow[]) : [];
   }
 
   /**
@@ -5719,6 +5799,8 @@ export class ApplicationsService {
       composeWebService: web?.service ?? null,
       // Config mounts are a template (COMPOSE) feature only — never for a docker-run app.
       configMounts: app.source === "COMPOSE" ? this.appConfigMounts(app) : null,
+      // Hub-owned extra network attachments of a stored-compose app's services (see setComposeNetworks).
+      composeNetworks: app.source === "COMPOSE" && !app.gitUrl ? this.appComposeNetworks(app) : null,
     };
   }
 

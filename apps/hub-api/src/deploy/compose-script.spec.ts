@@ -519,3 +519,38 @@ describe("composeTugraLabels (D5)", () => {
     expect(composeTugraLabels(base, { dollarEscape: false }).size).toBe(0);
   });
 });
+
+
+describe("compose shared networks (hub-owned extra attachments)", () => {
+  const base = { id: "app1", name: "svc", composeFile: "services:\n  meilisearch:\n    image: a:1\n  web:\n    image: b:1\n", env: {} } as unknown as Parameters<typeof composeOverride>[0];
+  const nets = [{ network: "svc-search", service: "meilisearch", aliases: ["meilisearch", "search"] }];
+
+  it("without rows the override and the up script are exactly as before", () => {
+    expect(composeOverride({ ...base })).toBe("services:\n");
+    const up = buildComposeUpScript({ ...base });
+    expect(up).not.toContain("docker network create");
+    expect(up).not.toContain("docker-compose.tugra.yml");
+  });
+
+  it("attaches the service to the network under its aliases, keeps default, declares it external", () => {
+    const yaml = composeOverride({ ...base, composeNetworks: nets });
+    const doc = parseYaml(yaml) as { services: Record<string, { networks: Record<string, unknown> }>; networks: Record<string, unknown> };
+    expect(doc.services.meilisearch.networks).toEqual({ default: {}, "svc-search": { aliases: ["meilisearch", "search"] } });
+    expect(doc.networks).toEqual({ "svc-search": { external: true } });
+  });
+
+  it("without aliases the list form is kept; a routed service joins the proxy too", () => {
+    const yaml = composeOverride({ ...base, composeNetworks: [{ network: "svc-search", service: "meilisearch", aliases: [] }], serviceDomains: [{ service: "meilisearch", hostname: "s.example.test", port: 7700 }] });
+    const doc = parseYaml(yaml) as { services: Record<string, { networks: unknown }>; networks: Record<string, unknown> };
+    expect(doc.services.meilisearch.networks).toEqual(["default", "tugra-proxy", "svc-search"]);
+    expect(Object.keys(doc.networks).sort()).toEqual(["svc-search", "tugra-proxy"]);
+  });
+
+  it("the up script creates the labelled network before up, writes the override and uses it", () => {
+    const up = buildComposeUpScript({ ...base, composeNetworks: nets });
+    expect(up).toContain("docker network create --label tugra.managed=true 'svc-search' 2>/dev/null || true");
+    expect(up.indexOf("docker network create")).toBeLessThan(up.indexOf("docker compose"));
+    expect(up).toContain("docker-compose.tugra.yml");
+    expect(up).toMatch(/-f \/etc\/tugra\/compose\/app1\/docker-compose\.tugra\.yml /);
+  });
+});

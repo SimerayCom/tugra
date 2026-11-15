@@ -16,7 +16,9 @@ import {
   serviceDomainLabels,
   certPreludeFor,
   PROXY_NETWORK,
+  NETWORK_OWNER_LABEL,
   type AppSpec,
+  type ComposeNetworkRow,
   type TraefikLabelInput,
 } from "./deploy-script";
 import { assertScriptFits, mlPrefix, mlPrelude, planEnv } from "./env-render";
@@ -209,6 +211,9 @@ export function composeOverride(app: AppSpec): string {
   };
 
   const rows = app.serviceDomains ?? [];
+  // Hub-owned extra network attachments (private reachability for sibling apps), grouped per service.
+  const extraNets = new Map<string, ComposeNetworkRow[]>();
+  for (const r of app.composeNetworks ?? []) (extraNets.get(r.service) ?? extraNets.set(r.service, []).get(r.service)!).push(r);
   const joinProxy = (name: string) => {
     // Keep on `default` AND join the proxy (declaring `networks:` drops implicit default membership → the
     // service would lose reach to its DB/siblings). Set once per service.
@@ -224,18 +229,35 @@ export function composeOverride(app: AppSpec): string {
   mounts.forEach((m, i) => {
     add(binds, m.serviceName, `      - ${JSON.stringify(`${mountFilePath(app, i)}:${m.target}:ro`)}`);
   });
+  for (const svc of extraNets.keys()) touch(svc);
 
   const lines: string[] = ["services:"];
   for (const name of order) {
     lines.push(`  ${name}:`);
     const n = networks.get(name);
-    if (n && n.length) lines.push("    networks:", ...n);
+    const extra = extraNets.get(name);
+    if (extra && extra.length) {
+      // `default` is re-listed (declaring `networks:` drops the implicit membership), then the proxy when routed. A row
+      // with aliases needs the map form (the list form cannot carry aliases); without any alias the list form is kept.
+      const hasAlias = extra.some((r) => r.aliases.length > 0);
+      if (!hasAlias) {
+        lines.push("    networks:", "      - default", ...(n && n.length ? [`      - ${PROXY_NETWORK}`] : []), ...extra.map((r) => `      - ${r.network}`));
+      } else {
+        lines.push("    networks:", "      default: {}", ...(n && n.length ? [`      ${PROXY_NETWORK}: {}`] : []));
+        for (const r of extra) lines.push(`      ${r.network}:`, "        aliases:", ...r.aliases.map((a) => `          - ${a}`));
+      }
+    } else if (n && n.length) lines.push("    networks:", ...n);
     const l = labels.get(name);
     if (l && l.length) lines.push("    labels:", ...l); // ONE labels: key (traefik + mount fingerprints)
     const b = binds.get(name);
     if (b && b.length) lines.push("    volumes:", ...b); // ONE volumes: key, all binds appended
   }
-  if (magic || rows.length) lines.push("networks:", `  ${PROXY_NETWORK}:`, "    external: true");
+  const extraNames = [...new Set((app.composeNetworks ?? []).map((r) => r.network))];
+  if (magic || rows.length || extraNames.length) {
+    lines.push("networks:");
+    if (magic || rows.length) lines.push(`  ${PROXY_NETWORK}:`, "    external: true");
+    for (const n of extraNames) lines.push(`  ${n}:`, "    external: true");
+  }
   lines.push("");
   return lines.join("\n");
 }
@@ -303,7 +325,8 @@ export function buildComposeUpScript(app: AppSpec, noCache = false): string {
   const overridePath = composeOverridePath(app);
   // The Tugra override carries the proxy labels (primary and/or per-service domains) AND/OR the config-mount
   // binds — write it for any of them.
-  const writeOverride = magic || mounts.length > 0 || (app.serviceDomains?.length ?? 0) > 0;
+  const extraNetworks = [...new Set((app.composeNetworks ?? []).map((r) => r.network))];
+  const writeOverride = magic || mounts.length > 0 || (app.serviceDomains?.length ?? 0) > 0 || extraNetworks.length > 0;
 
   const lines = [
     "set -e",
@@ -325,6 +348,9 @@ export function buildComposeUpScript(app: AppSpec, noCache = false): string {
       );
     });
   }
+  // The hub-owned shared networks must exist before `up` (external in the override). Labelled so only a network Tugra
+  // created can ever be pruned; idempotent and tolerant of an existing one.
+  for (const n of extraNetworks) lines.push(`docker network create --label ${NETWORK_OWNER_LABEL} ${shq(n)} 2>/dev/null || true`);
   if (writeOverride) {
     lines.push(`printf %s ${shq(b64(composeOverride(app)))} | base64 -d > ${overridePath}`);
   }
