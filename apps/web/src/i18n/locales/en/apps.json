@@ -110,7 +110,7 @@
     "containerPicker": "Container",
     "pathField": "Path",
     "quickLinks": "Quick links",
-    "containerEphemeral": "This is the live container filesystem. Changes are lost when the container is recreated, redeployed or restarted from its image.",
+    "containerEphemeral": "This is the live container filesystem. Changes are lost when the container is recreated, redeployed or restarted from its image. Reading, uploading and creating folders act as the container's root user and ignore file permissions.",
     "containerTruncated": "This directory is too large to list completely. Type a path in the path field to go straight to what you need.",
     "containerNoBinary": "Rename, permissions and delete need mv, chmod and rm inside the image.",
     "binaryNoEdit": "This looks like a binary file, so it can't be edited here. Download it instead.",

@@ -95,7 +95,9 @@ to a signed URL and the hub pipes it straight into the browser response, so noth
 
 **Container filesystem.** The agent uses `docker cp` (daemon-side, so it works on stopped and distroless containers; the
 tar stream is parsed header by header and never extracted) for list, stat, read, write and mkdir, and a fixed-argument
-`docker exec` for rename, chmod and delete. Changes are ephemeral and not atomic, and a very large directory lists only
+`docker exec` for rename, chmod and delete. Because `docker cp` is performed by the Docker daemon, list, read, write and
+mkdir act as container-root (they ignore the image's `USER` and file modes), whereas rename, chmod and delete run as the
+image's default user, like the terminal. Changes are ephemeral and not atomic, and a very large directory lists only
 its first part.
 
 The web server streams file bodies through dedicated routes (Next's generic rewrite buffers and truncates request

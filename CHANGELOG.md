@@ -132,8 +132,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the `files`, `files_write` and `terminal` capabilities, an app's Files tab gains a **Container (ephemeral)**
   source: browse, download, replace and upload files in the running container (for example `/app` and `/etc`), with
   an editable path field and quick links. It works through `docker cp`, so it also works on stopped and distroless
-  containers; rename, permissions and delete run `mv`, `chmod` and `rm` inside the container and report
-  `no_binary` when the image does not ship them. Changes are lost when the container is recreated, writes are not
+  containers. Reads, writes and new folders are performed by the Docker daemon as container-root, so they ignore the
+  image's `USER` and file modes and can reach files the container's own user could not; rename, permissions and delete
+  run `mv`, `chmod` and `rm` inside the container as the image's default user and report `no_binary` when the image
+  does not ship them. Changes are lost when the container is recreated, writes are not
   atomic, and a very large directory lists only its first part. Clustered apps are not supported. Every change needs
   the `admin` token scope. API: `GET /apps/{id}/container-files[/stat|/content]`, `PUT /apps/{id}/container-files/content`,
   `POST /apps/{id}/container-files/mkdir|rename|chmod`, `DELETE /apps/{id}/container-files`.

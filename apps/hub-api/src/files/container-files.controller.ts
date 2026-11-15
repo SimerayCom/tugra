@@ -33,8 +33,10 @@ import { withRetryAfter } from "./files.controller";
 /**
  * The LIVE container filesystem of an app (/app, /etc, ...). Ephemeral: changes are lost when the container is
  * recreated. Beyond `apps:config`, every route needs the team permission `terminal` AND the server capabilities
- * `files` + `terminal` (reads) / + `files_write` (mutations) — exactly the power an interactive shell already
- * grants, so no separate owner flag exists. Because this edits a running app's runtime, EVERY mutation needs the
+ * `files` + `terminal` (reads) / + `files_write` (mutations); no separate owner flag exists. Reads, writes and
+ * mkdir go through `docker cp`, which the Docker daemon performs as container-root: they ignore the image's USER and
+ * file modes, so they can reach files an interactive shell as that user could not. Rename, chmod and delete run as the
+ * image's default user, like the shell. Because this edits a running app's runtime, EVERY mutation needs the
  * `admin` token scope (reads: `read:secrets`). A single-container app ignores `container`; a COMPOSE app must name
  * one of its own containers. Clustered apps are refused.
  */
