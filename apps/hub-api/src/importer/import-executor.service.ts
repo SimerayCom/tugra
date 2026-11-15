@@ -152,7 +152,7 @@ export class ImportExecutorService {
     const { source, session } = await this.importer.openSession(userId, input.sessionId, input.sourceKind); // session ownership + team authz + kind pin
     try {
       const fleet = await source.discover();
-      const plan = planImport(fleet, { sourceKind: input.sourceKind });
+      const plan = planImport(fleet, { sourceKind: input.sourceKind, ...(input.dbDataModes && Object.keys(input.dbDataModes).length ? { dbDataModes: input.dbDataModes } : {}) });
       if (plan.planHash !== input.planHash) {
         throw new ConflictException("the plan changed since it was previewed — re-run the plan and review again");
       }

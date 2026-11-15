@@ -21,6 +21,7 @@ import { assertSafeBase } from "./migration-command";
 import { isValidVolumeName, maxDecodedVolumeBytes, maxVolumeBytes, scrubVolumeTail, volStageRef, volumeTimeoutMs } from "./migration-volume";
 import { buildAllMigratorRecipes, MIGRATOR_ENGINES, MIGRATOR_UNSUPPORTED, type MigratorRecipe } from "./migrator-recipe";
 import { ImportExecutorService } from "./import-executor.service";
+import { VxService } from "./volume-stream/vx.service";
 import type { MigrationTokenContext } from "./migration-token.service";
 import { mintArtifactUrl, verifyArtifactSig } from "./migration-artifact";
 import {
@@ -86,6 +87,7 @@ export class MigrationIngestService {
     private readonly databases: DatabasesService,
     private readonly volumeBackups: VolumeBackupsService,
     private readonly config: ConfigService,
+    private readonly vx: VxService,
   ) {}
 
   private secret(): string {
@@ -153,7 +155,16 @@ export class MigrationIngestService {
         });
       }
     }
-    return { opId: op.opId, targets, maxArtifactBytes: this.maxBytes(), maxVolumeBytes: maxVolumeBytes() };
+    // Streamed volume copy (v2): ADDITIVE rows + envelope fields only when the stream is enabled, so a hub with it off
+    // (or an old migrator, which ignores unknown kinds/fields) sees today's response byte-for-byte.
+    const vxRows = await this.vx.targetRows(opRow);
+    if (vxRows.volumeRefOfDb.size) {
+      for (const row of targets as Array<{ kind?: string; itemRef?: string; dataPlane?: string }>) {
+        if (row.kind === "database" && row.itemRef && vxRows.volumeRefOfDb.has(row.itemRef)) row.dataPlane = "volume";
+      }
+    }
+    targets.push(...vxRows.rows);
+    return { opId: op.opId, targets, maxArtifactBytes: this.maxBytes(), maxVolumeBytes: maxVolumeBytes(), ...this.vx.targetsEnvelope() };
   }
 
   /**

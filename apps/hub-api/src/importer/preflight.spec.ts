@@ -1,6 +1,6 @@
-import { buildCutoverHint, buildPreflight, classifyDbDataPlane } from "./preflight";
+import { buildCutoverHint, buildPreflight, classifyDbDataPlane, vxVolumeReason } from "./preflight";
 import { planImport } from "./import-planner";
-import type { ForeignFleet, ImportOptions } from "./foreign-fleet";
+import type { ForeignApp, ForeignFleet, ImportOptions } from "./foreign-fleet";
 
 describe("classifyDbDataPlane", () => {
   it("one-click for the 6 migrator engines", () => {
@@ -40,8 +40,14 @@ function fleet(over: Partial<ForeignFleet> = {}): ForeignFleet {
   };
 }
 
-describe("buildPreflight", () => {
+describe("buildPreflight (streamed copy OFF: today's hub-staged text, byte-identical)", () => {
   const opts: ImportOptions = { sourceKind: "coolify", targetServerId: "t1" };
+  beforeEach(() => {
+    process.env.MIGRATION_VX_ENABLED = "false";
+  });
+  afterEach(() => {
+    delete process.env.MIGRATION_VX_ENABLED;
+  });
 
   it("classifies every database and surfaces services the plan drops", () => {
     const f = fleet({
@@ -160,5 +166,82 @@ describe("buildCutoverHint (source-only cutover facts, advisory)", () => {
   it("makes no promise about certificates being carried over", () => {
     const f = fleet({ apps: [app("a", ["example.com"])] });
     expect(JSON.stringify(buildPreflight(f, { sourceKind: "coolify" }))).not.toMatch(/zero.downtime|certificates? (are|is|will be) (carried|copied|transferred)/i);
+  });
+});
+
+describe("buildPreflight (streamed copy ON, the default)", () => {
+  const opts: ImportOptions = { sourceKind: "coolify", targetServerId: "t1" };
+  const web: ForeignApp = { sourceRef: "a1", name: "web", kind: "git", buildPack: "dockerfile", volumes: [{ mountPath: "/data", type: "named", name: "v" }, { mountPath: "/media", hostPath: "/srv/m", type: "bind" }] };
+  afterEach(() => {
+    delete process.env.MIGRATION_VX_ENABLED;
+    delete process.env.MIGRATION_VX_PART_MIB;
+  });
+
+  it("declared volumes are `stream` rows with the exact unmeasured text and the fidelity line; no `manual-large` ever", () => {
+    const pf = buildPreflight(fleet({ apps: [web] }), opts);
+    const data = pf.volumes!.find((v) => v.mountPath === "/data")!;
+    expect(data.dataPlane).toBe("stream");
+    expect(data.reason).toBe(
+      "Streamed by the migrator in resumable parts of about 128 MiB. The source container must be stopped first. Size is not measured yet: run the migrator with --dry-run to measure it and check free space on the target. The target needs roughly the compressed size while it copies and about the full data size again while it extracts.",
+    );
+    expect(data.fidelity).toBe(
+      "Copied: files, directories, symlinks, hard links, numeric owner and group, mode, modification time. Not copied: extended attributes, ACLs, file capabilities, sockets (listed per volume), device nodes (the copy is refused).",
+    );
+    expect(pf.volumes!.every((v) => v.dataPlane !== "manual-large" && v.dataPlane !== "hub-staged")).toBe(true);
+  });
+
+  it("a bind mount adds the exact bind sentence; the legacy phrases are gone from the stream path", () => {
+    const pf = buildPreflight(fleet({ apps: [web] }), opts);
+    const media = pf.volumes!.find((v) => v.mountPath === "/media")!;
+    expect(media.dataPlane).toBe("stream");
+    expect(media.reason).toContain(
+      "Bind mounts are refused unless you run the migrator with --allow-bind. Ownership and mode come from the archive headers; extended attributes, ACLs and file capabilities are not copied.",
+    );
+    const all = JSON.stringify(pf);
+    expect(all).not.toContain("do not raise the cap");
+    expect(all).not.toContain("tar + rsync/scp");
+  });
+
+  it("a measured volume gets the exact measured text (size, parts, needed and free GiB)", () => {
+    const inv = new Map<string, number>([["web:/data", 10 * 1024 ** 3]]);
+    const pf = buildPreflight(fleet({ apps: [web] }), opts, inv);
+    const data = pf.volumes!.find((v) => v.mountPath === "/data")!;
+    expect(data.reason).toMatch(/^About 10 GiB in about 80 parts\. The source must stay stopped for the whole copy \(downtime until you start the app on the target\)\. The target needs about 22 GiB free and /);
+    // with the target's free space known the sentence is complete
+    expect(vxVolumeReason(10 * 1024 ** 3, 100 * 1024 ** 3)).toBe(
+      "About 10 GiB in about 80 parts. The source must stay stopped for the whole copy (downtime until you start the app on the target). The target needs about 22 GiB free and has 100 GiB.",
+    );
+  });
+
+  it("the part size follows MIGRATION_VX_PART_MIB", () => {
+    process.env.MIGRATION_VX_PART_MIB = "64";
+    expect(vxVolumeReason(undefined)).toContain("parts of about 64 MiB");
+  });
+
+  it("the volume note describes the streamed copy and the explicit exclusion rule", () => {
+    const pf = buildPreflight(fleet({ apps: [web] }), opts);
+    expect(pf.volumeDataNote).toMatch(/streams their DATA in resumable parts/);
+    expect(pf.volumeDataNote).toMatch(/excluded explicitly/);
+    expect(pf.volumeDataNote).not.toMatch(/do not raise|rsync/);
+  });
+
+  it("databases: every engine says why volume copy is or is not offered; a volume-mode Postgres is a `volume` row", () => {
+    const f = fleet({ databases: [{ sourceRef: "pg1", name: "pg", engine: "POSTGRES" }, { sourceRef: "m1", name: "maria", engine: "MARIADB" }, { sourceRef: "r1", name: "rd", engine: "REDIS" }] });
+    const plain = buildPreflight(f, opts);
+    expect(plain.databases.map((d) => d.dataPlane)).toEqual(["one-click", "one-click", "one-click"]);
+    expect(plain.databases[0].reason).toMatch(/Volume copy for this database/);
+    expect(plain.databases[1].reason).toMatch(/root password lives in the copied system tables/);
+    expect(plain.databases[2].reason).toMatch(/copied logically/);
+    const vol = buildPreflight(f, { ...opts, dbDataModes: { "database:_:pg1": "volume", "database:_:m1": "volume" } });
+    expect(vol.databases[0]).toMatchObject({ dataPlane: "volume" });
+    expect(vol.databases[0].reason).toMatch(/same image and major run on both sides/);
+    expect(vol.databases[1]).toMatchObject({ dataPlane: "blocked" }); // volume mode is Postgres-only
+  });
+
+  it("the kill switch restores the legacy rows", () => {
+    process.env.MIGRATION_VX_ENABLED = "false";
+    const pf = buildPreflight(fleet({ apps: [web] }), opts);
+    expect(pf.volumes!.find((v) => v.mountPath === "/data")!.dataPlane).toBe("hub-staged");
+    expect(pf.volumes![0]).not.toHaveProperty("fidelity");
   });
 });

@@ -9,6 +9,7 @@ import { AgentGatewayModule } from "../agent-gateway/agent-gateway.module";
 import { CutoverCertService } from "../cutover/cutover-cert.service";
 import { BackupsModule } from "../backups/backups.module";
 import { VolumeBackupsModule } from "../volume-backups/volume-backups.module";
+import { AgentGatewayModule } from "../agent-gateway/agent-gateway.module";
 import { ImporterController } from "./importer.controller";
 import { MigrationIngestController } from "./migration-ingest.controller";
 import { MigrationArtifactController } from "./migration-artifact.controller";
@@ -20,6 +21,8 @@ import { ImportMappingService } from "./import-mapping.service";
 import { MigrationTokenService } from "./migration-token.service";
 import { MigrationTokenGuard } from "./migration-token.guard";
 import { MigrationIngestService } from "./migration-ingest.service";
+import { MigrationVolumeController } from "./volume-stream/vx.controller";
+import { VxService } from "./volume-stream/vx.service";
 import { CoolifyClientFactory } from "./sources/coolify-client.factory";
 import { DokployClientFactory } from "./sources/dokploy-client.factory";
 import { ImportSourceFactory } from "./sources/import-source.factory";
@@ -31,8 +34,8 @@ import { ImportSourceFactory } from "./sources/import-source.factory";
 // ImportSourceFactory maps a source kind → its adapter (it depends on CoolifyClientFactory).
 @Module({
   imports: [MigratorModule, CryptoModule, ApplicationsModule, DatabasesModule, BackupsModule, VolumeBackupsModule, GitSourcesModule, ProjectsModule, AgentGatewayModule],
-  controllers: [ImporterController, MigrationIngestController, MigrationArtifactController],
-  providers: [ImporterService, ImportExecutorService, GitLinkResolverService, ImportGitLinksService, MigrationTokenService, MigrationTokenGuard, MigrationIngestService, CoolifyClientFactory, DokployClientFactory, ImportSourceFactory, CutoverCertService, ImportMappingService],
+  controllers: [ImporterController, MigrationIngestController, MigrationArtifactController, MigrationVolumeController],
+  providers: [ImporterService, ImportExecutorService, GitLinkResolverService, ImportGitLinksService, MigrationTokenService, MigrationTokenGuard, MigrationIngestService, CoolifyClientFactory, DokployClientFactory, ImportSourceFactory, CutoverCertService, ImportMappingService, VxService],
   exports: [ImporterService, ImportExecutorService, CutoverCertService, ImportMappingService], // the MCP server wraps these as import_* tools
 })
 export class ImporterModule {}

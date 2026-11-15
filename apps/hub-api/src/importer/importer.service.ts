@@ -103,7 +103,7 @@ export class ImporterService {
         `${input.sourceKind} discover: ${fleet.servers.length} servers, ${fleet.apps.length} apps, ${fleet.databases.length} dbs, ${fleet.services.length} services in ${Date.now() - t0}ms`,
       );
       await this.prisma.importSession.update({ where: { id: session.id }, data: { lastUsedAt: new Date() } });
-      const opts = { sourceKind: input.sourceKind };
+      const opts = { sourceKind: input.sourceKind, ...(input.dbDataModes && Object.keys(input.dbDataModes).length ? { dbDataModes: input.dbDataModes } : {}) };
       const coverage = buildCoverage(fleet, opts);
       // The mapping block is additive and OUTSIDE planHash (computed from the plan alone, above).
       const mapping = this.mappings ? await this.mappings.planBlock(session) : undefined;

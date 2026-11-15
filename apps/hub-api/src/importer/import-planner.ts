@@ -34,7 +34,7 @@ export function planImport(fleet: ForeignFleet, options: ImportOptions): ImportP
   // does NOT copy volume data yet (the user must copy it to the target before cutover).
   const carried = options.sourceKind === "local-docker";
 
-  const dbItems = fleet.databases.map((db) => planDatabase(db, treeRisk(fleet.projects, db, "db.project")));
+  const dbItems = fleet.databases.map((db) => planDatabase(db, treeRisk(fleet.projects, db, "db.project"), options.dbDataModes?.[ns("database", db.serverRef, db.sourceRef)] === "volume"));
 
   // Volumes: standalone + app-owned, deduped by their namespaced itemRef.
   const volItems = new Map<string, ImportPlanItem>();
@@ -85,7 +85,7 @@ function treeRisk(projects: ForeignProject[] | undefined, res: { projectRef?: st
   return { level: "info", code, message: `imports into project "${project.name}", environment "${env.name}" (created on the target team if missing, reused otherwise)` };
 }
 
-function planDatabase(db: ForeignDb, tree?: ImportRisk): ImportPlanItem {
+function planDatabase(db: ForeignDb, tree?: ImportRisk, volumeMode = false): ImportPlanItem {
   const risks: ImportRisk[] = [];
   if (tree) risks.push(tree);
   if (db.engine === "UNKNOWN") {
@@ -101,11 +101,22 @@ function planDatabase(db: ForeignDb, tree?: ImportRisk): ImportPlanItem {
   if (!db.credentials?.secretRef && !db.credentials?.username) {
     risks.push({ level: "warn", code: "db.creds.missing", message: "no source credentials found — dependent apps' DATABASE_URL must be rewritten manually" });
   }
+  // Physical (volume) copy: Postgres only, and only when the exact source major + image are known (the gates re-prove
+  // them against the real data directory at migrate time; these are the early, plan-time refusals).
+  if (volumeMode) {
+    if (db.engine !== "POSTGRES") {
+      risks.push({ level: "blocker", code: "db.volume.engine", message: `volume copy is only offered for PostgreSQL, not ${db.engine}` });
+    } else if (!db.version || !db.image) {
+      risks.push({ level: "blocker", code: "db.volume.unknown", message: "volume copy needs the exact source image and PostgreSQL version, which the source did not report; use the logical dump" });
+    } else {
+      risks.push({ level: "info", code: "db.volume.locked", message: `volume copy locks the target to the source image ${db.image}, its PostgreSQL major ${db.version} and the carried database and user names (a physical copy only works with the same image, major and credentials)` });
+    }
+  }
   return {
     itemRef: ns("database", db.serverRef, db.sourceRef),
     kind: "database",
     name: db.name,
-    proposed: { engine: db.engine, version: db.version ?? null, image: db.image ?? null, database: db.credentials?.database ?? null },
+    proposed: { engine: db.engine, version: db.version ?? null, image: db.image ?? null, database: db.credentials?.database ?? null, ...(volumeMode ? { dataMode: "volume" } : {}) },
     risks,
     dependsOn: [],
   };

@@ -27,11 +27,14 @@ export const ImportConnectSchema = z.object({
 });
 export type ImportConnectInput = z.infer<typeof ImportConnectSchema>;
 
+/** Per-database data mode (`volume` = physical copy of a PostgreSQL data directory). Bounded; keys are database itemRefs. */
+const dbDataModes = z.record(z.string().min(1).max(256), z.literal("volume")).refine((r) => Object.keys(r).length <= 500, "too many entries");
+
 /** Request body for the dry-run import plan: a local server to adopt, or a connected remote session. */
 export const ImportPlanRequestSchema = z.discriminatedUnion("sourceKind", [
   z.object({ sourceKind: z.literal("local-docker"), serverId: z.string().min(1) }),
-  z.object({ sourceKind: z.literal("coolify"), sessionId: z.string().min(1) }),
-  z.object({ sourceKind: z.literal("dokploy"), sessionId: z.string().min(1) }),
+  z.object({ sourceKind: z.literal("coolify"), sessionId: z.string().min(1), dbDataModes: dbDataModes.optional() }),
+  z.object({ sourceKind: z.literal("dokploy"), sessionId: z.string().min(1), dbDataModes: dbDataModes.optional() }),
 ]);
 export type ImportPlanRequestInput = z.infer<typeof ImportPlanRequestSchema>;
 
@@ -106,6 +109,7 @@ const remoteApplyFields = {
   acks: z.array(ImportAckSchema).max(2000).optional(),
   serviceChoices: ServiceChoicesSchema.optional(),
   ...remoteMappingFields,
+  dbDataModes: dbDataModes.optional(),
 };
 export const ImportApplySchema = z
   .discriminatedUnion("sourceKind", [

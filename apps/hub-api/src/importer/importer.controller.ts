@@ -11,6 +11,8 @@ import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
 import { ImporterService } from "./importer.service";
 import { ImportExecutorService } from "./import-executor.service";
+import { VxService } from "./volume-stream/vx.service";
+import { VxDiskCheckBodySchema, VxExcludeBodySchema, type VxDiskCheckBody, type VxExcludeBody } from "./volume-stream/vx.dto";
 import {
   ImportConnectSchema,
   type ImportConnectInput,
@@ -42,6 +44,7 @@ export class ImporterController {
     private readonly importer: ImporterService,
     private readonly executor: ImportExecutorService,
     private readonly gitLinks: ImportGitLinksService,
+    private readonly vx: VxService,
   ) {}
 
   /** Connect an external source PaaS (Coolify): verify reachability + store an encrypted, expiring session. */
@@ -243,5 +246,46 @@ export class ImporterController {
   @RequireScopes("deploy")
   remapEnvUndo(@CurrentUser() user: AuthUser, @Param("opId") opId: string) {
     return this.executor.remapEnvUndo(user.userId, opId);
+  }
+
+  /** Per-volume state of the streamed data copy: progress, the migrator's inventory (labelled as reported by it), the
+   *  disk verdict and, for a Postgres data volume, every gate with its evidence. Read-only; secret-free. */
+  @Get("operations/:opId/volumes")
+  volumes(@CurrentUser() user: AuthUser, @Param("opId") opId: string) {
+    return this.vx.listVolumes(user.userId, opId);
+  }
+
+  /** Dry-run size check of the target host for one volume (against the inventory bytes unless `rawBytes` is given).
+   *  Probes the target read-only; no data moves. */
+  @Post("operations/:opId/volumes/:itemRef/disk-check")
+  @RequireScopes("deploy")
+  @ApiZodBody(VxDiskCheckBodySchema)
+  volumeDiskCheck(
+    @CurrentUser() user: AuthUser,
+    @Param("opId") opId: string,
+    @Param("itemRef") itemRef: string,
+    @Body(new ZodValidationPipe(VxDiskCheckBodySchema)) body: VxDiskCheckBody,
+  ) {
+    return this.vx.diskCheck(opId, user.userId, itemRef, body.rawBytes);
+  }
+
+  /** Explicitly mark a volume NOT migrated (needs the acknowledgement). The migrator reports it `volume-not-migrated`. */
+  @Post("operations/:opId/volumes/:itemRef/exclude")
+  @RequireScopes("deploy")
+  @ApiZodBody(VxExcludeBodySchema)
+  volumeExclude(
+    @CurrentUser() user: AuthUser,
+    @Param("opId") opId: string,
+    @Param("itemRef") itemRef: string,
+    @Body(new ZodValidationPipe(VxExcludeBodySchema)) body: VxExcludeBody,
+  ) {
+    return this.vx.setExcluded(user.userId, opId, itemRef, true, body.reason);
+  }
+
+  /** Undo an exclusion (the volume is migrated again). */
+  @Post("operations/:opId/volumes/:itemRef/include")
+  @RequireScopes("deploy")
+  volumeInclude(@CurrentUser() user: AuthUser, @Param("opId") opId: string, @Param("itemRef") itemRef: string) {
+    return this.vx.setExcluded(user.userId, opId, itemRef, false);
   }
 }

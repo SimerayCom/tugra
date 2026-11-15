@@ -308,3 +308,32 @@ describe("planHash is a pure source-drift guard (editable import mapping)", () =
     expect(JSON.stringify(a)).not.toMatch(/mapping/i);
   });
 });
+
+describe("planImport dbDataModes (physical volume copy)", () => {
+  const POSTGRES_REF = "database:srv1:d1";
+
+  it("the planHash of an existing plan is byte-identical: a hash captured before the option existed", () => {
+    // Captured from the pre-change planner on this exact fixture/options (the `dbDataModes` key does not exist then).
+    expect(planImport(fleet, opts).planHash).toBe("b4998c13c8a284da470539294149890b");
+    expect(planImport(fleet, { ...opts, dbDataModes: undefined }).planHash).toBe(planImport(fleet, opts).planHash);
+    const dbItem = planImport(fleet, opts).items.find((i) => i.itemRef === POSTGRES_REF)!;
+    expect(Object.keys(dbItem.proposed)).toEqual(["engine", "version", "image", "database"]); // no dataMode key
+  });
+
+  it("opting a Postgres database in sets proposed.dataMode, adds the locked-values note and changes the planHash", () => {
+    const base = planImport(fleet, opts);
+    const vol = planImport(fleet, { ...opts, dbDataModes: { [POSTGRES_REF]: "volume" } });
+    expect(vol.planHash).not.toBe(base.planHash);
+    const it = vol.items.find((i) => i.itemRef === POSTGRES_REF)!;
+    expect(it.proposed).toMatchObject({ dataMode: "volume", version: "16", image: "pgvector/pgvector:pg16" });
+    expect(it.risks).toContainEqual(expect.objectContaining({ level: "info", code: "db.volume.locked", message: expect.stringContaining("pgvector/pgvector:pg16") }));
+    expect(vol.totals.blockers).toBe(base.totals.blockers);
+  });
+
+  it("is a blocker for a non-Postgres engine and when the source reported no exact image/version", () => {
+    const f: ForeignFleet = { ...fleet, databases: [{ sourceRef: "m1", name: "m", engine: "MARIADB", version: "11", serverRef: "srv1" }, { sourceRef: "p2", name: "p", engine: "POSTGRES", serverRef: "srv1" }] };
+    const plan = planImport(f, { ...opts, dbDataModes: { "database:srv1:m1": "volume", "database:srv1:p2": "volume" } });
+    expect(plan.items.find((i) => i.itemRef === "database:srv1:m1")!.risks).toContainEqual(expect.objectContaining({ level: "blocker", code: "db.volume.engine" }));
+    expect(plan.items.find((i) => i.itemRef === "database:srv1:p2")!.risks).toContainEqual(expect.objectContaining({ level: "blocker", code: "db.volume.unknown" }));
+  });
+});

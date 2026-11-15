@@ -22,13 +22,29 @@ var (
 	ErrEngineMismatch = errors.New("the source container engine does not match the provisioned target")
 )
 
-// Target is one entry from GET /targets.
+// Target is one entry from GET /targets. The volume-stream fields are additive: an old hub never sends them, and an
+// old migrator ignores the ones a new hub adds (decoding is non-strict).
 type Target struct {
 	ItemRef   string `json:"itemRef"`
 	Kind      string `json:"kind"`
 	Engine    string `json:"engine"`
 	DataPlane string `json:"dataPlane"`
 	Reason    string `json:"reason"`
+
+	// Kind == "volume" rows.
+	VolumeIngest    string   `json:"volumeIngest"` // "stream-v2" | "excluded"
+	Dest            *VolDest `json:"dest"`
+	EngineVersion   string   `json:"engineVersion"`
+	SourceImage     string   `json:"sourceImage"`
+	AppItemRef      string   `json:"appItemRef"`
+	DatabaseItemRef string   `json:"databaseItemRef"`
+}
+
+// VolDest is where a streamed volume lands on the target (hub-derived; never a host path).
+type VolDest struct {
+	Type      string `json:"type"` // "app-volume" | "db-data"
+	Name      string `json:"name"`
+	MountPath string `json:"mountPath"`
 }
 
 // source is a validated, running source DB container. ID is the immutable 64-hex container ID
@@ -85,17 +101,21 @@ type psRow struct {
 
 // dockerInspectJSON is the minimal slice of `docker inspect` we decode.
 type dockerInspectJSON struct {
-	ID    string `json:"Id"`
-	Name  string `json:"Name"`
-	Image string `json:"Image"` // sha256:... (the image digest)
-	Path  string `json:"Path"`
+	ID    string   `json:"Id"`
+	Name  string   `json:"Name"`
+	Image string   `json:"Image"` // sha256:... (the image digest)
+	Path  string   `json:"Path"`
 	Args  []string `json:"Args"`
 	State struct {
-		Running    bool `json:"Running"`
-		Paused     bool `json:"Paused"`
-		Restarting bool `json:"Restarting"`
-		Dead       bool `json:"Dead"`
+		Running    bool   `json:"Running"`
+		Paused     bool   `json:"Paused"`
+		Restarting bool   `json:"Restarting"`
+		Dead       bool   `json:"Dead"`
+		ExitCode   int    `json:"ExitCode"`
+		StartedAt  string `json:"StartedAt"`
+		FinishedAt string `json:"FinishedAt"`
 	} `json:"State"`
+	Mounts []dockerMount `json:"Mounts"`
 	Config struct {
 		Image      string            `json:"Image"`
 		Env        []string          `json:"Env"`
@@ -103,6 +123,15 @@ type dockerInspectJSON struct {
 		Entrypoint []string          `json:"Entrypoint"`
 		Cmd        []string          `json:"Cmd"`
 	} `json:"Config"`
+}
+
+// dockerMount is one `docker inspect` Mounts[] entry (Source is the HOST path of a bind mount).
+type dockerMount struct {
+	Type        string `json:"Type"`
+	Name        string `json:"Name"`
+	Source      string `json:"Source"`
+	Destination string `json:"Destination"`
+	RW          bool   `json:"RW"`
 }
 
 // dockerCallTimeout bounds a single docker ps/inspect so a wedged daemon cannot stall the run.
@@ -128,16 +157,9 @@ func Resolve(ctx context.Context, tg Target, override, dockerPath string, env []
 		return nil, err
 	}
 
-	var id string
-	if override != "" {
-		if id, err = resolveOverride(override, rows); err != nil {
-			return nil, err
-		}
-	} else {
-		id, err = resolveByName(sourceRef, rows)
-		if err != nil {
-			return nil, err
-		}
+	id, err := resolveContainerID(sourceRef, override, rows, false)
+	if err != nil {
+		return nil, err
 	}
 
 	info, err := dockerInspect(ctx, dockerPath, id, env)
@@ -176,6 +198,45 @@ func Resolve(ctx context.Context, tg Target, override, dockerPath string, env []
 			Cmd:        info.Config.Cmd,
 		},
 	}, nil
+}
+
+// resolveContainerID picks ONE container id: a --map override (exact name / 64-hex id / unique 12-hex prefix) or the
+// byte-exact name match of sourceRef. allowSuffix (the volume arm only) additionally accepts Coolify's application
+// container naming `<uuid>-<digits>` when no container is named exactly sourceRef. 0 hits => ErrNotFound; >1 =>
+// ErrAmbiguous. The DB arm calls it with allowSuffix=false, so its behaviour is exactly what it always was.
+func resolveContainerID(sourceRef, override string, rows []psRow, allowSuffix bool) (string, error) {
+	if override != "" {
+		return resolveOverride(override, rows)
+	}
+	id, err := resolveByName(sourceRef, rows)
+	if err == ErrNotFound && allowSuffix {
+		return resolveBySuffixedName(sourceRef, rows)
+	}
+	return id, err
+}
+
+var suffixDigitsRe = regexp.MustCompile(`^[0-9]{6,}$`)
+
+// resolveBySuffixedName matches `<sourceRef>-<digits>` (Coolify names an application container after its uuid plus a
+// deploy timestamp). Several such containers (an old and a new deploy) are ambiguous: fail closed.
+func resolveBySuffixedName(sourceRef string, rows []psRow) (string, error) {
+	var hits []string
+	for _, r := range rows {
+		for _, n := range r.names {
+			if rest, ok := strings.CutPrefix(n, sourceRef+"-"); ok && suffixDigitsRe.MatchString(rest) {
+				hits = append(hits, r.id)
+				break
+			}
+		}
+	}
+	switch len(hits) {
+	case 0:
+		return "", ErrNotFound
+	case 1:
+		return hits[0], nil
+	default:
+		return "", ErrAmbiguous
+	}
 }
 
 func dockerPS(ctx context.Context, dockerPath string, env []string) ([]psRow, error) {

@@ -25,9 +25,27 @@
 //     item (or aborts the run) rather than guessing. A missing recipe is never an
 //     empty, silently-successful dump.
 //
+// The VOLUME ARM (`--arms volumes|all`, default `databases`) copies declared app volumes (and, gated, a PostgreSQL data
+// directory) of a STOPPED source container to the hub's memory relay in resumable parts, with the same boundary rules:
+//
+//   - It never writes to the source and never removes anything. A running source is refused unless --stop-source is given,
+//     and then ONLY that container is stopped (and restarted if the copy does not complete). Quiescence is verified before
+//     the first byte and re-checked after the last; the hub stores the fingerprint and refuses to apply when it changed.
+//   - The tar helper is the migrator's OWN image (--helper-image / TUGRA_SELF_IMAGE), run with --pull=never, no network,
+//     a read-only root, every capability dropped except DAC_READ_SEARCH and the volume mounted read-only: nothing is ever
+//     pulled onto the customer's host.
+//   - Parts are cut from the raw tar stream (independent gzip members, so a resume compares RAW hashes and never depends on
+//     the compressor), each verified by sha256 and exact length at the relay and again on the target; memory is bounded
+//     (two buffers). A mismatch against what the hub already committed is `volume-diverged`, never a silent re-send.
+//   - Every state is explicit (volume-copied, volume-applied, volume-skipped-running, volume-diverged,
+//     volume-source-missing, volume-bind-refused, volume-special-files, volume-disk-insufficient, volume-aborted,
+//     volume-not-migrated): nothing is skipped without a reported reason.
+//
 // The source files mirror the concerns designed in S4-3: scrub.go (secret
 // redaction), recipe.go (the pinned recipe/engine contract + child-env build),
 // creds.go (per-engine credential discovery), discover.go (itemRef -> container),
 // dump.go (no-shell dump -> gzip -> spool+sha256), hubclient.go (the hub HTTP
-// client) and run.go (the status-first orchestration + exit-code contract).
+// client) and run.go (the status-first orchestration + exit-code contract); volume.go
+// (volume resolution, quiescence, bind denylist, inventory), runvolume.go (the volume arm's
+// orchestration), vxclient.go (the volume-stream hub calls) and vxstream.go (the tar -> parts streamer).
 package migrate

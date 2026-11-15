@@ -59,7 +59,38 @@ const (
 	KindHubMisconfig
 	KindUnknownConflict
 	KindDecode // a 2xx body that failed to decode (or strict-decode) — a contract/skew signal
+
+	// Streamed volume copy (v2). Appended AFTER the existing kinds so none of their values moves.
+	KindVxFingerprintChanged // the source changed between begin and the stored fingerprint: reset required, never auto
+	KindVxDiverged           // a committed part's raw hash differs from the source now (changed source / non-deterministic tar)
+	KindVxShortPart          // a part shorter than the policy was already committed: no later part may follow
+	KindVxPartLost           // the hub restarted mid-part: re-register the same part with the same buffer
+	KindVxDiskInsufficient   // the target cannot hold the transfer
+	KindVxAborted            // the owner aborted the transfer from the UI
+	KindVxOtherRun           // another migrator run holds the lease
+	KindVxDbVolumeMode       // the database is set to a physical volume copy: the logical dump route is closed
+	KindVxUsesStream         // the volume uses the streamed copy: the hub-staged upload route is closed
+	KindVxUsesHubStaged      // the volume already uses the hub-staged upload: the streamed copy is closed
 )
+
+var kindNames = map[ErrKind]string{
+	KindOther: "Other", KindAuth: "Auth", KindNotFound: "NotFound", KindBadRequest: "BadRequest", KindTooLarge: "TooLarge",
+	KindLengthRequired: "LengthRequired", KindBadMedia: "BadMedia", KindNoSpace: "NoSpace", KindRateLimited: "RateLimited",
+	KindServer: "Server", KindRedirect: "Redirect", KindBusyUpload: "BusyUpload", KindRestoreInProgress: "RestoreInProgress",
+	KindNotStaged: "NotStaged", KindDifferentRestored: "DifferentRestored", KindDestDirty: "DestDirty", KindDestGone: "DestGone",
+	KindHubMisconfig: "HubMisconfig", KindUnknownConflict: "UnknownConflict", KindDecode: "Decode",
+	KindVxFingerprintChanged: "VxFingerprintChanged", KindVxDiverged: "VxDiverged", KindVxShortPart: "VxShortPart",
+	KindVxPartLost: "VxPartLost", KindVxDiskInsufficient: "VxDiskInsufficient", KindVxAborted: "VxAborted",
+	KindVxOtherRun: "VxOtherRun", KindVxDbVolumeMode: "VxDbVolumeMode", KindVxUsesStream: "VxUsesStream", KindVxUsesHubStaged: "VxUsesHubStaged",
+}
+
+// String is the stable name the shared 409 vectors (testdata/vx-409-literals.json) use.
+func (k ErrKind) String() string {
+	if n, ok := kindNames[k]; ok {
+		return n
+	}
+	return "Other"
+}
 
 // HubError is a classified hub failure. Msg is already safe (carries no token).
 type HubError struct {
@@ -92,6 +123,17 @@ type TargetsResp struct {
 	OpID             string   `json:"opId"`
 	Targets          []Target `json:"targets"`
 	MaxArtifactBytes int64    `json:"maxArtifactBytes"`
+	MaxVolumeBytes   int64    `json:"maxVolumeBytes"`
+	// VxProtocol is 0 on a hub without the streamed volume copy (the volume arm then refuses with a clear message).
+	VxProtocol int       `json:"vxProtocol"`
+	Vx         *VxPolicy `json:"vx"`
+}
+
+// VxPolicy is the hub's streamed-copy policy: the raw part size the migrator must use and the per-volume limits.
+type VxPolicy struct {
+	PartRawBytes int   `json:"partRawBytes"`
+	MaxBytes     int64 `json:"maxBytes"`
+	MaxParts     int   `json:"maxParts"`
 }
 type StatusResp struct {
 	ItemRef  string `json:"itemRef"`
@@ -412,6 +454,27 @@ func classify409(msg string) ErrKind {
 		return KindDestGone
 	case strings.Contains(m, "hub public url is not configured"):
 		return KindHubMisconfig
+	// Streamed volume copy (v2). The literals are mirrored from the hub's VX_409 (shared vectors keep them in sync).
+	case strings.Contains(m, "vx-fingerprint-changed"):
+		return KindVxFingerprintChanged
+	case strings.Contains(m, "vx-diverged"):
+		return KindVxDiverged
+	case strings.Contains(m, "vx-short-part"):
+		return KindVxShortPart
+	case strings.Contains(m, "vx-part-lost"):
+		return KindVxPartLost
+	case strings.Contains(m, "vx-disk-insufficient"):
+		return KindVxDiskInsufficient
+	case strings.Contains(m, "vx-aborted"):
+		return KindVxAborted
+	case strings.Contains(m, "another migrator run is active for this volume"):
+		return KindVxOtherRun
+	case strings.Contains(m, "this database is set to volume copy"):
+		return KindVxDbVolumeMode
+	case strings.Contains(m, "this volume uses the streamed copy"):
+		return KindVxUsesStream
+	case strings.Contains(m, "this volume already uses the hub-staged upload"):
+		return KindVxUsesHubStaged
 	default:
 		return KindUnknownConflict
 	}

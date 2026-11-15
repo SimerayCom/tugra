@@ -294,6 +294,10 @@ export interface ImportOptions {
    *  of the source AFTER cutover+verification — never automatic (see the spec's takeover gate). */
   mode?: ImportMode;
   decommissionConfirmName?: string; // required to arm takeover's decommission step
+  /** Per-database data mode chosen at review time: `volume` = copy the PostgreSQL data DIRECTORY (physical) instead of a
+   *  logical dump. Keyed by the database's itemRef. The key is OMITTED (never `{}`/undefined-valued) when no database
+   *  opts in, so the planHash of every existing plan is byte-identical. */
+  dbDataModes?: Record<string, "volume">;
 }
 
 export interface ImportPlan {
@@ -313,14 +317,14 @@ export interface ImportPlan {
 }
 
 /** How a database's DATA will move (distinct from whether its CONFIG imports). */
-export type DbDataPlane = "one-click" | "manual" | "blocked";
+export type DbDataPlane = "one-click" | "manual" | "blocked" | "volume";
 
 /** How an app volume's DATA will move.
  *  - hub-staged: the migrator copies it through hub staging (up to the per-volume cap).
  *  - manual-large: measured over the cap → copy it by hand (tar + rsync/scp); never ride hub staging.
  *  - manual: the mount is not declared on the target (compose-managed / file / invalid / duplicate / over-limit).
  *  - unknown-size: eligible, but its size was not measured (copied up to the cap at migrate time). */
-export type VolumeDataPlane = "hub-staged" | "manual-large" | "manual" | "unknown-size";
+export type VolumeDataPlane = "hub-staged" | "manual-large" | "manual" | "unknown-size" | "stream";
 
 /**
  * Secret-free, advisory summary attached to a plan so the review screen can show, up front, what actually
@@ -353,7 +357,7 @@ export interface ImportPreflight {
   /** Per declared/skipped app volume: how its DATA will move. Additive; NOT part of planHash. A size is only
    *  known when an inventory was supplied (the Go `--inventory` producer is deferred), so at plan time an
    *  eligible mount is `hub-staged` and size-unmeasured, never silently assumed small. */
-  volumes?: Array<{ app: string; mountPath: string; type?: "named" | "bind"; dataPlane: VolumeDataPlane; reason: string }>;
+  volumes?: Array<{ app: string; mountPath: string; type?: "named" | "bind"; dataPlane: VolumeDataPlane; reason: string; fidelity?: string }>;
   /** Per-app "what is not carried over". Additive; NOT part of planHash (preflight never is). */
   coverage?: ImportCoverage;
   /** Coolify only: how many apps' variables are unreadable because the API token lacks read:sensitive. */

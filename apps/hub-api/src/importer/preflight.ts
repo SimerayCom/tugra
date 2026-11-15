@@ -4,8 +4,18 @@ import { foreignAppToVolumes } from "./apply-map";
 import { gitUrlHost } from "../deploy/deploy-script";
 import { DEFAULT_MAX_ARTIFACT_BYTES } from "./migration-staging";
 import { maxVolumeBytes } from "./migration-volume";
+import { vxEnabled, vxPartRawBytes } from "./volume-stream/vx-constants";
 import type { DbDataPlane, ForeignApp, ForeignFleet, ImportCutoverHint, ImportOptions, ImportPreflight, VolumeDataPlane } from "./foreign-fleet";
 import { counterpartOf, isGeneratedHost } from "../cutover/cutover.logic";
+
+const VX_DB_VOLUME_REASON =
+  "Volume copy: the PostgreSQL data directory is copied physically with the source stopped. It is only offered when the same image and major run on both sides, the credentials were carried, the data sits at the volume root and the destination was never started. The migrator's --dry-run reads the source and every check is shown with its evidence before any data moves.";
+
+function volumeCopyNote(engine: string): string {
+  if (engine === "POSTGRES") return "A PostgreSQL data volume can instead be copied physically (same image, same major, carried credentials): choose Volume copy for this database and run the migrator with --dry-run to see each check.";
+  if (engine === "MYSQL" || engine === "MARIADB") return "Volume copy is not offered for this engine: its root password lives in the copied system tables, so the data is copied logically.";
+  return "Volume copy is not offered for this engine: its data is copied logically.";
+}
 
 const DEFAULT_CAP_MIB = Math.round(DEFAULT_MAX_ARTIFACT_BYTES / (1024 * 1024));
 
@@ -21,13 +31,37 @@ export const MINIO_SERVICE_NOTE =
 
 type VolumeRow = NonNullable<ImportPreflight["volumes"]>[number];
 
+const GiB = 1024 ** 3;
+
+/** What the streamed copy keeps and what it does not (shown on EVERY stream row; the same for every volume). */
+export const VX_FIDELITY =
+  "Copied: files, directories, symlinks, hard links, numeric owner and group, mode, modification time. Not copied: extended attributes, ACLs, file capabilities, sockets (listed per volume), device nodes (the copy is refused).";
+const VX_BIND_NOTE =
+  "Bind mounts are refused unless you run the migrator with --allow-bind. Ownership and mode come from the archive headers; extended attributes, ACLs and file capabilities are not copied.";
+
+/**
+ * The honest per-volume text of the streamed copy. `rawBytes` is the measured tar size (undefined = not measured yet),
+ * `targetFreeBytes` the free space the target reported (undefined = not probed yet). Required space is the stricter,
+ * same-filesystem figure the disk verdict uses: the compressed parts (~1x) plus the decoded copy (~1.05x) plus headroom.
+ */
+export function vxVolumeReason(rawBytes: number | undefined, targetFreeBytes?: number): string {
+  if (rawBytes === undefined) {
+    return `Streamed by the migrator in resumable parts of about ${Math.round(vxPartRawBytes() / (1024 * 1024))} MiB. The source container must be stopped first. Size is not measured yet: run the migrator with --dry-run to measure it and check free space on the target. The target needs roughly the compressed size while it copies and about the full data size again while it extracts.`;
+  }
+  const x = Math.max(0.1, Math.round((rawBytes / GiB) * 10) / 10);
+  const parts = Math.max(1, Math.ceil(rawBytes / vxPartRawBytes()));
+  const y = Math.ceil((2.05 * rawBytes + GiB) / GiB);
+  const free = targetFreeBytes === undefined ? "run the migrator with --dry-run to see how much the target has" : `has ${Math.floor(targetFreeBytes / GiB)} GiB`;
+  return `About ${x} GiB in about ${parts} parts. The source must stay stopped for the whole copy (downtime until you start the app on the target). The target needs about ${y} GiB free and ${free}.`;
+}
+
 /**
  * Per-app-volume data-movement rows. Declared-eligible mounts are `hub-staged` (or `manual-large` when a
  * supplied inventory measures them over the live cap); skipped mounts carry their skip reason as `manual`.
  * `inventory` maps `"<appName>:<containerPath>"` → compressed bytes; it is omitted at plan time (the Go
  * `--inventory` producer is deferred), so an eligible mount is size-unmeasured, never assumed small.
  */
-function buildVolumeRows(apps: ForeignApp[], inventory: ReadonlyMap<string, number> | undefined, cap: number, capMiB: number): VolumeRow[] {
+function buildVolumeRows(apps: ForeignApp[], inventory: ReadonlyMap<string, number> | undefined, cap: number, capMiB: number, vx: boolean): VolumeRow[] {
   const rows: VolumeRow[] = [];
   for (const app of apps) {
     if ((app.volumes ?? []).length === 0) continue;
@@ -39,6 +73,13 @@ function buildVolumeRows(apps: ForeignApp[], inventory: ReadonlyMap<string, numb
       const size = inventory?.get(`${app.name}:${v.path}`);
       let dataPlane: VolumeDataPlane;
       let reason: string;
+      if (vx) {
+        // Streamed copy: declared volumes of any size move through the hub's memory relay (no hub disk, no cap).
+        dataPlane = "stream";
+        reason = vxVolumeReason(size) + (isBind ? ` ${VX_BIND_NOTE}` : "");
+        rows.push({ app: app.name, mountPath: v.path, type, dataPlane, reason, fidelity: VX_FIDELITY });
+        continue;
+      }
       if (size === undefined) {
         dataPlane = "hub-staged";
         reason = `upload its data to the hub before the first deploy (tar the source volume + curl), up to ~${capMiB} MiB${ownerNote}`;
@@ -120,10 +161,20 @@ export function buildCutoverHint(fleet: ForeignFleet): ImportCutoverHint {
  */
 export function buildPreflight(fleet: ForeignFleet, options: ImportOptions, inventory?: ReadonlyMap<string, number>): ImportPreflight {
   const carried = options.sourceKind === "local-docker"; // adopts in place; volumes re-attach, data not copied
+  const vx = vxEnabled(); // streamed volume copy: the declared volumes' data moves through the migrator, uncapped
 
   const databases = fleet.databases.map((d) => {
     const c = classifyDbDataPlane(d.engine);
-    return { name: d.name, engine: d.engine, dataPlane: c.dataPlane, reason: c.reason };
+    const ref = `database:${d.serverRef ?? "_"}:${d.sourceRef}`;
+    if (c.dataPlane === "one-click" && options.dbDataModes?.[ref] === "volume") {
+      if (d.engine === "POSTGRES") {
+        return { name: d.name, engine: d.engine, dataPlane: "volume" as DbDataPlane, reason: VX_DB_VOLUME_REASON };
+      }
+      return { name: d.name, engine: d.engine, dataPlane: "blocked" as DbDataPlane, reason: `volume copy is only offered for PostgreSQL, not ${d.engine}; the plan blocks this choice (use the logical dump)` };
+    }
+    // Volume copy is a Postgres-only choice; say WHY for the others instead of staying silent.
+    const volumeNote = vx && c.dataPlane === "one-click" ? ` ${volumeCopyNote(d.engine)}` : "";
+    return { name: d.name, engine: d.engine, dataPlane: c.dataPlane, reason: c.reason + volumeNote };
   });
 
   const services = fleet.services.map((s) => {
@@ -148,7 +199,7 @@ export function buildPreflight(fleet: ForeignFleet, options: ImportOptions, inve
 
   const cap = maxVolumeBytes();
   const capMiB = Math.round(cap / (1024 * 1024));
-  const volumes = carried ? [] : buildVolumeRows(fleet.apps, inventory, cap, capMiB);
+  const volumes = carried ? [] : buildVolumeRows(fleet.apps, inventory, cap, capMiB, vx);
 
   const envApps = fleet.apps.filter((a) => a.envReport);
   const gitHosts = new Map<string, number>();
@@ -165,7 +216,9 @@ export function buildPreflight(fleet: ForeignFleet, options: ImportOptions, inve
     volumeDataNote:
       appsWithVolumeData === 0
         ? undefined
-        : appsDeclaringVolumes > 0
+        : appsDeclaringVolumes > 0 && vx
+          ? "empty volumes are declared on the new apps; the migrator streams their DATA in resumable parts with owner, group and mode kept (stop each source container first, a live copy is refused). Run the migrator with --dry-run to measure every volume and check the target's free space before choosing a window. A volume you do not want copied must be excluded explicitly: it is then reported as not migrated, never skipped silently. Small volumes can still be uploaded by hand to the hub before the first deploy"
+          : appsDeclaringVolumes > 0
           ? `empty volumes are declared on the new apps; upload their DATA to the hub before the first deploy (tar each source volume and curl it to the migration endpoint, up to ~${capMiB} MiB per volume; file ownership is not preserved, and a live tar is not crash-consistent — stop the source app first). Larger volumes are copied manually, or the app starts empty`
           : `these volumes are compose-managed or skipped (not declared on the target) — recreate and copy their DATA manually before the first deploy or the app starts empty`,
     ...(volumes.length ? { volumes } : {}),

@@ -53,6 +53,16 @@ type itemResult struct {
 	Bytes    int64  `json:"bytes,omitempty"`
 	Sha256   string `json:"sha256,omitempty"`
 	HubExit  *int   `json:"hubExit,omitempty"`
+
+	// Volume-arm facts (all omitempty: a database item's JSON is unchanged).
+	Entries  int64  `json:"entries,omitempty"`
+	Parts    int    `json:"parts,omitempty"`
+	Running  *bool  `json:"running,omitempty"`
+	ExitCode *int   `json:"exitCode,omitempty"`
+	Image    string `json:"image,omitempty"`
+	PgMajor  string `json:"pgMajor,omitempty"`
+	PgLayout string `json:"pgLayout,omitempty"`
+	Disk     string `json:"disk,omitempty"`
 }
 
 type output struct {
@@ -101,6 +111,18 @@ type cli struct {
 	certs          bool   // opt-in: seed ACME certificates (--certs)
 	proxyContainer string // the source proxy container to inspect for acme.json
 	acmeFile       string // optional explicit acme.json path as seen by this process
+
+	// Streamed volume copy (v2). Defaults keep the database-only behaviour byte-identical.
+	arms             string // "databases" (default) | "volumes" | "all"
+	stopSource       bool
+	stopTimeout      int // seconds, passed to `docker stop -t`
+	allowBind        bool
+	partMiB          int // 0 = follow the hub policy
+	helperImage      string
+	resetVolume      stringList
+	hubOutageWait    time.Duration
+	speedtestMiB     int
+	restartOnFailure bool
 }
 
 // RunCLI is the `tugra-agent migrate` entrypoint. It installs its own signal handling (no agent
@@ -267,23 +289,41 @@ func RunCLI(args []string, version string, stdout, stderr io.Writer) (code int) 
 	if spoolCreated {
 		defer os.RemoveAll(spoolDir) // we made this temp root; leave no 0600 residue behind
 	}
-	sweepStaleSpools(spoolDir, "tugra-migrate-")          // our own per-item dirs from a crashed run
+	sweepStaleSpools(spoolDir, "tugra-migrate-")           // our own per-item dirs from a crashed run
 	sweepStaleSpools(os.TempDir(), "tugra-migrate-spool-") // default spool roots from crashed runs
 
-	// in-scope database items, filtered by --only, sorted for determinism
-	inScope := selectTargets(targets.Targets, c.only)
+	// in-scope items by arm, filtered by --only, sorted for determinism. The default arm is databases only, so the
+	// existing behaviour (and its golden output) is unchanged unless --arms asks for volumes.
+	var inScope, volScope []Target
+	if c.arms != "volumes" {
+		inScope = selectTargets(targets.Targets, c.only)
+	}
+	if c.arms != "databases" {
+		if targets.VxProtocol != vxProtocolVersion || targets.Vx == nil {
+			logf("this hub does not offer the streamed volume copy (too old, or switched off): update the hub, or run with --arms databases")
+			code = exitSkew
+			return
+		}
+		volScope = selectVolumeTargets(targets.Targets, c.only)
+	}
 
 	run := &runner{hub: hub, dockerPath: dockerPath, dockerEnv: dockerEnv, spoolDir: spoolDir,
 		maxGz: maxGz, c: c, sc: sc, logf: logf, parsed: parsed, rejected: rejected, overrides: mapOverrides,
 		usedIDs: map[string]string{}}
 
-	if len(inScope) == 0 {
+	if len(inScope) == 0 && len(volScope) == 0 {
 		out.NoTargets = true
 		code = exitOK
 		if c.certs && ctx.Err() == nil && !c.dryRun {
 			code = certsPhase(ctx, run, &out, code)
 		}
 		return
+	}
+
+	var vr *volRunner
+	if len(volScope) > 0 {
+		vr = &volRunner{hub: hub, dockerPath: dockerPath, dockerEnv: dockerEnv, c: c, sc: sc, logf: logf, runID: newRunID(),
+			policy: *targets.Vx, overrides: mapOverrides, usedIDs: map[string]string{}, expiry: probe.expiresAt}
 	}
 
 	if c.dryRun {
@@ -300,6 +340,15 @@ func RunCLI(args []string, version string, stdout, stderr io.Writer) (code int) 
 				out.Counts.Skipped++
 				bad = true
 				// "planned" is NOT counted as restored: a dry run restores nothing.
+			}
+		}
+		if vr != nil {
+			for _, res := range vr.dryRun(ctx, volScope) {
+				out.Items = append(out.Items, res)
+				if res.State != "planned" {
+					tallyState(&out.Counts, res.State)
+					bad = true
+				}
 			}
 		}
 		if bad {
@@ -339,6 +388,13 @@ func RunCLI(args []string, version string, stdout, stderr io.Writer) (code int) 
 			logf("aborting the run after %s", codeName(abort))
 			code = abort
 			return
+		}
+	}
+
+	if vr != nil && ctx.Err() == nil {
+		for _, res := range vr.run(ctx, volScope) {
+			out.Items = append(out.Items, res)
+			tallyState(&out.Counts, res.State)
 		}
 	}
 
@@ -611,6 +667,16 @@ func parseFlags(args []string, stderr io.Writer) (*cli, error) {
 	fs.BoolVar(&c.certs, "certs", false, "also seed the source proxy's issued ACME certificates (opt-in)")
 	fs.StringVar(&c.proxyContainer, "proxy-container", defaultProxyContainer, "source proxy container whose acme.json --certs reads")
 	fs.StringVar(&c.acmeFile, "acme-file", "", "explicit acme.json path as seen by this process (skips the docker lookup)")
+	fs.StringVar(&c.arms, "arms", "databases", "what to migrate: databases (default), volumes or all")
+	fs.BoolVar(&c.stopSource, "stop-source", false, "docker stop a RUNNING source container for the copy (only that container; restarted on failure)")
+	fs.IntVar(&c.stopTimeout, "stop-timeout", 120, "seconds docker stop waits before killing the source container")
+	fs.BoolVar(&c.allowBind, "allow-bind", false, "also stream host bind mounts (denylisted paths stay refused)")
+	fs.IntVar(&c.partMiB, "part-mib", 0, "raw MiB per part, 32..512; must equal the hub policy (default: the hub policy)")
+	fs.StringVar(&c.helperImage, "helper-image", envOrEmpty("TUGRA_SELF_IMAGE"), "image that provides tar for the volume arm (default $TUGRA_SELF_IMAGE; never pulled)")
+	fs.Var(&c.resetVolume, "reset-volume", "discard a volume's staged parts and start over: itemRef (repeatable)")
+	fs.DurationVar(&c.hubOutageWait, "hub-outage-wait", 15*time.Minute, "how long to wait for a restarting hub before giving up on a part")
+	fs.IntVar(&c.speedtestMiB, "speedtest-mib", 0, "measure the end-to-end rate by streaming the first N MiB of the real volume through the relay to the target, then discard it")
+	fs.BoolVar(&c.restartOnFailure, "restart-on-failure", true, "restart a source container this run stopped when the copy does not complete")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
@@ -623,7 +689,38 @@ func parseFlags(args []string, stderr io.Writer) (*cli, error) {
 		fmt.Fprintln(stderr, err)
 		return nil, err
 	}
+	if err := c.validateVolumeFlags(); err != nil {
+		fmt.Fprintln(stderr, err)
+		return nil, err
+	}
 	return c, nil
+}
+
+var helperImageRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,254}$`)
+
+// validateVolumeFlags rejects out-of-range volume-arm flags before any network call (exit 2).
+func (c *cli) validateVolumeFlags() error {
+	switch c.arms {
+	case "databases", "volumes", "all":
+	default:
+		return fmt.Errorf("--arms must be databases, volumes or all")
+	}
+	if c.partMiB != 0 && (c.partMiB < 32 || c.partMiB > 512) {
+		return fmt.Errorf("--part-mib must be between 32 and 512")
+	}
+	if c.stopTimeout < 1 || c.stopTimeout > 3600 {
+		return fmt.Errorf("--stop-timeout must be between 1 and 3600 seconds")
+	}
+	if c.hubOutageWait < 0 || c.hubOutageWait > time.Hour {
+		return fmt.Errorf("--hub-outage-wait must be between 0 and 1h")
+	}
+	if c.speedtestMiB < 0 || c.speedtestMiB > 4096 {
+		return fmt.Errorf("--speedtest-mib must be between 0 and 4096")
+	}
+	if c.helperImage != "" && !helperImageRe.MatchString(c.helperImage) {
+		return fmt.Errorf("--helper-image has an unsafe charset")
+	}
+	return nil
 }
 
 func envOrEmpty(k string) string { v, _ := os.LookupEnv(k); return v }
@@ -793,8 +890,15 @@ func tallyState(c *counts, state string) {
 		c.Skipped++
 	case "unsupported":
 		c.Unsupported++
-	case "restore-unconfirmed":
+	case "restore-unconfirmed", "volume-copied":
 		c.Unconfirmed++
+	case "volume-applied":
+		c.Restored++
+	case "volume-skipped-running", "volume-source-missing", "volume-bind-refused", "volume-special-files",
+		"volume-disk-insufficient", "volume-aborted", "volume-not-migrated":
+		c.Skipped++
+	case "volume-diverged":
+		c.Failed++
 	}
 }
 
