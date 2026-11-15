@@ -71,7 +71,7 @@ describe("visibleConfigGroups", () => {
     expect(keysOf(f)).toEqual(["general", "build", "environment", "domains", "automation", "danger"]);
     expect(group(f, "automation")!.cardIds).toEqual(["deployHooks"]);
     // general holds the description note (metadata, every app type) + the always-on cards (environment + tags)
-    expect(group(f, "general")!.cardIds).toEqual(["description", "environment", "tags"]);
+    expect(group(f, "general")!.cardIds).toEqual(["description", "environment", "move", "tags"]);
     expect(group(f, "build")!.cardIds).toEqual(["containerLabels", "credentials"]); // labels: read-only applied view + a note
     expect(group(f, "environment")!.cardIds).toEqual(["env", "secretRefs"]); // secret refs resolve on compose deploys too
     expect(group(f, "domains")!.cardIds).toEqual(["expose", "serviceDomains"]); // compose gains per-service domains
@@ -277,5 +277,15 @@ describe("visibleConfigGroups", () => {
     expect(group(facts({ source: "COMPOSE", domain: null, domainKind: null, volumes: [] }), "danger")!.cardIds).toEqual(["danger"]);
     // …and the whole group disappears for a read-only viewer.
     expect(keysOf(facts({ canWrite: false }))).not.toContain("danger");
+  });
+});
+
+
+describe("the move card", () => {
+  it("is in General for every writer-visible app (clustered ones see it disabled), but not on a preview app", () => {
+    expect(group(facts(), "general")!.cardIds).toContain("move");
+    expect(group(facts({ clusterId: "c1" }), "general")!.cardIds).toContain("move");
+    expect(group(facts({ source: "COMPOSE", volumes: [] }), "general")!.cardIds).toContain("move");
+    expect(group(facts({ isPreview: true }), "general")!.cardIds).not.toContain("move");
   });
 });

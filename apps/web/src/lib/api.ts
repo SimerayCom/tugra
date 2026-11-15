@@ -1,4 +1,8 @@
 import type {
+  AppMove,
+  AppMovePhase,
+  MoveAcks,
+  MovePreflightResult,
   ApiToken,
   AppLabelsView,
   ApiTokenScope,
@@ -1179,6 +1183,28 @@ export const api = {
   },
   cloneApp(id: string, body: { name?: string; serverId?: string; environmentId?: string }) {
     return apiFetch<{ app: Application; warnings: string[] }>(`/apps/${id}/clone`, { method: "POST", body: JSON.stringify(body) });
+  },
+  previewAppMove(id: string, body: { targetServerId: string; acknowledge?: MoveAcks; probeLink?: boolean }) {
+    return apiFetch<MovePreflightResult>(`/apps/${id}/move/preflight`, { method: "POST", body: JSON.stringify(body) });
+  },
+  startAppMove(id: string, body: { targetServerId: string; acknowledge: MoveAcks; repointDns: boolean; archiveRetainDays: number; confirmName: string }) {
+    return apiFetch<{ moveId: string; phase: AppMovePhase }>(`/apps/${id}/move`, { method: "POST", body: JSON.stringify(body) });
+  },
+  getAppMoves(id: string, opts?: { active?: boolean; limit?: number }) {
+    const q = new URLSearchParams();
+    if (opts?.active) q.set("active", "true");
+    if (opts?.limit) q.set("limit", String(opts.limit));
+    const qs = q.toString();
+    return apiFetch<AppMove[]>(`/apps/${id}/moves${qs ? `?${qs}` : ""}`);
+  },
+  getAppMove(id: string, moveId: string) {
+    return apiFetch<AppMove>(`/apps/${id}/moves/${moveId}`);
+  },
+  cancelAppMove(id: string, moveId: string) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/moves/${moveId}/cancel`, { method: "POST" });
+  },
+  purgeMoveSource(id: string, moveId: string) {
+    return apiFetch<{ ok: true }>(`/apps/${id}/moves/${moveId}/purge-source`, { method: "POST" });
   },
   cancelDeployment(id: string, deploymentId: string) {
     return apiFetch<Deployment>(`/apps/${id}/deployments/${deploymentId}/cancel`, { method: "POST" });

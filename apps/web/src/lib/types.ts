@@ -1319,6 +1319,8 @@ export interface Application {
   watchPaths: string[];
   autoDeploy: boolean;
   imageUpdate?: ImageUpdate | null; // optional so older fixtures/clients still type-check; the hub always sends it
+  /** The app's live (non-terminal) move, null when none. Drives the lock on edit/lifecycle controls. */
+  move?: { id: string; phase: AppMovePhase } | null;
   previewExcludeKeys: string[];
   previewLimit: number | null;
   extraPorts: { hostPort: number; containerPort: number; protocol: "tcp" | "udp" }[];
@@ -1509,6 +1511,9 @@ export interface Deployment {
   registryImage: string | null;
   imageDigest: string | null; // resolved upstream digest of the pulled image (nginx@sha256:…) — provenance
   rollbackable: boolean; // artifact retained → can be a rollback target (image tag/registry, or compose snapshot)
+  /** Ran on the app's PREVIOUS server (an app move) and only has a local tag there: it can no longer be rolled back to. */
+  rollbackPredatesMove?: boolean;
+  runServerId?: string | null; // server the deploy ran on; null = the app's current server
   durationMs?: number | null; // wall-clock ms (start → terminal status); null for legacy/RUNNING rows
   trigger?: string | null; // origin: "manual" | "webhook" | "preview" | "rollback" | "rollout"; null for legacy rows
   commitSha?: string | null; // deployed git commit (GIT source); null otherwise
@@ -2047,4 +2052,82 @@ export interface ComposePreviewResult {
   redactions: number;
   warnings: string[];
   generatedAt: string;
+}
+
+// ── App move (relocate an app + its data to another server) ──
+export type AppMovePhase = "QUEUED" | "PRECHECK" | "STOPPING_SOURCE" | "TRANSFERRING" | "DEPLOYING" | "FINALIZING" | "COMPLETED" | "ROLLING_BACK" | "ROLLED_BACK" | "FAILED";
+export type MoveAckKey = "hostMounts" | "externalVolumes" | "dropPrivilegedOptions" | "dropGpus" | "resetCpuset" | "hostPortChanged" | "domainChanges";
+export type MoveAcks = Partial<Record<MoveAckKey, boolean>>;
+
+export interface MoveBlocker {
+  code: string;
+  message: string;
+  details?: Record<string, unknown>;
+  /** The operator can accept this consequence (tick the matching acknowledgement). */
+  ack?: boolean;
+}
+export interface MoveWarning {
+  code: string;
+  details?: Record<string, unknown>;
+}
+export interface MovePlanVolume {
+  name: string;
+  dockerName: string;
+  kind: "app" | "compose";
+  sizeBytes: number | null;
+  state: "move" | "absent_skip" | "external_skip";
+}
+export interface MovePreflightResult {
+  ok: boolean;
+  blockers: MoveBlocker[];
+  warnings: MoveWarning[];
+  requiredAcks: MoveAckKey[];
+  plan: {
+    cheap: boolean;
+    volumes: MovePlanVolume[];
+    totalBytes: number;
+    partBytes: number;
+    estimatedParts: number;
+    sourceStagingFreeBytes: number | null;
+    targetFreeBytes: number | null;
+    estimatedDowntimeSec: { low: number; high: number };
+    domain: { kind: string; from: string | null; to: string | null };
+    hostPort: { from: number | null; to: number | null };
+    targetIp: string | null;
+    link: { ok: boolean; mbps: number | null } | null;
+  };
+}
+export interface AppMoveVolume {
+  name: string;
+  state: string;
+  sizeBytes: number | null;
+  parts: number;
+  partsDone: number;
+  bytesDone: number;
+}
+export interface AppMove {
+  id: string;
+  appId: string;
+  appName: string;
+  phase: AppMovePhase;
+  prevStatus: string;
+  sourceServerId: string;
+  targetServerId: string;
+  volumes: AppMoveVolume[];
+  progress: { volumeIndex: number; volumeCount: number; bytesDone: number; bytesTotal: number };
+  warnings: MoveWarning[];
+  failureReason: string | null;
+  failurePhase: AppMovePhase | null;
+  deploymentId: string | null;
+  cutoverAt: string | null;
+  finishedAt: string | null;
+  archiveUntil: string | null;
+  sourcePurgedAt: string | null;
+  createdAt: string;
+  canCancel: boolean;
+  needsAttention: boolean;
+  /** writer-only (null for read-only members) */
+  plan: Record<string, unknown> | null;
+  acks: Record<string, boolean> | null;
+  logTail: string | null;
 }

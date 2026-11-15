@@ -33,7 +33,7 @@ export function DeploymentDetailView({
   onRollback,
   onAnalyze,
 }: {
-  app: Pick<Application, "canWrite" | "gitUrl">;
+  app: Pick<Application, "canWrite" | "gitUrl" | "move">;
   d: DeploymentDetail;
   /** Live SSE state while the row is RUNNING (lines accumulate; done flips when the deploy settles; ended = the
    *  stream closed with nothing to follow). */
@@ -123,7 +123,11 @@ export function DeploymentDetailView({
           <Btn variant="ghost" onClick={onCancel} disabled={pending.cancel} style={{ color: "var(--c-r)" }}>{t("apps.depCancelRunning")}</Btn>
         )}
         {app.canWrite && d.rollbackable && !d.isCurrent && (
-          <Btn variant="ghost" onClick={onRollback} disabled={pending.rollback}>{t("apps.depRollbackHere")}</Btn>
+          <Btn variant="ghost" onClick={onRollback} disabled={pending.rollback || !!app.move} title={app.move ? t("apps.moveLockedTooltip") : undefined}>{t("apps.depRollbackHere")}</Btn>
+        )}
+        {/* a pre-move deploy that only has a local image tag on the app's PREVIOUS server can no longer be rolled back to */}
+        {app.canWrite && !d.rollbackable && d.rollbackPredatesMove && !d.isCurrent && (
+          <Btn variant="ghost" disabled title={t("apps.rollbackPredatesMove")}>{t("apps.depRollbackHere")}</Btn>
         )}
         {d.status === "FAILED" && app.canWrite && (
           <Btn variant="ghost" onClick={onAnalyze} disabled={pending.analyze}>{pending.analyze ? t("apps.analyzing") : t("apps.analyzeAi")}</Btn>

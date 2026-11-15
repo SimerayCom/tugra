@@ -14,6 +14,8 @@ import { EnvCard } from "../../../../components/env-card";
 import { AppSecretRefsCard } from "../../../../components/app-secret-refs-card";
 import { TerminalModal } from "../../../../components/terminal-modal";
 import { CloneAppModal } from "../../../../components/clone-app-modal";
+import { AppMoveBanner } from "../../../../components/app-move-banner";
+import { MoveAppCard } from "../../../../components/move-app-card";
 import { RenameModal } from "../../../../components/rename-modal";
 import { ExposeModal } from "../../../../components/expose-modal";
 import { resourceBreadcrumb } from "../../../../lib/breadcrumb";
@@ -120,7 +122,7 @@ export default function AppDetailPage() {
   // Shared by the header "…" menu and the Danger-zone card, so one delete flow with its typed-name
   // guard and keep-volumes / remove-images opt-ins lives in a single place.
   const confirmAndDelete = async () => {
-    if (!appData || del.isPending) return; // guard both entry points (header "…" menu + Danger-zone card) against a double-fire
+    if (!appData || del.isPending || appData.move) return; // guard both entry points (header "…" menu + Danger-zone card) against a double-fire; a move in progress locks it
     keepVolumes.current = false;
     removeImages.current = false;
     pruneNetworks.current = false;
@@ -231,7 +233,16 @@ export default function AppDetailPage() {
   if (isLoading || !appData) return <div style={{ padding: "var(--page-pad)" }}><Spinner /></div>;
 
   // Guard BEFORE mutating: with a dirty card, "Stay" must cancel the deploy as well as the jump to Logs.
-  const onDeploy = (opts?: { noCache?: boolean }) => guardLeave(() => { setOptimisticDeploy(true); deploy.mutate(opts); setTab("logs"); });
+  const onDeploy = (opts?: { noCache?: boolean }) => { if (appData.move) return; guardLeave(() => { setOptimisticDeploy(true); deploy.mutate(opts); setTab("logs"); }); };
+  // A live app move pauses deploys, lifecycle actions, rollbacks and every config edit (the hub answers 409 anyway).
+  const moveLocked = !!appData.move;
+  const lockTitle = moveLocked ? t("apps.moveLockedTooltip") : undefined;
+  const lockedContent = (node: ReactNode): ReactNode =>
+    moveLocked ? (
+      <fieldset disabled title={lockTitle} aria-label={t("apps.moveLockedTooltip")} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+        {node}
+      </fieldset>
+    ) : node;
   const deployingNow = deploy.isPending || optimisticDeploy;
   const isRunning = appData.status === "RUNNING";
   const statusDisplay = appStatusDisplay(appData);
@@ -251,6 +262,7 @@ export default function AppDetailPage() {
       <ClusterDeployCard id={id} teamId={appData.teamId} clusterId={appData.clusterId} replicas={appData.replicas} placement={appData.placement} volumes={appData.volumes} constraintServerId={appData.constraintServerId} />
     ),
     environment: () => <EnvironmentCard kind="app" id={id} environmentId={appData.environmentId} />,
+    move: () => <MoveAppCard app={appData} />,
     tags: () => <TagsCard tags={appData.tags} canWrite={appData.canWrite} onSave={(next) => tags.mutate(next)} />,
     source: () => <SourceCard id={id} source={appData.source} gitUrl={appData.gitUrl} gitBranch={appData.gitBranch} gitCommit={appData.gitCommit} image={appData.image} composePath={appData.composePath} gitSourceId={appData.gitSourceId} teamId={appData.teamId} hasGitToken={appData.hasGitToken} isPreview={appData.isPreview} />,
     build: () => <BuildSettingsCard id={id} buildType={appData.buildType} dockerfilePath={appData.dockerfilePath} dockerBuildTarget={appData.dockerBuildTarget} inlineDockerfile={appData.inlineDockerfile} baseDirectory={appData.baseDirectory} buildCommand={appData.buildCommand} outputDir={appData.outputDir} nixpacksInstallCmd={appData.nixpacksInstallCmd} nixpacksBuildCmd={appData.nixpacksBuildCmd} nixpacksStartCmd={appData.nixpacksStartCmd} gitSubmodules={appData.gitSubmodules} gitLfs={appData.gitLfs} gitShallowClone={appData.gitShallowClone} disableBuildCache={appData.disableBuildCache} injectEnvAsBuildArgs={appData.injectEnvAsBuildArgs} sourceCommitMode={appData.sourceCommitMode} />,
@@ -362,7 +374,8 @@ export default function AppDetailPage() {
                   variant={primary === "deploy" ? "primary" : "ghost"}
                   iconTone={primary === "deploy" ? undefined : "success"}
                   loading={deploy.isPending}
-                  title={appData.status === "NEW" ? undefined : t("apps.redeployHint")}
+                  disabled={moveLocked}
+                  title={moveLocked ? lockTitle : appData.status === "NEW" ? undefined : t("apps.redeployHint")}
                   onClick={() => onDeploy()}
                 >
                   {deploy.isPending ? t("apps.deploying") : appData.status === "NEW" ? t("apps.deploy") : t("apps.redeploy")}
@@ -370,12 +383,12 @@ export default function AppDetailPage() {
               </div>
               <div role="group" aria-label={t("apps.actionsLifecycle")} style={actionGroupSep}>
                 {primary === "restart" && (
-                  <Btn icon={RotateCw} iconTone="warn" loading={restart.isPending} title={t("apps.restartHint")} onClick={() => restart.mutate()}>{restart.isPending ? t("apps.restarting") : t("apps.restart")}</Btn>
+                  <Btn icon={RotateCw} iconTone="warn" loading={restart.isPending} disabled={moveLocked} title={moveLocked ? lockTitle : t("apps.restartHint")} onClick={() => restart.mutate()}>{restart.isPending ? t("apps.restarting") : t("apps.restart")}</Btn>
                 )}
                 {primary === "start" && (
-                  <Btn icon={Play} iconTone="success" loading={start.isPending} onClick={() => start.mutate()}>{start.isPending ? t("apps.starting") : t("apps.start")}</Btn>
+                  <Btn icon={Play} iconTone="success" loading={start.isPending} disabled={moveLocked} title={lockTitle} onClick={() => start.mutate()}>{start.isPending ? t("apps.starting") : t("apps.start")}</Btn>
                 )}
-                <Btn icon={Square} variant="dangerGhost" loading={stop.isPending} disabled={!isRunning} onClick={async () => { if (await confirm({ body: t("apps.stopConfirm"), danger: true })) stop.mutate(); }}>{t("apps.stop")}</Btn>
+                <Btn icon={Square} variant="dangerGhost" loading={stop.isPending} disabled={!isRunning || moveLocked} title={lockTitle} onClick={async () => { if (await confirm({ body: t("apps.stopConfirm"), danger: true })) stop.mutate(); }}>{t("apps.stop")}</Btn>
               </div>
               <div role="group" aria-label={t("apps.actionsTools")} style={actionGroupSep}>
                 <Menu
@@ -394,13 +407,13 @@ export default function AppDetailPage() {
                       label: appData.source === "COMPOSE" || appData.source === "IMAGE" ? t("apps.pullRedeploy") : t("apps.rebuild"),
                       icon: appData.source === "COMPOSE" || appData.source === "IMAGE" ? CloudDownload : Hammer,
                       tone: "warn",
-                      disabled: deploy.isPending,
-                      title: t("apps.forceDeployHint"),
+                      disabled: deploy.isPending || moveLocked,
+                      title: moveLocked ? lockTitle : t("apps.forceDeployHint"),
                       onSelect: () => onDeploy({ noCache: true }),
                     },
                     { key: "rename", label: t("apps.rename"), icon: Pencil, onSelect: () => setRenameOpen(true) },
                     { key: "clone", label: t("apps.clone"), icon: Copy, onSelect: () => setCloneOpen(true) },
-                    { key: "delete", label: t("apps.delete"), icon: Trash2, danger: true, onSelect: () => void confirmAndDelete() },
+                    { key: "delete", label: t("apps.delete"), icon: Trash2, danger: true, disabled: moveLocked, title: lockTitle, onSelect: () => void confirmAndDelete() },
                   ]}
                 />
               </div>
@@ -445,6 +458,8 @@ export default function AppDetailPage() {
         )}
       </PageHeader>
 
+      <AppMoveBanner appId={id} teamId={appData.teamId} move={appData.move} canWrite={appData.canWrite} />
+
       {cloneOpen && (
         <CloneAppModal appId={id} defaultName={`${appData.name} (copy)`} teamId={appData.teamId} currentServerId={appData.serverId} currentEnvironmentId={appData.environmentId} onClose={() => setCloneOpen(false)} />
       )}
@@ -484,7 +499,7 @@ export default function AppDetailPage() {
             <Btn variant="ghost" icon={Settings2} onClick={() => goToSection("general")}>{t("apps.tabConfiguration")}</Btn>
           )}
           {appData.canWrite && (
-            <Btn onClick={() => onDeploy()} disabled={deploy.isPending}>{t("apps.deploy")}</Btn>
+            <Btn onClick={() => onDeploy()} disabled={deploy.isPending || moveLocked} title={lockTitle}>{t("apps.deploy")}</Btn>
           )}
         </div>
       )}
@@ -517,12 +532,12 @@ export default function AppDetailPage() {
               active={activeSection}
               onChange={setSection}
               groups={[
-                { key: "overview", label: t("apps.cfgGroupOverview"), icon: LayoutDashboard, content: <>{overviewPanel}<AppIconCard app={appData} onChanged={() => { invalidate(); qc.invalidateQueries({ queryKey: ["apps"] }); }} /></> },
+                { key: "overview", label: t("apps.cfgGroupOverview"), icon: LayoutDashboard, content: lockedContent(<>{overviewPanel}<AppIconCard app={appData} onChanged={() => { invalidate(); qc.invalidateQueries({ queryKey: ["apps"] }); }} /></>) },
                 ...configGroups.map((g) => ({
                   key: g.key,
                   label: t(g.labelKey),
                   icon: CONFIG_GROUP_ICONS[g.key],
-                  content: g.cardIds.map((cid) => <Fragment key={cid}>{renderConfigCard[cid]()}</Fragment>),
+                  content: lockedContent(g.cardIds.map((cid) => <Fragment key={cid}>{renderConfigCard[cid]()}</Fragment>)),
                 })),
               ]}
             />

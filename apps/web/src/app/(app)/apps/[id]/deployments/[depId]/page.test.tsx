@@ -130,6 +130,31 @@ describe("DeploymentDetailPage", () => {
     await waitFor(() => expect(nav.push).toHaveBeenCalledWith("/apps/app1/deployments/d9"));
   });
 
+  it("a pre-move deploy that only has a local tag on the app's previous server shows Roll back DISABLED with the reason", async () => {
+    vi.spyOn(api, "getDeployment").mockResolvedValue(dep({ isCurrent: false, rollbackable: false, rollbackPredatesMove: true, runServerId: "s0" }));
+    wrap();
+    const btn = (await screen.findByRole("button", { name: "Roll back to this version" })) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    expect(btn.title).toMatch(/ran on the app's previous server/);
+    fireEvent.click(btn);
+    expect(api.rollbackApp).not.toHaveBeenCalled();
+  });
+
+  it("rollback is paused (disabled with the reason) while the app is being moved", async () => {
+    vi.spyOn(api, "getApp").mockResolvedValue({ ...app, move: { id: "mv1", phase: "TRANSFERRING" } } as Application);
+    vi.spyOn(api, "getDeployment").mockResolvedValue(dep({ isCurrent: false }));
+    wrap();
+    const btn = (await screen.findByRole("button", { name: "Roll back to this version" })) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    expect(btn.title).toMatch(/being moved to another server/);
+  });
+
+  it("a deploy triggered by an app move is labelled 'App move'", async () => {
+    vi.spyOn(api, "getDeployment").mockResolvedValue(dep({ trigger: "move", actor: { kind: "user", name: "Ömer" } }));
+    wrap();
+    expect(await screen.findByText("App move")).toBeTruthy();
+  });
+
   it("a RUNNING deploy whose live stream has nothing to follow (hub restarted / recovering) says so instead of claiming to follow", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: false, body: null } as unknown as Response);
     vi.spyOn(api, "getDeployment").mockResolvedValue(dep({ status: "RUNNING", exitCode: null, durationMs: null, finishedAt: null, logs: null, hasLogs: false, rollbackable: false, isCurrent: false, cancellable: true, rollout: null, note: "recovering" }));

@@ -28,6 +28,7 @@ export type ConfigCardId =
   | "deploySettings"
   | "clusterDeploy"
   | "environment"
+  | "move"
   | "tags"
   | "source"
   | "build"
@@ -97,6 +98,8 @@ export const CONFIG_CARDS: { id: ConfigCardId; group: ConfigGroupKey; visible: (
   { id: "deploySettings", group: "general", visible: notCompose },
   { id: "clusterDeploy", group: "general", visible: notCompose },
   { id: "environment", group: "general", visible: () => true },
+  // Move the app (and its data) to another server of the team. Previews follow their parent; clustered apps show it disabled.
+  { id: "move", group: "general", visible: (a) => !a.isPreview },
   { id: "tags", group: "general", visible: (a) => !a.isPreview },
   // Build
   // Edit where the code/image comes from (GIT repo+branch / IMAGE ref) after create; COMPOSE edits via its file.
