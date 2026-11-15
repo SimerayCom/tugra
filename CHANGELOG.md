@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0-beta.17] - 2026-11-15
+
 - **"Update now" shows what it is doing.** Settings → Updates has a four-step progress view (queued, pulling,
   recreating services, reconnecting and verifying the version) with an elapsed timer and the target version, and
   a Reload button once it finishes. "Check for updates" and saving the update settings now confirm with a toast.
