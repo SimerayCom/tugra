@@ -194,7 +194,8 @@ export class DestinationsService {
     // (HubBackup rows are excluded: they use the .env-derived passphrase, not this destination's key.)
     let discarded = 0;
     if (dest.encryptionEnabled) {
-      const where = { destinationId: id, status: "SUCCESS" as const };
+      // Everything but FAILED: a RUNNING/PENDING run is mid-write under this key, so it counts too.
+      const where = { destinationId: id, status: { not: "FAILED" as const } };
       const [a, b, c] = await Promise.all([
         this.prisma.backup.count({ where }),
         this.prisma.volumeBackup.count({ where }),

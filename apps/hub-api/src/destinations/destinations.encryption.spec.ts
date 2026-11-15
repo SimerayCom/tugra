@@ -130,6 +130,15 @@ describe("DestinationsService.remove — delete guard", () => {
     },
   );
 
+  it("counts every non-FAILED status (in-flight RUNNING/PENDING rows too), not just SUCCESS", async () => {
+    const { svc, prisma } = make({ encrypted: true });
+    await svc.remove("u1", "d1");
+    const expected = { where: { destinationId: "d1", status: { not: "FAILED" } } };
+    expect(prisma.backup.count).toHaveBeenCalledWith(expected);
+    expect(prisma.volumeBackup.count).toHaveBeenCalledWith(expected);
+    expect(prisma.baseBackup.count).toHaveBeenCalledWith(expected);
+  });
+
   it("passes with discardBackups and audits how many were discarded", async () => {
     const { svc, del } = make({ encrypted: true, counts: { backup: 2, volume: 1 } });
     await svc.remove("u1", "d1", { discardBackups: true });
