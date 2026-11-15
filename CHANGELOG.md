@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Migrator: a volume-mode Postgres is no longer dumped by the database arm.** With `--arms all` the database row of a
+  Postgres set to the physical volume copy is left to the volume arm (before, it was dumped, uploaded and refused by
+  the hub on every run, or reported `not-running` and made the run exit partial). With `--arms databases` it is
+  reported `skipped` with reason `volume-mode`; a hub refusal of the logical route now also reads `volume-mode`.
 - **Cutover certificate seeding no longer overwrites a large target `acme.json`.** A target proxy store bigger than one
   agent command result (about 48 KiB) used to be read back cut off, treated as empty and replaced, losing the ACME
   account and every certificate already issued there. The store is now read in verified chunks (length and sha256

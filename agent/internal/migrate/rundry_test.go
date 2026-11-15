@@ -296,3 +296,60 @@ func TestVolumeFlagValidation(t *testing.T) {
 		}
 	}
 }
+
+// A volume-mode Postgres (dataPlane "volume") moves by its db-data `volume:` row. The DB arm must not dump it (the
+// hub closes the logical route with a 409): it is dropped when the volume arm runs, and reported skipped:volume-mode
+// when the user asked for --arms databases only.
+func TestVolumeModeDatabaseIsNotDumpedByTheDBArm(t *testing.T) {
+	stubDockerOnPath(t)
+	dbRow := `{"itemRef":"database:srv1:pg7c1","kind":"database","engine":"POSTGRES","dataPlane":"volume"}`
+	volRow := `{"itemRef":"volume:srv1:pg7c1:data","kind":"volume","volumeIngest":"stream-v2","dest":{"type":"db-data","name":"data","mountPath":"/var/lib/postgresql/data"},"databaseItemRef":"database:srv1:pg7c1","engine":"POSTGRES","engineVersion":"17"}`
+	targets := `{"opId":"op1","targets":[` + dbRow + `,` + volRow + `],"maxArtifactBytes":268435456,"maxVolumeBytes":268435456,"vxProtocol":1,"vx":{"partRawBytes":134217728,"maxBytes":274877906944,"maxParts":100000}}`
+	newHub := func() (*vxHub, *httptest.Server) {
+		hub := &vxHub{targets: targets, disk: `{"ok":true,"unknown":false,"details":{}}`}
+		return hub, httptest.NewServer(hub.handler(t))
+	}
+	docker := func() {
+		(&volDocker{ctrs: []*vctr{{id: dbCtrID, name: "pg7c1", image: "postgres:17-alpine", mounts: []dockerMount{{Type: "volume", Name: "pg_data", Destination: "/var/lib/postgresql/data"}}}}, invOut: "TUGRA_INV bytes=1 entries=1 sockets=0 fifos=0 devices=0 pgv=- nested=-\n"}).install(t)
+	}
+	for _, dry := range []bool{true, false} {
+		name := "run"
+		args := []string{"--arms", "all"}
+		if dry {
+			name, args = "dry-run", append(args, "--dry-run")
+		}
+		t.Run("arms all drops the DB-arm row ("+name+")", func(t *testing.T) {
+			hub, srv := newHub()
+			defer srv.Close()
+			docker()
+			out, _, _ := runVol(t, srv, append(args, "--helper-image", "img:1")...)
+			for _, it := range out.Items {
+				if it.ItemRef == "database:srv1:pg7c1" {
+					t.Errorf("the volume-mode DB must be left to the volume arm: %+v", it)
+				}
+			}
+			if hub.called("database:srv1:pg7c1/stage") || hub.called("/stage") {
+				t.Errorf("no dump upload expected: %v", hub.calls)
+			}
+		})
+	}
+	for _, dry := range []bool{true, false} {
+		name := "run"
+		args := []string{"--arms", "databases"}
+		if dry {
+			name, args = "dry-run", append(args, "--dry-run")
+		}
+		t.Run("arms databases reports it skipped:volume-mode ("+name+")", func(t *testing.T) {
+			hub, srv := newHub()
+			defer srv.Close()
+			docker()
+			out, _, _ := runVol(t, srv, args...)
+			if len(out.Items) != 1 || out.Items[0].ItemRef != "database:srv1:pg7c1" || out.Items[0].State != "skipped" || out.Items[0].Reason != "volume-mode" {
+				t.Errorf("items: %+v", out.Items)
+			}
+			if hub.called("/stage") || hub.called("vx/") {
+				t.Errorf("nothing may be dumped or streamed: %v", hub.calls)
+			}
+		})
+	}
+}

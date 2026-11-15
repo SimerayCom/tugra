@@ -300,7 +300,7 @@ func RunCLI(args []string, version string, stdout, stderr io.Writer) (code int) 
 	// existing behaviour (and its golden output) is unchanged unless --arms asks for volumes.
 	var inScope, volScope []Target
 	if c.arms != "volumes" {
-		inScope = selectTargets(targets.Targets, c.only)
+		inScope = selectTargets(targets.Targets, c.only, c.arms != "databases")
 	}
 	if c.arms != "databases" {
 		if targets.VxProtocol != vxProtocolVersion || targets.Vx == nil {
@@ -465,6 +465,10 @@ func (r *runner) item(ctx context.Context, tg Target) (res itemResult, abort int
 	// unsupported / no-recipe short-circuit
 	if tg.DataPlane == "unsupported" {
 		res.State, res.Reason = "unsupported", sanitizeReason(tg.Reason)
+		return res, 0
+	}
+	if tg.DataPlane == "volume" { // moved by the volume arm; the hub refuses the logical route
+		res.State, res.Reason = "skipped", "volume-mode"
 		return res, 0
 	}
 	if _, ok := engineSpecs[tg.Engine]; !ok {
@@ -849,7 +853,10 @@ func prepareSpool(dir string) (string, bool, error) {
 	return dir, false, nil
 }
 
-func selectTargets(all []Target, only stringList) []Target {
+// selectTargets picks the DB-arm rows. A database whose plan chose the physical volume copy (`dataPlane:"volume"`)
+// moves by its own `volume:` row in the volume arm, so it is dropped here when that arm runs; with --arms databases
+// it stays and item()/planState report it as skipped:volume-mode (the hub closes the logical route with a 409).
+func selectTargets(all []Target, only stringList, volumeArm bool) []Target {
 	allow := map[string]bool{}
 	for _, o := range only {
 		allow[o] = true
@@ -857,6 +864,9 @@ func selectTargets(all []Target, only stringList) []Target {
 	var out []Target
 	for _, tg := range all {
 		if tg.Kind != "database" {
+			continue
+		}
+		if volumeArm && tg.DataPlane == "volume" {
 			continue
 		}
 		if len(allow) > 0 && !allow[tg.ItemRef] {
@@ -878,6 +888,9 @@ type planned struct{ state, reason string }
 func planState(tg Target, parsed map[string]*Parsed, rejected map[string]bool) planned {
 	if tg.DataPlane == "unsupported" {
 		return planned{"unsupported", sanitizeReason(tg.Reason)}
+	}
+	if tg.DataPlane == "volume" {
+		return planned{"skipped", "volume-mode"}
 	}
 	if _, ok := engineSpecs[tg.Engine]; !ok {
 		return planned{"unsupported", "no-recipe"}
@@ -1039,6 +1052,8 @@ func uploadReason(err error) string {
 		return "no-space"
 	case KindBadMedia, KindLengthRequired, KindBadRequest:
 		return "upload-rejected"
+	case KindVxDbVolumeMode:
+		return "volume-mode"
 	default:
 		return "upload-failed"
 	}
@@ -1054,6 +1069,8 @@ func restoreReason(err error) string {
 		return "restored-differs"
 	case KindNotStaged:
 		return "not-staged"
+	case KindVxDbVolumeMode:
+		return "volume-mode"
 	default:
 		return "restore-failed"
 	}
