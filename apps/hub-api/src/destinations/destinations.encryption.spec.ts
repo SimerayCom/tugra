@@ -190,6 +190,16 @@ describe("DestinationsService.testConnection — encryption check", () => {
     expect(JSON.stringify(res)).not.toContain("k'ey");
   });
 
+  it("an unreadable stored key (e.g. SecretsKeyUnavailableError) -> ok:false FAILED, no 500, nothing is sent, no key id echoed", async () => {
+    const sendCommand = jest.fn();
+    const broken = { ...crypto, decrypt: () => { throw new Error("secrets key tk1.deadbeef is not available"); } } as unknown as CryptoService;
+    const svc = new DestinationsService(prismaOf(enc) as PrismaService, access, audit as unknown as AuditService, broken, { sendCommand } as unknown as AgentWsServer);
+    const res = await svc.testConnection("u1", "d1");
+    expect(res).toMatchObject({ ok: false, encryption: "FAILED" });
+    expect(res.message).not.toContain("deadbeef");
+    expect(sendCommand).not.toHaveBeenCalled();
+  });
+
   it("exit 5 -> FAILED with the gpg-not-installed message", async () => {
     const sendCommand = jest.fn().mockResolvedValue({ exitCode: 5, output: "TUGRA_GPG_MISSING\n" });
     const res = await svcOf(prismaOf(enc), { sendCommand }).testConnection("u1", "d1");

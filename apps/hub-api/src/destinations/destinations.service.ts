@@ -84,7 +84,14 @@ export class DestinationsService {
       }
     }
     if (!encrypted) return { ok: true, message, encryption: "SKIPPED" };
-    const key = this.crypto.decrypt(dest.encryptionKey!);
+    // The stored key may be unreadable (rotated away, retired data key, corrupt): that is exactly what the Test button
+    // should report, not a 500. The message is fixed on purpose — error text could name a key id.
+    let key: string;
+    try {
+      key = this.crypto.decrypt(dest.encryptionKey!);
+    } catch {
+      return { ok: false, message: "The destination's encryption key cannot be read with the loaded secrets key", encryption: "FAILED" };
+    }
     try {
       const r = await this.agentWs.sendCommand(server.id, buildEncryptionCheckScript(key), "backup", 30_000);
       if (r.exitCode === 0 && r.output.includes("TUGRA_ENC_OK")) return { ok: true, message, encryption: "OK" };
