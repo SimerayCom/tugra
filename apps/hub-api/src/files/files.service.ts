@@ -70,7 +70,7 @@ export function fsAuditAction(scope: Fs2Scope, op: Fs2Op): string {
 function failureCode(e: unknown): string {
   if (e instanceof FsRemoteException || e instanceof FsPolicyException) return e.code;
   if (e instanceof HttpException) return `http_${e.getStatus()}`;
-  return "error";
+  return "stream_failed";
 }
 
 interface Resolved {
@@ -281,10 +281,13 @@ export class FilesService {
     });
 
     return this.dispatch(userId, t, "write", async () => {
-      const release = this.budget.reserve(len); // 507 staging_full when the hub is holding too much already
+      // Admission control BEFORE the first body byte is read: a per-server fs2 slot (429 busy) and staging space (507).
+      const slot = this.agentWs.reserveFs2(t.serverId);
+      let release: (() => void) | undefined;
       let stagedPath: string | undefined;
       let xferId: string | undefined;
       try {
+        release = this.budget.reserve(len); // 507 staging_full when the hub is holding too much already
         await assertDiskHeadroom(len);
         let staged;
         try {
@@ -309,10 +312,12 @@ export class FilesService {
             xfer: reg.path,
           }),
           transferTimeoutMs(len),
+          { reservation: slot },
         );
         return { created: r.created === true, body: { path: q.path, bytes: r.bytes ?? len, sha256: r.sha256 ?? staged.sha256, etag: r.etag ?? "" } };
       } finally {
-        release();
+        slot();
+        release?.();
         if (xferId) this.transfers.release(xferId);
         await discardStaged(stagedPath);
       }
@@ -356,15 +361,19 @@ export class FilesService {
           ETag: `"${stat.etag}"`,
         },
       });
+      const sent = this.agentWs.sendFs2(t.serverId, this.req(t.scope, "read", t.subject, p, { size: stat.size, xfer: reg.path }), transferTimeoutMs(stat.size));
+      sent.catch(() => undefined); // observed below; never an unhandled rejection
       try {
-        await Promise.all([
-          this.agentWs.sendFs2(t.serverId, this.req(t.scope, "read", t.subject, p, { size: stat.size, xfer: reg.path }), transferTimeoutMs(stat.size)),
-          reg.done,
-        ]);
-      } catch (e) {
+        await Promise.all([sent, reg.done]);
+      } catch (first) {
+        // A relay error (the bytes stopped) usually arrives just before the agent's own typed reason (changed, denied,
+        // ...). Give the agent a moment so the audit row and the JSON error carry the real cause, not "stream failed".
+        const e = first instanceof FsRemoteException ? first : await Promise.race([sent.then(() => first, (x: unknown) => x), new Promise((r) => setTimeout(() => r(first), 1500))]);
         reg.cancel(e instanceof Error ? e : new Error("download failed"));
         if (res.headersSent) {
-          res.destroy(); // mid-body: never end cleanly
+          // Mid-body: the browser must see a FAILED download (never a clean end), and the audit trail must show it.
+          await this.fail(userId, t, "read", e);
+          res.destroy();
           return;
         }
         throw e;

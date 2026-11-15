@@ -157,6 +157,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly pending = new Map<string, Pending>(); // reqId → resolver
   private readonly fsPending = new Map<string, FsPending>(); // reqId → file-op resolver
   private readonly fs2Pending = new Map<string, Fs2Pending>(); // reqId → fs2 (write-capable file op) resolver
+  private readonly fs2Reserved = new Map<string, number>(); // serverId → slots held ahead of a send (see reserveFs2)
   private readonly statePending = new Map<string, StatePending>(); // reqId → command_status resolver
   private readonly chunkListeners = new Map<string, (chunk: string) => void>(); // reqId → live log sink
   private readonly logListeners = new Map<string, LogListener>(); // streamId → live container-log sink
@@ -763,6 +764,26 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
   }
 
   /**
+   * Hold one of the per-server fs2 slots BEFORE a long, expensive step (an upload body being staged), so the request
+   * is refused with 429 `busy` up front instead of after the whole body has been received. Returns an idempotent
+   * release; pass it to `sendFs2` (which converts the reservation into its pending entry) or call it on failure.
+   */
+  reserveFs2(serverId: string): () => void {
+    if (this.fs2InFlight(serverId) + (this.fs2Reserved.get(serverId) ?? 0) >= FS2_MAX_IN_FLIGHT_PER_SERVER) {
+      throw new HttpException({ statusCode: 429, code: "busy", message: "too many file operations in flight for this server" }, 429);
+    }
+    this.fs2Reserved.set(serverId, (this.fs2Reserved.get(serverId) ?? 0) + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const left = (this.fs2Reserved.get(serverId) ?? 1) - 1;
+      if (left <= 0) this.fs2Reserved.delete(serverId);
+      else this.fs2Reserved.set(serverId, left);
+    };
+  }
+
+  /**
    * Send a signed fs2 file operation (write-capable volume ops and container-filesystem ops) and await its
    * result. Order: online -> fs2_v1 -> every required capability -> per-server in-flight cap -> sign (with an
    * `exp`) -> send. A failed op rejects with FsRemoteException(code), a drop with AgentDisconnectedException, a
@@ -772,11 +793,13 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
     serverId: string,
     req: Omit<Fs2Fields, "reqId" | "exp" | "capability" | "timeoutMs">,
     timeoutMs: number,
+    opts: { reservation?: () => void } = {},
   ): Promise<Fs2ResultMsg> {
     const required = await this.assertFs2Ready(serverId, req.scope, req.op);
     const socket = this.sockets.get(serverId);
     if (!socket || socket.readyState !== WebSocket.OPEN) throw new AgentOfflineException(); // the await above may have outlived it
-    if (this.fs2InFlight(serverId) >= FS2_MAX_IN_FLIGHT_PER_SERVER) {
+    // A caller that reserved a slot up front (reserveFs2) was already admitted; everyone else is checked here.
+    if (!opts.reservation && this.fs2InFlight(serverId) + (this.fs2Reserved.get(serverId) ?? 0) >= FS2_MAX_IN_FLIGHT_PER_SERVER) {
       throw new HttpException({ statusCode: 429, code: "busy", message: "too many file operations in flight for this server" }, 429);
     }
     const reqId = randomUUID();
@@ -788,6 +811,7 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
       }, timeoutMs);
       timer.unref?.();
       this.fs2Pending.set(reqId, { serverId, resolve, reject, timer });
+      opts.reservation?.(); // the reserved slot is now the pending entry: net occupancy is unchanged
       this.send(socket, this.signOutbound({ type: "fs2_req", ...req, reqId, timeoutMs, exp, capability: required[required.length - 1] }));
     });
   }

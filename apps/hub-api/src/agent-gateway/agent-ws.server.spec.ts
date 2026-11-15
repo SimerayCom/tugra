@@ -1093,6 +1093,35 @@ describe("AgentWsServer fs2 (write-capable file ops)", () => {
     await Promise.all([...pending.slice(1), again]);
   });
 
+  it("reserveFs2 holds a slot ahead of the send: it counts toward the cap, is released idempotently, and sendFs2 converts it", async () => {
+    const h = fs2Harness(["files", "files_write"]);
+    const slots = Array.from({ length: 4 }, () => h.server.reserveFs2("s1"));
+    expect(() => h.server.reserveFs2("s1")).toThrow(HttpException); // 4 reserved => the 5th is refused UP FRONT
+    try {
+      h.server.reserveFs2("s1");
+    } catch (e) {
+      expect((e as HttpException).getStatus()).toBe(429);
+      expect((e as HttpException).getResponse()).toMatchObject({ code: "busy" });
+    }
+    // a plain sendFs2 sees the reserved slots too
+    await expect(h.server.sendFs2("s1", base as any, 5000)).rejects.toMatchObject({ status: 429 });
+    // a request that RESERVED its slot is admitted and the slot becomes its pending entry (occupancy unchanged)
+    const p = h.server.sendFs2("s1", writeReq as any, 5000, { reservation: slots[0] });
+    await flush();
+    expect(h.server.fs2InFlight("s1")).toBe(1);
+    expect(() => h.server.reserveFs2("s1")).toThrow(HttpException); // 1 pending + 3 reserved = 4 still full
+    slots[0](); // double release is a no-op
+    expect(() => h.server.reserveFs2("s1")).toThrow(HttpException);
+    slots[1]();
+    expect(() => h.server.reserveFs2("s1")()).not.toThrow(); // one slot freed
+    await h.deliver({ type: "fs2_result", reqId: h.lastSent().reqId, ok: true });
+    await p;
+    // other servers are independent
+    expect(() => h.server.reserveFs2("s2")()).not.toThrow();
+    slots[2]();
+    slots[3]();
+  });
+
   it("rejects with the agent's typed code on ok:false (FsRemoteException)", async () => {
     const h = fs2Harness(["files", "files_write"]);
     const p = h.server.sendFs2("s1", { ...base, op: "mkdir" } as any, 5000);

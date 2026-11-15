@@ -93,6 +93,10 @@ describe("FilesService", () => {
         events.push("send");
         return { type: "fs2_result", reqId: "r", ok: true, stat: { name: "x", type: "file", size: 3, etag: "3-9" } };
       }),
+      reserveFs2: jest.fn((..._a: unknown[]) => {
+        events.push("reserve");
+        return jest.fn();
+      }),
       isOnline: jest.fn().mockReturnValue(true),
       agentSupports: jest.fn().mockReturnValue(true),
       isCapabilityGranted: jest.fn().mockResolvedValue(true),
@@ -314,6 +318,39 @@ describe("FilesService", () => {
     expect(pulled).toBe(false);
   });
 
+  it("admission control runs BEFORE the body is read: a busy server is a 429 with nothing staged, and the slot is handed to sendFs2", async () => {
+    const h = build();
+    let pulled = false;
+    const body = new Readable({ read() { pulled = true; this.push(null); } });
+    h.agentWs.reserveFs2.mockImplementationOnce(() => {
+      throw new HttpException({ statusCode: 429, code: "busy", message: "busy" }, 429);
+    });
+    const err = await h.svc.upload("u1", "app1", { volume: "data" }, { path: "f" }, uploadReq(body, 5)).catch((e: unknown) => e);
+    expect((err as HttpException).getStatus()).toBe(429);
+    expect(pulled).toBe(false);
+    expect(await readdir(dir)).toEqual([]);
+    expect(h.agentWs.sendFs2).not.toHaveBeenCalled();
+
+    // happy path: reserve happens first, the same release is passed to sendFs2, and it is released afterwards
+    const slot = jest.fn();
+    h.agentWs.reserveFs2.mockReset().mockImplementation((() => {
+      events.push("reserve");
+      return slot;
+    }) as never);
+    fakeAgent(h);
+    events.length = 0;
+    await h.svc.upload("u1", "app1", { volume: "data" }, { path: "f" }, uploadReq("hello", 5));
+    expect(events.indexOf("reserve")).toBeGreaterThan(events.indexOf("audit:app.file.write"));
+    expect(events.indexOf("reserve")).toBeLessThan(events.indexOf("send"));
+    expect(h.agentWs.sendFs2.mock.calls[0][3]).toEqual({ reservation: slot });
+    expect(slot).toHaveBeenCalled(); // idempotent release in finally
+    // ...and also on a failed upload
+    const slot2 = jest.fn();
+    h.agentWs.reserveFs2.mockImplementation((() => slot2) as never);
+    await expect(h.svc.upload("u1", "app1", { volume: "data" }, { path: "f" }, uploadReq("abc", 10))).rejects.toBeInstanceOf(BadRequestException);
+    expect(slot2).toHaveBeenCalled();
+  });
+
   it("a body shorter or longer than its Content-Length is a 400 and leaves nothing staged", async () => {
     for (const [body, len] of [["abc", 10], ["abcdefgh", 3]] as const) {
       const h = build();
@@ -435,6 +472,25 @@ describe("FilesService", () => {
     await expect(h.svc.download("u1", "app1", { volume: "data" }, "r.txt", res as unknown as ServerResponse)).resolves.toBeUndefined();
     expect(res.destroyed).toBe(true);
     expect(res.writableFinished).toBe(false);
+  });
+
+  it("a download that fails after the bytes started flowing is still audited as app.file.failed", async () => {
+    const h = build();
+    const res = new FakeRes();
+    h.agentWs.sendFs2.mockImplementation((async (_sid: string, req: Record<string, unknown>) => {
+      if (req.op === "stat") return statResult({ size: 10 });
+      const { id, exp, sig } = parts(req.xfer as string);
+      const body = new PassThrough();
+      const put = transfers.receiveFromAgent(id, exp, sig, agentPut(body, 10)).catch(() => undefined);
+      body.write("hello");
+      await new Promise((r) => setImmediate(r));
+      body.destroy(new Error("helper died"));
+      await put;
+      throw new FsRemoteException("changed", "file size changed");
+    }) as never);
+    await h.svc.download("u1", "app1", { volume: "data" }, "r.txt", res as unknown as ServerResponse);
+    expect(res.destroyed).toBe(true);
+    expect(h.audit.log).toHaveBeenLastCalledWith({ actor: "u1", action: "app.file.failed", target: "app1", meta: { op: "read", scope: "volume", code: "changed" } });
   });
 
   // ── meta ────────────────────────────────────────────────────────────────────────────────────────────────────
