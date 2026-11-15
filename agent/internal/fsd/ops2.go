@@ -322,11 +322,10 @@ func linkUnsupported(err error) bool {
 	if !errors.As(err, &en) {
 		return false
 	}
-	switch en {
-	case syscall.EPERM, syscall.ENOTSUP, syscall.EOPNOTSUPP, syscall.ENOSYS, syscall.EMLINK, syscall.EXDEV:
-		return true
-	}
-	return false
+	// An if-chain, not a switch: ENOTSUP and EOPNOTSUPP are the same constant on Linux (a duplicate case there)
+	// but differ on darwin.
+	return en == syscall.EPERM || en == syscall.ENOTSUP || en == syscall.EOPNOTSUPP ||
+		en == syscall.ENOSYS || en == syscall.EMLINK || en == syscall.EXDEV
 }
 
 func randHex16() string {
