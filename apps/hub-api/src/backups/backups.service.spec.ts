@@ -616,6 +616,37 @@ describe("BackupsService.list — run outcome, errorTail is WRITER-ONLY", () => 
   });
 });
 
+describe("BackupsService.usage — server-side storage meter over ALL SUCCESS rows", () => {
+  const GIB = 1024n ** 3n;
+  const mk = (rows: unknown[], dbOver: Record<string, unknown> = {}) => {
+    const prisma = {
+      database: { findUnique: jest.fn().mockResolvedValue({ ...db, backupRetentionDays: null, backupMaxSizeGb: 5, ...dbOver }) },
+      backup: { findMany: jest.fn().mockResolvedValue(rows) },
+    } as unknown as PrismaService;
+    const access = { teamRole: jest.fn().mockResolvedValue("VIEWER"), requireResourceAccess: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    return { svc: make(prisma, access), prisma };
+  };
+  const row = (id: string, ageH: number, gb: number | null) => ({ id, createdAt: new Date(Date.now() - ageH * 3_600_000), sizeBytes: gb == null ? null : BigInt(gb) * GIB });
+
+  it("sums every SUCCESS row (not a 50-row window), counts unknown sizes and flags over-budget via the planner", async () => {
+    const { svc, prisma } = mk([row("a", 1, 4), row("b", 2, 4), row("c", 3, null)]);
+    const u = await svc.usage("u1", "db1");
+    expect(u).toEqual({ pool: "app", volume: null, usedBytes: (8n * GIB).toString(), backupCount: 3, unknownSizeCount: 1, budgetGb: 5, overBudget: false });
+    const q = (prisma.backup.findMany as jest.Mock).mock.calls[0][0];
+    expect(q.where).toEqual({ databaseId: "db1", status: "SUCCESS" });
+    expect(q.take).toBeUndefined();
+  });
+
+  it("overBudget is true only when the newest (protected) backup alone exceeds the budget", async () => {
+    expect((await mk([row("a", 1, 9)]).svc.usage("u1", "db1")).overBudget).toBe(true);
+    expect((await mk([row("a", 1, 3), row("b", 2, 3)]).svc.usage("u1", "db1")).overBudget).toBe(false); // prune would drop b
+  });
+
+  it("no budget -> budgetGb null, never over budget", async () => {
+    expect(await mk([row("a", 1, 100)], { backupMaxSizeGb: null }).svc.usage("u1", "db1")).toMatchObject({ budgetGb: null, overBudget: false });
+  });
+});
+
 describe("BackupsService — physical base backups (sibling family, Postgres-only)", () => {
   const pgDb = { id: "db1", name: "shop", teamId: "t1", serverId: "s1", engine: "POSTGRES", version: "16" };
   const baseRow = { id: "bb1", status: "SUCCESS", filename: "t.basebackup.tar.gz", sizeBytes: 999n, destinationId: null, pgVersion: "16", startLsn: "0/2000028", timeline: 1, createdBy: "u1", createdAt: new Date(), completedAt: new Date(), exitCode: 0, errorTail: "secret detail", durationMs: 42 };

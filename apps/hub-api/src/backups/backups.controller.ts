@@ -17,7 +17,7 @@ import { ApiAuthGuard } from "../api-tokens/api-auth.guard";
 import { ScopesGuard } from "../api-tokens/scopes.guard";
 import { RequireScopes } from "../api-tokens/require-scopes.decorator";
 import { AuthUser } from "../auth/strategies/jwt.strategy";
-import { BackupsService, BackupViewSchema, BaseBackupViewSchema, RestoreViewSchema } from "./backups.service";
+import { BackupsService, BackupUsageViewSchema, BackupViewSchema, BaseBackupViewSchema, RestoreViewSchema } from "./backups.service";
 import { PitrService, PitrStatusSchema } from "./pitr.service";
 import { PitrRestoreService, PitrRestoreStartSchema, PitrWindowSchema } from "./pitr-restore.service";
 import {
@@ -52,6 +52,12 @@ export class BackupsController {
   @ApiZodResponse(BackupViewSchema, { isArray: true })
   list(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.backups.list(user.userId, id);
+  }
+
+  @Get("backup-usage")
+  @ApiZodResponse(BackupUsageViewSchema)
+  usage(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.backups.usage(user.userId, id);
   }
 
   @Get("restores")

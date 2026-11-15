@@ -23,6 +23,7 @@ import { BaseBackupRunnerService } from "./base-backup-runner.service";
 import { BackupSchedulerService } from "./backups.scheduler.service";
 import { BackupAlertsService } from "./backup-alerts.service";
 import { planTargets } from "../bulk/bulk.service";
+import { GIB, planRetention } from "./retention";
 import type { BackupConfigInput, BaseBackupConfigInput, ImportFromUrlInput, VerifyConfigInput } from "./dto";
 
 export const BackupViewSchema = z.object({
@@ -42,6 +43,19 @@ export const BackupViewSchema = z.object({
   errorTail: z.string().nullable(),
 });
 export type BackupView = z.infer<typeof BackupViewSchema>;
+
+/** Storage used by a database's SUCCESS backups against its size budget, computed over ALL rows (the list endpoint
+ *  only returns the newest 50). Same shape as one entry of the volume-backup usage view. */
+export const BackupUsageViewSchema = z.object({
+  pool: z.string(), // "app" (the single shared pool a database has)
+  volume: z.string().nullable(), // always null for a database
+  usedBytes: z.string(),
+  backupCount: z.number(),
+  unknownSizeCount: z.number(),
+  budgetGb: z.number().nullable(),
+  overBudget: z.boolean(),
+});
+export type BackupUsageView = z.infer<typeof BackupUsageViewSchema>;
 
 export const RestoreViewSchema = z.object({
   id: z.string(),
@@ -126,6 +140,33 @@ export class BackupsService {
     // errorTail is command output → writers only (same gate as listRestores / requireWrite).
     const perms = await this.access.membershipPermissions(userId, db.teamId);
     return this.toViews(backups, perms?.has("backups") ?? false);
+  }
+
+  /** Server-side usage over every SUCCESS backup (what prune sees), with overBudget from the same planner. */
+  async usage(userId: string, dbId: string): Promise<BackupUsageView> {
+    const db = await this.require(userId, dbId);
+    const rows = await this.prisma.backup.findMany({
+      where: { databaseId: dbId, status: "SUCCESS" },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, createdAt: true, sizeBytes: true },
+    });
+    const plan = planRetention(
+      rows.map((b) => ({ id: b.id, series: "db", createdAt: b.createdAt, sizeBytes: b.sizeBytes })),
+      {
+        keep: db.backupRetention,
+        maxAgeDays: db.backupRetentionDays,
+        maxBytes: db.backupMaxSizeGb != null ? BigInt(db.backupMaxSizeGb) * GIB : null,
+      },
+    );
+    return {
+      pool: "app",
+      volume: null,
+      usedBytes: rows.reduce((n, b) => n + (b.sizeBytes ?? 0n), 0n).toString(),
+      backupCount: rows.length,
+      unknownSizeCount: rows.filter((b) => b.sizeBytes == null).length,
+      budgetGb: db.backupMaxSizeGb,
+      overBudget: plan.overBudget,
+    };
   }
 
   async restore(userId: string, dbId: string, backupId: string): Promise<void> {

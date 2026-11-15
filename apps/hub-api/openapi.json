@@ -47160,6 +47160,126 @@
         ]
       }
     },
+    "/api/v1/databases/{id}/backup-usage": {
+      "get": {
+        "operationId": "BackupsController_usage",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "pool": {
+                      "type": "string"
+                    },
+                    "volume": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "usedBytes": {
+                      "type": "string"
+                    },
+                    "backupCount": {
+                      "type": "number"
+                    },
+                    "unknownSizeCount": {
+                      "type": "number"
+                    },
+                    "budgetGb": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "overBudget": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "pool",
+                    "volume",
+                    "usedBytes",
+                    "backupCount",
+                    "unknownSizeCount",
+                    "budgetGb",
+                    "overBudget"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "backups"
+        ]
+      }
+    },
     "/api/v1/databases/{id}/restores": {
       "get": {
         "operationId": "BackupsController_listRestores",
@@ -51125,6 +51245,10 @@
                           "pool": {
                             "type": "string"
                           },
+                          "volume": {
+                            "type": "string",
+                            "nullable": true
+                          },
                           "usedBytes": {
                             "type": "string"
                           },
@@ -51144,6 +51268,7 @@
                         },
                         "required": [
                           "pool",
+                          "volume",
                           "usedBytes",
                           "backupCount",
                           "unknownSizeCount",

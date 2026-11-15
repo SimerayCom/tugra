@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "../../i18n/provider";
-import { BackupPolicyCard, usageFromBackups } from "./backup-policy-card";
+import { BackupPolicyCard } from "./backup-policy-card";
 import type { BackupDestination, BackupUsage } from "../../lib/types";
 
 afterEach(cleanup);
@@ -76,20 +76,5 @@ describe("BackupPolicyCard", () => {
     show({ onSave });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(onSave).toHaveBeenCalled();
-  });
-});
-
-describe("usageFromBackups", () => {
-  it("sums SUCCESS rows, counts unknown sizes, flags over-budget", () => {
-    const u = usageFromBackups(
-      [
-        { status: "SUCCESS", sizeBytes: String(3 * 1024 ** 3) },
-        { status: "SUCCESS", sizeBytes: null },
-        { status: "FAILED", sizeBytes: String(99 * 1024 ** 3) },
-      ],
-      2,
-    );
-    expect(u).toMatchObject({ backupCount: 2, unknownSizeCount: 1, budgetGb: 2, overBudget: true });
-    expect(usageFromBackups([], null).overBudget).toBe(false);
   });
 });

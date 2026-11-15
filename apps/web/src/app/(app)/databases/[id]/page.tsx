@@ -11,7 +11,7 @@ import { dbColor, engineLabel, fromDatetimeLocal, isDbTransitional, pitrAvailabl
 import type { Database, PitrState } from "../../../../lib/types";
 import { backupColor, formatSize, lastErrorLine, restoreColor } from "../../../../lib/backups";
 import { BackupRunModal } from "../../../../components/backup-run-modal";
-import { BackupPolicyCard, usageFromBackups } from "../../../../components/backups/backup-policy-card";
+import { BackupPolicyCard } from "../../../../components/backups/backup-policy-card";
 import { scheduleFromFields, scheduleToFields, type ScheduleValue } from "../../../../components/backups/schedule-field";
 import { retentionFromFields, retentionToFields, type RetentionValue } from "../../../../components/backups/retention-fields";
 import { ErrorState } from "../../../../components/error-state";
@@ -54,6 +54,15 @@ export default function DatabaseDetailPage() {
     queryKey: ["backups", id],
     queryFn: () => api.listBackups(id),
     refetchInterval: 5000,
+  });
+  // Storage meter: computed server-side over EVERY SUCCESS backup (the list above is only the newest 50, so a
+  // sum over it would under-report). Keyed on the budget/retention so a saved schedule refreshes it; prefix
+  // ["backups", id] also lets invalidateBackups() refresh it after a run/delete.
+  const { data: usage } = useQuery({
+    queryKey: ["backups", id, "usage", db?.backupMaxSizeGb ?? null, db?.backupRetention ?? null, db?.backupRetentionDays ?? null],
+    queryFn: () => api.getBackupUsage(id),
+    enabled: !!db?.canWrite && !!db?.backupSupported,
+    refetchInterval: 15000,
   });
   const { data: destinations = [] } = useQuery({
     queryKey: ["destinations"],
@@ -425,7 +434,7 @@ export default function DatabaseDetailPage() {
             destinationId={destinationId}
             onDestination={setDestinationId}
             destinations={destinations}
-            usage={[usageFromBackups(backups, db.backupMaxSizeGb)]}
+            usage={usage ? [usage] : undefined}
             onSave={() => saveSchedule.mutate()}
             saving={saveSchedule.isPending}
             error={saveSchedule.isError ? (saveSchedule.error as Error).message : null}

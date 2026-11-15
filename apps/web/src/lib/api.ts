@@ -35,6 +35,7 @@ import type {
   FileListing,
   BulkOperation,
   Backup,
+  BackupUsage,
   Restore,
   BackupDestination,
   CreatedDestination,
@@ -1792,6 +1793,9 @@ export const api = {
   // ── database backups ──
   listBackups(dbId: string) {
     return apiFetch<Backup[]>(`/databases/${dbId}/backups`);
+  },
+  getBackupUsage(dbId: string) {
+    return apiFetch<BackupUsage>(`/databases/${dbId}/backup-usage`);
   },
   listRestores(dbId: string) {
     return apiFetch<Restore[]>(`/databases/${dbId}/restores`);

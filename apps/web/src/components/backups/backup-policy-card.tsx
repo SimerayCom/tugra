@@ -11,20 +11,6 @@ import { RetentionFields, type RetentionValue } from "./retention-fields";
 
 const GIB = 1024 ** 3;
 
-/** Client-side usage for a list of SUCCESS backups (databases have no usage endpoint; volumes get it from the hub). */
-export function usageFromBackups(rows: { status: string; sizeBytes: string | null }[], budgetGb: number | null): BackupUsage {
-  const ok = rows.filter((r) => r.status === "SUCCESS");
-  const used = ok.reduce((n, r) => n + (r.sizeBytes != null ? Number(r.sizeBytes) : 0), 0);
-  return {
-    pool: "app",
-    usedBytes: String(used),
-    backupCount: ok.length,
-    unknownSizeCount: ok.filter((r) => r.sizeBytes == null).length,
-    budgetGb,
-    overBudget: budgetGb != null && used > budgetGb * GIB,
-  };
-}
-
 function EncryptionBadge({ destinationId, destinations }: { destinationId: string; destinations: BackupDestination[] }) {
   const t = useT();
   const dest = destinationId ? destinations.find((d) => d.id === destinationId) : undefined;
