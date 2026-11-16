@@ -29,7 +29,9 @@ applying an update. The pipeline lives in [`.github/workflows/release.yml`](../.
 
 1. Make sure the commit is **green on `main`** — the release workflow does not re-run the CI test suite
    (a tag push doesn't match `ci.yml`'s branch trigger).
-2. Bump the root `package.json` `version` to match the tag (cosmetic; the tag is the source of truth).
+2. Bump the root `package.json` `version` to match the tag (cosmetic; the tag is the source of truth) **and
+   `packages/cli/package.json` to the same version** — `node scripts/check-versions.mjs` fails (in CI via a jest
+   spec, and in the release `guard` job) if the two drift.
 3. Tag and push:
 
    ```sh

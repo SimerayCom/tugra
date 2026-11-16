@@ -65,6 +65,11 @@ jobs:
             exit 1
           fi
           echo "OK: $SHA is on origin/main."
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Require the root and CLI package versions to agree
+        run: node scripts/check-versions.mjs
 
   build-push:
     needs: [ci, guard]
