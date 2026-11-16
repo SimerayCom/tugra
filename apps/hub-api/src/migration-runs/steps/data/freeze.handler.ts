@@ -1,0 +1,385 @@
+import { Inject, Injectable, OnModuleInit } from "@nestjs/common";
+import type { ApprovalBinding, DryRunItem, GateCheck, GateResult } from "../../core/dto";
+import {
+  RunLeaseLostError,
+  STEP_HANDLERS,
+  resolveOwnerInput,
+  type ActResult,
+  type CompResult,
+  type CompensateHow,
+  type Observation,
+  type RunSnapshot,
+  type SourceController,
+  type StepContext,
+  type StepHandler,
+  type StepHandlerRegistry,
+} from "../../core/run-contract";
+import { coolifyRefOf, type CoolifyResourceKind } from "../../../importer/sources/coolify-control";
+import {
+  CAPABILITY_PORT,
+  DATA_CODES,
+  DATA_PORT,
+  SOURCE_API_PORT,
+  SOURCE_HOST_PORT,
+  type ApiFailure,
+  type CapabilityPort,
+  type DataPort,
+  type DataSnapshot,
+  type FreezeRecord,
+  type RecordedContainer,
+  type SourceApiPort,
+  type SourceHostPort,
+} from "./data-contract";
+import { sha256Hex } from "./data-logic";
+import { classifyAgentError, compOf, gateFrom, loadSnapshot, releaseIfOurs } from "./handler-util";
+import {
+  buildSourceInspectScript,
+  buildSourceStartScript,
+  buildSourceStateScript,
+  buildSourceStopScript,
+  parseSourceInspect,
+  parseStartOutput,
+  parseStateOutput,
+  parseStopOutput,
+} from "./source-control/source-scripts";
+
+export interface StopItem {
+  itemRef: string;
+  kind: CoolifyResourceKind;
+  uuid: string;
+  name: string;
+}
+
+export interface FreezeObs extends Observation {
+  snap: DataSnapshot;
+  controller: SourceController;
+  stop: StopItem[];
+  record: FreezeRecord | undefined;
+  attested: boolean;
+  /** Hub-verified state of what the freeze stopped (null = nothing recorded yet, or it could not be read). */
+  states: { total: number; stopped: number; running: number; unknown: number } | null;
+  apiAvailable: "ok" | ApiFailure | null;
+}
+
+/** How long an accepted stop may take to show as stopped before the freeze fails (retryable). */
+export const STOP_CONFIRM_TIMEOUT_MS = 5 * 60_000;
+const SCRIPT_TIMEOUT_MS = 300_000;
+
+/** The Coolify items the freeze would stop (apps and services; databases keep running so their dumps can be taken). */
+export function buildStopList(snap: Pick<DataSnapshot, "apps" | "services">): StopItem[] {
+  const out: StopItem[] = [];
+  for (const it of [...snap.apps, ...snap.services]) {
+    const ref = coolifyRefOf(it.itemRef);
+    if (ref && ref.kind !== "database") out.push({ itemRef: it.itemRef, kind: ref.kind, uuid: ref.uuid, name: it.name ?? ref.uuid });
+  }
+  return out.sort((a, b) => (a.itemRef < b.itemRef ? -1 : 1));
+}
+
+export const controllerOf = (run: RunSnapshot): SourceController => resolveOwnerInput(run.inputs, "sourceController") ?? "manual";
+
+/**
+ * FREEZE (approval, then operator or automatic): opens the downtime window by stopping the source writers.
+ *
+ *  - `manual` (default, owner question 8 unanswered): prints the stop list; the evidence is the operator's attestation.
+ *  - `api`: stops each Coolify application/service through its API (a token that may write; the import session's token),
+ *    then verifies the state back from the API (hub-verified).
+ *  - `agent`: same-host only. Discovers the containers, RECORDS their identity (id + name + image), stops exactly those,
+ *    and verifies they are down through the agent (hub-verified). Never `docker rm`.
+ *
+ * The freeze is NOT the point of no return: Tugra has taken no writes, so abort restarts exactly what was stopped.
+ */
+@Injectable()
+export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
+  readonly key = "FREEZE" as const;
+  readonly kind = "approval" as const;
+  readonly rollback = "UNDOABLE" as const;
+
+  constructor(
+    @Inject(STEP_HANDLERS) private readonly registry: StepHandlerRegistry,
+    @Inject(DATA_PORT) private readonly data: DataPort,
+    @Inject(SOURCE_API_PORT) private readonly api: SourceApiPort,
+    @Inject(SOURCE_HOST_PORT) private readonly host: SourceHostPort,
+    @Inject(CAPABILITY_PORT) private readonly caps: CapabilityPort,
+  ) {}
+
+  onModuleInit(): void {
+    this.registry.register(this);
+  }
+
+  applicable(_run: RunSnapshot): boolean {
+    return true;
+  }
+
+  async dryRun(ctx: StepContext): Promise<DryRunItem[]> {
+    const run = ctx.run;
+    const controller = controllerOf(run);
+    const items: DryRunItem[] = [{ code: "freeze.dry.plan", level: "info", params: { controller, scheduled: !!run.options.freezeAt, ttlPolicy: run.options.ttlPolicy } }];
+    if (controller === "agent" && run.topology !== "swap-proxy") items.push({ code: DATA_CODES.agentNeedsSameHost, level: "block" });
+    if (!run.opId) return items;
+    const stop = buildStopList(await loadSnapshot(this.data, ctx));
+    items.push({ code: DATA_CODES.freezeStopList, level: stop.length ? "info" : "warn", params: { count: stop.length, names: stop.slice(0, 40).map((s) => s.name) } });
+    return items;
+  }
+
+  // ───────────────────────────── observe ─────────────────────────────
+
+  async observe(ctx: StepContext): Promise<FreezeObs> {
+    const run = ctx.run;
+    const snap = await loadSnapshot(this.data, ctx);
+    const controller = controllerOf(run);
+    const record = compOf(ctx).freeze as FreezeRecord | undefined;
+    const attested = ctx.step.evidence.attestations.some((a) => a.checkId === "source-quiesced");
+    let apiAvailable: FreezeObs["apiAvailable"] = null;
+    if (controller === "api") {
+      const av = await this.api.available(run);
+      apiAvailable = av.ok ? "ok" : av.reason;
+    }
+    return { snap, controller, stop: buildStopList(snap), record, attested, apiAvailable, states: record ? await this.readStates(ctx, record) : null };
+  }
+
+  /** Re-read what the freeze stopped. Never throws: an unreadable state is `unknown` and therefore not quiesced. */
+  private async readStates(ctx: StepContext, rec: FreezeRecord): Promise<FreezeObs["states"]> {
+    if (rec.controller === "api" && rec.api) {
+      let stopped = 0;
+      let running = 0;
+      let unknown = 0;
+      for (const it of rec.api) {
+        const s = await this.api.state(ctx.run, it.kind, it.uuid);
+        if (!s.ok) unknown++;
+        else if (s.state === "stopped") stopped++;
+        else if (s.state === "running") running++;
+        else unknown++;
+      }
+      return { total: rec.api.length, stopped, running, unknown };
+    }
+    if (rec.controller === "agent" && rec.containers) {
+      if (rec.containers.length === 0) return { total: 0, stopped: 0, running: 0, unknown: 0 };
+      try {
+        const res = await this.host.run(ctx.run.targetServerId, buildSourceStateScript(rec.containers), "migrate", SCRIPT_TIMEOUT_MS);
+        const st = parseStateOutput(res.output, rec.containers.map((c) => c.id));
+        let stopped = 0;
+        let running = 0;
+        let unknown = 0;
+        for (const c of rec.containers) {
+          const v = st.get(c.id);
+          if (v === "false" || v === "gone") stopped++;
+          else if (v === "true") running++;
+          else unknown++;
+        }
+        return { total: rec.containers.length, stopped, running, unknown };
+      } catch {
+        return { total: rec.containers.length, stopped: 0, running: 0, unknown: rec.containers.length };
+      }
+    }
+    return null;
+  }
+
+  // ───────────────────────────── gates ─────────────────────────────
+
+  private structural(ctx: StepContext, obs: FreezeObs): { checks: GateCheck[]; timer: string | null } {
+    const run = ctx.run;
+    const checks: GateCheck[] = [];
+    let timer: string | null = null;
+    if (obs.controller === "agent" && run.topology !== "swap-proxy") checks.push({ id: "agent-same-host", status: "fail", code: DATA_CODES.agentNeedsSameHost });
+    if (obs.controller === "api" && obs.apiAvailable !== "ok") checks.push({ id: "api-available", status: "fail", code: DATA_CODES.freezeApiUnavailable, params: { reason: obs.apiAvailable ?? "unknown" }, ownerInput: "sourceController" });
+    const seed = ctx.stepState("DATA_SEED").status;
+    if (seed !== "PASSED" && seed !== "SKIPPED") checks.push({ id: "data-seed", status: "fail", code: "freeze.data-seed-not-passed", params: { status: seed } });
+    // the TTL wait: freezing earlier is pointless, the flip cannot happen before the old TTL has expired
+    const dns = ctx.stepState("DNS_PREPARE");
+    if (run.topology === "two-box" && dns.status !== "SKIPPED") {
+      const nb = dns.notBefore;
+      if (dns.status === "PASSED" || dns.status === "WAITING_TIMER") {
+        if (nb && nb.getTime() > ctx.now().getTime()) {
+          if (run.options.ttlPolicy === "wait") {
+            timer = nb.toISOString();
+            checks.push({ id: "ttl-wait", status: "fail", code: "freeze.ttl-wait", params: { notBefore: timer } });
+          } else checks.push({ id: "ttl-wait", status: "warn", code: "freeze.ttl-skipped", params: { notBefore: nb.toISOString() } });
+        }
+      } else checks.push({ id: "dns-prepared", status: "fail", code: "freeze.dns-not-prepared", params: { status: dns.status } });
+    }
+    return { checks, timer };
+  }
+
+  preGate(ctx: StepContext, obs: FreezeObs): GateResult {
+    const { checks, timer } = this.structural(ctx, obs);
+    return gateFrom(checks, timer ? { kind: "timer", notBefore: timer, code: "freeze.ttl-wait" } : undefined);
+  }
+
+  async approvalBinding(ctx: StepContext, obs: FreezeObs): Promise<ApprovalBinding | null> {
+    const est = ctx.run.windowEstimate?.freezeToFlipSec ?? null;
+    const refs = obs.stop.map((s) => s.itemRef).join(",");
+    return {
+      inputHash: sha256Hex(`freeze|${ctx.run.id}|${obs.controller}|${refs}|${est ?? "unknown"}`),
+      ponr: false,
+      confirm: "run-id",
+      ttlSec: null,
+      requiresDataRisk: false,
+      ackable: [],
+      requiredAcks: [],
+      review: {
+        controller: obs.controller,
+        apps: obs.snap.apps.length,
+        services: obs.snap.services.length,
+        stopList: obs.stop.slice(0, 40).map((s) => s.name),
+        estimateSec: est,
+        keepsStopped: true,
+        scheduledFor: ctx.run.options.freezeAt ?? null,
+      },
+    };
+  }
+
+  /** The source is quiesced AND the evidence says how we know. */
+  private quiesced(ctx: StepContext, obs: FreezeObs): { ok: boolean; remaining: number } {
+    if (!obs.record) return { ok: false, remaining: obs.stop.length };
+    if (obs.controller === "manual") {
+      // the operator's word, or the migrator will stop the source writers itself (`--stop-source`, reported at DATA_FINAL)
+      return { ok: obs.attested || ctx.run.options.stopSource, remaining: obs.attested || ctx.run.options.stopSource ? 0 : obs.stop.length };
+    }
+    if (!obs.states) return { ok: false, remaining: obs.stop.length };
+    return { ok: obs.states.running === 0 && obs.states.unknown === 0, remaining: obs.states.running + obs.states.unknown };
+  }
+
+  postGate(ctx: StepContext, obs: FreezeObs): GateResult {
+    const q = this.quiesced(ctx, obs);
+    const evidence = obs.controller === "manual" ? (obs.attested ? "operator-attested" : "migrator-reported") : "hub-verified";
+    return gateFrom([{ id: "source-quiesced", status: q.ok ? "pass" : obs.record ? "fail" : "unknown", code: q.ok ? DATA_CODES.freezeQuiesced : DATA_CODES.freezeStillRunning, params: { remaining: q.remaining, controller: obs.controller }, evidence }]);
+  }
+
+  // ───────────────────────────── act ─────────────────────────────
+
+  async act(ctx: StepContext, obs: FreezeObs): Promise<ActResult> {
+    const run = ctx.run;
+    if (!ctx.approval) return { outcome: "fail", code: "freeze.approval-missing", retryable: true };
+    const freezeAt = run.options.freezeAt ? new Date(run.options.freezeAt) : null;
+    if (freezeAt && freezeAt.getTime() > ctx.now().getTime()) {
+      return { outcome: "wait", wait: { kind: "timer", notBefore: freezeAt.toISOString(), code: DATA_CODES.freezeScheduled } };
+    }
+    await ctx.patchRun({ freezeStartedAt: ctx.now() }); // first call wins: the downtime window opens now
+
+    switch (obs.controller) {
+      case "manual":
+        return this.actManual(ctx, obs);
+      case "api":
+        return this.actApi(ctx, obs);
+      case "agent":
+        return this.actAgent(ctx, obs);
+    }
+  }
+
+  private async actManual(ctx: StepContext, obs: FreezeObs): Promise<ActResult> {
+    if (!obs.record) await ctx.recordCompensation({ freeze: { controller: "manual" } satisfies FreezeRecord });
+    if (obs.attested || ctx.run.options.stopSource) return { outcome: "done" };
+    return {
+      outcome: "wait",
+      wait: { kind: "operator", code: DATA_CODES.freezeManual, params: { count: obs.stop.length, names: obs.stop.slice(0, 40).map((s) => s.name) }, attest: ["source-quiesced"] },
+    };
+  }
+
+  private async actApi(ctx: StepContext, obs: FreezeObs): Promise<ActResult> {
+    const run = ctx.run;
+    if (obs.apiAvailable !== "ok") return { outcome: "fail", code: DATA_CODES.freezeApiUnavailable, params: { reason: obs.apiAvailable ?? "unknown" }, retryable: true };
+    if (obs.stop.length === 0) {
+      await ctx.recordCompensation({ freeze: { controller: "api", api: [] } satisfies FreezeRecord });
+      return { outcome: "done" };
+    }
+    const record: FreezeRecord = obs.record ?? { controller: "api", api: obs.stop.map((s) => ({ kind: s.kind, uuid: s.uuid, itemRef: s.itemRef })) };
+    if (!obs.record) await ctx.recordCompensation({ freeze: record }); // BEFORE the first stop: a crash can still restart them
+    if (obs.states && obs.states.running === 0 && obs.states.unknown === 0) return { outcome: "done" };
+    const startedAt = compOf(ctx).stopRequestedAt;
+    if (startedAt && ctx.now().getTime() - new Date(startedAt).getTime() > STOP_CONFIRM_TIMEOUT_MS) {
+      return { outcome: "fail", code: DATA_CODES.freezeStillRunning, params: { remaining: (obs.states?.running ?? 0) + (obs.states?.unknown ?? 0) }, retryable: true };
+    }
+    for (const it of record.api ?? []) {
+      await ctx.assertLease();
+      const cur = await this.api.state(run, it.kind, it.uuid);
+      if (cur.ok && cur.state === "stopped") continue;
+      const res = await this.api.stop(run, it.kind, it.uuid);
+      if (!res.ok) return { outcome: "fail", code: DATA_CODES.freezeApiFailed, params: { reason: res.reason, itemRef: it.itemRef }, retryable: res.reason !== "forbidden" && res.reason !== "unauthorized" };
+    }
+    if (!startedAt) await ctx.recordCompensation({ stopRequestedAt: ctx.now().toISOString() });
+    return { outcome: "continue", pollAfterMs: 5_000 }; // the next tick verifies the state back from the API
+  }
+
+  private async actAgent(ctx: StepContext, obs: FreezeObs): Promise<ActResult> {
+    const run = ctx.run;
+    if (run.topology !== "swap-proxy") return { outcome: "fail", code: DATA_CODES.agentNeedsSameHost, retryable: false };
+    const granted = await this.caps.ensureMigrate(ctx.actor.userId, run.targetServerId);
+    if (!granted.ok) return { outcome: "fail", code: granted.reason === "forbidden" ? DATA_CODES.capabilityDenied : DATA_CODES.capabilityMissingTarget, retryable: false };
+    if (granted.added) await ctx.recordCompensation({ capAdded: true });
+    try {
+      let record = obs.record;
+      if (!record) {
+        // 1. discover + record identity (only what is RUNNING now: a container that was already stopped is never started again)
+        const targets = obs.stop.map((s) => ({ itemRef: s.itemRef }));
+        const res = await this.host.run(run.targetServerId, buildSourceInspectScript(targets), "migrate", SCRIPT_TIMEOUT_MS);
+        const found = parseSourceInspect(res.output, targets);
+        const running: RecordedContainer[] = found.filter((c) => c.state === "running").map((c) => ({ id: c.id, name: c.name, image: c.image, ports: c.ports, itemRef: c.itemRef }));
+        const unresolved = obs.stop.filter((s) => !found.some((c) => c.itemRef === s.itemRef));
+        if (unresolved.length) await ctx.emit({ stepKey: "FREEZE", level: "warn", code: DATA_CODES.freezeContainerUnresolved, params: { count: unresolved.length, names: unresolved.slice(0, 20).map((u) => u.name) } });
+        record = { controller: "agent", containers: running };
+        await ctx.recordCompensation({ freeze: record }); // BEFORE the first stop
+      }
+      const containers = record.containers ?? [];
+      if (containers.length === 0) return { outcome: "done" };
+      if (obs.states && obs.states.running === 0 && obs.states.unknown === 0) return { outcome: "done" };
+      await ctx.assertLease();
+      const stop = await this.host.run(run.targetServerId, buildSourceStopScript(containers), "migrate", SCRIPT_TIMEOUT_MS);
+      const outcomes = parseStopOutput(stop.output, containers.map((c) => c.id));
+      const bad = containers.filter((c) => {
+        const o = outcomes.get(c.id);
+        return o !== "stopped" && o !== "gone";
+      });
+      if (bad.length) {
+        const mismatch = bad.some((c) => outcomes.get(c.id) === "mismatch");
+        return { outcome: "fail", code: mismatch ? DATA_CODES.freezeContainerMismatch : DATA_CODES.freezeAgentFailed, params: { count: bad.length, names: bad.slice(0, 10).map((c) => c.name) }, retryable: true };
+      }
+      await ctx.emit({ stepKey: "FREEZE", level: "info", code: "freeze.agent-stopped", params: { count: containers.length } });
+      return { outcome: "done" };
+    } catch (e) {
+      if (e instanceof RunLeaseLostError) throw e;
+      const kind = classifyAgentError(e);
+      return { outcome: "fail", code: kind === "offline" ? DATA_CODES.agentOffline : kind === "forbidden" ? DATA_CODES.capabilityDenied : DATA_CODES.freezeAgentFailed, params: { reason: kind }, retryable: true };
+    }
+  }
+
+  // ───────────────────────────── compensate ─────────────────────────────
+
+  async compensate(ctx: StepContext, how: CompensateHow): Promise<CompResult> {
+    if (how !== "abort") return { outcome: "nothing-to-do" };
+    const rec = compOf(ctx).freeze as FreezeRecord | undefined;
+    if (!rec) return { outcome: "nothing-to-do" };
+    const run = ctx.run;
+    if (rec.controller === "manual") {
+      return { outcome: "manual", manual: [{ code: DATA_CODES.freezeRestartManual, params: { controller: "manual" } }] };
+    }
+    if (rec.controller === "api") {
+      const failed: string[] = [];
+      for (const it of rec.api ?? []) {
+        const res = await this.api.start(run, it.kind, it.uuid);
+        if (!res.ok) failed.push(it.itemRef);
+      }
+      return failed.length ? { outcome: "failed", code: DATA_CODES.freezeRestartFailed, params: { count: failed.length, items: failed.slice(0, 20) } } : { outcome: "done" };
+    }
+    const containers = rec.containers ?? [];
+    if (containers.length === 0) return { outcome: "nothing-to-do" };
+    try {
+      const granted = await this.caps.ensureMigrate(ctx.actor.userId, run.targetServerId);
+      if (!granted.ok) return { outcome: "failed", code: DATA_CODES.capabilityDenied };
+      if (granted.added) await ctx.recordCompensation({ capAdded: true });
+      let res: { exitCode: number; output: string };
+      try {
+        res = await this.host.run(run.targetServerId, buildSourceStartScript(containers), "migrate", SCRIPT_TIMEOUT_MS);
+      } finally {
+        await releaseIfOurs(ctx, this.caps, granted.added); // least privilege: the grant ends with the restart
+      }
+      const out = parseStartOutput(res.output, containers.map((c) => c.id));
+      const failed = containers.filter((c) => out.get(c.id) === "failed");
+      const manual = containers.filter((c) => out.get(c.id) === "gone" || out.get(c.id) === "mismatch" || !out.has(c.id));
+      if (failed.length) return { outcome: "failed", code: DATA_CODES.freezeRestartFailed, params: { count: failed.length, names: failed.slice(0, 10).map((c) => c.name) } };
+      if (manual.length) return { outcome: "manual", manual: [{ code: DATA_CODES.freezeRestartManual, params: { controller: "agent", names: manual.slice(0, 20).map((c) => c.name) } }] };
+      return { outcome: "done" };
+    } catch {
+      return { outcome: "failed", code: DATA_CODES.freezeRestartFailed };
+    }
+  }
+}

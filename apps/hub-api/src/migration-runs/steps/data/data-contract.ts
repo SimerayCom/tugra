@@ -381,3 +381,13 @@ export const ALL_DATA_STEP_KEYS: readonly StepKey[] = ["DATA_SEED", "FREEZE", "D
 
 /** A gate that passed, for steps that have nothing to verify. */
 export const emptyGate = (): GateResult => ({ passed: true, checks: [] });
+
+// ───────────────────────────── MigrationRunCheck vocabulary ─────────────────────────────
+
+/** The raw source-side measurement the migrator reports (`--verify`), stored as `migrator-reported` evidence. */
+export const SOURCE_STATS_CHECK = "source-stats";
+/** The approval marker VERIFY writes once a PONR-bound approval was accepted (its evidence carries the bound hash). */
+export const VERIFY_APPROVAL_CHECK = "verify-approval";
+/** Ordinary verdict rows are capped at 8 KiB of evidence; the raw measurement rows may carry every table (512 KiB). */
+export const CHECK_EVIDENCE_MAX_BYTES = 8 * 1024;
+export const RAW_EVIDENCE_MAX_BYTES = 512 * 1024;
