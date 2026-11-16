@@ -2493,3 +2493,284 @@ export interface StartObjectMigrationInput {
   removeExtraneous?: boolean;
   mergeIntoExisting?: boolean;
 }
+
+// ── P7 guided migration runs (mirrors hub-api migration-runs/core/dto.ts; secret-free, codes + params only) ──
+export type MigrationRunStatus =
+  | "QUEUED" | "RUNNING" | "WAITING" | "PAUSED" | "ABORTING" | "ABORTED" | "ROLLING_BACK" | "ROLLED_BACK" | "REVERSING" | "REVERSED" | "COMPLETED" | "FAILED" | "DRY_RUN_DONE";
+export type MigrationRunStepStatus = "PENDING" | "RUNNING" | "WAITING_OPERATOR" | "WAITING_APPROVAL" | "WAITING_TIMER" | "PASSED" | "FAILED" | "SKIPPED" | "COMPENSATED";
+export type MigrationRunStepKey =
+  | "PREFLIGHT" | "IMPORT" | "DNS_PREPARE" | "DATA_SEED" | "FREEZE" | "DATA_FINAL" | "REMAP_ENV" | "DEPLOY_DARK" | "TLS_PREISSUE" | "VERIFY" | "CUTOVER" | "OBSERVE" | "FINALIZE" | "DECOMMISSION";
+export type MigrationRunStepKind = "auto" | "operator" | "approval" | "timer";
+export type MigrationRunRollbackClass = "FREE" | "UNDOABLE" | "LOSSY_AFTER_PONR" | "IRREVERSIBLE";
+export type MigrationRunMode = "copy" | "takeover";
+export type MigrationRunTopology = "two-box" | "swap-proxy";
+export type MigrationRunEvidenceKind = "hub-verified" | "migrator-reported" | "operator-attested";
+export type MigrationRunCheckStatus = "pass" | "fail" | "warn" | "unknown";
+export type MigrationRunOwnerInputKey = "acmeEmail" | "allowBind" | "allowLiveShapeProbe" | "sourceController";
+export type MigrationRunConfirmKind = "none" | "run-id" | "target-server" | "target-server+source-host" | "source-host";
+export type MigrationRunProgressUnit = "item" | "byte" | "volume" | "host" | "app" | "database" | "bucket" | "second";
+
+export type MigrationRunParamValue = string | number | boolean | null | Array<string | number | boolean | null>;
+export type MigrationRunParams = Record<string, MigrationRunParamValue>;
+
+export interface MigrationRunGateCheck {
+  id: string;
+  status: MigrationRunCheckStatus;
+  code: string;
+  params?: MigrationRunParams;
+  subject?: string;
+  evidence?: MigrationRunEvidenceKind;
+  ownerInput?: MigrationRunOwnerInputKey;
+  ackable?: boolean;
+  acked?: boolean;
+}
+export interface MigrationRunApprovalBinding {
+  inputHash: string;
+  ponr: boolean;
+  confirm: MigrationRunConfirmKind;
+  ttlSec: number | null;
+  requiresDataRisk: boolean;
+  ackable: string[];
+  requiredAcks: string[];
+  review: MigrationRunParams;
+}
+export type MigrationRunWait =
+  | { kind: "operator"; code: string; params?: MigrationRunParams; offersCommand?: boolean; attest?: string[] }
+  | { kind: "approval"; binding: MigrationRunApprovalBinding }
+  | { kind: "timer"; notBefore: string; code: string; params?: MigrationRunParams };
+export interface MigrationRunGate {
+  passed: boolean;
+  checks: MigrationRunGateCheck[];
+  wait?: MigrationRunWait;
+}
+export interface MigrationRunApproval {
+  byUserId: string;
+  at: string;
+  boundHash: string;
+  acks: string[];
+  acceptDataRisk: boolean;
+  expiresAt: string | null;
+}
+export interface MigrationRunDryRunItem {
+  code: string;
+  level: "info" | "warn" | "block" | "unknown";
+  subject?: string;
+  params?: MigrationRunParams;
+}
+export interface MigrationRunProgress {
+  done: number;
+  total: number;
+  unit: MigrationRunProgressUnit;
+  etaSec?: number | null;
+  dryRun?: MigrationRunDryRunItem[];
+}
+export interface MigrationRunStepEvidence {
+  attestations: Array<{ checkId: string; subject?: string; note?: string; byUserId: string; at: string }>;
+  attachments: Array<{ kind: "object-migration"; resourceId: string; byUserId: string; at: string }>;
+}
+export interface MigrationRunStepAllowed {
+  approve: boolean;
+  retry: boolean;
+  skip: boolean;
+  evidence: boolean;
+  attach: boolean;
+  command: boolean;
+}
+export interface MigrationRunStepView {
+  key: MigrationRunStepKey;
+  idx: number;
+  kind: MigrationRunStepKind;
+  status: MigrationRunStepStatus;
+  rollbackClass: MigrationRunRollbackClass;
+  attempt: number;
+  skippedCode: string | null;
+  gate: MigrationRunGate | null;
+  approval: MigrationRunApproval | null;
+  wait: MigrationRunWait | null;
+  progress: MigrationRunProgress | null;
+  evidence: MigrationRunStepEvidence;
+  notBefore: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  lastError: string | null;
+  allowed: MigrationRunStepAllowed;
+}
+export interface MigrationRunNextAction {
+  kind: "operator" | "approval" | "timer" | "gate" | "session" | "paused" | "failed" | "engine" | "none";
+  stepKey: MigrationRunStepKey | null;
+  code: string;
+  params?: MigrationRunParams;
+  since: string;
+  notBefore?: string | null;
+  approval?: MigrationRunApprovalBinding;
+  attest?: string[];
+  offersCommand?: boolean;
+}
+export interface MigrationRunAllowed {
+  start: boolean;
+  pause: boolean;
+  resume: boolean;
+  abort: boolean;
+  cleanup: boolean;
+  reverse: boolean;
+  decommission: boolean;
+  setInputs: boolean;
+  sourceSession: boolean;
+}
+export interface MigrationRunInputRecord<T> {
+  value: T | "unknown";
+  source: "request" | "default" | "derived";
+  setBy: string | null;
+  at: string;
+}
+export interface MigrationRunOwnerInputs {
+  acmeEmail?: MigrationRunInputRecord<string>;
+  allowBind?: MigrationRunInputRecord<boolean>;
+  allowLiveShapeProbe?: MigrationRunInputRecord<boolean>;
+  sourceController?: MigrationRunInputRecord<"manual" | "api" | "agent">;
+}
+export interface MigrationRunOptions {
+  ttlPolicy: "wait" | "skip-ack";
+  deployWaves: "single" | "earlyStateless";
+  warmDbSeed: boolean;
+  stopSource: boolean;
+  sourceRunner: "operator" | "agent";
+  certs: "none" | "seed";
+  acceptHttp01Gap: boolean;
+  freezeAt?: string;
+  observeMinutes: number;
+  manualFinalize: boolean;
+  batchSize: number;
+  intervalSec: number;
+  dnsCredentialId?: string;
+  healthPath?: string;
+  rowCountMode: "exact" | "estimate";
+  decommissionMinAgeHours: number;
+  stuckOperatorMinutes: number;
+}
+export interface MigrationRunWindowEstimate {
+  freezeToFlipSec: number | null;
+  basis: Array<{ code: string; params?: MigrationRunParams }>;
+  estimatedAt: string;
+}
+export interface MigrationRunFailure {
+  step: MigrationRunStepKey | null;
+  code: string;
+}
+export interface MigrationRunView {
+  id: string;
+  teamId: string;
+  actorId: string;
+  targetServerId: string;
+  targetServerName: string | null;
+  sourceKind: ImportRemoteKind;
+  sourceHost: string | null;
+  opId: string | null;
+  opHistory: string[];
+  planHash: string;
+  mode: MigrationRunMode;
+  topology: MigrationRunTopology;
+  dryRun: boolean;
+  promotedFromId: string | null;
+  status: MigrationRunStatus;
+  currentStep: MigrationRunStepKey | null;
+  ponrAt: string | null;
+  pauseRequested: boolean;
+  abortRequested: boolean;
+  options: MigrationRunOptions;
+  inputs: MigrationRunOwnerInputs;
+  windowEstimate: MigrationRunWindowEstimate | null;
+  freezeStartedAt: string | null;
+  freezeEndedAt: string | null;
+  measuredDowntimeSec: number | null;
+  failure: MigrationRunFailure | null;
+  nextAction: MigrationRunNextAction;
+  allowed: MigrationRunAllowed;
+  steps: MigrationRunStepView[];
+  eventSeq: number;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  updatedAt: string;
+}
+export interface MigrationRunSummary {
+  id: string;
+  teamId: string;
+  targetServerId: string;
+  targetServerName: string | null;
+  sourceKind: ImportRemoteKind;
+  sourceHost: string | null;
+  mode: MigrationRunMode;
+  topology: MigrationRunTopology;
+  dryRun: boolean;
+  status: MigrationRunStatus;
+  currentStep: MigrationRunStepKey | null;
+  ponrAt: string | null;
+  stepsPassed: number;
+  stepsTotal: number;
+  nextActionKind: MigrationRunNextAction["kind"];
+  failure: MigrationRunFailure | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+export interface MigrationRunEvent {
+  seq: number;
+  at: string;
+  stepKey: MigrationRunStepKey | null;
+  level: "info" | "warn" | "error";
+  code: string;
+  params: MigrationRunParams | null;
+  actorId: string | null;
+}
+export interface MigrationRunEventsPage {
+  events: MigrationRunEvent[];
+  lastSeq: number;
+  hasMore: boolean;
+}
+/** `POST /migration-runs` body (the apply fields, frozen server-side, plus the run switches). */
+export interface MigrationRunCreateInput extends ImportApplyExtras {
+  sessionId: string;
+  sourceKind: ImportRemoteKind;
+  targetServerId: string;
+  environmentId?: string;
+  planHash: string;
+  mapping?: ImportMappingDoc;
+  mappingHash?: string;
+  mode?: MigrationRunMode;
+  topology?: MigrationRunTopology;
+  dryRun?: boolean;
+  options?: Partial<MigrationRunOptions>;
+  inputs?: Partial<{ acmeEmail: string | "unknown"; allowBind: boolean | "unknown"; allowLiveShapeProbe: boolean | "unknown"; sourceController: "manual" | "api" | "agent" | "unknown" }>;
+}
+export type MigrationRunInputsRequest = NonNullable<MigrationRunCreateInput["inputs"]>;
+export interface MigrationRunApproveInput {
+  boundHash: string;
+  acks: string[];
+  confirmName?: string;
+  acceptDataRisk?: boolean;
+}
+export interface MigrationRunCommandResult {
+  stepKey: MigrationRunStepKey;
+  opId: string;
+  expiresAt: string;
+  command: string;
+  commands?: { dryRun: string; run: string; resume: string };
+  shownOnce: true;
+}
+export interface MigrationRunReport {
+  runId: string;
+  generatedAt: string;
+  status: MigrationRunStatus;
+  mode: MigrationRunMode;
+  topology: MigrationRunTopology;
+  dryRun: boolean;
+  source: { kind: ImportRemoteKind; host: string | null };
+  target: { serverId: string; serverName: string | null };
+  ponrAt: string | null;
+  window: { estimatedSec: number | null; measuredSec: number | null };
+  steps: Array<{ key: MigrationRunStepKey; status: MigrationRunStepStatus; attempts: number; durationSec: number | null; code: string | null }>;
+  items: Array<{ kind: "app" | "database" | "service" | "volume" | "bucket" | "domain"; name: string; outcome: "moved" | "skipped" | "acked" | "failed" | "not-cut-over"; code: string | null; evidence: MigrationRunEvidenceKind | null }>;
+  evidenceSummary: Record<MigrationRunEvidenceKind, number>;
+  manual: Array<{ code: string; params?: MigrationRunParams }>;
+}

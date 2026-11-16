@@ -142,6 +142,16 @@ import type {
   RolloutPlan,
   SecretsKeyStatus,
   DeploymentDetail,
+  MigrationRunView,
+  MigrationRunSummary,
+  MigrationRunStatus,
+  MigrationRunStepKey,
+  MigrationRunEventsPage,
+  MigrationRunCreateInput,
+  MigrationRunInputsRequest,
+  MigrationRunApproveInput,
+  MigrationRunCommandResult,
+  MigrationRunReport,
 } from "./types";
 
 // Same-origin path the SPA calls; next.config rewrites proxy it to the hub, so the httpOnly session
@@ -149,6 +159,11 @@ import type {
 // The hub serves its REST API under /api/v1 (versioned); this constant is the single place that base is
 // set, so every api.* method + SSE/download caller follows automatically.
 export const API_BASE = "/api/v1";
+
+/** Same-origin URL of a run's Markdown report (a plain download link; the session cookie rides along). */
+export function migrationRunReportMdUrl(id: string): string {
+  return `${API_BASE}/migration-runs/${encodeURIComponent(id)}/report?format=md`;
+}
 
 /** Same-origin URL for an app's custom icon, for an <img> tag (the session cookie rides along). `v` is the
  *  app's iconUpdatedAt — it cache-busts the image when the icon changes. Returns null when there is no icon. */
@@ -2304,6 +2319,77 @@ export const api = {
   },
   deleteObjectMigration(id: string) {
     return apiFetch<{ ok: true }>(`/object-migrations/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
+  // ── P7 guided migration runs (Coolify -> Tugra orchestrator; secret-free views, codes + params only) ──
+  listMigrationRuns(filter: { teamId?: string | null; status?: MigrationRunStatus; active?: boolean; limit?: number } = {}) {
+    const p = new URLSearchParams();
+    if (filter.teamId) p.set("teamId", filter.teamId);
+    if (filter.status) p.set("status", filter.status);
+    if (filter.active !== undefined) p.set("active", String(filter.active));
+    if (filter.limit) p.set("limit", String(filter.limit));
+    const q = p.toString();
+    return apiFetch<MigrationRunSummary[]>(`/migration-runs${q ? `?${q}` : ""}`);
+  },
+  getMigrationRun(id: string) {
+    return apiFetch<MigrationRunView>(`/migration-runs/${encodeURIComponent(id)}`);
+  },
+  getMigrationRunEvents(id: string, afterSeq = 0, limit = 200) {
+    return apiFetch<MigrationRunEventsPage>(`/migration-runs/${encodeURIComponent(id)}/events?afterSeq=${afterSeq}&limit=${limit}`);
+  },
+  createMigrationRun(input: MigrationRunCreateInput) {
+    return apiFetch<MigrationRunView>("/migration-runs", { method: "POST", body: JSON.stringify(input) });
+  },
+  /** QUEUED -> RUNNING; on a DRY_RUN_DONE run it promotes and returns a NEW run (its id differs). */
+  startMigrationRun(id: string, body: { sessionId?: string } = {}) {
+    return apiFetch<MigrationRunView>(`/migration-runs/${encodeURIComponent(id)}/start`, { method: "POST", body: JSON.stringify(body) });
+  },
+  approveMigrationRunStep(id: string, key: MigrationRunStepKey, body: MigrationRunApproveInput) {
+    return apiFetch<MigrationRunView>(`/migration-runs/${encodeURIComponent(id)}/steps/${key}/approve`, { method: "POST", body: JSON.stringify(body) });
+  },
+  retryMigrationRunStep(id: string, key: MigrationRunStepKey) {
+    return apiFetch<MigrationRunView>(`/migration-runs/${encodeURIComponent(id)}/steps/${key}/retry`, { method: "POST", body: JSON.stringify({}) });
+  },
+  skipMigrationRunStep(id: string, key: MigrationRunStepKey, body: { reason?: string } = {}) {
+    return apiFetch<MigrationRunView>(`/migration-runs/${encodeURIComponent(id)}/steps/${key}/skip`, { method: "POST", body: JSON.stringify(body) });
+  },
+  attestMigrationRunStep(id: string, key: MigrationRunStepKey, body: { checkId: string; subject?: string; note?: string }) {
+    return apiFetch<MigrationRunView>(`/migration-runs/${encodeURIComponent(id)}/steps/${key}/evidence`, { method: "POST", body: JSON.stringify(body) });
+  },
+  attachMigrationRunStep(id: string, key: MigrationRunStepKey, body: { kind: "object-migration"; resourceId: string }) {
+    return apiFetch<MigrationRunView>(`/migration-runs/${encodeURIComponent(id)}/steps/${key}/attach`, { method: "POST", body: JSON.stringify(body) });
+  },
+  /** Mints (or reissues) the migrator token; the command carrying it is returned ONCE. */
+  migrationRunCommand(id: string, key: MigrationRunStepKey, body: { reissue?: boolean } = {}) {
+    return apiFetch<MigrationRunCommandResult>(`/migration-runs/${encodeURIComponent(id)}/steps/${key}/command`, { method: "POST", body: JSON.stringify(body) });
+  },
+  setMigrationRunInputs(id: string, body: MigrationRunInputsRequest) {
+    return apiFetch<MigrationRunView>(`/migration-runs/${encodeURIComponent(id)}/inputs`, { method: "POST", body: JSON.stringify(body) });
+  },
+  pauseMigrationRun(id: string) {
+    return apiFetch<MigrationRunView>(`/migration-runs/${encodeURIComponent(id)}/pause`, { method: "POST" });
+  },
+  resumeMigrationRun(id: string) {
+    return apiFetch<MigrationRunView>(`/migration-runs/${encodeURIComponent(id)}/resume`, { method: "POST" });
+  },
+  abortMigrationRun(id: string, body: { confirmName: string }) {
+    return apiFetch<MigrationRunView>(`/migration-runs/${encodeURIComponent(id)}/abort`, { method: "POST", body: JSON.stringify(body) });
+  },
+  cleanupMigrationRun(id: string, body: { confirmName: string; includeData?: boolean; dataConfirmNames?: string[] }) {
+    return apiFetch<MigrationRunView>(`/migration-runs/${encodeURIComponent(id)}/cleanup`, { method: "POST", body: JSON.stringify(body) });
+  },
+  reverseMigrationRun(id: string, body: { confirmName: string; acknowledgeDataLoss: true }) {
+    return apiFetch<MigrationRunView>(`/migration-runs/${encodeURIComponent(id)}/reverse`, { method: "POST", body: JSON.stringify(body) });
+  },
+  decommissionMigrationRun(id: string, body: { confirmName: string }) {
+    return apiFetch<MigrationRunView>(`/migration-runs/${encodeURIComponent(id)}/decommission`, { method: "POST", body: JSON.stringify(body) });
+  },
+  /** Re-enter the source token when the 1 h import session expired (never returned). */
+  migrationRunSourceSession(id: string, body: { token: string }) {
+    return apiFetch<{ sessionId: string; expiresAt: string }>(`/migration-runs/${encodeURIComponent(id)}/source-session`, { method: "POST", body: JSON.stringify(body) });
+  },
+  getMigrationRunReport(id: string) {
+    return apiFetch<MigrationRunReport>(`/migration-runs/${encodeURIComponent(id)}/report`);
   },
 
   // ── shared variables (team-wide env) ──

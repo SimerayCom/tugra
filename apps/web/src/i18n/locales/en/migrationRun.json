@@ -1,0 +1,454 @@
+{
+  "title": "Guided migrations",
+  "subtitle": "One resumable run per source team and target server: preflight, import, data, certificates, verification and cutover, with a gate and an approval at every step that needs one.",
+  "new": "Run guided migration",
+  "yes": "Yes",
+  "no": "No",
+  "dryRun": "Dry run",
+  "progressOf": "{done} / {total} {unit}",
+  "list": {
+    "activeOnly": "Only runs that are still live",
+    "emptyTitle": "No guided migrations yet",
+    "empty": "Connect a Coolify or Dokploy source in Import, review the plan, then choose Run guided migration. Start with a dry run: it writes nothing outside the run's own records.",
+    "hint": "A run is driven by the hub but needs you at the gates: the source-host command, the freeze, the verification approval and the point of no return."
+  },
+  "status": {
+    "QUEUED": "Queued",
+    "RUNNING": "Running",
+    "WAITING": "Waiting for you",
+    "PAUSED": "Paused",
+    "ABORTING": "Aborting",
+    "ABORTED": "Aborted",
+    "ROLLING_BACK": "Cleaning up",
+    "ROLLED_BACK": "Cleaned up",
+    "REVERSING": "Reversing",
+    "REVERSED": "Reversed",
+    "COMPLETED": "Completed",
+    "FAILED": "Needs attention",
+    "DRY_RUN_DONE": "Dry run finished"
+  },
+  "stepStatus": {
+    "PENDING": "Not started",
+    "RUNNING": "Running",
+    "WAITING_OPERATOR": "Waiting for you",
+    "WAITING_APPROVAL": "Waiting for approval",
+    "WAITING_TIMER": "Waiting for time to pass",
+    "PASSED": "Done",
+    "FAILED": "Failed",
+    "SKIPPED": "Skipped",
+    "COMPENSATED": "Undone"
+  },
+  "kind": {
+    "auto": "Automatic",
+    "operator": "You run it",
+    "approval": "Needs approval",
+    "timer": "Timed"
+  },
+  "rollback": {
+    "FREE": "Nothing to undo",
+    "UNDOABLE": "Fully undoable before the point of no return",
+    "LOSSY_AFTER_PONR": "After this, only a lossy reverse exists",
+    "IRREVERSIBLE": "Cannot be undone"
+  },
+  "mode": {
+    "copy": "Copy",
+    "copyHint": "The source keeps running as a second system. Nothing on it is removed.",
+    "takeover": "Takeover",
+    "takeoverHint": "Tugra replaces the source. After finalizing, the source can be stopped (never deleted) in a separate, typed step."
+  },
+  "topology": {
+    "two-box": "Two servers",
+    "two-boxHint": "Tugra runs on its own server. Traffic moves by changing DNS.",
+    "swap-proxy": "Same server",
+    "swap-proxyHint": "Tugra runs beside the source on the same host. Traffic moves by swapping which proxy owns ports 80 and 443; DNS is not touched."
+  },
+  "evidence": {
+    "hub-verified": "Hub verified",
+    "migrator-reported": "Reported by the migrator",
+    "operator-attested": "Attested by you",
+    "hint": {
+      "hub-verified": "The hub checked this itself.",
+      "migrator-reported": "The migrator on the source host reported this. The hub could not check it independently.",
+      "operator-attested": "You confirmed this by hand. Nothing checked it."
+    }
+  },
+  "check": {
+    "pass": "Pass",
+    "fail": "Fail",
+    "warn": "Warning",
+    "unknown": "Unknown",
+    "acked": "Accepted by you",
+    "needsInput": "Needs input: {input}"
+  },
+  "steps": {
+    "PREFLIGHT": {
+      "title": "Preflight",
+      "desc": "Checks the plan, the target server, certificates, DNS access and disk. Reads only."
+    },
+    "IMPORT": {
+      "title": "Import configuration",
+      "desc": "Creates the apps, databases and services on the target from the reviewed plan. Undoable."
+    },
+    "DNS_PREPARE": {
+      "title": "Prepare DNS",
+      "desc": "Lowers record TTLs now so the later change takes effect quickly. Waits for the old TTL to expire."
+    },
+    "DATA_SEED": {
+      "title": "Rehearse data copy",
+      "desc": "A non-disruptive first pass: inventory, speed test, object seed. Optional."
+    },
+    "FREEZE": {
+      "title": "Freeze the source",
+      "desc": "Opens the downtime window by stopping the source writers. The source stays stopped after a complete copy."
+    },
+    "DATA_FINAL": {
+      "title": "Final data copy",
+      "desc": "The last, complete copy of volumes, databases and objects, then verification."
+    },
+    "REMAP_ENV": {
+      "title": "Re-point environment",
+      "desc": "Rewrites references to source databases so apps use the Tugra ones."
+    },
+    "DEPLOY_DARK": {
+      "title": "Deploy dark",
+      "desc": "Starts the databases and apps on the target without public traffic."
+    },
+    "TLS_PREISSUE": {
+      "title": "Issue certificates",
+      "desc": "Prepares valid certificates before traffic moves."
+    },
+    "VERIFY": {
+      "title": "Verify and approve",
+      "desc": "Parity and runtime checks, then your typed approval of exactly what was verified."
+    },
+    "CUTOVER": {
+      "title": "Cutover",
+      "desc": "Moves production traffic to Tugra. This is the point of no return for stateful hosts."
+    },
+    "OBSERVE": {
+      "title": "Observe",
+      "desc": "Watches the moved hosts for a while before finishing."
+    },
+    "FINALIZE": {
+      "title": "Finalize",
+      "desc": "Restores the original TTLs, writes the report and revokes temporary access."
+    },
+    "DECOMMISSION": {
+      "title": "Decommission source",
+      "desc": "Takeover only, never automatic: stops the source containers and prints removal commands. Tugra deletes nothing."
+    }
+  },
+  "timeline": {
+    "title": "Steps",
+    "ponrAhead": "Point of no return ahead",
+    "ponrReached": "Point of no return reached"
+  },
+  "step": {
+    "gate": "Checks",
+    "dryRun": "What this step would do",
+    "skipped": "Skipped: {why}",
+    "eta": "about {time} left",
+    "approvedAt": "Approved {when}",
+    "approvalExpiresAt": "approval valid until {when}",
+    "attestations": "{n} operator attestation(s) recorded",
+    "attempt": "attempt {n}",
+    "started": "started {when}",
+    "took": "took {time}"
+  },
+  "next": {
+    "title": "What I am waiting for",
+    "since": "since {when}",
+    "operator": "You",
+    "approval": "Your approval",
+    "timer": "Time",
+    "gate": "A check",
+    "session": "Source access",
+    "paused": "Paused",
+    "failed": "A failure",
+    "engine": "The hub is working",
+    "none": "Nothing",
+    "timerLeft": "About {time} remaining.",
+    "timerDue": "The wait is over; the hub continues on its next tick.",
+    "recheck": "Check again",
+    "retry": "Retry this step",
+    "failedHint": "A failed step is not final. Retry it once the cause is fixed, or abort the run to put the source back in charge."
+  },
+  "actions": {
+    "start": "Start run",
+    "startTitle": "Start this run?",
+    "startBody": "The hub begins with preflight and imports the configuration onto the target. Nothing touches production traffic until the verification approval.",
+    "promote": "Promote to real run",
+    "promoteTitle": "Promote this dry run?",
+    "promoteBody": "A new real run is created from the same reviewed inputs. The plan is checked again and the source must still match.",
+    "pause": "Pause",
+    "pauseTitle": "Pause the run?",
+    "pauseBody": "Forward progress stops. Nothing is undone and nothing is rolled back.",
+    "resume": "Resume"
+  },
+  "banner": {
+    "dryRun": "This is a dry run.",
+    "dryRunBody": "It projects what each step would do and writes nothing outside the run's own records.",
+    "dryRunBlocked": "{blocks} item(s) would stop a real run and {unknown} could not be checked.",
+    "dryRunClean": "Nothing would stop a real run ({warns} warning(s)).",
+    "ponrBefore": "Before the point of no return you can abort: the source becomes authoritative again and nothing is deleted.",
+    "ponrPast": "Point of no return reached {when}.",
+    "ponrPastBody": "Abort is no longer possible. You can finish the run, or reverse it; a reverse can lose data written to Tugra after the cutover."
+  },
+  "ponr": {
+    "title": "Point of no return",
+    "body": "Approving lets the hub route production traffic of stateful apps to Tugra. From then on the source no longer receives their writes and abort is refused. Only a reverse remains, and it can lose data Tugra wrote after the switch."
+  },
+  "approval": {
+    "review": "What you are approving",
+    "acks": "Accept these findings",
+    "ackCount": "({n} items)",
+    "required": "(required)",
+    "dataRisk": "I understand stateful data may be lost if this is reversed after traffic has moved.",
+    "expires": "This approval is valid for {minutes} minutes. After that it must be given again.",
+    "approve": "Approve",
+    "approvePonr": "Approve and pass the point of no return",
+    "accepted": "Approval recorded.",
+    "reReview": "Review the new state",
+    "issue": {
+      "stale": "What you reviewed has changed since you opened this form. Review the new state before approving; the approval is bound to what you saw.",
+      "ackMissing": "Accept every required finding.",
+      "nameMismatch": "Type the names exactly as shown.",
+      "nameUnavailable": "A name needed for confirmation is not known to the hub, so this cannot be confirmed here.",
+      "dataRisk": "Acknowledge the data risk."
+    }
+  },
+  "confirm": {
+    "none": "No name is needed to confirm.",
+    "runId": "Type the run id to confirm.",
+    "targetServer": "Type the target server name to confirm.",
+    "targetServerAndHost": "Type the target server name, then the source host, to confirm.",
+    "sourceHost": "Type the source host to confirm.",
+    "typeToConfirm": "Type {name} to confirm"
+  },
+  "command": {
+    "intro": "This step runs on the source host. The hub mints a short-lived migration token and shows the command once.",
+    "get": "Get the source-host command",
+    "shownOnce": "Shown once: copy it now. It carries a live token.",
+    "expires": "Expires in {time}.",
+    "bootstrap": "Run on the source host",
+    "inspect": "1. Inspect only (changes nothing)",
+    "copy": "2. Copy the data",
+    "resume": "3. Resume an interrupted copy",
+    "reissue": "Issue a new command",
+    "hide": "Hide"
+  },
+  "attest": {
+    "title": "Confirm this was done?",
+    "body": "You are confirming by hand: {what}. The run records it as attested by you, not as verified by the hub.",
+    "confirm": "I did this",
+    "button": "I did this",
+    "note": "Note (optional)",
+    "recorded": "Recorded as attested by you."
+  },
+  "attach": {
+    "hint": "Object storage copies keep their credentials in Migrate objects. Create one there, then attach its id; the run only drives and observes it.",
+    "label": "Object migration id",
+    "button": "Attach",
+    "attached": "Attached: {id}",
+    "create": "Create an object migration"
+  },
+  "skip": {
+    "button": "Skip this step",
+    "title": "Skip this step?",
+    "body": "The step is optional. Skipping it leaves its checks unrun.",
+    "confirm": "Skip"
+  },
+  "session": {
+    "body": "The source session expired. Enter the source API token again to continue. It is stored encrypted by the hub and never shown again.",
+    "token": "Source API token",
+    "hint": "Sent to the hub only; the page does not keep it.",
+    "button": "Refresh the session",
+    "refreshed": "The source session was refreshed."
+  },
+  "inputs": {
+    "title": "Owner inputs",
+    "desc": "Answers the run may need. An unanswered input blocks only the step that needs it.",
+    "acmeEmail": "ACME certificate email",
+    "acmeEmailHint": "Required for certificates and the cutover. Earlier steps run without it.",
+    "allowBind": "Allow bind-mounted apps",
+    "allowBindHint": "Off by default: apps with bind mounts are refused rather than copied from an unknown path.",
+    "allowLiveShapeProbe": "Allow a read-only live probe of the source API",
+    "allowLiveShapeProbeHint": "Lets the hub read the source API to learn its shapes. Off by default.",
+    "sourceController": "Who freezes the source",
+    "sourceControllerHint": "Manual prints the steps and records your attestation. API or agent let the hub stop and restart the recorded source containers.",
+    "controller": {
+      "manual": "Manual (printed steps)",
+      "api": "Source API (write token)",
+      "agent": "Agent on the source host"
+    },
+    "emailInvalid": "Enter a valid email address.",
+    "save": "Save inputs",
+    "saved": "Inputs saved."
+  },
+  "facts": {
+    "title": "Run",
+    "source": "Source",
+    "target": "Target server",
+    "mode": "Mode",
+    "topology": "Topology",
+    "progress": "Progress"
+  },
+  "window": {
+    "estimate": "Estimated downtime window",
+    "measured": "Measured downtime window",
+    "none": "Not available yet",
+    "open": "Still open",
+    "note": "There is a window: the source is frozen until the first moved host is verified. The estimate comes from measured sizes and speeds and is replaced by the measured number."
+  },
+  "recovery": {
+    "title": "Abort and recovery",
+    "desc": "Each action says what it does. Nothing here deletes source data.",
+    "abort": "Abort",
+    "abortBody": "Before the point of no return: puts the source back in charge. Cancels transfers, revokes tokens, restarts the recorded source containers (or lists them for you), restores TTLs and stops the Tugra copies. Deletes no data.",
+    "abortButton": "Abort run",
+    "abortConfirm": "The source becomes authoritative again and the Tugra copies are left stopped. No data is deleted.",
+    "abortRefused": "The point of no return has been reached, so abort is refused. Reverse is the only way back.",
+    "cleanup": "Clean up",
+    "cleanupBody": "After an abort: removes the resources the run created on Tugra. Resources holding data need an explicit opt-in and their names.",
+    "cleanupButton": "Clean up",
+    "cleanupConfirm": "Removes the Tugra-side resources this run created. The source is not touched.",
+    "includeData": "Also remove resources that hold data",
+    "dataNames": "Type the name of each data-holding resource to remove, one per line",
+    "reverse": "Reverse",
+    "reverseBody": "After the point of no return: restores DNS from the ledger, or swaps the proxy back. Data Tugra wrote after the switch is not carried back; dump it to the source yourself.",
+    "reverseButton": "Reverse cutover",
+    "reverseConfirm": "Traffic goes back to the source. Writes Tugra accepted since the cutover can be lost. Nothing syncs backwards.",
+    "ackLoss": "I understand data written to Tugra after the cutover can be lost.",
+    "decommission": "Decommission the source",
+    "decommissionBody": "Takeover only. Stops the source containers and prints removal commands. Tugra deletes nothing on the source.",
+    "decommissionButton": "Stop the source",
+    "decommissionConfirm": "The source containers are stopped, not removed. Removal commands are printed for you to run."
+  },
+  "events": {
+    "title": "Events",
+    "desc": "Newest first.",
+    "empty": "No events yet.",
+    "error": "The event log could not be refreshed. Retrying.",
+    "showAll": "Show all {n}",
+    "level": {
+      "info": "Info",
+      "warn": "Warning",
+      "error": "Error"
+    }
+  },
+  "report": {
+    "title": "Report",
+    "download": "Download Markdown",
+    "notYet": "The report appears when the run has finished or failed.",
+    "estimated": "Estimated window: {time}",
+    "measured": "Measured window: {time}",
+    "evidence": "Evidence relied on:",
+    "manual": "Still to do by hand",
+    "kind": {
+      "app": "App",
+      "database": "Database",
+      "service": "Service",
+      "volume": "Volume",
+      "bucket": "Bucket",
+      "domain": "Domain"
+    },
+    "outcome": {
+      "moved": "Moved",
+      "skipped": "Skipped",
+      "acked": "Accepted",
+      "failed": "Failed",
+      "notCutOver": "Not cut over"
+    }
+  },
+  "drawer": {
+    "volumes": "Volume transfers",
+    "cutover": "SSL and DNS cutover details",
+    "bypass": "These are the operation's own panels. Acting here by hand bypasses the guided run's gates and approvals."
+  },
+  "launch": {
+    "title": "Run guided migration",
+    "desc": "Let the hub drive the whole migration with gates and approvals, using this reviewed plan. The manual apply above stays available.",
+    "button": "Run guided migration",
+    "dialogDesc": "The run freezes this reviewed plan and the choices made above. Start with a dry run to see what would happen; it writes nothing outside the run's own records.",
+    "target": "Target server",
+    "targetHint": "The run puts the imported resources on this server. One live run per target server.",
+    "targetMissing": "Choose a target server.",
+    "dryRun": "Dry run first",
+    "dryRunHint": "Projects every step and ends without changing anything. You can promote it to a real run afterwards.",
+    "mode": "Mode",
+    "topology": "Topology",
+    "acmeHint": "Optional now. Certificates and the cutover are blocked until it is set.",
+    "observe": "Observe window (minutes)",
+    "observeHint": "How long to watch moved hosts before finishing. 0 to skip.",
+    "observeInvalid": "Enter a whole number from 0 to 4320.",
+    "create": "Create run",
+    "createDry": "Create dry run"
+  },
+  "units": {
+    "item": "items",
+    "byte": "bytes",
+    "volume": "volumes",
+    "host": "hosts",
+    "app": "apps",
+    "database": "databases",
+    "bucket": "buckets",
+    "second": "seconds"
+  },
+  "dry": {
+    "info": "Info",
+    "warn": "Warning",
+    "block": "Blocks",
+    "unknown": "Unknown"
+  },
+  "review": {
+    "stopList": "Source containers to stop",
+    "windowEstimateSec": "Estimated downtime",
+    "hosts": "Hosts",
+    "statefulHosts": "Stateful hosts"
+  },
+  "errors": {
+    "generic": "Something went wrong. Try again.",
+    "approval-stale": "What you approved no longer matches the current state. Review it again.",
+    "run-past-ponr": "The point of no return has been reached, so this is no longer possible. Use reverse.",
+    "human-confirmation-required": "This approval must be given by a person in the panel."
+  },
+  "codes": {
+    "unknown": "{code}{params}",
+    "run_created": "Run created.",
+    "run_started": "Run started.",
+    "run_promoted": "Dry run promoted to a real run.",
+    "run_paused": "Run paused.",
+    "run_resumed": "Run resumed.",
+    "run_waiting": "Run is waiting for you.",
+    "run_failed": "Run needs attention.",
+    "run_completed": "Run completed.",
+    "run_dry-run-done": "Dry run finished.",
+    "run_abort_requested": "Abort requested.",
+    "run_aborted": "Run aborted; the source is authoritative again.",
+    "run_cleanup_started": "Clean-up started.",
+    "run_rolled-back": "Tugra-side resources cleaned up.",
+    "run_reverse_started": "Reverse started.",
+    "run_reversed": "Cutover reversed.",
+    "run_ponr_reached": "Point of no return reached.",
+    "run_auth-lost": "The run's owner lost the permissions it needs, so it was paused.",
+    "run_recovered": "The hub restarted and picked the run back up.",
+    "run_input_set": "Owner input set.",
+    "run_session_refreshed": "Source session refreshed.",
+    "step_entered": "Step started.",
+    "step_waiting": "Step is waiting.",
+    "step_passed": "Step passed.",
+    "step_failed": "Step failed.",
+    "step_skipped": "Step skipped.",
+    "step_retry": "Step retried.",
+    "step_compensated": "Step undone.",
+    "step_evidence_added": "Evidence recorded.",
+    "step_attached": "Resource attached.",
+    "step_command_issued": "Source-host command issued.",
+    "step_not-applicable": "Not applicable to this run.",
+    "step_post-gate-failed": "The step finished but its verification did not pass.",
+    "step_internal-error": "An internal error stopped this step. Retry it; the hub log has details.",
+    "approval_accepted": "Approval accepted.",
+    "approval_void": "A stored approval no longer matches what it was given for, so it was voided.",
+    "approval_expired": "The approval expired."
+  }
+}
