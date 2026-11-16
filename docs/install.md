@@ -153,6 +153,8 @@ the `Secure` flag on HTTPS installs.
 | `--acme-email <addr>` | Let's Encrypt contact email (required by `--auto-tls`; providing it implies `--auto-tls`). |
 | `--acme-dns-cloudflare <token>` | DNS-01 via a Cloudflare API token — a real panel cert while the record stays proxied (IP hidden). Implies `--auto-tls`. The token is visible in `ps`/history; prefer the file form. |
 | `--acme-dns-cloudflare-file <path>` | Same, reading the token from a file (first line) — keeps it out of argv and shell history. Env form: `TUGRA_ACME_DNS_TOKEN`. |
+| `--cloudflare-proxy` | The panel's DNS record is Cloudflare-proxied (orange cloud): sets `HUB_TRUSTED_PROXY_CLOUDFLARE=true` so the hub uses `CF-Connecting-IP` as the client IP, only when the hop Traefik observed is a published Cloudflare edge range (needs an https `--domain`; opt-in, never implied by `--acme-dns-cloudflare`; see [Security](security.md)). |
+| `--no-cloudflare-proxy` | Turn that off again. A flag-less re-run keeps whatever is configured. |
 | `--keep-raw-ports` | Don't move the published hub/web ports from `0.0.0.0` to `127.0.0.1` when the install turns https / bundled TLS (also `TUGRA_KEEP_RAW_PORTS=1`). |
 | `--hub-url <url>` | Explicit public hub URL (overrides `--domain`). |
 | `--web-url <url>` | Explicit public web (browser) origin. |

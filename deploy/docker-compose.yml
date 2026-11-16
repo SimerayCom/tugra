@@ -133,6 +133,13 @@ services:
       HUB_INTERNAL_URL: "http://hub-api:3000"
       # Idle timeout of the web -> hub hop for file uploads/downloads (above the hub's 10-minute apply budget).
       HUB_PROXY_TIMEOUT_MS: "${HUB_PROXY_TIMEOUT_MS:-660000}"
+      # The web server is the middle hop (reverse proxy -> web -> hub) and forwards the browser's IP to the hub, so it
+      # applies the hub's own trust rules (same variables, same .env): behind a trusted proxy it keeps only the
+      # X-Forwarded-For entry that proxy observed; from any other peer it replaces the chain with the socket address.
+      # A client reaching the web port can therefore never forge its IP (or a CF-Connecting-IP) past the hub.
+      HUB_TRUSTED_PROXY: "${HUB_TRUSTED_PROXY:-false}"
+      HUB_TRUSTED_PROXY_CIDRS: "${HUB_TRUSTED_PROXY_CIDRS:-}"
+      HUB_TRUSTED_PROXY_STRICT: "${HUB_TRUSTED_PROXY_STRICT:-false}"
     depends_on:
       - hub-api
     ports:

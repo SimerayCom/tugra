@@ -22,14 +22,50 @@ vulnerability**, see the [security policy](../SECURITY.md) — please don't open
   reverse proxy with a **public** egress IP (a proxy on another host) must be listed in `HUB_TRUSTED_PROXY_CIDRS`
   (comma-separated IPs/CIDRs; `0.0.0.0/0,::/0` trusts any peer — only when the proxy alone can reach the port).
   This is defense in depth next to the loopback bind the installer applies. By default private peers stay trusted,
-  so a host on the same LAN/VPN that reaches the raw hub port could forge its source IP; set
+  so a host on the same LAN/VPN that reaches the raw hub or web port could forge its source IP; set
   `HUB_TRUSTED_PROXY_STRICT=true` to trust **only** the `HUB_TRUSTED_PROXY_CIDRS` peers (list your proxy's subnet,
   e.g. from `docker network inspect <panel network>`; the hub refuses to boot in strict mode without
   `HUB_TRUSTED_PROXY=true` and at least one valid CIDR, and a wrong CIDR collapses observed IPs to the proxy
   address). The rightmost `X-Forwarded-For` entry must be a valid IP (a port suffix or IPv6 brackets are parsed);
-  a malformed one is treated as no source IP, so it is denied by the API allowlist rather than recorded. Whether the
-  web container's Next rewrites append the browser IP to `X-Forwarded-For` is not verified yet. Not yet handled: Cloudflare's orange-cloud proxy in front
-  of the bundled Traefik (Traefik sees a Cloudflare edge address); allowlists are not meaningful in that mode.
+  a malformed one is treated as no source IP, so it is denied by the API allowlist rather than recorded.
+- **Browser IP through the web container.** The chain is browser → reverse proxy (bundled Traefik) → web (Next) →
+  hub. Verified against Next 15.5 (the pinned line): Next's `/api/v1` rewrite proxy and the streaming route handlers
+  forward the browser's headers **verbatim** and do not append the address of the peer they accepted, so a client
+  that reached the web port could previously hand the hub any `X-Forwarded-For` (the hub trusts the web container, a
+  private peer) and a client-supplied `CF-Connecting-IP` rode along unchecked. The web server now starts through
+  `apps/web/server.mjs`, which runs a guard on the raw request (where the socket is visible) before Next sees it:
+  behind a trusted proxy peer it keeps **only** the one `X-Forwarded-For` entry that proxy observed (the leftmost,
+  client-supplied entries are dropped); from any other peer it replaces the chain with the socket address and drops
+  `CF-Connecting-IP`; a malformed chain becomes `unknown`, which the hub refuses; `X-Real-IP` and `Forwarded` are
+  always dropped. The guard applies the hub's own rules from the same variables (`HUB_TRUSTED_PROXY`,
+  `HUB_TRUSTED_PROXY_CIDRS`, `HUB_TRUSTED_PROXY_STRICT`, passed to the web container by `docker-compose.yml`), and
+  both share one implementation (`packages/shared/src/client-ip.ts`). Bundled Traefik discards any inbound
+  `X-Forwarded-For` (it is configured without `forwardedHeaders.trustedIPs`) and sets it to the peer it saw, so the
+  hub receives the browser's address. Remaining limit, same as the hub's default mode: a host on a *private* address
+  that can reach the raw web or hub port is trusted as a proxy; bind the ports to loopback (installer default with
+  `--domain`) or use strict mode. If you run your own `docker-compose.yml`, pass these three variables to the `web`
+  service as well, otherwise it treats every peer as untrusted and the hub sees the proxy's address.
+- **Cloudflare orange-cloud (`HUB_TRUSTED_PROXY_CLOUDFLARE`).** With the panel's DNS record proxied by Cloudflare,
+  Traefik's peer is a Cloudflare edge address, so without this every client looks like Cloudflare and allowlists are
+  meaningless. Opt-in (`HUB_TRUSTED_PROXY_CLOUDFLARE=true`, installer `--cloudflare-proxy`; the hub refuses to boot
+  without `HUB_TRUSTED_PROXY=true`). The hub then uses `CF-Connecting-IP` as the client IP **only when the hop the
+  trusted proxy observed (the rightmost `X-Forwarded-For` entry, i.e. what Traefik saw) is a published Cloudflare
+  edge range**, and only if that header is exactly one public IP. Everything else fails closed: a request that did not
+  come through Cloudflare (someone hitting the origin directly) keeps its own address and its `CF-Connecting-IP` is
+  ignored; a Cloudflare hop with a missing, repeated or malformed `CF-Connecting-IP` yields no address (never the edge
+  IP), so an allowlist denies it; a client-supplied leftmost `X-Forwarded-For` entry can never pose as an edge; the TCP
+  peer must still be a trusted proxy (private, or listed; strict mode applies). The same verified address feeds the
+  PAT allowlist, the terminal and agent gateways, throttling and request logs. The ranges are vendored public data in
+  `packages/shared/src/cloudflare-ips.ts` (source: <https://www.cloudflare.com/ips-v4> and `/ips-v6`, date recorded
+  in the file). Refresh them with `node scripts/refresh-cloudflare-ips.mjs` (fetches both lists, rejects anything
+  malformed or implausibly broad and leaves the file untouched on failure; `--check` exits 1 when the file is stale;
+  `--v4-file`/`--v6-file` read local copies for an air-gapped host), then rebuild. If Cloudflare adds a range before
+  your next release, add it without a rebuild via `HUB_TRUSTED_PROXY_CLOUDFLARE_EXTRA_CIDRS` (additive to the vendored
+  list). A stale list degrades safely: requests from an unlisted edge are attributed to that edge address, never to a
+  forgeable header. Not covered: Cloudflare Tunnel (`cloudflared` connects from inside your network, so the hop is not a
+  Cloudflare edge range) and Cloudflare in front of the web port with no reverse proxy in between (list the Cloudflare
+  ranges in `HUB_TRUSTED_PROXY_CIDRS` in that topology). Do not set `forwardedHeaders.trustedIPs` on the bundled
+  Traefik entry points: the hub relies on Traefik reporting the peer it actually saw.
 - **Two-factor auth & sessions.** TOTP 2FA with recovery codes; httpOnly session cookies with CSRF
   protection; `COOKIE_SECURE` + `HUB_TRUSTED_PROXY` for correct handling behind a TLS reverse proxy.
 - **SSRF protection.** Outbound targets (notifications, registries, git sources, monitors, update checks)

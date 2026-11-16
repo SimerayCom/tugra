@@ -22,6 +22,12 @@
 #                       through the proxy.) The token on the command line is visible in `ps` and shell
 #                       history — prefer --acme-dns-cloudflare-file or TUGRA_ACME_DNS_TOKEN.
 #   --acme-dns-cloudflare-file <path>  Same as above, reading the token from a file (first line).
+#   --cloudflare-proxy  The panel's DNS record is Cloudflare-proxied (orange cloud): trust CF-Connecting-IP as the
+#                       client IP, but ONLY when the hop the proxy observed is a published Cloudflare edge range
+#                       (sets HUB_TRUSTED_PROXY_CLOUDFLARE=true; needs an https --domain). Opt-in, never implied by
+#                       --acme-dns-cloudflare. Without it, behind Cloudflare every client shows as a Cloudflare edge
+#                       address, so IP allowlists are meaningless. (also: TUGRA_CLOUDFLARE_PROXY=1)
+#   --no-cloudflare-proxy  Turn that off again (a flag-less re-run keeps whatever is configured).
 #   --keep-raw-ports    Do NOT move the published hub/web ports to 127.0.0.1 when the install turns https /
 #                       bundled-TLS (also: TUGRA_KEEP_RAW_PORTS=1). Default: a 0.0.0.0 bind is rebound to
 #                       loopback on that transition, since only the proxy needs to reach the raw ports.
@@ -76,6 +82,8 @@ ACME_DNS_TOKEN_ARG="${TUGRA_ACME_DNS_TOKEN:-}"
 ACME_DNS_TOKEN_ARGV=0
 TUGRA_SNAPSHOT_DRY=0   # lib/snapshot.sh dry switch: install.sh never dry-runs it (an inherited DRY must not skip the snapshot)
 KEEP_RAW_PORTS="${TUGRA_KEEP_RAW_PORTS:-0}"
+# Cloudflare orange-cloud client-IP mode: "" = undecided (keep what .env has), "1"/"0" explicit.
+CF_PROXY="${TUGRA_CLOUDFLARE_PROXY:-}"
 # HUB_PORT/WEB_PORT: env wins, else the value stored in .env (resolved after flag parsing), else 3000/3001.
 HUB_PORT="${HUB_PORT:-}"
 WEB_PORT="${WEB_PORT:-}"
@@ -153,6 +161,8 @@ while [ $# -gt 0 ]; do
       ACME_DNS_PROVIDER_ARG="cloudflare"; ACME_DNS_TOKEN_ARG="$(head -n1 "$2" | tr -d '[:space:]')"
       [ -n "$ACME_DNS_TOKEN_ARG" ] || { err "--acme-dns-cloudflare-file: $2 is empty"; exit 1; }
       shift 2 ;;
+    --cloudflare-proxy)     CF_PROXY=1; shift ;;
+    --no-cloudflare-proxy)  CF_PROXY=0; shift ;;
     --keep-raw-ports)       KEEP_RAW_PORTS=1; shift ;;
     --public-ip) MANUAL_PUBLIC_IP="${2:-}"; shift 2 ;;
     --dry-run|--no-start) DRY_RUN=1; shift ;;
@@ -461,6 +471,16 @@ case "$HUB_URL" in
   https://*) COOKIE_SECURE="true";  HUB_TRUSTED_PROXY="true" ;;
   *)         COOKIE_SECURE="false"; HUB_TRUSTED_PROXY="false" ;;
 esac
+# Cloudflare client-IP mode reads a forwarding chain it only believes behind a trusted proxy (https): refuse to
+# silently ignore the flag, and never leave a stale true behind a plain-http origin (the hub would refuse to boot).
+case "$CF_PROXY" in ""|0|1) ;; *) err "TUGRA_CLOUDFLARE_PROXY must be 1 or 0 (got: $CF_PROXY)"; exit 1 ;; esac
+if [ "$CF_PROXY" = "1" ] && [ "$HUB_TRUSTED_PROXY" != "true" ]; then
+  err "--cloudflare-proxy needs the panel served over https (--domain <host> or an https --hub-url): Cloudflare only proxies a real hostname. Nothing was changed."
+  exit 1
+fi
+if [ -n "$ACME_DNS_TOKEN_ARG" ] && [ -z "$CF_PROXY" ] && [ "$(env_get HUB_TRUSTED_PROXY_CLOUDFLARE)" != "true" ]; then
+  note "Behind Cloudflare's orange cloud every client looks like a Cloudflare edge address (IP allowlists are meaningless). If this record is proxied, re-run with --cloudflare-proxy."
+fi
 # Host bind for the published hub/web ports. A trusted-proxy (https) hub honors X-Forwarded-For (and only from
 # private/loopback/docker peers, see HUB_TRUSTED_PROXY_CIDRS), so its raw port should not be internet-exposed.
 # A FRESH --domain install binds to loopback (same-host proxy). The http quick start keeps 0.0.0.0 (agents dial
@@ -645,6 +665,13 @@ set_env COOKIE_SECURE  "$COOKIE_SECURE"
 # Always upsert (not just in --domain mode): switching back from --domain to the http quick-start must
 # CLEAR a stale HUB_TRUSTED_PROXY=true, else the hub would keep trusting spoofable X-Forwarded-For.
 set_env HUB_TRUSTED_PROXY "$HUB_TRUSTED_PROXY"
+# Cloudflare client-IP mode: explicit flag wins; a flag-less re-run keeps the stored value while the proxy trust is
+# still on; leaving trusted-proxy mode CLEARS it (the hub refuses to boot with CLOUDFLARE=true and no trusted proxy).
+if [ "$HUB_TRUSTED_PROXY" != "true" ]; then
+  if env_has HUB_TRUSTED_PROXY_CLOUDFLARE; then set_env HUB_TRUSTED_PROXY_CLOUDFLARE "false"; fi
+elif [ "$CF_PROXY" = "1" ]; then set_env HUB_TRUSTED_PROXY_CLOUDFLARE "true"
+elif [ "$CF_PROXY" = "0" ]; then set_env HUB_TRUSTED_PROXY_CLOUDFLARE "false"
+fi
 # Panel-TLS: persist only when a decision was made THIS run (a flag-less re-run leaves these untouched).
 if [ -n "$PANEL_TLS_DECISION" ]; then
   set_env PANEL_TLS "$PANEL_TLS_DECISION"

@@ -108,6 +108,55 @@ describe("scripts/install.sh", () => {
       expect(env.COOKIE_SECURE).toBe("false");
     });
 
+    describe("--cloudflare-proxy (orange-cloud client IP mode)", () => {
+      const runCf = (args: string[], envPath: string) =>
+        spawnSync("bash", [INSTALL_SH, "--dry-run", "--env-file", envPath, ...args], { encoding: "utf8", env: cleanEnv });
+
+      it("is off by default: nothing is written for a plain --domain install", () => {
+        const envPath = join(dir, "cf-default.env");
+        run(["--domain", "tugra.example.com"], envPath);
+        expect(parseEnv(readFileSync(envPath, "utf8")).HUB_TRUSTED_PROXY_CLOUDFLARE).toBeUndefined();
+      });
+      it("sets HUB_TRUSTED_PROXY_CLOUDFLARE=true alongside the trusted proxy with --domain", () => {
+        const envPath = join(dir, "cf-on.env");
+        run(["--domain", "tugra.example.com", "--cloudflare-proxy"], envPath);
+        const env = parseEnv(readFileSync(envPath, "utf8"));
+        expect(env.HUB_TRUSTED_PROXY).toBe("true");
+        expect(env.HUB_TRUSTED_PROXY_CLOUDFLARE).toBe("true");
+      });
+      it("refuses (and writes nothing) without an https origin: Cloudflare cannot proxy a bare IP", () => {
+        const envPath = join(dir, "cf-http.env");
+        const r = runCf(["--hub-url", "http://10.0.0.5:3000", "--web-url", "http://10.0.0.5:3001", "--cloudflare-proxy"], envPath);
+        expect(r.status).not.toBe(0);
+        expect(`${r.stdout}${r.stderr}`).toMatch(/--cloudflare-proxy needs the panel served over https/);
+        expect(existsSync(envPath)).toBe(false);
+      });
+      it("a flag-less re-run keeps it; --no-cloudflare-proxy turns it off", () => {
+        const envPath = join(dir, "cf-rerun.env");
+        run(["--domain", "tugra.example.com", "--cloudflare-proxy"], envPath);
+        run([], envPath);
+        expect(parseEnv(readFileSync(envPath, "utf8")).HUB_TRUSTED_PROXY_CLOUDFLARE).toBe("true");
+        run(["--no-cloudflare-proxy"], envPath);
+        expect(parseEnv(readFileSync(envPath, "utf8")).HUB_TRUSTED_PROXY_CLOUDFLARE).toBe("false");
+      });
+      it("downgrading to plain http CLEARS it (the hub refuses to boot with CLOUDFLARE=true and no trusted proxy)", () => {
+        const envPath = join(dir, "cf-downgrade.env");
+        run(["--domain", "tugra.example.com", "--cloudflare-proxy"], envPath);
+        run(["--hub-url", "http://10.0.0.5:3000", "--web-url", "http://10.0.0.5:3001"], envPath);
+        const env = parseEnv(readFileSync(envPath, "utf8"));
+        expect(env.HUB_TRUSTED_PROXY).toBe("false");
+        expect(env.HUB_TRUSTED_PROXY_CLOUDFLARE).toBe("false");
+      });
+      it("rejects a bad TUGRA_CLOUDFLARE_PROXY value", () => {
+        const envPath = join(dir, "cf-bad.env");
+        const r = spawnSync("bash", [INSTALL_SH, "--dry-run", "--env-file", envPath, "--domain", "tugra.example.com"], {
+          encoding: "utf8",
+          env: { ...cleanEnv, TUGRA_CLOUDFLARE_PROXY: "maybe" },
+        });
+        expect(r.status).not.toBe(0);
+      });
+    });
+
     it("a flag-less re-run (the documented upgrade path) PRESERVES the configured --domain origin", () => {
       const envPath = join(dir, "upgrade.env");
       run(["--domain", "tugra.example.com"], envPath);
@@ -879,6 +928,15 @@ exit 0
       for (const k of Object.keys(webEnv)) {
         expect(k).not.toMatch(/SECRET|KEY|PASSWORD|DATABASE_URL/);
       }
+    });
+
+    it("hands the web container the SAME proxy-trust settings as the hub so it can guard the forwarded client IP", () => {
+      const webEnv = compose.services["web"].environment ?? {};
+      const hubEnv = compose.services["hub-api"].environment ?? {};
+      expect(webEnv.HUB_TRUSTED_PROXY).toBe(hubEnv.HUB_TRUSTED_PROXY);
+      expect(webEnv.HUB_TRUSTED_PROXY).toBe("${HUB_TRUSTED_PROXY:-false}"); // spoof-safe default: off
+      expect(webEnv.HUB_TRUSTED_PROXY_CIDRS).toBe("${HUB_TRUSTED_PROXY_CIDRS:-}");
+      expect(webEnv.HUB_TRUSTED_PROXY_STRICT).toBe("${HUB_TRUSTED_PROXY_STRICT:-false}");
     });
 
     it("runs Redis unauthenticated (BullMQ workers only use host/port)", () => {
