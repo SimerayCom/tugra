@@ -371,7 +371,9 @@ func (h *Hub) VxPutPart(ctx context.Context, srcPath string, buf []byte) error {
 	req.TransferEncoding = nil
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req.Header.Set("User-Agent", h.ua)
-	req.Header.Set("Expect", "")
+	// No Expect header at all: Go never adds one by itself, and Set("Expect", "") would SEND an empty one, which Node
+	// answers with 417 Expectation Failed.
+	req.Header.Del("Expect")
 	resp, err := h.hc.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {

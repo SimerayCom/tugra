@@ -717,6 +717,30 @@ func TestVxPutPartGuards(t *testing.T) {
 	}
 }
 
+// The relay PUT carries no Expect header at all. Node answers 417 to any Expect value other than 100-continue, including
+// an empty one, which is what setting the header to "" sends; every part then failed with "hub 417" in the lab.
+func TestVxPutPartSendsNoExpectHeader(t *testing.T) {
+	var got []string
+	var seen bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got, seen = r.Header["Expect"]
+		if seen && !strings.EqualFold(strings.Join(got, ""), "100-continue") {
+			w.WriteHeader(http.StatusExpectationFailed) // what Node's http server does
+			return
+		}
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	h := newTestHub(t, srv)
+	if err := h.VxPutPart(context.Background(), "/api/v1/agent-vx/t/abcdefghijklmnopqrstuv?exp=1999999999&sig="+strings.Repeat("s", 43), bytes.Repeat([]byte("x"), 4<<20)); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	if seen {
+		t.Fatalf("Expect header sent: %q", got)
+	}
+}
+
 // Two migrators on one host: the reaper at the start of a run removes only helpers whose owner is gone (or unlabelled,
 // or its own), never those of a migrator container that is still running.
 func TestReapStaleHelpersSparesLiveOwners(t *testing.T) {
