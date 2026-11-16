@@ -195,7 +195,8 @@ export class SourceHostFake implements SourceHostPort {
   }
 
   dispose(): void {
-    rmSync(this.dir, { recursive: true, force: true });
+    // The launch script backgrounds the fake migrator, which may still be writing its status file here.
+    rmSync(this.dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 }
 
