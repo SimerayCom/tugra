@@ -23,7 +23,7 @@ import { H, makeRig, zoneRec, type Rig, type RigOpts } from "./testing/cutover-r
 import { FinalizeHandler } from "./finalize.handler";
 import { OBSERVE_CHECK_EVERY_MS, ObserveHandler } from "./observe.handler";
 import { buildSourceBaseline } from "../import/baseline/source-health";
-import type { PostPonrRelease } from "../import/baseline/post-ponr";
+import type { PostPonrRelease, WorkerVerify } from "../import/baseline/post-ponr";
 import type { CutoverWorld } from "./cutover-world.service";
 
 beforeEach(() => jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined));
@@ -47,10 +47,11 @@ async function afterCutover(o: RigOpts = {}): Promise<Rig> {
 }
 
 /** A release double that records what it was asked, so these specs test the hand-off, not the release itself (see post-ponr.spec). */
-const fakeRelease = (undo = { changed: 0, failed: 0 }) => {
-  const run = jest.fn(async () => ({ workersStarted: 1, workersFailed: 0, autoDeployRestored: 1 }));
+const fakeRelease = (undo = { changed: 0, failed: 0 }, workers: WorkerVerify | null = null) => {
+  const run = jest.fn(async (_ctx?: unknown, _opts?: { retry?: boolean }) => ({ workersStarted: 1, workersFailed: 0, autoDeployRestored: 1 }));
   const undoFn = jest.fn(async () => undo);
-  return { release: { run, undo: undoFn } as unknown as PostPonrRelease, run, undo: undoFn };
+  const verify = jest.fn(async () => workers);
+  return { release: { run, undo: undoFn, verify } as unknown as PostPonrRelease, run, undo: undoFn, verify };
 };
 const observeWith = (rig: Rig, release?: PostPonrRelease) => new ObserveHandler(rig.registry, rig.cutover, rig.world as unknown as CutoverWorld, rig.net as never, release);
 
@@ -177,8 +178,85 @@ describe("OBSERVE and FINALIZE release what was held until after the point of no
   });
 });
 
+describe("OBSERVE and FINALIZE check that the held workers came up (R26/C13)", () => {
+  const verdict = (over: Partial<WorkerVerify> = {}): WorkerVerify => ({ total: 2, running: 2, starting: [], failed: [], failedAtSource: [], ...over });
+  const WINDOW = 31 * 60_000;
+
+  it("a worker that failed to start fails the window with its name, and says so as an event, instead of going on to FINALIZE", async () => {
+    const rig = await afterCutover();
+    const f = fakeRelease({ changed: 0, failed: 0 }, verdict({ running: 1, failed: ["queue-worker"] }));
+    const r = await rig.driver.tick(observeWith(rig, f.release));
+    expect(r.fail).toEqual({ code: "observe.workers-not-running", params: { count: 1, workers: ["queue-worker"] }, retryable: true });
+    expect(rig.driver.events.filter((e) => e.code === "release.worker-failed").map((e) => e.params)).toEqual([{ name: "queue-worker" }]);
+  });
+
+  it("a worker that is still starting when the window is over keeps the step waiting, and the step passes once it runs", async () => {
+    const rig = await afterCutover();
+    const f = fakeRelease({ changed: 0, failed: 0 }, verdict({ running: 1, starting: ["mail-worker"] }));
+    const obs = observeWith(rig, f.release);
+    await rig.driver.tick(obs);
+    rig.driver.advance(WINDOW);
+    const waiting = await rig.driver.tick(obs, "timer");
+    expect(waiting.status).toBe("WAITING_TIMER");
+    expect(rig.driver.rec("OBSERVE").wait).toMatchObject({ kind: "timer", code: "observe.workers-starting", params: { count: 1, workers: ["mail-worker"] } });
+    f.verify.mockResolvedValue(verdict());
+    rig.driver.advance(OBSERVE_CHECK_EVERY_MS);
+    expect((await rig.driver.tick(obs, "timer")).status).toBe("PASSED");
+  });
+
+  it("without held workers (null) the window ends exactly as before", async () => {
+    const rig = await afterCutover();
+    const obs = observeWith(rig, fakeRelease().release);
+    await rig.driver.tick(obs);
+    rig.driver.advance(WINDOW);
+    expect((await rig.driver.tick(obs, "timer")).status).toBe("PASSED");
+  });
+
+  it("a retry of the window starts the failed workers again; the first pass does not ask for a rebuild", async () => {
+    const rig = await afterCutover();
+    const f = fakeRelease({ changed: 0, failed: 0 }, verdict({ running: 1, failed: ["queue-worker"] }));
+    const obs = observeWith(rig, f.release);
+    await rig.driver.tick(obs);
+    expect(f.run.mock.calls[0][1]).toEqual({ retry: false });
+    f.verify.mockResolvedValue(verdict());
+    await rig.driver.tick(obs, "retry");
+    expect(f.run.mock.calls[1][1]).toEqual({ retry: true });
+  });
+
+  it("the post gate carries the workers' state: failed and starting fail it, running passes it", async () => {
+    const rig = await afterCutover();
+    const cases: Array<[WorkerVerify, string, string]> = [
+      [verdict({ failed: ["w"] }), "fail", "observe.workers-not-running"],
+      [verdict({ starting: ["w"] }), "fail", "observe.workers-starting"],
+      [verdict(), "pass", "observe.workers-running"],
+    ];
+    for (const [w, status, code] of cases) {
+      const f = fakeRelease({ changed: 0, failed: 0 }, w);
+      const obs = observeWith(rig, f.release);
+      rig.driver.rec("OBSERVE").compensation = { observeStartedAt: rig.driver.now.toISOString() };
+      const o = await obs.observe(rig.driver.contextFor("OBSERVE"));
+      expect(obs.postGate(rig.driver.contextFor("OBSERVE"), o).checks.find((c) => c.id === "observe.workers")).toMatchObject({ status, code });
+    }
+  });
+
+  it("FINALIZE fails the close when a worker did not come up, warns while one is still starting, and passes otherwise", async () => {
+    const rig = await afterCutover({ options: { observeMinutes: 0 } });
+    rig.driver.setStep("OBSERVE", { status: "SKIPPED" });
+    const at = async (w: WorkerVerify | null) => {
+      const fin = new FinalizeHandler(rig.registry, rig.cutover, rig.world as unknown as CutoverWorld, fakeRelease({ changed: 0, failed: 0 }, w).release);
+      const o = await fin.observe(rig.driver.contextFor("FINALIZE"));
+      return fin.postGate(rig.driver.contextFor("FINALIZE"), o).checks.find((c) => c.id === "finalize.workers");
+    };
+    expect(await at(verdict({ failed: ["queue-worker"] }))).toMatchObject({ status: "fail", code: "finalize.workers-not-running", params: { count: 1, workers: ["queue-worker"] } });
+    expect(await at(verdict({ starting: ["queue-worker"] }))).toMatchObject({ status: "warn", code: "finalize.workers-starting" });
+    expect(await at(verdict())).toMatchObject({ status: "pass", code: "finalize.workers-running" });
+    expect(await at(null)).toBeUndefined();
+    expect(await at(verdict({ total: 0, running: 0 }))).toBeUndefined();
+  });
+});
+
 describe("Nest wiring of the release", () => {
-  it("injects the post-PONR release into OBSERVE and FINALIZE when the import steps provide it", async () => {
+  it("injects the post-PONR release into OBSERVE, FINALIZE and TLS_PREISSUE when the import steps provide it", async () => {
     const mod = await Test.createTestingModule({
       imports: [StepRegistryModule],
       providers: [
@@ -208,6 +286,7 @@ describe("Nest wiring of the release", () => {
     const release = mod.get(Release);
     expect((mod.get(ObserveHandler) as unknown as { release: unknown }).release).toBe(release);
     expect((mod.get(FinalizeHandler) as unknown as { release: unknown }).release).toBe(release);
+    expect((mod.get(TlsPreissueHandler) as unknown as { release: unknown }).release).toBe(release);
     await mod.close();
   });
 });

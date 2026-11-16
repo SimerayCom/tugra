@@ -472,11 +472,19 @@ describe("PREFLIGHT safety checks over the plan (R11, R26/C13, R27/C5)", () => {
 
   it("an operator mark moves an app in or out of the worker set", () => {
     const hints = [
-      { kind: "worker-mark" as const, key: "app:_:web", scope: "", value: "job-runner", evidence: "operator-attested" as const },
+      { kind: "worker-mark" as const, key: "app:_:peer", scope: "", value: "job-runner", evidence: "operator-attested" as const },
       { kind: "worker-mark" as const, key: "app:_:queue", scope: "", value: "web", evidence: "operator-attested" as const },
     ];
     const c = byId(preflightChecks(baseRun({ applyInput: aliasInput as never }), baseObs({ plan: workerPlan, hints })), "preflight.workers");
-    expect(c).toMatchObject({ params: { count: 1, items: ["web"] } });
+    expect(c).toMatchObject({ params: { count: 1, items: ["internal-api"] } });
+  });
+
+  it("a job-runner mark on an app that serves a domain fails the check: a cutover host cannot be held back", () => {
+    const hints = [{ kind: "worker-mark" as const, key: "app:_:web", scope: "", value: "job-runner", evidence: "operator-attested" as const }];
+    const checks = preflightChecks(baseRun({ applyInput: aliasInput as never }), baseObs({ plan: workerPlan, hints }));
+    expect(byId(checks, "preflight.job-runner-domain")).toMatchObject({ status: "fail", code: "preflight.job-runner-has-domain", params: { count: 1, items: ["web"] } });
+    expect(byId(checks, "preflight.workers")).toMatchObject({ params: { count: 1, items: ["queue-worker"] } }); // the marked app is not held
+    expect(byId(preflightChecks(baseRun({ applyInput: aliasInput as never }), baseObs({ plan: workerPlan })), "preflight.job-runner-domain")).toBeUndefined();
   });
 
   it("a domain the plan does not state is never read as 'no domain'", () => {

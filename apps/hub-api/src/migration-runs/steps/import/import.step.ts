@@ -41,7 +41,7 @@ import { CLEANUP_REQUEST_KEY, RunAbortRequestedError, type CleanupRequest } from
 import { SESSION_EXPIRED_CODE } from "../../core/run-logic";
 import { IMPORT_STEPS_PORT, type DeploymentRef, type ImportStepsPort, type OpSnapshot, type SessionState } from "./import-ports";
 import { applyInputOf, deployKeyBase, failureOf, hasActive, hasBad, includedItems, isConflict, itemTasks, stopRunApps, unackedBlockers } from "./step-utils";
-import { appTasksOf, targetOfTask, workerSetsOfOp } from "./baseline/op-safety";
+import { appTasksOf, duePinsOf, pinFloatingImages, targetOfTask, workerSetsOfOp } from "./baseline/op-safety";
 import { RUN_HINTS, type RunHint, type RunHintStore } from "./baseline/run-hints";
 
 /** How long a redo waits for orphaned RUNNING tasks to settle before it gives up (the importer's reaper frees them after 10 min). */
@@ -57,6 +57,8 @@ export interface ImportObs extends Observation {
   build: { total: number; pending: Array<{ appId: string; name: string; server: string }> } | null;
   /** Apps of the settled op whose push-to-deploy is still ON (to be switched off). `null` = not observed (op running, or the port cannot say). */
   autoDeployOn: string[] | null;
+  /** R11: how many image apps still have to be pointed at the digest the source runs (0 = none, or already done / not possible with this port). */
+  pinsDue: number;
 }
 
 interface Comp {
@@ -72,6 +74,8 @@ interface Comp {
   autoDeployHeld?: string[];
   /** earlyBuild: the apps whose image build finished (or that have nothing to build). */
   prebuilt?: string[];
+  /** R11: the image apps of THIS op were pointed at the digests the source runs (before any deploy path can start them). */
+  imagesPinned?: boolean;
   [CLEANUP_REQUEST_KEY]?: CleanupRequest;
 }
 
@@ -117,9 +121,10 @@ export class ImportStep implements StepHandler<ImportObs>, OnModuleInit {
     const settledOp = live && !hasActive(op!) && !hasBad(op!);
     const build = settledOp && run.options.deployWaves === "earlyBuild" && this.port.prebuild ? this.buildState(ctx, op!) : null;
     const autoDeployOn = settledOp ? await this.autoDeployOn(ctx, op!) : null;
+    const pinsDue = settledOp && this.port.pinImage && compOf(ctx).imagesPinned !== true ? duePinsOf(op!, hints).length : 0;
     const tasks = op ? itemTasks(op) : [];
     const settled = tasks.filter((t) => !["PENDING", "RUNNING", "AWAITING_CUTOVER"].includes(t.status)).length;
-    return { session, op, wave, build, autoDeployOn, progress: { done: settled, total: tasks.length, unit: "item" } };
+    return { session, op, wave, build, autoDeployOn, pinsDue, progress: { done: settled, total: tasks.length, unit: "item" } };
   }
 
   /** The op's apps whose push-to-deploy is still on. Null when the port cannot read it (nothing to enforce then). */
@@ -191,6 +196,7 @@ export class ImportStep implements StepHandler<ImportObs>, OnModuleInit {
       const ok = w.deployed === w.candidates.length;
       checks.push({ id: "import.early-wave", status: ok ? "pass" : "fail", code: ok ? "import.early-wave-done" : "import.early-wave-pending", params: { deployed: w.deployed, total: w.candidates.length }, evidence: "hub-verified" });
     }
+    if (obs.pinsDue > 0) checks.push({ id: "import.images-pin", status: "fail", code: "import.images-pin-pending", params: { count: obs.pinsDue }, evidence: "hub-verified" });
     if (obs.autoDeployOn) {
       const n = obs.autoDeployOn.length;
       checks.push({ id: "import.auto-deploy", status: n ? "fail" : "pass", code: n ? "import.auto-deploy-pending" : "import.auto-deploy-held", params: { count: n }, evidence: "hub-verified" });
@@ -221,12 +227,31 @@ export class ImportStep implements StepHandler<ImportObs>, OnModuleInit {
       if (comp.redoOpen === true || orphan || (failed && ctx.trigger === "retry")) return this.redo(ctx, obs, op);
       if (active) return { outcome: "continue", pollAfterMs: 2000 };
       if (failed) return { outcome: "fail", code: "import.tasks-failed", params: { failed: itemTasks(op).filter((t) => ["FAILED", "FAILED_VERIFY", "CANCELLED"].includes(t.status)).length }, retryable: true };
+      if (comp.imagesPinned !== true) return this.pinImages(ctx, op);
       if (obs.autoDeployOn?.length) return this.holdAutoDeploy(ctx, obs.autoDeployOn);
       const built = await this.earlyBuild(ctx, obs);
       if (built) return built;
       return this.earlyWave(ctx, obs);
     }
     return this.applyNow(ctx);
+  }
+
+  /**
+   * R11: a floating image app is pointed at the digest the source runs as soon as the op settled, so EVERY later way of starting it
+   * (the early wave, DEPLOY_DARK, the worker release after the point of no return, TLS_PREISSUE's redeploy) runs that digest and
+   * never today's `latest`. Idempotent: an app on its digest, or without a recorded digest, is untouched.
+   */
+  private async pinImages(ctx: StepContext, op: OpSnapshot): Promise<ActResult> {
+    await ctx.assertLease();
+    let pinned: string[];
+    try {
+      pinned = await pinFloatingImages(this.port, ctx.actor.userId, op, await this.hints(ctx.run));
+    } catch (e) {
+      throw failureOf(e, "import.image-pin");
+    }
+    await ctx.recordCompensation({ imagesPinned: true });
+    if (pinned.length) await ctx.emit({ level: "info", code: "import.images-pinned", params: { count: pinned.length } });
+    return { outcome: "continue", pollAfterMs: 1000 };
   }
 
   /**
@@ -301,7 +326,7 @@ export class ImportStep implements StepHandler<ImportObs>, OnModuleInit {
       throw f;
     }
     await ctx.patchRun({ opId });
-    await ctx.recordCompensation({ applyDone: true, adopted: false, redoOpen: false });
+    await ctx.recordCompensation({ applyDone: true, adopted: false, redoOpen: false, imagesPinned: false });
     await ctx.emit({ level: "info", code: "import.applied" });
     return { outcome: "continue", pollAfterMs: 1000 };
   }

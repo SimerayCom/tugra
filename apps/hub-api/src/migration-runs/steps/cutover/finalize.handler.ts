@@ -1,6 +1,6 @@
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { CutoverService } from "../../../cutover/cutover.service";
-import type { ApprovalBinding, DryRunItem, GateResult } from "../../core/dto";
+import type { ApprovalBinding, DryRunItem, GateCheck, GateResult } from "../../core/dto";
 import {
   STEP_HANDLERS,
   StepFailure,
@@ -14,7 +14,7 @@ import {
   type StepHandler,
   type StepHandlerRegistry,
 } from "../../core/run-contract";
-import { PostPonrRelease } from "../import/baseline/post-ponr";
+import { PostPonrRelease, type WorkerVerify } from "../import/baseline/post-ponr";
 import { CutoverStepBase } from "./cutover-step-base";
 import { CutoverWorld, type SwapRow } from "./cutover-world.service";
 import { capHosts, chk, earliestVerified, finalizeBindingHash, hasLoweredUnflippedTtl, type Entry } from "./run-cutover-logic";
@@ -25,6 +25,8 @@ export interface FinalizeObs extends Observation {
   entries: Entry[];
   tokenActive: boolean;
   swap: SwapRow | null;
+  /** The held workers' state (null when the run holds none or cannot say). */
+  workers: WorkerVerify | null;
 }
 
 /**
@@ -62,10 +64,10 @@ export class FinalizeHandler extends CutoverStepBase implements StepHandler<Fina
   async observe(ctx: StepContext): Promise<FinalizeObs> {
     const run = ctx.run;
     const opId = run.opId;
-    const base: FinalizeObs = { opId, topology: run.topology, entries: [], tokenActive: false, swap: null };
+    const base: FinalizeObs = { opId, topology: run.topology, entries: [], tokenActive: false, swap: null, workers: null };
     if (!opId) return base;
     const [view, tokenActive] = await Promise.all([this.cutover.view(ctx.actor.userId, opId), this.world.migrationTokenActive(opId)]);
-    return { ...base, entries: view.entries, tokenActive, swap: run.topology === "swap-proxy" ? await this.world.getSwap(run.id, run.targetServerId) : null };
+    return { ...base, entries: view.entries, tokenActive, swap: run.topology === "swap-proxy" ? await this.world.getSwap(run.id, run.targetServerId) : null, workers: (await this.release?.verify(ctx)) ?? null };
   }
 
   async approvalBinding(ctx: StepContext, obs: FinalizeObs): Promise<ApprovalBinding | null> {
@@ -115,7 +117,7 @@ export class FinalizeHandler extends CutoverStepBase implements StepHandler<Fina
     await ctx.emit({ stepKey: "FINALIZE", level: "info", code: revoked ? "finalize.token-revoked" : "finalize.token-already-revoked" });
     // What the run held back until after the point of no return is released here at the latest (OBSERVE does it when its window
     // opens; with the window skipped this is the first chance). Idempotent: a second release changes nothing and says nothing.
-    await this.release?.run(ctx);
+    await this.release?.run(ctx, { retry: ctx.trigger === "retry" });
     return { outcome: "done" };
   }
 
@@ -127,10 +129,19 @@ export class FinalizeHandler extends CutoverStepBase implements StepHandler<Fina
       chk("finalize.ttl", obs.topology === "swap-proxy" || pending.length === 0 ? "pass" : "fail", "finalize.ttl-pending", { params: { hosts: pending.length }, evidence: "hub-verified" }),
       chk("finalize.ttl-unflipped", obs.topology === "swap-proxy" || lowered.length === 0 ? "pass" : "fail", "finalize.ttl-unflipped-pending", { params: { hosts: capHosts(lowered.map((e) => e.hostname)) }, evidence: "hub-verified" }),
       chk("finalize.token", obs.tokenActive ? "fail" : "pass", "finalize.token-active", { evidence: "hub-verified" }),
+      ...workerChecks(obs.workers),
     ]);
   }
 
   async compensate(_ctx: StepContext, _how: CompensateHow): Promise<CompResult> {
     return { outcome: "nothing-to-do" };
   }
+}
+
+/** A worker that failed to start fails the close (its jobs run nowhere); one that is only still starting is reported, not waited for. */
+function workerChecks(w: WorkerVerify | null): GateCheck[] {
+  if (!w || w.total === 0) return [];
+  if (w.failed.length) return [chk("finalize.workers", "fail", "finalize.workers-not-running", { params: { count: w.failed.length, workers: w.failed.slice(0, 10) }, evidence: "hub-verified" })];
+  if (w.starting.length) return [chk("finalize.workers", "warn", "finalize.workers-starting", { params: { count: w.starting.length, workers: w.starting.slice(0, 10) }, evidence: "hub-verified" })];
+  return [chk("finalize.workers", "pass", "finalize.workers-running", { params: { count: w.running }, evidence: "hub-verified" })];
 }

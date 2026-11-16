@@ -36,7 +36,7 @@ import { deployWindow } from "./baseline/build-window";
 import { floatingImages } from "./baseline/image-pins";
 import { RUN_HINTS, type RunHint, type RunHintStore } from "./baseline/run-hints";
 import { baselineItemRef, buildSourceBaseline, isDegradedAtSource, sameBaseline } from "./baseline/source-health";
-import { isWorker, workerMarks, workerSets } from "./baseline/workers";
+import { isWorker, markConflicts, workerMarks, workerSets } from "./baseline/workers";
 import { RunAbortRequestedError } from "../../core/run-engine.service";
 
 const MEMO_MS = 60_000;
@@ -135,6 +135,12 @@ function safetyChecks(run: RunSnapshot, obs: PreflightObs, plan: ImportPlanRespo
   if (workers.length) {
     const code = policy === "hold-dark" ? "preflight.workers-held" : policy === "exclude" ? "preflight.workers-excluded" : "preflight.workers-start-dark";
     out.push({ id: "preflight.workers", status: policy === "start-dark" ? "warn" : "pass", code, params: { count: workers.length, items: names(workers.map((w) => nameOf.get(w.itemRef) ?? w.itemRef)) }, ...ev });
+  }
+
+  // a `job-runner` mark on an app that serves a domain cannot hold it (a cutover host must run dark): refuse until the mark goes
+  const conflicts = markConflicts(cands, marks);
+  if (conflicts.length) {
+    out.push({ id: "preflight.job-runner-domain", status: "fail", code: "preflight.job-runner-has-domain", params: { count: conflicts.length, items: names(conflicts.map((w) => nameOf.get(w.itemRef) ?? w.itemRef)) }, ...ev });
   }
 
   // R27/C5: the builds that remain inside the downtime window

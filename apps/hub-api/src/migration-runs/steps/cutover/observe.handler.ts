@@ -16,7 +16,7 @@ import {
   type StepHandler,
   type StepHandlerRegistry,
 } from "../../core/run-contract";
-import { PostPonrRelease } from "../import/baseline/post-ponr";
+import { PostPonrRelease, type WorkerVerify } from "../import/baseline/post-ponr";
 import { degradedItemRefs } from "../import/baseline/source-health";
 import { CutoverStepBase } from "./cutover-step-base";
 import { CutoverWorld, type SwapRow } from "./cutover-world.service";
@@ -38,6 +38,8 @@ export interface ObserveObs extends Observation {
   baselineExcluded: number;
   swap: SwapRow | null;
   swapVerify: SwapVerify | null;
+  /** The held workers' state once the window is open (null before, or when the run holds none). */
+  workers: WorkerVerify | null;
 }
 
 /** A VERIFIED host that still answers through the target with a valid certificate and a router (`needsDeploy` is the cutover probe's "router gone / unreachable" flag). */
@@ -92,7 +94,7 @@ export class ObserveHandler extends CutoverStepBase implements StepHandler<Obser
     const run = ctx.run;
     const opId = run.opId;
     const startedAt = compDate(ctx.step.compensation, "observeStartedAt");
-    const base: ObserveObs = { opId, topology: run.topology, entries: [], startedAt, crashes: 0, baselineExcluded: 0, swap: null, swapVerify: null };
+    const base: ObserveObs = { opId, topology: run.topology, entries: [], startedAt, crashes: 0, baselineExcluded: 0, swap: null, swapVerify: null, workers: null };
     if (!opId) return base;
     const view = await this.cutover.view(ctx.actor.userId, opId);
     const obs: ObserveObs = { ...base, entries: view.entries };
@@ -100,6 +102,7 @@ export class ObserveHandler extends CutoverStepBase implements StepHandler<Obser
       const w = await this.watched(run, opId);
       obs.baselineExcluded = w.excluded;
       obs.crashes = await this.world.crashEventsSince(run.targetServerId, w.names, startedAt);
+      obs.workers = (await this.release?.verify(ctx)) ?? null;
     }
     if (run.topology === "swap-proxy") {
       obs.swap = await this.world.getSwap(run.id, run.targetServerId);
@@ -135,8 +138,15 @@ export class ObserveHandler extends CutoverStepBase implements StepHandler<Obser
       if (excluded > 0) await ctx.emit({ stepKey: "OBSERVE", level: "info", code: "observe.baseline-excluded", params: { count: excluded } });
     }
     // after the point of no return Tugra is authoritative: start the held workers, restore push-to-deploy (once per window)
-    if (this.release && compDate(ctx.step.compensation, "releasedAt") === null) {
-      if (await this.release.run(ctx)) await ctx.recordCompensation({ releasedAt: iso(now) });
+    // (a retry of the window starts the workers whose start failed once more)
+    if (this.release && (compDate(ctx.step.compensation, "releasedAt") === null || ctx.trigger === "retry")) {
+      if (await this.release.run(ctx, { retry: ctx.trigger === "retry" })) await ctx.recordCompensation({ releasedAt: iso(now) });
+    }
+    // a worker that did not come up is a failure of the window, never a silent gap: its jobs are not running anywhere
+    const workers = (await this.release?.verify(ctx)) ?? null;
+    if (workers && workers.failed.length > 0) {
+      for (const name of workers.failed) await ctx.emit({ stepKey: "OBSERVE", level: "warn", code: "release.worker-failed", params: { name } });
+      throw new StepFailure("observe.workers-not-running", { count: workers.failed.length, workers: workers.failed.slice(0, 10) }, true);
     }
     const windowEnd = new Date(startedAt.getTime() + minutes * 60_000);
 
@@ -155,7 +165,13 @@ export class ObserveHandler extends CutoverStepBase implements StepHandler<Obser
     const bad = run.topology === "two-box" ? entries.filter((e) => e.state !== "BLOCKED" && e.state !== "EXCLUDED" && e.state !== "ROLLED_BACK" && !hostHealthy(e)).map((e) => e.hostname) : Object.entries(swapVerify ?? {}).filter(([, v]) => !v.ok).map(([h]) => h);
     if (bad.length > 0) throw new StepFailure("observe.host-unhealthy", { hosts: capHosts(bad) }, true);
 
-    if (now >= windowEnd) return { outcome: "done" };
+    if (now >= windowEnd) {
+      if (workers && workers.starting.length === 0) return { outcome: "done" };
+      if (!workers) return { outcome: "done" };
+      // the window itself is over, a held worker is still building or starting: look again soon (a start that fails is caught above)
+      const soon = new Date(now.getTime() + OBSERVE_CHECK_EVERY_MS);
+      return { outcome: "wait", wait: { kind: "timer", notBefore: iso(soon), code: "observe.workers-starting", params: { count: workers.starting.length, workers: workers.starting.slice(0, 10) } } };
+    }
     const next = new Date(Math.min(windowEnd.getTime(), now.getTime() + OBSERVE_CHECK_EVERY_MS));
     return { outcome: "wait", wait: { kind: "timer", notBefore: iso(next), code: "observe.window-open", params: { windowEndsAt: iso(windowEnd), minutes } } };
   }
@@ -172,6 +188,12 @@ export class ObserveHandler extends CutoverStepBase implements StepHandler<Obser
       const bad = Object.entries(obs.swapVerify ?? {}).filter(([, v]) => !v.ok);
       const unknown = obs.swap?.state === "LIVE" && obs.swapVerify === null;
       checks.push(chk("observe.hosts", unknown ? "unknown" : bad.length === 0 ? "pass" : "fail", "observe.host-unhealthy", { params: { hosts: capHosts(bad.map(([h]) => h)) }, evidence: "hub-verified" }));
+    }
+    if (obs.workers) {
+      const w = obs.workers;
+      if (w.failed.length) checks.push(chk("observe.workers", "fail", "observe.workers-not-running", { params: { count: w.failed.length, workers: w.failed.slice(0, 10) }, evidence: "hub-verified" }));
+      else if (w.starting.length) checks.push(chk("observe.workers", "fail", "observe.workers-starting", { params: { count: w.starting.length, workers: w.starting.slice(0, 10) }, evidence: "hub-verified" }));
+      else checks.push(chk("observe.workers", "pass", "observe.workers-running", { params: { count: w.running }, evidence: "hub-verified" }));
     }
     return makeGate(checks);
   }

@@ -5,7 +5,11 @@
  * no return; an abort never starts it.
  *
  * What is NOT a worker although it has no domain: an app another app reaches by name (a mapped `containerAlias`) and an app
- * the operator marked `web`. What IS one although it has a domain: an app the operator marked `job-runner`.
+ * the operator marked `web`. What IS one although it has no further proof: an app the operator marked `job-runner`.
+ *
+ * A held worker never has a primary domain: an app with a hostname is a cutover host (TLS issuance, the router probe, the flip all
+ * need it running dark), so a `job-runner` mark on an app that serves a domain is a CONFLICT, not a worker. {@link markConflicts}
+ * names such marks; PREFLIGHT and DEPLOY_DARK refuse them, and `isWorker` never holds the app in the meantime.
  */
 import type { WorkerPolicy } from "../../../core/run-contract";
 import type { RunApplyInput } from "../../../core/dto";
@@ -28,12 +32,19 @@ export function workerMarks(hints: readonly RunHint[]): Map<string, WorkerMark> 
   return out;
 }
 
+const hasDomain = (c: WorkerCandidate): boolean => typeof c.domain === "string" && c.domain !== "";
+
+/** The apps the operator marked `job-runner` that nevertheless serve a primary domain: the mark cannot hold them (see the file header). */
+export function markConflicts(candidates: readonly WorkerCandidate[], marks: ReadonlyMap<string, WorkerMark>): WorkerCandidate[] {
+  return candidates.filter((c) => c.kind === "app" && marks.get(c.itemRef) === "job-runner" && hasDomain(c));
+}
+
 /** Is this app a worker? An unknown domain is never read as "no domain": without the fact nothing is held. */
 export function isWorker(c: WorkerCandidate, applyInput: Pick<RunApplyInput, "mapping">, marks: ReadonlyMap<string, WorkerMark>): boolean {
   if (c.kind !== "app") return false;
   const mark = marks.get(c.itemRef);
-  if (mark === "job-runner") return true;
   if (mark === "web") return false;
+  if (mark === "job-runner") return !hasDomain(c);
   if (c.domain !== null) return false;
   return !applyInput.mapping?.items?.[c.itemRef]?.containerAlias;
 }

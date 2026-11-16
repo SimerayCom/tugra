@@ -834,6 +834,18 @@
     "release_workers-started": "Started {count} workers that were held until after the cutover.",
     "release_worker-failed": "The worker {name} did not start. Start it from its app page.",
     "release_auto-deploy-restored": "Push-to-deploy is on again for {count} apps.",
-    "release_webhooks-repoint": "{count} apps now deploy on a git push here. Remove the push webhook at the source (its GitHub App or repository webhook) so a push does not deploy twice. For apps without a connected git source, point the repository webhook at the app's Tugra webhook URL."
+    "release_webhooks-repoint": "{count} apps now deploy on a git push here. Remove the push webhook at the source (its GitHub App or repository webhook) so a push does not deploy twice. For apps without a connected git source, point the repository webhook at the app's Tugra webhook URL.",
+    "observe_workers-not-running": "{count} workers did not come up after the cutover: {workers}. Start them from their app pages, then retry the step.",
+    "observe_workers-starting": "{count} workers are still starting: {workers}.",
+    "observe_workers-running": "All {count} held workers are running.",
+    "finalize_workers-not-running": "{count} workers did not come up after the cutover: {workers}. Start them from their app pages, then retry the step.",
+    "finalize_workers-starting": "{count} workers are still starting: {workers}.",
+    "finalize_workers-running": "All {count} held workers are running.",
+    "tls-preissue_worker-not-redeployed": "{count} workers with a hostname were not redeployed here. They stay stopped until after the cutover, so their hostnames cannot be checked yet.",
+    "preflight_job-runner-has-domain": "{count} apps are marked as job runners but serve a domain, and a hostname has to be checked while the app runs next to the source. Remove the job-runner mark or take the domain off the app: {items}.",
+    "deploy-dark_job-runner-has-domain": "{count} apps are marked as job runners but serve a domain, so they cannot be held back. Remove the job-runner mark: {items}.",
+    "import_images-pinned": "{count} apps were pointed at the image digest the source runs instead of a floating tag.",
+    "import_image-pin_failed": "Pointing an imported app at the image digest of the source failed.",
+    "import_images-pin-pending": "{count} image apps still run a floating tag instead of the digest the source runs."
   }
 }

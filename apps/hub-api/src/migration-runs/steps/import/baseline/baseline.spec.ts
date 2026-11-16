@@ -2,7 +2,7 @@ import { DIGEST_RE, floatingImages, imageRepoOf, isFloatingImage, pinFor, pinned
 import { InMemoryRunHints, PrismaRunHints, mergeHints, type RunHint } from "./run-hints";
 import { baselineItemRef, baselineVerdict, buildSourceBaseline, degradedItemRefs, isDegradedAtSource, sameBaseline } from "./source-health";
 import { BUILD_SEC_ASSUMED, START_SEC_ASSUMED, deployWindow } from "./build-window";
-import { isWorker, workerMarks, workerSets } from "./workers";
+import { isWorker, markConflicts, workerMarks, workerSets } from "./workers";
 
 const D1 = `sha256:${"a".repeat(64)}`;
 const D2 = `sha256:${"b".repeat(64)}`;
@@ -80,9 +80,22 @@ describe("workers (R26/C13)", () => {
     expect(isWorker({ itemRef: "database:_:d", kind: "database", domain: null }, input, none)).toBe(false);
   });
 
-  it("a job-runner mark holds an app that has a domain", () => {
-    expect(isWorker({ itemRef: "app:_:j", kind: "app", domain: "j.example.test" }, input, workerMarks([mark("app:_:j", "job-runner")]))).toBe(true);
+  it("a job-runner mark holds an app that has no domain of its own (an aliased internal one, or one the plan does not state a domain for)", () => {
+    expect(isWorker({ itemRef: "app:_:peer", kind: "app", domain: null }, input, workerMarks([mark("app:_:peer", "job-runner")]))).toBe(true);
+    expect(isWorker({ itemRef: "app:_:j", kind: "app", domain: undefined }, input, workerMarks([mark("app:_:j", "job-runner")]))).toBe(true);
     expect([...workerMarks([mark("app:_:j", "bogus"), pin("x", D1)]).keys()]).toEqual([]);
+  });
+
+  it("a job-runner mark on an app that serves a domain is a conflict, not a worker: a cutover host has to run dark", () => {
+    const marks = workerMarks([mark("app:_:j", "job-runner"), mark("app:_:k", "job-runner"), mark("app:_:m", "web")]);
+    const cands = [
+      { itemRef: "app:_:j", kind: "app", domain: "j.example.test" },
+      { itemRef: "app:_:k", kind: "app", domain: null },
+      { itemRef: "app:_:m", kind: "app", domain: "m.example.test" },
+    ];
+    expect(isWorker(cands[0], input, marks)).toBe(false);
+    expect(markConflicts(cands, marks).map((c) => c.itemRef)).toEqual(["app:_:j"]);
+    expect(workerSets(cands, input, marks, "hold-dark").held).toEqual(new Set(["app:_:k"]));
   });
 
   it("the policy decides where workers go: hold-dark holds, exclude excludes, start-dark treats them as ordinary apps", () => {

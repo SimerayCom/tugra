@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { APPLICATIONS_SERVICE } from "../../../applications/applications.tokens";
 import type { ApplicationsService } from "../../../applications/applications.service";
 import { CutoverService } from "../../../cutover/cutover.service";
@@ -19,6 +19,7 @@ import {
   type StepHandler,
   type StepHandlerRegistry,
 } from "../../core/run-contract";
+import { PostPonrRelease } from "../import/baseline/post-ponr";
 import { CutoverStepBase, POLL_MS, rethrowLeaseLost, requireOpId } from "./cutover-step-base";
 import { CutoverWorld } from "./cutover-world.service";
 import { buildDarkProbeScript, classifyDarkHost, parseDarkProbe, type DarkVerdict } from "./dark-probe";
@@ -68,6 +69,7 @@ export class TlsPreissueHandler extends CutoverStepBase implements StepHandler<T
     private readonly world: CutoverWorld,
     private readonly proxyOps: ProxyOpsService,
     @Inject(APPLICATIONS_SERVICE) private readonly apps: ApplicationsService,
+    @Optional() private readonly release?: PostPonrRelease,
   ) {
     super(registry);
   }
@@ -227,7 +229,17 @@ export class TlsPreissueHandler extends CutoverStepBase implements StepHandler<T
 
     // 5. redeploy the apps whose router labels changed (once per app)
     const done = new Set(compStrings(comp, "redeployed"));
-    const todo = trackedEntries(view.entries).filter((e) => e.needsDeploy && !done.has(e.applicationId));
+    // A held (or excluded) worker is never started before the cutover, whatever its router labels say (R26/C13): it is deployed
+    // by the release after the point of no return, or not at all.
+    const withheld = (await this.release?.withheldAppIds(ctx)) ?? new Set<string>();
+    const todo = trackedEntries(view.entries).filter((e) => e.needsDeploy && !done.has(e.applicationId) && !withheld.has(e.applicationId));
+    const skipped = [...new Set(trackedEntries(view.entries).filter((e) => e.needsDeploy && withheld.has(e.applicationId)).map((e) => e.applicationId))];
+    const noted = new Set(compStrings(ctx.step.compensation, "withheldNoted"));
+    if (skipped.some((id) => !noted.has(id))) {
+      for (const id of skipped) noted.add(id);
+      await ctx.recordCompensation({ withheldNoted: [...noted] });
+      await ctx.emit({ stepKey: "TLS_PREISSUE", level: "warn", code: "tls-preissue.worker-not-redeployed", params: { count: skipped.length } });
+    }
     for (const appId of [...new Set(todo.map((e) => e.applicationId))]) {
       await ctx.assertLease();
       // The key is stable across crashes (a re-entered call is deduplicated by the deploy queue); only a retry moves the generation.

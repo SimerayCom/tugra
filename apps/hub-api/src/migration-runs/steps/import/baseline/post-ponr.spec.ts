@@ -3,6 +3,7 @@ import { OwnerInputsSchema, RunOptionsSchema } from "../../../core/dto";
 import type { ImportStepsPort, OpSnapshot } from "../import-ports";
 import { InMemoryRunHints } from "./run-hints";
 import { PostPonrRelease, heldAutoDeployIds } from "./post-ponr";
+import { buildSourceBaseline } from "./source-health";
 
 const PONR = new Date("2026-11-20T09:00:00Z");
 
@@ -21,7 +22,7 @@ function fakePort() {
     tasks: ["a1", "a2", "a3"].map((id, i) => ({ itemRef: `app:_:${id}`, kind: "app", status: "DONE", resourceType: "application", resourceId: id, name: names[id], gitStatus: null, i } as never)),
     planItems: [
       { itemRef: "app:_:a1", kind: "app", dependsOn: [], domain: "web.example.test", image: null },
-      { itemRef: "app:_:a2", kind: "app", dependsOn: [], domain: null, image: null },
+      { itemRef: "app:_:a2", kind: "app", dependsOn: [], domain: null, image: "ghcr.io/example/queue:latest" },
       { itemRef: "app:_:a3", kind: "app", dependsOn: [], domain: null, image: null },
     ],
   };
@@ -43,6 +44,10 @@ function fakePort() {
     stopApp: async (_u: string, id: string) => {
       calls.push(`stop:${id}`);
       status.set(id, "STOPPED");
+    },
+    pinImage: async (_u: string, id: string, digest: string) => {
+      calls.push(`pin:${id}:${digest}`);
+      return { pinned: true };
     },
     autoDeployState: async (_u: string, id: string) => switches.get(id) ?? null,
     setAutoDeploy: async (_u: string, id: string, v: boolean) => {
@@ -99,23 +104,26 @@ describe("PostPonrRelease.run", () => {
     }
   });
 
-  it("start-dark and exclude have no held workers to start; push-to-deploy is still restored", async () => {
-    for (const v of ["start-dark", "exclude"]) {
-      const s = setup({ inputs: OwnerInputsSchema.parse({ workerPolicy: { value: v, source: "request", setBy: "u1", at: "2026-11-20T00:00:00.000Z" } }) });
-      const r = await s.release.run(s.ctx());
-      expect(r).toEqual({ workersStarted: 0, workersFailed: 0, autoDeployRestored: 3 });
-      expect(s.deploys).toEqual([]);
-    }
+  it("start-dark and exclude have no held workers to start; push-to-deploy is restored, except for a worker the run excludes", async () => {
+    const policy = (v: string) => ({ inputs: OwnerInputsSchema.parse({ workerPolicy: { value: v, source: "request", setBy: "u1", at: "2026-11-20T00:00:00.000Z" } }) });
+    const dark = setup(policy("start-dark"));
+    expect(await dark.release.run(dark.ctx())).toEqual({ workersStarted: 0, workersFailed: 0, autoDeployRestored: 3 });
+    expect(dark.deploys).toEqual([]);
+    // a2 and a3 are excluded workers: Tugra created them but a push must never deploy what this run promised not to run
+    const excl = setup(policy("exclude"));
+    expect(await excl.release.run(excl.ctx())).toEqual({ workersStarted: 0, workersFailed: 0, autoDeployRestored: 1 });
+    expect(excl.deploys).toEqual([]);
+    expect(excl.switches).toEqual(new Map([["a1", true], ["a2", false], ["a3", false]]));
   });
 
   it("an operator mark decides what a worker is", async () => {
     const s = setup();
     await s.hints.upsert("run1", [
       { kind: "worker-mark", key: "app:_:a2", scope: "", value: "web", evidence: "operator-attested" },
-      { kind: "worker-mark", key: "app:_:a1", scope: "", value: "job-runner", evidence: "operator-attested" },
+      { kind: "worker-mark", key: "app:_:a1", scope: "", value: "job-runner", evidence: "operator-attested" }, // a1 serves a domain: the mark cannot hold it
     ]);
     await s.release.run(s.ctx());
-    expect(s.deploys.map((d) => d.appId).sort()).toEqual(["a1", "a3"]);
+    expect(s.deploys.map((d) => d.appId).sort()).toEqual(["a3"]);
   });
 
   it("a worker that fails to start is reported once and is not rebuilt in a loop", async () => {
@@ -183,5 +191,69 @@ describe("PostPonrRelease.undo (a reverse puts Coolify back in charge)", () => {
       throw new Error("agent offline");
     };
     expect((await s2.release.undo(s2.ctx())).failed).toBe(2);
+  });
+});
+
+describe("PostPonrRelease: digest pin, verify, retry and the withheld set", () => {
+  const D = `sha256:${"c".repeat(64)}`;
+
+  it("pins a held worker's floating image to the recorded digest right before it is started", async () => {
+    const s = setup();
+    await s.hints.upsert("run1", [{ kind: "image-pin", key: "ghcr.io/example/queue:latest", scope: "", value: D, evidence: "operator-attested" }]);
+    await s.release.run(s.ctx());
+    const order = s.calls.filter((c) => c.startsWith("pin:") || c === "deploy:a2");
+    expect(order).toEqual([`pin:a2:${D}`, "deploy:a2"]);
+    expect(s.driver.events.find((e) => e.code === "deploy-dark.image-pinned")?.params).toEqual({ name: "queue" });
+  });
+
+  it("verify: running, starting (queued, or not started yet) and failed workers are told apart; the baseline excuses one already failing at the source", async () => {
+    const s = setup();
+    expect(await s.release.verify(s.ctx())).toMatchObject({ total: 2, running: 0, starting: ["queue", "mail"], failed: [] }); // nothing started yet
+    s.failDeploy.add("a3");
+    await s.release.run(s.ctx());
+    expect(await s.release.verify(s.ctx())).toEqual({ total: 2, running: 1, starting: [], failed: ["mail"], failedAtSource: [] });
+    s.driver.run.sourceBaseline = buildSourceBaseline([{ kind: "app", ref: "a3", health: "exited", restartCount: 9 }], new Date("2026-11-20T08:00:00Z"));
+    expect(await s.release.verify(s.ctx())).toEqual({ total: 2, running: 1, starting: [], failed: [], failedAtSource: ["mail"] });
+  });
+
+  it("verify: a started worker that is not RUNNING, and one whose app vanished, are failures", async () => {
+    const s = setup();
+    await s.release.run(s.ctx());
+    s.status.set("a2", "STOPPED");
+    s.status.delete("a3");
+    expect(await s.release.verify(s.ctx())).toMatchObject({ running: 0, failed: ["queue", "mail"] });
+  });
+
+  it("verify answers null when the run may not release yet, and when there is nothing to hold", async () => {
+    for (const over of [{ ponrAt: null }, { dryRun: true }, { status: "ABORTED" as const }, { opId: null }]) {
+      const s = setup(over);
+      expect(await s.release.verify(s.ctx())).toBeNull();
+    }
+    const s = setup({ inputs: OwnerInputsSchema.parse({ workerPolicy: { value: "start-dark", source: "request", setBy: "u1", at: "2026-11-20T00:00:00.000Z" } }) });
+    expect(await s.release.verify(s.ctx())).toBeNull();
+  });
+
+  it("a retry rebuilds a worker whose start failed once, under a new numbered key; a plain pass still does not", async () => {
+    const s = setup();
+    s.failDeploy.add("a3");
+    await s.release.run(s.ctx());
+    s.failDeploy.clear();
+    await s.release.run(s.ctx());
+    expect(s.deploys.filter((d) => d.appId === "a3")).toHaveLength(1);
+    const r = await s.release.run(s.ctx(), { retry: true });
+    expect(r).toMatchObject({ workersStarted: 1 });
+    expect(s.deploys.filter((d) => d.appId === "a3").map((d) => d.key)).toEqual(["migrun:run1:a3", "migrun:run1:a3:1"]);
+    expect(await s.release.verify(s.ctx())).toMatchObject({ running: 2, failed: [] });
+  });
+
+  it("withheldAppIds names the held and the excluded workers, so nothing else starts them before the cutover", async () => {
+    const s = setup();
+    expect([...(await s.release.withheldAppIds(s.ctx()))].sort()).toEqual(["a2", "a3"]);
+    const ex = setup({ inputs: OwnerInputsSchema.parse({ workerPolicy: { value: "exclude", source: "request", setBy: "u1", at: "2026-11-20T00:00:00.000Z" } }) });
+    expect([...(await ex.release.withheldAppIds(ex.ctx()))].sort()).toEqual(["a2", "a3"]);
+    const dark = setup({ inputs: OwnerInputsSchema.parse({ workerPolicy: { value: "start-dark", source: "request", setBy: "u1", at: "2026-11-20T00:00:00.000Z" } }) });
+    expect([...(await dark.release.withheldAppIds(dark.ctx()))]).toEqual([]);
+    const none = setup({ opId: null });
+    expect([...(await none.release.withheldAppIds(none.ctx()))]).toEqual([]);
   });
 });

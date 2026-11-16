@@ -223,30 +223,56 @@ describe("DEPLOY_DARK workers (R26/C13)", () => {
     expect(comp.appIds).toEqual([appIdOf(w, "web")]); // an abort has nothing of the worker's to stop
   });
 
-  it("an operator mark makes a domain-bearing app a worker and a domainless one a normal app", async () => {
+  it("an operator `web` mark makes a domainless app a normal app", async () => {
     const { w, hints } = safetyWorld(items);
     const mark = (key: string, value: string): RunHint => ({ kind: "worker-mark", key, scope: "", value, evidence: "operator-attested" });
-    await hints.upsert("pending", []);
     const id = await w.create();
-    await hints.upsert(id, [mark("app:_:web", "job-runner"), mark("app:_:queue", "web")]);
+    await hints.upsert(id, [mark("app:_:queue", "web")]);
     await w.start(id);
     await w.settle(id);
     expect(w.status(id)).toBe("COMPLETED");
-    expect(deployed(w)).toEqual(["queue-worker"]);
+    expect(deployed(w)).toEqual(["queue-worker", "web"]);
+  });
+
+  it("a job-runner mark on an app that serves a domain, set after PREFLIGHT, is refused before anything is deployed and clears when the mark goes", async () => {
+    // PREFLIGHT refuses such a mark itself (see preflight.step.spec); here it only appears once the import has started
+    class LateMarks extends InMemoryRunHints {
+      hide = true;
+      override async list(runId: string, parent?: string | null): Promise<RunHint[]> {
+        return (await super.list(runId, parent)).filter((h) => !this.hide || h.kind !== "worker-mark");
+      }
+    }
+    const hints = new LateMarks();
+    const { w } = safetyWorld(items, hints);
+    const apply = w.port.apply.bind(w.port);
+    w.port.apply = async (u, i) => {
+      hints.hide = false;
+      return apply(u, i);
+    };
+    const id = await w.create();
+    await hints.upsert(id, [{ kind: "worker-mark", key: "app:_:web", scope: "", value: "job-runner", evidence: "operator-attested" }]);
+    await w.start(id);
+    await w.settle(id);
+    expect(w.stepStatus(id, "DEPLOY_DARK")).toBe("WAITING_OPERATOR");
+    expect((await w.view(id)).nextAction).toMatchObject({ kind: "gate", stepKey: "DEPLOY_DARK", code: "deploy-dark.job-runner-has-domain" });
+    expect(deployed(w)).toEqual([]); // not even the domainless worker, and certainly not the marked app
+    const step = await dd(w, id);
+    expect(step.gate!.checks).toEqual(expect.arrayContaining([expect.objectContaining({ code: "deploy-dark.job-runner-has-domain", status: "fail", params: { count: 1, items: ["web"] } })]));
+    await hints.remove(id, [{ kind: "worker-mark", key: "app:_:web", scope: "" }]);
+    await w.tick();
+    expect(w.status(id)).toBe("COMPLETED");
+    expect(deployed(w)).toEqual(["web"]);
   });
 
   it("a promoted run reads the marks its dry-run was given", async () => {
     const { w, hints } = safetyWorld(items);
     const dry = await w.create({ dryRun: true });
-    await hints.upsert(dry, [
-      { kind: "worker-mark", key: "app:_:web", scope: "", value: "job-runner", evidence: "operator-attested" },
-      { kind: "worker-mark", key: "app:_:queue", scope: "", value: "web", evidence: "operator-attested" },
-    ]);
+    await hints.upsert(dry, [{ kind: "worker-mark", key: "app:_:queue", scope: "", value: "web", evidence: "operator-attested" }]);
     await w.settle(dry);
     const real = (await w.service.start(ACTOR, dry, {})).id;
     expect(real).not.toBe(dry);
     await w.settle(real);
-    expect(deployed(w)).toEqual(["queue-worker"]);
+    expect(deployed(w)).toEqual(["queue-worker", "web"]);
   });
 
   it("start-dark deploys the worker like any app; exclude never deploys it", async () => {
@@ -295,25 +321,37 @@ describe("DEPLOY_DARK workers (R26/C13)", () => {
 describe("DEPLOY_DARK image pins (R11)", () => {
   const items = [item("app:src-a:img", "proxy", { source: "IMAGE", image: "ghcr.io/example/imageproxy:latest", domain: "img.example.test" })];
 
-  it("a floating image app is pinned to the digest the source runs before it is deployed", async () => {
-    const hints = new InMemoryRunHints();
-    const { w } = safetyWorld(items, hints);
-    const pinned: Array<[string, string]> = [];
+  /** Like the real port: the first pin of an app changes it, a repeat finds it already on its digest. */
+  const statefulPin = (w: RunWorld, pinned: Array<[string, string]>) => {
+    const done = new Set<string>();
     (w.port as unknown as { pinImage: (u: string, a: string, d: string) => Promise<{ pinned: boolean }> }).pinImage = async (_u, appId, digest) => {
       w.port.calls.push(`pin:${appId}`);
+      if (done.has(appId)) return { pinned: false };
+      done.add(appId);
       pinned.push([appId, digest]);
       return { pinned: true };
     };
+  };
+  const pin = { kind: "image-pin" as const, key: "ghcr.io/example/imageproxy:latest", scope: "src-a", value: DIGEST, evidence: "host-loop-reported" as const };
+
+  it("a floating image app is pinned to the digest the source runs as soon as the import settled, before any deploy path can start it", async () => {
+    const hints = new InMemoryRunHints();
+    const { w } = safetyWorld(items, hints);
+    const pinned: Array<[string, string]> = [];
+    statefulPin(w, pinned);
     const id = await w.create();
-    await hints.upsert(id, [{ kind: "image-pin", key: "ghcr.io/example/imageproxy:latest", scope: "src-a", value: DIGEST, evidence: "host-loop-reported" }]);
+    await hints.upsert(id, [pin]);
     await w.start(id);
     await w.settle(id);
     expect(w.status(id)).toBe("COMPLETED");
     expect(pinned).toEqual([[appIdOf(w, "proxy"), DIGEST]]);
     const order = w.port.calls.filter((c) => c.startsWith("pin:") || c.startsWith("deploy:"));
     expect(order[0].startsWith("pin:")).toBe(true);
-    expect(order[1].startsWith("deploy:")).toBe(true);
-    expect((await w.service.events(ACTOR, id, { afterSeq: 0, limit: 500 })).events.some((e) => e.code === "deploy-dark.image-pinned")).toBe(true);
+    expect(order.find((c) => c.startsWith("deploy:"))).toBeDefined();
+    expect(order.indexOf(order.find((c) => c.startsWith("deploy:"))!)).toBeGreaterThan(0);
+    const events = (await w.service.events(ACTOR, id, { afterSeq: 0, limit: 500 })).events;
+    expect(events.find((e) => e.code === "import.images-pinned")?.params).toEqual({ count: 1 });
+    expect(events.some((e) => e.code === "deploy-dark.image-pinned")).toBe(false); // already pinned: DEPLOY_DARK has nothing to change
   });
 
   it("with no recorded digest the image is deployed as it is (PREFLIGHT made the operator accept that)", async () => {

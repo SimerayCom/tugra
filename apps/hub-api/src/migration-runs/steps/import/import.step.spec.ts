@@ -3,6 +3,7 @@ import { ACTOR, RunWorld, defaultPlan } from "../../core/testing/run-world";
 import { CLEANUP_REQUEST_KEY } from "../../core/run-engine.service";
 import { TEAM } from "../../core/testing/run-world";
 import { item, safetyWorld } from "./testing/safety-world";
+import { InMemoryRunHints } from "./baseline/run-hints";
 
 // the specs drive a whole run through the engine on a fake clock; give a loaded CI machine room
 jest.setTimeout(30_000);
@@ -420,5 +421,82 @@ describe("IMPORT earlyStateless never starts a held worker (R26/C13)", () => {
     expect(w.port.deploys.map((d) => d.appId).sort()).toEqual([idOf(w, "api"), idOf(w, "web")].sort());
     const comp = w.store.step(id, "IMPORT").compensation as { earlyAppIds: string[] };
     expect(comp.earlyAppIds).not.toContain(idOf(w, "queue-worker"));
+  });
+});
+
+describe("IMPORT pins floating images before any deploy path (R11)", () => {
+  const DIGEST = `sha256:${"e".repeat(64)}`;
+  const imgItems = [
+    item("app:src-a:img", "proxy", { source: "IMAGE", image: "ghcr.io/example/imageproxy:latest", domain: "img.example.test" }),
+    item("app:src-a:tunnel", "tunnel-agent", { source: "IMAGE", image: "ghcr.io/example/tunnel", domain: null }),
+  ];
+  const pins = [
+    { kind: "image-pin" as const, key: "ghcr.io/example/imageproxy:latest", scope: "src-a", value: DIGEST, evidence: "host-loop-reported" as const },
+    { kind: "image-pin" as const, key: "ghcr.io/example/tunnel", scope: "", value: DIGEST, evidence: "operator-attested" as const },
+  ];
+  const record = (w: SafetyWorld) => {
+    const pinned: Array<[string, string]> = [];
+    const done = new Set<string>();
+    (w.port as unknown as { pinImage: unknown }).pinImage = async (_u: string, appId: string, digest: string) => {
+      w.port.calls.push(`pin:${appId}`);
+      if (done.has(appId)) return { pinned: false };
+      done.add(appId);
+      pinned.push([w.port.apps.get(appId)!.name, digest]);
+      return { pinned: true };
+    };
+    return pinned;
+  };
+
+  it("an app the early wave deploys, and a worker that is only released after the point of no return, are both pinned first", async () => {
+    const hints = new InMemoryRunHints();
+    const { w } = safetyWorld(imgItems, hints);
+    const pinned = record(w);
+    const id = await w.create({ options: earlyOpts(w, { deployWaves: "earlyStateless" }) });
+    await hints.upsert(id, pins);
+    await w.start(id);
+    await w.settle(id);
+    expect(w.status(id)).toBe("COMPLETED");
+    // the held worker (no domain) is pinned at IMPORT although nothing deploys it before the cutover
+    expect(pinned.sort()).toEqual([["proxy", DIGEST], ["tunnel-agent", DIGEST]]);
+    const firstDeploy = w.port.calls.findIndex((c) => c.startsWith("deploy:"));
+    expect(w.port.calls.filter((c) => c.startsWith("pin:")).length).toBeGreaterThan(0);
+    expect(w.port.calls.findIndex((c) => c.startsWith("pin:") && c.endsWith(idOf(w, "tunnel-agent")))).toBeLessThan(firstDeploy);
+    expect(w.port.calls.findIndex((c) => c.startsWith("pin:") && c.endsWith(idOf(w, "proxy")))).toBeLessThan(firstDeploy);
+    expect(w.port.deploys.map((d) => d.appId)).toEqual([idOf(w, "proxy")]); // the worker stays stopped
+  });
+
+  it("the step does not pass until the pins are applied, and a failing pin fails it retryably", async () => {
+    const hints = new InMemoryRunHints();
+    const { w } = safetyWorld(imgItems, hints);
+    record(w);
+    let fail = true;
+    const orig = (w.port as unknown as { pinImage: (u: string, a: string, d: string) => Promise<{ pinned: boolean }> }).pinImage;
+    (w.port as unknown as { pinImage: unknown }).pinImage = async (u: string, a: string, d: string) => {
+      if (fail) throw new Error("registry denied");
+      return orig(u, a, d);
+    };
+    const id = await w.create();
+    await hints.upsert(id, pins);
+    await w.start(id);
+    await w.settle(id);
+    expect(w.store.row(id).failureCode).toBe("import.image-pin.failed");
+    expect(w.port.deploys).toEqual([]);
+    fail = false;
+    await w.service.retry(ACTOR, id, "IMPORT", {});
+    await w.settle(id, "retry");
+    expect(w.status(id)).toBe("COMPLETED");
+  });
+
+  it("an image on a version tag is never touched, even when a digest was recorded for that exact ref", async () => {
+    const hints = new InMemoryRunHints();
+    const { w } = safetyWorld([item("app:src-a:v", "versioned", { source: "IMAGE", image: "ghcr.io/example/app:1.2.3", domain: "v.example.test" })], hints);
+    const pinned = record(w);
+    const id = await w.create();
+    await hints.upsert(id, [{ kind: "image-pin", key: "ghcr.io/example/app:1.2.3", scope: "", value: DIGEST, evidence: "operator-attested" }]);
+    await w.start(id);
+    await w.settle(id);
+    expect(w.status(id)).toBe("COMPLETED");
+    expect(pinned).toEqual([]);
+    expect(w.port.calls.some((c) => c.startsWith("pin:"))).toBe(false);
   });
 });
