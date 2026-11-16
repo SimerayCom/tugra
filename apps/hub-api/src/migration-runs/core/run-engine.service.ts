@@ -225,6 +225,7 @@ export class RunEngineService implements OnModuleDestroy {
         hb.unref?.();
       }
       await this.loop(runId, d, c.previousOwner && c.previousOwner !== this.bootId && trigger === "tick" ? "recover" : trigger);
+      await this.runCommands(d); // a command that raced the end of the pass still runs under the lease
     } catch (e) {
       if (e instanceof RunLeaseLostError) this.logger.warn(`run ${runId}: lease lost, stopping`);
       else this.logger.warn(`run ${runId}: engine pass failed: ${errLog(e)}`);

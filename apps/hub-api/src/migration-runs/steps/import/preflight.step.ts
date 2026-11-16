@@ -8,6 +8,7 @@
  * run IS this step.
  */
 import { Inject, Injectable, OnModuleInit } from "@nestjs/common";
+import { validateAcmeEmail } from "../../../deploy/panel-router";
 import type { ImportPlanResponse } from "../../../importer/importer.service";
 import type { ResolvedMapping } from "../../../importer/import-mapping";
 import type { ServicePreview } from "../../../importer/service-preview";
@@ -29,6 +30,16 @@ import { IMPORT_STEPS_PORT, type ImportStepsPort, type SessionState, type Target
 import { Memo, failureOf, includedItems, isPassive, itemsFromChecks, softenAckable, unackedBlockers } from "./step-utils";
 
 const MEMO_MS = 60_000;
+
+/** The same rule the proxy applies (`validateAcmeEmail`): a syntactically valid address on a non-placeholder domain. */
+function isRealAcmeEmail(v: string): boolean {
+  try {
+    validateAcmeEmail(v);
+    return true;
+  } catch {
+    return false;
+  }
+}
 const CAPS_NEEDED = ["deploy", "database"] as const;
 
 export interface PreflightObs extends Observation {
@@ -132,11 +143,15 @@ export function preflightChecks(run: RunSnapshot, obs: PreflightObs): GateCheck[
   const missing = CAPS_NEEDED.filter((k) => !t.capabilities.includes(k));
   if (missing.length) c.push({ id: "preflight.capabilities", status: "fail", code: "preflight.capability-missing", params: { capabilities: [...missing] }, ...ev });
   const email = run.inputs.acmeEmail;
-  const emailAnswered = !!email && email.value !== "unknown";
+  const answered = !!email && email.value !== "unknown";
+  // an answered address must be a REAL one (not example/test/localhost): TLS_PREISSUE and CUTOVER refuse a placeholder
+  const answeredOk = answered && isRealAcmeEmail(String(email!.value));
   c.push(
-    emailAnswered || t.acmeEmailOk
-      ? { id: "preflight.acme-email", status: "pass", code: emailAnswered ? "preflight.acme-email-input" : "preflight.acme-email-ok", ...ev }
-      : { id: "preflight.acme-email", status: "warn", code: "preflight.acme-email-missing", ownerInput: "acmeEmail", ...ev },
+    answeredOk
+      ? { id: "preflight.acme-email", status: "pass", code: "preflight.acme-email-input", ...ev }
+      : t.acmeEmailOk
+        ? { id: "preflight.acme-email", status: "pass", code: "preflight.acme-email-ok", ...ev }
+        : { id: "preflight.acme-email", status: "warn", code: answered ? "preflight.acme-email-invalid" : "preflight.acme-email-missing", ownerInput: "acmeEmail", ...ev },
   );
   if (run.topology === "two-box" && t.proxyBind !== "public") c.push({ id: "preflight.proxy-bind", status: "warn", code: "preflight.proxy-not-public", params: { bind: t.proxyBind ?? "unknown" }, ...ev });
   if (!t.dnsCredential) c.push({ id: "preflight.dns", status: "warn", code: "preflight.dns-manual", ...ev });

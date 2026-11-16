@@ -135,10 +135,12 @@ describe("PREFLIGHT checks (pure)", () => {
   });
 
   it("an answered acmeEmail input satisfies the ACME check; the topology swap-proxy has no proxy-bind check", () => {
-    const inputs = OwnerInputsSchema.parse({ acmeEmail: { value: "ops@example.com", source: "request", setBy: "u1", at: "2026-11-23T00:00:00.000Z" } });
+    const inputs = OwnerInputsSchema.parse({ acmeEmail: { value: "ops@acme-corp.dev", source: "request", setBy: "u1", at: "2026-11-23T00:00:00.000Z" } });
     const cs = preflightChecks(run({ inputs, topology: "swap-proxy" }), obs({ target: target({ acmeEmailOk: false, proxyBind: "none" }) }));
     expect(byId(cs, "preflight.acme-email")).toMatchObject({ status: "pass", code: "preflight.acme-email-input" });
     expect(byId(cs, "preflight.proxy-bind")).toBeUndefined();
+    const placeholder = OwnerInputsSchema.parse({ acmeEmail: { value: "ops@example.com", source: "request", setBy: "u1", at: "2026-11-23T00:00:00.000Z" } });
+    expect(byId(preflightChecks(run({ inputs: placeholder }), obs({ target: target({ acmeEmailOk: false }) })), "preflight.acme-email")).toMatchObject({ status: "warn", code: "preflight.acme-email-invalid", ownerInput: "acmeEmail" });
     const unknown = OwnerInputsSchema.parse({ acmeEmail: { value: "unknown", source: "request", setBy: "u1", at: "2026-11-23T00:00:00.000Z" } });
     expect(byId(preflightChecks(run({ inputs: unknown }), obs({ target: target({ acmeEmailOk: false }) })), "preflight.acme-email")?.status).toBe("warn");
   });
