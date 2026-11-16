@@ -3,7 +3,7 @@ import { resolveOwnerInput, type RunSnapshot } from "../../../core/run-contract"
 import type { ImportStepsPort, OpSnapshot, OpTask } from "../import-ports";
 import { isFloatingImage, pinFor, serverRefOfItem } from "./image-pins";
 import type { RunHint } from "./run-hints";
-import { markConflicts, workerMarks, workerSets, type WorkerSets } from "./workers";
+import { markConflicts, unmatchedMarks, workerMarks, workerSets, type WorkerSets } from "./workers";
 
 /** The op's app tasks that produced a Tugra application. */
 export const appTasksOf = (op: OpSnapshot): OpTask[] => op.tasks.filter((t) => t.kind === "app" && t.status === "DONE" && t.resourceType === "application" && !!t.resourceId);
@@ -26,6 +26,12 @@ export function markConflictsOfOp(op: OpSnapshot, hints: readonly RunHint[]): Ar
   const cands = op.planItems.filter((i) => i.kind === "app").map((i) => ({ itemRef: i.itemRef, kind: i.kind, domain: i.domain }));
   const nameOf = new Map(op.tasks.filter((t) => !!t.itemRef).map((t) => [t.itemRef as string, t.name ?? (t.itemRef as string)]));
   return markConflicts(cands, workerMarks(hints)).map((c) => ({ itemRef: c.itemRef, name: nameOf.get(c.itemRef) ?? c.itemRef }));
+}
+
+/** The itemRefs the operator marked that name no app of the op (see `unmatchedMarks`). */
+export function unmatchedMarksOfOp(op: OpSnapshot, hints: readonly RunHint[]): string[] {
+  const cands = op.planItems.map((i) => ({ itemRef: i.itemRef, kind: i.kind, domain: i.domain }));
+  return unmatchedMarks(cands, workerMarks(hints));
 }
 
 /** The image apps of the op that run a FLOATING tag for which a digest is recorded (R11): what has to be pinned before any deploy path starts them. */

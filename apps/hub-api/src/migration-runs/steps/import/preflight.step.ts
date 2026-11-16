@@ -36,7 +36,7 @@ import { deployWindow } from "./baseline/build-window";
 import { floatingImages } from "./baseline/image-pins";
 import { RUN_HINTS, type RunHint, type RunHintStore } from "./baseline/run-hints";
 import { baselineItemRef, buildSourceBaseline, isDegradedAtSource, sameBaseline } from "./baseline/source-health";
-import { isWorker, markConflicts, workerMarks, workerSets } from "./baseline/workers";
+import { isWorker, markConflicts, unmatchedMarks, workerMarks, workerSets } from "./baseline/workers";
 import { RunAbortRequestedError } from "../../core/run-engine.service";
 
 const MEMO_MS = 60_000;
@@ -141,6 +141,12 @@ function safetyChecks(run: RunSnapshot, obs: PreflightObs, plan: ImportPlanRespo
   const conflicts = markConflicts(cands, marks);
   if (conflicts.length) {
     out.push({ id: "preflight.job-runner-domain", status: "fail", code: "preflight.job-runner-has-domain", params: { count: conflicts.length, items: names(conflicts.map((w) => nameOf.get(w.itemRef) ?? w.itemRef)) }, ...ev });
+  }
+
+  // a mark is looked up by exact item ref: one that names no app of the plan is ignored, and the real worker would start dark
+  const unmatched = unmatchedMarks(items.map((i) => ({ itemRef: i.itemRef, kind: i.kind })), marks);
+  if (unmatched.length) {
+    out.push({ id: "preflight.worker-mark-unmatched", status: "fail", code: "preflight.worker-mark-unmatched", params: { count: unmatched.length, items: names(unmatched) }, ...ev });
   }
 
   // R27/C5: the builds that remain inside the downtime window

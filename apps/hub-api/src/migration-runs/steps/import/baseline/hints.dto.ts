@@ -46,7 +46,7 @@ export const SetWorkerMarksSchema = z
           .object({
             /** The plan itemRef of the app (`app:<server>:<ref>`). */
             itemRef: z.string().min(1).max(340),
-            /** `job-runner`: held until after the cutover even with a domain; `web`: starts dark even without one; `null` removes the mark. */
+            /** `job-runner`: held until after the cutover (an app with no domain; one that serves a domain is refused by PREFLIGHT); `web`: starts dark even without one; `null` removes the mark. */
             role: z.enum(WORKER_MARKS).nullable(),
           })
           .strict(),

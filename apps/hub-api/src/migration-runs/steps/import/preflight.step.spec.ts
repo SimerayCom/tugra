@@ -487,6 +487,19 @@ describe("PREFLIGHT safety checks over the plan (R11, R26/C13, R27/C5)", () => {
     expect(byId(preflightChecks(baseRun({ applyInput: aliasInput as never }), baseObs({ plan: workerPlan })), "preflight.job-runner-domain")).toBeUndefined();
   });
 
+  it("a mark that matches no app of the plan fails the check, so a typo cannot leave the real worker running next to the source", () => {
+    const typo = { kind: "worker-mark" as const, key: "app:_:queu", scope: "", value: "job-runner", evidence: "operator-attested" as const };
+    const checks = preflightChecks(baseRun({ applyInput: aliasInput as never }), baseObs({ plan: workerPlan, hints: [typo] }));
+    expect(byId(checks, "preflight.worker-mark-unmatched")).toMatchObject({ status: "fail", code: "preflight.worker-mark-unmatched", params: { count: 1, items: ["app:_:queu"] } });
+    // a mark on a database item is no app mark either
+    const dbMark = { ...typo, key: "database:_:db" };
+    expect(byId(preflightChecks(baseRun({ applyInput: aliasInput as never }), baseObs({ plan: workerPlan, hints: [dbMark] })), "preflight.worker-mark-unmatched")).toMatchObject({ status: "fail" });
+    // a mark that names a real app, and no mark at all, raise nothing
+    const good = { ...typo, key: "app:_:queue" };
+    expect(byId(preflightChecks(baseRun({ applyInput: aliasInput as never }), baseObs({ plan: workerPlan, hints: [good] })), "preflight.worker-mark-unmatched")).toBeUndefined();
+    expect(byId(preflightChecks(baseRun({ applyInput: aliasInput as never }), baseObs({ plan: workerPlan })), "preflight.worker-mark-unmatched")).toBeUndefined();
+  });
+
   it("a domain the plan does not state is never read as 'no domain'", () => {
     const p = plan([{ itemRef: "app:_:a", kind: "app", name: "a", proposed: { source: "GIT" } }]);
     expect(byId(preflightChecks(baseRun(), baseObs({ plan: p })), "preflight.workers")).toBeUndefined();

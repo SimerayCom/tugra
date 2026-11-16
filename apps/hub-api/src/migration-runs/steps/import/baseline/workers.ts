@@ -9,7 +9,8 @@
  *
  * A held worker never has a primary domain: an app with a hostname is a cutover host (TLS issuance, the router probe, the flip all
  * need it running dark), so a `job-runner` mark on an app that serves a domain is a CONFLICT, not a worker. {@link markConflicts}
- * names such marks; PREFLIGHT and DEPLOY_DARK refuse them, and `isWorker` never holds the app in the meantime.
+ * names such marks; PREFLIGHT and DEPLOY_DARK refuse them, and `isWorker` never holds the app in the meantime. A mark that matches
+ * no app of the plan at all is refused the same way ({@link unmatchedMarks}).
  */
 import type { WorkerPolicy } from "../../../core/run-contract";
 import type { RunApplyInput } from "../../../core/dto";
@@ -37,6 +38,15 @@ const hasDomain = (c: WorkerCandidate): boolean => typeof c.domain === "string" 
 /** The apps the operator marked `job-runner` that nevertheless serve a primary domain: the mark cannot hold them (see the file header). */
 export function markConflicts(candidates: readonly WorkerCandidate[], marks: ReadonlyMap<string, WorkerMark>): WorkerCandidate[] {
   return candidates.filter((c) => c.kind === "app" && marks.get(c.itemRef) === "job-runner" && hasDomain(c));
+}
+
+/**
+ * The marks whose itemRef names no app of the plan (a typo, a database ref, an item the run does not import). A mark is looked up
+ * by exact itemRef, so such a mark is silently ignored: the real worker would start dark next to the live source. Fail closed.
+ */
+export function unmatchedMarks(candidates: readonly WorkerCandidate[], marks: ReadonlyMap<string, WorkerMark>): string[] {
+  const apps = new Set(candidates.filter((c) => c.kind === "app").map((c) => c.itemRef));
+  return [...marks.keys()].filter((ref) => !apps.has(ref)).sort();
 }
 
 /** Is this app a worker? An unknown domain is never read as "no domain": without the fact nothing is held. */

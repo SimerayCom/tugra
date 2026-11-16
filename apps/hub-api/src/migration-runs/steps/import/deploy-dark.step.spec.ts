@@ -264,6 +264,34 @@ describe("DEPLOY_DARK workers (R26/C13)", () => {
     expect(deployed(w)).toEqual(["web"]);
   });
 
+  it("a mark that names no app of the plan stops DEPLOY_DARK before anything is deployed, and clears when the mark goes", async () => {
+    class LateMarks extends InMemoryRunHints {
+      hide = true;
+      override async list(runId: string, parent?: string | null): Promise<RunHint[]> {
+        return (await super.list(runId, parent)).filter((h) => !this.hide || h.kind !== "worker-mark");
+      }
+    }
+    const hints = new LateMarks();
+    const { w } = safetyWorld(items, hints);
+    const apply = w.port.apply.bind(w.port);
+    w.port.apply = async (u, i) => {
+      hints.hide = false;
+      return apply(u, i);
+    };
+    const id = await w.create();
+    await hints.upsert(id, [{ kind: "worker-mark", key: "app:_:queu", scope: "", value: "job-runner", evidence: "operator-attested" }]);
+    await w.start(id);
+    await w.settle(id);
+    expect(w.stepStatus(id, "DEPLOY_DARK")).toBe("WAITING_OPERATOR");
+    expect((await w.view(id)).nextAction).toMatchObject({ kind: "gate", stepKey: "DEPLOY_DARK", code: "deploy-dark.worker-mark-unmatched" });
+    expect(deployed(w)).toEqual([]);
+    const step = await dd(w, id);
+    expect(step.gate!.checks).toEqual(expect.arrayContaining([expect.objectContaining({ code: "deploy-dark.worker-mark-unmatched", status: "fail", params: { count: 1, items: ["app:_:queu"] } })]));
+    await hints.remove(id, [{ kind: "worker-mark", key: "app:_:queu", scope: "" }]);
+    await w.tick();
+    expect(w.status(id)).toBe("COMPLETED");
+  });
+
   it("a promoted run reads the marks its dry-run was given", async () => {
     const { w, hints } = safetyWorld(items);
     const dry = await w.create({ dryRun: true });

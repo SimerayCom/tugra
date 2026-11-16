@@ -55,7 +55,7 @@ export class RunSafetyController {
     return view(await this.hints.list(v.id, v.promotedFromId));
   }
 
-  /** Mark an app a job runner (held until after the cutover) or a web app (starts dark even without a domain); `role: null` removes the mark. */
+  /** Mark an app a job runner (an app with no domain: held until after the cutover; PREFLIGHT refuses the mark on an app that serves one) or a web app (starts dark even without a domain); `role: null` removes the mark. An itemRef that matches no app of the plan is refused by PREFLIGHT and DEPLOY_DARK. */
   @Put(":id/worker-marks")
   @HttpCode(200)
   @RequireScopes("deploy")

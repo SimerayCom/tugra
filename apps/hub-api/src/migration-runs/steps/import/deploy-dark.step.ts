@@ -33,7 +33,7 @@ import {
 import { IMPORT_STEPS_PORT, type DeploymentRef, type ImportStepsPort } from "./import-ports";
 import { deployKeyBase, failureOf, includedItems, isActiveDeploy, stopRunApps } from "./step-utils";
 import { pinFor, isFloatingImage, serverRefOfItem } from "./baseline/image-pins";
-import { appTasksOf, markConflictsOfOp, workerSetsOfOp } from "./baseline/op-safety";
+import { appTasksOf, markConflictsOfOp, unmatchedMarksOfOp, workerSetsOfOp } from "./baseline/op-safety";
 import { RUN_HINTS, type RunHint, type RunHintStore } from "./baseline/run-hints";
 import { workerMarks, workerSets } from "./baseline/workers";
 import { resolveOwnerInput } from "../../core/run-contract";
@@ -70,6 +70,8 @@ export interface DeployDarkObs extends Observation {
   apps: AppRow[];
   /** Apps marked `job-runner` that serve a domain: a mark that cannot hold them (they would be deployed here), so the step refuses to start. */
   markConflicts: string[];
+  /** Marked item refs that name no app of the plan: ignored by every lookup, so the step refuses to start until they are fixed or removed. */
+  markUnmatched: string[];
 }
 
 interface Comp {
@@ -113,7 +115,7 @@ export class DeployDarkStep implements StepHandler<DeployDarkObs>, OnModuleInit 
   async observe(ctx: StepContext): Promise<DeployDarkObs> {
     const run = ctx.run;
     const userId = ctx.actor.userId;
-    if (!run.opId) return { agentOnline: true, dbs: [], apps: [], markConflicts: [] };
+    if (!run.opId) return { agentOnline: true, dbs: [], apps: [], markConflicts: [], markUnmatched: [] };
     const op = await this.port.opSnapshot(userId, run.opId);
     // every target server of the run must have its agent online (a multi-host run deploys on all of them)
     const targets = await Promise.all(ctx.targetServerIds.map((serverId) => this.port.target(userId, { serverId, hosts: [] })));
@@ -148,7 +150,7 @@ export class DeployDarkStep implements StepHandler<DeployDarkObs>, OnModuleInit 
     }
     const need = apps.filter(required);
     const done = dbs.filter(dbOk).length + need.filter(appOk).length;
-    return { agentOnline, dbs, apps, markConflicts: markConflictsOfOp(op, hints).map((c) => c.name), progress: { done, total: dbs.length + need.length, unit: "app" } };
+    return { agentOnline, dbs, apps, markConflicts: markConflictsOfOp(op, hints).map((c) => c.name), markUnmatched: unmatchedMarksOfOp(op, hints), progress: { done, total: dbs.length + need.length, unit: "app" } };
   }
 
   async dryRun(ctx: StepContext): Promise<DryRunItem[]> {
@@ -174,7 +176,9 @@ export class DeployDarkStep implements StepHandler<DeployDarkObs>, OnModuleInit 
     void _ctx;
     const checks: GateCheck[] = [{ id: "deploy-dark.agent", status: obs.agentOnline ? "pass" : "fail", code: obs.agentOnline ? "deploy-dark.agent-online" : "deploy-dark.agent-offline", evidence: "hub-verified" }];
     if (obs.markConflicts.length) checks.push({ id: "deploy-dark.job-runner-domain", status: "fail", code: "deploy-dark.job-runner-has-domain", params: { count: obs.markConflicts.length, items: obs.markConflicts.slice(0, 10) }, evidence: "hub-verified" });
-    return makeGate(checks, { wait: { kind: "operator", code: obs.agentOnline ? "deploy-dark.job-runner-has-domain" : "deploy-dark.agent-offline" } });
+    if (obs.markUnmatched.length) checks.push({ id: "deploy-dark.worker-mark-unmatched", status: "fail", code: "deploy-dark.worker-mark-unmatched", params: { count: obs.markUnmatched.length, items: obs.markUnmatched.slice(0, 10) }, evidence: "hub-verified" });
+    const waitCode = !obs.agentOnline ? "deploy-dark.agent-offline" : obs.markConflicts.length ? "deploy-dark.job-runner-has-domain" : "deploy-dark.worker-mark-unmatched";
+    return makeGate(checks, { wait: { kind: "operator", code: waitCode } });
   }
 
   postGate(_ctx: StepContext, obs: DeployDarkObs): GateResult {
