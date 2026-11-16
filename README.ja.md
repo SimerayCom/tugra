@@ -111,7 +111,7 @@ Tugra は、自分たちのサーバー群にまたがってアプリとデー�
 | 他ツールからの移行(Coolify からのインポート) | ✅⁹ | — | — | — | — | — |
 | コアライセンス | AGPL-3.0 | Apache-2.0 | Apache-2.0³ | zlib + BE⁷ | Apache-2.0 + 追加条項⁴ | MIT |
 
-<sub>¹ Coolify v4 はサーバーを個別に管理します(組み込みのクラスタリングはありません)。Docker Swarm のサポートは非推奨です(v5 で削除予定)。また、1 つのイメージを複数のサーバーへデプロイするには、独自のロードバランサーが必要です。 ² サードパーティによる初期段階の Dokku MCP プロジェクトであり、公式リリースではありません。 ³ Dokploy のコアは Apache-2.0 です。エンタープライズ向けの `proprietary/` ディレクトリ(SSO、監査ログ、ホワイトラベル)には、別途 Source-Available ライセンスが適用されます。これは Tugra が採用しているものと同じオープンコアの形です。 ⁴ CapRover の `LICENSE` は Apache-2.0 ですが、有料機能の改変・再配布を制限する付録が付いています。 ⁵ Tugra、Coolify、Dokploy はいずれも、読み取りツールと書き込みツールを備えた MCP サーバーを提供しているため、エージェント制御の面では同等です。Tugra はこれに加えて、フリート全体へのアクション(クラスター全体に対する 1 回の呼び出し)、破壊的なツールでの名前確認、シークレットのマスキングを備えています。 ⁶ Dokku は Docker Swarm をサポートしていません。マルチノードの選択肢は `scheduler-k3s` プラグイン(k3s/Kubernetes)で、これはアーキテクチャが異なります。 ⁷ Portainer の完全な RBAC、AD/OIDC SSO テンプレート、監査ログは Business Edition(3 ノードまで無料)の機能です。Community では基本的なユーザー管理と限定的な LDAP/OAuth のみ利用できます。公式の MCP サーバーリポジトリはサポート対象外で、サポートされる AI の手段(Portainer Command)は Business Edition です。 ⁸ Tugra のコアは無料でフル機能です(チーム/RBAC、監査ログ、バックアップ、監視、MCP、マイグレーター、マルチノード HA)。SSO/OIDC は Pro 機能です。 ⁹ Coolify のアプリと、その設定・環境変数を、新しい Tugra リソースとしてインポートします(コピーモード。Dokploy のプロジェクトもインポートできますが、現時点では API / MCP / CLI 経由で、Web ウィザードにはまだありません)。これとは別に、ローカル Docker の引き継ぎ機能(adopter)が、同一ホスト上のコンテナを名前付きボリュームごとそのまま引き継ぎます。Postgres、MySQL、MariaDB、Redis、KeyDB、Dragonfly のデータベース **データ** は、Coolify ホスト上に貼り付けて実行するワンコマンドのマイグレーターで、ホスト間を移行できます。MongoDB のデータはガイド付きのダンプ&リストア(import-from-url)で、LibSQL とアプリの **ボリューム** データは `tar`/`rsync` で移行します。ClickHouse の移行ツールはまだありません([docs/coolify-migration.md](docs/coolify-migration.md))。¹⁰ PostgreSQL のみ。他のエンジンは、スケジュール実行の論理ダンプを引き続き使用します。 ¹¹ GitHub、GitLab、Gitea/Forgejo、Bitbucket（Cloud と Server）の pull/merge request イベントでプレビューの作成・更新・削除を行います。プレビューには Git からビルドするアプリでプレビューが有効であることが必要で、フォークからの pull request は無視されます。 ¹² 競合に関する注記は公式ドキュメントに基づきます(2026-11): Coolify の Server Patching はサーバー単位で Beta であり、ストレージバックアップには UI からのリストアがなく、DB エンジンは 9 種類と記載されていますがスケジュールバックアップは 6 種類のみです。Dokploy のモニタリングしきい値は Cloud 限定と表記されており、ロールバックはご自身で設定する Docker Swarm ネイティブのアップデートロールバックです。Portainer のカナリア型グループロールアウトは Business Edition かつ Edge Stacks のみです。CapRover の DNS-01 と Netdata によるモニタリングは手動/オプトインのセットアップです。Dokku のデータベースエンジンは UI のない公式 CLI プラグインです。 製品名はそれぞれの所有者の商標です。Tugra はこれらの製品・企業とは提携関係になく、公認を受けているものでもありません。</sub>
+<sub>¹ Coolify v4 はサーバーを個別に管理します(組み込みのクラスタリングはありません)。Docker Swarm のサポートは非推奨です(v5 で削除予定)。また、1 つのイメージを複数のサーバーへデプロイするには、独自のロードバランサーが必要です。 ² サードパーティによる初期段階の Dokku MCP プロジェクトであり、公式リリースではありません。 ³ Dokploy のコアは Apache-2.0 です。エンタープライズ向けの `proprietary/` ディレクトリ(SSO、監査ログ、ホワイトラベル)には、別途 Source-Available ライセンスが適用されます。これは Tugra が採用しているものと同じオープンコアの形です。 ⁴ CapRover の `LICENSE` は Apache-2.0 ですが、有料機能の改変・再配布を制限する付録が付いています。 ⁵ Tugra、Coolify、Dokploy はいずれも、読み取りツールと書き込みツールを備えた MCP サーバーを提供しているため、エージェント制御の面では同等です。Tugra はこれに加えて、フリート全体へのアクション(クラスター全体に対する 1 回の呼び出し)、破壊的なツールでの名前確認、シークレットのマスキングを備えています。 ⁶ Dokku は Docker Swarm をサポートしていません。マルチノードの選択肢は `scheduler-k3s` プラグイン(k3s/Kubernetes)で、これはアーキテクチャが異なります。 ⁷ Portainer の完全な RBAC、AD/OIDC SSO テンプレート、監査ログは Business Edition(3 ノードまで無料)の機能です。Community では基本的なユーザー管理と限定的な LDAP/OAuth のみ利用できます。公式の MCP サーバーリポジトリはサポート対象外で、サポートされる AI の手段(Portainer Command)は Business Edition です。 ⁸ Tugra のコアは無料でフル機能です(チーム/RBAC、監査ログ、バックアップ、監視、MCP、マイグレーター、マルチノード HA)。SSO/OIDC は Pro 機能です。 ⁹ Coolify のアプリと、その設定・環境変数を、新しい Tugra リソースとしてインポートします(コピーモード。Dokploy のプロジェクトも Web ウィザード、または API / MCP / CLI からインポートできます)。これとは別に、ローカル Docker の引き継ぎ機能(adopter)が、同一ホスト上のコンテナを名前付きボリュームごとそのまま引き継ぎます。Postgres、MySQL、MariaDB、Redis、KeyDB、Dragonfly のデータベース **データ** は、Coolify ホスト上に貼り付けて実行するワンコマンドのマイグレーターで、ホスト間を移行できます。MongoDB のデータはガイド付きのダンプ&リストア(import-from-url)で、アプリの **ボリューム** データはマイグレーターのストリーミングで再開可能なボリュームコピーで、LibSQL は `tar`/`rsync` で移行します。ClickHouse の移行ツールはまだありません([docs/coolify-migration.md](docs/coolify-migration.md))。¹⁰ PostgreSQL のみ。他のエンジンは、スケジュール実行の論理ダンプを引き続き使用します。 ¹¹ GitHub、GitLab、Gitea/Forgejo、Bitbucket（Cloud と Server）の pull/merge request イベントでプレビューの作成・更新・削除を行います。プレビューには Git からビルドするアプリでプレビューが有効であることが必要で、フォークからの pull request は無視されます。 ¹² 競合に関する注記は公式ドキュメントに基づきます(2026-11): Coolify の Server Patching はサーバー単位で Beta であり、ストレージバックアップには UI からのリストアがなく、DB エンジンは 9 種類と記載されていますがスケジュールバックアップは 6 種類のみです。Dokploy のモニタリングしきい値は Cloud 限定と表記されており、ロールバックはご自身で設定する Docker Swarm ネイティブのアップデートロールバックです。Portainer のカナリア型グループロールアウトは Business Edition かつ Edge Stacks のみです。CapRover の DNS-01 と Netdata によるモニタリングは手動/オプトインのセットアップです。Dokku のデータベースエンジンは UI のない公式 CLI プラグインです。 製品名はそれぞれの所有者の商標です。Tugra はこれらの製品・企業とは提携関係になく、公認を受けているものでもありません。</sub>
 
 ## クイックスタート
 
@@ -194,7 +194,7 @@ Pro および Cloud エディション(SSO、監査ログのエクスポート�
 - [x] マルチサーバークラスター + Docker Swarm の構成、フリート全体への一括操作
 - [x] ネイティブ MCP サーバー — 56 ツール(読み取り + PAT スコープ付きの変更 / フリート操作)+ ガイド付きプロンプト
 - [x] アプリストア — 280 以上のワンクリックテンプレート + ホームモードランチャー
-- [x] アプリのボリューム向け読み取り専用ファイルブラウザー(Web UI + MCP `list_files`)
+- [x] アプリのボリューム向けファイルマネージャー — 閲覧・ダウンロード・アップロード・編集・名前変更・パーミッション変更・削除(書き込みはオプトインのサーバーケイパビリティ。Web UI、読み取りは MCP `list_files` も利用可)
 - [x] プレビューデプロイ(プルリクエストごと)
 - [x] 死活監視(HTTP/TCP/メトリクス)+ 12 の通知チャネル(webhook · Telegram · ntfy · Discord · Slack · Gotify · SMTP · Pushover · Teams · Mattermost · Lark · Resend)
 - [x] スケジュールタスク(cron) · ロールバック · リソース制限とヘルスチェック
@@ -202,7 +202,7 @@ Pro および Cloud エディション(SSO、監査ログのエクスポート�
 - [x] パブリック API(OpenAPI)+ CLI(`tugra`)
 - [x] サーバーのパッチ適用(OS パッケージの更新)
 - [x] セルフアップデート(署名付きリリース)+ ガイド付きオンボーディング
-- [x] マイグレーター — ローカル Docker コンテナの引き継ぎ + Coolify(Web ウィザード)と Dokploy(API / MCP / CLI)からのインポート(接続 · 計画 · 適用 · ロールバック)+ ワンコマンドでのホスト間 DB データ移行(Postgres · MySQL · MariaDB · Redis · KeyDB · Dragonfly)
+- [x] マイグレーター — ローカル Docker コンテナの引き継ぎ + Coolify(Web ウィザード)と Dokploy(Web ウィザード / API / MCP / CLI)からのインポート(接続 · 計画 · 適用 · ロールバック)+ ワンコマンドでのホスト間 DB データ移行(Postgres · MySQL · MariaDB · Redis · KeyDB · Dragonfly)+ ストリーミングで再開可能なアプリボリュームのコピー
 - [x] リストア検証ドリル(スケジュール実行、ライブネス監視付き)· PostgreSQL ポイントインタイムリカバリ(WAL シッピング · ベースバックアップ · 任意の 1 秒時点へのリストア)
 - [x] ヘルスゲート付きローリングデプロイ + オプトインのカットオーバー後ソークと自動復帰 · フリートロールアウト(カナリア → ウェーブ → ヘルスゲート → 停止/再開/ロールバック)
 - [x] デプロイが Hub の再起動をまたいで継続(エージェントのコマンドジャーナル + 結果の引き継ぎ)· デプロイごとの詳細ページ(タイムライン · ライブログ · 設定の差分)
@@ -212,9 +212,8 @@ Pro および Cloud エディション(SSO、監査ログのエクスポート�
 **今後の予定**
 
 - [ ] サードパーティクライアント向けの MCP OAuth(動的クライアント登録、PKCE)
-- [ ] ファイルマネージャーの書き込み対応(アップロード / 名前変更 / 削除)
-- [ ] ClickHouse と MongoDB のデータ、およびアプリのボリュームデータのワンクリック移行
-- [ ] 移行元の追加(Web インポートウィザードでの Dokploy、CapRover)
+- [ ] ClickHouse と MongoDB のデータのワンクリック移行
+- [ ] 移行元の追加(CapRover)
 - [ ] モバイルアプリ
 
 ## コミュニティとドキュメント

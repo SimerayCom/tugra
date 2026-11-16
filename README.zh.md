@@ -111,7 +111,7 @@ Tugra 是一个可自托管的开源核心（open-core）控制平面，用于�
 | 迁入（从 Coolify 导入） | ✅⁹ | — | — | — | — | — |
 | 核心许可证 | AGPL-3.0 | Apache-2.0 | Apache-2.0³ | zlib + BE⁷ | Apache-2.0 + 条款⁴ | MIT |
 
-<sub>¹ Coolify v4 逐台单独管理服务器（没有内置集群功能）；其 Docker Swarm 支持已弃用（计划在 v5 中移除），要把同一镜像部署到多台服务器需要自备负载均衡器。 ² 一个由第三方开发、尚处早期阶段的 Dokku MCP 项目，并非官方发布。 ³ Dokploy 的核心是 Apache-2.0；另有一份 Source-Available 许可证覆盖其企业版 `proprietary/` 目录（SSO、审计日志、白标）——与 Tugra 采用的开源核心模式如出一辙。 ⁴ CapRover 的 `LICENSE` 为 Apache-2.0，并附有一份附录，限制对付费功能的修改和再分发。 ⁵ Tugra、Coolify 和 Dokploy 都提供带读写工具的 MCP 服务器，因此在智能体控制方面持平；Tugra 额外提供全机群操作（一次调用覆盖整个集群）、对破坏性工具的名称确认，以及密钥脱敏。 ⁶ Dokku 不支持 Docker Swarm；它的多节点方案是 `scheduler-k3s` 插件（k3s/Kubernetes），属于另一种架构。 ⁷ Portainer 完整的 RBAC、AD/OIDC SSO 模板和审计日志属于 Business Edition（最多 3 个节点免费）；Community 版只有基础用户和有限的 LDAP/OAuth。其官方 MCP 服务器仓库不受支持；受支持的 AI 方案（Portainer Command）属于 Business Edition。 ⁸ Tugra 的核心免费且功能完整（团队/RBAC、审计日志、备份、监控、MCP、迁移工具、多节点高可用）；SSO/OIDC 是 Pro 功能。 ⁹ 将 Coolify 的应用及其配置/环境变量作为新的 Tugra 资源导入（复制模式；Dokploy 项目也可导入，目前通过 API / MCP / CLI，Web 向导中暂未提供）；另有一个本地 Docker 接管工具，可就地接管同一主机上的容器（保留其具名卷）。Postgres、MySQL、MariaDB、Redis、KeyDB 和 Dragonfly 的数据库**数据**可通过在 Coolify 主机上粘贴运行的一条命令跨主机迁移；MongoDB 数据通过引导式的 dump 再恢复（import-from-url）迁移，LibSQL 和应用**卷**数据通过 `tar`/`rsync` 迁移，ClickHouse 目前还没有迁移工具（[docs/coolify-migration.md](docs/coolify-migration.md)）。¹⁰ 仅限 PostgreSQL；其他引擎仍保留定时的逻辑 dump。 ¹¹ 来自 GitHub、GitLab、Gitea/Forgejo 和 Bitbucket（Cloud 与 Server）的 pull/merge request 事件会创建、更新和删除预览；预览需要由 Git 构建且已启用预览的应用，来自 fork 的 pull request 会被忽略。 ¹² 竞品说明取自官方文档，2026-11：Coolify 的 Server Patching 按服务器进行且为 Beta，其存储备份没有 UI 恢复功能，并且文档中列出 9 种数据库引擎，但定时备份只覆盖 6 种；Dokploy 的监控阈值标注为仅限 Cloud，其回滚是需要您自行配置的 Docker Swarm 原生更新回滚；Portainer 的金丝雀式分组发布属于 Business Edition，且仅适用于 Edge Stacks；CapRover 的 DNS-01 和 Netdata 监控需要手动/自行选择启用；Dokku 的数据库引擎是官方 CLI 插件，没有 UI。 产品名称均为其各自所有者的商标；Tugra 与它们没有任何隶属关系，也未获其背书。</sub>
+<sub>¹ Coolify v4 逐台单独管理服务器（没有内置集群功能）；其 Docker Swarm 支持已弃用（计划在 v5 中移除），要把同一镜像部署到多台服务器需要自备负载均衡器。 ² 一个由第三方开发、尚处早期阶段的 Dokku MCP 项目，并非官方发布。 ³ Dokploy 的核心是 Apache-2.0；另有一份 Source-Available 许可证覆盖其企业版 `proprietary/` 目录（SSO、审计日志、白标）——与 Tugra 采用的开源核心模式如出一辙。 ⁴ CapRover 的 `LICENSE` 为 Apache-2.0，并附有一份附录，限制对付费功能的修改和再分发。 ⁵ Tugra、Coolify 和 Dokploy 都提供带读写工具的 MCP 服务器，因此在智能体控制方面持平；Tugra 额外提供全机群操作（一次调用覆盖整个集群）、对破坏性工具的名称确认，以及密钥脱敏。 ⁶ Dokku 不支持 Docker Swarm；它的多节点方案是 `scheduler-k3s` 插件（k3s/Kubernetes），属于另一种架构。 ⁷ Portainer 完整的 RBAC、AD/OIDC SSO 模板和审计日志属于 Business Edition（最多 3 个节点免费）；Community 版只有基础用户和有限的 LDAP/OAuth。其官方 MCP 服务器仓库不受支持；受支持的 AI 方案（Portainer Command）属于 Business Edition。 ⁸ Tugra 的核心免费且功能完整（团队/RBAC、审计日志、备份、监控、MCP、迁移工具、多节点高可用）；SSO/OIDC 是 Pro 功能。 ⁹ 将 Coolify 的应用及其配置/环境变量作为新的 Tugra 资源导入（复制模式；Dokploy 项目也可通过 Web 向导或 API / MCP / CLI 导入）；另有一个本地 Docker 接管工具，可就地接管同一主机上的容器（保留其具名卷）。Postgres、MySQL、MariaDB、Redis、KeyDB 和 Dragonfly 的数据库**数据**可通过在 Coolify 主机上粘贴运行的一条命令跨主机迁移；MongoDB 数据通过引导式的 dump 再恢复（import-from-url）迁移，应用**卷**数据通过迁移工具的流式、可断点续传卷复制迁移，LibSQL 通过 `tar`/`rsync` 迁移，ClickHouse 目前还没有迁移工具（[docs/coolify-migration.md](docs/coolify-migration.md)）。¹⁰ 仅限 PostgreSQL；其他引擎仍保留定时的逻辑 dump。 ¹¹ 来自 GitHub、GitLab、Gitea/Forgejo 和 Bitbucket（Cloud 与 Server）的 pull/merge request 事件会创建、更新和删除预览；预览需要由 Git 构建且已启用预览的应用，来自 fork 的 pull request 会被忽略。 ¹² 竞品说明取自官方文档，2026-11：Coolify 的 Server Patching 按服务器进行且为 Beta，其存储备份没有 UI 恢复功能，并且文档中列出 9 种数据库引擎，但定时备份只覆盖 6 种；Dokploy 的监控阈值标注为仅限 Cloud，其回滚是需要您自行配置的 Docker Swarm 原生更新回滚；Portainer 的金丝雀式分组发布属于 Business Edition，且仅适用于 Edge Stacks；CapRover 的 DNS-01 和 Netdata 监控需要手动/自行选择启用；Dokku 的数据库引擎是官方 CLI 插件，没有 UI。 产品名称均为其各自所有者的商标；Tugra 与它们没有任何隶属关系，也未获其背书。</sub>
 
 ## 快速开始
 
@@ -194,7 +194,7 @@ Pro 和 Cloud 版本（SSO、审计日志导出、白标、托管控制平面）
 - [x] 多服务器集群 + Docker Swarm 组建，跨整个机群批量操作
 - [x] 原生 MCP 服务器——56 个工具（只读 + 受 PAT 权限范围约束的变更 / 机群运维操作）+ 引导式提示词
 - [x] 应用商店——280+ 个一键模板 + Home 模式启动器
-- [x] 应用卷的只读文件浏览器（Web UI + MCP `list_files`）
+- [x] 应用卷的文件管理器——浏览、下载、上传、编辑、重命名、修改权限和删除（写入是可选启用的服务器 capability；Web UI，读取另可用 MCP `list_files`）
 - [x] 预览部署（每个 pull request 一个）
 - [x] 可用性监控（HTTP/TCP/指标）+ 12 个通知渠道（webhook · Telegram · ntfy · Discord · Slack · Gotify · SMTP · Pushover · Teams · Mattermost · Lark · Resend）
 - [x] 定时任务（cron）· 回滚 · 资源限制与健康检查
@@ -202,7 +202,7 @@ Pro 和 Cloud 版本（SSO、审计日志导出、白标、托管控制平面）
 - [x] 公开 API（OpenAPI）+ CLI（`tugra`）
 - [x] 服务器补丁管理（操作系统软件包更新）
 - [x] 自更新（签名发布）+ 引导式上手
-- [x] 迁移工具——接管本地 Docker 容器 + 从 Coolify（Web 向导）和 Dokploy（API / MCP / CLI）导入（连接 · 规划 · 应用 · 回滚）+ 一条命令的跨主机数据库数据迁移（Postgres · MySQL · MariaDB · Redis · KeyDB · Dragonfly）
+- [x] 迁移工具——接管本地 Docker 容器 + 从 Coolify（Web 向导）和 Dokploy（Web 向导 / API / MCP / CLI）导入（连接 · 规划 · 应用 · 回滚）+ 一条命令的跨主机数据库数据迁移（Postgres · MySQL · MariaDB · Redis · KeyDB · Dragonfly）+ 流式、可断点续传的应用卷复制
 - [x] 恢复验证演练（定时执行，带存活看门狗）· PostgreSQL 时间点恢复（WAL 传输 · 基础备份 · 恢复到任意一秒）
 - [x] 带健康检查关卡的滚动部署 + 可选启用的切换后 soak 观察与自动回退 · 机群滚动发布（金丝雀 → 分批 → 健康检查关卡 → 暂停/恢复/回滚）
 - [x] 部署可在 hub 重启后继续完成（agent 命令日志 + 结果接管）· 单次部署详情页（时间线 · 实时日志 · 配置对比）
@@ -212,9 +212,8 @@ Pro 和 Cloud 版本（SSO、审计日志导出、白标、托管控制平面）
 **下一步**
 
 - [ ] 面向第三方客户端的 MCP OAuth（动态客户端注册、PKCE）
-- [ ] 文件管理器——写入支持（上传 / 重命名 / 删除）
-- [ ] ClickHouse 与 MongoDB 数据及应用卷数据的一键迁移
-- [ ] 更多迁移来源（Web 导入向导中的 Dokploy、CapRover）
+- [ ] ClickHouse 与 MongoDB 数据的一键迁移
+- [ ] 更多迁移来源（CapRover）
 - [ ] 移动应用
 
 ## 社区与文档
