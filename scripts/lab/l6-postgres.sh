@@ -92,15 +92,21 @@ lab_expect_item copy volume-applied
 read -r state _ <<<"$(lab_transfer)"
 lab_check "the hub transfer is DONE" test "$state" = DONE
 lab_no_leftovers
-COMPARE_EXCLUDE=postmaster.pid lab_compare
-lab_check "postmaster.pid was not copied" bash -c "! docker run --rm -v $DEST_VOLUME:/data:ro $(lab_helper_image) test -e /data/postmaster.pid"
+# No physical compare here: the hub starts the database as the last step of the apply, so by the time `volume-applied` returns the
+# destination volume belongs to a running server (WAL replay, an end-of-recovery checkpoint, a new postmaster.pid) and can never
+# equal the frozen source again. Byte identity of the stream is L1a's check (same code path, no server on the volume); here the
+# proof is that the copied cluster itself recovers and holds the same rows. The exclusion of postmaster.pid is a unit-tested
+# argument of the tar helper (vxstream_test.go); the lab only proves it is exercised:
+lab_check "the SIGKILLed source left a stale postmaster.pid (so the exclusion has something to exclude)" docker run --rm -v "$SRC_VOLUME:$MOUNT:ro" "$(lab_helper_image)" test -e "$MOUNT/postmaster.pid"
 
-# start the database on the target
-lab_api POST "/databases/$DB_ID/provision" >/dev/null
+# the hub already started the database as the last step of the apply (postApply provisions it and waits for RUNNING before the
+# transfer is DONE). Do NOT provision it again: `databases.provision` begins with `docker rm -f`, a SIGKILL, and the container
+# that replays WAL after THAT kill says nothing about the copied cluster. Read the evidence from the container the hub
+# started, before anything recreates it.
 lab_wait 180 "the destination database to be RUNNING" bash -c "[ \"\$(node $LAB_SELF_DIR/seed.mjs db-status $DB_ID | awk '{print \$1}')\" = RUNNING ]"
 CTR="tugra_db_$DB_ID"
 lab_wait 120 "the destination postgres to accept connections" docker exec "$CTR" pg_isready
-lab_check "WAL replay ran on the target (the source was SIGKILLed)" bash -c "docker logs $CTR 2>&1 | grep -qi -E 'not properly shut down|automatic recovery in progress|redo starts'"
+lab_check "WAL replay ran on the copied cluster (the source was SIGKILLed, so its data directory needs recovery)" bash -c "docker logs $CTR 2>&1 | grep -qi -E 'not properly shut down|automatic recovery in progress|redo starts'"
 DST_COUNT="$(docker exec "$CTR" psql -U tugra -d postgres -At -c 'select count(*) from lab_t')"
 DST_SIZE="$(docker exec "$CTR" psql -U tugra -d postgres -At -c "select pg_total_relation_size('lab_t')")"
 lab_log "target: $DST_COUNT rows, $DST_SIZE bytes"

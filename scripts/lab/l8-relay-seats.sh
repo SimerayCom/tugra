@@ -2,15 +2,20 @@
 # L8: relay seats. Migration parts draw from their OWN seat pool (MIGRATION_RELAY_CONCURRENCY), never the app-move pool
 # (MOVE_MAX_CONCURRENT_RELAYS). The hub runs with ONE seat in each pool.
 #  A. two migrator runs (two ops, two source volumes) race for the single migration seat: the second sees `busy` (an uncounted,
-#     jittered backoff) and both finish volume-applied, with no part failure.
+#     jittered backoff) and both finish volume-applied, with no part failure. Both go through scripts/lab/http-tap.mjs, which
+#     counts the hub's {"busy":true} answers: zero would mean the pool was never contended and the scenario proved nothing.
+#     The second migrator starts only after the first is streaming: every migrator removes ALL helper containers labelled
+#     tugra.vx=1 at its start (reapStaleHelpers, no run scoping), so two starting together would delete each other's live
+#     inventory and tar helpers (a harness-induced failure; the product finding is in the runbook).
 #  B. while A runs, a real app move (a deployed app with data, to a second agent) proceeds through the app-move pool. This
 #     leg is OBSERVATIONAL: both "servers" are one docker host sharing /etc/tugra and the docker daemon, so a failure of the
 #     move itself is reported (MOVE: ...) but only a move that is STARVED by the migration (stuck behind it) fails the lab.
-#     Set L8_MOVE=0 to skip it.
+#     Pool separation is shown directly: the summary records how many parts the move committed WHILE the migration pool was
+#     answering `busy` (the move draws from MOVE_MAX_CONCURRENT_RELAYS, which is free). Set L8_MOVE=0 to skip it.
 set -euo pipefail
 # shellcheck source=lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-trap '"$LAB_SELF_DIR/hub.sh" reset-extra >/dev/null 2>&1 || true' EXIT
+trap 'lab_tap_stop; "$LAB_SELF_DIR/hub.sh" reset-extra >/dev/null 2>&1 || true' EXIT
 
 MIB="${L8_MIB:-512}"
 "$LAB_SELF_DIR/hub.sh" restart MIGRATION_RELAY_CONCURRENCY=1 MOVE_MAX_CONCURRENT_RELAYS=1
@@ -57,9 +62,12 @@ fi
 
 # A: two concurrent migrations, each in the background
 lab_op_load main
-lab_run_bg m1 --arms all --part-mib 128
-LAB_OP=second lab_run_bg m2 --arms all --part-mib 128
+lab_tap_start
+lab_run_bg m1 --hub "$LAB_TAP_URL" --arms all --part-mib 128
 t0=$(date +%s)
+# m2 only once m1 has passed its startup (helper reaping) and committed a part, so it contends for the seat while m1 streams
+lab_wait_part m1 0
+LAB_OP=second lab_run_bg m2 --hub "$LAB_TAP_URL" --arms all --part-mib 128
 
 # B: the move, started while both migrations stream; polled until it ends (or stays stuck 5 minutes after the migrations)
 if [ "$MOVE_OK" = ready ]; then
@@ -73,8 +81,15 @@ if [ "$MOVE_OK" = ready ]; then
     if [ -n "$MOVE_ID" ]; then
       MOVE_OK=running
       grace=0
+      move_parts_during=0 # max parts the move had committed while a migration was still running
+      busy_during=0       # busy answers the migrators had received by then
       while :; do
-        mphase="$(lab_api GET "/apps/$APP_ID/moves/$MOVE_ID" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).phase))')"
+        mview="$(lab_api GET "/apps/$APP_ID/moves/$MOVE_ID")"
+        mphase="$(node -e 'console.log(JSON.parse(process.argv[1]).phase)' "$mview")"
+        if [ ! -f "$LAB_DIR/run.m1.rc" ] || [ ! -f "$LAB_DIR/run.m2.rc" ]; then
+          mp="$(node -e 'try{console.log((JSON.parse(process.argv[1]).volumes||[]).reduce((n,v)=>n+(Number(v.partsDone)||0),0))}catch{console.log(0)}' "$mview")"
+          [ "$mp" -le "$move_parts_during" ] || { move_parts_during="$mp"; busy_during="$(lab_tap_busy)"; }
+        fi
         case "$mphase" in COMPLETED | FAILED | ROLLED_BACK) MOVE_OK="$mphase"; break ;; esac
         if [ -f "$LAB_DIR/run.m1.rc" ] && [ -f "$LAB_DIR/run.m2.rc" ]; then
           grace=$((grace + 1))
@@ -98,6 +113,9 @@ lab_log "migrations finished in ${t1} s: exits $rc1 / $rc2; move: $MOVE_OK"
 [ "$rc2" = 0 ] || { tail -30 "$LAB_DIR/run.m2.log" >&2; lab_die "migration 2 exit $rc2"; }
 lab_expect_item m1 volume-applied
 (lab_op_load second; lab_expect_item m2 volume-applied)
+busy_total="$(lab_tap_busy)"
+lab_log "the hub answered busy $busy_total time(s) to the two migrators (relay pool of ONE seat)"
+lab_check "the migration seat pool was contended (the migrators saw busy at least once): without that L8 proves nothing" test "$busy_total" -ge 1
 for t in m1 m2; do
   lab_check "no part failed ($t): busy is waited out, never counted" bash -c "! grep -q -E 'part-failed|ErrPartFailed|could not be delivered' $LAB_DIR/run.$t.log"
 done
@@ -105,5 +123,14 @@ case "$MOVE_OK" in STUCK-*) lab_die "the app move never progressed while migrati
 lab_no_leftovers
 lab_compare
 (lab_op_load second; SRC_VOLUME=lab-src2 lab_compare)
-echo "L8_MOVE=$MOVE_OK" >>"$LAB_DIR/l8.summary"
+if [ "$MOVE_OK" != skipped ] && [ "$MOVE_OK" != setup-failed ]; then
+  if [ "${move_parts_during:-0}" -ge 1 ] && [ "${busy_during:-0}" -ge 1 ]; then
+    lab_log "pool separation shown: the move had committed $move_parts_during part(s) while the migrators had already been told busy $busy_during time(s)"
+    echo "L8_SEPARATION=shown move_parts=$move_parts_during busy=$busy_during" >>"$LAB_DIR/l8.summary"
+  else
+    lab_log "pool separation NOT shown by this run (the move committed ${move_parts_during:-0} part(s) during the migrations, busy answers by then ${busy_during:-0}): inconclusive, see the move log"
+    echo "L8_SEPARATION=inconclusive move_parts=${move_parts_during:-0} busy=${busy_during:-0}" >>"$LAB_DIR/l8.summary"
+  fi
+fi
+echo "L8_MOVE=$MOVE_OK busy=$busy_total" >>"$LAB_DIR/l8.summary"
 lab_pass "L8 relay seats (move leg: $MOVE_OK)"

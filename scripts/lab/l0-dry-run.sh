@@ -7,7 +7,7 @@ set -euo pipefail
 
 lab_scenario_begin l0
 "$LAB_SELF_DIR/fixture.sh" "$SRC_VOLUME" "${L0_MIB:-256}" random
-snap_before="$(docker ps -a --format '{{.Names}} {{.ID}} {{.Status}}' | grep -v -E '^tugra-migrator-' | sort)"
+snap_before="$(lab_docker_snapshot)"
 
 lab_run dry --arms all --dry-run
 [ "$LAB_RC" = 0 ] || lab_die "dry-run exit $LAB_RC (log: $LAB_DIR/run.dry.log)"
@@ -16,7 +16,7 @@ lab_check "disk verdict is ok" test "$(lab_item dry disk)" = ok
 lab_check "the inventory reports entries" test "$(lab_item dry entries)" -gt 10
 lab_check "the inventory reports raw bytes >= the fixture" test "$(lab_item dry rawBytes)" -ge $(( ${L0_MIB:-256} * 1048576 ))
 
-snap_after="$(docker ps -a --format '{{.Names}} {{.ID}} {{.Status}}' | grep -v -E '^tugra-migrator-' | sort)"
+snap_after="$(lab_docker_snapshot)"
 lab_check "docker ps -a is unchanged by a dry run" test "$snap_before" = "$snap_after"
 lab_source_untouched
 lab_check "nothing is staged on the target" test -z "$(lab_staging_dirs)"

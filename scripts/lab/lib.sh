@@ -26,6 +26,14 @@ lab_check() {
   if "$@"; then lab_log "ok: $what"; else lab_die "$what"; fi
 }
 
+# lab_guard_destructive: the lab removes containers, volumes and /etc/tugra/app-moves staging on the docker host it runs on and
+# starts an agent against the host's docker.sock and /etc/tugra. On a host that already runs Tugra that is data loss, so it only
+# runs where the host is disposable: a CI runner (CI=true, which GitHub Actions sets) or when explicitly acknowledged.
+lab_guard_destructive() {
+  [ "${CI:-}" = true ] || [ "${LAB_I_UNDERSTAND_DESTRUCTIVE:-}" = 1 ] ||
+    lab_die "refusing to run: the migration lab removes containers, volumes and /etc/tugra/app-moves staging on THIS docker host. Run it on a disposable host (CI=true) or export LAB_I_UNDERSTAND_DESTRUCTIVE=1"
+}
+
 lab_need() {
   local c
   for c in "$@"; do command -v "$c" >/dev/null 2>&1 || lab_die "missing tool: $c"; done
@@ -119,6 +127,7 @@ lab_reset_source() {
 # on the lab target; writes $LAB_DIR/op.main.env and loads it. Idempotent per scenario name.
 lab_scenario_begin() {
   local name="$1"; shift
+  lab_guard_destructive
   lab_load
   lab_log "=== scenario $name ==="
   lab_clean_leftovers
@@ -128,10 +137,30 @@ lab_scenario_begin() {
 }
 
 lab_clean_leftovers() {
-  local c
+  local c d
   for c in $(docker ps -aq --filter 'label=tugra.vx=1' 2>/dev/null); do docker rm -f "$c" >/dev/null 2>&1 || true; done
   for c in $(docker ps -aq --filter 'name=tugra-migrator-' 2>/dev/null); do docker rm -f "$c" >/dev/null 2>&1 || true; done
-  lab_agent_exec sh -c 'rm -rf /etc/tugra/app-moves/* 2>/dev/null || true' >/dev/null 2>&1 || true
+  # staging directories of the lab's own transfers and moves only (named by the ids in the lab hub's database)
+  for d in $(lab_owned dirs); do lab_agent_exec sh -c 'rm -rf "/etc/tugra/app-moves/$1" 2>/dev/null || true' _ "$d" >/dev/null 2>&1 || true; done
+}
+
+# lab_owned volumes|dirs: the docker volumes / app-moves staging dirs that belong to the lab (see scope.mjs). Empty when the
+# hub database is gone: nothing is then provably the lab's, so nothing is removed.
+lab_owned() {
+  local mode="$1"
+  {
+    node "$LAB_SELF_DIR/seed.mjs" ids 2>/dev/null || true
+    case "$mode" in
+      volumes) docker volume ls -q 2>/dev/null | sed 's/^/volume /' ;;
+      dirs) { ls -1 /etc/tugra/app-moves 2>/dev/null || docker exec "${LAB_AGENT:-lab-agent}" sh -c 'ls -1 /etc/tugra/app-moves 2>/dev/null || true' 2>/dev/null; } | sed 's/^/dir /' ;;
+    esac
+  } | node "$LAB_SELF_DIR/scope.mjs" "$mode"
+}
+
+# lab_docker_snapshot: every container EXCEPT the migrator's own, as "name id state". Only fields that cannot change by
+# themselves: docker's Status column is relative text ("Up 47 seconds") that differs between two reads of an untouched host.
+lab_docker_snapshot() {
+  docker ps -a --no-trunc --format '{{.Names}} {{.ID}} {{.State}}' | grep -v -E '^tugra-migrator-' | sort
 }
 
 # ---- migrator runs in the background, interruption, progress ---------------------------------------------------------------
@@ -206,6 +235,23 @@ lab_proxy_stop() {
   kill "$(cat "$LAB_DIR/proxy.pid")" 2>/dev/null || true
   rm -f "$LAB_DIR/proxy.pid"
 }
+
+# ---- the HTTP tap (L8): a pass-through to the hub that counts the relay's `busy` answers to part registrations -------------------
+lab_tap_start() { # [port]
+  local port="${1:-4002}"
+  lab_tap_stop
+  : >"$LAB_DIR/tap.busy"
+  node "$LAB_SELF_DIR/http-tap.mjs" --listen "$port" --target "127.0.0.1:${LAB_HUB_PORT}" --busy-file "$LAB_DIR/tap.busy" 2>>"$LAB_DIR/tap.log" &
+  echo $! >"$LAB_DIR/tap.pid"
+  LAB_TAP_URL="http://${LAB_HOST}:${port}"
+  lab_wait 10 "http tap on :$port" curl -s -o /dev/null "http://127.0.0.1:${port}/health"
+}
+lab_tap_stop() {
+  [ -f "$LAB_DIR/tap.pid" ] || return 0
+  kill "$(cat "$LAB_DIR/tap.pid")" 2>/dev/null || true
+  rm -f "$LAB_DIR/tap.pid"
+}
+lab_tap_busy() { wc -l <"$LAB_DIR/tap.busy" 2>/dev/null | tr -d ' ' || echo 0; }
 
 # ---- volume-level checks -----------------------------------------------------------------------------------------------------
 lab_no_leftovers() { # no tar helper, no migrator, no rollback snapshot volume, no staged parts

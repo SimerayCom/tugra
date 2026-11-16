@@ -10,7 +10,11 @@ set -euo pipefail
 trap 'lab_proxy_stop; "$LAB_SELF_DIR/hub.sh" reset-extra >/dev/null 2>&1 || true' EXIT
 
 # ---------------- A: mid-part (32 MiB parts through a 2 MB/s link: a part takes ~16 s) ----------------
-"$LAB_SELF_DIR/hub.sh" restart MIGRATION_VX_PART_MIB=32
+# The lab hub's default stale window is 30 s (up.sh: the minimum, so the L1b kill -9 lease cases do not wait minutes). The hub
+# is down here for ~20 s plus its boot, on top of up to ~16 s since the last commit: the boot sweep would see a lease older than
+# 30 s and declare the run dead, a harness artifact and not what this scenario asks. A 5 minute window keeps the lease alive
+# across the planned outage; the sweep's own behaviour is L1b's job.
+"$LAB_SELF_DIR/hub.sh" restart MIGRATION_VX_PART_MIB=32 MIGRATION_VX_STALE_MS=300000
 lab_scenario_begin l2-part
 "$LAB_SELF_DIR/fixture.sh" "$SRC_VOLUME" "${L2A_MIB:-128}" random
 lab_proxy_start 2

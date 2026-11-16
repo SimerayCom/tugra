@@ -13,6 +13,8 @@
 //   seed.mjs transfer OP_ID             "STATE PARTS_DONE ERROR ATTEMPT" of the op's volume transfer(s)
 //   seed.mjs db-status DB_ID            the Database row's status/image/version (for the L6 gates)
 //   seed.mjs db-set DB_ID STATUS        force the Database row's status (L6: a started destination must be refused)
+//   seed.mjs ids                        every app, database, volume transfer and app move in the LAB database ("app <id>" ...),
+//                                       what scope.mjs uses to decide which docker volumes and staging dirs the lab owns
 //   seed.mjs app --name N [--volume data] [--path P] [--server-id ID]   a plain app (no op), for the L8 app move
 //
 // Environment: LAB_DIR (state dir, default $TMPDIR/tugra-lab), LAB_HUB_PORT (3000), DATABASE_URL (default: read from
@@ -222,6 +224,16 @@ async function main() {
       console.log(`${argv[0]} ${argv[1]}`);
       break;
     }
+    case "ids": {
+      const db = await prisma();
+      for (const [label, rows] of [
+        ["app", await db.application.findMany({ select: { id: true } })],
+        ["db", await db.database.findMany({ select: { id: true } })],
+        ["transfer", await db.migrationVolumeTransfer.findMany({ select: { id: true } })],
+        ["move", await db.appMove.findMany({ select: { id: true } })],
+      ]) for (const r of rows) console.log(`${label} ${r.id}`);
+      break;
+    }
     case "app": {
       const f = flags({ name: `lab-app-${Date.now()}`, volume: "data", path: "/usr/share/nginx/html", "server-id": "" });
       const serverId = f["server-id"] || process.env.SERVER_ID;
@@ -234,7 +246,7 @@ async function main() {
       break;
     }
     default:
-      throw new Error(`usage: seed.mjs base|server|token|server-status|op|transfer|db-status|db-set|app (got ${cmd ?? "nothing"})`);
+      throw new Error(`usage: seed.mjs base|server|token|server-status|op|transfer|db-status|db-set|ids|app (got ${cmd ?? "nothing"})`);
   }
 }
 

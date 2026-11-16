@@ -21,6 +21,7 @@ for a in "$@"; do
   esac
 done
 
+lab_guard_destructive
 lab_need docker node pnpm curl openssl
 docker info >/dev/null 2>&1 || lab_die "no docker daemon: the lab runs on a Linux docker host (see docs/runbooks/migration-lab.md)"
 HOST="$(lab_host_addr)"

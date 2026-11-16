@@ -30,13 +30,15 @@ concurrency:
 jobs:
   tar:
     name: L4 tar fidelity (busybox apply)
-    if: github.event_name != 'workflow_dispatch' || inputs.items == 'all' || contains(inputs.items, 'tar')
+    if: github.event_name != 'workflow_dispatch' || inputs.items == 'all' || contains(format(',{0},', replace(inputs.items, ' ', '')), ',tar,')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Lab state directory
         run: echo "LAB_DIR=$RUNNER_TEMP/tugra-lab" >> "$GITHUB_ENV"
+      - name: Harness self-test (no docker: the lab scripts' own decision logic)
+        run: node --test scripts/lab/selftest.mjs
       - name: L4 - the migrator tar stream into the pinned alpine busybox tar
         run: scripts/lab/vx-tar-fidelity.sh
       - name: Collect logs
@@ -56,7 +58,7 @@ jobs:
 
   core:
     name: L0 dry-run, L1a stream, L1b interrupt and resume
-    if: github.event_name != 'workflow_dispatch' || inputs.items == 'all' || contains(inputs.items, 'core')
+    if: github.event_name != 'workflow_dispatch' || inputs.items == 'all' || contains(format(',{0},', replace(inputs.items, ' ', '')), ',core,')
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -101,7 +103,7 @@ jobs:
 
   restart:
     name: L2 hub restart mid-part and mid-apply
-    if: github.event_name != 'workflow_dispatch' || inputs.items == 'all' || contains(inputs.items, 'restart')
+    if: github.event_name != 'workflow_dispatch' || inputs.items == 'all' || contains(format(',{0},', replace(inputs.items, ' ', '')), ',restart,')
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -142,7 +144,7 @@ jobs:
 
   postgres:
     name: L6 PostgreSQL ${{ matrix.image }}
-    if: github.event_name != 'workflow_dispatch' || inputs.items == 'all' || contains(inputs.items, 'postgres')
+    if: github.event_name != 'workflow_dispatch' || inputs.items == 'all' || contains(format(',{0},', replace(inputs.items, ' ', '')), ',postgres,')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -188,7 +190,7 @@ jobs:
 
   memory:
     name: L7 migrator memory under the 768 MiB cap
-    if: github.event_name != 'workflow_dispatch' || inputs.items == 'all' || contains(inputs.items, 'memory')
+    if: github.event_name != 'workflow_dispatch' || inputs.items == 'all' || contains(format(',{0},', replace(inputs.items, ' ', '')), ',memory,')
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -229,7 +231,7 @@ jobs:
 
   seats:
     name: L8 relay seats vs a concurrent app move
-    if: github.event_name != 'workflow_dispatch' || inputs.items == 'all' || contains(inputs.items, 'seats')
+    if: github.event_name != 'workflow_dispatch' || inputs.items == 'all' || contains(format(',{0},', replace(inputs.items, ' ', '')), ',seats,')
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -270,7 +272,7 @@ jobs:
 
   throttle:
     name: L3 throttled link (mechanics)
-    if: github.event_name != 'workflow_dispatch' || inputs.items == 'all' || contains(inputs.items, 'throttle')
+    if: github.event_name != 'workflow_dispatch' || inputs.items == 'all' || contains(format(',{0},', replace(inputs.items, ' ', '')), ',throttle,')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:

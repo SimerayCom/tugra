@@ -35,8 +35,13 @@ done
 
 # boundary: a single ~30 MiB part at 0.25 MB/s takes ~2 min and must still complete (the relay's 120 s idle limit applies to
 # a stalled socket, not to a slow one). A 30 MiB archive is one part under the 32 MiB policy.
+# Nothing renews the transfer's lease while a part is being PUT (the hub bumps lastBeatAt on begin, commit, finish and beat
+# only, and the migrator beats only while skipping), so the hub's stale-copy sweep, which runs every 60 s, fails any COPYING
+# transfer whose last commit is older than MIGRATION_VX_STALE_MS and cancels the part in flight. The lab's 30 s default would
+# kill this ~126 s PUT on the first sweep: the window must exceed the part's whole transfer time. That is a product finding
+# (docs/runbooks/migration-lab.md, "Findings the lab surfaced"), not something this scenario can paper over.
 if [ "${L3_BOUNDARY:-1}" = 1 ]; then
-  "$LAB_SELF_DIR/hub.sh" restart MIGRATION_VX_PART_MIB=32
+  "$LAB_SELF_DIR/hub.sh" restart MIGRATION_VX_PART_MIB=32 MIGRATION_VX_STALE_MS=900000
   lab_scenario_begin l3-boundary
   "$LAB_SELF_DIR/fixture.sh" "$SRC_VOLUME" 30 random   # one part (the whole archive is < 32 MiB)
   lab_proxy_start 0.25
