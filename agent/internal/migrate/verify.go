@@ -20,6 +20,7 @@ package migrate
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -39,6 +40,13 @@ const (
 	// maxVerifyTables bounds one item's report (the hub's schema caps it identically).
 	maxVerifyTables = 5000
 	verifyTab       = "\t"
+
+	// maxVerifyBodyBytes is the budget of ONE report request. The hub parses JSON bodies with the framework default limit
+	// (100 KiB) and rejects a larger one outright (413), which would lose every measurement of the run, so the report is
+	// split into requests under this size (the hub stores one row per database, so batches are independent).
+	maxVerifyBodyBytes = 88 * 1024
+	// verifyEnvelopeBytes is the size of `{"items":[]}`.
+	verifyEnvelopeBytes = 12
 )
 
 // VerifyTable is one measured relation: a table (rows) or a Redis logical db (keys, with how many carry a TTL).
@@ -79,6 +87,62 @@ type verifyOut struct {
 	Skipped  int          `json:"skipped"`
 	Failed   int          `json:"failed"`
 	Items    []VerifyItem `json:"items"`
+}
+
+// packVerifyItems splits the report into request bodies that fit maxVerifyBodyBytes. A database whose own report is bigger than
+// the budget keeps as many tables as fit and is marked truncated (its true count stays in TableCount): the hub treats a
+// truncated report as "cannot prove parity beyond what it carries" (acknowledgeable), never as a pass. It returns the batches and
+// how many items were truncated.
+func packVerifyItems(items []VerifyItem, budget int) ([][]VerifyItem, int) {
+	var batches [][]VerifyItem
+	var cur []VerifyItem
+	curSize := verifyEnvelopeBytes
+	truncated := 0
+	for _, it := range items {
+		size := jsonSize(it)
+		if size+verifyEnvelopeBytes+1 > budget {
+			it = shrinkVerifyItem(it, budget-verifyEnvelopeBytes-1)
+			size = jsonSize(it)
+			truncated++
+		}
+		if len(cur) > 0 && curSize+size+1 > budget {
+			batches = append(batches, cur)
+			cur, curSize = nil, verifyEnvelopeBytes
+		}
+		cur = append(cur, it)
+		curSize += size + 1
+	}
+	if len(cur) > 0 {
+		batches = append(batches, cur)
+	}
+	return batches, truncated
+}
+
+func jsonSize(v any) int {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return 0
+	}
+	return len(b)
+}
+
+// shrinkVerifyItem keeps the longest prefix of the tables that fits `limit` bytes together with the rest of the item.
+func shrinkVerifyItem(it VerifyItem, limit int) VerifyItem {
+	tables := it.Tables
+	it.Tables = []VerifyTable{}
+	it.Truncated = true
+	used := jsonSize(it)
+	keep := 0
+	for _, t := range tables {
+		n := jsonSize(t) + 1
+		if used+n > limit {
+			break
+		}
+		used += n
+		keep++
+	}
+	it.Tables = tables[:keep:keep]
+	return it
 }
 
 // PutVerify reports the source-side measurements to the hub (a token-authenticated POST; retried like every other
@@ -404,15 +468,26 @@ func verifyPhase(ctx context.Context, run *runner, scope []Target, out *output, 
 	if len(vo.Items) == 0 {
 		return code
 	}
-	rctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	_, err := run.hub.PutVerify(rctx, vo.Items)
-	cancel()
-	if err != nil {
+	batches, cut := packVerifyItems(vo.Items, maxVerifyBodyBytes)
+	if cut > 0 {
+		run.logf("verify report: %d database(s) have more tables than one request carries; the report is truncated for them", cut)
+	}
+	var sendErr error
+	for _, batch := range batches {
+		rctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		_, err := run.hub.PutVerify(rctx, batch)
+		cancel()
+		if err == nil {
+			continue
+		}
 		if a := abortKind(err); a != 0 {
 			run.logf("verify report failed: %s", codeName(a))
 			return a
 		}
 		run.logf("verify report failed: %v", err)
+		sendErr = err
+	}
+	if sendErr != nil {
 		if code == exitOK {
 			return exitPartial
 		}

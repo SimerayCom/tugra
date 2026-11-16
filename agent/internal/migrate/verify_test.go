@@ -215,6 +215,9 @@ type verifyHub struct {
 	got     []VerifyItem
 	status  int
 	calls   []string
+	// maxBody > 0 mimics the hub's framework JSON body limit: a larger request is answered 413 and stores nothing.
+	maxBody int
+	bodies  []int
 }
 
 func (h *verifyHub) handler() http.Handler {
@@ -236,8 +239,17 @@ func (h *verifyHub) handler() http.Handler {
 				io.WriteString(w, `{"message":"nope"}`)
 				return
 			}
+			raw, _ := io.ReadAll(r.Body)
+			h.mu.Lock()
+			h.bodies = append(h.bodies, len(raw))
+			h.mu.Unlock()
+			if h.maxBody > 0 && len(raw) > h.maxBody {
+				w.WriteHeader(http.StatusRequestEntityTooLarge)
+				io.WriteString(w, `{"message":"request entity too large"}`)
+				return
+			}
 			var body verifyReq
-			_ = json.NewDecoder(r.Body).Decode(&body)
+			_ = json.Unmarshal(raw, &body)
 			h.mu.Lock()
 			h.got = append(h.got, body.Items...)
 			h.mu.Unlock()
@@ -512,5 +524,91 @@ func TestVerifyStatementsMatchTheHub(t *testing.T) {
 	}
 	if got := pgSQL(verifyModeEstimate, 250000); got != wantPg {
 		t.Errorf("postgres estimate SQL drifted from the hub's:\n%s", got)
+	}
+}
+
+func bigVerifyItem(ref string, tables int) VerifyItem {
+	it := VerifyItem{ItemRef: ref, Engine: "POSTGRES", Kind: "tables", Mode: "exact", State: "measured", TableCount: tables}
+	for i := 0; i < tables; i++ {
+		it.Tables = append(it.Tables, VerifyTable{Name: fmt.Sprintf("public.some_reasonably_long_table_name_%05d", i), Rows: int64(1000 + i)})
+	}
+	return it
+}
+
+func TestPackVerifyItemsSplitsUnderTheBudgetAndTruncatesWhatCannotFit(t *testing.T) {
+	const budget = 20 * 1024
+	small := []VerifyItem{bigVerifyItem("database:_:a", 120), bigVerifyItem("database:_:b", 120), bigVerifyItem("database:_:c", 120), bigVerifyItem("database:_:d", 120)}
+	batches, cut := packVerifyItems(small, budget)
+	if cut != 0 || len(batches) < 2 {
+		t.Fatalf("small items must be split across requests, not truncated: batches=%d cut=%d", len(batches), cut)
+	}
+	n := 0
+	for _, b := range batches {
+		if sz := jsonSize(verifyReq{Items: b}); sz > budget {
+			t.Errorf("a batch is %d bytes, budget %d", sz, budget)
+		}
+		n += len(b)
+	}
+	if n != len(small) {
+		t.Errorf("every item must be sent exactly once: %d of %d", n, len(small))
+	}
+
+	huge := bigVerifyItem("database:_:huge", 3000)
+	batches, cut = packVerifyItems([]VerifyItem{small[0], huge}, budget)
+	if cut != 1 {
+		t.Fatalf("the oversize item must be counted as truncated: %d", cut)
+	}
+	var got VerifyItem
+	for _, b := range batches {
+		if sz := jsonSize(verifyReq{Items: b}); sz > budget {
+			t.Errorf("a batch is %d bytes, budget %d", sz, budget)
+		}
+		for _, it := range b {
+			if it.ItemRef == huge.ItemRef {
+				got = it
+			}
+		}
+	}
+	if !got.Truncated || got.TableCount != 3000 || len(got.Tables) == 0 || len(got.Tables) >= 3000 {
+		t.Errorf("a truncated item keeps its true table count and a prefix of its tables: truncated=%v count=%d kept=%d", got.Truncated, got.TableCount, len(got.Tables))
+	}
+	if got.Tables[0].Name != huge.Tables[0].Name {
+		t.Error("the kept tables must be a prefix")
+	}
+}
+
+func TestVerifyReportOfALargeFleetStaysUnderTheHubBodyLimit(t *testing.T) {
+	hub := &verifyHub{targets: dbTargets, maxBody: 100 * 1024}
+	srv := httptest.NewServer(hub.handler())
+	defer srv.Close()
+	var lines strings.Builder
+	for i := 0; i < 3000; i++ {
+		fmt.Fprintf(&lines, "public.some_reasonably_long_table_name_%05d\t%d\t0\n", i, 10+i)
+	}
+	d := &verifyDocker{out: map[string]string{pgID: lines.String(), otherID: "# Keyspace\r\ndb0:keys=7,expires=2,avg_ttl=5\r\n"}}
+	d.install(t, []fakeContainer{
+		{id: pgID, name: "mypg", image: "postgres:16", running: true, envv: []string{"POSTGRES_USER=app", "POSTGRES_PASSWORD=pgpw", "POSTGRES_DB=appdb"}},
+		{id: otherID, name: "myrd", image: "redis:7", running: true, envv: []string{"REDIS_PASSWORD=rdpw"}},
+		{id: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", name: "stopped", image: "postgres:16", running: false, envv: []string{"POSTGRES_PASSWORD=x"}},
+	})
+	out, _, stderr := runVerify(t, srv, "--arms", "volumes", "--verify", "--verify-mode", "exact", "--helper-image", "img:1")
+	if out.Verify == nil || !out.Verify.Reported {
+		t.Fatalf("a report over the hub's body limit must not be lost: %+v stderr=%s", out.Verify, stderr)
+	}
+	for _, n := range hub.bodies {
+		if n > 100*1024 {
+			t.Errorf("a request of %d bytes would be refused by the hub", n)
+		}
+	}
+	byRef := map[string]VerifyItem{}
+	for _, it := range hub.got {
+		byRef[it.ItemRef] = it
+	}
+	if len(byRef) != 3 || byRef["database:_:myrd"].State != "measured" || byRef["database:_:stopped"].State != "skipped" {
+		t.Errorf("every database must still arrive: %v", byRef)
+	}
+	pg := byRef["database:_:mypg"]
+	if pg.State != "measured" || pg.TableCount != 3000 {
+		t.Errorf("postgres item: state=%s count=%d", pg.State, pg.TableCount)
 	}
 }
