@@ -77,7 +77,7 @@ lab_pg_integrity_seed "$SRC" tugra postgres "$VEC_ARG"
 lab_pg_fingerprint "$SRC" tugra postgres ticks "$VEC_ARG" >"$LAB_DIR/l16.fp.src"
 lab_stream_plan plan
 lab_run copy --arms volumes
-[ "$LAB_RC" = 0 ] || { tail -40 "$LAB_DIR/run.copy.log" >&2; lab_die "migrator exit $LAB_RC"; }
+[ "$LAB_RC" = 0 ] || lab_stream_fail copy "migrator exit $LAB_RC"
 lab_stream_expect_applied copy
 lab_stream_transfer_done
 lab_stream_dest

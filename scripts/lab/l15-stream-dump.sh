@@ -92,9 +92,16 @@ lab_run_bg stream --hub "$LAB_PROXY_URL" --arms volumes --part-mib 32 --hub-outa
 dump_in_flight_or_done() { [ "$(lab_last_part stream)" -ge 1 ] || [ -f "$LAB_DIR/run.stream.rc" ]; }
 lab_wait 900 "the first dumped parts" dump_in_flight_or_done
 if [ -f "$LAB_DIR/run.stream.rc" ]; then
-  # the whole dump fit before the hub could be killed: the data was too small for the link, not a product result
+  early_rc="$(cat "$LAB_DIR/run.stream.rc")"
   tail -30 "$LAB_DIR/run.stream.log" >&2
-  lab_die "the dump finished before the hub could be killed in flight (raise L15_MIB or lower L15_RATE; $(cat "$LAB_DIR/run.stream.rc") is the migrator's exit)"
+  lab_stream_note_refusal stream
+  # a run that ended with no committed part was refused or failed at the start (a destination gate answers before any byte moves):
+  # that is a result of the lane, not a dump that was too small for the link
+  if [ "$(lab_last_part stream)" -lt 1 ]; then
+    lab_die "the streamed run ended before any part was committed (migrator exit $early_rc): it was refused or failed at the start, see the log above"
+  fi
+  # the whole dump fit before the hub could be killed: the data was too small for the link, not a product result
+  lab_die "the dump finished before the hub could be killed in flight (raise L15_MIB or lower L15_RATE; $early_rc is the migrator's exit)"
 fi
 lab_log "the dump is in flight (part $(lab_last_part stream) committed): killing the hub"
 "$LAB_SELF_DIR/hub.sh" kill
@@ -105,7 +112,7 @@ rc="$(lab_run_wait stream 3600)"
 secs=$(( $(date +%s) - t0 ))
 lab_proxy_stop
 lab_stream_expect_applied stream
-[ "$rc" = 0 ] || { tail -40 "$LAB_DIR/run.stream.log" >&2; lab_die "migrator exit $rc"; }
+[ "$rc" = 0 ] || lab_stream_fail stream "migrator exit $rc"
 lab_log "the dump rode the hub outage and was applied: $(lab_item stream parts) parts, $(lab_item stream rawBytes) raw B, ${secs} s"
 echo "L15_COPY_SECONDS=$secs L15_PARTS=$(lab_item stream parts) L15_RAW_BYTES=$(lab_item stream rawBytes)" >>"$LAB_DIR/l15.summary"
 lab_stream_transfer_done

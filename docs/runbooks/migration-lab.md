@@ -59,7 +59,7 @@ the fix removes the header. L1a, L2, L8 and L9 are the scenarios that prove it o
   docker was available to reproduce. Two changes bound the possible suspects: `migrate.sh` no longer ends with an unbounded `wait` (it
   waited for the stderr tee, which any stray descendant holding the pipe would keep alive; it now waits at most 5 s for the log to
   drain), and a `lab_run_wait` timeout prints the live processes (`migrate.sh`, the installer, `docker run/kill/rm`, the tee) and the
-  containers. If L1b is red again, those two blocks in the job log name the holder.
+  containers. If L1b is red again, those two blocks in the job log name the holder. `lab_kill9_migrator` also kills by name, waits a bounded time (`LAB_KILL_REAP_TICKS`, 20 s) for the run's installer-side `docker run` client to exit, kills a client that does not, and removes the container by name, logging whatever it had to force, so a stuck client is visible and can no longer be what the scenario waits on.
 
 **A product bug seen in run 3's hub log (not a lab failure).** `container-health.runner.service.ts` line 235 builds
 `containerName: { notIn: liveNames.length ? liveNames : ["\u0000"] }`: when a server reports no containers the sentinel is a NUL
@@ -216,7 +216,7 @@ or re-testing `posix`.
 The central gate. The images are the four the real estate runs (`postgres:16-alpine`, `postgres:17-alpine`, `pgvector/pgvector:pg17`,
 `postgres:18-alpine`); a pgvector image also carries a vector table with an HNSW index, and the copied database must hold it and answer a
 nearest-neighbour query. **PostgreSQL 18 stays on the logical path, where the biggest database cannot go** (L9 shows the 256 MiB cap).
-A real cluster (`POSTGRES_USER=tugra`, about 200 MiB of rows) is **SIGKILLed** (exit 137, no checkpoint). 16 and 17 (PGDATA mounted at
+A real cluster (`POSTGRES_USER=tugra`, about 200 MiB of rows) is **SIGKILLed** (exit 137, no shutdown checkpoint: the data directory is "not properly shut down" and the destination runs crash recovery). One explicit `CHECKPOINT` runs after the source fingerprint and just before the kill, so no WAL newer than the last checkpoint exists to be redone: PostgreSQL logs a serial's value 32 ahead in the WAL, and redoing such a record moves `last_value` (250 to 264 on a plain 15) with no row changed, which a sequence comparison would read as a loss. 16 and 17 (PGDATA mounted at
 `/var/lib/postgresql/data`): the gates pass, the copy applies, and the database the **hub itself starts** as the last step of the apply
 (`postApply` provisions it and waits for `RUNNING` before the transfer is `DONE`) shows WAL replay in its logs, with the **fingerprint**
 (row count plus a checksum over every column of every row, the extensions, the sequences' `last_value`, the collation, and, because a

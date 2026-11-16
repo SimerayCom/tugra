@@ -211,7 +211,29 @@ lab_wait_part() { # <tag> <n>: until the run committed part index >= n
 }
 
 lab_migrator_containers() { docker ps -q --filter 'name=tugra-migrator-'; }
-lab_kill9_migrator() { local c; c="$(lab_migrator_containers)"; [ -n "$c" ] || lab_die "no migrator container is running"; docker kill --signal KILL $c >/dev/null; }
+# lab_kill9_migrator: SIGKILL every running migrator container (the unclean stop), then make sure the run that owns it can end. The installer's
+# `docker run` client normally exits on its own the moment its container dies (137); a client that does not (lab run 3, L1b: the run never
+# wrote its exit code within 120 s) is killed after a bound, and the container is removed by name, so a stuck client can never be what a
+# scenario waits on. What had to be forced is logged, so a harness bug stays visible.
+lab_kill9_migrator() {
+  local names n i
+  names="$(docker ps --filter 'name=tugra-migrator-' --format '{{.Names}}')"
+  [ -n "$names" ] || lab_die "no migrator container is running"
+  for n in $names; do docker kill --signal KILL "$n" >/dev/null; done
+  for n in $names; do
+    i=0
+    while pgrep -f -- "--name $n" >/dev/null 2>&1; do
+      i=$((i + 1))
+      if [ "$i" -gt "${LAB_KILL_REAP_TICKS:-40}" ]; then
+        lab_log "the docker client of the killed migrator $n did not exit within the bound: killing it"
+        pkill -KILL -f -- "--name $n" >/dev/null 2>&1 || true
+        break
+      fi
+      sleep 0.5
+    done
+    docker rm -f "$n" >/dev/null 2>&1 || true
+  done
+}
 
 # lab_item <tag> <field>: a field of THIS op's volume item in the run's JSON result (state, reason, parts, disk, ...).
 lab_item() { node "$LAB_SELF_DIR/jget.mjs" "items.@itemRef=${ITEMREF}.$2" "$LAB_DIR/run.$1.json" 2>/dev/null || true; }

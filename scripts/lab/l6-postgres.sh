@@ -61,7 +61,11 @@ if [ "$MAJOR" = 16 ]; then
   lab_check "the running source was left running" test "$(docker inspect -f '{{.State.Running}}' labsrc)" = true
 fi
 
-# the unclean stop: SIGKILL, exit 137, no checkpoint (the target must replay WAL)
+# the unclean stop: SIGKILL, exit 137 (the target must run crash recovery). One checkpoint first, AFTER the fingerprint: PostgreSQL logs a
+# serial's value 32 ahead in the WAL, so redo of a record newer than the last checkpoint moves lab_ser_id_seq's last_value (250 -> 264 on a
+# plain 15) while no row changed. With the checkpoint there is nothing newer to redo, the sequence is exactly what the fingerprint saw, and
+# the data directory is still "not properly shut down" (SIGKILL), so recovery runs.
+psql_src "checkpoint" >/dev/null
 docker kill labsrc >/dev/null
 lab_check "the source exited 137" test "$(docker inspect -f '{{.State.ExitCode}}' labsrc)" = 137
 

@@ -85,7 +85,7 @@ if [ "$MAJOR" -ge 18 ]; then
       t1=$(date +%s)
       LAB_OP=stream lab_run stream ${hubargs[@]+"${hubargs[@]}"} --arms volumes
       secs1=$(( $(date +%s) - t1 ))
-      [ "$LAB_RC" = 0 ] || { tail -40 "$LAB_DIR/run.stream.log" >&2; lab_die "streamed lane: migrator exit $LAB_RC"; }
+      [ "$LAB_RC" = 0 ] || lab_stream_fail stream "streamed lane: migrator exit $LAB_RC"
       lab_stream_expect_applied stream
       echo "L9_STREAM_SECONDS=$secs1 L9_STREAM_PARTS=$(lab_item stream parts) L9_STREAM_RAW_BYTES=$(lab_item stream rawBytes)" >>"$LAB_DIR/l9.summary"
       lab_stream_transfer_done "$OP_ID"

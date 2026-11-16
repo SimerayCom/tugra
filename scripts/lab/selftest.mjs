@@ -945,3 +945,61 @@ test("migrate.sh and lib.sh: the log tee drains within a bound, a run that never
 test("the lab never names a pullable-looking image it cannot pull: minio/minio and minio/mc are gone from fleet.sh", () => {
   assert.doesNotMatch(read("fleet.sh").split("\n").filter((l) => !l.trim().startsWith("#")).join("\n"), /minio\/(minio|mc)[:\s"]/);
 });
+
+// ---- review fixes: the SIGKILL copy's sequences, refusal naming before the exit-code check, the killed migrator's docker client -------
+test("L6: a checkpoint after the fingerprint and before the SIGKILL, so redo cannot move a serial's last_value", () => {
+  const s = read("l6-postgres.sh");
+  const fp = s.indexOf("lab_pg_fingerprint labsrc");
+  const cp = s.indexOf('psql_src "checkpoint"');
+  const kill = s.indexOf("docker kill labsrc");
+  assert.ok(fp > 0 && cp > fp, "the checkpoint comes after the source fingerprint");
+  assert.ok(kill > cp, "and before the kill");
+  assert.equal(s.slice(cp, kill).split("\n").filter((l) => l.trim() && !l.startsWith("#")).length, 1, "nothing but the checkpoint runs before the kill (no new WAL)");
+  assert.match(s, /not properly shut down/, "the WAL replay evidence is still asserted");
+});
+
+test("stream legs: a PostgreSQL 18 refusal is named before any exit-code check can die with a generic message", () => {
+  const dir = tmp();
+  writeFileSync(join(dir, "run.stream.log"), "error: the destination refused: PostgreSQL 18 or newer is not supported\n");
+  const r = bash(`. ${join(LAB, "stream.sh")}; lab_stream_fail stream "migrator exit 1"`, { LAB_DIR: dir });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /PRODUCT FINDING: the hub refuses a streamed dump into a PostgreSQL 18 destination/);
+  assert.match(r.stderr, /FAIL: migrator exit 1/);
+  const clean = tmp();
+  writeFileSync(join(clean, "run.stream.log"), "error: something else\n");
+  const r2 = bash(`. ${join(LAB, "stream.sh")}; lab_stream_fail stream "migrator exit 1"`, { LAB_DIR: clean });
+  assert.equal(r2.status, 1);
+  assert.doesNotMatch(r2.stderr, /PRODUCT FINDING/, "a run that failed for another reason is not blamed on the gate");
+  for (const [f, tag] of [["l9-fleet-pg.sh", "stream"], ["l10-fleet-mariadb.sh", "stream"], ["l16-pg-tls.sh", "copy"], ["l15-stream-dump.sh", "stream"]]) {
+    const t = read(f);
+    assert.ok(!t.includes(`tail -40 "$LAB_DIR/run.${tag}.log" >&2; lab_die`), `${f} dies through lab_stream_fail`);
+    assert.match(t, /lab_stream_(fail|note_refusal)/);
+  }
+  const l15 = read("l15-stream-dump.sh");
+  const early = l15.indexOf("lab_stream_note_refusal stream");
+  assert.ok(early > 0 && early < l15.indexOf('if [ "$(lab_last_part stream)" -lt 1 ]') && early < l15.indexOf("finished before the hub could be killed"), "the early exit names the refusal first");
+  assert.match(l15, /ended before any part was committed/, "a run with no committed part is a refusal or failure, not a small dump");
+});
+
+test("lab_kill9_migrator: kills by name, waits a bound for the run's docker client, kills a stuck one, removes the container", (t) => {
+  if (spawnSync("bash", ["-c", "command -v pgrep && command -v pkill"]).status !== 0) return t.skip("pgrep or pkill is missing");
+  const dir = tmp();
+  const env = fakeDocker(dir, `echo "$*" >>"$LAB_DIR/docker.calls"; case "$1" in ps) echo tugra-migrator-4242;; esac; exit 0`);
+  // a stand-in for the installer's stuck `docker run` client
+  const stuck = spawn("bash", ["-c", "sleep 60; exit 0", "stuck-docker-client", "--name", "tugra-migrator-4242"], { stdio: "ignore", detached: true });
+  try {
+    const r = bash(`. ${join(LAB, "lib.sh")}; lab_kill9_migrator`, { ...env, LAB_KILL_REAP_TICKS: "2" });
+    assert.equal(r.status, 0, r.stderr);
+    const calls = readFileSync(join(dir, "docker.calls"), "utf8");
+    assert.match(calls, /kill --signal KILL tugra-migrator-4242/);
+    assert.match(calls, /rm -f tugra-migrator-4242/);
+    assert.match(r.stderr, /did not exit within the bound: killing it/);
+    assert.equal(spawnSync("pgrep", ["-f", "--", "--name tugra-migrator-4242"]).status, 1, "the stuck client was killed");
+  } finally {
+    try { process.kill(-stuck.pid, "SIGKILL"); } catch { /* already gone */ }
+  }
+  const none = fakeDocker(tmp(), `exit 0`);
+  const r2 = bash(`. ${join(LAB, "lib.sh")}; lab_kill9_migrator`, none);
+  assert.equal(r2.status, 1);
+  assert.match(r2.stderr, /no migrator container is running/);
+});

@@ -21,15 +21,31 @@ lab_stream_plan() {
   lab_expect_item "$tag" planned would-stream-dump
 }
 
+# lab_stream_note_refusal <tag>: when the run's log or JSON carries the hub's PostgreSQL 18 destination refusal, name it for what it is:
+# a product gate, not a harness failure. Prints nothing otherwise. A refused run ends with a non-zero migrator exit before any part
+# moves, so every caller that dies on a non-zero exit calls this first (lab_stream_fail does).
+lab_stream_note_refusal() {
+  local tag="$1"
+  if grep -q -E "PostgreSQL 18 or newer" "$LAB_DIR/run.$tag.log" "$LAB_DIR/run.$tag.json" 2>/dev/null; then
+    lab_log "PRODUCT FINDING: the hub refuses a streamed dump into a PostgreSQL 18 destination (importer/volume-stream/vx-dest-gate.ts dumpDestLayout, called from vx.service.ts begin and vx-apply.service.ts runDumpApply): Tugra mounts the database volume at the pre-18 data path, so the restored cluster would sit outside the named volume"
+  fi
+}
+
+# lab_stream_fail <tag> <message>: a streamed run that went wrong. Shows the end of its log, names a destination refusal, then dies.
+lab_stream_fail() {
+  local tag="$1"; shift
+  tail -40 "$LAB_DIR/run.$tag.log" >&2 || true
+  lab_stream_note_refusal "$tag"
+  lab_die "$*"
+}
+
 # lab_stream_expect_applied <tag>: the run's item is `volume-applied`; when it is not, the log is shown and a PostgreSQL 18 destination
-# refusal is named for what it is: a product gate, not a harness failure.
+# refusal is named for what it is.
 lab_stream_expect_applied() {
   local tag="$1"
   if [ "$(lab_item "$tag" state)" != volume-applied ]; then
     tail -30 "$LAB_DIR/run.$tag.log" >&2 || true
-    if grep -q -E "PostgreSQL 18 or newer" "$LAB_DIR/run.$tag.log" "$LAB_DIR/run.$tag.json" 2>/dev/null; then
-      lab_log "PRODUCT FINDING: the hub refuses a streamed dump into a PostgreSQL 18 destination (importer/volume-stream/vx-dest-gate.ts dumpDestLayout, called from vx.service.ts begin and vx-apply.service.ts runDumpApply): Tugra mounts the database volume at the pre-18 data path, so the restored cluster would sit outside the named volume"
-    fi
+    lab_stream_note_refusal "$tag"
   fi
   lab_expect_item "$tag" volume-applied
 }
