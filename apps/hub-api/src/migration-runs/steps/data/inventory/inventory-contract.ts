@@ -5,7 +5,6 @@
  * `host-command.service.ts`, the tests use the in-memory fake in `testing/`.
  */
 import type { CommandKind, RunSnapshot, StepKey } from "../../../core/run-contract";
-import type { DataSnapshot } from "../data-contract";
 
 export const HOST_REPORT_PORT = Symbol("MIGRATION_RUN_HOST_REPORT_PORT");
 
@@ -44,11 +43,13 @@ export interface HostCommandInput {
   /** The live migration token (shown once, only inside the returned script). */
   token: string;
   hubBase: string;
+  /** The check ids the operator attested on the step (`freeze-containers-unresolved` lifts the stop-list guard of a freeze). */
+  attested: readonly string[];
 }
 
 export interface RunHostCommandPort {
   /** Build the script of a host-loop / inventory command, or throw a `HostCommandError` with a fixed code. */
-  build(input: HostCommandInput, snap: DataSnapshot): Promise<{ command: string; hosts: string[] }>;
+  build(input: HostCommandInput): Promise<{ command: string; hosts: string[] }>;
 }
 
 export class HostCommandError extends Error {

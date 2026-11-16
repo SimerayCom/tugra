@@ -697,7 +697,7 @@ describe("RunEngine: evidence, attachments, inputs and the migrator command", ()
     expect(w.port.calls).toContain("mint:op-1:mint");
     // the credential is in the response only: never in a view, an event or an audit entry
     expect(JSON.stringify([await w.view(id), w.store.eventRows, w.sink.audits])).not.toContain("TOKEN");
-    await expect(w.service.command(ACTOR, id, "FREEZE", { reissue: false }, "https://hub.example.com")).rejects.toThrow(/step-has-no-command/);
+    await expect(w.service.command(ACTOR, id, "VERIFY", { reissue: false }, "https://hub.example.com")).rejects.toThrow(/step-has-no-command/);
   });
 
   it("an object migration is attached to DATA_SEED/DATA_FINAL (same team only, deduplicated)", async () => {

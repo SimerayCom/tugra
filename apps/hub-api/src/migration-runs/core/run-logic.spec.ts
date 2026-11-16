@@ -287,7 +287,9 @@ describe("allowed flags", () => {
     expect(deriveStepAllowed(r, step("DATA_SEED", "WAITING_OPERATOR", { wait: { kind: "operator", code: "a.b" } })).skip).toBe(true);
     expect(deriveStepAllowed(r, step("IMPORT", "WAITING_OPERATOR", { wait: { kind: "operator", code: "a.b" } })).skip).toBe(false);
     expect(deriveStepAllowed(r, step("DATA_FINAL", "WAITING_OPERATOR", { wait: { kind: "operator", code: "a.b", offersCommand: true } })).command).toBe(true);
-    expect(deriveStepAllowed(r, step("FREEZE", "WAITING_OPERATOR", { wait: { kind: "operator", code: "a.b", offersCommand: true } })).command).toBe(false);
+    // FREEZE can mint the host-loop script (the coolify-host-loop runner stops the writers through it); VERIFY has no source-host command
+    expect(deriveStepAllowed(r, step("FREEZE", "WAITING_OPERATOR", { wait: { kind: "operator", code: "a.b", offersCommand: true } })).command).toBe(true);
+    expect(deriveStepAllowed(r, step("VERIFY", "WAITING_OPERATOR", { wait: { kind: "operator", code: "a.b", offersCommand: true } })).command).toBe(false);
     expect(deriveStepAllowed(r, step("FREEZE", "WAITING_OPERATOR", { wait: { kind: "operator", code: "a.b", attest: ["c"] } })).evidence).toBe(true);
     expect(deriveStepAllowed(r, step("DATA_SEED", "PENDING")).attach).toBe(true);
     expect(deriveStepAllowed(r, step("IMPORT", "PENDING")).attach).toBe(false);

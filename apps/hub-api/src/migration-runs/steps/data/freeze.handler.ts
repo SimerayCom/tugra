@@ -1,4 +1,4 @@
-import { Inject, Injectable, OnModuleInit } from "@nestjs/common";
+import { Inject, Injectable, OnModuleInit, Optional } from "@nestjs/common";
 import type { ApprovalBinding, DryRunItem, GateCheck, GateResult } from "../../core/dto";
 import {
   RunLeaseLostError,
@@ -32,6 +32,10 @@ import {
   type SourceHostPort,
 } from "./data-contract";
 import { estimateEquals, estimateWindow, sha256Hex } from "./data-logic";
+import { HOST_LOOP_CODES } from "./inventory/host-codes";
+import { serverRefOfItem } from "./inventory/host-hosts";
+import { emptyHostView, loadHostView, type HostView } from "./inventory/host-view";
+import { HOST_REPORT_PORT, type HostReportPort } from "./inventory/inventory-contract";
 import { classifyAgentError, compOf, gateFrom, loadSnapshot, releaseIfOurs } from "./handler-util";
 import {
   buildSourceInspectScript,
@@ -62,6 +66,8 @@ export interface FreezeObs extends Observation {
   apiAvailable: "ok" | ApiFailure | null;
   /** The downtime estimate from the CURRENT facts (the approval reviews this, not a stale stored value). */
   estimateSec: number | null;
+  /** The stored reports of the host-loop runner (freeze outcome per source host); empty unless that runner freezes. */
+  hosts: HostView;
 }
 
 /** How long an accepted stop may take to show as stopped before the freeze fails (retryable). */
@@ -88,6 +94,28 @@ export function buildStopList(snap: Pick<DataSnapshot, "apps" | "services"> & { 
 export const controllerOf = (run: RunSnapshot): SourceController => resolveOwnerInput(run.inputs, "sourceController") ?? "manual";
 
 /**
+ * With the `coolify-host-loop` runner the writers are stopped by the loop script on each source host (the `agent` controller's
+ * identity-checked docker stop, executed over ssh from the Coolify host instead of by an agent on the host): there is no
+ * same-host requirement, and the evidence is `host-loop-reported`.
+ */
+export const hostLoopFreeze = (run: RunSnapshot): boolean => run.options.sourceRunner === "coolify-host-loop" && controllerOf(run) === "agent";
+
+/** The `freeze` compensation record of a host-loop freeze: only the controller; the identities live in the host reports and on each host. */
+const HOST_LOOP_CONTROLLER = "host-loop";
+
+/** The stop list grouped by the source host that runs each item (`_` = the source did not say, which no host can be told to stop). */
+export function stopHostsOf(stop: readonly StopItem[]): { byHost: Map<string, StopItem[]>; unplaced: StopItem[] } {
+  const byHost = new Map<string, StopItem[]>();
+  const unplaced: StopItem[] = [];
+  for (const s of stop) {
+    const h = serverRefOfItem(s.itemRef);
+    if (h === "_") unplaced.push(s);
+    else byHost.set(h, [...(byHost.get(h) ?? []), s]);
+  }
+  return { byHost, unplaced };
+}
+
+/**
  * FREEZE (approval, then operator or automatic): opens the downtime window by stopping the source writers.
  *
  *  - `manual` (default, owner question 8 unanswered): prints the stop list; the evidence is the operator's attestation.
@@ -110,6 +138,7 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
     @Inject(SOURCE_API_PORT) private readonly api: SourceApiPort,
     @Inject(SOURCE_HOST_PORT) private readonly host: SourceHostPort,
     @Inject(CAPABILITY_PORT) private readonly caps: CapabilityPort,
+    @Optional() @Inject(HOST_REPORT_PORT) private readonly reports?: HostReportPort,
   ) {}
 
   onModuleInit(): void {
@@ -124,10 +153,16 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
     const run = ctx.run;
     const controller = controllerOf(run);
     const items: DryRunItem[] = [{ code: "freeze.dry.plan", level: "info", params: { controller, scheduled: !!run.options.freezeAt, ttlPolicy: run.options.ttlPolicy } }];
-    if (controller === "agent" && run.topology !== "swap-proxy") items.push({ code: DATA_CODES.agentNeedsSameHost, level: "block" });
+    const viaLoop = hostLoopFreeze(run);
+    if (controller === "agent" && !viaLoop && run.topology !== "swap-proxy") items.push({ code: DATA_CODES.agentNeedsSameHost, level: "block" });
     if (!run.opId) return items;
     const stop = buildStopList(await loadSnapshot(this.data, ctx));
     items.push({ code: DATA_CODES.freezeStopList, level: stop.length ? "info" : "warn", params: { count: stop.length, names: stop.slice(0, 40).map((s) => s.name) } });
+    if (viaLoop) {
+      const { byHost, unplaced } = stopHostsOf(stop);
+      items.push({ code: HOST_LOOP_CODES.freezeDryPlan, level: "info", params: { hosts: byHost.size, items: stop.length - unplaced.length } });
+      if (unplaced.length) items.push({ code: HOST_LOOP_CODES.freezeNoHost, level: "block", params: { count: unplaced.length, names: unplaced.slice(0, 20).map((u) => u.name) } });
+    }
     return items;
   }
 
@@ -145,7 +180,8 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
       apiAvailable = av.ok ? "ok" : av.reason;
     }
     const estimate = estimateWindow(snap, ctx.now());
-    return { snap, controller, stop: buildStopList(snap), record, attested, apiAvailable, estimateSec: estimate.freezeToFlipSec, states: record ? await this.readStates(ctx, record) : null };
+    const hosts = hostLoopFreeze(run) ? await loadHostView(this.reports, run.id) : emptyHostView();
+    return { snap, controller, stop: buildStopList(snap), record, attested, apiAvailable, estimateSec: estimate.freezeToFlipSec, hosts, states: record ? await this.readStates(ctx, record) : null };
   }
 
   /** Re-read what the freeze stopped. Never throws: an unreadable state is `unknown` and therefore not quiesced. */
@@ -191,7 +227,7 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
     const run = ctx.run;
     const checks: GateCheck[] = [];
     let timer: string | null = null;
-    if (obs.controller === "agent" && run.topology !== "swap-proxy") checks.push({ id: "agent-same-host", status: "fail", code: DATA_CODES.agentNeedsSameHost });
+    if (obs.controller === "agent" && !hostLoopFreeze(run) && run.topology !== "swap-proxy") checks.push({ id: "agent-same-host", status: "fail", code: DATA_CODES.agentNeedsSameHost });
     if (obs.controller === "api" && obs.apiAvailable !== "ok") checks.push({ id: "api-available", status: "fail", code: DATA_CODES.freezeApiUnavailable, params: { reason: obs.apiAvailable ?? "unknown" }, ownerInput: "sourceController" });
     const seed = ctx.stepState("DATA_SEED").status;
     if (seed !== "PASSED" && seed !== "SKIPPED") checks.push({ id: "data-seed", status: "fail", code: "freeze.data-seed-not-passed", params: { status: seed } });
@@ -241,6 +277,7 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
 
   /** The source is quiesced AND the evidence says how we know. */
   private quiesced(ctx: StepContext, obs: FreezeObs): { ok: boolean; remaining: number } {
+    if (hostLoopFreeze(ctx.run)) return this.hostLoopQuiesced(obs);
     if (!obs.record) return { ok: false, remaining: obs.stop.length };
     if (obs.controller === "manual") {
       // the operator's word, or the migrator will stop the source writers itself (`--stop-source`, reported at DATA_FINAL)
@@ -250,13 +287,37 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
     return { ok: obs.states.running === 0 && obs.states.unknown === 0, remaining: obs.states.running + obs.states.unknown };
   }
 
+  /** Host-loop freeze: quiesced when EVERY source host that has stop-list items reported that its recorded containers are stopped. */
+  private hostLoopQuiesced(obs: FreezeObs): { ok: boolean; remaining: number } {
+    const { byHost, unplaced } = stopHostsOf(obs.stop);
+    let remaining = unplaced.length;
+    for (const host of byHost.keys()) if (obs.hosts.freeze.get(host)?.state !== "stopped") remaining++;
+    return { ok: remaining === 0, remaining };
+  }
+
   postGate(ctx: StepContext, obs: FreezeObs): GateResult {
+    if (hostLoopFreeze(ctx.run)) return this.hostLoopGate(obs);
     const q = this.quiesced(ctx, obs);
     const unresolved = obs.record?.unresolved?.length ?? 0;
     const evidence = obs.controller === "manual" ? (obs.attested ? "operator-attested" : "migrator-reported") : unresolved ? "operator-attested" : "hub-verified";
     const checks: GateCheck[] = [{ id: "source-quiesced", status: q.ok ? "pass" : obs.record ? "fail" : "unknown", code: q.ok ? DATA_CODES.freezeQuiesced : DATA_CODES.freezeStillRunning, params: { remaining: q.remaining, controller: obs.controller }, evidence }];
     // the part of the stop list the hub could not resolve to a container was accepted by the operator, and stays visible
     if (unresolved) checks.push({ id: "containers-unresolved", status: "warn", code: DATA_CODES.freezeContainerUnresolved, params: { count: unresolved, names: obs.record!.unresolved!.slice(0, 20) }, evidence: "operator-attested" });
+    return gateFrom(checks);
+  }
+
+  private hostLoopGate(obs: FreezeObs): GateResult {
+    const q = this.hostLoopQuiesced(obs);
+    const checks: GateCheck[] = [
+      { id: "source-quiesced", status: q.ok ? "pass" : obs.record ? "fail" : "unknown", code: q.ok ? DATA_CODES.freezeQuiesced : DATA_CODES.freezeStillRunning, params: { remaining: q.remaining, controller: "host-loop" }, evidence: "host-loop-reported" },
+    ];
+    const unresolved: string[] = [];
+    for (const [host, rep] of obs.hosts.freeze) {
+      if (rep.state === "stop-failed" || (rep.state === "error" && rep.payload.errorCode !== "unresolved-items")) checks.push({ id: `freeze-host:${host.slice(0, 60)}`, status: "fail", code: HOST_LOOP_CODES.freezeHostFailed, subject: host, params: { host, state: rep.state, code: rep.payload.errorCode ?? "stop-failed" }, evidence: "host-loop-reported" });
+      unresolved.push(...rep.payload.unresolved);
+    }
+    // a stop-list item no container matched was accepted by the operator and stays visible
+    if (q.ok && unresolved.length) checks.push({ id: "containers-unresolved", status: "warn", code: DATA_CODES.freezeContainerUnresolved, params: { count: unresolved.length, names: unresolved.slice(0, 20) }, evidence: "operator-attested" });
     return gateFrom(checks);
   }
 
@@ -279,8 +340,37 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
       case "api":
         return this.actApi(ctx, obs);
       case "agent":
-        return this.actAgent(ctx, obs);
+        return hostLoopFreeze(run) ? this.actHostLoop(ctx, obs) : this.actAgent(ctx, obs);
     }
+  }
+
+  /**
+   * The loop script on the Coolify host stops the writers of every source host (identity-checked, recorded on the host before the
+   * first stop) and reports back. The hub tracks per-host outcomes; a stop-list item no container matched waits for the operator's
+   * attestation, exactly like the same-host agent controller.
+   */
+  private async actHostLoop(ctx: StepContext, obs: FreezeObs): Promise<ActResult> {
+    const { byHost, unplaced } = stopHostsOf(obs.stop);
+    if (unplaced.length) return { outcome: "fail", code: HOST_LOOP_CODES.freezeNoHost, params: { count: unplaced.length, names: unplaced.slice(0, 20).map((u) => u.name) }, retryable: false };
+    if (!obs.record) await ctx.recordCompensation({ freeze: { controller: HOST_LOOP_CONTROLLER, hosts: [...byHost.keys()] } });
+    if (byHost.size === 0 || this.hostLoopQuiesced(obs).ok) return { outcome: "done" };
+    const names = new Map(obs.stop.map((s) => [s.itemRef, s.name]));
+    const blocked = [...obs.hosts.freeze.values()].filter((r) => r.state === "error" && r.payload.errorCode === "unresolved-items");
+    const accepted = ctx.step.evidence.attestations.some((a) => a.checkId === UNRESOLVED_CHECK);
+    if (blocked.length && !accepted) {
+      const unresolved = blocked.flatMap((b) => b.payload.unresolved);
+      await ctx.emit({ stepKey: "FREEZE", level: "warn", code: DATA_CODES.freezeContainerUnresolved, params: { count: unresolved.length, names: unresolved.slice(0, 20).map((u) => names.get(u) ?? u) } });
+      return {
+        outcome: "wait",
+        wait: { kind: "operator", code: DATA_CODES.freezeContainerUnresolved, params: { count: unresolved.length, of: obs.stop.length, names: unresolved.slice(0, 20).map((u) => names.get(u) ?? u) }, attest: [UNRESOLVED_CHECK], offersCommand: true, commandKind: "host-loop" },
+      };
+    }
+    const pending = [...byHost.keys()].filter((h) => obs.hosts.freeze.get(h)?.state !== "stopped");
+    const failing = pending.filter((h) => ["stop-failed", "error"].includes(obs.hosts.freeze.get(h)?.state ?? ""));
+    return {
+      outcome: "wait",
+      wait: { kind: "operator", code: HOST_LOOP_CODES.freezeRun, params: { hosts: byHost.size, pending: pending.length, failing: failing.length, names: failing.slice(0, 20), items: obs.stop.length }, offersCommand: true, commandKind: "host-loop" },
+    };
   }
 
   private async actManual(ctx: StepContext, obs: FreezeObs): Promise<ActResult> {
@@ -387,6 +477,13 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
     const rec = compOf(ctx).freeze as FreezeRecord | undefined;
     if (!rec) return { outcome: "nothing-to-do" };
     const run = ctx.run;
+    if ((rec.controller as string) === HOST_LOOP_CONTROLLER) {
+      // the hub cannot start a container on a source host itself: name the hosts that still have recorded containers stopped, so the
+      // operator runs the same script with TUGRA_LOOP_ACTION=unfreeze (it starts exactly the recorded, identity-checked containers)
+      const view = await loadHostView(this.reports, run.id).catch(() => emptyHostView());
+      const hosts = [...view.freeze].filter(([, f]) => f.payload.recorded.length > 0 && f.state !== "restarted").map(([h]) => h);
+      return hosts.length ? { outcome: "manual", manual: [{ code: HOST_LOOP_CODES.freezeUnfreeze, params: { hosts: hosts.slice(0, 20), count: hosts.length } }] } : { outcome: "nothing-to-do" };
+    }
     if (rec.controller === "manual") {
       return { outcome: "manual", manual: [{ code: DATA_CODES.freezeRestartManual, params: { controller: "manual" } }] };
     }

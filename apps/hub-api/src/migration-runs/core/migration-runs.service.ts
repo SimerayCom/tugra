@@ -8,7 +8,7 @@
  *
  * Errors are the usual Nest HTTP exceptions whose message is a stable machine code (`plan-changed`, `run-past-ponr`, ...).
  */
-import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { scopeSatisfies, type Scope } from "../../api-tokens/scopes";
 import {
   OwnerInputsSchema,
@@ -65,6 +65,7 @@ import {
 import { CLEANUP_REQUEST_KEY, RunEngineService, type CleanupRequest } from "./run-engine.service";
 import { ATTACH_STEPS, COMMAND_STEPS, OPEN_STATUSES, approvalExpiry, deriveStepAllowed, hashOf, isTerminal, isWaitingStep, serverMapOf, stripSince } from "./run-logic";
 import { RUN_ENV, RUN_IMPORT, RUN_SINK, RUN_STORE, type RunEnvPort, type RunImportPort, type RunSessionInfo, type RunSinkPort } from "./run-ports";
+import { HOST_REPORT_PORT, HostCommandError, RUN_HOST_COMMANDS, type HostReportPort, type RunHostCommandPort } from "../steps/data/inventory/inventory-contract";
 import { ServerHasLiveRunError, type EventRow, type RunRow, type RunStore, type StepRow } from "./run-store";
 import { buildReport, reportToMarkdown, runFacts, stepFacts, toSummary, toView } from "./run-view";
 
@@ -80,6 +81,10 @@ export class MigrationRunsService implements MigrationRunsFacade {
     @Inject(RUN_ENV) private readonly env: RunEnvPort,
     @Inject(RUN_SINK) private readonly sink: RunSinkPort,
     @Inject(RUN_IMPORT) private readonly imp: RunImportPort,
+    // the host-loop / inventory command builder and the stored host reports (the data steps module provides both; optional so the
+    // classic single-host facade, and specs that do not need them, work without)
+    @Optional() @Inject(RUN_HOST_COMMANDS) private readonly hostCommands?: RunHostCommandPort,
+    @Optional() @Inject(HOST_REPORT_PORT) private readonly hostReports?: HostReportPort,
   ) {
     this.engine.terminalHook = (runId) => this.persistReport(runId);
   }
@@ -491,8 +496,14 @@ export class MigrationRunsService implements MigrationRunsFacade {
     const step = this.stepOf(rows, key);
     const st = step.status as StepStatus;
     if (!(st === "PENDING" || st === "RUNNING" || isWaitingStep(st))) throw conflict("step-not-attachable");
-    const res = await this.env.objectMigration(body.resourceId);
-    if (!res || res.teamId !== run.teamId) throw new NotFoundException("resource-not-found");
+    if (body.kind === "host-inventory") {
+      // a stored host inventory of THIS run (the report table is owned by the host-loop / inventory lane)
+      const rep = await this.hostReports?.get(run.id, body.resourceId);
+      if (!rep || rep.kind !== "inventory") throw new NotFoundException("resource-not-found");
+    } else {
+      const res = await this.env.objectMigration(body.resourceId);
+      if (!res || res.teamId !== run.teamId) throw new NotFoundException("resource-not-found");
+    }
     const ev = (step.evidence as StepEvidence | null) ?? EMPTY_STEP_EVIDENCE;
     if (!ev.attachments.some((a) => a.kind === body.kind && a.resourceId === body.resourceId)) {
       if (ev.attachments.length >= 50) throw conflict("evidence-full");
@@ -510,18 +521,45 @@ export class MigrationRunsService implements MigrationRunsFacade {
     const run = await this.loadActing(actor, id);
     this.requireOpen(run);
     if (!COMMAND_STEPS.includes(key)) throw bad("step-has-no-command");
-    const kind = body.kind ?? "migrator";
-    // only the classic migrator command exists in the core; the host-loop and inventory commands are minted by the lane that owns them
-    if (kind !== "migrator") throw conflict("command-kind-unavailable");
+    const opts = RunOptionsSchema.parse(run.options);
+    // a host-loop run mints the host-loop script by default (the one command that reaches the sources); FREEZE has no other kind
+    const kind = body.kind ?? (opts.sourceRunner === "coolify-host-loop" || key === "FREEZE" ? "host-loop" : "migrator");
+    if (key === "FREEZE" && kind !== "host-loop") throw bad("step-has-no-command");
+    if (kind === "host-loop" && opts.sourceRunner !== "coolify-host-loop") throw conflict("command-kind-unavailable"); // the loop exists only for that runner
+    if (kind !== "migrator" && !this.hostCommands) throw conflict("command-kind-unavailable");
     const rows = await this.store.steps(run.id);
     const step = this.stepOf(rows, key);
     if (!deriveStepAllowed(runFacts(run), stepFacts(step)).command) throw conflict("step-not-waiting-command");
     if (!run.opId) throw conflict("run-has-no-op");
-    const opts = RunOptionsSchema.parse(run.options);
+    const attested = ((step.evidence as StepEvidence | null) ?? EMPTY_STEP_EVIDENCE).attestations.map((a) => a.checkId);
+    if (kind !== "migrator") {
+      // dry-build with a placeholder token BEFORE minting: a request that cannot succeed (no hosts, an unsafe value) must not
+      // rotate the live token and kill a command the operator already pasted
+      await this.buildHostCommand(run, key, kind, `tugra_mig_${"x".repeat(43)}`, hubBase, attested);
+    }
     const minted = await this.imp.mintCommand(actor.userId, run.opId, hubBase, { reissue: body.reissue, certs: opts.certs === "seed" });
-    await this.event(run.id, actor, "step.command.issued", "info", key, { reissue: body.reissue });
-    await this.audit(actor, "command", run.id, { step: key, reissue: body.reissue, expiresAt: minted.expiresAt.toISOString() });
+    await this.event(run.id, actor, "step.command.issued", "info", key, { reissue: body.reissue, kind });
+    await this.audit(actor, "command", run.id, { step: key, reissue: body.reissue, kind, expiresAt: minted.expiresAt.toISOString() });
+    if (kind !== "migrator") {
+      const token = /TUGRA_MIGRATION_TOKEN=(tugra_mig_[A-Za-z0-9_-]{43})/.exec(minted.command)?.[1];
+      if (!token) throw conflict("command-kind-unavailable");
+      const built = await this.buildHostCommand(run, key, kind, token, hubBase, attested);
+      return { stepKey: key, kind, opId: run.opId, expiresAt: minted.expiresAt.toISOString(), command: built.command, shownOnce: true };
+    }
     return { stepKey: key, kind, opId: run.opId, expiresAt: minted.expiresAt.toISOString(), command: minted.command, ...(minted.commands ? { commands: minted.commands } : {}), shownOnce: true };
+  }
+
+  /** Build a host-loop / inventory command through the data steps' builder, mapping its fixed refusals to HTTP errors. */
+  private async buildHostCommand(run: RunRow, key: StepKey, kind: "host-loop" | "inventory", token: string, hubBase: string, attested: readonly string[]): Promise<{ command: string; hosts: string[] }> {
+    try {
+      return await this.hostCommands!.build({ run: this.engine.snapshot(run), step: key, kind, token, hubBase, attested });
+    } catch (e) {
+      if (!(e instanceof HostCommandError)) throw e;
+      if (e.code === "no-hosts") throw conflict("host-loop-no-hosts");
+      if (e.code === "unsafe-input") throw bad("host-loop-unsafe-input");
+      if (e.code === "step-unsupported") throw bad("step-has-no-command");
+      throw conflict("command-kind-unavailable");
+    }
   }
 
   async setInputs(actor: RunActor, id: string, body: SetRunInputsInput): Promise<MigrationRunView> {
