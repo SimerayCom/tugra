@@ -44,6 +44,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     names in the panel.
   - Known limits: dumps carry data and schema but not roles, grants or MariaDB stored routines (Tugra creates its own
     owner); verify those by hand where an app relies on them.
+- **A streamed database dump survives a hub restart or a stalled link.** The migrator now drains the dump client into a
+  bounded on-disk spool (an anonymous Docker volume on the source host, removed with the migrator; `--dump-spool-mib`,
+  default 8192) so a paused upload no longer trips MariaDB/MySQL's write timeout ("Lost connection to server during
+  query"). A failed or diverged volume run releases its lease at once, so the printed remedy (`--reset-volume`, a rerun)
+  works without waiting, and a failed dump reports the client's own error.
 - **Container health no longer fails every minute on a server with no containers.**
 - **Guided migrations for real multi-host Coolify fleets.** A run can now span several source servers: a server map
   places each source server on a Tugra server, an unmapped source server stops the run instead of landing on the
