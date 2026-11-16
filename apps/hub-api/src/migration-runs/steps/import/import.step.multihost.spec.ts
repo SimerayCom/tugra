@@ -102,6 +102,40 @@ describe("IMPORT with a serverMap", () => {
   });
 });
 
+describe("PREFLIGHT then IMPORT with a mapping and a serverMap", () => {
+  const mapping = { version: 1 as const, items: { "app:src-b:api": { name: "renamed" } }, projects: {}, gitSources: {}, acks: [] };
+  const WITH_MAP = "a".repeat(32);
+  const WITHOUT_MAP = "b".repeat(32);
+  /** The importer's hash is bound to the placement: the fake mirrors that, one hash per input shape. */
+  const bindHashToPlacement = (w: RunWorld): unknown[] => {
+    const seen: unknown[] = [];
+    w.port.resolveMapping = async (_u, input) => {
+      seen.push(input);
+      const hasMap = !!input.serverMap && Object.keys(input.serverMap).length > 0;
+      return { version: 1, effective: [], projects: [], gitSources: [], conflicts: [], orphans: [], mappingHash: hasMap ? WITH_MAP : WITHOUT_MAP, counts: { renamed: 1, moved: 0, excluded: 0, aliased: 0, newProjects: 0, newEnvironments: 0 } } as never;
+    };
+    return seen;
+  };
+
+  it("PREFLIGHT resolves the mapping with the run's serverMap, so the hash IMPORT checks is the one PREFLIGHT checks", async () => {
+    const w = world();
+    const seen = bindHashToPlacement(w);
+    const id = await w.run({ serverMap: MAP, mapping, mappingHash: WITH_MAP });
+    expect(seen[0]).toMatchObject({ serverMap: MAP });
+    const out = JSON.stringify(await w.view(id));
+    expect(out).not.toContain("preflight.mapping-changed");
+    expect(w.status(id)).toBe("COMPLETED");
+  });
+
+  it("a single-target run still resolves without any serverMap", async () => {
+    const w = world();
+    const seen = bindHashToPlacement(w);
+    const id = await w.run({ mapping, mappingHash: WITHOUT_MAP });
+    expect(seen[0]).not.toHaveProperty("serverMap");
+    expect(w.status(id)).toBe("COMPLETED");
+  });
+});
+
 describe("IMPORT: services the import did not create (C14)", () => {
   it("a skipped service is a warning on the settled import, naming it; created services are not mentioned", async () => {
     const w = world();

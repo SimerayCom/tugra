@@ -227,6 +227,8 @@ export class PreflightStep implements StepHandler<PreflightObs>, OnModuleInit {
             ...(a.reconcile !== undefined ? { reconcile: a.reconcile } : {}),
             ...(a.dbDataModes ? { dbDataModes: a.dbDataModes } : {}),
             ...(a.acks ? { acks: a.acks } : {}),
+            // placement binds the mappingHash: resolve with the map IMPORT will apply with, or the two hashes never agree
+            ...(Object.keys(run.serverMap ?? {}).length > 0 ? { serverMap: run.serverMap } : {}),
             mapping: mapping0,
           }),
         )
