@@ -3,8 +3,8 @@
  * on PATH, so the real shell function (`inventory-script.ts`) runs for REAL under `sh -c` and the specs assert on what the host
  * experienced (which docker verbs were called, what reached an argv, what was POSTed to the hub) instead of on script text.
  *
- * The fake docker understands exactly the read-only calls the inventory makes (`version`, `ps -a`, `inspect -f`, `volume ls -q`,
- * `volume inspect -f`); any other verb is recorded in `calls.jsonl` and fails, so a spec can assert nothing else was called.
+ * The fake docker understands exactly the read-only calls the inventory makes (`version`, `ps -a`, `inspect -f` of the mounts, the image
+ * id, the environment or the executed command, `image inspect -f` of the RepoDigests, `volume ls -q`, `volume inspect -f`); any other verb is recorded in `calls.jsonl` and fails, so a spec can assert nothing else was called.
  * The fake curl plays the hub: `ping` answers 200 with the configured part size, `sink` accepts a body up to the configured cap
  * (anything bigger is answered 413, like a proxy with a body limit), `host-report` records the posted text.
  */
@@ -26,6 +26,13 @@ export interface FakeInvContainer {
   image: string;
   state?: string;
   mounts?: FakeMount[];
+  /** `Config.Env` entries (`KEY=value`) the container was started with. */
+  env?: string[];
+  /** The executed command: `.Path` and `.Args`. */
+  path?: string;
+  args?: string[];
+  /** `RepoDigests` of the container's image (`repo@sha256:<hex>`); the fake answers them for `docker image inspect`. */
+  repoDigests?: string[];
 }
 export interface InventoryHostOptions {
   containers: FakeInvContainer[];
@@ -52,9 +59,18 @@ else if (cmd === "ps") {
   for (const c of st.containers) console.log([c.id, c.name, c.image, c.state || "running"].join("|"));
 } else if (cmd === "inspect") {
   const id = args[args.length - 1];
+  const fmt = args[args.indexOf("-f") + 1] || "";
   const c = st.containers.find((x) => x.id === id);
   if (!c) { console.error("No such object"); process.exit(1); }
-  for (const m of c.mounts || []) console.log([m.type, m.name || "", m.source, m.dest, m.rw === false ? "false" : "true"].join("|"));
+  if (fmt.includes(".Config.Env")) { for (const e of c.env || []) console.log(e); }
+  else if (fmt.includes(".Path")) { console.log(c.path || ""); for (const a of c.args || []) console.log(a); }
+  else if (fmt.trim() === "{{.Image}}") { console.log("sha256:" + id); }
+  else for (const m of c.mounts || []) console.log([m.type, m.name || "", m.source, m.dest, m.rw === false ? "false" : "true"].join("|"));
+} else if (cmd === "image" && args[1] === "inspect") {
+  const imgId = args[args.length - 1].replace(/^sha256:/, "");
+  const c = st.containers.find((x) => x.id === imgId);
+  if (!c) { console.error("No such image"); process.exit(1); }
+  for (const d of c.repoDigests || []) console.log(d);
 } else if (cmd === "volume" && args[1] === "ls") {
   for (const v of st.volumes) console.log(v.name);
 } else if (cmd === "volume" && args[1] === "inspect") {

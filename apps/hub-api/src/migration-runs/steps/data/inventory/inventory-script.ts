@@ -9,6 +9,12 @@
  *  - SIZES ARE MEASURED, NEVER GUESSED (C19): `docker system df -v` cannot see bind-mounted data, so every bind source and every
  *    volume mountpoint is measured with `du -skx`. A path `du` cannot read (or that takes longer than TUGRA_DU_TIMEOUT seconds,
  *    default 300) is reported as `unknown`, never as 0.
+ *  - IMAGE DIGESTS (R11): for every RUNNING container it reports the registry digests of the image it runs (`docker image inspect`
+ *    RepoDigests), so the hub can pin a floating tag (`latest`) to what the source really runs.
+ *  - DATABASE FACTS (R2): for a container whose image is a database it reads the container's environment to report the NON-secret
+ *    identity a carry needs (user, database name, version) and whether a password the migrator can use exists (`env`, `file`,
+ *    `none`, `acl`). It never prints, stores or sends a password: presence is tested with `grep -q` on a temp file in the 0700 work
+ *    directory, which is removed at once, and no secret is ever put in a shell variable or on an argv.
  *  - NO SECRET ON AN ARGV: the migration token is handed to curl as a config file on stdin (`--config -`), built by the `printf`
  *    builtin; it is on no process argument list.
  *  - EVERY LINE IS SELF-LABELLED with the source server it concerns (`--server-ref`, default `_`) and the whole report is
@@ -59,6 +65,102 @@ tugra_inventory() {
   cfg() { printf 'header = "Authorization: Bearer %s"\n' "$TK"; }
   clean() { printf '%s' "$1" | tr '\t\r\n' '???'; }
 
+  # the image digests a running container runs (R11): the digests docker recorded for the image id the container uses
+  rdigs() {
+    imgid=$(docker inspect -f '{{.Image}}' "$1" 2>/dev/null </dev/null)
+    [ -n "$imgid" ] || return 0
+    docker image inspect -f '{{range .RepoDigests}}{{println .}}{{end}}' "$imgid" > "$W/rd" 2>/dev/null </dev/null || return 0
+    n=0
+    while IFS= read -r rd; do
+      [ -n "$rd" ] || continue
+      n=$((n + 1))
+      [ "$n" -le 8 ] || break
+      emit rdig "$1" "$(clean "$rd")"
+    done < "$W/rd"
+    rm -f "$W/rd"
+  }
+  # a database identifier the hub accepts (alphanumerics . _ -, at most 63 characters), else "-" (unknown)
+  dbident() {
+    case "$1" in ''|*[!A-Za-z0-9_.-]*|-*|.*) printf '%s' - ; return 0 ;; esac
+    if [ "$(printf '%s' "$1" | wc -c | tr -d ' ')" -le 63 ]; then printf '%s' "$1"; else printf '%s' -; fi
+  }
+  # the value of an environment variable of the container, read from the temp file (only ever for the fixed, NON-secret names below)
+  evar() { sed -n "s/^$1=//p" "$W/env" | tail -n 1; }
+  # does a variable of the container have a non-empty value (the value itself is never read)
+  ehas() { grep -q "^$1=." "$W/env" 2>/dev/null; }
+  # the non-secret facts of a database container (R2): user, database, whether a password the migrator can use exists, the version
+  dbmeta() {
+    b=$(printf '%s' "$2" | sed 's,.*/,,; s/@.*//; s/:.*//' | tr 'A-Z' 'a-z')
+    case "$b" in
+      postgres*|postgis*|pgvector*|timescale*|supabase*) fam=pg ;;
+      mariadb*) fam=mariadb ;;
+      mysql*|percona*) fam=mysql ;;
+      redis*|keydb*|dragonfly*|valkey*) fam=redis ;;
+      *) return 0 ;;
+    esac
+    docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$1" > "$W/env" 2>/dev/null </dev/null || : > "$W/env"
+    u=-
+    d=-
+    cred=none
+    ver=-
+    case "$fam" in
+      pg)
+        u=$(evar POSTGRES_USER)
+        [ -n "$u" ] || u=postgres
+        d=$(evar POSTGRES_DB)
+        [ -n "$d" ] || d=$u
+        if ehas POSTGRES_PASSWORD; then cred=env; elif grep -q '^POSTGRES_PASSWORD_FILE=' "$W/env"; then cred=file; fi
+        ver=$(evar PG_MAJOR)
+        ;;
+      mariadb|mysql)
+        pfx="MYSQL"
+        [ "$fam" != mariadb ] || pfx="MARIADB MYSQL"
+        d=""
+        for p in $pfx; do
+          [ -z "$d" ] || break
+          d=$(evar "$p"_DATABASE)
+        done
+        root=""
+        rand=""
+        usr=""
+        usrpw=""
+        for p in $pfx; do
+          ehas "$p"_ROOT_PASSWORD && root=1
+          ehas "$p"_RANDOM_ROOT_PASSWORD && rand=1
+          ehas "$p"_PASSWORD && usrpw=1
+          [ -n "$usr" ] || usr=$(evar "$p"_USER)
+          if { grep -q "^$p"_ROOT_PASSWORD_FILE= "$W/env" && ! ehas "$p"_ROOT_PASSWORD; } || { grep -q "^$p"_PASSWORD_FILE= "$W/env" && ! ehas "$p"_PASSWORD; }; then cred=file; fi
+        done
+        if [ "$cred" != file ]; then
+          if [ -n "$root" ] && [ -z "$rand" ]; then u=root; cred=env
+          elif [ -n "$usr" ] && [ "$usr" != root ] && [ -n "$usrpw" ]; then u=$usr; cred=env
+          fi
+        fi
+        [ -n "$d" ] || d=-
+        ver=$(evar MARIADB_MAJOR)
+        [ -n "$ver" ] || ver=$(evar MYSQL_MAJOR)
+        ;;
+      redis)
+        ru=$(evar REDIS_USERNAME)
+        if [ -n "$ru" ] && [ "$ru" != default ]; then
+          cred=acl
+        else
+          docker inspect -f '{{.Path}}{{println}}{{range .Args}}{{println .}}{{end}}' "$1" > "$W/argv" 2>/dev/null </dev/null || : > "$W/argv"
+          if grep -q -- '--requirepass' "$W/argv" 2>/dev/null; then cred=env
+          elif ehas REDIS_PASSWORD || ehas KEYDB_PASSWORD || ehas DFLY_requirepass || ehas DRAGONFLY_PASSWORD; then cred=env
+          fi
+          rm -f "$W/argv"
+        fi
+        ver=$(evar REDIS_VERSION)
+        ;;
+    esac
+    rm -f "$W/env"
+    [ "$u" = - ] || u=$(dbident "$u")
+    [ "$d" = - ] || d=$(dbident "$d")
+    if ! printf '%s' "$ver" | grep -Eq '^[0-9]{1,3}([.][0-9]{1,3}){0,2}$'; then ver=-; fi
+    emit dbmeta "$1" "$u" "$d" "$cred" "$ver"
+  }
+
   hn=$(clean "$(hostname 2>/dev/null)")
   dv=$(clean "$(docker version --format '{{.Server.Version}}' 2>/dev/null)")
   os=$(clean "$( . /etc/os-release 2>/dev/null; printf '%s' "$PRETTY_NAME")")
@@ -70,6 +172,8 @@ tugra_inventory() {
   while IFS='|' read -r id name image state; do
     [ -n "$id" ] || continue
     emit ctr "$id" "$name" "$image" "$state"
+    if [ "$state" = running ]; then rdigs "$id"; fi
+    dbmeta "$id" "$image"
     docker inspect -f '{{range .Mounts}}{{.Type}}|{{.Name}}|{{.Source}}|{{.Destination}}|{{.RW}}{{"\n"}}{{end}}' "$id" > "$W/m" 2>/dev/null </dev/null
     while IFS='|' read -r mt mn ms md mrw; do
       case "$mt" in

@@ -87,7 +87,7 @@ describe("host inventory script (run for real against a fake docker/du/curl)", (
       .calls()
       .filter((c) => c[0] === "docker")
       .map((c) => (c[1] === "volume" ? `volume ${c[2]}` : c[1]));
-    expect(new Set(verbs)).toEqual(new Set(["version", "ps", "inspect", "volume ls", "volume inspect"]));
+    expect(new Set(verbs)).toEqual(new Set(["version", "ps", "inspect", "image", "volume ls", "volume inspect"]));
     for (const c of fake!.calls()) if (c[0] === "docker") expect(["rm", "stop", "kill", "prune", "start", "run", "exec", "pull"]).not.toContain(c[1]);
   });
 
@@ -145,6 +145,94 @@ describe("host inventory script (run for real against a fake docker/du/curl)", (
     const inv = r.parsed.inventory.get("srv-1")!;
     expect(inv.mounts).toEqual([]);
     expect(inv.rejected).toBeGreaterThan(0);
+  });
+});
+
+const D1 = `sha256:${"1".repeat(64)}`;
+const D2 = `sha256:${"2".repeat(64)}`;
+const SECRET = "S3cr3tPassw0rdValue";
+
+describe("image digests (R11)", () => {
+  it("reports the registry digests of the image of every RUNNING container, and none for a stopped one", () => {
+    const r = run({
+      containers: [
+        { id: A, name: "meili0aaaaaaaaaaaaaaaaaaaaa", image: "getmeili/meilisearch:latest", repoDigests: [`getmeili/meilisearch@${D1}`] },
+        { id: B, name: "gotenberg-1", image: "gotenberg/gotenberg", repoDigests: [`gotenberg/gotenberg@${D1}`, `ghcr.io/example/gotenberg@${D2}`] },
+        { id: C, name: "old-one", image: "nginx:latest", state: "exited", repoDigests: [`nginx@${D2}`] },
+      ],
+    });
+    const inv = r.parsed.inventory.get("srv-1")!;
+    expect(inv.complete).toBe(true);
+    expect(inv.rejected).toBe(0);
+    expect(inv.containers.map((c) => [c.name, c.repoDigests ?? []])).toEqual([
+      ["meili0aaaaaaaaaaaaaaaaaaaaa", [`getmeili/meilisearch@${D1}`]],
+      ["gotenberg-1", [`gotenberg/gotenberg@${D1}`, `ghcr.io/example/gotenberg@${D2}`]],
+      ["old-one", []],
+    ]);
+  });
+
+  it("a locally built image has no RepoDigests: nothing is reported for it and the inventory is still whole", () => {
+    const r = run({ containers: [{ id: A, name: "built-here", image: "app:local" }] });
+    expect(r.parsed.inventory.get("srv-1")).toMatchObject({ complete: true, rejected: 0, containers: [expect.objectContaining({ name: "built-here" })] });
+    expect(r.parsed.inventory.get("srv-1")!.containers[0].repoDigests).toBeUndefined();
+  });
+
+  it("a digest line of a different shape, or for an unknown container, is dropped and counted", () => {
+    const text = ["ctr\t" + [A, "x", "postgres:16", "running"].join("\t"), "rdig\t" + [A, "repo@sha256:short"].join("\t"), "rdig\t" + [B, `repo@${D1}`].join("\t"), "end\t3"].map((l) => `TUGRA_AT\tsrv-1\tTUGRA_INV\t${l}`).join("\n");
+    const inv = parseReportBody(text).inventory.get("srv-1")!;
+    expect(inv.rejected).toBe(2);
+    expect(inv.containers[0].repoDigests).toBeUndefined();
+  });
+});
+
+describe("database facts (R2): non-secret identity, never the password", () => {
+  const db = (over: Partial<InventoryHostOptions["containers"][number]> & { image: string }): InventoryHostOptions => ({ containers: [{ id: A, name: "db-x", ...over }] });
+
+  it("reads the user, database and version of a PostgreSQL container and reports that a password exists, without sending it", () => {
+    const r = run(db({ image: "postgres:17-alpine", env: ["POSTGRES_USER=appuser", "POSTGRES_DB=appdb", `POSTGRES_PASSWORD=${SECRET}`, "PG_MAJOR=17"] }));
+    expect(r.parsed.inventory.get("srv-1")!.containers[0].db).toEqual({ user: "appuser", database: "appdb", cred: "env", version: "17" });
+    expect(r.stdout).not.toContain(SECRET);
+    expect(r.stderr).not.toContain(SECRET);
+    expect(fake!.file("posted.txt")).not.toContain(SECRET);
+    for (const c of fake!.calls()) expect(c.join(" ")).not.toContain(SECRET);
+  });
+
+  it("PostgreSQL defaults: user postgres, database = user; a *_FILE secret is `file`, no password at all is `none`", () => {
+    const file = run(db({ image: "postgres:16", env: ["POSTGRES_PASSWORD_FILE=/run/secrets/pw"] }));
+    expect(file.parsed.inventory.get("srv-1")!.containers[0].db).toMatchObject({ user: "postgres", database: "postgres", cred: "file" });
+    const none = run(db({ image: "postgres:16", env: [] }));
+    expect(none.parsed.inventory.get("srv-1")!.containers[0].db).toMatchObject({ cred: "none" });
+  });
+
+  it("MySQL / MariaDB: root first (unless the root password is random), else the app user; the database must be named", () => {
+    const root = run(db({ image: "mariadb:11", env: ["MARIADB_ROOT_PASSWORD=x", "MARIADB_DATABASE=shop", "MARIADB_MAJOR=11"] }));
+    expect(root.parsed.inventory.get("srv-1")!.containers[0].db).toEqual({ user: "root", database: "shop", cred: "env", version: "11" });
+    const app = run(db({ image: "mysql:8.0", env: ["MYSQL_RANDOM_ROOT_PASSWORD=yes", "MYSQL_ROOT_PASSWORD=ignored", "MYSQL_USER=shopper", "MYSQL_PASSWORD=x", "MYSQL_DATABASE=shop", "MYSQL_MAJOR=8.0"] }));
+    expect(app.parsed.inventory.get("srv-1")!.containers[0].db).toEqual({ user: "shopper", database: "shop", cred: "env", version: "8.0" });
+    const file = run(db({ image: "mysql:8", env: ["MYSQL_ROOT_PASSWORD_FILE=/run/secrets/pw", "MYSQL_DATABASE=shop"] }));
+    expect(file.parsed.inventory.get("srv-1")!.containers[0].db).toMatchObject({ cred: "file" });
+    const nodb = run(db({ image: "mysql:8", env: ["MYSQL_ROOT_PASSWORD=x"] }));
+    expect(nodb.parsed.inventory.get("srv-1")!.containers[0].db).toMatchObject({ database: null, cred: "env" });
+  });
+
+  it("Redis family: a password on the server's command line or in the environment is `env`; an ACL user is `acl`; neither is `none`", () => {
+    const argv = run(db({ image: "redis:7", path: "redis-server", args: ["--requirepass", SECRET], env: ["REDIS_VERSION=7.2.4"] }));
+    expect(argv.parsed.inventory.get("srv-1")!.containers[0].db).toEqual({ user: null, database: null, cred: "env", version: "7.2.4" });
+    expect(argv.stdout).not.toContain(SECRET);
+    const env = run(db({ image: "eqalpha/keydb:latest", env: [`KEYDB_PASSWORD=${SECRET}`] }));
+    expect(env.parsed.inventory.get("srv-1")!.containers[0].db).toMatchObject({ cred: "env" });
+    const acl = run(db({ image: "redis:7", env: ["REDIS_USERNAME=app", "REDIS_PASSWORD=x"] }));
+    expect(acl.parsed.inventory.get("srv-1")!.containers[0].db).toMatchObject({ cred: "acl" });
+    expect(run(db({ image: "redis:7" })).parsed.inventory.get("srv-1")!.containers[0].db).toMatchObject({ cred: "none" });
+  });
+
+  it("a value outside the identifier charset is reported as unknown, and a container that is not a database carries no facts at all", () => {
+    const odd = run(db({ image: "postgres:16", env: ["POSTGRES_USER=bad user;x", "POSTGRES_DB=ok_db", "POSTGRES_PASSWORD=x", "PG_MAJOR=sixteen"] }));
+    expect(odd.parsed.inventory.get("srv-1")!.containers[0].db).toEqual({ user: null, database: "ok_db", cred: "env", version: null });
+    expect(odd.parsed.inventory.get("srv-1")!.rejected).toBe(0);
+    const web = run(db({ image: "ghcr.io/example/web:1", env: [`SECRET_KEY=${SECRET}`] }));
+    expect(web.parsed.inventory.get("srv-1")!.containers[0].db).toBeUndefined();
+    expect(web.stdout).not.toContain(SECRET);
   });
 });
 

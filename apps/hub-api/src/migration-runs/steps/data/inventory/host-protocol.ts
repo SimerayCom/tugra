@@ -36,6 +36,10 @@ const PATH_RE = /^\/[A-Za-z0-9._@+/-]{0,500}$/;
 const HEX64_RE = /^[0-9a-f]{64}$/;
 const ITEMREF_RE = /^[a-z]+:[A-Za-z0-9_-]{1,128}:[A-Za-z0-9_-]{1,128}(:[A-Za-z0-9_-]{1,64})?$/;
 const FREE_RE = /^[A-Za-z0-9 ._()/+-]{0,80}$/;
+const REPO_DIGEST_RE = /^[A-Za-z0-9][A-Za-z0-9._/:-]{0,200}@sha256:[a-f0-9]{64}$/;
+const DB_IDENT_RE = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,62}$/;
+const DB_VERSION_RE = /^[0-9]{1,3}(\.[0-9]{1,3}){0,2}$/;
+const DB_CREDS = ["env", "file", "none", "acl"] as const;
 
 // ───────────────────────────── per-host loop status ─────────────────────────────
 
@@ -80,11 +84,30 @@ export function loopVerdict(s: Pick<LoopStatus, "state" | "rc"> | null): "ok" | 
 
 // ───────────────────────────── inventory ─────────────────────────────
 
+/**
+ * What the inventory read of a DATABASE container's own environment (R2): the NON-secret identity the carry needs and whether the
+ * migrator can discover the password on its own. The password itself is never read into the report: the migrator reads it on the
+ * source host when it dumps.
+ *  - `cred`: `env` = a password is set in the environment (or on the server's command line, for the Redis family); `file` = it
+ *    comes from a `*_FILE` secret the migrator never reads; `none` = no password was found; `acl` = an ACL user other than the
+ *    default one (the migrator authenticates the default user only).
+ */
+export interface InvDbMeta {
+  user: string | null;
+  database: string | null;
+  cred: "env" | "file" | "none" | "acl";
+  /** The engine's own version variable (`PG_MAJOR`, `MYSQL_MAJOR`, `MARIADB_MAJOR`, `REDIS_VERSION`), used when the image tag names none. */
+  version: string | null;
+}
 export interface InvContainer {
   id: string;
   name: string;
   image: string;
   state: string;
+  /** R11: the registry digests (`repo@sha256:<64 hex>`) of the image a RUNNING container uses, as the host's docker reports them. */
+  repoDigests?: string[];
+  /** R2: only for a container whose image looks like a database. */
+  db?: InvDbMeta;
 }
 export interface InvMount {
   ctrId: string;
@@ -240,6 +263,18 @@ export function parseReportBody(text: string): ParsedReport {
         if (a.length !== 5 || !HEX64_RE.test(a[1]) || !NAME_RE.test(a[2]) || !IMAGE_RE.test(a[3]) || !STATE_RE.test(a[4])) bad();
         else if (i.containers.length >= INV_MAX.containers) bad();
         else i.containers.push({ id: a[1], name: a[2], image: a[3], state: a[4] });
+      } else if (kind === "rdig") {
+        // ctrId, repo@sha256:digest (the image digests of a running container; attached to its `ctr` line)
+        const c = a.length === 3 ? i.containers.find((x) => x.id === a[1]) : undefined;
+        if (!c || !REPO_DIGEST_RE.test(a[2])) bad();
+        else if ((c.repoDigests?.length ?? 0) >= 8) bad();
+        else if (!c.repoDigests?.includes(a[2])) c.repoDigests = [...(c.repoDigests ?? []), a[2]];
+      } else if (kind === "dbmeta") {
+        // ctrId, user|-, database|-, cred, version|-
+        const c = a.length === 6 ? i.containers.find((x) => x.id === a[1]) : undefined;
+        const ok = !!c && (a[2] === "-" || DB_IDENT_RE.test(a[2])) && (a[3] === "-" || DB_IDENT_RE.test(a[3])) && (DB_CREDS as readonly string[]).includes(a[4]) && (a[5] === "-" || DB_VERSION_RE.test(a[5]));
+        if (!ok) bad();
+        else c!.db = { user: a[2] === "-" ? null : a[2], database: a[3] === "-" ? null : a[3], cred: a[4] as InvDbMeta["cred"], version: a[5] === "-" ? null : a[5] };
       } else if (kind === "mount") {
         // ctrId, type, name|-, source, dest, rw
         const ok = a.length === 7 && HEX64_RE.test(a[1]) && (a[2] === "volume" || a[2] === "bind") && (a[3] === "-" || NAME_RE.test(a[3])) && PATH_RE.test(a[4]) && /^\/[A-Za-z0-9._@+/-]{0,500}$/.test(a[5]) && (a[6] === "true" || a[6] === "false");
