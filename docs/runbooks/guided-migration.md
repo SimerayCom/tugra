@@ -5,8 +5,12 @@ pre-issue, verification and the cutover. It sits **above** the pieces described 
 [Migrating from Coolify](../coolify-migration.md) and the [SSL/DNS cutover runbook](cutover.md); it does not replace
 them. Those manual paths keep working and remain the way to do anything a run does not cover.
 
-Where it lives: the API under `/migration-runs`, the CLI `tugra import run ...`, the `migration_run_*` MCP tools. and the panel pages
+Where it lives: the API under `/migration-runs`, the CLI `tugra import run ...`, the `migration_run_*` MCP tools and the panel pages
 under `/import/runs` (or "Run guided migration" in the import wizard).
+
+A project that spans several source servers, large databases, a proxy that caps uploads and workers that must not start
+early is covered by the [fleet runs](#fleet-runs-several-source-hosts-one-run) section below. Everything in it is opt-in
+and every default is the safe one: a run created without those options behaves as it always did.
 
 ## Verification status (read this first)
 
@@ -19,6 +23,14 @@ Be clear about what has and has not been proven before you point this at a fleet
 - **Not verified:** **no live lab run has happened.** No real Coolify host, Cloudflare zone, source-host migrator run,
   DNS flip or same-host proxy swap has been driven end to end by this feature. Every number in this document that is
   a time or a rate is an **estimate**, not a measurement. The measured downtime of your own run is in its report.
+- **Fleet-fit changes (multi-host placement, the Coolify-host loop runner, the host inventory, streamed large
+  databases, the safety rules, the per-host cutover, and the panel, CLI and MCP surfaces for them):** covered by unit
+  and in-memory specs only. They were designed from an analysis of a real fleet, but **no real fleet has been
+  migrated with them.** The migration-lab scenarios that rehearse them (L9 to L14, see the
+  [migration lab](migration-lab.md)) exist as fixtures and workflows; they had **not been run** when this was written,
+  and several things they cannot cover (Cloudflare record types, a real Coolify 4.1.2, a real Ubuntu 26.04 host, real
+  multi-GB sizes) are listed there as manual rehearsal steps. Where a specific part is unproven, the section that
+  describes it says so.
 - **Unverified assumptions** (to be settled in the lab, not here): whether Coolify restarts its own stopped proxy on a
   same-host swap; whether proxy restart policies survive a host reboot; whether the dark probe against the Tugra proxy
   container works while Coolify holds :80/:443; per-engine row-count cost on very large tables.
@@ -48,7 +60,9 @@ Start with a **dry run on a rehearsal copy**, then a real run on a non-critical 
 - **Not zero downtime** for stateful apps. The window is "freeze, final data copy, deploy, flip". It is estimated
   before the freeze (from sizes and a measured link speed) and measured during the run; the report compares the two.
 - **One live real run per target server.** A second real run on the same server is refused (`server-has-live-run`).
-  A fleet is a campaign of runs, one per source team and target server. Dry runs are unlimited.
+  A run that places resources on several servers holds **every** one of them (the default and each mapped target), so a
+  second run cannot start on any of them until the first finishes or is aborted. A fleet is a campaign of runs, one per
+  source team (give them one `campaign` label to list them together). Dry runs are unlimited and hold no lock.
 - **A single hub.** The streamed copy relays through the hub's memory, so a multi-hub deployment is not supported for
   this flow.
 
@@ -65,7 +79,11 @@ Start with a **dry run on a rehearsal copy**, then a real run on a non-critical 
 - For a DNS flip: a team **DNS credential** covering your zones (Cloudflare), or manual DNS (the run prints the records).
   The same rules as the [cutover runbook](cutover.md) apply, including the Cloudflare SSL mode check.
 - The **source host must be able to reach the hub** over HTTPS; the migrator runs on the source host and pulls from the
-  hub (the hub cannot start it unless you enrol an agent there, see the runner option below).
+  hub (the hub cannot start it unless you enrol an agent there, or use the Coolify-host loop, see the runner option
+  below). A proxy in front of the hub that caps request bodies also caps the migrator's upload parts: the host
+  inventory measures that per source host (see [fleet runs](#fleet-runs-several-source-hosts-one-run)).
+- A **supported Coolify version** on the source: at least 4.1.2, tested up to 4.7.5 (see
+  [safety rules](#safety-rules-before-the-cutover)). Dokploy has no version range.
 - Enough disk on the target: a physical volume copy needs roughly 2x the volume (the preflight shows the verdict).
 
 ## Choose the shape of the run
@@ -83,9 +101,10 @@ Start with a **dry run on a rehearsal copy**, then a real run on a non-critical 
 
 Two more choices, both with safe defaults:
 
-- **Source runner** (`operator` default, `agent`): who starts the migrator on the source host. `operator` prints the
-  exact command for you to paste; `agent` has the Tugra agent on the source host run it and needs the opt-in `migrate`
-  capability on that server (granted for the run, revoked at the end).
+- **Source runner** (`operator` default, `agent`, `coolify-host-loop`): who starts the migrator on the source host.
+  `operator` prints the exact command for you to paste on each source host; `agent` has the Tugra agent on the source
+  host run it and needs the opt-in `migrate` capability on that server (granted for the run, revoked at the end);
+  `coolify-host-loop` prints one script for the **Coolify host** that loops over every source host (see below).
 - **Source controller** (`manual` default, `api`, `agent`): who freezes and restarts the source writers. `manual` prints
   the steps and you attest; `api` needs a Coolify **write** token; `agent` stops the recorded container ids.
 
@@ -121,6 +140,8 @@ Every check a step reports carries how trustworthy a pass is. Read the badge; do
 | `hub-verified` | The hub checked it itself (a transfer's entry counts, a health probe, a record read back). |
 | `migrator-reported` | The migrator on the source host said so (a quiescence fingerprint, a row count). Trusted less: the source reports on itself. |
 | `operator-attested` | **You** said so (for example "I stopped the source writers"). Recorded with who and when. |
+| `source-api-reported` | The source's own API (read-only token) said so: its version, its health, what it lists. The hub cannot check it independently. |
+| `host-loop-reported` | A read-only probe of the host script reported it and the script sent it back (an inventory, a reach probe, a per-host status). The hub cannot check it independently. |
 
 An **unknown** check is a failure wherever data would move; it is never counted as a pass.
 
@@ -174,7 +195,10 @@ Set the hub and a PAT with `deploy` **and** `read:secrets` (`tugra login`). Clea
    changes, your approval is void and the step returns to waiting (`approval-stale`). With a manual source controller
    you then stop the source writers by hand and attest.
 7. **VERIFY and the point of no return.** Read the verification report. The approval needs you to type the target
-   server name (and, for a takeover, the source host) and to accept the data risk. It expires after 30 minutes.
+   server name (and, for a takeover, the source host) and to accept the data risk. On a run that places resources on
+   several servers it needs the name of **every** target server, so the approval can never cover only some of the
+   hosts: the distinct names sorted by code point, joined with a comma and a space (`status` prints the exact text, and
+   the panel asks for one name per field). It expires after 30 minutes.
    **Nobody can approve this over MCP**; an agent will be refused with `human-confirmation-required`.
 8. **CUTOVER, OBSERVE, FINALIZE** run by themselves. Stop the source app yourself if the source controller is manual,
    before Tugra takes writes (the printed steps). Read the report: `tugra import run report <runId> --format md`.
@@ -195,8 +219,173 @@ Unanswered questions do **not** block the run; each blocks only the step that ne
 | `allowBind` (bind-mount apps) | refuse; the count is shown in PREFLIGHT, per-volume exclusion with an acknowledgement | the affected data steps |
 | `allowLiveShapeProbe` (consent for the read-only live probe of Coolify API shapes) | off; the services preview degrades with its existing wording | nothing |
 | `sourceController` | `manual` (printed steps plus your attestation) | FREEZE automation only |
+| `minioPolicy` (`hold`, `mirror`, `external`) | `hold`: hosts that depend on the source's object storage stay on the source | CUTOVER, for those hosts only |
+| `tickGapAcceptMinutes` (0 to 10080) | `0`: no gap in writes between the last copy and the switch is accepted | the steps that judge a gap |
+| `workerPolicy` (`hold-dark`, `start-dark`, `exclude`) | `hold-dark`: apps without a domain stay stopped until after the cutover | nothing; it decides when workers start |
+| `unlistedDbPolicy` (`block`, `carry`, `skip`) | `block`: a database container the source API does not list stops DATA_SEED | DATA_SEED |
+| `orphanVolumePolicy` (`block`, `skip`) | `block`: a volume no container mounts stops DATA_SEED | DATA_SEED |
 
-Set or change them any time: `tugra import run inputs <runId> --acme-email ops@example.com`.
+An unanswered fleet policy (or the literal `unknown`) keeps its default, and every default holds work back rather than
+moving it. Set or change them any time: `tugra import run inputs <runId> --acme-email ops@example.com`, or
+`--minio-policy`, `--tick-gap-accept`, `--worker-policy`, `--unlisted-db-policy`, `--orphan-volume-policy`; the panel's
+"Owner inputs" card has the same fields.
+
+## Fleet runs: several source hosts, one run
+
+A real fleet is rarely one Coolify server. This section covers what a run does when a project spans several source
+servers, has databases too large to dump into an artifact, or runs workers and floating image tags. All of it is
+opt-in. **Status: designed from a real fleet's requirements and covered by unit and in-memory specs; not yet run
+against a real fleet** (see the verification status above).
+
+### Place source hosts on Tugra servers
+
+A project that spans 3 to 6 source servers is **one** run. Give the run a `serverMap`: the **source server** (the Coolify
+server uuid that appears in the plan's item refs, `app:<server>:<ref>`) mapped to a **Tugra server id**. The run's own
+target server stays the default.
+
+```bash
+tugra import run create --dry-run --session <sessionId> --server <defaultTargetServerId> --plan-hash <planHash> \
+  --map <sourceServerUuidA>=<tugraServerId1> --map <sourceServerUuidB>=<tugraServerId2> --campaign wave-1
+```
+
+In the panel the launch dialog lists the plan's source hosts once the target team has two or more servers; turn on
+"Place source hosts on different Tugra servers" and choose a server per host. Rules, all enforced by the hub:
+
+- **List every source server.** A source server missing from a non-empty map **stops the run** instead of landing on the
+  default server (IMPORT's pre-gate and the dry run report it). A resource whose source host is unknown is placed with
+  the key `_`. Many source servers may share one target; at most 64 are mapped.
+- Every target must belong to the run's **team** (404 `server-not-found` otherwise).
+- Each app, database and service is created on the server its source server maps to, and each app's env remap runs on
+  its own server. A reference from one app to a database, service or alias on **another** Tugra server is **reported for
+  a manual fix**, not rewritten to a name that cannot resolve there.
+- The map is stored on the run, **not** in the frozen apply input or the plan hash.
+- The run holds a lock on every target server (see the guarantees above) and the PONR approval names every one of them.
+- The run page shows the placement, and `tugra import run list --campaign wave-1` (or the panel's campaign chips, or
+  `migration_run_list` with `campaign`) lists the runs of one campaign with their server counts.
+
+What this does **not** do: it does not read the source servers' names (only their uuids are in the plan, so the panel
+and CLI show uuids), and the proxy swap does not support it (below).
+
+### The Coolify-host loop runner
+
+With `sourceRunner: coolify-host-loop` (`--source-runner coolify-host-loop`; options `--host-loop-key-dir`,
+`--host-loop-parallel`, `--host-loop-connect-timeout`, `--host-loop-retries`) you do not paste a command on every source
+host. The hub prints **one script for the Coolify host**. It loops over the run's source hosts using the SSH keys Coolify
+already holds (`<keyDir>/ssh_key@<serverUuid>`, default key directory `/data/coolify/ssh/keys`), starts the migrator on
+each, and posts a per-host status back to the hub. Re-running it resumes: a host that already finished is not redone.
+Only the key **directory** is stored on the run, never a key; the script's token is the run's migration token, shown
+once.
+
+- The hosts are the `serverMap`'s keys plus the hosts named by the plan's items.
+- **DATA_SEED asks for the host inventory first**, then the loop script (`tugra import run command <runId> DATA_SEED`
+  returns whichever the step waits for; `--kind inventory|host-loop` names one). FREEZE and DATA_FINAL ask for the loop
+  script again; the freeze script stops the writers per host and an aborted run can still fetch a **token-free unfreeze
+  script** from the report.
+- Source containers that are running are normal during a seed. Pass `--stop-source` only when the migrator should stop
+  them itself; the run does not force it.
+- Status per host is `host-loop-reported` evidence: the hub cannot verify what a host's script said.
+- **Not covered:** DATA_FINAL's own wait does not yet surface a per-host failure by itself; read the per-host checks.
+
+### Host inventory and the docker-vs-API cross-check
+
+The run's coverage ledger comes from the source **API**, so a database container the API does not list would be left
+behind silently. The inventory (`migrator.sh --inventory`, read-only) compares `docker ps` and the volumes of each source
+host with the plan:
+
+- a **database container the plan does not account for** is a blocking finding until you decide: set
+  `unlistedDbPolicy` (`carry` or `skip`) or attest that exact finding with `inventory-excluded` (not migrated) or
+  `inventory-mapped` (it **is** this plan item; the plan item must be named in the note);
+- a **named volume no container mounts** that the plan does not carry blocks until `orphanVolumePolicy: skip` or an
+  `inventory-excluded` attestation;
+- **bind-mount sizes** are measured with `du`; a size that cannot be measured is **unknown**, never zero, and the
+  downtime estimate stays unknown for it;
+- a **hub reachability and body-cap probe** per host: if a proxy caps uploads the check fails and recommends the
+  largest `MIGRATION_VX_PART_MIB` that passed (the part size is a hub setting, not a per-run one);
+- anonymous volumes are counted, not listed one by one; the Coolify control plane and Tugra's own containers are never
+  findings.
+
+The inventory is `host-loop-reported` evidence. Container recognition is by image name, so a database in an image the
+list does not know is not found. Each blocking finding gets its own attestation row in the panel.
+
+### Large databases
+
+A database whose **dump** is over the 256 MiB artifact limit, or that cannot be copied as files (for example a
+PostgreSQL 18 data directory, which does not match how Tugra provisions PostgreSQL), has no physical lane. With
+`largeDbMode: stream-logical` (`--large-db-mode stream-logical`) the dump streams through the hub's relay in parts and is
+restored on the target without spooling, for PostgreSQL, MariaDB and MySQL. Notes:
+
+- It is **opt-in**. With the default `refuse`, a database that needs it yields an explicit blocker naming the failed gate;
+  it never silently falls back to a capped dump.
+- It runs **inside the freeze window**, with no warm seed, so it adds to the downtime. The estimate includes the dump,
+  transfer and restore and says so.
+- Only the **dump size** decides the lane, never the volume size. The migrator measures it with
+  `--dry-run --measure-dbs`; an uncounted database is routed conservatively by catalog size.
+- Parity is the same row-count verification as for the other lanes. **Never exercised on a real multi-GB database.**
+
+### Safety rules before the cutover
+
+- **Source version.** PREFLIGHT reads the source's Coolify version (also captured at create and promote and shown in
+  the run view and report). Older than **4.1.2** blocks; newer than **4.7.5** (the newest tested) fails the check but
+  can be **acknowledged**; a version the hub could not read **warns** (it does not block today; the contract intends
+  steps that move data to refuse an unknown version, which is not wired). Dokploy has no range and is not judged.
+- **Health baseline.** Before anything changes, PREFLIGHT records the source's per-resource health and restart counts
+  (the run view shows only when). The watch after the cutover ignores apps that were already failing at the source.
+  VERIFY does not consume the baseline yet.
+- **Workers stay dark.** Apps without a domain are treated as workers and held **stopped until after the cutover**
+  (`workerPolicy: hold-dark`, the default); OBSERVE or FINALIZE starts them after the point of no return, an abort never
+  starts them and a reverse stops them. `start-dark` starts them with the rest, `exclude` leaves them out. Mark an app
+  yourself with `tugra import run worker-mark <runId> --item app:<server>:<ref> --role job-runner|web|none` (the panel's
+  "Held workers and image pins" card, `PUT /migration-runs/:id/worker-marks`): a job runner that serves a domain is held
+  too, a web app without a domain starts dark. These marks are **attested by you**.
+- **No deploy on push.** Push-to-deploy is switched off on imported apps from IMPORT until after the point of no
+  return, then restored with a `release.webhooks-repoint` hint. Removing the push webhook **at the source** stays
+  manual (the source token is read-only). Pull-request previews are not covered.
+- **Floating image tags.** An image with a tag such as `latest` is flagged (acknowledgeable). Record the digest the
+  source runs (`tugra import run image-pin <runId> --image repo/app:latest --digest sha256:<64 hex>`, or the panel
+  card, `PUT /migration-runs/:id/image-pins`) and an image app is pinned to `repo@sha256:...` before it deploys; service
+  members use the existing per-service pins. The digest is attested, not checked; recording it on the hosts for you is
+  not automatic yet.
+- **Build before the freeze.** `deployWaves: earlyBuild` builds every app image right after the import, with nothing
+  started, so the window holds only starts; `deployConcurrency` (1 to 8, default 1) caps builds per target server for
+  small hosts. It prebuilds **Git** builds on the app's own server only, and the window estimate does not yet include
+  deploy time.
+
+### The cutover for a fleet
+
+CUTOVER decides per **host**, so a host that cannot move does not stall the others:
+
+- **Object-storage dependants** (`minioPolicy`): with `hold` they stay on the source; `mirror` waits until their object
+  data is copied and verified (then they flip in a later group), `external` treats the storage as not on the source.
+  A host is judged a dependant from the **names** of its app's environment variables (S3, MinIO, bucket and similar) or
+  because it is the storage service itself: a heuristic, so the gate lists which hosts were judged and by which names. Clear one
+  host with the `cutover.object-cleared` attestation.
+- **Manual DNS** gets a per-host checklist: the exact records to enter (with copy buttons in the panel) and what the
+  resolvers show now. Confirm each host (`cutover.manual-dns-switched`, per host or for all) or defer it
+  (`cutover.manual-dns-deferred`: it stays on the source and is reported as not cut over). The run keeps checking
+  resolvers while it waits, and a confirmation the resolvers never showed is asked about again after 30 minutes.
+- **HTTP-01 gaps** are accepted per host (`tls-preissue.http01-gap-accepted`), or the host is **left out**
+  (`cutover.host-left-out`). The decision gate still needs every host decided; a bulk accept exists.
+- Hosts flip **one target server at a time** (the stateless server first, dependants last) with the point of no return
+  recorded once, per-group `autoRevert`, a per-server ACME check and one approval over all hosts. Imported compose
+  services are tracked, flipped and verified like apps.
+- After the cutover each git app behind a moved host gets a **webhook-repoint warning** (GitHub App source URL or the
+  per-app deploy webhook, credentials stripped from the shown URL). The run only gives guidance.
+- **Same-host proxy swap** no longer needs the Coolify control plane stopped: it refuses the control plane's own box
+  (`cutover.swap-control-plane-host`), takes the ports back if Coolify restarts its proxy (two attempts at the start,
+  two while live) and **refuses runs that span several target servers** (`cutover.swap-multi-target`). How Coolify really
+  behaves here is unverified until the lab item for it is run.
+
+### Other fleet details
+
+- **PostgreSQL TLS.** A database can serve TLS (self-signed). IMPORT creates the copy with TLS when the Coolify source
+  expects it, and the env rewrite switches TLS on before writing `sslmode=require` URLs. `verify-ca` and `verify-full`
+  stay manual. The script has never run on a real Docker.
+- **Service endpoints.** An internal service host is rewritten to the service's private network alias (the app joins that
+  network; undo restores the networks) and a renamed public service host is rewritten. Services with public domains or
+  several members have no private alias and stay manual. Services are created **stopped**; starting them dark and
+  choosing them for verification belongs to DEPLOY_DARK and is not complete.
+- **Custom network aliases** (for example `api.internal`) are carried as DNS labels, and dependants' env is rewritten.
+- **Service domains** count as hosts to flip in the cutover hint.
 
 ## Abort, cleanup, reverse, decommission
 
@@ -230,8 +419,13 @@ CLI:
 
 - `migration_run_create` defaults to a **dry run**; an agent must pass `dryRun: false` explicitly for a real one.
 - **Refused to agents:** the PONR approval and decommission (`403 human-confirmation-required`). Also not exposed: the
-  source-host command (it carries a live token), operator attestations (a human vouches for the source host) and the
-  source-token re-entry.
+  source-host command and the host-loop and inventory scripts (they carry a live token), operator attestations (a human
+  vouches for the source host), the image-digest and job-runner facts (only someone who can see the source host can
+  vouch for them) and the source-token re-entry.
+- `migration_run_create` takes `serverMap` and `campaign`; its `options` and `inputs` cover the host-loop runner, the
+  build and large-database options and the fleet policies. `migration_run_set_inputs` changes the policies,
+  `migration_run_list` filters by `campaign`, and `migration_run_status` shows the placement, the source version with
+  its verdict and the health-baseline time.
 - Abort, cleanup and reverse need the run id echoed back, and cleanup and reverse need an `admin` token.
 - The `guided_migration` prompt walks an agent through this and tells it to report evidence kinds honestly.
 
@@ -249,9 +443,12 @@ CLI:
 | Error / code | Meaning |
 |---|---|
 | `plan-changed` (409) | The source changed since you reviewed the plan (create, or promoting a dry run). Re-plan and review again. |
-| `server-has-live-run` (409) | Another real run is live on that target server. Finish or abort it first. |
+| `server-has-live-run` (409) | Another real run is live on one of the target servers (the default or any mapped one). Finish or abort it first. |
+| `server-not-found` (404) | A target server in the `serverMap` does not exist or belongs to another team. |
+| `command-kind-unavailable` (409) | The host-loop or inventory script is not available for this run: it needs `sourceRunner: coolify-host-loop` (or, for a single-host inventory, a run that can build one) and a known list of source hosts. |
+| `hints-closed` (409) | The image-digest and job-runner facts can no longer be changed: the run is finished or past the point of no return. |
 | `approval-stale` (409) | What you reviewed changed. Read `status` again and approve the new hash. |
-| `bad-confirmation` (400) | The typed name does not match (run id, target server, source host, or "server host" for a takeover). |
+| `bad-confirmation` (400) | The typed name does not match (run id, target server, source host, or "server host" for a takeover; on a multi-server run, every target server, sorted, joined with a comma and a space). |
 | `acks-required` / `data-risk-required` (400) | The approval needs those acknowledgements ticked. |
 | `human-confirmation-required` (403) | You are on MCP. The PONR and decommission approvals are for a human session or PAT. |
 | `insufficient-scope` (403) | Create needs `deploy` and `read:secrets`; cleanup, reverse and decommission need `admin`. |

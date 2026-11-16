@@ -37,15 +37,32 @@ tugra import run status <runId>           # steps, gate checks with evidence kin
 tugra import run start <dryRunId>         # promotes the dry run into a NEW real run and prints it
 tugra import run watch <runId> --until-waiting
 tugra import run command <runId> DATA_SEED                  # the source-host command (live token, shown once)
+tugra import run command <runId> DATA_SEED --kind inventory   # name the script (migrator | host-loop | inventory); default: what the step waits for
 tugra import run approve <runId> FREEZE --hash <inputHash> --confirm <typed name>   # `status` prints this line for you
 tugra import run abort <runId> --confirm <runId>            # before the point of no return only; deletes nothing
 tugra import run report <runId> --format md
+
+# a fleet: one run over several source hosts (see "Fleet runs" in the guided runbook)
+tugra import run create --dry-run --session <sessionId> --server <defaultTargetServerId> --plan-hash <planHash> \
+  --map <sourceServerUuidA>=<tugraServerId1> --map <sourceServerUuidB>=<tugraServerId2> --campaign wave-1 \
+  --source-runner coolify-host-loop --large-db-mode stream-logical --minio-policy hold
+tugra import run list --campaign wave-1
+tugra import run image-pin <runId> --image repo/app:latest --digest sha256:<64 hex>   # the digest the SOURCE runs (attested by you)
+tugra import run worker-mark <runId> --item app:<server>:<ref> --role job-runner      # held until after the cutover; `none` removes it
 ```
 
 Sub-commands: `list`, `create`, `status`, `events`, `watch`, `start`, `approve`, `retry`, `skip`, `evidence`, `attach`,
-`command`, `inputs`, `pause`, `resume`, `abort`, `cleanup`, `reverse`, `decommission`, `source-session`, `report`.
-Notes:
+`command`, `inputs`, `pause`, `resume`, `abort`, `cleanup`, `reverse`, `decommission`, `source-session`, `report`,
+`safety-hints`, `image-pin`, `worker-mark`. Notes:
 
+- Fleet options of `create`: `--map <source=target>` (repeat for each source host; every source host must be listed once a
+  map is given) or `--server-map-file`, `--campaign`, `--source-runner coolify-host-loop` with `--host-loop-key-dir`,
+  `--host-loop-parallel`, `--host-loop-connect-timeout`, `--host-loop-retries`, `--deploy-waves earlyBuild`,
+  `--deploy-concurrency`, `--large-db-mode`, and the owner policies `--minio-policy`, `--tick-gap-accept`,
+  `--worker-policy`, `--unlisted-db-policy`, `--orphan-volume-policy` (also on `inputs`). Nothing answered, nothing sent:
+  the hub's fail-closed defaults apply.
+- On a multi-server run `status` prints every target server, the placement, the source version with its verdict and the
+  exact typed confirmation (every target server, sorted, joined with a comma and a space).
 - `create` and `command` need a token with `deploy` **and** `read:secrets`; `cleanup`, `reverse` and `decommission`
   need `admin` (see [scopes](api.md#scopes)).
 - Secrets never travel as flags: `source-session` reads the source API token from `$TUGRA_SOURCE_TOKEN`; object-store

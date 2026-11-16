@@ -33,7 +33,14 @@ Always start with `--dry-run`: it projects every step and writes nothing outside
 - The golden rule is unchanged: the run **never deletes anything on Coolify**. Before the point of no return an abort
   restarts the source containers the run stopped; after it, the only way back is a lossy reverse.
 - Not zero downtime for stateful apps, and not a replacement for the checks below: read the verification evidence
-  (`hub-verified`, `migrator-reported`, `operator-attested`) before you approve the cutover.
+  (`hub-verified`, `migrator-reported`, `source-api-reported`, `host-loop-reported`, `operator-attested`) before you
+  approve the cutover.
+- **A fleet.** A project that spans several source servers is one run with a placement map (each source server mapped to a
+  Tugra server), the migrator can be started on every source host by one script on the Coolify host
+  (`coolify-host-loop`), a host inventory compares `docker ps` with what the source API lists, and a database too large
+  for a dump artifact can stream. These are opt-in, designed from a real fleet, and **not yet run against one**; see
+  [fleet runs](runbooks/guided-migration.md#fleet-runs-several-source-hosts-one-run). The manual path on this page needs
+  none of it: run the migrator on each source host yourself.
 
 ## What moves how
 

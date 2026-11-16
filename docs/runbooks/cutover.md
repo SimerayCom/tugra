@@ -116,6 +116,23 @@ When a [guided run](guided-migration.md) drives the cutover, these rules are unc
   Coolify owns port 80: DNS-01 or seeded certificates are required before the swap. None of this has been verified
   on a real host; see the verification status in the guided runbook.
 
+### A fleet inside a guided run
+
+When a run places resources on several Tugra servers or carries hosts that cannot all move at once, the cutover decides
+**per host** (the full rules, inputs and attestation ids are in the
+[guided runbook](guided-migration.md#the-cutover-for-a-fleet)):
+
+- A host that depends on the source's **object storage** stays on the source under the default policy (`hold`), or flips
+  later once its object data is verified (`mirror`). The dependency is judged from environment variable **names**, so the
+  gate lists which hosts were held and why; treat a missed host as possible.
+- **Manual-DNS hosts** get an exact per-host record checklist and a per-host confirmation or deferral. A deferred host
+  is reported as **not cut over**; it never fails the run and it never flips.
+- **HTTP-01 gap** acceptance is per host, and a host can be **left out** of the run.
+- Hosts flip **one target server at a time**, with the point of no return recorded once, and after the cutover each git
+  app behind a moved host gets a webhook-repoint warning (guidance only; the run changes no webhook).
+- The same-host **proxy swap** refuses the Coolify control plane's own box and refuses a run that spans several target
+  servers. None of the swap behaviour has been verified on a real host.
+
 ## Troubleshooting
 
 | Symptom | Meaning |
