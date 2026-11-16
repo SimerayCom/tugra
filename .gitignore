@@ -46,6 +46,8 @@ vendor/
 *.sqlite
 *.db
 data/
+# the P7 run data steps live in a source directory that is called data
+!apps/hub-api/src/migration-runs/steps/data/
 
 # OS
 .DS_Store
