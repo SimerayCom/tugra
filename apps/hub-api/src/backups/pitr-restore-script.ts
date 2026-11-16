@@ -16,9 +16,7 @@ import {
   dbContainerName,
   dbVolumeName,
   ENGINES,
-  pgDataDirParent,
   pgDataLayout,
-  pgMajorOfDb,
   PG_PARENT_MOUNT,
   walRestoreHostDir,
 } from "../databases/database-script";
@@ -221,17 +219,20 @@ export function parseWalObjects(output: string, dest: DestinationSpec): { object
 
 // ── data layout ──
 
-/** Where the data volume is mounted in the recovering container and where PGDATA sits (the image default for its major). */
+/**
+ * Where the data volume is mounted in the recovering container and where PGDATA sits. `pgdata` null = "whatever the pulled image declares":
+ * a parent-mount target keeps the image's own PGDATA (`/var/lib/postgresql/<major>/docker`), and the major is read from the image at run time, never
+ * guessed from its tag (a floating `latest` is whatever major was published when it was pulled).
+ */
 export interface PitrDataLayout {
   mount: string;
-  pgdata: string;
+  pgdata: string | null;
 }
 
-/** The layout of a PITR target row: a PostgreSQL 18+ target mounts its volume at the parent and keeps PGDATA at /var/lib/postgresql/<major>/docker. */
+/** The layout of a PITR target row: a PostgreSQL 18+ target mounts its volume at the parent and keeps the image's PGDATA beneath it. */
 export function pitrDataLayout(db: { engine: string; version?: string | null; image?: string | null; pgParentMount?: boolean | null }): PitrDataLayout {
   const legacy = ENGINES.POSTGRES.dataDir;
-  const major = pgMajorOfDb(db.version, db.image);
-  if (pgDataLayout(db) === "parent" && major !== null) return { mount: PG_PARENT_MOUNT, pgdata: pgDataDirParent(major) };
+  if (pgDataLayout(db) === "parent") return { mount: PG_PARENT_MOUNT, pgdata: null };
   return { mount: legacy, pgdata: legacy };
 }
 
@@ -246,14 +247,16 @@ export function pitrDataLayout(db: { engine: string; version?: string | null; im
  */
 export function buildPitrPrepareScript(newId: string, image: string, segments: number, layout?: PitrDataLayout): string {
   const dir = walRestoreHostDir(newId);
-  const dataDir = (layout ?? pitrDataLayout({ engine: "POSTGRES" })).pgdata;
+  const { mount, pgdata } = layout ?? pitrDataLayout({ engine: "POSTGRES" });
   const needKb = Math.ceil((segments * WAL_SEGMENT_BYTES) / 1024) + 1_048_576;
   return [
     "set -e",
     `IMG=${shq(image)}`,
     `docker pull "$IMG" >/dev/null 2>&1 || { echo "tugra: could not pull ${image}" >&2; exit 13; }`,
     `PGD=$(docker run --rm --entrypoint sh "$IMG" -c 'printenv PGDATA' 2>/dev/null || true)`,
-    `[ "$PGD" = ${shq(dataDir)} ] || { echo "tugra: image data dir is '$PGD', expected ${dataDir}" >&2; exit 22; }`,
+    pgdata === null
+      ? `case "$PGD" in ${mount}/?*) ;; *) echo "tugra: image data dir is '$PGD', expected a directory under ${mount}" >&2; exit 22 ;; esac`
+      : `[ "$PGD" = ${shq(pgdata)} ] || { echo "tugra: image data dir is '$PGD', expected ${pgdata}" >&2; exit 22; }`,
     `U=$(docker run --rm --entrypoint id "$IMG" -u postgres) && G=$(docker run --rm --entrypoint id "$IMG" -g postgres) || { echo "tugra: image has no postgres user" >&2; exit 21; }`,
     `mkdir -p /etc/tugra; AVAIL=$(df -Pk /etc/tugra 2>/dev/null | awk 'NR==2{print $4}' || true)`,
     `if [ -n "$AVAIL" ] && [ "$AVAIL" -lt ${needKb} ] 2>/dev/null; then echo "tugra: not enough free disk to stage ${segments} WAL segment(s) (need ~${Math.ceil(needKb / 1024)} MiB under /etc/tugra)" >&2; exit 24; fi`,
@@ -320,11 +323,17 @@ export function buildPitrSeedScript(
   layout?: PitrDataLayout,
 ): string {
   const vol = dbVolumeName(newDb);
-  const { mount, pgdata: dataDir } = layout ?? pitrDataLayout({ engine: "POSTGRES" });
+  const { mount, pgdata } = layout ?? pitrDataLayout({ engine: "POSTGRES" });
+  // A parent-mount layout takes PGDATA from the image the helper container runs ($PGDATA is part of its environment); a fixed layout writes it literally.
+  const dataDir = pgdata ?? '"$PGDATA"';
   const fetch = decodeChain(dest, storedObjectSourceCmd(dest, baseNs(srcId), base.filename), { gzip: true });
   const inner = [
     "set -e",
-    ...(dataDir === mount ? [] : [`mkdir -p ${dataDir}`]),
+    ...(pgdata === null
+      ? [`case "$PGDATA" in ${mount}/?*) ;; *) echo "tugra: image data dir is '$PGDATA', expected a directory under ${mount}" >&2; exit 22 ;; esac`, `mkdir -p ${dataDir}`]
+      : pgdata === mount
+        ? []
+        : [`mkdir -p ${dataDir}`]),
     `tar -xf - -C ${dataDir}`,
     `[ -s ${dataDir}/backup_label ] || { echo "tugra: base tar has no backup_label" >&2; exit 21; }`,
     `PGV=$(cat ${dataDir}/PG_VERSION | cut -d. -f1)`,
@@ -476,6 +485,7 @@ export function pitrRestoreExitHint(exitCode: number | null, phase: "prepare" | 
       13: "The database image could not be pulled from its registry.",
       20: "The target data volume already holds data.",
       21: "The base backup is not a usable Postgres cluster for the image that will run it.",
+      22: "This image keeps its data directory somewhere other than where Tugra mounts the volume; point-in-time restore cannot seed it.",
       23: "The base backup's start segment does not match its recorded start LSN (non-default WAL segment size?).",
       25: "Point-in-time restore needs Postgres 12 or newer.",
     },

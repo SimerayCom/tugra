@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import {
   baseIntervals,
   buildPitrPrepareScript,
@@ -317,25 +318,42 @@ describe("pitr-restore-script — WAL-aware retention (5.7)", () => {
 describe("pitr-restore-script: the PostgreSQL 18+ layout", () => {
   const parent = pitrDataLayout({ engine: "POSTGRES", version: "18", image: "postgres:18", pgParentMount: true });
 
-  it("layout: a parent-mount row keeps PGDATA at <mount>/<major>/docker, every other row the original data dir", () => {
-    expect(parent).toEqual({ mount: "/var/lib/postgresql", pgdata: "/var/lib/postgresql/18/docker" });
+  it("layout: a parent-mount row mounts the parent and takes PGDATA from the image, every other row the original data dir", () => {
+    expect(parent).toEqual({ mount: "/var/lib/postgresql", pgdata: null });
+    // a floating tag is whatever major was published when it was pulled: its PGDATA is never guessed from a major
+    expect(pitrDataLayout({ engine: "POSTGRES", version: "16", image: "postgres:latest", pgParentMount: true })).toEqual({ mount: "/var/lib/postgresql", pgdata: null });
     expect(pitrDataLayout({ engine: "POSTGRES", version: "16", image: "postgres:16" })).toEqual({ mount: "/var/lib/postgresql/data", pgdata: "/var/lib/postgresql/data" });
     expect(pitrDataLayout({ engine: "POSTGRES", version: "18", image: "postgres:18", pgParentMount: false })).toEqual({ mount: "/var/lib/postgresql/data", pgdata: "/var/lib/postgresql/data" });
   });
 
-  it("prepare expects the image's PGDATA to be the major's directory", () => {
-    const s = buildPitrPrepareScript("new1", "postgres:18", 10, parent);
-    expect(s).toMatch(/expected \/var\/lib\/postgresql\/18\/docker[^\n]*exit 22/);
-    expect(s).toContain("[ \"$PGD\" = '/var/lib/postgresql/18/docker' ]");
+  /** Run the prepare script's PGDATA check line against a made-up image PGDATA; "ok" when it accepts, else the exit code. */
+  function prepareAccepts(layout: ReturnType<typeof pitrDataLayout>, pgd: string): string {
+    const line = buildPitrPrepareScript("new1", "postgres:latest", 10, layout)
+      .split("\n")
+      .find((l) => l.includes("exit 22"))!;
+    const r = spawnSync("sh", ["-c", `PGD='${pgd}'\n${line}\necho ok`], { encoding: "utf8" });
+    return r.status === 0 ? "ok" : String(r.status);
+  }
+
+  it("prepare accepts any major's PGDATA under the parent mount (a floating tag may be newer than 18) and refuses anything else", () => {
+    for (const pgd of ["/var/lib/postgresql/18/docker", "/var/lib/postgresql/19/docker", "/var/lib/postgresql/21/docker"]) expect(prepareAccepts(parent, pgd)).toBe("ok");
+    for (const pgd of ["/var/lib/postgresql", "", "/data", "/var/lib/postgresql-x/18"]) expect(prepareAccepts(parent, pgd)).toBe("22");
+    const s = buildPitrPrepareScript("new1", "postgres:latest", 10, parent);
+    expect(s).not.toContain("/18/docker");
     expect(buildPitrPrepareScript("new1", "postgres:16", 10)).toMatch(/expected \/var\/lib\/postgresql\/data[^\n]*exit 22/);
+    expect(prepareAccepts(pitrDataLayout({ engine: "POSTGRES", version: "16" }), "/var/lib/postgresql/data")).toBe("ok");
+    expect(prepareAccepts(pitrDataLayout({ engine: "POSTGRES", version: "16" }), "/var/lib/postgresql/19/docker")).toBe("22");
   });
 
-  it("seed mounts the volume at the parent, extracts into PGDATA beneath it and owns the whole mount", () => {
-    const s = buildPitrSeedScript({ id: "new1", image: "postgres:18" }, { filename: "t.basebackup.tar.gz" }, "db1", LOCAL_DEST, "000000010000000000000002", parent);
+  it("seed mounts the volume at the parent, extracts into the image's PGDATA beneath it and owns the whole mount", () => {
+    const s = buildPitrSeedScript({ id: "new1", image: "postgres:latest" }, { filename: "t.basebackup.tar.gz" }, "db1", LOCAL_DEST, "000000010000000000000002", parent);
     expect(s).toContain("--user 0 --entrypoint sh -v \"$VOL\":/var/lib/postgresql \"$IMG\" -c ");
-    expect(s).toContain("mkdir -p /var/lib/postgresql/18/docker; tar -xf - -C /var/lib/postgresql/18/docker");
-    expect(s).toContain("touch /var/lib/postgresql/18/docker/recovery.signal");
-    expect(s).toContain("chown -R postgres:postgres /var/lib/postgresql; chmod 700 /var/lib/postgresql/18/docker");
+    expect(s).toContain("tar -xf - -C \"$PGDATA\"");
+    expect(s).toContain("mkdir -p \"$PGDATA\"");
+    expect(s).toContain("touch \"$PGDATA\"/recovery.signal");
+    expect(s).toContain("chown -R postgres:postgres /var/lib/postgresql; chmod 700 \"$PGDATA\"");
+    expect(s).toMatch(/case "\$PGDATA" in \/var\/lib\/postgresql\/\?\*\)/);
     expect(s).not.toContain("/var/lib/postgresql/data");
+    expect(s).not.toContain("/18/docker");
   });
 });
