@@ -99,7 +99,18 @@ export function deriveEntries(app: { domain: string | null; extraDomains: string
   return out;
 }
 
-export interface OpTaskLite { itemRef: string | null; kind: string; status: string; dependsOn: string[] }
+export interface OpTaskLite { itemRef: string | null; kind: string; status: string; dependsOn: string[]; result?: unknown }
+
+/**
+ * How many volumes of an imported compose SERVICE carry data to the target (a volume whose policy is `skip` is created empty
+ * by design). Read from the task result the importer stored; 0 for anything else. A service has no `dependsOn` rows, so this
+ * is what makes a MinIO / Meilisearch service count as stateful.
+ */
+export function serviceDataVolumes(result: unknown): number {
+  const v = result && typeof result === "object" ? (result as { volumes?: unknown }).volumes : undefined;
+  if (!Array.isArray(v)) return 0;
+  return v.filter((x) => x && typeof x === "object" && (x as { policy?: unknown }).policy !== "skip").length;
+}
 
 /** Pure: an app is `stateful` when it depends on a database or volume whose DATA task is not DONE. A database's data
  *  arrives either as a dump restore (`data:database:<s>:<r>`) or, for a volume-mode Postgres, as the streamed physical
@@ -108,8 +119,16 @@ export interface OpTaskLite { itemRef: string | null; kind: string; status: stri
  *  volume/database, so the counts add without double counting. A volume dependency is satisfied only when at least as
  *  many DONE volume data tasks exist as volume dependencies. */
 export function isStateful(appItemRef: string | null, tasks: OpTaskLite[]): boolean {
-  const app = tasks.find((t) => t.itemRef === appItemRef && t.kind === "app");
+  const app = tasks.find((t) => t.itemRef === appItemRef && (t.kind === "app" || t.kind === "service"));
   if (!app) return false;
+  if (app.kind === "service") {
+    // A compose service: its data volumes arrive as streamed copies `data:volume:<s>:<r>:<key>` (the service ref is `service:<s>:<r>`).
+    const want = serviceDataVolumes(app.result);
+    if (want === 0) return false;
+    const prefix = `data:${String(appItemRef ?? "").replace(/^service:/, "volume:")}:`;
+    const done = tasks.filter((t) => t.kind === "data" && t.status === "DONE" && (t.itemRef ?? "").startsWith(prefix)).length;
+    return done < want;
+  }
   const deps = app.dependsOn ?? [];
   const dbDeps = deps.filter((d) => d.startsWith("database:"));
   const volDeps = deps.filter((d) => d.startsWith("volume:"));

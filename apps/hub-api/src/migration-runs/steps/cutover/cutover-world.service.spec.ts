@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import { CutoverWorld } from "./cutover-world.service";
+import { CutoverWorld, isMinioResult, sanitizeRepo } from "./cutover-world.service";
 import type { CoolifyProxySnapshot } from "./proxy-swap";
 
 const SNAP: CoolifyProxySnapshot = { containerId: "a".repeat(64), name: "coolify-proxy", image: "traefik:v3.1", restartPolicy: "always", running: true, ports: ["80>80/tcp", "443>443/tcp"] };
@@ -8,8 +8,11 @@ function make() {
   const swaps: Array<Record<string, unknown>> = [];
   const prisma = {
     bulkTask: { findMany: jest.fn() },
+    objectMigration: { findMany: jest.fn() },
+    objectMigrationBucket: { findMany: jest.fn() },
     application: { findMany: jest.fn(), count: jest.fn() },
     appServiceDomain: { findMany: jest.fn() },
+    gitSource: { findMany: jest.fn().mockResolvedValue([]) },
     server: { findUnique: jest.fn(), update: jest.fn() },
     user: { findUnique: jest.fn() },
     bulkOperation: { findUnique: jest.fn(), updateMany: jest.fn() },
@@ -33,8 +36,9 @@ function make() {
   const settings = { acmeEmailFor: jest.fn(), update: jest.fn() };
   const config = { get: jest.fn() };
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
-  const world = new CutoverWorld(prisma as never, agentWs as never, settings as never, config as never, audit as never);
-  return { world, prisma, agentWs, settings, config, audit, swaps };
+  const crypto = { decrypt: jest.fn((t: string) => t.replace(/^enc:/, "")) };
+  const world = new CutoverWorld(prisma as never, agentWs as never, settings as never, config as never, audit as never, crypto as never);
+  return { world, prisma, agentWs, settings, config, audit, swaps, crypto };
 }
 
 describe("CutoverWorld", () => {
@@ -55,12 +59,141 @@ describe("CutoverWorld", () => {
     const apps = await m.world.opApps("op1");
     expect(apps.map((a) => [a.appId, a.hasData])).toEqual([["a1", true], ["a2", true], ["a3", false]]);
     expect(apps[0]).toMatchObject({ domain: "A.example.com", extraDomains: ["x.example.com"], serviceHosts: ["svc.example.com"] });
-    expect(m.prisma.bulkTask.findMany).toHaveBeenCalledWith({ where: { opId: "op1", kind: "app", status: "DONE", resourceType: "application" }, select: { itemRef: true, resourceId: true, dependsOn: true } });
+    // compose services are applications too
+    expect(m.prisma.bulkTask.findMany).toHaveBeenCalledWith({ where: { opId: "op1", kind: { in: ["app", "service"] }, status: "DONE", resourceType: "application" }, select: { itemRef: true, kind: true, resourceId: true, dependsOn: true, result: true } });
+  });
+
+  it("opApps carries compose services (kind, server, status, MinIO member) and counts a service with data volumes as stateful", async () => {
+    const m = make();
+    m.prisma.bulkTask.findMany.mockResolvedValue([
+      { itemRef: "service:_:s1", kind: "service", resourceId: "a1", dependsOn: [], result: { kind: "service", members: ["minio"], volumes: [{ key: "data", policy: "copy" }] } },
+      { itemRef: "service:_:s2", kind: "service", resourceId: "a2", dependsOn: [], result: { kind: "service", members: ["gotenberg"], volumes: [{ key: "tmp", policy: "skip" }] } },
+      { itemRef: "app:_:1", kind: "app", resourceId: "a3", dependsOn: [], result: {} },
+    ]);
+    m.prisma.application.findMany.mockResolvedValue([
+      { id: "a1", domain: null, extraDomains: [], clusterId: null, serverId: "srv-a", status: "STOPPED" },
+      { id: "a2", domain: null, extraDomains: [], clusterId: null, serverId: "srv-b", status: "RUNNING" },
+      { id: "a3", domain: "x.example.test", extraDomains: [], clusterId: null, serverId: "srv-b", status: "RUNNING" },
+    ]);
+    m.prisma.appServiceDomain.findMany.mockResolvedValue([{ applicationId: "a1", hostname: "S3.Example.test" }]);
+    const apps = await m.world.opApps("op1");
+    expect(apps.map((a) => [a.appId, a.kind, a.serverId, a.status, a.hasData, a.objectStore])).toEqual([
+      ["a1", "service", "srv-a", "STOPPED", true, true],
+      ["a2", "service", "srv-b", "RUNNING", false, false],
+      ["a3", "app", "srv-b", "RUNNING", false, false],
+    ]);
+    expect(apps[0].serviceHosts).toEqual(["s3.example.test"]);
+  });
+
+  it("appObjectKeys returns only the env NAMES that point at an object store, from the encrypted env or the plain one, and never a value", async () => {
+    const m = make();
+    m.prisma.application.findMany.mockResolvedValue([
+      { id: "a1", env: {}, envEnc: `enc:${JSON.stringify({ S3_ENDPOINT: "https://secret.example.test", DATABASE_URL: "postgres://u:p@h/db", MINIO_ROOT_PASSWORD: "x" })}` },
+      { id: "a2", env: { PORT: "80" }, envEnc: null },
+      { id: "a3", env: {}, envEnc: "enc:{not json" },
+    ]);
+    const out = await m.world.appObjectKeys(["a1", "a2", "a3"]);
+    expect([...out]).toEqual([["a1", ["MINIO_ROOT_PASSWORD", "S3_ENDPOINT"]]]);
+    expect(JSON.stringify([...out])).not.toContain("secret.example.test");
+    expect(m.prisma.application.findMany).toHaveBeenCalledWith({ where: { id: { in: ["a1", "a2", "a3"] } }, select: { id: true, env: true, envEnc: true } });
+  });
+
+  it("appObjectKeys is empty without a crypto service or without apps (no names are invented)", async () => {
+    const m = make();
+    expect((await m.world.appObjectKeys([])).size).toBe(0);
+    const bare = new CutoverWorld(m.prisma as never, m.agentWs as never, m.settings as never, m.config as never, m.audit as never);
+    expect((await bare.appObjectKeys(["a1"])).size).toBe(0);
+    expect(m.prisma.application.findMany).not.toHaveBeenCalled();
+  });
+
+  it("objectsVerification counts the selected buckets of the run's team migrations only", async () => {
+    const m = make();
+    expect(await m.world.objectsVerification("team1", [])).toBeNull();
+    m.prisma.objectMigration.findMany.mockResolvedValue([{ id: "o1" }]);
+    m.prisma.objectMigrationBucket.findMany.mockResolvedValue([{ status: "VERIFIED" }, { status: "VERIFIED" }, { status: "DIFFERS" }, { status: "SEEDED" }]);
+    expect(await m.world.objectsVerification("team1", ["o1", "o9"])).toEqual({ attached: 1, selectedBuckets: 4, verified: 2, problems: 1 });
+    expect(m.prisma.objectMigration.findMany).toHaveBeenCalledWith({ where: { id: { in: ["o1", "o9"] }, teamId: "team1" }, select: { id: true } });
+    expect(m.prisma.objectMigrationBucket.findMany).toHaveBeenCalledWith({ where: { migrationId: { in: ["o1"] }, selected: true }, select: { status: true } });
+    m.prisma.objectMigration.findMany.mockResolvedValue([]);
+    expect(await m.world.objectsVerification("team1", ["other-team"])).toEqual({ attached: 0, selectedBuckets: 0, verified: 0, problems: 0 });
+  });
+
+  it("gitWebhookApps tells a GitHub-App source (shared webhook) from a per-app deploy webhook and never echoes a credential", async () => {
+    const m = make();
+    m.prisma.application.findMany.mockResolvedValue([
+      { id: "a1", name: "web", gitUrl: "https://x-access-token:abc123@github.com/acme/web.git", gitSourceId: "src1", autoDeploy: true },
+      { id: "a2", name: "api", gitUrl: "git@github.com:acme/api.git", gitSourceId: null, autoDeploy: false },
+      { id: "a3", name: "odd", gitUrl: "not a url", gitSourceId: null, autoDeploy: true },
+    ]);
+    m.prisma.gitSource.findMany.mockResolvedValue([{ id: "src1", provider: "github", webhookSecretEnc: "enc:whsec" }]);
+    const out = await m.world.gitWebhookApps(["a1", "a2", "a3"]);
+    expect(JSON.stringify(m.prisma.gitSource.findMany.mock.calls)).toContain("webhookSecretEnc");
+    expect(out).toEqual([
+      { appId: "a1", name: "web", kind: "github-app", repo: "github.com/acme/web", sourceId: "src1", autoDeploy: true },
+      { appId: "a2", name: "api", kind: "deploy-token", repo: "github.com/acme/api", sourceId: null, autoDeploy: false },
+      { appId: "a3", name: "odd", kind: "deploy-token", repo: null, sourceId: null, autoDeploy: true },
+    ]);
+    expect(JSON.stringify(out)).not.toContain("abc123");
+    expect(await m.world.gitWebhookApps([])).toEqual([]);
+  });
+
+  it("gitWebhookApps gives an app on a token provider (or a source without a webhook secret) the per-app deploy webhook, never the shared GitHub endpoint", async () => {
+    const m = make();
+    m.prisma.application.findMany.mockResolvedValue([
+      { id: "a1", name: "gh", gitUrl: "https://github.com/acme/gh.git", gitSourceId: "src-gh", autoDeploy: true },
+      { id: "a2", name: "gt", gitUrl: "https://git.example.test/acme/gt.git", gitSourceId: "src-gitea", autoDeploy: true },
+      { id: "a3", name: "cb", gitUrl: "https://codeberg.org/acme/cb.git", gitSourceId: "src-cb", autoDeploy: false },
+      { id: "a4", name: "nosecret", gitUrl: "https://github.com/acme/ns.git", gitSourceId: "src-ns", autoDeploy: true },
+      { id: "a5", name: "gone", gitUrl: "https://github.com/acme/gone.git", gitSourceId: "src-missing", autoDeploy: true },
+    ]);
+    m.prisma.gitSource.findMany.mockResolvedValue([
+      { id: "src-gh", provider: "github", webhookSecretEnc: "enc:x" },
+      { id: "src-gitea", provider: "gitea", webhookSecretEnc: null },
+      { id: "src-cb", provider: "codeberg", webhookSecretEnc: "enc:y" },
+      { id: "src-ns", provider: "github", webhookSecretEnc: null },
+    ]);
+    const out = await m.world.gitWebhookApps(["a1", "a2", "a3", "a4", "a5"]);
+    expect(out.map((w) => [w.name, w.kind, w.sourceId])).toEqual([["gh", "github-app", "src-gh"], ["gt", "deploy-token", null], ["cb", "deploy-token", null], ["nosecret", "deploy-token", null], ["gone", "deploy-token", null]]);
+  });
+
+  it("appObjectEnv names the apps whose env could not be read instead of reading them as having no keys", async () => {
+    const m = make();
+    m.prisma.application.findMany.mockResolvedValue([
+      { id: "a1", env: {}, envEnc: `enc:${JSON.stringify({ S3_BUCKET: "x" })}` },
+      { id: "a2", env: { PORT: "80" }, envEnc: null },
+      { id: "a3", env: {}, envEnc: "enc:{not json" },
+      { id: "a4", env: {}, envEnc: "enc:[1,2]" },
+    ]);
+    const out = await m.world.appObjectEnv(["a1", "a2", "a3", "a4"]);
+    expect([...out.keys]).toEqual([["a1", ["S3_BUCKET"]]]);
+    expect(out.unreadable).toEqual(["a3", "a4"]);
+    m.crypto.decrypt.mockImplementationOnce(() => {
+      throw new Error("bad key");
+    });
+    m.prisma.application.findMany.mockResolvedValue([{ id: "a9", env: {}, envEnc: "enc:{}" }]);
+    expect((await m.world.appObjectEnv(["a9"])).unreadable).toEqual(["a9"]);
+  });
+
+  it("without a crypto service every app's env reads as unreadable (the dependency is unknown, never absent)", async () => {
+    const m = make();
+    const bare = new CutoverWorld(m.prisma as never, m.agentWs as never, m.settings as never, m.config as never, m.audit as never);
+    expect(await bare.appObjectEnv(["a1", "a2"])).toEqual({ keys: new Map(), unreadable: ["a1", "a2"] });
+    expect(await bare.appObjectEnv([])).toEqual({ keys: new Map(), unreadable: [] });
+  });
+
+  it("hubPublicUrl is the configured https/http base without a trailing slash, else null", () => {
+    const m = make();
+    m.config.get.mockReturnValue("https://hub.example.test/");
+    expect(m.world.hubPublicUrl()).toBe("https://hub.example.test");
+    m.config.get.mockReturnValue("hub.example.test");
+    expect(m.world.hubPublicUrl()).toBeNull();
+    m.config.get.mockReturnValue(undefined);
+    expect(m.world.hubPublicUrl()).toBeNull();
   });
 
   it("opContainerNames lists the run's app and database containers", async () => {
     const m = make();
-    m.prisma.bulkTask.findMany.mockImplementation(async ({ where }: { where: { kind: string } }) => (where.kind === "app" ? [{ itemRef: "x", resourceId: "a1", dependsOn: [] }] : [{ resourceId: "d1" }]));
+    m.prisma.bulkTask.findMany.mockImplementation(async ({ where }: { where: { kind: string | { in: string[] } } }) => (typeof where.kind === "object" ? [{ itemRef: "x", resourceId: "a1", dependsOn: [] }] : [{ resourceId: "d1" }]));
     m.prisma.application.findMany.mockResolvedValue([{ id: "a1", domain: null, extraDomains: [], clusterId: null }]);
     m.prisma.appServiceDomain.findMany.mockResolvedValue([]);
     expect(await m.world.opContainerNames("op1")).toEqual(["tugra_a1", "tugra_db_d1"]);
@@ -177,5 +310,24 @@ describe("CutoverWorld", () => {
     m.prisma.server.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: "s", name: "n", teamId: "t", publicIp: null, proxyBind: "public" });
     expect(await m.world.serverFacts("x")).toBeNull();
     expect(await m.world.serverFacts("s")).toEqual({ id: "s", name: "n", teamId: "t", publicIp: null, proxyBind: "public" });
+  });
+});
+
+describe("helpers", () => {
+  it("isMinioResult reads the kept member names of a service result", () => {
+    expect(isMinioResult({ members: ["minio", "console"] })).toBe(true);
+    expect(isMinioResult({ members: ["meilisearch"] })).toBe(false);
+    expect(isMinioResult(null)).toBe(false);
+    expect(isMinioResult({ members: "minio" })).toBe(false);
+  });
+
+  it("sanitizeRepo keeps host/owner/repo and drops userinfo, .git, query and anything that is not a git url", () => {
+    expect(sanitizeRepo("https://user:tok@github.com/acme/web.git")).toBe("github.com/acme/web");
+    expect(sanitizeRepo("ssh://git@git.example.test:2222/acme/web")).toBe("git.example.test/acme/web");
+    expect(sanitizeRepo("git@gitlab.example.test:grp/sub/repo.git")).toBe("gitlab.example.test/grp/sub/repo");
+    expect(sanitizeRepo("https://github.com/acme/web/")).toBe("github.com/acme/web");
+    expect(sanitizeRepo("")).toBeNull();
+    expect(sanitizeRepo(null)).toBeNull();
+    expect(sanitizeRepo("just words")).toBeNull();
   });
 });

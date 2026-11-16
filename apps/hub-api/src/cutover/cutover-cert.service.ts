@@ -63,7 +63,7 @@ export class CutoverCertService {
   }
 
   private async wantedSet(opId: string): Promise<Set<string>> {
-    const tasks = await this.prisma.bulkTask.findMany({ where: { opId, kind: "app", status: "DONE", resourceType: "application" }, select: { resourceId: true } });
+    const tasks = await this.prisma.bulkTask.findMany({ where: { opId, kind: { in: ["app", "service"] }, status: "DONE", resourceType: "application" }, select: { resourceId: true } });
     const ids = tasks.map((t) => t.resourceId).filter((x): x is string => !!x);
     const apps = await this.prisma.application.findMany({ where: { id: { in: ids } }, select: { id: true, domain: true, extraDomains: true } });
     const svc = await this.prisma.appServiceDomain.findMany({ where: { applicationId: { in: ids } }, select: { hostname: true } });

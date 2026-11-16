@@ -116,7 +116,8 @@ export class CutoverService {
     const op = await this.executor.ownedOpForCutover(userId, opId);
     const meta = typeof op.meta === "object" && op.meta ? (op.meta as { rolledBackAt?: string }) : {};
     if (meta.rolledBackAt) throw new ConflictException("operation was rolled back");
-    const appTasks = op.tasks.filter((t) => t.kind === "app" && t.status === "DONE" && t.resourceType === "application" && !!t.resourceId);
+    // A compose "service" the import created is an application too (it serves hostnames through its service domains).
+    const appTasks = op.tasks.filter((t) => (t.kind === "app" || t.kind === "service") && t.status === "DONE" && t.resourceType === "application" && !!t.resourceId);
     const names = new Map<string, string>();
     const itemRefByApp = new Map<string, string>();
     for (const t of appTasks) {

@@ -24,7 +24,7 @@ import {
 
 const T = 60_000;
 
-export type SourceProxy = { ok: true; snapshot: CoolifyProxySnapshot } | { ok: false; code: "unreadable" | "absent" | "name" | "image" | "ports" };
+export type SourceProxy = { ok: true; snapshot: CoolifyProxySnapshot } | { ok: false; code: "unreadable" | "absent" | "name" | "image" | "ports" | "control-plane" };
 
 /** Read-only: which container is the source's `coolify-proxy`, and is it really that (name + traefik image + :80/:443)? */
 export async function inspectSourceProxy(world: Pick<CutoverWorld, "exec">, serverId: string): Promise<SourceProxy> {

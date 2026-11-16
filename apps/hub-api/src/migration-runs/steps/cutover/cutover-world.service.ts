@@ -1,11 +1,14 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../../prisma/prisma.service";
 import { AgentWsServer } from "../../../agent-gateway/agent-ws.server";
 import { AuditService } from "../../../audit/audit.service";
 import { InstanceSettingsService } from "../../../instance/instance-settings.service";
+import { CryptoService } from "../../../crypto/crypto.service";
 import { containerName } from "../../../deploy/deploy-script";
+import { serviceDataVolumes } from "../../../cutover/cutover.logic";
+import { objectStoreKeys, type ObjectsVerification } from "./cutover-holds";
 import type { CoolifyProxySnapshot, SwapState } from "./proxy-swap";
 
 /** An app the run's import op created, with the one fact the PONR rule needs: does it carry data to the target at all? */
@@ -21,6 +24,27 @@ export interface OpApp {
   /** Compose service domains (`AppServiceDomain`). */
   serviceHosts: string[];
   clusterId: string | null;
+  /** `service` for a compose service the import created (a MinIO, a Meilisearch...), `app` (the default) for everything else. */
+  kind?: "app" | "service";
+  /** The Tugra server the app runs on (the target of ITS source server): hosts flip per server. */
+  serverId?: string;
+  /** Application status (`RUNNING`, `STOPPED`, ...). */
+  status?: string;
+  /** The service IS an object store (one of its members is a MinIO). */
+  objectStore?: boolean;
+}
+
+/** What the repoint guidance of a git webhook needs about an app (never a token, never a credential in a URL). */
+export interface GitWebhookApp {
+  appId: string;
+  name: string;
+  /** `github-app`: one webhook on the git source (shared by its apps); `deploy-token`: a webhook per app. */
+  kind: "github-app" | "deploy-token";
+  /** Repository as `host/owner/repo` (userinfo and `.git` removed); null when the app has no git url. */
+  repo: string | null;
+  /** The git source id (github-app only): it is the path of the shared webhook. */
+  sourceId: string | null;
+  autoDeploy: boolean;
 }
 
 export interface SwapRow {
@@ -54,23 +78,101 @@ export class CutoverWorld {
     private readonly settings: InstanceSettingsService,
     private readonly config: ConfigService,
     private readonly audit: AuditService,
+    /** Optional so existing callers keep working; without it the object-store dependency of an app reads as unknown (no names). */
+    @Optional() private readonly crypto?: CryptoService,
   ) {}
 
   // ── the import op's resources (read-only) ──────────────────────────────────────────────────
 
   async opApps(opId: string): Promise<OpApp[]> {
-    const tasks = await this.prisma.bulkTask.findMany({ where: { opId, kind: "app", status: "DONE", resourceType: "application" }, select: { itemRef: true, resourceId: true, dependsOn: true } });
+    // The import's compose SERVICES are applications too (kind "service"): they serve hostnames and carry data.
+    const tasks = await this.prisma.bulkTask.findMany({ where: { opId, kind: { in: ["app", "service"] }, status: "DONE", resourceType: "application" }, select: { itemRef: true, kind: true, resourceId: true, dependsOn: true, result: true } });
     const ids = tasks.map((t) => t.resourceId).filter((x): x is string => !!x);
-    const apps = await this.prisma.application.findMany({ where: { id: { in: ids } }, select: { id: true, domain: true, extraDomains: true, clusterId: true } });
+    const apps = await this.prisma.application.findMany({ where: { id: { in: ids } }, select: { id: true, domain: true, extraDomains: true, clusterId: true, serverId: true, status: true } });
     const byId = new Map(apps.map((a) => [a.id, a]));
     const svc = await this.prisma.appServiceDomain.findMany({ where: { applicationId: { in: ids } }, select: { applicationId: true, hostname: true } });
     return tasks.flatMap((t) => {
       const a = t.resourceId ? byId.get(t.resourceId) : undefined;
       if (!a) return [];
-      const hasData = (t.dependsOn ?? []).some((d) => d.startsWith("database:") || d.startsWith("volume:"));
+      const isService = t.kind === "service";
+      const hasData = (t.dependsOn ?? []).some((d) => d.startsWith("database:") || d.startsWith("volume:")) || (isService && serviceDataVolumes(t.result) > 0);
       const serviceHosts = svc.filter((x) => x.applicationId === a.id).map((x) => x.hostname.toLowerCase());
-      return [{ appId: a.id, itemRef: t.itemRef, hasData, domain: a.domain, extraDomains: a.extraDomains ?? [], serviceHosts, clusterId: a.clusterId }];
+      return [{ appId: a.id, itemRef: t.itemRef, hasData, domain: a.domain, extraDomains: a.extraDomains ?? [], serviceHosts, clusterId: a.clusterId, kind: isService ? ("service" as const) : ("app" as const), serverId: a.serverId, status: a.status, objectStore: isService && isMinioResult(t.result) }];
     });
+  }
+
+  /**
+   * The env var NAMES of each app that point at an object store (see `isObjectStoreKey`), and the apps whose env could NOT be
+   * read (no crypto service, a value that does not decrypt, a body that is not JSON). Only names leave this method: the env is
+   * decrypted here to list its keys and nothing else is read or kept. An unreadable env is reported, never read as "no keys":
+   * the caller treats such an app as a possible dependant and names it, so the object-store default fails closed.
+   */
+  async appObjectEnv(appIds: readonly string[]): Promise<{ keys: Map<string, string[]>; unreadable: string[] }> {
+    const keys = new Map<string, string[]>();
+    if (appIds.length === 0) return { keys, unreadable: [] };
+    if (!this.crypto) return { keys, unreadable: [...appIds] };
+    const unreadable: string[] = [];
+    const rows = await this.prisma.application.findMany({ where: { id: { in: [...appIds] } }, select: { id: true, env: true, envEnc: true } });
+    for (const r of rows) {
+      let names: string[];
+      try {
+        const env = r.envEnc ? (JSON.parse(this.crypto.decrypt(r.envEnc)) as Record<string, unknown>) : ((r.env ?? {}) as Record<string, unknown>);
+        if (!env || typeof env !== "object" || Array.isArray(env)) throw new Error("env is not an object");
+        names = Object.keys(env);
+      } catch {
+        unreadable.push(r.id);
+        continue;
+      }
+      const hit = objectStoreKeys(names);
+      if (hit.length > 0) keys.set(r.id, hit);
+    }
+    return { keys, unreadable: unreadable.sort() };
+  }
+
+  /** The names part of {@link appObjectEnv}. */
+  async appObjectKeys(appIds: readonly string[]): Promise<Map<string, string[]>> {
+    return (await this.appObjectEnv(appIds)).keys;
+  }
+
+  /**
+   * What the object migrations attached to the run say, read-only: counts of selected buckets by outcome. Scoped to the run's
+   * team, so an id from another team reads as absent. Null when there are no ids (nothing was attached).
+   */
+  async objectsVerification(teamId: string, migrationIds: readonly string[]): Promise<ObjectsVerification | null> {
+    if (migrationIds.length === 0) return null;
+    const migrations = await this.prisma.objectMigration.findMany({ where: { id: { in: [...migrationIds] }, teamId }, select: { id: true } });
+    if (migrations.length === 0) return { attached: 0, selectedBuckets: 0, verified: 0, problems: 0 };
+    const buckets = await this.prisma.objectMigrationBucket.findMany({ where: { migrationId: { in: migrations.map((m) => m.id) }, selected: true }, select: { status: true } });
+    return {
+      attached: migrations.length,
+      selectedBuckets: buckets.length,
+      verified: buckets.filter((b) => b.status === "VERIFIED").length,
+      problems: buckets.filter((b) => b.status === "DIFFERS" || b.status === "FAILED").length,
+    };
+  }
+
+  /**
+   * Git webhook facts of the given apps for the post-cutover repoint guidance (names, repository and source id only). Only a
+   * GitHub-App source has the shared receiver (`/webhooks/github/<sourceId>`, it needs the source's webhook secret); an app
+   * on a token provider (gitea, forgejo, codeberg) or without a source has its own per-app deploy webhook.
+   */
+  async gitWebhookApps(appIds: readonly string[]): Promise<GitWebhookApp[]> {
+    if (appIds.length === 0) return [];
+    const rows = await this.prisma.application.findMany({ where: { id: { in: [...appIds] }, source: "GIT" }, select: { id: true, name: true, gitUrl: true, gitSourceId: true, autoDeploy: true }, orderBy: { name: "asc" } });
+    const sourceIds = [...new Set(rows.map((r) => r.gitSourceId).filter((x): x is string => !!x))];
+    const sources = sourceIds.length > 0 ? await this.prisma.gitSource.findMany({ where: { id: { in: sourceIds } }, select: { id: true, provider: true, webhookSecretEnc: true } }) : [];
+    const shared = new Map(sources.map((x) => [x.id, { provider: x.provider, receiver: !!x.webhookSecretEnc }]));
+    return rows.map((r) => {
+      const src = r.gitSourceId ? shared.get(r.gitSourceId) : undefined;
+      const github = !!src && src.receiver && src.provider === "github";
+      return { appId: r.id, name: r.name, kind: github ? ("github-app" as const) : ("deploy-token" as const), repo: sanitizeRepo(r.gitUrl), sourceId: github ? r.gitSourceId : null, autoDeploy: r.autoDeploy };
+    });
+  }
+
+  /** The hub's public base URL (no trailing slash) when configured, else null: the webhook guidance names the path only then. */
+  hubPublicUrl(): string | null {
+    const v = (this.config.get<string>("HUB_PUBLIC_URL") ?? "").trim().replace(/\/+$/, "");
+    return /^https?:\/\/[^\s]+$/.test(v) ? v : null;
   }
 
   async opDatabaseIds(opId: string): Promise<string[]> {
@@ -202,4 +304,19 @@ export class CutoverWorld {
     const ok = new Set(rows.map((r) => r.databaseId));
     return databaseIds.map((databaseId) => ({ databaseId, hasSuccess: ok.has(databaseId) }));
   }
+}
+
+/** A compose service is an object store when one of its kept members is a MinIO (the importer stores the member names in the task result). */
+export function isMinioResult(result: unknown): boolean {
+  const members = result && typeof result === "object" ? (result as { members?: unknown }).members : undefined;
+  return Array.isArray(members) && members.some((m) => typeof m === "string" && /minio/i.test(m));
+}
+
+/** `https://user:token@host/owner/repo.git` -> `host/owner/repo`. Anything that is not a plain git url reads as null (never echo a credential). */
+export function sanitizeRepo(url: string | null | undefined): string | null {
+  if (!url) return null;
+  const m = /^(?:https?:\/\/|ssh:\/\/|git:\/\/)(?:[^@/\s]*@)?([A-Za-z0-9.-]+)(?::\d+)?\/([^\s?#]+?)(?:\.git)?\/?$/.exec(url.trim());
+  if (m) return `${m[1].toLowerCase()}/${m[2]}`;
+  const scp = /^(?:[^@\s]+@)?([A-Za-z0-9.-]+):([^\s?#:][^\s?#]*?)(?:\.git)?\/?$/.exec(url.trim());
+  return scp ? `${scp[1].toLowerCase()}/${scp[2]}` : null;
 }

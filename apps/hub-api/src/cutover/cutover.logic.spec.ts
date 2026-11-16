@@ -5,7 +5,7 @@ import * as path from "node:path";
 import {
   CUTOVER_STATES, canTransition, caaAllowsLetsEncrypt, certNames, classifyHealth, classifyObserved, classifyPort80, counterpartOf, deriveEntries, effectiveTtl, isGeneratedHost,
   isStateful, keyMatchesCert, mergeAcmeStore, parseAcmeDiagMarkers, parseCutoverProbeMarkers, planHash, planRecords, recordSetKey, simulateApply, simulateRevert, sslModeVerdict,
-  stepAction, ttlGuidance, earliestFlip, allNoop, sanitizeText,
+  stepAction, ttlGuidance, earliestFlip, allNoop, sanitizeText, serviceDataVolumes,
   type CutoverState, type LedgerRecord, type ProviderRec,
 } from "./cutover.logic";
 import { shq } from "../deploy/deploy-script";
@@ -69,6 +69,18 @@ describe("hostnames and entry derivation", () => {
     const vol = { itemRef: "app:_:3", kind: "app", status: "DONE", dependsOn: ["volume:_:v1"] };
     expect(isStateful("app:_:3", [vol])).toBe(true);
     expect(isStateful("app:_:3", [vol, { itemRef: "data:vol:app:_:3:data", kind: "data", status: "DONE", dependsOn: [] }])).toBe(false);
+  });
+  it("a compose SERVICE is stateful while its data volumes (policy not skip) have no finished streamed copy", () => {
+    const svc = (volumes: unknown) => ({ itemRef: "service:_:7", kind: "service", status: "DONE", dependsOn: [] as string[], result: { kind: "service", volumes } });
+    const copy = (key: string, status = "DONE") => ({ itemRef: `data:volume:_:7:${key}`, kind: "data", status, dependsOn: [] as string[] });
+    expect(serviceDataVolumes({ volumes: [{ key: "a", policy: "copy" }, { key: "b", policy: "skip" }] })).toBe(1);
+    expect(serviceDataVolumes(null)).toBe(0);
+    expect(serviceDataVolumes({ volumes: "x" })).toBe(0);
+    expect(isStateful("service:_:7", [svc([{ key: "data", policy: "copy" }])])).toBe(true);
+    expect(isStateful("service:_:7", [svc([{ key: "data", policy: "copy" }]), copy("data")])).toBe(false);
+    expect(isStateful("service:_:7", [svc([{ key: "data", policy: "copy" }]), copy("data", "RUNNING")])).toBe(true);
+    expect(isStateful("service:_:7", [svc([{ key: "data", policy: "skip" }])])).toBe(false);
+    expect(isStateful("service:_:7", [svc([])])).toBe(false);
   });
   it("counts the streamed (v2) data tasks: data:volume:<s>:<r>:<name> for app volumes, :data for a volume-mode Postgres", () => {
     const vx = { itemRef: "app:_:4", kind: "app", status: "DONE", dependsOn: ["database:_:9", "volume:_:v1"] };

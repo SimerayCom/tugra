@@ -3,6 +3,7 @@ import { StepHandlerRegistryService } from "../../core/step-handler.registry";
 import type { PostPonrRelease } from "../import/baseline/post-ponr";
 import type { CutoverWorld } from "./cutover-world.service";
 import { TLS_DEADLINE_MS, TlsPreissueHandler } from "./tls-preissue.handler";
+import { HTTP01_GAP_ATTEST, LEFT_OUT_ATTEST } from "./cutover-holds";
 
 afterEach(() => jest.useRealTimers());
 
@@ -42,13 +43,23 @@ describe("TLS_PREISSUE (two-box)", () => {
     expect(rig.driver.now.getTime() - started).toBeGreaterThan(TLS_DEADLINE_MS);
   });
 
-  it("without DNS-01 credentials the hosts fall back to HTTP-01, which needs the explicit gap acceptance", async () => {
+  it("without DNS-01 credentials the hosts fall back to HTTP-01, which needs the gap accepted: the run option, or each host by an operator attestation", async () => {
     const rig = makeRig({ apps: apps(1), zone: zoneFor(1) });
     rig.proxyConfig.resolveFor.mockResolvedValue({ acmeEmail: "ops@realco.io", bind: "public" } as never);
     rig.sim.sslOk = false;
-    const refused = await rig.driver.drive(rig.handlers.tls, { maxTicks: 120 });
-    expect(refused.fail?.code).toBe("tls-preissue.timeout");
+    // nothing else is progressing, so the step asks the operator PER HOST instead of timing out after 20 minutes
+    const asked = await rig.driver.drive(rig.handlers.tls, { maxTicks: 120 });
+    expect(asked.status).toBe("WAITING_OPERATOR");
+    expect(asked.wait).toMatchObject({ kind: "operator", code: "tls-preissue.http01-gap-hosts", params: { hosts: [H(1)], count: 1 }, attest: [HTTP01_GAP_ATTEST, LEFT_OUT_ATTEST] });
     expect(rig.appsSvc.setDomainOptions).toHaveBeenCalledWith("user1", "a1", { dnsChallenge: false });
+    expect(rig.driver.rec("TLS_PREISSUE").compensation).toMatchObject({ gapWaitAt: expect.any(String) });
+    // an attestation for ANOTHER host changes nothing
+    rig.driver.attest("TLS_PREISSUE", HTTP01_GAP_ATTEST, "other.example.test");
+    expect((await rig.driver.tick(rig.handlers.tls, "evidence")).status).toBe("WAITING_OPERATOR");
+    rig.driver.attest("TLS_PREISSUE", HTTP01_GAP_ATTEST, H(1));
+    const accepted = await rig.driver.drive(rig.handlers.tls);
+    expect(accepted.status).toBe("PASSED");
+    expect(accepted.gate!.checks.find((c) => c.code === "tls-preissue.http01-gap")).toMatchObject({ status: "warn", subject: H(1) });
 
     const gap = makeRig({ apps: apps(1), zone: zoneFor(1), options: { acceptHttp01Gap: true } });
     gap.proxyConfig.resolveFor.mockResolvedValue({ acmeEmail: "ops@realco.io", bind: "public" } as never);
@@ -58,7 +69,35 @@ describe("TLS_PREISSUE (two-box)", () => {
     expect(ok.gate!.checks.find((c) => c.code === "tls-preissue.http01-gap")).toMatchObject({ status: "warn", subject: H(1) });
   });
 
-  it("a host DNS-01 cannot serve is a failing check naming the reason; the HTTP-01 gap acceptance lifts it", async () => {
+  it("a host the operator leaves out is a warning, nothing is prepared for it, and the step passes without it", async () => {
+    const rig = makeRig({ apps: apps(2), zone: zoneFor(2) });
+    rig.proxyConfig.resolveFor.mockResolvedValue({ acmeEmail: "ops@realco.io", bind: "public" } as never);
+    rig.sim.sslOk = false;
+    const asked = await rig.driver.drive(rig.handlers.tls, { maxTicks: 120 });
+    expect(asked.wait).toMatchObject({ code: "tls-preissue.http01-gap-hosts", params: { hosts: [H(1), H(2)] } });
+    rig.driver.attest("TLS_PREISSUE", HTTP01_GAP_ATTEST, H(1));
+    rig.driver.attest("TLS_PREISSUE", LEFT_OUT_ATTEST, H(2));
+    const r = await rig.driver.drive(rig.handlers.tls);
+    expect(r.status).toBe("PASSED");
+    expect(r.gate!.checks.find((c) => c.subject === H(2))).toMatchObject({ status: "warn", code: "tls-preissue.host-left-out" });
+    expect(r.gate!.checks.find((c) => c.subject === H(1))).toMatchObject({ status: "warn", code: "tls-preissue.http01-gap" });
+  });
+
+  it("the gap decision does not stall the other hosts: only the HTTP-01 host waits, the DNS-01 host is ready meanwhile", async () => {
+    const rig = makeRig({ apps: apps(2), zone: zoneFor(2) });
+    // host 2 has no DNS-01 coverage (its zone is not visible to the server credential)
+    rig.cf.findZoneForHostname.mockImplementation((async (_t: string, host: string) => {
+      if (host === H(2) && rig.prisma.cutoverDomain.rows.length > 0) throw Object.assign(new Error("no zone"), { status: 404 });
+      return { zoneId: "z1", zoneName: "example.com" };
+    }) as never);
+    rig.sim.sslOk = true;
+    const r = await rig.driver.drive(rig.handlers.tls, { maxTicks: 40 });
+    expect(r.status).toBe("WAITING_OPERATOR");
+    expect(r.wait).toMatchObject({ code: "tls-preissue.http01-gap-hosts", params: { hosts: [H(2)] } });
+    expect(rig.prisma.cutoverDomain.rows.find((x) => x.hostname === H(1))).toMatchObject({ state: "READY", certState: "ready" });
+  });
+
+  it("a host DNS-01 cannot serve is a failing check naming the reason; the gap acceptance lifts it (per host, after the preparation too)", async () => {
     const rig = makeRig({ apps: apps(1), zone: zoneFor(1) });
     // the server's DNS-01 credential cannot see the zone, although the team credential can
     rig.cf.findZoneForHostname.mockImplementation((async (_t: string, host: string) => {
@@ -67,11 +106,17 @@ describe("TLS_PREISSUE (two-box)", () => {
     }) as never);
     rig.sim.sslOk = false;
     const r = await rig.driver.drive(rig.handlers.tls, { maxTicks: 3 });
-    expect(r.status).toBe("RUNNING");
+    expect(r.status).toBe("WAITING_OPERATOR");
+    expect(r.wait).toMatchObject({ code: "tls-preissue.http01-gap-hosts", params: { hosts: [H(1)] } });
     expect(rig.prisma.cutoverDomain.rows[0]).toMatchObject({ state: "BLOCKED", blockReason: "zone-not-covered" });
     const gate = await rig.driver.postGateOf(rig.handlers.tls);
     expect(gate.checks.find((c) => c.code === "tls-preissue.dns01-blocked")).toMatchObject({ status: "fail", subject: H(1), params: { reason: "zone-not-covered" } });
     expect(rig.driver.eventCodes()).toContain("tls-preissue.dns01-blocked");
+    // the host's gap is accepted AFTER the preparation: it moves to HTTP-01 without redoing the others
+    rig.driver.attest("TLS_PREISSUE", HTTP01_GAP_ATTEST, H(1));
+    expect((await rig.driver.drive(rig.handlers.tls)).status).toBe("PASSED");
+    expect(rig.prisma.cutoverDomain.rows[0]).toMatchObject({ state: "READY", challenge: "http01" });
+    expect(rig.driver.rec("TLS_PREISSUE").compensation).toMatchObject({ gapPrepared: [H(1)] });
 
     const gap = makeRig({ apps: apps(1), zone: zoneFor(1), options: { acceptHttp01Gap: true } });
     gap.cf.findZoneForHostname.mockImplementation((async () => {

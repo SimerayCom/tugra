@@ -1,7 +1,7 @@
 import { Logger } from "@nestjs/common";
 import { COOLIFY_ID, H, IP, OLD, SRV, makeRig, zoneRec, type Rig, type RigOpts } from "./testing/cutover-rig";
 import { Crash } from "./testing/step-driver";
-import { SWAP_VERIFY_DEADLINE_MS, VERIFY_DEADLINE_MS, MANUAL_DNS_ATTEST, PLAN_CHANGED_ATTEST } from "./cutover.handler";
+import { SWAP_VERIFY_DEADLINE_MS, VERIFY_DEADLINE_MS, MANUAL_DNS_ATTEST, MANUAL_DNS_DEFER_ATTEST, PLAN_CHANGED_ATTEST } from "./cutover.handler";
 
 beforeEach(() => jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined));
 afterEach(() => {
@@ -260,7 +260,9 @@ describe("CUTOVER two-box: manual-DNS hosts", () => {
     const rig = await manualRig();
     const r = await drive(rig);
     expect(r.status).toBe("WAITING_OPERATOR");
-    expect(r.wait).toMatchObject({ kind: "operator", code: "cutover.manual-dns", params: { hosts: ["foo.other.net"] }, attest: [MANUAL_DNS_ATTEST] });
+    expect(r.wait).toMatchObject({ kind: "operator", code: "cutover.manual-dns", params: { hosts: ["foo.other.net"], pending: 1, total: 1 }, attest: [MANUAL_DNS_ATTEST, MANUAL_DNS_DEFER_ATTEST] });
+    // the exact records to create, per host, and what the resolvers show now
+    expect(r.wait).toMatchObject({ params: { records: [`foo.other.net A ${IP} ttl=60`], observed: [expect.stringMatching(/^foo\.other\.net=/)] } });
     expect(rig.driver.run.ponrAt).not.toBeNull();
     expect(states(rig)).toEqual([[H(1), "VERIFIED"], ["foo.other.net", "READY"]]);
   });
@@ -278,12 +280,16 @@ describe("CUTOVER two-box: manual-DNS hosts", () => {
     expect(rig.zone.records.some((x) => x.name === "foo.other.net")).toBe(false);
   });
 
-  it("an attested host that never shows up at the target fails after the deadline (retryable)", async () => {
+  it("an attested host that never shows up at the target is asked about again after the window; the step does not fail", async () => {
     const rig = await manualRig();
     await drive(rig);
     rig.driver.attest("CUTOVER", MANUAL_DNS_ATTEST);
     const r = await rig.driver.drive(rig.handlers.cut, { maxTicks: 200, between: () => rig.cutover.idle() });
-    expect(r.fail).toMatchObject({ code: "cutover.host-not-verified", retryable: true });
+    expect(r.status).toBe("WAITING_OPERATOR");
+    expect(r.fail).toBeUndefined();
+    expect(r.wait).toMatchObject({ code: "cutover.manual-dns", params: { hosts: ["foo.other.net"] } });
+    expect(rig.driver.events.find((e) => e.code === "cutover.manual-dns-not-seen")).toMatchObject({ level: "warn", params: { hosts: ["foo.other.net"], minutes: 30 } });
+    expect(rig.driver.now.getTime() - Date.parse(rig.driver.rec("CUTOVER").evidence.attestations[0].at)).toBeGreaterThan(30 * 60_000);
   });
 });
 
@@ -646,15 +652,16 @@ describe("CUTOVER: a retry after a verification deadline gets a fresh window", (
     expect(again.fail).toMatchObject({ code: "cutover.host-not-verified", retryable: true });
   });
 
-  it("manual DNS: an attested host that failed at the deadline is re-verified on retry", async () => {
+  it("manual DNS: a confirmation the resolvers never backed is asked about again, and a fresh confirmation is verified", async () => {
     const rig = await twoBoxReady({ apps: [{ id: "a1", host: H(1) }, { id: "a2", host: "foo.other.net", hasData: true }], zone: zoneFor(1), options: { ttlPolicy: "skip-ack", acceptHttp01Gap: true } });
     await drive(rig);
     rig.driver.attest("CUTOVER", MANUAL_DNS_ATTEST);
-    const failed = await rig.driver.drive(rig.handlers.cut, { maxTicks: 200, between: () => rig.cutover.idle() });
-    expect(failed.fail).toMatchObject({ code: "cutover.host-not-verified", retryable: true });
+    const asked = await rig.driver.drive(rig.handlers.cut, { maxTicks: 200, between: () => rig.cutover.idle() });
+    expect(asked.status).toBe("WAITING_OPERATOR");
     const orig = rig.lookup.resolve4.getMockImplementation()!;
     rig.lookup.resolve4.mockImplementation((async (h: string) => (h === "foo.other.net" ? [IP] : orig(h))) as never);
-    const r = await retryUntilSettled(rig);
+    rig.driver.attest("CUTOVER", MANUAL_DNS_ATTEST, "foo.other.net");
+    const r = await rig.driver.drive(rig.handlers.cut, { between: () => rig.cutover.idle() });
     expect(r.status).toBe("PASSED");
     expect(states(rig)).toEqual([[H(1), "VERIFIED"], ["foo.other.net", "VERIFIED"]]);
   });
