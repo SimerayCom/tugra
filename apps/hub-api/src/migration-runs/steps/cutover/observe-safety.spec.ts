@@ -1,0 +1,158 @@
+import { Logger } from "@nestjs/common";
+import { H, makeRig, zoneRec, type Rig, type RigOpts } from "./testing/cutover-rig";
+import { FinalizeHandler } from "./finalize.handler";
+import { OBSERVE_CHECK_EVERY_MS, ObserveHandler } from "./observe.handler";
+import { buildSourceBaseline } from "../import/baseline/source-health";
+import type { PostPonrRelease } from "../import/baseline/post-ponr";
+import type { CutoverWorld } from "./cutover-world.service";
+
+beforeEach(() => jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined));
+afterEach(() => {
+  jest.useRealTimers();
+  jest.restoreAllMocks();
+});
+
+const apps = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `a${i + 1}`, host: H(i + 1), hasData: false }));
+const zoneFor = (n: number) => Array.from({ length: n }, (_, i) => zoneRec(`r${i + 1}`, H(i + 1)));
+
+async function afterCutover(o: RigOpts = {}): Promise<Rig> {
+  const rig = makeRig({ apps: apps(3), zone: zoneFor(3), ...o, options: { ttlPolicy: "skip-ack", ...(o.options ?? {}) } });
+  await rig.driver.drive(rig.handlers.dns);
+  await rig.driver.drive(rig.handlers.tls);
+  rig.driver.setStep("VERIFY", { status: "PASSED" });
+  rig.driver.approve("VERIFY", "d".repeat(64), { acceptDataRisk: true, expiresAt: null });
+  expect((await rig.driver.drive(rig.handlers.cut, { between: () => rig.cutover.idle() })).status).toBe("PASSED");
+  rig.driver.setStep("CUTOVER", { status: "PASSED" });
+  return rig;
+}
+
+/** A release double that records what it was asked, so these specs test the hand-off, not the release itself (see post-ponr.spec). */
+const fakeRelease = (undo = { changed: 0, failed: 0 }) => {
+  const run = jest.fn(async () => ({ workersStarted: 1, workersFailed: 0, autoDeployRestored: 1 }));
+  const undoFn = jest.fn(async () => undo);
+  return { release: { run, undo: undoFn } as unknown as PostPonrRelease, run, undo: undoFn };
+};
+const observeWith = (rig: Rig, release?: PostPonrRelease) => new ObserveHandler(rig.registry, rig.cutover, rig.world as unknown as CutoverWorld, rig.net as never, release);
+
+const BASELINE = buildSourceBaseline(
+  [
+    { kind: "app", ref: "a1", health: "exited", restartCount: 126368 },
+    { kind: "app", ref: "a2", health: "healthy", restartCount: 0 },
+    { kind: "app", ref: "a3", health: "unknown", restartCount: 2 },
+  ],
+  new Date("2026-11-20T08:00:00Z"),
+);
+
+describe("OBSERVE judged against the source (R28/R66)", () => {
+  it("an app that was already failing at the source cannot fail the window; every other app still can", async () => {
+    const rig = await afterCutover();
+    rig.driver.run.sourceBaseline = BASELINE;
+    const obs = observeWith(rig);
+    await rig.driver.tick(obs);
+    expect(rig.driver.events.find((e) => e.code === "observe.baseline-excluded")?.params).toEqual({ count: 1 });
+    rig.world.crashes.push({ name: "tugra_a1", ts: new Date(rig.driver.now.getTime() + 1000) });
+    rig.driver.advance(OBSERVE_CHECK_EVERY_MS);
+    expect((await rig.driver.tick(obs, "timer")).status).toBe("WAITING_TIMER"); // a1 crashing again is what the source did
+    rig.world.crashes.push({ name: "tugra_a2", ts: new Date(rig.driver.now.getTime() + 1000) });
+    rig.driver.advance(OBSERVE_CHECK_EVERY_MS);
+    expect((await rig.driver.tick(obs, "timer")).fail).toEqual({ code: "observe.crash-detected", params: { events: 1 }, retryable: true });
+  });
+
+  it("an app that was only unchecked at the source (no health check) gets no excuse", async () => {
+    const rig = await afterCutover();
+    rig.driver.run.sourceBaseline = BASELINE;
+    const obs = observeWith(rig);
+    await rig.driver.tick(obs);
+    rig.world.crashes.push({ name: "tugra_a3", ts: new Date(rig.driver.now.getTime() + 1000) });
+    rig.driver.advance(OBSERVE_CHECK_EVERY_MS);
+    expect((await rig.driver.tick(obs, "timer")).fail).toMatchObject({ code: "observe.crash-detected" });
+  });
+
+  it("with no baseline nothing is excluded and the watch is exactly what it was", async () => {
+    const rig = await afterCutover();
+    await rig.driver.tick(rig.handlers.obs);
+    expect(rig.driver.eventCodes()).not.toContain("observe.baseline-excluded");
+    rig.world.crashes.push({ name: "tugra_a1", ts: new Date(rig.driver.now.getTime() + 1000) });
+    rig.driver.advance(OBSERVE_CHECK_EVERY_MS);
+    expect((await rig.driver.tick(rig.handlers.obs, "timer")).fail).toMatchObject({ code: "observe.crash-detected" });
+  });
+
+  it("the observation counts the same excluded set (crashes the post gate sees)", async () => {
+    const rig = await afterCutover();
+    rig.driver.run.sourceBaseline = BASELINE;
+    const obs = observeWith(rig);
+    await rig.driver.tick(obs);
+    rig.world.crashes.push({ name: "tugra_a1", ts: new Date(rig.driver.now.getTime() + 1000) });
+    const o = await obs.observe(rig.driver.contextFor("OBSERVE"));
+    expect(o).toMatchObject({ crashes: 0, baselineExcluded: 1 });
+  });
+});
+
+describe("OBSERVE and FINALIZE release what was held until after the point of no return", () => {
+  it("OBSERVE releases once, when its window opens, and remembers it", async () => {
+    const rig = await afterCutover();
+    const f = fakeRelease();
+    const obs = observeWith(rig, f.release);
+    await rig.driver.tick(obs);
+    expect(f.run).toHaveBeenCalledTimes(1);
+    expect(rig.driver.rec("OBSERVE").compensation!.releasedAt).toBeDefined();
+    rig.driver.advance(OBSERVE_CHECK_EVERY_MS);
+    await rig.driver.tick(obs, "timer");
+    expect(f.run).toHaveBeenCalledTimes(1);
+  });
+
+  it("a release that was refused (null) is asked again on the next pass", async () => {
+    const rig = await afterCutover();
+    const f = fakeRelease();
+    f.run.mockResolvedValueOnce(null as never);
+    const obs = observeWith(rig, f.release);
+    await rig.driver.tick(obs);
+    expect(rig.driver.rec("OBSERVE").compensation!.releasedAt).toBeUndefined();
+    rig.driver.advance(OBSERVE_CHECK_EVERY_MS);
+    await rig.driver.tick(obs, "timer");
+    expect(f.run).toHaveBeenCalledTimes(2);
+    expect(rig.driver.rec("OBSERVE").compensation!.releasedAt).toBeDefined();
+  });
+
+  it("a release that throws fails the step retryably instead of pretending the workers started", async () => {
+    const rig = await afterCutover();
+    const f = fakeRelease();
+    f.run.mockRejectedValueOnce(new Error("agent offline"));
+    const r = await rig.driver.tick(observeWith(rig, f.release));
+    expect(r.status).toBe("FAILED");
+  });
+
+  it("with the window skipped (0 minutes) FINALIZE is the first chance and releases", async () => {
+    const rig = await afterCutover({ options: { observeMinutes: 0 } });
+    const f = fakeRelease();
+    expect(rig.handlers.obs.applicable(rig.driver.run)).toBe(false);
+    rig.driver.setStep("OBSERVE", { status: "SKIPPED" });
+    const fin = new FinalizeHandler(rig.registry, rig.cutover, rig.world as unknown as CutoverWorld, f.release);
+    expect((await rig.driver.drive(fin)).status).toBe("PASSED");
+    expect(f.run).toHaveBeenCalledTimes(1);
+  });
+
+  it("without a release (a world that has none) both steps behave exactly as before", async () => {
+    const rig = await afterCutover();
+    rig.driver.setStep("OBSERVE", { status: "PASSED" });
+    expect((await rig.driver.drive(rig.handlers.fin)).status).toBe("PASSED");
+  });
+
+  it("a reverse hands back to the release: workers stop, push-to-deploy goes off", async () => {
+    const rig = await afterCutover();
+    const f = fakeRelease({ changed: 3, failed: 0 });
+    const obs = observeWith(rig, f.release);
+    expect(await rig.driver.compensate(obs, "reverse")).toEqual({ outcome: "done" });
+    expect(f.undo).toHaveBeenCalledTimes(1);
+    for (const how of ["abort", "cleanup"] as const) expect((await rig.driver.compensate(obs, how)).outcome).toBe("nothing-to-do");
+    expect(f.undo).toHaveBeenCalledTimes(1);
+  });
+
+  it("a reverse that could not put everything back fails the compensation (retryable) with a count", async () => {
+    const rig = await afterCutover();
+    const f = fakeRelease({ changed: 1, failed: 2 });
+    expect(await rig.driver.compensate(observeWith(rig, f.release), "reverse")).toEqual({ outcome: "failed", code: "observe.reverse-release-failed", params: { count: 2 } });
+    const none = fakeRelease({ changed: 0, failed: 0 });
+    expect((await rig.driver.compensate(observeWith(rig, none.release), "reverse")).outcome).toBe("nothing-to-do");
+  });
+});

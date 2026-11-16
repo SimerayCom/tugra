@@ -1,6 +1,8 @@
 import { ConflictException, ForbiddenException, Logger } from "@nestjs/common";
 import { ACTOR, RunWorld, defaultPlan } from "../../core/testing/run-world";
 import { CLEANUP_REQUEST_KEY } from "../../core/run-engine.service";
+import { TEAM } from "../../core/testing/run-world";
+import { item, safetyWorld } from "./testing/safety-world";
 
 // the specs drive a whole run through the engine on a fake clock; give a loaded CI machine room
 jest.setTimeout(30_000);
@@ -234,5 +236,189 @@ describe("IMPORT abort and cleanup", () => {
     await w.settle(other);
     const fresh = await w.create();
     await expect(w.service.cleanup(ACTOR, fresh, { confirmName: fresh, includeData: false, dataConfirmNames: [] })).rejects.toThrow(/run-not-cleanable/);
+  });
+});
+
+// ───────────────────────────── grup-7 safety rules ─────────────────────────────
+
+type SafetyWorld = ReturnType<typeof safetyWorld>["w"];
+const items = [
+  item("app:src-a:web", "web", { source: "GIT", domain: "web.example.test" }),
+  item("app:src-a:api", "api", { source: "GIT", domain: "api.example.test" }),
+  item("app:src-b:queue", "queue-worker", { source: "GIT", domain: null }),
+];
+const idOf = (w: SafetyWorld, name: string) => [...w.port.apps.values()].find((a) => a.name === name)!.id;
+const callsOf = (w: SafetyWorld, prefix: string) => w.port.calls.filter((c) => c.startsWith(prefix));
+
+/** push-to-deploy switches (every app is created ON unless named in `off`) and a prebuild that records its calls. */
+function wire(w: SafetyWorld, opts: { off?: string[]; prebuild?: (appId: string) => Promise<{ built: boolean }> } = {}) {
+  const sw = new Map<string, boolean>();
+  const port = w.port as unknown as Record<string, unknown>;
+  port.autoDeployState = async (_u: string, id: string) => (w.port.apps.has(id) ? (sw.get(id) ?? !(opts.off ?? []).includes(w.port.apps.get(id)!.name)) : null);
+  port.setAutoDeploy = async (_u: string, id: string, v: boolean) => {
+    w.port.calls.push(`autoDeploy:${id}:${v ? "on" : "off"}`);
+    sw.set(id, v);
+  };
+  port.prebuild = async (_u: string, id: string) => {
+    w.port.calls.push(`prebuild:${id}`);
+    return opts.prebuild ? opts.prebuild(id) : { built: true };
+  };
+  return sw;
+}
+const earlyOpts = (w: SafetyWorld, over: Record<string, unknown>) => ({ ...w.createBody().options, ...over });
+
+describe("IMPORT push-to-deploy hold (R17/R64)", () => {
+  it("switches push-to-deploy off for every imported app before anything is deployed, and records the ids first", async () => {
+    const { w } = safetyWorld(items);
+    const sw = wire(w);
+    const id = await w.run({ options: earlyOpts(w, { deployWaves: "earlyStateless" }) });
+    expect(w.status(id)).toBe("COMPLETED");
+    const offs = callsOf(w, "autoDeploy:").filter((c) => c.endsWith(":off"));
+    expect(offs).toHaveLength(3);
+    const firstDeploy = w.port.calls.findIndex((c) => c.startsWith("deploy:"));
+    expect(w.port.calls.indexOf(offs[offs.length - 1])).toBeLessThan(firstDeploy);
+    expect([...sw.values()].every((v) => v === false)).toBe(true);
+    const comp = w.store.step(id, "IMPORT").compensation as { autoDeployHeld: string[] };
+    expect([...comp.autoDeployHeld].sort()).toEqual([idOf(w, "api"), idOf(w, "queue-worker"), idOf(w, "web")].sort());
+    const step = await importStep(w, id);
+    expect(step.gate!.checks).toContainEqual(expect.objectContaining({ id: "import.auto-deploy", status: "pass", code: "import.auto-deploy-held" }));
+    expect((await w.service.events(ACTOR, id, { afterSeq: 0, limit: 500 })).events.find((e) => e.code === "import.auto-deploy-held")?.params).toEqual({ count: 3 });
+  });
+
+  it("an app that already had push-to-deploy off is left alone: never touched, never recorded (so never switched on later)", async () => {
+    const { w } = safetyWorld(items);
+    wire(w, { off: ["api"] });
+    const id = await w.run();
+    expect(w.status(id)).toBe("COMPLETED");
+    expect(callsOf(w, "autoDeploy:")).toHaveLength(2);
+    const comp = w.store.step(id, "IMPORT").compensation as { autoDeployHeld: string[] };
+    expect(comp.autoDeployHeld).not.toContain(idOf(w, "api"));
+  });
+
+  it("a failing switch fails the step retryably, and the retry switches the rest without re-switching the done ones", async () => {
+    const { w } = safetyWorld(items);
+    const sw = wire(w);
+    const set = (w.port as unknown as { setAutoDeploy: (u: string, id: string, v: boolean) => Promise<void> }).setAutoDeploy;
+    let fail = true;
+    (w.port as unknown as { setAutoDeploy: unknown }).setAutoDeploy = async (u: string, id: string, v: boolean) => {
+      if (fail && w.port.apps.get(id)!.name === "api") throw new Error("denied");
+      return set(u, id, v);
+    };
+    const id = await w.run();
+    expect(w.store.row(id).failureCode).toBe("import.auto-deploy.failed");
+    fail = false;
+    await w.service.retry(ACTOR, id, "IMPORT", {});
+    await w.settle(id, "retry");
+    expect(w.status(id)).toBe("COMPLETED");
+    expect([...sw.values()].every((v) => v === false)).toBe(true);
+    const comp = w.store.step(id, "IMPORT").compensation as { autoDeployHeld: string[] };
+    expect(new Set(comp.autoDeployHeld).size).toBe(3);
+  });
+
+  it("without the capability (a port that cannot read or set the switch) nothing is checked", async () => {
+    const { w } = safetyWorld(items);
+    const id = await w.run();
+    expect(w.status(id)).toBe("COMPLETED");
+    expect((await importStep(w, id)).gate!.checks.map((c) => c.id)).not.toContain("import.auto-deploy");
+  });
+});
+
+describe("IMPORT earlyBuild (R27/C5)", () => {
+  it("builds every app image, workers included, during IMPORT, nothing started; DEPLOY_DARK then starts only the ordinary apps", async () => {
+    const { w } = safetyWorld(items);
+    wire(w);
+    const id = await w.run({ options: earlyOpts(w, { deployWaves: "earlyBuild" }) });
+    expect(w.status(id)).toBe("COMPLETED");
+    expect(callsOf(w, "prebuild:").sort()).toEqual([idOf(w, "api"), idOf(w, "queue-worker"), idOf(w, "web")].map((a) => `prebuild:${a}`).sort());
+    const lastBuild = Math.max(...callsOf(w, "prebuild:").map((c) => w.port.calls.indexOf(c)));
+    const firstDeploy = w.port.calls.findIndex((c) => c.startsWith("deploy:"));
+    expect(lastBuild).toBeLessThan(firstDeploy); // every build finished before the first start
+    expect(w.port.deploys.map((d) => d.appId).sort()).toEqual([idOf(w, "api"), idOf(w, "web")].sort()); // the worker stays held
+    expect((await importStep(w, id)).gate!.checks).toContainEqual(expect.objectContaining({ id: "import.early-build", status: "pass", code: "import.early-build-done", params: { built: 3, total: 3 } }));
+  });
+
+  it("IMPORT does not pass while images are still to be built", async () => {
+    const { w } = safetyWorld(items);
+    wire(w, { prebuild: async () => Promise.reject(new Error("docker build failed")) });
+    const id = await w.run({ options: earlyOpts(w, { deployWaves: "earlyBuild" }) });
+    expect(w.stepStatus(id, "IMPORT")).toBe("FAILED");
+    expect(w.store.row(id).failureCode).toBe("import.early-build.failed");
+    expect(w.port.deploys).toHaveLength(0);
+  });
+
+  it("a retry rebuilds only the images that are not built yet", async () => {
+    const { w } = safetyWorld(items);
+    let broken = true;
+    wire(w, { prebuild: async (id) => (broken && w.port.apps.get(id)!.name === "api" ? Promise.reject(new Error("x")) : { built: true }) });
+    const id = await w.run({ options: earlyOpts(w, { deployWaves: "earlyBuild" }) });
+    expect(w.stepStatus(id, "IMPORT")).toBe("FAILED");
+    const before = callsOf(w, "prebuild:").length;
+    broken = false;
+    await w.service.retry(ACTOR, id, "IMPORT", {});
+    await w.settle(id, "retry");
+    expect(w.status(id)).toBe("COMPLETED");
+    const again = callsOf(w, "prebuild:").slice(before);
+    expect(again.sort()).toEqual([`prebuild:${idOf(w, "api")}`, `prebuild:${idOf(w, "queue-worker")}`].sort()); // `web` was built before the failure and is not built again
+  });
+
+  it("an app with nothing to build (an image app) is simply recorded, not an error", async () => {
+    const { w } = safetyWorld(items);
+    wire(w, { prebuild: async () => ({ built: false }) });
+    const id = await w.run({ options: earlyOpts(w, { deployWaves: "earlyBuild" }) });
+    expect(w.status(id)).toBe("COMPLETED");
+  });
+
+  it("builds run deployConcurrency at a time per TARGET server, the servers in parallel", async () => {
+    const run = async (serverMap: Record<string, string> | undefined, n: number) => {
+      const { w } = safetyWorld(items.slice(0, 2).concat(item("app:src-b:c", "c", { source: "GIT", domain: "c.example.test" }), item("app:src-b:d", "d", { source: "GIT", domain: "d.example.test" })));
+      for (const [sid, name] of [["srv2", "host-2"], ["srv3", "host-3"]] as const) w.env.serversById.set(sid, { id: sid, name, teamId: TEAM });
+      const serverOf = (name: string) => (serverMap ? (["web", "api"].includes(name) ? "srv2" : "srv3") : "srv1");
+      let now = 0;
+      let max = 0;
+      const per = new Map<string, number>();
+      const maxPer = new Map<string, number>();
+      wire(w, {
+        prebuild: async (id) => {
+          const sv = serverOf(w.port.apps.get(id)!.name);
+          now++;
+          per.set(sv, (per.get(sv) ?? 0) + 1);
+          max = Math.max(max, now);
+          maxPer.set(sv, Math.max(maxPer.get(sv) ?? 0, per.get(sv)!));
+          for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+          now--;
+          per.set(sv, per.get(sv)! - 1);
+          return { built: true };
+        },
+      });
+      const id = await w.run({ ...(serverMap ? { serverMap } : {}), options: earlyOpts(w, { deployWaves: "earlyBuild", deployConcurrency: n }) });
+      expect(w.status(id)).toBe("COMPLETED");
+      return { max, maxPer: Object.fromEntries(maxPer) };
+    };
+    expect((await run(undefined, 1)).max).toBe(1);
+    expect((await run(undefined, 2)).max).toBe(2);
+    const multi = await run({ "src-a": "srv2", "src-b": "srv3" }, 1);
+    expect(multi.max).toBe(2);
+    expect(multi.maxPer).toEqual({ srv2: 1, srv3: 1 });
+  });
+
+  it("an abort mid-build stops cleanly: nothing was started, so nothing needs stopping", async () => {
+    const { w } = safetyWorld(items, undefined, { TLS_PREISSUE: { blocked: (x) => !x.done.has("go") } });
+    wire(w);
+    const id = await w.run({ options: earlyOpts(w, { deployWaves: "earlyBuild" }) });
+    await w.service.abort(ACTOR, id, { confirmName: id });
+    await w.settle(id);
+    expect(w.status(id)).toBe("ABORTED");
+    expect(callsOf(w, "stopApp:").some((c) => c.endsWith(idOf(w, "queue-worker")))).toBe(false);
+  });
+});
+
+describe("IMPORT earlyStateless never starts a held worker (R26/C13)", () => {
+  it("deploys the stateless apps that serve traffic, not the queue worker", async () => {
+    const { w } = safetyWorld(items);
+    const id = await w.run({ options: earlyOpts(w, { deployWaves: "earlyStateless" }) });
+    expect(w.status(id)).toBe("COMPLETED");
+    expect(w.port.deploys.map((d) => d.appId).sort()).toEqual([idOf(w, "api"), idOf(w, "web")].sort());
+    const comp = w.store.step(id, "IMPORT").compensation as { earlyAppIds: string[] };
+    expect(comp.earlyAppIds).not.toContain(idOf(w, "queue-worker"));
   });
 });

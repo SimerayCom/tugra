@@ -35,7 +35,7 @@ import { deployKeyBase, failureOf, includedItems, isActiveDeploy, stopRunApps } 
 import { pinFor, isFloatingImage, serverRefOfItem } from "./baseline/image-pins";
 import { appTasksOf, workerSetsOfOp } from "./baseline/op-safety";
 import { RUN_HINTS, type RunHint, type RunHintStore } from "./baseline/run-hints";
-import { isWorker, workerMarks, workerSets } from "./baseline/workers";
+import { workerMarks, workerSets } from "./baseline/workers";
 import { resolveOwnerInput } from "../../core/run-contract";
 
 /**

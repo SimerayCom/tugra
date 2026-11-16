@@ -22,7 +22,7 @@ function make(over: { opMeta?: unknown; cancelRequestedAt?: Date | null; statusV
     remapEnvApply: jest.fn(),
     remapEnvUndo: jest.fn(),
   };
-  const apps = { stop: jest.fn(), deploy: jest.fn(), cancelDeployment: jest.fn() };
+  const apps = { stop: jest.fn(), deploy: jest.fn(), cancelDeployment: jest.fn(), setAutoDeploy: jest.fn(), prebuild: jest.fn(), setSource: jest.fn() };
   const dbs = { provision: jest.fn(), stop: jest.fn() };
   const agentWs = { isOnline: jest.fn().mockReturnValue(true) };
   const proxyConfig = { resolveFor: jest.fn().mockResolvedValue({ acmeEmail: "ops@acme-corp.dev" }) };
@@ -199,5 +199,73 @@ describe("ImportPortService", () => {
     apps.cancelDeployment.mockResolvedValue({ id: "d" });
     await expect(svc.cancelDeployment("u1", "a1", "d")).resolves.toBeUndefined();
     expect(apps.cancelDeployment).toHaveBeenCalledWith("u1", "a1", "d");
+  });
+
+  it("sourceHealth reads the source's health through healthBaseline(), closes it, and is null for a source with none", async () => {
+    const { svc, prisma, source } = make();
+    const rows = [{ kind: "app", ref: "a1", health: "exited", restartCount: 5 }];
+    (source as Record<string, unknown>).healthBaseline = jest.fn().mockResolvedValue(rows);
+    expect(await svc.sourceHealth("u1", { sessionId: "s1", sourceKind: "coolify" })).toEqual(rows);
+    delete (source as Record<string, unknown>).healthBaseline;
+    expect(await svc.sourceHealth("u1", { sessionId: "s1", sourceKind: "dokploy" })).toBeNull();
+    (source as Record<string, unknown>).healthBaseline = jest.fn().mockRejectedValue(new Error("boom"));
+    await expect(svc.sourceHealth("u1", { sessionId: "s1", sourceKind: "coolify" })).rejects.toThrow("boom");
+    expect(source.close).toHaveBeenCalledTimes(3);
+    expect(prisma.importSession.update).not.toHaveBeenCalled();
+  });
+
+  it("opSnapshot carries the plan's primary domain and image per item (null = none, absent = the plan did not say)", async () => {
+    const { svc } = make({
+      statusView: {
+        tasks: [],
+        plan: {
+          items: [
+            { itemRef: "app:_:w", kind: "app", dependsOn: [], proposed: { domain: null, image: "img/x:latest" } },
+            { itemRef: "app:_:web", kind: "app", dependsOn: [], proposed: { domain: "web.example.test", image: null } },
+            { itemRef: "database:_:d", kind: "database", dependsOn: [], proposed: { engine: "POSTGRES" } },
+          ],
+        },
+      },
+    });
+    const snap = await svc.opSnapshot("u1", "op-1");
+    expect(snap.planItems).toEqual([
+      { itemRef: "app:_:w", kind: "app", dependsOn: [], domain: null, image: "img/x:latest" },
+      { itemRef: "app:_:web", kind: "app", dependsOn: [], domain: "web.example.test", image: null },
+      { itemRef: "database:_:d", kind: "database", dependsOn: [] },
+    ]);
+  });
+
+  it("push-to-deploy: reads the app's switch (null when gone) and sets it through the apps service as the actor", async () => {
+    const { svc, prisma, apps } = make();
+    prisma.application.findUnique.mockResolvedValueOnce({ autoDeploy: true }).mockResolvedValueOnce({ autoDeploy: false }).mockResolvedValueOnce(null);
+    expect(await svc.autoDeployState("u1", "a1")).toBe(true);
+    expect(await svc.autoDeployState("u1", "a1")).toBe(false);
+    expect(await svc.autoDeployState("u1", "a1")).toBeNull();
+    await svc.setAutoDeploy("u1", "a1", false);
+    expect(apps.setAutoDeploy).toHaveBeenCalledWith("u1", "a1", false);
+  });
+
+  it("prebuild builds without a deployment and reports whether anything was built", async () => {
+    const { svc, apps } = make();
+    apps.prebuild.mockResolvedValueOnce({ built: true }).mockResolvedValueOnce({ built: false, reason: "not-git" });
+    expect(await svc.prebuild("u1", "a1")).toEqual({ built: true });
+    expect(await svc.prebuild("u1", "a2")).toEqual({ built: false });
+    expect(apps.prebuild).toHaveBeenCalledWith("u1", "a1");
+  });
+
+  it("pinImage pins only a floating IMAGE app, once, and never overrides a version tag or a digest", async () => {
+    const { svc, prisma, apps } = make();
+    const digest = `sha256:${"a".repeat(64)}`;
+    prisma.application.findUnique.mockResolvedValueOnce({ source: "IMAGE", image: "ghcr.io/example/imageproxy:latest" });
+    expect(await svc.pinImage("u1", "a1", digest)).toEqual({ pinned: true });
+    expect(apps.setSource).toHaveBeenCalledWith("u1", "a1", { image: `ghcr.io/example/imageproxy@${digest}` });
+    apps.setSource.mockClear();
+    prisma.application.findUnique.mockResolvedValueOnce({ source: "IMAGE", image: "ghcr.io/example/imageproxy:1.4" });
+    prisma.application.findUnique.mockResolvedValueOnce({ source: "IMAGE", image: `ghcr.io/example/imageproxy@${digest}` });
+    prisma.application.findUnique.mockResolvedValueOnce({ source: "GIT", image: null });
+    prisma.application.findUnique.mockResolvedValueOnce(null);
+    for (let i = 0; i < 4; i++) expect(await svc.pinImage("u1", "a1", digest)).toEqual({ pinned: false });
+    expect(await svc.pinImage("u1", "a1", "sha256:bad")).toEqual({ pinned: false });
+    expect(apps.setSource).not.toHaveBeenCalled();
   });
 });
