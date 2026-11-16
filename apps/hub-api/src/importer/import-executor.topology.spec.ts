@@ -42,8 +42,8 @@ function harness(over: { fleet?: ForeignFleet; inflightOn?: string[]; prior?: Ar
   const prisma = {
     server: { findUnique: jest.fn().mockImplementation(async ({ where }: { where: { id: string } }) => (SERVERS[where.id] ? { ...SERVERS[where.id], publicIp: "203.0.113.7", clusterId: null } : null)) },
     bulkOperation: {
-      findFirst: jest.fn().mockImplementation(async ({ where }: { where: { OR: Array<{ meta?: { path: string[]; equals: string }; tasks: { some: { serverId?: string } } }> } }) => {
-        const asked = where.OR[0].meta!.equals;
+      findFirst: jest.fn().mockImplementation(async ({ where }: { where: { meta?: { equals: string }; tasks: { some: { serverId?: string } } } }) => {
+        const asked = where.meta?.equals ?? where.tasks.some.serverId!;
         return (over.inflightOn ?? []).includes(asked) ? { id: "op-busy" } : null;
       }),
       create: jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ id: "op-1", ...data })),
@@ -180,12 +180,17 @@ describe("ImportExecutorService.applyRemote: multi-host placement (serverMap)", 
     expect(h.access.requirePermission).toHaveBeenCalledWith("u1", "team-1", "apps:config");
   });
 
-  it("the in-flight check also sees tasks another op placed on a mapped server", async () => {
+  it("the in-flight check also sees tasks another op placed on a mapped server (a second query by task server)", async () => {
     const h = harness();
     await h.svc.apply("u1", input(fleet(), { serverMap: { "src-a": "tgt-1", "src-b": "tgt-2" } }));
-    const where = (h.prisma.bulkOperation.findFirst as jest.Mock).mock.calls.map((c) => c[0].where);
-    expect(where).toHaveLength(3); // default + two targets
-    for (const w of where) expect(w.OR[1].tasks.some.serverId).toBeDefined();
+    const wheres = (h.prisma.bulkOperation.findFirst as jest.Mock).mock.calls.map((c) => c[0].where);
+    expect(wheres).toHaveLength(6); // default + two targets, each asked twice
+    const byTask = wheres.filter((w) => !w.meta).map((w) => w.tasks.some.serverId);
+    expect(byTask).toEqual(["srv-default", "tgt-1", "tgt-2"]);
+    // an op that holds tgt-2 only through a placed task still blocks it
+    const busy = harness();
+    (busy.prisma.bulkOperation.findFirst as jest.Mock).mockImplementation(async ({ where }: { where: { meta?: unknown; tasks: { some: { serverId?: string } } } }) => (!where.meta && where.tasks.some.serverId === "tgt-2" ? { id: "other-op" } : null));
+    await expect(busy.svc.apply("u1", input(fleet(), { serverMap: { "src-a": "tgt-1", "src-b": "tgt-2" } }))).rejects.toBeInstanceOf(ConflictException);
   });
 
   it("idempotency follows each item's own target: a prior import on tgt-1 only skips the item that lands on tgt-1", async () => {

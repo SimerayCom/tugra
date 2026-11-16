@@ -31,7 +31,7 @@ import { validateServiceChoices } from "./service-choices";
 import { generatedOnlyTemplate } from "../templates/catalog";
 import { composeProject } from "../deploy/compose-script";
 import { createHash } from "node:crypto";
-import { remapEnv, credsFromUrlForHost, type DbRemapTarget, type AppRemapTarget } from "./env-rewrite";
+import { remapEnv, credsFromUrlForHost, type DbRemapTarget, type AppRemapTarget, type ServiceRemapTarget } from "./env-rewrite";
 import { tokenizeDockerOptions } from "../deploy/deploy-script";
 import type { DatabaseView } from "../databases/databases.service";
 
@@ -670,17 +670,17 @@ export class ImportExecutorService {
 
   /** One import per target server at a time (a small check-then-create window remains; create/adopt guards back it). */
   private async assertNoInflight(serverId: string): Promise<void> {
-    const inflight = await this.prisma.bulkOperation.findFirst({
-      // The op's default server OR any server one of its (multi-host) tasks is placed on.
-      where: {
-        kind: "import",
-        OR: [
-          { meta: { path: ["serverId"], equals: serverId }, tasks: { some: { status: { in: ["PENDING", "RUNNING"] } } } },
-          { tasks: { some: { serverId, status: { in: ["PENDING", "RUNNING"] } } } },
-        ],
-      },
-      select: { id: true },
-    });
+    const live = { status: { in: ["PENDING", "RUNNING"] as Array<"PENDING" | "RUNNING"> } };
+    const inflight =
+      (await this.prisma.bulkOperation.findFirst({
+        where: { kind: "import", meta: { path: ["serverId"], equals: serverId }, tasks: { some: live } },
+        select: { id: true },
+      })) ??
+      // multi-host: an op whose DEFAULT server is another one can still have tasks placed on this server
+      (await this.prisma.bulkOperation.findFirst({
+        where: { kind: "import", tasks: { some: { serverId, ...live } } },
+        select: { id: true },
+      }));
     if (inflight) throw new ConflictException("an import for this server is already in progress");
   }
 
@@ -1432,9 +1432,18 @@ export class ImportExecutorService {
   private async computeRemapPlan(userId: string, opId: string) {
     const op = await this.loadOwnedOp(userId, opId, { reapData: false }); // never kill an in-flight restore
     await this.assertCanMigrate(userId, op); // coolify copy-mode, settled, creator still holds apps:config
-    const meta = op.meta as { serverId: string; sourceKind?: string; services?: Array<{ itemRef: string; name: string; oldHost: string }> };
+    const meta = op.meta as {
+      serverId: string;
+      sourceKind?: string;
+      services?: Array<{ itemRef: string; name: string; oldHost: string }>;
+      serviceChoices?: Record<string, ServiceChoice>;
+      plan?: { items?: Array<{ itemRef?: unknown; kind?: unknown; proposed?: { serviceDomains?: unknown } }> };
+    };
     const hostShape = remapHostShapeFor(meta.sourceKind);
-    const sourceServices = meta.sourceKind === "coolify" && Array.isArray(meta.services) ? meta.services.filter((sv) => sv && typeof sv.oldHost === "string" && typeof sv.itemRef === "string") : undefined;
+    const baseServices = meta.sourceKind === "coolify" && Array.isArray(meta.services) ? meta.services.filter((sv) => sv && typeof sv.oldHost === "string" && typeof sv.itemRef === "string") : undefined;
+    // Source service to Tugra resource map: a service this op imported (DONE) carries where it runs, its private alias and its
+    // public hostnames (with the operator's renames), so an env value pointing at it can be rewritten instead of only reported.
+    const sourceServices: ServiceRemapTarget[] | undefined = baseServices?.map((sv) => this.serviceRemapTarget(sv, op.tasks, meta));
     const server = await this.prisma.server.findUnique({ where: { id: meta.serverId } });
     if (!server) throw new ConflictException("target server not found");
     await this.access.requirePermission(userId, server.teamId, "databases"); // reading DB credentials
@@ -1457,6 +1466,16 @@ export class ImportExecutorService {
       const r = typeof t.result === "object" && t.result ? (t.result as { name?: string }) : {};
       appEnvs.push({ itemRef: t.itemRef, appId: t.resourceId, name: r.name ?? t.itemRef, env });
     }
+
+    // The Tugra side of every migrated app and database (multi-host: which server each runs on; TLS state; whether the app can
+    // join a private service network). One query each, read-only.
+    const appRows = appEnvs.length
+      ? await this.prisma.application.findMany({ where: { id: { in: appEnvs.map((a) => a.appId) } }, select: { id: true, serverId: true, clusterId: true, source: true, dockerOptions: true, dbNetwork: true, isPreview: true } })
+      : [];
+    const appRowById = new Map(appRows.map((r) => [r.id, r]));
+    const dbRowIds = op.tasks.filter((t) => t.status === "DONE" && t.resourceType === "database" && !!t.resourceId).map((t) => t.resourceId as string);
+    const dbRows = dbRowIds.length ? await this.prisma.database.findMany({ where: { id: { in: dbRowIds } }, select: { id: true, serverId: true, status: true, ssl: true } }) : [];
+    const dbRowById = new Map(dbRows.map((r) => [r.id, r]));
 
     // DONE database destinations → their Tugra connection facts (writer view decrypts the creds). A DB we
     // cannot load (deleted / no creds visible) is SKIPPED but recorded, never aborts the whole preview.
@@ -1510,6 +1529,8 @@ export class ImportExecutorService {
         newUser: dv.username ?? "",
         newPassword: dv.password ?? "",
         newDatabase: dv.database ?? "",
+        serverId: dv.serverId,
+        ssl: dbRowById.get(dv.id)?.ssl === true,
         oldUser: rec?.user,
         // only pg/mysql/mariadb carry a db-NAME in the URL path; a redis /index or mongo params must not be
         // treated as a db-name (else a REDIS_DB=0 split var would be rewritten to the Tugra slug).
@@ -1520,11 +1541,23 @@ export class ImportExecutorService {
     const appTargets: AppRemapTarget[] = appEnvs.map((a) => ({ itemRef: a.itemRef, name: a.name, oldHost: sourceRefOf(a.itemRef) ?? "\u0000none", newHost: `tugra_${a.appId}` }));
 
     // Raw per-app rewrites ({key,newValue}) the apply writer sets — NEVER returned to a client (secret values).
-    const writes: Array<{ appId: string; name: string; itemRef: string; entries: Array<{ key: string; newValue: string }> }> = [];
+    const writes: Array<{ appId: string; name: string; itemRef: string; entries: Array<{ key: string; newValue: string }>; joinNetworks: string[] }> = [];
+    const tlsWanted = new Set<string>(); // PostgreSQL databases (itemRefs) a rewritten URL needs TLS on
     // Pass 1 (sync): run the pure engine per app; collect the public diff + the DBs each app references.
     const prepped = appEnvs.map((a) => {
-      const res = remapEnv(a.env, { dbs: targets, apps: appTargets.filter((at) => at.itemRef !== a.itemRef), ...(hostShape ? { hostShape, bareHostKeyGate: true } : {}), ...(sourceServices?.length ? { services: sourceServices } : {}) });
-      writes.push({ appId: a.appId, name: a.name, itemRef: a.itemRef, entries: res.changes.map((c) => ({ key: c.key, newValue: c.newValue })) });
+      const row = appRowById.get(a.appId);
+      // a classic docker-run app on a plain network can join a service's private network (the same rules setNetworks enforces)
+      const canJoin = !!row && !row.clusterId && row.source !== "COMPOSE" && !row.isPreview && !tokenizeDockerOptions(row.dockerOptions).some((t) => /^(--network|--net)(=|$)/.test(t));
+      const res = remapEnv(a.env, {
+        dbs: targets,
+        apps: appTargets.filter((at) => at.itemRef !== a.itemRef),
+        ...(hostShape ? { hostShape, bareHostKeyGate: true } : {}),
+        ...(sourceServices?.length ? { services: sourceServices } : {}),
+        ...(row ? { appServerId: row.serverId, appCanJoinNetwork: canJoin } : {}),
+      });
+      const joinNetworks = [...new Set(res.changes.map((c) => c.joinNetwork).filter((n): n is string => !!n))].sort();
+      writes.push({ appId: a.appId, name: a.name, itemRef: a.itemRef, entries: res.changes.map((c) => ({ key: c.key, newValue: c.newValue })), joinNetworks });
+      for (const t of res.tlsNeeded ?? []) tlsWanted.add(t);
       const needsManual = res.needsManual.map((n) => ({ key: n.key, reason: n.reason, targetItemRef: n.target }));
       // A value that references a DB we could NOT load looks "unchanged" but actually needs this DB — surface
       // it so an app is never shown as cleanly remapped while a referenced destination was skipped.
@@ -1557,41 +1590,54 @@ export class ImportExecutorService {
         unchangedCount,
         needsManual,
         refDbs,
+        joinNetworks,
+        // the imported services this app depends on (key + service itemRef + internal|public): which services must run for it to verify
+        serviceLinks: (res.serviceLinks ?? []).map((l) => ({ key: l.key, targetItemRef: l.target, via: l.via })),
+        tlsDbs: [...new Set(res.tlsNeeded ?? [])],
       };
     });
+
+    // R22: databases that need TLS before a rewritten sslmode=require URL can connect. A database that has not started (NEW,
+    // STOPPED, FAILED) simply gets the flag; a running one gets it too but must be restarted by hand (reported per app).
+    const tlsPlan = [...tlsWanted].sort().map((itemRef) => {
+      const t = targets.find((x) => x.itemRef === itemRef);
+      const dbId = op.tasks.find((x) => x.itemRef === itemRef)?.resourceId ?? "";
+      const status = dbRowById.get(dbId)?.status ?? "NEW";
+      return { itemRef, name: t?.name ?? itemRef, dbId, state: status === "RUNNING" || status === "PROVISIONING" ? ("restart" as const) : ("enable" as const) };
+    });
+    const tlsRestart = new Set(tlsPlan.filter((t) => t.state === "restart").map((t) => t.itemRef));
 
     // S4d-4 link eligibility (best-effort preview; setDbNetwork re-validates authoritatively at apply). An app
     // whose rewrites point at a migrated DB may also need to join the node-local DB network (tugra-net) so it
     // resolves tugra_db_<id>. Eligible only for a co-located classic topology; an ineligible app still gets its
     // env rewritten but is flagged needs-manual (it won't connect until networking is wired by hand).
     const candidateIds = prepped.filter((p) => p.refDbs.length > 0).map((p) => p.appId);
-    const rows = candidateIds.length
-      ? await this.prisma.application.findMany({
-          where: { id: { in: candidateIds } },
-          select: { id: true, serverId: true, clusterId: true, source: true, dockerOptions: true, dbNetwork: true },
-        })
-      : [];
-    const rowById = new Map(rows.map((r) => [r.id, r]));
-    // Exposure disclosure: a linked app can reach EVERY managed DB on the server (tugra-net is shared), and
-    // libSQL has no auth — count/flag them so the operator confirms an informed blast radius. Only queried
-    // when there IS a candidate app (nothing references a DB otherwise).
+    const rowById = appRowById; // the app rows read above (one query for the whole preview)
+    // Exposure disclosure: a linked app can reach EVERY managed DB on ITS server (tugra-net is shared per host), and
+    // libSQL has no auth — count/flag them so the operator confirms an informed blast radius. Multi-host: counted per the
+    // app's own server. Only queried when there IS a candidate app (nothing references a DB otherwise).
+    const candidateServerIds = [...new Set(candidateIds.map((id) => rowById.get(id)?.serverId ?? server.id))];
     const serverDbs = candidateIds.length
-      ? await this.prisma.database.findMany({ where: { serverId: server.id, teamId: server.teamId }, select: { engine: true } })
+      ? await this.prisma.database.findMany({ where: { serverId: { in: candidateServerIds }, teamId: server.teamId }, select: { serverId: true, engine: true } })
       : [];
-    const serverDbCount = serverDbs.length;
-    const hasUnauthEngine = serverDbs.some((d) => d.engine === "LIBSQL");
+    const dbsOnServer = (serverId: string) => serverDbs.filter((d) => (d.serverId ?? server.id) === serverId);
+    // The Tugra server a referenced database runs on (unknown = the op's default target).
+    const dbServerOf = (itemRef: string) => targets.find((t) => t.itemRef === itemRef)?.serverId ?? server.id;
 
     const links: Array<{ appId: string; eligible: boolean; dbNetworkPrior: boolean }> = [];
     const apps = prepped.map((p) => {
-      const { refDbs, ...pubApp } = p;
+      const { refDbs, tlsDbs, ...pubApp } = p;
       let dbNetwork: { willLink: boolean; reason?: string; databases: string[]; serverDbCount: number; hasUnauthEngine: boolean } | null = null;
       if (refDbs.length > 0) {
         const row = rowById.get(p.appId);
+        const onServer = dbsOnServer(row?.serverId ?? server.id);
+        const serverDbCount = onServer.length;
+        const hasUnauthEngine = onServer.some((d) => d.engine === "LIBSQL");
         let reason: string | undefined;
         if (!row) reason = "app-unavailable";
         else if (row.clusterId) reason = "swarm";
         else if (row.source === "COMPOSE") reason = "compose";
-        else if (row.serverId !== server.id) reason = "cross-host";
+        else if (refDbs.some((r) => dbServerOf(r) !== row.serverId)) reason = "cross-host"; // the DB is not on the app's own server
         else if (tokenizeDockerOptions(row.dockerOptions).some((t) => /^(--network|--net)(=|$)/.test(t))) reason = "dockerOptions-network";
         else if (serverDbCount === 0) reason = "no-database"; // mirror setDbNetwork's guard so preview + gate agree
         const eligible = reason === undefined;
@@ -1599,6 +1645,8 @@ export class ImportExecutorService {
         dbNetwork = { willLink: eligible, reason, databases: refDbs, serverDbCount, hasUnauthEngine };
         if (!eligible) pubApp.needsManual.push({ key: "(db-network)", reason: "dbnet-unsupported-topology", targetItemRef: undefined });
       }
+      // A database that must serve TLS but is already running has to be restarted by hand for the new setting to apply.
+      for (const t of tlsDbs) if (tlsRestart.has(t)) pubApp.needsManual.push({ key: "(db-tls)", reason: "db-tls-restart", targetItemRef: t });
       return { ...pubApp, dbNetwork };
     });
 
@@ -1612,8 +1660,11 @@ export class ImportExecutorService {
           id: a.appId,
           c: a.changes.map((c) => [c.key, c.rule, c.targetItemRef, c.newMasked]).sort(),
           l: a.dbNetwork ? [a.dbNetwork.willLink, a.dbNetwork.databases, a.dbNetwork.serverDbCount, a.dbNetwork.hasUnauthEngine] : null,
+          // multi-host additions: absent (so the hash is byte-identical) when an app joins no service network
+          ...(a.joinNetworks.length ? { j: a.joinNetworks } : {}),
         }))
         .sort((x, y) => x.id.localeCompare(y.id)),
+      ...(tlsPlan.length ? { t: tlsPlan.map((t) => [t.itemRef, t.state]) } : {}),
     });
     const planHash = createHash("sha256").update(canonical).digest("hex");
 
@@ -1623,9 +1674,34 @@ export class ImportExecutorService {
       databases: targets.map((t) => ({ itemRef: t.itemRef, name: t.name, engine: t.engine, mode: t.mode })),
       skipped,
       apps,
+      // R22: the PostgreSQL databases that will be switched to TLS (`enable`) or must be restarted for it (`restart`)
+      ...(tlsPlan.length ? { tls: tlsPlan.map((t) => ({ itemRef: t.itemRef, name: t.name, state: t.state })) } : {}),
       note: "read-only preview — nothing has been changed; review the diff, then apply (a confirm-gated step) to write it",
     };
-    return { op, pub, writes, links };
+    return { op, pub, writes, links, tlsPlan };
+  }
+
+  /** The source service as the remap engine sees it: identity plus, when this op imported it, where it runs, its private alias
+   *  and its public hostnames (with the operator's renames). A service the op did not import stays identity-only (report-only). */
+  private serviceRemapTarget(
+    sv: { itemRef: string; name: string; oldHost: string },
+    tasks: Array<{ status: string; itemRef?: string | null; kind?: string; serverId?: string; resourceType: string | null; resourceId: string | null; result?: unknown }>,
+    meta: { serviceChoices?: Record<string, ServiceChoice>; plan?: { items?: Array<{ itemRef?: unknown; proposed?: { serviceDomains?: unknown } }> } },
+  ): ServiceRemapTarget {
+    const base: ServiceRemapTarget = { itemRef: sv.itemRef, name: sv.name, oldHost: sv.oldHost };
+    const t = tasks.find((x) => x.itemRef === sv.itemRef && x.status === "DONE" && x.resourceType === "application" && !!x.resourceId);
+    if (!t) return base;
+    const result = typeof t.result === "object" && t.result ? (t.result as { privateNetwork?: { network?: unknown; alias?: unknown } }) : {};
+    const pn = result.privateNetwork;
+    const privateAlias = pn && typeof pn.network === "string" && typeof pn.alias === "string" ? { network: pn.network, alias: pn.alias } : undefined;
+    const planItem = meta.plan?.items?.find((i) => i.itemRef === sv.itemRef);
+    const rows = Array.isArray(planItem?.proposed?.serviceDomains) ? (planItem!.proposed!.serviceDomains as Array<{ host?: unknown }>) : [];
+    const renames = meta.serviceChoices?.[sv.itemRef]?.hostnameMap ?? {};
+    const publicHosts = [...new Set(rows.map((r) => r.host).filter((h): h is string => typeof h === "string"))].map((host) => {
+      const to = Object.prototype.hasOwnProperty.call(renames, host) ? renames[host] : undefined;
+      return to && to !== host ? { host, rename: to } : { host };
+    });
+    return { ...base, ...(t.serverId ? { serverId: t.serverId } : {}), ...(privateAlias ? { privateAlias } : {}), ...(publicHosts.length ? { publicHosts } : {}) };
   }
 
   /**
@@ -1642,7 +1718,7 @@ export class ImportExecutorService {
    * are both refused. Env changes take effect on an app's NEXT deploy — the response says so per app.
    */
   async remapEnvApply(userId: string, opId: string, confirmToken: string) {
-    const { op, pub, writes, links } = await this.computeRemapPlan(userId, opId);
+    const { op, pub, writes, links, tlsPlan } = await this.computeRemapPlan(userId, opId);
     if (pub.planHash !== confirmToken) {
       throw new ConflictException("the plan has changed since you reviewed it — re-open the preview and confirm the new plan");
     }
@@ -1658,8 +1734,8 @@ export class ImportExecutorService {
 
     // 1) Snapshot each target's CURRENT env first (fresh, writer-gated). An app we cannot read now (deleted or
     //    no longer writable since the plan) is skipped+reported — never written, never half-snapshotted.
-    const undoApps: Array<{ appId: string; name: string; priorEnc: string; keys: string[]; dbNetworkPrior?: boolean }> = [];
-    const targets: Array<{ appId: string; name: string; prior: Record<string, string>; entries: Array<{ key: string; newValue: string }> }> = [];
+    const undoApps: Array<{ appId: string; name: string; priorEnc: string; keys: string[]; dbNetworkPrior?: boolean; networksPrior?: string[] }> = [];
+    const targets: Array<{ appId: string; name: string; prior: Record<string, string>; entries: Array<{ key: string; newValue: string }>; joinNetworks: string[]; networksPrior: string[] }> = [];
     const unprepared: Array<{ appId: string; name: string }> = [];
     for (const w of toWrite) {
       let prior: Record<string, string>;
@@ -1674,8 +1750,11 @@ export class ImportExecutorService {
       // touch it — and recording only the false case means undo only ever calls setDbNetwork(false), the
       // guard-free direction that cannot throw a topology error and strand the record. Committed before any write.
       const linkEntry = linkPrior.get(w.appId) === false ? { dbNetworkPrior: false } : {};
-      undoApps.push({ appId: w.appId, name: w.name, priorEnc: this.crypto.encrypt(JSON.stringify(prior)), keys: w.entries.map((e) => e.key), ...linkEntry });
-      targets.push({ appId: w.appId, name: w.name, prior, entries: w.entries });
+      // A service-endpoint rewrite also joins the app to the service's private network: remember the networks it had, so undo
+      // puts exactly those back (read fresh, like the env snapshot).
+      const networksPrior = w.joinNetworks.length ? ((await this.prisma.application.findUnique({ where: { id: w.appId }, select: { networks: true } }))?.networks ?? []) : [];
+      undoApps.push({ appId: w.appId, name: w.name, priorEnc: this.crypto.encrypt(JSON.stringify(prior)), keys: w.entries.map((e) => e.key), ...linkEntry, ...(w.joinNetworks.length ? { networksPrior } : {}) });
+      targets.push({ appId: w.appId, name: w.name, prior, entries: w.entries, joinNetworks: w.joinNetworks, networksPrior });
     }
     if (targets.length === 0) {
       throw new ConflictException("no apps could be prepared for the remap (deleted or no longer writable)");
@@ -1684,11 +1763,18 @@ export class ImportExecutorService {
     // 2) COMMIT the undo record BEFORE any write, as an atomic compare-and-set on op.meta (see casMeta): it
     //    applies only if meta is still what the guard just saw, so two overlapping applies can never both
     //    commit an undo record, and sibling meta keys (hubBase/rolledBackAt) are never lost to a stale write.
+    // R22: the PostgreSQL databases this apply switches to TLS (only those still off, read fresh): undo switches exactly those back.
+    const dbSsl: Array<{ dbId: string; name: string }> = [];
+    for (const t of tlsPlan) {
+      if (!t.dbId) continue;
+      const cur = await this.prisma.database.findUnique({ where: { id: t.dbId }, select: { ssl: true } });
+      if (cur && cur.ssl !== true) dbSsl.push({ dbId: t.dbId, name: t.name });
+    }
     const before = await this.freshMeta(opId);
     if (hasPendingRemap(before)) {
       throw new ConflictException("another env-remap apply is in progress or already applied — re-open the preview");
     }
-    await this.casMeta(opId, before, { ...before, remapUndo: { appliedAt: new Date().toISOString(), planHash: pub.planHash, apps: undoApps } });
+    await this.casMeta(opId, before, { ...before, remapUndo: { appliedAt: new Date().toISOString(), planHash: pub.planHash, apps: undoApps, ...(dbSsl.length ? { dbSsl } : {}) } });
 
     // 3) Write. The undo record already covers every target, so a per-app failure here stays reversible. Each
     //    write MERGES onto a FRESH read of the app's env, so an edit landing since the snapshot is preserved.
@@ -1697,7 +1783,18 @@ export class ImportExecutorService {
     const appliedApps: Array<{ appId: string; name: string; written: number; keys: string[]; needsRedeploy: boolean; linked: boolean }> = [];
     const failed: Array<{ appId: string; name: string }> = [...unprepared];
     const linkFailed: Array<{ appId: string; name: string }> = [];
-    for (const t of targets) {
+    // TLS comes first: a URL that says sslmode=require must never be written while its database cannot serve TLS. A failure here
+    // stops the whole write (the record above already covers it, so undo stays exact).
+    const tlsFailed: Array<{ appId: string; name: string }> = [];
+    for (const d of dbSsl) {
+      try {
+        await this.dbs.setSsl(userId, d.dbId, true);
+      } catch {
+        tlsFailed.push({ appId: d.dbId, name: d.name });
+      }
+    }
+    if (tlsFailed.length) failed.push(...tlsFailed);
+    for (const t of tlsFailed.length ? [] : targets) {
       try {
         const current = await this.apps.getEnv(userId, t.appId); // fresh — unrelated edits since the snapshot kept
         const next = { ...current };
@@ -1712,12 +1809,19 @@ export class ImportExecutorService {
             linkFailed.push({ appId: t.appId, name: t.name }); // env is written; only the network link failed
           }
         }
+        if (t.joinNetworks.length) {
+          try {
+            await this.apps.setNetworks(userId, t.appId, { networks: [...new Set([...t.networksPrior, ...t.joinNetworks])] }); // takes effect next deploy
+          } catch {
+            if (!linkFailed.some((f) => f.appId === t.appId)) linkFailed.push({ appId: t.appId, name: t.name }); // env is written; only the service network failed
+          }
+        }
         appliedApps.push({ appId: t.appId, name: t.name, written: t.entries.length, keys: t.entries.map((e) => e.key), needsRedeploy: true, linked });
       } catch {
         failed.push({ appId: t.appId, name: t.name }); // reversible via undo — the snapshot was committed above
       }
     }
-    await this.audit.log({ actor: userId, action: "import.remap_env.apply", target: opId, meta: { applied: appliedApps.map((a) => ({ appId: a.appId, keys: a.keys, linked: a.linked })), failed: failed.map((f) => f.appId), linkFailed: linkFailed.map((f) => f.appId) } });
+    await this.audit.log({ actor: userId, action: "import.remap_env.apply", target: opId, meta: { applied: appliedApps.map((a) => ({ appId: a.appId, keys: a.keys, linked: a.linked })), failed: failed.map((f) => f.appId), linkFailed: linkFailed.map((f) => f.appId), ...(dbSsl.length ? { tlsEnabled: dbSsl.map((d) => d.dbId) } : {}) } });
     return {
       opId,
       applied: failed.length === 0 && linkFailed.length === 0,
@@ -1743,13 +1847,13 @@ export class ImportExecutorService {
     await this.assertCanMigrate(userId, op);
     const before = metaObj(op.meta); // the meta `undo` is read from — also the compare-and-set precondition below
     const undo = readRemapUndo(before);
-    if (!undo || undo.undoneAt || !undo.apps?.length) {
+    if (!undo || undo.undoneAt || (!undo.apps?.length && !undo.dbSsl?.length)) {
       throw new ConflictException("nothing to undo — no env-remap has been applied for this import");
     }
     const restored: Array<{ appId: string; name: string }> = [];
     const terminal: Array<{ appId: string; name: string; reason: string }> = []; // can never be restored → dropped, not retried forever
     const stillFailed: typeof undo.apps = []; // a TRANSIENT failure — kept so undo can be retried
-    for (const a of undo.apps) {
+    for (const a of undo.apps ?? []) {
       let prior: Record<string, string>;
       try {
         prior = JSON.parse(this.crypto.decrypt(a.priorEnc)) as Record<string, string>;
@@ -1767,6 +1871,8 @@ export class ImportExecutorService {
         await this.apps.setEnv(userId, a.appId, next); // key-scoped revert — post-apply edits to other keys kept
         // Reverse the DB-network link too (only for an app the apply linked) — restore its prior flag.
         if (a.dbNetworkPrior !== undefined) await this.apps.setDbNetwork(userId, a.appId, a.dbNetworkPrior);
+        // ...and the service networks the apply added: put back exactly the networks the app had before
+        if (a.networksPrior !== undefined) await this.apps.setNetworks(userId, a.appId, { networks: a.networksPrior });
         restored.push({ appId: a.appId, name: a.name });
       } catch (e) {
         if (e instanceof NotFoundException) terminal.push({ appId: a.appId, name: a.name, reason: "app-deleted" });
@@ -1774,23 +1880,35 @@ export class ImportExecutorService {
         else stillFailed.push(a); // transient (e.g. a DB blip) — keep for a retry
       }
     }
+    // TLS the apply switched on goes back off (a database that is gone or no longer writable can never be restored: dropped).
+    const sslPending: NonNullable<RemapUndoRecord["dbSsl"]> = [];
+    for (const d of undo.dbSsl ?? []) {
+      try {
+        await this.dbs.setSsl(userId, d.dbId, false);
+      } catch (e) {
+        if (e instanceof NotFoundException) terminal.push({ appId: d.dbId, name: d.name, reason: "database-deleted" });
+        else if (e instanceof ForbiddenException) terminal.push({ appId: d.dbId, name: d.name, reason: "not-writable" });
+        else sslPending.push(d);
+      }
+    }
     // Consume the record ONLY when nothing transient remains: a terminal app (deleted/unwritable/corrupt) is
     // dropped so a re-apply is never blocked forever; a transient app is kept (un-undone) so undo can retry.
     // On full consumption the encrypted priorEnc snapshots are dropped from meta (hygiene — no secret lingers).
+    const transient = stillFailed.length > 0 || sslPending.length > 0;
     const after = {
       ...before,
-      remapUndo: stillFailed.length
-        ? { ...undo, apps: stillFailed, partialUndoAt: new Date().toISOString() }
+      remapUndo: transient
+        ? { ...undo, apps: stillFailed, ...(sslPending.length ? { dbSsl: sslPending } : { dbSsl: undefined }), partialUndoAt: new Date().toISOString() }
         : { appliedAt: undo.appliedAt, planHash: undo.planHash, undoneAt: new Date().toISOString(), apps: [] },
     };
     await this.casMeta(opId, before, after);
     await this.audit.log({ actor: userId, action: "import.remap_env.undo", target: opId, meta: { restored: restored.map((r) => r.appId), terminal: terminal.map((t) => ({ appId: t.appId, reason: t.reason })), failed: stillFailed.map((f) => f.appId) } });
     return {
       opId,
-      undone: stillFailed.length === 0,
+      undone: !transient,
       apps: restored,
-      failed: [...terminal.map((t) => ({ appId: t.appId, name: t.name })), ...stillFailed.map((f) => ({ appId: f.appId, name: f.name }))],
-      note: stillFailed.length
+      failed: [...terminal.map((t) => ({ appId: t.appId, name: t.name })), ...stillFailed.map((f) => ({ appId: f.appId, name: f.name })), ...sslPending.map((f) => ({ appId: f.dbId, name: f.name }))],
+      note: transient
         ? "reverted the remapped keys for the apps that could be written; some remain pending (a transient failure) — retry undo"
         : "reverted the remapped keys to the pre-remap snapshot (other env edits kept); redeploy to apply the reverted env",
     };
@@ -1956,7 +2074,9 @@ interface RemapUndoRecord {
   undoneAt?: string;
   partialUndoAt?: string;
   planHash?: string;
-  apps?: Array<{ appId: string; name: string; priorEnc: string; keys?: string[]; dbNetworkPrior?: boolean }>;
+  apps?: Array<{ appId: string; name: string; priorEnc: string; keys?: string[]; dbNetworkPrior?: boolean; networksPrior?: string[] }>;
+  /** Databases this apply switched to TLS (they were off): undo switches them back. */
+  dbSsl?: Array<{ dbId: string; name: string }>;
 }
 
 /** A Prisma Json value as a fresh mutable object ({} when null/absent), safe to merge onto. */

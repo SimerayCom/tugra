@@ -275,7 +275,7 @@ describe("ImportExecutorService — Coolify services as stopped compose apps (ru
     expect(taskOf(h, "beta-meilisearch").data.status).toBe("SKIPPED");
     expect(String(taskOf(h, "beta-meilisearch").data.output)).toMatch(/your choice/);
     expect(h.access.requirePermission).toHaveBeenCalledWith("u1", "team-1", "apps:config");
-    expect((h.prisma.bulkOperation.findFirst as jest.Mock).mock.calls.some((c) => c[0].where.meta.equals === "srv-two")).toBe(true); // assertNoInflight per target
+    expect((h.prisma.bulkOperation.findFirst as jest.Mock).mock.calls.some((c) => c[0].where.meta?.equals === "srv-two")).toBe(true); // assertNoInflight per target
     expect(JSON.stringify((h.prisma.bulkOperation.create as jest.Mock).mock.calls)).toContain("Search A"); // choices recorded secret-free in op.meta
   });
 
