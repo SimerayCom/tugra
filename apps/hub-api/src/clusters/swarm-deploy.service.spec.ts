@@ -31,14 +31,14 @@ function spec(over: Partial<AppSpec> = {}): AppSpec {
   } as AppSpec;
 }
 
-function make(opts: { swarmStatus?: string; swarmManagerId?: string | null; managerStatus?: string; backupManagerId?: string | null; sendImpl?: jest.Mock; journal?: boolean; online?: (id: string) => boolean } = {}) {
+function make(opts: { swarmStatus?: string; swarmManagerId?: string | null; managerStatus?: string; backupManagerId?: string | null; backupStatus?: string; sendImpl?: jest.Mock; journal?: boolean; online?: (id: string) => boolean } = {}) {
   const cluster = { swarmStatus: opts.swarmStatus ?? "ACTIVE", swarmManagerId: opts.swarmManagerId ?? "mgr" };
   const prisma = {
     cluster: { findUnique: jest.fn().mockResolvedValue(cluster) },
     server: {
       findUnique: jest.fn().mockResolvedValue({ status: opts.managerStatus ?? "ONLINE" }),
-      // the primary being offline triggers a search for any other online MANAGER.
-      findFirst: jest.fn().mockResolvedValue(opts.backupManagerId ? { id: opts.backupManagerId } : null),
+      // the primary being offline (or having no live socket) triggers a search for any other MANAGER.
+      findMany: jest.fn().mockResolvedValue(opts.backupManagerId ? [{ id: opts.backupManagerId, status: opts.backupStatus ?? "ONLINE" }] : []),
     },
   } as unknown as PrismaService;
   const send =
@@ -65,10 +65,22 @@ describe("SwarmDeployService.resolveManager", () => {
   it("fails over to another ONLINE manager when the primary is offline", async () => {
     const { svc, prisma } = make({ managerStatus: "OFFLINE", backupManagerId: "mgr2" });
     expect(await svc.resolveManager("c1")).toBe("mgr2");
-    // the fallback query excludes the primary and requires an online swarm-capable manager
-    expect((prisma.server.findFirst as unknown as jest.Mock)).toHaveBeenCalledWith(
-      expect.objectContaining({ where: expect.objectContaining({ clusterId: "c1", swarmRole: "MANAGER", status: "ONLINE", NOT: { id: "mgr" } }) }),
+    // the fallback query excludes the primary and requires a swarm-capable manager (status is judged by socket, not the DB)
+    expect((prisma.server.findMany as unknown as jest.Mock)).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ clusterId: "c1", swarmRole: "MANAGER", NOT: { id: "mgr" } }) }),
     );
+  });
+  it("fails over to a backup with a live socket when the primary is DB-ONLINE but has no socket (stale after a hub restart)", async () => {
+    const { svc } = make({ managerStatus: "ONLINE", backupManagerId: "mgr2", backupStatus: "OFFLINE", online: (id) => id === "mgr2" });
+    expect(await svc.resolveManager("c1")).toBe("mgr2");
+  });
+  it("keeps the primary when it is DB-ONLINE and no manager has a socket (the dispatch reports the failure)", async () => {
+    const { svc } = make({ managerStatus: "ONLINE", backupManagerId: "mgr2", online: () => false });
+    expect(await svc.resolveManager("c1")).toBe("mgr");
+  });
+  it("falls back to a DB-ONLINE backup when the primary is DB-OFFLINE and no socket is up", async () => {
+    const { svc } = make({ managerStatus: "OFFLINE", backupManagerId: "mgr2", online: () => false });
+    expect(await svc.resolveManager("c1")).toBe("mgr2");
   });
 });
 
@@ -201,7 +213,7 @@ describe("SwarmDeployService.resolveTaskExec", () => {
         findMany: jest.fn().mockResolvedValue(o.members ?? [{ id: "mgr", hostname: "host-mgr", status: "ONLINE", capabilities: ["terminal", "deploy"] }]),
       },
     } as unknown as PrismaService;
-    const svc = new SwarmDeployService(prisma, { sendCommand: send } as unknown as AgentWsServer, { ensure: jest.fn() } as unknown as import("./swarm-proxy.service").SwarmProxyService);
+    const svc = new SwarmDeployService(prisma, { sendCommand: send, isOnline: jest.fn().mockReturnValue(true) } as unknown as AgentWsServer, { ensure: jest.fn() } as unknown as import("./swarm-proxy.service").SwarmProxyService);
     return { svc, send };
   }
 
@@ -408,6 +420,13 @@ describe("SwarmDeployService.liveManager", () => {
   });
   it("uses a failover manager when the primary is offline", async () => {
     expect(await make({ managerStatus: "OFFLINE", backupManagerId: "mgr2" }).svc.liveManager("c1")).toBe("mgr2");
+  });
+  it("fails over to a connected backup when the primary is DB-ONLINE but has no socket (hub restarted while the primary is down)", async () => {
+    const m = make({ managerStatus: "ONLINE", backupManagerId: "mgr2", backupStatus: "OFFLINE", online: (id) => id === "mgr2" });
+    expect(await m.svc.liveManager("c1")).toBe("mgr2");
+  });
+  it("is null when the primary is DB-ONLINE and nobody has a socket", async () => {
+    expect(await make({ managerStatus: "ONLINE", backupManagerId: "mgr2", online: () => false }).svc.liveManager("c1")).toBeNull();
   });
 });
 

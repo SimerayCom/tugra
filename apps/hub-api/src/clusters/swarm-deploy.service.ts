@@ -84,14 +84,22 @@ export class SwarmDeployService {
     }
     if (!cluster.swarmManagerId) throw new BadRequestException("cluster has no swarm manager");
     const mgr = await this.prisma.server.findUnique({ where: { id: cluster.swarmManagerId }, select: { status: true } });
-    if (mgr && mgr.status === "ONLINE") return cluster.swarmManagerId; // fast path: primary online (unchanged)
-    // failover: the primary is offline, but `docker service …` is cluster-wide from ANY manager — so
-    // fall back to any other ONLINE manager with the 'swarm' capability for this cluster before giving up.
-    const backup = await this.prisma.server.findFirst({
-      where: { clusterId, swarmRole: "MANAGER", status: "ONLINE", capabilities: { has: "swarm" }, NOT: { id: cluster.swarmManagerId } },
-      select: { id: true },
+    const primaryDbOnline = !!mgr && mgr.status === "ONLINE";
+    // fast path: primary online in the DB AND its agent socket is up (the DB status alone is stale across a hub
+    // restart — nothing flips a never-reconnecting server to OFFLINE, and a fresh hub has no sockets to close).
+    if (primaryDbOnline && this.agentWs.isOnline(cluster.swarmManagerId)) return cluster.swarmManagerId;
+    // failover: `docker service …` is cluster-wide from ANY manager, so fall back to another manager with the
+    // 'swarm' capability for this cluster. A backup with a LIVE agent socket wins regardless of its DB status
+    // (stale after a restart); otherwise one the DB says is ONLINE (legacy behaviour, the dispatch reports failure).
+    const backups = await this.prisma.server.findMany({
+      where: { clusterId, swarmRole: "MANAGER", capabilities: { has: "swarm" }, NOT: { id: cluster.swarmManagerId } },
+      select: { id: true, status: true },
     });
-    if (backup) return backup.id;
+    const liveBackup = backups.find((b) => this.agentWs.isOnline(b.id));
+    if (liveBackup) return liveBackup.id;
+    if (primaryDbOnline) return cluster.swarmManagerId; // nobody has a socket: keep the primary, the caller surfaces the dispatch failure
+    const dbBackup = backups.find((b) => b.status === "ONLINE");
+    if (dbBackup) return dbBackup.id;
     throw new ServiceUnavailableException("swarm manager is offline");
   }
 
