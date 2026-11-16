@@ -1,6 +1,7 @@
 import { InventoryHostFake, type InventoryHostOptions } from "./testing/inventory-host-fake";
 import { inventoryShellLines } from "./inventory-script";
 import { parseReportBody } from "./host-protocol";
+import { renderMigratorInstallScript } from "../../../../install/migrator-install-script";
 
 const TOKEN = `tugra_mig_${"A".repeat(43)}`;
 const HUB = "https://hub.example.test";
@@ -139,5 +140,48 @@ describe("host inventory script (run for real against a fake docker/du/curl)", (
     const inv = r.parsed.inventory.get("srv-1")!;
     expect(inv.mounts).toEqual([]);
     expect(inv.rejected).toBeGreaterThan(0);
+  });
+});
+
+describe("migrator.sh --inventory (the real rendered script)", () => {
+  const rendered = renderMigratorInstallScript({ image: "ghcr.io/example/agent:1" });
+  const runScript = (args: string, env: Record<string, string>) => {
+    fake = new InventoryHostFake({ ...base });
+    return fake.sh(`sh -c "$SCRIPT" tugra ${args}`, { SCRIPT: rendered, ...env });
+  };
+
+  it("runs the inventory instead of the migrator: no docker pull/run, the report is labelled with --server-ref, and the exit code is 0", () => {
+    const r = runScript(`--hub ${HUB} --inventory --server-ref srv-9`, { TUGRA_MIGRATION_TOKEN: TOKEN });
+    expect(r.code).toBe(0);
+    const parsed = parseReportBody(r.stdout);
+    expect([...parsed.inventory.keys()]).toEqual(["srv-9"]);
+    expect(parsed.inventory.get("srv-9")!.complete).toBe(true);
+    for (const c of fake!.calls()) if (c[0] === "docker") expect(["pull", "run", "rm", "stop"]).not.toContain(c[1]);
+    for (const c of fake!.calls()) expect(c.join(" ")).not.toContain(TOKEN);
+  });
+
+  it("defaults the label to `_` (a single host the operator did not name)", () => {
+    const r = runScript(`--hub ${HUB} --inventory`, { TUGRA_MIGRATION_TOKEN: TOKEN });
+    expect([...parseReportBody(r.stdout).inventory.keys()]).toEqual(["_"]);
+  });
+
+  it("validates its inputs before touching docker: a hostile --server-ref, a missing token and a wrong-shape token", () => {
+    const bad = runScript(`--hub ${HUB} --inventory --server-ref 'x; reboot'`, { TUGRA_MIGRATION_TOKEN: TOKEN });
+    expect(bad.code).not.toBe(0);
+    expect(bad.stderr).toContain("invalid --server-ref");
+    expect(fake!.calls()).toEqual([]);
+    const noTok = runScript(`--hub ${HUB} --inventory`, {});
+    expect(noTok.code).not.toBe(0);
+    expect(noTok.stderr).toContain("TUGRA_MIGRATION_TOKEN is not set");
+    const wrong = runScript(`--hub ${HUB} --inventory`, { TUGRA_MIGRATION_TOKEN: "ghp_a_personal_access_token" });
+    expect(wrong.code).not.toBe(0);
+    expect(wrong.stderr).toContain("malformed migration token");
+    expect(wrong.stderr).not.toContain("ghp_a_personal");
+  });
+
+  it("without --inventory nothing of the inventory runs (the migrator path is untouched: it fails on the missing socket exactly as before)", () => {
+    const r = runScript(`--hub ${HUB}`, { TUGRA_MIGRATION_TOKEN: TOKEN });
+    expect(r.stdout).not.toContain("TUGRA_INV");
+    expect(fake!.calls().filter((c) => c[0] === "docker" && c[1] === "volume")).toEqual([]);
   });
 });

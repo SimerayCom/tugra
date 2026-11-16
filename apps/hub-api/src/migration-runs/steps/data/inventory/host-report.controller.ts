@@ -28,8 +28,10 @@ type RawReq = Readable & { headers: Record<string, string | string[] | undefined
 export class HostReportController {
   constructor(private readonly reports: HostReportService) {}
 
+  // a loop over many hosts posts every state change: the route is token-authenticated and tiny, so it gets a generous allowance
   @Post("host-report")
   @HttpCode(200)
+  @Throttle({ default: { limit: 600, ttl: 60_000 } })
   async report(@MigrationOp() op: MigrationTokenContext, @Req() req: RawReq) {
     return this.reports.ingest(op, await readTextBody(req, REPORT_MAX_BYTES));
   }

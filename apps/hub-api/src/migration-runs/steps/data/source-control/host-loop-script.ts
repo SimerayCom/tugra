@@ -93,6 +93,7 @@ const SCRIPT = String.raw`
 #   TUGRA_LOOP_ONLY="<server-uuid> ..."  restrict this run to some hosts        TUGRA_LOOP_NO_WAIT=1  launch and return
 #   TUGRA_LOOP_RELAUNCH=1                start a host again whose launch ended without a usable result
 #   TUGRA_LOOP_ACTION=unfreeze           (FREEZE only) start the stopped writers again, exactly the recorded containers
+#   TUGRA_COOLIFY_DB=<container>         the Coolify database container (default coolify-db), asked only for server uuid/ip/port/user
 set -u
 umask 077
 HUB=@@HUB@@
