@@ -180,7 +180,7 @@ export class VerifyHandler implements StepHandler<VerifyObs>, OnModuleInit {
       await this.checks.upsert({ runId: run.id, stepKey: "VERIFY", checkId: TARGET_STATS_CHECK, subject: d.itemRef, status: s.state === "measured" ? "pass" : "unknown", evidenceKind: "hub-verified", evidence: s as unknown as Record<string, unknown>, at: ctx.now() });
     }
 
-    const suite = buildVerifySuite({ snap, runtime, objects: views, sourceStats, targetStats, drift: driftResult, flip });
+    const suite = buildVerifySuite({ snap, runtime, objects: views, sourceStats, targetStats, drift: driftResult, flip, runInputs: run.inputs });
     for (const id of missing) suite.push({ id: `object-gone:${id.slice(0, 40)}`, checkId: "bucket", subject: id, status: "fail", code: DATA_CODES.seedObjectGone, evidence: "hub-verified" });
     const report = reportHash(suite);
     return {

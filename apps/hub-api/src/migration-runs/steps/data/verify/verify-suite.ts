@@ -15,6 +15,8 @@
 import type { GateCheck } from "../../../core/dto";
 import { DATA_CODES, type DataSnapshot, type DbStats, type FlipPlanLite, type ObjectView, type RuntimeSnapshot } from "../data-contract";
 import { canonicalJson, checkKey, sha256Hex } from "../data-logic";
+import { objectPlanChecks } from "../object-plan-check";
+import type { RunSnapshot } from "../../../core/run-contract";
 import { PARITY_CODES, compareDbStats } from "./db-stats";
 
 export interface SuiteInputs {
@@ -27,6 +29,8 @@ export interface SuiteInputs {
   targetStats: ReadonlyMap<string, DbStats>;
   drift: "same" | "changed" | "unknown";
   flip: FlipPlanLite;
+  /** The run's owner inputs (the object storage policy); absent = the unanswered default. */
+  runInputs?: RunSnapshot["inputs"];
 }
 
 /** A gate check plus the stable (checkId, subject) pair it is stored under in `MigrationRunCheck`. */
@@ -145,6 +149,7 @@ export function buildVerifySuite(i: SuiteInputs): SuiteCheck[] {
   // store. Each one is a row of its own, so the coverage ledger never reads "everything moved" while a service volume stayed behind.
   // A volume the stream moved is already judged by its `volume-parity` row above.
   out.push(...serviceVolumeCoverage(i.snap));
+  out.push(...objectPlanCoverage(i));
 
   // 6. source drift: re-discover and compare
   out.push(
@@ -196,6 +201,18 @@ export function serviceVolumeCoverage(snap: DataSnapshot): SuiteCheck[] {
     );
   }
   return out;
+}
+
+/**
+ * The R33 object storage plan check again, at the last gate before the cutover: DATA_SEED is skippable, and skipping it must not let a plan with
+ * object storage and no attached object migration (a selected bucket) reach the cutover looking clean. Only the failure is a row: when a
+ * migration is attached its buckets have their own `bucket` rows, and policy `external` has nothing to migrate. A person who moved the
+ * buckets by other means acknowledges it in the approval.
+ */
+export function objectPlanCoverage(i: Pick<SuiteInputs, "snap" | "objects" | "runInputs">): SuiteCheck[] {
+  return objectPlanChecks({ inputs: i.runInputs ?? {} }, i.snap, i.objects)
+    .filter((c) => c.status === "fail")
+    .map((c) => mk("coverage-object-plan", "", { status: "fail", code: c.code, ...(c.params ? { params: c.params } : {}), ackable: true, evidence: "hub-verified" }));
 }
 
 /** `blocked` = a fail/unknown that no human may accept; `pending` = needs an acknowledgement in the approval. */
