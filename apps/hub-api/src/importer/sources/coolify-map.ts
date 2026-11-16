@@ -42,6 +42,20 @@ export function coolifyServerOs(s: Pick<CoolifyServer, "server_metadata">): stri
   return text || undefined;
 }
 
+/**
+ * `GET /servers` lists only a few columns of a server (name, address, reachability flags): the unreachable counter and the specs
+ * (OS) are on the single-server read. The detail's value wins for those facts; anything it does not carry stays as the list had it.
+ */
+export function withServerDetail(listed: CoolifyServer, detail: CoolifyServer | null | undefined): CoolifyServer {
+  if (!detail || typeof detail !== "object") return listed;
+  return {
+    ...listed,
+    ...(detail.is_coolify_host !== undefined && detail.is_coolify_host !== null ? { is_coolify_host: detail.is_coolify_host } : {}),
+    ...(detail.unreachable_count !== undefined && detail.unreachable_count !== null ? { unreachable_count: detail.unreachable_count } : {}),
+    ...(detail.server_metadata ? { server_metadata: detail.server_metadata } : {}),
+  };
+}
+
 /** A discovered server with the facts PREFLIGHT classifies it by; a fact the API did not report is left out. */
 function foreignServerOf(s: CoolifyServer): ForeignFleet["servers"][number] {
   const os = coolifyServerOs(s);
