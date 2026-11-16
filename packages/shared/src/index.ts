@@ -12,6 +12,9 @@ export * from "./version";
 export * from "./editions";
 export * from "./app-move";
 export * from "./import-reasons";
+// Client-IP trust (X-Forwarded-For / Cloudflare) — shared by the hub and the web server. Node-only (node:net).
+export * from "./client-ip";
+export * from "./cloudflare-ips";
 
 /**
  * Notification event types — single source of truth for the hub (Zod enum) and the web UI (served via
