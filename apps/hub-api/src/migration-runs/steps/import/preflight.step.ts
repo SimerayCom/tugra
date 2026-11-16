@@ -140,7 +140,7 @@ function safetyChecks(run: RunSnapshot, obs: PreflightObs, plan: ImportPlanRespo
   const workers = cands.filter((cd) => isWorker(cd, run.applyInput, marks));
   if (workers.length) {
     const code = policy === "hold-dark" ? "preflight.workers-held" : policy === "exclude" ? "preflight.workers-excluded" : "preflight.workers-start-dark";
-    out.push({ id: "preflight.workers", status: policy === "start-dark" ? "warn" : "pass", code, params: { count: workers.length, items: names(workers.map((w) => nameOf.get(w.itemRef) ?? w.itemRef)), workers: workers.slice(0, 200).map((w) => nameOf.get(w.itemRef) ?? w.itemRef), policy }, ...ev });
+    out.push({ id: "preflight.workers", status: policy === "start-dark" ? "warn" : "pass", code, params: { count: workers.length, items: names(workers.map((w) => nameOf.get(w.itemRef) ?? w.itemRef)), workers: workers.slice(0, 200).map((w) => (nameOf.get(w.itemRef) ?? w.itemRef).slice(0, 300)), policy }, ...ev });
   }
 
   // a `job-runner` mark on an app that serves a domain cannot hold it (a cutover host must run dark): refuse until the mark goes
