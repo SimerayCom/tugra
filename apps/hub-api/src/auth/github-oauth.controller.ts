@@ -44,7 +44,9 @@ export class GithubOAuthController {
    * or the Referer header. The callback URL is chosen so it lands on the origin the browser uses for the
    * panel (see GithubOAuthService.redirectUri): the proxy origin for `--domain`, or the web port's own
    * `/api/auth/oauth/github/callback` proxy on the raw two-port install. The browser-bound state cookie is
-   * single-use: it is cleared whatever the outcome.
+   * single-use: it is cleared whatever the outcome. The whole login must therefore run on ONE origin: the panel has
+   * to be opened at exactly WEB_PUBLIC_URL (same scheme, host and port), otherwise the cookie set at the start is
+   * not sent to the callback and the user gets `?error=oauth_origin`.
    */
   @Get("callback")
   async callback(
@@ -55,6 +57,13 @@ export class GithubOAuthController {
   ): Promise<void> {
     const nonce = parseCookies(req.headers?.cookie)[TG_OAUTH_STATE];
     clearOauthStateCookie(res);
+    // No binding cookie: the browser started the login on a different origin than the one GitHub sent it back to
+    // (the callback always lands on WEB_PUBLIC_URL / the registered URL), or the cookie expired. Say so, instead of
+    // the generic failure, so the login page can tell the user to open the panel at its configured address.
+    if (!nonce) {
+      res.redirect(`${this.web()}/login?error=oauth_origin`);
+      return;
+    }
     try {
       const tokens = await this.oauth.handleCallback(code, state, nonce);
       setAuthCookies(res, tokens);

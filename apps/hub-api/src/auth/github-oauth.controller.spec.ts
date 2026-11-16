@@ -128,7 +128,8 @@ describe("GithubOAuthController", () => {
       const { res, cap } = mockRes();
       await ctl.callback("code1", state, { headers: {} }, res);
 
-      expect(cap.redirectedTo).toBe(`${topo.web}/login?error=oauth`);
+      // No cookie = the browser came back on an origin other than WEB_PUBLIC_URL: a distinct, explainable error.
+      expect(cap.redirectedTo).toBe(`${topo.web}/login?error=oauth_origin`);
       expect(cap.set).toHaveLength(0);
       expect(authSvc.loginWithGithub).not.toHaveBeenCalled();
       expect(global.fetch).not.toHaveBeenCalled();

@@ -42,6 +42,7 @@ export default function LoginPage() {
     const params = new URLSearchParams(window.location.search);
     const e = params.get("error");
     if (e === "oauth_unconfigured") setErr(t("auth.oauthUnconfigured"));
+    else if (e === "oauth_origin") setErr(t("auth.oauthOrigin"));
     else if (e === "sso_unconfigured") setErr(t("auth.ssoUnconfigured"));
     else if (e) setErr(t("auth.oauthError"));
     setInvite(params.get("invite") ?? "");

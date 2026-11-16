@@ -16,7 +16,7 @@ describe("next.config rewrites", () => {
   });
 
   // "Sign in with GitHub" on the raw two-port install registers `<web origin>/api/auth/oauth/github/callback` with
-  // GitHub, so the web port must forward both the start and the callback (query string included, handled by Next) to
+  // GitHub, so the web port must forward both the start and the callback (query string, Cookie and Set-Cookie forwarding is Next's own rewrite behaviour, checked by hand against a stub hub, not here) to
   // the hub's bare, un-prefixed OAuth routes.
   it("proxies the GitHub OAuth start and callback on the web origin to the hub's bare routes", async () => {
     const prev = process.env.HUB_INTERNAL_URL;

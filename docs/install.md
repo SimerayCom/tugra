@@ -137,7 +137,10 @@ your layout:
 
 The hub works the right URL out from `HUB_PUBLIC_URL` and `WEB_PUBLIC_URL`: one shared origin uses the first form,
 different ports or hosts use the second. Set `GITHUB_OAUTH_CALLBACK_URL` only to force a different registered URL.
-Each login is bound to the browser that started it (a short-lived `HttpOnly` cookie), and the session cookies keep
+**Open the panel at exactly `WEB_PUBLIC_URL`** (same scheme, host and port) when you use GitHub sign-in: the login
+cookie is set on the address you start from and GitHub sends you back to `WEB_PUBLIC_URL`, so starting from another
+host name, `localhost`, or another port ends on the login page with a message asking you to use the configured
+address. Each login is bound to the browser that started it (a short-lived `HttpOnly` cookie), and the session cookies keep
 the `Secure` flag on HTTPS installs.
 
 ## Installer flags

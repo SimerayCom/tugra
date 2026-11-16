@@ -41,7 +41,7 @@ describe("GitHub OAuth (e2e)", () => {
     const cb = await request(app.getHttpServer())
       .get(`/auth/oauth/github/callback?code=x&state=${encodeURIComponent(state)}`)
       .expect(302);
-    expect(cb.headers.location).toContain("/login?error=oauth");
+    expect(cb.headers.location).toContain("/login?error=oauth_origin");
     expect(([] as string[]).concat(cb.headers["set-cookie"] ?? []).some((c) => c.startsWith("tg_access="))).toBe(false);
   });
 });

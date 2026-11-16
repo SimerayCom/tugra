@@ -81,6 +81,14 @@ git-driven upgrades or run with update checks turned off. (A checkout made by `b
 branch `TUGRA_REF` tracks that branch, so `git pull` works. A tag- or SHA-pinned install is detached by design:
 upgrade it by re-running bootstrap with a new `TUGRA_REF`, not with `git pull`.)
 
+### GitHub sign-in on a two-port or split-host install
+
+Earlier betas registered `<HUB_PUBLIC_URL>/auth/oauth/github/callback` with GitHub. When the web and hub run on
+different ports or hosts (the raw install), the callback is now served on the web origin:
+`<WEB_PUBLIC_URL>/api/auth/oauth/github/callback`. After upgrading, either update the callback URL in your GitHub
+OAuth app to that address, or set `GITHUB_OAUTH_CALLBACK_URL` to the URL you already registered. Single-origin
+(`--domain`) installs are unchanged. Open the panel at exactly `WEB_PUBLIC_URL` when signing in with GitHub.
+
 ## Configuring update checks
 
 | Key | Purpose |
