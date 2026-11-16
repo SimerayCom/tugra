@@ -2339,6 +2339,38 @@ model CutoverCert {
   @@index([opId])
 }
 
+/// P7 lane C: the same-host proxy swap of a `swap-proxy` migration run, one row per (run, server). It records exactly
+/// what the swap stopped (the source's `coolify-proxy`: id, image, restart policy, published ports, never env) and the
+/// Tugra proxy bind it replaced, BEFORE the first command, so the reverse is exact and idempotent across hub restarts.
+/// `runId` is a LOOSE reference (no FK), like AppMove.appId. Never holds a secret.
+enum MigrationRunSwapState {
+  PLANNED
+  STOPPING_SOURCE_PROXY
+  STARTING_TARGET_PROXY
+  LIVE
+  REVERSING
+  REVERSED
+}
+
+model MigrationRunSwap {
+  id                   String                @id @default(cuid())
+  runId                String
+  serverId             String
+  state                MigrationRunSwapState @default(PLANNED)
+  /// {containerId, name, image, restartPolicy, ports[]} of the stopped source proxy (docker inspect minus env).
+  coolifyProxy         Json
+  /// `Server.proxyBind` before the swap flipped it to "public" (restored by the reverse).
+  tugraProxyBindBefore String
+  stoppedAt            DateTime?
+  liveAt               DateTime?
+  reversedAt           DateTime?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+
+  @@unique([runId, serverId])
+  @@index([serverId])
+}
+
 // ── One-click migration orchestrator (P7): MigrationRun sits ABOVE the import BulkOperation, it never replaces it. ──
 // Lane A owns this hunk. Lane B appends MigrationRunCheck (after MigrationVolumePart) and lane C MigrationRunSwap
 // (after CutoverCert); both reference a run by a LOOSE `runId` (no FK), like AppMove.appId.
