@@ -729,6 +729,8 @@ export interface WorldOptions {
   stubs?: Partial<Record<StepKey, StubScript>>;
   /** Which stand-ins to register (default: every key lane A does not own). */
   stubKeys?: readonly StepKey[];
+  /** Let the service's fire-and-forget `kick` start engine passes by itself (default false: specs drive with `settle`/`tick`, which keeps them deterministic). */
+  autoKick?: boolean;
 }
 
 let bootSeq = 0;
@@ -770,6 +772,7 @@ export class RunWorld {
     this.engine = new RunEngineService(this.store, this.registry, { bootId: this.bootId } as never, this.env, this.sink);
     this.engine.clock = this.clock;
     this.engine.options = { heartbeatMs: 0 };
+    if (!this.opts.autoKick) this.engine.kick = () => undefined;
     this.service = new MigrationRunsService(this.store, this.engine, this.registry, this.env, this.sink, this.port);
     this.recovery = new RunRecoveryService(this.store, this.engine, this.sink);
   }

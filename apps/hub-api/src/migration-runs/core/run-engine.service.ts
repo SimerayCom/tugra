@@ -105,6 +105,8 @@ class Driving {
   controller = new AbortController();
   readonly kicks: DriveTrigger[] = [];
   readonly commands: Command[] = [];
+  /** Resolves when the pass ends (so a second `drive` call can be awaited too). */
+  done: Promise<void> = Promise.resolve();
   private waker: (() => void) | null = null;
 
   wake(): void {
@@ -197,15 +199,20 @@ export class RunEngineService implements OnModuleDestroy {
    * Drive a run until it parks (waiting for a human / timer), settles, pauses or fails. Never throws. Safe to call any
    * number of times: a second call while this process is already driving only wakes the loop.
    */
-  async drive(runId: string, trigger: DriveTrigger = "tick"): Promise<void> {
+  drive(runId: string, trigger: DriveTrigger = "tick"): Promise<void> {
     const existing = this.driving.get(runId);
     if (existing) {
       existing.kicks.push(trigger);
       existing.wake();
-      return;
+      return existing.done;
     }
     const d = new Driving();
     this.driving.set(runId, d);
+    d.done = this.pass(runId, d, trigger);
+    return d.done;
+  }
+
+  private async pass(runId: string, d: Driving, trigger: DriveTrigger): Promise<void> {
     let hb: ReturnType<typeof setInterval> | undefined;
     try {
       const c = await this.store.claim(runId, this.bootId, this.clock.now(), DRIVABLE_STATUSES);
@@ -231,15 +238,20 @@ export class RunEngineService implements OnModuleDestroy {
   /**
    * Drive ONE manual step (DECOMMISSION) of a finished takeover run. The run stays COMPLETED; only the step row moves.
    */
-  async driveManual(runId: string, key: StepKey, trigger: DriveTrigger = "tick"): Promise<void> {
-    if (this.driving.has(runId)) {
-      const d = this.driving.get(runId)!;
-      d.kicks.push(trigger);
-      d.wake();
-      return;
+  driveManual(runId: string, key: StepKey, trigger: DriveTrigger = "tick"): Promise<void> {
+    const existing = this.driving.get(runId);
+    if (existing) {
+      existing.kicks.push(trigger);
+      existing.wake();
+      return existing.done;
     }
     const d = new Driving();
     this.driving.set(runId, d);
+    d.done = this.manualPass(runId, key, d, trigger);
+    return d.done;
+  }
+
+  private async manualPass(runId: string, key: StepKey, d: Driving, trigger: DriveTrigger): Promise<void> {
     try {
       const c = await this.store.claim(runId, this.bootId, this.clock.now(), ["COMPLETED"]);
       if (!c.claimed) return;
@@ -249,11 +261,12 @@ export class RunEngineService implements OnModuleDestroy {
         if (!run || run.status !== "COMPLETED") return;
         const r = await this.stepTick(run, trig, d, key);
         trig = d.kicks.shift() ?? "tick";
-        if (r.kind === "advance" || r.kind === "idle") {
-          if (!d.kicks.length) break;
+        if (r.kind === "sleep") {
+          await this.nap(d, r.ms);
           continue;
         }
-        await this.nap(d, r.ms);
+        if (r.kind === "idle" && d.kicks.length) continue;
+        break;
       }
     } catch (e) {
       if (!(e instanceof RunLeaseLostError)) this.logger.warn(`run ${runId}: manual step ${key} failed: ${errLog(e)}`);
@@ -614,16 +627,18 @@ export class RunEngineService implements OnModuleDestroy {
   private async completeFlow(run: RunRow): Promise<TickResult> {
     const now = this.clock.now();
     if (run.dryRun) {
-      await this.owned(run.id, { status: "DRY_RUN_DONE", finishedAt: now, currentStep: null, ownerId: null, pauseRequested: false });
+      await this.owned(run.id, { status: "DRY_RUN_DONE", finishedAt: now, currentStep: null, pauseRequested: false });
       await this.emit(run.id, { level: "info", code: "run.dry-run-done" });
       await this.settled(run.id);
+      await this.release(run.id);
       return { kind: "idle" };
     }
-    await this.owned(run.id, { status: "COMPLETED", finishedAt: now, currentStep: null, activeKey: null, ownerId: null, failureStep: null, failureCode: null });
+    await this.owned(run.id, { status: "COMPLETED", finishedAt: now, currentStep: null, activeKey: null, failureStep: null, failureCode: null });
     await this.emit(run.id, { level: "info", code: "run.completed" });
     await this.sink.notify(run.teamId, { runId: run.id, kind: "completed", mode: run.mode as RunMode, stepKey: null, code: "run.completed" }).catch(() => undefined);
     await this.sink.audit({ actor: run.actorId, action: "migration.run.complete", target: run.id, meta: { mode: run.mode, topology: run.topology } }).catch(() => undefined);
     await this.settled(run.id);
+    await this.release(run.id);
     return { kind: "idle" };
   }
 
@@ -668,8 +683,9 @@ export class RunEngineService implements OnModuleDestroy {
     const now = this.clock.now();
     if (failure) {
       if (how === "cleanup") {
-        await this.owned(run.id, { status: "ABORTED", activeKey: null, ownerId: null, failureStep: failure.key, failureCode: failure.code });
+        await this.owned(run.id, { status: "ABORTED", activeKey: null, failureStep: failure.key, failureCode: failure.code });
         await this.emit(run.id, { level: "error", code: "run.failed", stepKey: failure.key, params: { code: failure.code, how } });
+        await this.release(run.id);
       } else {
         await this.owned(run.id, { status: "FAILED", failureStep: failure.key, failureCode: failure.code, abortRequested: false });
         await this.emit(run.id, { level: "error", code: "run.failed", stepKey: failure.key, params: { code: failure.code, how } });
@@ -678,19 +694,25 @@ export class RunEngineService implements OnModuleDestroy {
       return;
     }
     if (how === "abort") {
-      await this.owned(run.id, { status: "ABORTED", finishedAt: now, activeKey: null, ownerId: null, abortRequested: false, failureStep: null, failureCode: null });
+      await this.owned(run.id, { status: "ABORTED", finishedAt: now, activeKey: null, abortRequested: false, failureStep: null, failureCode: null });
       await this.emit(run.id, { level: "info", code: "run.aborted" });
       await this.sink.notify(run.teamId, { runId: run.id, kind: "aborted", mode: run.mode as RunMode, stepKey: null, code: "run.aborted" }).catch(() => undefined);
     } else if (how === "cleanup") {
-      await this.owned(run.id, { status: "ROLLED_BACK", finishedAt: now, activeKey: null, ownerId: null, failureStep: null, failureCode: null });
+      await this.owned(run.id, { status: "ROLLED_BACK", finishedAt: now, activeKey: null, failureStep: null, failureCode: null });
       await this.emit(run.id, { level: "info", code: "run.rolled-back" });
     } else {
-      await this.owned(run.id, { status: "REVERSED", finishedAt: now, activeKey: null, ownerId: null, failureStep: null, failureCode: null });
+      await this.owned(run.id, { status: "REVERSED", finishedAt: now, activeKey: null, failureStep: null, failureCode: null });
       await this.emit(run.id, { level: "info", code: "run.reversed" });
       await this.appendManual(run.id, [{ code: "run.reverse-sync-guidance" }]);
       await this.sink.notify(run.teamId, { runId: run.id, kind: "reversed", mode: run.mode as RunMode, stepKey: null, code: "run.reversed" }).catch(() => undefined);
     }
     await this.settled(run.id);
+    await this.release(run.id);
+  }
+
+  /** Hand the lease back (the run is settled: nobody drives it any more). */
+  private async release(runId: string): Promise<void> {
+    await this.owned(runId, { ownerId: null });
   }
 
   /** Operator steps a compensation could not do itself (kept in `report.manual`, shown by the view and the report). */
