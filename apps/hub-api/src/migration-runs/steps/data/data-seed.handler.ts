@@ -138,7 +138,7 @@ export class DataSeedHandler implements StepHandler<SeedObs>, OnModuleInit {
       if (MigratorRunner.available(run)) {
         const st = obs.launcher;
         if (st?.state === "running") return { outcome: "continue", pollAfterMs: 5_000 };
-        if (st?.state === "finished" && compOf(ctx).launch?.phase === phase && st.rc !== 0 && st.rc !== 1) {
+        if (st?.state === "finished" && compOf(ctx).launch?.phase === phase && st.rc !== 0 && st.rc !== 1 && ctx.trigger !== "retry") {
           return { outcome: "fail", code: DATA_CODES.finalMigratorExit, params: { exit: st.rc, phase }, retryable: true };
         }
         const launched = await this.runner.launch(ctx, phase, snap);

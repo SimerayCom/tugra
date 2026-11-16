@@ -73,6 +73,8 @@ export interface DbDataItem {
   task: "none" | "running" | "done" | "failed";
   /** A fixed failure classification of the data task's output (never the raw text). */
   taskFailure: string | null;
+  /** When the `data:<itemRef>` task last finished (ISO); null while it has not. A dump restored BEFORE the freeze is not the final copy. */
+  finishedAt: string | null;
 }
 
 export interface SourceItem {
@@ -294,6 +296,8 @@ export interface FreezeRecord {
   api?: Array<{ kind: ApiResourceKind; uuid: string; itemRef: string }>;
   /** agent: the exact containers (identity-checked) this run asked to stop. */
   containers?: RecordedContainer[];
+  /** agent: names of stop-list items no container matched, accepted by the operator (the evidence is then operator-attested). */
+  unresolved?: string[];
 }
 
 export type FreezeOutcome =
@@ -359,6 +363,9 @@ export const DATA_CODES = {
   finalPgGate: "data-final.pg-gate",
   finalMigratorExit: "data-final.migrator-exit",
   finalStopSourceManual: "data-final.restart-stopped-source-manually",
+  finalObjectsWritersNotFrozen: "data-final.objects-writers-not-frozen",
+  finalAwaitVerifyReport: "data-final.awaiting-verify-report",
+  finalVerifyReportMissing: "data-final.verify-report-missing",
   // verify
   verifyVolumeParity: "verify.volume-parity",
   verifyPgVersion: "verify.postgres-physical-copy",

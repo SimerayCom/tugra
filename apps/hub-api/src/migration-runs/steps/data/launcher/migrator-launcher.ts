@@ -28,10 +28,15 @@ export const MIGRATOR_CONTAINER_PREFIX = "tugra-migrator-";
 
 const RUN_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 
-export function launcherDir(runId: string, attempt: number, root = MIGRATE_RUN_ROOT): string {
+/** The step a launch belongs to: DATA_SEED and DATA_FINAL each count their own attempts from 1, so the directory names the step. */
+export type LaunchTag = "seed" | "final";
+const TAG_RE = /^(seed|final)$/;
+
+export function launcherDir(runId: string, attempt: number, root = MIGRATE_RUN_ROOT, tag?: LaunchTag): string {
   if (!RUN_ID_RE.test(runId) || !Number.isInteger(attempt) || attempt < 0 || attempt > 9999) throw new Error("invalid launcher id");
   if (!/^\/[A-Za-z0-9._/-]+$/.test(root)) throw new Error("invalid launcher root");
-  return `${root}/${runId}-${attempt}`;
+  if (tag !== undefined && !TAG_RE.test(tag)) throw new Error("invalid launcher tag");
+  return tag ? `${root}/${runId}-${tag}-${attempt}` : `${root}/${runId}-${attempt}`;
 }
 
 export interface LaunchInput {
@@ -41,6 +46,8 @@ export interface LaunchInput {
   token: string;
   flags: readonly string[];
   root?: string;
+  /** Which step launches (part of the run directory name); absent = the pre-tag layout, still readable for an in-flight run. */
+  tag?: LaunchTag;
 }
 
 const RUN_SH = [
@@ -61,7 +68,7 @@ export const MIG_MARK = "TUGRA_MIG";
 export const MIG_OUT_MARK = "TUGRA_MIG_OUT";
 
 export function buildLaunchScript(i: LaunchInput): string {
-  const dir = launcherDir(i.runId, i.attempt, i.root);
+  const dir = launcherDir(i.runId, i.attempt, i.root, i.tag);
   assertSafeBase(i.hubBase);
   if (!isMigrationToken(i.token)) throw new Error("invalid migration token");
   assertSafeFlags(i.flags);
@@ -89,8 +96,8 @@ export function buildLaunchScript(i: LaunchInput): string {
 }
 
 /** Read-only: where is the run? `none` (never launched), `running`, `finished <rc>` (+ the result line) or `died`. */
-export function buildLauncherStatusScript(runId: string, attempt: number, root?: string): string {
-  const dir = launcherDir(runId, attempt, root);
+export function buildLauncherStatusScript(runId: string, attempt: number, root?: string, tag?: LaunchTag): string {
+  const dir = launcherDir(runId, attempt, root, tag);
   return [
     "set -u",
     `D=${shq(dir)}`,

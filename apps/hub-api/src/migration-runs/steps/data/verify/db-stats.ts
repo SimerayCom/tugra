@@ -20,6 +20,12 @@ export const DEFAULT_EXACT_BELOW = 1_000_000;
 export const MAX_STATS_TABLES = 5000;
 /** In estimate mode a planner estimate may be off by this factor either way before it counts as a mismatch. */
 export const ESTIMATE_TOLERANCE = 2;
+/**
+ * When only ONE side is an estimate (usually the source: the target is counted exactly right after a restore), a
+ * target below this fraction of the source estimate is a possible LOSS, not estimator noise. It cannot be waved through as a
+ * warning, and a planner estimate can legitimately be stale-high, so a human decides: the verdict is `unknown` (acknowledgeable).
+ */
+export const ESTIMATE_SHORTFALL_FLOOR = 0.9;
 
 // ───────────────────────────── statements (mirror of verify.go) ─────────────────────────────
 
@@ -165,6 +171,7 @@ export const PARITY_CODES = {
   targetExtra: "verify.db-parity.target-extra",
   estimateWithin: "verify.db-parity.estimate-within-tolerance",
   estimateOut: "verify.db-parity.estimate-out-of-tolerance",
+  estimateShortfall: "verify.db-parity.estimate-shortfall",
   ttlInFlight: "verify.db-parity.ttl-in-flight",
   uncounted: "verify.db-parity.uncounted",
   sourceUnavailable: "verify.db-parity.source-unavailable",
@@ -209,7 +216,10 @@ function compareTable(kind: "tables" | "keys", name: string, s: StatsTable | und
   if (s.rows === 0 && t.rows === 0) return { status: "pass", code: PARITY_CODES.match, name };
   const lo = s.rows / ESTIMATE_TOLERANCE;
   const hi = s.rows * ESTIMATE_TOLERANCE;
-  return t.rows >= lo && t.rows <= hi ? { status: "warn", code: PARITY_CODES.estimateWithin, name } : { status: "fail", code: PARITY_CODES.estimateOut, name };
+  if (t.rows < lo || t.rows > hi) return { status: "fail", code: PARITY_CODES.estimateOut, name };
+  // an estimate that is approximate on only ONE side cannot excuse a target that clearly has fewer rows than the source
+  if (s.estimated !== t.estimated && t.rows < s.rows * ESTIMATE_SHORTFALL_FLOOR) return { status: "unknown", code: PARITY_CODES.estimateShortfall, name };
+  return { status: "warn", code: PARITY_CODES.estimateWithin, name };
 }
 
 /** Compare the two sides of ONE database. `unknown` whenever either side did not measure (it never passes by default). */

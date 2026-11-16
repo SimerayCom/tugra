@@ -200,7 +200,7 @@ export const inspected = (itemRef: string, bytes = 1024 ** 3, entries = 100, o: 
 
 export const copied = (itemRef: string, bytes = 1024 ** 3, entries = 100): VolumeDataItem => inspected(itemRef, bytes, entries, { state: "DONE", entries, rawBytesDone: bytes, bytesDone: bytes / 2 });
 
-export const database = (itemRef: string, o: Partial<DbDataItem> = {}): DbDataItem => ({ itemRef, dbId: `dbid-${itemRef}`, name: "db", engine: "POSTGRES", plane: "logical", unsupportedReason: null, task: "none", taskFailure: null, ...o });
+export const database = (itemRef: string, o: Partial<DbDataItem> = {}): DbDataItem => ({ itemRef, dbId: `dbid-${itemRef}`, name: "db", engine: "POSTGRES", plane: "logical", unsupportedReason: null, task: "none", taskFailure: null, finishedAt: null, ...o });
 
 export function makeSnap(o: Partial<DataSnapshot> = {}): DataSnapshot {
   return {

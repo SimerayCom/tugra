@@ -1,4 +1,4 @@
-import { assertSafeFlags, canonicalJson, checkKey, classifyDbTaskFailure, classifyTransferError, estimateEquals, estimateWindow, finalChecks, ASSUMED_BYTES_PER_SEC, migratorFlags, migratorWorkRemains, objectFinalChecks, objectSeedChecks, seedChecks, sha256Hex, subjectKey } from "./data-logic";
+import { assertSafeFlags, canonicalJson, checkKey, classifyDbTaskFailure, classifyTransferError, estimateEquals, estimateWindow, finalChecks, dbRestoredAfterFreeze, ASSUMED_BYTES_PER_SEC, migratorFlags, migratorWorkRemains, objectFinalChecks, objectSeedChecks, seedChecks, sha256Hex, subjectKey } from "./data-logic";
 import { VX_409 } from "../../../importer/volume-stream/vx-constants";
 import { DATA_CODES } from "./data-contract";
 import { answered, copied, database, inspected, makeRun, makeSnap, volume, NOW } from "./testing/fakes";
@@ -188,6 +188,27 @@ describe("finalChecks", () => {
     expect(migratorWorkRemains(makeSnap({ volumes: [copied("v")] }))).toBe(false);
     expect(migratorWorkRemains(makeSnap({ volumes: [inspected("v")] }))).toBe(true);
     expect(migratorWorkRemains(makeSnap({ volumes: [volume("v", { excluded: true, state: "EXCLUDED" })] }))).toBe(false);
+  });
+});
+
+describe("a database restored before the freeze is not the final copy", () => {
+  const freeze = new Date("2026-11-20T09:30:00.000Z");
+  const warm = database("database:s:pg", { task: "done", finishedAt: "2026-11-20T09:00:00.000Z" });
+  const fresh = database("database:s:pg", { task: "done", finishedAt: "2026-11-20T09:45:00.000Z" });
+
+  it("is pending work for the migrator, and an unknown (not a pass) in the final gate", () => {
+    expect(migratorWorkRemains(makeSnap({ databases: [warm] }), freeze)).toBe(true);
+    expect(migratorWorkRemains(makeSnap({ databases: [fresh] }), freeze)).toBe(false);
+    expect(migratorWorkRemains(makeSnap({ databases: [database("d", { task: "done", finishedAt: null })] }), freeze)).toBe(true);
+    expect(finalChecks(makeSnap({ databases: [warm] }), [], freeze)[0]).toMatchObject({ status: "unknown", params: { stale: true } });
+    expect(finalChecks(makeSnap({ databases: [fresh] }), [], freeze)[0]).toMatchObject({ status: "pass" });
+  });
+
+  it("is only enforced once the freeze opened, and only for logical databases", () => {
+    expect(dbRestoredAfterFreeze(warm, null)).toBe(true);
+    expect(migratorWorkRemains(makeSnap({ databases: [warm] }))).toBe(false);
+    expect(migratorWorkRemains(makeSnap({ databases: [{ ...warm, plane: "volume" }] }), freeze)).toBe(false);
+    expect(dbRestoredAfterFreeze(database("d", { task: "running" }), freeze)).toBe(false);
   });
 });
 

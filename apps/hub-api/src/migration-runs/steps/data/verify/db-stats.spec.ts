@@ -125,6 +125,19 @@ describe("compareDbStats", () => {
     expect(compareDbStats(src, stats([tbl("big", 6_000_000)], { mode: "estimate" })).params.mode).toBe("estimate");
     expect(compareDbStats(stats([tbl("t", 0, { estimated: true })]), stats([tbl("t", 0, { estimated: true })]))).toMatchObject({ status: "pass" });
   });
+
+  it("a target that clearly has FEWER rows than a one-sided estimate is never a warning: it is an acknowledgeable unknown that names the table", () => {
+    const src = stats([tbl("big", 10_000_000, { estimated: true })], { mode: "estimate" });
+    // 6M of an estimated 10M: inside the 2x tolerance, but a 40% loss cannot be waved through
+    expect(compareDbStats(src, stats([tbl("big", 6_000_000)], { mode: "estimate" }))).toMatchObject({ status: "unknown", code: PARITY_CODES.estimateShortfall, names: ["big"] });
+    // an exact source against an estimated target is the same situation the other way round
+    expect(compareDbStats(stats([tbl("big", 10_000_000)]), stats([tbl("big", 6_000_000, { estimated: true })], { mode: "estimate" }))).toMatchObject({ status: "unknown", code: PARITY_CODES.estimateShortfall });
+    // within the floor (stale planner statistics) and above the source stay informational
+    expect(compareDbStats(src, stats([tbl("big", 9_500_000)], { mode: "estimate" }))).toMatchObject({ status: "warn", code: PARITY_CODES.estimateWithin });
+    expect(compareDbStats(src, stats([tbl("big", 12_000_000)], { mode: "estimate" }))).toMatchObject({ status: "warn", code: PARITY_CODES.estimateWithin });
+    // two estimates are noisy on both sides: the wide tolerance stays
+    expect(compareDbStats(src, stats([tbl("big", 6_000_000, { estimated: true })], { mode: "estimate" }))).toMatchObject({ status: "warn", code: PARITY_CODES.estimateWithin });
+  });
   it("redis: a key with a TTL may expire in flight (warn), a real loss fails", () => {
     const k = (rows: number, expires = 0): DbStats => stats([tbl("db0", rows, { expires })], { engine: "REDIS", kind: "keys" });
     expect(compareDbStats(k(10), k(10))).toMatchObject({ status: "pass" });

@@ -208,6 +208,23 @@ describe("DataSeedHandler with the same-host (agent) runner", () => {
     first.host.dispose();
   });
 
+  it("an explicit retry after a fatal migrator exit launches again instead of failing with the same exit; the launch budget renews", async () => {
+    const run = sameHost();
+    const { handler, ctx, host } = build(run);
+    const comp = { launchSeq: 3, launchBudgetFrom: 0, launch: { seq: 3, phase: "inspect", at: "x", tag: "seed" } };
+    const fatal = { state: "finished" as const, rc: 3, result: null };
+    const tick = ctx({ run, steps: { DATA_SEED: { compensation: comp } } });
+    const o1 = await handler.observe(tick.ctx);
+    o1.launcher = fatal;
+    expect(await handler.act(tick.ctx, o1)).toMatchObject({ outcome: "fail", code: DATA_CODES.finalMigratorExit });
+    const retry = ctx({ run, trigger: "retry", steps: { DATA_SEED: { compensation: comp } } });
+    const o2 = await handler.observe(retry.ctx);
+    o2.launcher = fatal;
+    expect(await handler.act(retry.ctx, o2)).toMatchObject({ outcome: "continue" });
+    expect(retry.comp).toMatchObject({ launchSeq: 4, launchBudgetFrom: 3, launch: { seq: 4, phase: "inspect", tag: "seed" } });
+    host.dispose();
+  });
+
   it("gives up after the launch budget instead of looping, with a retryable fixed code", async () => {
     const run = sameHost();
     const { handler, ctx, host } = build(run);

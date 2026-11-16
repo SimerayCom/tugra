@@ -4,7 +4,7 @@ import type { RunSnapshot, StepContext } from "../../../core/run-contract";
 import { CAPABILITY_PORT, DATA_CODES, DATA_PORT, SOURCE_HOST_PORT, type CapabilityPort, type DataPort, type DataSnapshot, type SourceHostPort } from "../data-contract";
 import { migratorFlags, type MigratorPhase } from "../data-logic";
 import { classifyAgentError, compOf, releaseIfOurs, type LaunchRecord } from "../handler-util";
-import { MIGRATE_RUN_ROOT, buildLaunchScript, buildLauncherStatusScript, buildLauncherStopScript, parseLaunchOutput, parseLauncherStatus, type LauncherStatus } from "./migrator-launcher";
+import { MIGRATE_RUN_ROOT, buildLaunchScript, buildLauncherStatusScript, buildLauncherStopScript, parseLaunchOutput, parseLauncherStatus, type LauncherStatus, type LaunchTag } from "./migrator-launcher";
 
 /** Optional override of the run directory root on the source host (specs; production uses `/etc/tugra/migrate`). */
 export const LAUNCHER_ROOT = Symbol("MIGRATION_RUN_LAUNCHER_ROOT");
@@ -39,7 +39,7 @@ export class MigratorRunner {
   async status(run: RunSnapshot, launch: LaunchRecord | undefined): Promise<LauncherStatus | null> {
     if (!launch) return null;
     try {
-      const res = await this.host.run(run.targetServerId, buildLauncherStatusScript(run.id, launch.seq, this.root), "migrate", SCRIPT_TIMEOUT_MS);
+      const res = await this.host.run(run.targetServerId, buildLauncherStatusScript(run.id, launch.seq, this.root, launch.tag), "migrate", SCRIPT_TIMEOUT_MS);
       return parseLauncherStatus(res.output);
     } catch {
       return null; // an unreachable agent is "unknown", never "finished"
@@ -62,9 +62,13 @@ export class MigratorRunner {
     const prior = compOf(ctx);
     if (granted.added) await ctx.recordCompensation({ capAdded: true });
 
+    // `seq` only ever grows (it names a fresh run directory); the budget counts from the last explicit retry, so a human pressing
+    // retry after "too-many-launches" gets a new set of attempts instead of the same refusal
     const seq = (prior.launchSeq ?? 0) + 1;
-    if (seq > MAX_LAUNCHES_PER_STEP) return { ok: false, code: DATA_CODES.launcherFailed, params: { reason: "too-many-launches" }, retryable: true };
-    await ctx.recordCompensation({ launchSeq: seq, launch: { seq, phase, at: ctx.now().toISOString() } satisfies LaunchRecord });
+    const budgetFrom = ctx.trigger === "retry" ? (prior.launchSeq ?? 0) : (prior.launchBudgetFrom ?? 0);
+    if (seq - budgetFrom > MAX_LAUNCHES_PER_STEP) return { ok: false, code: DATA_CODES.launcherFailed, params: { reason: "too-many-launches" }, retryable: true };
+    const tag: LaunchTag = ctx.step.key === "DATA_FINAL" ? "final" : "seed";
+    await ctx.recordCompensation({ launchSeq: seq, launchBudgetFrom: budgetFrom, launch: { seq, phase, at: ctx.now().toISOString(), tag } satisfies LaunchRecord });
     await ctx.assertLease();
 
     let token: string;
@@ -75,7 +79,7 @@ export class MigratorRunner {
     }
     let script: string;
     try {
-      script = buildLaunchScript({ runId: run.id, attempt: seq, hubBase, token, flags: migratorFlags(phase, run, snap), root: this.root });
+      script = buildLaunchScript({ runId: run.id, attempt: seq, hubBase, token, flags: migratorFlags(phase, run, snap), root: this.root, tag });
     } catch {
       return { ok: false, code: DATA_CODES.launcherFailed, params: { reason: "invalid-input" }, retryable: false };
     }

@@ -84,6 +84,7 @@ export class PrismaDataPort implements DataPort {
         unsupportedReason: plane === "unsupported" ? (MIGRATOR_UNSUPPORTED[db.engine] ?? "unsupported") : null,
         task: taskState,
         taskFailure: taskState === "failed" ? classifyDbTaskFailure(data?.output ?? null) : null,
+        finishedAt: taskState === "done" && data?.finishedAt ? data.finishedAt.toISOString() : null,
       });
     }
     databases.sort((a, b) => (a.itemRef < b.itemRef ? -1 : 1));

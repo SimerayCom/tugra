@@ -46,17 +46,23 @@ export function gateFrom(checks: readonly GateCheck[], wait?: WaitSpec): GateRes
 // ───────────────────────────── compensation keys ─────────────────────────────
 
 export interface LaunchRecord {
-  /** Monotonic per step: the launcher directory is `<runId>-<seq>`. */
+  /** Monotonic per step: the launcher directory is `<runId>-<tag>-<seq>`. */
   seq: number;
   phase: "inspect" | "warm-db" | "final";
   at: string;
+  /** The step that launched (part of the directory name, so two steps never share a run directory). Absent on a pre-tag record. */
+  tag?: "seed" | "final";
 }
 
 export interface StepComp {
   launchSeq?: number;
+  /** `launchSeq` as of the last explicit retry: the per-step launch budget counts from here. */
+  launchBudgetFrom?: number;
   launch?: LaunchRecord;
   /** True when THIS run added the `migrate` capability (so only it may revoke it). */
   capAdded?: boolean;
+  /** DATA_FINAL: when the data was first complete while the migrator's verify report was still due (the grace window starts here). */
+  dataCompleteAt?: string | null;
   /** DATA_FINAL: the step wrapped up (token revoked, capability released). */
   wrapped?: boolean;
   /** FREEZE: what was stopped (see FreezeRecord). */

@@ -1,7 +1,7 @@
 import { StepHandlerRegistryService } from "../../core/step-handler.registry";
 import type { RunSnapshot } from "../../core/run-contract";
 import { DATA_CODES, type FreezeRecord } from "./data-contract";
-import { FreezeHandler, STOP_CONFIRM_TIMEOUT_MS, buildStopList, controllerOf } from "./freeze.handler";
+import { FreezeHandler, STOP_CONFIRM_TIMEOUT_MS, UNRESOLVED_CHECK, buildStopList, controllerOf } from "./freeze.handler";
 import { SourceHostFake, ctrId } from "./testing/source-host-fake";
 import { estimateWindow } from "./data-logic";
 import { FakeCaps, FakeDataPort, FakeSourceApi, NOW, answered, inspected, makeCtx, makeRun, makeSnap, type CtxHarness } from "./testing/fakes";
@@ -9,12 +9,14 @@ import { FakeCaps, FakeDataPort, FakeSourceApi, NOW, answered, inspected, makeCt
 const A = ctrId("a");
 const B = ctrId("b");
 const C = ctrId("c");
+const D = ctrId("d");
 const APPROVAL = { byUserId: "user1", at: "2026-11-20T09:59:00.000Z", boundHash: "f".repeat(64), acks: [], confirmedName: "cmrun00000001", acceptDataRisk: false, expiresAt: null };
 
 const fleet = () => [
   { id: A, name: "abc-170000000000", image: "ghcr.io/x/web:1", ports: "0.0.0.0:80->80/tcp", running: true },
   { id: B, name: "def-170000000001", image: "ghcr.io/x/api:2", ports: "", running: true },
   { id: C, name: "unrelated", image: "postgres:16", ports: "", running: true },
+  { id: D, name: "svc1-170000000002", image: "redis:7", ports: "", running: false }, // the service's container, already stopped
 ];
 
 function build(run: RunSnapshot, host = new SourceHostFake({ containers: fleet() })) {
@@ -276,6 +278,51 @@ describe("FREEZE with the api controller", () => {
     expect(await handler.act(h3.ctx, await handler.observe(h3.ctx))).toMatchObject({ outcome: "continue" });
   });
 
+  it("an explicit retry after the confirmation window timed out sends the stops again instead of failing at once", async () => {
+    const run = apiRun();
+    const { handler, ctx, api } = build(run);
+    api.stopsTakeEffect = false;
+    const h = ctx({ run, approval: APPROVAL });
+    await handler.act(h.ctx, await handler.observe(h.ctx));
+    const later = new Date(NOW.getTime() + STOP_CONFIRM_TIMEOUT_MS + 1000);
+    const h2 = ctx({ run, approval: APPROVAL, now: later, steps: { FREEZE: { compensation: h.comp } } });
+    expect(await handler.act(h2.ctx, await handler.observe(h2.ctx))).toMatchObject({ outcome: "fail", code: DATA_CODES.freezeStillRunning, retryable: true });
+
+    api.stopsTakeEffect = true; // the resource that ignored the first stop obeys the second
+    api.calls.length = 0;
+    const h3 = ctx({ run, approval: APPROVAL, now: later, trigger: "retry", steps: { FREEZE: { compensation: h.comp } } });
+    expect(await handler.act(h3.ctx, await handler.observe(h3.ctx))).toMatchObject({ outcome: "continue" });
+    expect(api.calls.filter((c) => c.startsWith("stop:")).length).toBeGreaterThan(0);
+    expect(h3.comp.stopRequestedAt).toBe(later.toISOString()); // a fresh window
+    const h4 = ctx({ run, approval: APPROVAL, now: later, steps: { FREEZE: { compensation: h3.comp } } });
+    expect(await handler.act(h4.ctx, await handler.observe(h4.ctx))).toEqual({ outcome: "done" });
+  });
+
+  it("a resource the owner had already stopped is never recorded, so an abort never starts it", async () => {
+    const run = apiRun();
+    const { handler, ctx, api } = build(run);
+    api.states.set("def", "stopped"); // stopped on Coolify on purpose, before the freeze
+    const h = ctx({ run, approval: APPROVAL });
+    await handler.act(h.ctx, await handler.observe(h.ctx));
+    const rec = h.comp.freeze as FreezeRecord;
+    expect(rec.api!.map((a) => a.uuid).sort()).toEqual(["abc", "svc1"]);
+    expect(api.calls).not.toContain("stop:application:def");
+    api.calls.length = 0;
+    expect(await handler.compensate(ctx({ steps: { FREEZE: { compensation: h.comp } } }).ctx, "abort")).toEqual({ outcome: "done" });
+    expect(api.calls).toEqual(["start:application:abc", "start:service:svc1"]);
+    expect(api.states.get("def")).toBe("stopped");
+  });
+
+  it("when every stop-list item was already stopped nothing is recorded to restart and the freeze completes", async () => {
+    const run = apiRun();
+    const { handler, ctx, api } = build(run);
+    for (const u of ["abc", "def", "svc1"]) api.states.set(u, "stopped");
+    const h = ctx({ run, approval: APPROVAL });
+    expect(await handler.act(h.ctx, await handler.observe(h.ctx))).toEqual({ outcome: "done" });
+    expect(h.comp.freeze).toEqual({ controller: "api", api: [] });
+    expect(api.calls.filter((c) => c.startsWith("stop:"))).toEqual([]);
+  });
+
   it("with nothing to stop the freeze completes", async () => {
     const run = apiRun();
     const { handler, ctx, data } = build(run);
@@ -349,6 +396,38 @@ describe("FREEZE with the agent controller (same host, against a fake source hos
     const { handler, ctx, host } = build(run, new SourceHostFake({ containers: fleet(), failStop: [A] }));
     const h = ctx({ run, approval: APPROVAL });
     expect(await handler.act(h.ctx, await handler.observe(h.ctx))).toMatchObject({ outcome: "fail", code: DATA_CODES.freezeAgentFailed, params: { count: 1, names: ["abc-170000000000"] }, retryable: true });
+    host.dispose();
+  });
+
+  it("a stop-list item no container matches fails closed: nothing is stopped or recorded until the operator accepts exactly that", async () => {
+    const run = agentRun();
+    const { handler, ctx, host } = build(run, new SourceHostFake({ containers: fleet().filter((c) => c.id !== D) })); // the service has no container under a known name
+    const h = ctx({ run, approval: APPROVAL });
+    const res = await handler.act(h.ctx, await handler.observe(h.ctx));
+    expect(res).toMatchObject({ outcome: "wait", wait: { kind: "operator", code: DATA_CODES.freezeContainerUnresolved, params: { count: 1, of: 3, names: ["cache"] }, attest: [UNRESOLVED_CHECK] } });
+    expect(h.comp.freeze).toBeUndefined();
+    expect(host.container(A).running).toBe(true);
+    expect(host.runs.some((r) => r.script.includes("docker stop"))).toBe(false);
+
+    // the operator looked at the host and accepts it: the rest is stopped, and the evidence is downgraded and says so
+    const ha = ctx({ run, approval: APPROVAL, steps: { FREEZE: { evidence: { attestations: [{ checkId: UNRESOLVED_CHECK, byUserId: "user1", at: "x" }], attachments: [] } } } });
+    expect(await handler.act(ha.ctx, await handler.observe(ha.ctx))).toEqual({ outcome: "done" });
+    expect((ha.comp.freeze as FreezeRecord).unresolved).toEqual(["cache"]);
+    expect(host.container(A).running).toBe(false);
+    const hb = ctx({ run, approval: APPROVAL, steps: { FREEZE: { compensation: ha.comp } } });
+    const g = handler.postGate(hb.ctx, await handler.observe(hb.ctx));
+    expect(g.passed).toBe(true);
+    expect(g.checks.find((c) => c.id === "source-quiesced")).toMatchObject({ status: "pass", evidence: "operator-attested" });
+    expect(g.checks.find((c) => c.id === "containers-unresolved")).toMatchObject({ status: "warn", params: { count: 1, names: ["cache"] } });
+    host.dispose();
+  });
+
+  it("a stop list that resolves to no container at all does not pass as quiesced", async () => {
+    const run = agentRun();
+    const { handler, ctx, host } = build(run, new SourceHostFake({ containers: [{ id: C, name: "unrelated", image: "postgres:16", ports: "", running: true }] }));
+    const h = ctx({ run, approval: APPROVAL });
+    expect(await handler.act(h.ctx, await handler.observe(h.ctx))).toMatchObject({ outcome: "wait", wait: { code: DATA_CODES.freezeContainerUnresolved, params: { count: 3, of: 3 } } });
+    expect(h.comp.freeze).toBeUndefined();
     host.dispose();
   });
 

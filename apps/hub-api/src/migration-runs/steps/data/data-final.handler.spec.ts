@@ -2,12 +2,13 @@ import { join } from "node:path";
 import { StepHandlerRegistryService } from "../../core/step-handler.registry";
 import type { RunSnapshot } from "../../core/run-contract";
 import { VX_409 } from "../../../importer/volume-stream/vx-constants";
-import { DATA_CODES } from "./data-contract";
-import { DataFinalHandler } from "./data-final.handler";
+import { DATA_CODES, SOURCE_STATS_CHECK } from "./data-contract";
+import { DataFinalHandler, VERIFY_REPORT_GRACE_MS, WRITERS_FROZEN_CHECK } from "./data-final.handler";
 import { MAX_AUTO_OBJECT_STARTS } from "./handler-util";
 import { MigratorRunner } from "./launcher/migrator-runner.service";
+import { MemoryCheckStore } from "./verify/check-store";
 import { SourceHostFake } from "./testing/source-host-fake";
-import { FakeCaps, FakeDataPort, FakeObjectPort, answered, copied, database, inspected, makeCtx, makeRun, makeSnap, volume, type CtxHarness } from "./testing/fakes";
+import { FakeCaps, FakeDataPort, FakeObjectPort, NOW, answered, copied, database, inspected, makeCtx, makeRun, makeSnap, volume, type CtxHarness } from "./testing/fakes";
 
 const FROZEN = { DATA_SEED: { status: "PASSED" as const }, FREEZE: { status: "PASSED" as const } };
 
@@ -18,10 +19,15 @@ function build(run: RunSnapshot = makeRun()) {
   const caps = new FakeCaps();
   const host = new SourceHostFake({ containers: [] });
   const runner = new MigratorRunner(host, data, caps, join(host.dir, "runs"));
-  const handler = new DataFinalHandler(registry, data, objects, caps, runner);
+  const checks = new MemoryCheckStore();
+  const handler = new DataFinalHandler(registry, data, objects, caps, runner, checks);
   handler.onModuleInit();
+  /** The migrator's source-side `--verify` report for these databases has reached the hub. */
+  const reported = async (...refs: string[]): Promise<void> => {
+    for (const r of refs) await checks.upsert({ runId: run.id, stepKey: "VERIFY", checkId: SOURCE_STATS_CHECK, subject: r, status: "unknown", evidenceKind: "migrator-reported", evidence: {}, at: new Date("2026-11-20T10:00:00.000Z") });
+  };
   const ctx = (o: Partial<Parameters<typeof makeCtx>[0]> = {}): CtxHarness => makeCtx({ key: "DATA_FINAL", run, steps: { ...FROZEN, ...(o.steps ?? {}) }, ...o, ...(o.steps ? { steps: { ...FROZEN, ...o.steps } } : {}) });
-  return { registry, data, objects, caps, host, handler, ctx };
+  return { registry, data, objects, caps, host, handler, ctx, checks, reported };
 }
 
 const attach = (id: string) => ({ DATA_SEED: { evidence: { attestations: [], attachments: [{ kind: "object-migration" as const, resourceId: id, byUserId: "user1", at: "x" }] } } });
@@ -86,7 +92,8 @@ describe("DataFinalHandler with an operator-run migrator", () => {
   });
 
   it("wraps up when everything is in: revokes the token, ends the capability this run added, and only then passes", async () => {
-    const { handler, ctx, data, caps } = build();
+    const { handler, ctx, data, caps, reported } = build();
+    await reported("database:s:pg");
     data.snap = makeSnap({ tokenActive: true, volumes: [copied("volume:s:a:data")], databases: [database("database:s:pg", { task: "done" })] });
     caps.granted.add("migrate");
     const h = ctx({ steps: { DATA_SEED: { compensation: { capAdded: true } } } });
@@ -309,5 +316,198 @@ describe("DataFinalHandler.dryRun", () => {
     expect(items.some((i) => i.code === DATA_CODES.finalDbUnsupported && i.level === "warn")).toBe(true);
     expect(data.tokens + data.revoked + data.aborted.length + objects.calls.length).toBe(0);
     void answered;
+  });
+});
+
+const FREEZE_AT = new Date("2026-11-20T09:30:00.000Z");
+const before = "2026-11-20T09:00:00.000Z"; // the warm seed
+const after = "2026-11-20T09:45:00.000Z"; // the final dump
+const frozenRun = (o: Parameters<typeof makeRun>[0] = {}) => ({ ...makeRun(o), freezeStartedAt: FREEZE_AT });
+
+describe("DataFinalHandler: a warm-seeded database is not the final copy", () => {
+  it("with only databases (warm seed done before the freeze) and no pending volume, the final run is still asked for, and the step does not wrap up", async () => {
+    const run = frozenRun({ options: { warmDbSeed: true } });
+    const { handler, ctx, data } = build(run);
+    data.snap = makeSnap({ tokenActive: true, databases: [database("database:s:pg", { task: "done", finishedAt: before })] });
+    const h = ctx({ run });
+    const obs = await handler.observe(h.ctx);
+    expect(handler.postGate(h.ctx, obs).checks.find((c) => c.id.startsWith("db-restored"))).toMatchObject({ status: "unknown", params: { stale: true } });
+    expect(await handler.act(h.ctx, obs)).toMatchObject({ outcome: "wait", wait: { code: DATA_CODES.runMigrator, params: { phase: "final", pending: 1 } } });
+    expect(data.revoked).toBe(0);
+    expect(h.comp.wrapped).toBeUndefined();
+  });
+
+  it("the same-host runner launches the final run for it", async () => {
+    const run = frozenRun({ topology: "swap-proxy", options: { sourceRunner: "agent", warmDbSeed: true } });
+    const { handler, ctx, data, host } = build(run);
+    data.snap = makeSnap({ databases: [database("database:s:pg", { task: "done", finishedAt: before })] });
+    const h = ctx({ run });
+    expect(await handler.act(h.ctx, await handler.observe(h.ctx))).toEqual({ outcome: "continue", pollAfterMs: 10_000 });
+    expect(host.runs.some((r) => r.script.includes("'--resync'"))).toBe(true);
+    host.dispose();
+  });
+
+  it("a dump restored after the freeze is the final copy and lets the step wrap up; one with no finish time proves nothing", async () => {
+    const run = frozenRun();
+    const { handler, ctx, data, reported } = build(run);
+    await reported("database:s:pg");
+    data.snap = makeSnap({ tokenActive: true, databases: [database("database:s:pg", { task: "done", finishedAt: after })] });
+    const h = ctx({ run });
+    expect(await handler.act(h.ctx, await handler.observe(h.ctx))).toEqual({ outcome: "done" });
+    expect(data.revoked).toBe(1);
+
+    data.snap = makeSnap({ databases: [database("database:s:pg", { task: "done", finishedAt: null })] });
+    const h2 = ctx({ run });
+    expect(await handler.act(h2.ctx, await handler.observe(h2.ctx))).toMatchObject({ outcome: "wait", wait: { code: DATA_CODES.runMigrator } });
+  });
+});
+
+describe("DataFinalHandler: the migration token outlives the migrator's verify report", () => {
+  it("same-host: a migrator that is still running (its verify phase) is waited for; the token is not revoked under it", async () => {
+    const run = frozenRun({ topology: "swap-proxy", options: { sourceRunner: "agent" } });
+    const { handler, ctx, data, host } = build(run);
+    data.snap = makeSnap({ tokenActive: true, volumes: [copied("volume:s:a:data")], databases: [database("database:s:pg", { task: "done", finishedAt: after })] });
+    const comp = { launchSeq: 1, launch: { seq: 1, phase: "final", at: "x", tag: "final" } };
+    const h = ctx({ run, steps: { DATA_FINAL: { compensation: comp } } });
+    const obs = await handler.observe(h.ctx);
+    obs.launcher = { state: "running" };
+    expect(await handler.act(h.ctx, obs)).toEqual({ outcome: "continue", pollAfterMs: 10_000 });
+    expect(data.revoked).toBe(0);
+    expect(h.comp.wrapped).toBeUndefined();
+    // an unreachable agent is "unknown", never "finished"
+    obs.launcher = null;
+    expect((await handler.act(h.ctx, obs)).outcome).toBe("continue");
+    expect(data.revoked).toBe(0);
+    // finished: nothing more is coming
+    obs.launcher = { state: "finished", rc: 0, result: null };
+    expect(await handler.act(h.ctx, obs)).toEqual({ outcome: "done" });
+    expect(data.revoked).toBe(1);
+    host.dispose();
+  });
+
+  it("operator-run: the step waits for the source-side report of every logical database, then wraps up", async () => {
+    const run = frozenRun();
+    const { handler, ctx, data, reported } = build(run);
+    data.snap = makeSnap({ tokenActive: true, databases: [database("database:s:a", { task: "done", finishedAt: after }), database("database:s:b", { task: "done", finishedAt: after }), database("database:s:vol", { plane: "volume" })] });
+    await reported("database:s:a");
+    const h = ctx({ run });
+    expect(await handler.act(h.ctx, await handler.observe(h.ctx))).toEqual({ outcome: "continue", pollAfterMs: 10_000 });
+    expect(data.revoked).toBe(0);
+    expect(h.comp.dataCompleteAt).toBe(NOW.toISOString());
+    expect(h.events.map((e) => e.code)).toContain(DATA_CODES.finalAwaitVerifyReport);
+
+    await reported("database:s:b");
+    const h2 = ctx({ run, steps: { DATA_FINAL: { compensation: h.comp } } });
+    expect(await handler.act(h2.ctx, await handler.observe(h2.ctx))).toEqual({ outcome: "done" });
+    expect(data.revoked).toBe(1);
+  });
+
+  it("a report from before the freeze does not count (it belongs to an earlier pass)", async () => {
+    const run = frozenRun();
+    const { handler, ctx, data, checks } = build(run);
+    data.snap = makeSnap({ tokenActive: true, databases: [database("database:s:a", { task: "done", finishedAt: after })] });
+    await checks.upsert({ runId: run.id, stepKey: "VERIFY", checkId: SOURCE_STATS_CHECK, subject: "database:s:a", status: "unknown", evidenceKind: "migrator-reported", evidence: {}, at: new Date(before) });
+    const h = ctx({ run });
+    expect((await handler.act(h.ctx, await handler.observe(h.ctx))).outcome).toBe("continue");
+    expect(data.revoked).toBe(0);
+  });
+
+  it("the wait is bounded: after the grace window (a run without --verify, a dead migrator) the step wraps up and says the report is missing", async () => {
+    const run = frozenRun();
+    const { handler, ctx, data } = build(run);
+    data.snap = makeSnap({ tokenActive: true, databases: [database("database:s:a", { task: "done", finishedAt: after })] });
+    const startedWaiting = { dataCompleteAt: NOW.toISOString() };
+    const early = ctx({ run, steps: { DATA_FINAL: { compensation: startedWaiting } }, now: new Date(NOW.getTime() + VERIFY_REPORT_GRACE_MS - 1000) });
+    expect((await handler.act(early.ctx, await handler.observe(early.ctx))).outcome).toBe("continue");
+    const late = ctx({ run, steps: { DATA_FINAL: { compensation: startedWaiting } }, now: new Date(NOW.getTime() + VERIFY_REPORT_GRACE_MS + 1000) });
+    expect(await handler.act(late.ctx, await handler.observe(late.ctx))).toEqual({ outcome: "done" });
+    expect(data.revoked).toBe(1);
+    expect(late.events.map((e) => [e.level, e.code])).toContainEqual(["warn", DATA_CODES.finalVerifyReportMissing]);
+  });
+
+  it("nothing to wait for without a logical database", async () => {
+    const run = frozenRun();
+    const { handler, ctx, data } = build(run);
+    data.snap = makeSnap({ volumes: [copied("volume:s:a:data")] });
+    const h = ctx({ run });
+    expect(await handler.act(h.ctx, await handler.observe(h.ctx))).toEqual({ outcome: "done" });
+  });
+});
+
+describe("DataFinalHandler: the object final pass needs frozen writers", () => {
+  const stopSourceRun = () => makeRun({ options: { stopSource: true } });
+  const seeded = () => ({ id: "om1", status: "SEEDED", buckets: [{ srcBucket: "media", selected: true, status: "SEEDED", diffMissing: null, diffDiffer: null, diffExtra: null }] });
+
+  it("manual control that only relies on --stop-source does not tell the object service the writers are frozen, until the operator attests it", async () => {
+    const run = stopSourceRun();
+    const { handler, ctx, objects } = build(run);
+    objects.add(seeded());
+    const h = ctx({ run, steps: attach("om1") });
+    expect(await handler.act(h.ctx, await handler.observe(h.ctx))).toMatchObject({ outcome: "wait", wait: { code: DATA_CODES.finalObjectsWritersNotFrozen, attest: [WRITERS_FROZEN_CHECK] } });
+    expect(objects.calls).toEqual([]);
+
+    const att = { DATA_FINAL: { evidence: { attestations: [{ checkId: WRITERS_FROZEN_CHECK, byUserId: "user1", at: "x" }], attachments: [] } } };
+    const h2 = ctx({ run, steps: { ...attach("om1"), ...att } });
+    expect(await handler.act(h2.ctx, await handler.observe(h2.ctx))).toEqual({ outcome: "continue", pollAfterMs: 10_000 });
+    expect(objects.calls).toEqual(["final:om1"]);
+  });
+
+  it("an attested manual freeze, or a hub-verified controller, needs no extra attestation", async () => {
+    const run = stopSourceRun();
+    const a = build(run);
+    a.objects.add(seeded());
+    const ha = a.ctx({ run, steps: { ...attach("om1"), FREEZE: { status: "PASSED", evidence: { attestations: [{ checkId: "source-quiesced", byUserId: "user1", at: "x" }], attachments: [] } } } });
+    await a.handler.act(ha.ctx, await a.handler.observe(ha.ctx));
+    expect(a.objects.calls).toEqual(["final:om1"]);
+
+    const apiRun = makeRun({ options: { stopSource: true }, inputs: { sourceController: answered("api" as const) } });
+    const b = build(apiRun);
+    b.objects.add(seeded());
+    const hb = b.ctx({ run: apiRun, steps: attach("om1") });
+    await b.handler.act(hb.ctx, await b.handler.observe(hb.ctx));
+    expect(b.objects.calls).toEqual(["final:om1"]);
+  });
+
+  it("without --stop-source (a manual freeze is attested by FREEZE's own gate) the final pass starts as before", async () => {
+    const { handler, ctx, objects } = build();
+    objects.add(seeded());
+    const h = ctx({ steps: attach("om1") });
+    await handler.act(h.ctx, await handler.observe(h.ctx));
+    expect(objects.calls).toEqual(["final:om1"]);
+  });
+});
+
+describe("DataFinalHandler: launch budget and retry", () => {
+  const sameHost = () => frozenRun({ topology: "swap-proxy", options: { sourceRunner: "agent" } });
+
+  it("an explicit retry after a fatal migrator exit launches again (and renews the launch budget) instead of failing with the same exit", async () => {
+    const run = sameHost();
+    const { handler, ctx, data, host } = build(run);
+    data.snap = makeSnap({ databases: [database("database:s:pg", { task: "none" })] });
+    const comp = { launchSeq: 3, launchBudgetFrom: 0, launch: { seq: 3, phase: "final", at: "x", tag: "final" } };
+    const fatal = { state: "finished" as const, rc: 3, result: { exit: 3, code: "auth", counts: {}, items: [] } };
+
+    const tick = ctx({ run, steps: { DATA_FINAL: { compensation: comp } } });
+    const o1 = await handler.observe(tick.ctx);
+    o1.launcher = fatal;
+    expect(await handler.act(tick.ctx, o1)).toMatchObject({ outcome: "fail", code: DATA_CODES.finalMigratorExit });
+
+    const retry = ctx({ run, trigger: "retry", steps: { DATA_FINAL: { compensation: comp } } });
+    const o2 = await handler.observe(retry.ctx);
+    o2.launcher = fatal;
+    expect(await handler.act(retry.ctx, o2)).toEqual({ outcome: "continue", pollAfterMs: 10_000 });
+    expect(retry.comp).toMatchObject({ launchSeq: 4, launchBudgetFrom: 3, launch: { seq: 4, phase: "final", tag: "final" } });
+    host.dispose();
+  });
+
+  it("without a retry the budget still stops a migrator that keeps finishing short", async () => {
+    const run = sameHost();
+    const { handler, ctx, data, host } = build(run);
+    data.snap = makeSnap({ databases: [database("database:s:pg", { task: "none" })] });
+    const h = ctx({ run, steps: { DATA_FINAL: { compensation: { launchSeq: 3, launchBudgetFrom: 0, launch: { seq: 3, phase: "final", at: "x", tag: "final" } } } } });
+    const o = await handler.observe(h.ctx);
+    o.launcher = { state: "finished", rc: 1, result: null };
+    expect(await handler.act(h.ctx, o)).toMatchObject({ outcome: "fail", code: DATA_CODES.launcherFailed, params: { reason: "too-many-launches" } });
+    host.dispose();
   });
 });

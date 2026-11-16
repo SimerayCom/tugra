@@ -11,6 +11,13 @@ describe("launcher input validation", () => {
     expect(launcherDir(RUN, 2)).toBe(`${MIGRATE_RUN_ROOT}/${RUN}-2`);
     expect(buildLaunchScript(base)).toContain(`D='${MIGRATE_RUN_ROOT}/${RUN}-1'`);
   });
+  it("names the step in the directory, so DATA_SEED's attempt 1 and DATA_FINAL's attempt 1 are different runs", () => {
+    expect(launcherDir(RUN, 1, MIGRATE_RUN_ROOT, "seed")).toBe(`${MIGRATE_RUN_ROOT}/${RUN}-seed-1`);
+    expect(launcherDir(RUN, 1, MIGRATE_RUN_ROOT, "final")).toBe(`${MIGRATE_RUN_ROOT}/${RUN}-final-1`);
+    expect(buildLaunchScript({ ...base, tag: "final" })).toContain(`D='${MIGRATE_RUN_ROOT}/${RUN}-final-1'`);
+    expect(buildLauncherStatusScript(RUN, 2, undefined, "seed")).toContain(`${RUN}-seed-2`);
+    expect(() => launcherDir(RUN, 1, MIGRATE_RUN_ROOT, "../x" as never)).toThrow();
+  });
   it("refuses an unsafe hub base, token, flag, run id, attempt or root", () => {
     expect(() => buildLaunchScript({ ...base, hubBase: "https://x;rm -rf /" })).toThrow();
     expect(() => buildLaunchScript({ ...base, token: "tugra_mig_short" })).toThrow();

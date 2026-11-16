@@ -152,10 +152,22 @@ export function seedChecks(run: RunSnapshot, snap: DataSnapshot, objects: readon
 
 // ───────────────────────────── DATA_FINAL checks ─────────────────────────────
 
-const dbIsPending = (d: DbDataItem): boolean => d.plane === "logical" && d.task !== "done";
+/**
+ * A logical database whose `data:` task finished BEFORE the freeze holds a warm seed (or an earlier pass), not the final copy:
+ * writes made between that dump and the freeze are not in it. Only enforced once the freeze opened (`freezeStartedAt` set,
+ * which DATA_FINAL's own pre-gate guarantees); a task without a finish time cannot prove it is fresh.
+ */
+export function dbRestoredAfterFreeze(d: DbDataItem, freezeStartedAt: Date | null | undefined): boolean {
+  if (d.task !== "done") return false;
+  if (!freezeStartedAt) return true;
+  const at = d.finishedAt ? Date.parse(d.finishedAt) : NaN;
+  return Number.isFinite(at) && at >= freezeStartedAt.getTime();
+}
+
+const dbIsPending = (d: DbDataItem, freezeStartedAt: Date | null | undefined): boolean => d.plane === "logical" && !dbRestoredAfterFreeze(d, freezeStartedAt);
 
 /** The checks the DATA_FINAL gate is made of. `warn` entries never block (they are reported in the VERIFY coverage ledger). */
-export function finalChecks(snap: DataSnapshot, objects: readonly ObjectView[]): GateCheck[] {
+export function finalChecks(snap: DataSnapshot, objects: readonly ObjectView[], freezeStartedAt?: Date | null): GateCheck[] {
   const checks: GateCheck[] = [];
   for (const d of snap.databases) {
     if (d.plane === "unsupported") {
@@ -163,7 +175,8 @@ export function finalChecks(snap: DataSnapshot, objects: readonly ObjectView[]):
       continue;
     }
     if (d.plane === "volume") continue; // its db-data volume row below carries the evidence
-    if (d.task === "done") checks.push({ id: checkKey("db-restored", d.itemRef), status: "pass", code: DATA_CODES.finalDbNotRestored, subject: d.itemRef, params: { engine: d.engine }, evidence: "hub-verified" });
+    if (d.task === "done" && dbRestoredAfterFreeze(d, freezeStartedAt)) checks.push({ id: checkKey("db-restored", d.itemRef), status: "pass", code: DATA_CODES.finalDbNotRestored, subject: d.itemRef, params: { engine: d.engine }, evidence: "hub-verified" });
+    else if (d.task === "done") checks.push({ id: checkKey("db-restored", d.itemRef), status: "unknown", code: DATA_CODES.finalDbNotRestored, subject: d.itemRef, params: { engine: d.engine, running: false, stale: true }, evidence: "hub-verified" });
     else if (d.task === "failed") {
       const code = d.taskFailure === "restored-differs" ? DATA_CODES.finalDbRestoredDiffers : DATA_CODES.finalDbFailed;
       checks.push({ id: checkKey("db-restored", d.itemRef), status: "fail", code, subject: d.itemRef, params: { engine: d.engine, reason: d.taskFailure ?? "restore-failed" }, evidence: "hub-verified" });
@@ -204,9 +217,9 @@ export function finalChecks(snap: DataSnapshot, objects: readonly ObjectView[]):
   return checks;
 }
 
-/** True when the migrator still has something to move (a pending database or an unfinished volume). */
-export function migratorWorkRemains(snap: DataSnapshot): boolean {
-  return snap.databases.some(dbIsPending) || snap.volumes.some((v) => !v.excluded && v.state !== "DONE");
+/** True when the migrator still has something to move (a database not yet restored since the freeze, or an unfinished volume). */
+export function migratorWorkRemains(snap: DataSnapshot, freezeStartedAt?: Date | null): boolean {
+  return snap.databases.some((d) => dbIsPending(d, freezeStartedAt)) || snap.volumes.some((v) => !v.excluded && v.state !== "DONE");
 }
 
 export const hasLiveTransfer = (snap: DataSnapshot): boolean => snap.volumes.some((v) => LIVE_VOLUME_STATES.includes(v.state));

@@ -67,6 +67,8 @@ export interface FreezeObs extends Observation {
 /** How long an accepted stop may take to show as stopped before the freeze fails (retryable). */
 export const STOP_CONFIRM_TIMEOUT_MS = 5 * 60_000;
 const SCRIPT_TIMEOUT_MS = 300_000;
+/** The operator attestation that stop-list items matching no container may be left as they are (they are not writers). */
+export const UNRESOLVED_CHECK = "freeze-containers-unresolved";
 
 /**
  * The Coolify items the freeze stops: apps and services (the writers), plus every database that is copied PHYSICALLY (its data
@@ -250,8 +252,12 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
 
   postGate(ctx: StepContext, obs: FreezeObs): GateResult {
     const q = this.quiesced(ctx, obs);
-    const evidence = obs.controller === "manual" ? (obs.attested ? "operator-attested" : "migrator-reported") : "hub-verified";
-    return gateFrom([{ id: "source-quiesced", status: q.ok ? "pass" : obs.record ? "fail" : "unknown", code: q.ok ? DATA_CODES.freezeQuiesced : DATA_CODES.freezeStillRunning, params: { remaining: q.remaining, controller: obs.controller }, evidence }]);
+    const unresolved = obs.record?.unresolved?.length ?? 0;
+    const evidence = obs.controller === "manual" ? (obs.attested ? "operator-attested" : "migrator-reported") : unresolved ? "operator-attested" : "hub-verified";
+    const checks: GateCheck[] = [{ id: "source-quiesced", status: q.ok ? "pass" : obs.record ? "fail" : "unknown", code: q.ok ? DATA_CODES.freezeQuiesced : DATA_CODES.freezeStillRunning, params: { remaining: q.remaining, controller: obs.controller }, evidence }];
+    // the part of the stop list the hub could not resolve to a container was accepted by the operator, and stays visible
+    if (unresolved) checks.push({ id: "containers-unresolved", status: "warn", code: DATA_CODES.freezeContainerUnresolved, params: { count: unresolved, names: obs.record!.unresolved!.slice(0, 20) }, evidence: "operator-attested" });
+    return gateFrom(checks);
   }
 
   // ───────────────────────────── act ─────────────────────────────
@@ -293,10 +299,23 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
       await ctx.recordCompensation({ freeze: { controller: "api", api: [] } satisfies FreezeRecord });
       return { outcome: "done" };
     }
-    const record: FreezeRecord = obs.record ?? { controller: "api", api: obs.stop.map((s) => ({ kind: s.kind, uuid: s.uuid, itemRef: s.itemRef })) };
-    if (!obs.record) await ctx.recordCompensation({ freeze: record }); // BEFORE the first stop: a crash can still restart them
+    let record = obs.record;
+    if (!record) {
+      // record only what is running NOW: a resource the owner had stopped on purpose is never started again by an abort
+      const running: NonNullable<FreezeRecord["api"]> = [];
+      for (const s of obs.stop) {
+        await ctx.assertLease();
+        const cur = await this.api.state(run, s.kind, s.uuid);
+        if (!cur.ok) return { outcome: "fail", code: DATA_CODES.freezeApiFailed, params: { reason: cur.reason, itemRef: s.itemRef }, retryable: cur.reason !== "forbidden" && cur.reason !== "unauthorized" };
+        if (cur.state !== "stopped") running.push({ kind: s.kind, uuid: s.uuid, itemRef: s.itemRef });
+      }
+      record = { controller: "api", api: running };
+      await ctx.recordCompensation({ freeze: record }); // BEFORE the first stop: a crash can still restart them
+      if (running.length === 0) return { outcome: "done" };
+    }
     if (obs.states && obs.states.running === 0 && obs.states.unknown === 0) return { outcome: "done" };
-    const startedAt = compOf(ctx).stopRequestedAt;
+    // an explicit retry opens a fresh confirmation window (and sends the stops again): otherwise the first timeout is final
+    const startedAt = ctx.trigger === "retry" ? undefined : compOf(ctx).stopRequestedAt;
     if (startedAt && ctx.now().getTime() - new Date(startedAt).getTime() > STOP_CONFIRM_TIMEOUT_MS) {
       return { outcome: "fail", code: DATA_CODES.freezeStillRunning, params: { remaining: (obs.states?.running ?? 0) + (obs.states?.unknown ?? 0) }, retryable: true };
     }
@@ -326,8 +345,16 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
         const found = parseSourceInspect(res.output, targets);
         const running: RecordedContainer[] = found.filter((c) => c.state === "running").map((c) => ({ id: c.id, name: c.name, image: c.image, ports: c.ports, itemRef: c.itemRef }));
         const unresolved = obs.stop.filter((s) => !found.some((c) => c.itemRef === s.itemRef));
-        if (unresolved.length) await ctx.emit({ stepKey: "FREEZE", level: "warn", code: DATA_CODES.freezeContainerUnresolved, params: { count: unresolved.length, names: unresolved.slice(0, 20).map((u) => u.name) } });
-        record = { controller: "agent", containers: running };
+        if (unresolved.length) {
+          // fail closed: a stop-list item no container matched may still be writing under a name this matcher does not know.
+          // Nothing is stopped or recorded until the operator, who can look at the host, accepts exactly that (an attestation).
+          const accepted = ctx.step.evidence.attestations.some((a) => a.checkId === UNRESOLVED_CHECK);
+          await ctx.emit({ stepKey: "FREEZE", level: "warn", code: DATA_CODES.freezeContainerUnresolved, params: { count: unresolved.length, names: unresolved.slice(0, 20).map((u) => u.name) } });
+          if (!accepted) {
+            return { outcome: "wait", wait: { kind: "operator", code: DATA_CODES.freezeContainerUnresolved, params: { count: unresolved.length, of: obs.stop.length, names: unresolved.slice(0, 20).map((u) => u.name) }, attest: [UNRESOLVED_CHECK] } };
+          }
+        }
+        record = { controller: "agent", containers: running, ...(unresolved.length ? { unresolved: unresolved.slice(0, 200).map((u) => u.name) } : {}) };
         await ctx.recordCompensation({ freeze: record }); // BEFORE the first stop
       }
       const containers = record.containers ?? [];

@@ -95,6 +95,16 @@ describe("PrismaDataPort.snapshot", () => {
     expect(vols["volume:srv:pgvol:data"] ?? vols["volume:s:pgvol:data"]).toMatchObject({ destType: "db-data", gates: expect.any(Array) });
   });
 
+  it("carries when a database's data task finished, so a restore from before the freeze can be told from the final one", async () => {
+    const at = new Date("2026-11-20T09:45:00.000Z");
+    const tasks = op().tasks.map((t) => (t.itemRef === "data:database:s:pg" ? { ...t, status: "DONE", output: null, finishedAt: at } : t));
+    const done = (await port(prisma(op({ tasks }))).snapshot(makeRun())).databases.find((d) => d.itemRef === "database:s:pg")!;
+    expect(done).toMatchObject({ task: "done", finishedAt: at.toISOString() });
+    // a task that has not finished (failed / running / never started) has no finish time to trust
+    const failed = (await port().snapshot(makeRun())).databases.find((d) => d.itemRef === "database:s:pg")!;
+    expect(failed.finishedAt).toBeNull();
+  });
+
   it("a revoked / expired / cancelled token reads as inactive", async () => {
     for (const over of [{ migrationTokenHash: null }, { migrationTokenExpiresAt: new Date(NOW - 1000) }, { cancelRequestedAt: new Date() }]) {
       expect((await port(prisma(op(over))).snapshot(makeRun())).tokenActive).toBe(false);
@@ -249,7 +259,7 @@ describe("AgentSourceHost / TargetDbStats", () => {
     expect(sendCommand).toHaveBeenCalledWith("srv", "echo 1", "migrate", 1234);
   });
 
-  const db = { itemRef: "database:s:pg", dbId: "db1", name: "pg", engine: "POSTGRES", plane: "logical" as const, unsupportedReason: null, task: "done" as const, taskFailure: null };
+  const db = { itemRef: "database:s:pg", dbId: "db1", name: "pg", engine: "POSTGRES", plane: "logical" as const, unsupportedReason: null, task: "done" as const, taskFailure: null, finishedAt: null };
   const build = (row: unknown, run = jest.fn(async () => ({ exitCode: 0, output: "public.t\t5\t0\n" }))) => ({
     run,
     stats: new TargetDbStats(
