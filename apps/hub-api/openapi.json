@@ -65270,6 +65270,14 @@
                         "minimum": 1,
                         "maximum": 8
                       },
+                      "serviceStart": {
+                        "type": "string",
+                        "enum": [
+                          "dependencies",
+                          "none",
+                          "all"
+                        ]
+                      },
                       "largeDbMode": {
                         "type": "string",
                         "enum": [
@@ -75250,6 +75258,14 @@
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 8
+              },
+              "serviceStart": {
+                "type": "string",
+                "enum": [
+                  "dependencies",
+                  "none",
+                  "all"
+                ]
               },
               "largeDbMode": {
                 "type": "string",
