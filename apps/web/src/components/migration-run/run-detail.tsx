@@ -16,7 +16,8 @@ import { OwnerInputsCard } from "./owner-inputs-card";
 import { ReportCard } from "./report-card";
 import { RecoveryCard, RunHeaderActions } from "./run-actions";
 import { RunDrawers } from "./run-drawers";
-import { RunBanners, RunFacts } from "./run-summary";
+import { PlacementCard, RunBanners, RunFacts } from "./run-summary";
+import { SafetyCard } from "./safety-card";
 import { StepTimeline } from "./step-timeline";
 import { runQueryKey } from "./use-run-actions";
 import { useRunEvents } from "./use-run-events";
@@ -38,7 +39,8 @@ export function RunDetail({ id }: { id: string }) {
   if (!run) return null;
 
   const settled = isTerminalRun(run.status);
-  const title = `${run.sourceHost ?? run.sourceKind} → ${run.targetServerName ?? run.targetServerId}`;
+  const extraTargets = Math.max(0, run.targetServers.length - 1);
+  const title = `${run.sourceHost ?? run.sourceKind} → ${run.targetServerName ?? run.targetServerId}${extraTargets > 0 ? ` +${extraTargets}` : ""}`;
   return (
     <>
       <PageHeader
@@ -58,7 +60,9 @@ export function RunDetail({ id }: { id: string }) {
         <NextActionCard run={run} />
         <StepTimeline run={run} />
         <RunFacts run={run} />
+        <PlacementCard run={run} />
         <OwnerInputsCard key={JSON.stringify(run.inputs)} run={run} />
+        <SafetyCard run={run} />
         <RunDrawers run={run} />
         <RecoveryCard run={run} />
         <EventLog events={events} error={error} />

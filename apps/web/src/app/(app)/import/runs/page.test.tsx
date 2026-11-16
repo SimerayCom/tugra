@@ -79,4 +79,18 @@ describe("migration runs list page", () => {
     wrap();
     await screen.findByText("Something went wrong");
   });
+
+  it("shows multi-host runs, campaigns and versions, rolls a campaign up and filters by it", async () => {
+    const list = vi.spyOn(api, "listMigrationRuns").mockResolvedValue([
+      mkSummary({ id: "r1", targetServerCount: 3, campaign: "wave-1", sourceVersion: "4.5.0", status: "COMPLETED" }),
+      mkSummary({ id: "r2", campaign: "wave-1", status: "WAITING" }),
+    ]);
+    wrap();
+    await screen.findByText("coolify.example.org → tugra-1 +2");
+    expect(screen.getByText("3 target servers")).toBeTruthy();
+    expect(screen.getAllByText("Source 4.5.0").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("2 runs, 1 completed, 1 still live")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Show only the runs of campaign wave-1" }));
+    await waitFor(() => expect(list).toHaveBeenLastCalledWith(expect.objectContaining({ campaign: "wave-1" })));
+  });
 });

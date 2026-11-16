@@ -150,7 +150,9 @@ import type {
   MigrationRunCreateInput,
   MigrationRunInputsRequest,
   MigrationRunApproveInput,
+  MigrationRunCommandKind,
   MigrationRunCommandResult,
+  MigrationRunSafetyHints,
   MigrationRunReport,
 } from "./types";
 
@@ -2322,11 +2324,12 @@ export const api = {
   },
 
   // ── P7 guided migration runs (Coolify -> Tugra orchestrator; secret-free views, codes + params only) ──
-  listMigrationRuns(filter: { teamId?: string | null; status?: MigrationRunStatus; active?: boolean; limit?: number } = {}) {
+  listMigrationRuns(filter: { teamId?: string | null; status?: MigrationRunStatus; active?: boolean; campaign?: string; limit?: number } = {}) {
     const p = new URLSearchParams();
     if (filter.teamId) p.set("teamId", filter.teamId);
     if (filter.status) p.set("status", filter.status);
     if (filter.active !== undefined) p.set("active", String(filter.active));
+    if (filter.campaign) p.set("campaign", filter.campaign);
     if (filter.limit) p.set("limit", String(filter.limit));
     const q = p.toString();
     return apiFetch<MigrationRunSummary[]>(`/migration-runs${q ? `?${q}` : ""}`);
@@ -2360,7 +2363,7 @@ export const api = {
     return apiFetch<MigrationRunView>(`/migration-runs/${encodeURIComponent(id)}/steps/${key}/attach`, { method: "POST", body: JSON.stringify(body) });
   },
   /** Mints (or reissues) the migrator token; the command carrying it is returned ONCE. */
-  migrationRunCommand(id: string, key: MigrationRunStepKey, body: { reissue?: boolean } = {}) {
+  migrationRunCommand(id: string, key: MigrationRunStepKey, body: { reissue?: boolean; kind?: MigrationRunCommandKind } = {}) {
     return apiFetch<MigrationRunCommandResult>(`/migration-runs/${encodeURIComponent(id)}/steps/${key}/command`, { method: "POST", body: JSON.stringify(body) });
   },
   setMigrationRunInputs(id: string, body: MigrationRunInputsRequest) {
@@ -2387,6 +2390,17 @@ export const api = {
   /** Re-enter the source token when the 1 h import session expired (never returned). */
   migrationRunSourceSession(id: string, body: { token: string }) {
     return apiFetch<{ sessionId: string; expiresAt: string }>(`/migration-runs/${encodeURIComponent(id)}/source-session`, { method: "POST", body: JSON.stringify(body) });
+  },
+  getMigrationRunSafetyHints(id: string) {
+    return apiFetch<MigrationRunSafetyHints>(`/migration-runs/${encodeURIComponent(id)}/safety-hints`);
+  },
+  /** Record (or, with `digest: null`, remove) the digest the SOURCE runs for a floating image. */
+  setMigrationRunImagePins(id: string, body: { pins: Array<{ image: string; scope?: string; digest: string | null; evidence?: "operator-attested" | "host-loop-reported" }> }) {
+    return apiFetch<MigrationRunSafetyHints>(`/migration-runs/${encodeURIComponent(id)}/image-pins`, { method: "PUT", body: JSON.stringify(body) });
+  },
+  /** Mark an app a job runner (held until after the cutover) or a web app; `role: null` removes the mark. */
+  setMigrationRunWorkerMarks(id: string, body: { marks: Array<{ itemRef: string; role: "job-runner" | "web" | null }> }) {
+    return apiFetch<MigrationRunSafetyHints>(`/migration-runs/${encodeURIComponent(id)}/worker-marks`, { method: "PUT", body: JSON.stringify(body) });
   },
   getMigrationRunReport(id: string) {
     return apiFetch<MigrationRunReport>(`/migration-runs/${encodeURIComponent(id)}/report`);

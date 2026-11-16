@@ -22,8 +22,14 @@ export const mkRun = (over: Partial<MigrationRunView> = {}, steps?: MigrationRun
   actorId: "u1",
   targetServerId: "srv1",
   targetServerName: "tugra-1",
+  serverMap: {},
+  targetServers: [{ serverId: "srv1", serverName: "tugra-1", primary: true }],
   sourceKind: "coolify",
   sourceHost: "coolify.example.org",
+  sourceVersion: "4.5.0",
+  sourceVersionVerdict: "supported",
+  campaign: null,
+  baselineAt: null,
   opId: null,
   opHistory: [],
   planHash: "a".repeat(32),
@@ -58,6 +64,6 @@ export const mkRun = (over: Partial<MigrationRunView> = {}, steps?: MigrationRun
 });
 
 export const mkSummary = (over: Partial<MigrationRunSummary> = {}): MigrationRunSummary => ({
-  id: "run12345abcdef", teamId: "t1", targetServerId: "srv1", targetServerName: "tugra-1", sourceKind: "coolify", sourceHost: "coolify.example.org", mode: "copy", topology: "two-box", dryRun: false,
+  id: "run12345abcdef", teamId: "t1", targetServerId: "srv1", targetServerName: "tugra-1", targetServerCount: 1, sourceKind: "coolify", sourceHost: "coolify.example.org", sourceVersion: "4.5.0", campaign: null, mode: "copy", topology: "two-box", dryRun: false,
   status: "RUNNING", currentStep: "IMPORT", ponrAt: null, stepsPassed: 1, stepsTotal: 13, nextActionKind: "engine", failure: null, createdAt: "2026-11-16T09:00:00.000Z", startedAt: "2026-11-16T09:01:00.000Z", finishedAt: null, ...over,
 });

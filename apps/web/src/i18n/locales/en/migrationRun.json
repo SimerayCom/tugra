@@ -10,7 +10,13 @@
     "activeOnly": "Only runs that are still live",
     "emptyTitle": "No guided migrations yet",
     "empty": "Connect a Coolify or Dokploy source in Import, review the plan, then choose Run guided migration. Start with a dry run: it writes nothing outside the run's own records.",
-    "hint": "A run is driven by the hub but needs you at the gates: the source-host command, the freeze, the verification approval and the point of no return."
+    "hint": "A run is driven by the hub but needs you at the gates: the source-host command, the freeze, the verification approval and the point of no return.",
+    "campaign": "Campaign",
+    "campaignAll": "All campaigns",
+    "campaignFilter": "Show only the runs of campaign {campaign}",
+    "campaignRollup": "{total} runs, {completed} completed, {live} still live",
+    "servers": "{count} target servers",
+    "version": "Source {version}"
   },
   "status": {
     "QUEUED": "Queued",
@@ -227,7 +233,9 @@
     "targetServer": "Type the target server name to confirm.",
     "targetServerAndHost": "Type the target server name, then the source host, to confirm.",
     "sourceHost": "Type the source host to confirm.",
-    "typeToConfirm": "Type {name} to confirm"
+    "typeToConfirm": "Type {name} to confirm",
+    "targetServers": "This run places resources on several servers. Type the name of every target server to confirm.",
+    "targetServersAndHost": "This run places resources on several servers. Type the name of every target server, then the source host, to confirm."
   },
   "command": {
     "intro": "This step runs on the source host. The hub mints a short-lived migration token and shows the command once.",
@@ -242,7 +250,13 @@
     "hide": "Hide",
     "unfreezeIntro": "This script starts the stopped source containers again on the Coolify host. It carries no migration token, so you can get it again whenever you need it.",
     "getUnfreeze": "Get the unfreeze script",
-    "unfreeze": "Run on the Coolify host"
+    "unfreeze": "Run on the Coolify host",
+    "hostLoopIntro": "This step runs from the Coolify host. The hub prints one script that loops over the source hosts with the SSH keys Coolify already holds, starts the migrator on each and reports back. The migration token inside is shown once.",
+    "inventoryIntro": "Run this read-only inventory on the Coolify host first. It lists the containers and volumes of each source host so the hub can compare them with what the source API reports.",
+    "getHostLoop": "Get the host-loop script",
+    "getInventory": "Get the inventory script",
+    "hostLoop": "Run on the Coolify host",
+    "inventory": "Run the inventory on the Coolify host"
   },
   "attest": {
     "title": "Confirm this was done?",
@@ -251,7 +265,9 @@
     "button": "I did this",
     "note": "Note (optional)",
     "noteRequired": "The plan item this container is (required)",
-    "recorded": "Recorded as attested by you."
+    "recorded": "Recorded as attested by you.",
+    "records": "Records to enter",
+    "observed": "The resolvers show: {observed}"
   },
   "attach": {
     "hint": "Object storage copies keep their credentials in Migrate objects. Create one there, then attach its id; the run only drives and observes it.",
@@ -292,7 +308,42 @@
     },
     "emailInvalid": "Enter a valid email address.",
     "save": "Save inputs",
-    "saved": "Inputs saved."
+    "saved": "Inputs saved.",
+    "policiesTitle": "Fleet policies",
+    "policiesDesc": "Questions the fleet raises. Each unanswered one keeps its safe default, which holds work back rather than moving it.",
+    "decideLater": "Decide later (the safe default applies)",
+    "minioPolicy": "Hosts that use the source's object storage",
+    "minioPolicyHint": "Hosts whose environment points at object storage (MinIO). Hold keeps them on the source. Wait for a verified copy flips them after their objects are copied and verified. External means the storage is not on the source host.",
+    "tickGapAcceptMinutes": "Write gap you accept (minutes)",
+    "tickGapAcceptMinutesHint": "How long writes may be missing between the last copy and the switch. 0 accepts none, which is the default.",
+    "tickGapInvalid": "Enter a whole number of minutes from 0 to 10080.",
+    "workerPolicy": "Workers without a domain",
+    "workerPolicyHint": "Apps that serve no domain are treated as workers. They are held stopped until after the cutover unless you choose otherwise.",
+    "unlistedDbPolicy": "Database containers the source API does not list",
+    "unlistedDbPolicyHint": "The host inventory can find database containers the source API never reported. Stopping the run is the safe default.",
+    "orphanVolumePolicy": "Volumes that no container uses",
+    "orphanVolumePolicyHint": "The host inventory can find volumes mounted by nothing. Stopping the run is the safe default.",
+    "choice": {
+      "minioPolicy": {
+        "hold": "Hold on the source (default)",
+        "mirror": "Wait for a verified copy",
+        "external": "The storage is external, nothing to copy"
+      },
+      "workerPolicy": {
+        "hold-dark": "Keep stopped until after the cutover (default)",
+        "start-dark": "Start before the cutover",
+        "exclude": "Leave out of this run"
+      },
+      "unlistedDbPolicy": {
+        "block": "Stop the run (default)",
+        "carry": "Copy them as well",
+        "skip": "Leave them on the source"
+      },
+      "orphanVolumePolicy": {
+        "block": "Stop the run (default)",
+        "skip": "Leave them on the source"
+      }
+    }
   },
   "facts": {
     "title": "Run",
@@ -300,7 +351,16 @@
     "target": "Target server",
     "mode": "Mode",
     "topology": "Topology",
-    "progress": "Progress"
+    "progress": "Progress",
+    "version": "Source version",
+    "versionNone": "Not read yet",
+    "campaign": "Campaign",
+    "servers": "Target servers",
+    "serverDefault": "default",
+    "runner": "Source runner",
+    "baseline": "Source health baseline",
+    "baselineAt": "Recorded {when}",
+    "baselineNone": "Not recorded yet. The preflight records it before anything changes, so the watch after the cutover can tell what was already failing."
   },
   "window": {
     "estimate": "Estimated downtime window",
@@ -367,7 +427,10 @@
       "acked": "Accepted",
       "failed": "Failed",
       "notCutOver": "Not cut over"
-    }
+    },
+    "version": "Source version: {version}",
+    "targets": "Target servers: {servers}",
+    "campaign": "Campaign: {campaign}"
   },
   "drawer": {
     "volumes": "Volume transfers",
@@ -391,7 +454,60 @@
     "observeHint": "How long to watch moved hosts before finishing. 0 to skip.",
     "observeInvalid": "Enter a whole number from 0 to 4320.",
     "create": "Create run",
-    "createDry": "Create dry run"
+    "createDry": "Create dry run",
+    "placement": {
+      "title": "Where each source host lands",
+      "toggle": "Place source hosts on different Tugra servers",
+      "hint": "Off: every resource lands on the target server above. On: each source host is mapped to a Tugra server, and a host that is missing from the map stops the run instead of landing on the default server.",
+      "host": "Source host {ref}",
+      "unknownHost": "Resources with no source host",
+      "counts": "{apps} apps, {databases} databases, {services} services, {volumes} volumes",
+      "target": "Tugra server for {ref}",
+      "none": "The plan names no source host, so there is nothing to place.",
+      "invalid": "Every source host needs a Tugra server, and at most {max} hosts can be mapped.",
+      "summary": "{hosts} source hosts on {servers} Tugra servers.",
+      "teamOnly": "Only servers of the target server's team are offered."
+    },
+    "advanced": {
+      "title": "Advanced options",
+      "desc": "Defaults are safe. Open this for a fleet with several source hosts, large databases or a small build host.",
+      "campaign": "Campaign",
+      "campaignHint": "An optional label that groups the runs of one migration campaign, so you can list them together.",
+      "campaignInvalid": "Use 1 to 80 printable characters.",
+      "runner": "Who runs the migrator on the source hosts",
+      "runnerHint": "The host-loop script is printed once and run on the Coolify host. It uses the SSH keys Coolify already holds, loops over the source hosts and reports back.",
+      "runnerChoice": {
+        "operator": "You, on each source host",
+        "agent": "The Tugra agent on the source host",
+        "coolify-host-loop": "One script on the Coolify host, looping over the hosts"
+      },
+      "hostLoop": {
+        "keyDir": "SSH key directory on the Coolify host",
+        "keyDirHint": "Only this path is stored, never a key.",
+        "parallel": "Hosts at a time",
+        "connectTimeout": "SSH connect timeout (seconds)",
+        "retries": "Retries per host",
+        "invalid": "Use an absolute path of letters, digits and . _ / - without .., 1 to 8 hosts at a time, 5 to 120 seconds and 0 to 5 retries."
+      },
+      "deployWaves": "When apps are built and started",
+      "deployWavesChoice": {
+        "single": "Everything after the data is copied",
+        "earlyStateless": "Stateless apps right after the import",
+        "earlyBuild": "Build every image before the freeze, start after"
+      },
+      "deployWavesHint": "Building before the freeze keeps the downtime window for starting things. Workers stay stopped either way.",
+      "deployConcurrency": "Builds at a time per server",
+      "deployConcurrencyHint": "Leave empty for one at a time. Raise it only on servers with spare CPU and memory.",
+      "deployConcurrencyInvalid": "Enter a whole number from 1 to 8.",
+      "largeDbMode": "Databases too large for a dump artifact",
+      "largeDbModeHint": "Stream a logical dump has no size cap but runs inside the freeze window, so it adds to the downtime.",
+      "largeDbChoice": {
+        "refuse": "Stop the run (default)",
+        "stream-logical": "Stream a logical dump"
+      },
+      "stopSource": "Let the migrator stop the source writers itself",
+      "stopSourceHint": "Off by default. Without it the freeze step asks you to stop the writers."
+    }
   },
   "units": {
     "item": "items",
@@ -421,7 +537,10 @@
     "run-past-ponr": "The point of no return has been reached, so this is no longer possible. Use reverse.",
     "human-confirmation-required": "This approval must be given by a person in the panel.",
     "attest-subject-invalid": "That finding is no longer open, so there is nothing to attest. Reload the run.",
-    "attest-note-required": "Name the plan item this container is in the note."
+    "attest-note-required": "Name the plan item this container is in the note.",
+    "command-kind-unavailable": "This script is not available for this run: it needs the host-loop runner and a known list of source hosts.",
+    "hints-closed": "This run can no longer take these facts: it is finished or past the point of no return.",
+    "server-has-live-run": "One of the target servers already has a live guided migration. Finish or abort it first."
   },
   "codes": {
     "unknown": "{code}{params}",
@@ -932,5 +1051,64 @@
     "inventory_reach-failed": "Host {host} cannot reach this hub (HTTP {httpCode}), so the migrator cannot work from there.",
     "inventory_reach-unknown": "Whether host {host} can reach this hub has not been measured yet.",
     "inventory_part-size-exceeds-cap": "The path from host {host} to this hub accepts uploads of {acceptedMiB} MiB, less than the part size of {partMiB} MiB (a proxy in front of the hub caps request bodies). Set MIGRATION_VX_PART_MIB to {recommendMiB} (0 means even 32 MiB fails) or remove the cap, then run the inventory again."
+  },
+  "version": {
+    "title": "Source version",
+    "supported": "Supported",
+    "supportedHint": "The source runs a version this run was tested against.",
+    "newer": "Newer than tested",
+    "newerHint": "The source is newer than the newest version this run was tested with. The preflight warns, and you can accept it there.",
+    "too-old": "Too old",
+    "too-oldHint": "The source is older than the oldest supported version, so the preflight blocks the run.",
+    "unknown": "Not known",
+    "unknownHint": "The source did not report a version the hub could read. Run the preflight again to refresh it.",
+    "unchecked": "Not checked",
+    "uncheckedHint": "This source kind has no tested version range, so the hub does not judge the version.",
+    "none": "Not read yet"
+  },
+  "runnerName": {
+    "operator": "You run the migrator on each source host",
+    "agent": "The Tugra agent on the source host",
+    "coolify-host-loop": "One script on the Coolify host, looping over the source hosts"
+  },
+  "placement": {
+    "title": "Placement",
+    "desc": "Which Tugra server each source host lands on. A source host that is not listed stops the run instead of landing on the default server.",
+    "host": "Source host",
+    "target": "Tugra server",
+    "unknownHost": "Resources with no source host",
+    "defaultNote": "The default target is {name}."
+  },
+  "safety": {
+    "title": "Held workers and image pins",
+    "desc": "Facts only someone who can see the source host knows: which apps are job runners that must stay stopped until after the cutover, and which image digest the source really runs. The hub cannot check them, so they are recorded as attested by you.",
+    "closed": "This run can no longer take these facts: it is finished or past the point of no return.",
+    "loading": "Loading the recorded facts.",
+    "marksTitle": "Job runners and web apps",
+    "marksHint": "An app with no domain is held stopped until after the cutover. Mark an app that serves a domain as a job runner to hold it too, or mark one that serves no domain as a web app so it starts dark.",
+    "marksEmpty": "No app is marked.",
+    "item": "Plan item (app:host:name)",
+    "itemInvalid": "Use the plan item as it appears in the plan, starting with app:.",
+    "role": "Role",
+    "roleJobRunner": "Job runner: held until after the cutover",
+    "roleWeb": "Web app: starts dark",
+    "markAdd": "Save mark",
+    "markRemove": "Remove the mark of {item}",
+    "pinsTitle": "Image digests the source runs",
+    "pinsHint": "An image with a floating tag such as latest is pinned to the digest you record here, so Tugra runs what the source runs. Take the digest from docker image inspect on the source host.",
+    "pinsEmpty": "No digest is recorded.",
+    "image": "Image as the plan shows it",
+    "imageInvalid": "Use the image reference without spaces.",
+    "scope": "Source host (optional)",
+    "scopeHint": "Leave empty when every source host runs the same digest.",
+    "digest": "Digest (sha256:...)",
+    "digestInvalid": "A digest is sha256: followed by 64 lower-case hex characters.",
+    "evidence": "Where it came from",
+    "evidenceOperator": "I read it on the host",
+    "evidenceHostLoop": "The host script printed it",
+    "pinAdd": "Save digest",
+    "pinRemove": "Remove the digest of {image}",
+    "saved": "Recorded.",
+    "open": "Show and edit"
   }
 }

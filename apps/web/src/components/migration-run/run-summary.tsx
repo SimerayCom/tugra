@@ -2,9 +2,10 @@
 
 import { ShieldAlert, ShieldCheck } from "lucide-react";
 import { useT } from "../../i18n/provider";
-import { Card, SectionCard } from "../ui";
+import { Badge, Card, SectionCard } from "../ui";
 import { formatDuration } from "../../lib/import";
-import { MODE_HINT_KEY, TOPOLOGY_HINT_KEY, dryRunVerdict, stepsSummary } from "../../lib/migration-run";
+import { MODE_HINT_KEY, TOPOLOGY_HINT_KEY, UNKNOWN_SOURCE_HOST, VERSION_VERDICT_HINT_KEY, VERSION_VERDICT_KEY, dryRunVerdict, stepsSummary, versionVerdictColor } from "../../lib/migration-run";
+import { relativeTime } from "../../lib/fleet";
 import type { MigrationRunView } from "../../lib/types";
 import { MeterBar } from "../meter-bar";
 
@@ -45,6 +46,12 @@ export function RunBanners({ run }: { run: MigrationRunView }) {
   );
 }
 
+const RUNNER_KEY = {
+  operator: "migrationRun.runnerName.operator",
+  agent: "migrationRun.runnerName.agent",
+  "coolify-host-loop": "migrationRun.runnerName.coolify-host-loop",
+} as const;
+
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div style={{ minWidth: 0 }}>
@@ -65,7 +72,32 @@ export function RunFacts({ run }: { run: MigrationRunView }) {
     <SectionCard title={t("migrationRun.facts.title")} style={{ marginBottom: 0 }}>
       <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 200px), 1fr))" }}>
         <Fact label={t("migrationRun.facts.source")}><span className="mono">{run.sourceHost ?? run.sourceKind}</span></Fact>
-        <Fact label={t("migrationRun.facts.target")}><span className="mono">{run.targetServerName ?? run.targetServerId}</span></Fact>
+        <Fact label={t("migrationRun.facts.version")}>
+          {run.sourceVersion ? <span className="mono">{run.sourceVersion}</span> : t("migrationRun.facts.versionNone")}
+          <div title={t(VERSION_VERDICT_HINT_KEY[run.sourceVersionVerdict])} style={{ fontSize: 11, marginTop: 2, lineHeight: 1.4, color: versionVerdictColor(run.sourceVersionVerdict), fontWeight: 600 }}>
+            {t(VERSION_VERDICT_KEY[run.sourceVersionVerdict])}
+          </div>
+          <div style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 2, lineHeight: 1.4 }}>{t(VERSION_VERDICT_HINT_KEY[run.sourceVersionVerdict])}</div>
+        </Fact>
+        <Fact label={run.targetServers.length > 1 ? t("migrationRun.facts.servers") : t("migrationRun.facts.target")}>
+          {run.targetServers.length > 1 ? (
+            <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+              {run.targetServers.map((s) => (
+                <span key={s.serverId} style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                  <span className="mono">{s.serverName ?? s.serverId}</span>
+                  {s.primary && <Badge tone="muted">{t("migrationRun.facts.serverDefault")}</Badge>}
+                </span>
+              ))}
+            </span>
+          ) : (
+            <span className="mono">{run.targetServerName ?? run.targetServerId}</span>
+          )}
+        </Fact>
+        {run.campaign && <Fact label={t("migrationRun.facts.campaign")}><span className="mono">{run.campaign}</span></Fact>}
+        <Fact label={t("migrationRun.facts.runner")}>{t(RUNNER_KEY[run.options.sourceRunner])}</Fact>
+        <Fact label={t("migrationRun.facts.baseline")}>
+          {run.baselineAt ? t("migrationRun.facts.baselineAt", { when: relativeTime(run.baselineAt) }) : <span style={{ fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.4 }}>{t("migrationRun.facts.baselineNone")}</span>}
+        </Fact>
         <Fact label={t("migrationRun.facts.mode")}>
           {t(run.mode === "takeover" ? "migrationRun.mode.takeover" : "migrationRun.mode.copy")}
           <div style={{ fontSize: 11, color: "var(--c-tx3)", marginTop: 2, lineHeight: 1.4 }}>{t(MODE_HINT_KEY[run.mode])}</div>
@@ -85,6 +117,29 @@ export function RunFacts({ run }: { run: MigrationRunView }) {
         </div>
         <p style={{ margin: "8px 0 0", fontSize: 11, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t("migrationRun.window.note")}</p>
       </Card>
+    </SectionCard>
+  );
+}
+
+/** The multi-host placement of the run: which Tugra server each source host lands on (shown only for a run with a map). */
+export function PlacementCard({ run }: { run: MigrationRunView }) {
+  const t = useT();
+  const entries = Object.entries(run.serverMap ?? {});
+  if (entries.length === 0) return null;
+  const nameOf = (id: string) => run.targetServers.find((s) => s.serverId === id)?.serverName ?? id;
+  return (
+    <SectionCard title={t("migrationRun.placement.title")} desc={t("migrationRun.placement.desc")} style={{ marginBottom: 0 }}>
+      <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 8 }}>
+        {entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([ref, id]) => (
+          <li key={ref} style={{ display: "flex", flexWrap: "wrap", gap: "2px 12px", alignItems: "baseline", fontSize: 13, minWidth: 0 }}>
+            <span style={{ fontSize: 11, color: "var(--c-tx3)", minWidth: 90 }}>{ref === UNKNOWN_SOURCE_HOST ? t("migrationRun.placement.unknownHost") : t("migrationRun.placement.host")}</span>
+            {ref !== UNKNOWN_SOURCE_HOST && <span className="mono" style={{ wordBreak: "break-all", flex: "1 1 160px", minWidth: 0 }}>{ref}</span>}
+            <span aria-hidden>→</span>
+            <span className="mono" style={{ wordBreak: "break-word", flex: "1 1 120px", minWidth: 0 }}>{nameOf(id)}</span>
+          </li>
+        ))}
+      </ul>
+      <p style={{ margin: "10px 0 0", fontSize: 11, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t("migrationRun.placement.defaultNote", { name: run.targetServerName ?? run.targetServerId })}</p>
     </SectionCard>
   );
 }

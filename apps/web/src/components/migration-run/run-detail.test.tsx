@@ -370,6 +370,203 @@ describe("RunDetail", () => {
     wrap();
     await screen.findByText("Something went wrong");
   });
-});
 
-export type _Keep = MigrationRunView;
+  describe("fleet runs", () => {
+    const multi = (over: Partial<MigrationRunView> = {}, steps?: MigrationRunStepView[]) =>
+      mkRun(
+        {
+          serverMap: { "host-a": "srv1", "host-b": "srv2" },
+          targetServers: [
+            { serverId: "srv1", serverName: "tugra-1", primary: true },
+            { serverId: "srv2", serverName: "tugra-b", primary: false },
+          ],
+          campaign: "wave-1",
+          ...over,
+        },
+        steps,
+      );
+
+    it("shows every target server, the placement, the campaign and the source version with its verdict", async () => {
+      vi.spyOn(api, "getMigrationRun").mockResolvedValue(multi({ sourceVersion: "4.9.0", sourceVersionVerdict: "newer", baselineAt: new Date().toISOString() }));
+      wrap();
+      await screen.findByText("coolify.example.org → tugra-1 +1");
+      expect(screen.getByText("Target servers")).toBeTruthy();
+      expect(screen.getAllByText("tugra-b").length).toBeGreaterThanOrEqual(2); // the facts and the placement card
+      expect(screen.getByText("Placement")).toBeTruthy();
+      expect(screen.getByText("host-b")).toBeTruthy();
+      expect(screen.getByText("wave-1")).toBeTruthy();
+      expect(screen.getByText("4.9.0")).toBeTruthy();
+      expect(screen.getByText("Newer than tested")).toBeTruthy();
+      expect(screen.getByText(/Recorded/)).toBeTruthy();
+    });
+
+    it("a single-target run has no placement card and says when the baseline is still missing", async () => {
+      vi.spyOn(api, "getMigrationRun").mockResolvedValue(mkRun({ sourceVersion: null, sourceVersionVerdict: "unknown" }));
+      wrap();
+      await screen.findByText("coolify.example.org → tugra-1");
+      expect(screen.queryByText("Placement")).toBeNull();
+      expect(screen.getByText("Not read yet")).toBeTruthy();
+      expect(screen.getByText("Not known")).toBeTruthy();
+      expect(screen.getByText(/Not recorded yet/)).toBeTruthy();
+    });
+
+    it("the point-of-no-return approval of a multi-host run asks for EVERY target server, sorted, then the source host", async () => {
+      const b = binding({ confirm: "target-servers+source-host", ponr: true, requiresDataRisk: true, ttlSec: 1800 });
+      const step = mkStep("VERIFY", "WAITING_APPROVAL", { kind: "approval", allowed: { approve: true, retry: false, skip: false, evidence: false, attach: false, command: false } });
+      vi.spyOn(api, "getMigrationRun").mockResolvedValue(multi({ nextAction: { kind: "approval", stepKey: "VERIFY", code: "verify.approve", since: "2026-11-16T10:00:00.000Z", approval: b } }, stepsWith({ VERIFY: step })));
+      const approve = vi.spyOn(api, "approveMigrationRunStep").mockResolvedValue(mkRun());
+      wrap();
+      await screen.findByText("Point of no return");
+      expect(screen.getByText(/places resources on several servers/)).toBeTruthy();
+      const submit = screen.getByRole("button", { name: "Approve and pass the point of no return" }) as HTMLButtonElement;
+      fireEvent.change(screen.getByLabelText("Type tugra-1 to confirm"), { target: { value: "tugra-1" } });
+      fireEvent.change(screen.getByLabelText("Type coolify.example.org to confirm"), { target: { value: "coolify.example.org" } });
+      fireEvent.click(screen.getByRole("checkbox", { name: /stateful data may be lost/ }));
+      // one server is still missing: nothing can be sent that names only some of the hosts
+      expect(submit.disabled).toBe(true);
+      fireEvent.change(screen.getByLabelText("Type tugra-b to confirm"), { target: { value: "tugra-b" } });
+      expect(submit.disabled).toBe(false);
+      fireEvent.click(submit);
+      await waitFor(() => expect(approve).toHaveBeenCalledWith("run12345abcdef", "VERIFY", { boundHash: HASH, acks: [], confirmName: "tugra-1, tugra-b coolify.example.org", acceptDataRisk: true }));
+    });
+
+    it("a host-loop run offers the script of what the step waits for: the inventory first", async () => {
+      const step = mkStep("DATA_SEED", "WAITING_OPERATOR", {
+        kind: "operator",
+        wait: { kind: "operator", code: "data-seed.host-inventory-run", offersCommand: true, commandKind: "inventory" },
+        allowed: { approve: false, retry: false, skip: false, evidence: false, attach: false, command: true },
+      });
+      const base = mkRun();
+      vi.spyOn(api, "getMigrationRun").mockResolvedValue(
+        mkRun({ currentStep: "DATA_SEED", options: { ...base.options, sourceRunner: "coolify-host-loop" }, nextAction: { kind: "operator", stepKey: "DATA_SEED", code: "data-seed.host-inventory-run", since: "2026-11-16T10:00:00.000Z", offersCommand: true } }, stepsWith({ DATA_SEED: step })),
+      );
+      const mint = vi.spyOn(api, "migrationRunCommand").mockResolvedValue({ stepKey: "DATA_SEED", kind: "inventory", opId: "op1", expiresAt: new Date(Date.now() + 3600_000).toISOString(), command: "sh -s <<'EOF'\ninventory-script\nEOF", shownOnce: true });
+      wrap();
+      fireEvent.click(await screen.findByRole("button", { name: "Get the inventory script" }));
+      await screen.findByText(/inventory-script/);
+      // the hub picks the command from what the step waits for, so the page sends no kind of its own
+      expect(mint).toHaveBeenCalledWith("run12345abcdef", "DATA_SEED", { reissue: false });
+      expect(screen.getByText("Run the inventory on the Coolify host")).toBeTruthy();
+    });
+
+    it("the host-loop script of a data step is worded as the Coolify-host script", async () => {
+      const step = mkStep("DATA_FINAL", "WAITING_OPERATOR", { kind: "operator", allowed: { approve: false, retry: false, skip: false, evidence: false, attach: false, command: true } });
+      const base = mkRun();
+      vi.spyOn(api, "getMigrationRun").mockResolvedValue(
+        mkRun({ currentStep: "DATA_FINAL", options: { ...base.options, sourceRunner: "coolify-host-loop" }, nextAction: { kind: "operator", stepKey: "DATA_FINAL", code: "data-final.run-migrator", since: "2026-11-16T10:00:00.000Z", offersCommand: true } }, stepsWith({ DATA_FINAL: step })),
+      );
+      vi.spyOn(api, "migrationRunCommand").mockResolvedValue({ stepKey: "DATA_FINAL", kind: "host-loop", opId: "op1", expiresAt: new Date(Date.now() + 3600_000).toISOString(), command: "host-loop-script", shownOnce: true });
+      wrap();
+      fireEvent.click(await screen.findByRole("button", { name: "Get the host-loop script" }));
+      await screen.findByText("host-loop-script");
+      expect(screen.getByText("Run on the Coolify host")).toBeTruthy();
+      expect(screen.getByText(/loops over the source hosts/)).toBeTruthy();
+      expect(screen.getByText(/Shown once/)).toBeTruthy(); // this script carries the live token
+    });
+
+    it("a manual-DNS host lists the exact records to enter with a copy button, and what the resolvers show", async () => {
+      const step = mkStep("CUTOVER", "WAITING_OPERATOR", {
+        kind: "operator",
+        allowed: { approve: false, retry: false, skip: false, evidence: true, attach: false, command: false },
+        gate: { passed: false, checks: [{ id: "cutover.manual-dns-switched", status: "warn", code: "cutover.release-manual-dns", subject: "app-a.example.test", params: { host: "app-a.example.test", records: ["app-a.example.test A 203.0.113.10"], observed: "198.51.100.7" } }] },
+      });
+      vi.spyOn(api, "getMigrationRun").mockResolvedValue(
+        mkRun({ currentStep: "CUTOVER", nextAction: { kind: "operator", stepKey: "CUTOVER", code: "cutover.manual-dns", since: "2026-11-16T10:00:00.000Z", attest: ["cutover.manual-dns-switched"] } }, stepsWith({ CUTOVER: step })),
+      );
+      wrap();
+      await screen.findByText("Records to enter");
+      expect(screen.getAllByText("app-a.example.test A 203.0.113.10").length).toBeGreaterThanOrEqual(1);
+      expect(screen.getByText("The resolvers show: 198.51.100.7")).toBeTruthy();
+      expect(screen.getAllByRole("button", { name: "Copy" }).length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("the report names every target server and counts the new evidence kinds", async () => {
+      vi.spyOn(api, "getMigrationRun").mockResolvedValue(multi({ status: "COMPLETED", currentStep: null, allowed: { ...mkRun().allowed, abort: false, pause: false } }));
+      vi.spyOn(api, "getMigrationRunReport").mockResolvedValue({
+        runId: "run12345abcdef", generatedAt: "2026-11-16T10:00:00Z", status: "COMPLETED", mode: "copy", topology: "two-box", dryRun: false, source: { kind: "coolify", host: "h", version: "4.5.0" },
+        target: { serverId: "srv1", serverName: "tugra-1" }, targets: [{ serverId: "srv1", serverName: "tugra-1" }, { serverId: "srv2", serverName: "tugra-b" }], campaign: "wave-1",
+        ponrAt: null, window: { estimatedSec: null, measuredSec: null }, steps: [], items: [],
+        evidenceSummary: { "hub-verified": 2, "migrator-reported": 0, "operator-attested": 0, "source-api-reported": 3, "host-loop-reported": 0 }, manual: [],
+      });
+      wrap();
+      await screen.findByText("Target servers: tugra-1, tugra-b");
+      expect(screen.getByText("Source version: 4.5.0")).toBeTruthy();
+      expect(screen.getByText("Campaign: wave-1")).toBeTruthy();
+      expect(screen.getByText("Reported by the source API")).toBeTruthy();
+      expect(screen.queryByText("Reported by the host script")).toBeNull(); // a kind the run never relied on stays out
+    });
+
+    it("the owner-input card answers the fleet policies and sends only the ones that changed", async () => {
+      vi.spyOn(api, "getMigrationRun").mockResolvedValue(mkRun());
+      const save = vi.spyOn(api, "setMigrationRunInputs").mockResolvedValue(mkRun());
+      wrap();
+      fireEvent.change(await screen.findByLabelText("Hosts that use the source's object storage"), { target: { value: "mirror" } });
+      fireEvent.change(screen.getByLabelText("Write gap you accept (minutes)"), { target: { value: "20" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save inputs" }));
+      await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+      const body = save.mock.calls[0][1];
+      expect(body).toMatchObject({ minioPolicy: "mirror", tickGapAcceptMinutes: 20 });
+      expect(body).not.toHaveProperty("workerPolicy");
+      expect(body).not.toHaveProperty("unlistedDbPolicy");
+      fireEvent.change(screen.getByLabelText("Write gap you accept (minutes)"), { target: { value: "99999" } });
+      expect((screen.getByRole("button", { name: "Save inputs" }) as HTMLButtonElement).disabled).toBe(true);
+    });
+  });
+
+  describe("held workers and image pins", () => {
+    const hints = { imagePins: [{ image: "repo/app:latest", scope: "", digest: `sha256:${"a".repeat(64)}`, evidence: "operator-attested" }], workerMarks: [{ itemRef: "app:host-a:queue", role: "job-runner" as const }] };
+    const open = async () => {
+      fireEvent.click(await screen.findByText("Show and edit"));
+      await screen.findByText("Job runners and web apps");
+    };
+
+    it("loads the recorded facts only when opened, and records a job runner mark and an image digest", async () => {
+      vi.spyOn(api, "getMigrationRun").mockResolvedValue(mkRun());
+      const get = vi.spyOn(api, "getMigrationRunSafetyHints").mockResolvedValue(hints);
+      const marks = vi.spyOn(api, "setMigrationRunWorkerMarks").mockResolvedValue({ ...hints, workerMarks: [...hints.workerMarks, { itemRef: "app:host-a:cron", role: "job-runner" }] });
+      const pins = vi.spyOn(api, "setMigrationRunImagePins").mockResolvedValue(hints);
+      wrap();
+      await screen.findByText("Held workers and image pins");
+      expect(get).not.toHaveBeenCalled();
+      await open();
+      expect(get).toHaveBeenCalledWith("run12345abcdef");
+      expect(screen.getByText("app:host-a:queue")).toBeTruthy();
+      expect(screen.getByText("repo/app:latest")).toBeTruthy();
+
+      // a mark must name a plan app item
+      const item = screen.getByLabelText("Plan item (app:host:name)");
+      fireEvent.change(item, { target: { value: "nonsense" } });
+      expect((screen.getByRole("button", { name: "Save mark" }) as HTMLButtonElement).disabled).toBe(true);
+      fireEvent.change(item, { target: { value: "app:host-a:cron" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save mark" }));
+      await waitFor(() => expect(marks).toHaveBeenCalledWith("run12345abcdef", { marks: [{ itemRef: "app:host-a:cron", role: "job-runner" }] }));
+
+      // a digest must be sha256 plus 64 lower-case hex characters
+      fireEvent.change(screen.getByLabelText("Image as the plan shows it"), { target: { value: "repo/search:latest" } });
+      fireEvent.change(screen.getByLabelText("Digest (sha256:...)"), { target: { value: "sha256:short" } });
+      expect((screen.getByRole("button", { name: "Save digest" }) as HTMLButtonElement).disabled).toBe(true);
+      fireEvent.change(screen.getByLabelText("Digest (sha256:...)"), { target: { value: `sha256:${"b".repeat(64)}` } });
+      fireEvent.click(screen.getByRole("button", { name: "Save digest" }));
+      await waitFor(() => expect(pins).toHaveBeenCalledWith("run12345abcdef", { pins: [{ image: "repo/search:latest", scope: "", digest: `sha256:${"b".repeat(64)}`, evidence: "operator-attested" }] }));
+    });
+
+    it("removes a mark with a null role, and is read-only once the run is past the point of no return", async () => {
+      vi.spyOn(api, "getMigrationRun").mockResolvedValue(mkRun());
+      vi.spyOn(api, "getMigrationRunSafetyHints").mockResolvedValue(hints);
+      const marks = vi.spyOn(api, "setMigrationRunWorkerMarks").mockResolvedValue({ ...hints, workerMarks: [] });
+      wrap();
+      await open();
+      fireEvent.click(screen.getByRole("button", { name: "Remove the mark of app:host-a:queue" }));
+      await waitFor(() => expect(marks).toHaveBeenCalledWith("run12345abcdef", { marks: [{ itemRef: "app:host-a:queue", role: null }] }));
+      cleanup();
+      qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      vi.spyOn(api, "getMigrationRunSafetyHints").mockResolvedValue(hints);
+      vi.spyOn(api, "getMigrationRun").mockResolvedValue(mkRun({ ponrAt: "2026-11-16T10:00:00.000Z" }));
+      wrap();
+      await open();
+      expect(screen.getByText(/can no longer take these facts/)).toBeTruthy();
+      expect((screen.getByRole("button", { name: "Remove the mark of app:host-a:queue" }) as HTMLButtonElement).disabled).toBe(true);
+      expect((screen.getByRole("button", { name: "Save mark" }) as HTMLButtonElement).disabled).toBe(true);
+    });
+  });
+});

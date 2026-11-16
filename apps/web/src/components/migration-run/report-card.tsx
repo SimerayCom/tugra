@@ -5,7 +5,7 @@ import { api, migrationRunReportMdUrl } from "../../lib/api";
 import { useT } from "../../i18n/provider";
 import { Badge, SectionCard, Spinner } from "../ui";
 import { formatDuration } from "../../lib/import";
-import { STEP_TITLE_KEY, codeText } from "../../lib/migration-run";
+import { EVIDENCE_KINDS, STEP_TITLE_KEY, codeText } from "../../lib/migration-run";
 import type { MigrationRunReport } from "../../lib/types";
 import { EvidenceBadge } from "./badges";
 import { CommandBlock } from "./command-block";
@@ -54,15 +54,23 @@ export function ReportBody({ report }: { report: MigrationRunReport }) {
   const ev = report.evidenceSummary;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {(report.source.version || (report.targets?.length ?? 0) > 1 || report.campaign) && (
+        <div style={{ display: "flex", gap: "4px 14px", flexWrap: "wrap", fontSize: 13, color: "var(--c-tx2)" }}>
+          {report.source.version && <span>{t("migrationRun.report.version", { version: report.source.version })}</span>}
+          {(report.targets?.length ?? 0) > 1 && <span>{t("migrationRun.report.targets", { servers: report.targets!.map((x) => x.serverName ?? x.serverId).join(", ") })}</span>}
+          {report.campaign && <span>{t("migrationRun.report.campaign", { campaign: report.campaign })}</span>}
+        </div>
+      )}
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 13 }}>
         <span>{t("migrationRun.report.estimated", { time: report.window.estimatedSec === null ? t("migrationRun.window.none") : (formatDuration(report.window.estimatedSec) ?? "-") })}</span>
         <span>{t("migrationRun.report.measured", { time: report.window.measuredSec === null ? t("migrationRun.window.none") : (formatDuration(report.window.measuredSec) ?? "-") })}</span>
       </div>
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
         <span style={{ fontSize: 12, color: "var(--c-tx3)" }}>{t("migrationRun.report.evidence")}</span>
-        {(["hub-verified", "migrator-reported", "operator-attested"] as const).map((k) => (
+        {/* the three classic kinds always, the two newer ones (source API, host script) only when the run relied on them */}
+        {EVIDENCE_KINDS.filter((k) => (ev[k] ?? 0) > 0 || k === "hub-verified" || k === "migrator-reported" || k === "operator-attested").map((k) => (
           <span key={k} style={{ display: "inline-flex", gap: 4, alignItems: "center", fontSize: 12 }}>
-            <EvidenceBadge kind={k} /> {ev[k]}
+            <EvidenceBadge kind={k} /> {ev[k] ?? 0}
           </span>
         ))}
       </div>

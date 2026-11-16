@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Route } from "lucide-react";
@@ -10,8 +10,22 @@ import { Btn } from "../ui";
 import { Modal } from "../modal";
 import { Checkbox, Field, NumberInput, Select, TextInput } from "../form";
 import { useToast } from "../toast";
-import { MODE_HINT_KEY, MODE_KEY, TOPOLOGY_HINT_KEY, TOPOLOGY_KEY, buildLaunchInput, errorText, launchIssues, looksLikeEmail } from "../../lib/migration-run";
-import type { ImportApplyExtras, ImportPlan, ImportRemoteKind, MigrationRunMode, MigrationRunTopology } from "../../lib/types";
+import {
+  EMPTY_POLICIES,
+  HOST_LOOP_FORM_DEFAULTS,
+  MODE_HINT_KEY,
+  MODE_KEY,
+  TOPOLOGY_HINT_KEY,
+  TOPOLOGY_KEY,
+  buildLaunchInput,
+  errorText,
+  launchIssues,
+  looksLikeEmail,
+  sourceServersOf,
+} from "../../lib/migration-run";
+import { AdvancedFields, type AdvancedState } from "./launch-advanced";
+import { PlacementFields } from "./launch-placement";
+import type { ImportApplyExtras, ImportPlan, ImportRemoteKind, MigrationRunMode, MigrationRunServerMap, MigrationRunTopology } from "../../lib/types";
 
 interface Props {
   plan: ImportPlan;
@@ -52,8 +66,32 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, onClose }: Props
   const [allowBind, setAllowBind] = useState(false);
   const [probe, setProbe] = useState(false);
   const [observe, setObserve] = useState("30");
+  const [placement, setPlacement] = useState<MigrationRunServerMap | null>(null);
+  const [adv, setAdv] = useState<AdvancedState>({
+    campaign: "",
+    sourceRunner: "operator",
+    hostLoop: { ...HOST_LOOP_FORM_DEFAULTS },
+    deployWaves: "single",
+    deployConcurrency: "",
+    largeDbMode: "refuse",
+    stopSource: false,
+    policies: { ...EMPTY_POLICIES },
+  });
 
-  const form = { sessionId, sourceKind: kind, targetServerId, planHash: plan.planHash, extras, mode, topology, dryRun, acmeEmail, allowBind, allowLiveShapeProbe: probe, sourceController: controller, observeMinutes: observe };
+  // Only servers of the target's team can take part in the run (the hub refuses another team's server).
+  const teamId = servers.find((s) => s.id === targetServerId)?.teamId;
+  const placeable = useMemo(() => servers.filter((s) => !teamId || s.teamId === teamId), [servers, teamId]);
+  const sourceRows = useMemo(() => sourceServersOf(plan.items ?? []), [plan.items]);
+  const changeTarget = (id: string) => {
+    // a host that was on the old default follows the new default; hosts the operator moved elsewhere stay where they are
+    if (placement) setPlacement(Object.fromEntries(Object.entries(placement).map(([ref, sid]) => [ref, sid === targetServerId ? id : sid])));
+    setTarget(id);
+  };
+
+  const form = {
+    sessionId, sourceKind: kind, targetServerId, planHash: plan.planHash, extras, mode, topology, dryRun, acmeEmail, allowBind, allowLiveShapeProbe: probe, sourceController: controller, observeMinutes: observe,
+    placement, campaign: adv.campaign, sourceRunner: adv.sourceRunner, hostLoop: adv.hostLoop, deployWaves: adv.deployWaves, deployConcurrency: adv.deployConcurrency, largeDbMode: adv.largeDbMode, stopSource: adv.stopSource, policies: adv.policies,
+  };
   const issues = launchIssues(form);
   const create = useMutation({
     mutationFn: () => api.createMigrationRun(buildLaunchInput(form)),
@@ -77,8 +115,10 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, onClose }: Props
         <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t("migrationRun.launch.dialogDesc")}</p>
 
         <Field label={t("migrationRun.launch.target")} hint={t("migrationRun.launch.targetHint")} error={issues.includes("target") ? t("migrationRun.launch.targetMissing") : undefined}>
-          <Select value={targetServerId} onChange={setTarget} options={servers.map((s) => ({ value: s.id, label: s.name }))} style={{ minHeight: 44 }} />
+          <Select value={targetServerId} onChange={changeTarget} options={servers.map((s) => ({ value: s.id, label: s.name }))} style={{ minHeight: 44 }} />
         </Field>
+
+        <PlacementFields rows={sourceRows} servers={placeable} defaultId={targetServerId} value={placement} onChange={setPlacement} invalid={issues.includes("placement")} />
 
         <div>
           <Checkbox checked={dryRun} onChange={setDryRun} label={t("migrationRun.launch.dryRun")} />
@@ -117,6 +157,8 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, onClose }: Props
 
         <Checkbox checked={allowBind} onChange={setAllowBind} label={t("migrationRun.inputs.allowBind")} />
         <Checkbox checked={probe} onChange={setProbe} label={t("migrationRun.inputs.allowLiveShapeProbe")} />
+
+        <AdvancedFields value={adv} onChange={setAdv} issues={issues} />
 
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
           <Btn variant="ghost" onClick={onClose} disabled={create.isPending}>{t("common.cancel")}</Btn>

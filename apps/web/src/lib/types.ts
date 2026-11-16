@@ -2504,10 +2504,21 @@ export type MigrationRunStepKind = "auto" | "operator" | "approval" | "timer";
 export type MigrationRunRollbackClass = "FREE" | "UNDOABLE" | "LOSSY_AFTER_PONR" | "IRREVERSIBLE";
 export type MigrationRunMode = "copy" | "takeover";
 export type MigrationRunTopology = "two-box" | "swap-proxy";
-export type MigrationRunEvidenceKind = "hub-verified" | "migrator-reported" | "operator-attested";
+export type MigrationRunEvidenceKind = "hub-verified" | "migrator-reported" | "operator-attested" | "source-api-reported" | "host-loop-reported";
 export type MigrationRunCheckStatus = "pass" | "fail" | "warn" | "unknown";
-export type MigrationRunOwnerInputKey = "acmeEmail" | "allowBind" | "allowLiveShapeProbe" | "sourceController";
-export type MigrationRunConfirmKind = "none" | "run-id" | "target-server" | "target-server+source-host" | "source-host";
+export type MigrationRunOwnerInputKey =
+  | "acmeEmail" | "allowBind" | "allowLiveShapeProbe" | "sourceController" | "minioPolicy" | "tickGapAcceptMinutes" | "workerPolicy" | "unlistedDbPolicy" | "orphanVolumePolicy";
+export type MigrationRunMinioPolicy = "hold" | "mirror" | "external";
+export type MigrationRunWorkerPolicy = "hold-dark" | "start-dark" | "exclude";
+export type MigrationRunUnlistedDbPolicy = "block" | "carry" | "skip";
+export type MigrationRunOrphanVolumePolicy = "block" | "skip";
+export type MigrationRunSourceRunner = "operator" | "agent" | "coolify-host-loop";
+export type MigrationRunCommandKind = "migrator" | "host-loop" | "inventory";
+export type MigrationRunLargeDbMode = "refuse" | "stream-logical";
+export type MigrationRunSourceVersionVerdict = "supported" | "newer" | "too-old" | "unknown" | "unchecked";
+/** Source server (Coolify server uuid) to Tugra target server id. */
+export type MigrationRunServerMap = Record<string, string>;
+export type MigrationRunConfirmKind = "none" | "run-id" | "target-server" | "target-servers" | "target-server+source-host" | "target-servers+source-host" | "source-host";
 export type MigrationRunProgressUnit = "item" | "byte" | "volume" | "host" | "app" | "database" | "bucket" | "second";
 
 export type MigrationRunParamValue = string | number | boolean | null | Array<string | number | boolean | null>;
@@ -2537,7 +2548,7 @@ export interface MigrationRunApprovalBinding {
   review: MigrationRunParams;
 }
 export type MigrationRunWait =
-  | { kind: "operator"; code: string; params?: MigrationRunParams; offersCommand?: boolean; attest?: string[] }
+  | { kind: "operator"; code: string; params?: MigrationRunParams; offersCommand?: boolean; commandKind?: MigrationRunCommandKind; attest?: string[] }
   | { kind: "approval"; binding: MigrationRunApprovalBinding }
   | { kind: "timer"; notBefore: string; code: string; params?: MigrationRunParams };
 export interface MigrationRunGate {
@@ -2630,13 +2641,27 @@ export interface MigrationRunOwnerInputs {
   allowBind?: MigrationRunInputRecord<boolean>;
   allowLiveShapeProbe?: MigrationRunInputRecord<boolean>;
   sourceController?: MigrationRunInputRecord<"manual" | "api" | "agent">;
+  minioPolicy?: MigrationRunInputRecord<MigrationRunMinioPolicy>;
+  tickGapAcceptMinutes?: MigrationRunInputRecord<number>;
+  workerPolicy?: MigrationRunInputRecord<MigrationRunWorkerPolicy>;
+  unlistedDbPolicy?: MigrationRunInputRecord<MigrationRunUnlistedDbPolicy>;
+  orphanVolumePolicy?: MigrationRunInputRecord<MigrationRunOrphanVolumePolicy>;
+}
+export interface MigrationRunHostLoopOptions {
+  keyDir: string;
+  parallel: number;
+  connectTimeoutSec: number;
+  retries: number;
 }
 export interface MigrationRunOptions {
   ttlPolicy: "wait" | "skip-ack";
-  deployWaves: "single" | "earlyStateless";
+  deployWaves: "single" | "earlyStateless" | "earlyBuild";
   warmDbSeed: boolean;
   stopSource: boolean;
-  sourceRunner: "operator" | "agent";
+  sourceRunner: MigrationRunSourceRunner;
+  hostLoop?: MigrationRunHostLoopOptions;
+  deployConcurrency?: number;
+  largeDbMode?: MigrationRunLargeDbMode;
   certs: "none" | "seed";
   acceptHttp01Gap: boolean;
   freezeAt?: string;
@@ -2665,8 +2690,17 @@ export interface MigrationRunView {
   actorId: string;
   targetServerId: string;
   targetServerName: string | null;
+  /** Source server (Coolify server uuid) to target server id; `{}` for a single-target run. */
+  serverMap: MigrationRunServerMap;
+  /** Every target server of the run, the default first. */
+  targetServers: Array<{ serverId: string; serverName: string | null; primary: boolean }>;
   sourceKind: ImportRemoteKind;
   sourceHost: string | null;
+  sourceVersion: string | null;
+  sourceVersionVerdict: MigrationRunSourceVersionVerdict;
+  campaign: string | null;
+  /** When the source health baseline was captured; null until then. */
+  baselineAt: string | null;
   opId: string | null;
   opHistory: string[];
   planHash: string;
@@ -2700,8 +2734,11 @@ export interface MigrationRunSummary {
   teamId: string;
   targetServerId: string;
   targetServerName: string | null;
+  targetServerCount: number;
   sourceKind: ImportRemoteKind;
   sourceHost: string | null;
+  sourceVersion: string | null;
+  campaign: string | null;
   mode: MigrationRunMode;
   topology: MigrationRunTopology;
   dryRun: boolean;
@@ -2743,7 +2780,21 @@ export interface MigrationRunCreateInput extends ImportApplyExtras {
   topology?: MigrationRunTopology;
   dryRun?: boolean;
   options?: Partial<MigrationRunOptions>;
-  inputs?: Partial<{ acmeEmail: string | "unknown"; allowBind: boolean | "unknown"; allowLiveShapeProbe: boolean | "unknown"; sourceController: "manual" | "api" | "agent" | "unknown" }>;
+  inputs?: Partial<{
+    acmeEmail: string | "unknown";
+    allowBind: boolean | "unknown";
+    allowLiveShapeProbe: boolean | "unknown";
+    sourceController: "manual" | "api" | "agent" | "unknown";
+    minioPolicy: MigrationRunMinioPolicy | "unknown";
+    tickGapAcceptMinutes: number | "unknown";
+    workerPolicy: MigrationRunWorkerPolicy | "unknown";
+    unlistedDbPolicy: MigrationRunUnlistedDbPolicy | "unknown";
+    orphanVolumePolicy: MigrationRunOrphanVolumePolicy | "unknown";
+  }>;
+  /** Multi-host placement: source server uuid to Tugra target server id (the run's `targetServerId` stays the default). */
+  serverMap?: MigrationRunServerMap;
+  /** Groups the runs of one campaign. */
+  campaign?: string;
 }
 export type MigrationRunInputsRequest = NonNullable<MigrationRunCreateInput["inputs"]>;
 export interface MigrationRunApproveInput {
@@ -2754,6 +2805,8 @@ export interface MigrationRunApproveInput {
 }
 export interface MigrationRunCommandResult {
   stepKey: MigrationRunStepKey;
+  /** Which command this is; absent on a hub that predates the host-loop runner (read as `migrator`). */
+  kind?: MigrationRunCommandKind;
   opId: string;
   expiresAt: string;
   command: string;
@@ -2767,12 +2820,21 @@ export interface MigrationRunReport {
   mode: MigrationRunMode;
   topology: MigrationRunTopology;
   dryRun: boolean;
-  source: { kind: ImportRemoteKind; host: string | null };
+  source: { kind: ImportRemoteKind; host: string | null; version?: string | null };
   target: { serverId: string; serverName: string | null };
+  /** Every target server of the run (default first); empty in a report stored before multi-host runs. */
+  targets?: Array<{ serverId: string; serverName: string | null }>;
+  campaign?: string | null;
   ponrAt: string | null;
   window: { estimatedSec: number | null; measuredSec: number | null };
   steps: Array<{ key: MigrationRunStepKey; status: MigrationRunStepStatus; attempts: number; durationSec: number | null; code: string | null }>;
   items: Array<{ kind: "app" | "database" | "service" | "volume" | "bucket" | "domain"; name: string; outcome: "moved" | "skipped" | "acked" | "failed" | "not-cut-over"; code: string | null; evidence: MigrationRunEvidenceKind | null }>;
-  evidenceSummary: Record<MigrationRunEvidenceKind, number>;
+  evidenceSummary: Partial<Record<MigrationRunEvidenceKind, number>>;
   manual: Array<{ code: string; params?: MigrationRunParams }>;
+}
+
+/** `GET /migration-runs/:id/safety-hints`: facts attested by the people who can see the SOURCE HOST (secret-free). */
+export interface MigrationRunSafetyHints {
+  imagePins: Array<{ image: string; scope: string; digest: string; evidence: string }>;
+  workerMarks: Array<{ itemRef: string; role: "job-runner" | "web" }>;
 }

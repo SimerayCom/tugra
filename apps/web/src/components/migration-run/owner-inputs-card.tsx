@@ -5,13 +5,17 @@ import { useMutation } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { useT } from "../../i18n/provider";
 import { Btn, SectionCard } from "../ui";
-import { Checkbox, Field, Select, TextInput } from "../form";
-import { OWNER_INPUT_HINT_KEY, OWNER_INPUT_LABEL_KEY, looksLikeEmail } from "../../lib/migration-run";
+import { Checkbox, Field, NumberInput, Select, TextInput } from "../form";
+import { OWNER_INPUT_HINT_KEY, OWNER_INPUT_LABEL_KEY, TICK_GAP_MAX_MINUTES, looksLikeEmail, type OwnerPolicyKey } from "../../lib/migration-run";
 import type { MigrationRunInputsRequest, MigrationRunView } from "../../lib/types";
 import { INPUTS_ANCHOR } from "./gate-checks";
+import { PolicySelect } from "./launch-advanced";
 import { useRunPlumbing } from "./use-run-actions";
 
 const isUnknown = (r: { value: unknown } | undefined) => !r || r.value === "unknown";
+const POLICY_KEYS: OwnerPolicyKey[] = ["minioPolicy", "workerPolicy", "unlistedDbPolicy", "orphanVolumePolicy"];
+/** The text a policy input starts from: its answered value, or empty (unanswered: the hub's safe default applies). */
+const initialOf = (r: { value: unknown } | undefined): string => (isUnknown(r) ? "" : String(r!.value));
 
 /** The owner questions as run inputs. An unanswered one blocks only the step that needs it (the gate says which). */
 export function OwnerInputsCard({ run }: { run: MigrationRunView }) {
@@ -23,6 +27,14 @@ export function OwnerInputsCard({ run }: { run: MigrationRunView }) {
   const [probe, setProbe] = useState(inputs.allowLiveShapeProbe?.value === true);
   const [controller, setController] = useState<string>(isUnknown(inputs.sourceController) ? "manual" : String(inputs.sourceController!.value));
   const emailBad = email.trim() !== "" && !looksLikeEmail(email);
+  const [policies, setPolicies] = useState<Record<OwnerPolicyKey, string>>({
+    minioPolicy: initialOf(inputs.minioPolicy),
+    workerPolicy: initialOf(inputs.workerPolicy),
+    unlistedDbPolicy: initialOf(inputs.unlistedDbPolicy),
+    orphanVolumePolicy: initialOf(inputs.orphanVolumePolicy),
+  });
+  const [tickGap, setTickGap] = useState(initialOf(inputs.tickGapAcceptMinutes));
+  const gapBad = tickGap.trim() !== "" && !(Number.isInteger(Number(tickGap)) && Number(tickGap) >= 0 && Number(tickGap) <= TICK_GAP_MAX_MINUTES);
 
   const save = useMutation({
     mutationFn: () => {
@@ -32,6 +44,9 @@ export function OwnerInputsCard({ run }: { run: MigrationRunView }) {
         allowLiveShapeProbe: probe,
         sourceController: controller as "manual" | "api" | "agent",
       };
+      // the fleet policies are sent only when they changed (an unanswered one keeps the hub's safe default, and is not recorded as "unknown" on every save)
+      for (const k of POLICY_KEYS) if (policies[k] !== initialOf(inputs[k])) (body as Record<string, unknown>)[k] = policies[k] || "unknown";
+      if (tickGap !== initialOf(inputs.tickGapAcceptMinutes)) body.tickGapAcceptMinutes = tickGap.trim() === "" ? "unknown" : Number(tickGap);
       return api.setMigrationRunInputs(run.id, body);
     },
     onSuccess: (v) => {
@@ -71,8 +86,18 @@ export function OwnerInputsCard({ run }: { run: MigrationRunView }) {
             <div style={{ fontSize: 11, color: "var(--c-tx3)", margin: "2px 0 0 24px" }}>{t(OWNER_INPUT_HINT_KEY.allowLiveShapeProbe)}</div>
           </div>
         </div>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "var(--c-tx3)", textTransform: "uppercase", letterSpacing: "0.05em", margin: "18px 0 4px" }}>{t("migrationRun.inputs.policiesTitle")}</div>
+        <p style={{ margin: "0 0 12px", fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>{t("migrationRun.inputs.policiesDesc")}</p>
+        <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))" }}>
+          {POLICY_KEYS.map((k) => (
+            <PolicySelect key={k} policy={k} value={policies[k]} onChange={(v) => setPolicies((p) => ({ ...p, [k]: v }))} />
+          ))}
+          <Field label={t(OWNER_INPUT_LABEL_KEY.tickGapAcceptMinutes)} hint={t(OWNER_INPUT_HINT_KEY.tickGapAcceptMinutes)} error={gapBad ? t("migrationRun.inputs.tickGapInvalid") : undefined}>
+            <NumberInput min={0} max={TICK_GAP_MAX_MINUTES} value={tickGap} onChange={(e) => setTickGap(e.target.value)} style={{ minHeight: 44 }} />
+          </Field>
+        </div>
         <div style={{ marginTop: 14 }}>
-          <Btn onClick={() => save.mutate()} disabled={!run.allowed.setInputs || emailBad} loading={save.isPending}>{t("migrationRun.inputs.save")}</Btn>
+          <Btn onClick={() => save.mutate()} disabled={!run.allowed.setInputs || emailBad || gapBad} loading={save.isPending}>{t("migrationRun.inputs.save")}</Btn>
         </div>
       </SectionCard>
     </div>

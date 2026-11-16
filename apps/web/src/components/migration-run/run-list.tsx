@@ -9,9 +9,9 @@ import { useT } from "../../i18n/provider";
 import { scopeByTeam } from "../../lib/team-scope";
 import { useTeamScope } from "../team-scope";
 import { relativeTime } from "../../lib/fleet";
-import { NEXT_KIND_KEY, STEP_TITLE_KEY, codeText, runListRefetchInterval, runTitleParts } from "../../lib/migration-run";
-import { Checkbox } from "../form";
-import { EmptyState, LinkBtn } from "../ui";
+import { NEXT_KIND_KEY, STEP_TITLE_KEY, campaignRollup, codeText, runListRefetchInterval, runTitleParts, validCampaign } from "../../lib/migration-run";
+import { Checkbox, Field, TextInput } from "../form";
+import { Badge, EmptyState, LinkBtn } from "../ui";
 import { ErrorState } from "../error-state";
 import { ListCard, ListRow } from "../list";
 import { PageTitle } from "../page-header";
@@ -22,15 +22,18 @@ import { ModeBadges, RunStatusPill } from "./badges";
 
 function RunRow({ r, index, onOpen }: { r: MigrationRunSummary; index: number; onOpen: () => void }) {
   const t = useT();
-  const { source, target } = runTitleParts(r);
+  const { source, target, extraTargets } = runTitleParts(r);
   const pct = r.stepsTotal > 0 ? Math.round((r.stepsPassed / r.stepsTotal) * 100) : 0;
   return (
     <ListRow index={index} onClick={onOpen}>
       <div style={{ display: "flex", alignItems: "center", gap: "8px 14px", flexWrap: "wrap", width: "100%" }}>
         <div style={{ flex: "1 1 220px", minWidth: 0 }}>
-          <div style={{ fontWeight: 600, wordBreak: "break-word" }}>{source} → {target}</div>
-          <div style={{ marginTop: 4 }}>
+          <div style={{ fontWeight: 600, wordBreak: "break-word" }}>{source} → {target}{extraTargets > 0 ? ` +${extraTargets}` : ""}</div>
+          <div style={{ marginTop: 4, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
             <ModeBadges mode={r.mode} topology={r.topology} dryRun={r.dryRun} />
+            {r.targetServerCount > 1 && <Badge tone="lapis">{t("migrationRun.list.servers", { count: r.targetServerCount })}</Badge>}
+            {r.campaign && <Badge tone="gold">{r.campaign}</Badge>}
+            {r.sourceVersion && <Badge>{t("migrationRun.list.version", { version: r.sourceVersion })}</Badge>}
           </div>
           <div style={{ fontSize: 12, color: "var(--c-tx3)", marginTop: 4, wordBreak: "break-word" }}>
             {r.failure ? codeText(t, r.failure.code) : r.currentStep ? `${t(STEP_TITLE_KEY[r.currentStep])} · ${t(NEXT_KIND_KEY[r.nextActionKind])}` : t(NEXT_KIND_KEY[r.nextActionKind])}
@@ -50,18 +53,43 @@ export function RunList() {
   const router = useRouter();
   const { teamId } = useTeamScope();
   const [activeOnly, setActiveOnly] = useState(false);
+  const [campaignText, setCampaignText] = useState("");
+  // the hub filters by the exact label; an invalid or empty text lists every run
+  const campaign = validCampaign(campaignText) ? campaignText.trim() : "";
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ["migration-runs", activeOnly],
-    queryFn: () => api.listMigrationRuns({ ...(activeOnly ? { active: true } : {}), limit: 100 }),
+    queryKey: ["migration-runs", activeOnly, campaign],
+    queryFn: () => api.listMigrationRuns({ ...(activeOnly ? { active: true } : {}), ...(campaign ? { campaign } : {}), limit: 100 }),
     refetchInterval: (q) => runListRefetchInterval(q.state.data as MigrationRunSummary[] | undefined),
   });
   const scoped = scopeByTeam(data ?? [], teamId);
+  const rollup = campaignRollup(scoped);
   return (
     <div style={{ padding: "var(--page-pad)" }}>
       <PageTitle title={t("migrationRun.title")} subtitle={t("migrationRun.subtitle")} actions={<LinkBtn href="/import">{t("migrationRun.new")}</LinkBtn>} />
-      <div style={{ marginBottom: 12 }}>
+      <div style={{ marginBottom: 12, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
         <Checkbox checked={activeOnly} onChange={setActiveOnly} label={t("migrationRun.list.activeOnly")} />
+        <Field label={t("migrationRun.list.campaign")} style={{ flex: "1 1 220px", maxWidth: 320 }}>
+          <TextInput value={campaignText} onChange={(e) => setCampaignText(e.target.value)} placeholder={t("migrationRun.list.campaignAll")} maxLength={80} autoComplete="off" style={{ minHeight: 44 }} />
+        </Field>
       </div>
+      {rollup.length > 0 && (
+        <ul style={{ margin: "0 0 12px", padding: 0, listStyle: "none", display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {rollup.map((c) => (
+            <li key={c.campaign}>
+              <button
+                type="button"
+                className="tg-btn"
+                onClick={() => setCampaignText(c.campaign)}
+                aria-label={t("migrationRun.list.campaignFilter", { campaign: c.campaign })}
+                style={{ minHeight: 44, padding: "6px 12px", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", background: "var(--c-el)", color: "var(--c-tx)", textAlign: "left", cursor: "pointer", fontSize: 12 }}
+              >
+                <strong style={{ display: "block", wordBreak: "break-word" }}>{c.campaign}</strong>
+                <span style={{ color: "var(--c-tx3)" }}>{t("migrationRun.list.campaignRollup", { total: c.total, completed: c.completed, live: c.live })}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       {isLoading && <SkeletonTable rows={4} />}
       {isError && !data && <ErrorState onRetry={() => refetch()} />}
       {data && (

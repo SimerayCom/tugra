@@ -8,7 +8,7 @@ import { Btn } from "../ui";
 import { CopyBtn } from "../copy-row";
 import { formatDuration } from "../../lib/import";
 import { secondsUntil } from "../../lib/migration-run";
-import type { MigrationRunCommandResult, MigrationRunStepKey } from "../../lib/types";
+import type { MigrationRunCommandKind, MigrationRunCommandResult, MigrationRunStepKey } from "../../lib/types";
 import { useRunPlumbing } from "./use-run-actions";
 
 const codeBox: React.CSSProperties = {
@@ -26,7 +26,19 @@ const codeBox: React.CSSProperties = {
 
 /** The exact source-host command of an operator step. The hub mints the migration token when the operator asks and
  *  returns the command ONCE: this block holds it in memory only (a reload drops it; "Issue again" mints a new one). */
-export function CommandBlock({ runId, stepKey, tokenless = false }: { runId: string; stepKey: MigrationRunStepKey; /** The script carries no migration token (the unfreeze of an aborted run): it can be asked for again at any time. */ tokenless?: boolean }) {
+export function CommandBlock({
+  runId,
+  stepKey,
+  tokenless = false,
+  kind = "migrator",
+}: {
+  runId: string;
+  stepKey: MigrationRunStepKey;
+  /** The script carries no migration token (the unfreeze of an aborted run): it can be asked for again at any time. */
+  tokenless?: boolean;
+  /** What the step expects (the hub decides the command from what the step waits for; this only words the intro and the button). */
+  kind?: MigrationRunCommandKind;
+}) {
   const { onError, t } = useRunPlumbing(runId);
   const [result, setResult] = useState<MigrationRunCommandResult | null>(null);
   const mint = useMutation({
@@ -35,13 +47,17 @@ export function CommandBlock({ runId, stepKey, tokenless = false }: { runId: str
     onError,
   });
   const left = result && !tokenless ? secondsUntil(result.expiresAt, Date.now()) : null;
+  const shown: MigrationRunCommandKind = result?.kind ?? kind;
+  const intro = tokenless ? "migrationRun.command.unfreezeIntro" : shown === "host-loop" ? "migrationRun.command.hostLoopIntro" : shown === "inventory" ? "migrationRun.command.inventoryIntro" : "migrationRun.command.intro";
+  const getLabel = tokenless ? "migrationRun.command.getUnfreeze" : kind === "host-loop" ? "migrationRun.command.getHostLoop" : kind === "inventory" ? "migrationRun.command.getInventory" : "migrationRun.command.get";
+  const rowLabel = tokenless ? "migrationRun.command.unfreeze" : shown === "host-loop" ? "migrationRun.command.hostLoop" : shown === "inventory" ? "migrationRun.command.inventory" : "migrationRun.command.bootstrap";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <p style={{ margin: 0, fontSize: 13, color: "var(--c-tx2)", lineHeight: 1.5 }}>{t(tokenless ? "migrationRun.command.unfreezeIntro" : "migrationRun.command.intro")}</p>
+      <p style={{ margin: 0, fontSize: 13, color: "var(--c-tx2)", lineHeight: 1.5 }}>{t(intro)}</p>
       {!result ? (
         <div>
-          <Btn onClick={() => mint.mutate(false)} loading={mint.isPending}>{t(tokenless ? "migrationRun.command.getUnfreeze" : "migrationRun.command.get")}</Btn>
+          <Btn onClick={() => mint.mutate(false)} loading={mint.isPending}>{t(getLabel)}</Btn>
         </div>
       ) : (
         <>
@@ -51,7 +67,7 @@ export function CommandBlock({ runId, stepKey, tokenless = false }: { runId: str
               {left !== null && <> {t("migrationRun.command.expires", { time: formatDuration(left) ?? "0 s" })}</>}
             </div>
           )}
-          <CommandRow label={t(tokenless ? "migrationRun.command.unfreeze" : "migrationRun.command.bootstrap")} text={result.command} />
+          <CommandRow label={t(rowLabel)} text={result.command} />
           {result.commands && (
             <>
               <CommandRow label={t("migrationRun.command.inspect")} text={result.commands.dryRun} />

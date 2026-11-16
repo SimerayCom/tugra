@@ -7,7 +7,7 @@ import nav from "./locales/en/nav.json";
 import {
   CHECK_STATUS_KEY, CONFIRM_PROMPT_KEY, DRY_KEY, ERROR_CODE_KEY, EVIDENCE_HINT_KEY, EVIDENCE_KEY, MIGRATION_RUN_STATUSES, MIGRATION_RUN_STEP_KEYS, MIGRATION_RUN_STEP_STATUSES,
   MODE_HINT_KEY, MODE_KEY, NEXT_KIND_KEY, OWNER_INPUT_HINT_KEY, OWNER_INPUT_LABEL_KEY, REVIEW_LABEL_KEY, ROLLBACK_KEY, RUN_STATUS_KEY, STEP_DESC_KEY, STEP_KIND_KEY, STEP_STATUS_KEY, STEP_TITLE_KEY,
-  TOPOLOGY_HINT_KEY, TOPOLOGY_KEY, UNIT_KEY, codeKey,
+  TOPOLOGY_HINT_KEY, TOPOLOGY_KEY, UNIT_KEY, VERSION_VERDICT_HINT_KEY, VERSION_VERDICT_KEY, OWNER_POLICY_CHOICE_KEY, EVIDENCE_KINDS, codeKey,
 } from "../lib/migration-run";
 
 const SRC = path.resolve(__dirname, "..");
@@ -52,6 +52,7 @@ describe("guided migration i18n coverage", () => {
     const maps: Array<Record<string, string>> = [
       RUN_STATUS_KEY, STEP_STATUS_KEY, STEP_TITLE_KEY, STEP_DESC_KEY, STEP_KIND_KEY, ROLLBACK_KEY, EVIDENCE_KEY, EVIDENCE_HINT_KEY, CHECK_STATUS_KEY, MODE_KEY, MODE_HINT_KEY, TOPOLOGY_KEY, TOPOLOGY_HINT_KEY,
       NEXT_KIND_KEY, UNIT_KEY, OWNER_INPUT_LABEL_KEY, OWNER_INPUT_HINT_KEY, CONFIRM_PROMPT_KEY, DRY_KEY, ERROR_CODE_KEY, REVIEW_LABEL_KEY,
+      VERSION_VERDICT_KEY, VERSION_VERDICT_HINT_KEY, ...Object.values(OWNER_POLICY_CHOICE_KEY),
     ];
     for (const m of maps) for (const [code, key] of Object.entries(m)) expect(typeof lookup(en, key), `${code} -> ${key}`).toBe("string");
     expect(Object.keys(RUN_STATUS_KEY).sort()).toEqual([...MIGRATION_RUN_STATUSES].sort());
@@ -60,12 +61,19 @@ describe("guided migration i18n coverage", () => {
     expect(Object.keys(STEP_DESC_KEY).sort()).toEqual([...MIGRATION_RUN_STEP_KEYS].sort());
   });
 
+  it("every evidence kind, owner input and confirmation kind the hub speaks is worded", () => {
+    expect(Object.keys(EVIDENCE_KEY).sort()).toEqual([...EVIDENCE_KINDS].sort());
+    expect(Object.keys(EVIDENCE_HINT_KEY).sort()).toEqual([...EVIDENCE_KINDS].sort());
+    expect(Object.keys(OWNER_INPUT_LABEL_KEY).sort()).toEqual(["acmeEmail", "allowBind", "allowLiveShapeProbe", "minioPolicy", "orphanVolumePolicy", "sourceController", "tickGapAcceptMinutes", "unlistedDbPolicy", "workerPolicy"]);
+    expect(Object.keys(CONFIRM_PROMPT_KEY).sort()).toEqual(["none", "run-id", "source-host", "target-server", "target-server+source-host", "target-servers", "target-servers+source-host"]);
+  });
+
   it("every engine event code from the contract has a localized message", () => {
     const ENGINE = [
       "run.created", "run.started", "run.promoted", "run.paused", "run.resumed", "run.waiting", "run.failed", "run.completed", "run.dry-run-done", "run.abort.requested", "run.aborted",
       "run.cleanup.started", "run.rolled-back", "run.reverse.started", "run.reversed", "run.ponr.reached", "run.auth-lost", "run.recovered", "run.input.set", "run.session.refreshed",
       "step.entered", "step.waiting", "step.passed", "step.failed", "step.skipped", "step.retry", "step.compensated", "step.evidence.added", "step.attached", "step.command.issued",
-      "approval.accepted", "approval.void", "approval.expired", "step.not-applicable", "step.post-gate-failed", "step.internal-error",
+      "run.source-version", "approval.accepted", "approval.void", "approval.expired", "step.not-applicable", "step.post-gate-failed", "step.internal-error",
     ];
     for (const c of ENGINE) expect(typeof lookup(en, codeKey(c)), c).toBe("string");
   });

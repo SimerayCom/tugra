@@ -18,6 +18,22 @@ import {
   evidenceCounts,
   humanizeCode,
   humanizeKey,
+  campaignRollup,
+  defaultPlacement,
+  evidenceTone,
+  hintsClosed,
+  placementTargetCount,
+  policyInputs,
+  runTitleParts,
+  sourceServersOf,
+  targetServerNames,
+  validAppItemRef,
+  validCampaign,
+  validDigest,
+  validImageRef,
+  validKeyDir,
+  EMPTY_POLICIES,
+  HOST_LOOP_FORM_DEFAULTS,
   isPastPonr,
   isTerminalRun,
   joinConfirmNames,
@@ -191,7 +207,7 @@ describe("gates", () => {
     expect(checksNeedingInput(gate).map((c) => c.id)).toEqual(["c"]);
   });
   it("counts passes by evidence kind, so a weaker kind is never merged into a stronger one", () => {
-    expect(evidenceCounts(gate)).toEqual({ "hub-verified": 1, "migrator-reported": 1, "operator-attested": 0 });
+    expect(evidenceCounts(gate)).toEqual({ "hub-verified": 1, "migrator-reported": 1, "operator-attested": 0, "source-api-reported": 0, "host-loop-reported": 0 });
   });
   it("lists dry-run blocks first and totals the verdict", () => {
     const progress = { done: 0, total: 0, unit: "item" as const, dryRun: [
@@ -329,5 +345,167 @@ describe("errors", () => {
     expect(errorText(t, new Error("human-confirmation-required"))).toContain("person");
     expect(errorText(t, new Error("Something specific"))).toBe("Something specific");
     expect(errorText(t, null)).toBe("Something went wrong. Try again.");
+  });
+});
+
+describe("multi-host typed confirmation", () => {
+  const multi = {
+    ...run,
+    targetServers: [
+      { serverId: "s2", serverName: "tugra-b", primary: false },
+      { serverId: "s1", serverName: "tugra-1", primary: true },
+      { serverId: "s3", serverName: "tugra-1", primary: false },
+    ],
+  };
+  it("names every distinct target server, sorted by code point", () => {
+    expect(targetServerNames(multi)).toEqual(["tugra-1", "tugra-b"]);
+    expect(confirmNames("target-servers", multi)).toEqual(["tugra-1", "tugra-b"]);
+    expect(confirmNames("target-servers+source-host", multi)).toEqual(["tugra-1", "tugra-b", "coolify.example.org"]);
+  });
+  it("blocks when ANY target server has no known name, so no host can be skipped", () => {
+    const hole = { ...multi, targetServers: [...multi.targetServers, { serverId: "s4", serverName: null, primary: false }] };
+    expect(confirmNames("target-servers", hole)).toBeNull();
+    expect(confirmNames("target-servers+source-host", { ...multi, sourceHost: null })).toBeNull();
+  });
+  it("falls back to the default server for a run view without the list", () => {
+    expect(targetServerNames(run)).toEqual(["tugra-1"]);
+  });
+  it("joins the server names with a comma and a space, then the source host after one space (what the hub compares)", () => {
+    expect(joinConfirmNames(["tugra-1", "tugra-b"], "target-servers")).toBe("tugra-1, tugra-b");
+    expect(joinConfirmNames(["tugra-1", "tugra-b", "h"], "target-servers+source-host")).toBe("tugra-1, tugra-b h");
+    expect(joinConfirmNames(["tugra-1", "h"], "target-server+source-host")).toBe("tugra-1 h");
+  });
+  it("an approval payload for a multi-host binding carries the joined text", () => {
+    const b = binding({ confirm: "target-servers+source-host" });
+    const p = approvalPayload(b, draft({ typed: ["tugra-1", "tugra-b", "h"] }));
+    expect(p.confirmName).toBe("tugra-1, tugra-b h");
+  });
+});
+
+describe("source hosts and placement", () => {
+  const items = [
+    { itemRef: "app:host-a:web", kind: "app" as const },
+    { itemRef: "database:host-a:db1", kind: "database" as const },
+    { itemRef: "volume:host-b:v1:data", kind: "volume" as const },
+    { itemRef: "service:host-b:svc", kind: "service" as const },
+    { itemRef: "app:_:orphan", kind: "app" as const },
+  ];
+  it("reads the source hosts from the item refs, with counts, the unknown host last", () => {
+    expect(sourceServersOf(items)).toEqual([
+      { ref: "host-a", apps: 1, databases: 1, services: 0, volumes: 0 },
+      { ref: "host-b", apps: 0, databases: 0, services: 1, volumes: 1 },
+      { ref: "_", apps: 1, databases: 0, services: 0, volumes: 0 },
+    ]);
+    expect(sourceServersOf([])).toEqual([]);
+  });
+  it("places every host on the default server first, and counts the distinct targets", () => {
+    const rows = sourceServersOf(items);
+    const map = defaultPlacement(rows, "srv1");
+    expect(map).toEqual({ "host-a": "srv1", "host-b": "srv1", _: "srv1" });
+    expect(placementTargetCount("srv1", map)).toBe(1);
+    expect(placementTargetCount("srv1", { ...map, "host-b": "srv2" })).toBe(2);
+    expect(placementTargetCount("srv1", null)).toBe(1);
+  });
+});
+
+describe("launch form: placement, runner, policies", () => {
+  const base = { sessionId: "s1", sourceKind: "coolify" as const, targetServerId: "srv1", planHash: "a".repeat(32), mode: "copy" as const, topology: "two-box" as const, dryRun: true, acmeEmail: "", allowBind: false, allowLiveShapeProbe: false, sourceController: "manual" as const, observeMinutes: "30" };
+  it("sends nothing new for a plain single-target form (a stored form keeps working)", () => {
+    const body = buildLaunchInput(base);
+    expect(body).not.toHaveProperty("serverMap");
+    expect(body).not.toHaveProperty("campaign");
+    expect(body.options).toEqual({ observeMinutes: 30 });
+    expect(body.inputs).toEqual({ acmeEmail: "unknown", allowBind: false, allowLiveShapeProbe: false, sourceController: "manual" });
+  });
+  it("sends the placement as the run-level serverMap and keeps the form's target as the default", () => {
+    const body = buildLaunchInput({ ...base, placement: { "host-a": "srv1", "host-b": "srv2" }, campaign: "  wave-1 " });
+    expect(body.serverMap).toEqual({ "host-a": "srv1", "host-b": "srv2" });
+    expect(body.targetServerId).toBe("srv1");
+    expect(body.campaign).toBe("wave-1");
+  });
+  it("sends the host-loop runner with its tuning, and only that runner's tuning", () => {
+    const hostLoop = { ...HOST_LOOP_FORM_DEFAULTS, parallel: "2", retries: "0" };
+    expect(buildLaunchInput({ ...base, sourceRunner: "coolify-host-loop", hostLoop }).options).toEqual({
+      observeMinutes: 30,
+      sourceRunner: "coolify-host-loop",
+      hostLoop: { keyDir: "/data/coolify/ssh/keys", parallel: 2, connectTimeoutSec: 15, retries: 0 },
+    });
+    expect(buildLaunchInput({ ...base, sourceRunner: "operator", hostLoop }).options).toEqual({ observeMinutes: 30 });
+  });
+  it("sends the build, large-db and stop-source options only when they differ from the defaults", () => {
+    expect(buildLaunchInput({ ...base, deployWaves: "earlyBuild", deployConcurrency: "2", largeDbMode: "stream-logical", stopSource: true }).options).toEqual({
+      observeMinutes: 30, deployWaves: "earlyBuild", deployConcurrency: 2, largeDbMode: "stream-logical", stopSource: true,
+    });
+    expect(buildLaunchInput({ ...base, deployWaves: "single", deployConcurrency: " ", largeDbMode: "refuse", stopSource: false }).options).toEqual({ observeMinutes: 30 });
+  });
+  it("sends only the policy answers that were given; an unanswered one keeps the hub's safe default", () => {
+    expect(policyInputs(undefined)).toEqual({});
+    expect(policyInputs(EMPTY_POLICIES)).toEqual({});
+    expect(policyInputs({ ...EMPTY_POLICIES, minioPolicy: "mirror", workerPolicy: "exclude", tickGapAcceptMinutes: "15" })).toEqual({ minioPolicy: "mirror", workerPolicy: "exclude", tickGapAcceptMinutes: 15 });
+    expect(buildLaunchInput({ ...base, policies: { ...EMPTY_POLICIES, orphanVolumePolicy: "skip" } }).inputs).toMatchObject({ orphanVolumePolicy: "skip" });
+  });
+  it("refuses what the hub would refuse", () => {
+    expect(launchIssues({ ...base, placement: {} })).toEqual(["placement"]);
+    expect(launchIssues({ ...base, placement: { a: "" } })).toEqual(["placement"]);
+    expect(launchIssues({ ...base, placement: Object.fromEntries(Array.from({ length: 65 }, (_, i) => [`h${i}`, "srv1"])) })).toEqual(["placement"]);
+    expect(launchIssues({ ...base, placement: { a: "srv1" } })).toEqual([]);
+    expect(launchIssues({ ...base, campaign: "x".repeat(81) })).toEqual(["campaign"]);
+    expect(launchIssues({ ...base, campaign: "   " })).toEqual([]);
+    expect(launchIssues({ ...base, sourceRunner: "coolify-host-loop", hostLoop: { ...HOST_LOOP_FORM_DEFAULTS, keyDir: "keys" } })).toEqual(["hostLoop"]);
+    expect(launchIssues({ ...base, sourceRunner: "coolify-host-loop", hostLoop: { ...HOST_LOOP_FORM_DEFAULTS, parallel: "9" } })).toEqual(["hostLoop"]);
+    expect(launchIssues({ ...base, sourceRunner: "coolify-host-loop", hostLoop: { ...HOST_LOOP_FORM_DEFAULTS } })).toEqual([]);
+    // the tuning only matters for the host-loop runner
+    expect(launchIssues({ ...base, sourceRunner: "operator", hostLoop: { ...HOST_LOOP_FORM_DEFAULTS, keyDir: "keys" } })).toEqual([]);
+    expect(launchIssues({ ...base, deployConcurrency: "9" })).toEqual(["concurrency"]);
+    expect(launchIssues({ ...base, policies: { ...EMPTY_POLICIES, tickGapAcceptMinutes: "10081" } })).toEqual(["tickGap"]);
+    expect(launchIssues({ ...base, policies: { ...EMPTY_POLICIES, tickGapAcceptMinutes: "10080" } })).toEqual([]);
+  });
+  it("validates the pieces the way the hub does", () => {
+    expect(validKeyDir("/data/coolify/ssh/keys")).toBe(true);
+    expect(validKeyDir("/data/../etc")).toBe(false);
+    expect(validKeyDir("/data/keys; rm")).toBe(false);
+    expect(validKeyDir("relative/path")).toBe(false);
+    expect(validCampaign("wave 1")).toBe(true);
+    expect(validCampaign("")).toBe(false);
+    expect(validCampaign("a\u0007b")).toBe(false);
+    expect(validDigest(`sha256:${"a".repeat(64)}`)).toBe(true);
+    expect(validDigest(`sha256:${"A".repeat(64)}`)).toBe(false);
+    expect(validDigest("sha256:abc")).toBe(false);
+    expect(validImageRef("repo/app:latest")).toBe(true);
+    expect(validImageRef("bad image")).toBe(false);
+    expect(validAppItemRef("app:host-a:web-1")).toBe(true);
+    expect(validAppItemRef("database:host-a:db")).toBe(false);
+  });
+});
+
+describe("run list helpers", () => {
+  it("counts extra target servers for the title", () => {
+    expect(runTitleParts({ sourceHost: "h", sourceKind: "coolify", targetServerName: "t", targetServerId: "s", targetServerCount: 3 })).toEqual({ source: "h", target: "t", extraTargets: 2 });
+    expect(runTitleParts({ sourceHost: null, sourceKind: "coolify", targetServerName: null, targetServerId: "s" })).toEqual({ source: "coolify", target: "s", extraTargets: 0 });
+  });
+  it("rolls the runs of a campaign up (completed, still live) and skips runs with no campaign", () => {
+    const rows = [
+      { campaign: "wave-2", status: "COMPLETED" as const },
+      { campaign: "wave-2", status: "WAITING" as const },
+      { campaign: "wave-2", status: "ABORTED" as const },
+      { campaign: "wave-1", status: "RUNNING" as const },
+      { campaign: null, status: "RUNNING" as const },
+    ];
+    expect(campaignRollup(rows)).toEqual([
+      { campaign: "wave-1", total: 1, completed: 0, live: 1 },
+      { campaign: "wave-2", total: 3, completed: 1, live: 1 },
+    ]);
+  });
+  it("words the evidence kinds: the two newer kinds are never drawn like a hub-verified one", () => {
+    expect(evidenceTone("hub-verified")).toBe("ok");
+    expect(evidenceTone("operator-attested")).toBe("muted");
+    expect(evidenceTone("source-api-reported")).toBe("warn");
+    expect(evidenceTone("host-loop-reported")).toBe("warn");
+  });
+  it("knows when a run can no longer take safety facts", () => {
+    expect(hintsClosed({ status: "WAITING", ponrAt: null })).toBe(false);
+    expect(hintsClosed({ status: "DRY_RUN_DONE", ponrAt: null })).toBe(false);
+    expect(hintsClosed({ status: "WAITING", ponrAt: "2026-11-16T10:00:00Z" })).toBe(true);
+    expect(hintsClosed({ status: "COMPLETED", ponrAt: null })).toBe(true);
   });
 });

@@ -63,7 +63,7 @@ export function NextActionCard({ run }: { run: MigrationRunView }) {
           </div>
         )}
 
-        {na.kind === "operator" && step && <OperatorTools runId={run.id} step={step} attest={na.attest} offersCommand={na.offersCommand} />}
+        {na.kind === "operator" && step && <OperatorTools runId={run.id} step={step} attest={na.attest} offersCommand={na.offersCommand} runnerIsHostLoop={run.options.sourceRunner === "coolify-host-loop"} />}
 
         {na.kind === "approval" && step && na.approval && <ApprovalForm key={step.key} run={run} stepKey={step.key} binding={na.approval} gate={step.gate} />}
 

@@ -1,4 +1,5 @@
 import type {
+  ImportPlanItem,
   MigrationRunApprovalBinding,
   MigrationRunCheckStatus,
   MigrationRunConfirmKind,
@@ -24,6 +25,9 @@ import type {
   MigrationRunTopology,
   MigrationRunView,
   MigrationRunOwnerInputKey,
+  MigrationRunOptions as RunOptionsType,
+  MigrationRunServerMap,
+  MigrationRunSourceVersionVerdict,
   ImportApplyExtras,
   ImportRemoteKind,
 } from "./types";
@@ -128,11 +132,15 @@ export const EVIDENCE_KEY: Record<MigrationRunEvidenceKind, string> = {
   "hub-verified": "migrationRun.evidence.hub-verified",
   "migrator-reported": "migrationRun.evidence.migrator-reported",
   "operator-attested": "migrationRun.evidence.operator-attested",
+  "source-api-reported": "migrationRun.evidence.source-api-reported",
+  "host-loop-reported": "migrationRun.evidence.host-loop-reported",
 };
 export const EVIDENCE_HINT_KEY: Record<MigrationRunEvidenceKind, string> = {
   "hub-verified": "migrationRun.evidence.hint.hub-verified",
   "migrator-reported": "migrationRun.evidence.hint.migrator-reported",
   "operator-attested": "migrationRun.evidence.hint.operator-attested",
+  "source-api-reported": "migrationRun.evidence.hint.source-api-reported",
+  "host-loop-reported": "migrationRun.evidence.hint.host-loop-reported",
 };
 export const CHECK_STATUS_KEY: Record<MigrationRunCheckStatus, string> = {
   pass: "migrationRun.check.pass",
@@ -188,18 +196,79 @@ export const OWNER_INPUT_LABEL_KEY: Record<MigrationRunOwnerInputKey, string> = 
   allowBind: "migrationRun.inputs.allowBind",
   allowLiveShapeProbe: "migrationRun.inputs.allowLiveShapeProbe",
   sourceController: "migrationRun.inputs.sourceController",
+  minioPolicy: "migrationRun.inputs.minioPolicy",
+  tickGapAcceptMinutes: "migrationRun.inputs.tickGapAcceptMinutes",
+  workerPolicy: "migrationRun.inputs.workerPolicy",
+  unlistedDbPolicy: "migrationRun.inputs.unlistedDbPolicy",
+  orphanVolumePolicy: "migrationRun.inputs.orphanVolumePolicy",
 };
 export const OWNER_INPUT_HINT_KEY: Record<MigrationRunOwnerInputKey, string> = {
   acmeEmail: "migrationRun.inputs.acmeEmailHint",
   allowBind: "migrationRun.inputs.allowBindHint",
   allowLiveShapeProbe: "migrationRun.inputs.allowLiveShapeProbeHint",
   sourceController: "migrationRun.inputs.sourceControllerHint",
+  minioPolicy: "migrationRun.inputs.minioPolicyHint",
+  tickGapAcceptMinutes: "migrationRun.inputs.tickGapAcceptMinutesHint",
+  workerPolicy: "migrationRun.inputs.workerPolicyHint",
+  unlistedDbPolicy: "migrationRun.inputs.unlistedDbPolicyHint",
+  orphanVolumePolicy: "migrationRun.inputs.orphanVolumePolicyHint",
 };
+
+/** The choices of the four enum-valued owner inputs, in the order the hub documents them; the first is the fail-closed default. */
+export const OWNER_POLICY_CHOICES = {
+  minioPolicy: ["hold", "mirror", "external"],
+  workerPolicy: ["hold-dark", "start-dark", "exclude"],
+  unlistedDbPolicy: ["block", "carry", "skip"],
+  orphanVolumePolicy: ["block", "skip"],
+} as const;
+export type OwnerPolicyKey = keyof typeof OWNER_POLICY_CHOICES;
+/** Literal-key map for every choice label (`migrationRun.inputs.choice.<policy>.<value>`). */
+export const OWNER_POLICY_CHOICE_KEY: Record<OwnerPolicyKey, Record<string, string>> = {
+  minioPolicy: {
+    hold: "migrationRun.inputs.choice.minioPolicy.hold",
+    mirror: "migrationRun.inputs.choice.minioPolicy.mirror",
+    external: "migrationRun.inputs.choice.minioPolicy.external",
+  },
+  workerPolicy: {
+    "hold-dark": "migrationRun.inputs.choice.workerPolicy.hold-dark",
+    "start-dark": "migrationRun.inputs.choice.workerPolicy.start-dark",
+    exclude: "migrationRun.inputs.choice.workerPolicy.exclude",
+  },
+  unlistedDbPolicy: {
+    block: "migrationRun.inputs.choice.unlistedDbPolicy.block",
+    carry: "migrationRun.inputs.choice.unlistedDbPolicy.carry",
+    skip: "migrationRun.inputs.choice.unlistedDbPolicy.skip",
+  },
+  orphanVolumePolicy: {
+    block: "migrationRun.inputs.choice.orphanVolumePolicy.block",
+    skip: "migrationRun.inputs.choice.orphanVolumePolicy.skip",
+  },
+};
+export const TICK_GAP_MAX_MINUTES = 7 * 24 * 60;
+
+/** The source version verdict labels and hints (the hub derives the verdict; the web only words it). */
+export const VERSION_VERDICT_KEY: Record<MigrationRunSourceVersionVerdict, string> = {
+  supported: "migrationRun.version.supported",
+  newer: "migrationRun.version.newer",
+  "too-old": "migrationRun.version.too-old",
+  unknown: "migrationRun.version.unknown",
+  unchecked: "migrationRun.version.unchecked",
+};
+export const VERSION_VERDICT_HINT_KEY: Record<MigrationRunSourceVersionVerdict, string> = {
+  supported: "migrationRun.version.supportedHint",
+  newer: "migrationRun.version.newerHint",
+  "too-old": "migrationRun.version.too-oldHint",
+  unknown: "migrationRun.version.unknownHint",
+  unchecked: "migrationRun.version.uncheckedHint",
+};
+export const versionVerdictColor = (v: MigrationRunSourceVersionVerdict): string => (v === "supported" || v === "unchecked" ? "var(--c-g)" : v === "too-old" ? "var(--c-r)" : "var(--c-am)");
 export const CONFIRM_PROMPT_KEY: Record<MigrationRunConfirmKind, string> = {
   none: "migrationRun.confirm.none",
   "run-id": "migrationRun.confirm.runId",
   "target-server": "migrationRun.confirm.targetServer",
+  "target-servers": "migrationRun.confirm.targetServers",
   "target-server+source-host": "migrationRun.confirm.targetServerAndHost",
+  "target-servers+source-host": "migrationRun.confirm.targetServersAndHost",
   "source-host": "migrationRun.confirm.sourceHost",
 };
 
@@ -291,7 +360,9 @@ export function stepStatusColor(s: MigrationRunStepStatus): string {
 export const checkStatusColor = (s: MigrationRunCheckStatus): string => (s === "pass" ? "var(--c-g)" : s === "fail" ? "var(--c-r)" : "var(--c-am)");
 
 /** Evidence trust order, weakest first: the badge never upgrades a weaker kind. */
-export const evidenceTone = (k: MigrationRunEvidenceKind): "ok" | "warn" | "muted" => (k === "hub-verified" ? "ok" : k === "migrator-reported" ? "warn" : "muted");
+export const evidenceTone = (k: MigrationRunEvidenceKind): "ok" | "warn" | "muted" => (k === "hub-verified" ? "ok" : k === "operator-attested" ? "muted" : "warn");
+/** Every evidence kind, strongest first (the order the summary lists them). */
+export const EVIDENCE_KINDS: readonly MigrationRunEvidenceKind[] = ["hub-verified", "migrator-reported", "source-api-reported", "host-loop-reported", "operator-attested"];
 
 /** Poll fast while the hub is moving by itself, slowly while it waits for a human, never once settled. */
 export function runRefetchInterval(run: (Pick<MigrationRunView, "status"> & { steps?: Pick<MigrationRunStepView, "status">[] }) | undefined): number | false {
@@ -359,7 +430,7 @@ export const checksNeedingInput = (gate: MigrationRunGate | null | undefined): M
 
 /** Counts of checks by evidence kind (the trust summary above a gate). */
 export function evidenceCounts(gate: MigrationRunGate | null | undefined): Record<MigrationRunEvidenceKind, number> {
-  const out: Record<MigrationRunEvidenceKind, number> = { "hub-verified": 0, "migrator-reported": 0, "operator-attested": 0 };
+  const out: Record<MigrationRunEvidenceKind, number> = { "hub-verified": 0, "migrator-reported": 0, "operator-attested": 0, "source-api-reported": 0, "host-loop-reported": 0 };
   for (const c of gate?.checks ?? []) if (c.evidence && c.status === "pass") out[c.evidence] += 1;
   return out;
 }
@@ -394,9 +465,20 @@ export function mergeEvents(existing: MigrationRunEvent[], incoming: MigrationRu
 
 // ───────────────────────────── typed confirmation + approvals ─────────────────────────────
 
+type ConfirmRun = Pick<MigrationRunView, "id" | "targetServerName" | "sourceHost"> & Partial<Pick<MigrationRunView, "targetServers">>;
+
+/** The distinct target server names of a run, sorted by code point (what the hub expects, joined with ", "); null when a
+ *  name the hub should know is missing (a deleted server), so the action stays blocked rather than accepting a partial list. */
+export function targetServerNames(run: ConfirmRun): string[] | null {
+  const list = run.targetServers && run.targetServers.length > 0 ? run.targetServers.map((s) => s.serverName?.trim() || null) : [run.targetServerName?.trim() || null];
+  if (list.some((n) => !n)) return null;
+  return [...new Set(list as string[])].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
 /** Names the operator must type for a confirmation kind, in order; null when a name the hub should know is missing
- *  (a deleted server), in which case the action stays blocked rather than accepting an empty match. */
-export function confirmNames(kind: MigrationRunConfirmKind, run: Pick<MigrationRunView, "id" | "targetServerName" | "sourceHost">): string[] | null {
+ *  (a deleted server), in which case the action stays blocked rather than accepting an empty match. A multi-host run
+ *  names EVERY target server (one entry each, sorted), so the point-of-no-return confirmation cannot skip a host. */
+export function confirmNames(kind: MigrationRunConfirmKind, run: ConfirmRun): string[] | null {
   const server = run.targetServerName?.trim() || null;
   const host = run.sourceHost?.trim() || null;
   switch (kind) {
@@ -406,16 +488,27 @@ export function confirmNames(kind: MigrationRunConfirmKind, run: Pick<MigrationR
       return [run.id];
     case "target-server":
       return server ? [server] : null;
+    case "target-servers":
+      return targetServerNames(run);
     case "source-host":
       return host ? [host] : null;
     case "target-server+source-host":
       return server && host ? [server, host] : null;
+    case "target-servers+source-host": {
+      const names = targetServerNames(run);
+      return names && host ? [...names, host] : null;
+    }
   }
 }
 
-/** The single `confirmName` string sent to the hub: the typed names joined by one space, in the order shown (the
- *  server name first, the source host last). */
-export const joinConfirmNames = (typed: readonly string[]): string => typed.map((s) => s.trim()).join(" ");
+/** The single `confirmName` string sent to the hub: the typed names joined by one space, in the order shown. For a
+ *  multi-host kind the server names are joined with ", " (as the hub does) and the source host follows after one space. */
+export function joinConfirmNames(typed: readonly string[], kind?: MigrationRunConfirmKind): string {
+  const t = typed.map((s) => s.trim());
+  if (kind === "target-servers") return t.join(", ");
+  if (kind === "target-servers+source-host" && t.length >= 2) return `${t.slice(0, -1).join(", ")} ${t[t.length - 1]}`;
+  return t.join(" ");
+}
 
 export interface ApprovalDraft {
   /** The hash the operator was looking at when they started the form. */
@@ -442,7 +535,7 @@ export function approvalIssues(binding: MigrationRunApprovalBinding, draft: Appr
 export function approvalPayload(binding: MigrationRunApprovalBinding, draft: ApprovalDraft) {
   const allowed = new Set(binding.ackable);
   const acks = [...draft.acks].filter((id) => allowed.has(id) || binding.requiredAcks.includes(id));
-  const name = joinConfirmNames(draft.typed);
+  const name = joinConfirmNames(draft.typed, binding.confirm);
   return {
     boundHash: draft.reviewedHash,
     acks,
@@ -490,6 +583,69 @@ export function reviewLabel(t: T, key: string): string {
 
 // ───────────────────────────── create (wizard launcher) ─────────────────────────────
 
+/** At most this many source hosts in a placement map (the hub's own limit). */
+export const SERVER_MAP_MAX = 64;
+/** The placement ref of a resource whose source host the source did not say (item ref `<kind>:_:<ref>`). */
+export const UNKNOWN_SOURCE_HOST = "_";
+
+export interface SourceServerRow {
+  /** The Coolify server uuid, or {@link UNKNOWN_SOURCE_HOST}. */
+  ref: string;
+  apps: number;
+  databases: number;
+  services: number;
+  volumes: number;
+}
+
+/** The source hosts a plan spans, read from the item refs (`<kind>:<serverRef|_>:<ref>`), sorted, with what lives on each. */
+export function sourceServersOf(items: ReadonlyArray<Pick<ImportPlanItem, "itemRef" | "kind">>): SourceServerRow[] {
+  const by = new Map<string, SourceServerRow>();
+  for (const it of items) {
+    const i1 = it.itemRef.indexOf(":");
+    const i2 = i1 < 0 ? -1 : it.itemRef.indexOf(":", i1 + 1);
+    const ref = i1 >= 0 && i2 > i1 ? it.itemRef.slice(i1 + 1, i2) || UNKNOWN_SOURCE_HOST : UNKNOWN_SOURCE_HOST;
+    const row = by.get(ref) ?? { ref, apps: 0, databases: 0, services: 0, volumes: 0 };
+    if (it.kind === "app") row.apps += 1;
+    else if (it.kind === "database") row.databases += 1;
+    else if (it.kind === "service") row.services += 1;
+    else row.volumes += 1;
+    by.set(ref, row);
+  }
+  return [...by.values()].sort((a, b) => (a.ref === UNKNOWN_SOURCE_HOST ? 1 : b.ref === UNKNOWN_SOURCE_HOST ? -1 : a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0));
+}
+
+/** The default placement of every source host: all on `defaultId` (the operator then moves some). */
+export const defaultPlacement = (rows: readonly SourceServerRow[], defaultId: string): MigrationRunServerMap => Object.fromEntries(rows.map((r) => [r.ref, defaultId]));
+
+/** Target servers a run touches, counted from a placement (the default is always one of them). */
+export const placementTargetCount = (defaultId: string, map: MigrationRunServerMap | null | undefined): number => new Set([defaultId, ...Object.values(map ?? {})]).size;
+
+export const HOST_LOOP_FORM_DEFAULTS = { keyDir: "/data/coolify/ssh/keys", parallel: "1", connectTimeoutSec: "15", retries: "1" } as const;
+export interface HostLoopForm {
+  keyDir: string;
+  parallel: string;
+  connectTimeoutSec: string;
+  retries: string;
+}
+/** The hub's keyDir rule: absolute, only [A-Za-z0-9._/-], no `..` segment. */
+export const validKeyDir = (p: string): boolean => /^\/[A-Za-z0-9._\/-]{0,200}$/.test(p) && !p.split("/").includes("..");
+const intIn = (v: string, min: number, max: number): boolean => v.trim() !== "" && Number.isInteger(Number(v)) && Number(v) >= min && Number(v) <= max;
+/** A campaign label: 1-80 printable characters (the hub trims it). */
+export const validCampaign = (v: string): boolean => {
+  const c = v.trim();
+  return c.length >= 1 && c.length <= 80 && !/\p{Cc}/u.test(c);
+};
+
+/** The owner policy inputs of the launch form; an empty string = left unanswered (the hub's fail-closed default applies). */
+export interface LaunchPolicies {
+  minioPolicy: string;
+  workerPolicy: string;
+  unlistedDbPolicy: string;
+  orphanVolumePolicy: string;
+  tickGapAcceptMinutes: string;
+}
+export const EMPTY_POLICIES: LaunchPolicies = { minioPolicy: "", workerPolicy: "", unlistedDbPolicy: "", orphanVolumePolicy: "", tickGapAcceptMinutes: "" };
+
 export interface LaunchForm {
   sessionId: string;
   sourceKind: ImportRemoteKind;
@@ -505,25 +661,78 @@ export interface LaunchForm {
   sourceController: "manual" | "api" | "agent";
   observeMinutes: string;
   options?: Partial<MigrationRunOptions>;
+  /** Source host -> Tugra server for a multi-host run; null/undefined = every resource on `targetServerId`. */
+  placement?: MigrationRunServerMap | null;
+  campaign?: string;
+  sourceRunner?: RunOptionsType["sourceRunner"];
+  hostLoop?: HostLoopForm;
+  deployWaves?: RunOptionsType["deployWaves"];
+  deployConcurrency?: string;
+  largeDbMode?: NonNullable<RunOptionsType["largeDbMode"]>;
+  stopSource?: boolean;
+  policies?: LaunchPolicies;
 }
 
 /** Practical email shape check (the hub validates strictly; this only keeps an obvious typo from being sent). */
 export const looksLikeEmail = (v: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim()) && v.trim().length <= 254;
 
+export type LaunchIssue = "target" | "email" | "observe" | "placement" | "campaign" | "hostLoop" | "concurrency" | "tickGap";
+
 /** Why the launch form cannot be submitted (empty = ready). */
-export function launchIssues(f: Pick<LaunchForm, "targetServerId" | "acmeEmail" | "observeMinutes">): Array<"target" | "email" | "observe"> {
-  const out: Array<"target" | "email" | "observe"> = [];
+export function launchIssues(
+  f: Pick<LaunchForm, "targetServerId" | "acmeEmail" | "observeMinutes"> & Partial<Pick<LaunchForm, "placement" | "campaign" | "sourceRunner" | "hostLoop" | "deployConcurrency" | "policies">>,
+): LaunchIssue[] {
+  const out: LaunchIssue[] = [];
   if (!f.targetServerId) out.push("target");
   if (f.acmeEmail.trim() && !looksLikeEmail(f.acmeEmail)) out.push("email");
   const n = Number(f.observeMinutes);
   if (f.observeMinutes.trim() === "" || !Number.isInteger(n) || n < 0 || n > 4320) out.push("observe");
+  if (f.placement) {
+    const entries = Object.entries(f.placement);
+    if (entries.length === 0 || entries.length > SERVER_MAP_MAX || entries.some(([, id]) => !id)) out.push("placement");
+  }
+  if (f.campaign !== undefined && f.campaign.trim() !== "" && !validCampaign(f.campaign)) out.push("campaign");
+  if (f.sourceRunner === "coolify-host-loop" && f.hostLoop) {
+    const h = f.hostLoop;
+    if (!validKeyDir(h.keyDir.trim()) || !intIn(h.parallel, 1, 8) || !intIn(h.connectTimeoutSec, 5, 120) || !intIn(h.retries, 0, 5)) out.push("hostLoop");
+  }
+  if (f.deployConcurrency !== undefined && f.deployConcurrency.trim() !== "" && !intIn(f.deployConcurrency, 1, 8)) out.push("concurrency");
+  const gap = f.policies?.tickGapAcceptMinutes;
+  if (gap !== undefined && gap.trim() !== "" && !intIn(gap, 0, TICK_GAP_MAX_MINUTES)) out.push("tickGap");
   return out;
 }
 
+/** The policy inputs that were answered, as the request form (an unanswered one is left out: the hub's safe default applies). */
+export function policyInputs(p: LaunchPolicies | undefined): NonNullable<MigrationRunCreateInput["inputs"]> {
+  if (!p) return {};
+  return {
+    ...(p.minioPolicy ? { minioPolicy: p.minioPolicy as "hold" | "mirror" | "external" } : {}),
+    ...(p.workerPolicy ? { workerPolicy: p.workerPolicy as "hold-dark" | "start-dark" | "exclude" } : {}),
+    ...(p.unlistedDbPolicy ? { unlistedDbPolicy: p.unlistedDbPolicy as "block" | "carry" | "skip" } : {}),
+    ...(p.orphanVolumePolicy ? { orphanVolumePolicy: p.orphanVolumePolicy as "block" | "skip" } : {}),
+    ...(p.tickGapAcceptMinutes.trim() ? { tickGapAcceptMinutes: Number(p.tickGapAcceptMinutes) } : {}),
+  };
+}
+
 /** The `POST /migration-runs` body. An unanswered ACME email is sent as "unknown" (blocks only TLS and CUTOVER). The
- *  plan step's acks / service choices / data modes ride along so the run's frozen apply input equals what was reviewed. */
+ *  plan step's acks / service choices / data modes ride along so the run's frozen apply input equals what was reviewed.
+ *  A placement (multi-host) is sent as the run-level `serverMap`; the form's target server stays the default. */
 export function buildLaunchInput(f: LaunchForm): MigrationRunCreateInput {
   const e = f.extras ?? {};
+  const hostLoop =
+    f.sourceRunner === "coolify-host-loop" && f.hostLoop
+      ? { keyDir: f.hostLoop.keyDir.trim(), parallel: Number(f.hostLoop.parallel), connectTimeoutSec: Number(f.hostLoop.connectTimeoutSec), retries: Number(f.hostLoop.retries) }
+      : undefined;
+  const options: Partial<MigrationRunOptions> = {
+    ...(f.options ?? {}),
+    observeMinutes: Number(f.observeMinutes),
+    ...(f.sourceRunner && f.sourceRunner !== "operator" ? { sourceRunner: f.sourceRunner } : {}),
+    ...(hostLoop ? { hostLoop } : {}),
+    ...(f.deployWaves && f.deployWaves !== "single" ? { deployWaves: f.deployWaves } : {}),
+    ...(f.deployConcurrency?.trim() ? { deployConcurrency: Number(f.deployConcurrency) } : {}),
+    ...(f.largeDbMode && f.largeDbMode !== "refuse" ? { largeDbMode: f.largeDbMode } : {}),
+    ...(f.stopSource ? { stopSource: true } : {}),
+  };
   return {
     sessionId: f.sessionId,
     sourceKind: f.sourceKind,
@@ -535,19 +744,48 @@ export function buildLaunchInput(f: LaunchForm): MigrationRunCreateInput {
     mode: f.mode,
     topology: f.topology,
     dryRun: f.dryRun,
-    options: { ...(f.options ?? {}), observeMinutes: Number(f.observeMinutes) },
+    options,
     inputs: {
       acmeEmail: f.acmeEmail.trim() ? f.acmeEmail.trim() : "unknown",
       allowBind: f.allowBind,
       allowLiveShapeProbe: f.allowLiveShapeProbe,
       sourceController: f.sourceController,
+      ...policyInputs(f.policies),
     },
+    ...(f.placement && Object.keys(f.placement).length ? { serverMap: f.placement } : {}),
+    ...(f.campaign?.trim() ? { campaign: f.campaign.trim() } : {}),
   };
 }
 
 /** "Source host -> target server" label of a run row (names only; a deleted server reads as its id). */
-export function runTitleParts(r: Pick<MigrationRunSummary, "sourceHost" | "sourceKind" | "targetServerName" | "targetServerId">): { source: string; target: string } {
-  return { source: r.sourceHost ?? r.sourceKind, target: r.targetServerName ?? r.targetServerId };
+export function runTitleParts(r: Pick<MigrationRunSummary, "sourceHost" | "sourceKind" | "targetServerName" | "targetServerId"> & Partial<Pick<MigrationRunSummary, "targetServerCount">>): { source: string; target: string; extraTargets: number } {
+  return { source: r.sourceHost ?? r.sourceKind, target: r.targetServerName ?? r.targetServerId, extraTargets: Math.max(0, (r.targetServerCount ?? 1) - 1) };
+}
+
+/** Image digest as the hub accepts it: `sha256:` and 64 lower-case hex characters. */
+export const validDigest = (v: string): boolean => /^sha256:[a-f0-9]{64}$/.test(v.trim());
+/** An image reference as the plan shows it (the hub's own rule). */
+export const validImageRef = (v: string): boolean => v.length >= 1 && v.length <= 300 && /^[A-Za-z0-9][A-Za-z0-9._\/:-]*$/.test(v);
+/** A source host ref for an image pin scope: empty means every host. */
+export const validPinScope = (v: string): boolean => v.length <= 200 && /^[\x21-\x7e]*$/.test(v);
+/** The plan item ref of an app (`app:<host>:<ref>`). */
+export const validAppItemRef = (v: string): boolean => /^app:[\x21-\x7e]{1,200}:[\x21-\x7e]{1,130}$/.test(v) && v.length <= 340;
+/** Runs that can no longer take safety facts (finished, or past the point of no return). */
+export const hintsClosed = (run: Pick<MigrationRunView, "status" | "ponrAt">): boolean =>
+  !!run.ponrAt || ["COMPLETED", "ABORTED", "ROLLING_BACK", "ROLLED_BACK", "REVERSING", "REVERSED"].includes(run.status);
+
+/** The distinct campaign labels of a list of runs with how many runs each holds and how many are completed / still live. */
+export function campaignRollup(rows: ReadonlyArray<Pick<MigrationRunSummary, "campaign" | "status">>): Array<{ campaign: string; total: number; completed: number; live: number }> {
+  const by = new Map<string, { campaign: string; total: number; completed: number; live: number }>();
+  for (const r of rows) {
+    if (!r.campaign) continue;
+    const row = by.get(r.campaign) ?? { campaign: r.campaign, total: 0, completed: 0, live: 0 };
+    row.total += 1;
+    if (r.status === "COMPLETED") row.completed += 1;
+    else if (!isTerminalRun(r.status)) row.live += 1;
+    by.set(r.campaign, row);
+  }
+  return [...by.values()].sort((a, b) => (a.campaign < b.campaign ? -1 : a.campaign > b.campaign ? 1 : 0));
 }
 
 // ───────────────────────────── errors ─────────────────────────────
@@ -560,6 +798,9 @@ export const ERROR_CODE_KEY: Record<string, string> = {
   "human-confirmation-required": "migrationRun.errors.human-confirmation-required",
   "attest-subject-invalid": "migrationRun.errors.attest-subject-invalid",
   "attest-note-required": "migrationRun.errors.attest-note-required",
+  "command-kind-unavailable": "migrationRun.errors.command-kind-unavailable",
+  "hints-closed": "migrationRun.errors.hints-closed",
+  "server-has-live-run": "migrationRun.errors.server-has-live-run",
 };
 
 /** An error from the hub as one readable line: a known machine code is localized, anything else is the hub's message. */
