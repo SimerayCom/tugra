@@ -81,8 +81,15 @@ export interface RemapContext {
    *  {@link UUID_RE}, so every caller that omits it (Coolify, whose internal hosts are uuid-shaped) behaves
    *  byte-identically. It is ONLY a shape gate: a value is still rewritten solely when it EQUALS a known
    *  `oldHost` from `dbs`/`apps` (exact string equality) — a looser shape never turns an arbitrary word into a
-   *  host. The substring guard ({@link RM_CONTAINS_TOKEN}) is shape-independent. */
+   *  host. The substring guard ({@link RM_CONTAINS_TOKEN}) is shape-independent.
+   *  The {@link RM_UNRESOLVED_HOST} detection is NOT driven by it (see {@link flagUnresolvedHosts}). */
   hostShape?: RegExp;
+  /** OPTIONAL (Coolify, R21): report a value whose host is a uuid-shaped container name that no plan item owns
+   *  ({@link RM_UNRESOLVED_HOST}) instead of leaving a dead host in place. Off by default: a caller that omits it is byte-identical. */
+  flagUnresolvedHosts?: boolean;
+  /** OPTIONAL: hosts a plan item DOES own but that this pass cannot rewrite (a database that could not be loaded, the app's own
+   *  name). They are never reported as unresolved: the caller has its own, more precise handling of them. */
+  ownedHosts?: readonly string[];
   /** OPTIONAL (Dokploy): when true, a BARE value that equals a known `oldHost` is rewritten as a host ONLY if its
    *  KEY looks host-like (`DB_HOST`, `*_HOST`, `*_ADDR`, `ENDPOINT`, `SERVER`…). Dokploy internal hosts are
    *  readable slugs, so a non-host var (`APP_NAME`, `COMPOSE_PROJECT_NAME`) could legitimately HOLD that slug and
@@ -148,9 +155,24 @@ export const RM_QUERY_CREDS = "credentials-in-query"; // a connection URL carrie
 export const RM_CROSS_SERVER = "cross-server-target"; // the database/service runs on another Tugra server than this app: its container name / alias does not resolve here
 export const RM_TLS_VERIFY = "tls-verify-unsupported"; // sslmode=verify-ca/verify-full: the copy serves a self-signed certificate the client cannot verify
 export const RM_SERVICE_NET = "service-network-unsupported"; // a private-alias service this app cannot join (compose, swarm, raw --network)
+export const RM_UNRESOLVED_HOST = "unresolved-uuid-host"; // R21: the host is a Coolify uuid-shaped name that no plan item (database, app, service) owns: after the move it resolves to nothing
 
 /** A Coolify resource uuid: ~16-40 chars of [a-z0-9]. Required before matching a bare token as a host. */
 const UUID_RE = /^[a-z0-9]{16,40}$/i;
+/**
+ * R21: a Coolify container host: exactly 24 lower-case letters and digits (a resource uuid), or a service member's name, `<service>-<uuid>`.
+ * The member form must carry both letters and digits in its uuid part so an ordinary `name-word` host is never taken for one.
+ */
+const COOLIFY_HOST_RE = /^[a-z0-9]{24}$/;
+const COOLIFY_MEMBER_HOST_RE = /^[a-z][a-z0-9-]*-([a-z0-9]{24})$/;
+export function isCoolifyUuidHost(host: string): boolean {
+  if (COOLIFY_HOST_RE.test(host)) return true;
+  const m = COOLIFY_MEMBER_HOST_RE.exec(host);
+  return !!m && /[a-z]/.test(m[1]) && /[0-9]/.test(m[1]);
+}
+/** A BARE value is judged a host only under a key that names one (a 24-character generated password is common and must be left alone). */
+const BARE_HOST_KEY = /HOST|ADDR|ENDPOINT|SERVER|NODE|MASTER|PRIMARY|REPLICA|LEADER/i;
+
 /** A var KEY that plausibly holds a host (used only when ctx.bareHostKeyGate is on — i.e. a readable-slug source
  *  like Dokploy — so a name-shaped value in a non-host var is not mistaken for a host). */
 const HOST_LIKE_KEY = /(?:^|_)(HOST|HOSTNAME|ADDR|ADDRESS|ENDPOINT|SERVER|NODE|MASTER|PRIMARY|REPLICA|LEADER)(?:_|$)/i;
@@ -293,6 +315,8 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
   const unchanged: string[] = [];
   const needsManual: RemapNeedsManual[] = [];
   const hostShape = ctx.hostShape ?? UUID_RE;
+  const flagUnresolved = ctx.flagUnresolvedHosts === true;
+  const owned = new Set(ctx.ownedHosts ?? []);
   const dbByHost = new Map(ctx.dbs.map((d) => [d.oldHost, d]));
   const appByHost = new Map(ctx.apps.map((a) => [a.oldHost, a]));
   const referencedDbs = new Set<DbRemapTarget>(); // DBs an R1/R2 match in THIS env pointed at (gates R3)
@@ -429,6 +453,10 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
         publicService(key, pub, (h) => `${auth.scheme}://${auth.hasUserinfo ? `${auth.userinfo}@` : ""}${h}${auth.port ? `:${auth.port}` : ""}${auth.rest}`, maskConnString, value);
         continue;
       }
+      if (flagUnresolved && isCoolifyUuidHost(auth.host) && !owned.has(auth.host)) {
+        needsManual.push({ key, reason: RM_UNRESOLVED_HOST });
+        continue;
+      }
       // a URL to something we don't manage: fall through to the embedded-token scan (host may be <uuid>.suffix).
     } else {
       // R2 — the value is exactly an old host token, or <host>:<port>.
@@ -480,6 +508,11 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
       if (barePub) {
         const port = hp ? `:${hp[2]}` : "";
         publicService(key, barePub, (h) => `${h}${port}`, (v) => v, value);
+        continue;
+      }
+      // R21: `<uuid>` under a host-like key, or `<uuid>:<port>` under any key, that nothing above recognised
+      if (flagUnresolved && (hp ? isCoolifyUuidHost(hp[1]) && !owned.has(hp[1]) : isCoolifyUuidHost(value) && !owned.has(value) && (BARE_HOST_KEY.test(key) || HOST_LIKE_KEY.test(key)))) {
+        needsManual.push({ key, reason: RM_UNRESOLVED_HOST });
         continue;
       }
     }

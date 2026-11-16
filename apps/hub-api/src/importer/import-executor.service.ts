@@ -1571,7 +1571,9 @@ export class ImportExecutorService {
       const res = remapEnv(a.env, {
         dbs: targets,
         apps: appTargets.filter((at) => at.itemRef !== a.itemRef),
-        ...(hostShape ? { hostShape, bareHostKeyGate: true } : {}),
+        ...(hostShape
+          ? { hostShape, bareHostKeyGate: true }
+          : { flagUnresolvedHosts: true, ownedHosts: [...skippedDbHosts, ...(sourceRefOf(a.itemRef) ? [sourceRefOf(a.itemRef) as string] : [])] }), // R21: a Coolify uuid host no plan item owns is reported, never left as a dead host
         ...(sourceServices?.length ? { services: sourceServices } : {}),
         ...(row ? { appServerId: row.serverId, appCanJoinNetwork: canJoin } : {}),
       });

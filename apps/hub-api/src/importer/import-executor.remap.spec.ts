@@ -191,6 +191,19 @@ describe("ImportExecutorService.remapEnvPlan", () => {
     expect(plan.databases[0].mode).toBe("rotate");
   });
 
+  it("R21: an env value pointing at a uuid-shaped container no plan item owns is needsManual, its own host and the plan's databases are not", async () => {
+    const GHOST = "qrstuvwxyz0123456789abcd";
+    const { svc } = harness({
+      apps: [{ id: "app-1", itemRef: `app:_:${APPUUID}`, env: { DATABASE_URL: `postgres://appuser:pw@${UUID}:5432/appdb`, CACHE_URL: `redis://:pw@${GHOST}:6379/0`, SELF_URL: `http://${APPUUID}:3000` } }],
+    });
+    const plan = await svc.remapEnvPlan("user-1", "op-1");
+    const keys = plan.apps[0].needsManual.map((n) => `${n.key}:${n.reason}`);
+    expect(keys).toContain("CACHE_URL:unresolved-uuid-host");
+    expect(keys.some((k) => k.startsWith("SELF_URL"))).toBe(false);
+    expect(plan.apps[0].changes.map((c) => c.key)).toEqual(["DATABASE_URL"]);
+    expect(JSON.stringify(plan)).not.toContain("pw@");
+  });
+
   it("a DB that cannot be loaded is SKIPPED (preview does not throw) and its apps show target-unavailable", async () => {
     const { svc } = harness({ dbGetError: true });
     const plan = await svc.remapEnvPlan("user-1", "op-1");

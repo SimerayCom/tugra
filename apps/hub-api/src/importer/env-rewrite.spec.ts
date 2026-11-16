@@ -9,6 +9,8 @@ import {
   RM_AMBIGUOUS,
   RM_UNCONFIRMED_CRED,
   RM_SERVICE_LINK_REVIEW,
+  RM_UNRESOLVED_HOST,
+  isCoolifyUuidHost,
 } from "./env-rewrite";
 
 const UUID = "3f1a9c0b2d4e6f8a1b3c5d7e"; // 24 hex-ish, matches UUID_RE
@@ -439,6 +441,60 @@ describe("remapEnv — old source services (RM_SERVICE_LINK_REVIEW)", () => {
 
   it("a service oldHost that is not uuid-shaped is ignored (never matched on a loose string)", () => {
     const r = remapEnv({ X: "minio" }, c({ services: [{ itemRef: "service:srv:minio", name: "minio", oldHost: "minio" }] }));
+    expect(r.needsManual).toEqual([]);
+  });
+});
+
+describe("R21: a uuid-shaped host no plan item owns", () => {
+  const GHOST = "qrstuvwxyz0123456789abcd"; // 24 chars, owned by no database / app / service of the plan
+  const known = (extra: Partial<RemapContext> = {}): RemapContext => ({ dbs: [pgTarget("preserve")], apps: [], flagUnresolvedHosts: true, ...extra });
+
+  it("isCoolifyUuidHost: 24 lower-case letters+digits, or <service>-<uuid> with both letters and digits in the uuid; nothing else", () => {
+    expect(isCoolifyUuidHost(GHOST)).toBe(true);
+    expect(isCoolifyUuidHost(`meili-${GHOST}`)).toBe(true);
+    expect(isCoolifyUuidHost("a".repeat(23))).toBe(false);
+    expect(isCoolifyUuidHost("a".repeat(25))).toBe(false);
+    expect(isCoolifyUuidHost("Q".repeat(24))).toBe(false);
+    expect(isCoolifyUuidHost(`cache-${"a".repeat(24)}`)).toBe(false); // a plain word after a dash is not a member container
+    expect(isCoolifyUuidHost("db.example.test")).toBe(false);
+  });
+
+  it("a connection URL whose host is an unknown uuid is needsManual with the stable code, and nothing is rewritten", () => {
+    const r = remapEnv({ CACHE_URL: `redis://:pw@${GHOST}:6379/0`, DATABASE_URL: `postgres://appuser:pw@${UUID}:5432/appdb` }, known());
+    expect(r.needsManual).toEqual([{ key: "CACHE_URL", reason: RM_UNRESOLVED_HOST }]);
+    expect(r.changes.map((c) => c.key)).toEqual(["DATABASE_URL"]); // the database the plan owns is still rewritten
+    expect(RM_UNRESOLVED_HOST).toBe("unresolved-uuid-host");
+  });
+
+  it("a bare host, host:port and a service member name are flagged; a bare value is judged only under a host-like key", () => {
+    const r = remapEnv({ REDIS_HOST: GHOST, PGHOST: GHOST, OTHER_ADDR: `${GHOST}:5432`, ODD: `${GHOST}:6379`, SEARCH_HOST: `meili-${GHOST}`, DB_PASSWORD: GHOST, API_KEY: GHOST }, known());
+    expect(r.needsManual.map((n) => n.key).sort()).toEqual(["ODD", "OTHER_ADDR", "PGHOST", "REDIS_HOST", "SEARCH_HOST"]);
+    expect(r.needsManual.every((n) => n.reason === RM_UNRESOLVED_HOST)).toBe(true);
+    expect(r.unchanged.sort()).toEqual(["API_KEY", "DB_PASSWORD"]); // a 24-character generated password is never taken for a host
+  });
+
+  it("a host the plan owns (database, app, service) keeps its own handling and is never reported unresolved", () => {
+    const r = remapEnv(
+      { DB_HOST: UUID, OTHER: `http://${APPUUID}:3000`, MINIO: `http://${GHOST}:9000` },
+      known({ apps: [{ itemRef: `app:_:${APPUUID}`, name: "other", oldHost: APPUUID, newHost: "tugra_x" }], services: [{ itemRef: `service:_:${GHOST}`, name: "minio", oldHost: GHOST }] }),
+    );
+    expect(r.changes.map((c) => c.key)).toEqual(["DB_HOST"]);
+    expect(r.needsManual).toEqual([
+      { key: "OTHER", reason: RM_APP_LINK_REVIEW, target: `app:_:${APPUUID}` },
+      { key: "MINIO", reason: RM_SERVICE_LINK_REVIEW, target: `service:_:${GHOST}` },
+    ]);
+  });
+
+  it("is opt-in (a caller that omits flagUnresolvedHosts is byte-identical) and never flags a host the caller says a plan item owns", () => {
+    const env = { REDIS_HOST: GHOST, CACHE_URL: `redis://${GHOST}:6379` };
+    expect(remapEnv(env, known({ flagUnresolvedHosts: undefined })).needsManual).toEqual([]);
+    expect(remapEnv(env, known({ flagUnresolvedHosts: false })).needsManual).toEqual([]);
+    expect(remapEnv(env, known({ ownedHosts: [GHOST] })).needsManual).toEqual([]);
+    expect(remapEnv(env, known({ ownedHosts: [GHOST] })).unchanged.sort()).toEqual(["CACHE_URL", "REDIS_HOST"]);
+  });
+
+  it("an ordinary hostname, an empty value and a longer host are untouched", () => {
+    const r = remapEnv({ A: "https://api.example.test/x", B: "", C_HOST: "localhost", D: `http://${GHOST}x.example.test` }, known());
     expect(r.needsManual).toEqual([]);
   });
 });

@@ -189,7 +189,8 @@
     "unresolvedHeading": "Missing in the new app"
   },
   "remap": {
-    "serviceLinkReview": "points at an old service (e.g. MinIO); set the new endpoint after migrating its data"
+    "serviceLinkReview": "points at an old service (e.g. MinIO); set the new endpoint after migrating its data",
+    "unresolvedHost": "points at a source container that is not part of this import (a database or app the source API does not list); it will not resolve after the move — carry that container or set the new host by hand"
   },
   "git": {
     "title": "Git repositories",
