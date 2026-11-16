@@ -141,6 +141,11 @@ export function buildVerifySuite(i: SuiteInputs): SuiteCheck[] {
     out.push(mk("coverage", t.itemRef, { status: "fail", code: DATA_CODES.verifyCoverage, params: { kind: t.kind, status: t.status, known: dbItems.has(t.itemRef) }, ackable: true, evidence: "hub-verified" }));
   }
 
+  // 5b. compose-service volumes the streamed lane did NOT move (R53): a search engine's index, a converter's cache, a 58 GB analytics
+  // store. Each one is a row of its own, so the coverage ledger never reads "everything moved" while a service volume stayed behind.
+  // A volume the stream moved is already judged by its `volume-parity` row above.
+  out.push(...serviceVolumeCoverage(i.snap));
+
   // 6. source drift: re-discover and compare
   out.push(
     mk("source-drift", "", {
@@ -161,6 +166,29 @@ export function buildVerifySuite(i: SuiteInputs): SuiteCheck[] {
       evidence: "hub-verified",
     }),
   );
+  return out;
+}
+
+/**
+ * One coverage row per service volume that is not on the streamed lane. `copy` that cannot be streamed and `skip` (an explicit choice
+ * not to carry the data) fail and need an acknowledgement; `empty` starts empty by design and is a warning, so it is listed but does
+ * not hold the approval. An excluded volume has its own `volume-parity` row.
+ */
+export function serviceVolumeCoverage(snap: DataSnapshot): SuiteCheck[] {
+  const out: SuiteCheck[] = [];
+  for (const v of snap.serviceVolumes ?? []) {
+    if (v.streamed) continue;
+    const reason = v.policy === "copy" ? "not-streamable" : v.policy === "skip" ? "policy-skip" : "starts-empty";
+    out.push(
+      mk("coverage-service-volume", `${v.serviceItemRef}/${v.key}`, {
+        status: v.policy === "empty" ? "warn" : "fail",
+        code: DATA_CODES.verifyServiceVolume,
+        params: { service: v.serviceName ?? v.serviceItemRef, key: v.key, outcome: v.policy === "empty" ? "starts-empty" : "not-migrated", reason },
+        ackable: v.policy !== "empty",
+        evidence: "hub-verified",
+      }),
+    );
+  }
   return out;
 }
 

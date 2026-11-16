@@ -123,6 +123,36 @@ export interface DataSnapshot {
   /** Apps the op provisioned (the FREEZE stop list is built from these). */
   apps: SourceItem[];
   services: SourceItem[];
+  /**
+   * Every data volume of the compose services the op provisioned and whether the streamed lane moves it (`streamed`; the row of a
+   * streamed one is in `volumes`). Absent on a snapshot from a port that cannot say (read as "none known").
+   */
+  serviceVolumes?: ServiceVolumeItem[];
+  /** The object storage the plan has: imported MinIO services and the apps whose env names an object store (R33). Absent = not known. */
+  objectStorage?: ObjectStorageFacts;
+}
+
+/** One data volume of an imported compose service (a search engine's index, a converter's cache, ...). */
+export interface ServiceVolumeItem {
+  /** `service:<serverRef|_>:<uuid>`. */
+  serviceItemRef: string;
+  serviceName: string | null;
+  /** The compose volume key. */
+  key: string;
+  /** What the import decided: `copy` carries the data, `empty` starts empty by design, `skip` is not carried. */
+  policy: "copy" | "empty" | "skip" | string;
+  /** True when the streamed lane has a target for it (its parity row is in `volumes`). */
+  streamed: boolean;
+}
+
+/** What the plan needs object migration for: names only, never an endpoint or a credential. */
+export interface ObjectStorageFacts {
+  /** The imported compose services that are a MinIO object store (their buckets are NOT copied by the import). */
+  stores: SourceItem[];
+  /** Apps whose env has a variable pointing at an object store (names matched by `isObjectStoreKey`). */
+  dependants: SourceItem[];
+  /** Apps whose env could not be read: they count as possible dependants (fail closed). */
+  unreadable: number;
 }
 
 /** An object migration, reduced to what the run needs (no endpoints, no credentials). */
@@ -411,6 +441,7 @@ export const DATA_CODES = {
   verifyHost: "verify.host-ready",
   verifyEnv: "verify.env-carried",
   verifyCoverage: "verify.coverage",
+  verifyServiceVolume: "verify.service-volume-not-migrated",
   verifyDrift: "verify.source-drift",
   verifyFlipPlan: "verify.flip-plan",
   verifyEvidenceMissing: "verify.evidence-missing",

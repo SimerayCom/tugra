@@ -220,3 +220,36 @@ describe("reportHash and ponrBindingHash", () => {
     void DATA_CODES;
   });
 });
+
+describe("service volume coverage (R53)", () => {
+  const sv = (key: string, policy: string, streamed: boolean, serviceName: string | null = "search-a") => ({ serviceItemRef: "service:s:svc1", serviceName, key, policy, streamed });
+  const rows = (items: ReturnType<typeof sv>[], extra: Partial<SuiteInputs> = {}) => find(buildVerifySuite(inputs({ snap: makeSnap({ volumes: [copied("volume:s:abc:data")], databases: [], serviceVolumes: items }), ...extra })), "coverage-service-volume");
+
+  it("a volume the stream moved has no coverage row of its own (its volume-parity row judges it)", () => {
+    expect(rows([sv("index", "copy", true)])).toEqual([]);
+  });
+  it("a copy volume the stream cannot move is a not-migrated row that fails and needs an acknowledgement", () => {
+    const [r] = rows([sv("index", "copy", false)]);
+    expect(r).toMatchObject({ subject: "service:s:svc1/index", status: "fail", code: DATA_CODES.verifyServiceVolume, ackable: true, evidence: "hub-verified", params: { service: "search-a", key: "index", outcome: "not-migrated", reason: "not-streamable" } });
+  });
+  it("a skipped volume is listed as not migrated and held for an acknowledgement; an empty one is a visible warning only", () => {
+    const [skipped, empty] = rows([sv("analytics", "skip", false), sv("cache", "empty", false)]);
+    expect(skipped).toMatchObject({ status: "fail", ackable: true, params: { outcome: "not-migrated", reason: "policy-skip" } });
+    expect(empty).toMatchObject({ status: "warn", ackable: false, params: { outcome: "starts-empty", reason: "starts-empty" } });
+  });
+  it("never reads as clean: the suite is not all-pass, the row is pending until acknowledged and an ack clears it", () => {
+    const s = buildVerifySuite(inputs({ snap: makeSnap({ volumes: [copied("volume:s:abc:data")], databases: [database("database:s:pg", { task: "done" })], serviceVolumes: [sv("analytics", "skip", false)] }) }));
+    const c = find(s, "coverage-service-volume")[0];
+    expect(classifySuite(s).pending.map((x) => x.id)).toContain(c.id);
+    expect(classifySuite(s, new Set([c.id])).pending).toEqual([]);
+    expect(classifySuite(s).blocked).toEqual([]);
+  });
+  it("a service volume is named by its service ref when the name is unknown, and ids stay unique and short", () => {
+    const [r] = rows([sv("k".repeat(60), "copy", false, null)]);
+    expect(r.params).toMatchObject({ service: "service:s:svc1" });
+    expect(r.id.length).toBeLessThanOrEqual(80);
+  });
+  it("a snapshot from a port that cannot say adds nothing", () => {
+    expect(find(buildVerifySuite(inputs()), "coverage-service-volume")).toEqual([]);
+  });
+});
