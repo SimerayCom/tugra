@@ -140,7 +140,7 @@ function manifest(dir, shim, extra = {}) {
   return execFileSync("sh", [join(LAB, "manifest.sh")], { env: { PATH: `${shim}:${process.env.PATH}`, DATA: dir, ...extra }, encoding: "utf8" });
 }
 
-test("manifest: the volume root, the setuid digit and symlink/FIFO mtimes are compared", (t) => {
+test("manifest: the volume root, the setuid digit and FIFO mtimes are compared, symlink mtimes are not", (t) => {
   const shim = gnuShim();
   if (!shim) return t.skip("GNU stat and sha256sum are not available here");
   const d = tree();
@@ -155,7 +155,7 @@ test("manifest: the volume root, the setuid digit and symlink/FIFO mtimes are co
   assert.notEqual(manifest(d, shim), base, "a different root mode must change the manifest");
   chmodSync(d, 0o750);
   lutimesSync(join(d, "link"), new Date("2024-02-02T00:00:00Z"), new Date("2024-02-02T00:00:00Z"));
-  assert.notEqual(manifest(d, shim), base, "a symlink mtime must change the manifest");
+  assert.equal(manifest(d, shim), base, "a symlink mtime is a documented non-copy (busybox tar cannot set it)");
   lutimesSync(join(d, "link"), new Date("2023-01-15T10:30:45Z"), new Date("2023-01-15T10:30:45Z"));
   spawnSync("touch", ["-t", "202401010101", join(d, "fifo")]);
   assert.notEqual(manifest(d, shim), base, "a FIFO mtime must change the manifest");
@@ -164,7 +164,7 @@ test("manifest: the volume root, the setuid digit and symlink/FIFO mtimes are co
   assert.equal(manifest(again, shim).split("\n").filter((l) => l.startsWith("./sub|")).length, 1);
 });
 
-test("tarlist: only DIRECTORY mtimes are masked", (t) => {
+test("tarlist: only DIRECTORY and SYMLINK mtimes are masked", (t) => {
   const gtar = has("gtar") ? "gtar" : has("tar") && /GNU tar/.test(spawnSync("tar", ["--version"], { encoding: "utf8" }).stdout) ? "tar" : null;
   if (!gtar) return t.skip("GNU tar is not available here");
   const list = (dir) => execFileSync("sh", [join(LAB, "tarlist.sh")], { env: { PATH: process.env.PATH, DATA: dir, TAR: gtar }, encoding: "utf8" });
@@ -183,7 +183,7 @@ test("tarlist: only DIRECTORY mtimes are masked", (t) => {
   assert.notEqual(list(d), base, "setuid bit");
   chmodSync(join(d, "suid"), 0o4755);
   lutimesSync(join(d, "link"), new Date("2024-02-02T00:00:00Z"), new Date("2024-02-02T00:00:00Z"));
-  assert.notEqual(list(d), base, "symlink mtime");
+  assert.equal(list(d), base, "symlink mtime is masked (busybox tar cannot set it)");
   lutimesSync(join(d, "link"), new Date("2023-01-15T10:30:45Z"), new Date("2023-01-15T10:30:45Z"));
   assert.equal(list(d), base);
   spawnSync("touch", ["-t", "202401010101", join(d, "fifo")]);

@@ -5,8 +5,8 @@
 # 2. On a difference, a field-level manifest diff (busybox stat + content hash, volume root and full modes included) names the
 #    exact entry and field. Directory mtimes are decided by the extractor, so a difference ONLY there prints DIR-MTIME-ONLY and
 #    exits 0 (COMPARE_STRICT=1 makes it fail); that verdict is taken from the tar listing with only directory mtimes masked
-#    (tarlist.sh), so it cannot hide a root owner or mode, a setuid bit, or a symlink or FIFO mtime. Expected non-copies
-#    (documented): sockets, xattrs, ACLs, file capabilities, sub-second mtimes, holes.
+#    (tarlist.sh), so it cannot hide a root owner or mode, a setuid bit, or a FIFO mtime. Expected non-copies
+#    (documented): sockets, xattrs, ACLs, file capabilities, sub-second mtimes, holes, symlink mtimes (busybox tar cannot set them).
 # Environment: COMPARE_EXCLUDE=<path> skips one top-level entry on both sides (postmaster.pid for a Postgres volume).
 # Prints ARCHIVE-IDENTICAL | DIR-MTIME-ONLY | ARCHIVE-DIFFERS; exit 0 for the first two.
 set -euo pipefail
@@ -45,7 +45,7 @@ trap 'rm -f "$fields_a" "$fields_b"' EXIT
 manifest "$SRC" 0 >"$fields_a"
 manifest "$DST" 0 >"$fields_b"
 if diff -u "$fields_a" "$fields_b" >"$LAB_DIR/compare.diff"; then
-  # every manifest field matches (the volume root, full modes and symlink/special mtimes included). Whether ONLY directory
+  # every manifest field matches (the volume root, full modes and special-file mtimes included). Whether ONLY directory
   # mtimes remain is decided by the tar listing itself with just those masked, never by the manifest being empty.
   listing "$SRC" >"$fields_a"
   listing "$DST" >"$fields_b"
