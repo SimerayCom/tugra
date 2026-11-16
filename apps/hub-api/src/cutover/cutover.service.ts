@@ -33,7 +33,8 @@ const VERIFY_BACKOFF_MS = 10_000;
 const DEFAULT_BATCH = 5;
 const DEFAULT_INTERVAL_SEC = 30;
 const DEFAULT_TARGET_TTL = 60;
-const PRE_FLIP: CutoverState[] = ["PLANNED", "CERT_PENDING", "CERT_READY", "READY"];
+const PRE_FLIP: CutoverState[] = ["PLANNED", "CERT_PENDING", "CERT_READY", "READY"];/** Block reasons that only exist because DNS-01 could not be used for the host. */
+const DNS01_BLOCK_REASONS = ["zone-not-covered", "no-dns-credential", "caa-blocks-letsencrypt"];
 
 interface AppRow {
   id: string;
@@ -442,7 +443,7 @@ export class CutoverService {
    * CAA policy that forbids Let's Encrypt, is BLOCKED instead of silently half-configured. It does not deploy:
    * `needsDeploy` tells the UI the labels change on the next deploy.
    */
-  async certPrepare(userId: string, opId: string, input: CutoverCertPrepInput): Promise<CutoverView & { blocked: Array<{ hostname: string; reason: string }> }> {
+  async certPrepare(userId: string, opId: string, input: CutoverCertPrepInput, opts: { unblockDnsBlocked?: boolean } = {}): Promise<CutoverView & { blocked: Array<{ hostname: string; reason: string }> }> {
     const c = await this.ctx(userId, opId);
     const rows = (await this.entries(opId, input.hostnames)).filter((r) => PRE_FLIP.includes(r.state as CutoverState) || r.state === "BLOCKED");
     const apps = await this.loadApps([...new Set(rows.map((r) => r.applicationId))]);
@@ -455,7 +456,12 @@ export class CutoverService {
       const app = apps.get(appId)!;
       if (input.challenge === "http01") {
         await this.apps.setDomainOptions(userId, appId, { dnsChallenge: false });
-        for (const e of list) await this.set(e.id, { challenge: "http01", needsDeploy: true });
+        for (const e of list) {
+          // Additive (migration runs): an explicit HTTP-01 choice also lifts a block that was only about DNS-01 (the host
+          // is then READY for the accepted HTTP-01 gap); without the option the block stays, as before.
+          if (opts.unblockDnsBlocked && e.state === "BLOCKED" && DNS01_BLOCK_REASONS.includes(e.blockReason ?? "")) await this.cas(e.id, "BLOCKED", "PLANNED", { blockReason: null });
+          await this.set(e.id, { challenge: "http01", needsDeploy: true });
+        }
         continue;
       }
       const facts = await this.serverFacts(app.serverId);
@@ -1024,6 +1030,27 @@ export class CutoverService {
     }
     await this.auditLog(userId, "cutover.finalize", opId, { hosts: rows.length });
     return this.view(userId, opId);
+  }
+
+  /**
+   * Put the TTL back on hosts whose TTL was lowered but that were never flipped (an aborted migration run). A flipped host
+   * is untouched: its revert restores its own ledger. Only records that still carry the lowered TTL are patched, so a TTL
+   * the owner changed meanwhile is left alone. Returns the number of records patched.
+   */
+  async restoreTtlsUnflipped(userId: string, opId: string): Promise<number> {
+    await this.ctx(userId, opId);
+    const rows = (await this.entries(opId)).filter((e) => !!e.ttlLoweredAt && e.originalTtl != null && e.targetTtl != null && e.dnsMode === "cloudflare" && !!e.dnsCredentialId && !!e.zoneId && !e.ledger && (PRE_FLIP.includes(e.state as CutoverState) || e.state === "BLOCKED" || e.state === "EXCLUDED"));
+    const apps = await this.loadApps([...new Set(rows.map((r) => r.applicationId))]);
+    await this.requireConfig(userId, apps.keys(), apps);
+    let restored = 0;
+    for (const e of rows) {
+      const recs = (await this.dnsAuto.listRecordsFor(userId, e.dnsCredentialId!, e.zoneId!, e.hostname)).filter((r) => (r.type === "A" || r.type === "AAAA" || r.type === "CNAME") && !r.proxied && r.ttl === e.targetTtl);
+      if (recs.length) await this.dnsAuto.setRecordTtls(userId, e.dnsCredentialId!, e.zoneId!, recs.map((r) => ({ id: r.id, ttl: e.originalTtl! })));
+      restored += recs.length;
+      await this.set(e.id, { ttlLoweredAt: null, earliestFlipAt: null });
+    }
+    await this.auditLog(userId, "cutover.ttl.restore", opId, { hosts: rows.length, records: restored });
+    return restored;
   }
 
   async fixCounterpart(userId: string, opId: string, input: CutoverFixCounterpartInput): Promise<CutoverView> {

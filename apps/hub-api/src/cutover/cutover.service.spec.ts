@@ -588,3 +588,51 @@ describe("cert-prepare", () => {
     expect(m.apps.setDomainOptions).toHaveBeenCalledWith(U, "a0", { dnsChallenge: false });
   });
 });
+
+describe("migration-run additions", () => {
+  it("certPrepare(http01, unblockDnsBlocked) lifts a DNS-01-only block; without the option the block stays", async () => {
+    const m = make({ zone: [rec("r0", "x.other.net")] });
+    m.addApp("a0", { domain: "x.other.net" });
+    m.tasks.push(m.appTask("a0"));
+    await m.seedEntry("a0", "x.other.net", { state: "PLANNED" });
+    await m.svc.certPrepare(U, OP, { challenge: "dns01" });
+    expect(m.row("x.other.net")).toMatchObject({ state: "BLOCKED", blockReason: "zone-not-covered" });
+    await m.svc.certPrepare(U, OP, { challenge: "http01" });
+    expect(m.row("x.other.net").state).toBe("BLOCKED");
+    await m.svc.certPrepare(U, OP, { challenge: "http01" }, { unblockDnsBlocked: true });
+    expect(m.row("x.other.net")).toMatchObject({ state: "PLANNED", blockReason: null, challenge: "http01", needsDeploy: true });
+  });
+
+  it("certPrepare(unblockDnsBlocked) never lifts a block that is not about DNS-01 (a tunnel host stays blocked)", async () => {
+    const m = make();
+    m.addApp("a0", { domain: H(0) });
+    m.tasks.push(m.appTask("a0"));
+    await m.seedEntry("a0", H(0), { state: "BLOCKED", blockReason: "tunnel-routed" });
+    await m.svc.certPrepare(U, OP, { challenge: "http01" }, { unblockDnsBlocked: true });
+    expect(m.row(H(0)).state).toBe("BLOCKED");
+  });
+
+  it("restoreTtlsUnflipped puts the original TTL back on an unflipped host only, and leaves a TTL the owner changed alone", async () => {
+    const m = make({ zone: [rec("r1", H(1)), rec("r2", H(2)), rec("r3", H(3))] });
+    for (const i of [1, 2, 3]) {
+      m.addApp(`a${i}`, { domain: H(i) });
+      m.tasks.push(m.appTask(`a${i}`));
+    }
+    await m.seedEntry("a1", H(1));
+    await m.seedEntry("a2", H(2));
+    await m.seedEntry("a3", H(3));
+    await m.svc.ttl(U, OP, { ttl: 60 });
+    // the owner changed h2's TTL since; h3 was flipped (a ledger exists): revert owns it
+    m.zone.records.find((r) => r.id === "r2")!.ttl = 300;
+    m.row(H(3)).ledger = [{ type: "A" }];
+    m.row(H(3)).state = "SWITCHED";
+    const n = await m.svc.restoreTtlsUnflipped(U, OP);
+    expect(n).toBe(1);
+    expect(m.zone.records.find((r) => r.id === "r1")!.ttl).toBe(3600);
+    expect(m.zone.records.find((r) => r.id === "r2")!.ttl).toBe(300);
+    expect(m.zone.records.find((r) => r.id === "r3")!.ttl).toBe(60);
+    expect(m.row(H(1)).ttlLoweredAt).toBeNull();
+    // idempotent
+    expect(await m.svc.restoreTtlsUnflipped(U, OP)).toBe(0);
+  });
+});
