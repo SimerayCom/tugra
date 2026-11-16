@@ -5,8 +5,8 @@ pre-issue, verification and the cutover. It sits **above** the pieces described 
 [Migrating from Coolify](../coolify-migration.md) and the [SSL/DNS cutover runbook](cutover.md); it does not replace
 them. Those manual paths keep working and remain the way to do anything a run does not cover.
 
-Where it lives: the API under `/migration-runs`, the CLI `tugra import run ...`, the `migration_run_*` MCP tools and
-the `/import/runs` pages of the panel.
+Where it lives: the API under `/migration-runs`, the CLI `tugra import run ...`, the `migration_run_*` MCP tools. Panel pages for runs
+(`/import/runs`) are coming and are not part of this build: use the CLI or the API until they ship.
 
 ## Verification status (read this first)
 

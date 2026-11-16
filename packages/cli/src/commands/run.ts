@@ -338,6 +338,11 @@ export function confirmHint(confirm: string, ctx: { runId: string; serverName: s
   }
 }
 
+/** POSIX single-quote a value so a pasted command passes it as ONE literal argument (no `$(...)`, backtick or quote breakout). */
+export function shellQuote(v: string): string {
+  return `'${v.replace(/'/g, `'\\''`)}'`;
+}
+
 /** One event as a log line: `12 2026-11-22T02:00:00Z info  FREEZE  step.freeze.started {"hosts":3}`. */
 export function formatEvent(e: RunEventView): string {
   const params = e.params && Object.keys(e.params).length ? ` ${JSON.stringify(e.params)}` : "";
@@ -360,11 +365,11 @@ export function formatStatus(v: RunView): string[] {
   const ap = na.approval;
   if (na.kind === "approval" && ap && na.stepKey) {
     const typed = confirmHint(ap.confirm, { runId: v.id, serverName: v.targetServerName, sourceHost: v.sourceHost });
-    out.push(`  approval${ap.ponr ? " (POINT OF NO RETURN: approve it yourself, an agent cannot)" : ""}: review the step, then`);
+    out.push(`  approval${ap.ponr ? " (POINT OF NO RETURN: refused over MCP, review it yourself before approving)" : ""}: review the step, then`);
     out.push(
       `    tugra import run approve ${v.id} ${na.stepKey} --hash ${ap.inputHash}` +
         (ap.requiredAcks.length ? ` --ack ${ap.requiredAcks.join(",")}` : "") +
-        (typed ? ` --confirm "${typed}"` : "") +
+        (typed ? ` --confirm ${shellQuote(typed)}` : "") +
         (ap.requiresDataRisk ? " --accept-data-risk" : ""),
     );
     if (ap.ackable.length) out.push(`    acknowledgeable checks: ${ap.ackable.join(", ")}`);
@@ -418,18 +423,25 @@ export interface WatchOpts {
 export async function watchRun(runId: string, o: WatchOpts, d: WatchDeps): Promise<RunView> {
   let after = 0;
   let polls = 0;
-  for (;;) {
+  const drain = async (): Promise<void> => {
     for (;;) {
       const page = (await d.get(`${base(runId)}/events?afterSeq=${after}&limit=500`)) as { events: RunEventView[]; lastSeq: number; hasMore: boolean };
       for (const e of page.events) d.write(formatEvent(e));
       after = page.lastSeq;
       if (!page.hasMore) break;
     }
+  };
+  for (;;) {
+    await drain();
     const view = (await d.get(base(runId))) as RunView;
     polls++;
-    if (isTerminal(view.status)) return view;
-    if (o.untilWaiting && HUMAN_WAITS.includes(view.nextAction.kind)) return view;
-    if (o.maxPolls && polls >= o.maxPolls) return view;
+    const done = isTerminal(view.status) || (o.untilWaiting && HUMAN_WAITS.includes(view.nextAction.kind)) || (o.maxPolls && polls >= o.maxPolls);
+    if (done) {
+      // The engine appends its last events (run.completed, run.aborted, the approval prompt) and only then flips the status, so
+      // an event can land between the events fetch and the view fetch above. Drain once more so none is dropped.
+      await drain();
+      return view;
+    }
     await d.sleep(Math.max(1, o.interval) * 1000);
   }
 }
