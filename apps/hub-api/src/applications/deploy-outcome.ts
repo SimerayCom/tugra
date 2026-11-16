@@ -10,6 +10,9 @@
  *   4 → rolling only: POST-cutover soak failed and the script already restarted the previous container → the old
  *       version is provably live again (auto-rollback).
  *   anything else → hard failure.
+ *
+ * Swarm service deploys (plan.swarm) use their own contract: 0 converged, 3 = Swarm auto-rolled-back to the previous
+ * spec (the app is still serving), anything else failed.
  */
 export interface DeployOutcomePlan {
   rolling: boolean;
@@ -17,6 +20,9 @@ export interface DeployOutcomePlan {
   isCompose: boolean;
   /** A previous SUCCESS image existed to fall back to (recreate: the prev row at dispatch; rolling: any kept image). */
   hadPrev: boolean;
+  /** Swarm service deploy (the main command is the manager's `docker service` rollout). Exit 3 there means Swarm's
+   *  native --update-failure-action rollback restored the previous spec — no hadPrev/rolling/recreate needed. */
+  swarm?: boolean;
 }
 
 export interface DeployOutcome {
@@ -26,6 +32,7 @@ export interface DeployOutcome {
 
 export function decideDeployOutcome(exitCode: number, plan: DeployOutcomePlan): DeployOutcome {
   const ok = exitCode === 0;
+  if (plan.swarm) return { ok, rolledBack: exitCode === 3 };
   let rolledBack = false;
   if (exitCode === 3 && !plan.isCompose && (plan.recreate || plan.rolling)) rolledBack = plan.hadPrev;
   if (exitCode === 4 && plan.rolling && !plan.isCompose) rolledBack = true;
@@ -57,4 +64,10 @@ export interface DispatchPlan extends DeployOutcomePlan {
 export function isDispatchPlan(v: unknown): v is DispatchPlan {
   const p = v as Partial<DispatchPlan> | null;
   return !!p && typeof p === "object" && p.v === 1 && typeof p.rolling === "boolean" && typeof p.recreate === "boolean" && typeof p.isCompose === "boolean" && typeof p.hadPrev === "boolean";
+}
+
+/** A row whose main command was a swarm `docker service` rollout (dispatch plan flagged `swarm`). Such a rollout is
+ *  never cancellable: killing the agent's poll script would not stop Swarm rolling the service. */
+export function isSwarmDispatch(row: { dispatchPlan?: unknown }): boolean {
+  return isDispatchPlan(row.dispatchPlan) && row.dispatchPlan.swarm === true;
 }

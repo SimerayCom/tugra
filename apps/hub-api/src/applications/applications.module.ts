@@ -75,6 +75,7 @@ export class ApplicationsModule implements OnModuleInit {
     this.agentWs.setDeployReDriveProvider((serverId) => {
       void this.recovery.adoptForServer(serverId).catch(() => undefined);
       void this.apps.redriveQueuedForServer(serverId).catch(() => undefined);
+      void this.apps.redriveQueuedClusteredForServer(serverId).catch(() => undefined);
     });
   }
 }

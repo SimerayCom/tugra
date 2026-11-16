@@ -21,7 +21,7 @@ import { APP_MOVE_TERMINAL, assertNoActiveMove, findActiveMove } from "../common
 import { AgentDisconnectedException, AgentOfflineException } from "../agent-gateway/agent-offline.exception";
 import { DeployLeaseService } from "./deploy-lease.service";
 import { INTERRUPTED_DEPLOY_NOTE } from "./deployment-reconcile.service";
-import { decideDeployOutcome, isDispatchPlan, type DispatchPlan } from "./deploy-outcome";
+import { decideDeployOutcome, isDispatchPlan, isSwarmDispatch, type DispatchPlan } from "./deploy-outcome";
 import { classifyActor, classifyNote, finishedAtOf, predatesMove, toDeploymentRow } from "./deployment-view";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService, type AuditFilters } from "../audit/audit.service";
@@ -56,7 +56,7 @@ import { injectableBuildArgs } from "../deploy/build-args";
 import { APPS_NETWORK, isUserNetworkNameAllowed } from "../deploy/network-names";
 import type { SetPlacementInput } from "./dto";
 import { PlacementConstraintSchema } from "./dto";
-import { serviceName, parseServiceTasks, parseSwarmTasks, type SwarmTask } from "../deploy/service-script";
+import { serviceName, parseServiceTasks, parseSwarmTasks, parseServiceImageDigest, type SwarmTask } from "../deploy/service-script";
 import { MonitorsService } from "../monitors/monitors.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { GitSourcesService, sourceCloneHost } from "../git-sources/git-sources.service";
@@ -1849,6 +1849,7 @@ export class ApplicationsService {
       return this.agentWs.cancelCommand(live.serverId, live.reqId);
     }
     const row = await this.prisma.deployment.findUnique({ where: { id: depId } });
+    if (row && isSwarmDispatch(row)) return false;
     if (row?.status === "RUNNING" && row.agentReqId && row.agentServerId && (row.phase === "DISPATCHED" || row.phase === "RECOVERING")) {
       return this.agentWs.cancelCommand(row.agentServerId, row.agentReqId);
     }
@@ -1936,8 +1937,8 @@ export class ApplicationsService {
    * (re)connects to the gateway (registered in ApplicationsModule.onModuleInit). This is the SAFE HALF of
    * surviving a hub restart: a QUEUED row has startedAt=null and has dispatched NOTHING to the agent
    * (executeDeploy, the only sender, runs only on a RUNNING row), so re-driving it is a byte-identical
-   * NORMAL deploy — not a resume — with zero double-apply risk. (An interrupted RUNNING deploy is deliberately
-   * NOT resumed here; that stays reaped to FAILED at boot.)
+   * NORMAL deploy — not a resume — with zero double-apply risk. (An interrupted RUNNING deploy is never
+   * re-run here: DeployRecoveryService adopts its journaled outcome, or boot re-queues/reaps it.)
    *
    * It fans out one private drain() per distinct app — zero new queue logic — so the one-RUNNING-per-app
    * invariant is never bypassed: drain → claimNext takes SELECT ... FOR UPDATE on the Application row and
@@ -1950,16 +1951,16 @@ export class ApplicationsService {
    * drain is never attempted against an offline agent (no "agent offline" failures in the normal path).
    *
    * CLUSTERED (swarm) apps are EXCLUDED here (clusterId: null filter): a swarm deploy targets the dynamically-
-   * resolved cluster manager, not Application.serverId, so this per-server online gate can't safely gate them.
-   * Their QUEUED rows are instead cancelled at boot (DeploymentReconcileService) — resuming clustered deploys
-   * is a deferred follow-up. This keeps the slice from ever driving a swarm deploy at an offline manager.
+   * resolved cluster manager, not Application.serverId, so this per-server online gate can't gate them. They have
+   * their own, equally strict gate in redriveQueuedClusteredForServer (same hook), which asks the swarm layer for a
+   * manager that is actually reachable.
    *
    * Flapping is harmless: each (re)connect re-fires this, and drain/claimNext no-op when a deploy is already
    * RUNNING, so no debounce is needed. Best-effort — any error is swallowed (the sweep is the backstop).
    */
   async redriveQueuedForServer(serverId: string): Promise<void> {
     // The OR mirrors cleanup-runner.service.ts: an app whose SEPARATE build server reconnects is re-driven too.
-    // clusterId: null — only single-server apps; clustered (swarm) QUEUED rows are cancelled at boot, not resumed.
+    // clusterId: null — only single-server apps; clustered (swarm) QUEUED rows re-drive via redriveQueuedClusteredForServer.
     const rows = await this.prisma.deployment.findMany({
       where: { status: "QUEUED", application: { clusterId: null, OR: [{ serverId }, { buildServerId: serverId }] } },
       select: { appId: true, application: { select: { serverId: true, buildServerId: true } } },
@@ -1971,6 +1972,35 @@ export class ApplicationsService {
       const runOnline = this.agentWs.isOnline(runServerId);
       const buildOnline = !buildServerId || buildServerId === runServerId || this.agentWs.isOnline(buildServerId);
       if (!runOnline || !buildOnline) continue; // leave QUEUED — re-drives when the other server reconnects
+      void this.drain(row.appId).catch(() => undefined);
+    }
+  }
+
+  /**
+   * The swarm half of the reconnect re-drive (same hook, same safety argument): re-drive every CLUSTERED app that has a
+   * QUEUED deploy — a never-started or restart-re-queued row has dispatched nothing to the cluster, so driving it is a
+   * normal deploy, and drain/claimNext keep one RUNNING per app. A swarm deploy targets the cluster MANAGER (resolved
+   * fresh, with failover), not Application.serverId, so the gate is different: the manager must be reachable NOW
+   * (SwarmDeployService.liveManager — resolves AND has a live agent socket) and, for a GIT app with a separate build
+   * server, that server must be online too. Otherwise the row stays QUEUED and re-drives when the missing node
+   * reconnects and fires this hook (any member of the cluster, or the build server, triggers the re-check); the stale
+   * sweep is the backstop for a cluster that never comes back. Best-effort, errors swallowed.
+   */
+  async redriveQueuedClusteredForServer(serverId: string): Promise<void> {
+    const srv = await this.prisma.server.findUnique({ where: { id: serverId }, select: { clusterId: true } }).catch(() => null);
+    const or: Prisma.ApplicationWhereInput[] = [{ buildServerId: serverId }];
+    if (srv?.clusterId) or.push({ clusterId: srv.clusterId });
+    const rows = await this.prisma.deployment.findMany({
+      where: { status: "QUEUED", application: { clusterId: { not: null }, OR: or } },
+      select: { appId: true, application: { select: { clusterId: true, buildServerId: true } } },
+      distinct: ["appId"],
+    });
+    for (const row of rows) {
+      const clusterId = row.application.clusterId;
+      if (!clusterId) continue;
+      const buildServerId = row.application.buildServerId;
+      if (buildServerId && !this.agentWs.isOnline(buildServerId)) continue; // re-drives when the build server reconnects
+      if (!(await this.swarmDeploy.liveManager(clusterId))) continue; // re-drives when a manager is reachable
       void this.drain(row.appId).catch(() => undefined);
     }
   }
@@ -1998,7 +2028,7 @@ export class ApplicationsService {
       data: {
         status: "CANCELLED",
         exitCode: -1,
-        logs: "Queued deploy cancelled: its server's agent did not reconnect in time. Re-deploy.",
+        logs: "Queued deploy cancelled: its server's agent (or its cluster's swarm manager) did not reconnect in time. Re-deploy.",
       },
     });
     return count;
@@ -2025,6 +2055,9 @@ export class ApplicationsService {
     const row = await this.prisma.deployment.findFirst({ where: { id: depId, appId } });
     if (!row) throw new NotFoundException("deployment not found");
     if (row.status === "RUNNING") {
+      // A swarm rollout is not cancellable even when adopted from the journal: killing the agent's poll script would
+      // report CANCELLED while Swarm keeps rolling the service out (the live path refuses it for the same reason).
+      if (isSwarmDispatch(row)) throw new ConflictException("this running deployment can't be cancelled (a swarm rollout can't be interrupted)");
       // In-memory handle for a command this process dispatched; else the row's persisted handle for a durable
       // command owned by a dead process / being adopted (the agent kills it and journals `killed`, so adoption
       // settles it CANCELLED).
@@ -2062,6 +2095,9 @@ export class ApplicationsService {
     // True once the main deploy command's reqId is persisted on the row (durable dispatch) — the catch may then
     // release the lease for adoption instead of writing FAILED on a mere socket drop.
     let dispatched = false;
+    // The agent the durable main command went to: app.serverId for the classic paths, the cluster MANAGER for a swarm
+    // deploy (set by the swarm dispatch hook) — the lease-released hook must wake the adopter of THAT agent.
+    let dispatchServerId = app.serverId;
     try {
       // Fail-closed: re-validate the STORED dockerOptions against the app's CURRENT privileged flag on every
       // deploy. If the owner revoked the override (or a path stored privileged options without the flag), the
@@ -2140,6 +2176,50 @@ export class ApplicationsService {
           noCache,
           timeoutMs: this.deployTimeoutMs(app),
           onChunk: (chunk) => this.deployLogs.push(app.id, chunk),
+          // Hub-restart survival (only used when the manager's agent journals commands; an older agent keeps the
+          // legacy path and boot reaps it as before). Two checkpoints, both compare-and-set on OUR lease:
+          //  - prepare: build/inspect begin; nothing live is touched until dispatch, so a restart RE-QUEUES the row;
+          //  - beforeDispatch: the one mutating `docker service` command is about to go out as a durable command; a
+          //    restart from here ADOPTS its real outcome from the agent's journal (never re-sent → no double-apply).
+          durable: {
+            prepare: async () => {
+              const { count } = await this.prisma.deployment.updateMany({
+                where: { id: dep.id, status: "RUNNING", ownerId: this.lease.bootId, phase: "CLAIMED" },
+                data: { phase: "PREPARING" },
+              });
+              if (count !== 1) throw new Error("deploy lease lost before the swarm build started");
+            },
+            beforeDispatch: async ({ managerId, reqId, timeoutMs, buildLog }) => {
+              const plan: DispatchPlan = {
+                v: 1,
+                rolling: false,
+                recreate: false,
+                isCompose: false,
+                isGitCompose: false,
+                hadPrev: false,
+                swarm: true,
+                gitSourced: app.source === "GIT",
+                runTag: null, // no local retag on a swarm — the registry ref is the artifact
+                registryRef,
+                wasRunning,
+                postDeploy: false,
+                buildLogHead: buildLog ? buildLog.slice(0, BUILD_LOG_HEAD_BYTES) : null,
+              };
+              const { count } = await this.prisma.deployment.updateMany({
+                where: { id: dep.id, status: "RUNNING", ownerId: this.lease.bootId },
+                data: {
+                  phase: "DISPATCHED",
+                  agentReqId: reqId,
+                  agentServerId: managerId,
+                  deadlineAt: new Date(Date.now() + timeoutMs + DISPATCH_DEADLINE_SLACK_MS),
+                  dispatchPlan: plan as unknown as Prisma.InputJsonValue,
+                },
+              });
+              if (count !== 1) throw new Error("deploy lease lost before dispatch");
+              dispatched = true;
+              dispatchServerId = managerId;
+            },
+          },
         });
         const ok = sd.exitCode === 0;
         const rolledBack = sd.exitCode === 3; // Swarm's native --update-failure-action rollback restored the previous live spec
@@ -2441,7 +2521,7 @@ export class ApplicationsService {
         if (released.count === 1) {
           this.logger.warn(`deploy ${dep.id} (app ${app.id}): agent ${app.serverId} disconnected mid-command — lease released for adoption`);
           this.deployLogs.push(app.id, "TUGRA: connection to the agent dropped; the deploy keeps running there and is re-adopted when it reconnects\n");
-          this.leaseReleasedHook?.(app.serverId);
+          this.leaseReleasedHook?.(dispatchServerId);
           // finally still runs (clears the cancel registry; drain is a no-op while this row stays RUNNING).
           return this.prisma.deployment.findUnique({ where: { id: dep.id } });
         }
@@ -2522,7 +2602,8 @@ export class ApplicationsService {
     this.cancelRequested.delete(dep.id);
     const ownerGuard = { id: dep.id, status: "RUNNING" as const, ownerId: this.lease.bootId };
     const clear = { ownerId: null, phase: null };
-    const tagsToReap = plan.isCompose ? [] : [plan.runTag, plan.registryRef].filter((x): x is string => !!x);
+    // A swarm deploy retags nothing locally (the registry is the artifact), so there is nothing to reap on any server.
+    const tagsToReap = plan.isCompose || plan.swarm ? [] : [plan.runTag, plan.registryRef].filter((x): x is string => !!x);
     if (result.killed) {
       // A command_cancel killed it (requested before the hub died, or via the row's handle afterwards): CANCELLED,
       // never FAILED, no auto-rollback bookkeeping, app status untouched — the live path's exact semantics.
@@ -2548,7 +2629,7 @@ export class ApplicationsService {
         exitCode: result.exitCode,
         imageTag: ok && !plan.isCompose ? plan.runTag : null,
         registryImage: ok ? plan.registryRef : null,
-        imageDigest: ok && !plan.isCompose ? parseImageDigest(output) : null,
+        imageDigest: ok && !plan.isCompose ? (plan.swarm ? parseServiceImageDigest(output) : parseImageDigest(output)) : null,
         commitSha: cc?.sha ?? null,
         commitMessage: cc?.message ?? null,
         ...this.finishStamp(dep),
@@ -2569,7 +2650,7 @@ export class ApplicationsService {
     }
     this.deployLogs.finish(app.id, { status: ok ? "SUCCESS" : "FAILED", exitCode: result.exitCode, deploymentId: dep.id });
     this.notifyDeploy(app, dep, ok ? "deploy_success" : rolledBack ? "deploy_rolled_back" : "deploy_failed").catch(() => {});
-    if (ok && !plan.isCompose) void this.pruneImages(app).catch(() => undefined);
+    if (ok && !plan.isCompose && !plan.swarm) void this.pruneImages(app).catch(() => undefined);
     else if (tagsToReap.length) await this.agentWs.sendCommand(app.serverId, buildImageRemoveScriptForTags(app.id, tagsToReap, await this.ownedVersionsFor(app, tagsToReap)), "cleanup").catch(() => undefined);
     await this.audit.log({ actor: dep.requestedBy ?? "system", action: "app.deploy", target: app.id });
     void this.drain(app.id);
@@ -3184,7 +3265,7 @@ export class ApplicationsService {
     const row = toDeploymentRow(d, { isCompose: app.source === "COMPOSE", prevSnapshot: (base?.configSnapshot as ConfigSnapshot | null) ?? null, currentServerId: app.serverId });
     const cancellable =
       d.status === "QUEUED" ||
-      (d.status === "RUNNING" && (this.activeDeployCommands.has(d.id) || (!!d.agentReqId && !!d.agentServerId && (d.phase === "DISPATCHED" || d.phase === "RECOVERING"))));
+      (d.status === "RUNNING" && !isSwarmDispatch(d) && (this.activeDeployCommands.has(d.id) || (!!d.agentReqId && !!d.agentServerId && (d.phase === "DISPATCHED" || d.phase === "RECOVERING"))));
     const finishedAt = finishedAtOf(d);
     return {
       ...row,

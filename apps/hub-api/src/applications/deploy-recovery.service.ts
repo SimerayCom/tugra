@@ -27,8 +27,13 @@ const MIN_ADOPT_WINDOW_MS = 10_000;
  * deadline → settleInterrupted (the legacy FAILED -1 shape, Application.status untouched). A second drop while
  * waiting releases the lease again (RECOVERING) for the next reconnect.
  *
- * Rows WITHOUT a journaled command (pre-dispatch, build-server/render phase, swarm, rollback, old agent) are not
- * ours: DeploymentReconcileService reaps them at boot exactly as before.
+ * Swarm deploys are adopted the same way: their one mutating command (the manager's `docker service create/update`
+ * + convergence poll) is dispatched durable to the MANAGER (agentServerId), judged by a `swarm` dispatch plan
+ * (0 converged / 3 Swarm auto-rollback / else failed — the live contract). A swarm deploy still in its pre-dispatch
+ * build phase has no journaled command; DeploymentReconcileService RE-QUEUES it at boot (nothing live was touched).
+ *
+ * Rows WITHOUT a journaled command (build-server/render phase, manual rollback, old agent) are not ours:
+ * DeploymentReconcileService reaps them at boot exactly as before (swarm deploys: see above).
  */
 @Injectable()
 export class DeployRecoveryService implements OnModuleInit, OnApplicationBootstrap, OnModuleDestroy {

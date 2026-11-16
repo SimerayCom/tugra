@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 
 /** Deployment.phase values (see schema). */
-export type DeployPhase = "CLAIMED" | "DISPATCHED" | "RECOVERING";
+export type DeployPhase = "CLAIMED" | "PREPARING" | "DISPATCHED" | "RECOVERING";
 
 const HEARTBEAT_MS = 10_000;
 

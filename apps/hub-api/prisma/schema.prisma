@@ -1645,7 +1645,7 @@ model Deployment {
   // agent without cmd_journal_v1 — those keep the boot-time "reap RUNNING → FAILED" behaviour.
   ownerId        String? // hub process (bootId) currently driving this RUNNING row; NULL = released, awaiting adoption
   heartbeatAt    DateTime? // last owner heartbeat (10s) — multi-hub expiry signal (not used for decisions on a single hub)
-  phase          String? // "CLAIMED" (pre-dispatch) | "DISPATCHED" (main deploy command on the agent) | "RECOVERING" (owner lost; adopt on reconnect)
+  phase          String? // "CLAIMED" (pre-dispatch) | "PREPARING" (swarm only: build/inspect running, nothing live touched yet — a hub restart safely re-queues it) | "DISPATCHED" (main deploy command on the agent) | "RECOVERING" (owner lost; adopt on reconnect)
   agentReqId     String? // reqId of the durable main deploy command (= what the agent journaled); set only for cmd_journal_v1 agents
   agentServerId  String? // server the command was sent to (adoption is gated on THAT agent reconnecting)
   deadlineAt     DateTime? // dispatch + agent timeout + soak + slack: past it an unrecovered row settles as interrupted

@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AgentWsServer } from "../agent-gateway/agent-ws.server";
 import { SwarmProxyService } from "./swarm-proxy.service";
 import { createHash } from "node:crypto";
+import { AGENT_FEATURE_CMD_JOURNAL } from "@tugra/shared";
 import { assertScriptFits, planEnv } from "../deploy/env-render";
 import { appVolumeName, buildBuildOnlyScript, constraintExpr, envFileB64, imageRef, spreadPrefExpr, traefikLabels, type AppSpec, type RegistryAuth } from "../deploy/deploy-script";
 import {
@@ -45,6 +46,17 @@ export function effectivePollSec(replicas: number, healthCmd?: string | null): n
   return Math.min(900, 30 + Math.max(1, replicas) * per);
 }
 
+/** What a caller (ApplicationsService.executeDeploy) supplies so a swarm deploy survives a hub restart. Only honoured
+ *  when the manager's agent advertises the command journal (cmd_journal_v1); otherwise the deploy runs the legacy way. */
+export interface SwarmDurableHooks {
+  /** Called once the manager is known to journal commands, BEFORE any build/inspect: from here until dispatch nothing
+   *  on the cluster is touched, so a hub restart may safely re-queue the deploy from scratch. */
+  prepare: () => Promise<void>;
+  /** Persist-before-send for the one mutating command (`docker service create/update` + convergence poll): a throw
+   *  aborts BEFORE the frame leaves the hub, so a dispatched command is always known to the DB. */
+  beforeDispatch: (info: { managerId: string; reqId: string; timeoutMs: number; buildLog: string }) => Promise<void>;
+}
+
 /**
  * Deploys an app as a Docker Swarm SERVICE. Owns the swarm-specific command building + dispatch to
  * the cluster's MANAGER; the Deployment-row lifecycle (status/notify/logs) stays in ApplicationsService,
@@ -83,6 +95,18 @@ export class SwarmDeployService {
     throw new ServiceUnavailableException("swarm manager is offline");
   }
 
+  /** The cluster manager a deploy could be dispatched to RIGHT NOW (resolves like deploy() AND has a live agent
+   *  socket — the DB status alone can be stale after a hub restart), or null. Never throws. Used to gate the
+   *  re-drive of queued deploys so one is never driven at an unreachable manager. */
+  async liveManager(clusterId: string): Promise<string | null> {
+    try {
+      const id = await this.resolveManager(clusterId);
+      return this.agentWs.isOnline(id) ? id : null;
+    } catch {
+      return null;
+    }
+  }
+
   /**
    * Build + push (GIT) then create/update the swarm service on the manager, polling to convergence.
    * Returns the combined output, exit code (0 converged / 3 auto-rolled-back / other failed) and the
@@ -92,9 +116,12 @@ export class SwarmDeployService {
     app: Application,
     spec: AppSpec,
     deploymentId: string,
-    opts: { noCache?: boolean; timeoutMs: number; onChunk?: (c: string) => void } = { timeoutMs: 300_000 },
+    opts: { noCache?: boolean; timeoutMs: number; onChunk?: (c: string) => void; durable?: SwarmDurableHooks } = { timeoutMs: 300_000 },
   ): Promise<{ exitCode: number; output: string; digest: string | null; registryRef: string | null }> {
     const managerId = await this.resolveManager(app.clusterId!);
+    // Durable (hub-restart-surviving) mode needs a journaling agent on the manager; an older agent keeps the legacy path.
+    const durable = opts.durable && this.agentWs.agentSupports(managerId, AGENT_FEATURE_CMD_JOURNAL) ? opts.durable : null;
+    if (durable) await durable.prepare();
 
     let ref: string;
     let auth = spec.registryAuth ?? null;
@@ -130,7 +157,15 @@ export class SwarmDeployService {
     // discovered. Ensure it (idempotent; refuses on a classic-proxy collision) before deploying.
     if (spec.domain) await this.swarmProxy.ensure(app.clusterId!);
 
-    const svc = await this.dispatchService(managerId, app, spec, ref, auth, opts.onChunk);
+    const svc = await this.dispatchService(
+      managerId,
+      app,
+      spec,
+      ref,
+      auth,
+      opts.onChunk,
+      durable ? { reqId: `dep-${deploymentId}`, beforeDispatch: (reqId, timeoutMs) => durable.beforeDispatch({ managerId, reqId, timeoutMs, buildLog }) } : undefined,
+    );
     const output = buildLog ? `${buildLog}\n${svc.output}` : svc.output;
     return { exitCode: svc.exitCode, output, digest: parseServiceImageDigest(output), registryRef };
   }
@@ -162,6 +197,7 @@ export class SwarmDeployService {
     ref: string,
     auth: RegistryAuth | null,
     onChunk?: (c: string) => void,
+    durable?: { reqId: string; beforeDispatch: (reqId: string, timeoutMs: number) => Promise<void> },
   ): Promise<{ exitCode: number; output: string }> {
     const replicas = Math.max(1, app.replicas ?? 1);
     const pollSec = effectivePollSec(replicas, spec.healthCmd);
@@ -255,7 +291,15 @@ export class SwarmDeployService {
     ].join("\n");
     // multiline values are base64'd into this one `bash -c` argument (twice, via the secret body): fail clearly up front
     if (mlKeys.length > 0) assertScriptFits(script);
-    return this.agentWs.sendCommand(managerId, script, "swarm", (pollSec + 30) * 1000, onChunk);
+    const timeoutMs = (pollSec + 30) * 1000;
+    if (!durable) return this.agentWs.sendCommand(managerId, script, "swarm", timeoutMs, onChunk);
+    // Durable dispatch: the agent journals this exact command (reqId), so a hub restart re-adopts its real outcome
+    // (DeployRecoveryService) instead of guessing — the command is NEVER re-sent, so no double-apply.
+    return this.agentWs.sendCommand(managerId, script, "swarm", timeoutMs, onChunk, undefined, {
+      reqId: durable.reqId,
+      durable: true,
+      beforeSend: (reqId) => durable.beforeDispatch(reqId, timeoutMs),
+    });
   }
 
   // ── lifecycle (all dispatched to the cluster manager under the "swarm" capability) ──

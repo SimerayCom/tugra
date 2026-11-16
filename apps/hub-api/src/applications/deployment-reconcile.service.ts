@@ -5,9 +5,6 @@ import { DeployLeaseService } from "./deploy-lease.service";
 export const INTERRUPTED_DEPLOY_NOTE =
   "Deployment interrupted: the hub restarted while this deploy was in progress, so its result is unknown. Re-deploy to continue.";
 
-export const CLUSTERED_QUEUED_DROP_NOTE =
-  "Queued deploy dropped: the hub restarted before it started. Swarm/cluster deploys don't yet resume across a restart — re-deploy.";
-
 /**
  * On hub startup, deal with every Deployment still marked RUNNING by a dead hub process. A deploy is driven
  * synchronously by the hub process (executeDeploy awaits the agent), so a RUNNING row at boot is orphaned — the
@@ -28,22 +25,24 @@ export const CLUSTERED_QUEUED_DROP_NOTE =
  * durationMs is intentionally left null — the true wall-clock of an interrupted run is unknown (the hub may
  * have been down for hours), and a stamped value would be misleading.
  *
- * NON-CLUSTERED (single-server) QUEUED rows are deliberately LEFT INTACT across a restart (no longer cancelled
- * here). A QUEUED deploy has startedAt=null and has dispatched NOTHING to its agent (executeDeploy is the only
- * sender, and it runs only on a RUNNING row), so re-driving it later is a byte-identical NORMAL deploy — not a
- * resume — with zero double-apply risk. They are re-driven automatically when the owning server's agent
- * reconnects to the gateway (ApplicationsService.redriveQueuedForServer, registered in
- * ApplicationsModule.onModuleInit), which is strictly gated on that server being online — so a restart no
- * longer silently drops single-server queued work, and a drain is never attempted while the agent is offline.
- * A stale-QUEUED safety sweep (ApplicationsService.sweepStaleQueued, driven by DeployQueueSweepSchedulerService)
- * is the backstop that eventually cancels a row whose server never comes back, so nothing lingers QUEUED forever.
+ * QUEUED rows (single-server AND clustered/swarm) are deliberately LEFT INTACT across a restart. A QUEUED deploy has
+ * startedAt=null and has dispatched NOTHING to its agent (executeDeploy is the only sender, and it runs only on a
+ * RUNNING row), so re-driving it later is a byte-identical NORMAL deploy — not a resume — with zero double-apply
+ * risk. They are re-driven automatically when the owning agent reconnects to the gateway
+ * (ApplicationsService.redriveQueuedForServer for single-server apps, redriveQueuedClusteredForServer for swarm apps,
+ * both registered in ApplicationsModule.onModuleInit), strictly gated on the agent(s) the deploy needs being online:
+ * the app's server, or for a swarm app a reachable cluster manager (plus the build server if one is set). A stale-QUEUED
+ * safety sweep (ApplicationsService.sweepStaleQueued, DeployQueueSweepSchedulerService) is the backstop that
+ * eventually cancels a row whose server/cluster never comes back, so nothing lingers QUEUED forever.
  *
- * CLUSTERED (swarm) QUEUED rows ARE still cancelled here. A swarm deploy targets the cluster MANAGER, resolved
- * dynamically (swarmDeploy.resolveManager), not Application.serverId — so the reconnect re-drive's per-server
- * online gate cannot safely gate it, and driving it while the manager is offline would spuriously FAIL the
- * deploy. Resuming clustered deploys is a deferred follow-up; cancelling them at boot preserves today's exact
- * behavior for swarm apps (no regression, no spurious "manager offline" FAILED) while single-server apps gain
- * resume. redriveQueuedForServer and the sweep both reflect this split.
+ * SWARM RUNNING rows follow the same two-way split as single-server ones, decided by how far the deploy got:
+ *  - phase DISPATCHED/RECOVERING with a journaled `docker service` command (agentReqId): RECOVERABLE (case 1 above) —
+ *    adopted from the manager's command journal, never re-sent.
+ *  - phase PREPARING (the swarm build/inspect phase, nothing on the cluster touched, no command journaled): the row is
+ *    RE-QUEUED (status QUEUED, startedAt/owner/phase cleared; createdAt untouched so it keeps its FIFO place) and re-driven
+ *    like any queued row. Re-running that phase is idempotent (the image build/push is tagged by the deployment id,
+ *    the pull/inspect and proxy ensure are read-only/idempotent), so a restart can neither double-apply nor lose it.
+ *  Swarm rows on an agent WITHOUT a journal (no PREPARING stamp, no reqId) fall through to the legacy reap below.
  */
 @Injectable()
 export class DeploymentReconcileService implements OnApplicationBootstrap {
@@ -66,6 +65,16 @@ export class DeploymentReconcileService implements OnApplicationBootstrap {
     if (recoverable > 0) {
       this.logger.warn(`${recoverable} deployment(s) left RUNNING by a hub restart are recoverable — awaiting their agent to adopt the outcome`);
     }
+    // (1b) Swarm deploys caught in their pre-dispatch build/inspect phase: nothing live was touched and no command was
+    // journaled, so put the row back in the queue (it re-drives when the cluster is reachable) instead of failing it.
+    // Must run BEFORE the reap below, which would otherwise FAIL every non-RECOVERING row.
+    const { count: requeued } = await this.prisma.deployment.updateMany({
+      where: { status: "RUNNING", phase: "PREPARING", agentReqId: null, ...notOurs },
+      data: { status: "QUEUED", startedAt: null, ownerId: null, heartbeatAt: null, phase: null },
+    });
+    if (requeued > 0) {
+      this.logger.warn(`re-queued ${requeued} swarm deployment(s) interrupted by a hub restart before anything was dispatched — they re-run when the cluster is reachable`);
+    }
     // (2) Everything else still RUNNING and not ours: the legacy reap. NULL-safe on purpose: Prisma's `not` on a
     // nullable column compiles to `<> value`, which never matches NULL — and every row written before this
     // migration (or by a legacy path) has phase NULL. Those are exactly the orphans this reap exists for.
@@ -76,17 +85,7 @@ export class DeploymentReconcileService implements OnApplicationBootstrap {
     if (count > 0) {
       this.logger.warn(`reaped ${count} deployment(s) left RUNNING by a hub restart (marked FAILED)`);
     }
-    // Non-clustered QUEUED rows are intentionally NOT touched: they survive the restart and re-drive when their
-    // server's agent reconnects (see the class docstring). CLUSTERED (swarm) QUEUED rows ARE cancelled — a
-    // swarm deploy targets the dynamically-resolved cluster manager, not Application.serverId, so the per-server
-    // reconnect gate can't safely gate them; resuming them is deferred. This preserves today's behavior for
-    // swarm apps. The stale-QUEUED sweep is the eventual backstop for the single-server rows left intact.
-    const { count: cancelled } = await this.prisma.deployment.updateMany({
-      where: { status: "QUEUED", application: { clusterId: { not: null } } },
-      data: { status: "CANCELLED", exitCode: -1, logs: CLUSTERED_QUEUED_DROP_NOTE },
-    });
-    if (cancelled > 0) {
-      this.logger.warn(`cancelled ${cancelled} clustered QUEUED deploy(s) across a hub restart (swarm resume is deferred)`);
-    }
+    // QUEUED rows (single-server and swarm) are intentionally NOT touched: they survive the restart and re-drive when
+    // their agent / cluster manager is reachable (see the class docstring). The stale-QUEUED sweep is the backstop.
   }
 }
