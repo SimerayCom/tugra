@@ -5,6 +5,7 @@ import { DatabasesModule } from "../../../databases/databases.module";
 import { DnsModule } from "../../../dns/dns.module";
 import { ImporterModule } from "../../../importer/importer.module";
 import { RUN_IMPORT } from "../../core/run-ports";
+import { RunDataStepsModule } from "../data/run-data-steps.module";
 import { PostPonrRelease } from "./baseline/post-ponr";
 import { RunSafetyController } from "./baseline/safety.controller";
 import { PrismaRunHints, RUN_HINTS } from "./baseline/run-hints";
@@ -21,7 +22,8 @@ import { RemapEnvStep } from "./remap-env.step";
  * `RUN_IMPORT` port.
  */
 @Module({
-  imports: [ImporterModule, ApplicationsModule, DatabasesModule, AgentGatewayModule, DnsModule],
+  // RunDataStepsModule exports the host report store PREFLIGHT reads for the inventory cross-check (R2/C6)
+  imports: [ImporterModule, ApplicationsModule, DatabasesModule, AgentGatewayModule, DnsModule, RunDataStepsModule],
   controllers: [RunSafetyController],
   providers: [
     ImportPortService,

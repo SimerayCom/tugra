@@ -33,6 +33,9 @@ import { SESSION_EXPIRED_CODE, applyAcks, hashOf } from "../../core/run-logic";
 import { IMPORT_STEPS_PORT, type ImportStepsPort, type SessionState, type TargetFacts } from "./import-ports";
 import { Memo, failureOf, includedItems, isPassive, itemsFromChecks, softenAckable, unackedBlockers } from "./step-utils";
 import { deployWindow } from "./baseline/build-window";
+import { preflightCrossCheck } from "./baseline/preflight-crosscheck";
+import { emptyHostView, loadHostView, type HostView } from "../data/inventory/host-view";
+import { HOST_REPORT_PORT, type HostReportPort } from "../data/inventory/inventory-contract";
 import { floatingImages } from "./baseline/image-pins";
 import { RUN_HINTS, type RunHint, type RunHintStore } from "./baseline/run-hints";
 import { baselineItemRef, buildSourceBaseline, isDegradedAtSource, sameBaseline } from "./baseline/source-health";
@@ -70,6 +73,8 @@ export interface PreflightObs extends Observation {
   baseline?: { state: "captured"; baseline: SourceBaseline } | { state: "unavailable" };
   /** The run's hints (image digests, job-runner marks). */
   hints?: readonly RunHint[];
+  /** The stored host reports of the run (the inventory the docker-vs-API cross-check reads); absent = none were read. */
+  hosts?: HostView;
 }
 
 const ev = { evidence: "hub-verified" as const };
@@ -236,6 +241,8 @@ export function preflightChecks(run: RunSnapshot, obs: PreflightObs): GateCheck[
   if (generated.length) c.push({ id: "preflight.generated-hosts", status: "warn", code: "preflight.generated-hosts", params: { count: generated.length }, ...ev });
 
   c.push(...safetyChecks(run, obs, plan));
+  // R2/C6: the docker-vs-API inventory cross-check, as a warning only (DATA_SEED stays the gate that blocks on it)
+  c.push(...preflightCrossCheck(run, plan, obs.hosts));
 
   // live service probe (owner question 7)
   const hasServices = plan.items.some((i) => i.kind === "service");
@@ -304,6 +311,7 @@ export class PreflightStep implements StepHandler<PreflightObs>, OnModuleInit {
     @Inject(STEP_HANDLERS) private readonly registry: StepHandlerRegistry,
     @Inject(IMPORT_STEPS_PORT) private readonly port: ImportStepsPort,
     @Optional() @Inject(RUN_HINTS) private readonly hintStore?: RunHintStore,
+    @Optional() @Inject(HOST_REPORT_PORT) private readonly reports?: HostReportPort,
   ) {}
 
   onModuleInit(): void {
@@ -378,7 +386,8 @@ export class PreflightStep implements StepHandler<PreflightObs>, OnModuleInit {
     const sourceVersion = await this.sourceVersionOf(ctx, bypass);
     const baseline = await this.baselineOf(ctx, bypass);
     const hints = this.hintStore ? await this.hintStore.list(run.id, run.promotedFromId).catch(() => []) : [];
-    return { session, plan, planError: null, target, mapping, storedMappingBlocks, services, sourceVersion, ...(baseline ? { baseline } : {}), hints };
+    const hostView = this.reports ? await loadHostView(this.reports, run.id).catch(() => emptyHostView()) : undefined;
+    return { session, plan, planError: null, target, mapping, storedMappingBlocks, services, sourceVersion, ...(baseline ? { baseline } : {}), hints, ...(hostView ? { hosts: hostView } : {}) };
   }
 
   /**
