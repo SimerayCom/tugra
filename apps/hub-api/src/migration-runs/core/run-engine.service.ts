@@ -580,14 +580,17 @@ export class RunEngineService implements OnModuleDestroy {
     const prev = row.wait as WaitSpec | null;
     const changed = row.status !== target || !sameWait(prev, wait);
     const since = changed ? this.clock.now().toISOString() : (waitSince(prev) ?? this.clock.now().toISOString());
+    // the engine's own bookkeeping on an unchanged wait (the watchdog's `_stuck` marker) survives a re-park
+    const hidden = !changed && prev ? Object.fromEntries(Object.entries(prev).filter(([k]) => k.startsWith("_"))) : {};
+    const stored = { ...wait, ...hidden, [WAIT_SINCE_KEY]: since };
     await this.store.updateStep(
       run.id,
       key,
-      { status: target, wait: { ...wait, [WAIT_SINCE_KEY]: since }, gate, notBefore: wait.kind === "timer" ? new Date(wait.notBefore) : null },
+      { status: target, wait: stored, gate, notBefore: wait.kind === "timer" ? new Date(wait.notBefore) : null },
       this.bootId,
     );
     row.status = target;
-    row.wait = { ...wait, [WAIT_SINCE_KEY]: since } as never;
+    row.wait = stored as never;
     if (changed) {
       const code = wait.kind === "approval" ? "step.waiting-approval" : wait.code;
       await this.emit(run.id, { level: "info", code: "step.waiting", stepKey: key, params: { kind: wait.kind, reason: code } });

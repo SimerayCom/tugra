@@ -14,7 +14,9 @@ import { ProxyConfigService } from "../../../proxy-config/proxy-config.service";
 import { validateAcmeEmail } from "../../../deploy/panel-router";
 import { ImportExecutorService, type RollbackOptions } from "../../../importer/import-executor.service";
 import { ImporterService, type ImportPlanResponse } from "../../../importer/importer.service";
-import { planImport } from "../../../importer/import-planner";
+import { ns, planImport } from "../../../importer/import-planner";
+import { validateServiceChoices } from "../../../importer/service-choices";
+import { buildServicePreview } from "../../../importer/service-preview";
 import { buildPreflight } from "../../../importer/preflight";
 import { buildCoverage } from "../../../importer/coverage";
 import { mapLimit } from "../../../importer/sources/map-limit";
@@ -99,8 +101,26 @@ export class ImportPortService implements ImportStepsPort {
     return !!d && (Object.keys(d.items).length > 0 || Object.keys(d.projects).length > 0 || Object.keys(d.gitSources).length > 0 || d.acks.length > 0);
   }
 
+  /** Mirrors ImporterService.previewServices WITHOUT its `lastUsedAt` touch (a dry-run writes nothing outside its own rows). */
   async previewServices(userId: string, input: { sessionId: string; sourceKind: RemoteSourceKind; choices?: Record<string, ServiceChoice> }): Promise<ServicePreview[]> {
-    return (await this.importer.previewServices(userId, input)).services;
+    const { source, session } = await this.importer.openSession(userId, input.sessionId, input.sourceKind);
+    try {
+      const fleet = await source.discover();
+      const plan = planImport(fleet, { sourceKind: session.sourceKind });
+      const choices = validateServiceChoices(fleet, plan.items, input.choices);
+      const services = [...fleet.services].sort((a, b) => (ns("service", a.serverRef, a.sourceRef) < ns("service", b.serverRef, b.sourceRef) ? -1 : 1));
+      return await mapLimit(services, 4, async (svc) => {
+        let bundle;
+        try {
+          bundle = await source.fetchServiceBundle?.(svc.sourceRef);
+        } catch {
+          bundle = undefined; // a fixed degrade: the card says secretsAvailable:false, never the error text
+        }
+        return buildServicePreview(svc, choices[ns("service", svc.serverRef, svc.sourceRef)], bundle);
+      });
+    } finally {
+      await source.close();
+    }
   }
 
   async target(userId: string, input: { serverId: string; dnsCredentialId?: string; hosts: readonly string[] }): Promise<TargetFacts> {
