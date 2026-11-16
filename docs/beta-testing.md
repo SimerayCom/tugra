@@ -54,8 +54,6 @@ Pick what matches how you would actually use it. Each item takes a couple of min
   command journal (never re-sent). Needs an agent that keeps the command journal; a swarm manager on an older agent
   still fails an in-flight deploy as "interrupted". A manual swarm *rollback* that is mid-run during a restart is
   still marked interrupted (re-run it).
-- "Sign in with GitHub" works only behind the single-origin HTTPS proxy setup (`--domain`), not on the raw
-  two-port install.
 - The in-app updater updates the hub and web (and now the local agent); a release that changes the compose file
   or the scripts still needs `git pull && ./scripts/install.sh`.
 - Hubs on beta.16 or earlier have no working update check, so they upgrade to the first automatic-check release

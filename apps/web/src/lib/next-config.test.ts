@@ -14,4 +14,21 @@ describe("next.config rewrites", () => {
     }
     expect(r.afterFiles.map((x) => x.source)).toEqual(["/api/auth/oauth/:path*", "/api/auth/oidc/:path*", "/api/auth/oidc"]);
   });
+
+  // "Sign in with GitHub" on the raw two-port install registers `<web origin>/api/auth/oauth/github/callback` with
+  // GitHub, so the web port must forward both the start and the callback (query string included, handled by Next) to
+  // the hub's bare, un-prefixed OAuth routes.
+  it("proxies the GitHub OAuth start and callback on the web origin to the hub's bare routes", async () => {
+    const prev = process.env.HUB_INTERNAL_URL;
+    process.env.HUB_INTERNAL_URL = "http://hub-api:3000";
+    try {
+      const r = (await nextConfig.rewrites!()) as unknown as Record<string, { source: string; destination: string }[]>;
+      const rule = r.afterFiles.find((x) => x.source === "/api/auth/oauth/:path*")!;
+      expect(rule.destination).toBe("http://hub-api:3000/auth/oauth/:path*");
+      // `:path*` (zero or more segments) covers both `github` (start) and `github/callback`.
+    } finally {
+      if (prev === undefined) delete process.env.HUB_INTERNAL_URL;
+      else process.env.HUB_INTERNAL_URL = prev;
+    }
+  });
 });

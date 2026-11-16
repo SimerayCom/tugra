@@ -124,8 +124,21 @@ The hub-side tunables for the file manager (set them in `.env`; the hub reads th
 | `HUB_REQUEST_TIMEOUT_MS` | 900000 | - | See the table above |
 | `HUB_PROXY_TIMEOUT_MS` | 660000 | - | See the table above (web service) |
 
-"Sign in with GitHub" works only in this single-origin proxy deployment (the hub and web share one
-public origin so the session cookie is visible to the SPA); it isn't available in the two-port quick start.
+## Sign in with GitHub
+
+"Sign in with GitHub" works in both layouts. Create an OAuth app at <https://github.com/settings/developers>, set
+`GITHUB_OAUTH_CLIENT_ID` / `GITHUB_OAUTH_CLIENT_SECRET` in `.env`, restart the hub, and register the callback URL for
+your layout:
+
+| Layout | Authorization callback URL |
+|---|---|
+| Single-origin proxy (`--domain`) | `https://<host>/auth/oauth/github/callback` (your proxy already routes `/auth/oauth` to the hub, see the table above) |
+| Raw two-port quick start (`http://<ip>:3001` + `http://<ip>:3000`) | `http://<ip>:3001/api/auth/oauth/github/callback` (the **web** port, not the hub port; it proxies the callback to the hub) |
+
+The hub works the right URL out from `HUB_PUBLIC_URL` and `WEB_PUBLIC_URL`: one shared origin uses the first form,
+different ports or hosts use the second. Set `GITHUB_OAUTH_CALLBACK_URL` only to force a different registered URL.
+Each login is bound to the browser that started it (a short-lived `HttpOnly` cookie), and the session cookies keep
+the `Secure` flag on HTTPS installs.
 
 ## Installer flags
 
