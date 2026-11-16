@@ -219,6 +219,7 @@
     "stateful": "Stateful app: the source and Tugra can diverge until the source is stopped",
     "caa": "A CAA record may restrict certificate issuance",
     "coverageUnverified": "DNS credential coverage of this zone is unverified",
+    "healthPreExisting": "The app was already failing at the source and still returns an error here; this does not block the switch",
     "sslModeWeak": "Cloudflare SSL mode is weak for an origin certificate",
     "sslModeUnknown": "Cloudflare SSL mode could not be read",
     "sslModeBad": "Cloudflare SSL mode will break HTTPS to the origin",

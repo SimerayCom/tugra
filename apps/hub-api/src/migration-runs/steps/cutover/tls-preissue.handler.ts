@@ -24,7 +24,7 @@ import { PostPonrRelease } from "../import/baseline/post-ponr";
 import { CutoverStepBase, POLL_MS, rethrowLeaseLost, requireOpId } from "./cutover-step-base";
 import { CutoverWorld, type OpApp } from "./cutover-world.service";
 import { HTTP01_GAP_ATTEST, LEFT_OUT_ATTEST, gapAccepted, isLeftOut } from "./cutover-holds";
-import { excuseDarkVerdicts } from "./baseline-hosts";
+import { degradedAtSourceHosts, excuseDarkVerdicts } from "./baseline-hosts";
 import { buildDarkProbeScript, classifyDarkHost, parseDarkProbe, type DarkVerdict } from "./dark-probe";
 import { appHosts, cutoverInit } from "./dns-prepare.handler";
 import { actionableEntries, capHosts, chk, compDate, compStrings, isDns01Blocked, iso, PRE_FLIP_STATES, trackedEntries, type Entry } from "./run-cutover-logic";
@@ -274,7 +274,7 @@ export class TlsPreissueHandler extends CutoverStepBase implements StepHandler<T
     if (run.topology === "two-box") {
       // A host whose gap the operator accepted AFTER the preparation moves to HTTP-01 now (per host, never for the whole run).
       await this.prepareAcceptedGaps(ctx, opId, entries);
-      entries = (await this.cutover.check(userId, opId, { ...(run.options.healthPath ? { healthPath: run.options.healthPath } : {}) })).entries;
+      entries = (await this.cutover.check(userId, opId, { ...(run.options.healthPath ? { healthPath: run.options.healthPath } : {}) }, { degradedAtSource: await degradedAtSourceHosts(this.world, opId, run.sourceBaseline, entries) })).entries;
     }
 
     // C10: hosts that can only get a certificate after the flip wait for a decision PER HOST while every other host carries on.

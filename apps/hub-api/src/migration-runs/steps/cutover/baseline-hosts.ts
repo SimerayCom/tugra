@@ -6,6 +6,7 @@
  * about those. A host the baseline never saw, or one that was healthy at the source, is never excused.
  */
 import type { SourceBaseline } from "../../core/dto";
+import { HEALTH_PRE_EXISTING_TAG } from "../../../cutover/cutover.logic";
 import { preExistingHosts } from "../import/baseline/source-health";
 import type { DarkVerdict } from "./dark-probe";
 import type { SwapVerify } from "./swap-runtime";
@@ -55,9 +56,17 @@ export function excuseDarkVerdicts(verdicts: Record<string, DarkVerdict> | null,
 /** Hostnames of a swap verification that were excused as pre-existing. */
 export const excusedSwapHosts = (verify: SwapVerify | null): string[] => Object.entries(verify ?? {}).filter(([, v]) => v.ok && v.reason === PRE_EXISTING_REASON).map(([h]) => h);
 
-/** The two-box OBSERVE flag: hosts of VERIFIED entries whose only fault is the router/health probe (`needsDeploy`) and whose app was degraded at the source. */
-export function excusedBoxHosts(entries: ReadonlyArray<EntryLite & { state: string; needsDeploy: boolean }>, baseline: SourceBaseline | null | undefined, apps: readonly AppLite[]): Set<string> {
-  if (!baseline) return new Set();
-  const failing = entries.filter((e) => e.state === "VERIFIED" && e.needsDeploy).map((e) => e.hostname);
-  return preExistingHosts(baseline, failing, appRefOfHost(entries, apps));
+/**
+ * The two-box side of the baseline. The hosts whose app was degraded at the source (every entry of an app the baseline calls
+ * pre-existing), handed to `cutover.check` so the service excuses a failing app answer (never a missing router, a dead host or a bad
+ * certificate) for them and keeps the excuse as the `health-pre-existing` warning.
+ */
+export async function degradedAtSourceHosts(world: { opApps(opId: string): Promise<AppLite[]> }, opId: string, baseline: SourceBaseline | null | undefined, entries: readonly EntryLite[]): Promise<string[]> {
+  if (!baseline || entries.length === 0) return [];
+  const apps = await world.opApps(opId);
+  return [...preExistingHosts(baseline, entries.map((e) => e.hostname), appRefOfHost(entries, apps))];
 }
+
+/** The two-box OBSERVE flag: hosts of VERIFIED entries whose app answers with an error on Tugra but was degraded at the source (the service recorded the excuse). */
+export const excusedBoxHosts = (entries: ReadonlyArray<{ hostname: string; state: string; warnings: readonly string[] }>): Set<string> =>
+  new Set(entries.filter((e) => e.state === "VERIFIED" && e.warnings.includes(HEALTH_PRE_EXISTING_TAG)).map((e) => e.hostname));

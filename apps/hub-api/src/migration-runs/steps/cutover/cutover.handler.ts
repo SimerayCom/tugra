@@ -42,7 +42,7 @@ import {
   type HoldApp,
   type ObjectsVerification,
 } from "./cutover-holds";
-import { PRE_EXISTING_REASON, excuseSwapVerify } from "./baseline-hosts";
+import { PRE_EXISTING_REASON, degradedAtSourceHosts, excuseSwapVerify } from "./baseline-hosts";
 import { inspectSourceProxy, reverseSwapOnHost, stopSourceProxy, swapHostState, targetPublishesWeb, verifySwapHosts, type SwapVerify } from "./swap-runtime";
 import type { SwapHostState } from "./proxy-swap";
 import {
@@ -247,7 +247,7 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     if (ctx.now().getTime() - last < MANUAL_CHECK_EVERY_MS) return view;
     this.lastManualCheck.set(ctx.run.id, ctx.now().getTime());
     try {
-      return await this.cutover.check(ctx.actor.userId, opId, { hostnames: hosts.slice(0, 200), ...(ctx.run.options.healthPath ? { healthPath: ctx.run.options.healthPath } : {}) });
+      return await this.cutover.check(ctx.actor.userId, opId, { hostnames: hosts.slice(0, 200), ...(ctx.run.options.healthPath ? { healthPath: ctx.run.options.healthPath } : {}) }, { degradedAtSource: await degradedAtSourceHosts(this.world, opId, ctx.run.sourceBaseline, view.entries) });
     } catch (e) {
       rethrowLeaseLost(e);
       this.log.warn(`run ${ctx.run.id}: manual DNS check failed: ${(e as Error).message}`);
@@ -563,7 +563,7 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     if (switched.length > 0) {
       const since = await this.verifyWindowStart(ctx, compDate(ctx.step.compensation, "flipStartedAt") ?? now);
       if (now.getTime() - since.getTime() > VERIFY_DEADLINE_MS) throw new StepFailure("cutover.host-not-verified", { hosts: capHosts(switched.map((e) => e.hostname)), minutes: Math.round(VERIFY_DEADLINE_MS / 60_000) }, true);
-      await this.cutover.check(userId, opId, { hostnames: switched.map((e) => e.hostname) });
+      await this.cutover.check(userId, opId, { hostnames: switched.map((e) => e.hostname) }, { degradedAtSource: await degradedAtSourceHosts(this.world, opId, ctx.run.sourceBaseline, entries) });
       return { outcome: "continue", pollAfterMs: POLL_MS };
     }
 
@@ -658,7 +658,7 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     }
     if (todo.length === 0) {
       // Every manual host is confirmed and fresh: verify them against the resolvers now (the parked step does it on its own too).
-      await this.cutover.check(userId, opId, { hostnames: manual.map((e) => e.hostname).slice(0, 200) });
+      await this.cutover.check(userId, opId, { hostnames: manual.map((e) => e.hostname).slice(0, 200) }, { degradedAtSource: await degradedAtSourceHosts(this.world, opId, ctx.run.sourceBaseline, obs.entries) });
       return { outcome: "continue", pollAfterMs: POLL_MS };
     }
     const hosts = todo.map((m) => m.hostname);

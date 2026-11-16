@@ -17,7 +17,7 @@ import { NetProbe } from "./net-probe";
 import { buildAcmeDiagScript, buildCutoverLoopbackProbeScript, parseAcmeDiagMarkers, parseCutoverProbeMarkers } from "./cutover-scripts";
 import {
   canTransition, caaAllowsLetsEncrypt, classifyHealth, classifyObserved, counterpartOf, deriveEntries, earliestFlip, isStateful, planHash as computePlanHash, planRecords,
-  REVERTIBLE, sanitizeText, sslModeVerdict, stepAction, ttlGuidance, classifyPort80,
+  REVERTIBLE, sanitizeText, sslModeVerdict, stepAction, ttlGuidance, classifyPort80, HEALTH_PRE_EXISTING_TAG, SOURCE_DEGRADED_TAG, isExcusableHealth,
   type CutoverState, type DnsObserved, type LedgerRecord, type ProviderRec, type TargetIps,
 } from "./cutover.logic";
 import type {
@@ -431,7 +431,7 @@ export class CutoverService {
       id: e.id, applicationId: e.applicationId, appName: app?.name ?? "", hostname: e.hostname, role: e.role, state: e.state, blockReason: e.blockReason, dnsMode: e.dnsMode,
       challenge: e.challenge, certState: e.certState, certIssuer: e.certIssuer, certNotAfter: iso(e.certNotAfter), certError: e.certError, dnsObserved: e.dnsObserved, proxied: e.proxied,
       viaWildcard: e.viaWildcard, sslMode: e.sslMode, currentTtl: e.ttlLoweredAt ? e.targetTtl : e.originalTtl, targetTtl: e.targetTtl, ttlWaitUntil: iso(e.earliestFlipAt),
-      stateful: e.stateful, needsDeploy: e.needsDeploy, warnings: e.warnings ?? [], precheckAt: iso(e.precheckAt), flippedAt: iso(e.flippedAt), verifiedAt: iso(e.verifiedAt),
+      stateful: e.stateful, needsDeploy: e.needsDeploy, warnings: (e.warnings ?? []).filter((w) => w !== SOURCE_DEGRADED_TAG), precheckAt: iso(e.precheckAt), flippedAt: iso(e.flippedAt), verifiedAt: iso(e.verifiedAt),
       finalizedAt: iso(e.finalizedAt), lastError: e.lastError, sourceName,
     };
   }
@@ -516,8 +516,9 @@ export class CutoverService {
    * Promotes PLANNED/CERT_PENDING -> CERT_READY -> READY, demotes a READY entry whose re-check fails, and (for
    * entries already flipped) retries the verification.
    */
-  async check(userId: string, opId: string, input: CutoverCheckInput): Promise<CutoverView> {
+  async check(userId: string, opId: string, input: CutoverCheckInput, opts: { degradedAtSource?: readonly string[] } = {}): Promise<CutoverView> {
     const c = await this.ctx(userId, opId);
+    if (opts.degradedAtSource) await this.syncSourceDegraded(opId, opts.degradedAtSource);
     const rows = (await this.entries(opId, input.hostnames)).filter((r) => !["EXCLUDED", "BLOCKED", "CONFLICT", "REVERTING", "ROLLED_BACK", "SWITCHING"].includes(r.state));
     const apps = await this.loadApps([...new Set(rows.map((r) => r.applicationId))]);
     await this.requireConfig(userId, apps.keys(), apps);
@@ -539,6 +540,21 @@ export class CutoverService {
     await Promise.all(Array.from({ length: Math.min(4, rows.length) }, () => worker()));
     await this.auditLog(userId, "cutover.check", opId, { hosts: rows.length });
     return this.view(userId, opId);
+  }
+
+  /**
+   * The guided run's source health baseline (R52): mark the hosts whose app was ALREADY failing at the source (and clear the mark from
+   * every other host). A marked host whose app answers with a failing status on Tugra is excused from the health test only (see
+   * {@link isExcusableHealth}); the certificate, DNS and "no answer at all" tests still apply, and the excuse shows as a warning.
+   */
+  private async syncSourceDegraded(opId: string, hostnames: readonly string[]): Promise<void> {
+    const want = new Set(hostnames);
+    for (const e of await this.entries(opId)) {
+      const has = (e.warnings ?? []).includes(SOURCE_DEGRADED_TAG);
+      if (want.has(e.hostname) === has) continue;
+      const rest = (e.warnings ?? []).filter((w) => w !== SOURCE_DEGRADED_TAG);
+      await this.set(e.id, { warnings: want.has(e.hostname) ? [...rest, SOURCE_DEGRADED_TAG] : rest });
+    }
   }
 
   private async checkOne(userId: string, e: CutoverDomain, app: AppRow, ips: TargetIps, via: "hub" | "agent", path: string): Promise<void> {
@@ -585,9 +601,12 @@ export class CutoverService {
       h443 = await this.probe.httpAt(ip, e.hostname, { tls: true, path }).catch(() => ({ status: null, traefik404: false, location: null }));
       h80 = await this.probe.httpAt(ip, e.hostname, { tls: false, path: "/" }).catch(() => ({ status: null, traefik404: false, location: null }));
     }
-    const health = classifyHealth(h443.status, h443.traefik404);
+    const classified = classifyHealth(h443.status, h443.traefik404);
+    const excused = !classified.pass && (e.warnings ?? []).includes(SOURCE_DEGRADED_TAG) && isExcusableHealth(classified.kind);
+    const health = excused ? { ...classified, pass: true } : classified;
+    patch.warnings = [...new Set([...(e.warnings ?? []).filter((w) => w !== HEALTH_PRE_EXISTING_TAG), ...(excused ? [HEALTH_PRE_EXISTING_TAG] : [])])];
     patch.needsDeploy = h443.traefik404 || (h443.status === null && !health.pass);
-    patch.precheck = { tls: ssl?.reason ?? (ssl?.ok ? "ok" : "none"), https: h443.status, http80: h80.status, port80Redirect: classifyPort80(h80.status, h80.location), probeVia: via, health: health.kind, at: new Date().toISOString() } as unknown as Prisma.InputJsonValue;
+    patch.precheck = { tls: ssl?.reason ?? (ssl?.ok ? "ok" : "none"), https: h443.status, http80: h80.status, port80Redirect: classifyPort80(h80.status, h80.location), probeVia: via, health: classified.kind, at: new Date().toISOString() } as unknown as Prisma.InputJsonValue;
     patch.precheckAt = new Date();
     // stuck certificate: ask the proxy why (diagnostic only; never decides readiness)
     if (!certReady && e.challenge && !patch.needsDeploy && via === "hub") {
@@ -696,6 +715,7 @@ export class CutoverService {
       if (e.stateful) warnings.push("stateful");
       if (e.warnings?.includes("caa")) warnings.push("caa");
       if (e.warnings?.includes("coverage-unverified")) warnings.push("coverage-unverified");
+      if (e.warnings?.includes(HEALTH_PRE_EXISTING_TAG)) warnings.push(HEALTH_PRE_EXISTING_TAG);
       if (at.some((r) => r.proxied)) {
         const v = sslModeVerdict(e.sslMode);
         if (v !== "ok") warnings.push(`ssl-mode-${v}`);
@@ -856,7 +876,8 @@ export class CutoverService {
     }
     const pre = (e.precheck ?? {}) as { health?: string };
     if (!(e.certState === "ready" || (e.challenge === "http01" && params.acceptHttp01Gap))) return "cert-not-ready";
-    if (!["ok", "redirect", "auth", "app-404"].includes(pre.health ?? "")) return "health-failed";
+    const excusedHealth = (e.warnings ?? []).includes(SOURCE_DEGRADED_TAG) && isExcusableHealth(pre.health);
+    if (!["ok", "redirect", "auth", "app-404"].includes(pre.health ?? "") && !excusedHealth) return "health-failed";
     if (!params.skipTtlWait && e.earliestFlipAt && e.earliestFlipAt.getTime() > Date.now()) return "ttl-not-waited";
     if (e.proxied && params.keepProxied) {
       if (e.dnsCredentialId && e.zoneId) {
@@ -952,7 +973,7 @@ export class CutoverService {
       if (!ssl.ok) return { ok: false, reason: `cert-${ssl.reason ?? "error"}` };
       const h = await this.probe.httpAt(ip, e.hostname, { tls: true, path: "/" });
       const cls = classifyHealth(h.status, h.traefik404);
-      if (!cls.pass) return { ok: false, reason: `health-${cls.kind}` };
+      if (!cls.pass && !((e.warnings ?? []).includes(SOURCE_DEGRADED_TAG) && isExcusableHealth(cls.kind))) return { ok: false, reason: `health-${cls.kind}` };
       return { ok: true, reason: "" };
     } catch (err) {
       return { ok: false, reason: sanitizeText((err as Error).message, 160) || "verify-error" };

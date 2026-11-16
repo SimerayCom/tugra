@@ -1,9 +1,10 @@
 import { Logger } from "@nestjs/common";
 import type { SourceBaseline } from "../../core/dto";
 import { buildSourceBaseline } from "../import/baseline/source-health";
-import { PRE_EXISTING_REASON, appRefOfHost, excuseDarkVerdicts, excuseSwapVerify, excusedBoxHosts, excusedSwapHosts } from "./baseline-hosts";
+import { HEALTH_PRE_EXISTING_TAG } from "../../../cutover/cutover.logic";
+import { PRE_EXISTING_REASON, appRefOfHost, degradedAtSourceHosts, excuseDarkVerdicts, excuseSwapVerify, excusedBoxHosts, excusedSwapHosts } from "./baseline-hosts";
 import { OBSERVE_CHECK_EVERY_MS } from "./observe.handler";
-import { H, makeRig, zoneRec, type Rig, type RigOpts } from "./testing/cutover-rig";
+import { H, U, makeRig, zoneRec, type Rig, type RigOpts } from "./testing/cutover-rig";
 
 beforeEach(() => jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined));
 afterEach(() => {
@@ -60,10 +61,15 @@ describe("source health baseline on the CUTOVER side (R52), pure", () => {
     expect(out["c.example.test"].ready).toBe(false);
   });
 
-  it("a two-box host whose only fault is the router probe is excused when its app was degraded at the source", () => {
-    expect([...excusedBoxHosts(entries, baseline([{ ref: "a", health: "unhealthy" }]), apps)]).toEqual(["a.example.test"]);
-    expect([...excusedBoxHosts(entries, null, apps)]).toEqual([]);
-    expect([...excusedBoxHosts([{ ...entries[0], state: "SWITCHED" }], baseline([{ ref: "a", health: "unhealthy" }]), apps)]).toEqual([]);
+  it("the two-box OBSERVE flag lists only VERIFIED hosts whose health failure the service excused, never a host that lost its router", () => {
+    const e = (hostname: string, state: string, warnings: string[]) => ({ hostname, state, warnings });
+    expect([...excusedBoxHosts([e("a.example.test", "VERIFIED", [HEALTH_PRE_EXISTING_TAG]), e("b.example.test", "VERIFIED", []), e("c.example.test", "SWITCHED", [HEALTH_PRE_EXISTING_TAG])])]).toEqual(["a.example.test"]);
+  });
+
+  it("the hosts degraded at the source come from the baseline and the apps behind each host", async () => {
+    const world = { opApps: async () => apps };
+    expect(await degradedAtSourceHosts(world, "op", baseline([{ ref: "a", health: "unhealthy" }, { ref: "b", health: "healthy" }]), entries)).toEqual(["a.example.test"]);
+    expect(await degradedAtSourceHosts(world, "op", null, entries)).toEqual([]);
   });
 });
 
@@ -173,7 +179,7 @@ describe("OBSERVE against the baseline", () => {
     expect((await rig.driver.tick(rig.handlers.obs, "timer")).fail).toMatchObject({ code: "observe.host-unhealthy", params: { hosts: [H(1)] } });
   });
 
-  it("two-box: a host that lost its router is excused only when its app was degraded at the source; the other host is still named", async () => {
+  it("two-box: a host that lost its router is a failure even when its app was degraded at the source", async () => {
     const rig = makeRig({ apps: rigApps(2), zone: zoneFor(2), options: { ttlPolicy: "skip-ack" } });
     await rig.driver.drive(rig.handlers.dns);
     await rig.driver.drive(rig.handlers.tls);
@@ -181,14 +187,62 @@ describe("OBSERVE against the baseline", () => {
     rig.driver.approve("VERIFY", "d".repeat(64), { acceptDataRisk: true, expiresAt: null });
     expect((await rig.driver.drive(rig.handlers.cut, { between: () => rig.cutover.idle() })).status).toBe("PASSED");
     rig.driver.setStep("CUTOVER", { status: "PASSED" });
-    rig.driver.run.sourceBaseline = baseline([{ ref: "a1", health: "unhealthy" }, { ref: "a2", health: "healthy" }]);
+    rig.driver.run.sourceBaseline = baseline([{ ref: "a1", health: "unhealthy" }, { ref: "a2", health: "unhealthy" }]);
     await rig.driver.tick(rig.handlers.obs);
     rig.sim.traefik404 = true; // every host loses its route behind the target
     rig.driver.advance(OBSERVE_CHECK_EVERY_MS);
-    expect((await rig.driver.tick(rig.handlers.obs, "timer")).fail).toMatchObject({ code: "observe.host-unhealthy", params: { hosts: [H(2)] } });
-    // with both apps degraded at the source nothing fails
-    rig.driver.run.sourceBaseline = baseline([{ ref: "a1", health: "unhealthy" }, { ref: "a2", health: "exited" }]);
-    const r = await rig.driver.tick(rig.handlers.obs, "retry");
-    expect(r.fail).toBeUndefined();
+    expect((await rig.driver.tick(rig.handlers.obs, "timer")).fail).toMatchObject({ code: "observe.host-unhealthy", params: { hosts: [H(1), H(2)] } });
+  });
+});
+
+describe("two-box: the baseline reaches READY, the flip and OBSERVE (R52)", () => {
+  const boxRig = (b: SourceBaseline | null): Rig => {
+    const rig = makeRig({ apps: rigApps(2), zone: zoneFor(2), options: { ttlPolicy: "skip-ack" } });
+    rig.driver.run.sourceBaseline = b;
+    return rig;
+  };
+  /** Host 1 answers with `status` through the Tugra proxy (null = nothing answers), host 2 with 200. */
+  const answer = (rig: Rig, status: number | null) =>
+    rig.net.httpAt.mockImplementation(async (_ip: string, h: string, op: { tls: boolean }) => ({ status: (op.tls ? (h === H(1) ? status : 200) : 301) as number, traefik404: false, location: op.tls ? null : "https://x/" }));
+  const entryOf = async (rig: Rig, h: string) => (await rig.cutover.view(U, rig.driver.run.opId!)).entries.find((e) => e.hostname === h)!;
+
+  it("an app that was already failing at the source reaches READY, is flipped, VERIFIED, and OBSERVE passes with a pre-existing warning", async () => {
+    const rig = boxRig(baseline([{ ref: "a1", health: "unhealthy" }, { ref: "a2", health: "healthy" }]));
+    answer(rig, 503);
+    await rig.driver.drive(rig.handlers.dns);
+    expect((await rig.driver.drive(rig.handlers.tls)).status).toBe("PASSED");
+    expect((await entryOf(rig, H(1))).state).toBe("READY");
+    rig.driver.setStep("VERIFY", { status: "PASSED" });
+    rig.driver.approve("VERIFY", "d".repeat(64), { acceptDataRisk: true, expiresAt: null });
+    expect((await rig.driver.drive(rig.handlers.cut, { between: () => rig.cutover.idle() })).status).toBe("PASSED");
+    const e1 = await entryOf(rig, H(1));
+    expect(e1.state).toBe("VERIFIED");
+    expect(e1.warnings).toContain(HEALTH_PRE_EXISTING_TAG);
+    expect(e1.warnings).not.toContain("source-degraded"); // the marker is internal
+    expect((await entryOf(rig, H(2))).warnings).not.toContain(HEALTH_PRE_EXISTING_TAG);
+    rig.driver.setStep("CUTOVER", { status: "PASSED" });
+    const r = await rig.driver.drive(rig.handlers.obs);
+    expect(r.status).toBe("PASSED");
+    expect(r.gate!.checks.find((c) => c.id === "observe.hosts-pre-existing")).toMatchObject({ status: "warn", params: { hosts: [H(1)] } });
+  });
+
+  it("the same failing answer on an app that was healthy at the source (or with no baseline) never reaches READY", async () => {
+    for (const b of [baseline([{ ref: "a1", health: "healthy" }, { ref: "a2", health: "healthy" }]), null]) {
+      const rig = boxRig(b);
+      answer(rig, 503);
+      await rig.driver.drive(rig.handlers.dns);
+      await rig.driver.drive(rig.handlers.tls, { maxTicks: 120 });
+      expect((await entryOf(rig, H(1))).state).not.toBe("READY");
+      expect((await entryOf(rig, H(1))).warnings).not.toContain(HEALTH_PRE_EXISTING_TAG);
+    }
+  });
+
+  it("a degraded app that does not answer at all is not excused: only a failing answer is", async () => {
+    const rig = boxRig(baseline([{ ref: "a1", health: "unhealthy" }, { ref: "a2", health: "healthy" }]));
+    answer(rig, null);
+    await rig.driver.drive(rig.handlers.dns);
+    await rig.driver.drive(rig.handlers.tls, { maxTicks: 120 });
+    expect((await entryOf(rig, H(1))).state).not.toBe("READY");
+    expect((await entryOf(rig, H(1))).warnings).not.toContain(HEALTH_PRE_EXISTING_TAG);
   });
 });
