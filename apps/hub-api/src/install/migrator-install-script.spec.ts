@@ -278,6 +278,33 @@ describe("renderMigratorInstallScript", () => {
       }
     });
 
+    it("forwards the DB logical-parity flags to `migrate` verbatim (both value forms)", () => {
+      const r = run(["--hub", "https://hub.example.com", "--arms", "all", "--verify", "--verify-mode", "exact", "--verify-exact-below=500000"]);
+      expect(r.code).toBe(0);
+      const args = argsOf(r);
+      expect(args).toEqual(expect.arrayContaining(["--verify", "--verify-mode", "exact", "--verify-exact-below=500000"]));
+      const r2 = run(["--hub", "https://hub.example.com", "--verify", "--verify-mode=estimate", "--verify-exact-below", "100"]);
+      expect(r2.code).toBe(0);
+      expect(argsOf(r2)).toEqual(expect.arrayContaining(["--verify", "--verify-mode=estimate", "--verify-exact-below", "100"]));
+      // the order of the forwarded words is preserved: a value stays right behind its flag
+      const a = argsOf(r);
+      expect(a[a.indexOf("--verify-mode") + 1]).toBe("exact");
+    });
+
+    it("rejects a bad --verify-mode / --verify-exact-below value, or a dangling flag, before any docker call", () => {
+      for (const bad of [["--verify-mode", "fast"], ["--verify-mode=x;id"], ["--verify-mode"], ["--verify-exact-below", "10;id"], ["--verify-exact-below=abc"], ["--verify-exact-below"], ["--verify-exact-below="]]) {
+        const r = run(["--hub", "https://hub.example.com", "--verify", ...bad]);
+        expect(r.code).not.toBe(0);
+        expect(r.log).toBe("");
+      }
+    });
+
+    it("the verify flags never put the token on an argv either", () => {
+      const r = run(["--hub", "https://hub.example.com", "--verify"]);
+      for (const a of argsOf(r)) expect(a).not.toContain("tugra_mig_");
+      expect(r.log).toContain(`ENV_TOKEN:${TOK}`);
+    });
+
     it("golden: the final docker run line keeps the hardening, the socket as the ONLY mount, and the new env/memory slots", () => {
       const text = script.slice(script.indexOf("  docker run --rm --name"));
       const run = text.slice(0, text.indexOf("|| rc=$?"));

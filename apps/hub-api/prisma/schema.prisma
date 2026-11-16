@@ -1063,7 +1063,8 @@ model MigrationVolumePart {
 /// One verification result of a migration run (P7 lane B): a queryable parity check with an honest trust label
 /// (`evidenceKind`: hub-verified | migrator-reported | operator-attested), the same idea as the volume panel's
 /// "reported by the migrator" note. Loose `runId` (no FK) like AppMove.appId, so the evidence survives run deletion
-/// for audit. `evidence` is secret-free and capped at 8 KiB by the writer.
+/// for audit. `evidence` is secret-free; the writer caps it at 8 KiB per verdict row and 512 KiB for the raw `source-stats`
+/// measurement the migrator reports (an oversize value is replaced by a `{truncated:true}` marker).
 model MigrationRunCheck {
   id           String   @id @default(cuid())
   runId        String

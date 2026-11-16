@@ -38,6 +38,7 @@ export function renderMigratorInstallScript(opts: { image: string; digests?: Arc
     "# Docker container on the source host. The migration token rides the ENVIRONMENT, never an argv.",
     "# Usage: curl -fsSL <hub>/install/migrator.sh | TUGRA_MIGRATION_TOKEN=<token> sh -s -- --hub <hub-url> [--dry-run] [--only REF] [--map REF=CONTAINER] [--resync] [--certs] [--proxy-container NAME]",
     "#   volume data (streamed in resumable parts): [--arms databases|volumes|all] [--stop-source] [--stop-timeout S] [--allow-bind] [--part-mib N] [--reset-volume REF] [--hub-outage-wait D] [--speedtest-mib N]",
+    "#   DB logical parity (read-only counts reported to the hub after the data arms): [--verify] [--verify-mode exact|estimate] [--verify-exact-below N]",
     "set -eu",
     "",
     // Version-matched agent image, injected by the hub (the migrator is the agent image's `migrate` subcommand).
@@ -86,11 +87,17 @@ export function renderMigratorInstallScript(opts: { image: string; digests?: Arc
     // --arms is both parsed (to size the container) and forwarded verbatim to `migrate`.
     '      --arms) [ "$n" -ge 1 ] || die "--arms needs a value"; ARMS=$1; shift; n=$((n - 1)); set -- "$@" --arms "$ARMS" ;;',
     "      --arms=*) ARMS=${a#--arms=}; set -- \"$@\" \"$a\" ;;",
+    // The verify flags are forwarded verbatim like every other `--` flag, but their VALUES are checked here so a typo fails before
+    // a docker pull / run (migrate validates them again, exit 2).
+    '      --verify-mode) [ "$n" -ge 1 ] || die "--verify-mode needs a value"; case "$1" in exact|estimate) ;; *) die "--verify-mode must be exact or estimate" ;; esac; set -- "$@" --verify-mode "$1"; shift; n=$((n - 1)) ;;',
+    '      --verify-mode=*) case "${a#--verify-mode=}" in exact|estimate) ;; *) die "--verify-mode must be exact or estimate" ;; esac; set -- "$@" "$a" ;;',
+    '      --verify-exact-below) [ "$n" -ge 1 ] || die "--verify-exact-below needs a value"; case "$1" in \'\'|*[!0-9]*) die "--verify-exact-below must be a number" ;; esac; set -- "$@" --verify-exact-below "$1"; shift; n=$((n - 1)) ;;',
+    '      --verify-exact-below=*) case "${a#--verify-exact-below=}" in \'\'|*[!0-9]*) die "--verify-exact-below must be a number" ;; esac; set -- "$@" "$a" ;;',
     "      --*) set -- \"$@\" \"$a\" ;;",
     // A single-dash option (Go's flag package accepts `-token` as well as `--token`) would slip a token /
     // spool-dir / hub onto the container argv or override a pinned value. Reject ALL single-dash options
     // WITHOUT echoing the arg (it could be `-token=<secret>`). The hub/UI only ever emit `--` flags.
-    '      -?*) die "single-dash options are not accepted - use the double-dash flags from the Tugra UI (--dry-run, --only, --map, --resync, --handshake, --certs, --proxy-container)" ;;',
+    '      -?*) die "single-dash options are not accepted - use the double-dash flags from the Tugra UI (--dry-run, --only, --map, --resync, --handshake, --certs, --proxy-container, --verify)" ;;',
     '      *) set -- "$@" "$a" ;;',
     "    esac",
     "  done",
