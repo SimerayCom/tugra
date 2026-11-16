@@ -17,7 +17,9 @@ function AttestRow({ runId, step, checkId, subject }: { runId: string; step: Mig
   const confirm = useConfirm();
   const [note, setNote] = useState("");
   // One check id can repeat once per subject: an attestation covers exactly its own subject.
-  const check = step.gate?.checks.find((c) => c.id === checkId && c.subject === subject);
+  const check = step.gate?.checks.find((c) => (c.id === checkId || c.attestable?.includes(checkId)) && c.subject === subject);
+  // an inventory "mapped" attestation says WHICH plan item the container is: without that note it settles nothing
+  const needsNote = checkId === "inventory-mapped";
   const done = step.evidence.attestations.some((a) => a.checkId === checkId && a.subject === subject);
   const attest = useMutation({
     mutationFn: () => api.attestMigrationRunStep(runId, step.key, { checkId, ...(subject ? { subject } : {}), ...(note.trim() ? { note: note.trim() } : {}) }),
@@ -35,11 +37,11 @@ function AttestRow({ runId, step, checkId, subject }: { runId: string; step: Mig
         <div style={{ fontSize: 12, color: "var(--c-g)" }}>{t("migrationRun.attest.recorded")}</div>
       ) : (
         <>
-          <Field label={t("migrationRun.attest.note")}>
+          <Field label={needsNote ? t("migrationRun.attest.noteRequired") : t("migrationRun.attest.note")}>
             <TextInput value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} style={{ minHeight: 44 }} />
           </Field>
           <div>
-            <Btn variant="ghost" onClick={onAttest} loading={attest.isPending}>{t("migrationRun.attest.button")}</Btn>
+            <Btn variant="ghost" onClick={onAttest} loading={attest.isPending} disabled={needsNote && !note.trim()}>{t("migrationRun.attest.button")}</Btn>
           </div>
         </>
       )}
@@ -83,7 +85,8 @@ export function OperatorTools({ runId, step, attest, offersCommand }: { runId: s
   // the gate still gets its single row.
   const attestRows = step.allowed.evidence
     ? (attest ?? []).flatMap((id) => {
-        const subjects = (step.gate?.checks ?? []).filter((c) => c.id === id).map((c) => c.subject);
+        // a check lists the attestations that settle IT (`attestable`): a finding blocks with its own subject, so each gets a row
+        const subjects = (step.gate?.checks ?? []).filter((c) => c.id === id || (c.attestable?.includes(id) && c.status !== "pass")).map((c) => c.subject);
         return (subjects.length > 0 ? subjects : [undefined]).map((subject) => ({ id, subject }));
       })
     : [];

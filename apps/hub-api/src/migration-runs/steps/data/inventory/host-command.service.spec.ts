@@ -96,4 +96,23 @@ describe("HostCommandService", () => {
     expect(r.command).toContain("CTO=30");
     expect(r.command).toContain("RETRIES=2");
   });
+
+  it("the tokenless FREEZE rollback is built from the recorded hosts alone (it reads no plan, so a run whose op is gone can still be rolled back), carries no token and defaults to unfreeze", async () => {
+    const readPlan = jest.fn();
+    const service = new HostCommandService({ snapshot: readPlan } as never);
+    const r = await service.build(input({ step: "FREEZE", token: null, unfreezeHosts: ["srv-b", "srv-a", "srv-a"], run: { ...run(), opId: null } }));
+    expect(readPlan).not.toHaveBeenCalled();
+    expect(r.hosts).toEqual(["srv-a", "srv-b"]);
+    expect(r.command).not.toContain(TOKEN);
+    expect(r.command).not.toContain("tugra_mig_");
+    expect(r.command).toContain("TOK=''");
+    expect(r.command).toContain("ACTION=${TUGRA_LOOP_ACTION:-unfreeze}");
+    expect(r.command).toContain("REFS='srv-a srv-b'");
+    expect(syntaxOk(r.command)).toBe(true);
+    await expect(service.build(input({ step: "FREEZE", token: null, unfreezeHosts: [] }))).rejects.toMatchObject({ code: "no-hosts" });
+    await expect(service.build(input({ step: "FREEZE", token: null }))).rejects.toMatchObject({ code: "no-hosts" });
+    await expect(service.build(input({ step: "DATA_FINAL", token: null, unfreezeHosts: ["srv-a"] }))).rejects.toMatchObject({ code: "step-unsupported" });
+    await expect(service.build(input({ step: "FREEZE", kind: "inventory", token: null, unfreezeHosts: ["srv-a"] }))).rejects.toMatchObject({ code: "step-unsupported" });
+    await expect(service.build(input({ step: "FREEZE", token: null, unfreezeHosts: ["srv a; reboot"] }))).rejects.toMatchObject({ code: "unsafe-input" });
+  });
 });

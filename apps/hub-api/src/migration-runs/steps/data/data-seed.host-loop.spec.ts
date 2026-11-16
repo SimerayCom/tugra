@@ -124,6 +124,25 @@ describe("DATA_SEED with the coolify-host-loop runner", () => {
     expect(g3.checks).toContainEqual(expect.objectContaining({ code: INVENTORY_CODES.unlistedDbSkipped }));
   });
 
+  it("the finding is part of the PRE-gate (what the engine stores when it parks the step): one attestable check per finding, with its own subject, so the panel can offer a row for it", async () => {
+    const { handler, data, ctx, takeInventories, reports } = build();
+    data.snap.volumes = [inspected(`volume:srv-a:${UDB}:data`)];
+    takeInventories();
+    reports.set(RUN, { stepKey: "", sourceServerRef: "srv-a", kind: "inventory", state: "complete", payload: inventoryOf("srv-a", { containers: [{ id: id("a"), name: UDB, image: "postgres:16", state: "running" }, { id: id("f"), name: GHOST, image: "mariadb:11", state: "running" }], volumes: [{ name: "forgotten", mountpoint: "/v/f/_data", sizeKiB: 5, links: 0 }] }) as unknown as Record<string, unknown> });
+    const h = ctx();
+    const pre = handler.preGate(h.ctx, await handler.observe(h.ctx));
+    expect(pre.passed).toBe(false);
+    expect(pre.checks.filter((c) => c.attestable).map((c) => [c.subject, c.attestable])).toEqual([
+      [`srv-a/${GHOST}`, [INVENTORY_ATTEST.excluded, INVENTORY_ATTEST.mapped]],
+      ["srv-a/volume:forgotten", [INVENTORY_ATTEST.excluded]],
+    ]);
+    expect(pre.wait).toMatchObject({ kind: "operator", code: INVENTORY_CODES.unlistedDb, attest: [INVENTORY_ATTEST.excluded, INVENTORY_ATTEST.mapped] });
+    // settled by attestations: the pre-gate passes and the migrator work can start
+    const att = (checkId: string, subject: string) => ({ checkId, subject, byUserId: "user1", at: "2026-11-20T10:00:00.000Z" });
+    const settled = ctx({ steps: { DATA_SEED: { evidence: { attestations: [att(INVENTORY_ATTEST.excluded, `srv-a/${GHOST}`), att(INVENTORY_ATTEST.excluded, "srv-a/volume:forgotten")], attachments: [] } } } });
+    expect(handler.preGate(settled.ctx, await handler.observe(settled.ctx)).passed).toBe(true);
+  });
+
   it("R8: a path to the hub with a body cap below the part size blocks with the recommended part size", async () => {
     const { handler, data, ctx, takeInventories, reports } = build();
     data.snap.volumes = [inspected(`volume:srv-a:${UDB}:data`)];

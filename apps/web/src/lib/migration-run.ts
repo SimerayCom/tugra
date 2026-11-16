@@ -558,6 +558,8 @@ export const ERROR_CODE_KEY: Record<string, string> = {
   "approval-stale": "migrationRun.errors.approval-stale",
   "run-past-ponr": "migrationRun.errors.run-past-ponr",
   "human-confirmation-required": "migrationRun.errors.human-confirmation-required",
+  "attest-subject-invalid": "migrationRun.errors.attest-subject-invalid",
+  "attest-note-required": "migrationRun.errors.attest-note-required",
 };
 
 /** An error from the hub as one readable line: a known machine code is localized, anything else is the hub's message. */

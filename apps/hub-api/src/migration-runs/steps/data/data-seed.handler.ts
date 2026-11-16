@@ -166,8 +166,20 @@ export class DataSeedHandler implements StepHandler<SeedObs>, OnModuleInit {
     return checks;
   }
 
+  /**
+   * The structural preconditions, plus every BLOCKING docker-vs-API finding (R2/C6): the engine stores the pre-gate of a parked
+   * step, so the panel can only offer an attestation row per finding (`attestable`, with the finding's own subject) when the
+   * finding is part of this gate. A finding therefore parks the step BEFORE the migrator is launched, which is also the right
+   * order: an unlisted database must be decided before data moves.
+   */
   preGate(ctx: StepContext, obs: SeedObs): GateResult {
-    return gateFrom(this.checks(ctx, obs).filter((c) => STRUCTURAL.has(c.id)));
+    const all = this.checks(ctx, obs);
+    const findings = all.filter((c) => c.status === "fail" && (c.attestable?.length ?? 0) > 0);
+    const gate = gateFrom([...all.filter((c) => STRUCTURAL.has(c.id)), ...findings]);
+    if (gate.passed || findings.length === 0) return gate;
+    const first = findings[0];
+    const attest = attestableFindings(findings);
+    return { ...gate, wait: { kind: "operator", code: first.code, params: { failing: findings.length, ...(first.params ?? {}) }, attest } };
   }
 
   postGate(ctx: StepContext, obs: SeedObs): GateResult {

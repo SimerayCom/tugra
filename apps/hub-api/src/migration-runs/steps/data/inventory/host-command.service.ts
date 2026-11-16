@@ -20,21 +20,23 @@ export class HostCommandService implements RunHostCommandPort {
 
   async build(input: HostCommandInput): Promise<{ command: string; hosts: string[] }> {
     const run = input.run;
+    if (input.token === null) return this.unfreeze(input);
     if (!run.opId) throw new HostCommandError("step-unsupported");
     const snap = await this.data.snapshot(run);
+    const token = input.token;
     try {
       if (input.kind === "inventory" && run.options.sourceRunner !== "coolify-host-loop") {
         // a single host: the same bootstrap the operator already uses, in inventory mode (add --server-ref <uuid> to label the host)
         return { command: `${buildMigrationCommand(input.token, input.hubBase)} --inventory`, hosts: [] };
       }
-      return this.loop(input, run, snap);
+      return this.loop({ ...input, token }, run, snap);
     } catch (e) {
       if (e instanceof HostCommandError) throw e;
       throw new HostCommandError("unsafe-input"); // the builders refuse (plain Error) any value that is not safe to embed
     }
   }
 
-  private loop(input: HostCommandInput, run: RunSnapshot, snap: DataSnapshot): { command: string; hosts: string[] } {
+  private loop(input: HostCommandInput & { token: string }, run: RunSnapshot, snap: DataSnapshot): { command: string; hosts: string[] } {
     const opt = hostLoopOf(run.options);
     const step: LoopScriptStep = input.kind === "inventory" ? "INVENTORY" : (input.step as StepKey) === "FREEZE" ? "FREEZE" : input.step === "DATA_FINAL" ? "DATA_FINAL" : "DATA_SEED";
     if (input.kind === "host-loop" && !["DATA_SEED", "DATA_FINAL", "FREEZE"].includes(input.step)) throw new HostCommandError("step-unsupported");
@@ -71,5 +73,34 @@ export class HostCommandService implements RunHostCommandPort {
       allowUnresolved: input.attested.includes(UNRESOLVED_CHECK),
     });
     return { command: wrapHostLoopCommand(script), hosts: hosts.map((h) => h.ref) };
+  }
+
+  /**
+   * The TOKENLESS FREEZE rollback: it starts again exactly the containers each host recorded when it stopped them. The hosts are the
+   * ones the run's FREEZE compensation record names (the run may be aborted, its plan unreadable, its token revoked: none of that may
+   * stand between the operator and their stopped writers), so this path reads nothing from the hub's data port.
+   */
+  private unfreeze(input: HostCommandInput): { command: string; hosts: string[] } {
+    const run = input.run;
+    const opt = hostLoopOf(run.options);
+    if (input.step !== "FREEZE" || input.kind !== "host-loop") throw new HostCommandError("step-unsupported");
+    const refs = [...new Set(input.unfreezeHosts ?? [])].sort();
+    if (refs.length === 0) throw new HostCommandError("no-hosts");
+    try {
+      const script = buildHostLoopScript({
+        runId: run.id,
+        step: "FREEZE",
+        hubBase: input.hubBase,
+        token: null,
+        hosts: refs.map((ref) => ({ ref, flags: [], freezeItems: [] })),
+        keyDir: opt.keyDir,
+        parallel: opt.parallel,
+        connectTimeoutSec: opt.connectTimeoutSec,
+        retries: opt.retries,
+      });
+      return { command: wrapHostLoopCommand(script), hosts: refs };
+    } catch {
+      throw new HostCommandError("unsafe-input");
+    }
   }
 }

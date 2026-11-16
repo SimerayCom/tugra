@@ -40,11 +40,13 @@ export interface HostCommandInput {
   run: RunSnapshot;
   step: StepKey;
   kind: Exclude<CommandKind, "migrator">;
-  /** The live migration token (shown once, only inside the returned script). */
-  token: string;
+  /** The live migration token (shown once, only inside the returned script); null for the tokenless FREEZE rollback (`unfreezeHosts`). */
+  token: string | null;
   hubBase: string;
   /** The check ids the operator attested on the step (`freeze-containers-unresolved` lifts the stop-list guard of a freeze). */
   attested: readonly string[];
+  /** With a null token: the source hosts whose recorded containers the script starts again (from the FREEZE compensation record). */
+  unfreezeHosts?: readonly string[];
 }
 
 export interface RunHostCommandPort {

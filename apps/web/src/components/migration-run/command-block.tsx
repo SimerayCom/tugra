@@ -26,7 +26,7 @@ const codeBox: React.CSSProperties = {
 
 /** The exact source-host command of an operator step. The hub mints the migration token when the operator asks and
  *  returns the command ONCE: this block holds it in memory only (a reload drops it; "Issue again" mints a new one). */
-export function CommandBlock({ runId, stepKey }: { runId: string; stepKey: MigrationRunStepKey }) {
+export function CommandBlock({ runId, stepKey, tokenless = false }: { runId: string; stepKey: MigrationRunStepKey; /** The script carries no migration token (the unfreeze of an aborted run): it can be asked for again at any time. */ tokenless?: boolean }) {
   const { onError, t } = useRunPlumbing(runId);
   const [result, setResult] = useState<MigrationRunCommandResult | null>(null);
   const mint = useMutation({
@@ -34,22 +34,24 @@ export function CommandBlock({ runId, stepKey }: { runId: string; stepKey: Migra
     onSuccess: setResult,
     onError,
   });
-  const left = result ? secondsUntil(result.expiresAt, Date.now()) : null;
+  const left = result && !tokenless ? secondsUntil(result.expiresAt, Date.now()) : null;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <p style={{ margin: 0, fontSize: 13, color: "var(--c-tx2)", lineHeight: 1.5 }}>{t("migrationRun.command.intro")}</p>
+      <p style={{ margin: 0, fontSize: 13, color: "var(--c-tx2)", lineHeight: 1.5 }}>{t(tokenless ? "migrationRun.command.unfreezeIntro" : "migrationRun.command.intro")}</p>
       {!result ? (
         <div>
-          <Btn onClick={() => mint.mutate(false)} loading={mint.isPending}>{t("migrationRun.command.get")}</Btn>
+          <Btn onClick={() => mint.mutate(false)} loading={mint.isPending}>{t(tokenless ? "migrationRun.command.getUnfreeze" : "migrationRun.command.get")}</Btn>
         </div>
       ) : (
         <>
-          <div role="note" style={{ fontSize: 12, color: "var(--c-am)", lineHeight: 1.5 }}>
-            {t("migrationRun.command.shownOnce")}
-            {left !== null && <> {t("migrationRun.command.expires", { time: formatDuration(left) ?? "0 s" })}</>}
-          </div>
-          <CommandRow label={t("migrationRun.command.bootstrap")} text={result.command} />
+          {!tokenless && (
+            <div role="note" style={{ fontSize: 12, color: "var(--c-am)", lineHeight: 1.5 }}>
+              {t("migrationRun.command.shownOnce")}
+              {left !== null && <> {t("migrationRun.command.expires", { time: formatDuration(left) ?? "0 s" })}</>}
+            </div>
+          )}
+          <CommandRow label={t(tokenless ? "migrationRun.command.unfreeze" : "migrationRun.command.bootstrap")} text={result.command} />
           {result.commands && (
             <>
               <CommandRow label={t("migrationRun.command.inspect")} text={result.commands.dryRun} />
@@ -58,7 +60,7 @@ export function CommandBlock({ runId, stepKey }: { runId: string; stepKey: Migra
             </>
           )}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <Btn variant="ghost" onClick={() => mint.mutate(true)} loading={mint.isPending}>{t("migrationRun.command.reissue")}</Btn>
+            {!tokenless && <Btn variant="ghost" onClick={() => mint.mutate(true)} loading={mint.isPending}>{t("migrationRun.command.reissue")}</Btn>}
             <Btn variant="ghost" onClick={() => setResult(null)}>{t("migrationRun.command.hide")}</Btn>
           </div>
         </>

@@ -147,6 +147,47 @@ describe("RunDetail", () => {
     await waitFor(() => expect(attest).toHaveBeenCalledWith("run12345abcdef", "DATA_FINAL", { checkId: "volume-copied", subject: "vol-b" }));
   });
 
+  it("inventory findings get one attestation row each, with the finding's own subject; a mapping needs the plan item in its note", async () => {
+    const finding = (container: string) => ({ id: `inventory-unlisted-db:${container}`, status: "fail" as const, code: "inventory.unlisted-db", subject: `host-1/${container}`, params: { host: "host-1", container, image: "mariadb:11", engine: "MARIADB", state: "running" }, attestable: ["inventory-excluded", "inventory-mapped"] });
+    const step = mkStep("DATA_SEED", "WAITING_OPERATOR", {
+      kind: "operator",
+      allowed: { approve: false, retry: false, skip: false, evidence: true, attach: false, command: false },
+      gate: { passed: false, checks: [finding("db-ghost-a"), finding("db-ghost-b")] },
+    });
+    vi.spyOn(api, "getMigrationRun").mockResolvedValue(
+      mkRun({ currentStep: "DATA_SEED", nextAction: { kind: "operator", stepKey: "DATA_SEED", code: "inventory.unlisted-db", since: "2026-11-16T10:00:00.000Z", attest: ["inventory-excluded", "inventory-mapped"] } }, stepsWith({ DATA_SEED: step })),
+    );
+    const attest = vi.spyOn(api, "attestMigrationRunStep").mockResolvedValue(mkRun());
+    wrap();
+    await screen.findByText("What I am waiting for");
+    // two findings x (excluded, mapped) = four rows, each saying which container it is about
+    const buttons = screen.getAllByRole("button", { name: "I did this" });
+    expect(buttons).toHaveLength(4);
+    expect(screen.getAllByText(/db-ghost-a/).length).toBeGreaterThanOrEqual(2);
+    // the mapping buttons are disabled until the note names the plan item
+    const disabled = buttons.filter((b) => (b as HTMLButtonElement).disabled);
+    expect(disabled).toHaveLength(2);
+    fireEvent.click(buttons.find((b) => !(b as HTMLButtonElement).disabled)!);
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "I did this" }));
+    await waitFor(() => expect(attest).toHaveBeenCalledWith("run12345abcdef", "DATA_SEED", { checkId: "inventory-excluded", subject: "host-1/db-ghost-a" }));
+  });
+
+  it("an aborted run whose host-loop freeze is still in effect offers the token-free unfreeze script from the report", async () => {
+    vi.spyOn(api, "getMigrationRun").mockResolvedValue(mkRun({ status: "ABORTED", currentStep: null, allowed: { ...mkRun().allowed, abort: false, pause: false } }));
+    vi.spyOn(api, "getMigrationRunReport").mockResolvedValue({
+      runId: "run12345abcdef", generatedAt: "2026-11-16T10:00:00Z", status: "ABORTED", mode: "copy", topology: "two-box", dryRun: false, source: { kind: "coolify", host: "h" }, target: { serverId: "srv1", serverName: "tugra-1" },
+      ponrAt: null, window: { estimatedSec: null, measuredSec: null }, steps: [], items: [], evidenceSummary: { "hub-verified": 0, "migrator-reported": 0, "operator-attested": 0 },
+      manual: [{ code: "freeze.host-loop-unfreeze", params: { hosts: ["host-1"], count: 1 } }],
+    });
+    const mint = vi.spyOn(api, "migrationRunCommand").mockResolvedValue({ stepKey: "FREEZE", opId: "op1", expiresAt: "2026-11-16T10:00:00.000Z", command: "sh -s <<'EOF'\nunfreeze-script\nEOF", shownOnce: true });
+    wrap();
+    fireEvent.click(await screen.findByRole("button", { name: "Get the unfreeze script" }));
+    await screen.findByText(/unfreeze-script/);
+    expect(mint).toHaveBeenCalledWith("run12345abcdef", "FREEZE", { reissue: false });
+    expect(screen.queryByText(/Shown once/)).toBeNull(); // it carries no token: nothing to hide, nothing that expires
+    expect(screen.queryByRole("button", { name: "Issue a new command" })).toBeNull();
+  });
+
   it("the abort-is-safe banner is shown only while abort is actually allowed", async () => {
     vi.spyOn(api, "getMigrationRun").mockResolvedValue(mkRun({ status: "COMPLETED", currentStep: null, allowed: { ...mkRun().allowed, abort: false, pause: false } }));
     wrap();

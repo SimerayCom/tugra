@@ -239,7 +239,10 @@
     "copy": "2. Copy the data",
     "resume": "3. Resume an interrupted copy",
     "reissue": "Issue a new command",
-    "hide": "Hide"
+    "hide": "Hide",
+    "unfreezeIntro": "This script starts the stopped source containers again on the Coolify host. It carries no migration token, so you can get it again whenever you need it.",
+    "getUnfreeze": "Get the unfreeze script",
+    "unfreeze": "Run on the Coolify host"
   },
   "attest": {
     "title": "Confirm this was done?",
@@ -247,6 +250,7 @@
     "confirm": "I did this",
     "button": "I did this",
     "note": "Note (optional)",
+    "noteRequired": "The plan item this container is (required)",
     "recorded": "Recorded as attested by you."
   },
   "attach": {
@@ -415,7 +419,9 @@
     "generic": "Something went wrong. Try again.",
     "approval-stale": "What you approved no longer matches the current state. Review it again.",
     "run-past-ponr": "The point of no return has been reached, so this is no longer possible. Use reverse.",
-    "human-confirmation-required": "This approval must be given by a person in the panel."
+    "human-confirmation-required": "This approval must be given by a person in the panel.",
+    "attest-subject-invalid": "That finding is no longer open, so there is nothing to attest. Reload the run.",
+    "attest-note-required": "Name the plan item this container is in the note."
   },
   "codes": {
     "unknown": "{code}{params}",
@@ -819,7 +825,7 @@
     "freeze_host-loop-run": "Run the host-loop script on the Coolify host to stop the writers on {hosts} source hosts ({items} items). {pending} hosts have not reported a stop yet.",
     "freeze_host-loop-host-failed": "Host {host} could not stop its writers ({state}: {code}).",
     "freeze_host-loop-no-host": "{count} stop-list items have no known source host, so no host can be told to stop them: {names}.",
-    "freeze_host-loop-unfreeze": "The freeze was undone, but {count} source hosts still have writers stopped by this run: {hosts}. Run the host-loop script again with TUGRA_LOOP_ACTION=unfreeze to start exactly those containers.",
+    "freeze_host-loop-unfreeze": "The freeze was undone, but {count} source hosts may still have writers stopped by this run: {hosts}. Get the unfreeze script below and run it on the Coolify host: it starts exactly the containers this run recorded and stopped there, and reports what it did.",
     "freeze_dry_host-loop": "The writers are stopped on {hosts} source hosts through the host-loop script ({items} items).",
     "inventory_not-taken": "No inventory of host {host} has arrived yet. Run the host inventory on the Coolify host.",
     "inventory_truncated": "The inventory of host {host} was cut off, so it cannot prove that nothing is missing. Run the inventory again.",

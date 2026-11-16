@@ -20,10 +20,12 @@ import {
   type CleanupRunInput,
   type CreateMigrationRunInput,
   type DecommissionRunInput,
+  type GateResult,
   type ListMigrationRunsQuery,
   type MigrationRunSummary,
   type MigrationRunView,
   type OwnerInputs,
+  type RunOptions,
   type ReverseRunInput,
   type RunCommandInput,
   type RunCommandResult,
@@ -65,6 +67,7 @@ import {
 import { CLEANUP_REQUEST_KEY, RunEngineService, type CleanupRequest } from "./run-engine.service";
 import { ATTACH_STEPS, COMMAND_STEPS, OPEN_STATUSES, approvalExpiry, deriveStepAllowed, hashOf, isTerminal, isWaitingStep, serverMapOf, stripSince } from "./run-logic";
 import { RUN_ENV, RUN_IMPORT, RUN_SINK, RUN_STORE, type RunEnvPort, type RunImportPort, type RunSessionInfo, type RunSinkPort } from "./run-ports";
+import { INVENTORY_ATTEST } from "../steps/data/inventory/cross-check";
 import { HOST_REPORT_PORT, HostCommandError, RUN_HOST_COMMANDS, type HostReportPort, type RunHostCommandPort } from "../steps/data/inventory/inventory-contract";
 import { ServerHasLiveRunError, type EventRow, type RunRow, type RunStore, type StepRow } from "./run-store";
 import { buildReport, reportToMarkdown, runFacts, stepFacts, toSummary, toView } from "./run-view";
@@ -471,6 +474,12 @@ export class MigrationRunsService implements MigrationRunsFacade {
     const step = this.stepOf(rows, key);
     const wait = step.wait ? (stripSince(step.wait as object) as WaitSpec) : null;
     if (step.status !== "WAITING_OPERATOR" || !wait || wait.kind !== "operator" || !wait.attest?.includes(body.checkId)) throw bad("attest-not-allowed");
+    if ((Object.values(INVENTORY_ATTEST) as string[]).includes(body.checkId)) {
+      // an inventory attestation settles ONE finding: its subject must be a blocking finding of the stored gate, or it would be accepted and settle nothing
+      const checks = (step.gate as GateResult | null)?.checks ?? [];
+      if (!body.subject || !checks.some((c) => c.subject === body.subject && c.attestable?.includes(body.checkId))) throw bad("attest-subject-invalid");
+      if (body.checkId === INVENTORY_ATTEST.mapped && !body.note) throw bad("attest-note-required"); // names the plan item the container IS
+    }
     const ev = (step.evidence as StepEvidence | null) ?? EMPTY_STEP_EVIDENCE;
     if (ev.attestations.length >= 200) throw conflict("evidence-full");
     const next: StepEvidence = {
@@ -519,16 +528,21 @@ export class MigrationRunsService implements MigrationRunsFacade {
   async command(actor: RunActor, id: string, key: StepKey, body: RunCommandInput, hubBase: string): Promise<RunCommandResult> {
     this.scope(actor, "deploy", "read:secrets");
     const run = await this.loadActing(actor, id);
-    this.requireOpen(run);
     if (!COMMAND_STEPS.includes(key)) throw bad("step-has-no-command");
     const opts = RunOptionsSchema.parse(run.options);
-    // a host-loop run mints the host-loop script by default (the one command that reaches the sources); FREEZE has no other kind
-    const kind = body.kind ?? (opts.sourceRunner === "coolify-host-loop" || key === "FREEZE" ? "host-loop" : "migrator");
-    if (key === "FREEZE" && kind !== "host-loop") throw bad("step-has-no-command");
-    if (kind === "host-loop" && opts.sourceRunner !== "coolify-host-loop") throw conflict("command-kind-unavailable"); // the loop exists only for that runner
-    if (kind !== "migrator" && !this.hostCommands) throw conflict("command-kind-unavailable");
+    // the rollback of a host-loop freeze must stay obtainable once the run is aborting or aborted: it needs no token and no open run
+    if (key === "FREEZE" && (run.status === "ABORTING" || run.status === "ABORTED")) return this.unfreezeCommand(actor, run, opts, hubBase);
+    this.requireOpen(run);
     const rows = await this.store.steps(run.id);
     const step = this.stepOf(rows, key);
+    // the kind follows what the step WAITS for (a DATA_SEED that needs the host inventory waits for `inventory`, not for the migrator
+    // script); an explicit kind wins, and a step that names none keeps the run's default (host-loop runs, FREEZE)
+    const waited = step.wait ? (stripSince(step.wait as object) as WaitSpec) : null;
+    const waitedKind = waited?.kind === "operator" ? waited.commandKind : undefined;
+    const kind = body.kind ?? waitedKind ?? (opts.sourceRunner === "coolify-host-loop" || key === "FREEZE" ? "host-loop" : "migrator");
+    if (key === "FREEZE" && kind !== "host-loop" && kind !== "inventory") throw bad("step-has-no-command");
+    if (kind === "host-loop" && opts.sourceRunner !== "coolify-host-loop") throw conflict("command-kind-unavailable"); // the loop exists only for that runner
+    if (kind !== "migrator" && !this.hostCommands) throw conflict("command-kind-unavailable");
     if (!deriveStepAllowed(runFacts(run), stepFacts(step)).command) throw conflict("step-not-waiting-command");
     if (!run.opId) throw conflict("run-has-no-op");
     const attested = ((step.evidence as StepEvidence | null) ?? EMPTY_STEP_EVIDENCE).attestations.map((a) => a.checkId);
@@ -549,10 +563,27 @@ export class MigrationRunsService implements MigrationRunsFacade {
     return { stepKey: key, kind, opId: run.opId, expiresAt: minted.expiresAt.toISOString(), command: minted.command, ...(minted.commands ? { commands: minted.commands } : {}), shownOnce: true };
   }
 
+  /**
+   * The unfreeze script of a host-loop freeze for an aborting or aborted run: the hosts come from the FREEZE step's compensation
+   * record, no migration token is minted (the script talks to no hub, and the run's token is revoked by then), so it can be asked for
+   * again whenever the operator needs it. `expiresAt` is now: there is nothing that expires.
+   */
+  private async unfreezeCommand(actor: RunActor, run: RunRow, opts: RunOptions, hubBase: string): Promise<RunCommandResult> {
+    if (!this.hostCommands || opts.sourceRunner !== "coolify-host-loop") throw conflict("command-kind-unavailable");
+    const step = this.stepOf(await this.store.steps(run.id), "FREEZE");
+    const rec = (step.compensation as { freeze?: { controller?: unknown; hosts?: unknown } } | null)?.freeze;
+    if (rec?.controller !== "host-loop") throw conflict("command-kind-unavailable"); // nothing was stopped by a host-loop freeze
+    const hosts = Array.isArray(rec.hosts) ? rec.hosts.filter((h): h is string => typeof h === "string") : [];
+    const built = await this.buildHostCommand(run, "FREEZE", "host-loop", null, hubBase, [], hosts);
+    await this.event(run.id, actor, "step.command.issued", "info", "FREEZE", { reissue: false, kind: "host-loop", unfreeze: true });
+    await this.audit(actor, "command", run.id, { step: "FREEZE", reissue: false, kind: "host-loop", unfreeze: true });
+    return { stepKey: "FREEZE", kind: "host-loop", opId: run.opId ?? run.id, expiresAt: this.engine.clock.now().toISOString(), command: built.command, shownOnce: true };
+  }
+
   /** Build a host-loop / inventory command through the data steps' builder, mapping its fixed refusals to HTTP errors. */
-  private async buildHostCommand(run: RunRow, key: StepKey, kind: "host-loop" | "inventory", token: string, hubBase: string, attested: readonly string[]): Promise<{ command: string; hosts: string[] }> {
+  private async buildHostCommand(run: RunRow, key: StepKey, kind: "host-loop" | "inventory", token: string | null, hubBase: string, attested: readonly string[], unfreezeHosts?: readonly string[]): Promise<{ command: string; hosts: string[] }> {
     try {
-      return await this.hostCommands!.build({ run: this.engine.snapshot(run), step: key, kind, token, hubBase, attested });
+      return await this.hostCommands!.build({ run: this.engine.snapshot(run), step: key, kind, token, hubBase, attested, ...(unfreezeHosts ? { unfreezeHosts } : {}) });
     } catch (e) {
       if (!(e instanceof HostCommandError)) throw e;
       if (e.code === "no-hosts") throw conflict("host-loop-no-hosts");

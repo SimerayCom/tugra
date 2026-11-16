@@ -2521,6 +2521,8 @@ export interface MigrationRunGateCheck {
   subject?: string;
   evidence?: MigrationRunEvidenceKind;
   ownerInput?: MigrationRunOwnerInputKey;
+  /** The attestation check ids an operator may record for this check (one row per check and subject). */
+  attestable?: string[];
   ackable?: boolean;
   acked?: boolean;
 }
