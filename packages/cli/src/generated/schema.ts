@@ -6570,9 +6570,22 @@ export interface components {
             actorId: string;
             targetServerId: string;
             targetServerName: string | null;
+            serverMap: {
+                [key: string]: string;
+            };
+            targetServers: {
+                serverId: string;
+                serverName: string | null;
+                primary: boolean;
+            }[];
             /** @enum {string} */
             sourceKind: "coolify" | "dokploy";
             sourceHost: string | null;
+            sourceVersion: string | null;
+            /** @enum {string} */
+            sourceVersionVerdict: "supported" | "newer" | "too-old" | "unknown" | "unchecked";
+            campaign: string | null;
+            baselineAt: string | null;
             opId: string | null;
             opHistory: string[];
             planHash: string;
@@ -6599,7 +6612,7 @@ export interface components {
                  * @default single
                  * @enum {string}
                  */
-                deployWaves: "single" | "earlyStateless";
+                deployWaves: "single" | "earlyStateless" | "earlyBuild";
                 /** @default false */
                 warmDbSeed: boolean;
                 /** @default false */
@@ -6608,7 +6621,20 @@ export interface components {
                  * @default operator
                  * @enum {string}
                  */
-                sourceRunner: "operator" | "agent";
+                sourceRunner: "operator" | "agent" | "coolify-host-loop";
+                hostLoop?: {
+                    /** @default /data/coolify/ssh/keys */
+                    keyDir: string;
+                    /** @default 1 */
+                    parallel: number;
+                    /** @default 15 */
+                    connectTimeoutSec: number;
+                    /** @default 1 */
+                    retries: number;
+                };
+                deployConcurrency?: number;
+                /** @enum {string} */
+                largeDbMode?: "refuse" | "stream-logical";
                 /**
                  * @default none
                  * @enum {string}
@@ -6666,6 +6692,41 @@ export interface components {
                     setBy: string | null;
                     at: string;
                 };
+                minioPolicy?: {
+                    value: ("hold" | "mirror" | "external") | "unknown";
+                    /** @enum {string} */
+                    source: "request" | "default" | "derived";
+                    setBy: string | null;
+                    at: string;
+                };
+                tickGapAcceptMinutes?: {
+                    value: number | "unknown";
+                    /** @enum {string} */
+                    source: "request" | "default" | "derived";
+                    setBy: string | null;
+                    at: string;
+                };
+                workerPolicy?: {
+                    value: ("hold-dark" | "start-dark" | "exclude") | "unknown";
+                    /** @enum {string} */
+                    source: "request" | "default" | "derived";
+                    setBy: string | null;
+                    at: string;
+                };
+                unlistedDbPolicy?: {
+                    value: ("block" | "carry" | "skip") | "unknown";
+                    /** @enum {string} */
+                    source: "request" | "default" | "derived";
+                    setBy: string | null;
+                    at: string;
+                };
+                orphanVolumePolicy?: {
+                    value: ("block" | "skip") | "unknown";
+                    /** @enum {string} */
+                    source: "request" | "default" | "derived";
+                    setBy: string | null;
+                    at: string;
+                };
             };
             windowEstimate: {
                 freezeToFlipSec: number | null;
@@ -6700,7 +6761,7 @@ export interface components {
                     inputHash: string;
                     ponr: boolean;
                     /** @enum {string} */
-                    confirm: "none" | "run-id" | "target-server" | "target-server+source-host" | "source-host";
+                    confirm: "none" | "run-id" | "target-server" | "target-servers" | "target-server+source-host" | "target-servers+source-host" | "source-host";
                     ttlSec: number | null;
                     requiresDataRisk: boolean;
                     ackable: string[];
@@ -6747,9 +6808,9 @@ export interface components {
                         };
                         subject?: string;
                         /** @enum {string} */
-                        evidence?: "hub-verified" | "migrator-reported" | "operator-attested";
+                        evidence?: "hub-verified" | "migrator-reported" | "operator-attested" | "source-api-reported" | "host-loop-reported";
                         /** @enum {string} */
-                        ownerInput?: "acmeEmail" | "allowBind" | "allowLiveShapeProbe" | "sourceController";
+                        ownerInput?: "acmeEmail" | "allowBind" | "allowLiveShapeProbe" | "sourceController" | "minioPolicy" | "tickGapAcceptMinutes" | "workerPolicy" | "unlistedDbPolicy" | "orphanVolumePolicy";
                         ackable?: boolean;
                         acked?: boolean;
                     }[];
@@ -6761,6 +6822,8 @@ export interface components {
                             [key: string]: string | number | boolean | ("null" | null) | (string | number | boolean | ("null" | null))[];
                         };
                         offersCommand?: boolean;
+                        /** @enum {string} */
+                        commandKind?: "migrator" | "host-loop" | "inventory";
                         attest?: string[];
                     } | {
                         /** @enum {string} */
@@ -6769,7 +6832,7 @@ export interface components {
                             inputHash: string;
                             ponr: boolean;
                             /** @enum {string} */
-                            confirm: "none" | "run-id" | "target-server" | "target-server+source-host" | "source-host";
+                            confirm: "none" | "run-id" | "target-server" | "target-servers" | "target-server+source-host" | "target-servers+source-host" | "source-host";
                             ttlSec: number | null;
                             requiresDataRisk: boolean;
                             ackable: string[];
@@ -6804,6 +6867,8 @@ export interface components {
                         [key: string]: string | number | boolean | ("null" | null) | (string | number | boolean | ("null" | null))[];
                     };
                     offersCommand?: boolean;
+                    /** @enum {string} */
+                    commandKind?: "migrator" | "host-loop" | "inventory";
                     attest?: string[];
                 } | {
                     /** @enum {string} */
@@ -6812,7 +6877,7 @@ export interface components {
                         inputHash: string;
                         ponr: boolean;
                         /** @enum {string} */
-                        confirm: "none" | "run-id" | "target-server" | "target-server+source-host" | "source-host";
+                        confirm: "none" | "run-id" | "target-server" | "target-servers" | "target-server+source-host" | "target-servers+source-host" | "source-host";
                         ttlSec: number | null;
                         requiresDataRisk: boolean;
                         ackable: string[];
@@ -6856,7 +6921,7 @@ export interface components {
                     }[];
                     attachments: {
                         /** @enum {string} */
-                        kind: "object-migration";
+                        kind: "object-migration" | "host-inventory";
                         resourceId: string;
                         byUserId: string;
                         at: string;
@@ -42493,9 +42558,12 @@ export interface operations {
                         teamId: string;
                         targetServerId: string;
                         targetServerName: string | null;
+                        targetServerCount: number;
                         /** @enum {string} */
                         sourceKind: "coolify" | "dokploy";
                         sourceHost: string | null;
+                        sourceVersion: string | null;
+                        campaign: string | null;
                         /** @enum {string} */
                         mode: "copy" | "takeover";
                         /** @enum {string} */
@@ -42680,7 +42748,7 @@ export interface operations {
                          * @default single
                          * @enum {string}
                          */
-                        deployWaves?: "single" | "earlyStateless";
+                        deployWaves?: "single" | "earlyStateless" | "earlyBuild";
                         /** @default false */
                         warmDbSeed?: boolean;
                         /** @default false */
@@ -42689,7 +42757,20 @@ export interface operations {
                          * @default operator
                          * @enum {string}
                          */
-                        sourceRunner?: "operator" | "agent";
+                        sourceRunner?: "operator" | "agent" | "coolify-host-loop";
+                        hostLoop?: {
+                            /** @default /data/coolify/ssh/keys */
+                            keyDir?: string;
+                            /** @default 1 */
+                            parallel?: number;
+                            /** @default 15 */
+                            connectTimeoutSec?: number;
+                            /** @default 1 */
+                            retries?: number;
+                        };
+                        deployConcurrency?: number;
+                        /** @enum {string} */
+                        largeDbMode?: "refuse" | "stream-logical";
                         /**
                          * @default none
                          * @enum {string}
@@ -42724,7 +42805,16 @@ export interface operations {
                         allowBind?: boolean | "unknown";
                         allowLiveShapeProbe?: boolean | "unknown";
                         sourceController?: ("manual" | "api" | "agent") | "unknown";
+                        minioPolicy?: ("hold" | "mirror" | "external") | "unknown";
+                        tickGapAcceptMinutes?: number | "unknown";
+                        workerPolicy?: ("hold-dark" | "start-dark" | "exclude") | "unknown";
+                        unlistedDbPolicy?: ("block" | "carry" | "skip") | "unknown";
+                        orphanVolumePolicy?: ("block" | "skip") | "unknown";
                     };
+                    serverMap?: {
+                        [key: string]: string;
+                    };
+                    campaign?: string;
                 };
             };
         };
@@ -43359,7 +43449,7 @@ export interface operations {
             content: {
                 "application/json": {
                     /** @enum {string} */
-                    kind: "object-migration";
+                    kind: "object-migration" | "host-inventory";
                     resourceId: string;
                 };
             };
@@ -43444,6 +43534,8 @@ export interface operations {
                 "application/json": {
                     /** @default false */
                     reissue?: boolean;
+                    /** @enum {string} */
+                    kind?: "migrator" | "host-loop" | "inventory";
                 };
             };
         };
@@ -43458,6 +43550,11 @@ export interface operations {
                         stepKey: "PREFLIGHT" | "IMPORT" | "DNS_PREPARE" | "DATA_SEED" | "FREEZE" | "DATA_FINAL" | "REMAP_ENV" | "DEPLOY_DARK" | "TLS_PREISSUE" | "VERIFY" | "CUTOVER" | "OBSERVE" | "FINALIZE" | "DECOMMISSION";
                         opId: string;
                         expiresAt: string;
+                        /**
+                         * @default migrator
+                         * @enum {string}
+                         */
+                        kind: "migrator" | "host-loop" | "inventory";
                         command: string;
                         commands?: {
                             dryRun: string;
@@ -43541,6 +43638,11 @@ export interface operations {
                     allowBind?: boolean | "unknown";
                     allowLiveShapeProbe?: boolean | "unknown";
                     sourceController?: ("manual" | "api" | "agent") | "unknown";
+                    minioPolicy?: ("hold" | "mirror" | "external") | "unknown";
+                    tickGapAcceptMinutes?: number | "unknown";
+                    workerPolicy?: ("hold-dark" | "start-dark" | "exclude") | "unknown";
+                    unlistedDbPolicy?: ("block" | "carry" | "skip") | "unknown";
+                    orphanVolumePolicy?: ("block" | "skip") | "unknown";
                 };
             };
         };
@@ -44185,11 +44287,20 @@ export interface operations {
                             /** @enum {string} */
                             kind: "coolify" | "dokploy";
                             host: string | null;
+                            /** @default null */
+                            version: string | null;
                         };
                         target: {
                             serverId: string;
                             serverName: string | null;
                         };
+                        /** @default [] */
+                        targets: {
+                            serverId: string;
+                            serverName: string | null;
+                        }[];
+                        /** @default null */
+                        campaign: string | null;
                         ponrAt: string | null;
                         window: {
                             estimatedSec: number | null;
@@ -44212,12 +44323,16 @@ export interface operations {
                             outcome: "moved" | "skipped" | "acked" | "failed" | "not-cut-over";
                             code: string | null;
                             /** @enum {string|null} */
-                            evidence: "hub-verified" | "migrator-reported" | "operator-attested" | null;
+                            evidence: "hub-verified" | "migrator-reported" | "operator-attested" | "source-api-reported" | "host-loop-reported" | null;
                         }[];
                         evidenceSummary: {
                             "hub-verified": number;
                             "migrator-reported": number;
                             "operator-attested": number;
+                            /** @default 0 */
+                            "source-api-reported": number;
+                            /** @default 0 */
+                            "host-loop-reported": number;
                         };
                         manual: {
                             code: string;

@@ -65190,7 +65190,8 @@
                         "type": "string",
                         "enum": [
                           "single",
-                          "earlyStateless"
+                          "earlyStateless",
+                          "earlyBuild"
                         ],
                         "default": "single"
                       },
@@ -65206,9 +65207,51 @@
                         "type": "string",
                         "enum": [
                           "operator",
-                          "agent"
+                          "agent",
+                          "coolify-host-loop"
                         ],
                         "default": "operator"
+                      },
+                      "hostLoop": {
+                        "type": "object",
+                        "properties": {
+                          "keyDir": {
+                            "type": "string",
+                            "pattern": "^\\/[A-Za-z0-9._\\/-]{0,200}$",
+                            "default": "/data/coolify/ssh/keys"
+                          },
+                          "parallel": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 8,
+                            "default": 1
+                          },
+                          "connectTimeoutSec": {
+                            "type": "integer",
+                            "minimum": 5,
+                            "maximum": 120,
+                            "default": 15
+                          },
+                          "retries": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 5,
+                            "default": 1
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "deployConcurrency": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 8
+                      },
+                      "largeDbMode": {
+                        "type": "string",
+                        "enum": [
+                          "refuse",
+                          "stream-logical"
+                        ]
                       },
                       "certs": {
                         "type": "string",
@@ -65343,10 +65386,110 @@
                             ]
                           }
                         ]
+                      },
+                      "minioPolicy": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "hold",
+                              "mirror",
+                              "external"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "unknown"
+                            ]
+                          }
+                        ]
+                      },
+                      "tickGapAcceptMinutes": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 10080
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "unknown"
+                            ]
+                          }
+                        ]
+                      },
+                      "workerPolicy": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "hold-dark",
+                              "start-dark",
+                              "exclude"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "unknown"
+                            ]
+                          }
+                        ]
+                      },
+                      "unlistedDbPolicy": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "block",
+                              "carry",
+                              "skip"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "unknown"
+                            ]
+                          }
+                        ]
+                      },
+                      "orphanVolumePolicy": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "block",
+                              "skip"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "unknown"
+                            ]
+                          }
+                        ]
                       }
                     },
                     "additionalProperties": false,
                     "default": {}
+                  },
+                  "serverMap": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    }
+                  },
+                  "campaign": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80,
+                    "pattern": "^[^\\p{Cc}]+$"
                   }
                 },
                 "required": [
@@ -65463,6 +65606,10 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "targetServerCount": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
                       "sourceKind": {
                         "type": "string",
                         "enum": [
@@ -65471,6 +65618,15 @@
                         ]
                       },
                       "sourceHost": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "sourceVersion": {
+                        "type": "string",
+                        "maxLength": 64,
+                        "nullable": true
+                      },
+                      "campaign": {
                         "type": "string",
                         "nullable": true
                       },
@@ -65616,8 +65772,11 @@
                       "teamId",
                       "targetServerId",
                       "targetServerName",
+                      "targetServerCount",
                       "sourceKind",
                       "sourceHost",
+                      "sourceVersion",
+                      "campaign",
                       "mode",
                       "topology",
                       "dryRun",
@@ -66639,7 +66798,8 @@
                   "kind": {
                     "type": "string",
                     "enum": [
-                      "object-migration"
+                      "object-migration",
+                      "host-inventory"
                     ]
                   },
                   "resourceId": {
@@ -66770,6 +66930,14 @@
                   "reissue": {
                     "type": "boolean",
                     "default": false
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "migrator",
+                      "host-loop",
+                      "inventory"
+                    ]
                   }
                 },
                 "additionalProperties": false
@@ -66813,6 +66981,15 @@
                       "type": "string",
                       "minLength": 10,
                       "maxLength": 40
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "migrator",
+                        "host-loop",
+                        "inventory"
+                      ],
+                      "default": "migrator"
                     },
                     "command": {
                       "type": "string"
@@ -66996,6 +67173,92 @@
                           "manual",
                           "api",
                           "agent"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "unknown"
+                        ]
+                      }
+                    ]
+                  },
+                  "minioPolicy": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "hold",
+                          "mirror",
+                          "external"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "unknown"
+                        ]
+                      }
+                    ]
+                  },
+                  "tickGapAcceptMinutes": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 10080
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "unknown"
+                        ]
+                      }
+                    ]
+                  },
+                  "workerPolicy": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "hold-dark",
+                          "start-dark",
+                          "exclude"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "unknown"
+                        ]
+                      }
+                    ]
+                  },
+                  "unlistedDbPolicy": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "block",
+                          "carry",
+                          "skip"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "unknown"
+                        ]
+                      }
+                    ]
+                  },
+                  "orphanVolumePolicy": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "block",
+                          "skip"
                         ]
                       },
                       {
@@ -67961,6 +68224,12 @@
                         "host": {
                           "type": "string",
                           "nullable": true
+                        },
+                        "version": {
+                          "type": "string",
+                          "maxLength": 64,
+                          "nullable": true,
+                          "default": null
                         }
                       },
                       "required": [
@@ -67987,6 +68256,35 @@
                         "serverName"
                       ],
                       "additionalProperties": false
+                    },
+                    "targets": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "serverId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "serverName": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "serverId",
+                          "serverName"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "maxItems": 65,
+                      "default": []
+                    },
+                    "campaign": {
+                      "type": "string",
+                      "nullable": true,
+                      "default": null
                     },
                     "ponrAt": {
                       "type": "string",
@@ -68118,7 +68416,9 @@
                             "enum": [
                               "hub-verified",
                               "migrator-reported",
-                              "operator-attested"
+                              "operator-attested",
+                              "source-api-reported",
+                              "host-loop-reported"
                             ],
                             "nullable": true
                           }
@@ -68145,6 +68445,14 @@
                         },
                         "operator-attested": {
                           "type": "integer"
+                        },
+                        "source-api-reported": {
+                          "type": "integer",
+                          "default": 0
+                        },
+                        "host-loop-reported": {
+                          "type": "integer",
+                          "default": 0
                         }
                       },
                       "required": [
@@ -74141,6 +74449,40 @@
             "type": "string",
             "nullable": true
           },
+          "serverMap": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          },
+          "targetServers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "serverId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                "serverName": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "primary": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "serverId",
+                "serverName",
+                "primary"
+              ],
+              "additionalProperties": false
+            }
+          },
           "sourceKind": {
             "type": "string",
             "enum": [
@@ -74150,6 +74492,31 @@
           },
           "sourceHost": {
             "type": "string",
+            "nullable": true
+          },
+          "sourceVersion": {
+            "type": "string",
+            "maxLength": 64,
+            "nullable": true
+          },
+          "sourceVersionVerdict": {
+            "type": "string",
+            "enum": [
+              "supported",
+              "newer",
+              "too-old",
+              "unknown",
+              "unchecked"
+            ]
+          },
+          "campaign": {
+            "type": "string",
+            "nullable": true
+          },
+          "baselineAt": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 40,
             "nullable": true
           },
           "opId": {
@@ -74258,7 +74625,8 @@
                 "type": "string",
                 "enum": [
                   "single",
-                  "earlyStateless"
+                  "earlyStateless",
+                  "earlyBuild"
                 ],
                 "default": "single"
               },
@@ -74274,9 +74642,51 @@
                 "type": "string",
                 "enum": [
                   "operator",
-                  "agent"
+                  "agent",
+                  "coolify-host-loop"
                 ],
                 "default": "operator"
+              },
+              "hostLoop": {
+                "type": "object",
+                "properties": {
+                  "keyDir": {
+                    "type": "string",
+                    "pattern": "^\\/[A-Za-z0-9._\\/-]{0,200}$",
+                    "default": "/data/coolify/ssh/keys"
+                  },
+                  "parallel": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 8,
+                    "default": 1
+                  },
+                  "connectTimeoutSec": {
+                    "type": "integer",
+                    "minimum": 5,
+                    "maximum": 120,
+                    "default": 15
+                  },
+                  "retries": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 5,
+                    "default": 1
+                  }
+                },
+                "additionalProperties": false
+              },
+              "deployConcurrency": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8
+              },
+              "largeDbMode": {
+                "type": "string",
+                "enum": [
+                  "refuse",
+                  "stream-logical"
+                ]
               },
               "certs": {
                 "type": "string",
@@ -74497,6 +74907,247 @@
                           "manual",
                           "api",
                           "agent"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "unknown"
+                        ]
+                      }
+                    ]
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "request",
+                      "default",
+                      "derived"
+                    ]
+                  },
+                  "setBy": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "nullable": true
+                  },
+                  "at": {
+                    "type": "string",
+                    "minLength": 10,
+                    "maxLength": 40
+                  }
+                },
+                "required": [
+                  "value",
+                  "source",
+                  "setBy",
+                  "at"
+                ],
+                "additionalProperties": false
+              },
+              "minioPolicy": {
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "hold",
+                          "mirror",
+                          "external"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "unknown"
+                        ]
+                      }
+                    ]
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "request",
+                      "default",
+                      "derived"
+                    ]
+                  },
+                  "setBy": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "nullable": true
+                  },
+                  "at": {
+                    "type": "string",
+                    "minLength": 10,
+                    "maxLength": 40
+                  }
+                },
+                "required": [
+                  "value",
+                  "source",
+                  "setBy",
+                  "at"
+                ],
+                "additionalProperties": false
+              },
+              "tickGapAcceptMinutes": {
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 10080
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "unknown"
+                        ]
+                      }
+                    ]
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "request",
+                      "default",
+                      "derived"
+                    ]
+                  },
+                  "setBy": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "nullable": true
+                  },
+                  "at": {
+                    "type": "string",
+                    "minLength": 10,
+                    "maxLength": 40
+                  }
+                },
+                "required": [
+                  "value",
+                  "source",
+                  "setBy",
+                  "at"
+                ],
+                "additionalProperties": false
+              },
+              "workerPolicy": {
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "hold-dark",
+                          "start-dark",
+                          "exclude"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "unknown"
+                        ]
+                      }
+                    ]
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "request",
+                      "default",
+                      "derived"
+                    ]
+                  },
+                  "setBy": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "nullable": true
+                  },
+                  "at": {
+                    "type": "string",
+                    "minLength": 10,
+                    "maxLength": 40
+                  }
+                },
+                "required": [
+                  "value",
+                  "source",
+                  "setBy",
+                  "at"
+                ],
+                "additionalProperties": false
+              },
+              "unlistedDbPolicy": {
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "block",
+                          "carry",
+                          "skip"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "unknown"
+                        ]
+                      }
+                    ]
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "request",
+                      "default",
+                      "derived"
+                    ]
+                  },
+                  "setBy": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "nullable": true
+                  },
+                  "at": {
+                    "type": "string",
+                    "minLength": 10,
+                    "maxLength": 40
+                  }
+                },
+                "required": [
+                  "value",
+                  "source",
+                  "setBy",
+                  "at"
+                ],
+                "additionalProperties": false
+              },
+              "orphanVolumePolicy": {
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "block",
+                          "skip"
                         ]
                       },
                       {
@@ -74794,7 +75445,9 @@
                       "none",
                       "run-id",
                       "target-server",
+                      "target-servers",
                       "target-server+source-host",
+                      "target-servers+source-host",
                       "source-host"
                     ]
                   },
@@ -75100,7 +75753,9 @@
                             "enum": [
                               "hub-verified",
                               "migrator-reported",
-                              "operator-attested"
+                              "operator-attested",
+                              "source-api-reported",
+                              "host-loop-reported"
                             ]
                           },
                           "ownerInput": {
@@ -75109,7 +75764,12 @@
                               "acmeEmail",
                               "allowBind",
                               "allowLiveShapeProbe",
-                              "sourceController"
+                              "sourceController",
+                              "minioPolicy",
+                              "tickGapAcceptMinutes",
+                              "workerPolicy",
+                              "unlistedDbPolicy",
+                              "orphanVolumePolicy"
                             ]
                           },
                           "ackable": {
@@ -75194,6 +75854,14 @@
                             "offersCommand": {
                               "type": "boolean"
                             },
+                            "commandKind": {
+                              "type": "string",
+                              "enum": [
+                                "migrator",
+                                "host-loop",
+                                "inventory"
+                              ]
+                            },
                             "attest": {
                               "type": "array",
                               "items": {
@@ -75234,7 +75902,9 @@
                                     "none",
                                     "run-id",
                                     "target-server",
+                                    "target-servers",
                                     "target-server+source-host",
+                                    "target-servers+source-host",
                                     "source-host"
                                   ]
                                 },
@@ -75526,6 +76196,14 @@
                         "offersCommand": {
                           "type": "boolean"
                         },
+                        "commandKind": {
+                          "type": "string",
+                          "enum": [
+                            "migrator",
+                            "host-loop",
+                            "inventory"
+                          ]
+                        },
                         "attest": {
                           "type": "array",
                           "items": {
@@ -75566,7 +76244,9 @@
                                 "none",
                                 "run-id",
                                 "target-server",
+                                "target-servers",
                                 "target-server+source-host",
+                                "target-servers+source-host",
                                 "source-host"
                               ]
                             },
@@ -75904,7 +76584,8 @@
                           "kind": {
                             "type": "string",
                             "enum": [
-                              "object-migration"
+                              "object-migration",
+                              "host-inventory"
                             ]
                           },
                           "resourceId": {
@@ -76052,8 +76733,14 @@
           "actorId",
           "targetServerId",
           "targetServerName",
+          "serverMap",
+          "targetServers",
           "sourceKind",
           "sourceHost",
+          "sourceVersion",
+          "sourceVersionVerdict",
+          "campaign",
+          "baselineAt",
           "opId",
           "opHistory",
           "planHash",
