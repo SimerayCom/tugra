@@ -6,7 +6,7 @@
  * Nothing here carries a secret: tokens are issued by a port and handed straight to the launcher, never stored in a
  * snapshot, an event or a check row.
  */
-import type { RunSnapshot, StepKey } from "../../core/run-contract";
+import type { EvidenceKind, RunSnapshot, StepKey } from "../../core/run-contract";
 import type { GateResult } from "../../core/dto";
 
 // ───────────────────────────── DI tokens ─────────────────────────────
@@ -168,7 +168,7 @@ export interface CapabilityPort {
 }
 
 export type CheckStatusValue = "pass" | "fail" | "warn" | "unknown";
-export type EvidenceKindValue = "hub-verified" | "migrator-reported" | "operator-attested";
+export type EvidenceKindValue = EvidenceKind;
 
 export interface RunCheckRow {
   runId: string;

@@ -91,6 +91,17 @@ export class ImportPortService implements ImportStepsPort {
     return (await this.discoverPlan(userId, i)).planHash; // never cached: the source must be re-read to bind a run to it
   }
 
+  /** The source's own version string (`GET /version` of the source adapter), or null when it did not report one. Writes nothing. */
+  async sourceVersion(userId: string, i: { sessionId: string; sourceKind: RemoteSourceKind }): Promise<string | null> {
+    const { source } = await this.importer.openSession(userId, i.sessionId, i.sourceKind);
+    try {
+      const v = await source.verify();
+      return v.ok && v.version ? v.version : null;
+    } finally {
+      await source.close();
+    }
+  }
+
   resolveMapping(userId: string, input: ImportMappingResolveInput): Promise<ResolvedMapping> {
     return this.importer.resolveMapping(userId, input);
   }

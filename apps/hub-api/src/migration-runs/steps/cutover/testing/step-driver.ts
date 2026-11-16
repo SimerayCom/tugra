@@ -14,7 +14,7 @@ import {
   type StepSnapshot,
   type StepStatus,
 } from "../../../core/run-contract";
-import { EMPTY_STEP_EVIDENCE } from "../../../core/run-contract";
+import { EMPTY_STEP_EVIDENCE, targetServerFor, targetServerIdsOf } from "../../../core/run-contract";
 import {
   ApprovalBindingSchema,
   CodeParamsSchema,
@@ -72,7 +72,11 @@ export function makeRun(over: Partial<{ -readonly [K in keyof RunSnapshot]: RunS
     teamId: "team1",
     actorId: "user1",
     targetServerId: "srv1",
+    serverMap: {},
     sourceKind: "coolify",
+    sourceVersion: null,
+    campaign: null,
+    sourceBaseline: null,
     sourceHost: "coolify.example.com",
     sessionId: null,
     opId: "op1",
@@ -188,6 +192,8 @@ export class StepDriver {
       },
       signal: new AbortController().signal,
       now: () => new Date(self.now),
+      targetFor: (ref) => targetServerFor(runSnap, ref),
+      targetServerIds: targetServerIdsOf(runSnap),
       stepState: (k) => {
         let s = frozen.get(k);
         if (!s) {

@@ -59,6 +59,21 @@ describe("ImportPortService", () => {
     expect(source.close).toHaveBeenCalledTimes(3);
   });
 
+  it("sourceVersion reads the version through verify(), closes the source, writes nothing and never returns the token", async () => {
+    const { svc, prisma, source } = make();
+    (source as Record<string, unknown>).verify = jest.fn().mockResolvedValue({ ok: true, version: "4.1.2" });
+    expect(await svc.sourceVersion("u1", { sessionId: "s1", sourceKind: "coolify" })).toBe("4.1.2");
+    expect(source.close).toHaveBeenCalledTimes(1);
+    expect(prisma.importSession.update).not.toHaveBeenCalled();
+    (source as Record<string, unknown>).verify = jest.fn().mockResolvedValue({ ok: true });
+    expect(await svc.sourceVersion("u1", { sessionId: "s1", sourceKind: "coolify" })).toBeNull();
+    (source as Record<string, unknown>).verify = jest.fn().mockResolvedValue({ ok: false, version: "4.1.2", detail: "unreachable" });
+    expect(await svc.sourceVersion("u1", { sessionId: "s1", sourceKind: "coolify" })).toBeNull();
+    (source as Record<string, unknown>).verify = jest.fn().mockRejectedValue(new Error("boom"));
+    await expect(svc.sourceVersion("u1", { sessionId: "s1", sourceKind: "coolify" })).rejects.toThrow("boom");
+    expect(source.close).toHaveBeenCalledTimes(4); // closed on every path
+  });
+
   it("plan is memoized briefly, planHash never is", async () => {
     const { svc, importer } = make();
     await svc.plan("u1", { sessionId: "s1", sourceKind: "coolify" });

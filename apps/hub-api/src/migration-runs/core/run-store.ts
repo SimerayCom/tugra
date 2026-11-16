@@ -31,8 +31,19 @@ export interface NewRun {
   applyInput: unknown;
   options: unknown;
   inputs: unknown;
-  /** `srv:<targetServerId>` for a real run (unique), null for a dry-run. */
+  /** `srv:<targetServerId>` (the default target) for a real run (unique), null for a dry-run. */
   activeKey: string | null;
+  /** Multi-host placement (source server uuid to target server id); null/absent = single target. */
+  serverMap?: Record<string, string> | null;
+  /** The source's version string when already known at create time. */
+  sourceVersion?: string | null;
+  /** Campaign label. */
+  campaign?: string | null;
+  /**
+   * Every target server the run locks (the default AND each `serverMap` target), written in the SAME transaction as the run so
+   * "one live run per target server" holds for all of them. Empty for a dry-run. Absent = just the `activeKey` server.
+   */
+  lockServerIds?: readonly string[];
 }
 
 export interface NewStep {
@@ -57,6 +68,13 @@ export interface RunPatch {
   ownerId?: string | null;
   heartbeatAt?: Date | null;
   activeKey?: string | null;
+  /**
+   * Re-arm helper: with a non-null `activeKey` the store locks exactly these servers (default: just that key's server), in the
+   * same transaction as the update; with `activeKey: null` it releases every lock row of the run. Never stored on the run.
+   */
+  lockServerIds?: readonly string[];
+  sourceVersion?: string | null;
+  sourceBaseline?: unknown;
   inputs?: unknown;
   windowEstimate?: unknown;
   freezeStartedAt?: Date | null;
@@ -114,10 +132,11 @@ export interface ListRunsFilter {
   teamId?: string;
   status?: RunStatus;
   live?: boolean;
+  campaign?: string;
   limit: number;
 }
 
-/** Raised by {@link RunStore.create} when a REAL run already holds `activeKey` (one live run per target server). */
+/** Raised by {@link RunStore.create} (and a re-arming `updateRun`) when a REAL run already holds `activeKey` or ANY of the target servers (one live run per target server). */
 export class ServerHasLiveRunError extends Error {
   constructor() {
     super("target server already has a live migration run");
@@ -126,7 +145,7 @@ export class ServerHasLiveRunError extends Error {
 }
 
 export interface RunStore {
-  /** Create the run and its step rows atomically. Throws {@link ServerHasLiveRunError} on an `activeKey` clash. */
+  /** Create the run, its step rows and its server locks atomically. Throws {@link ServerHasLiveRunError} on an `activeKey` or server-lock clash. */
   create(run: NewRun, steps: readonly NewStep[], status: RunStatus): Promise<RunRow>;
   get(id: string): Promise<RunRow | null>;
   steps(runId: string): Promise<StepRow[]>;

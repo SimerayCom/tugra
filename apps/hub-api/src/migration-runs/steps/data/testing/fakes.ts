@@ -3,7 +3,7 @@
  * port (`data-contract.ts`). Behaviour mirrors the real adapters closely enough that a spec exercises the handler's real logic
  * (including crash-resume: the compensation a handler wrote is fed back into the next context).
  */
-import { RunLeaseLostError, type RunSnapshot, type StepContext, type StepKey, type StepSnapshot, type RunEventInput } from "../../../core/run-contract";
+import { RunLeaseLostError, targetServerFor, targetServerIdsOf, type RunSnapshot, type StepContext, type StepKey, type StepSnapshot, type RunEventInput } from "../../../core/run-contract";
 import { OwnerInputsSchema, RunOptionsSchema, type OwnerInputs, type RunOptions, type StepApprovalRecord, type StepProgress, type WaitSpec, type WindowEstimate } from "../../../core/dto";
 import type {
   ApiFailure,
@@ -38,6 +38,7 @@ export interface RunOverrides {
   windowEstimate?: WindowEstimate | null;
   sessionId?: string | null;
   dryRun?: boolean;
+  serverMap?: Record<string, string>;
 }
 
 export function makeRun(o: RunOverrides = {}): RunSnapshot {
@@ -46,7 +47,11 @@ export function makeRun(o: RunOverrides = {}): RunSnapshot {
     teamId: "team1",
     actorId: "user1",
     targetServerId: "srv-target",
+    serverMap: o.serverMap ?? {},
     sourceKind: o.sourceKind ?? "coolify",
+    sourceVersion: null,
+    campaign: null,
+    sourceBaseline: null,
     sourceHost: "coolify.example.com",
     sessionId: o.sessionId === undefined ? "sess1" : o.sessionId,
     opId: o.opId === undefined ? "op1" : o.opId,
@@ -137,6 +142,8 @@ export function makeCtx(o: CtxOptions): CtxHarness {
     approval: o.approval ?? null,
     signal: ac.signal,
     now: () => clock.now,
+    targetFor: (ref) => targetServerFor(run, ref),
+    targetServerIds: targetServerIdsOf(run),
     stepState,
     assertLease: async () => guard(),
     emit: async (e) => {

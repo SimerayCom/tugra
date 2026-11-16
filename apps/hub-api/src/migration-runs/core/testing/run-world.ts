@@ -104,6 +104,8 @@ export class InMemoryRunStore implements RunStore {
   readonly runs = new Map<string, RunRow>();
   readonly stepRows = new Map<string, StepRow[]>();
   readonly eventRows: EventRow[] = [];
+  /** Server locks (server id to run id): the in-memory twin of `MigrationRunServerLock`. */
+  readonly serverLocks = new Map<string, string>();
   /** Every owned write, in order (label = `table.field,...`): the crash specs enumerate these boundaries. */
   ownedWrites = 0;
   private killAt: { n: number; bootId: string } | null = null;
@@ -145,15 +147,22 @@ export class InMemoryRunStore implements RunStore {
 
   async create(run: NewRun, steps: readonly NewStep[], status: RunStatus): Promise<RunRow> {
     if (run.activeKey && [...this.runs.values()].some((r) => r.activeKey === run.activeKey)) throw new ServerHasLiveRunError();
+    const locks = [...new Set(run.lockServerIds ?? (run.activeKey ? [run.activeKey.replace(/^srv:/, "")] : []))];
+    if (locks.some((sid) => this.serverLocks.has(sid))) throw new ServerHasLiveRunError();
     const id = `run-${++this.seq}`;
+    for (const sid of locks) this.serverLocks.set(sid, id);
     const now = this.clock.now();
     const row: RunRow = {
       id,
       teamId: run.teamId,
       actorId: run.actorId,
       targetServerId: run.targetServerId,
+      serverMap: run.serverMap && Object.keys(run.serverMap).length ? (clone(run.serverMap) as never) : null,
       sourceKind: run.sourceKind,
       sourceHost: run.sourceHost,
+      sourceVersion: run.sourceVersion ?? null,
+      sourceBaseline: null,
+      campaign: run.campaign ?? null,
       sessionId: run.sessionId,
       opId: null,
       opHistory: [],
@@ -226,7 +235,7 @@ export class InMemoryRunStore implements RunStore {
   async list(f: ListRunsFilter): Promise<RunRow[]> {
     const live: RunStatus[] = ["QUEUED", "RUNNING", "WAITING", "PAUSED", "ABORTING", "ROLLING_BACK", "REVERSING", "FAILED"];
     return [...this.runs.values()]
-      .filter((r) => r.actorId === f.actorId && (f.teamId ? r.teamId === f.teamId && f.teamIds.includes(f.teamId) : f.teamIds.includes(r.teamId)) && (!f.status || r.status === f.status) && (!f.live || live.includes(r.status as RunStatus)))
+      .filter((r) => r.actorId === f.actorId && (f.teamId ? r.teamId === f.teamId && f.teamIds.includes(f.teamId) : f.teamIds.includes(r.teamId)) && (!f.status || r.status === f.status) && (!f.live || live.includes(r.status as RunStatus)) && (!f.campaign || r.campaign === f.campaign))
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id))
       .slice(0, f.limit)
       .map(clone);
@@ -255,7 +264,14 @@ export class InMemoryRunStore implements RunStore {
       return false;
     }
     if (patch.activeKey && [...this.runs.values()].some((x) => x.id !== id && x.activeKey === patch.activeKey)) throw new ServerHasLiveRunError();
-    for (const [k, v] of Object.entries(patch)) if (v !== undefined) (r as unknown as Record<string, unknown>)[k] = clone(v);
+    if (patch.activeKey !== undefined) {
+      // mirrors the Prisma store: the lock rows move with `activeKey` in one step
+      const wanted = patch.activeKey ? [...new Set(patch.lockServerIds ?? [patch.activeKey.replace(/^srv:/, "")])] : [];
+      if (wanted.some((sid) => this.serverLocks.has(sid) && this.serverLocks.get(sid) !== id)) throw new ServerHasLiveRunError();
+      for (const [sid, rid] of [...this.serverLocks]) if (rid === id) this.serverLocks.delete(sid);
+      for (const sid of wanted) this.serverLocks.set(sid, id);
+    }
+    for (const [k, v] of Object.entries(patch)) if (v !== undefined && k !== "lockServerIds") (r as unknown as Record<string, unknown>)[k] = clone(v);
     r!.updatedAt = this.clock.now();
     return true;
   }
@@ -476,6 +492,9 @@ export class ScriptedImportPort implements ImportStepsPort {
   remapFailed = 0;
   remapPendingBy = new Map<string, boolean>();
   remapNothing = false;
+  /** What the source reports as its version (null = it reports none); `throwVersion` makes the read fail. */
+  version_: string | null = null;
+  throwVersion = false;
   private n = 0;
   constructor(private readonly clock: TestClock) {}
 
@@ -492,6 +511,12 @@ export class ScriptedImportPort implements ImportStepsPort {
     this.reads.push("plan");
     return this.plan_;
   }
+  async sourceVersion(): Promise<string | null> {
+    this.reads.push("sourceVersion");
+    if (this.throwVersion) throw new Error("source unreachable");
+    return this.version_;
+  }
+
   async planHash(): Promise<string> {
     this.reads.push("planHash");
     return this.plan_.planHash;

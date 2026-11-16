@@ -14,6 +14,7 @@ import { ImportMappingDocSchema } from "../../importer/import-mapping";
 import {
   ATTACH_KINDS,
   CERT_MODES,
+  COMMAND_KINDS,
   CONFIRM_KINDS,
   DEPLOY_WAVES,
   DEFAULT_DECOMMISSION_MIN_AGE_HOURS,
@@ -21,6 +22,10 @@ import {
   EVENT_LEVELS,
   EVIDENCE_KINDS,
   GATE_CHECK_STATUSES,
+  HOST_LOOP_DEFAULTS,
+  LARGE_DB_MODES,
+  MINIO_POLICIES,
+  ORPHAN_VOLUME_POLICIES,
   OWNER_INPUT_KEYS,
   PROGRESS_UNITS,
   ROLLBACK_CLASSES,
@@ -29,13 +34,18 @@ import {
   RUN_MODES,
   RUN_STATUSES,
   RUN_TOPOLOGIES,
+  SERVER_MAP_MAX,
   SOURCE_CONTROLLERS,
   SOURCE_RUNNERS,
+  SOURCE_VERSION_RE,
+  SOURCE_VERSION_VERDICTS,
   STEP_KEYS,
   STEP_KINDS,
   STEP_STATUSES,
   TTL_POLICIES,
+  UNLISTED_DB_POLICIES,
   WAIT_KINDS,
+  WORKER_POLICIES,
 } from "./run-contract";
 
 // ───────────────────────────── primitives ─────────────────────────────
@@ -118,6 +128,8 @@ export const WaitSpecSchema = z.discriminatedUnion("kind", [
     code: RunCodeSchema,
     params: CodeParamsSchema.optional(),
     offersCommand: z.boolean().optional(),
+    /** Which command the "get command" action mints (default `migrator`); see {@link COMMAND_KINDS}. Only meaningful with `offersCommand`. */
+    commandKind: z.enum(COMMAND_KINDS).optional(),
     attest: z.array(z.string().max(80)).max(50).optional(),
   }),
   z.object({ kind: z.literal(WAIT_KINDS[1]), binding: ApprovalBindingSchema }),
@@ -182,6 +194,82 @@ export const WindowEstimateSchema = z.object({
 });
 export type WindowEstimate = z.infer<typeof WindowEstimateSchema>;
 
+// ───────────────────────────── multi-host placement, baseline, host loop (grup-7) ─────────────────────────────
+
+/** A source server ref: a Coolify server uuid (printable ASCII; the prototype-pollution names are refused). */
+const SourceServerRef = z
+  .string()
+  .regex(/^[\x21-\x7e]{1,200}$/, "invalid source server ref")
+  .refine((k) => k !== "__proto__" && k !== "constructor" && k !== "prototype", "reserved key");
+
+/**
+ * Multi-host placement (C1/R12/Q4): source server (Coolify server uuid) to Tugra target server id, so a project that spans
+ * 3-6 source hosts migrates in ONE run. At most {@link SERVER_MAP_MAX} entries; many sources may share one target. The run's
+ * `targetServerId` stays the default for any source server not listed. Every target must belong to the run's team (checked
+ * at create). Names and ids only: no secret.
+ */
+export const ServerMapSchema = z
+  .record(SourceServerRef, Id)
+  .refine((m) => Object.keys(m).length <= SERVER_MAP_MAX, `at most ${SERVER_MAP_MAX} source servers`);
+export type ServerMap = z.infer<typeof ServerMapSchema>;
+
+/** A free label that groups the runs of one campaign (R15/R69). Printable text without control characters. */
+export const CampaignSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(80)
+  .regex(/^[^\p{Cc}]+$/u, "invalid campaign label");
+
+/** Health of one source resource at baseline time. `exited` = the container is not running. */
+export const BASELINE_HEALTHS = ["healthy", "unhealthy", "unknown", "exited"] as const;
+
+/**
+ * The source health baseline (R28/R29/R52/R66): what each source resource looked like BEFORE the run changed anything, so
+ * VERIFY and OBSERVE can tell "Tugra broke it" from "it was already crash-looping" (and so 62 apps without a health check
+ * have a defined `unknown`). Secret-free: refs, enums and counts.
+ */
+export const SourceBaselineSchema = z.object({
+  capturedAt: Iso,
+  entries: z
+    .array(
+      z.object({
+        kind: z.enum(["app", "database", "service"]),
+        /** The plan item's source ref. */
+        ref: z.string().min(1).max(300),
+        /** The source server uuid the resource runs on, when known (per-host baselines). */
+        serverRef: z.string().max(200).optional(),
+        health: z.enum(BASELINE_HEALTHS),
+        /** Container restart count at capture time; null when unknown. */
+        restartCount: z.number().int().min(0).nullable(),
+      }),
+    )
+    .max(5000),
+});
+export type SourceBaseline = z.infer<typeof SourceBaselineSchema>;
+
+/**
+ * Options of the `coolify-host-loop` source runner (R32/C2). Directory and numbers only: the hub never stores a key. The
+ * list of hosts is NOT an option: it is derived from the run's `serverMap` (see `hostLoopTargets`).
+ */
+export const HostLoopOptionsSchema = z
+  .object({
+    /** Directory ON THE COOLIFY HOST holding one private key per managed server (`<keyDir>/ssh_key@<serverUuid>`). Absolute, no shell metacharacters. */
+    keyDir: z
+      .string()
+      .regex(/^\/[A-Za-z0-9._\/-]{0,200}$/, "keyDir must be an absolute path of [A-Za-z0-9._/-]")
+      .refine((p) => !p.split("/").includes(".."), "keyDir must not contain ..")
+      .default(HOST_LOOP_DEFAULTS.keyDir),
+    /** Hosts the loop handles at the same time (the source runs on small hosts; 1 = strictly one after the other). */
+    parallel: z.number().int().min(1).max(8).default(HOST_LOOP_DEFAULTS.parallel),
+    /** SSH connect timeout per host. */
+    connectTimeoutSec: z.number().int().min(5).max(120).default(HOST_LOOP_DEFAULTS.connectTimeoutSec),
+    /** Extra attempts per host after a failed connect (flaky links: R44). */
+    retries: z.number().int().min(0).max(5).default(HOST_LOOP_DEFAULTS.retries),
+  })
+  .strict();
+export type HostLoopOptions = z.infer<typeof HostLoopOptionsSchema>;
+
 // ───────────────────────────── run options and owner inputs ─────────────────────────────
 
 /**
@@ -198,8 +286,14 @@ export const RunOptionsSchema = z
     warmDbSeed: z.boolean().default(false),
     /** Pass `--stop-source` to the migrator (it stops the source writers itself). */
     stopSource: z.boolean().default(false),
-    /** Who starts the migrator on the source host. */
+    /** Who starts the migrator on the source host (`coolify-host-loop`: one script on the Coolify host loops over every mapped source host, R32). */
     sourceRunner: z.enum(SOURCE_RUNNERS).default("operator"),
+    /** Tuning of the `coolify-host-loop` runner; absent = {@link HOST_LOOP_DEFAULTS} (read it with `hostLoopOf`). */
+    hostLoop: HostLoopOptionsSchema.optional(),
+    /** Builds started at once per target server (R25: 2 CPU / 4 GB hosts); absent = 1 (read it with `deployConcurrencyOf`). */
+    deployConcurrency: z.number().int().min(1).max(8).optional(),
+    /** What happens to a database over the logical cap with no physical lane (R9/R45/R46); absent = `refuse` (read it with `largeDbModeOf`). */
+    largeDbMode: z.enum(LARGE_DB_MODES).optional(),
     /** `seed` copies the source proxy's ACME certs (`--certs`; private keys travel encrypted to the hub, purged after apply). */
     certs: z.enum(CERT_MODES).default("none"),
     /** Accept hosts that only have an HTTP-01 certificate gap at flip time. */
@@ -247,11 +341,21 @@ const AcmeEmail = z.string().trim().email().max(254);
 const AllowBind = z.boolean();
 const AllowLiveShapeProbe = z.boolean();
 const SourceControllerValue = z.enum(SOURCE_CONTROLLERS);
+const MinioPolicyValue = z.enum(MINIO_POLICIES);
+/** Minutes (0 = no gap accepted .. 7 days). */
+const TickGapAcceptMinutes = z.number().int().min(0).max(7 * 24 * 60);
+const WorkerPolicyValue = z.enum(WORKER_POLICIES);
+const UnlistedDbPolicyValue = z.enum(UNLISTED_DB_POLICIES);
+const OrphanVolumePolicyValue = z.enum(ORPHAN_VOLUME_POLICIES);
 
 /**
  * The owner questions as run inputs with provenance (`MigrationRun.inputs`). Q3 `acmeEmail` blocks TLS and CUTOVER only;
  * Q5 `allowBind` (default refuse); Q7 `allowLiveShapeProbe` (consent for the read-only live probe, default off); Q8
- * `sourceController` (default `manual`). Q1/Q2/Q4/Q6 are derived at runtime and have no input.
+ * `sourceController` (default `manual`). Q1/Q2/Q4 are derived at runtime and have no input.
+ *
+ * Added in grup-7 (all fail-closed, see `OWNER_INPUT_DEFAULTS`): Q6 `minioPolicy` (default `hold`), N2 `tickGapAcceptMinutes`
+ * (default 0), R26 `workerPolicy` (default `hold-dark`), N3 `unlistedDbPolicy` (default `block`), N4 `orphanVolumePolicy`
+ * (default `block`).
  */
 export const OwnerInputsSchema = z
   .object({
@@ -259,6 +363,11 @@ export const OwnerInputsSchema = z
     allowBind: inputRecord(AllowBind).optional(),
     allowLiveShapeProbe: inputRecord(AllowLiveShapeProbe).optional(),
     sourceController: inputRecord(SourceControllerValue).optional(),
+    minioPolicy: inputRecord(MinioPolicyValue).optional(),
+    tickGapAcceptMinutes: inputRecord(TickGapAcceptMinutes).optional(),
+    workerPolicy: inputRecord(WorkerPolicyValue).optional(),
+    unlistedDbPolicy: inputRecord(UnlistedDbPolicyValue).optional(),
+    orphanVolumePolicy: inputRecord(OrphanVolumePolicyValue).optional(),
   })
   .strict();
 export type OwnerInputs = z.infer<typeof OwnerInputsSchema>;
@@ -270,6 +379,11 @@ export const OwnerInputsRequestSchema = z
     allowBind: z.union([AllowBind, z.literal("unknown")]).optional(),
     allowLiveShapeProbe: z.union([AllowLiveShapeProbe, z.literal("unknown")]).optional(),
     sourceController: z.union([SourceControllerValue, z.literal("unknown")]).optional(),
+    minioPolicy: z.union([MinioPolicyValue, z.literal("unknown")]).optional(),
+    tickGapAcceptMinutes: z.union([TickGapAcceptMinutes, z.literal("unknown")]).optional(),
+    workerPolicy: z.union([WorkerPolicyValue, z.literal("unknown")]).optional(),
+    unlistedDbPolicy: z.union([UnlistedDbPolicyValue, z.literal("unknown")]).optional(),
+    orphanVolumePolicy: z.union([OrphanVolumePolicyValue, z.literal("unknown")]).optional(),
   })
   .strict();
 export type OwnerInputsRequest = z.infer<typeof OwnerInputsRequestSchema>;
@@ -312,7 +426,8 @@ export type RunApplyInput = z.infer<typeof RunApplyInputSchema>;
 /**
  * `POST /migration-runs`. `sessionId` + `planHash` bind the run to the plan the caller reviewed (409 when the source
  * changed). `dryRun: true` creates a run that only projects (never writes outside its own rows) and ends `DRY_RUN_DONE`.
- * `topology: "side-by-side"` is not accepted (400): not available in v1.
+ * `topology: "side-by-side"` is not accepted (400): not available in v1. `serverMap` and `campaign` are run-level (stored in
+ * their own columns, NOT part of the frozen apply input or the plan hash).
  */
 export const CreateMigrationRunSchema = z
   .object({
@@ -323,6 +438,10 @@ export const CreateMigrationRunSchema = z
     dryRun: z.boolean().default(false),
     options: RunOptionsSchema.default({}),
     inputs: OwnerInputsRequestSchema.default({}),
+    /** Multi-host placement (see {@link ServerMapSchema}); `targetServerId` stays the default for unmapped sources. Absent = single target. */
+    serverMap: ServerMapSchema.optional(),
+    /** Groups the runs of one campaign (see {@link CampaignSchema}). */
+    campaign: CampaignSchema.optional(),
   })
   .strict()
   .superRefine(mappingPair);
@@ -366,8 +485,11 @@ export type StepEvidenceInput = z.infer<typeof StepEvidenceInputSchema>;
 export const AttachSchema = z.object({ kind: z.enum(ATTACH_KINDS), resourceId: Id }).strict();
 export type AttachInput = z.infer<typeof AttachSchema>;
 
-/** `POST /:id/steps/:key/command`: mint or reissue the migrator token for the step. */
-export const RunCommandSchema = z.object({ reissue: z.boolean().default(false) }).strict();
+/**
+ * `POST /:id/steps/:key/command`: mint or reissue the command of the step. `kind` (default `migrator`, the classic one-host
+ * bootstrap) picks which command: see {@link COMMAND_KINDS}.
+ */
+export const RunCommandSchema = z.object({ reissue: z.boolean().default(false), kind: z.enum(COMMAND_KINDS).optional() }).strict();
 export type RunCommandInput = z.infer<typeof RunCommandSchema>;
 
 /** `POST /:id/inputs`: at least one owner input. */
@@ -410,6 +532,8 @@ export const ListMigrationRunsQuerySchema = z.object({
   status: RunStatusSchema.optional(),
   /** `true` = only live runs (`LIVE_RUN_STATUSES`). */
   active: z.enum(["true", "false"]).optional(),
+  /** Only the runs of this campaign label. */
+  campaign: CampaignSchema.optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
 });
 export type ListMigrationRunsQuery = z.infer<typeof ListMigrationRunsQuerySchema>;
@@ -519,16 +643,33 @@ export type RunAllowed = z.infer<typeof RunAllowedSchema>;
 
 const OwnerInputsViewSchema = OwnerInputsSchema;
 
+/** One target server of a (multi-host) run. `primary` = the run's default `targetServerId`. */
+export const RunTargetServerSchema = z.object({ serverId: Id, serverName: z.string().nullable(), primary: z.boolean() });
+export type RunTargetServer = z.infer<typeof RunTargetServerSchema>;
+
 /** The full, secret-free run view (`GET /migration-runs/:id` and the response of every action). */
 export const MigrationRunViewSchema = z.object({
   id: Id,
   teamId: Id,
   /** The creator, the only user who drives the run. */
   actorId: Id,
+  /** The default target server (every source server the `serverMap` does not map lands here). */
   targetServerId: Id,
   targetServerName: z.string().nullable(),
+  /** The multi-host placement: source server (Coolify server uuid) to target server id; `{}` for a single-target run. */
+  serverMap: z.record(z.string(), Id),
+  /** Every target server of the run (default first, each once) with its display name; what a typed confirmation must name. */
+  targetServers: z.array(RunTargetServerSchema),
   sourceKind: z.enum(REMOTE_SOURCE_KINDS),
   sourceHost: z.string().nullable(),
+  /** The source's version string, null until known. */
+  sourceVersion: z.string().max(64).nullable(),
+  /** How {@link sourceVersion} compares to the supported range (derived on read). */
+  sourceVersionVerdict: z.enum(SOURCE_VERSION_VERDICTS),
+  /** The campaign label, null when none. */
+  campaign: z.string().nullable(),
+  /** When the source health baseline was captured (the baseline itself is not in the view), null until captured. */
+  baselineAt: Iso.nullable(),
   opId: Id.nullable(),
   opHistory: z.array(Id),
   planHash: Hash32,
@@ -568,8 +709,12 @@ export const MigrationRunSummarySchema = z.object({
   teamId: Id,
   targetServerId: Id,
   targetServerName: z.string().nullable(),
+  /** How many distinct target servers the run places resources on (1 for a single-target run). */
+  targetServerCount: z.number().int().min(1),
   sourceKind: z.enum(REMOTE_SOURCE_KINDS),
   sourceHost: z.string().nullable(),
+  sourceVersion: z.string().max(64).nullable(),
+  campaign: z.string().nullable(),
   mode: RunModeSchema,
   topology: RunTopologySchema,
   dryRun: z.boolean(),
@@ -591,7 +736,9 @@ export const RunCommandResultSchema = z.object({
   stepKey: StepKeySchema,
   opId: Id,
   expiresAt: Iso,
-  /** The one-line source-host bootstrap (carries the live token). */
+  /** Which command this is (echoes the request's `kind`). */
+  kind: z.enum(COMMAND_KINDS).default("migrator"),
+  /** The source-host bootstrap (carries the live token); the `host-loop` kind is a multi-line script. */
   command: z.string(),
   /** The three streamed-copy commands (inspect, run, resume), when the streamed copy is enabled. */
   commands: z.object({ dryRun: z.string(), run: z.string(), resume: z.string() }).optional(),
@@ -616,8 +763,13 @@ export const RunReportSchema = z.object({
   mode: RunModeSchema,
   topology: RunTopologySchema,
   dryRun: z.boolean(),
-  source: z.object({ kind: z.enum(REMOTE_SOURCE_KINDS), host: z.string().nullable() }),
+  source: z.object({ kind: z.enum(REMOTE_SOURCE_KINDS), host: z.string().nullable(), version: z.string().max(64).nullable().default(null) }),
+  /** The default target server. */
   target: z.object({ serverId: Id, serverName: z.string().nullable() }),
+  /** Every target server of the run (default first); `[]` in reports stored before multi-host runs. */
+  targets: z.array(z.object({ serverId: Id, serverName: z.string().nullable() })).max(SERVER_MAP_MAX + 1).default([]),
+  /** The campaign label, when the run has one. */
+  campaign: z.string().nullable().default(null),
   ponrAt: Iso.nullable(),
   window: z.object({ estimatedSec: z.number().int().min(0).nullable(), measuredSec: z.number().int().min(0).nullable() }),
   steps: z.array(
@@ -635,7 +787,13 @@ export const RunReportSchema = z.object({
     )
     .max(5000),
   /** How many results of each evidence kind the run relied on. */
-  evidenceSummary: z.object({ "hub-verified": z.number().int(), "migrator-reported": z.number().int(), "operator-attested": z.number().int() }),
+  evidenceSummary: z.object({
+    "hub-verified": z.number().int(),
+    "migrator-reported": z.number().int(),
+    "operator-attested": z.number().int(),
+    "source-api-reported": z.number().int().default(0),
+    "host-loop-reported": z.number().int().default(0),
+  }),
   /** Operator actions still required (printed source steps, removal commands...), as codes + params. */
   manual: z.array(z.object({ code: RunCodeSchema, params: CodeParamsSchema.optional() })).max(200),
 });

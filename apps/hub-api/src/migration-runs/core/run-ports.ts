@@ -66,6 +66,11 @@ export const RUN_IMPORT = Symbol("MIGRATION_RUN_IMPORT");
 export interface RunImportPort {
   /** Re-discover + re-plan with the session and return the live `planHash` (read-only: it writes nothing). */
   planHash(userId: string, input: { sessionId: string; sourceKind: RemoteSourceKind; dbDataModes?: Record<string, "volume"> }): Promise<string>;
+  /**
+   * OPTIONAL: the source's own version string (`4.1.2`), read with the session (never the token). Called best effort at
+   * create/promote; a missing method, a throw or a null leave the version unknown for PREFLIGHT to fill.
+   */
+  sourceVersion?(userId: string, input: { sessionId: string; sourceKind: RemoteSourceKind }): Promise<string | null>;
   /** The coverage ledger of an import op for the final report (secret-free; empty when the op is unknown). */
   opItems(userId: string, opId: string): Promise<RunReport["items"]>;
   /** Mint (or reissue) the migrator token of the op and return the source-host command(s). Shown once. */

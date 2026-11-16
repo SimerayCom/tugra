@@ -66,10 +66,14 @@
     "hub-verified": "Hub verified",
     "migrator-reported": "Reported by the migrator",
     "operator-attested": "Attested by you",
+    "source-api-reported": "Reported by the source API",
+    "host-loop-reported": "Reported by the host script",
     "hint": {
       "hub-verified": "The hub checked this itself.",
       "migrator-reported": "The migrator on the source host reported this. The hub could not check it independently.",
-      "operator-attested": "You confirmed this by hand. Nothing checked it."
+      "operator-attested": "You confirmed this by hand. Nothing checked it.",
+      "source-api-reported": "The source's own API said so (read-only token). The hub could not check it independently.",
+      "host-loop-reported": "A read-only probe of the host script reported this and you carried it back. The hub could not check it independently."
     }
   },
   "check": {
@@ -435,6 +439,7 @@
     "run_recovered": "The hub restarted and picked the run back up.",
     "run_input_set": "Owner input set.",
     "run_session_refreshed": "Source session refreshed.",
+    "run_source-version": "Source version {version} (check: {verdict}).",
     "step_entered": "Step started.",
     "step_waiting": "Step is waiting.",
     "step_passed": "Step passed.",

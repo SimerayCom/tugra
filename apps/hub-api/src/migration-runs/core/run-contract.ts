@@ -41,6 +41,8 @@ import type {
   RunEventsQuery,
   RunOptions,
   RunReport,
+  ServerMap,
+  SourceBaseline,
   SetRunInputsInput,
   SourceSessionInput,
   SourceSessionResult,
@@ -160,8 +162,15 @@ export type RunMode = (typeof RUN_MODES)[number];
 export const RUN_TOPOLOGIES = ["two-box", "swap-proxy"] as const;
 export type RunTopology = (typeof RUN_TOPOLOGIES)[number];
 
-/** Who starts the migrator on the source host (design 5.2). `agent` needs the opt-in `migrate` capability (lane B). */
-export const SOURCE_RUNNERS = ["operator", "agent"] as const;
+/**
+ * Who starts the migrator on the source host (design 5.2). `agent` needs the opt-in `migrate` capability (lane B).
+ * `coolify-host-loop` (fleet requirement R32/C2): the only reach to the sources is SSH FROM the Coolify host, which holds one
+ * key per managed server. The hub prints ONE script for the operator to run on that host; it loops over every source host
+ * of the run (the list is derived from {@link ServerMap} keys, see {@link hostLoopTargets}) and starts the migrator on each
+ * through the host's own keys. No key, key path content or secret is ever stored or printed by the hub (only the key
+ * DIRECTORY, {@link HostLoopOptions.keyDir}, an option the operator may change).
+ */
+export const SOURCE_RUNNERS = ["operator", "agent", "coolify-host-loop"] as const;
 export type SourceRunner = (typeof SOURCE_RUNNERS)[number];
 /** Who freezes/restarts the source writers (design 5.2). `manual` is the default (owner question 8 unanswered). */
 export const SOURCE_CONTROLLERS = ["manual", "api", "agent"] as const;
@@ -170,8 +179,13 @@ export type SourceController = (typeof SOURCE_CONTROLLERS)[number];
 /** DNS TTL wait policy: `wait` (default) honours `earliestFlipAt`; `skip-ack` lets the operator skip it knowingly. */
 export const TTL_POLICIES = ["wait", "skip-ack"] as const;
 export type TtlPolicy = (typeof TTL_POLICIES)[number];
-/** `single` deploys everything at DEPLOY_DARK; `earlyStateless` deploys stateless apps right after IMPORT (A, last slice). */
-export const DEPLOY_WAVES = ["single", "earlyStateless"] as const;
+/**
+ * `single` deploys everything at DEPLOY_DARK; `earlyStateless` deploys stateless apps right after IMPORT (A, last slice);
+ * `earlyBuild` (R27/C5) BUILDS every app image right after IMPORT (a stopped, build-only deploy), long before FREEZE, so the
+ * 74 Dockerfile builds of the real fleet are not inside the downtime window; DEPLOY_DARK then only starts the built images.
+ * Whether the importer/executor can build without starting is the topology lane's job; the option is the switch.
+ */
+export const DEPLOY_WAVES = ["single", "earlyStateless", "earlyBuild"] as const;
 export type DeployWaves = (typeof DEPLOY_WAVES)[number];
 /** ACME certificate source before the flip: `none` = issue on the target, `seed` = copy the source's certs (`--certs`). */
 export const CERT_MODES = ["none", "seed"] as const;
@@ -180,8 +194,17 @@ export type CertMode = (typeof CERT_MODES)[number];
 export const ROW_COUNT_MODES = ["exact", "estimate"] as const;
 export type RowCountMode = (typeof ROW_COUNT_MODES)[number];
 
-/** How trustworthy a gate result/evidence row is (design 4.1). The UI shows it as a badge; never upgrade silently. */
-export const EVIDENCE_KINDS = ["hub-verified", "migrator-reported", "operator-attested"] as const;
+/**
+ * How trustworthy a gate result/evidence row is (design 4.1). The UI shows it as a badge; never upgrade silently.
+ *  - `hub-verified`: the hub checked it itself (its own probe, its own DB).
+ *  - `migrator-reported`: the migrator binary on the source host reported it.
+ *  - `operator-attested`: a human attested it.
+ *  - `source-api-reported` (grup-7): read from the source's API (Coolify version, health, restart counts, the inventory
+ *    list). The hub made the call, but the claim is the source's and a read-only token may not see everything.
+ *  - `host-loop-reported` (grup-7): measured by a read-only probe of the `coolify-host-loop` script (`docker ps`, `du` of a
+ *    bind mount, ...) and carried back by the operator; the hub cannot check it independently.
+ */
+export const EVIDENCE_KINDS = ["hub-verified", "migrator-reported", "operator-attested", "source-api-reported", "host-loop-reported"] as const;
 export type EvidenceKind = (typeof EVIDENCE_KINDS)[number];
 
 /** `unknown` is NOT a pass: it fails wherever data would move (see {@link makeGate}). */
@@ -191,25 +214,87 @@ export type GateCheckStatus = (typeof GATE_CHECK_STATUSES)[number];
 export const EVENT_LEVELS = ["info", "warn", "error"] as const;
 export type EventLevel = (typeof EVENT_LEVELS)[number];
 
-/** The 8 owner questions as typed run inputs (design 7). Q1/Q2/Q4/Q6 are derived at runtime, so they have no input. */
-export const OWNER_INPUT_KEYS = ["acmeEmail", "allowBind", "allowLiveShapeProbe", "sourceController"] as const;
+/**
+ * The owner questions as typed run inputs (design 7 plus the fleet analysis). Q1/Q2/Q4 are derived at runtime (Q4 is now the
+ * {@link ServerMap}), so they have no input. Every input added in grup-7 has a documented FAIL-CLOSED default in
+ * {@link OWNER_INPUT_DEFAULTS}: an unanswered question can only make the run stop or hold something back, never act.
+ */
+export const OWNER_INPUT_KEYS = [
+  "acmeEmail",
+  "allowBind",
+  "allowLiveShapeProbe",
+  "sourceController",
+  "minioPolicy",
+  "tickGapAcceptMinutes",
+  "workerPolicy",
+  "unlistedDbPolicy",
+  "orphanVolumePolicy",
+] as const;
 export type OwnerInputKey = (typeof OWNER_INPUT_KEYS)[number];
+
+/**
+ * Q6 / C7 (R34): what happens to apps that depend on a source MinIO (object storage). Unknown must not silently block every
+ * backend at CUTOVER, so the answer is asked up front and the default holds only the dependents back:
+ *  - `hold` (default): buckets are not mirrored and every host whose app depends on a MinIO stays on the source (not cut over).
+ *  - `mirror`: `mc mirror` each bucket, verify, and cut dependents over only after their buckets verified (R61 imageproxy).
+ *  - `external`: the MinIO stays where it is and the apps keep using its public endpoint (no data movement, no remap).
+ */
+export const MINIO_POLICIES = ["hold", "mirror", "external"] as const;
+export type MinioPolicy = (typeof MINIO_POLICIES)[number];
+/**
+ * R26 / C13: what happens to workers (apps with no domain: queue consumers, price feeds, mailers). A dark worker can send
+ * mail or replay jobs while the source is still authoritative.
+ *  - `hold-dark` (default): the worker is imported and built but kept STOPPED until after CUTOVER.
+ *  - `start-dark`: the owner accepts that the worker runs on Tugra before CUTOVER (duplicate side effects possible).
+ *  - `exclude`: workers are not migrated by this run.
+ */
+export const WORKER_POLICIES = ["hold-dark", "start-dark", "exclude"] as const;
+export type WorkerPolicy = (typeof WORKER_POLICIES)[number];
+/**
+ * N3 / R2 / C6: containers the source API does not list (3 DB containers on the real fleet), found by the host-loop
+ * inventory cross-check.
+ *  - `block` (default): the preflight gate fails until the owner decides.
+ *  - `carry`: the owner wants them migrated (a lane builds a ledger row for them).
+ *  - `skip`: the owner acknowledges they are not migrated (listed as not-carried in the report).
+ */
+export const UNLISTED_DB_POLICIES = ["block", "carry", "skip"] as const;
+export type UnlistedDbPolicy = (typeof UNLISTED_DB_POLICIES)[number];
+/** N4 / R14: volumes no container uses (LINKS 0). `block` (default) until the owner says `skip` (acknowledged, not carried, reported). */
+export const ORPHAN_VOLUME_POLICIES = ["block", "skip"] as const;
+export type OrphanVolumePolicy = (typeof ORPHAN_VOLUME_POLICIES)[number];
 
 /** Why a step is waiting, as stored in `WaitSpec.kind`. */
 export const WAIT_KINDS = ["operator", "approval", "timer"] as const;
 export type WaitKind = (typeof WAIT_KINDS)[number];
 
-/** What an approval requires the human to type (checked server-side by the facade against the live names). */
-export const CONFIRM_KINDS = ["none", "run-id", "target-server", "target-server+source-host", "source-host"] as const;
+/**
+ * What an approval requires the human to type (checked server-side by the facade against the live names).
+ * `target-servers` / `target-servers+source-host` name EVERY target server of a multi-host run ({@link confirmServerNames}).
+ * A handler that still asks for `target-server` on a run with more than one target server is upgraded by the engine to
+ * `target-servers` ({@link upgradeConfirmKind}), so the point-of-no-return confirmation can never name only some of the hosts.
+ */
+export const CONFIRM_KINDS = ["none", "run-id", "target-server", "target-servers", "target-server+source-host", "target-servers+source-host", "source-host"] as const;
 export type ConfirmKind = (typeof CONFIRM_KINDS)[number];
 
 /** Units of {@link StepProgress}; the web maps them to `migrationRun.units.<unit>`. */
 export const PROGRESS_UNITS = ["item", "byte", "volume", "host", "app", "database", "bucket", "second"] as const;
 export type ProgressUnit = (typeof PROGRESS_UNITS)[number];
 
-/** The only resources an operator can attach to a step with `POST /steps/:key/attach`. */
-export const ATTACH_KINDS = ["object-migration"] as const;
+/**
+ * The resources an operator can attach to a step with `POST /steps/:key/attach`. `host-inventory` (grup-7) is a stored
+ * host-loop inventory snapshot of the run (the runner/inventory lane owns its table and ingest route).
+ */
+export const ATTACH_KINDS = ["object-migration", "host-inventory"] as const;
 export type AttachKind = (typeof ATTACH_KINDS)[number];
+
+/**
+ * Which source-host command `POST /steps/:key/command` mints (and which one an operator {@link WaitSpec} offers):
+ *  - `migrator`: the classic one-line migrator bootstrap of ONE source host (default, unchanged).
+ *  - `host-loop`: the single script that loops over every source host from the Coolify host (`sourceRunner: coolify-host-loop`).
+ *  - `inventory`: the read-only inventory/probe script (containers, volumes, bind sizes, host facts), run per host or looped.
+ */
+export const COMMAND_KINDS = ["migrator", "host-loop", "inventory"] as const;
+export type CommandKind = (typeof COMMAND_KINDS)[number];
 
 /** What caused the engine to enter a step (see {@link StepContext.trigger}). */
 export const DRIVE_TRIGGERS = ["enter", "tick", "retry", "approve", "evidence", "attach", "timer", "recover"] as const;
@@ -269,8 +354,157 @@ export const STEP_MANIFEST: Readonly<Record<StepKey, StepManifestEntry>> = {
 export const stepIndex = (key: StepKey): number => STEP_MANIFEST[key].idx;
 /** The step rows a new run gets: all 13 flow steps, plus DECOMMISSION only for `takeover`. */
 export const stepKeysForMode = (mode: RunMode): StepKey[] => STEP_KEYS.filter((k) => k !== "DECOMMISSION" || mode === "takeover");
-/** The `activeKey` of a real run on a server. Dry-runs hold none (they write nothing outside their own run rows). */
+/** The `activeKey` of a real run on its PRIMARY target server. Dry-runs hold none (they write nothing outside their own run rows). */
 export const activeKeyFor = (targetServerId: string): string => `srv:${targetServerId}`;
+
+// ───────────────────────────── multi-host runs (grup-7, C1/R12/Q4) ─────────────────────────────
+
+/** A run maps at most this many source servers (the real fleet has 24 hosts; 3-6 per project). */
+export const SERVER_MAP_MAX = 64;
+
+/** What the server-map helpers read of a run: the snapshot, a DB row mapped to it, or any `Pick` of them. */
+export interface ServerMapped {
+  /** The default/fallback target: used for every source server that has no `serverMap` entry. */
+  readonly targetServerId: string;
+  /** Source server (Coolify server uuid) to Tugra target server id. Absent/empty = a classic single-target run. */
+  readonly serverMap?: Readonly<Record<string, string>> | null;
+}
+
+/** Own-property lookup: a source ref like `__proto__` or `constructor` can never resolve through the prototype chain. */
+const own = (o: Readonly<Record<string, string>>, k: string): string | undefined => (Object.prototype.hasOwnProperty.call(o, k) ? o[k] : undefined);
+
+/**
+ * The Tugra target server for a resource that lives on source server `sourceServerRef` (a Coolify server uuid, the
+ * `serverRef` of an importer plan item). Resolution: the mapped server, else the run's default `targetServerId`.
+ * `null`/`undefined`/unknown refs fall back to the default (a single-target run therefore resolves everything to it).
+ */
+export function targetServerFor(run: ServerMapped, sourceServerRef: string | null | undefined): string {
+  if (!sourceServerRef || !run.serverMap) return run.targetServerId;
+  return own(run.serverMap, sourceServerRef) ?? run.targetServerId;
+}
+
+/** Every Tugra target server of the run: the default first, then the mapped ones in map order, each once. */
+export function targetServerIdsOf(run: ServerMapped): string[] {
+  const out: string[] = [run.targetServerId];
+  for (const id of Object.values(run.serverMap ?? {})) if (!out.includes(id)) out.push(id);
+  return out;
+}
+
+/** True when the run places resources on more than the default server. */
+export const isMultiTarget = (run: ServerMapped): boolean => targetServerIdsOf(run).length > 1;
+
+/**
+ * The server ids a REAL run locks (one live run per target server): every target server, default included. Dry-runs lock none.
+ * The store keeps `activeKey` for the default server (backward compatible) and one lock row per id returned here.
+ */
+export const lockServerIdsFor = (run: ServerMapped, dryRun: boolean): string[] => (dryRun ? [] : targetServerIdsOf(run));
+
+/**
+ * The source servers a run maps, in map order, each with its target: the per-host list of the `coolify-host-loop` runner and
+ * of the per-host inventory. A run without a `serverMap` has no explicit hosts (the importer plan names them).
+ */
+export function hostLoopTargets(run: ServerMapped): Array<{ sourceServerRef: string; targetServerId: string }> {
+  return Object.entries(run.serverMap ?? {}).map(([sourceServerRef, targetServerId]) => ({ sourceServerRef, targetServerId }));
+}
+
+/**
+ * The source servers of `refs` that a NON-EMPTY serverMap does not map (they would silently land on the default target).
+ * A single-target run (no map) returns []: there everything goes to the default by design.
+ */
+export function unmappedSourceServers(run: ServerMapped, refs: readonly string[]): string[] {
+  const map = run.serverMap;
+  if (!map || Object.keys(map).length === 0) return [];
+  return [...new Set(refs)].filter((r) => own(map, r) === undefined);
+}
+
+/**
+ * The exact text a human types to confirm an approval that names target servers: the DISTINCT server names, sorted by code
+ * point, joined with `", "`. Sorting makes the text independent of map order; the web and CLI show this expected string.
+ */
+export const confirmServerNames = (names: readonly string[]): string => [...new Set(names)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).join(", ");
+
+/** Upgrade a handler's confirm kind for a run with `targetCount` target servers (see {@link CONFIRM_KINDS}). */
+export function upgradeConfirmKind(kind: ConfirmKind, targetCount: number): ConfirmKind {
+  if (targetCount <= 1) return kind;
+  if (kind === "target-server") return "target-servers";
+  if (kind === "target-server+source-host") return "target-servers+source-host";
+  return kind;
+}
+
+// ───────────────────────────── run option resolvers (grup-7) ─────────────────────────────
+
+/**
+ * Options of the `coolify-host-loop` runner. Paths and numbers only: the hub never stores, prints or reads a private key (the
+ * script uses the Coolify host's own key files at `<keyDir>/ssh_key@<serverUuid>`).
+ */
+export const HOST_LOOP_DEFAULTS = { keyDir: "/data/coolify/ssh/keys", parallel: 1, connectTimeoutSec: 15, retries: 1 } as const;
+/** `options.hostLoop` with every default filled in. */
+export const hostLoopOf = (o: Pick<RunOptions, "hostLoop">): { keyDir: string; parallel: number; connectTimeoutSec: number; retries: number } => ({ ...HOST_LOOP_DEFAULTS, ...(o.hostLoop ?? {}) });
+
+/** Builds started at once per target server during DEPLOY_DARK / `earlyBuild` (R25: the real hosts have 2 CPU / 4 GB). */
+export const DEFAULT_DEPLOY_CONCURRENCY = 1;
+export const deployConcurrencyOf = (o: Pick<RunOptions, "deployConcurrency">): number => o.deployConcurrency ?? DEFAULT_DEPLOY_CONCURRENCY;
+
+/**
+ * What DATA_FINAL does with a database whose dump exceeds the logical cap and that has no physical lane (R9/R36/R45/R46):
+ * `refuse` (default) fails the capability matrix with a `no-lane` verdict; `stream-logical` opts in to the streaming logical
+ * lane (the large-DB lane implements it; it is only offered while the run's window estimate shows it fits).
+ */
+export const LARGE_DB_MODES = ["refuse", "stream-logical"] as const;
+export type LargeDbMode = (typeof LARGE_DB_MODES)[number];
+export const largeDbModeOf = (o: Pick<RunOptions, "largeDbMode">): LargeDbMode => o.largeDbMode ?? "refuse";
+
+// ───────────────────────────── source version (grup-7, R4/C18) ─────────────────────────────
+
+/**
+ * The source versions a run is validated against. `min` is the oldest version a real fleet is proven on (Coolify 4.1.2, the
+ * fleet's own); `maxTested` the newest the importer parity work targeted (4.7.5). Dokploy has no range yet (its steps are
+ * not built): it is `unchecked`.
+ */
+export const SOURCE_VERSION_SUPPORT: Readonly<Partial<Record<"coolify" | "dokploy", { readonly min: string; readonly maxTested: string }>>> = {
+  coolify: { min: "4.1.2", maxTested: "4.7.5" },
+};
+/**
+ * `supported`: inside the range. `newer`: above `maxTested` (untested: warn, ackable). `too-old`: below `min` (block).
+ * `unknown`: no version or not parseable (fails wherever data would move). `unchecked`: the source kind has no range.
+ */
+export const SOURCE_VERSION_VERDICTS = ["supported", "newer", "too-old", "unknown", "unchecked"] as const;
+export type SourceVersionVerdict = (typeof SOURCE_VERSION_VERDICTS)[number];
+/** A stored source version is a short printable token. */
+export const SOURCE_VERSION_RE = /^[\x21-\x7e]{1,64}$/;
+
+interface ParsedVersion {
+  readonly n: readonly [number, number, number];
+  /** `4.0.0-beta.442`: a pre-release sorts BEFORE the same x.y.z without one. */
+  readonly pre: boolean;
+}
+
+/** Parse `v4.1.2`, `4.1.2`, `4.0.0-beta.442`, `4.7` (patch 0). Returns null for anything else. */
+export function parseSourceVersion(v: string | null | undefined): ParsedVersion | null {
+  if (!v) return null;
+  const m = /^v?(\d{1,6})\.(\d{1,6})(?:\.(\d{1,6}))?(?:([-+])[0-9A-Za-z.+-]{0,40})?$/.exec(v.trim());
+  if (!m) return null;
+  return { n: [Number(m[1]), Number(m[2]), Number(m[3] ?? 0)], pre: m[4] === "-" };
+}
+
+/** Negative when `a < b`, 0 when equal, positive when `a > b`; null when either side does not parse. */
+export function compareSourceVersions(a: string, b: string): number | null {
+  const x = parseSourceVersion(a);
+  const y = parseSourceVersion(b);
+  if (!x || !y) return null;
+  for (let i = 0; i < 3; i += 1) if (x.n[i] !== y.n[i]) return x.n[i] - y.n[i];
+  return x.pre === y.pre ? 0 : x.pre ? -1 : 1;
+}
+
+/** Classify a source version against {@link SOURCE_VERSION_SUPPORT} (see {@link SourceVersionVerdict}). */
+export function classifySourceVersion(kind: "coolify" | "dokploy", version: string | null | undefined): SourceVersionVerdict {
+  const range = SOURCE_VERSION_SUPPORT[kind];
+  if (!range) return "unchecked";
+  if (!parseSourceVersion(version)) return "unknown";
+  if ((compareSourceVersions(version as string, range.min) ?? 0) < 0) return "too-old";
+  if ((compareSourceVersions(version as string, range.maxTested) ?? 0) > 0) return "newer";
+  return "supported";
+}
 
 // ───────────────────────────── actor ─────────────────────────────
 
@@ -306,8 +540,27 @@ export interface RunSnapshot {
   readonly teamId: string;
   /** The creator: the only user who drives the run. Services are called as this user (they re-check permissions). */
   readonly actorId: string;
+  /** The default target server: every source server that {@link serverMap} does not map lands here. */
   readonly targetServerId: string;
+  /**
+   * Source server (Coolify server uuid) to Tugra target server id, the multi-host placement of the run (grup-7). `{}` for a
+   * classic single-target run. Never read it directly to place a resource: use {@link StepContext.targetFor}.
+   */
+  readonly serverMap: Readonly<Record<string, string>>;
   readonly sourceKind: "coolify" | "dokploy";
+  /**
+   * The source's own version string (`4.1.2`), captured at create (best effort) and refreshed by PREFLIGHT through
+   * {@link RunPatch.sourceVersion}; null until known. Judge it with {@link classifySourceVersion}.
+   */
+  readonly sourceVersion: string | null;
+  /** Free label that groups the runs of one migration campaign (fleet dashboard, campaign report); null when none. */
+  readonly campaign: string | null;
+  /**
+   * The source health baseline captured before the run changes anything (R28/R52/R66); null until a handler sets it with
+   * {@link RunPatch.sourceBaseline}. VERIFY and OBSERVE compare against it so an app that was already crash-looping on the
+   * source is not blamed on Tugra.
+   */
+  readonly sourceBaseline: SourceBaseline | null;
   /** Source instance host (typed-confirmation target and display). */
   readonly sourceHost: string | null;
   /** `ImportSession` id; null/expired when it must be re-entered (steps that need it go to WAITING). */
@@ -360,6 +613,10 @@ export interface RunPatch {
   readonly opId?: string;
   /** DATA_SEED: the estimate that feeds the FREEZE approval and the final report. */
   readonly windowEstimate?: WindowEstimate;
+  /** PREFLIGHT: the source's version string (trimmed, a short printable token, see {@link SOURCE_VERSION_RE}); an invalid value is ignored. */
+  readonly sourceVersion?: string;
+  /** PREFLIGHT: the source health baseline. Ignored once FREEZE opened the window (a baseline taken after the stop would be wrong). */
+  readonly sourceBaseline?: SourceBaseline;
   /** FREEZE: the downtime window opened (set once, first call wins). */
   readonly freezeStartedAt?: Date;
   /** CUTOVER: first host VERIFIED after the flip/swap (set once, first call wins) => measured downtime. */
@@ -398,6 +655,7 @@ export const ENGINE_EVENT_CODES = [
   "run.recovered",
   "run.input.set",
   "run.session.refreshed",
+  "run.source-version",
   "step.entered",
   "step.waiting",
   "step.passed",
@@ -438,6 +696,14 @@ export interface StepContext {
   readonly signal: AbortSignal;
   /** The engine clock (injectable in tests). */
   now(): Date;
+  /**
+   * The Tugra target server for a resource that lives on source server `sourceServerUuid` (the plan item's `serverRef`):
+   * the run's `serverMap` entry, else the default `run.targetServerId`. EVERY handler that touches a target server must
+   * resolve it through this (never `run.targetServerId` directly) so multi-host runs place and verify per host.
+   */
+  targetFor(sourceServerUuid: string | null | undefined): string;
+  /** Every Tugra target server of the run (default first, each once): scope per-server work, capability grants and cleanups to these. */
+  readonly targetServerIds: readonly string[];
   /** Read-only view of any step of the run (e.g. CUTOVER reads VERIFY's approval hash). */
   stepState(key: StepKey): StepSnapshot;
   /** Throws {@link RunLeaseLostError} if this hub no longer owns the run. Call before an irreversible effect. */
@@ -718,6 +984,12 @@ export interface OwnerInputValues {
   allowBind: boolean;
   allowLiveShapeProbe: boolean;
   sourceController: SourceController;
+  minioPolicy: MinioPolicy;
+  /** Longest write gap in minutes the owner accepts for append-only feed writers (R42/N2); 0 = no gap accepted. */
+  tickGapAcceptMinutes: number;
+  workerPolicy: WorkerPolicy;
+  unlistedDbPolicy: UnlistedDbPolicy;
+  orphanVolumePolicy: OrphanVolumePolicy;
 }
 
 /**
@@ -728,6 +1000,17 @@ export const OWNER_INPUT_DEFAULTS: { readonly [K in Exclude<OwnerInputKey, "acme
   allowBind: false,
   allowLiveShapeProbe: false,
   sourceController: "manual",
+  // grup-7, all fail-closed: an unanswered question holds something back or blocks, it never acts.
+  /** Mirror nothing, cut no MinIO-dependent host over. */
+  minioPolicy: "hold",
+  /** No write gap accepted: a window that would stop an append-only feed writer is blocked until the owner states a tolerance. */
+  tickGapAcceptMinutes: 0,
+  /** Workers are imported but stay stopped until after CUTOVER. */
+  workerPolicy: "hold-dark",
+  /** An unlisted DB container blocks preflight until the owner decides. */
+  unlistedDbPolicy: "block",
+  /** An orphan volume blocks until the owner acknowledges it is not carried. */
+  orphanVolumePolicy: "block",
 };
 
 /**

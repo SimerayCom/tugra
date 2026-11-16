@@ -21,17 +21,24 @@ import {
 const json = (v: unknown): Prisma.InputJsonValue | typeof Prisma.JsonNull | undefined => (v === undefined ? undefined : v === null ? Prisma.JsonNull : (v as Prisma.InputJsonValue));
 
 const isUnique = (e: unknown, field?: string): boolean => e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002" && (!field || String(e.meta?.target ?? "").includes(field));
+/** A unique violation on the run's `activeKey` or on a server-lock row (primary key `serverId`). */
+const isLockClash = (e: unknown): boolean => isUnique(e, "activeKey") || isUnique(e, "serverId") || isUnique(e, "MigrationRunServerLock");
 const isNotFound = (e: unknown): boolean => e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2025";
+
+const JSON_RUN_COLUMNS = new Set(["inputs", "windowEstimate", "report", "sourceBaseline", "serverMap"]);
 
 function runData(p: RunPatch): Prisma.MigrationRunUncheckedUpdateManyInput {
   const out: Prisma.MigrationRunUncheckedUpdateManyInput = {};
   const o = out as Record<string, unknown>;
   for (const [k, v] of Object.entries(p)) {
-    if (v === undefined) continue;
-    o[k] = k === "inputs" || k === "windowEstimate" || k === "report" ? json(v) : v;
+    if (v === undefined || k === "lockServerIds") continue; // lockServerIds is a store directive, not a column
+    o[k] = JSON_RUN_COLUMNS.has(k) ? json(v) : v;
   }
   return out;
 }
+
+/** The server id an `activeKey` (`srv:<id>`) names. */
+const serverOfKey = (key: string): string => key.replace(/^srv:/, "");
 
 function stepData(p: StepPatch): Prisma.MigrationRunStepUncheckedUpdateManyInput {
   const out: Prisma.MigrationRunStepUncheckedUpdateManyInput = {};
@@ -49,14 +56,18 @@ export class PrismaRunStore implements RunStore {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(run: NewRun, steps: readonly NewStep[], status: RunStatus): Promise<RunRow> {
+    const locks = [...new Set(run.lockServerIds ?? (run.activeKey ? [serverOfKey(run.activeKey)] : []))];
     try {
       return await this.prisma.migrationRun.create({
         data: {
           teamId: run.teamId,
           actorId: run.actorId,
           targetServerId: run.targetServerId,
+          ...(run.serverMap && Object.keys(run.serverMap).length ? { serverMap: json(run.serverMap) as Prisma.InputJsonValue } : {}),
           sourceKind: run.sourceKind,
           sourceHost: run.sourceHost,
+          ...(run.sourceVersion ? { sourceVersion: run.sourceVersion } : {}),
+          ...(run.campaign ? { campaign: run.campaign } : {}),
           sessionId: run.sessionId,
           planHash: run.planHash,
           mode: run.mode,
@@ -69,10 +80,11 @@ export class PrismaRunStore implements RunStore {
           activeKey: run.activeKey,
           status,
           steps: { create: steps.map((s) => ({ key: s.key, idx: s.idx, kind: s.kind, rollbackClass: s.rollbackClass })) },
+          ...(locks.length ? { serverLocks: { create: locks.map((serverId) => ({ serverId })) } } : {}),
         },
       });
     } catch (e) {
-      if (isUnique(e, "activeKey")) throw new ServerHasLiveRunError();
+      if (isLockClash(e)) throw new ServerHasLiveRunError();
       throw e;
     }
   }
@@ -97,6 +109,7 @@ export class PrismaRunStore implements RunStore {
         teamId: f.teamId ? (f.teamIds.includes(f.teamId) ? f.teamId : "\u0000none") : { in: [...f.teamIds] },
         ...(f.status ? { status: f.status } : {}),
         ...(f.live ? { status: { in: [...LIVE_RUN_STATUSES] } } : {}),
+        ...(f.campaign ? { campaign: f.campaign } : {}),
       },
       orderBy: { createdAt: "desc" },
       take: f.limit,
@@ -123,9 +136,9 @@ export class PrismaRunStore implements RunStore {
     };
     let r: { count: number };
     try {
-      r = await this.prisma.migrationRun.updateMany({ where, data: runData(patch) });
+      r = patch.activeKey !== undefined ? await this.updateWithLocks(id, where, patch) : await this.prisma.migrationRun.updateMany({ where, data: runData(patch) });
     } catch (e) {
-      if (isUnique(e, "activeKey")) throw new ServerHasLiveRunError();
+      if (isLockClash(e)) throw new ServerHasLiveRunError();
       throw e;
     }
     if (r.count === 1) return true;
@@ -135,6 +148,24 @@ export class PrismaRunStore implements RunStore {
       throw new RunLeaseLostError(id);
     }
     return false;
+  }
+
+  /**
+   * An update that changes `activeKey` also changes the run's server locks, in ONE transaction (so a crash can neither leave a
+   * server locked by a settled run nor unlocked under a live one): `null` releases every lock row, a key re-locks
+   * `patch.lockServerIds` (default: the key's own server). A lock clash rolls the whole update back.
+   */
+  private updateWithLocks(id: string, where: Prisma.MigrationRunWhereInput, patch: RunPatch): Promise<{ count: number }> {
+    return this.prisma.$transaction(async (tx) => {
+      const r = await tx.migrationRun.updateMany({ where, data: runData(patch) });
+      if (r.count !== 1) return r;
+      await tx.migrationRunServerLock.deleteMany({ where: { runId: id } });
+      if (patch.activeKey) {
+        const ids = [...new Set(patch.lockServerIds ?? [serverOfKey(patch.activeKey)])];
+        if (ids.length) await tx.migrationRunServerLock.createMany({ data: ids.map((serverId) => ({ serverId, runId: id })) });
+      }
+      return r;
+    });
   }
 
   async updateStep(runId: string, key: StepKey, patch: StepPatch, bootId?: string): Promise<void> {

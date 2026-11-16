@@ -46,9 +46,14 @@ import {
   EMPTY_STEP_EVIDENCE,
   PONR_APPROVAL_TTL_SEC,
   STEP_HANDLERS,
+  SOURCE_VERSION_RE,
   STEP_MANIFEST,
   activeKeyFor,
+  classifySourceVersion,
+  confirmServerNames,
+  lockServerIdsFor,
   stepKeysForMode,
+  targetServerIdsOf,
   type MigrationRunsFacade,
   type RunActor,
   type RunMode,
@@ -58,7 +63,7 @@ import {
   type StepStatus,
 } from "./run-contract";
 import { CLEANUP_REQUEST_KEY, RunEngineService, type CleanupRequest } from "./run-engine.service";
-import { ATTACH_STEPS, COMMAND_STEPS, OPEN_STATUSES, approvalExpiry, deriveStepAllowed, hashOf, isTerminal, isWaitingStep, stripSince } from "./run-logic";
+import { ATTACH_STEPS, COMMAND_STEPS, OPEN_STATUSES, approvalExpiry, deriveStepAllowed, hashOf, isTerminal, isWaitingStep, serverMapOf, stripSince } from "./run-logic";
 import { RUN_ENV, RUN_IMPORT, RUN_SINK, RUN_STORE, type RunEnvPort, type RunImportPort, type RunSessionInfo, type RunSinkPort } from "./run-ports";
 import { ServerHasLiveRunError, type EventRow, type RunRow, type RunStore, type StepRow } from "./run-store";
 import { buildReport, reportToMarkdown, runFacts, stepFacts, toSummary, toView } from "./run-view";
@@ -104,8 +109,13 @@ export class MigrationRunsService implements MigrationRunsFacade {
 
   private async view(run: RunRow): Promise<MigrationRunView> {
     const fresh = (await this.store.get(run.id)) ?? run;
-    const [steps, server] = await Promise.all([this.store.steps(run.id), this.env.server(run.targetServerId)]);
-    return toView(fresh, steps, server?.name ?? null);
+    const [steps, names] = await Promise.all([this.store.steps(run.id), this.env.servers(this.targetIds(fresh))]);
+    return toView(fresh, steps, names.get(fresh.targetServerId) ?? null, names);
+  }
+
+  /** Every target server id of a row (default first). */
+  private targetIds(run: RunRow): string[] {
+    return targetServerIdsOf({ targetServerId: run.targetServerId, serverMap: serverMapOf(run.serverMap) });
   }
 
   private async audit(actor: RunActor, action: string, runId: string, meta: Record<string, unknown> = {}): Promise<void> {
@@ -136,16 +146,22 @@ export class MigrationRunsService implements MigrationRunsFacade {
     if (!st.member) throw new NotFoundException("server-not-found");
     if (!st.appsConfig || !st.databases) throw new ForbiddenException("insufficient-permission");
     const session = await this.requireSession(actor, body.sessionId, body.sourceKind);
+    const serverMap = serverMapOf(body.serverMap ?? {});
+    await this.assertTargetsInTeam(server.teamId, serverMap);
 
     const applyInput = RunApplyInputSchema.parse(pickApply(body));
     await this.assertPlanFresh(actor, session, applyInput);
+    const sourceVersion = await this.captureSourceVersion(actor, session);
 
     const run = await this.insert(actor, {
       teamId: server.teamId,
       sourceKind: body.sourceKind,
       sourceHost: session.host,
+      sourceVersion,
       sessionId: session.id,
       targetServerId: server.id,
+      serverMap,
+      campaign: body.campaign ?? null,
       planHash: body.planHash,
       mode: body.mode,
       topology: body.topology,
@@ -155,20 +171,67 @@ export class MigrationRunsService implements MigrationRunsFacade {
       options: RunOptionsSchema.parse(body.options),
       inputs: stampInputs(body.inputs, actor.userId, this.engine.clock.now()),
     });
-    await this.event(run.id, actor, "run.created", "info", null, { dryRun: run.dryRun, mode: run.mode, topology: run.topology });
-    await this.audit(actor, "create", run.id, { dryRun: run.dryRun, mode: run.mode, topology: run.topology, serverId: server.id, planHash: body.planHash });
+    await this.event(run.id, actor, "run.created", "info", null, { dryRun: run.dryRun, mode: run.mode, topology: run.topology, targets: this.targetIds(run).length });
+    await this.sourceVersionEvent(run, actor);
+    await this.audit(actor, "create", run.id, { dryRun: run.dryRun, mode: run.mode, topology: run.topology, serverId: server.id, serverIds: this.targetIds(run), planHash: body.planHash, ...(run.campaign ? { campaign: run.campaign } : {}) });
     if (run.dryRun) this.engine.kick(run.id, "enter");
     return this.view(run);
   }
 
+  /**
+   * Every mapped target server must exist and belong to the run's team (the standing checked for the default server covers
+   * the team). A foreign or unknown server is indistinguishable: 404 `server-not-found`.
+   */
+  private async assertTargetsInTeam(teamId: string, serverMap: Record<string, string>): Promise<void> {
+    for (const id of new Set(Object.values(serverMap))) {
+      const s = await this.env.server(id);
+      if (!s || s.teamId !== teamId) throw new NotFoundException("server-not-found");
+    }
+  }
+
+  /** The source's version, when the import port can read it (best effort: a failure leaves it unknown for PREFLIGHT to fill). */
+  private async captureSourceVersion(actor: RunActor, session: RunSessionInfo): Promise<string | null> {
+    if (!this.imp.sourceVersion) return null;
+    try {
+      const v = (await this.imp.sourceVersion(actor.userId, { sessionId: session.id, sourceKind: session.sourceKind }))?.trim();
+      return v && SOURCE_VERSION_RE.test(v) ? v : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** The `run.source-version` event: a warning when the version is outside the supported range (or unknown). */
+  private async sourceVersionEvent(run: RunRow, actor: RunActor | null): Promise<void> {
+    if (!run.sourceVersion) return;
+    const verdict = classifySourceVersion(run.sourceKind as "coolify" | "dokploy", run.sourceVersion);
+    await this.event(run.id, actor, "run.source-version", verdict === "supported" || verdict === "unchecked" ? "info" : "warn", null, { version: run.sourceVersion, verdict });
+  }
+
   private async insert(
     actor: RunActor,
-    f: { teamId: string; sourceKind: string; sourceHost: string | null; sessionId: string | null; targetServerId: string; planHash: string; mode: string; topology: string; dryRun: boolean; promotedFromId: string | null; applyInput: unknown; options: unknown; inputs: unknown },
+    f: {
+      teamId: string;
+      sourceKind: string;
+      sourceHost: string | null;
+      sourceVersion: string | null;
+      sessionId: string | null;
+      targetServerId: string;
+      serverMap: Record<string, string>;
+      campaign: string | null;
+      planHash: string;
+      mode: string;
+      topology: string;
+      dryRun: boolean;
+      promotedFromId: string | null;
+      applyInput: unknown;
+      options: unknown;
+      inputs: unknown;
+    },
   ): Promise<RunRow> {
     const steps = stepKeysForMode(f.mode as RunMode).map((key) => ({ key, idx: STEP_MANIFEST[key].idx, kind: STEP_MANIFEST[key].kind, rollbackClass: STEP_MANIFEST[key].rollback }));
     try {
       return await this.store.create(
-        { ...f, actorId: actor.userId, activeKey: f.dryRun ? null : activeKeyFor(f.targetServerId) },
+        { ...f, actorId: actor.userId, activeKey: f.dryRun ? null : activeKeyFor(f.targetServerId), lockServerIds: lockServerIdsFor(f, f.dryRun) },
         steps,
         f.dryRun ? "RUNNING" : "QUEUED",
       );
@@ -216,12 +279,17 @@ export class MigrationRunsService implements MigrationRunsFacade {
     const apply = RunApplyInputSchema.parse(from.applyInput);
     await this.assertPlanFresh(actor, session, apply);
     this.assertHandlers(from.mode as RunMode);
+    const serverMap = serverMapOf(from.serverMap);
+    await this.assertTargetsInTeam(from.teamId, serverMap);
     const run = await this.insert(actor, {
       teamId: from.teamId,
       sourceKind: from.sourceKind,
       sourceHost: session.host,
+      sourceVersion: (await this.captureSourceVersion(actor, session)) ?? from.sourceVersion,
       sessionId: session.id,
       targetServerId: from.targetServerId,
+      serverMap,
+      campaign: from.campaign,
       planHash: from.planHash,
       mode: from.mode,
       topology: from.topology,
@@ -231,7 +299,8 @@ export class MigrationRunsService implements MigrationRunsFacade {
       options: from.options,
       inputs: from.inputs,
     });
-    await this.event(run.id, actor, "run.created", "info", null, { dryRun: false, mode: run.mode, topology: run.topology });
+    await this.event(run.id, actor, "run.created", "info", null, { dryRun: false, mode: run.mode, topology: run.topology, targets: this.targetIds(run).length });
+    await this.sourceVersionEvent(run, actor);
     await this.event(run.id, actor, "run.promoted", "info", null, { fromRunId: from.id });
     await this.store.updateRun(run.id, { statusIn: ["QUEUED"] }, { status: "RUNNING" });
     await this.audit(actor, "promote", run.id, { fromRunId: from.id });
@@ -249,10 +318,11 @@ export class MigrationRunsService implements MigrationRunsFacade {
       ...(query.teamId ? { teamId: query.teamId } : {}),
       ...(query.status ? { status: query.status } : {}),
       ...(query.active === "true" ? { live: true } : {}),
+      ...(query.campaign ? { campaign: query.campaign } : {}),
       limit: query.active === "false" ? 200 : query.limit,
     });
     const kept = query.active === "false" ? rows.filter((r) => !OPEN_OR_LIVE.has(r.status as RunStatus)).slice(0, query.limit) : rows;
-    const [steps, names] = await Promise.all([this.store.stepsOf(kept.map((r) => r.id)), this.env.servers(kept.map((r) => r.targetServerId))]);
+    const [steps, names] = await Promise.all([this.store.stepsOf(kept.map((r) => r.id)), this.env.servers([...new Set(kept.map((r) => r.targetServerId))])]);
     return kept.map((r) =>
       toSummary(
         r,
@@ -301,8 +371,10 @@ export class MigrationRunsService implements MigrationRunsFacade {
     if (body.acks.some((a) => !binding.ackable.includes(a))) throw bad("ack-not-allowed");
     if (binding.requiredAcks.some((a) => !body.acks.includes(a))) throw bad("acks-required");
     if (binding.requiresDataRisk && body.acceptDataRisk !== true) throw bad("data-risk-required");
-    const server = await this.env.server(run.targetServerId);
-    if (!confirmMatches(binding.confirm, body.confirmName, { runId: run.id, serverName: server?.name ?? null, sourceHost: run.sourceHost })) throw bad("bad-confirmation");
+    const names = await this.env.servers(this.targetIds(run));
+    // every target server's name: a typed confirmation of a multi-host run must name ALL of them
+    const serverNames = this.targetIds(run).map((id) => names.get(id) ?? "");
+    if (!confirmMatches(binding.confirm, body.confirmName, { runId: run.id, serverName: names.get(run.targetServerId) ?? null, serverNames, sourceHost: run.sourceHost })) throw bad("bad-confirmation");
 
     const now = this.engine.clock.now();
     const ttlSec = binding.ponr ? Math.min(binding.ttlSec ?? PONR_APPROVAL_TTL_SEC, PONR_APPROVAL_TTL_SEC) : binding.ttlSec;
@@ -438,6 +510,9 @@ export class MigrationRunsService implements MigrationRunsFacade {
     const run = await this.loadActing(actor, id);
     this.requireOpen(run);
     if (!COMMAND_STEPS.includes(key)) throw bad("step-has-no-command");
+    const kind = body.kind ?? "migrator";
+    // only the classic migrator command exists in the core; the host-loop and inventory commands are minted by the lane that owns them
+    if (kind !== "migrator") throw conflict("command-kind-unavailable");
     const rows = await this.store.steps(run.id);
     const step = this.stepOf(rows, key);
     if (!deriveStepAllowed(runFacts(run), stepFacts(step)).command) throw conflict("step-not-waiting-command");
@@ -446,7 +521,7 @@ export class MigrationRunsService implements MigrationRunsFacade {
     const minted = await this.imp.mintCommand(actor.userId, run.opId, hubBase, { reissue: body.reissue, certs: opts.certs === "seed" });
     await this.event(run.id, actor, "step.command.issued", "info", key, { reissue: body.reissue });
     await this.audit(actor, "command", run.id, { step: key, reissue: body.reissue, expiresAt: minted.expiresAt.toISOString() });
-    return { stepKey: key, opId: run.opId, expiresAt: minted.expiresAt.toISOString(), command: minted.command, ...(minted.commands ? { commands: minted.commands } : {}), shownOnce: true };
+    return { stepKey: key, kind, opId: run.opId, expiresAt: minted.expiresAt.toISOString(), command: minted.command, ...(minted.commands ? { commands: minted.commands } : {}), shownOnce: true };
   }
 
   async setInputs(actor: RunActor, id: string, body: SetRunInputsInput): Promise<MigrationRunView> {
@@ -514,7 +589,7 @@ export class MigrationRunsService implements MigrationRunsFacade {
     await this.store.updateStep(run.id, "IMPORT", { compensation: { ...((importStep.compensation as Record<string, unknown> | null) ?? {}), [CLEANUP_REQUEST_KEY]: request } });
     let ok: boolean;
     try {
-      ok = await this.store.updateRun(run.id, { statusIn: ["ABORTED"] }, { status: "ROLLING_BACK", activeKey: activeKeyFor(run.targetServerId), finishedAt: null });
+      ok = await this.store.updateRun(run.id, { statusIn: ["ABORTED"] }, { status: "ROLLING_BACK", activeKey: activeKeyFor(run.targetServerId), lockServerIds: this.targetIds(run), finishedAt: null });
     } catch (e) {
       if (e instanceof ServerHasLiveRunError) throw conflict("server-has-live-run");
       throw e;
@@ -611,12 +686,12 @@ export class MigrationRunsService implements MigrationRunsFacade {
       const stored = RunReportSchema.safeParse(run.report);
       if (stored.success && stored.data.status === run.status) return stored.data;
     }
-    const [steps, server, items] = await Promise.all([
+    const [steps, names, items] = await Promise.all([
       this.store.steps(run.id),
-      this.env.server(run.targetServerId),
+      this.env.servers(this.targetIds(run)),
       run.opId ? this.imp.opItems(run.actorId, run.opId).catch(() => []) : Promise.resolve([]),
     ]);
-    return buildReport(run, steps, items, server?.name ?? null, this.engine.clock.now());
+    return buildReport(run, steps, items, names.get(run.targetServerId) ?? null, this.engine.clock.now(), names);
   }
 
   /** Persist the final report once a run settles (engine hook; best effort). */
@@ -663,19 +738,31 @@ function stampInputs(req: Partial<Record<string, unknown>>, userId: string, at: 
   return OwnerInputsSchema.parse(out);
 }
 
-/** Does the typed name match what the binding asks for? The combined takeover form is `"<server name> <source host>"`. */
-export function confirmMatches(kind: string, typed: string | undefined, ctx: { runId: string; serverName: string | null; sourceHost: string | null }): boolean {
-  switch (kind) {
+/**
+ * Does the typed name match what the binding asks for? The combined takeover form is `"<server name> <source host>"`.
+ * `serverNames` are the names of EVERY target server of the run (default first): with more than one, `target-server` is read as
+ * `target-servers` (fail closed: the text must name all hosts), and the typed text is {@link confirmServerNames} of them.
+ */
+export function confirmMatches(kind: string, typed: string | undefined, ctx: { runId: string; serverName: string | null; sourceHost: string | null; serverNames?: readonly string[] }): boolean {
+  const names = ctx.serverNames && ctx.serverNames.length ? ctx.serverNames : ctx.serverName ? [ctx.serverName] : [];
+  const multi = names.length > 1;
+  const allNamed = names.length > 0 && names.every((n) => n.length > 0);
+  const k = multi && kind === "target-server" ? "target-servers" : multi && kind === "target-server+source-host" ? "target-servers+source-host" : kind;
+  switch (k) {
     case "none":
       return true;
     case "run-id":
       return typed === ctx.runId;
     case "target-server":
       return !!ctx.serverName && typed === ctx.serverName;
+    case "target-servers":
+      return allNamed && typed === confirmServerNames(names);
     case "source-host":
       return !!ctx.sourceHost && typed === ctx.sourceHost;
     case "target-server+source-host":
       return !!ctx.serverName && !!ctx.sourceHost && typed === `${ctx.serverName} ${ctx.sourceHost}`;
+    case "target-servers+source-host":
+      return allNamed && !!ctx.sourceHost && typed === `${confirmServerNames(names)} ${ctx.sourceHost}`;
     default:
       return false;
   }

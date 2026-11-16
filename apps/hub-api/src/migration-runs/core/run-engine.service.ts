@@ -30,9 +30,13 @@ import {
   EMPTY_STEP_EVIDENCE,
   RunLeaseLostError,
   STEP_HANDLERS,
+  SOURCE_VERSION_RE,
   STEP_MANIFEST,
   StepFailure,
   isRunCode,
+  targetServerFor,
+  targetServerIdsOf,
+  upgradeConfirmKind,
   type ActResult,
   type AnyStepHandler,
   type CompResult,
@@ -62,6 +66,8 @@ import {
   nextFlowStep,
   parkStatus,
   sameWait,
+  serverMapOf,
+  sourceBaselineOf,
   stable,
   stripSince,
   waitSince,
@@ -311,7 +317,17 @@ export class RunEngineService implements OnModuleDestroy {
     if (!row) return null;
     const ctx = this.makeCtx(run, row, rows, "tick", new AbortController().signal, null, true);
     const obs = await handler.observe(ctx);
-    return handler.approvalBinding(ctx, obs);
+    return this.upgradeBinding(run, await handler.approvalBinding(ctx, obs));
+  }
+
+  /**
+   * A binding that asks the human to type ONE target server is upgraded to name ALL of them when the run places resources on
+   * more than one (multi-host run), so no handler can make the point-of-no-return confirmation name only some of the hosts.
+   */
+  private upgradeBinding(run: RunRow, binding: ApprovalBinding | null): ApprovalBinding | null {
+    if (!binding) return binding;
+    const confirm = upgradeConfirmKind(binding.confirm, targetServerIdsOf({ targetServerId: run.targetServerId, serverMap: serverMapOf(run.serverMap) }).length);
+    return confirm === binding.confirm ? binding : { ...binding, confirm };
   }
 
   // ───────────────────────────── the loop ─────────────────────────────
@@ -469,7 +485,7 @@ export class RunEngineService implements OnModuleDestroy {
     let approval: StepApprovalRecord | null = null;
     if (handler.approvalBinding) {
       try {
-        binding = await handler.approvalBinding(ctx, obs);
+        binding = this.upgradeBinding(run, await handler.approvalBinding(ctx, obs));
       } catch (e) {
         if (e instanceof RunLeaseLostError) throw e;
         return this.handlerFailed(run, row, e, manual);
@@ -761,7 +777,11 @@ export class RunEngineService implements OnModuleDestroy {
       teamId: r.teamId,
       actorId: r.actorId,
       targetServerId: r.targetServerId,
+      serverMap: serverMapOf(r.serverMap),
       sourceKind: r.sourceKind as "coolify" | "dokploy",
+      sourceVersion: r.sourceVersion,
+      campaign: r.campaign,
+      sourceBaseline: sourceBaselineOf(r.sourceBaseline),
       sourceHost: r.sourceHost,
       sessionId: r.sessionId,
       opId: r.opId,
@@ -832,6 +852,8 @@ export class RunEngineService implements OnModuleDestroy {
       approval,
       signal,
       now: () => clock.now(),
+      targetFor: (ref) => targetServerFor(snap, ref),
+      targetServerIds: targetServerIdsOf(snap),
       stepState: (k) => {
         const s = stepSnaps.get(k);
         if (!s) throw new Error(`no step ${k}`);
@@ -864,6 +886,12 @@ export class RunEngineService implements OnModuleDestroy {
           if (r.opId && !r.opHistory.includes(r.opId)) patch.opHistory = [...r.opHistory, r.opId];
         }
         if (p.windowEstimate !== undefined) patch.windowEstimate = p.windowEstimate;
+        if (p.sourceVersion !== undefined) {
+          const v = p.sourceVersion.trim();
+          if (SOURCE_VERSION_RE.test(v) && v !== r.sourceVersion) patch.sourceVersion = v;
+        }
+        // a baseline taken after FREEZE opened the window would describe the stopped source: ignore it
+        if (p.sourceBaseline !== undefined && r.freezeStartedAt === null) patch.sourceBaseline = p.sourceBaseline;
         if (p.freezeStartedAt !== undefined && r.freezeStartedAt === null) patch.freezeStartedAt = p.freezeStartedAt;
         if (p.freezeEndedAt !== undefined && r.freezeEndedAt === null) patch.freezeEndedAt = p.freezeEndedAt;
         if (Object.keys(patch).length) await store.updateRun(run.id, { bootId }, patch);

@@ -12,8 +12,16 @@ function fake() {
   const run = { create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn(), updateMany: jest.fn(), count: jest.fn() };
   const step = { findMany: jest.fn(), update: jest.fn(), updateMany: jest.fn() };
   const event = { create: jest.fn(), findMany: jest.fn() };
-  const prisma = { migrationRun: run, migrationRunStep: step, migrationRunEvent: event };
-  return { prisma, run, step, event, store: new PrismaRunStore(prisma as never) };
+  const lock = { deleteMany: jest.fn().mockResolvedValue({ count: 0 }), createMany: jest.fn().mockResolvedValue({ count: 0 }) };
+  const prisma: Record<string, unknown> = {
+    migrationRun: run,
+    migrationRunStep: step,
+    migrationRunEvent: event,
+    migrationRunServerLock: lock,
+    /** An interactive transaction runs its callback against the same (fake) client. */
+    $transaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>): Promise<unknown> => fn(prisma)),
+  };
+  return { prisma, run, step, event, lock, store: new PrismaRunStore(prisma as never) };
 }
 
 const newRun = { teamId: "t", actorId: "u", targetServerId: "s", sourceKind: "coolify", sourceHost: "h", sessionId: "x", planHash: "p", mode: "copy", topology: "two-box", dryRun: false, promotedFromId: null, applyInput: { a: 1 }, options: {}, inputs: {}, activeKey: "srv:s" };
@@ -62,6 +70,79 @@ describe("PrismaRunStore", () => {
     expect(run.updateMany.mock.calls[0][0].where).toEqual({ id: "r1", ponrAt: { not: null }, OR: [{ ownerId: null }, { ownerId: { not: "b1" } }] });
     run.updateMany.mockRejectedValueOnce(p2002("activeKey"));
     await expect(store.updateRun("r1", { statusIn: ["ABORTED"] }, { status: "ROLLING_BACK", activeKey: "srv:s" })).rejects.toBeInstanceOf(ServerHasLiveRunError);
+  });
+
+  describe("multi-host server locks", () => {
+    it("creates the run and one lock row per target server in the SAME nested write; serverMap, version and campaign are columns", async () => {
+      const { store, run } = fake();
+      run.create.mockResolvedValue({ id: "r1" });
+      await store.create({ ...newRun, serverMap: { "src-a": "s2", "src-b": "s3" }, sourceVersion: "4.1.2", campaign: "wave-1", lockServerIds: ["s", "s2", "s3", "s2"] }, [], "QUEUED");
+      const data = run.create.mock.calls[0][0].data;
+      expect(data).toMatchObject({ activeKey: "srv:s", serverMap: { "src-a": "s2", "src-b": "s3" }, sourceVersion: "4.1.2", campaign: "wave-1" });
+      expect(data.serverLocks).toEqual({ create: [{ serverId: "s" }, { serverId: "s2" }, { serverId: "s3" }] });
+    });
+    it("a single-target run without lockServerIds still locks its own server; a dry-run locks nothing; no serverMap column is written for {}", async () => {
+      const { store, run } = fake();
+      run.create.mockResolvedValue({ id: "r1" });
+      await store.create(newRun, [], "QUEUED");
+      expect(run.create.mock.calls[0][0].data.serverLocks).toEqual({ create: [{ serverId: "s" }] });
+      expect("serverMap" in run.create.mock.calls[0][0].data).toBe(false);
+      await store.create({ ...newRun, activeKey: null, dryRun: true, lockServerIds: [], serverMap: {} }, [], "RUNNING");
+      expect("serverLocks" in run.create.mock.calls[1][0].data).toBe(false);
+    });
+    it("a clash on a lock row (the server's primary key) or on activeKey is ServerHasLiveRunError; anything else is not", async () => {
+      const { store, run } = fake();
+      run.create.mockRejectedValueOnce(p2002("serverId"));
+      await expect(store.create(newRun, [], "QUEUED")).rejects.toBeInstanceOf(ServerHasLiveRunError);
+      run.create.mockRejectedValueOnce(p2002("MigrationRunServerLock_pkey"));
+      await expect(store.create(newRun, [], "QUEUED")).rejects.toBeInstanceOf(ServerHasLiveRunError);
+    });
+    it("releasing activeKey deletes the run's lock rows in the same transaction as the update", async () => {
+      const { store, run, lock, prisma } = fake();
+      run.updateMany.mockResolvedValue({ count: 1 });
+      await expect(store.updateRun("r1", { bootId: "b1" }, { status: "COMPLETED", activeKey: null })).resolves.toBe(true);
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(lock.deleteMany).toHaveBeenCalledWith({ where: { runId: "r1" } });
+      expect(lock.createMany).not.toHaveBeenCalled();
+      // lockServerIds is a directive, never a column
+      expect("lockServerIds" in run.updateMany.mock.calls[0][0].data).toBe(false);
+    });
+    it("re-arming activeKey re-locks every target server (default: just the key's server)", async () => {
+      const { store, run, lock } = fake();
+      run.updateMany.mockResolvedValue({ count: 1 });
+      await store.updateRun("r1", { statusIn: ["ABORTED"] }, { status: "ROLLING_BACK", activeKey: "srv:s", lockServerIds: ["s", "s2"] });
+      expect(lock.createMany).toHaveBeenCalledWith({ data: [{ serverId: "s", runId: "r1" }, { serverId: "s2", runId: "r1" }] });
+      await store.updateRun("r1", { statusIn: ["ABORTED"] }, { status: "ROLLING_BACK", activeKey: "srv:s" });
+      expect(lock.createMany).toHaveBeenLastCalledWith({ data: [{ serverId: "s", runId: "r1" }] });
+    });
+    it("a missed compare-and-set neither deletes nor creates lock rows; a lock clash while re-arming is ServerHasLiveRunError", async () => {
+      const { store, run, lock } = fake();
+      run.updateMany.mockResolvedValueOnce({ count: 0 });
+      await expect(store.updateRun("r1", { statusIn: ["ABORTED"] }, { status: "ROLLING_BACK", activeKey: "srv:s" })).resolves.toBe(false);
+      expect(lock.deleteMany).not.toHaveBeenCalled();
+      run.updateMany.mockResolvedValueOnce({ count: 1 });
+      lock.createMany.mockRejectedValueOnce(p2002("serverId"));
+      await expect(store.updateRun("r1", { statusIn: ["ABORTED"] }, { status: "ROLLING_BACK", activeKey: "srv:s", lockServerIds: ["s", "s2"] })).rejects.toBeInstanceOf(ServerHasLiveRunError);
+    });
+    it("an update that does not touch activeKey never opens a transaction", async () => {
+      const { store, run, prisma } = fake();
+      run.updateMany.mockResolvedValue({ count: 1 });
+      await store.updateRun("r1", {}, { status: "RUNNING" });
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+    it("list filters by campaign", async () => {
+      const { store, run } = fake();
+      run.findMany.mockResolvedValue([]);
+      await store.list({ actorId: "u1", teamIds: ["t1"], campaign: "wave-1", limit: 5 });
+      expect(run.findMany.mock.calls[0][0].where).toMatchObject({ campaign: "wave-1" });
+    });
+    it("the migration backfills a lock row for every live run so the rule survives the upgrade", () => {
+      const dir = readdirSync(join(__dirname, "../../../prisma/migrations")).find((d) => d.endsWith("_migration_run_multi_host"))!;
+      const sql = readFileSync(join(__dirname, "../../../prisma/migrations", dir, "migration.sql"), "utf8");
+      expect(dir.startsWith("20261124000000")).toBe(true);
+      expect(sql).toMatch(/CREATE TABLE "MigrationRunServerLock"/);
+      expect(sql).toMatch(/INSERT INTO "MigrationRunServerLock"[\s\S]*FROM "MigrationRun" WHERE "activeKey" LIKE 'srv:%'/);
+    });
   });
 
   it("JSON columns: null clears (SQL NULL), values are stored, undefined is left out", async () => {
@@ -183,9 +264,9 @@ describe("the run core reaches the database only through its ports", () => {
     expect(writes).toEqual([]);
   });
 
-  it("the store implementation writes only the three run tables", () => {
+  it("the store implementation writes only the run tables (run, steps, events, server locks)", () => {
     const src = read("core/run-store.prisma.ts");
-    const models = new Set([...src.matchAll(/this\.prisma\.(\w+)\./g)].map((m) => m[1]));
-    expect([...models].sort()).toEqual(["migrationRun", "migrationRunEvent", "migrationRunStep"]);
+    const models = new Set([...src.matchAll(/(?:this\.prisma|tx)\.(migrationRun\w*)\./g)].map((m) => m[1]));
+    expect([...models].sort()).toEqual(["migrationRun", "migrationRunEvent", "migrationRunServerLock", "migrationRunStep"]);
   });
 });

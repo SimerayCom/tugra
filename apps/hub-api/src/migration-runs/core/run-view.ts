@@ -17,8 +17,21 @@ import {
   type StepEvidence,
   type WaitSpec,
 } from "./dto";
-import { EMPTY_STEP_EVIDENCE, isRunCode, type EvidenceKind, type RunMode, type RunStatus, type RunTopology, type StepKey, type StepKind, type StepStatus, type RollbackClass } from "./run-contract";
-import { deriveNextAction, deriveRunAllowed, deriveStepAllowed, flowKeys, measuredDowntimeSec, stripSince, type RunFacts, type StepFacts } from "./run-logic";
+import {
+  EMPTY_STEP_EVIDENCE,
+  classifySourceVersion,
+  isRunCode,
+  targetServerIdsOf,
+  type EvidenceKind,
+  type RunMode,
+  type RunStatus,
+  type RunTopology,
+  type StepKey,
+  type StepKind,
+  type StepStatus,
+  type RollbackClass,
+} from "./run-contract";
+import { deriveNextAction, deriveRunAllowed, deriveStepAllowed, flowKeys, measuredDowntimeSec, serverMapOf, sourceBaselineOf, stripSince, type RunFacts, type StepFacts } from "./run-logic";
 import type { RunRow, StepRow } from "./run-store";
 
 const iso = (d: Date | null): string | null => (d ? d.toISOString() : null);
@@ -86,8 +99,20 @@ function stepView(run: RunFacts, s: StepRow, facts: StepFacts): MigrationRunStep
   };
 }
 
-export function toView(r: RunRow, steps: readonly StepRow[], serverName: string | null): MigrationRunView {
+/** Every target server of a row (default first) with its display name, from `names` (server id to name); an unknown id has a null name. */
+export function targetServersOf(r: RunRow, names: ReadonlyMap<string, string>): MigrationRunView["targetServers"] {
+  return targetServerIdsOf({ targetServerId: r.targetServerId, serverMap: serverMapOf(r.serverMap) }).map((serverId) => ({ serverId, serverName: names.get(serverId) ?? null, primary: serverId === r.targetServerId }));
+}
+
+/**
+ * `serverName` is the default target's name; `names` (optional) resolves the other target servers of a multi-host run (the
+ * default's name is taken from `serverName` when `names` lacks it).
+ */
+export function toView(r: RunRow, steps: readonly StepRow[], serverName: string | null, names: ReadonlyMap<string, string> = new Map()): MigrationRunView {
   const facts = runFacts(r);
+  const allNames = new Map(names);
+  if (serverName !== null && !allNames.has(r.targetServerId)) allNames.set(r.targetServerId, serverName);
+  const baseline = sourceBaselineOf(r.sourceBaseline);
   const fm = factsMap(steps);
   const failureCode = code(r.failureCode);
   const sorted = [...steps].sort((a, b) => a.idx - b.idx);
@@ -97,8 +122,14 @@ export function toView(r: RunRow, steps: readonly StepRow[], serverName: string 
     actorId: r.actorId,
     targetServerId: r.targetServerId,
     targetServerName: serverName,
+    serverMap: serverMapOf(r.serverMap),
+    targetServers: targetServersOf(r, allNames),
     sourceKind: r.sourceKind as MigrationRunView["sourceKind"],
     sourceHost: r.sourceHost,
+    sourceVersion: r.sourceVersion,
+    sourceVersionVerdict: classifySourceVersion(r.sourceKind as MigrationRunView["sourceKind"], r.sourceVersion),
+    campaign: r.campaign,
+    baselineAt: baseline?.capturedAt ?? null,
     opId: r.opId,
     opHistory: [...r.opHistory],
     planHash: r.planHash,
@@ -139,8 +170,11 @@ export function toSummary(r: RunRow, steps: readonly StepRow[], serverName: stri
     teamId: r.teamId,
     targetServerId: r.targetServerId,
     targetServerName: serverName,
+    targetServerCount: targetServerIdsOf({ targetServerId: r.targetServerId, serverMap: serverMapOf(r.serverMap) }).length,
     sourceKind: r.sourceKind as MigrationRunSummary["sourceKind"],
     sourceHost: r.sourceHost,
+    sourceVersion: r.sourceVersion,
+    campaign: r.campaign,
     mode: r.mode as RunMode,
     topology: r.topology as RunTopology,
     dryRun: r.dryRun,
@@ -170,7 +204,7 @@ export function manualOf(r: RunRow): Array<{ code: string; params?: CodeParams }
 
 /** Count the passed gate checks of every step by how trustworthy their evidence is. */
 export function evidenceSummary(steps: readonly StepRow[]): RunReport["evidenceSummary"] {
-  const out: Record<EvidenceKind, number> = { "hub-verified": 0, "migrator-reported": 0, "operator-attested": 0 };
+  const out: Record<EvidenceKind, number> = { "hub-verified": 0, "migrator-reported": 0, "operator-attested": 0, "source-api-reported": 0, "host-loop-reported": 0 };
   for (const s of steps) {
     const g = s.gate as GateResult | null;
     for (const c of g?.checks ?? []) if ((c.status === "pass" || c.acked === true) && c.evidence) out[c.evidence] += 1;
@@ -178,7 +212,9 @@ export function evidenceSummary(steps: readonly StepRow[]): RunReport["evidenceS
   return out;
 }
 
-export function buildReport(r: RunRow, steps: readonly StepRow[], items: readonly ReportItem[], serverName: string | null, now: Date): RunReport {
+export function buildReport(r: RunRow, steps: readonly StepRow[], items: readonly ReportItem[], serverName: string | null, now: Date, names: ReadonlyMap<string, string> = new Map()): RunReport {
+  const allNames = new Map(names);
+  if (serverName !== null && !allNames.has(r.targetServerId)) allNames.set(r.targetServerId, serverName);
   const est = r.windowEstimate ? WindowEstimateSchema.parse(r.windowEstimate) : null;
   return {
     runId: r.id,
@@ -187,8 +223,10 @@ export function buildReport(r: RunRow, steps: readonly StepRow[], items: readonl
     mode: r.mode as RunMode,
     topology: r.topology as RunTopology,
     dryRun: r.dryRun,
-    source: { kind: r.sourceKind as RunReport["source"]["kind"], host: r.sourceHost },
+    source: { kind: r.sourceKind as RunReport["source"]["kind"], host: r.sourceHost, version: r.sourceVersion },
     target: { serverId: r.targetServerId, serverName },
+    targets: targetServersOf(r, allNames).map((t) => ({ serverId: t.serverId, serverName: t.serverName })),
+    campaign: r.campaign,
     ponrAt: iso(r.ponrAt),
     window: { estimatedSec: est?.freezeToFlipSec ?? null, measuredSec: measuredDowntimeSec(r.freezeStartedAt, r.freezeEndedAt) },
     steps: [...steps]
@@ -215,8 +253,10 @@ export function reportToMarkdown(rep: RunReport): string {
   L.push(`# Migration run ${rep.runId}`, "");
   L.push(`- Status: ${rep.status}${rep.dryRun ? " (dry-run)" : ""}`);
   L.push(`- Mode: ${rep.mode}, topology: ${rep.topology}`);
-  L.push(`- Source: ${rep.source.kind}${rep.source.host ? ` (${rep.source.host})` : ""}`);
-  L.push(`- Target server: ${rep.target.serverName ?? rep.target.serverId}`);
+  L.push(`- Source: ${rep.source.kind}${rep.source.host ? ` (${rep.source.host})` : ""}${rep.source.version ? `, version ${rep.source.version}` : ""}`);
+  if (rep.campaign) L.push(`- Campaign: ${mdCell(rep.campaign)}`);
+  if (rep.targets.length > 1) L.push(`- Target servers (default first): ${rep.targets.map((t) => mdCell(t.serverName ?? t.serverId)).join(", ")}`);
+  else L.push(`- Target server: ${rep.target.serverName ?? rep.target.serverId}`);
   if (rep.ponrAt) L.push(`- Point of no return: ${rep.ponrAt}`);
   L.push(`- Downtime window: estimated ${rep.window.estimatedSec ?? "n/a"} s, measured ${rep.window.measuredSec ?? "n/a"} s`);
   L.push("", "## Steps", "", "| Step | Status | Attempts | Seconds | Code |", "| --- | --- | --- | --- | --- |");

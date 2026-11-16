@@ -16,6 +16,7 @@ import {
   type StepKey,
   type StepStatus,
 } from "./run-contract";
+import { ServerMapSchema, SourceBaselineSchema } from "./dto";
 import type {
   ApprovalBinding,
   DryRunItem,
@@ -23,10 +24,24 @@ import type {
   GateResult,
   NextAction,
   RunAllowed,
+  ServerMap,
+  SourceBaseline,
   StepAllowed,
   StepApprovalRecord,
   WaitSpec,
 } from "./dto";
+
+// ───────────────────────────── stored run columns ─────────────────────────────
+
+/** The `serverMap` column as a map (`{}` when null: a single-target run). A corrupt value throws: placement must fail closed. */
+export const serverMapOf = (v: unknown): ServerMap => ServerMapSchema.parse(v ?? {});
+
+/** The `sourceBaseline` column, or null when absent (or, defensively, unreadable: it only informs comparisons). */
+export const sourceBaselineOf = (v: unknown): SourceBaseline | null => {
+  if (v === null || v === undefined) return null;
+  const p = SourceBaselineSchema.safeParse(v);
+  return p.success ? p.data : null;
+};
 
 // ───────────────────────────── run status machine ─────────────────────────────
 

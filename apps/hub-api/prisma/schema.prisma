@@ -2408,9 +2408,13 @@ model MigrationRun {
   id              String             @id @default(cuid())
   teamId          String // loose refs (no FK) like AppMove, so audit/report survive team/server deletion
   actorId         String // only the creator drives the run (same rule as the importer's loadOwnedOp)
-  targetServerId  String
+  targetServerId  String // the DEFAULT target server (every source server `serverMap` does not map lands here)
+  serverMap       Json? // multi-host placement: {<source server uuid>: <Tugra target server id>}; null = single target
   sourceKind      String // coolify | dokploy
   sourceHost      String? // snapshot of the source instance host (typed confirmation + list display, no secret)
+  sourceVersion   String? // the source's own version string (e.g. "4.1.2"), captured at create/preflight
+  sourceBaseline  Json? // source health baseline captured before anything changes (refs, health enum, restart counts; no secret)
+  campaign        String? // free label grouping the runs of one migration campaign
   sessionId       String? // ImportSession (1 h TTL; refreshed via POST /:id/source-session)
   opId            String?            @unique // the CURRENT import BulkOperation; null before IMPORT
   opHistory       String[]           @default([]) // earlier ops redone by an IMPORT retry
@@ -2430,7 +2434,7 @@ model MigrationRun {
   abortRequested  Boolean            @default(false)
   ownerId         String? // hub bootId lease (DeployLeaseService.bootId); null = awaiting recovery
   heartbeatAt     DateTime?
-  activeKey       String?            @unique // "srv:<targetServerId>" while a REAL run is non-terminal => one live run per target server
+  activeKey       String?            @unique // "srv:<targetServerId>" (the default target) while a REAL run is non-terminal; every target server is also locked in MigrationRunServerLock
   eventSeq        Int                @default(0)
   windowEstimate  Json? // {freezeToFlipSec, basis[], estimatedAt}
   freezeStartedAt DateTime?
@@ -2443,12 +2447,26 @@ model MigrationRun {
   finishedAt      DateTime?
   updatedAt       DateTime           @updatedAt
 
-  steps  MigrationRunStep[]
-  events MigrationRunEvent[]
+  steps       MigrationRunStep[]
+  events      MigrationRunEvent[]
+  serverLocks MigrationRunServerLock[]
 
   @@index([teamId, createdAt(sort: Desc)])
   @@index([status])
   @@index([actorId])
+  @@index([teamId, campaign])
+}
+
+/// One row per target server a REAL, non-terminal run places resources on (the default `targetServerId` AND every
+/// `serverMap` target): the primary key makes "one live run per target server" hold for every mapped server, atomically with the
+/// run's own create. Deleted when the run settles (activeKey released) and re-created when a cleanup re-arms it.
+model MigrationRunServerLock {
+  serverId  String       @id
+  run       MigrationRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  runId     String
+  createdAt DateTime     @default(now())
+
+  @@index([runId])
 }
 
 model MigrationRunStep {
