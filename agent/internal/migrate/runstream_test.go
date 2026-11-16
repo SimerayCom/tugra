@@ -38,6 +38,8 @@ type streamHub struct {
 	speedEnds    int32
 	speedCommits int
 	speedFail    bool
+	recipes      string // overrides the /recipes answer (the streamed dump lane needs real recipes)
+	dbSizes      []dbSizeReq
 }
 
 func (s *streamHub) serve(t *testing.T) *httptest.Server {
@@ -53,9 +55,21 @@ func (s *streamHub) serve(t *testing.T) *httptest.Server {
 		case p == "probe":
 			io.WriteString(w, `{"ok":true,"opId":"op1","expiresAt":"2999-01-01T00:00:00Z"}`)
 		case p == "recipes":
+			if s.recipes != "" {
+				io.WriteString(w, s.recipes)
+				return
+			}
 			io.WriteString(w, `{"v":1,"recipes":{},"unsupported":{}}`)
 		case p == "targets":
 			io.WriteString(w, s.targets)
+		case p == "vx/db-sizes":
+			b, _ := io.ReadAll(r.Body)
+			var req dbSizeReq
+			_ = json.Unmarshal(b, &req)
+			s.mu2.Lock()
+			s.dbSizes = append(s.dbSizes, req)
+			s.mu2.Unlock()
+			io.WriteString(w, `{"expiresAt":"2999-01-01T00:00:00Z"}`)
 		case p == "vx/inventory":
 			io.WriteString(w, `{"stored":1,"expiresAt":"2999-01-01T00:00:00Z"}`)
 		case strings.HasSuffix(p, "/begin"):

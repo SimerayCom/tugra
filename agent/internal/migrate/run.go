@@ -87,8 +87,9 @@ type output struct {
 	Engines     []string     `json:"engines,omitempty"`
 	Counts      counts       `json:"counts"`
 	Items       []itemResult `json:"items"`
-	Certs       *certsResult `json:"certs,omitempty"`  // only present when --certs was set
-	Verify      *verifyOut   `json:"verify,omitempty"` // only present when --verify was set
+	Certs       *certsResult `json:"certs,omitempty"`   // only present when --certs was set
+	Verify      *verifyOut   `json:"verify,omitempty"`  // only present when --verify was set
+	DbSizes     []DbSizeItem `json:"dbSizes,omitempty"` // only present on a --dry-run that measured databases
 }
 
 type stringList []string
@@ -133,6 +134,11 @@ type cli struct {
 	verify           bool
 	verifyMode       string // exact | estimate
 	verifyExactBelow int64  // estimate mode counts exactly below this row estimate
+
+	// --dry-run database size measurement (the hub chooses a lane per database from it).
+	measureDBs       bool  // measure every dump-capable database (read-only) and report it to the hub
+	measureDump      bool  // count the dump itself for every database, whatever its size
+	measureDumpBelow int64 // count the dump itself for databases whose catalog size is at or below this
 }
 
 // RunCLI is the `tugra-agent migrate` entrypoint. It installs its own signal handling (no agent
@@ -340,15 +346,30 @@ func RunCLI(args []string, version string, stdout, stderr io.Writer) (code int) 
 		return
 	}
 
+	runID := newRunID()
 	var vr *volRunner
 	if len(volScope) > 0 {
-		vr = &volRunner{hub: hub, dockerPath: dockerPath, dockerEnv: dockerEnv, c: c, sc: sc, logf: logf, runID: newRunID(),
-			policy: *targets.Vx, overrides: mapOverrides, usedIDs: map[string]string{}, expiry: probe.expiresAt}
+		vr = &volRunner{hub: hub, dockerPath: dockerPath, dockerEnv: dockerEnv, c: c, sc: sc, logf: logf, runID: runID,
+			policy: *targets.Vx, overrides: mapOverrides, usedIDs: map[string]string{}, expiry: probe.expiresAt,
+			parsed: parsed, sizes: map[string]DbSizeItem{}}
 	}
 
 	if c.dryRun || c.speedtestMiB > 0 {
 		out.DryRun = true
 		bad := false
+		// Measure every dump-capable database (read-only) and report it: the hub chooses each database's lane from the size
+		// of its DUMP, never from the size of its volume. Needs the run id the volume arm uses, so it exists only then.
+		if c.dryRun && (c.measureDBs || c.measureDump) {
+			sizes, abort := dbSizePhase(ctx, run, selectTargets(targets.Targets, c.only, false), runID)
+			if abort != 0 {
+				code = abort
+				return
+			}
+			if vr != nil {
+				vr.sizes = sizes
+			}
+			out.DbSizes = sortedDbSizes(sizes)
+		}
 		for _, tg := range inScope {
 			st := planState(tg, parsed, rejected)
 			out.Items = append(out.Items, itemResult{ItemRef: tg.ItemRef, Engine: tg.Engine, State: st.state, Reason: st.reason})
@@ -713,6 +734,9 @@ func parseFlags(args []string, stderr io.Writer) (*cli, error) {
 	fs.BoolVar(&c.verify, "verify", false, "after the data arms, measure each source database's row/key counts (read-only) and report them to the hub as logical-parity evidence")
 	fs.StringVar(&c.verifyMode, "verify-mode", verifyModeEstimate, "verify cost mode: exact (count every table) or estimate (planner estimate for big tables)")
 	fs.Int64Var(&c.verifyExactBelow, "verify-exact-below", defaultVerifyExactBelow, "estimate mode: tables under this many estimated rows are still counted exactly")
+	fs.BoolVar(&c.measureDBs, "measure-dbs", false, "--dry-run: measure every dump-capable database (catalog size, plus the counted dump when cheap) read-only and report it to the hub, which chooses each database's lane from it")
+	fs.BoolVar(&c.measureDump, "measure-dump", false, "--dry-run: count every database's dump (raw and gzip bytes, nothing written) whatever its size, so the hub decides its lane from the real dump")
+	fs.Int64Var(&c.measureDumpBelow, "measure-dump-below", defaultMeasureDumpBelow, "--dry-run: count the dump of databases whose catalog size is at or below this many bytes (larger ones are reported by catalog size)")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
@@ -730,6 +754,10 @@ func parseFlags(args []string, stderr io.Writer) (*cli, error) {
 		return nil, err
 	}
 	if err := c.validateVerifyFlags(); err != nil {
+		fmt.Fprintln(stderr, err)
+		return nil, err
+	}
+	if err := c.validateDumpFlags(); err != nil {
 		fmt.Fprintln(stderr, err)
 		return nil, err
 	}

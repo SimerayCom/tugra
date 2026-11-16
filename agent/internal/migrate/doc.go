@@ -41,6 +41,13 @@
 //     volume-source-missing, volume-bind-refused, volume-special-files, volume-disk-insufficient, volume-aborted,
 //     volume-not-migrated): nothing is skipped without a reported reason.
 //
+// The STREAMED DUMP LANE (dbsize.go, dumpstream.go, rundump.go) moves a database the 256 MiB artifact route cannot carry (or
+// whose data directory cannot be copied as files) without any size cap: the pinned dump recipe (pg_dump custom format,
+// mariadb-dump) runs inside the source container, its stdout is cut into the same independent gzip members the volume arm
+// sends, delivered through the same relay, staged on the target and restored there streaming. `--dry-run --measure-dbs`
+// reports each database's catalog size, plus its counted dump when cheap, so the hub chooses a lane from the DUMP size and
+// never from the volume size. The source database is never stopped; its writers are frozen by the run.
+//
 // The VERIFY PHASE (`--verify`) measures the SOURCE side of DB logical parity after the data arms (Redis-family key counts,
 // Postgres/MySQL/MariaDB per-table row counts; exact or planner estimates) with read-only, no-shell, pinned commands and
 // reports them to the hub (verify.go), which labels them `migrator-reported` and measures the target itself.

@@ -44,6 +44,10 @@ type volRunner struct {
 	policy     VxPolicy
 	overrides  map[string]string
 	usedIDs    map[string]string
+	// parsed are the dump recipes that passed the contract check (the streamed dump lane builds its plan from them);
+	// sizes are this run's database size measurements by itemRef (the dump lane's estimate).
+	parsed map[string]*Parsed
+	sizes  map[string]DbSizeItem
 	// expiry is the probe's token expiry; the hub's renewed value (Hub.Expiry) wins once a vx call returned one.
 	expiry time.Time
 	// abortCode is set when the whole run must stop (authentication lost).
@@ -67,7 +71,7 @@ func selectVolumeTargets(all []Target, only stringList) []Target {
 	}
 	var out []Target
 	for _, tg := range all {
-		if tg.Kind != "volume" || (tg.VolumeIngest != "stream-v2" && tg.VolumeIngest != "excluded") {
+		if tg.Kind != "volume" || (tg.VolumeIngest != "stream-v2" && tg.VolumeIngest != "excluded" && tg.VolumeIngest != volumeIngestDump) {
 			continue
 		}
 		if len(allow) > 0 && !allow[tg.ItemRef] {
@@ -100,6 +104,8 @@ type volumeFacts struct {
 	reason string
 	// stopped is the container THIS run stopped (so it may restart it if the copy does not complete); nil otherwise.
 	stopped *volSource
+	// applyBudget overrides how long awaitApply polls the hub (the streamed dump's restore is much slower than an extract).
+	applyBudget time.Duration
 }
 
 // inspect resolves + validates one volume target and reads its inventory. With mayStop (the real run, never the dry run)
@@ -259,7 +265,23 @@ func volumeOutcome(err error) (state, reason string) {
 
 // dryRun inspects every volume in scope (no stop, no begin, no part), posts the inventory to the hub and asks it for
 // the target's disk verdict per found volume. It reports one item per volume.
-func (v *volRunner) dryRun(ctx context.Context, scope []Target) []itemResult {
+func (v *volRunner) dryRun(ctx context.Context, all []Target) []itemResult {
+	var scope, dumps []Target
+	for _, tg := range all {
+		if isDumpTarget(tg) {
+			dumps = append(dumps, tg)
+		} else {
+			scope = append(scope, tg)
+		}
+	}
+	results := v.dryRunVolumes(ctx, scope)
+	for _, tg := range dumps {
+		results = append(results, v.dryRunDump(ctx, tg))
+	}
+	return results
+}
+
+func (v *volRunner) dryRunVolumes(ctx context.Context, scope []Target) []itemResult {
 	results := make([]itemResult, 0, len(scope))
 	facts := make([]volumeFacts, 0, len(scope))
 	var inv []InvItem
@@ -336,6 +358,9 @@ func engineOfVolume(tg Target) string {
 	if tg.Dest != nil && tg.Dest.Type == "db-data" {
 		return "POSTGRES"
 	}
+	if isDumpTarget(tg) && tg.Engine != "" {
+		return tg.Engine
+	}
 	return "VOLUME"
 }
 
@@ -367,7 +392,12 @@ func (v *volRunner) run(ctx context.Context, scope []Target) ([]itemResult, int)
 			return results, 0
 		}
 		v.logf("[vol %d/%d] %s", i+1, len(scope), tg.ItemRef)
-		res := v.runOne(ctx, tg)
+		var res itemResult
+		if isDumpTarget(tg) {
+			res = v.runDump(ctx, tg)
+		} else {
+			res = v.runOne(ctx, tg)
+		}
 		results = append(results, res)
 		if v.abortCode != 0 {
 			for _, rest := range scope[i+1:] {
@@ -518,7 +548,11 @@ func toVxFingerprint(f Fingerprint) VxFingerprint {
 
 // awaitApply polls the hub every 5 s until the apply (and, for a database, its start) reached a terminal state.
 func (v *volRunner) awaitApply(ctx context.Context, tg Target, f volumeFacts, res *itemResult) itemResult {
-	deadline := time.Now().Add(applyWait(f.inv.RawBytes))
+	budget := applyWait(f.inv.RawBytes)
+	if f.applyBudget > 0 {
+		budget = f.applyBudget
+	}
+	deadline := time.Now().Add(budget)
 	for time.Now().Before(deadline) {
 		if ctx.Err() != nil {
 			res.State, res.Reason = "volume-copied", "interrupted-before-apply-confirmed"

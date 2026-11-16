@@ -56,6 +56,10 @@ type source struct {
 	Digest  string
 	Engine  string
 	inspect inspectInfo
+	// StartedAt / FinishedAt are the daemon's own timestamps of this container's current run (a streamed dump compares them
+	// before and after: a restarted source is a different state).
+	StartedAt  string
+	FinishedAt string
 }
 
 // runDocker runs a docker CLI argv and returns stdout + trimmed stderr. Package var so tests stub
@@ -185,11 +189,13 @@ func Resolve(ctx context.Context, tg Target, override, dockerPath string, env []
 		return nil, ErrEngineMismatch
 	}
 	return &source{
-		ID:     info.ID,
-		Name:   name,
-		Image:  info.Config.Image,
-		Digest: info.Image,
-		Engine: tg.Engine,
+		ID:         info.ID,
+		Name:       name,
+		Image:      info.Config.Image,
+		Digest:     info.Image,
+		Engine:     tg.Engine,
+		StartedAt:  info.State.StartedAt,
+		FinishedAt: info.State.FinishedAt,
 		inspect: inspectInfo{
 			Env:        info.Config.Env,
 			Path:       info.Path,
