@@ -7,6 +7,7 @@ import {
   mapApplication,
   mapDatabase,
   mapService,
+  tlsExpectation,
   buildCoolifyFleet,
   normalizeGitUrl,
   isGithubAppRepo,
@@ -392,5 +393,27 @@ describe("mapService — members, domains, placement (G4-C)", () => {
   it("the need-read:sensitive warning stays only for a service WITHOUT a raw compose", () => {
     const fleet = buildCoolifyFleet({ servers: [], resourcesByServer: {}, apps: [], databases: [], services: [row, { uuid: "svc2", name: "x" }], envsByResource: {}, volumesByResource: {} });
     expect(fleet.warnings.filter((w) => /service\(s\) need a read:sensitive/.test(w))).toEqual(["1 service(s) need a read:sensitive token to fetch their compose file before import"]);
+  });
+});
+
+describe("tlsExpectation / mapDatabase tls (R22)", () => {
+  const pg = (o: Record<string, unknown>) => ({ uuid: "d1", database_type: "standalone-postgresql", ...o }) as never;
+  it("ssl_mode require with enable_ssl off (the real fleet shape) still means the clients expect TLS", () => {
+    expect(tlsExpectation(pg({ enable_ssl: false, ssl_mode: "require" }))).toEqual({ enabled: false, mode: "require" });
+    expect(tlsExpectation(pg({ enable_ssl: true, ssl_mode: "Verify-Full" }))).toEqual({ enabled: true, mode: "verify-full" });
+    expect(tlsExpectation(pg({ enable_ssl: true }))).toEqual({ enabled: true });
+  });
+  it("no expectation for prefer/allow/disable/absent, nor for another engine", () => {
+    for (const ssl_mode of ["prefer", "allow", "disable", "", null, undefined]) expect(tlsExpectation(pg({ enable_ssl: false, ssl_mode }))).toBeUndefined();
+    expect(tlsExpectation({ uuid: "d2", database_type: "standalone-redis", enable_ssl: true, ssl_mode: "require" } as never)).toBeUndefined();
+  });
+  it("mapDatabase carries it only when present, and never changes the plan hash", () => {
+    const base = { uuid: "d1", name: "x", database_type: "standalone-postgresql", image: "postgres:16" } as never;
+    const withTls = mapDatabase({ ...(base as object), enable_ssl: false, ssl_mode: "require" } as never, { volumes: [] });
+    const without = mapDatabase(base, { volumes: [] });
+    expect(withTls.tls).toEqual({ enabled: false, mode: "require" });
+    expect(Object.prototype.hasOwnProperty.call(without, "tls")).toBe(false);
+    const fleet = (d: unknown) => ({ servers: [], apps: [], databases: [d], services: [], volumes: [], sharedEnv: [], warnings: [] }) as never;
+    expect(planImport(fleet(withTls), { sourceKind: "coolify" }).planHash).toBe(planImport(fleet(without), { sourceKind: "coolify" }).planHash);
   });
 });

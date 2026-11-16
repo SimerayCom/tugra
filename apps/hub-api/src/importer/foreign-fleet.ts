@@ -192,6 +192,10 @@ export interface ForeignDb {
   limits?: Pick<ForeignLimits, "memoryMb" | "cpus">;
   serviceRef?: string;
   serverRef?: string;
+  /** PostgreSQL only: the source expects TLS from this database (its `enable_ssl` is on, or its `ssl_mode` says require/verify).
+   *  `enabled` = the source really serves TLS; `mode` = the client-facing sslmode it advertises. Config only, never a secret.
+   *  Absent = no TLS expectation. Not part of the plan (planHash is unchanged). */
+  tls?: { enabled: boolean; mode?: "require" | "verify-ca" | "verify-full" };
   /** See {@link ForeignApp.projectRef}. */
   projectRef?: string;
   environmentRef?: string;

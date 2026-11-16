@@ -1117,6 +1117,8 @@ export class ImportExecutorService {
         throw new Error("could not read the source database credentials — retry the import");
       }
       const notes: string[] = [];
+      // R22: a PostgreSQL database whose source expects TLS (sslmode=require) is created serving TLS, or its clients are refused.
+      const wantsTls = engine === "POSTGRES" && !!db.tls;
       let created: DatabaseView;
       let flags: { credentialsCarried: boolean; imageCarried?: boolean; hostPortCarried?: boolean };
       if (carried?.password) {
@@ -1143,6 +1145,7 @@ export class ImportExecutorService {
           database: carried.database || db.credentials?.database || safeDbIdent(db.name),
           hostPort,
           environmentId,
+          ...(wantsTls ? { ssl: true } : {}),
         });
         flags = { credentialsCarried: true, imageCarried: !!db.image, hostPortCarried: hostPort !== undefined };
         if (carried.rootPassword && carried.rootPassword !== carried.password && (engine === "MYSQL" || engine === "MARIADB")) {
@@ -1157,6 +1160,13 @@ export class ImportExecutorService {
           : await this.dbs.create(userId, input); // re-checks `databases` on the TARGET team; no deploy
         flags = { credentialsCarried: false };
         notes.push("DB credentials not carried — fresh password minted; rewire the app DB_PASSWORD");
+        if (wantsTls) {
+          try {
+            await this.dbs.setSsl(userId, created.id, true); // a NEW database: the flag is read at its first provision
+          } catch {
+            notes.push("TLS was not enabled on the database - apps that require sslmode=require will not connect until it is");
+          }
+        }
       }
       // Carry the DB's hard CPU/memory limits. Best-effort, like the app post-create setters: the DB row already
       // exists with its resourceId, so a setLimits failure must NOT fail the task (a retry would skip the DB).
@@ -1173,7 +1183,7 @@ export class ImportExecutorService {
           status: "DONE",
           resourceType: "database",
           resourceId: created.id,
-          result: { name: created.name, ...(eff ? { sourceName: db.name, mapped: true } : {}), databaseId: created.id, ...flags }, // flags only — never a credential value
+          result: { name: created.name, ...(eff ? { sourceName: db.name, mapped: true } : {}), databaseId: created.id, ...flags, ...(wantsTls ? { tls: true } : {}) }, // flags only — never a credential value
           ...(notes.length ? { output: notes.join("; ") } : {}),
           finishedAt: new Date(),
         },

@@ -245,3 +245,56 @@ describe("ImportApplySchema: serverMap", () => {
     expect(ImportApplySchema.safeParse({ ...base, serverMap: { "src a": "t" } }).success).toBe(false);
   });
 });
+
+describe("ImportExecutorService.runCreateDb: TLS for a PostgreSQL source that expects it (R22)", () => {
+  const withTls = (tls?: { enabled: boolean; mode?: "require" | "verify-ca" | "verify-full" }, engine: "POSTGRES" | "REDIS" = "POSTGRES"): ForeignFleet => ({
+    servers: [],
+    apps: [],
+    databases: [{ sourceRef: "db-a", name: "db-a", engine, version: "16", serverRef: "src-a", ...(tls ? { tls } : {}) }],
+    services: [],
+    volumes: [],
+    sharedEnv: [],
+    warnings: [],
+  });
+  const dbTask = (h: ReturnType<typeof harness>) => (h.prisma.bulkTask.update as jest.Mock).mock.calls.map((c) => c[0]).find((c: { data: { resourceType?: string } }) => c.data.resourceType === "database");
+
+  it("carried credentials: the database is created with ssl on", async () => {
+    const f = withTls({ enabled: false, mode: "require" });
+    const h = harness({ fleet: f });
+    (h.source as unknown as { fetchDbCredentials: jest.Mock }).fetchDbCredentials = jest.fn().mockResolvedValue({ user: "u", password: "pw", database: "d" });
+    await h.svc.apply("u1", input(f));
+    await flush();
+    expect(h.dbs.createForImport).toHaveBeenCalledWith("u1", expect.objectContaining({ ssl: true }));
+    expect(dbTask(h).data.result).toMatchObject({ tls: true });
+  });
+
+  it("fresh credentials: TLS is switched on right after create; a refusal degrades to a note, never fails the task", async () => {
+    const f = withTls({ enabled: true });
+    const h = harness({ fleet: f });
+    const setSsl = jest.fn().mockResolvedValue({ changed: true, restartRequired: false });
+    (h.dbs as unknown as { setSsl: jest.Mock }).setSsl = setSsl;
+    await h.svc.apply("u1", input(f));
+    await flush();
+    expect(setSsl).toHaveBeenCalledWith("u1", "db-db-a", true);
+    expect(dbTask(h).data.status).toBe("DONE");
+
+    const h2 = harness({ fleet: f });
+    (h2.dbs as unknown as { setSsl: jest.Mock }).setSsl = jest.fn().mockRejectedValue(new Error("boom"));
+    await h2.svc.apply("u1", input(f));
+    await flush();
+    const t = dbTask(h2);
+    expect(t.data.status).toBe("DONE");
+    expect(String(t.data.output)).toMatch(/TLS was not enabled/);
+  });
+
+  it("no TLS expectation, or another engine: ssl is never requested", async () => {
+    for (const f of [withTls(undefined), withTls({ enabled: true }, "REDIS")]) {
+      const h = harness({ fleet: f });
+      const setSsl = jest.fn();
+      (h.dbs as unknown as { setSsl: jest.Mock }).setSsl = setSsl;
+      await h.svc.apply("u1", input(f));
+      await flush();
+      expect(setSsl).not.toHaveBeenCalled();
+    }
+  });
+});

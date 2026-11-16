@@ -76,6 +76,9 @@ export interface CoolifyDatabase {
   mongo_initdb_database?: string | null;
   clickhouse_admin_user?: string | null;
   clickhouse_db?: string | null;
+  /** The source's TLS switch and the `sslmode` it tells clients to use (PostgreSQL). Both are config, not secrets. */
+  enable_ssl?: boolean | null;
+  ssl_mode?: string | null;
 }
 export interface CoolifyService {
   uuid: string;
@@ -428,6 +431,7 @@ export function mapDatabase(
     db.postgres_user ?? db.mysql_user ?? db.mariadb_user ?? db.mongo_initdb_root_username ?? db.clickhouse_admin_user ?? undefined;
   const database =
     db.postgres_db ?? db.mysql_database ?? db.mariadb_database ?? db.mongo_initdb_database ?? db.clickhouse_db ?? undefined;
+  const tls = tlsExpectation(db);
   return {
     sourceRef: db.uuid,
     name: db.name ?? db.uuid,
@@ -439,7 +443,25 @@ export function mapDatabase(
     externalPort: db.is_public ? db.public_port ?? undefined : undefined,
     volumes: ctx.volumes.map((v) => mapVolume(v, db.uuid)),
     serverRef: ctx.serverRef,
+    ...(tls ? { tls } : {}),
   };
+}
+
+/** `ssl_mode` values a client reads as "this server must speak TLS" (libpq's sslmode vocabulary). */
+const TLS_REQUIRING_MODES = new Set(["require", "verify-ca", "verify-full"]);
+
+/**
+ * Pure: whether the source expects TLS from this PostgreSQL database, so the Tugra copy must serve it too (R22). The fleet shows
+ * `ssl_mode: require` with `enable_ssl: false`: the source's own clients may carry `sslmode=require` in their URLs, and a server
+ * without TLS would refuse them. `required` = TLS must be on; `verify` = the client verifies the chain (a self-signed copy cannot
+ * satisfy it). Other engines and databases with no TLS expectation return undefined (the key is then absent).
+ */
+export function tlsExpectation(db: Pick<CoolifyDatabase, "database_type" | "image" | "enable_ssl" | "ssl_mode">): ForeignDb["tls"] | undefined {
+  if (coolifyEngine(db as CoolifyDatabase) !== "POSTGRES") return undefined;
+  const mode = typeof db.ssl_mode === "string" ? db.ssl_mode.trim().toLowerCase() : "";
+  if (TLS_REQUIRING_MODES.has(mode)) return { enabled: db.enable_ssl === true, mode: mode as "require" | "verify-ca" | "verify-full" };
+  if (db.enable_ssl === true) return { enabled: true };
+  return undefined;
 }
 
 export function mapService(svc: CoolifyService, ctx: { serverRef?: string }): ForeignService {
