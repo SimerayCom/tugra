@@ -124,8 +124,34 @@ describe("FREEZE with the coolify-host-loop runner (host-loop controller)", () =
     reports.set(RUN, { stepKey: "FREEZE", sourceServerRef: "srv-b", kind: "freeze", state: "restarted", payload: { recorded: [{ id: id("a"), name: "n", image: "i", ports: "", itemRef: "app:srv-b:x" }], stopped: {}, started: { [id("a")]: "started" }, unresolved: [], outcome: "done", errorCode: null, action: "unfreeze" } });
     const h = ctx({ steps: { FREEZE: { compensation: { freeze: { controller: "host-loop", hosts: ["srv-a", "srv-b"] } } } } });
     expect(await handler.compensate(h.ctx, "abort")).toEqual({ outcome: "manual", manual: [{ code: HOST_LOOP_CODES.freezeUnfreeze, params: { hosts: ["srv-a"], count: 1 } }] });
-    reports.rows = reports.rows.filter((r) => r.sourceServerRef !== "srv-a");
-    expect(await handler.compensate(h.ctx, "abort")).toEqual({ outcome: "nothing-to-do" });
     expect(await handler.compensate(ctx().ctx, "abort")).toEqual({ outcome: "nothing-to-do" }); // never froze
+  });
+
+  const frozen = { steps: { FREEZE: { compensation: { freeze: { controller: "host-loop", hosts: ["srv-a", "srv-b"] } } } } };
+  const manual = (hosts: string[]) => ({ outcome: "manual", manual: [{ code: HOST_LOOP_CODES.freezeUnfreeze, params: { hosts, count: hosts.length } }] });
+
+  it("abort names a host whose freeze report NEVER arrived (the post is best effort and the containers may be stopped)", async () => {
+    const { handler, ctx, stopped } = build();
+    stopped("srv-b"); // srv-a stopped its writers but its report was lost
+    expect(await handler.compensate(ctx(frozen).ctx, "abort")).toEqual(manual(["srv-a", "srv-b"]));
+  });
+
+  it("abort names every recorded host when the reports cannot be read, never `nothing-to-do`", async () => {
+    const { handler, ctx, reports } = build();
+    reports.list = async () => {
+      throw new Error("database unavailable");
+    };
+    expect(await handler.compensate(ctx(frozen).ctx, "abort")).toEqual(manual(["srv-a", "srv-b"]));
+  });
+
+  it("abort leaves out only a host whose report PROVES nothing is stopped (restarted, or a finished script that recorded nothing); a half report stays named", async () => {
+    const { handler, ctx, reports } = build();
+    const rep = (ref: string, state: string, payload: Record<string, unknown>) =>
+      reports.set(RUN, { stepKey: "FREEZE", sourceServerRef: ref, kind: "freeze", state, payload: { recorded: [], stopped: {}, started: {}, unresolved: [], outcome: "done", errorCode: null, action: "freeze", ...payload } });
+    rep("srv-a", "stopped", {}); // finished, found nothing running: nothing to undo
+    rep("srv-b", "partial", { outcome: null }); // the done line never arrived
+    expect(await handler.compensate(ctx(frozen).ctx, "abort")).toEqual(manual(["srv-b"]));
+    rep("srv-b", "restarted", { recorded: [{ id: id("a"), name: "n", image: "i", ports: "", itemRef: "app:srv-b:x" }], started: { [id("a")]: "started" }, action: "unfreeze" });
+    expect(await handler.compensate(ctx(frozen).ctx, "abort")).toEqual({ outcome: "nothing-to-do" });
   });
 });

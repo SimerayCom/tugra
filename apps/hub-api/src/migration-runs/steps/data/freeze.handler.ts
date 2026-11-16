@@ -100,8 +100,12 @@ export const controllerOf = (run: RunSnapshot): SourceController => resolveOwner
  */
 export const hostLoopFreeze = (run: RunSnapshot): boolean => run.options.sourceRunner === "coolify-host-loop" && controllerOf(run) === "agent";
 
-/** The `freeze` compensation record of a host-loop freeze: only the controller; the identities live in the host reports and on each host. */
+/** The `freeze` compensation record of a host-loop freeze: the controller and the hosts it was started for; the identities live in the host reports and on each host. */
 const HOST_LOOP_CONTROLLER = "host-loop";
+interface HostLoopFreezeRecord {
+  controller: typeof HOST_LOOP_CONTROLLER;
+  hosts?: string[];
+}
 
 /** The stop list grouped by the source host that runs each item (`_` = the source did not say, which no host can be told to stop). */
 export function stopHostsOf(stop: readonly StopItem[]): { byHost: Map<string, StopItem[]>; unplaced: StopItem[] } {
@@ -472,16 +476,43 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
 
   // ───────────────────────────── compensate ─────────────────────────────
 
+  /** The source hosts of a host-loop freeze that may still hold writers this run stopped (see `compensate`). */
+  private async hostsToUnfreeze(ctx: StepContext, rec: HostLoopFreezeRecord): Promise<string[]> {
+    const named = new Set<string>(rec.hosts ?? []);
+    try {
+      const { byHost } = stopHostsOf(buildStopList(await this.data.snapshot(ctx.run)));
+      for (const h of byHost.keys()) named.add(h);
+    } catch {
+      // the record already names the hosts the freeze was started for
+    }
+    let view: HostView | null = null;
+    try {
+      view = await loadHostView(this.reports, ctx.run.id);
+    } catch {
+      view = null; // unreadable: every host the freeze was started for stays named
+    }
+    if (view) for (const h of view.freeze.keys()) named.add(h);
+    const out: string[] = [];
+    for (const h of [...named].sort()) {
+      const rep = view?.freeze.get(h);
+      if (!rep) out.push(h); // no report (or none readable): the script may well have stopped containers
+      else if (rep.state === "restarted") continue;
+      else if (rep.payload.recorded.length > 0 || rep.payload.outcome === null) out.push(h);
+    }
+    return out;
+  }
+
   async compensate(ctx: StepContext, how: CompensateHow): Promise<CompResult> {
     if (how !== "abort") return { outcome: "nothing-to-do" };
     const rec = compOf(ctx).freeze as FreezeRecord | undefined;
     if (!rec) return { outcome: "nothing-to-do" };
     const run = ctx.run;
     if ((rec.controller as string) === HOST_LOOP_CONTROLLER) {
-      // the hub cannot start a container on a source host itself: name the hosts that still have recorded containers stopped, so the
-      // operator runs the same script with TUGRA_LOOP_ACTION=unfreeze (it starts exactly the recorded, identity-checked containers)
-      const view = await loadHostView(this.reports, run.id).catch(() => emptyHostView());
-      const hosts = [...view.freeze].filter(([, f]) => f.payload.recorded.length > 0 && f.state !== "restarted").map(([h]) => h);
+      // The hub cannot start a container on a source host itself: name the hosts that may still have writers stopped by this run, so
+      // the operator runs the tokenless unfreeze script (it starts exactly the recorded, identity-checked containers). A host is
+      // named unless its report PROVES it needs nothing (restarted, or a finished script that recorded nothing to stop): a report
+      // that never arrived (the post is best effort), a read that failed or a half report all leave the host named.
+      const hosts = await this.hostsToUnfreeze(ctx, rec as unknown as HostLoopFreezeRecord);
       return hosts.length ? { outcome: "manual", manual: [{ code: HOST_LOOP_CODES.freezeUnfreeze, params: { hosts: hosts.slice(0, 20), count: hosts.length } }] } : { outcome: "nothing-to-do" };
     }
     if (rec.controller === "manual") {

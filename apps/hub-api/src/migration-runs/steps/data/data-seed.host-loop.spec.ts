@@ -170,15 +170,40 @@ describe("DATA_SEED with the coolify-host-loop runner", () => {
     expect(covered.handler.postGate(c.ctx, await covered.handler.observe(c.ctx)).checks.map((x) => x.code)).not.toContain(HOST_LOOP_CODES.sourceRunning);
   });
 
+  const offered = { steps: { DATA_SEED: { compensation: { loopHosts: ["srv-a", "srv-b"] } } } };
+
+  it("the host-loop wait records which hosts the script was offered for, BEFORE the operator can run it (an abort needs them)", async () => {
+    const { handler, ctx, takeInventories } = build();
+    takeInventories();
+    const h = ctx();
+    await handler.act(h.ctx, await handler.observe(h.ctx));
+    expect(h.comp.loopHosts).toEqual(["srv-a"]); // srv-b has no data item: the migrator is not started there
+  });
+
   it("abort names the hosts that may still run a migrator (the hub cannot stop what it did not start) and still revokes the token", async () => {
     const { handler, data, ctx, reports } = build();
     reports.set(RUN, { stepKey: "DATA_SEED", sourceServerRef: "srv-a", kind: "loop", state: "running", payload: { code: "migrating", rc: null } });
     reports.set(RUN, { stepKey: "DATA_SEED", sourceServerRef: "srv-b", kind: "loop", state: "finished", payload: { code: "ok", rc: 0 } });
-    const h = ctx();
+    const h = ctx(offered);
     expect(await handler.compensate(h.ctx, "abort")).toEqual({ outcome: "manual", manual: [{ code: HOST_LOOP_CODES.stopMigrators, params: { hosts: ["srv-a"], count: 1 } }] });
     expect(data.revoked).toBe(1);
     // nothing live: a clean abort
     reports.set(RUN, { stepKey: "DATA_SEED", sourceServerRef: "srv-a", kind: "loop", state: "finished", payload: { code: "ok", rc: 0 } });
+    expect(await handler.compensate(ctx(offered).ctx, "abort")).toEqual({ outcome: "done" });
+  });
+
+  it("abort still names a host whose report NEVER arrived (the post is best effort: the migrator may be running) and every host when the reports cannot be read", async () => {
+    const { handler, ctx, reports } = build();
+    reports.set(RUN, { stepKey: "DATA_SEED", sourceServerRef: "srv-b", kind: "loop", state: "finished", payload: { code: "ok", rc: 0 } });
+    expect(await handler.compensate(ctx(offered).ctx, "abort")).toEqual({ outcome: "manual", manual: [{ code: HOST_LOOP_CODES.stopMigrators, params: { hosts: ["srv-a"], count: 1 } }] });
+    reports.list = async () => {
+      throw new Error("database unavailable");
+    };
+    expect(await handler.compensate(ctx(offered).ctx, "abort")).toEqual({ outcome: "manual", manual: [{ code: HOST_LOOP_CODES.stopMigrators, params: { hosts: ["srv-a", "srv-b"], count: 2 } }] });
+  });
+
+  it("abort of a run whose host-loop script was never offered has nothing to name", async () => {
+    const { handler, ctx } = build();
     expect(await handler.compensate(ctx().ctx, "abort")).toEqual({ outcome: "done" });
   });
 

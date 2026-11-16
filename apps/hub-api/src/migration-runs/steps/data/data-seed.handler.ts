@@ -16,7 +16,7 @@ import {
 } from "../../core/run-contract";
 import { DATA_CODES, DATA_PORT, OBJECT_PORT, type DataPort, type DataSnapshot, type ObjectPort, type ObjectView } from "./data-contract";
 import { checkKey, estimateEquals, estimateWindow, hasLiveTransfer, migratorFlags, objectIsActive, seedChecks } from "./data-logic";
-import { compOf, gateFrom, loadObjects, loadSnapshot, takeObjectStart } from "./handler-util";
+import { compOf, gateFrom, loadObjects, loadSnapshot, takeObjectStart, type StepComp } from "./handler-util";
 import { MigratorRunner } from "./launcher/migrator-runner.service";
 import type { LauncherStatus } from "./launcher/migrator-launcher";
 import { vxPartRawBytes } from "../../../importer/volume-stream/vx-constants";
@@ -24,7 +24,7 @@ import { attestableFindings, crossCheckChecks } from "./inventory/cross-check";
 import { HOST_LOOP_CODES } from "./inventory/host-codes";
 import { dataItemsOfHost, planRefsOf, sourceHostsOf } from "./inventory/host-hosts";
 import { loopVerdict } from "./inventory/host-protocol";
-import { emptyHostView, loadHostView, loopByHost, type HostView } from "./inventory/host-view";
+import { loadHostView, loopByHost, type HostView } from "./inventory/host-view";
 import { HOST_REPORT_PORT, type HostReportPort } from "./inventory/inventory-contract";
 
 export interface SeedObs extends Observation {
@@ -35,6 +35,9 @@ export interface SeedObs extends Observation {
   /** The stored reports of the host-loop runner and the host inventory (empty when none arrived). */
   hosts: HostView;
 }
+
+/** Loop states after which no migrator of the host can still be running (the host was never reached, or the migrator ended). */
+const SETTLED_LOOP_STATES = ["finished", "failed", "died", "unreachable", "no-key", "no-host", "no-items"] as const;
 
 /** Checks that are preconditions of acting at all (the rest are the step's outcome). */
 const STRUCTURAL = new Set(["vx-disabled", "agent-same-host"]);
@@ -241,6 +244,10 @@ export class DataSeedHandler implements StepHandler<SeedObs>, OnModuleInit {
         // one script on the Coolify host runs the migrator on every source host; a host that failed is named so a re-run (which resumes) can fix it
         const loop = loopByHost(obs.hosts, "DATA_SEED");
         const bad = loopHosts.filter((h) => dataItemsOfHost(h, snap).length > 0 && loopVerdict(loop.get(h) ?? null) === "bad");
+        // BEFORE the operator can run the script: an abort must know which hosts it may have started a migrator on
+        const offered = loopHosts.filter((h) => dataItemsOfHost(h, snap).length > 0);
+        const known = (compOf(ctx) as StepComp & { loopHosts?: string[] }).loopHosts ?? [];
+        if (offered.some((h) => !known.includes(h))) await ctx.recordCompensation({ loopHosts: [...new Set([...known, ...offered])].sort() });
         return {
           outcome: "wait",
           wait: {
@@ -297,10 +304,22 @@ export class DataSeedHandler implements StepHandler<SeedObs>, OnModuleInit {
     if (failed) return { outcome: "failed", code: "data-seed.abort-incomplete" };
     if (run.options.sourceRunner === "coolify-host-loop") {
       // the hub cannot stop a migrator it did not start: with the token revoked it fails at its next hub call, but a container on a
-      // source host keeps running until then. Name the hosts so the operator can stop the migrator containers there.
-      const view = await loadHostView(this.reports, run.id).catch(() => emptyHostView());
-      const live = [...loopByHost(view, "DATA_SEED").values()].filter((l) => l.state === "launched" || l.state === "already" || l.state === "running").map((l) => l.ref);
-      if (live.length) return { outcome: "manual", manual: [{ code: HOST_LOOP_CODES.stopMigrators, params: { hosts: live.slice(0, 20), count: live.length } }] };
+      // source host keeps running until then. Name every host the script was offered for unless its report PROVES the migrator is over
+      // (the post is best effort: a host whose report never arrived, or a view that cannot be read, stays named).
+      const offered = (compOf(ctx) as StepComp & { loopHosts?: string[] }).loopHosts ?? [];
+      if (offered.length) {
+        let loop = new Map<string, { state: string }>();
+        try {
+          loop = loopByHost(await loadHostView(this.reports, run.id), "DATA_SEED");
+        } catch {
+          loop = new Map();
+        }
+        const live = offered.filter((h) => {
+          const st = loop.get(h);
+          return !st || !SETTLED_LOOP_STATES.includes(st.state as never);
+        });
+        if (live.length) return { outcome: "manual", manual: [{ code: HOST_LOOP_CODES.stopMigrators, params: { hosts: live.slice(0, 20), count: live.length } }] };
+      }
     }
     return { outcome: "done" };
   }
