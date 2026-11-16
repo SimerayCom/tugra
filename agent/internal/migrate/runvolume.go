@@ -627,7 +627,7 @@ func (v *volRunner) setStreamFailure(ctx context.Context, res *itemResult, err e
 	case kindOf(err) != KindOther:
 		v.setHubFailure(res, err)
 	default:
-		res.State, res.Reason = "failed", "part-failed"
+		res.State, res.Reason = "failed", "part-failed: "+hubText(err.Error())
 	}
 }
 
