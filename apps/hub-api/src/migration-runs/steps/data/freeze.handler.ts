@@ -25,12 +25,13 @@ import {
   type CapabilityPort,
   type DataPort,
   type DataSnapshot,
+  type DbDataItem,
   type FreezeRecord,
   type RecordedContainer,
   type SourceApiPort,
   type SourceHostPort,
 } from "./data-contract";
-import { sha256Hex } from "./data-logic";
+import { estimateEquals, estimateWindow, sha256Hex } from "./data-logic";
 import { classifyAgentError, compOf, gateFrom, loadSnapshot, releaseIfOurs } from "./handler-util";
 import {
   buildSourceInspectScript,
@@ -59,18 +60,25 @@ export interface FreezeObs extends Observation {
   /** Hub-verified state of what the freeze stopped (null = nothing recorded yet, or it could not be read). */
   states: { total: number; stopped: number; running: number; unknown: number } | null;
   apiAvailable: "ok" | ApiFailure | null;
+  /** The downtime estimate from the CURRENT facts (the approval reviews this, not a stale stored value). */
+  estimateSec: number | null;
 }
 
 /** How long an accepted stop may take to show as stopped before the freeze fails (retryable). */
 export const STOP_CONFIRM_TIMEOUT_MS = 5 * 60_000;
 const SCRIPT_TIMEOUT_MS = 300_000;
 
-/** The Coolify items the freeze would stop (apps and services; databases keep running so their dumps can be taken). */
-export function buildStopList(snap: Pick<DataSnapshot, "apps" | "services">): StopItem[] {
+/**
+ * The Coolify items the freeze stops: apps and services (the writers), plus every database that is copied PHYSICALLY (its data
+ * directory is copied as files, which is only consistent when the source database is stopped). A database copied logically keeps
+ * running: its dump needs a live server, and with its writers stopped nothing changes under it.
+ */
+export function buildStopList(snap: Pick<DataSnapshot, "apps" | "services"> & { databases?: ReadonlyArray<Pick<DbDataItem, "itemRef" | "name" | "plane">> }): StopItem[] {
   const out: StopItem[] = [];
-  for (const it of [...snap.apps, ...snap.services]) {
+  const candidates = [...snap.apps, ...snap.services, ...(snap.databases ?? []).filter((d) => d.plane === "volume")];
+  for (const it of candidates) {
     const ref = coolifyRefOf(it.itemRef);
-    if (ref && ref.kind !== "database") out.push({ itemRef: it.itemRef, kind: ref.kind, uuid: ref.uuid, name: it.name ?? ref.uuid });
+    if (ref) out.push({ itemRef: it.itemRef, kind: ref.kind, uuid: ref.uuid, name: it.name ?? ref.uuid });
   }
   return out.sort((a, b) => (a.itemRef < b.itemRef ? -1 : 1));
 }
@@ -134,7 +142,8 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
       const av = await this.api.available(run);
       apiAvailable = av.ok ? "ok" : av.reason;
     }
-    return { snap, controller, stop: buildStopList(snap), record, attested, apiAvailable, states: record ? await this.readStates(ctx, record) : null };
+    const estimate = estimateWindow(snap, ctx.now());
+    return { snap, controller, stop: buildStopList(snap), record, attested, apiAvailable, estimateSec: estimate.freezeToFlipSec, states: record ? await this.readStates(ctx, record) : null };
   }
 
   /** Re-read what the freeze stopped. Never throws: an unreadable state is `unknown` and therefore not quiesced. */
@@ -206,7 +215,7 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
   }
 
   async approvalBinding(ctx: StepContext, obs: FreezeObs): Promise<ApprovalBinding | null> {
-    const est = ctx.run.windowEstimate?.freezeToFlipSec ?? null;
+    const est = obs.estimateSec;
     const refs = obs.stop.map((s) => s.itemRef).join(",");
     return {
       inputHash: sha256Hex(`freeze|${ctx.run.id}|${obs.controller}|${refs}|${est ?? "unknown"}`),
@@ -255,6 +264,8 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
       return { outcome: "wait", wait: { kind: "timer", notBefore: freezeAt.toISOString(), code: DATA_CODES.freezeScheduled } };
     }
     await ctx.patchRun({ freezeStartedAt: ctx.now() }); // first call wins: the downtime window opens now
+    const est = estimateWindow(obs.snap, ctx.now());
+    if (!estimateEquals(run.windowEstimate, est)) await ctx.patchRun({ windowEstimate: est }); // the report compares it with the measured window
 
     switch (obs.controller) {
       case "manual":

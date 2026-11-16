@@ -3,7 +3,8 @@ import type { RunSnapshot } from "../../core/run-contract";
 import { DATA_CODES, type FreezeRecord } from "./data-contract";
 import { FreezeHandler, STOP_CONFIRM_TIMEOUT_MS, buildStopList, controllerOf } from "./freeze.handler";
 import { SourceHostFake, ctrId } from "./testing/source-host-fake";
-import { FakeCaps, FakeDataPort, FakeSourceApi, NOW, answered, makeCtx, makeRun, makeSnap, type CtxHarness } from "./testing/fakes";
+import { estimateWindow } from "./data-logic";
+import { FakeCaps, FakeDataPort, FakeSourceApi, NOW, answered, inspected, makeCtx, makeRun, makeSnap, type CtxHarness } from "./testing/fakes";
 
 const A = ctrId("a");
 const B = ctrId("b");
@@ -51,6 +52,18 @@ describe("buildStopList / controllerOf", () => {
       ["service:s:svc1", "service", "cache"],
     ]);
   });
+  it("a physically copied database is stopped too (its files are only consistent when it is down); a logical one keeps running for its dump", () => {
+    const l = buildStopList({
+      apps: [{ itemRef: "app:s:abc", name: "web" }],
+      services: [],
+      databases: [
+        { itemRef: "database:s:phys", name: "pg-phys", plane: "volume" },
+        { itemRef: "database:s:logical", name: "pg-logical", plane: "logical" },
+        { itemRef: "database:s:mongo", name: "m", plane: "unsupported" },
+      ],
+    });
+    expect(l.map((s) => [s.itemRef, s.kind])).toEqual([["app:s:abc", "application"], ["database:s:phys", "database"]]);
+  });
   it("the controller defaults to manual and treats `unknown` as the default", () => {
     expect(controllerOf(makeRun())).toBe("manual");
     expect(controllerOf(makeRun({ inputs: { sourceController: answered("unknown" as never) } }))).toBe("manual");
@@ -62,18 +75,26 @@ describe("buildStopList / controllerOf", () => {
 });
 
 describe("FREEZE approval binding and gates", () => {
-  it("binds the approval to the controller, the stop list and the estimate, and asks for the run id", async () => {
-    const { handler, ctx } = build(manualRun({ windowEstimate: { freezeToFlipSec: 900, basis: [], estimatedAt: NOW.toISOString() } }));
-    const h = ctx({ run: manualRun({ windowEstimate: { freezeToFlipSec: 900, basis: [], estimatedAt: NOW.toISOString() } }) });
+  it("binds the approval to the controller, the stop list and the CURRENT estimate, and asks for the run id", async () => {
+    const { handler, ctx, data } = build(manualRun());
+    data.snap.volumes = [inspected("volume:s:a:data", 3 * 1024 ** 3)];
+    const want = estimateWindow(data.snap, NOW).freezeToFlipSec;
+    const h = ctx();
     const obs = await handler.observe(h.ctx);
     const b = (await handler.approvalBinding(h.ctx, obs))!;
     expect(b).toMatchObject({ ponr: false, confirm: "run-id", ttlSec: null, requiresDataRisk: false, ackable: [], requiredAcks: [] });
     expect(b.inputHash).toMatch(/^[a-f0-9]{64}$/);
-    expect(b.review).toMatchObject({ controller: "manual", apps: 2, services: 1, stopList: ["web", "api", "cache"], estimateSec: 900, keepsStopped: true });
+    expect(b.review).toMatchObject({ controller: "manual", apps: 2, services: 1, stopList: ["web", "api", "cache"], estimateSec: want, keepsStopped: true });
 
-    // a different estimate or controller changes what was reviewed, so the approval would be void
-    const h2 = ctx({ run: manualRun({ windowEstimate: { freezeToFlipSec: 901, basis: [], estimatedAt: NOW.toISOString() } }) });
+    // different facts (a bigger volume) change what was reviewed, so the approval would be void
+    data.snap.volumes = [inspected("volume:s:a:data", 30 * 1024 ** 3)];
+    const h2 = ctx();
     expect((await handler.approvalBinding(h2.ctx, await handler.observe(h2.ctx)))!.inputHash).not.toBe(b.inputHash);
+    // and a different controller does too
+    const api = build(apiRun());
+    api.data.snap.volumes = [inspected("volume:s:a:data", 3 * 1024 ** 3)];
+    const h3 = api.ctx({ run: apiRun() });
+    expect((await api.handler.approvalBinding(h3.ctx, await api.handler.observe(h3.ctx)))!.inputHash).not.toBe(b.inputHash);
   });
 
   it("waits for the DNS TTL (timer), unless the owner chose to skip it knowingly", async () => {
@@ -129,7 +150,8 @@ describe("FREEZE with the manual controller", () => {
     expect(handler.postGate(h.ctx, obs).passed).toBe(false);
     const res = await handler.act(h.ctx, obs);
     expect(res).toMatchObject({ outcome: "wait", wait: { kind: "operator", code: DATA_CODES.freezeManual, attest: ["source-quiesced"], params: { count: 3 } } });
-    expect(h.patches).toEqual([{ freezeStartedAt: NOW }]);
+    expect(h.patches[0]).toEqual({ freezeStartedAt: NOW });
+    expect(h.patches[1]).toMatchObject({ windowEstimate: { estimatedAt: NOW.toISOString() } }); // the report compares the estimate with the measured window
     expect(h.comp.freeze).toEqual({ controller: "manual" });
     // still nothing attested: the step is not quiesced, whatever the world looks like
     const h2 = ctx({ approval: APPROVAL, steps: { FREEZE: { compensation: h.comp } } });
