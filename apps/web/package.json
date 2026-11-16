@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev -p 3001",
     "build": "next build",
-    "start": "next start -p 3001",
+    "start": "node server.mjs",
+    "start:next": "next start -p 3001",
     "lint": "tsc --noEmit",
     "test": "vitest run"
   },
