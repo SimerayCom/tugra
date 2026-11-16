@@ -1,4 +1,5 @@
 import { createHash, X509Certificate, createPrivateKey } from "node:crypto";
+import { isObjectStoreResult } from "../importer/volume-stream/vx-targets";
 
 /**
  * Pure logic of the SSL/DNS cutover (no I/O): the per-hostname state machine, the DNS record planner with its
@@ -102,14 +103,19 @@ export function deriveEntries(app: { domain: string | null; extraDomains: string
 export interface OpTaskLite { itemRef: string | null; kind: string; status: string; dependsOn: string[]; result?: unknown }
 
 /**
- * How many volumes of an imported compose SERVICE carry data to the target (a volume whose policy is `skip` is created empty
- * by design). Read from the task result the importer stored; 0 for anything else. A service has no `dependsOn` rows, so this
- * is what makes a MinIO / Meilisearch service count as stateful.
+ * The keys of the data volumes of an imported compose SERVICE: the ones its policy copies (`skip` is not carried and `empty` starts
+ * empty, both by design). Read from the task result the importer stored; empty for anything else. A service has no `dependsOn` rows,
+ * so this is what makes a MinIO / Meilisearch service count as stateful.
  */
-export function serviceDataVolumes(result: unknown): number {
+export function serviceDataKeys(result: unknown): string[] {
   const v = result && typeof result === "object" ? (result as { volumes?: unknown }).volumes : undefined;
-  if (!Array.isArray(v)) return 0;
-  return v.filter((x) => x && typeof x === "object" && (x as { policy?: unknown }).policy !== "skip").length;
+  if (!Array.isArray(v)) return [];
+  return v.filter((x) => x && typeof x === "object" && (x as { policy?: unknown }).policy === "copy" && typeof (x as { key?: unknown }).key === "string").map((x) => (x as { key: string }).key);
+}
+
+/** How many data volumes (see {@link serviceDataKeys}) a compose SERVICE carries to the target. */
+export function serviceDataVolumes(result: unknown): number {
+  return serviceDataKeys(result).length;
 }
 
 /** Pure: an app is `stateful` when it depends on a database or volume whose DATA task is not DONE. A database's data
@@ -123,11 +129,16 @@ export function isStateful(appItemRef: string | null, tasks: OpTaskLite[]): bool
   if (!app) return false;
   if (app.kind === "service") {
     // A compose service: its data volumes arrive as streamed copies `data:volume:<s>:<r>:<key>` (the service ref is `service:<s>:<r>`).
-    const want = serviceDataVolumes(app.result);
-    if (want === 0) return false;
+    // Matched BY KEY: every copy volume needs its OWN finished streamed copy (a count would let one volume's copy stand in for another's).
+    const keys = serviceDataKeys(app.result);
+    if (keys.length === 0) return false;
+    // An object store (MinIO) has no streamed volume copy: its buckets move through Object migration, which no data task here records. It
+    // therefore stays stateful (the flip needs acceptDataRisk and is never auto-reverted: once the target store took writes, a revert
+    // would lose them) however far the bucket migration got; the cutover holds are what keep its host on the source until the buckets are verified.
+    if (isObjectStoreResult(app.result)) return true;
     const prefix = `data:${String(appItemRef ?? "").replace(/^service:/, "volume:")}:`;
-    const done = tasks.filter((t) => t.kind === "data" && t.status === "DONE" && (t.itemRef ?? "").startsWith(prefix)).length;
-    return done < want;
+    const done = new Set(tasks.filter((t) => t.kind === "data" && t.status === "DONE" && (t.itemRef ?? "").startsWith(prefix)).map((t) => (t.itemRef ?? "").slice(prefix.length)));
+    return keys.some((k) => !done.has(k));
   }
   const deps = app.dependsOn ?? [];
   const dbDeps = deps.filter((d) => d.startsWith("database:"));

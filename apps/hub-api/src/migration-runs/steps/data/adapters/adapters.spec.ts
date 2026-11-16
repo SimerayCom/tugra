@@ -427,3 +427,63 @@ describe("ImporterDrift", () => {
     expect(p).toHaveBeenCalledWith("user1", { sourceKind: "coolify", sessionId: "sess1", dbDataModes: { "database:s:a": "volume" } });
   });
 });
+
+describe("PrismaDataPort.snapshot: compose services and object storage", () => {
+  const svcVol = (key: string, policy: string, mounts: Array<{ service: string; path: string }>) => ({ key, dockerName: `tugra_svc1_${key}`, policy, dataPlane: "hub-staged", state: "pending-data", mounts });
+  const build = (envOf: Record<string, Record<string, unknown> | "bad">, crypto?: { decrypt: (v: string) => string }) => {
+    const o = {
+      id: "op1",
+      kind: "import",
+      actorId: "user1",
+      cancelRequestedAt: null,
+      migrationTokenHash: null,
+      migrationTokenExpiresAt: null,
+      meta: { serverId: "srv-target", hubBase: "https://hub.example.com" },
+      tasks: [
+        task({ itemRef: "service:s:svc1", kind: "service", resourceType: "application", resourceId: "svc1", result: { kind: "service", members: ["search"], volumes: [svcVol("index", "copy", [{ service: "search", path: "/data" }]), svcVol("odd", "copy", []), svcVol("old", "skip", [{ service: "search", path: "/old" }]), svcVol("tmp", "empty", [])] } }),
+        task({ itemRef: "service:s:store", kind: "service", resourceType: "application", resourceId: "store1", result: { kind: "service", members: ["minio"], volumes: [svcVol("minio-data", "copy", [{ service: "minio", path: "/data" }])] } }),
+        task({ itemRef: "app:s:api", kind: "app", resourceType: "application", resourceId: "api1" }),
+        task({ itemRef: "app:s:web", kind: "app", resourceType: "application", resourceId: "web1" }),
+      ],
+    };
+    const p = readOnly({
+      bulkOperation: { findUnique: async () => o },
+      database: { findMany: async () => [] },
+      application: {
+        findMany: async (a: { where: { id: { in: string[] } }; select: Record<string, boolean> }) =>
+          a.select.env
+            ? a.where.id.in.map((id) => ({ id, env: null, envEnc: JSON.stringify(envOf[id.replace("1", "")] ?? {}) }))
+            : [{ id: "svc1", name: "search-a" }, { id: "store1", name: "store-a" }, { id: "api1", name: "api" }, { id: "web1", name: "web" }],
+      },
+      migrationVolumeTransfer: { findMany: async () => [] },
+    });
+    return new PrismaDataPort(p, { log: async () => undefined } as never, {} as never, {} as never, crypto as never);
+  };
+  const crypto = { decrypt: (v: string) => (v.includes("garble") ? (() => { throw new Error("bad"); })() : v) };
+
+  it("lists every service volume and whether the stream has a target for it", async () => {
+    const s = await build({}, crypto).snapshot(makeRun());
+    expect(s.serviceVolumes).toEqual([
+      // an object store's volume is never streamed: the buckets move through Object migration
+      { serviceItemRef: "service:s:store", serviceName: "store-a", key: "minio-data", policy: "copy", streamed: false, objectStore: true },
+      { serviceItemRef: "service:s:svc1", serviceName: "search-a", key: "index", policy: "copy", streamed: true },
+      { serviceItemRef: "service:s:svc1", serviceName: "search-a", key: "odd", policy: "copy", streamed: false },
+      { serviceItemRef: "service:s:svc1", serviceName: "search-a", key: "old", policy: "skip", streamed: false },
+      { serviceItemRef: "service:s:svc1", serviceName: "search-a", key: "tmp", policy: "empty", streamed: false },
+    ]);
+    // the streamed volume has its own row in the data plane
+    expect(s.volumes.map((v) => v.itemRef)).toEqual(["volume:s:svc1:index"]);
+    expect(s.volumes[0]).toMatchObject({ destType: "app-volume", ownerName: "search-a", state: "NONE" });
+  });
+  it("reads the object storage of the plan from names only: MinIO services and the apps whose env names an object store", async () => {
+    const s = await build({ api: { S3_ENDPOINT: "x", LOG_LEVEL: "y" }, web: { PORT: "1" } }, crypto).snapshot(makeRun());
+    expect(s.objectStorage).toEqual({ stores: [{ itemRef: "service:s:store", name: "store-a" }], dependants: [{ itemRef: "app:s:api", name: "api" }], unreadable: 0 });
+    expect(JSON.stringify(s.objectStorage)).not.toContain("S3_ENDPOINT");
+  });
+  it("an env that cannot be read, or no crypto service at all, is counted as unreadable (fail closed), never as clean", async () => {
+    const bad = await build({ api: "bad" as never }, { decrypt: () => { throw new Error("bad"); } }).snapshot(makeRun());
+    expect(bad.objectStorage).toMatchObject({ dependants: [], unreadable: 2 });
+    const none = await build({}, undefined).snapshot(makeRun());
+    expect(none.objectStorage).toMatchObject({ unreadable: 2 });
+  });
+});

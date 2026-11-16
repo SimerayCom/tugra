@@ -196,7 +196,10 @@ describe("DEPLOY_DARK", () => {
     const w = new RunWorld();
     const id = await w.create({ dryRun: true });
     await w.settle(id);
-    expect((await dd(w, id)).progress!.dryRun).toEqual([{ code: "deploy-dark.order", level: "info", params: { databases: 1, apps: 2, services: 0 } }]);
+    expect((await dd(w, id)).progress!.dryRun).toEqual([
+      { code: "deploy-dark.order", level: "info", params: { databases: 1, apps: 2 } },
+      { code: "deploy-dark.service-start", level: "info", params: { mode: "dependencies", services: 0 } },
+    ]);
     expect(w.port.calls).toEqual([]);
   });
 });

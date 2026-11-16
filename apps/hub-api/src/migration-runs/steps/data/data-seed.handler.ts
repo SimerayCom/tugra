@@ -18,6 +18,7 @@ import { DATA_CODES, DATA_PORT, OBJECT_PORT, type DataPort, type DataSnapshot, t
 import { checkKey, dbsNeedingMeasure, decideLanes, estimateEquals, estimateWindow, hasLiveTransfer, migratorFlags, objectIsActive, seedChecks } from "./data-logic";
 import { compOf, gateFrom, loadObjects, loadSnapshot, takeObjectStart, type StepComp } from "./handler-util";
 import { MigratorRunner } from "./launcher/migrator-runner.service";
+import { OBJECT_PLAN_ID, objectPlanChecks } from "./object-plan-check";
 import type { LauncherStatus } from "./launcher/migrator-launcher";
 import { vxPartRawBytes } from "../../../importer/volume-stream/vx-constants";
 import { attestableFindings, crossCheckChecks } from "./inventory/cross-check";
@@ -105,6 +106,9 @@ export class DataSeedHandler implements StepHandler<SeedObs>, OnModuleInit {
       else if (!v.inventory.found) items.push({ code: DATA_CODES.seedVolumeMissing, level: "block", subject: v.itemRef });
       else items.push({ code: "data-seed.dry.volume", level: "info", subject: v.itemRef, params: { rawBytes: v.inventory.rawBytes, entries: v.inventory.entries, running: v.inventory.running } });
     }
+    for (const c of objectPlanChecks(run, snap, (await loadObjects(this.objects, ctx)).views)) {
+      items.push({ code: c.code, level: c.status === "fail" ? "block" : c.status === "warn" ? "warn" : "info", ...(c.params ? { params: c.params } : {}) });
+    }
     items.push({ code: DATA_CODES.seedEstimate, level: est.freezeToFlipSec === null ? "unknown" : "info", params: { seconds: est.freezeToFlipSec } });
     return items;
   }
@@ -122,6 +126,7 @@ export class DataSeedHandler implements StepHandler<SeedObs>, OnModuleInit {
   private checks(ctx: StepContext, obs: SeedObs): GateCheck[] {
     const checks = seedChecks(ctx.run, obs.snap, obs.objects);
     for (const id of obs.missingObjects) checks.push({ id: `object-gone:${id.slice(0, 40)}`, status: "fail", code: DATA_CODES.seedObjectGone, subject: id });
+    checks.push(...objectPlanChecks(ctx.run, obs.snap, obs.objects));
     checks.push(...this.hostChecks(ctx, obs.snap, obs.hosts));
     return checks;
   }
@@ -184,7 +189,9 @@ export class DataSeedHandler implements StepHandler<SeedObs>, OnModuleInit {
   preGate(ctx: StepContext, obs: SeedObs): GateResult {
     const all = this.checks(ctx, obs);
     const findings = all.filter((c) => c.status === "fail" && (c.attestable?.length ?? 0) > 0);
-    const gate = gateFrom([...all.filter((c) => STRUCTURAL.has(c.id)), ...findings]);
+    // object storage in the plan with its data unaccounted for (R33) is settled before anything is launched or moved
+    const objectPlan = all.filter((c) => c.id === OBJECT_PLAN_ID && c.status === "fail");
+    const gate = gateFrom([...all.filter((c) => STRUCTURAL.has(c.id)), ...objectPlan, ...findings]);
     if (gate.passed || findings.length === 0) return gate;
     const first = findings[0];
     const attest = attestableFindings(findings);

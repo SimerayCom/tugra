@@ -3,7 +3,7 @@
 import { useT } from "../../i18n/provider";
 import { Checkbox, Field, NumberInput, Select, TextInput } from "../form";
 import { OWNER_INPUT_HINT_KEY, OWNER_INPUT_LABEL_KEY, OWNER_POLICY_CHOICES, OWNER_POLICY_CHOICE_KEY, type LaunchIssue, type LaunchPolicies, type OwnerPolicyKey, type HostLoopForm } from "../../lib/migration-run";
-import type { MigrationRunLargeDbMode, MigrationRunOptions, MigrationRunSourceRunner } from "../../lib/types";
+import type { MigrationRunLargeDbMode, MigrationRunOptions, MigrationRunServiceStart, MigrationRunSourceRunner } from "../../lib/types";
 
 export interface AdvancedState {
   campaign: string;
@@ -12,6 +12,7 @@ export interface AdvancedState {
   deployWaves: MigrationRunOptions["deployWaves"];
   deployConcurrency: string;
   largeDbMode: MigrationRunLargeDbMode;
+  serviceStart: MigrationRunServiceStart;
   stopSource: boolean;
   policies: LaunchPolicies;
 }
@@ -96,6 +97,18 @@ export function AdvancedFields({ value, onChange, issues }: { value: AdvancedSta
           </Field>
           <Field label={t("migrationRun.launch.advanced.deployConcurrency")} hint={t("migrationRun.launch.advanced.deployConcurrencyHint")} error={issues.includes("concurrency") ? t("migrationRun.launch.advanced.deployConcurrencyInvalid") : undefined}>
             <NumberInput min={1} max={8} value={value.deployConcurrency} onChange={(e) => set("deployConcurrency", e.target.value)} style={{ minHeight: 44 }} />
+          </Field>
+          <Field label={t("migrationRun.launch.advanced.serviceStart")} hint={t("migrationRun.launch.advanced.serviceStartHint")}>
+            <Select
+              value={value.serviceStart}
+              onChange={(v) => set("serviceStart", v as MigrationRunServiceStart)}
+              options={[
+                { value: "dependencies", label: t("migrationRun.launch.advanced.serviceStartChoice.dependencies") },
+                { value: "none", label: t("migrationRun.launch.advanced.serviceStartChoice.none") },
+                { value: "all", label: t("migrationRun.launch.advanced.serviceStartChoice.all") },
+              ]}
+              style={{ minHeight: 44 }}
+            />
           </Field>
           <Field label={t("migrationRun.launch.advanced.largeDbMode")} hint={t("migrationRun.launch.advanced.largeDbModeHint")}>
             <Select

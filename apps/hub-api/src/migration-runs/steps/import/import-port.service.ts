@@ -22,6 +22,8 @@ import { buildCoverage } from "../../../importer/coverage";
 import { mapLimit } from "../../../importer/sources/map-limit";
 import type { ImportApplyInput, ImportMappingResolveInput, RemoteSourceKind, ServiceChoice } from "../../../importer/dto";
 import type { SourceHealthRow } from "../../../importer/import-source";
+import { vxEnabled } from "../../../importer/volume-stream/vx-constants";
+import { isObjectStoreResult, serviceVolumeStreamable, serviceVolumesOf, volumeItemRef } from "../../../importer/volume-stream/vx-targets";
 import { pinnedImageRef } from "./baseline/image-pins";
 import type { ResolvedMapping } from "../../../importer/import-mapping";
 import type { ServicePreview } from "../../../importer/service-preview";
@@ -30,6 +32,7 @@ import { stable } from "../../core/run-logic";
 import type {
   DeploymentRef,
   ImportStepsPort,
+  ServiceLink,
   OpSnapshot,
   RemapApplyResult,
   RemapSummary,
@@ -208,6 +211,48 @@ export class ImportPortService implements ImportStepsPort {
           };
         }),
     };
+  }
+
+  /**
+   * The op's DONE compose services with the apps that depend on each: an app depends on a service when it joined the service's private
+   * network (what REMAP_ENV's service-host rewrite does). Reads only: `executor.status` is the authorization (op ownership).
+   */
+  async serviceLinks(userId: string, opId: string): Promise<ServiceLink[]> {
+    await this.executor.status(userId, opId);
+    const tasks = await this.prisma.bulkTask.findMany({ where: { opId }, select: { itemRef: true, kind: true, status: true, resourceType: true, resourceId: true, result: true } });
+    const services = tasks.filter((t) => t.kind === "service" && t.status === "DONE" && t.resourceType === "application" && !!t.resourceId && !!t.itemRef);
+    if (services.length === 0) return [];
+    const appTasks = tasks.filter((t) => t.kind === "app" && t.status === "DONE" && t.resourceType === "application" && !!t.resourceId);
+    const rows = await this.prisma.application.findMany({ where: { id: { in: appTasks.map((t) => t.resourceId as string) } }, select: { id: true, networks: true } });
+    const excluded = metaOf((await this.prisma.bulkOperation.findUnique({ where: { id: opId }, select: { meta: true } }))?.meta).vxExcluded;
+    const doneData = new Set(tasks.filter((t) => t.kind === "data" && t.status === "DONE" && !!t.itemRef).map((t) => t.itemRef as string));
+    // a copy that is STILL EXPECTED: a streamable copy volume the owner did not exclude and whose data task has not finished. A volume the
+    // stream cannot carry is not "expected" (VERIFY lists it as not migrated and the owner acknowledges it there).
+    // With the stream switched off no target, transfer or data task can ever exist (VERIFY lists the volumes as not migrated, ackable), and
+    // an object store's volume is not streamed at all (Object migration moves the buckets): neither is ever "still expected".
+    const streamOn = vxEnabled();
+    const dataPending = (itemRef: string, result: unknown): boolean =>
+      streamOn && !isObjectStoreResult(result) && serviceVolumesOf(result).some((v) => {
+        const ref = serviceVolumeStreamable(v) ? volumeItemRef(itemRef, v.key) : null;
+        return !!ref && !(excluded && typeof excluded === "object" && ref in (excluded as Record<string, unknown>)) && !doneData.has(`data:${ref}`);
+      });
+    const names = await this.prisma.application.findMany({ where: { id: { in: services.map((t) => t.resourceId as string) } }, select: { id: true, name: true } });
+    const nameOf = new Map(names.map((n) => [n.id, n.name]));
+    return services.map((t) => {
+      const net = (t.result as { privateNetwork?: { network?: unknown } } | null)?.privateNetwork?.network;
+      const network = typeof net === "string" ? net : null;
+      const r = (t.result ?? {}) as { serviceDomains?: { applied?: unknown }; hold?: unknown };
+      return {
+        itemRef: t.itemRef as string,
+        appId: t.resourceId as string,
+        name: nameOf.get(t.resourceId as string) ?? null,
+        objectStore: isObjectStoreResult(t.result),
+        dependants: network ? rows.filter((r) => (r.networks ?? []).includes(network)).map((r) => r.id).sort() : [],
+        dataPending: dataPending(t.itemRef as string, t.result),
+        hold: r.hold === true,
+        public: !network && r.hold !== true && typeof r.serviceDomains?.applied === "number" && r.serviceDomains.applied > 0,
+      };
+    });
   }
 
   async opsSince(userId: string, serverId: string, since: Date): Promise<string[]> {

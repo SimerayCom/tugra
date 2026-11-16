@@ -4,6 +4,8 @@ import { why } from "./reason";
 import { mapBuildPack } from "./buildpack-map";
 import { analyzeService, ns } from "./import-planner";
 import { isSshGitUrl } from "../deploy/deploy-script";
+import { isMinioService } from "./preflight";
+import { serviceVolumeStreamable, validServiceMountPath } from "./volume-stream/vx-targets";
 
 type Entry = ImportCoverageApp["notCarried"][number];
 
@@ -31,6 +33,11 @@ export function buildCoverage(fleet: ForeignFleet, options: ImportOptions): Impo
     if (!r) continue;
     const entries: Entry[] = r.dropped.map((d) => ({ field: d.field, reason: d.reason, level: d.level }));
     for (const v of r.volumes) if (v.policy === "empty") entries.push({ field: `volume:${v.key}`, reason: "starts empty on the target (coordination state is rebuilt)", level: "info" });
+    // R39/R53: a volume the import means to copy but the streamed lane cannot carry (its name or mount is unusable) is said so at plan time
+    // an object store's volume is never streamed (the buckets move through Object migration): it is not "unusable", see the objectData row
+    for (const v of r.volumes) if (!isMinioService(svc) && v.policy === "copy" && !serviceVolumeStreamable({ key: v.key, policy: v.policy, mountPath: v.mounts.find((m) => validServiceMountPath(m.path))?.path ?? null })) entries.push({ field: `volume:${v.key}`, reason: "its data cannot ride the streamed volume copy (the volume name or mount point is not usable); copy it by hand", level: "warn" });
+    // R33: an object store's buckets are never copied with the service: Object migration moves them
+    if (isMinioService(svc)) entries.push({ field: "objectData", reason: "the store's data volume is not streamed with the service; its buckets move only through an Object migration attached to the run (or keep the store external)", level: "warn" });
     for (const f of r.neededFiles) entries.push({ field: `file:${f}`, reason: "config file needed from the source; the service is not imported without it", level: "warn" });
     if (r.configMounts.length) entries.push({ field: "configMounts", reason: `${r.configMounts.length} config file(s) are carried as Tugra config mounts`, level: "info" });
     if (!entries.length) continue;

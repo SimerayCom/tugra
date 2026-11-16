@@ -1,6 +1,7 @@
-import { DATA_CODES, type DbStats, type FlipPlanLite, type RuntimeSnapshot } from "../data-contract";
+import { DATA_CODES, type ServiceVolumeItem, type DbStats, type FlipPlanLite, type RuntimeSnapshot } from "../data-contract";
 import { PARITY_CODES } from "./db-stats";
 import { buildVerifySuite, classifySuite, ponrBindingHash, reportHash, toGateCheck, type SuiteInputs } from "./verify-suite";
+import { OBJECT_PLAN_CODES } from "../object-plan-check";
 import { copied, database, inspected, makeSnap, measured, volume } from "../testing/fakes";
 
 const FLIP: FlipPlanLite = { planHash: "a".repeat(32), hosts: ["a.example.com"], statefulHosts: ["a.example.com"], unavailable: null };
@@ -218,5 +219,71 @@ describe("reportHash and ponrBindingHash", () => {
     expect(g.acked).toBe(true);
     expect(toGateCheck(buildVerifySuite(inputs({ snap: makeSnap({ volumes: [copied("volume:s:a:data")], databases: [] }) }))[0]).subject).toBe("volume:s:a:data");
     void DATA_CODES;
+  });
+});
+
+describe("service volume coverage (R53)", () => {
+  const sv = (key: string, policy: string, streamed: boolean, serviceName: string | null = "search-a"): ServiceVolumeItem => ({ serviceItemRef: "service:s:svc1", serviceName, key, policy, streamed });
+  const rows = (items: ServiceVolumeItem[], extra: Partial<SuiteInputs> = {}) => find(buildVerifySuite(inputs({ snap: makeSnap({ volumes: [copied("volume:s:abc:data")], databases: [], serviceVolumes: items }), ...extra })), "coverage-service-volume");
+
+  it("a volume the stream moved has no coverage row of its own (its volume-parity row judges it)", () => {
+    expect(rows([sv("index", "copy", true)])).toEqual([]);
+  });
+  it("a copy volume the stream cannot move is a not-migrated row that fails and needs an acknowledgement", () => {
+    const [r] = rows([sv("index", "copy", false)]);
+    expect(r).toMatchObject({ subject: "service:s:svc1/index", status: "fail", code: DATA_CODES.verifyServiceVolume, ackable: true, evidence: "hub-verified", params: { service: "search-a", key: "index", outcome: "not-migrated", reason: "not-streamable" } });
+  });
+  it("a skipped volume is listed as not migrated and held for an acknowledgement; an empty one is a visible warning only", () => {
+    const [skipped, empty] = rows([sv("analytics", "skip", false), sv("cache", "empty", false)]);
+    expect(skipped).toMatchObject({ code: DATA_CODES.verifyServiceVolumeSkipped, status: "fail", ackable: true, params: { outcome: "not-migrated", reason: "policy-skip" } });
+    expect(empty).toMatchObject({ code: DATA_CODES.verifyServiceVolumeEmpty, status: "warn", ackable: false, params: { outcome: "starts-empty", reason: "starts-empty" } });
+  });
+  it("never reads as clean: the suite is not all-pass, the row is pending until acknowledged and an ack clears it", () => {
+    const s = buildVerifySuite(inputs({ snap: makeSnap({ volumes: [copied("volume:s:abc:data")], databases: [database("database:s:pg", { task: "done" })], serviceVolumes: [sv("analytics", "skip", false)] }) }));
+    const c = find(s, "coverage-service-volume")[0];
+    expect(classifySuite(s).pending.map((x) => x.id)).toContain(c.id);
+    expect(classifySuite(s, new Set([c.id])).pending).toEqual([]);
+    expect(classifySuite(s).blocked).toEqual([]);
+  });
+  it("a service volume is named by its service ref when the name is unknown, and ids stay unique and short", () => {
+    const [r] = rows([sv("k".repeat(60), "copy", false, null)]);
+    expect(r.params).toMatchObject({ service: "service:s:svc1" });
+    expect(r.id.length).toBeLessThanOrEqual(80);
+  });
+  it("an object store's volume is listed as moved by Object migration: visible, not ackable, never a failure and never streamed", () => {
+    const [r] = rows([{ ...sv("minio-data", "copy", false, "store-a"), objectStore: true }]);
+    expect(r).toMatchObject({ subject: "service:s:svc1/minio-data", status: "warn", code: DATA_CODES.verifyServiceVolumeObjectStore, ackable: false, params: { service: "store-a", key: "minio-data", outcome: "moved-by-object-migration", reason: "object-store" } });
+    const s = buildVerifySuite(inputs({ snap: makeSnap({ volumes: [copied("volume:s:abc:data")], databases: [database("database:s:pg", { task: "done" })], serviceVolumes: [{ ...sv("minio-data", "copy", false), objectStore: true }] }) }));
+    expect(classifySuite(s)).toEqual({ blocked: [], pending: [], acked: [] });
+  });
+  it("a snapshot from a port that cannot say adds nothing", () => {
+    expect(find(buildVerifySuite(inputs()), "coverage-service-volume")).toEqual([]);
+  });
+});
+
+describe("object storage plan coverage at VERIFY (R33, DATA_SEED is skippable)", () => {
+  const store = { itemRef: "service:s:store", name: "store-a" };
+  const withStore = (o: Partial<SuiteInputs> = {}) => inputs({ snap: makeSnap({ volumes: [copied("volume:s:abc:data")], databases: [database("database:s:pg", { task: "done" })], objectStorage: { stores: [store], dependants: [], unreadable: 0 } }), ...o });
+  const policy = (value: "hold" | "mirror" | "external") => ({ minioPolicy: { value, source: "request" } }) as unknown as SuiteInputs["runInputs"];
+  const view = (selected: boolean) => ({ id: "om1", status: "DONE", phase: null, buckets: [{ srcBucket: "media", selected, status: "VERIFIED", diffMissing: 0, diffDiffer: 0, diffExtra: 0 }], blockers: 0, cancelRequested: false });
+
+  it("a plan with object storage and no attached object migration is an ackable failure row, never a clean run", () => {
+    const s = buildVerifySuite(withStore({ runInputs: policy("mirror") }));
+    const [r] = find(s, "coverage-object-plan");
+    expect(r).toMatchObject({ subject: "", status: "fail", code: OBJECT_PLAN_CODES.migrationMissing, ackable: true, evidence: "hub-verified", params: { stores: 1, policy: "mirror", attached: 0, selected: 0 } });
+    expect(classifySuite(s).pending.map((x) => x.id)).toContain(r.id);
+    expect(classifySuite(s).blocked).toEqual([]);
+    expect(classifySuite(s, new Set([r.id])).pending).toEqual([]);
+  });
+  it("the unanswered default hold fails too, with the question code", () => {
+    expect(find(buildVerifySuite(withStore()), "coverage-object-plan")[0]).toMatchObject({ status: "fail", code: OBJECT_PLAN_CODES.policyUnanswered });
+  });
+  it("adds no row when a migration with a selected bucket is attached (its bucket rows judge it), when the policy is external or when the plan has no object storage", () => {
+    expect(find(buildVerifySuite(withStore({ runInputs: policy("mirror"), objects: [view(true)] })), "coverage-object-plan")).toEqual([]);
+    expect(find(buildVerifySuite(withStore({ runInputs: policy("external") })), "coverage-object-plan")).toEqual([]);
+    expect(find(buildVerifySuite(inputs()), "coverage-object-plan")).toEqual([]);
+  });
+  it("an attached migration that selects no bucket accounts for nothing", () => {
+    expect(find(buildVerifySuite(withStore({ runInputs: policy("mirror"), objects: [view(false)] })), "coverage-object-plan")).toHaveLength(1);
   });
 });

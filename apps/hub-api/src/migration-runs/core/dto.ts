@@ -17,6 +17,7 @@ import {
   COMMAND_KINDS,
   CONFIRM_KINDS,
   DEPLOY_WAVES,
+  SERVICE_START_MODES,
   DEFAULT_DECOMMISSION_MIN_AGE_HOURS,
   DEFAULT_OBSERVE_MINUTES,
   EVENT_LEVELS,
@@ -294,6 +295,8 @@ export const RunOptionsSchema = z
     hostLoop: HostLoopOptionsSchema.optional(),
     /** Builds started at once per target server (R25: 2 CPU / 4 GB hosts); absent = 1 (read it with `deployConcurrencyOf`). */
     deployConcurrency: z.number().int().min(1).max(8).optional(),
+    /** Which imported compose services DEPLOY_DARK starts, before the apps that need them (C14/R30); absent = `dependencies` (read it with `serviceStartOf`). */
+    serviceStart: z.enum(SERVICE_START_MODES).optional(),
     /** What happens to a database over the logical cap with no physical lane (R9/R45/R46); absent = `refuse` (read it with `largeDbModeOf`). */
     largeDbMode: z.enum(LARGE_DB_MODES).optional(),
     /** `seed` copies the source proxy's ACME certs (`--certs`; private keys travel encrypted to the hub, purged after apply). */

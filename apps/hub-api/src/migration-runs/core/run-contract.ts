@@ -441,6 +441,21 @@ export const HOST_LOOP_DEFAULTS = { keyDir: "/data/coolify/ssh/keys", parallel: 
 /** `options.hostLoop` with every default filled in. */
 export const hostLoopOf = (o: Pick<RunOptions, "hostLoop">): { keyDir: string; parallel: number; connectTimeoutSec: number; retries: number } => ({ ...HOST_LOOP_DEFAULTS, ...(o.hostLoop ?? {}) });
 
+/**
+ * C14 / R30: which imported compose SERVICES (a search engine, a document converter, an object store) DEPLOY_DARK starts. The apps of
+ * a real stack cannot answer their health path without the services they call, so a service is started BEFORE the apps that need it:
+ *  - `dependencies` (default): start the services a dark app depends on (it joined the service's private network) and the services that
+ *    serve public domains of their own (cutover hosts), keep the others stopped;
+ *  - `none`: start no service (the operator starts them by hand);
+ *  - `all`: start every service the import created.
+ * A MinIO object store follows the same rule (a dark app that depends on it needs it up); one nobody depends on starts only under
+ * `minioPolicy: mirror`. Its buckets arrive through Object migration, never through a volume copy.
+ */
+export const SERVICE_START_MODES = ["dependencies", "none", "all"] as const;
+export type ServiceStartMode = (typeof SERVICE_START_MODES)[number];
+export const DEFAULT_SERVICE_START: ServiceStartMode = "dependencies";
+export const serviceStartOf = (o: Pick<RunOptions, "serviceStart">): ServiceStartMode => o.serviceStart ?? DEFAULT_SERVICE_START;
+
 /** Builds started at once per target server during DEPLOY_DARK / `earlyBuild` (R25: the real hosts have 2 CPU / 4 GB). */
 export const DEFAULT_DEPLOY_CONCURRENCY = 1;
 export const deployConcurrencyOf = (o: Pick<RunOptions, "deployConcurrency">): number => o.deployConcurrency ?? DEFAULT_DEPLOY_CONCURRENCY;

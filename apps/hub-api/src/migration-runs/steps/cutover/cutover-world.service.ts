@@ -8,6 +8,7 @@ import { InstanceSettingsService } from "../../../instance/instance-settings.ser
 import { CryptoService } from "../../../crypto/crypto.service";
 import { containerName } from "../../../deploy/deploy-script";
 import { serviceDataVolumes } from "../../../cutover/cutover.logic";
+import { isObjectStoreResult } from "../../../importer/volume-stream/vx-targets";
 import { objectStoreKeys, type ObjectsVerification } from "./cutover-holds";
 import type { CoolifyProxySnapshot, SwapState } from "./proxy-swap";
 
@@ -307,10 +308,7 @@ export class CutoverWorld {
 }
 
 /** A compose service is an object store when one of its kept members is a MinIO (the importer stores the member names in the task result). */
-export function isMinioResult(result: unknown): boolean {
-  const members = result && typeof result === "object" ? (result as { members?: unknown }).members : undefined;
-  return Array.isArray(members) && members.some((m) => typeof m === "string" && /minio/i.test(m));
-}
+export const isMinioResult = isObjectStoreResult;
 
 /** `https://user:token@host/owner/repo.git` -> `host/owner/repo`. Anything that is not a plain git url reads as null (never echo a credential). */
 export function sanitizeRepo(url: string | null | undefined): string | null {

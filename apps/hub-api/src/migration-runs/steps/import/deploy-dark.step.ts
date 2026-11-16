@@ -5,8 +5,9 @@
  * Databases first (each `provision`ed once), then the apps in small batches through `apps.deploy` under the idempotency
  * key `migrun:<runId>:<appId>` (a retry after a failed deploy takes a numbered suffix), so a crash and a re-drive never
  * deploy an app twice. Compensation ids are written before the first side effect; abort stops exactly those apps and
- * databases (never removes anything). Services (compose stacks) are not deployed: they stay stopped unless the operator
- * starts them.
+ * databases (never removes anything). Imported compose SERVICES (a search engine, a document converter) are started after the
+ * databases and BEFORE the apps that need them, per the `serviceStart` choice (C14/R30): by default the services a dark app depends on
+ * start and the others stay stopped (see `deploy-dark-services.ts`).
  *
  * Grup-7 safety rules:
  *  - WORKERS (apps with no domain, or marked job runners) are not deployed here: they stay stopped until after the point of
@@ -22,6 +23,7 @@ import {
   StepFailure,
   deployConcurrencyOf,
   makeGate,
+  serviceStartOf,
   type ActResult,
   type CompResult,
   type CompensateHow,
@@ -37,6 +39,7 @@ import { appTasksOf, markConflictsOfOp, unmatchedMarksOfOp, workerSetsOfOp } fro
 import { RUN_HINTS, type RunHint, type RunHintStore } from "./baseline/run-hints";
 import { workerMarks, workerSets } from "./baseline/workers";
 import { resolveOwnerInput } from "../../core/run-contract";
+import { planServiceStart, type SvcRow } from "./deploy-dark-services";
 
 /**
  * A database row can be left PROVISIONING by a hub that died inside `provision` (nothing reaps it; a live provision ends
@@ -68,6 +71,8 @@ export interface DeployDarkObs extends Observation {
   agentOnline: boolean;
   dbs: DbRow[];
   apps: AppRow[];
+  /** The imported compose services and what the `serviceStart` choice does with each (started in this order, before the apps). */
+  services: SvcRow[];
   /** Apps marked `job-runner` that serve a domain: a mark that cannot hold them (they would be deployed here), so the step refuses to start. */
   markConflicts: string[];
   /** Marked item refs that name no app of the plan: ignored by every lookup, so the step refuses to start until they are fixed or removed. */
@@ -77,16 +82,24 @@ export interface DeployDarkObs extends Observation {
 interface Comp {
   dbIds?: string[];
   appIds?: string[];
+  /** The Tugra app ids of the services this step starts (stopped again by an abort, like the apps). */
+  serviceIds?: string[];
   /** dbId -> ISO instant this step first saw the database PROVISIONING (the stuck-provision clock). */
   provisioningSince?: Record<string, string>;
 }
 const compOf = (ctx: StepContext): Comp => (ctx.step.compensation ?? {}) as Comp;
 
-const latest = (a: AppRow): DeploymentRef | undefined => a.deployments[a.deployments.length - 1];
+/** What the deploy machinery needs of a row: an app, or a service (which has no worker role and no image pin). */
+type Deployable = Pick<AppRow, "id" | "name" | "status" | "exists" | "deployments" | "server"> & { pin?: string | null };
+
+const latest = (a: Pick<AppRow, "deployments">): DeploymentRef | undefined => a.deployments[a.deployments.length - 1];
 const appOk = (a: AppRow): boolean => a.exists && latest(a)?.status === "SUCCESS" && a.status === "RUNNING";
 /** Workers (held or excluded) are not required to run before the cutover. */
 const required = (a: AppRow): boolean => a.worker === null;
 const dbOk = (d: DbRow): boolean => d.exists && d.status === "RUNNING";
+const svcOk = (x: SvcRow): boolean => x.exists && latest(x)?.status === "SUCCESS" && x.status === "RUNNING";
+/** The services DEPLOY_DARK starts (the others stay stopped). */
+const startedSvcs = (obs: Pick<DeployDarkObs, "services">): SvcRow[] => obs.services.filter((x) => x.start);
 
 @Injectable()
 export class DeployDarkStep implements StepHandler<DeployDarkObs>, OnModuleInit {
@@ -115,7 +128,7 @@ export class DeployDarkStep implements StepHandler<DeployDarkObs>, OnModuleInit 
   async observe(ctx: StepContext): Promise<DeployDarkObs> {
     const run = ctx.run;
     const userId = ctx.actor.userId;
-    if (!run.opId) return { agentOnline: true, dbs: [], apps: [], markConflicts: [], markUnmatched: [] };
+    if (!run.opId) return { agentOnline: true, dbs: [], apps: [], services: [], markConflicts: [], markUnmatched: [] };
     const op = await this.port.opSnapshot(userId, run.opId);
     // every target server of the run must have its agent online (a multi-host run deploys on all of them)
     const targets = await Promise.all(ctx.targetServerIds.map((serverId) => this.port.target(userId, { serverId, hosts: [] })));
@@ -149,8 +162,26 @@ export class DeployDarkStep implements StepHandler<DeployDarkObs>, OnModuleInit 
       });
     }
     const need = apps.filter(required);
-    const done = dbs.filter(dbOk).length + need.filter(appOk).length;
-    return { agentOnline, dbs, apps, markConflicts: markConflictsOfOp(op, hints).map((c) => c.name), markUnmatched: unmatchedMarksOfOp(op, hints), progress: { done, total: dbs.length + need.length, unit: "app" } };
+    const services = await this.serviceRows(ctx, apps);
+    const svcStart = services.filter((x) => x.start);
+    const done = dbs.filter(dbOk).length + svcStart.filter(svcOk).length + need.filter(appOk).length;
+    return { agentOnline, dbs, apps, services, markConflicts: markConflictsOfOp(op, hints).map((c) => c.name), markUnmatched: unmatchedMarksOfOp(op, hints), progress: { done, total: dbs.length + svcStart.length + need.length, unit: "app" } };
+  }
+
+  /** The op's imported services with their deployments and the verdict of the `serviceStart` choice (empty when the port cannot say). */
+  private async serviceRows(ctx: StepContext, apps: AppRow[]): Promise<SvcRow[]> {
+    const run = ctx.run;
+    if (!run.opId || !this.port.serviceLinks) return [];
+    const userId = ctx.actor.userId;
+    const links = await this.port.serviceLinks(userId, run.opId);
+    const facts = await Promise.all(
+      links.map(async (link) => {
+        const [s, deployments] = await Promise.all([this.port.appState(userId, link.appId), this.port.deployments(link.appId, deployKeyBase(run.id, link.appId))]);
+        return { link, name: s.name ?? link.name ?? "", status: s.status, exists: s.exists, deployments, server: ctx.targetFor(serverRefOfItem(link.itemRef) || null) };
+      }),
+    );
+    const requiredIds = new Set(apps.filter(required).map((a) => a.id));
+    return planServiceStart(serviceStartOf(run.options), resolveOwnerInput(run.inputs, "minioPolicy") ?? "hold", facts, requiredIds, new Map(apps.map((a) => [a.id, a.name])));
   }
 
   async dryRun(ctx: StepContext): Promise<DryRunItem[]> {
@@ -163,7 +194,8 @@ export class DeployDarkStep implements StepHandler<DeployDarkObs>, OnModuleInit 
       const policy = resolveOwnerInput(run.inputs, "workerPolicy") ?? "hold-dark";
       const apps = items.filter((i) => i.kind === "app");
       const sets = workerSets(apps.map((i) => ({ itemRef: i.itemRef, kind: i.kind, domain: "domain" in i.proposed ? ((i.proposed.domain as string | null) ?? null) : undefined })), run.applyInput, marks, policy);
-      const out: DryRunItem[] = [{ code: "deploy-dark.order", level: "info", params: { databases: items.filter((i) => i.kind === "database").length, apps: apps.length - sets.held.size - sets.excluded.size, services: 0 } }];
+      const out: DryRunItem[] = [{ code: "deploy-dark.order", level: "info", params: { databases: items.filter((i) => i.kind === "database").length, apps: apps.length - sets.held.size - sets.excluded.size } }];
+      out.push({ code: "deploy-dark.service-start", level: "info", params: { mode: serviceStartOf(run.options), services: items.filter((i) => i.kind === "service").length } });
       if (sets.held.size) out.push({ code: "deploy-dark.workers-held", level: "info", params: { count: sets.held.size } });
       if (sets.excluded.size) out.push({ code: "deploy-dark.workers-excluded", level: "info", params: { count: sets.excluded.size } });
       return out;
@@ -191,6 +223,12 @@ export class DeployDarkStep implements StepHandler<DeployDarkObs>, OnModuleInit 
     const excluded = obs.apps.filter((a) => a.worker === "excluded").length;
     if (held) checks.push({ id: "deploy-dark.workers", status: "pass", code: "deploy-dark.workers-held", params: { count: held }, evidence: "hub-verified" });
     if (excluded) checks.push({ id: "deploy-dark.workers-excluded", status: "pass", code: "deploy-dark.workers-excluded", params: { count: excluded }, evidence: "hub-verified" });
+    const svc = startedSvcs(obs);
+    const badSvc = svc.filter((x) => !svcOk(x));
+    const kept = obs.services.length - svc.length;
+    if (kept > 0) checks.push({ id: "deploy-dark.services-kept", status: "pass", code: "deploy-dark.services-kept", params: { count: kept }, evidence: "hub-verified" });
+    for (const x of badSvc.slice(0, 100)) checks.push({ id: "deploy-dark.service", status: "fail", code: "deploy-dark.service-not-running", subject: x.name, params: { deploy: latest(x)?.status ?? "none", status: x.status }, evidence: "hub-verified" });
+    if (svc.length) checks.push({ id: "deploy-dark.services-summary", status: badSvc.length ? "fail" : "pass", code: "deploy-dark.services-summary", params: { services: svc.length, servicesUp: svc.length - badSvc.length, kept }, evidence: "hub-verified" });
     for (const d of badDbs.slice(0, 100)) checks.push({ id: "deploy-dark.db", status: "fail", code: "deploy-dark.db-not-running", subject: d.name, params: { status: d.status }, evidence: "hub-verified" });
     for (const a of badApps.slice(0, 100)) {
       checks.push({ id: "deploy-dark.app", status: "fail", code: "deploy-dark.app-not-running", subject: a.name, params: { deploy: latest(a)?.status ?? "none", status: a.status }, evidence: "hub-verified" });
@@ -210,7 +248,7 @@ export class DeployDarkStep implements StepHandler<DeployDarkObs>, OnModuleInit 
     const run = ctx.run;
     // compensation ids first: a crash right after a side effect still tells abort what to stop
     // (workers are never deployed here, so an abort has nothing of theirs to stop)
-    await ctx.recordCompensation({ dbIds: obs.dbs.map((d) => d.id), appIds: obs.apps.filter(required).map((a) => a.id) });
+    await ctx.recordCompensation({ dbIds: obs.dbs.map((d) => d.id), appIds: obs.apps.filter(required).map((a) => a.id), serviceIds: startedSvcs(obs).map((x) => x.id) });
 
     // 1) databases, one at a time
     let started = false;
@@ -245,7 +283,11 @@ export class DeployDarkStep implements StepHandler<DeployDarkObs>, OnModuleInit 
     }
     if (started) return { outcome: "continue", pollAfterMs: 2000 };
 
-    // 2) apps, in small batches
+    // 2) the services the dark apps need, BEFORE those apps (C14/R30): started, then waited for, then the apps follow
+    const svcPhase = await this.startServices(ctx, obs);
+    if (svcPhase) return svcPhase;
+
+    // 3) apps, in small batches
     const need = obs.apps.filter(required);
     const failed = need.filter((a) => ["FAILED", "CANCELLED"].includes(latest(a)?.status ?? ""));
     if (failed.length && ctx.trigger !== "retry") return { outcome: "fail", code: "deploy-dark.app-failed", params: { name: failed[0].name, count: failed.length }, retryable: true };
@@ -259,18 +301,31 @@ export class DeployDarkStep implements StepHandler<DeployDarkObs>, OnModuleInit 
     if (!todo.length) return { outcome: "continue", pollAfterMs: 3000 }; // deploys are queued/running: wait for them
     // builds run `deployConcurrency` at a time PER TARGET server (R25): the small hosts of the real fleet (2 CPU / 4 GB) cannot
     // build a handful of images at once. Deploys already queued or running on a server count against its slots.
-    const slots = deployConcurrencyOf(run.options);
+    const batch = this.nextBatch(todo, need, deployConcurrencyOf(run.options));
+    if (!batch.length) return { outcome: "continue", pollAfterMs: 3000 }; // every slot is building: wait for one to free
+    await this.deployRows(ctx, batch, "deploy-dark.deploy");
+    return { outcome: "continue", pollAfterMs: 1000 };
+  }
+
+  /** The rows of `todo` that fit the free build slots of their target servers (`all` = every row of the phase: their active deploys use slots). */
+  private nextBatch<T extends Deployable>(todo: readonly T[], all: readonly Deployable[], slots: number): T[] {
     const busy = new Map<string, number>();
-    for (const a of need) if (a.exists && latest(a) && isActiveDeploy(latest(a)!)) busy.set(a.server, (busy.get(a.server) ?? 0) + 1);
-    const batch: AppRow[] = [];
+    for (const a of all) if (a.exists && latest(a) && isActiveDeploy(latest(a)!)) busy.set(a.server, (busy.get(a.server) ?? 0) + 1);
+    const batch: T[] = [];
     for (const a of todo) {
       if ((busy.get(a.server) ?? 0) >= slots) continue;
       busy.set(a.server, (busy.get(a.server) ?? 0) + 1);
       batch.push(a);
     }
-    if (!batch.length) return { outcome: "continue", pollAfterMs: 3000 }; // every slot is building: wait for one to free
+    return batch;
+  }
+
+  /** Enqueue the deploy of each row under its idempotency key (`migrun:<run>:<app>`, numbered after a failed one); a rejection fails the step with `prefix`. */
+  private async deployRows(ctx: StepContext, rows: readonly Deployable[], prefix: string): Promise<void> {
+    const userId = ctx.actor.userId;
+    const run = ctx.run;
     const results = await Promise.allSettled(
-      batch.map(async (a) => {
+      rows.map(async (a) => {
         if (ctx.signal.aborted) return;
         await ctx.assertLease();
         const base = deployKeyBase(run.id, a.id);
@@ -282,8 +337,37 @@ export class DeployDarkStep implements StepHandler<DeployDarkObs>, OnModuleInit 
       }),
     );
     const rejected = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
-    if (rejected) throw failureOf(rejected.reason, "deploy-dark.deploy");
-    return { outcome: "continue", pollAfterMs: 1000 };
+    if (rejected) throw failureOf(rejected.reason, prefix);
+  }
+
+  /**
+   * The services phase of `act`: deploy the services the choice starts (one batch per free slot, a service never before its data
+   * arrived), then wait until they all run. `null` = nothing left to do here, the apps may start.
+   */
+  private async startServices(ctx: StepContext, obs: DeployDarkObs): Promise<ActResult | null> {
+    const svc = startedSvcs(obs);
+    if (svc.length === 0) return null;
+    // a service on an empty volume would make its first deploy the "live" volume and refuse the data that is still to come
+    const pending = svc.find((x) => x.dataPending);
+    if (pending) return { outcome: "fail", code: "deploy-dark.service-data-pending", params: { name: pending.name, count: svc.filter((x) => x.dataPending).length }, retryable: true };
+    const missing = svc.find((x) => !x.exists);
+    if (missing) return { outcome: "fail", code: "deploy-dark.service-missing", params: { name: missing.name }, retryable: false };
+    const failed = svc.filter((x) => ["FAILED", "CANCELLED"].includes(latest(x)?.status ?? ""));
+    if (failed.length && ctx.trigger !== "retry") return { outcome: "fail", code: "deploy-dark.service-failed", params: { name: failed[0].name, count: failed.length }, retryable: true };
+    const todo = svc.filter((x) => {
+      const l = latest(x);
+      return !l || ((l.status === "FAILED" || l.status === "CANCELLED") && ctx.trigger === "retry");
+    });
+    if (todo.length) {
+      const batch = this.nextBatch(todo, svc, deployConcurrencyOf(ctx.run.options));
+      if (batch.length) {
+        await this.deployRows(ctx, batch, "deploy-dark.service");
+        await ctx.emit({ level: "info", code: "deploy-dark.services-started", params: { count: batch.length } });
+        return { outcome: "continue", pollAfterMs: 1000 };
+      }
+    }
+    // every service is deployed or deploying: the apps wait until each one runs
+    return svc.every(svcOk) ? null : { outcome: "continue", pollAfterMs: 3000 };
   }
 
   async compensate(ctx: StepContext, how: CompensateHow): Promise<CompResult> {
@@ -292,7 +376,7 @@ export class DeployDarkStep implements StepHandler<DeployDarkObs>, OnModuleInit 
     const userId = ctx.actor.userId;
     // `apps.deploy` only enqueues: an app whose deploy is still queued or running turns RUNNING after the abort, so those
     // deployments are cancelled first (and an uncancellable one fails the compensation until it settles)
-    const apps = await stopRunApps(this.port, userId, ctx.run.id, comp.appIds ?? []);
+    const apps = await stopRunApps(this.port, userId, ctx.run.id, [...(comp.appIds ?? []), ...(comp.serviceIds ?? [])]);
     let stopped = apps.stopped;
     let failed = apps.failed;
     for (const id of comp.dbIds ?? []) {

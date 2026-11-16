@@ -1,17 +1,19 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 import { ModuleRef } from "@nestjs/core";
 import { PrismaService } from "../../../../prisma/prisma.service";
 import { AuditService } from "../../../../audit/audit.service";
+import { CryptoService } from "../../../../crypto/crypto.service";
 import { ImportExecutorService } from "../../../../importer/import-executor.service";
 import { MIGRATOR_ENGINES, MIGRATOR_UNSUPPORTED } from "../../../../importer/migrator-recipe";
 import { VxService } from "../../../../importer/volume-stream/vx.service";
 import { dbGates } from "../../../../importer/volume-stream/vx-dest-gate";
 import { vxDumpEnabled, vxEnabled } from "../../../../importer/volume-stream/vx-constants";
-import { buildVolumeTargets, dbStreamModeRefs, dbVolumeModeRefs, type VxVolumeTarget } from "../../../../importer/volume-stream/vx-targets";
+import { buildVolumeTargets, dbStreamModeRefs, dbVolumeModeRefs, isObjectStoreResult, serviceVolumesOf, volumeItemRef, type VxVolumeTarget } from "../../../../importer/volume-stream/vx-targets";
 import { dumpRawEstimate, type DbSizeRecord } from "../../../../importer/volume-stream/vx-dump";
 import type { VxInventoryItem } from "../../../../importer/volume-stream/vx.dto";
 import type { RunSnapshot } from "../../../core/run-contract";
-import { DataPortError, type DataPort, type DataSnapshot, type DbDataItem, type DbMeasureLite, type SourceItem, type VolumeDataItem, type VolumeState } from "../data-contract";
+import { DataPortError, type DataPort, type DataSnapshot, type DbDataItem, type DbMeasureLite, type ServiceVolumeItem, type SourceItem, type VolumeDataItem, type VolumeState } from "../data-contract";
+import { objectStorageFacts } from "./object-storage-facts";
 import { classifyDbTaskFailure, classifyTransferError } from "../data-logic";
 
 interface OpMeta {
@@ -23,6 +25,25 @@ interface OpMeta {
   vxDisk?: Record<string, { ok: boolean; unknown: boolean }>;
   vxStream?: Record<string, unknown>;
   vxDbSizes?: Record<string, DbSizeRecord>;
+}
+
+/**
+ * Every data volume of the op's imported compose services, flagged `streamed` when the streamed lane has a target for it. A service
+ * volume that is not streamed (skip / empty policy, a key or mount the stream cannot use, the lane switched off) is what VERIFY lists
+ * as not migrated.
+ */
+function serviceVolumeItems(tasks: ReadonlyArray<{ itemRef: string | null; kind: string; status: string; resourceType: string | null; resourceId: string | null; result: unknown }>, targets: readonly VxVolumeTarget[], nameOf: ReadonlyMap<string, string>): ServiceVolumeItem[] {
+  const streamed = new Set(targets.filter((t) => t.ownerKind === "service").map((t) => t.itemRef));
+  const out: ServiceVolumeItem[] = [];
+  for (const t of tasks) {
+    if (t.kind !== "service" || t.status !== "DONE" || t.resourceType !== "application" || !t.itemRef) continue;
+    const objectStore = isObjectStoreResult(t.result);
+    for (const v of serviceVolumesOf(t.result)) {
+      const ref = volumeItemRef(t.itemRef, v.key);
+      out.push({ serviceItemRef: t.itemRef, serviceName: t.resourceId ? (nameOf.get(t.resourceId) ?? null) : null, key: v.key, policy: v.policy, streamed: !!ref && streamed.has(ref), ...(objectStore ? { objectStore: true } : {}) });
+    }
+  }
+  return out.sort((a, b) => (a.serviceItemRef + "/" + a.key < b.serviceItemRef + "/" + b.key ? -1 : 1));
 }
 
 const metaOf = (m: unknown): OpMeta => (m && typeof m === "object" ? (m as OpMeta) : {});
@@ -46,6 +67,7 @@ export class PrismaDataPort implements DataPort {
     private readonly audit: AuditService,
     private readonly executor: ImportExecutorService,
     private readonly moduleRef: ModuleRef,
+    @Optional() private readonly crypto?: CryptoService,
   ) {}
 
   async snapshot(run: RunSnapshot): Promise<DataSnapshot> {
@@ -160,6 +182,8 @@ export class PrismaDataPort implements DataPort {
       volumes,
       apps: named("app"),
       services: named("service"),
+      serviceVolumes: serviceVolumeItems(tasks, targets, nameOf),
+      objectStorage: await objectStorageFacts(this.prisma, this.crypto, tasks, nameOf),
     };
   }
 

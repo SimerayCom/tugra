@@ -172,13 +172,14 @@ describe("GuidedRunLauncher", () => {
       fireEvent.change(within(dialog).getByLabelText("Hosts at a time"), { target: { value: "3" } });
       fireEvent.change(within(dialog).getByLabelText("When apps are built and started"), { target: { value: "earlyBuild" } });
       fireEvent.change(within(dialog).getByLabelText("Databases too large for a dump artifact"), { target: { value: "stream-logical" } });
+      fireEvent.change(within(dialog).getByLabelText("Which services are started before the apps"), { target: { value: "all" } });
       fireEvent.change(within(dialog).getByLabelText("Hosts that use the source's object storage"), { target: { value: "mirror" } });
       fireEvent.change(within(dialog).getByLabelText("Campaign"), { target: { value: "wave-1" } });
       expect(submit.disabled).toBe(false);
       fireEvent.click(submit);
       await waitFor(() => expect(create).toHaveBeenCalled());
       const body = create.mock.calls[0][0];
-      expect(body.options).toMatchObject({ sourceRunner: "coolify-host-loop", hostLoop: { keyDir: "/data/coolify/ssh/keys", parallel: 3, connectTimeoutSec: 15, retries: 1 }, deployWaves: "earlyBuild", largeDbMode: "stream-logical" });
+      expect(body.options).toMatchObject({ sourceRunner: "coolify-host-loop", hostLoop: { keyDir: "/data/coolify/ssh/keys", parallel: 3, connectTimeoutSec: 15, retries: 1 }, deployWaves: "earlyBuild", largeDbMode: "stream-logical", serviceStart: "all" });
       expect(body.inputs).toMatchObject({ minioPolicy: "mirror" });
       expect(body.inputs).not.toHaveProperty("workerPolicy"); // unanswered: the hub's safe default applies
       expect(body.campaign).toBe("wave-1");

@@ -5,7 +5,7 @@ import * as path from "node:path";
 import {
   CUTOVER_STATES, canTransition, caaAllowsLetsEncrypt, certNames, classifyHealth, classifyObserved, classifyPort80, counterpartOf, deriveEntries, effectiveTtl, isGeneratedHost,
   isStateful, keyMatchesCert, mergeAcmeStore, parseAcmeDiagMarkers, parseCutoverProbeMarkers, planHash, planRecords, recordSetKey, simulateApply, simulateRevert, sslModeVerdict,
-  stepAction, ttlGuidance, earliestFlip, allNoop, sanitizeText, serviceDataVolumes,
+  stepAction, ttlGuidance, earliestFlip, allNoop, sanitizeText, serviceDataVolumes, serviceDataKeys,
   type CutoverState, type LedgerRecord, type ProviderRec,
 } from "./cutover.logic";
 import { shq } from "../deploy/deploy-script";
@@ -81,6 +81,27 @@ describe("hostnames and entry derivation", () => {
     expect(isStateful("service:_:7", [svc([{ key: "data", policy: "copy" }]), copy("data", "RUNNING")])).toBe(true);
     expect(isStateful("service:_:7", [svc([{ key: "data", policy: "skip" }])])).toBe(false);
     expect(isStateful("service:_:7", [svc([])])).toBe(false);
+  });
+  it("a compose SERVICE is stateful until EACH copy volume has its own finished copy (matched by key, an empty volume needs none)", () => {
+    const svc = (volumes: unknown) => ({ itemRef: "service:_:7", kind: "service", status: "DONE", dependsOn: [] as string[], result: { kind: "service", volumes } });
+    const copy = (key: string, status = "DONE") => ({ itemRef: `data:volume:_:7:${key}`, kind: "data", status, dependsOn: [] as string[] });
+    const two = [{ key: "search-data", policy: "copy" }, { key: "dumps", policy: "copy" }];
+    expect(serviceDataKeys({ volumes: [{ key: "a", policy: "copy" }, { key: "b", policy: "empty" }, { key: "c", policy: "skip" }] })).toEqual(["a"]);
+    // one volume copied twice (two rows of the same key) cannot stand in for the other volume
+    expect(isStateful("service:_:7", [svc(two), copy("search-data"), copy("search-data")])).toBe(true);
+    expect(isStateful("service:_:7", [svc(two), copy("search-data"), copy("dumps")])).toBe(false);
+    expect(isStateful("service:_:7", [svc(two), copy("search-data"), copy("dumps", "FAILED")])).toBe(true);
+    // a stateless (empty) volume carries no data: the service is not stateful because of it
+    expect(isStateful("service:_:7", [svc([{ key: "cache", policy: "empty" }])])).toBe(false);
+  });
+  it("an object store (MinIO) service with data volumes stays stateful: no data task records its bucket migration, so acceptDataRisk applies and a failed flip is never auto-reverted", () => {
+    const store = { itemRef: "service:_:8", kind: "service", status: "DONE", dependsOn: [] as string[], result: { kind: "service", members: ["minio"], volumes: [{ key: "minio-data", policy: "copy" }] } };
+    expect(isStateful("service:_:8", [store])).toBe(true);
+    // no data task clears it, and the same volume on a non-object-store service waits for its copy as well
+    expect(isStateful("service:_:8", [store, { itemRef: "data:volume:_:8:minio-data", kind: "data", status: "DONE", dependsOn: [] as string[] }])).toBe(true);
+    expect(isStateful("service:_:8", [{ ...store, result: { ...store.result, members: ["search"] } }])).toBe(true);
+    // an object store whose volumes are not carried (skip / empty) has no data waiting
+    expect(isStateful("service:_:8", [{ ...store, result: { ...store.result, volumes: [{ key: "minio-data", policy: "skip" }] } }])).toBe(false);
   });
   it("counts the streamed (v2) data tasks: data:volume:<s>:<r>:<name> for app volumes, :data for a volume-mode Postgres", () => {
     const vx = { itemRef: "app:_:4", kind: "app", status: "DONE", dependsOn: ["database:_:9", "volume:_:v1"] };
