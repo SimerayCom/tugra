@@ -340,10 +340,11 @@ restored on the target without spooling, for PostgreSQL, MariaDB and MySQL. Note
 - Parity is the same row-count verification as for the other lanes. **It has a lab scenario** (L15, and a streamed leg in L9 and
   L10) that moves a running PostgreSQL and MariaDB through it, kills the hub mid-dump and compares the destination by checksum, but
   only on generated data of a few hundred MiB to a few GiB; **never exercised on a real multi-GB database.**
-- **A PostgreSQL 18 destination is refused today.** Tugra mounts a database volume at the pre-18 data path, so a restored
-  PostgreSQL 18 cluster would sit outside the named volume and be lost when the container is recreated; the hub fails the
-  transfer before the first byte (`dumpDestLayout`). Until that is lifted a PostgreSQL 18 database has no lane: do not plan a wave
-  around one without asking.
+- **A PostgreSQL 18 destination is refused today, and the defect is wider than the streamed lane.** Tugra mounts every
+  database volume at the pre-18 data path with no `PGDATA`, so the data of **any PostgreSQL 18 database Tugra provisions**, fresh
+  or restored, sits outside its named volume and is lost when the container is recreated (the lab shows it by recreating a
+  fresh 18 database: L16 leg A). The streamed lane therefore fails the transfer before the first byte (`dumpDestLayout`), and a
+  PostgreSQL 18 database has no lane until provisioning keeps the cluster: do not plan a wave around one without asking.
 - **What the dump carries.** Rows, extensions (including pgvector), sequence positions and collation arrive. **Roles, table
   ownership, grants, MariaDB users and stored routines do not**: the PostgreSQL dump runs with `--no-owner --no-acl` and
   the MariaDB one without `--routines`, so everything lands owned by the destination's own user. An application that connects

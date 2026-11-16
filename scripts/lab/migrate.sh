@@ -41,6 +41,11 @@ rc=$?
 # the log is complete once the stderr tee has drained; bounded (5 s), so a stray descendant that inherited the pipe can never hang a run
 # (a bare `wait` here waits for every background job, the tee included, with no limit)
 for _ in $(seq 1 50); do [ -e "$ERR.done" ] && break; sleep 0.1; done
+# a tee that did not drain is recorded, never silent: the log of this run may be short, and what held the pipe is a finding
+if [ ! -e "$ERR.done" ]; then
+  lab_log "FINDING: the log tee of run $TAG did not drain within 5 s: a descendant of the installer still holds its stderr"
+  echo "L_TEE_UNDRAINED=$TAG" >>"$LAB_DIR/tee.summary"
+fi
 cat "$OUT"
 lab_log "migrator exit $rc (result: $OUT)"
 exit "$rc"

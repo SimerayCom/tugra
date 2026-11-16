@@ -95,6 +95,7 @@ if [ "$MAJOR" -ge 18 ]; then
       lab_check "the streamed row count equals the source ($SRC_COUNT)" test "$(lab_pg_q "$DST_CTR" "$U" "$D" 'select count(*) from ticks')" = "$SRC_COUNT"
       lab_pg_fingerprint "$DST_CTR" "$U" "$D" ticks >"$LAB_DIR/l9.fp.dst"
       lab_fingerprint_compare l9 "$LAB_DIR/l9.fp.src" "$LAB_DIR/l9.fp.dst" L9
+      lab_dest_survives_recreate "$DST_CTR" "$U" "$D" ticks "$SRC_COUNT" "$DB_ID" || lab_die "the streamed destination did not survive a recreate of its container (PRODUCT FINDING above)"
     )
     lab_check "the streamed dump never stopped or restarted the source" test "$(docker inspect -f '{{.State.StartedAt}}' "$SRC")" = "$SRC_STARTED"
     lab_check "the source is still running after the streamed dump" fleet_running "$SRC"

@@ -5,11 +5,16 @@
 # source URL; the hub starts the server with ssl=on and a self-signed pair generated once on the host, databases/database-script.ts).
 #   A. a fresh destination with ssl=true, provisioned through the hub's own route: `ssl` is on, a client with sslmode=require connects
 #      from INSIDE the container and from a SECOND container across the docker network, pg_stat_ssl says the session is encrypted, and
-#      the data written over it reads back. (`sslmode=verify-ca` needs a CA the client trusts and stays a manual step: it must fail.)
-#      A pgvector image also creates its extension and answers a nearest-neighbour query over TLS.
+#      the data written over it reads back. (`sslmode=verify-ca` needs a CA the client trusts and stays a manual step: it must fail, and
+#      the failure must be libpq refusing the certificate, not any failed connection.) A pgvector image also creates its extension and
+#      answers a nearest-neighbour query over TLS. Then the hub recreates the container through its own provision route and the rows must
+#      still be there: a destination whose data sits outside its named volume would otherwise read as healthy (every PostgreSQL 18+
+#      database Tugra provisions today, see lab_dest_survives_recreate). A lost row set is a PRODUCT FINDING, recorded in l16.summary; the
+#      leg keeps gathering evidence and fails at the end.
 #   B. the data arrives over the streamed dump lane into that TLS destination and is read back over TLS (the strict fingerprint of
-#      integrity.sh equal). PostgreSQL 18 skips B: the hub refuses a streamed dump into a PostgreSQL 18 destination today (see L15), and the
-#      skip is recorded in l16.summary, not hidden.
+#      integrity.sh equal), then survives a recreate of its container. B is always attempted: when the hub answers with the PostgreSQL 18
+#      destination refusal (see L15) the skip is recorded in l16.summary and the refusal named, decided on the refusal and never on the
+#      image's major, so lifting the gate needs no edit here.
 set -euo pipefail
 # shellcheck source=fleet.sh
 . "$(dirname "${BASH_SOURCE[0]}")/fleet.sh"
@@ -52,31 +57,51 @@ client() { docker run --rm --network "$NET" -e "PGPASSWORD=$PGPW" "$@"; } # <ssl
 tls_client() { client -e "PGSSLMODE=$1" "$IMAGE" psql -h "$IP" -U "$U" -d "$D" -At -v ON_ERROR_STOP=1 -c "$2"; }
 lab_check "a client container reaches it with sslmode=require and the session is encrypted" test "$(tls_client require 'select ssl from pg_stat_ssl where pid = pg_backend_pid()')" = t
 lab_check "the encrypted session negotiated a TLS version" test -n "$(tls_client require 'select version from pg_stat_ssl where pid = pg_backend_pid()')"
-verify_ca_refused() { ! tls_client verify-ca 'select 1' >/dev/null 2>&1; }
-lab_check "sslmode=verify-ca is refused (the pair is self-signed: a CA the client trusts stays a manual step)" verify_ca_refused
+# the client container has no root certificate, so libpq must refuse to verify the self-signed pair; the reason is checked, a plain failed
+# connection (a server with no TLS, a closed port) must not satisfy this
+verify_ca_refused() {
+  local out rc=0
+  out="$(tls_client verify-ca 'select 1' 2>&1)" || rc=$?
+  [ "$rc" != 0 ] || return 1
+  lab_log "verify-ca: $(printf '%s' "$out" | head -2 | tr '\n' ' ')"
+  lab_tls_cert_refusal "$out"
+}
+lab_check "sslmode=verify-ca is refused by libpq's certificate check (the pair is self-signed: a CA the client trusts stays a manual step)" verify_ca_refused
 if [ "$VEC_ARG" = vector ]; then
   lab_check "the pgvector extension is created over TLS" test "$(tls_client require "create extension if not exists vector; select extversion from pg_extension where extname = 'vector'" | tail -1)" != ""
   tls_client require "create table tls_v (id int primary key, e vector(3)); insert into tls_v select g, ('[' || g || ',' || (g % 7) || ',' || (g % 13) || ']')::vector from generate_series(1, 500) g" >/dev/null
   lab_check "a nearest-neighbour query answers over TLS" test -n "$(tls_client require "select id from tls_v order by e <-> '[5,5,5]' limit 1")"
 fi
 echo "L16_FRESH_TLS=ok" >>"$LAB_DIR/l16.summary"
+# the data outlives a recreate of the container (the hub's own provision route): a finding is recorded and the leg goes on
+PERSIST_LOST=""
+if lab_dest_survives_recreate "$CTR" "$U" "$D" tls_t 100000; then
+  echo "L16_PERSISTENCE=ok" >>"$LAB_DIR/l16.summary"
+else
+  echo "L16_PERSISTENCE=lost-on-recreate" >>"$LAB_DIR/l16.summary"
+  PERSIST_LOST="a PostgreSQL $MAJOR database provisioned by the hub does not keep its data across a recreate of its container"
+fi
 lab_log "A: ok"
 
 # ---- B. the dump arrives over the streamed lane into a TLS destination --------------------------------------------------------------
-if [ "$MAJOR" -ge 18 ]; then
-  echo "L16_RESTORE=skipped-pg18-destination-refused" >>"$LAB_DIR/l16.summary"
-  lab_log "B: skipped on PostgreSQL 18: the hub refuses a streamed dump into a PostgreSQL 18 destination (L15 reports it as a product finding)"
-  lab_pass "L16 $IMAGE: TLS destination (fresh), the streamed restore is skipped for 18"
-  exit 0
-fi
 SRC="$(fleet_uuid)"
 LAB_SKIP_SOURCE=1 lab_scenario_begin "l16b-$MAJOR" --kind db --engine POSTGRES --version "$MAJOR" --image "$IMAGE" --source "$SRC" --data-mode stream --ssl
 fleet_pg_source "$SRC" "$IMAGE" "$SRC_VOLUME"
 fleet_pg_load_ticks "$SRC" "$MIB"
 lab_pg_integrity_seed "$SRC" tugra postgres "$VEC_ARG"
 lab_pg_fingerprint "$SRC" tugra postgres ticks "$VEC_ARG" >"$LAB_DIR/l16.fp.src"
+SRC_ROWS="$(fleet_pg_sql "$SRC" 'select count(*) from ticks')"
 lab_stream_plan plan
 lab_run copy --arms volumes
+if [ "$LAB_RC" != 0 ] && lab_stream_refused copy; then
+  # the hub refused the destination before any byte moved: a named product finding, recorded, not a harness failure and not hidden
+  lab_stream_note_refusal copy
+  echo "L16_RESTORE=skipped-pg18-destination-refused" >>"$LAB_DIR/l16.summary"
+  lab_log "B: skipped: the hub refused the streamed dump into this destination (PRODUCT FINDING above)"
+  [ -z "$PERSIST_LOST" ] || lab_die "L16 $IMAGE: $PERSIST_LOST (PRODUCT FINDING above); the streamed restore was refused by the hub as well"
+  lab_pass "L16 $IMAGE: TLS destination (fresh), the streamed restore was refused by the hub (recorded)"
+  exit 0
+fi
 [ "$LAB_RC" = 0 ] || lab_stream_fail copy "migrator exit $LAB_RC"
 lab_stream_expect_applied copy
 lab_stream_transfer_done
@@ -89,4 +114,6 @@ lab_pg_fingerprint "$DST_CTR" "$U" "$D" ticks "$VEC_ARG" >"$LAB_DIR/l16.fp.dst"
 unset LAB_PG_TLS
 lab_fingerprint_compare l16 "$LAB_DIR/l16.fp.src" "$LAB_DIR/l16.fp.dst" L16
 echo "L16_RESTORE=ok" >>"$LAB_DIR/l16.summary"
-lab_pass "L16 $IMAGE: TLS destination, from inside and from a client container, and the streamed restore read back over TLS"
+lab_dest_survives_recreate "$DST_CTR" "$U" "$D" ticks "$SRC_ROWS" || lab_die "L16 $IMAGE: the restored database did not survive a recreate of its container (PRODUCT FINDING above)"
+[ -z "$PERSIST_LOST" ] || lab_die "L16 $IMAGE: $PERSIST_LOST (PRODUCT FINDING above)"
+lab_pass "L16 $IMAGE: TLS destination, from inside and from a client container, and the streamed restore read back over TLS, both surviving a recreate"

@@ -212,11 +212,13 @@ lab_wait_part() { # <tag> <n>: until the run committed part index >= n
 
 lab_migrator_containers() { docker ps -q --filter 'name=tugra-migrator-'; }
 # lab_kill9_migrator: SIGKILL every running migrator container (the unclean stop), then make sure the run that owns it can end. The installer's
-# `docker run` client normally exits on its own the moment its container dies (137); a client that does not (lab run 3, L1b: the run never
-# wrote its exit code within 120 s) is killed after a bound, and the container is removed by name, so a stuck client can never be what a
-# scenario waits on. What had to be forced is logged, so a harness bug stays visible.
+# `docker run` client normally exits on its own the moment its container dies (137). A client that does not (lab run 3, L1b: the run never
+# wrote its exit code within 120 s) is killed after a bound and the container is removed by name, so a stuck client can never be what a
+# scenario waits on. That is NOT a harness detail: a client that outlives its SIGKILLed container is what an operator's installer would
+# do on a real OOM kill, so the forced path is recorded (L1B_KILL_FORCED=<name> in l1b.summary, a FINDING line) and, under CI, fails
+# the scenario unless LAB_ALLOW_FORCED_KILL=1 says the integrator has seen it. A job can never go green because the lab covered for it.
 lab_kill9_migrator() {
-  local names n i
+  local names n i forced=""
   names="$(docker ps --filter 'name=tugra-migrator-' --format '{{.Names}}')"
   [ -n "$names" ] || lab_die "no migrator container is running"
   for n in $names; do docker kill --signal KILL "$n" >/dev/null; done
@@ -225,7 +227,9 @@ lab_kill9_migrator() {
     while pgrep -f -- "--name $n" >/dev/null 2>&1; do
       i=$((i + 1))
       if [ "$i" -gt "${LAB_KILL_REAP_TICKS:-40}" ]; then
-        lab_log "the docker client of the killed migrator $n did not exit within the bound: killing it"
+        lab_log "FINDING: the docker client of the SIGKILLed migrator $n did not exit within the bound (the docker run --rm client of install/migrator-install-script.ts): killing it by hand"
+        echo "L1B_KILL_FORCED=$n" >>"$LAB_DIR/l1b.summary"
+        forced="$forced $n"
         pkill -KILL -f -- "--name $n" >/dev/null 2>&1 || true
         break
       fi
@@ -233,6 +237,9 @@ lab_kill9_migrator() {
     done
     docker rm -f "$n" >/dev/null 2>&1 || true
   done
+  if [ -n "$forced" ] && [ "${CI:-}" = true ] && [ "${LAB_ALLOW_FORCED_KILL:-}" != 1 ]; then
+    lab_die "the installer's docker client did not exit after its migrator container was SIGKILLed (${forced# }): the product hangs on an OOM-style kill, the lab only covered for it (LAB_ALLOW_FORCED_KILL=1 accepts it knowingly)"
+  fi
 }
 
 # lab_item <tag> <field>: a field of THIS op's volume item in the run's JSON result (state, reason, parts, disk, ...).

@@ -136,3 +136,10 @@ lab_fingerprint_compare() {
   fi
   lab_log "FINDING $label: the destination dropped roles/users, ownership, grants or routines (see the access diff); the streamed dump runs without ownership, ACL or routine options. Set L_INTEGRITY_ACCESS=require to make this a failure."
 }
+
+# lab_tls_cert_refusal <libpq output>: true when the text is libpq REFUSING TO VERIFY the server's certificate (sslmode=verify-ca/verify-full
+# against a pair no trusted root signed): a missing root certificate file, or a failed chain check. A refused connection of any other kind
+# (a server with no TLS at all, a refused port, a bad password) is not this, so "verify-ca is refused" cannot pass on a plain failure.
+lab_tls_cert_refusal() {
+  printf '%s' "$1" | grep -Eq 'root certificate file .* does not exist|certificate verify failed|unable to get (local )?issuer certificate|self[- ]signed certificate'
+}

@@ -59,7 +59,7 @@ the fix removes the header. L1a, L2, L8 and L9 are the scenarios that prove it o
   docker was available to reproduce. Two changes bound the possible suspects: `migrate.sh` no longer ends with an unbounded `wait` (it
   waited for the stderr tee, which any stray descendant holding the pipe would keep alive; it now waits at most 5 s for the log to
   drain), and a `lab_run_wait` timeout prints the live processes (`migrate.sh`, the installer, `docker run/kill/rm`, the tee) and the
-  containers. If L1b is red again, those two blocks in the job log name the holder. `lab_kill9_migrator` also kills by name, waits a bounded time (`LAB_KILL_REAP_TICKS`, 20 s) for the run's installer-side `docker run` client to exit, kills a client that does not, and removes the container by name, logging whatever it had to force, so a stuck client is visible and can no longer be what the scenario waits on.
+  containers. If L1b is red again, those two blocks in the job log name the holder. `lab_kill9_migrator` also kills by name, waits a bounded time (`LAB_KILL_REAP_TICKS`, 20 s) for the run's installer-side `docker run` client to exit, kills a client that does not, and removes the container by name. **What it had to force is a finding, not a detail**: a client that outlives its SIGKILLed container is what an operator's installer would do on a real OOM kill. It is logged as a `FINDING` line, written to `l1b.summary` (`L1B_KILL_FORCED=<container>`), and **fails the scenario under CI** unless `LAB_ALLOW_FORCED_KILL=1` says the integrator has seen it, so L1b can never go green because the lab covered for the product. `migrate.sh` records a log tee that did not drain within its 5 s bound the same way (`FINDING` line, `tee.summary`).
 
 **A product bug seen in run 3's hub log (not a lab failure).** `container-health.runner.service.ts` line 235 builds
 `containerName: { notIn: liveNames.length ? liveNames : ["\u0000"] }`: when a server reports no containers the sentinel is a NUL
@@ -369,20 +369,33 @@ migrator rides it (`--hub-outage-wait`) and the run ends `volume-applied`. The d
 same strict fingerprint; the access objects are compared and recorded (below). The source is asserted untouched (same `StartedAt`), no
 helper or migrator container is left, and nothing else on the host changed. The summary carries the copy time, the parts and the staged
 parts left after the restore.
+The outage is evidenced, not assumed: the run has no exit code at the moment of the kill, its last committed part is recorded
+(`L15_PART_AT_KILL`), and the run must commit parts after the hub came back. A run that ends early with a non-zero exit dies with the
+migrator's failure and the log tail; only a clean exit 0 before the kill is reported as a dataset too small for the link. For PostgreSQL the
+destination's container is then recreated through the hub's own provision route and the rows are counted again.
 **The 18 leg is expected red today** with a `PRODUCT FINDING` line: the hub refuses a streamed dump into a PostgreSQL 18 destination, because
 Tugra mounts the database volume at the pre-18 data path (`database-script.ts`), so the restored cluster would sit outside the named volume.
 The gate is `importer/volume-stream/vx-dest-gate.ts` `dumpDestLayout`, called from `vx.service.ts` `begin` and `vx-apply.service.ts`
-`runDumpApply`. When provisioning keeps the cluster and the gate is lifted, this job and L9's streamed leg turn green with no change.
+`runDumpApply`. **The defect underneath is wider than the gate**: `databases/database-script.ts` builds every PostgreSQL run with
+`-v <volume>:/var/lib/postgresql/data` and no `PGDATA`, while the 18 image keeps its cluster under `/var/lib/postgresql/18/docker`, outside
+that mount, in an anonymous volume that a recreate orphans. **Every PostgreSQL 18 database Tugra provisions is affected**, fresh or restored,
+and nothing but a recreate shows it, which is why L16 leg A and the streamed legs recreate the container (`lab_dest_survives_recreate`) and
+name it as a `PRODUCT FINDING` when the rows are gone. When provisioning keeps the cluster and the gate is lifted, L15 and L9's streamed leg
+turn green with no change, and so does L16's leg B (it is decided on the hub's refusal, not on the version).
 
 ### L16 PostgreSQL TLS (`l16-pg-tls.sh`, `L16_IMAGE`)
 `L16_IMAGE` is 16, 17, 18 or pgvector 17. **A**: a fresh destination with `Database.ssl` (what the importer sets from a `sslmode=require`
 source), provisioned through the hub's own route. The server reports `ssl = on`, the self-signed pair exists on the host (key 0600,
 directory 0700), a client with `sslmode=require` connects from inside the container **and from a second container on the destination's
 docker network**, `pg_stat_ssl` says both sessions are encrypted and carry a TLS version, rows written over TLS read back, and
-`sslmode=verify-ca` is refused (the pair is self-signed: a CA the client trusts is a manual step). A pgvector image also creates its
-extension and answers a nearest-neighbour query over TLS. **B**: the same kind of destination receives a database through the streamed lane
-(L15's source and checks) and is read back over `sslmode=require`: the strict fingerprint is equal. B is skipped on 18 for the reason in L15
-and the skip is written to `l16.summary` (`L16_RESTORE=skipped-pg18-destination-refused`), not hidden.
+`sslmode=verify-ca` is refused **by libpq's certificate check** (the client container has no root certificate; the error text is asserted, so a
+server with no TLS at all does not satisfy it; a CA the client trusts is a manual step). A pgvector image also creates its extension and
+answers a nearest-neighbour query over TLS. The hub then recreates the container through its own provision route and the rows must still be
+there (`L16_PERSISTENCE=ok`, or `lost-on-recreate` as a `PRODUCT FINDING`, see L15; the leg keeps gathering evidence and fails at its end).
+**B**: the same kind of destination receives a database through the streamed lane (L15's source and checks) and is read back over
+`sslmode=require`: the strict fingerprint is equal, and the data survives a recreate. B is always attempted; when the hub answers with the
+PostgreSQL 18 destination refusal (L15) the skip is written to `l16.summary` (`L16_RESTORE=skipped-pg18-destination-refused`) and the
+refusal is named, not hidden.
 
 ### Data integrity (`integrity.sh`)
 A row count proves rows arrived, not that the database means the same on the target. L6, L9, L10, L15 and L16 compare a **fingerprint**

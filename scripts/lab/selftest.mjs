@@ -902,20 +902,81 @@ test("stream.sh: the plan measures first with the caller's hub flag in front, an
   assert.match(s, /lab_expect_item "\$tag" volume-applied/);
 });
 
-test("L16: a TLS destination read from inside and from a client container, the restore read back over TLS, 18 skips only the restore", () => {
+test("L16: a TLS destination read from inside and from a client container, the restore read back over TLS, the refusal (not the major) skips the restore", () => {
   const s = read("l16-pg-tls.sh");
   assert.match(s, /--data-mode dump --ssl/);
   assert.match(s, /lab_api POST "\/databases\/\$DB_ID\/provision"/);
   assert.match(s, /test "\$\(lab_pg_q "\$CTR" "\$U" "\$D" 'show ssl'\)" = on/);
   assert.match(s, /select ssl from pg_stat_ssl where pid = pg_backend_pid\(\)/);
   assert.match(s, /tls_client require/);
-  assert.match(s, /sslmode=verify-ca is refused/);
+  assert.match(s, /sslmode=verify-ca is refused by libpq's certificate check/);
+  assert.match(s, /lab_tls_cert_refusal "\$out"/, "the reason of the verify-ca failure is checked, not just a non-zero exit");
   assert.match(s, /create extension if not exists vector/);
   assert.match(s, /--data-mode stream --ssl/);
   assert.match(s, /export LAB_PG_TLS=1\nlab_check "the restored database is served over TLS/);
   assert.match(s, /L16_RESTORE=skipped-pg18-destination-refused/, "the skip is recorded, not hidden");
-  assert.match(s, /\[ "\$MAJOR" -ge 18 \]/);
+  assert.doesNotMatch(s, /\[ "\$MAJOR" -ge 18 \]/, "leg B is decided on the hub's refusal, never on the version, so lifting the gate needs no edit");
+  assert.match(s, /lab_stream_refused copy/);
   assert.doesNotMatch(s, /sslmode=disable/);
+  // the persistence check: leg A on every major (the 18 image is the one that fails it), after the last TLS read and before leg B
+  const persist = s.indexOf("lab_dest_survives_recreate \"$CTR\"");
+  assert.ok(persist > s.indexOf("L16_FRESH_TLS=ok") && persist < s.indexOf("# ---- B."), "leg A recreates the fresh destination and recounts, for every major");
+  assert.match(s, /L16_PERSISTENCE=lost-on-recreate/);
+  assert.match(s, /lab_dest_survives_recreate "\$DST_CTR"/, "the streamed destination is recreated and recounted too");
+});
+
+test("lab_stream_refused: the refusal text decides, a failed run of another kind is not blamed on the gate", () => {
+  const dir = tmp();
+  writeFileSync(join(dir, "run.a.log"), "error: the destination is PostgreSQL 18 or newer, whose data directory Tugra database volumes cannot persist yet\n");
+  writeFileSync(join(dir, "run.b.log"), "error: connection reset\n");
+  const run = (tag) => bash(`. ${join(LAB, "stream.sh")}; lab_stream_refused ${tag}`, { LAB_DIR: dir });
+  assert.equal(run("a").status, 0);
+  assert.notEqual(run("b").status, 0);
+  assert.notEqual(run("missing").status, 0);
+});
+
+test("lab_dest_survives_recreate: the hub's provision route recreates the container, rows lost across it are a named PRODUCT FINDING", () => {
+  const body = (psql) => `echo "$*" >>"$LAB_DIR/docker.calls"; case "$*" in *pg_isready*) exit 0;; *psql*) ${psql};; esac; exit 0`;
+  const script = (dir) => `. ${join(LAB, "stream.sh")}
+lab_api() { echo "api $*" >>"$LAB_DIR/api.calls"; }
+lab_wait() { :; }
+lab_dest_survives_recreate ctr-1 u d tls_t 100000 db-1`;
+  // the rows are all there
+  let dir = tmp();
+  let r = bash(script(dir), fakeDocker(dir, body("echo 100000")));
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(readFileSync(join(dir, "api.calls"), "utf8"), /api POST \/databases\/db-1\/provision/);
+  assert.match(r.stderr, /holds all 100000 rows/);
+  // the table is gone after the recreate (a PostgreSQL 18 cluster outside the named volume): psql fails
+  dir = tmp();
+  r = bash(script(dir), fakeDocker(dir, body("echo 'ERROR: relation does not exist' >&2; exit 1")));
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /PRODUCT FINDING: after the hub recreated the destination container \(ctr-1\) tls_t reads 'lost', not 100000/);
+  assert.match(r.stderr, /databases\/database-script\.ts/);
+  assert.match(r.stderr, /Every PostgreSQL 18\+ database Tugra provisions is affected, restored or fresh/);
+  // a partial table is as lost as a missing one
+  dir = tmp();
+  r = bash(script(dir), fakeDocker(dir, body("echo 99999")));
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /reads '99999'/);
+  // the legs that move data call it
+  for (const f of ["l15-stream-dump.sh", "l9-fleet-pg.sh"]) assert.match(read(f), /lab_dest_survives_recreate "\$DST_CTR"/, f);
+});
+
+test("lab_tls_cert_refusal: only libpq refusing the certificate counts, never any failed connection", () => {
+  const ok = (t) => bash(`. ${join(LAB, "integrity.sh")}; lab_tls_cert_refusal "$T"`, { T: t }).status === 0;
+  assert.ok(ok('psql: error: connection to server at "10.0.0.2", port 5432 failed: root certificate file "/root/.postgresql/root.crt" does not exist\nEither provide the file or change sslmode to disable server certificate verification.'));
+  assert.ok(ok('psql: error: connection to server failed: SSL error: certificate verify failed'));
+  assert.ok(!ok('psql: error: connection to server at "10.0.0.2", port 5432 failed: server does not support SSL, but SSL was required'), "a server with no TLS at all");
+  assert.ok(!ok('psql: error: connection to server failed: Connection refused'));
+  assert.ok(!ok('psql: error: connection failed: FATAL: password authentication failed for user "x"'));
+});
+
+test("every translated README names the same MCP tool count as README.md", () => {
+  const count = (f) => /(\d+) tools⁵/.exec(readFileSync(join(ROOT, f), "utf8"))?.[1];
+  const want = count("README.md");
+  assert.ok(want, "README.md states a count");
+  for (const l of ["zh", "fr", "tr", "es", "de", "ja", "pt"]) assert.equal(count(`README.${l}.md`), want, `README.${l}.md`);
 });
 
 test("fleet.sh: a pull that cannot succeed says which image and why, after retries", () => {
@@ -937,6 +998,7 @@ test("migrate.sh and lib.sh: the log tee drains within a bound, a run that never
   assert.doesNotMatch(m.split("\n").filter((l) => !l.startsWith("#")).join("\n"), /^wait$/m, "a bare wait has no limit (lab run 3: L1b waited 120 s for a killed migrator's run)");
   assert.match(m, /: >"\$ERR\.done"/);
   assert.match(m, /seq 1 50/);
+  assert.match(m, /L_TEE_UNDRAINED=\$TAG/, "an undrained tee is recorded, not silent");
   const l = read("lib.sh");
   assert.match(l, /run \$tag: processes/);
   assert.match(l, /run \$tag: containers/);
@@ -979,25 +1041,53 @@ test("stream legs: a PostgreSQL 18 refusal is named before any exit-code check c
   const early = l15.indexOf("lab_stream_note_refusal stream");
   assert.ok(early > 0 && early < l15.indexOf('if [ "$(lab_last_part stream)" -lt 1 ]') && early < l15.indexOf("finished before the hub could be killed"), "the early exit names the refusal first");
   assert.match(l15, /ended before any part was committed/, "a run with no committed part is a refusal or failure, not a small dump");
+  // a run that committed parts and then failed is a failure, only a clean exit 0 is "too small"
+  const fail = l15.indexOf('if [ "$early_rc" != 0 ]');
+  assert.ok(fail > 0 && fail < l15.indexOf("the dump finished before the hub could be killed in flight") && /lab_stream_fail stream "the streamed run failed after part/.test(l15.slice(fail)), "a non-zero early exit dies with the migrator failure and the log tail");
+  assert.match(l15, /the migrator exited 0/);
+  // the outage is evidenced: still running at the kill, and parts committed after the restart
+  assert.ok(l15.indexOf('[ ! -f "$LAB_DIR/run.stream.rc" ]') < l15.indexOf('"$LAB_SELF_DIR/hub.sh" kill'), "no exit code at the moment of the kill");
+  assert.match(l15, /PART_AT_KILL="\$\(lab_last_part stream\)"/);
+  assert.match(l15, /test "\$\(lab_last_part stream\)" -gt "\$PART_AT_KILL"/, "parts moved after the outage");
+  assert.match(l15, /lab_dest_survives_recreate/);
 });
 
-test("lab_kill9_migrator: kills by name, waits a bound for the run's docker client, kills a stuck one, removes the container", (t) => {
+test("lab_kill9_migrator: kills by name, waits a bound for the run's docker client, kills a stuck one, records it, fails under CI", (t) => {
   if (spawnSync("bash", ["-c", "command -v pgrep && command -v pkill"]).status !== 0) return t.skip("pgrep or pkill is missing");
   const dir = tmp();
   const env = fakeDocker(dir, `echo "$*" >>"$LAB_DIR/docker.calls"; case "$1" in ps) echo tugra-migrator-4242;; esac; exit 0`);
   // a stand-in for the installer's stuck `docker run` client
-  const stuck = spawn("bash", ["-c", "sleep 60; exit 0", "stuck-docker-client", "--name", "tugra-migrator-4242"], { stdio: "ignore", detached: true });
+  const standIn = () => spawn("bash", ["-c", "sleep 60; exit 0", "stuck-docker-client", "--name", "tugra-migrator-4242"], { stdio: "ignore", detached: true });
+  const live = [];
   try {
+    let stuck = standIn(); live.push(stuck);
     const r = bash(`. ${join(LAB, "lib.sh")}; lab_kill9_migrator`, { ...env, LAB_KILL_REAP_TICKS: "2" });
     assert.equal(r.status, 0, r.stderr);
     const calls = readFileSync(join(dir, "docker.calls"), "utf8");
     assert.match(calls, /kill --signal KILL tugra-migrator-4242/);
     assert.match(calls, /rm -f tugra-migrator-4242/);
-    assert.match(r.stderr, /did not exit within the bound: killing it/);
+    assert.match(r.stderr, /FINDING: the docker client of the SIGKILLed migrator tugra-migrator-4242 did not exit within the bound/);
+    assert.match(readFileSync(join(dir, "l1b.summary"), "utf8"), /^L1B_KILL_FORCED=tugra-migrator-4242$/m, "what had to be forced is recorded for the integrator");
     assert.equal(spawnSync("pgrep", ["-f", "--", "--name tugra-migrator-4242"]).status, 1, "the stuck client was killed");
+    // under CI a forced kill is a failure (the product's docker client hung, the lab only covered for it), unless knowingly allowed
+    writeFileSync(join(dir, "docker.calls"), "");
+    stuck = standIn(); live.push(stuck);
+    const ci = bash(`. ${join(LAB, "lib.sh")}; lab_kill9_migrator`, { ...env, LAB_KILL_REAP_TICKS: "2", CI: "true" });
+    assert.equal(ci.status, 1, "a forced kill under CI must fail the scenario");
+    assert.match(ci.stderr, /the installer's docker client did not exit after its migrator container was SIGKILLed \(tugra-migrator-4242\)/);
+    assert.match(readFileSync(join(dir, "docker.calls"), "utf8"), /rm -f tugra-migrator-4242/, "the container is still removed before the scenario fails");
+    stuck = standIn(); live.push(stuck);
+    const allowed = bash(`. ${join(LAB, "lib.sh")}; lab_kill9_migrator`, { ...env, LAB_KILL_REAP_TICKS: "2", CI: "true", LAB_ALLOW_FORCED_KILL: "1" });
+    assert.equal(allowed.status, 0, allowed.stderr);
   } finally {
-    try { process.kill(-stuck.pid, "SIGKILL"); } catch { /* already gone */ }
+    for (const p of live) { try { process.kill(-p.pid, "SIGKILL"); } catch { /* already gone */ } }
   }
+  // a client that exits on its own is not a finding, even under CI
+  const clean = tmp();
+  const cleanEnv = fakeDocker(clean, `case "$1" in ps) echo tugra-migrator-4243;; esac; exit 0`);
+  const rc = bash(`. ${join(LAB, "lib.sh")}; lab_kill9_migrator`, { ...cleanEnv, CI: "true" });
+  assert.equal(rc.status, 0, rc.stderr);
+  assert.equal(existsSync(join(clean, "l1b.summary")), false);
   const none = fakeDocker(tmp(), `exit 0`);
   const r2 = bash(`. ${join(LAB, "lib.sh")}; lab_kill9_migrator`, none);
   assert.equal(r2.status, 1);

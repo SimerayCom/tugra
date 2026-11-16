@@ -9,12 +9,13 @@
 #   2. the migrator's measuring dry run plans the streamed row (`would-stream-dump`) and leaves the source running
 #   3. THE HUB IS KILLED (SIGKILL) while the dump is in flight, with the migrator behind a throttled link so that is a window and not
 #      a race; the migrator rides the outage and the run ends `volume-applied` with no operator action
-#   4. the destination the hub started holds the same data: the strict fingerprint (rows and a checksum over every column, extensions,
+#   4. the destination the hub started holds the same data (and, for PostgreSQL, still holds it after the hub recreated its container): the strict fingerprint (rows and a checksum over every column, extensions,
 #      sequences' last_value, collation, AUTO_INCREMENT) is equal. Roles/users, ownership, grants and routines are compared too and
 #      RECORDED as a finding where the lane drops them (the dump runs with --no-owner --no-acl / without --routines); L_INTEGRITY_ACCESS=
 #      require makes that a failure.
 # A PostgreSQL 18 destination is refused by the hub today (vx-dest-gate.ts dumpDestLayout): the 18 leg fails with that named as a PRODUCT
-# FINDING until the destination can keep the cluster, it is not worked around here.
+# FINDING until the destination can keep the cluster, it is not worked around here. The underlying defect is wider than a streamed
+# restore: every PostgreSQL 18+ database Tugra provisions keeps its cluster outside its named volume (L16 leg A shows it on a fresh one).
 set -euo pipefail
 # shellcheck source=fleet.sh
 . "$(dirname "${BASH_SOURCE[0]}")/fleet.sh"
@@ -93,26 +94,35 @@ dump_in_flight_or_done() { [ "$(lab_last_part stream)" -ge 1 ] || [ -f "$LAB_DIR
 lab_wait 900 "the first dumped parts" dump_in_flight_or_done
 if [ -f "$LAB_DIR/run.stream.rc" ]; then
   early_rc="$(cat "$LAB_DIR/run.stream.rc")"
-  tail -30 "$LAB_DIR/run.stream.log" >&2
   lab_stream_note_refusal stream
   # a run that ended with no committed part was refused or failed at the start (a destination gate answers before any byte moves):
   # that is a result of the lane, not a dump that was too small for the link
   if [ "$(lab_last_part stream)" -lt 1 ]; then
-    lab_die "the streamed run ended before any part was committed (migrator exit $early_rc): it was refused or failed at the start, see the log above"
+    lab_stream_fail stream "the streamed run ended before any part was committed (migrator exit $early_rc): it was refused or failed at the start"
   fi
-  # the whole dump fit before the hub could be killed: the data was too small for the link, not a product result
-  lab_die "the dump finished before the hub could be killed in flight (raise L15_MIB or lower L15_RATE; $early_rc is the migrator's exit)"
+  # a run that committed parts and then FAILED is a failure of the lane (a hub 5xx, a dump error), never a small dataset
+  if [ "$early_rc" != 0 ]; then
+    lab_stream_fail stream "the streamed run failed after part $(lab_last_part stream) with migrator exit $early_rc, before the hub could be killed"
+  fi
+  # only a clean exit 0 is the whole dump fitting before the hub could be killed: the data was too small for the link, not a product result
+  tail -30 "$LAB_DIR/run.stream.log" >&2
+  lab_die "the dump finished before the hub could be killed in flight (raise L15_MIB or lower L15_RATE; the migrator exited 0)"
 fi
 lab_log "the dump is in flight (part $(lab_last_part stream) committed): killing the hub"
+# the outage must be a real one: the run is still going at the moment of the kill (no exit code yet) and its last committed part is noted,
+# so that parts committed AFTER the restart prove the migrator rode the outage with work still in flight
+[ ! -f "$LAB_DIR/run.stream.rc" ] || lab_die "the dump finished just before the hub could be killed (raise L15_MIB or lower L15_RATE)"
+PART_AT_KILL="$(lab_last_part stream)"
 "$LAB_SELF_DIR/hub.sh" kill
 sleep 15
 "$LAB_SELF_DIR/hub.sh" start
-echo "L15_HUB_RESTARTS=1" >>"$LAB_DIR/l15.summary"
+echo "L15_HUB_RESTARTS=1 L15_PART_AT_KILL=$PART_AT_KILL" >>"$LAB_DIR/l15.summary"
 rc="$(lab_run_wait stream 3600)"
 secs=$(( $(date +%s) - t0 ))
 lab_proxy_stop
 lab_stream_expect_applied stream
 [ "$rc" = 0 ] || lab_stream_fail stream "migrator exit $rc"
+lab_check "the migrator committed parts AFTER the hub came back (the dump was in flight during the outage: last part before the kill $PART_AT_KILL, after $(lab_last_part stream))" test "$(lab_last_part stream)" -gt "$PART_AT_KILL"
 lab_log "the dump rode the hub outage and was applied: $(lab_item stream parts) parts, $(lab_item stream rawBytes) raw B, ${secs} s"
 echo "L15_COPY_SECONDS=$secs L15_PARTS=$(lab_item stream parts) L15_RAW_BYTES=$(lab_item stream rawBytes)" >>"$LAB_DIR/l15.summary"
 lab_stream_transfer_done
@@ -131,12 +141,15 @@ if [ "$ENGINE" = POSTGRES ]; then
   DST_ROWS="$(lab_pg_q "$DST_CTR" "$DU" "$DD" 'select count(*) from ticks')"
   lab_check "the row count equals the source ($SRC_ROWS)" test "$DST_ROWS" = "$SRC_ROWS"
   lab_pg_fingerprint "$DST_CTR" "$DU" "$DD" ticks "$VEC_ARG" >"$LAB_DIR/l15.fp.dst"
+  lab_fingerprint_compare l15 "$LAB_DIR/l15.fp.src" "$LAB_DIR/l15.fp.dst" L15
+  # the restored rows live in the destination's named volume: recreate its container through the hub and count again
+  lab_dest_survives_recreate "$DST_CTR" "$DU" "$DD" ticks "$SRC_ROWS" || lab_die "the restored database did not survive a recreate of its container (PRODUCT FINDING above)"
 else
   DPW="$(lab_ctr_env "$DST_CTR" MARIADB_ROOT_PASSWORD)"; DD="$(lab_ctr_env "$DST_CTR" MARIADB_DATABASE)"
   lab_wait 120 "the destination mariadb to accept connections" docker exec -e "MYSQL_PWD=$DPW" "$DST_CTR" mariadb-admin -uroot ping
   DST_ROWS="$(lab_maria_q "$DST_CTR" "$DPW" "$DD" 'select count(*) from blobs')"
   lab_check "the row count equals the source ($SRC_ROWS)" test "$DST_ROWS" = "$SRC_ROWS"
   lab_maria_fingerprint "$DST_CTR" "$DPW" "$DD" >"$LAB_DIR/l15.fp.dst"
+  lab_fingerprint_compare l15 "$LAB_DIR/l15.fp.src" "$LAB_DIR/l15.fp.dst" L15
 fi
-lab_fingerprint_compare l15 "$LAB_DIR/l15.fp.src" "$LAB_DIR/l15.fp.dst" L15
 lab_pass "L15 $IMAGE: streamed dump, hub killed mid-dump, rows and checksums, sequences, collation, extensions equal"
