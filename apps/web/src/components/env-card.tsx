@@ -91,6 +91,10 @@ export function EnvCard({
   const flagsOn = flagsEnabled && !!flagsData; // per-row flag UI + the flags payload only exist when flags loaded
   const ctx = { applicable: flagsData?.applicable ?? { buildTime: false, literal: false } };
   const [rows, setRows] = useState<Row[]>([]);
+  // The env object the rows were last seeded from. Rows are seeded in an effect, so the render in which a new env
+  // arrives still shows the previous rows; comparing those against the new env would read as "dirty" for one
+  // commit and arm the leave guard. Only rows seeded from the current env can be dirty.
+  const [seededFrom, setSeededFrom] = useState<typeof env>(undefined);
   const [query, setQuery] = useState("");
   const [sorted, setSorted] = useState(false); // alphabetical VIEW toggle (never reorders the stored map)
   const [bulk, setBulk] = useState(false);
@@ -114,6 +118,7 @@ export function EnvCard({
       // With the flags unavailable a value that holds a line break is shown as a multiline block (a single-line
       // <input> would flatten it on display and on save); nothing about it is sent.
       setRows(Object.entries(env).map(([key, value]) => newRow(key, value, canonicalFlags({ ...flagsData?.flags[key], ...(flagsFailed && hasLineBreak(value) ? { multiline: true } : {}) }))));
+      setSeededFrom(env);
       remask();
     }
   }, [env, flagsData, flagsEnabled, flagsFailed, remask]);
@@ -215,7 +220,7 @@ export function EnvCard({
   // (while loading/errored, rows is still [] and a click would PUT {} and wipe everything) and only
   // enable on a real change.
   const flagsLoaded = !flagsEnabled || !!flagsData || flagsFailed;
-  const dirty = flagsLoaded && envDirty(rows, env, flagsOn ? flagsData?.flags : undefined);
+  const dirty = flagsLoaded && seededFrom === env && envDirty(rows, env, flagsOn ? flagsData?.flags : undefined);
   // Flag problems block Save (same pattern as duplicate keys); the server still has the final say.
   const issuesByRow = flagsOn ? rows.map((r) => rowIssues(r, ctx)) : rows.map(() => []);
   const budget = flagsOn ? budgetIssues(rows) : [];
