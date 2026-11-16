@@ -217,12 +217,41 @@ export const PG_LEGACY_DATA_MOUNT = "/var/lib/postgresql/data";
 export const PG_PARENT_MOUNT = "/var/lib/postgresql";
 const PG_NEW_LAYOUT_FROM_MAJOR = 18;
 
-/** The PostgreSQL major of a database: its version, else the tag of a `postgres:<major>` image; null when neither says. */
+/** What a floating tag (`latest`, `alpine`, a bare `postgres`, `bookworm`...) of the official image resolves to: the major published today. Only the ">= 18" decision matters. */
+export const PG_FLOATING_MAJOR = 18;
+
+/** The PostgreSQL major an image reference says: `postgres:18-alpine` 18, `postgis/postgis:17-3.5` 17, `...:2.17-pg16` 16, `postgres:latest` the floating major; null when it names none. */
+function pgMajorOfImage(image: string | null | undefined): number | null {
+  const ref = (image ?? "").trim().toLowerCase().replace(/@sha256:[a-f0-9]+$/, "");
+  if (!ref) return null;
+  const slash = ref.lastIndexOf("/");
+  const tagAt = ref.indexOf(":", slash + 1);
+  const base = tagAt === -1 ? ref.slice(slash + 1) : ref.slice(slash + 1, tagAt);
+  const tag = tagAt === -1 ? "" : ref.slice(tagAt + 1);
+  // pgvector/timescaledb style tags carry the major as a `pg<N>` token (`pg18`, `0.8.0-pg17`, `2.17.0-pg16-oss`).
+  const pg = /(?:^|[-_.])pg(\d{1,2})(?:$|[-_.])/.exec(tag);
+  if (pg) return Number(pg[1]);
+  const official = base === "postgres";
+  if (!official && base !== "postgis") return null; // an unknown image: its tag proves nothing, the stored version decides
+  const lead = /^(\d{1,2})(?:[.-]|$)/.exec(tag);
+  if (lead) return Number(lead[1]);
+  // The official image with no numeric tag follows the newest major (`postgres`, `postgres:latest`, `postgres:alpine`, `postgres:bookworm`).
+  return official && !/^\d/.test(tag) ? PG_FLOATING_MAJOR : null;
+}
+
+/**
+ * The PostgreSQL major of a database. The IMAGE is the truth (a row created with a custom `postgres:18` image carries the default
+ * version "16"), so its tag is read first and a floating tag counts as the newest major; the stored version only decides when the
+ * image names none. Null when neither says.
+ */
 export function pgMajorOfDb(version: string | null | undefined, image?: string | null): number | null {
-  const v = /^(\d{1,2})(?:[.-]|$)/.exec((version ?? "").trim());
-  if (v) return Number(v[1]);
-  const m = /(?:^|\/)postgres:(\d{1,2})(?:[.-]|$)/.exec((image ?? "").trim());
-  return m ? Number(m[1]) : null;
+  const fromImage = pgMajorOfImage(image);
+  if (fromImage !== null) return fromImage;
+  const v = (version ?? "").trim().toLowerCase();
+  const n = /^(\d{1,2})(?:[.-]|$)/.exec(v);
+  if (n) return Number(n[1]);
+  // A floating version ("latest") names the newest official image, but only when no other image was given.
+  return !(image ?? "").trim() && /^(latest|alpine|bookworm|trixie|bullseye)(?:[.-]|$)/.test(v) ? PG_FLOATING_MAJOR : null;
 }
 
 /** Whether a NEW database of this version/image must use the parent mount. */
@@ -236,6 +265,16 @@ export function pgDataLayout(db: { engine: string; version?: string | null; imag
   if (db.engine !== "POSTGRES") return "data";
   if (db.pgParentMount) return "parent";
   return pgWantsParentMount(db.version, db.image) ? "legacy-anon" : "data";
+}
+
+/** A row in one of these states may not have a cluster yet (a never-provisioned row, or a first provision that failed): its layout is settled at its next provision. */
+export function pgLayoutUnsettled(status: string): boolean {
+  return status === "NEW" || status === "FAILED";
+}
+
+/** A shell probe whose last output line says whether the database container exists on the host (any state): `tugra-container-present` or `tugra-container-absent`. */
+export function buildDbContainerProbeScript(db: { id: string }): string {
+  return `if docker inspect -f '{{.Id}}' ${dbContainerName(db)} >/dev/null 2>&1; then echo tugra-container-present; else echo tugra-container-absent; fi`;
 }
 
 /** The container path the managed data volume is mounted on. */

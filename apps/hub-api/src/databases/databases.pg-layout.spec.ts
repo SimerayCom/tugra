@@ -107,6 +107,62 @@ describe("DatabasesService: the PostgreSQL data layout", () => {
     for (const c of update.mock.calls) expect(c[0].data).not.toHaveProperty("pgParentMount");
   });
 
+  it("a custom postgres:18 image (default version 16), a floating tag and a postgis image are created with the parent mount", async () => {
+    const cases: Array<[string | undefined, string | undefined, boolean]> = [
+      [undefined, "postgres:18", true],
+      ["16", "postgres:18-alpine", true],
+      [undefined, "postgres:latest", true],
+      [undefined, "postgres:alpine", true],
+      ["latest", undefined, true],
+      ["alpine", undefined, true],
+      [undefined, "postgis/postgis:18-3.6", true],
+      [undefined, "postgres:17", false],
+      [undefined, "custom/img:1", false],
+    ];
+    for (const [version, image, flagged] of cases) {
+      const { svc, create } = make(row());
+      await svc.createForImport("u1", { name: "x", serverId: "s1", engine: "POSTGRES", ...(version ? { version } : {}), ...(image ? { image } : {}), username: "u", password: "p", database: "d" });
+      expect(`${image ?? version}:${create.mock.calls[0][0].data.pgParentMount === true}`).toBe(`${image ?? version}:${flagged}`);
+    }
+  });
+
+  it("a started row whose image is postgres:18 but whose version says 16 is flagged and keeps its mount", async () => {
+    const { svc, sendCommand } = make(row({ version: "16", image: "postgres:18", status: "RUNNING" }));
+    expect((await svc.get("u1", "db1")).dataLayoutWarning).toBe("pg_anonymous_volume");
+    await svc.provision("u1", "db1");
+    const s = runScript(sendCommand);
+    expect(mountOf(s)).toBe("/var/lib/postgresql/data");
+    expect(s).toContain("PGANON=$(docker inspect");
+  });
+
+  it("a FAILED PostgreSQL 18 row whose container does not exist moves to the parent mount at its next provision", async () => {
+    const { svc, sendCommand, update } = make(row({ version: "18", image: "postgres:18", pgParentMount: false, status: "FAILED" }));
+    sendCommand.mockImplementation((_s: string, script: string) =>
+      Promise.resolve(script.includes("docker inspect -f '{{.Id}}'") && !script.includes("docker run") ? { output: "tugra-container-absent\n", exitCode: 0 } : { output: "Up 1s", exitCode: 0 }),
+    );
+    await svc.provision("u1", "db1");
+    const run = sendCommand.mock.calls.map((c) => String(c[1])).find((s) => s.includes("docker run"))!;
+    expect(mountOf(run)).toBe("/var/lib/postgresql");
+    expect(run).not.toContain("PGANON");
+    expect(update.mock.calls[0][0].data).toMatchObject({ status: "PROVISIONING", pgParentMount: true });
+  });
+
+  it("a FAILED row whose container still exists, or whose host cannot be asked, keeps the old mount (the cluster may be in its anonymous volume)", async () => {
+    for (const probe of [() => Promise.resolve({ output: "tugra-container-present\n", exitCode: 0 }), () => Promise.reject(new Error("agent offline")), () => Promise.resolve({ output: "boom", exitCode: 1 })]) {
+      const { svc, sendCommand, update } = make(row({ version: "18", image: "postgres:18", pgParentMount: false, status: "FAILED" }));
+      sendCommand.mockImplementation((_s: string, script: string) => (script.includes("docker run") ? Promise.resolve({ output: "Up", exitCode: 0 }) : probe()));
+      await svc.provision("u1", "db1");
+      const run = sendCommand.mock.calls.map((c) => String(c[1])).find((s) => s.includes("docker run"))!;
+      expect(mountOf(run)).toBe("/var/lib/postgresql/data");
+      for (const c of update.mock.calls) expect(c[0].data).not.toHaveProperty("pgParentMount");
+    }
+  });
+
+  it("the view does not warn about a FAILED PostgreSQL 18 row (no cluster is known to exist)", async () => {
+    const { svc } = make(row({ version: "18", image: "postgres:18", status: "FAILED" }));
+    expect((await svc.get("u1", "db1")).dataLayoutWarning).toBeNull();
+  });
+
   it("PostgreSQL 16 and 17 databases keep the original mount and a script without any layout lines", async () => {
     for (const v of ["16", "17"]) {
       const { svc, sendCommand } = make(row({ version: v, image: `postgres:${v}`, status: "RUNNING" }));

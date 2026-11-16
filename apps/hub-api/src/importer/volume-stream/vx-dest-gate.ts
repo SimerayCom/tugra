@@ -2,7 +2,7 @@ import type { PrismaService } from "../../prisma/prisma.service";
 import { evaluateDbGates, type GateId, type GateResult } from "./vx-gates";
 import type { VxInventoryItem } from "./vx.dto";
 import { VX_RESTORE_BY_PREFIX } from "./vx-dump";
-import { pgDataLayout, pgMajorOfDb } from "../../databases/database-script";
+import { pgDataLayout, pgLayoutUnsettled, pgMajorOfDb } from "../../databases/database-script";
 
 /** The slice of a resolved destination the gates need. */
 export interface DbGateCtx {
@@ -68,13 +68,13 @@ export const PHYSICAL_DEST_PG18_TEXT =
  * Can the destination database keep what a streamed dump restores into it? A database that Tugra provisioned with the persistent
  * layout (every new PostgreSQL 18+ database: the volume is mounted at /var/lib/postgresql where that major keeps PGDATA) can, like
  * any pre-18 one. Refused only for a PostgreSQL 18+ row that was already started under the old mount: its cluster sits in an
- * anonymous volume, so pg_restore would succeed and the run would read DONE over data that is not persisted. A never-started row
- * (status NEW) is given the persistent layout when it is provisioned. Checked up front (before the first byte moves) and again before the restore.
+ * anonymous volume, so pg_restore would succeed and the run would read DONE over data that is not persisted. A row with no cluster yet (status NEW, or
+ * FAILED before it ever ran) is given the persistent layout when it is provisioned. Checked up front (before the first byte moves) and again before the restore.
  */
 export async function dumpDestLayout(prisma: Pick<PrismaService, "database">, resourceId: string): Promise<{ ok: true } | { ok: false; reason: string }> {
   const db = await prisma.database.findUnique({ where: { id: resourceId }, select: { engine: true, version: true, image: true, status: true, pgParentMount: true } });
   if (!db) return { ok: true }; // `dumpDestGate` reports a missing destination
   if (db.engine !== "POSTGRES") return { ok: true };
-  if (pgDataLayout(db) === "legacy-anon" && db.status !== "NEW") return { ok: false, reason: DUMP_DEST_PG_LAYOUT_TEXT };
+  if (pgDataLayout(db) === "legacy-anon" && !pgLayoutUnsettled(db.status)) return { ok: false, reason: DUMP_DEST_PG_LAYOUT_TEXT };
   return { ok: true };
 }

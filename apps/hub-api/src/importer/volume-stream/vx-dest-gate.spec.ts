@@ -21,8 +21,19 @@ describe("dumpDestLayout (the streamed dump into a PostgreSQL destination)", () 
     expect(await dumpDestLayout(prismaOf(db({ version: "latest", image: "postgres:19-alpine", status: "NEW" })), "d1")).toEqual({ ok: true });
   });
 
-  it("a PostgreSQL 18+ row that already ran under the old mount is the only one refused", async () => {
-    for (const status of ["RUNNING", "FAILED", "STOPPED"]) {
+  it("a FAILED PostgreSQL 18+ row is accepted: its next provision decides its layout from whether a container exists", async () => {
+    expect(await dumpDestLayout(prismaOf(db({ version: "18", image: "postgres:18", status: "FAILED" })), "d1")).toEqual({ ok: true });
+  });
+
+  it("the major comes from the image: a version-16 row on a postgres:18, postgres:latest or postgis image is refused once started", async () => {
+    for (const image of ["postgres:18", "postgres:latest", "postgres:alpine", "postgis/postgis:18-3.6"]) {
+      expect(await dumpDestLayout(prismaOf(db({ version: "16", image, status: "RUNNING" })), "d1")).toEqual({ ok: false, reason: DUMP_DEST_PG_LAYOUT_TEXT });
+      expect(await dumpDestLayout(prismaOf(db({ version: "16", image, status: "RUNNING", pgParentMount: true })), "d1")).toEqual({ ok: true });
+    }
+  });
+
+  it("a PostgreSQL 18+ row that already ran under the old mount is refused", async () => {
+    for (const status of ["RUNNING", "STOPPED"]) {
       expect(await dumpDestLayout(prismaOf(db({ version: "18", image: "postgres:18", status })), "d1")).toEqual({ ok: false, reason: DUMP_DEST_PG_LAYOUT_TEXT });
     }
   });
@@ -39,6 +50,11 @@ describe("dbGates (the physical copy) into a PostgreSQL 18+ destination", () => 
 
   it("a layout that would pass is refused, because the cluster lives under <major>/docker of the volume", async () => {
     const gates = await dbGates(prismaOf(db({ version: "18", image: "postgres:18", pgParentMount: true })), { resourceId: "d1", credentialsCarried: true }, { ...inv, image: "postgres:18" });
+    expect(gates.find((g) => g.id === "layout")).toEqual({ id: "layout", status: "fail", text: PHYSICAL_DEST_PG18_TEXT });
+  });
+
+  it("a version-16 row on a postgres:18 image is still a PostgreSQL 18 destination", async () => {
+    const gates = await dbGates(prismaOf(db({ version: "16", image: "postgres:18", pgParentMount: true })), { resourceId: "d1", credentialsCarried: true }, { ...inv, image: "postgres:18" });
     expect(gates.find((g) => g.id === "layout")).toEqual({ id: "layout", status: "fail", text: PHYSICAL_DEST_PG18_TEXT });
   });
 

@@ -517,6 +517,34 @@ describe("database-script: the PostgreSQL data layout (16 / 17 / 18)", () => {
     expect(dataMountFor("MYSQL", "parent")).toBe("/var/lib/mysql");
   });
 
+  it("the major is read from the image first: a default version 16 does not hide a postgres:18 image", () => {
+    expect(pgMajorOfDb("16", "postgres:18")).toBe(18);
+    expect(pgMajorOfDb("16", "docker.io/library/postgres:18.1-alpine")).toBe(18);
+    expect(pgMajorOfDb("18", "postgres:17")).toBe(17);
+    expect(pgMajorOfDb("16", "postgres:18@sha256:" + "a".repeat(64))).toBe(18);
+    expect(pgMajorOfDb("16", "registry.example.test:5000/mirror/postgres:18")).toBe(18);
+    // floating tags of the official image are the newest major, whatever the stored version says
+    for (const image of ["postgres:latest", "postgres:alpine", "postgres", "postgres:bookworm", "postgres:alpine3.22"]) expect(pgMajorOfDb("16", image)).toBe(18);
+    expect(pgMajorOfDb("latest", null)).toBe(18);
+    expect(pgMajorOfDb("alpine", "")).toBe(18);
+    // derived images keep the official layout and say their major in the tag
+    expect(pgMajorOfDb("16", "postgis/postgis:18-3.6")).toBe(18);
+    expect(pgMajorOfDb("16", "postgis/postgis:17-3.5-alpine")).toBe(17);
+    expect(pgMajorOfDb("16", "pgvector/pgvector:pg18")).toBe(18);
+    expect(pgMajorOfDb("16", "timescale/timescaledb:2.17.0-pg18")).toBe(18);
+    expect(pgMajorOfDb("18", "timescale/timescaledb:2.17.0-pg16")).toBe(16);
+    // an image that says nothing leaves the decision to the stored version
+    expect(pgMajorOfDb("17", "custom/img:1")).toBe(17);
+    expect(pgMajorOfDb("latest", "custom/img:1")).toBeNull();
+    expect(pgWantsParentMount("16", "postgres:18")).toBe(true);
+    expect(pgWantsParentMount("16", "postgres:latest")).toBe(true);
+    expect(pgWantsParentMount("16", "postgis/postgis:18-3.6")).toBe(true);
+    expect(pgWantsParentMount("18", "postgres:16")).toBe(false);
+    expect(pgDataLayout({ engine: "POSTGRES", version: "16", image: "postgres:18" })).toBe("legacy-anon");
+    expect(pgDataLayout({ engine: "POSTGRES", version: "latest", image: "postgres:latest" })).toBe("legacy-anon");
+    expect(pgDataLayout({ engine: "POSTGRES", version: "16", image: "postgres:16-alpine" })).toBe("data");
+  });
+
   describe("the legacy-anon script under a real shell (a fake docker on PATH)", () => {
     function runArgs(anonName: string): string {
       const dir = mkdtempSync(join(tmpdir(), "tugra-pgl-"));
