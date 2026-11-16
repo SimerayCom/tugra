@@ -2507,7 +2507,7 @@ export type MigrationRunTopology = "two-box" | "swap-proxy";
 export type MigrationRunEvidenceKind = "hub-verified" | "migrator-reported" | "operator-attested" | "source-api-reported" | "host-loop-reported";
 export type MigrationRunCheckStatus = "pass" | "fail" | "warn" | "unknown";
 export type MigrationRunOwnerInputKey =
-  | "acmeEmail" | "allowBind" | "allowLiveShapeProbe" | "sourceController" | "minioPolicy" | "tickGapAcceptMinutes" | "workerPolicy" | "unlistedDbPolicy" | "orphanVolumePolicy";
+  | "acmeEmail" | "allowBind" | "allowLiveShapeProbe" | "sourceController" | "minioPolicy" | "workerPolicy" | "unlistedDbPolicy" | "orphanVolumePolicy";
 export type MigrationRunMinioPolicy = "hold" | "mirror" | "external";
 export type MigrationRunWorkerPolicy = "hold-dark" | "start-dark" | "exclude";
 export type MigrationRunUnlistedDbPolicy = "block" | "carry" | "skip";
@@ -2642,7 +2642,6 @@ export interface MigrationRunOwnerInputs {
   allowLiveShapeProbe?: MigrationRunInputRecord<boolean>;
   sourceController?: MigrationRunInputRecord<"manual" | "api" | "agent">;
   minioPolicy?: MigrationRunInputRecord<MigrationRunMinioPolicy>;
-  tickGapAcceptMinutes?: MigrationRunInputRecord<number>;
   workerPolicy?: MigrationRunInputRecord<MigrationRunWorkerPolicy>;
   unlistedDbPolicy?: MigrationRunInputRecord<MigrationRunUnlistedDbPolicy>;
   orphanVolumePolicy?: MigrationRunInputRecord<MigrationRunOrphanVolumePolicy>;
@@ -2786,7 +2785,6 @@ export interface MigrationRunCreateInput extends ImportApplyExtras {
     allowLiveShapeProbe: boolean | "unknown";
     sourceController: "manual" | "api" | "agent" | "unknown";
     minioPolicy: MigrationRunMinioPolicy | "unknown";
-    tickGapAcceptMinutes: number | "unknown";
     workerPolicy: MigrationRunWorkerPolicy | "unknown";
     unlistedDbPolicy: MigrationRunUnlistedDbPolicy | "unknown";
     orphanVolumePolicy: MigrationRunOrphanVolumePolicy | "unknown";

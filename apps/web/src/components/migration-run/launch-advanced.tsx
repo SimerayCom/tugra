@@ -2,7 +2,7 @@
 
 import { useT } from "../../i18n/provider";
 import { Checkbox, Field, NumberInput, Select, TextInput } from "../form";
-import { OWNER_INPUT_HINT_KEY, OWNER_INPUT_LABEL_KEY, OWNER_POLICY_CHOICES, OWNER_POLICY_CHOICE_KEY, TICK_GAP_MAX_MINUTES, type LaunchIssue, type LaunchPolicies, type OwnerPolicyKey, type HostLoopForm } from "../../lib/migration-run";
+import { OWNER_INPUT_HINT_KEY, OWNER_INPUT_LABEL_KEY, OWNER_POLICY_CHOICES, OWNER_POLICY_CHOICE_KEY, type LaunchIssue, type LaunchPolicies, type OwnerPolicyKey, type HostLoopForm } from "../../lib/migration-run";
 import type { MigrationRunLargeDbMode, MigrationRunOptions, MigrationRunSourceRunner } from "../../lib/types";
 
 export interface AdvancedState {
@@ -121,9 +121,6 @@ export function AdvancedFields({ value, onChange, issues }: { value: AdvancedSta
           {POLICY_KEYS.map((k) => (
             <PolicySelect key={k} policy={k} value={value.policies[k]} onChange={(v) => setPolicy(k, v)} />
           ))}
-          <Field label={t(OWNER_INPUT_LABEL_KEY.tickGapAcceptMinutes)} hint={t(OWNER_INPUT_HINT_KEY.tickGapAcceptMinutes)} error={issues.includes("tickGap") ? t("migrationRun.inputs.tickGapInvalid") : undefined}>
-            <NumberInput min={0} max={TICK_GAP_MAX_MINUTES} value={value.policies.tickGapAcceptMinutes} onChange={(e) => setPolicy("tickGapAcceptMinutes", e.target.value)} style={{ minHeight: 44 }} />
-          </Field>
         </div>
       </div>
     </details>

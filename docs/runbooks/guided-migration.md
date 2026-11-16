@@ -220,15 +220,18 @@ Unanswered questions do **not** block the run; each blocks only the step that ne
 | `allowLiveShapeProbe` (consent for the read-only live probe of Coolify API shapes) | off; the services preview degrades with its existing wording | nothing |
 | `sourceController` | `manual` (printed steps plus your attestation) | FREEZE automation only |
 | `minioPolicy` (`hold`, `mirror`, `external`) | `hold`: hosts that depend on the source's object storage stay on the source | CUTOVER, for those hosts only |
-| `tickGapAcceptMinutes` (0 to 10080) | `0`: no gap in writes between the last copy and the switch is accepted | the steps that judge a gap |
 | `workerPolicy` (`hold-dark`, `start-dark`, `exclude`) | `hold-dark`: apps without a domain stay stopped until after the cutover | nothing; it decides when workers start |
 | `unlistedDbPolicy` (`block`, `carry`, `skip`) | `block`: a database container the source API does not list stops DATA_SEED | DATA_SEED |
 | `orphanVolumePolicy` (`block`, `skip`) | `block`: a volume no container mounts stops DATA_SEED | DATA_SEED |
 
 An unanswered fleet policy (or the literal `unknown`) keeps its default, and every default holds work back rather than
 moving it. Set or change them any time: `tugra import run inputs <runId> --acme-email ops@example.com`, or
-`--minio-policy`, `--tick-gap-accept`, `--worker-policy`, `--unlisted-db-policy`, `--orphan-volume-policy`; the panel's
+`--minio-policy`, `--worker-policy`, `--unlisted-db-policy`, `--orphan-volume-policy`; the panel's
 "Owner inputs" card has the same fields.
+
+The hub's input contract also holds `tickGapAcceptMinutes` (how long writes may be missing between the last copy and
+the switch). **No step reads it yet**: it changes no gate and no estimate, so the panel, the CLI and the MCP tools do not
+offer it. Until a step judges a write gap, the freeze plus the final copy is what bounds the gap.
 
 ## Fleet runs: several source hosts, one run
 
@@ -335,8 +338,12 @@ restored on the target without spooling, for PostgreSQL, MariaDB and MySQL. Note
   (`workerPolicy: hold-dark`, the default); OBSERVE or FINALIZE starts them after the point of no return, an abort never
   starts them and a reverse stops them. `start-dark` starts them with the rest, `exclude` leaves them out. Mark an app
   yourself with `tugra import run worker-mark <runId> --item app:<server>:<ref> --role job-runner|web|none` (the panel's
-  "Held workers and image pins" card, `PUT /migration-runs/:id/worker-marks`): a job runner that serves a domain is held
-  too, a web app without a domain starts dark. These marks are **attested by you**.
+  "Held workers and image pins" card, `PUT /migration-runs/:id/worker-marks`). A `job-runner` mark is for an app with
+  **no domain** whose role the plan cannot infer (for example one reached through a container alias); a `web` mark makes
+  an app without a domain start dark. A `job-runner` mark on an app that **serves a domain** holds nothing: it is a
+  conflict, and PREFLIGHT and DEPLOY_DARK fail until you remove the mark (a hostname needs the app running dark for the
+  certificate and the router probe). A mark that matches no app of the plan also fails PREFLIGHT and DEPLOY_DARK, so a
+  misspelled item cannot leave the real worker running next to the source. These marks are **attested by you**.
 - **No deploy on push.** Push-to-deploy is switched off on imported apps from IMPORT until after the point of no
   return, then restored with a `release.webhooks-repoint` hint. Removing the push webhook **at the source** stays
   manual (the source token is read-only). Pull-request previews are not covered.

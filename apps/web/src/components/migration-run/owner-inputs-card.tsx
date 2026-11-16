@@ -5,8 +5,8 @@ import { useMutation } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { useT } from "../../i18n/provider";
 import { Btn, SectionCard } from "../ui";
-import { Checkbox, Field, NumberInput, Select, TextInput } from "../form";
-import { OWNER_INPUT_HINT_KEY, OWNER_INPUT_LABEL_KEY, TICK_GAP_MAX_MINUTES, looksLikeEmail, type OwnerPolicyKey } from "../../lib/migration-run";
+import { Checkbox, Field, Select, TextInput } from "../form";
+import { OWNER_INPUT_HINT_KEY, OWNER_INPUT_LABEL_KEY, looksLikeEmail, type OwnerPolicyKey } from "../../lib/migration-run";
 import type { MigrationRunInputsRequest, MigrationRunView } from "../../lib/types";
 import { INPUTS_ANCHOR } from "./gate-checks";
 import { PolicySelect } from "./launch-advanced";
@@ -33,8 +33,6 @@ export function OwnerInputsCard({ run }: { run: MigrationRunView }) {
     unlistedDbPolicy: initialOf(inputs.unlistedDbPolicy),
     orphanVolumePolicy: initialOf(inputs.orphanVolumePolicy),
   });
-  const [tickGap, setTickGap] = useState(initialOf(inputs.tickGapAcceptMinutes));
-  const gapBad = tickGap.trim() !== "" && !(Number.isInteger(Number(tickGap)) && Number(tickGap) >= 0 && Number(tickGap) <= TICK_GAP_MAX_MINUTES);
 
   const save = useMutation({
     mutationFn: () => {
@@ -46,7 +44,6 @@ export function OwnerInputsCard({ run }: { run: MigrationRunView }) {
       };
       // the fleet policies are sent only when they changed (an unanswered one keeps the hub's safe default, and is not recorded as "unknown" on every save)
       for (const k of POLICY_KEYS) if (policies[k] !== initialOf(inputs[k])) (body as Record<string, unknown>)[k] = policies[k] || "unknown";
-      if (tickGap !== initialOf(inputs.tickGapAcceptMinutes)) body.tickGapAcceptMinutes = tickGap.trim() === "" ? "unknown" : Number(tickGap);
       return api.setMigrationRunInputs(run.id, body);
     },
     onSuccess: (v) => {
@@ -92,12 +89,9 @@ export function OwnerInputsCard({ run }: { run: MigrationRunView }) {
           {POLICY_KEYS.map((k) => (
             <PolicySelect key={k} policy={k} value={policies[k]} onChange={(v) => setPolicies((p) => ({ ...p, [k]: v }))} />
           ))}
-          <Field label={t(OWNER_INPUT_LABEL_KEY.tickGapAcceptMinutes)} hint={t(OWNER_INPUT_HINT_KEY.tickGapAcceptMinutes)} error={gapBad ? t("migrationRun.inputs.tickGapInvalid") : undefined}>
-            <NumberInput min={0} max={TICK_GAP_MAX_MINUTES} value={tickGap} onChange={(e) => setTickGap(e.target.value)} style={{ minHeight: 44 }} />
-          </Field>
         </div>
         <div style={{ marginTop: 14 }}>
-          <Btn onClick={() => save.mutate()} disabled={!run.allowed.setInputs || emailBad || gapBad} loading={save.isPending}>{t("migrationRun.inputs.save")}</Btn>
+          <Btn onClick={() => save.mutate()} disabled={!run.allowed.setInputs || emailBad} loading={save.isPending}>{t("migrationRun.inputs.save")}</Btn>
         </div>
       </SectionCard>
     </div>

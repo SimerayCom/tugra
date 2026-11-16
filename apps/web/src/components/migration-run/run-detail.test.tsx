@@ -501,15 +501,15 @@ describe("RunDetail", () => {
       const save = vi.spyOn(api, "setMigrationRunInputs").mockResolvedValue(mkRun());
       wrap();
       fireEvent.change(await screen.findByLabelText("Hosts that use the source's object storage"), { target: { value: "mirror" } });
-      fireEvent.change(screen.getByLabelText("Write gap you accept (minutes)"), { target: { value: "20" } });
+      // no control is offered for an input no step reads
+      expect(screen.queryByLabelText("Write gap you accept (minutes)")).toBeNull();
       fireEvent.click(screen.getByRole("button", { name: "Save inputs" }));
       await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
       const body = save.mock.calls[0][1];
-      expect(body).toMatchObject({ minioPolicy: "mirror", tickGapAcceptMinutes: 20 });
+      expect(body).toMatchObject({ minioPolicy: "mirror" });
+      expect(body).not.toHaveProperty("tickGapAcceptMinutes");
       expect(body).not.toHaveProperty("workerPolicy");
       expect(body).not.toHaveProperty("unlistedDbPolicy");
-      fireEvent.change(screen.getByLabelText("Write gap you accept (minutes)"), { target: { value: "99999" } });
-      expect((screen.getByRole("button", { name: "Save inputs" }) as HTMLButtonElement).disabled).toBe(true);
     });
   });
 

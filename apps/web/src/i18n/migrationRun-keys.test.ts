@@ -64,7 +64,7 @@ describe("guided migration i18n coverage", () => {
   it("every evidence kind, owner input and confirmation kind the hub speaks is worded", () => {
     expect(Object.keys(EVIDENCE_KEY).sort()).toEqual([...EVIDENCE_KINDS].sort());
     expect(Object.keys(EVIDENCE_HINT_KEY).sort()).toEqual([...EVIDENCE_KINDS].sort());
-    expect(Object.keys(OWNER_INPUT_LABEL_KEY).sort()).toEqual(["acmeEmail", "allowBind", "allowLiveShapeProbe", "minioPolicy", "orphanVolumePolicy", "sourceController", "tickGapAcceptMinutes", "unlistedDbPolicy", "workerPolicy"]);
+    expect(Object.keys(OWNER_INPUT_LABEL_KEY).sort()).toEqual(["acmeEmail", "allowBind", "allowLiveShapeProbe", "minioPolicy", "orphanVolumePolicy", "sourceController", "unlistedDbPolicy", "workerPolicy"]);
     expect(Object.keys(CONFIRM_PROMPT_KEY).sort()).toEqual(["none", "run-id", "source-host", "target-server", "target-server+source-host", "target-servers", "target-servers+source-host"]);
   });
 

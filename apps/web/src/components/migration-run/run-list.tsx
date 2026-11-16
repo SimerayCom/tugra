@@ -9,7 +9,7 @@ import { useT } from "../../i18n/provider";
 import { scopeByTeam } from "../../lib/team-scope";
 import { useTeamScope } from "../team-scope";
 import { relativeTime } from "../../lib/fleet";
-import { NEXT_KIND_KEY, STEP_TITLE_KEY, campaignRollup, codeText, runListRefetchInterval, runTitleParts, validCampaign } from "../../lib/migration-run";
+import { CAMPAIGN_ROLLUP_LIMIT, NEXT_KIND_KEY, STEP_TITLE_KEY, campaignRollup, codeText, runListRefetchInterval, runTitleParts, validCampaign } from "../../lib/migration-run";
 import { Checkbox, Field, TextInput } from "../form";
 import { Badge, EmptyState, LinkBtn } from "../ui";
 import { ErrorState } from "../error-state";
@@ -62,7 +62,16 @@ export function RunList() {
     refetchInterval: (q) => runListRefetchInterval(q.state.data as MigrationRunSummary[] | undefined),
   });
   const scoped = scopeByTeam(data ?? [], teamId);
-  const rollup = campaignRollup(scoped);
+  // the chips count every run of a campaign: they come from their own query, not from the page above, which is cut by
+  // "Active only", by the campaign filter and by its own limit
+  const all = useQuery({
+    queryKey: ["migration-runs", "rollup"],
+    queryFn: () => api.listMigrationRuns({ limit: CAMPAIGN_ROLLUP_LIMIT }),
+    refetchInterval: (q) => runListRefetchInterval(q.state.data as MigrationRunSummary[] | undefined),
+  });
+  const rollupRuns = scopeByTeam(all.data ?? [], teamId);
+  const rollup = campaignRollup(rollupRuns);
+  const rollupCapped = (all.data?.length ?? 0) >= CAMPAIGN_ROLLUP_LIMIT;
   return (
     <div style={{ padding: "var(--page-pad)" }}>
       <PageTitle title={t("migrationRun.title")} subtitle={t("migrationRun.subtitle")} actions={<LinkBtn href="/import">{t("migrationRun.new")}</LinkBtn>} />
@@ -84,7 +93,7 @@ export function RunList() {
                 style={{ minHeight: 44, padding: "6px 12px", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", background: "var(--c-el)", color: "var(--c-tx)", textAlign: "left", cursor: "pointer", fontSize: 12 }}
               >
                 <strong style={{ display: "block", wordBreak: "break-word" }}>{c.campaign}</strong>
-                <span style={{ color: "var(--c-tx3)" }}>{t("migrationRun.list.campaignRollup", { total: c.total, completed: c.completed, live: c.live })}</span>
+                <span style={{ color: "var(--c-tx3)" }}>{t(rollupCapped ? "migrationRun.list.campaignRollupCapped" : "migrationRun.list.campaignRollup", { total: c.total, completed: c.completed, live: c.live, failed: c.failed, other: c.other })}</span>
               </button>
             </li>
           ))}

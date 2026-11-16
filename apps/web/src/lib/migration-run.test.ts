@@ -441,7 +441,7 @@ describe("launch form: placement, runner, policies", () => {
   it("sends only the policy answers that were given; an unanswered one keeps the hub's safe default", () => {
     expect(policyInputs(undefined)).toEqual({});
     expect(policyInputs(EMPTY_POLICIES)).toEqual({});
-    expect(policyInputs({ ...EMPTY_POLICIES, minioPolicy: "mirror", workerPolicy: "exclude", tickGapAcceptMinutes: "15" })).toEqual({ minioPolicy: "mirror", workerPolicy: "exclude", tickGapAcceptMinutes: 15 });
+    expect(policyInputs({ ...EMPTY_POLICIES, minioPolicy: "mirror", workerPolicy: "exclude" })).toEqual({ minioPolicy: "mirror", workerPolicy: "exclude" });
     expect(buildLaunchInput({ ...base, policies: { ...EMPTY_POLICIES, orphanVolumePolicy: "skip" } }).inputs).toMatchObject({ orphanVolumePolicy: "skip" });
   });
   it("refuses what the hub would refuse", () => {
@@ -457,8 +457,6 @@ describe("launch form: placement, runner, policies", () => {
     // the tuning only matters for the host-loop runner
     expect(launchIssues({ ...base, sourceRunner: "operator", hostLoop: { ...HOST_LOOP_FORM_DEFAULTS, keyDir: "keys" } })).toEqual([]);
     expect(launchIssues({ ...base, deployConcurrency: "9" })).toEqual(["concurrency"]);
-    expect(launchIssues({ ...base, policies: { ...EMPTY_POLICIES, tickGapAcceptMinutes: "10081" } })).toEqual(["tickGap"]);
-    expect(launchIssues({ ...base, policies: { ...EMPTY_POLICIES, tickGapAcceptMinutes: "10080" } })).toEqual([]);
   });
   it("validates the pieces the way the hub does", () => {
     expect(validKeyDir("/data/coolify/ssh/keys")).toBe(true);
@@ -483,18 +481,22 @@ describe("run list helpers", () => {
     expect(runTitleParts({ sourceHost: "h", sourceKind: "coolify", targetServerName: "t", targetServerId: "s", targetServerCount: 3 })).toEqual({ source: "h", target: "t", extraTargets: 2 });
     expect(runTitleParts({ sourceHost: null, sourceKind: "coolify", targetServerName: null, targetServerId: "s" })).toEqual({ source: "coolify", target: "s", extraTargets: 0 });
   });
-  it("rolls the runs of a campaign up (completed, still live) and skips runs with no campaign", () => {
+  it("rolls the runs of a campaign up so the parts always add up to the total, and skips runs with no campaign", () => {
     const rows = [
       { campaign: "wave-2", status: "COMPLETED" as const },
       { campaign: "wave-2", status: "WAITING" as const },
       { campaign: "wave-2", status: "ABORTED" as const },
+      { campaign: "wave-2", status: "DRY_RUN_DONE" as const },
+      { campaign: "wave-2", status: "FAILED" as const },
+      { campaign: "wave-2", status: "ROLLED_BACK" as const },
       { campaign: "wave-1", status: "RUNNING" as const },
       { campaign: null, status: "RUNNING" as const },
     ];
     expect(campaignRollup(rows)).toEqual([
-      { campaign: "wave-1", total: 1, completed: 0, live: 1 },
-      { campaign: "wave-2", total: 3, completed: 1, live: 1 },
+      { campaign: "wave-1", total: 1, completed: 0, live: 1, failed: 0, other: 0 },
+      { campaign: "wave-2", total: 6, completed: 1, live: 1, failed: 1, other: 3 },
     ]);
+    for (const c of campaignRollup(rows)) expect(c.completed + c.live + c.failed + c.other).toBe(c.total);
   });
   it("words the evidence kinds: the two newer kinds are never drawn like a hub-verified one", () => {
     expect(evidenceTone("hub-verified")).toBe("ok");

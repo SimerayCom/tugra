@@ -197,7 +197,6 @@ export const OWNER_INPUT_LABEL_KEY: Record<MigrationRunOwnerInputKey, string> = 
   allowLiveShapeProbe: "migrationRun.inputs.allowLiveShapeProbe",
   sourceController: "migrationRun.inputs.sourceController",
   minioPolicy: "migrationRun.inputs.minioPolicy",
-  tickGapAcceptMinutes: "migrationRun.inputs.tickGapAcceptMinutes",
   workerPolicy: "migrationRun.inputs.workerPolicy",
   unlistedDbPolicy: "migrationRun.inputs.unlistedDbPolicy",
   orphanVolumePolicy: "migrationRun.inputs.orphanVolumePolicy",
@@ -208,7 +207,6 @@ export const OWNER_INPUT_HINT_KEY: Record<MigrationRunOwnerInputKey, string> = {
   allowLiveShapeProbe: "migrationRun.inputs.allowLiveShapeProbeHint",
   sourceController: "migrationRun.inputs.sourceControllerHint",
   minioPolicy: "migrationRun.inputs.minioPolicyHint",
-  tickGapAcceptMinutes: "migrationRun.inputs.tickGapAcceptMinutesHint",
   workerPolicy: "migrationRun.inputs.workerPolicyHint",
   unlistedDbPolicy: "migrationRun.inputs.unlistedDbPolicyHint",
   orphanVolumePolicy: "migrationRun.inputs.orphanVolumePolicyHint",
@@ -244,7 +242,6 @@ export const OWNER_POLICY_CHOICE_KEY: Record<OwnerPolicyKey, Record<string, stri
     skip: "migrationRun.inputs.choice.orphanVolumePolicy.skip",
   },
 };
-export const TICK_GAP_MAX_MINUTES = 7 * 24 * 60;
 
 /** The source version verdict labels and hints (the hub derives the verdict; the web only words it). */
 export const VERSION_VERDICT_KEY: Record<MigrationRunSourceVersionVerdict, string> = {
@@ -642,9 +639,8 @@ export interface LaunchPolicies {
   workerPolicy: string;
   unlistedDbPolicy: string;
   orphanVolumePolicy: string;
-  tickGapAcceptMinutes: string;
 }
-export const EMPTY_POLICIES: LaunchPolicies = { minioPolicy: "", workerPolicy: "", unlistedDbPolicy: "", orphanVolumePolicy: "", tickGapAcceptMinutes: "" };
+export const EMPTY_POLICIES: LaunchPolicies = { minioPolicy: "", workerPolicy: "", unlistedDbPolicy: "", orphanVolumePolicy: "" };
 
 export interface LaunchForm {
   sessionId: string;
@@ -676,7 +672,7 @@ export interface LaunchForm {
 /** Practical email shape check (the hub validates strictly; this only keeps an obvious typo from being sent). */
 export const looksLikeEmail = (v: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim()) && v.trim().length <= 254;
 
-export type LaunchIssue = "target" | "email" | "observe" | "placement" | "campaign" | "hostLoop" | "concurrency" | "tickGap";
+export type LaunchIssue = "target" | "email" | "observe" | "placement" | "campaign" | "hostLoop" | "concurrency";
 
 /** Why the launch form cannot be submitted (empty = ready). */
 export function launchIssues(
@@ -697,8 +693,6 @@ export function launchIssues(
     if (!validKeyDir(h.keyDir.trim()) || !intIn(h.parallel, 1, 8) || !intIn(h.connectTimeoutSec, 5, 120) || !intIn(h.retries, 0, 5)) out.push("hostLoop");
   }
   if (f.deployConcurrency !== undefined && f.deployConcurrency.trim() !== "" && !intIn(f.deployConcurrency, 1, 8)) out.push("concurrency");
-  const gap = f.policies?.tickGapAcceptMinutes;
-  if (gap !== undefined && gap.trim() !== "" && !intIn(gap, 0, TICK_GAP_MAX_MINUTES)) out.push("tickGap");
   return out;
 }
 
@@ -710,7 +704,6 @@ export function policyInputs(p: LaunchPolicies | undefined): NonNullable<Migrati
     ...(p.workerPolicy ? { workerPolicy: p.workerPolicy as "hold-dark" | "start-dark" | "exclude" } : {}),
     ...(p.unlistedDbPolicy ? { unlistedDbPolicy: p.unlistedDbPolicy as "block" | "carry" | "skip" } : {}),
     ...(p.orphanVolumePolicy ? { orphanVolumePolicy: p.orphanVolumePolicy as "block" | "skip" } : {}),
-    ...(p.tickGapAcceptMinutes.trim() ? { tickGapAcceptMinutes: Number(p.tickGapAcceptMinutes) } : {}),
   };
 }
 
@@ -774,15 +767,30 @@ export const validAppItemRef = (v: string): boolean => /^app:[\x21-\x7e]{1,200}:
 export const hintsClosed = (run: Pick<MigrationRunView, "status" | "ponrAt">): boolean =>
   !!run.ponrAt || ["COMPLETED", "ABORTED", "ROLLING_BACK", "ROLLED_BACK", "REVERSING", "REVERSED"].includes(run.status);
 
-/** The distinct campaign labels of a list of runs with how many runs each holds and how many are completed / still live. */
-export function campaignRollup(rows: ReadonlyArray<Pick<MigrationRunSummary, "campaign" | "status">>): Array<{ campaign: string; total: number; completed: number; live: number }> {
-  const by = new Map<string, { campaign: string; total: number; completed: number; live: number }>();
+export interface CampaignRollup {
+  campaign: string;
+  total: number;
+  completed: number;
+  live: number;
+  failed: number;
+  /** Dry runs and runs that were aborted, rolled back or reversed: settled, but not a migration that completed. */
+  other: number;
+}
+/** How many runs the roll-up asks the hub for; a list this long may be cut off, so its counts are then a lower bound. */
+export const CAMPAIGN_ROLLUP_LIMIT = 200;
+
+/** The distinct campaign labels of a list of runs with how many runs each holds, split into completed / live / failed /
+ *  other (dry-run or stopped), so the parts always add up to the total. Feed it the UNFILTERED runs, never a filtered page. */
+export function campaignRollup(rows: ReadonlyArray<Pick<MigrationRunSummary, "campaign" | "status">>): CampaignRollup[] {
+  const by = new Map<string, CampaignRollup>();
   for (const r of rows) {
     if (!r.campaign) continue;
-    const row = by.get(r.campaign) ?? { campaign: r.campaign, total: 0, completed: 0, live: 0 };
+    const row = by.get(r.campaign) ?? { campaign: r.campaign, total: 0, completed: 0, live: 0, failed: 0, other: 0 };
     row.total += 1;
     if (r.status === "COMPLETED") row.completed += 1;
-    else if (!isTerminalRun(r.status)) row.live += 1;
+    else if (r.status === "FAILED") row.failed += 1;
+    else if (isTerminalRun(r.status)) row.other += 1;
+    else row.live += 1;
     by.set(r.campaign, row);
   }
   return [...by.values()].sort((a, b) => (a.campaign < b.campaign ? -1 : a.campaign > b.campaign ? 1 : 0));

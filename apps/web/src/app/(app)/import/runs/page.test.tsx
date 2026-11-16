@@ -89,7 +89,7 @@ describe("migration runs list page", () => {
     await screen.findByText("coolify.example.org → tugra-1 +2");
     expect(screen.getByText("3 target servers")).toBeTruthy();
     expect(screen.getAllByText("Source 4.5.0").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("2 runs, 1 completed, 1 still live")).toBeTruthy();
+    expect(screen.getByText("2 runs: 1 completed, 1 live, 0 failed, 0 dry-run or stopped")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Show only the runs of campaign wave-1" }));
     await waitFor(() => expect(list).toHaveBeenLastCalledWith(expect.objectContaining({ campaign: "wave-1" })));
   });
