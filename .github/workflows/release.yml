@@ -210,6 +210,10 @@ jobs:
   # Generate + sign versions.json and publish it (with the detached .sig) to the gh-pages branch, the
   # single stable URL the self-update chain reads. The signer self-verifies against the real consumer
   # verifier and refuses to write anything that wouldn't validate, so nothing unpublishable can ship.
+  # The same push also publishes host/<version>/ — the release's compose file + installer/updater scripts with a
+  # separately signed HOSTFILES manifest — which the in-app updater downloads, verifies and applies (the signed
+  # versions.json commits to the manifest's sha256 as `hostFilesDigest`). One commit, so the manifest can never
+  # advertise host files that are not yet published.
   publish-manifest:
     needs: build-push
     runs-on: ubuntu-latest
@@ -267,6 +271,12 @@ jobs:
           agent_index_digest=$(read_digest agent)
           amd64=$(jq -r '.amd64 // empty' digests/agent-digests.json)
           arm64=$(jq -r '.arm64 // empty' digests/agent-digests.json)
+          # Sign the compose + scripts of THIS (vetted) commit into out/host/<version>/ and capture the digest of the
+          # signed HOSTFILES manifest (last stdout line). The grep fails the step (set -e) if it is missing.
+          host_out=$(node scripts/sign-host-files.mjs --version "$VERSION" --out-dir out)
+          printf '%s\n' "$host_out"
+          host_digest=$(printf '%s\n' "$host_out" | sed -n 's/^host-files-digest=\([0-9a-f]\{64\}\)$/\1/p' | tail -n1)
+          [ -n "$host_digest" ] || { echo "::error::sign-host-files produced no digest" >&2; exit 1; }
           node scripts/sign-manifest.mjs \
             --version "$VERSION" --channel "$CHANNEL" \
             --hub-image "ghcr.io/simeraycom/tugra-hub:$VERSION" \
@@ -274,6 +284,7 @@ jobs:
             --hub-digest "$hub_digest" --web-digest "$web_digest" \
             --updater-digest "$updater_digest" --agent-index-digest "$agent_index_digest" \
             --require-digests true \
+            --host-files-digest "$host_digest" --require-host-files true \
             ${amd64:+--agent-amd64 "$amd64"} ${arm64:+--agent-arm64 "$arm64"} \
             --changelog-url "https://github.com/SimerayCom/tugra/releases/tag/v$VERSION" \
             --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -290,7 +301,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # Stash the signed output, then switch the working copy to gh-pages (the build already produced
           # everything we need above, so the main tree is no longer required).
-          tmp="$(mktemp -d)"; cp out/versions.json out/versions.json.sig "$tmp/"
+          tmp="$(mktemp -d)"; cp out/versions.json out/versions.json.sig "$tmp/"; cp -R out/host "$tmp/host"
           if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
             git fetch origin gh-pages --depth 1
             git checkout gh-pages
@@ -299,7 +310,15 @@ jobs:
             git rm -rf . >/dev/null 2>&1 || true
           fi
           cp "$tmp/versions.json" "$tmp/versions.json.sig" .
-          git add versions.json versions.json.sig
+          # host/<version>/ is immutable once published: a re-run of the same version must reproduce it byte for byte.
+          mkdir -p host
+          if [ -e "host/$VERSION" ] && ! diff -r "$tmp/host/$VERSION" "host/$VERSION" >/dev/null; then
+            echo "::error::host/$VERSION is already published with different content — refusing to overwrite a released version" >&2
+            exit 1
+          fi
+          rm -rf "host/$VERSION"; cp -R "$tmp/host/$VERSION" "host/$VERSION"
+          touch .nojekyll # serve every file as-is (no Jekyll processing of host/<version>/)
+          git add versions.json versions.json.sig host .nojekyll
           git commit -m "release: versions.json for v$VERSION ($CHANNEL)"
           git push origin gh-pages
 

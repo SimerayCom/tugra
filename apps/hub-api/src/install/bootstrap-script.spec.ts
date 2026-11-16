@@ -121,6 +121,50 @@ describe("scripts/bootstrap.sh", () => {
       expect(r.out).toContain("INSTALLED:main");
     });
 
+    describe("files the in-app updater replaced (.tugra-host-applied)", () => {
+      const sha = (f: string) => createHash("sha256").update(readFileSync(f)).digest("hex");
+      const checkout = () => {
+        const r = boot({ TUGRA_REF: "main" });
+        expect(r.code).toBe(0);
+        return join(r.cwd, "tugra");
+      };
+
+      it("a release-replaced script that still matches its record is reset, so a re-run moves on (no `uncommitted changes` dead end)", () => {
+        const dir = checkout();
+        const f = join(dir, "scripts", "install.sh");
+        writeFileSync(f, '#!/bin/sh\necho "FROM-IN-APP-UPDATE"\n');
+        writeFileSync(join(dir, ".tugra-host-applied"), `${sha(f)}  scripts/install.sh\n`);
+        const r = boot({ TUGRA_REF: "main" }, [], { cwd: join(dir, "..") });
+        expect(r.code).toBe(0);
+        expect(r.out).toContain("INSTALLED:main");
+        expect(r.out).not.toContain("FROM-IN-APP-UPDATE");
+        expect(git(dir, "status", "--porcelain", "--untracked-files=no")).toBe("");
+      });
+
+      it("a script edited AFTER the in-app update (no longer matches the record) is still protected", () => {
+        const dir = checkout();
+        const f = join(dir, "scripts", "install.sh");
+        writeFileSync(f, "#!/bin/sh\necho applied\n");
+        writeFileSync(join(dir, ".tugra-host-applied"), `${sha(f)}  scripts/install.sh\n`);
+        writeFileSync(f, "#!/bin/sh\necho my-own-edit\n");
+        const r = boot({ TUGRA_REF: "main" }, [], { cwd: join(dir, "..") });
+        expect(r.code).not.toBe(0);
+        expect(r.out).toContain("uncommitted local changes");
+        expect(readFileSync(f, "utf8")).toContain("my-own-edit");
+      });
+
+      it("only compose/scripts paths are ever reset: a record naming anything else is ignored", () => {
+        const dir = checkout();
+        writeFileSync(join(dir, "README.md"), "mine\n");
+        git(dir, "add", "README.md");
+        writeFileSync(join(dir, "README.md"), "mine, edited\n");
+        writeFileSync(join(dir, ".tugra-host-applied"), `${sha(join(dir, "README.md"))}  README.md\n${"0".repeat(64)}  scripts/../README.md\n`);
+        const r = boot({ TUGRA_REF: "main" }, [], { cwd: join(dir, "..") });
+        expect(r.code).not.toBe(0);
+        expect(readFileSync(join(dir, "README.md"), "utf8")).toContain("mine, edited");
+      });
+    });
+
     it("checks out a TAG ref", () => {
       const r = boot({ TUGRA_REF: "v1.0" });
       expect(r.code).toBe(0);

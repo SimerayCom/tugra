@@ -55,6 +55,21 @@ if [ -d "$DIR/.git" ] && git -C "$DIR" rev-parse -q --verify HEAD >/dev/null 2>&
   # of swallowing it with `|| true` and silently installing old code.
   git -C "$DIR" fetch --depth 1 origin "$REPO_REF" >/dev/null 2>&1 \
     || die "could not fetch origin/$REPO_REF — check your network or TUGRA_REF; refusing to install a stale checkout"
+  # Files the in-app updater replaced with a signed release copy (it records `<sha256>  <path>` for each in
+  # .tugra-host-applied) are release-managed, not operator edits: put back any that still match that record, so the
+  # fetch can move to the new ref. A file edited AFTER the in-app update no longer matches and is left for the guard below.
+  if [ -f "$DIR/.tugra-host-applied" ]; then
+    while read -r _rsha _rpath; do
+      case "$_rpath" in *..*) continue ;; deploy/docker-compose.yml|scripts/*.sh|scripts/lib/*.sh) ;; *) continue ;; esac
+      [ -f "$DIR/$_rpath" ] || continue
+      if   command -v sha256sum >/dev/null 2>&1; then _rgot="$(sha256sum "$DIR/$_rpath" | cut -d' ' -f1)"
+      elif command -v shasum    >/dev/null 2>&1; then _rgot="$(shasum -a 256 "$DIR/$_rpath" | cut -d' ' -f1)"
+      else _rgot=""
+      fi
+      [ -n "$_rgot" ] && [ "$_rgot" = "$_rsha" ] && git -C "$DIR" checkout -q -- "$_rpath" 2>/dev/null
+    done < "$DIR/.tugra-host-applied"
+    true
+  fi
   # Don't silently discard an operator's local edits (the old `reset --hard` did).
   if git -C "$DIR" rev-parse --verify -q HEAD >/dev/null && ! git -C "$DIR" diff --quiet HEAD 2>/dev/null; then
     die "./$DIR has uncommitted local changes — commit/stash them, or set TUGRA_DIR to a fresh path, then re-run"

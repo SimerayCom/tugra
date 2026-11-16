@@ -160,6 +160,9 @@ hf_prepare() {
   command -v openssl >/dev/null 2>&1 || { HF_ERROR="this updater image has no openssl, so it cannot verify the release's compose/scripts — run git pull && ./scripts/install.sh once to refresh it"; return 1; }
   command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1 || { HF_ERROR="this updater image has no curl/wget — run git pull && ./scripts/install.sh once to refresh it"; return 1; }
 
+  # A previous job killed mid-run (container stop) can leave its private staging dir behind; jobs are single-flight
+  # (the hub's lock), so anything old enough is stale.
+  find "$REPO_DIR" -maxdepth 1 -name '.update-staging.*' -mmin +30 -exec rm -rf {} + 2>/dev/null || true
   HF_STAGE="$(mktemp -d "$REPO_DIR/.update-staging.XXXXXX")" || { HF_ERROR="cannot create a staging directory in the checkout"; return 1; }
   chmod 700 "$HF_STAGE" 2>/dev/null || true
   url="$HF_BASE_URL/$target"
@@ -191,10 +194,11 @@ hf_prepare() {
   return 0
 }
 
-# Warnings docker compose prints for a variable the .env does not define (one name per line, sorted).
+# Warnings docker compose prints for a variable the .env does not define (one name per line, sorted). Compose
+# prints either `The "FOO" variable is not set…` or, in logfmt form, `msg="The \"FOO\" variable is not set…"`.
 _hf_unset_vars() {
   docker compose --project-directory "$REPO_DIR/deploy" --env-file "$ENV_FILE" -f "$1" config 2>&1 >/dev/null \
-    | sed -n 's/.*The "\([A-Za-z0-9_]*\)" variable is not set.*/\1/p' | sort -u
+    | sed -En 's/.*The \\?"([A-Za-z0-9_]+)\\?" variable is not set.*/\1/p' | sort -u
 }
 
 # Validate the staged files BEFORE anything is applied: every script parses, and the new compose file is valid
