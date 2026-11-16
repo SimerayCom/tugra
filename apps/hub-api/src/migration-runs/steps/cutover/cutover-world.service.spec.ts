@@ -318,9 +318,9 @@ describe("CutoverWorld", () => {
       { ...same, status: "COMPLETED", mode: "takeover", steps: [{ status: "PASSED" }] },
       { ...same, status: "COMPLETED", mode: "takeover", steps: [{ status: "SKIPPED" }] },
     ]);
-    expect(await m.world.siblingRuns({ id: "r1", sourceKind: "coolify", sourceHost: "coolify.example.test" })).toEqual({ live: 2, undecommissioned: 2 });
+    expect(await m.world.siblingRuns({ id: "r1", teamId: "t1", actorId: "u1", sourceKind: "coolify", sourceHost: "coolify.example.test" })).toEqual({ live: 2, undecommissioned: 2 });
     expect(m.prisma.migrationRun.findMany).toHaveBeenCalledWith({
-      where: { id: { not: "r1" }, sourceKind: "coolify", dryRun: false, status: { notIn: ["ABORTED", "ROLLED_BACK", "REVERSED", "DRY_RUN_DONE"] } },
+      where: { id: { not: "r1" }, OR: [{ teamId: "t1" }, { actorId: "u1" }], sourceKind: "coolify", dryRun: false, status: { notIn: ["ABORTED", "ROLLED_BACK", "REVERSED", "DRY_RUN_DONE"] } },
       select: { status: true, mode: true, sourceHost: true, serverMap: true, sourceBaseline: true, steps: { where: { key: "DECOMMISSION" }, select: { status: true } } },
     });
   });
@@ -333,14 +333,14 @@ describe("CutoverWorld", () => {
       { status: "RUNNING", mode: "copy", sourceHost: "other.example.test", serverMap: { "srv-z": "t9" }, sourceBaseline: { entries: [{ ref: "app-77" }] } }, // another instance
       { status: "RUNNING", mode: "copy", sourceHost: null, serverMap: null, sourceBaseline: null }, // says nothing about its source
     ]);
-    const r = await m.world.siblingRuns({ id: "r1", sourceKind: "coolify", sourceHost: "coolify.example.test", serverMap: { "srv-a": "t2" }, sourceBaseline: { entries: [{ ref: "app-9" }, { ref: "app-10" }] } });
+    const r = await m.world.siblingRuns({ id: "r1", teamId: "t1", actorId: "u1", sourceKind: "coolify", sourceHost: "coolify.example.test", serverMap: { "srv-a": "t2" }, sourceBaseline: { entries: [{ ref: "app-9" }, { ref: "app-10" }] } });
     expect(r).toEqual({ live: 2, undecommissioned: 0 });
   });
 
   it("siblingRuns of a run that offers no source identity at all is unknown (null), never none, and reads nothing", async () => {
     const m = make();
-    expect(await m.world.siblingRuns({ id: "r1", sourceKind: "coolify", sourceHost: null })).toBeNull();
-    expect(await m.world.siblingRuns({ id: "r1", sourceKind: "coolify", sourceHost: null, serverMap: {}, sourceBaseline: { entries: [] } })).toBeNull();
+    expect(await m.world.siblingRuns({ id: "r1", teamId: "t1", actorId: "u1", sourceKind: "coolify", sourceHost: null })).toBeNull();
+    expect(await m.world.siblingRuns({ id: "r1", teamId: "t1", actorId: "u1", sourceKind: "coolify", sourceHost: null, serverMap: {}, sourceBaseline: { entries: [] } })).toBeNull();
     expect(m.prisma.migrationRun.findMany).not.toHaveBeenCalled();
   });
 

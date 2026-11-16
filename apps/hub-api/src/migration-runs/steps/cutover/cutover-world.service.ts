@@ -306,12 +306,16 @@ export class CutoverWorld {
    * another, so two runs also belong together when they share a source server uuid (a `serverMap` key) or a source resource ref
    * of the health baseline; those uuids are unique to one instance. A run that offers none of the three cannot be matched to
    * anything: that reads as `null` (unknown), never as "no other run".
+   *
+   * Only runs the operator could see themselves are counted: those of the run's own team and those created by the same actor
+   * (a fleet run team by team from one account). A typed host string such as `localhost` or a private address can be the same text
+   * in two unrelated tenants of one hub, so another tenant's run never blocks a decommission and its count is never shown.
    */
-  async siblingRuns(run: { id: string; sourceKind: string; sourceHost: string | null; serverMap?: Readonly<Record<string, string>> | null; sourceBaseline?: { entries: ReadonlyArray<{ ref: string }> } | null }): Promise<{ live: number; undecommissioned: number } | null> {
+  async siblingRuns(run: { id: string; teamId: string; actorId: string; sourceKind: string; sourceHost: string | null; serverMap?: Readonly<Record<string, string>> | null; sourceBaseline?: { entries: ReadonlyArray<{ ref: string }> } | null }): Promise<{ live: number; undecommissioned: number } | null> {
     const mine = sourceIdentityOf(run);
     if (!mine) return null;
     const rows = await this.prisma.migrationRun.findMany({
-      where: { id: { not: run.id }, sourceKind: run.sourceKind, dryRun: false, status: { notIn: ["ABORTED", "ROLLED_BACK", "REVERSED", "DRY_RUN_DONE"] } },
+      where: { id: { not: run.id }, OR: [{ teamId: run.teamId }, { actorId: run.actorId }], sourceKind: run.sourceKind, dryRun: false, status: { notIn: ["ABORTED", "ROLLED_BACK", "REVERSED", "DRY_RUN_DONE"] } },
       select: { status: true, mode: true, sourceHost: true, serverMap: true, sourceBaseline: true, steps: { where: { key: "DECOMMISSION" }, select: { status: true } } },
     });
     let live = 0;

@@ -117,7 +117,7 @@ export class DecommissionHandler extends CutoverStepBase implements StepHandler<
       siblings: null,
     };
     try {
-      obs.siblings = await this.world.siblingRuns({ id: run.id, sourceKind: run.sourceKind, sourceHost: run.sourceHost, serverMap: run.serverMap, sourceBaseline: run.sourceBaseline });
+      obs.siblings = await this.world.siblingRuns({ id: run.id, teamId: run.teamId, actorId: run.actorId, sourceKind: run.sourceKind, sourceHost: run.sourceHost, serverMap: run.serverMap, sourceBaseline: run.sourceBaseline });
     } catch (e) {
       rethrowLeaseLost(e);
       obs.siblings = null;
