@@ -397,7 +397,15 @@ describe("coolify-host-loop runner: FREEZE (identity-checked stop and unfreeze o
     expect(refuse.code).toBe(2);
     expect(refuse.stderr).toContain("can only unfreeze");
     expect(() => buildHostLoopScript(input(w, { token: null }))).toThrow(); // a data step needs its token
-    expect(spawnSync("sh", ["-n", "/dev/stdin"], { input: tokenless }).status).toBe(0);
+    const synDir = mkdtempSync(join(tmpdir(), "tugra-hl-syntax-"));
+    try {
+      writeFileSync(join(synDir, "tokenless.sh"), tokenless);
+      const syn = spawnSync("sh", ["-n", join(synDir, "tokenless.sh")], { encoding: "utf8" }); // a file, not /dev/stdin: Linux runners refuse that
+      expect(syn.stderr).toBe("");
+      expect(syn.status).toBe(0);
+    } finally {
+      rmSync(synDir, { recursive: true, force: true });
+    }
   });
 
   it("an item no container matches blocks the stop (nothing is stopped) until the operator's attestation mints the script with allowUnresolved", () => {

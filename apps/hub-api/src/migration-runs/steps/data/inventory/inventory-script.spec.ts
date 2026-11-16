@@ -2,6 +2,11 @@ import { InventoryHostFake, type InventoryHostOptions } from "./testing/inventor
 import { inventoryShellLines } from "./inventory-script";
 import { parseReportBody } from "./host-protocol";
 import { renderMigratorInstallScript } from "../../../../install/migrator-install-script";
+import { spawnSync } from "node:child_process";
+
+/** What the script's own os probe yields on this machine (empty on macOS, the PRETTY_NAME on a Linux runner). */
+const runnerOs = (): string =>
+  spawnSync("sh", ["-c", `( . /etc/os-release 2>/dev/null; printf '%s' "$PRETTY_NAME" ) | tr '\\t\\r\\n' '???'`], { encoding: "utf8" }).stdout;
 
 const TOKEN = `tugra_mig_${"A".repeat(43)}`;
 const HUB = "https://hub.example.test";
@@ -47,7 +52,7 @@ describe("host inventory script (run for real against a fake docker/du/curl)", (
     const inv = r.parsed.inventory.get("srv-1")!;
     expect(inv.complete).toBe(true);
     expect(inv.rejected).toBe(0);
-    expect(inv.host).toEqual({ name: "host-a", docker: "27.3.1", os: "" });
+    expect(inv.host).toEqual({ name: "host-a", docker: "27.3.1", os: runnerOs() }); // the script reads the real /etc/os-release
     expect(inv.containers.map((c) => [c.name, c.image, c.state])).toEqual([
       ["db0aaaaaaaaaaaaaaaaaaaaaa", "postgres:16-alpine", "running"],
       ["minio0bbbbbbbbbbbbbbbbbbbbb", "minio/minio:RELEASE.2025-04-22T22-12-26Z", "running"],
