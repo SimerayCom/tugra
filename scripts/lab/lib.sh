@@ -169,7 +169,8 @@ lab_docker_snapshot() {
 lab_run_bg() {
   local tag="$1"; shift
   rm -f "$LAB_DIR/run.$tag.json" "$LAB_DIR/run.$tag.log" "$LAB_DIR/run.$tag.rc"
-  (LAB_RUN_TAG="$tag" "$LAB_SELF_DIR/migrate.sh" "$@" >/dev/null 2>&1; echo $? >"$LAB_DIR/run.$tag.rc") &
+  # `|| rc=$?`: callers run under `set -e`, which the subshell inherits; a failing (or SIGKILLed) migrator must still record its code
+  (rc=0; LAB_RUN_TAG="$tag" "$LAB_SELF_DIR/migrate.sh" "$@" >/dev/null 2>&1 || rc=$?; echo "$rc" >"$LAB_DIR/run.$tag.rc") &
   echo $! >"$LAB_DIR/run.$tag.pid"
 }
 

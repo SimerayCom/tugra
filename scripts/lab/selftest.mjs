@@ -1093,3 +1093,21 @@ test("lab_kill9_migrator: kills by name, waits a bound for the run's docker clie
   assert.equal(r2.status, 1);
   assert.match(r2.stderr, /no migrator container is running/);
 });
+
+test("lab_run_bg records a failing migrator's exit code even when the caller runs under set -e (L1b waited 120 s for a code that was never written)", () => {
+  const lib = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "lib.sh"), "utf8");
+  const fn = /^lab_run_bg\(\) \{[\s\S]*?^\}/m.exec(lib);
+  assert.ok(fn, "lab_run_bg is defined in lib.sh");
+  const dir = mkdtempSync(join(tmpdir(), "lab-runbg-"));
+  writeFileSync(join(dir, "migrate.sh"), "#!/bin/sh\nexit 137\n");
+  chmodSync(join(dir, "migrate.sh"), 0o755);
+  const script = `set -euo pipefail\nLAB_SELF_DIR='${dir}'\nLAB_DIR='${dir}'\n${fn[0]}\nlab_run_bg first\nwait\ncat '${dir}/run.first.rc'\n`;
+  const r = spawnSync("bash", ["-c", script], { encoding: "utf8" });
+  assert.equal(r.stdout.trim(), "137");
+});
+
+test("every scenario script the workflow runs is executable in git (L15/L16 failed with Permission denied)", () => {
+  const out = execFileSync("git", ["ls-files", "-s", "--", "scripts/lab/"], { cwd: resolve(LAB, "../.."), encoding: "utf8" });
+  const bad = out.split("\n").filter((l) => /\sscripts\/lab\/l\d+[^/]*\.sh$/.test(l) && !l.startsWith("100755"));
+  assert.deepEqual(bad, []);
+});
