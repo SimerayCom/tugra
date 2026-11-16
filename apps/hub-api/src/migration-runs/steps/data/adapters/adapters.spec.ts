@@ -105,6 +105,70 @@ describe("PrismaDataPort.snapshot", () => {
     expect(failed.finishedAt).toBeNull();
   });
 
+  describe("the streamed dump lane", () => {
+    const dumpTransfer = (over: Record<string, unknown> = {}) => ({ itemRef: "volume:s:pgvol:dump", state: "COPYING", rawBytesDone: 5n, bytesDone: 2n, rawBytesTotal: null, bps: null, entries: null, error: null, finishedAt: null, ...over });
+    const portWith = (transfers: Array<Record<string, unknown>> = []) => {
+      const p = readOnly({
+        bulkOperation: { findUnique: async () => withStreamOp() },
+        database: { findMany: async () => [{ id: "db1", name: "pg", engine: "POSTGRES", version: "16", image: "postgres:16" }, { id: "db2", name: "pgvol", engine: "POSTGRES", version: "18", image: "postgres:18-alpine" }], findUnique: async () => ({ version: "16", image: "postgres:16", status: "NEW" }) },
+        application: { findMany: async () => [{ id: "app1", name: "web" }, { id: "app2", name: "x" }, { id: "app3", name: "svc" }] },
+        restore: { count: async () => 0 },
+        backup: { count: async () => 0 },
+        migrationVolumeTransfer: { findMany: async () => transfers },
+      });
+      return new PrismaDataPort(p, { log: async () => undefined } as never, {} as never, {} as never);
+    };
+    const withStreamOp = () => {
+      const base = op();
+      return op({ meta: { ...base.meta, vxStream: { "database:s:pgvol": { at: "t", by: "u" }, "database:s:pg": { at: "t", by: "u" } }, vxDbSizes: { "database:s:pgvol": { itemRef: "database:s:pgvol", engine: "POSTGRES", state: "measured", dbBytes: 34_100_000_000, measuredBy: "catalog" }, "database:s:pg": { itemRef: "database:s:pg", engine: "POSTGRES", state: "measured", dbBytes: 9, dumpRawBytes: 7, dumpGzBytes: 3, measuredBy: "dump" } } } });
+    };
+
+    it("a database on the lane is plane `stream` (even one planned as a physical copy), carries the migrator's measurement, and has a dump row instead of a data row", async () => {
+      const s = await portWith().snapshot(makeRun());
+      const byRef = Object.fromEntries(s.databases.map((d) => [d.itemRef, d]));
+      expect(byRef["database:s:pgvol"]).toMatchObject({ plane: "stream", measure: { state: "measured", dbBytes: 34_100_000_000, dumpRawBytes: null, dumpGzBytes: null, measuredBy: "catalog" } });
+      expect(byRef["database:s:pg"]).toMatchObject({ plane: "stream", measure: { dumpRawBytes: 7, dumpGzBytes: 3, measuredBy: "dump" } });
+      expect(s.dumpEnabled).toBe(true);
+      const vols = Object.fromEntries(s.volumes.map((v) => [v.itemRef, v]));
+      expect(vols["volume:s:pgvol:dump"]).toMatchObject({ destType: "db-dump", ownerItemRef: "database:s:pgvol", engine: "POSTGRES", gates: null, inventory: { found: true, rawBytes: 34_100_000_000, entries: 0, running: true }, state: "NONE" });
+      expect(vols["volume:s:pg:dump"]).toMatchObject({ inventory: { rawBytes: 7 } }); // a counted dump wins over the catalog size
+      expect(Object.keys(vols).some((k) => k.endsWith("pgvol:data"))).toBe(false); // no physical row for it any more
+    });
+
+    it("the data task of a streamed database IS its dump transfer", async () => {
+      const state = async (t: Record<string, unknown>) => (await portWith([dumpTransfer(t)]).snapshot(makeRun())).databases.find((d) => d.itemRef === "database:s:pgvol")!;
+      expect(await state({ state: "COPYING" })).toMatchObject({ task: "running", taskFailure: null, finishedAt: null });
+      expect(await state({ state: "APPLYING" })).toMatchObject({ task: "running" });
+      const at = new Date("2026-11-20T10:00:00.000Z");
+      expect(await state({ state: "DONE", finishedAt: at })).toMatchObject({ task: "done", finishedAt: at.toISOString() });
+      expect(await state({ state: "FAILED", error: "restoring the dump into the database failed" })).toMatchObject({ task: "failed", taskFailure: "restore-failed" });
+      expect(await state({ state: "FAILED", error: "the destination was started or holds data not restored by this migration" })).toMatchObject({ task: "failed", taskFailure: "dest-dirty" });
+      expect((await portWith([]).snapshot(makeRun())).databases.find((d) => d.itemRef === "database:s:pgvol")).toMatchObject({ task: "none" });
+    });
+
+    it("the switch asks the importer (through its own authorization) and reports a refusal as false", async () => {
+      const calls: unknown[][] = [];
+      const vx = { setStreamMode: async (...a: unknown[]) => { calls.push(a); if (a[2] === "database:s:no") throw new ForbiddenException(); return { itemRef: a[2], stream: a[3] }; } };
+      const p = new PrismaDataPort(prisma(), { log: async () => undefined } as never, {} as never, { get: () => vx } as never);
+      await expect(p.enableStream(makeRun(), "database:s:pg", true)).resolves.toBe(true);
+      expect(calls[0]).toEqual(["user1", "op1", "database:s:pg", true]);
+      await expect(p.enableStream(makeRun(), "database:s:no", true)).resolves.toBe(false);
+      await expect(p.enableStream(makeRun({ opId: null }), "database:s:pg", true)).resolves.toBe(false);
+    });
+
+    it("the kill switch turns the lane off in the snapshot: databases read as before and no dump row is listed", async () => {
+      process.env.MIGRATION_VX_DUMP_ENABLED = "false";
+      try {
+        const s = await portWith().snapshot(makeRun());
+        expect(s.dumpEnabled).toBe(false);
+        expect(s.databases.find((d) => d.itemRef === "database:s:pg")!.plane).toBe("logical");
+        expect(s.volumes.some((v) => v.destType === "db-dump")).toBe(false);
+      } finally {
+        delete process.env.MIGRATION_VX_DUMP_ENABLED;
+      }
+    });
+  });
+
   it("a revoked / expired / cancelled token reads as inactive", async () => {
     for (const over of [{ migrationTokenHash: null }, { migrationTokenExpiresAt: new Date(NOW - 1000) }, { cancelRequestedAt: new Date() }]) {
       expect((await port(prisma(op(over))).snapshot(makeRun())).tokenActive).toBe(false);

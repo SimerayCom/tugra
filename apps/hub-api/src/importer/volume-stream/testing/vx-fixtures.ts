@@ -10,6 +10,7 @@ export const APP_REF = "app:srv1:5f3a9c";
 export const DB_REF = "database:srv1:pg7c1";
 export const APP_VOL_REF = "volume:srv1:5f3a9c:data";
 export const DB_VOL_REF = "volume:srv1:pg7c1:data";
+export const DB_DUMP_REF = "volume:srv1:pg7c1:dump";
 export const RUN = "run_abcdef012345";
 export const GiB = 1024 ** 3;
 
