@@ -69,7 +69,7 @@ describe("DATA_SEED with the coolify-host-loop runner", () => {
     const res = await handler.act(h.ctx, await handler.observe(h.ctx));
     expect(res).toMatchObject({
       outcome: "wait",
-      wait: { kind: "operator", code: HOST_LOOP_CODES.seedRun, offersCommand: true, commandKind: "host-loop", params: { phase: "inspect", flags: ["--arms", "all", "--dry-run"], hosts: 1, failing: 0 } },
+      wait: { kind: "operator", code: HOST_LOOP_CODES.seedRun, offersCommand: true, commandKind: "host-loop", params: { phase: "inspect", flags: ["--arms", "all", "--dry-run", "--measure-dbs"], hosts: 1, failing: 0 } },
     });
   });
 

@@ -29,8 +29,8 @@ describe("HostCommandService", () => {
     const r = await svc().build(input());
     expect(r.hosts).toEqual(["srv-a", "srv-b"]); // srv-empty has nothing to move and gets no migrator
     expect(r.command.startsWith("sh -s <<'TUGRA_HOST_LOOP_EOF'\n")).toBe(true);
-    expect(r.command).toContain(`'srv-a') printf '%s\\n' '--arms' 'all' '--dry-run' '--only' 'database:srv-a:${UA}' '--only' 'volume:srv-a:${UA}:data' ;;`);
-    expect(r.command).toContain(`'srv-b') printf '%s\\n' '--arms' 'all' '--dry-run' '--only' 'volume:srv-b:${UB}:data' ;;`); // the excluded volume is not run
+    expect(r.command).toContain(`'srv-a') printf '%s\\n' '--arms' 'all' '--dry-run' '--measure-dbs' '--only' 'database:srv-a:${UA}' '--only' 'volume:srv-a:${UA}:data' ;;`);
+    expect(r.command).toContain(`'srv-b') printf '%s\\n' '--arms' 'all' '--dry-run' '--measure-dbs' '--only' 'volume:srv-b:${UB}:data' ;;`); // the excluded volume is not run
     expect(r.command).toContain("cmrun00000001-seed-1"); // inspect phase
     expect(syntaxOk(r.command)).toBe(true);
     expect(r.command.split(TOKEN).length - 1).toBe(1);
