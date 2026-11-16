@@ -7,6 +7,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Guided migration runs from Coolify (preview).** One resumable, observable, abortable run now chains what the
+  manual runbooks did step by step: preflight, config import, environment remap, dark deploy, data seed, freeze, final
+  data copy, TLS pre-issue, verification, DNS prepare, cutover, an observe window and finalize, plus an optional
+  decommission of the source for takeover runs. Each step has gates you can read, typed approvals at the freeze and at
+  the point of no return, and an abort that hands authority back to Coolify until that point. Runs survive a hub
+  restart and pick up where they stopped. Start one from the import wizard ("Run guided migration"), the new
+  **Guided migrations** pages, `tugra import run ...`, the `migration_run_*` MCP tools or `/migration-runs`. The
+  point-of-no-return approval is refused over MCP. Always start with a dry run: it writes nothing outside its own run
+  rows. The engine is covered by tests against in-memory fakes; it has not yet been driven against a live Coolify
+  fleet, so read the verification status in `docs/runbooks/guided-migration.md` first.
+- **Migration lab.** `scripts/lab/` and the `Migration lab (vx)` workflow run the real Go migrator against a real
+  hub, agent and the alpine busybox extractor (scenarios L0-L8: dry run, streaming, interrupt and resume, hub restart,
+  tar fidelity, Postgres, memory, relay seats, throttling). Nightly and on demand. Runbook:
+  `docs/runbooks/migration-lab.md`.
+- **Migrator memory.** Member buffers are allocated once and reused, and the Go heap limit is set below the
+  container's memory limit so the garbage collector works before the kernel kills it. The migrator also reports source row and key
+  counts during `--verify` and splits that report so a large fleet stays under the hub's request size limit.
 - **The in-app updater applies releases that change the compose file or the installer scripts.** "Update now" no
   longer needs `git pull && ./scripts/install.sh` for those. Each release publishes its compose file and scripts with
   a separately signed per-file hash list, committed to by the signed update manifest (`hostFilesDigest`). The updater
