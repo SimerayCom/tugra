@@ -260,3 +260,76 @@ describe("TLS_PREISSUE (swap-proxy, dark phase)", () => {
     expect(IP).toBe("203.0.113.7");
   });
 });
+
+describe("TLS_PREISSUE: review fixes", () => {
+  it("the instance-wide ACME email is not written by a run whose actor is not the instance owner; the gate stays unknown until the owner sets it", async () => {
+    const rig = makeRig({ apps: apps(1), zone: zoneFor(1) });
+    rig.proxyConfig.resolveFor.mockResolvedValue({ acmeEmail: undefined, bind: "public", dnsProvider: "cloudflare", dnsCreds: { CF_DNS_API_TOKEN: "x" } } as never);
+    rig.world.acmeKnown = false;
+    rig.world.owner = false;
+    rig.sim.sslOk = false;
+    await rig.driver.tick(rig.handlers.tls); // init
+    rig.driver.run.inputs = email("ops@realco.io");
+    const blocked = await rig.driver.tick(rig.handlers.tls);
+    expect(blocked.status).toBe("WAITING_OPERATOR");
+    expect(blocked.gate!.checks.find((c) => c.id === "tls-preissue.acme-email")).toMatchObject({ status: "unknown", ownerInput: "acmeEmail" });
+    expect(rig.world.applied).toEqual([]);
+    expect(rig.driver.eventCodes()).not.toContain("tls-preissue.acme-email-applied");
+  });
+
+  it("when the owner's status changes between the gate and the write, the skipped write is reported once, never applied", async () => {
+    const rig = makeRig({ apps: apps(1), zone: zoneFor(1), run: { inputs: email("ops@realco.io") } });
+    rig.proxyConfig.resolveFor.mockResolvedValue({ acmeEmail: undefined, bind: "public", dnsProvider: "cloudflare", dnsCreds: { CF_DNS_API_TOKEN: "x" } } as never);
+    rig.world.acmeKnown = false;
+    rig.sim.sslOk = false;
+    rig.world.owner = false;
+    // the observation (before the gate) still saw the owner; the write path re-checks and finds the actor is not one
+    const isOwner = jest.spyOn(rig.world, "isInstanceOwner").mockResolvedValueOnce(true).mockResolvedValue(false);
+    await rig.driver.tick(rig.handlers.tls);
+    await rig.driver.tick(rig.handlers.tls);
+    expect(isOwner).toHaveBeenCalled();
+    expect(rig.world.applied).toEqual([]);
+    expect(rig.driver.eventCodes().filter((c) => c === "tls-preissue.acme-email-owner-only")).toHaveLength(1);
+  });
+
+  it("the per-app DNS-01 state recorded first survives a retry: the abort still switches DNS-01 off for an app that did not have it", async () => {
+    const rig = makeRig({ apps: apps(1), zone: zoneFor(1) });
+    rig.sim.sslOk = false;
+    await rig.driver.drive(rig.handlers.tls, { maxTicks: 3 });
+    expect(rig.driver.rec("TLS_PREISSUE").compensation!.priorDnsChallenge).toEqual(["a1:0"]);
+    expect(rig.prisma.__apps.get("a1")!.dnsChallenge).toBe(true);
+    await rig.driver.tick(rig.handlers.tls, "retry"); // the view now shows dns01, which THIS step set
+    expect(rig.driver.rec("TLS_PREISSUE").compensation!.priorDnsChallenge).toEqual(["a1:0"]);
+    rig.appsSvc.setDomainOptions.mockClear();
+    await rig.driver.compensate(rig.handlers.tls, "abort");
+    expect(rig.appsSvc.setDomainOptions).toHaveBeenCalledWith("user1", "a1", { dnsChallenge: false });
+    expect(rig.prisma.__apps.get("a1")!.dnsChallenge).toBe(false);
+  });
+
+  it("the recorded prior state is merged per app (a first-seen app is added, a known one is kept)", async () => {
+    const rig = makeRig({ apps: apps(2), zone: zoneFor(2) });
+    rig.driver.rec("TLS_PREISSUE").compensation = { priorDnsChallenge: ["a1:0"] };
+    rig.sim.sslOk = false;
+    await rig.driver.drive(rig.handlers.tls, { maxTicks: 3 });
+    expect(rig.driver.rec("TLS_PREISSUE").compensation!.priorDnsChallenge).toEqual(["a1:0", "a2:0"]);
+  });
+
+  it("the 20 minutes of polling are counted from the end of the operator's wait for staged certificates, not from the step's start", async () => {
+    const rig = makeRig({ apps: apps(1), zone: zoneFor(1), options: { certs: "seed" } });
+    let staged = 0;
+    rig.prisma.cutoverCert.count = (async ({ where }: { where?: { appliedAt?: unknown } } = {}) => (where?.appliedAt === null ? staged : 0)) as never;
+    rig.sim.sslOk = false;
+    expect((await rig.driver.tick(rig.handlers.tls)).status).toBe("WAITING_OPERATOR");
+    rig.driver.advance(3 * 3600_000); // the operator took hours to stage the certificates
+    staged = 2;
+    const r = await rig.driver.tick(rig.handlers.tls, "evidence");
+    expect(r.status).toBe("RUNNING");
+    expect(rig.certs.seed).toHaveBeenCalledTimes(1);
+    expect(rig.driver.rec("TLS_PREISSUE").compensation).toMatchObject({ pollStartedAt: rig.driver.now.toISOString() });
+    // the deadline still applies to the polling itself
+    const later = await rig.driver.drive(rig.handlers.tls, { maxTicks: 200 });
+    expect(later.fail).toMatchObject({ code: "tls-preissue.timeout", retryable: true });
+    expect(rig.driver.now.getTime() - new Date(rig.driver.rec("TLS_PREISSUE").compensation!.pollStartedAt as string).getTime()).toBeGreaterThan(TLS_DEADLINE_MS);
+  });
+});
+

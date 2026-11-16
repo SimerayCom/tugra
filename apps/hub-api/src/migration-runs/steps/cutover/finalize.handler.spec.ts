@@ -121,3 +121,40 @@ describe("FINALIZE", () => {
     expect(rig.writes).toEqual([]);
   });
 });
+
+describe("FINALIZE: a lowered TTL that never flipped", () => {
+  const withBlockedHost = async (): Promise<Rig> => {
+    const rig = makeRig({ apps: apps(3), zone: zoneFor(3), options: { ttlPolicy: "skip-ack" } });
+    await rig.driver.drive(rig.handlers.dns);
+    await rig.driver.drive(rig.handlers.tls);
+    // DNS_PREPARE lowered all three TTLs; the third host is then parked (tunnel-routed) and never flips
+    const third = rig.prisma.cutoverDomain.rows.find((r) => r.hostname === H(3))!;
+    third.state = "BLOCKED";
+    third.blockReason = "tunnel-routed";
+    rig.driver.setStep("VERIFY", { status: "PASSED" });
+    rig.driver.approve("VERIFY", "d".repeat(64), { acceptDataRisk: true, expiresAt: null });
+    expect((await rig.driver.drive(rig.handlers.cut, { between: () => rig.cutover.idle() })).status).toBe("PASSED");
+    rig.driver.setStep("CUTOVER", { status: "PASSED" });
+    rig.driver.setStep("OBSERVE", { status: "PASSED" });
+    return rig;
+  };
+
+  it("puts the original TTL back on a host that was lowered but never flipped (BLOCKED), not only on the verified ones", async () => {
+    const rig = await withBlockedHost();
+    expect(rig.zone.records.map((r) => r.ttl)).toEqual([60, 60, 60]);
+    const r = await rig.driver.drive(rig.handlers.fin);
+    expect(r.status).toBe("PASSED");
+    expect(rig.zone.records.map((x) => x.ttl)).toEqual([3600, 3600, 3600]);
+    expect(rig.driver.eventCodes()).toContain("finalize.ttl-restored-unflipped");
+  });
+
+  it("the post gate names a lowered-but-unflipped host as pending until it is restored", async () => {
+    const rig = await withBlockedHost();
+    const gate = await rig.driver.postGateOf(rig.handlers.fin);
+    expect(gate.passed).toBe(false);
+    expect(gate.checks.find((c) => c.id === "finalize.ttl-unflipped")).toMatchObject({ status: "fail", code: "finalize.ttl-unflipped-pending", params: { hosts: [H(3)] } });
+    await rig.driver.drive(rig.handlers.fin);
+    expect((await rig.driver.postGateOf(rig.handlers.fin)).passed).toBe(true);
+  });
+});
+

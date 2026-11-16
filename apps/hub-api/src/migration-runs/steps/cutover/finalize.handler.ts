@@ -16,7 +16,7 @@ import {
 } from "../../core/run-contract";
 import { CutoverStepBase } from "./cutover-step-base";
 import { CutoverWorld, type SwapRow } from "./cutover-world.service";
-import { chk, earliestVerified, finalizeBindingHash, type Entry } from "./run-cutover-logic";
+import { capHosts, chk, earliestVerified, finalizeBindingHash, hasLoweredUnflippedTtl, type Entry } from "./run-cutover-logic";
 
 export interface FinalizeObs extends Observation {
   opId: string | null;
@@ -104,6 +104,10 @@ export class FinalizeHandler extends CutoverStepBase implements StepHandler<Fina
       const r = await this.cutover.finalize(ctx.actor.userId, opId, {});
       const restored = r.entries.filter((e) => e.finalizedAt !== null).length;
       await ctx.emit({ stepKey: "FINALIZE", level: "info", code: "finalize.ttl-restored", params: { hosts: restored } });
+      // A host DNS_PREPARE lowered that never flipped (parked as BLOCKED, or left unflipped) is not VERIFIED, so `finalize` skips it.
+      await ctx.assertLease();
+      const unflipped = await this.cutover.restoreTtlsUnflipped(ctx.actor.userId, opId);
+      if (unflipped > 0) await ctx.emit({ stepKey: "FINALIZE", level: "info", code: "finalize.ttl-restored-unflipped", params: { records: unflipped } });
     }
     const revoked = await this.world.revokeMigrationToken(opId, ctx.actor.userId);
     await ctx.emit({ stepKey: "FINALIZE", level: "info", code: revoked ? "finalize.token-revoked" : "finalize.token-already-revoked" });
@@ -113,8 +117,10 @@ export class FinalizeHandler extends CutoverStepBase implements StepHandler<Fina
   postGate(_ctx: StepContext, obs: FinalizeObs): GateResult {
     if (!obs.opId) return makeGate([chk("finalize.done", "fail", "finalize.import-op")]);
     const pending = obs.entries.filter((e) => e.state === "VERIFIED" && e.finalizedAt === null);
+    const lowered = obs.entries.filter(hasLoweredUnflippedTtl);
     return makeGate([
       chk("finalize.ttl", obs.topology === "swap-proxy" || pending.length === 0 ? "pass" : "fail", "finalize.ttl-pending", { params: { hosts: pending.length }, evidence: "hub-verified" }),
+      chk("finalize.ttl-unflipped", obs.topology === "swap-proxy" || lowered.length === 0 ? "pass" : "fail", "finalize.ttl-unflipped-pending", { params: { hosts: capHosts(lowered.map((e) => e.hostname)) }, evidence: "hub-verified" }),
       chk("finalize.token", obs.tokenActive ? "fail" : "pass", "finalize.token-active", { evidence: "hub-verified" }),
     ]);
   }

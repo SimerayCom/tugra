@@ -82,6 +82,15 @@ describe("OBSERVE", () => {
     expect(r.fail).toEqual({ code: "observe.crash-detected", params: { events: 1 }, retryable: true });
   });
 
+  it("a crash of a compose app's service container (tugra_<appId>-<service>-<n>) counts like the app's own", async () => {
+    const rig = await afterCutover();
+    await rig.driver.tick(rig.handlers.obs);
+    rig.world.crashes.push({ name: "tugra_a1-web-1", ts: new Date(rig.driver.now.getTime() + 1000) });
+    rig.driver.advance(OBSERVE_CHECK_EVERY_MS);
+    const r = await rig.driver.tick(rig.handlers.obs, "timer");
+    expect(r.fail).toEqual({ code: "observe.crash-detected", params: { events: 1 }, retryable: true });
+  });
+
   it("a host that lost its router/route behind the target fails the step with the host named", async () => {
     const rig = await afterCutover();
     await rig.driver.tick(rig.handlers.obs);

@@ -1,7 +1,7 @@
 import { Logger } from "@nestjs/common";
 import { COOLIFY_ID, H, IP, OLD, SRV, makeRig, zoneRec, type Rig, type RigOpts } from "./testing/cutover-rig";
 import { Crash } from "./testing/step-driver";
-import { SWAP_VERIFY_DEADLINE_MS, VERIFY_DEADLINE_MS, MANUAL_DNS_ATTEST } from "./cutover.handler";
+import { SWAP_VERIFY_DEADLINE_MS, VERIFY_DEADLINE_MS, MANUAL_DNS_ATTEST, PLAN_CHANGED_ATTEST } from "./cutover.handler";
 
 beforeEach(() => jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined));
 afterEach(() => {
@@ -406,7 +406,7 @@ describe("CUTOVER swap-proxy", () => {
 
   it("an unreadable inspect output is retryable and changes nothing", async () => {
     const rig = await swapRig();
-    jest.spyOn(rig.host, "exec").mockReturnValueOnce({ exitCode: 0, output: "TUGRA_SWAP_ID=zzz\n" });
+    jest.spyOn(rig.host, "exec").mockReturnValue({ exitCode: 0, output: "TUGRA_SWAP_ID=zzz\n" });
     const r = await drive(rig);
     expect(r.fail).toMatchObject({ code: "cutover.swap-inspect-failed", retryable: true });
     expect(rig.host.coolify!.running).toBe(true);
@@ -596,5 +596,170 @@ describe("CUTOVER dry run", () => {
     bad.host.coolify!.image = "nginx";
     await bad.driver.tick(bad.handlers.cut);
     expect(bad.driver.rec("CUTOVER").progress!.dryRun![2]).toMatchObject({ code: "cutover.dry.swap-identity-mismatch", level: "block" });
+  });
+});
+
+// ───────────────────────────── review fixes ─────────────────────────────
+
+/** Tick (retry first) until the step settles or `max` ticks passed, advancing the clock like the engine would. */
+async function retryUntilSettled(rig: Rig, max = 8) {
+  let t = await rig.driver.tick(rig.handlers.cut, "retry");
+  for (let i = 0; i < max && t.status === "RUNNING"; i++) {
+    rig.driver.advance(30_000);
+    await rig.cutover.idle();
+    t = await rig.driver.tick(rig.handlers.cut, "tick");
+  }
+  return t;
+}
+
+describe("CUTOVER: a retry after a verification deadline gets a fresh window", () => {
+  it("two-box: the deadline failure is retried, re-verifies, and passes once DNS agrees (the old clock is not reused)", async () => {
+    const rig = await twoBoxReady({ options: { ttlPolicy: "skip-ack" } });
+    await rig.driver.tick(rig.handlers.cut);
+    await rig.cutover.idle();
+    for (const r of rig.prisma.cutoverDomain.rows) r.state = "SWITCHED";
+    rig.sim.propagated = false;
+    rig.prisma.cutoverRun.rows[0].status = "done";
+    const failed = await rig.driver.drive(rig.handlers.cut, { maxTicks: 200 });
+    expect(failed.fail).toMatchObject({ code: "cutover.host-not-verified", retryable: true });
+    rig.sim.propagated = true;
+    const r = await retryUntilSettled(rig);
+    expect(r.status).toBe("PASSED");
+    expect(states(rig).every(([, s]) => s === "VERIFIED")).toBe(true);
+  });
+
+  it("two-box: a retry that still cannot verify is given a window of its own before it fails again", async () => {
+    const rig = await twoBoxReady({ options: { ttlPolicy: "skip-ack" } });
+    await rig.driver.tick(rig.handlers.cut);
+    await rig.cutover.idle();
+    for (const r of rig.prisma.cutoverDomain.rows) r.state = "SWITCHED";
+    rig.sim.propagated = false;
+    rig.prisma.cutoverRun.rows[0].status = "done";
+    await rig.driver.drive(rig.handlers.cut, { maxTicks: 200 });
+    const check = jest.spyOn(rig.cutover, "check");
+    const t = await rig.driver.tick(rig.handlers.cut, "retry");
+    expect(t.status).toBe("RUNNING");
+    expect(check).toHaveBeenCalledTimes(1);
+    expect(rig.driver.rec("CUTOVER").compensation).toMatchObject({ verifyRetryAt: rig.driver.now.toISOString() });
+    // the new window runs out like the first one
+    const again = await rig.driver.drive(rig.handlers.cut, { maxTicks: 200, between: () => rig.cutover.idle() });
+    expect(again.fail).toMatchObject({ code: "cutover.host-not-verified", retryable: true });
+  });
+
+  it("manual DNS: an attested host that failed at the deadline is re-verified on retry", async () => {
+    const rig = await twoBoxReady({ apps: [{ id: "a1", host: H(1) }, { id: "a2", host: "foo.other.net", hasData: true }], zone: zoneFor(1), options: { ttlPolicy: "skip-ack", acceptHttp01Gap: true } });
+    await drive(rig);
+    rig.driver.attest("CUTOVER", MANUAL_DNS_ATTEST);
+    const failed = await rig.driver.drive(rig.handlers.cut, { maxTicks: 200, between: () => rig.cutover.idle() });
+    expect(failed.fail).toMatchObject({ code: "cutover.host-not-verified", retryable: true });
+    const orig = rig.lookup.resolve4.getMockImplementation()!;
+    rig.lookup.resolve4.mockImplementation((async (h: string) => (h === "foo.other.net" ? [IP] : orig(h))) as never);
+    const r = await retryUntilSettled(rig);
+    expect(r.status).toBe("PASSED");
+    expect(states(rig)).toEqual([[H(1), "VERIFIED"], ["foo.other.net", "VERIFIED"]]);
+  });
+
+  it("swap: a retry after the swap-verify deadline gets its own probe window instead of failing after one round", async () => {
+    const rig = await swapRig();
+    rig.sim.sslOk = false;
+    const failed = await drive(rig, { maxTicks: 60 });
+    expect(failed.fail).toMatchObject({ code: "cutover.swap-verify-failed", retryable: true });
+    const first = await rig.driver.tick(rig.handlers.cut, "retry");
+    expect(first.status).toBe("RUNNING");
+    rig.sim.sslOk = true;
+    rig.driver.advance(10_000);
+    expect((await rig.driver.tick(rig.handlers.cut)).status).toBe("PASSED");
+    expect(swapRow(rig)!.state).toBe("LIVE");
+    expect(kinds(rig)).not.toContain("swap-reverse");
+  });
+});
+
+describe("CUTOVER: the approved plan is enforced at the point of no return", () => {
+  const firstSight = async (rig: Rig) => {
+    const first = await rig.driver.tick(rig.handlers.cut);
+    expect(first.status).toBe("WAITING_TIMER");
+    expect(rig.driver.rec("CUTOVER").compensation).toMatchObject({ planPin: expect.any(String), planPinFor: rig.driver.rec("VERIFY").approval!.at });
+    rig.driver.advance(Math.max(0, new Date((first.wait as { notBefore: string }).notBefore).getTime() - rig.driver.now.getTime()) + 1000);
+  };
+
+  it("two-box: a stateful host set that changed after the plan was first seen holds the step; nothing is written and no PONR is set", async () => {
+    const rig = await twoBoxReady();
+    await firstSight(rig);
+    rig.world.apps[0].hasData = true; // a host that was stateless in the approved plan now carries data
+    const r = await rig.driver.tick(rig.handlers.cut);
+    expect(r.status).toBe("WAITING_OPERATOR");
+    expect(r.gate!.checks.find((c) => c.id === "cutover.plan-unchanged")).toMatchObject({ status: "fail", code: "cutover.plan-changed" });
+    expect(r.wait).toMatchObject({ kind: "operator", code: "cutover.plan-changed", attest: [PLAN_CHANGED_ATTEST] });
+    expect(cutoverWrites(rig)).toEqual([]);
+    expect(rig.driver.run.ponrAt).toBeNull();
+    expect(rig.prisma.cutoverRun.rows).toHaveLength(0);
+  });
+
+  it("two-box: the operator's attestation accepts the changed plan (a new pin) and the flip goes on", async () => {
+    const rig = await twoBoxReady();
+    await firstSight(rig);
+    rig.world.apps[0].hasData = true;
+    expect((await rig.driver.tick(rig.handlers.cut)).status).toBe("WAITING_OPERATOR");
+    rig.driver.advance(1000);
+    rig.driver.attest("CUTOVER", PLAN_CHANGED_ATTEST);
+    const r = await drive(rig);
+    expect(r.status).toBe("PASSED");
+    expect(rig.driver.run.ponrAt).not.toBeNull();
+  });
+
+  it("two-box: an unchanged plan passes straight through (the pin is only taken once per approval)", async () => {
+    const rig = await twoBoxReady();
+    await firstSight(rig);
+    const pin = rig.driver.rec("CUTOVER").compensation!.planPin;
+    expect((await drive(rig)).status).toBe("PASSED");
+    expect(rig.driver.rec("CUTOVER").compensation!.planPin).toBe(pin);
+  });
+
+  it("two-box: a new approval pins again (the human reviewed the plan as it is then)", async () => {
+    const rig = await twoBoxReady();
+    await firstSight(rig);
+    rig.world.apps[0].hasData = true;
+    rig.driver.advance(1000);
+    approveVerify(rig);
+    const r = await drive(rig);
+    expect(r.status).toBe("PASSED");
+  });
+
+  it("swap: a source proxy that was recreated after the plan was first seen is NOT stopped; the step waits for the operator", async () => {
+    const rig = await swapRig();
+    rig.proxyConfig.resolveFor.mockResolvedValue({ acmeEmail: "admin@example.com", bind: "public", dnsProvider: "cloudflare", dnsCreds: { CF_DNS_API_TOKEN: "x" } } as never);
+    const first = await rig.driver.tick(rig.handlers.cut);
+    expect(first.status).toBe("WAITING_OPERATOR");
+    expect(rig.driver.rec("CUTOVER").compensation).toMatchObject({ planPin: expect.any(String) });
+    rig.proxyConfig.resolveFor.mockResolvedValue({ acmeEmail: "ops@realco.io", bind: "public", dnsProvider: "cloudflare", dnsCreds: { CF_DNS_API_TOKEN: "x" } } as never);
+    rig.host.coolify!.id = "e".repeat(64); // another container now answers to the name coolify-proxy
+    const r = await rig.driver.tick(rig.handlers.cut);
+    expect(r.status).toBe("WAITING_OPERATOR");
+    expect(r.wait).toMatchObject({ code: "cutover.plan-changed", attest: [PLAN_CHANGED_ATTEST] });
+    expect(kinds(rig)).not.toContain("swap-stop-source");
+    expect(swapRow(rig)).toBeUndefined();
+    expect(rig.driver.run.ponrAt).toBeNull();
+  });
+});
+
+describe("CUTOVER swap: every tracked host counts for the point of no return", () => {
+  it("a stateful host parked as BLOCKED still sets the PONR before the proxy is stopped (the swap moves the whole box's ingress)", async () => {
+    const rig = await swapRig({ apps: [{ id: "a1", host: H(1) }, { id: "a2", host: H(2), hasData: true }] });
+    rig.prisma.cutoverDomain.rows.find((r) => r.hostname === H(2))!.state = "BLOCKED";
+    rig.prisma.cutoverDomain.rows.find((r) => r.hostname === H(2))!.blockReason = "tunnel-routed";
+    const r = await drive(rig);
+    expect(r.status).toBe("PASSED");
+    expect(rig.driver.run.ponrAt).not.toBeNull();
+    expect(rig.host.log.find((l) => l.kind === "swap-stop-source")!.ponr).toBe(true);
+  });
+
+  it("the data-risk acknowledgement is required for it too", async () => {
+    const rig = await swapRig({ apps: [{ id: "a1", host: H(1) }, { id: "a2", host: H(2), hasData: true }] });
+    approveVerify(rig, { acceptDataRisk: false });
+    rig.prisma.cutoverDomain.rows.find((r) => r.hostname === H(2))!.state = "BLOCKED";
+    const r = await rig.driver.tick(rig.handlers.cut);
+    expect(r.status).toBe("WAITING_OPERATOR");
+    expect(r.gate!.checks.find((c) => c.id === "cutover.data-risk")).toMatchObject({ status: "fail", params: { hosts: [H(2)] } });
+    expect(kinds(rig)).not.toContain("swap-stop-source");
   });
 });

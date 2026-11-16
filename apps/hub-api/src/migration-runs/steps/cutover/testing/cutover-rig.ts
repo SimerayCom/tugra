@@ -5,6 +5,7 @@ import { StepHandlerRegistryService } from "../../../core/step-handler.registry"
 import type { StepKey } from "../../../core/run-contract";
 import { RunOptionsSchema, type RunOptions } from "../../../core/dto";
 import { CutoverHandler } from "../cutover.handler";
+import { CutoverPlanService } from "../cutover-plan.service";
 import type { CutoverWorld, OpApp, ServerFacts, SwapRow } from "../cutover-world.service";
 import { DecommissionHandler } from "../decommission.handler";
 import { DnsPrepareHandler } from "../dns-prepare.handler";
@@ -186,8 +187,13 @@ export class FakeWorld {
     return this.acmeKnown;
   }
   applied: string[] = [];
+  /** The run's actor is the instance owner (the default). */
+  owner = true;
+  async isInstanceOwner(): Promise<boolean> {
+    return this.owner;
+  }
   async applyAcmeEmailIfMissing(email: string): Promise<boolean> {
-    if (this.acmeKnown) return false;
+    if (this.acmeKnown || !this.owner) return false;
     this.applied.push(email);
     this.acmeKnown = true;
     return true;
@@ -226,7 +232,7 @@ export class FakeWorld {
     });
   }
   async crashEventsSince(_serverId: string, names: readonly string[], since: Date): Promise<number> {
-    return this.crashes.filter((c) => names.includes(c.name) && c.ts >= since).length;
+    return this.crashes.filter((c) => names.some((n) => c.name === n || c.name.startsWith(`${n}-`)) && c.ts >= since).length;
   }
   async backupCoverage(ids: readonly string[]): Promise<Array<{ databaseId: string; hasSuccess: boolean }>> {
     return ids.map((databaseId) => ({ databaseId, hasSuccess: this.backups.get(databaseId) === true }));
@@ -316,7 +322,8 @@ export function makeRig(o: RigOpts = {}) {
   const registry = new StepHandlerRegistryService();
   const dns = new DnsPrepareHandler(registry, cutover, world as unknown as CutoverWorld);
   const tls = new TlsPreissueHandler(registry, cutover, certs as never, world as unknown as CutoverWorld, proxyOps as never, appsSvc as never);
-  const cut = new CutoverHandler(registry, cutover, world as unknown as CutoverWorld, proxyOps as never, net as never);
+  const plans = new CutoverPlanService(cutover, world as unknown as CutoverWorld);
+  const cut = new CutoverHandler(registry, cutover, world as unknown as CutoverWorld, proxyOps as never, net as never, plans);
   const obs = new ObserveHandler(registry, cutover, world as unknown as CutoverWorld, net as never);
   const fin = new FinalizeHandler(registry, cutover, world as unknown as CutoverWorld);
   const dec = new DecommissionHandler(registry, world as unknown as CutoverWorld);
@@ -332,7 +339,7 @@ export function makeRig(o: RigOpts = {}) {
   const seat = async (state: string, hostnames?: string[]) => {
     for (const r of prisma.cutoverDomain.rows) if (!hostnames || hostnames.includes(r.hostname as string)) r.state = state;
   };
-  return { prisma, zone, cf, sim, writes, phase, access, audit, creds, lookup, net, proxyConfig, agentWs, appsSvc, executor, cutover, host, world, driver, proxyOps, certs, registry, handlers: { dns, tls, cut, obs, fin, dec }, tasks, row, seat };
+  return { prisma, zone, cf, sim, writes, phase, access, audit, creds, lookup, net, proxyConfig, agentWs, appsSvc, executor, cutover, host, world, driver, proxyOps, certs, registry, plans, handlers: { dns, tls, cut, obs, fin, dec }, tasks, row, seat };
 }
 
 export type Rig = ReturnType<typeof makeRig>;

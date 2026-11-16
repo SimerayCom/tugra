@@ -4,7 +4,7 @@ import type { RunSnapshot } from "../../core/run-contract";
 import { CutoverWorld } from "./cutover-world.service";
 import { swapPlanHash } from "./proxy-swap";
 import { inspectSourceProxy } from "./swap-runtime";
-import { actionableEntries, cutoverPlanHash, hostIsStateful } from "./run-cutover-logic";
+import { cutoverPlanHash, hostIsStateful, trackedEntries } from "./run-cutover-logic";
 
 /**
  * The plan the PONR approval is bound to, for VERIFY (lane B) to fold into its `inputHash`
@@ -25,7 +25,8 @@ export class CutoverPlanService {
     const [view, apps] = await Promise.all([this.cutover.view(run.actorId, run.opId), this.world.opApps(run.opId)]);
     const dataApps = new Set(apps.filter((a) => a.hasData).map((a) => a.appId));
     if (run.topology === "swap-proxy") {
-      const hosts = actionableEntries(view.entries);
+      // The swap moves the whole box's ingress: every tracked host (BLOCKED ones included) is part of what the approval covers.
+      const hosts = trackedEntries(view.entries);
       const ident = await inspectSourceProxy(this.world, run.targetServerId);
       if (!ident.ok) return null;
       const planHash = swapPlanHash({ runId: run.id, serverId: run.targetServerId, proxy: ident.snapshot, hosts: hosts.map((e) => ({ hostname: e.hostname, stateful: hostIsStateful(e, dataApps) })) });

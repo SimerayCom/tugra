@@ -111,11 +111,23 @@ export class CutoverWorld {
     return !!(await this.settings.acmeEmailFor(this.config.get<string>("ACME_EMAIL")));
   }
 
-  /** Apply the run's ACME email ONLY when the instance has none (an env or owner value is never overwritten). */
-  async applyAcmeEmailIfMissing(email: string): Promise<boolean> {
+  /** Is this user the instance owner (the only one who may change instance-wide settings)? Fail-closed. */
+  async isInstanceOwner(userId: string): Promise<boolean> {
+    const u = await this.prisma.user.findUnique({ where: { id: userId }, select: { isInstanceOwner: true } });
+    return u?.isInstanceOwner === true;
+  }
+
+  /**
+   * Apply the run's ACME email ONLY when the instance has none (an env or owner value is never overwritten) AND the run's
+   * actor is the instance owner: the ACME contact is instance-wide (every team's certificates), which `PATCH /instance/settings`
+   * reserves to the owner. The write is audited like that route's. Returns false when nothing was written.
+   */
+  async applyAcmeEmailIfMissing(email: string, actorUserId: string): Promise<boolean> {
     const existing = await this.settings.acmeEmailFor(this.config.get<string>("ACME_EMAIL"));
     if (existing) return false;
+    if (!(await this.isInstanceOwner(actorUserId))) return false;
     await this.settings.update({ acmeEmail: email });
+    await this.audit.log({ actor: actorUserId, action: "instance_settings.update", target: "singleton", meta: { by: "migration-run", fields: ["acmeEmail"] } }).catch(() => undefined);
     return true;
   }
 
@@ -173,9 +185,14 @@ export class CutoverWorld {
 
   // ── observation queries ────────────────────────────────────────────────────────────────────
 
+  /**
+   * Crash/OOM episodes since `since` of the given containers. Each name matches the container itself AND its compose
+   * services (`<name>-<service>-<n>`, the project name is `tugra_<appId>`), which are the containers a compose app runs as.
+   */
   async crashEventsSince(serverId: string, containerNames: readonly string[], since: Date): Promise<number> {
     if (containerNames.length === 0) return 0;
-    return this.prisma.containerEvent.count({ where: { serverId, containerName: { in: [...containerNames] }, ts: { gte: since } } });
+    const names = [...containerNames];
+    return this.prisma.containerEvent.count({ where: { serverId, ts: { gte: since }, OR: [{ containerName: { in: names } }, ...names.map((n) => ({ containerName: { startsWith: `${n}-` } }))] } });
   }
 
   /** For each database: has Tugra taken at least one SUCCESSFUL backup of it? (the DECOMMISSION precondition) */

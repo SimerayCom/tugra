@@ -34,6 +34,18 @@ export const isDns01Blocked = (e: Entry): boolean => e.state === "BLOCKED" && DN
  */
 export const hostIsStateful = (e: Entry, dataApps: ReadonlySet<string>): boolean => e.stateful || dataApps.has(e.applicationId);
 
+/**
+ * Does the swap carry data to Tugra? The swap moves the WHOLE box's ingress (routers are proxy-wide), so a host parked as
+ * BLOCKED is served by Tugra's proxy too: every tracked host counts, and so does any app that depends on data.
+ */
+export const swapIsStateful = (entries: readonly Entry[], dataApps: ReadonlySet<string>): boolean => dataApps.size > 0 || trackedEntries(entries).some((e) => hostIsStateful(e, dataApps));
+
+/**
+ * A host whose TTL the DNS preparation lowered but that never flipped (parked as BLOCKED, or still waiting): `ttlWaitUntil`
+ * is set exactly while the lowered TTL has not been restored. Verified hosts are restored by `cutover.finalize`.
+ */
+export const hasLoweredUnflippedTtl = (e: Entry): boolean => e.dnsMode === "cloudflare" && e.ttlWaitUntil !== null && (stateIn(e, PRE_FLIP_STATES) || e.state === "BLOCKED");
+
 /** Latest moment every lowered-TTL, unflipped, unproxied Cloudflare host's old resolver caches have expired (null = no wait). */
 export function ttlWaitUntil(entries: readonly Entry[]): Date | null {
   let max: Date | null = null;

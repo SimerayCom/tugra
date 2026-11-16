@@ -11,6 +11,7 @@ function make() {
     application: { findMany: jest.fn(), count: jest.fn() },
     appServiceDomain: { findMany: jest.fn() },
     server: { findUnique: jest.fn(), update: jest.fn() },
+    user: { findUnique: jest.fn() },
     bulkOperation: { findUnique: jest.fn(), updateMany: jest.fn() },
     containerEvent: { count: jest.fn() },
     backup: { findMany: jest.fn() },
@@ -118,13 +119,30 @@ describe("CutoverWorld", () => {
 
   it("applyAcmeEmailIfMissing never overwrites an env or owner email", async () => {
     const m = make();
+    m.prisma.user.findUnique.mockResolvedValue({ isInstanceOwner: true });
     m.settings.acmeEmailFor.mockResolvedValueOnce("owner@realco.io").mockResolvedValueOnce(undefined);
-    expect(await m.world.applyAcmeEmailIfMissing("run@realco.io")).toBe(false);
+    expect(await m.world.applyAcmeEmailIfMissing("run@realco.io", "u1")).toBe(false);
     expect(m.settings.update).not.toHaveBeenCalled();
-    expect(await m.world.applyAcmeEmailIfMissing("run@realco.io")).toBe(true);
+    expect(await m.world.applyAcmeEmailIfMissing("run@realco.io", "u1")).toBe(true);
     expect(m.settings.update).toHaveBeenCalledWith({ acmeEmail: "run@realco.io" });
     m.settings.acmeEmailFor.mockResolvedValueOnce(undefined);
     expect(await m.world.acmeEmailKnown()).toBe(false);
+  });
+
+  it("the instance-wide ACME email is written only for the instance owner, and the write is audited like PATCH /instance/settings", async () => {
+    const m = make();
+    m.settings.acmeEmailFor.mockResolvedValue(undefined);
+    m.prisma.user.findUnique.mockResolvedValueOnce({ isInstanceOwner: false });
+    expect(await m.world.applyAcmeEmailIfMissing("run@realco.io", "member")).toBe(false);
+    m.prisma.user.findUnique.mockResolvedValueOnce(null);
+    expect(await m.world.applyAcmeEmailIfMissing("run@realco.io", "ghost")).toBe(false);
+    expect(m.settings.update).not.toHaveBeenCalled();
+    expect(m.audit.log).not.toHaveBeenCalled();
+    m.prisma.user.findUnique.mockResolvedValueOnce({ isInstanceOwner: true });
+    expect(await m.world.applyAcmeEmailIfMissing("run@realco.io", "owner1")).toBe(true);
+    expect(m.settings.update).toHaveBeenCalledWith({ acmeEmail: "run@realco.io" });
+    expect(m.audit.log).toHaveBeenCalledWith({ actor: "owner1", action: "instance_settings.update", target: "singleton", meta: { by: "migration-run", fields: ["acmeEmail"] } });
+    expect(m.prisma.user.findUnique).toHaveBeenCalledWith({ where: { id: "owner1" }, select: { isInstanceOwner: true } });
   });
 
   it("setProxyBind writes only the bind; otherLiveApps counts RUNNING apps outside the op", async () => {
@@ -141,7 +159,8 @@ describe("CutoverWorld", () => {
     m.prisma.containerEvent.count.mockResolvedValue(2);
     const since = new Date();
     expect(await m.world.crashEventsSince("srv1", ["tugra_a1"], since)).toBe(2);
-    expect(m.prisma.containerEvent.count).toHaveBeenCalledWith({ where: { serverId: "srv1", containerName: { in: ["tugra_a1"] }, ts: { gte: since } } });
+    // a compose app runs as `tugra_<appId>-<service>-<n>`: each name matches itself and its services
+    expect(m.prisma.containerEvent.count).toHaveBeenCalledWith({ where: { serverId: "srv1", ts: { gte: since }, OR: [{ containerName: { in: ["tugra_a1"] } }, { containerName: { startsWith: "tugra_a1-" } }] } });
     expect(await m.world.crashEventsSince("srv1", [], since)).toBe(0);
   });
 

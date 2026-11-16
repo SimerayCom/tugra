@@ -18,6 +18,7 @@ import {
   type StepHandlerRegistry,
 } from "../../core/run-contract";
 import { CutoverStepBase, POLL_MS, rethrowLeaseLost } from "./cutover-step-base";
+import { CutoverPlanService } from "./cutover-plan.service";
 import { CutoverWorld, type ServerFacts, type SwapRow } from "./cutover-world.service";
 import { inspectSourceProxy, reverseSwapOnHost, stopSourceProxy, swapHostState, targetPublishesWeb, verifySwapHosts, type SwapVerify } from "./swap-runtime";
 import {
@@ -27,12 +28,14 @@ import {
   capHosts,
   chk,
   compDate,
+  compString,
   earliestVerified,
   hasAttestation,
   hostIsStateful,
   isFlipped,
   isManualDns,
   iso,
+  swapIsStateful,
   timerGate,
   trackedEntries,
   ttlWaitUntil,
@@ -47,6 +50,8 @@ export const SWAP_VERIFY_DEADLINE_MS = 5 * 60 * 1000;
 const FLIP_POLL_MS = 5_000;
 const SWAP_POLL_MS = 10_000;
 export const MANUAL_DNS_ATTEST = "cutover.manual-dns-switched";
+/** The operator's decision to go on with a plan that changed after the approval was given (see {@link CutoverHandler.preGate}). */
+export const PLAN_CHANGED_ATTEST = "cutover.plan-changed";
 
 export interface CutoverObs extends Observation {
   opId: string | null;
@@ -60,6 +65,10 @@ export interface CutoverObs extends Observation {
   swap: SwapRow | null;
   /** swap only, and only while LIVE: how each host answers through Tugra's proxy on the box. */
   swapVerify: SwapVerify | null;
+  /** Before anything is committed: the plan (flip plan hash / swap plan hash + stateful hosts) as it is right now, null when it cannot be computed. */
+  plan: string | null;
+  /** The plan the stored VERIFY approval is pinned to (first seen with that approval), null when nothing is pinned yet. */
+  planPin: string | null;
 }
 
 /**
@@ -86,6 +95,7 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     readonly world: CutoverWorld,
     private readonly proxyOps: ProxyOpsService,
     readonly net: NetProbe,
+    private readonly plans: CutoverPlanService,
   ) {
     super(registry);
   }
@@ -118,7 +128,7 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
   async observe(ctx: StepContext): Promise<CutoverObs> {
     const run = ctx.run;
     const opId = run.opId;
-    const base: CutoverObs = { opId, topology: run.topology, entries: [], servers: [], flipRun: null, dataApps: new Set(), facts: null, swap: null, swapVerify: null };
+    const base: CutoverObs = { opId, topology: run.topology, entries: [], servers: [], flipRun: null, dataApps: new Set(), facts: null, swap: null, swapVerify: null, plan: null, planPin: null };
     if (!opId) return base;
     const [view, apps, facts] = await Promise.all([this.cutover.view(ctx.actor.userId, opId), this.world.opApps(opId), this.world.serverFacts(run.targetServerId)]);
     const obs: CutoverObs = { ...base, entries: view.entries, servers: view.servers, flipRun: view.run, dataApps: new Set(apps.filter((a) => a.hasData).map((a) => a.appId)), facts };
@@ -126,6 +136,8 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
       obs.swap = await this.world.getSwap(run.id, run.targetServerId);
       if (obs.swap?.state === "LIVE" && facts) obs.swapVerify = await verifySwapHosts(this, facts, actionableEntries(view.entries).map((e) => e.hostname), run.options.healthPath ?? "/");
     }
+    // The approved plan is enforced while nothing is committed yet (a committed step resumes; its flip carries its own plan hash).
+    if (!this.committed(ctx, obs)) await this.pinPlan(ctx, obs);
     // The measured end of the downtime window is a fact about the world: the first moment a host answers through Tugra.
     // Stamped where it is observed (the step usually passes on its post gate without another `act`); first write wins.
     if (!run.freezeEndedAt) {
@@ -133,6 +145,39 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
       if (at) await ctx.patchRun({ freezeEndedAt: at });
     }
     return obs;
+  }
+
+  /**
+   * The human approved a plan (VERIFY binds the plan hash into its approval). The flip recomputes its own hash from the live
+   * state, so on its own it can never notice a change since the approval. The plan is therefore pinned the first time this
+   * step sees a given approval and compared on every later observation until the PONR: a DNS record, host set, stateful-host
+   * set or source proxy that changed in between holds the step for an explicit operator decision. An operator attestation
+   * newer than the pin accepts the plan as it is now (a new pin).
+   */
+  private async pinPlan(ctx: StepContext, obs: CutoverObs): Promise<void> {
+    const approval = ctx.stepState("VERIFY").approval;
+    if (!approval || !approvalValid(approval, ctx.now())) return;
+    let plan: string | null = null;
+    try {
+      plan = (await this.plans.planHash({ id: ctx.run.id, opId: ctx.run.opId, actorId: ctx.run.actorId, topology: ctx.run.topology, targetServerId: ctx.run.targetServerId }))?.planHash ?? null;
+    } catch (e) {
+      rethrowLeaseLost(e);
+      this.log.warn(`run ${ctx.run.id}: plan could not be computed: ${(e as Error).message}`);
+    }
+    obs.plan = plan;
+    const comp = ctx.step.compensation;
+    const pin = compString(comp, "planPin");
+    if (pin && compString(comp, "planPinFor") === approval.at) {
+      const pinnedAt = Date.parse(compString(comp, "planPinAt") ?? "");
+      const accepted = ctx.step.evidence.attestations.some((a) => a.checkId === PLAN_CHANGED_ATTEST && Date.parse(a.at) > pinnedAt);
+      if (!accepted) {
+        obs.planPin = pin;
+        return;
+      }
+    }
+    if (!plan) return;
+    await ctx.recordCompensation({ planPin: plan, planPinFor: approval.at, planPinAt: iso(ctx.now()) });
+    obs.planPin = plan;
   }
 
   // ───────────────────────────── gates ─────────────────────────────
@@ -151,8 +196,13 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
       checks.push(chk("cutover.verify-passed", verify.status === "PASSED" ? "pass" : "fail", "cutover.verify-not-passed"));
       const valid = approvalValid(verify.approval, ctx.now());
       checks.push(chk("cutover.approval", valid ? "pass" : "fail", verify.approval ? "cutover.approval-expired" : "cutover.approval-missing"));
+      // No pin and no plan: nothing could be compared (the act decides, e.g. an unreadable source proxy fails there with its own code).
+      if (obs.planPin !== null || obs.plan !== null) {
+        const same = obs.plan !== null && obs.plan === obs.planPin;
+        checks.push(chk("cutover.plan-unchanged", same || obs.planPin === null ? "pass" : obs.plan === null ? "unknown" : "fail", obs.plan === null ? "cutover.plan-unavailable" : "cutover.plan-changed"));
+      }
     }
-    const movers = actionableEntries(obs.entries).filter((e) => run.topology === "swap-proxy" || e.state === "READY" || isFlipped(e));
+    const movers = (run.topology === "swap-proxy" ? trackedEntries(obs.entries) : actionableEntries(obs.entries)).filter((e) => run.topology === "swap-proxy" || e.state === "READY" || isFlipped(e));
     const stateful = movers.filter((e) => hostIsStateful(e, obs.dataApps));
     if (stateful.length > 0 && !committed) {
       checks.push(chk("cutover.data-risk", verify.approval?.acceptDataRisk === true ? "pass" : "fail", "cutover.data-risk-not-accepted", { params: { hosts: capHosts(stateful.map((e) => e.hostname)) } }));
@@ -165,12 +215,19 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
         const until = ttlWaitUntil(obs.entries);
         const waiting = until !== null && until.getTime() > ctx.now().getTime();
         checks.push(chk("cutover.ttl-wait", waiting ? "fail" : "pass", "cutover.ttl-wait", waiting ? { params: { until: iso(until!) } } : {}));
-        return timerGate(checks, ["cutover.ttl-wait"], waiting ? until : null, "cutover.ttl-wait");
+        return this.planWait(checks) ?? timerGate(checks, ["cutover.ttl-wait"], waiting ? until : null, "cutover.ttl-wait");
       }
     } else if (!committed) {
       checks.push(chk("cutover.swap-server", obs.facts ? "pass" : "fail", "cutover.swap-server-missing"));
     }
-    return makeGate(checks);
+    return this.planWait(checks) ?? makeGate(checks);
+  }
+
+  /** When the plan check is the only thing blocking, the wait names it so the operator can accept the changed plan (an attestation). */
+  private planWait(checks: GateCheck[]): GateResult | null {
+    const blocking = checks.filter((c) => c.status === "fail" || c.status === "unknown");
+    if (blocking.length === 0 || !blocking.every((c) => c.id === "cutover.plan-unchanged") || blocking[0].code !== "cutover.plan-changed") return null;
+    return makeGate(checks, { wait: { kind: "operator", code: "cutover.plan-changed", attest: [PLAN_CHANGED_ATTEST] } });
   }
 
   // ───────────────────────────── act ─────────────────────────────
@@ -180,6 +237,20 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     const earliest = earliestVerified(obs.entries);
     if (earliest && !ctx.run.freezeEndedAt) await ctx.patchRun({ freezeEndedAt: earliest });
     return ctx.run.topology === "swap-proxy" ? this.actSwap(ctx, obs) : this.actTwoBox(ctx, obs);
+  }
+
+  /**
+   * Where the verification deadline is measured from. A retry after a deadline failure opens a FRESH window (recorded once,
+   * on the retry tick): the clock that already ran out would otherwise fail the retry before it re-verified anything.
+   */
+  private async verifyWindowStart(ctx: StepContext, base: Date): Promise<Date> {
+    if (ctx.trigger === "retry") {
+      const at = ctx.now();
+      await ctx.recordCompensation({ verifyRetryAt: iso(at) });
+      return at;
+    }
+    const retryAt = compDate(ctx.step.compensation, "verifyRetryAt");
+    return retryAt && retryAt.getTime() > base.getTime() ? retryAt : base;
   }
 
   private async actTwoBox(ctx: StepContext, obs: CutoverObs): Promise<ActResult> {
@@ -237,7 +308,7 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
 
     const switched = entries.filter((e) => e.state === "SWITCHED" || e.state === "VERIFY_FAILED");
     if (switched.length > 0) {
-      const since = compDate(ctx.step.compensation, "flipStartedAt") ?? now;
+      const since = await this.verifyWindowStart(ctx, compDate(ctx.step.compensation, "flipStartedAt") ?? now);
       if (now.getTime() - since.getTime() > VERIFY_DEADLINE_MS) throw new StepFailure("cutover.host-not-verified", { hosts: capHosts(switched.map((e) => e.hostname)), minutes: Math.round(VERIFY_DEADLINE_MS / 60_000) }, true);
       await this.cutover.check(userId, opId, { hostnames: switched.map((e) => e.hostname) });
       return { outcome: "continue", pollAfterMs: POLL_MS };
@@ -250,8 +321,9 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
       if (!hasAttestation(ctx.step.evidence, MANUAL_DNS_ATTEST)) {
         return { outcome: "wait", wait: { kind: "operator", code: "cutover.manual-dns", params: { hosts: capHosts(manual.map((e) => e.hostname)) }, attest: [MANUAL_DNS_ATTEST] } };
       }
-      const since = compDate(ctx.step.compensation, "manualCheckStartedAt");
-      if (!since) await ctx.recordCompensation({ manualCheckStartedAt: iso(now) });
+      const recorded = compDate(ctx.step.compensation, "manualCheckStartedAt");
+      if (!recorded) await ctx.recordCompensation({ manualCheckStartedAt: iso(now) });
+      const since = recorded ? await this.verifyWindowStart(ctx, recorded) : null;
       if (since && now.getTime() - since.getTime() > VERIFY_DEADLINE_MS) throw new StepFailure("cutover.host-not-verified", { hosts: capHosts(manual.map((e) => e.hostname)), minutes: Math.round(VERIFY_DEADLINE_MS / 60_000) }, true);
       await this.cutover.check(userId, opId, { hostnames: manual.map((e) => e.hostname) });
       return { outcome: "continue", pollAfterMs: POLL_MS };
@@ -264,7 +336,8 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     const serverId = run.targetServerId;
     const userId = ctx.actor.userId;
     const hosts = actionableEntries(obs.entries);
-    const stateful = hosts.some((e) => hostIsStateful(e, obs.dataApps));
+    // The swap moves the whole box's ingress: a host parked as BLOCKED is served by Tugra's proxy as well, so it counts for the PONR.
+    const stateful = swapIsStateful(obs.entries, obs.dataApps);
     if (hosts.length === 0) return { outcome: "done" };
 
     let swap = obs.swap;
@@ -323,7 +396,7 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
       if (!run.freezeEndedAt) await ctx.patchRun({ freezeEndedAt: ctx.now() });
       return { outcome: "done" };
     }
-    const since = swap.liveAt ?? ctx.now();
+    const since = await this.verifyWindowStart(ctx, swap.liveAt ?? ctx.now());
     if (ctx.now().getTime() - since.getTime() > SWAP_VERIFY_DEADLINE_MS) throw new StepFailure("cutover.swap-verify-failed", { hosts: capHosts(bad), minutes: Math.round(SWAP_VERIFY_DEADLINE_MS / 60_000) }, true);
     return { outcome: "continue", pollAfterMs: SWAP_POLL_MS };
   }

@@ -43,6 +43,8 @@ export interface TlsObs extends Observation {
   proxyBind: string | null;
   otherLiveApps: number;
   acmeEmailKnown: boolean;
+  /** The run's actor is the instance owner (the only one whose email may become the instance-wide ACME contact). */
+  actorOwner: boolean;
 }
 
 /**
@@ -90,9 +92,9 @@ export class TlsPreissueHandler extends CutoverStepBase implements StepHandler<T
   async observe(ctx: StepContext): Promise<TlsObs> {
     const run = ctx.run;
     const opId = run.opId;
-    const base: TlsObs = { opId, topology: run.topology, entries: [], servers: [], certs: { staged: 0, applied: 0 }, hostApps: 0, dark: null, darkState: null, proxyBind: null, otherLiveApps: 0, acmeEmailKnown: false };
+    const base: TlsObs = { opId, topology: run.topology, entries: [], servers: [], certs: { staged: 0, applied: 0 }, hostApps: 0, dark: null, darkState: null, proxyBind: null, otherLiveApps: 0, acmeEmailKnown: false, actorOwner: false };
     if (!opId) return base;
-    const [view, apps, facts, acmeEmailKnown] = await Promise.all([this.cutover.view(ctx.actor.userId, opId), this.world.opApps(opId), this.world.serverFacts(run.targetServerId), this.world.acmeEmailKnown()]);
+    const [view, apps, facts, acmeEmailKnown, actorOwner] = await Promise.all([this.cutover.view(ctx.actor.userId, opId), this.world.opApps(opId), this.world.serverFacts(run.targetServerId), this.world.acmeEmailKnown(), this.world.isInstanceOwner(ctx.actor.userId)]);
     const obs: TlsObs = {
       ...base,
       entries: view.entries,
@@ -101,6 +103,7 @@ export class TlsPreissueHandler extends CutoverStepBase implements StepHandler<T
       hostApps: apps.filter((a) => !a.clusterId && appHosts(a).length > 0).length,
       proxyBind: facts?.proxyBind ?? null,
       acmeEmailKnown,
+      actorOwner,
       otherLiveApps: run.options.certs === "seed" ? await this.world.otherLiveApps(run.targetServerId, apps.map((a) => a.appId)) : 0,
     };
     if (run.topology === "swap-proxy") {
@@ -138,7 +141,7 @@ export class TlsPreissueHandler extends CutoverStepBase implements StepHandler<T
     const provided = resolveOwnerInput(run.inputs, "acmeEmail");
     if (server || obs.entries.length > 0) {
       const ok = server ? server.acmeEmailOk : obs.acmeEmailKnown;
-      checks.push(ok ? chk("tls-preissue.acme-email", "pass", "tls-preissue.acme-email", { evidence: "hub-verified" }) : provided ? chk("tls-preissue.acme-email", "warn", "tls-preissue.acme-email-will-apply") : chk("tls-preissue.acme-email", "unknown", "tls-preissue.acme-email", { ownerInput: "acmeEmail" }));
+      checks.push(ok ? chk("tls-preissue.acme-email", "pass", "tls-preissue.acme-email", { evidence: "hub-verified" }) : provided && obs.actorOwner ? chk("tls-preissue.acme-email", "warn", "tls-preissue.acme-email-will-apply") : chk("tls-preissue.acme-email", "unknown", "tls-preissue.acme-email", { ownerInput: "acmeEmail" }));
     }
     if (run.options.certs === "seed" && obs.otherLiveApps > 0) checks.push(chk("tls-preissue.seed-live-apps", "fail", "tls-preissue.seed-would-drop-live-apps", { params: { count: obs.otherLiveApps } }));
     if (run.topology === "swap-proxy" && obs.proxyBind !== null && obs.proxyBind !== "none") checks.push(chk("tls-preissue.swap-bind", "warn", "tls-preissue.swap-bind-will-be-none", { params: { bind: obs.proxyBind } }));
@@ -171,9 +174,14 @@ export class TlsPreissueHandler extends CutoverStepBase implements StepHandler<T
     const email = resolveOwnerInput(run.inputs, "acmeEmail");
     const server = view.servers.find((s) => s.serverId === run.targetServerId);
     if (email && server && !server.acmeEmailOk && !has("emailAt")) {
-      await this.world.applyAcmeEmailIfMissing(email);
-      await ctx.recordCompensation({ emailAt: iso(now) });
-      await ctx.emit({ stepKey: "TLS_PREISSUE", level: "info", code: "tls-preissue.acme-email-applied" });
+      // Instance-wide setting: only the instance owner's run may write it (the gate stays `unknown` until the owner sets it).
+      if (await this.world.applyAcmeEmailIfMissing(email, userId)) {
+        await ctx.recordCompensation({ emailAt: iso(now) });
+        await ctx.emit({ stepKey: "TLS_PREISSUE", level: "info", code: "tls-preissue.acme-email-applied" });
+      } else if (!has("emailSkippedAt") && !(await this.world.isInstanceOwner(userId))) {
+        await ctx.recordCompensation({ emailSkippedAt: iso(now) });
+        await ctx.emit({ stepKey: "TLS_PREISSUE", level: "warn", code: "tls-preissue.acme-email-owner-only" });
+      }
     }
 
     // 2. swap host: the dark proxy must publish no port while Coolify owns :80/:443
@@ -197,6 +205,8 @@ export class TlsPreissueHandler extends CutoverStepBase implements StepHandler<T
       view = await this.cutover.view(userId, opId);
     }
 
+    let pollStartedAt = compDate(comp, "pollStartedAt") ?? startedAt;
+
     // 4. the source's own certificates, when the run chose to seed them (they arrive from the migrator's --certs pass)
     if (run.options.certs === "seed" && !has("seededAt")) {
       if (view.certs.staged === 0 && view.certs.applied === 0) {
@@ -210,7 +220,9 @@ export class TlsPreissueHandler extends CutoverStepBase implements StepHandler<T
         await this.certs.seed(userId, opId, { serverId: run.targetServerId, acknowledgeProxyRestart: true });
         await ctx.emit({ stepKey: "TLS_PREISSUE", level: "info", code: "tls-preissue.certs-seeded", params: { staged: view.certs.staged } });
       }
-      await ctx.recordCompensation({ seededAt: iso(now) });
+      // The 20 minutes of polling start here: an operator wait for the staged certificates is not part of them.
+      pollStartedAt = now;
+      await ctx.recordCompensation({ seededAt: iso(now), pollStartedAt: iso(now) });
     }
 
     // 5. redeploy the apps whose router labels changed (once per app)
@@ -228,7 +240,7 @@ export class TlsPreissueHandler extends CutoverStepBase implements StepHandler<T
     // 6. readiness: the cutover check promotes the host states (two-box); the dark probe is read in `observe` (swap)
     if (run.topology === "two-box") await this.cutover.check(userId, opId, { ...(run.options.healthPath ? { healthPath: run.options.healthPath } : {}) });
 
-    if (now.getTime() - startedAt.getTime() > TLS_DEADLINE_MS) throw new StepFailure("tls-preissue.timeout", { minutes: Math.round(TLS_DEADLINE_MS / 60_000) }, true);
+    if (now.getTime() - pollStartedAt.getTime() > TLS_DEADLINE_MS) throw new StepFailure("tls-preissue.timeout", { minutes: Math.round(TLS_DEADLINE_MS / 60_000) }, true);
     return { outcome: "continue", pollAfterMs: POLL_MS };
   }
 
@@ -239,10 +251,15 @@ export class TlsPreissueHandler extends CutoverStepBase implements StepHandler<T
     const dnsReady = server?.dnsReady === true;
     const gap = ctx.run.options.acceptHttp01Gap;
     const open = view.entries.filter((e) => (PRE_FLIP_STATES as readonly string[]).includes(e.state) || isDns01Blocked(e));
-    // Record each app's current challenge BEFORE changing it: the abort restores exactly this.
-    const prior: Record<string, boolean> = {};
-    for (const e of open) prior[e.applicationId] = e.challenge === "dns01";
-    await ctx.recordCompensation({ priorDnsChallenge: Object.entries(prior).map(([id, on]) => `${id}:${on ? 1 : 0}`) });
+    // Record each app's current challenge BEFORE changing it: the abort restores exactly this. First write wins per app: on a
+    // retry or a crash after the change, the view already shows what THIS step set, which is not what the abort must restore.
+    const prior = new Map<string, string>();
+    for (const p of compStrings(ctx.step.compensation, "priorDnsChallenge")) {
+      const [id] = p.split(":");
+      if (id) prior.set(id, p);
+    }
+    for (const e of open) if (!prior.has(e.applicationId)) prior.set(e.applicationId, `${e.applicationId}:${e.challenge === "dns01" ? 1 : 0}`);
+    await ctx.recordCompensation({ priorDnsChallenge: [...prior.values()] });
     const dns01 = dnsReady ? open.filter((e) => e.dnsMode === "cloudflare" && e.state !== "BLOCKED").map((e) => e.hostname) : [];
     // A host blocked only for DNS-01 reasons joins the HTTP-01 list when the owner accepted that gap; other blocks are left alone.
     const http01 = open.filter((e) => !dns01.includes(e.hostname) && (e.state !== "BLOCKED" || gap)).map((e) => e.hostname);
