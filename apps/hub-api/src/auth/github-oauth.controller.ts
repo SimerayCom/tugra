@@ -1,6 +1,13 @@
-import { Controller, ForbiddenException, Get, Query, Res } from "@nestjs/common";
+import { Controller, ForbiddenException, Get, Query, Req, Res } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { CookieResponse, setAuthCookies } from "../common/cookies";
+import {
+  clearOauthStateCookie,
+  CookieResponse,
+  parseCookies,
+  setAuthCookies,
+  setOauthStateCookie,
+  TG_OAUTH_STATE,
+} from "../common/cookies";
 import { GithubOAuthService } from "./github-oauth.service";
 
 /** Minimal Express response shape we use (avoids a hard @types/express dependency). */
@@ -26,23 +33,30 @@ export class GithubOAuthController {
       res.redirect(`${this.web()}/login?error=oauth_unconfigured`);
       return;
     }
-    res.redirect(await this.oauth.authorizeUrl());
+    const { url, nonce } = await this.oauth.begin();
+    setOauthStateCookie(res, nonce);
+    res.redirect(url);
   }
 
   /**
    * Callback: exchange the code, set httpOnly session cookies, then redirect to the SPA. Tokens are
    * delivered only via the cookies — never in the URL — so they can't leak through browser history
-   * or the Referer header. (Requires the hub and SPA to share a public origin, which the same-origin
-   * reverse-proxy deployment provides, so the cookies are visible to the SPA.)
+   * or the Referer header. The callback URL is chosen so it lands on the origin the browser uses for the
+   * panel (see GithubOAuthService.redirectUri): the proxy origin for `--domain`, or the web port's own
+   * `/api/auth/oauth/github/callback` proxy on the raw two-port install. The browser-bound state cookie is
+   * single-use: it is cleared whatever the outcome.
    */
   @Get("callback")
   async callback(
     @Query("code") code: string,
     @Query("state") state: string,
+    @Req() req: { headers?: { cookie?: string | string[] } },
     @Res() res: RedirectResponse,
   ): Promise<void> {
+    const nonce = parseCookies(req.headers?.cookie)[TG_OAUTH_STATE];
+    clearOauthStateCookie(res);
     try {
-      const tokens = await this.oauth.handleCallback(code, state);
+      const tokens = await this.oauth.handleCallback(code, state, nonce);
       setAuthCookies(res, tokens);
       res.redirect(`${this.web()}/oauth/callback`);
     } catch (err) {

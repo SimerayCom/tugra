@@ -79,6 +79,10 @@ export const envSchema = z
   // a friendly "unconfigured" redirect and the app boots normally.
   GITHUB_OAUTH_CLIENT_ID: z.string().min(1).optional(),
   GITHUB_OAUTH_CLIENT_SECRET: z.string().min(1).optional(),
+  // Optional override of the callback URL sent to GitHub (and registered in the OAuth app). Unset = derived:
+  // `<HUB_PUBLIC_URL>/auth/oauth/github/callback` when hub and web share one origin (--domain), otherwise
+  // `<WEB_PUBLIC_URL>/api/auth/oauth/github/callback` (the web's same-origin proxy, for the raw two-port install).
+  GITHUB_OAUTH_CALLBACK_URL: z.string().url().optional(),
   // Web origin the OAuth callback hands tokens back to (the SPA).
   WEB_PUBLIC_URL: z.string().url().default("http://localhost:3001"),
   // Optional first-run claim code. When set AND the instance is not yet initialized, the FIRST account can

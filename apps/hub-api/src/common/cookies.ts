@@ -5,6 +5,8 @@ import { randomBytes } from "node:crypto";
 export const TG_ACCESS = "tg_access";
 export const TG_REFRESH = "tg_refresh";
 export const TG_CSRF = "tg_csrf";
+// Short-lived browser binding for an in-flight OAuth login (the "state" is only valid in the browser that started it).
+export const TG_OAUTH_STATE = "tg_oauth_state";
 
 const ACCESS_MAX_AGE = 15 * 60 * 1000; // 15 min (matches the access-JWT TTL)
 const REFRESH_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days (matches the refresh-JWT TTL)
@@ -75,4 +77,21 @@ export function clearAuthCookies(res: CookieResponse): void {
   for (const name of [TG_ACCESS, TG_REFRESH, TG_CSRF]) {
     res.clearCookie(name, { path: "/", sameSite: "lax", secure });
   }
+}
+
+const OAUTH_STATE_MAX_AGE = 10 * 60 * 1000; // matches the state JWT TTL
+
+/**
+ * Bind an in-flight OAuth login to the browser that started it: an httpOnly cookie holding a random nonce whose
+ * hash is embedded in the signed `state`. A callback replayed from another browser (login CSRF / session
+ * fixation) carries a valid state but not this cookie, so it is rejected. SameSite=Lax is deliberate: the
+ * provider redirects back as a top-level GET navigation, which Lax cookies ride; Secure follows the same
+ * switch as the session cookies (on for https/--domain, off for the plain-http raw install).
+ */
+export function setOauthStateCookie(res: CookieResponse, nonce: string): void {
+  res.cookie(TG_OAUTH_STATE, nonce, { ...sessionOpts(cookiesSecure()), maxAge: OAUTH_STATE_MAX_AGE });
+}
+
+export function clearOauthStateCookie(res: CookieResponse): void {
+  res.clearCookie(TG_OAUTH_STATE, { path: "/", sameSite: "lax", secure: cookiesSecure() });
 }

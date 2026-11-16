@@ -27,5 +27,21 @@ describe("GitHub OAuth (e2e)", () => {
     expect(loc).toContain("client_id=e2e-client");
     expect(loc).toContain("state=");
     expect(loc).toContain("redirect_uri=");
+    // The start binds the login to this browser with an httpOnly state cookie.
+    const cookies = ([] as string[]).concat(res.headers["set-cookie"] ?? []);
+    const bind = cookies.find((c) => c.startsWith("tg_oauth_state="));
+    expect(bind).toBeDefined();
+    expect(bind).toMatch(/HttpOnly/i);
+    expect(bind).toMatch(/SameSite=Lax/i);
+  });
+
+  it("GET /auth/oauth/github/callback rejects a valid-looking state that has no binding cookie", async () => {
+    const res = await request(app.getHttpServer()).get("/auth/oauth/github").expect(302);
+    const state = new URL(res.headers.location as string).searchParams.get("state")!;
+    const cb = await request(app.getHttpServer())
+      .get(`/auth/oauth/github/callback?code=x&state=${encodeURIComponent(state)}`)
+      .expect(302);
+    expect(cb.headers.location).toContain("/login?error=oauth");
+    expect(([] as string[]).concat(cb.headers["set-cookie"] ?? []).some((c) => c.startsWith("tg_access="))).toBe(false);
   });
 });
