@@ -337,13 +337,10 @@ R31 is then still open. **What it cannot prove**: the 26.04 kernel and its docke
    a 128 MiB part below about 0.45 MB/s. The part sizes are chosen against that, but nothing enforces it. Candidate fix, for the owner: renew
    the lease from `registerPart` and from the relay's byte progress. The lab does not hide it: L3's boundary run sets a 15 minute window
    explicitly.
-2. **`reapStaleHelpers` is not run-scoped.** Every migrator removes all containers labelled `tugra.vx=1` when it starts, including the
-   live inventory and tar helpers of another migrator on the same docker host, which ends that run as `inventory helper failed` or a tar
-   failure. Two concurrent migrators on one host (one per volume, or two operators) can hit it. A run-id label is not enough on its own: a
-   dead run's helper and a live one both carry a foreign run id, so a fix needs a liveness test (for example the owning migrator
-   container still running). A stagger does not avoid it: a LATER migrator's start removes the live helpers of the EARLIER ones. L8
-starts all its migrators together behind a barrier in the tap, which narrows the window but does not close it; the real fix is in the
-migrator (a run-scoped or liveness-tested removal), and on the real estate it does not arise while each source host runs one migrator.
+2. **`reapStaleHelpers` was not run-scoped (fixed).** Every migrator used to remove all containers labelled `tugra.vx=1` when it
+   started, including the live inventory and tar helpers of another migrator on the same docker host. Helpers now carry
+   `tugra.vx.owner=<migrator container id>` and the reaper skips any helper whose owner container is still running; helpers of a dead
+   or unlabelled owner are still removed. L8 keeps its start barrier, which is now belt and braces rather than the only guard.
 
 ## Not covered here
 

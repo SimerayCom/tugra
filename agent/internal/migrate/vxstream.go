@@ -541,17 +541,38 @@ func removeHelper(dockerPath string, env []string, name string) {
 	_, _, _ = runDocker(ctx, []string{dockerPath, "rm", "-f", name}, env)
 }
 
-// reapStaleHelpers removes helper containers a crashed earlier run left behind (label tugra.vx=1, ONLY those).
+// reapStaleHelpers removes helper containers a crashed earlier run left behind (label tugra.vx=1, ONLY those). A helper
+// whose owner (another migrator container on this host) is still running belongs to a live run and is left alone.
 func reapStaleHelpers(ctx context.Context, dockerPath string, env []string) {
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	out, _, err := runDocker(cctx, []string{dockerPath, "ps", "-aq", "--no-trunc", "--filter", "label=tugra.vx=1"}, env)
+	out, _, err := runDocker(cctx, []string{dockerPath, "ps", "-a", "--no-trunc", "--filter", "label=tugra.vx=1", "--format", `{{.ID}} {{.Label "tugra.vx.owner"}}`}, env)
 	if err != nil {
 		return
 	}
-	for _, id := range strings.Fields(string(out)) {
-		if hex64Re.MatchString(id) {
-			_, _, _ = runDocker(cctx, []string{dockerPath, "rm", "-f", id}, env)
+	alive := map[string]bool{}
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) == 0 || !hex64Re.MatchString(f[0]) {
+			continue
 		}
+		if len(f) > 1 && f[1] != helperOwner && ownerRe.MatchString(f[1]) {
+			live, seen := alive[f[1]]
+			if !seen {
+				live = ownerRunning(cctx, dockerPath, env, f[1])
+				alive[f[1]] = live
+			}
+			if live {
+				continue
+			}
+		}
+		_, _, _ = runDocker(cctx, []string{dockerPath, "rm", "-f", f[0]}, env)
 	}
+}
+
+// ownerRunning reports whether the container named by a helper's owner label is running. Any error (gone, not a
+// container) counts as not running, so a crashed run's helpers are still reaped.
+func ownerRunning(ctx context.Context, dockerPath string, env []string, owner string) bool {
+	out, _, err := runDocker(ctx, []string{dockerPath, "inspect", "-f", "{{.State.Running}}", "--type", "container", owner}, env)
+	return err == nil && strings.TrimSpace(string(out)) == "true"
 }

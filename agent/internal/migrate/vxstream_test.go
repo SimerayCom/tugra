@@ -12,6 +12,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"strconv"
@@ -25,10 +27,13 @@ import (
 func sha(b []byte) string { h := sha256.Sum256(b); return hex.EncodeToString(h[:]) }
 
 func TestBuildTarArgvGolden(t *testing.T) {
+	prev := helperOwner
+	helperOwner = "0123abcd4567"
+	t.Cleanup(func() { helperOwner = prev })
 	got := buildTarArgv("/usr/bin/docker", "ghcr.io/x/tugra-agent:1", "pg_data", "tugra-vx-abcd1234-cccccccc", []string{"postmaster.pid"})
 	want := []string{
 		"/usr/bin/docker", "run", "--rm", "-i", "--pull=never", "--name", "tugra-vx-abcd1234-cccccccc", "--label", "tugra.vx=1",
-		"--network", "none", "--read-only", "--cap-drop", "ALL", "--cap-add", "DAC_READ_SEARCH",
+		"--label", "tugra.vx.owner=0123abcd4567", "--network", "none", "--read-only", "--cap-drop", "ALL", "--cap-add", "DAC_READ_SEARCH",
 		"--security-opt", "no-new-privileges", "--pids-limit", "64", "--user", "0",
 		"-v", "pg_data:/data:ro", "--entrypoint", "tar", "ghcr.io/x/tugra-agent:1",
 		"--sort=name", "--numeric-owner", "--format=gnu", "--exclude=./postmaster.pid", "-C", "/data", "-cf", "-", ".",
@@ -709,5 +714,37 @@ func TestVxPutPartGuards(t *testing.T) {
 	err := h2.VxPutPart(context.Background(), "/api/v1/agent-vx/t/abcdefghijklmnopqrstuv?exp=1999999999&sig="+strings.Repeat("s", 43), []byte("x"))
 	if kindOf(err) != KindRedirect {
 		t.Errorf("redirect: %v", err)
+	}
+}
+
+// Two migrators on one host: the reaper at the start of a run removes only helpers whose owner is gone (or unlabelled,
+// or its own), never those of a migrator container that is still running.
+func TestReapStaleHelpersSparesLiveOwners(t *testing.T) {
+	prev := helperOwner
+	helperOwner = "selfself0001"
+	t.Cleanup(func() { helperOwner = prev })
+	dir := t.TempDir()
+	h := func(c byte) string { return strings.Repeat(string(c), 64) }
+	ps := h('a') + " liveowner001\n" + h('b') + " deadowner001\n" + h('c') + " \n" + h('d') + " selfself0001\n" + h('e') + " liveowner001\n"
+	script := "#!/bin/sh\n" +
+		"case \"$1\" in\n" +
+		"ps) printf '%s' '" + ps + "' ;;\n" +
+		"inspect) for a; do last=$a; done; if [ \"$last\" = liveowner001 ]; then echo true; echo \"$last\" >> \"" + dir + "/inspected\"; else echo 'no such object' >&2; exit 1; fi ;;\n" +
+		"rm) echo \"$3\" >> \"" + dir + "/removed\" ;;\n" +
+		"esac\n"
+	docker := filepath.Join(dir, "docker")
+	if err := os.WriteFile(docker, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	reapStaleHelpers(context.Background(), docker, os.Environ())
+	removed, _ := os.ReadFile(filepath.Join(dir, "removed"))
+	got := strings.Fields(string(removed))
+	want := []string{h('b'), h('c'), h('d')}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("removed %v, want %v", got, want)
+	}
+	inspected, _ := os.ReadFile(filepath.Join(dir, "inspected"))
+	if n := strings.Count(string(inspected), "liveowner001"); n != 1 {
+		t.Fatalf("live owner inspected %d times, want 1 (cached)", n)
 	}
 }

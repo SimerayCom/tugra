@@ -356,12 +356,12 @@ test("L8: every migrator is started together behind the tap's barrier, never sta
   const m2 = s.indexOf("lab_run_bg m2");
   const released = s.indexOf('grep -q "^released all $N');
   assert.ok(m1 > 0 && m2 > m1 && released > m2, "m1, m2 (and later m3, m4), then the proof that they all lined up");
-  assert.doesNotMatch(s.slice(m1, released), /lab_wait_part/, "no migrator waits for another to commit a part: reapStaleHelpers would remove its live helpers");
+  assert.doesNotMatch(s.slice(m1, released), /lab_wait_part/, "no migrator waits for another to commit a part: all start together behind the barrier");
   assert.match(s, /LAB_TAP_BARRIER="\$N" lab_tap_start/);
   assert.match(s, /lab_run_bg m1 --hub "\$LAB_TAP_URL"/);
   assert.match(s, /lab_run_bg m2 --hub "\$LAB_TAP_URL"/);
   assert.match(s, /lab_check "the migration seat pool was contended/);
-  assert.match(s, /run-scoped/, "the header names the product finding");
+  assert.match(s, /Runbook finding 2 \(fixed in the migrator\)/, "the header names the product finding and its fix");
   assert.doesNotMatch(s, /two starting together would delete each other/, "the old, wrong premise is gone");
   assert.match(s, /probably another migrator on this docker host removed its helper container/, "a helper failure is reported as finding 2, not as a seat problem");
 });

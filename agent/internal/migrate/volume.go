@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -263,12 +264,28 @@ var invLineRe = regexp.MustCompile(`^TUGRA_INV bytes=(\d+) entries=(\d+) sockets
 // capabilities except DAC_READ_SEARCH (read/search bypass only: root with --cap-drop ALL cannot read 0600 files owned
 // by uid 999/70 nor traverse 0700 directories), no privilege escalation, a pid cap, and NEVER a pull.
 func helperHardening(name string) []string {
-	return []string{
-		"--rm", "-i", "--pull=never", "--name", name, "--label", "tugra.vx=1",
+	argv := []string{"--rm", "-i", "--pull=never", "--name", name, "--label", "tugra.vx=1"}
+	if helperOwner != "" {
+		argv = append(argv, "--label", "tugra.vx.owner="+helperOwner)
+	}
+	return append(argv,
 		"--network", "none", "--read-only", "--cap-drop", "ALL", "--cap-add", "DAC_READ_SEARCH",
 		"--security-opt", "no-new-privileges", "--pids-limit", "64", "--user", "0",
-	}
+	)
 }
+
+var ownerRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`)
+
+// helperOwner names the migrator that starts a helper: its hostname, which is the migrator container's short id in the
+// shipped mode (docker run without --hostname). The stale-helper reaper spares helpers whose owner is still running, so
+// two migrators on one host never remove each other's helpers mid-stream.
+var helperOwner = func() string {
+	h, err := os.Hostname()
+	if err != nil || !ownerRe.MatchString(h) {
+		return ""
+	}
+	return h
+}()
 
 // InventoryVolume measures the source volume with the helper image (the migrator's own image: never a pull on the
 // customer's host). Output is parsed strictly and any deviation is an error (fail closed). excludes are the tar

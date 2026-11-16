@@ -6,14 +6,10 @@
 #  A. N migrator runs (N ops, N source volumes) race for the migration seats: the surplus ones see `busy` (an uncounted, jittered
 #     backoff) and all finish volume-applied, with no part failure. Every migrator goes through scripts/lab/http-tap.mjs, which
 #     counts the hub's {"busy":true} answers: zero would mean the pool was never contended and the scenario proved nothing.
-#     HARNESS LIMIT (a product finding, runbook finding 2): every volume run starts by removing ALL helper containers labelled
-#     tugra.vx=1 on its docker host (reapStaleHelpers, not scoped to the run). Staggering the migrators does NOT avoid that: a later
-#     migrator's start would remove the live tar helpers of the earlier ones. So the opposite is done: all N migrators are started
-#     together and the tap holds each one's `GET targets` (its last hub call before that removal) until all N have asked, then
-#     releases them at once, so every removal runs before any migrator has created a helper. That narrows the window to the spread
-#     between the migrators' removals, it does not close it; a run that dies with tar-failed or "inventory helper failed" is reported
-#     as a probable collision with finding 2 (not as a seat problem). The fix belongs in the migrator (a run-scoped or
-#     liveness-tested removal), not in the lab.
+#     Runbook finding 2 (fixed in the migrator): helpers are labelled with their owning migrator container and the start-of-run
+#     reaper spares helpers whose owner is still running. All N migrators still start together behind the tap's barrier (each
+#     one's `GET targets` is held until all N asked), so a regression of that fix shows up as tar-failed or "inventory helper
+#     failed", which is reported as a probable collision with finding 2 (not as a seat problem).
 #  B. while A runs, a real app move (a deployed app with data, to a second agent) proceeds through the app-move pool. This
 #     leg is OBSERVATIONAL: both "servers" are one docker host sharing /etc/tugra and the docker daemon, so a failure of the
 #     move itself is reported (MOVE: ...) but only a move that is STARVED by the migration (stuck behind it) fails the lab.
@@ -83,7 +79,7 @@ if [ "${L8_MOVE:-1}" = 1 ]; then
 fi
 
 # A: N concurrent migrations, each in the background, all started together: the tap's barrier holds each one's `GET targets` until
-# all N asked (reapStaleHelpers is not run-scoped, so a stagger would let a later migrator kill the earlier ones' live helpers)
+# all N asked (belt and braces for runbook finding 2: the migrator's reaper spares helpers of a live owner)
 lab_op_load main
 LAB_TAP_BARRIER="$N" lab_tap_start
 lab_run_bg m1 --hub "$LAB_TAP_URL" --arms all --part-mib 128
@@ -144,7 +140,7 @@ for t in "${tags[@]}"; do
   if [ "$rc" != 0 ]; then
     tail -30 "$LAB_DIR/run.$t.log" >&2
     if grep -q -E 'tar-failed|inventory helper failed|the tar helper failed' "$LAB_DIR/run.$t.log" "$LAB_DIR/run.$t.json" 2>/dev/null; then
-      lab_die "migration $t exit $rc with a helper failure: probably another migrator on this docker host removed its helper container at its start (runbook finding 2: reapStaleHelpers is not run-scoped), not a seat problem"
+      lab_die "migration $t exit $rc with a helper failure: probably another migrator on this docker host removed its helper container at its start (runbook finding 2 regressed: the reaper removed a live owner's helper), not a seat problem"
     fi
     lab_die "migration $t exit $rc"
   fi
