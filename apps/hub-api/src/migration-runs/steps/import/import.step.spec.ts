@@ -342,7 +342,7 @@ describe("IMPORT earlyBuild (R27/C5)", () => {
     wire(w, { prebuild: async () => Promise.reject(new Error("docker build failed")) });
     const id = await w.run({ options: earlyOpts(w, { deployWaves: "earlyBuild" }) });
     expect(w.stepStatus(id, "IMPORT")).toBe("FAILED");
-    expect(w.store.row(id).failureCode).toBe("import.early-build.failed");
+    expect(w.store.row(id).failureCode).toBe("import.early-build-failed");
     expect(w.port.deploys).toHaveLength(0);
   });
 

@@ -1,4 +1,24 @@
 import { Logger } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { Test } from "@nestjs/testing";
+import { AgentWsServer } from "../../../agent-gateway/agent-ws.server";
+import { APPLICATIONS_SERVICE } from "../../../applications/applications.tokens";
+import { AuditService } from "../../../audit/audit.service";
+import { CutoverCertService } from "../../../cutover/cutover-cert.service";
+import { CutoverService } from "../../../cutover/cutover.service";
+import { NetProbe } from "../../../cutover/net-probe";
+import { InstanceSettingsService } from "../../../instance/instance-settings.service";
+import { PrismaService } from "../../../prisma/prisma.service";
+import { ProxyOpsService } from "../../../server-ops/proxy-ops.service";
+import { StepRegistryModule } from "../../core/step-registry.module";
+import { IMPORT_STEPS_PORT } from "../import/import-ports";
+import { PostPonrRelease as Release } from "../import/baseline/post-ponr";
+import { CutoverHandler } from "./cutover.handler";
+import { CutoverPlanService } from "./cutover-plan.service";
+import { CutoverWorld as World } from "./cutover-world.service";
+import { DecommissionHandler } from "./decommission.handler";
+import { DnsPrepareHandler } from "./dns-prepare.handler";
+import { TlsPreissueHandler } from "./tls-preissue.handler";
 import { H, makeRig, zoneRec, type Rig, type RigOpts } from "./testing/cutover-rig";
 import { FinalizeHandler } from "./finalize.handler";
 import { OBSERVE_CHECK_EVERY_MS, ObserveHandler } from "./observe.handler";
@@ -154,5 +174,40 @@ describe("OBSERVE and FINALIZE release what was held until after the point of no
     expect(await rig.driver.compensate(observeWith(rig, f.release), "reverse")).toEqual({ outcome: "failed", code: "observe.reverse-release-failed", params: { count: 2 } });
     const none = fakeRelease({ changed: 0, failed: 0 });
     expect((await rig.driver.compensate(observeWith(rig, none.release), "reverse")).outcome).toBe("nothing-to-do");
+  });
+});
+
+describe("Nest wiring of the release", () => {
+  it("injects the post-PONR release into OBSERVE and FINALIZE when the import steps provide it", async () => {
+    const mod = await Test.createTestingModule({
+      imports: [StepRegistryModule],
+      providers: [
+        World,
+        CutoverPlanService,
+        DnsPrepareHandler,
+        TlsPreissueHandler,
+        CutoverHandler,
+        ObserveHandler,
+        FinalizeHandler,
+        DecommissionHandler,
+        Release,
+        { provide: IMPORT_STEPS_PORT, useValue: {} },
+        { provide: CutoverService, useValue: {} },
+        { provide: CutoverCertService, useValue: {} },
+        { provide: ProxyOpsService, useValue: {} },
+        { provide: NetProbe, useValue: {} },
+        { provide: APPLICATIONS_SERVICE, useValue: {} },
+        { provide: PrismaService, useValue: {} },
+        { provide: AgentWsServer, useValue: {} },
+        { provide: InstanceSettingsService, useValue: {} },
+        { provide: ConfigService, useValue: {} },
+        { provide: AuditService, useValue: {} },
+      ],
+    }).compile();
+    await mod.init();
+    const release = mod.get(Release);
+    expect((mod.get(ObserveHandler) as unknown as { release: unknown }).release).toBe(release);
+    expect((mod.get(FinalizeHandler) as unknown as { release: unknown }).release).toBe(release);
+    await mod.close();
   });
 });

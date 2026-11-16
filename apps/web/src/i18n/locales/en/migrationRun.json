@@ -828,7 +828,7 @@
     "import_auto-deploy_failed": "Switching off push-to-deploy for an imported app failed.",
     "import_early-build-pending": "{built} of {total} app images are built.",
     "import_early-build-done": "All {total} app images are built ({built} built).",
-    "import_early-build_failed": "Building an app image early failed.",
+    "import_early-build-failed": "Building the image of {name} failed. Retry the step to build the images that are still missing.",
     "observe_baseline-excluded": "{count} apps were already unhealthy at the source and are not counted in the crash watch.",
     "observe_reverse-release-failed": "{count} workers or push-to-deploy switches could not be put back after the reverse.",
     "release_workers-started": "Started {count} workers that were held until after the cutover.",

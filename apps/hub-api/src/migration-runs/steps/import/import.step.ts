@@ -25,6 +25,7 @@ import { HttpException, Inject, Injectable, OnModuleInit, Optional } from "@nest
 import type { DryRunItem, GateCheck, GateResult } from "../../core/dto";
 import {
   STEP_HANDLERS,
+  RunLeaseLostError,
   StepFailure,
   deployConcurrencyOf,
   makeGate,
@@ -36,7 +37,7 @@ import {
   type StepHandler,
   type StepHandlerRegistry,
 } from "../../core/run-contract";
-import { CLEANUP_REQUEST_KEY, type CleanupRequest } from "../../core/run-engine.service";
+import { CLEANUP_REQUEST_KEY, RunAbortRequestedError, type CleanupRequest } from "../../core/run-engine.service";
 import { SESSION_EXPIRED_CODE } from "../../core/run-logic";
 import { IMPORT_STEPS_PORT, type DeploymentRef, type ImportStepsPort, type OpSnapshot, type SessionState } from "./import-ports";
 import { applyInputOf, deployKeyBase, failureOf, hasActive, hasBad, includedItems, isConflict, itemTasks, stopRunApps, unackedBlockers } from "./step-utils";
@@ -275,8 +276,12 @@ export class ImportStep implements StepHandler<ImportObs>, OnModuleInit {
     );
     for (const r of results) if (r.status === "fulfilled" && r.value) done.push(r.value);
     await ctx.recordCompensation({ prebuilt: done });
-    const rejected = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
-    if (rejected) throw failureOf(rejected.reason, "import.early-build");
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
+      if (r.status !== "rejected") continue;
+      if (r.reason instanceof RunLeaseLostError || r.reason instanceof RunAbortRequestedError) throw r.reason; // control flow, never a failure code
+      throw new StepFailure("import.early-build-failed", { name: chunk[i].name }, true);
+    }
     return { outcome: "continue", pollAfterMs: 1000 };
   }
 
