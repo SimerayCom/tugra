@@ -59,7 +59,14 @@ export interface CoolifyApp {
   limits_cpus?: string | number | null;
   health_check_enabled?: boolean | null;
   is_http_basic_auth_enabled?: boolean | null;
+  /** Repo-relative glob patterns that gate a push deploy, one per line (a comma list is tolerated). Config, not a secret. */
   watch_paths?: string | null;
+  /** A static site: the build output (`publish_directory`) is served by a web server instead of a start command. */
+  is_static?: boolean | null;
+  /** Static sites only: serve `index.html` for unknown paths. */
+  is_spa?: boolean | null;
+  /** Which host variant the proxy redirects to the other: `www`, `non-www` or `both` (no redirect, both are served). */
+  redirect?: string | null;
 }
 export interface CoolifyDatabase {
   uuid: string;
@@ -81,6 +88,8 @@ export interface CoolifyDatabase {
   /** The source's TLS switch and the `sslmode` it tells clients to use (PostgreSQL). Both are config, not secrets. */
   enable_ssl?: boolean | null;
   ssl_mode?: string | null;
+  /** A custom redis.conf (Redis only). Presence-only: the text is never read into the fleet. */
+  redis_conf?: string | null;
 }
 export interface CoolifyService {
   uuid: string;
@@ -196,6 +205,9 @@ export function mapCoolifyBuildPack(app: CoolifyApp): { kind: ForeignApp["kind"]
   if (app.build_pack === "dockerimage" || (!hasRealGit(app) && app.docker_registry_image_name)) {
     return { kind: "image", buildPack: "image" };
   }
+  // A nixpacks/railpack app Coolify marks `is_static` builds a site and serves its publish directory with a web server: that is
+  // Tugra's STATIC build (build command + output directory), not a started process.
+  if (app.is_static === true && (app.build_pack === "nixpacks" || app.build_pack === "railpack") && hasRealGit(app)) return { kind: "git", buildPack: "static" };
   switch (app.build_pack) {
     case "dockercompose":
       return { kind: "compose", buildPack: "dockercompose" };
@@ -328,6 +340,39 @@ const nonEmpty = (v: unknown): boolean => typeof v === "string" && v.trim() !== 
 /** Coolify "0" / "" / null / 0 all mean "no limit". */
 const nonZero = (v: unknown): boolean => (typeof v === "number" ? v > 0 : typeof v === "string" && v.trim() !== "" && v.trim() !== "0");
 
+/**
+ * Pure: Coolify's `watch_paths` (one glob per line; a comma list is tolerated, commas inside `{a,b}` braces are part of the glob)
+ * to Tugra's repo-relative patterns: trimmed, a leading `/` dropped (also after a `!`), empty lines and repeats removed. The list
+ * is not truncated or validated here: the apply step checks the whole set against Tugra's own schema and reports it when it fails.
+ */
+export function parseWatchPaths(raw: unknown): string[] {
+  if (typeof raw !== "string") return [];
+  const out: string[] = [];
+  for (const line of raw.split(/[\r\n]+/)) {
+    let depth = 0;
+    let cur = "";
+    const parts: string[] = [];
+    for (const ch of line) {
+      if (ch === "{") depth++;
+      else if (ch === "}" && depth > 0) depth--;
+      if (ch === "," && depth === 0) {
+        parts.push(cur);
+        cur = "";
+      } else cur += ch;
+    }
+    parts.push(cur);
+    for (const part of parts) {
+      const t = part.trim();
+      const neg = t.startsWith("!");
+      const body = (neg ? t.slice(1) : t).trim().replace(/^\/+/, "");
+      if (!body) continue;
+      const pattern = neg ? `!${body}` : body;
+      if (!out.includes(pattern)) out.push(pattern);
+    }
+  }
+  return out;
+}
+
 /** Fixed-reason coverage rows for what is PRESENT on a Coolify app but has no Tugra carry path. Presence only. */
 function coolifyNotCarried(app: CoolifyApp, realGit: boolean, kind: ForeignApp["kind"]): NonNullable<ForeignApp["notCarried"]> {
   const out: NonNullable<ForeignApp["notCarried"]> = [];
@@ -338,7 +383,8 @@ function coolifyNotCarried(app: CoolifyApp, realGit: boolean, kind: ForeignApp["
   if (nonZero(app.limits_memory) || nonZero(app.limits_cpus)) out.push({ field: "limits", level: "info", ...why("coolify_limits") });
   if (app.health_check_enabled === true) out.push({ field: "healthcheck", level: "info", ...why("coolify_healthcheck") });
   if (nonEmpty(app.dockerfile_target_build)) out.push({ field: "dockerBuildTarget", level: "info", ...why("coolify_build_target") });
-  if (nonEmpty(app.watch_paths)) out.push({ field: "watchPaths", level: "info", ...why("coolify_watch_paths") });
+  // watch_paths are carried (ForeignApp.watchPaths); R18: the www / non-www redirect has no Tugra setting, so the mode is reported.
+  if (app.redirect === "www" || app.redirect === "non-www") out.push({ field: "redirectMode", level: "info", ...why("coolify_redirect", { mode: app.redirect }) });
   // The planner's `app.git.missing` blocker case: a Dockerfile app with no real repo (and no image to fall back to).
   if (app.build_pack === "dockerfile" && !realGit && kind !== "image") {
     out.push({ field: "inlineDockerfile", level: "warn", ...why("coolify_inline_dockerfile") });
@@ -406,6 +452,7 @@ export function mapApplication(
   if (nonEmpty(app.custom_labels)) sourceExtras.labels = true;
   if (app.build_pack === "dockerfile" && (nonEmpty(app.dockerfile) || nonEmpty(app.dockerfile_raw))) sourceExtras.dockerfile = true;
   const notCarried = coolifyNotCarried(app, realGit, kind);
+  const watchPaths = parseWatchPaths(app.watch_paths);
   return {
     sourceRef: app.uuid,
     name: app.name ?? app.uuid,
@@ -431,6 +478,9 @@ export function mapApplication(
     buildCommand: app.build_command ?? undefined,
     startCommand: app.start_command ?? undefined,
     publishDirectory: app.publish_directory ?? undefined,
+    // A static site that does not fall back to index.html: Tugra's static builds always do (reported at apply).
+    ...(buildPack === "static" && app.is_spa === false ? { staticSpa: false } : {}),
+    ...(watchPaths.length ? { watchPaths } : {}),
     ports: parsePorts(app.ports_exposes),
     domains: parseFqdns(app.fqdn),
     env: ctx.envs.map(mapEnv),
@@ -465,6 +515,8 @@ export function mapDatabase(
     volumes: ctx.volumes.map((v) => mapVolume(v, db.uuid)),
     serverRef: ctx.serverRef,
     ...(tls ? { tls } : {}),
+    // R48: Tugra's Redis has no custom redis.conf. Presence only; the plan says the config must be re-applied by hand.
+    ...(engine === "REDIS" && nonEmpty(db.redis_conf) ? { notCarried: [{ field: "redisConf", level: "warn" as const, ...why("coolify_redis_conf") }] } : {}),
   };
 }
 

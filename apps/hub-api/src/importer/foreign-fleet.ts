@@ -200,6 +200,9 @@ export interface ForeignDb {
    *  `enabled` = the source really serves TLS; `mode` = the client-facing sslmode it advertises. Config only, never a secret.
    *  Absent = no TLS expectation. Not part of the plan (planHash is unchanged). */
   tls?: { enabled: boolean; mode?: "require" | "verify-ca" | "verify-full" };
+  /** Fields PRESENT on the source database that Tugra cannot carry (a custom redis.conf). Names + fixed reasons only, never values.
+   *  The planner turns each into a plan risk; NOT part of the plan item's `proposed`. */
+  notCarried?: Array<Unmapped & { level: "warn" | "info" }>;
   /** See {@link ForeignApp.projectRef}. */
   projectRef?: string;
   environmentRef?: string;

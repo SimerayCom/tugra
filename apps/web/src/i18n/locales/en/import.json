@@ -157,6 +157,8 @@
   "reason_coolify_healthcheck": "health check not carried",
   "reason_coolify_build_target": "build target not carried from Coolify yet",
   "reason_coolify_watch_paths": "watch paths not carried from Coolify yet",
+  "reason_coolify_redirect": "the source redirects to the {mode} host name; Tugra serves both names without a redirect — add a redirect rule in Tugra if the canonical name matters",
+  "reason_coolify_redis_conf": "the source Redis uses a custom redis.conf, which Tugra does not carry; re-apply its settings by hand after the import",
   "reason_coolify_inline_dockerfile": "an inline-Dockerfile app has no git repository; Tugra builds Dockerfile apps from a repo, so this app cannot be imported yet (repo-less Dockerfile apps are a planned feature)",
   "reason_dokploy_registry": "the registry credential is not carried; add the registry in Tugra before deploying a private image",
   "reason_dokploy_build_secrets": "build secret values are not read; re-add them as Tugra build secrets",

@@ -14,9 +14,11 @@ import {
   isGithubAppRepo,
   decodeCoolifyLabels,
   decodeCoolifyDockerfile,
+  parseWatchPaths,
   type CoolifyFleetInput,
 } from "./coolify-map";
 import { planImport } from "../import-planner";
+import { foreignAppToCreateInput, foreignAppToPostCreateConfig } from "../apply-map";
 
 describe("normalizeGitUrl", () => {
   it("normalizes a bare owner/repo (Coolify GitHub-App form) to a clone URL", () => {
@@ -323,7 +325,7 @@ describe("mapApplication — extras markers + notCarried", () => {
       ctx,
     );
     expect(a.notCarried!.map((n) => `${n.level}:${n.field}`).sort()).toEqual([
-      "info:deployHooks", "info:dockerBuildTarget", "info:healthcheck", "info:limits", "info:watchPaths",
+      "info:deployHooks", "info:dockerBuildTarget", "info:healthcheck", "info:limits",
       "warn:basicAuth", "warn:dockerOptions", "warn:publishedPorts",
     ]);
     expect(JSON.stringify(a.notCarried)).not.toMatch(/SUPERSECRET|NET_ADMIN|migrate|8080|512m/);
@@ -431,5 +433,80 @@ describe("parseNetworkAliases / mapApplication networkAliases (C17)", () => {
     const base = { uuid: "a1", name: "x", build_pack: "dockerfile", git_repository: "o/r" } as never;
     expect(mapApplication({ ...(base as object), custom_network_aliases: "api.internal" } as never, { envs: [], volumes: [] }).networkAliases).toEqual(["api.internal"]);
     expect(Object.prototype.hasOwnProperty.call(mapApplication(base, { envs: [], volumes: [] }), "networkAliases")).toBe(false);
+  });
+});
+
+describe("watch_paths carry (R16)", () => {
+  const ctx = { envs: [], volumes: [] };
+  const git = { uuid: "a", name: "api", build_pack: "nixpacks", git_repository: "org/mono", git_branch: "main" };
+
+  it("parseWatchPaths splits lines and top-level commas, keeps commas inside braces, drops a leading slash, blanks and repeats", () => {
+    expect(parseWatchPaths("apps/web/**\r\n/packages/**\n\n!/apps/web/docs/**\napps/web/**")).toEqual(["apps/web/**", "packages/**", "!apps/web/docs/**"]);
+    expect(parseWatchPaths("src/**, lib/{a,b}/**,  ")).toEqual(["src/**", "lib/{a,b}/**"]);
+    expect(parseWatchPaths(null)).toEqual([]);
+    expect(parseWatchPaths("  \n ")).toEqual([]);
+  });
+
+  it("mapApplication carries them in ForeignApp.watchPaths (no more `not carried` row) and the apply step accepts them", () => {
+    const a = mapApplication({ ...git, watch_paths: "apps/api/**\n/packages/shared/**" }, ctx);
+    expect(a.watchPaths).toEqual(["apps/api/**", "packages/shared/**"]);
+    expect((a.notCarried ?? []).some((n) => n.field === "watchPaths")).toBe(false);
+    const cfg = foreignAppToPostCreateConfig(a);
+    expect(cfg.watchPaths).toEqual(["apps/api/**", "packages/shared/**"]);
+    expect(cfg.unmapped.some((u) => u.field === "watchPaths")).toBe(false);
+  });
+
+  it("an app without watch_paths has no watchPaths key, and an invalid pattern is reported by the apply step instead of dropped silently", () => {
+    expect("watchPaths" in mapApplication({ ...git, watch_paths: "" }, ctx)).toBe(false);
+    const bad = foreignAppToPostCreateConfig(mapApplication({ ...git, watch_paths: "src/**\nhas space/**" }, ctx));
+    expect(bad.watchPaths).toBeUndefined();
+    expect(bad.unmapped).toEqual([expect.objectContaining({ field: "watchPaths", reasonCode: "watch_paths_invalid" })]);
+  });
+});
+
+describe("static site, redirect mode and redis conf (R18 / R19 / R48)", () => {
+  const ctx = { envs: [], volumes: [] };
+  const git = { uuid: "a", name: "site", git_repository: "org/site", git_branch: "main" };
+
+  it("a nixpacks/railpack app Coolify marks is_static becomes a STATIC build with its build command and output directory", () => {
+    const a = mapApplication({ ...git, build_pack: "nixpacks", is_static: true, build_command: "npm run build", publish_directory: "/dist" }, ctx);
+    expect(a).toMatchObject({ kind: "git", buildPack: "static", publishDirectory: "/dist", buildCommand: "npm run build" });
+    const input = foreignAppToCreateInput(a, {}, { serverId: "srv" });
+    expect(input).toMatchObject({ source: "GIT", buildType: "STATIC", buildCommand: "npm run build", outputDir: "dist" });
+    expect(mapCoolifyBuildPack({ ...git, build_pack: "railpack", is_static: true })).toEqual({ kind: "git", buildPack: "static" });
+  });
+
+  it("is_static is ignored for any other pack, for a false flag and for an app without a real repo", () => {
+    expect(mapCoolifyBuildPack({ ...git, build_pack: "nixpacks", is_static: false }).buildPack).toBe("nixpacks");
+    expect(mapCoolifyBuildPack({ ...git, build_pack: "dockerfile", is_static: true }).buildPack).toBe("dockerfile");
+    expect(mapCoolifyBuildPack({ uuid: "i", build_pack: "dockerimage", docker_registry_image_name: "nginx", is_static: true })).toEqual({ kind: "image", buildPack: "image" });
+  });
+
+  it("a static site that does not fall back to index.html reports the Tugra SPA fallback at apply; an SPA or unset flag reports nothing", () => {
+    const off = mapApplication({ ...git, build_pack: "static", is_spa: false }, ctx);
+    expect(off.staticSpa).toBe(false);
+    expect(foreignAppToPostCreateConfig(off).unmapped).toEqual([expect.objectContaining({ field: "staticSpa", reasonCode: "static_spa" })]);
+    expect("staticSpa" in mapApplication({ ...git, build_pack: "static", is_spa: true }, ctx)).toBe(false);
+    expect("staticSpa" in mapApplication({ ...git, build_pack: "nixpacks", is_spa: false }, ctx)).toBe(false);
+  });
+
+  it("the www / non-www redirect mode is reported in the plan coverage with its mode; `both` and an unset mode say nothing", () => {
+    const www = mapApplication({ ...git, build_pack: "nixpacks", redirect: "www" }, ctx);
+    expect(www.notCarried).toEqual([expect.objectContaining({ field: "redirectMode", level: "info", reasonCode: "coolify_redirect", reasonParams: { mode: "www" } })]);
+    expect(mapApplication({ ...git, build_pack: "nixpacks", redirect: "non-www" }, ctx).notCarried?.[0]).toMatchObject({ reasonParams: { mode: "non-www" } });
+    expect(mapApplication({ ...git, build_pack: "nixpacks", redirect: "both" }, ctx).notCarried).toBeUndefined();
+    expect(mapApplication({ ...git, build_pack: "nixpacks" }, ctx).notCarried).toBeUndefined();
+  });
+
+  it("a custom redis.conf is reported as a manual step on the redis database and reaches the plan as a warn risk, never its text", () => {
+    const db = { uuid: "r1", name: "cache", database_type: "standalone-redis", image: "redis:7", redis_conf: "maxmemory 2gb\nrequirepass SUPERSECRET" };
+    const mapped = mapDatabase(db, { volumes: [] });
+    expect(mapped.notCarried).toEqual([expect.objectContaining({ field: "redisConf", level: "warn", reasonCode: "coolify_redis_conf" })]);
+    expect(JSON.stringify(mapped)).not.toMatch(/SUPERSECRET|maxmemory/);
+    const plan = planImport({ servers: [], apps: [], databases: [mapped], services: [], volumes: [], sharedEnv: [], warnings: [] }, { sourceKind: "coolify" });
+    expect(plan.items[0].risks).toContainEqual(expect.objectContaining({ level: "warn", code: "db.notCarried.redisConf" }));
+    expect(JSON.stringify(plan)).not.toMatch(/SUPERSECRET|maxmemory/);
+    expect("notCarried" in mapDatabase({ ...db, redis_conf: "" }, { volumes: [] })).toBe(false);
+    expect("notCarried" in mapDatabase({ ...db, database_type: "standalone-postgresql", image: "postgres:17", redis_conf: "x" }, { volumes: [] })).toBe(false);
   });
 });

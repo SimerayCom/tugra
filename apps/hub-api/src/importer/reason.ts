@@ -92,6 +92,8 @@ export const REASON_EN: Record<ImportReasonCode, string> = {
   coolify_healthcheck: "health check not carried",
   coolify_build_target: "build target not carried from Coolify yet",
   coolify_watch_paths: "watch paths not carried from Coolify yet",
+  coolify_redirect: "the source redirects to the {mode} host name; Tugra serves both names without a redirect — add a redirect rule in Tugra if the canonical name matters",
+  coolify_redis_conf: "the source Redis uses a custom redis.conf, which Tugra does not carry; re-apply its settings by hand after the import",
   coolify_inline_dockerfile: "an inline-Dockerfile app has no git repository; Tugra builds Dockerfile apps from a repo, so this app cannot be imported yet (repo-less Dockerfile apps are a planned feature)",
   dokploy_registry: "the registry credential is not carried; add the registry in Tugra before deploying a private image",
   dokploy_build_secrets: "build secret values are not read; re-add them as Tugra build secrets",

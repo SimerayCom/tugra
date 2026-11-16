@@ -76,6 +76,8 @@ export const IMPORT_REASON_CODES = [
   "coolify_healthcheck",
   "coolify_build_target",
   "coolify_watch_paths",
+  "coolify_redirect",
+  "coolify_redis_conf",
   "coolify_inline_dockerfile",
   "dokploy_registry",
   "dokploy_build_secrets",
