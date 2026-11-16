@@ -14,7 +14,7 @@ import {
 } from "../../core/run-contract";
 import { CAPABILITY_PORT, DATA_CODES, DATA_PORT, OBJECT_PORT, type CapabilityPort, type DataPort, type DataSnapshot, type ObjectPort, type ObjectView } from "./data-contract";
 import { finalChecks, hasLiveTransfer, migratorFlags, migratorWorkRemains, objectIsActive } from "./data-logic";
-import { compOf, gateFrom, loadObjects, loadSnapshot, releaseIfOurs } from "./handler-util";
+import { compOf, gateFrom, loadObjects, loadSnapshot, releaseIfOurs, takeObjectStart } from "./handler-util";
 import type { LauncherStatus } from "./launcher/migrator-launcher";
 import { MigratorRunner } from "./launcher/migrator-runner.service";
 
@@ -130,12 +130,20 @@ export class DataFinalHandler implements StepHandler<FinalObs>, OnModuleInit {
       try {
         await ctx.assertLease();
         if (selected.every((b) => b.status === "VERIFIED")) continue;
-        if (selected.some((b) => !FINAL_OR_BETTER.has(b.status))) {
-          if (!["SEEDED", "FINAL", "FAILED", "DONE"].includes(o.status)) continue; // the seed pass has not finished: DATA_SEED's business
-          await this.objects.startFinal(ctx.actor.userId, o.id);
-          objectsBusy = true;
-        } else if (selected.some((b) => b.status !== "VERIFIED")) {
+        const differs = selected.some((b) => b.status === "DIFFERS");
+        if (differs) {
+          // the diff found a difference: never loop the same verification, the operator decides (retry re-runs the final pass)
+          if (ctx.trigger === "retry" && ["SEEDED", "FINAL", "FAILED", "DONE"].includes(o.status) && (await takeObjectStart(ctx, o.id))) {
+            await this.objects.startFinal(ctx.actor.userId, o.id);
+            objectsBusy = true;
+          }
+        } else if (selected.some((b) => b.status === "FINAL")) {
           await this.objects.verify(ctx.actor.userId, o.id);
+          objectsBusy = true;
+        } else if (selected.some((b) => !FINAL_OR_BETTER.has(b.status))) {
+          if (!["SEEDED", "FINAL", "FAILED", "DONE"].includes(o.status)) continue; // the seed pass has not finished: DATA_SEED's business
+          if (!(await takeObjectStart(ctx, o.id))) continue; // budget spent: the gate reports it, a human presses retry
+          await this.objects.startFinal(ctx.actor.userId, o.id);
           objectsBusy = true;
         }
       } catch (e) {

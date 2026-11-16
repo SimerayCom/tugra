@@ -14,7 +14,7 @@ import {
 } from "../../core/run-contract";
 import { DATA_CODES, DATA_PORT, OBJECT_PORT, type DataPort, type DataSnapshot, type ObjectPort, type ObjectView } from "./data-contract";
 import { estimateEquals, estimateWindow, hasLiveTransfer, migratorFlags, objectIsActive, seedChecks } from "./data-logic";
-import { compOf, gateFrom, loadObjects, loadSnapshot } from "./handler-util";
+import { compOf, gateFrom, loadObjects, loadSnapshot, takeObjectStart } from "./handler-util";
 import { MigratorRunner } from "./launcher/migrator-runner.service";
 import type { LauncherStatus } from "./launcher/migrator-launcher";
 
@@ -117,7 +117,7 @@ export class DataSeedHandler implements StepHandler<SeedObs>, OnModuleInit {
       if (o.blockers > 0) continue; // surfaced by the gate; the operator fixes the migration
       const selected = o.buckets.filter((b) => b.selected);
       const needsSeed = selected.length > 0 && selected.some((b) => !["SEEDED", "FINAL", "VERIFIED", "DIFFERS"].includes(b.status));
-      if (needsSeed && ["PREFLIGHTED", "SEEDED", "FAILED"].includes(o.status)) {
+      if (needsSeed && ["PREFLIGHTED", "SEEDED", "FAILED"].includes(o.status) && (await takeObjectStart(ctx, o.id))) {
         try {
           await ctx.assertLease();
           await this.objects.startSeed(ctx.actor.userId, o.id);

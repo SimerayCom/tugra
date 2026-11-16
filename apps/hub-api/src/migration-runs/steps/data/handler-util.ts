@@ -62,6 +62,8 @@ export interface StepComp {
   /** FREEZE: what was stopped (see FreezeRecord). */
   freeze?: unknown;
   stopRequestedAt?: string;
+  /** Object migrations started by this step, per migration id (a failing pass is not restarted forever). */
+  objStarts?: Record<string, number>;
 }
 
 export const compOf = (ctx: StepContext, key: StepKey = ctx.step.key): StepComp => (ctx.stepState(key).compensation ?? {}) as StepComp;
@@ -85,4 +87,20 @@ export function classifyAgentError(e: unknown): "offline" | "forbidden" | "timeo
  */
 export async function releaseIfOurs(ctx: StepContext, caps: CapabilityPort, addedNow: boolean): Promise<void> {
   if (addedNow || runAddedCapability(ctx)) await caps.releaseMigrate(ctx.actor.userId, ctx.run.targetServerId);
+}
+
+/** Automatic starts of one object migration pass per step before a human has to press retry. */
+export const MAX_AUTO_OBJECT_STARTS = 3;
+
+/**
+ * Count an automatic start of an object migration pass. Returns false (and records nothing) when the budget is spent and the
+ * trigger is not an explicit retry: a pass that keeps failing is reported, not hammered.
+ */
+export async function takeObjectStart(ctx: StepContext, id: string): Promise<boolean> {
+  const starts = { ...(compOf(ctx).objStarts ?? {}) };
+  const n = starts[id] ?? 0;
+  if (n >= MAX_AUTO_OBJECT_STARTS && ctx.trigger !== "retry") return false;
+  starts[id] = ctx.trigger === "retry" && n >= MAX_AUTO_OBJECT_STARTS ? 1 : n + 1;
+  await ctx.recordCompensation({ objStarts: starts });
+  return true;
 }

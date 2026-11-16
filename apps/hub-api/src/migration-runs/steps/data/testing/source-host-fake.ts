@@ -159,6 +159,15 @@ export class SourceHostFake implements SourceHostPort {
     return c;
   }
 
+  /** Set a container's running state directly (a precondition of a spec, not something the engine does). */
+  setRunning(id: string, running: boolean): void {
+    const st = JSON.parse(readFileSync(join(this.dir, "state.json"), "utf8")) as { containers: FakeContainer[] };
+    const c = st.containers.find((x) => x.id === id);
+    if (!c) throw new Error("unknown container");
+    c.running = running;
+    writeFileSync(join(this.dir, "state.json"), JSON.stringify(st));
+  }
+
   /** Replace a container (simulates a recreate: same name, new id). */
   recreate(oldId: string, newId: string): void {
     const st = JSON.parse(readFileSync(join(this.dir, "state.json"), "utf8")) as { containers: FakeContainer[] };

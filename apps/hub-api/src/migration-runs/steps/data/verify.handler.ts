@@ -157,7 +157,7 @@ export class VerifyHandler implements StepHandler<VerifyObs>, OnModuleInit {
     if (driftRow && now - driftRow.at < MEASURE_TTL_MS) driftResult = driftRow.result;
     else {
       driftResult = (await this.drift.check(run)).result;
-      await this.checks.upsert({ runId: run.id, stepKey: "VERIFY", checkId: DRIFT_CHECK, subject: "", status: driftResult === "same" ? "pass" : driftResult === "changed" ? "fail" : "unknown", evidenceKind: "hub-verified", evidence: { result: driftResult } });
+      await this.checks.upsert({ runId: run.id, stepKey: "VERIFY", checkId: DRIFT_CHECK, subject: "", status: driftResult === "same" ? "pass" : driftResult === "changed" ? "fail" : "unknown", evidenceKind: "hub-verified", evidence: { result: driftResult }, at: ctx.now() });
     }
 
     // target statistics: hub-measured, cached per database, re-measured when stale or when the source was re-reported
@@ -177,7 +177,7 @@ export class VerifyHandler implements StepHandler<VerifyObs>, OnModuleInit {
       const s = await this.stats.measureTarget(run, d, run.options.rowCountMode);
       targetStats.set(d.itemRef, s);
       targetAt.set(d.itemRef, now);
-      await this.checks.upsert({ runId: run.id, stepKey: "VERIFY", checkId: TARGET_STATS_CHECK, subject: d.itemRef, status: s.state === "measured" ? "pass" : "unknown", evidenceKind: "hub-verified", evidence: s as unknown as Record<string, unknown> });
+      await this.checks.upsert({ runId: run.id, stepKey: "VERIFY", checkId: TARGET_STATS_CHECK, subject: d.itemRef, status: s.state === "measured" ? "pass" : "unknown", evidenceKind: "hub-verified", evidence: s as unknown as Record<string, unknown>, at: ctx.now() });
     }
 
     const suite = buildVerifySuite({ snap, runtime, objects: views, sourceStats, targetStats, drift: driftResult, flip });
