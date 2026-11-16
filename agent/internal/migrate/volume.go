@@ -85,6 +85,11 @@ func ResolveVolume(ctx context.Context, tg Target, override, dockerPath string, 
 		return nil, err
 	}
 	id, err := resolveContainerID(sourceRef, override, rows, tg.Dest.Type == "app-volume")
+	if err == ErrNotFound && override == "" && isServiceVolume(tg) {
+		// A Coolify SERVICE is a compose project named by its uuid (the sourceRef); its members are named `<member>-<uuid>`,
+		// so no container carries the bare uuid. The member that holds this volume is the one that mounts the target's path.
+		id, err = resolveServiceMember(ctx, sourceRef, path.Clean(tg.Dest.MountPath), rows, dockerPath, env)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -144,6 +149,55 @@ func ResolveVolume(ctx context.Context, tg Target, override, dockerPath string, 
 }
 
 var dockerVolNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
+
+// isServiceVolume: the hub marks a compose service's volume by giving its owner as `service:<serverRef>:<uuid>`.
+func isServiceVolume(tg Target) bool {
+	return tg.Dest != nil && tg.Dest.Type == "app-volume" && strings.HasPrefix(tg.AppItemRef, "service:")
+}
+
+// maxServiceMembers bounds how many `<member>-<uuid>` containers are inspected for one service volume.
+const maxServiceMembers = 32
+
+// resolveServiceMember finds the single container of the service `uuid` (named `<member>-<uuid>`) that mounts `want`. Zero
+// matches is ErrNotFound, several is ErrAmbiguous (fail closed: the operator then names the container with --map).
+func resolveServiceMember(ctx context.Context, uuid, want string, rows []psRow, dockerPath string, env []string) (string, error) {
+	var cands []string
+	for _, r := range rows {
+		for _, n := range r.names {
+			if strings.HasSuffix(n, "-"+uuid) && len(n) > len(uuid)+1 {
+				cands = append(cands, r.id)
+				break
+			}
+		}
+	}
+	if len(cands) == 0 {
+		return "", ErrNotFound
+	}
+	if len(cands) > maxServiceMembers {
+		return "", ErrAmbiguous
+	}
+	var hits []string
+	for _, id := range cands {
+		info, err := dockerInspect(ctx, dockerPath, id, env)
+		if err != nil {
+			return "", err
+		}
+		for _, m := range info.Mounts {
+			if path.Clean(m.Destination) == want {
+				hits = append(hits, id)
+				break
+			}
+		}
+	}
+	switch len(hits) {
+	case 0:
+		return "", ErrNotFound
+	case 1:
+		return hits[0], nil
+	default:
+		return "", ErrAmbiguous
+	}
+}
 
 // mountSrc is the validated `-v` source of the helper container (a volume name or a bind host path).
 func (s *volSource) mountSrc() (string, error) {

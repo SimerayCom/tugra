@@ -20,7 +20,7 @@ import { VxApplyService } from "./vx-apply.service";
 import { buildMigrationPartStatScript } from "./vx-scripts";
 import { firstGate } from "./vx-dest-gate";
 import { volDataRef } from "../migration-volume";
-import { buildVolumeTargets, dbStreamModeRefs, dbVolumeModeRefs, parseVolumeItemRef, volumeItemRef, type VxDbLite, type VxExclusion, type VxVolumeTarget } from "./vx-targets";
+import { buildVolumeTargets, dbStreamModeRefs, dbVolumeModeRefs, parseVolumeItemRef, serviceVolumeName, volumeItemRef, type VxDbLite, type VxExclusion, type VxVolumeTarget } from "./vx-targets";
 import { dumpDiskVerdict, dumpRawEstimate, type DbSizeRecord } from "./vx-dump";
 import type { VxBeginBody, VxDbSizesBody, VxFinishBody, VxFingerprint, VxInventoryBody, VxInventoryItem, VxPartBody, VxRunBody, VxSpeedtestBody } from "./vx.dto";
 import { buildVolumeView, type VolumeTransferView } from "./vx-view";
@@ -121,7 +121,9 @@ export class VxService {
       if (!app) throw new ConflictException("destination no longer exists");
       if (app.serverId !== (task.serverId ?? meta.serverId) || app.teamId !== server.teamId) throw new ConflictException("destination does not belong to this import");
       if (app.clusterId) throw new ConflictException("volume ingest is not supported for clustered apps");
-      const declared = Array.isArray(app.volumes) ? (app.volumes as Array<{ name?: string; path?: string }>).find((v) => v?.name === target.name) : undefined;
+      // A compose SERVICE has no declared Tugra volumes: its data lands in the compose project's own named volume
+      // (`tugra_<appId>_<key>`, the name the service's compose file gives it), and the target row already carries the source mount.
+      const declared = target.ownerKind === "service" ? { path: target.mountPath } : Array.isArray(app.volumes) ? (app.volumes as Array<{ name?: string; path?: string }>).find((v) => v?.name === target.name) : undefined;
       if (!declared || typeof declared.path !== "string") throw new NotFoundException("no such volume for this target");
       await this.access.requirePermission(actorId, server.teamId, "apps:config"); // re-authz EVERY request
       return {
@@ -131,7 +133,7 @@ export class VxService {
         target: { ...target, mountPath: declared.path },
         targetServerId: app.serverId,
         teamId: app.teamId,
-        dockerVolume: appVolumeName(app, target.name),
+        dockerVolume: target.ownerKind === "service" ? serviceVolumeName(app, target.name) : appVolumeName(app, target.name),
         resourceType: "application",
         resourceId: app.id,
         ownerTaskItemRef: ownerRef,

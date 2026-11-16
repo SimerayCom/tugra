@@ -393,3 +393,67 @@ func TestInventoryVolumeArgvIsHardenedAndNeverPulls(t *testing.T) {
 		t.Error("unsafe exclude must be refused")
 	}
 }
+
+func svcVolTarget(uuid, vol, mount string) Target {
+	return Target{ItemRef: "volume:srv1:" + uuid + ":" + vol, Kind: "volume", VolumeIngest: "stream-v2", Dest: &VolDest{Type: "app-volume", Name: vol, MountPath: mount}, AppItemRef: "service:srv1:" + uuid}
+}
+
+func svcMember(id, name, volume, dest string) *vctr {
+	return &vctr{id: id, name: name, image: "example.test/search:1", exit: 0, started: "2026-11-01T00:00:00Z", finish: "2026-11-14T10:00:00Z",
+		mounts: []dockerMount{{Type: "volume", Name: volume, Source: "/var/lib/docker/volumes/" + volume + "/_data", Destination: dest, RW: true}}}
+}
+
+func TestResolveServiceVolumeFindsTheMemberThatMountsThePath(t *testing.T) {
+	// a Coolify service: no container carries the bare uuid, the members are `<member>-<uuid>`
+	search := svcMember(appCtrID, "search-ab12cd", "ab12cd_search-data", "/data.ms")
+	proxy := svcMember(dbCtrID, "proxy-ab12cd", "ab12cd_proxy-conf", "/etc/proxy")
+	other := svcMember(thirdID, "search-zz99zz", "zz99zz_search-data", "/data.ms")
+	(&volDocker{ctrs: []*vctr{proxy, other, search}}).install(t)
+	vs, err := ResolveVolume(context.Background(), svcVolTarget("ab12cd", "search-data", "/data.ms"), "", "docker", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vs.ContainerID != appCtrID || vs.VolumeName != "ab12cd_search-data" || vs.Destination != "/data.ms" {
+		t.Errorf("unexpected source %+v", vs)
+	}
+}
+
+func TestResolveServiceVolumeRefusals(t *testing.T) {
+	t.Run("no member mounts the path", func(t *testing.T) {
+		(&volDocker{ctrs: []*vctr{svcMember(appCtrID, "search-ab12cd", "ab12cd_search-data", "/data.ms")}}).install(t)
+		if _, err := ResolveVolume(context.Background(), svcVolTarget("ab12cd", "search-data", "/elsewhere"), "", "docker", nil); !errors.Is(err, ErrNotFound) {
+			t.Errorf("got %v", err)
+		}
+	})
+	t.Run("two members mount the same path: ambiguous", func(t *testing.T) {
+		a := svcMember(appCtrID, "one-ab12cd", "ab12cd_a", "/data")
+		b := svcMember(dbCtrID, "two-ab12cd", "ab12cd_b", "/data")
+		(&volDocker{ctrs: []*vctr{a, b}}).install(t)
+		if _, err := ResolveVolume(context.Background(), svcVolTarget("ab12cd", "a", "/data"), "", "docker", nil); !errors.Is(err, ErrAmbiguous) {
+			t.Errorf("got %v", err)
+		}
+	})
+	t.Run("no container of that service", func(t *testing.T) {
+		(&volDocker{ctrs: []*vctr{svcMember(appCtrID, "search-zz99zz", "zz99zz_d", "/data")}}).install(t)
+		if _, err := ResolveVolume(context.Background(), svcVolTarget("ab12cd", "d", "/data"), "", "docker", nil); !errors.Is(err, ErrNotFound) {
+			t.Errorf("got %v", err)
+		}
+	})
+	t.Run("an app volume never takes the service fallback", func(t *testing.T) {
+		(&volDocker{ctrs: []*vctr{svcMember(appCtrID, "search-ab12cd", "ab12cd_d", "/data")}}).install(t)
+		tg := svcVolTarget("ab12cd", "d", "/data")
+		tg.AppItemRef = "app:srv1:ab12cd"
+		if _, err := ResolveVolume(context.Background(), tg, "", "docker", nil); !errors.Is(err, ErrNotFound) {
+			t.Errorf("got %v", err)
+		}
+	})
+	t.Run("a --map override wins over the fallback", func(t *testing.T) {
+		a := svcMember(appCtrID, "one-ab12cd", "ab12cd_a", "/data")
+		b := svcMember(dbCtrID, "two-ab12cd", "ab12cd_b", "/data")
+		(&volDocker{ctrs: []*vctr{a, b}}).install(t)
+		vs, err := ResolveVolume(context.Background(), svcVolTarget("ab12cd", "a", "/data"), "two-ab12cd", "docker", nil)
+		if err != nil || vs.ContainerID != dbCtrID {
+			t.Errorf("override: %+v %v", vs, err)
+		}
+	})
+}

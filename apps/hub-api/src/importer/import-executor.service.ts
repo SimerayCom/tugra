@@ -515,7 +515,7 @@ export class ImportExecutorService {
         unresolvedEnv: bundle?.unresolved.length ?? 0,
         serviceDomains: domains,
         ...(network ? { privateNetwork: network } : {}),
-        volumes: res.volumes.map((v) => ({ key: v.key, dockerName: `${composeProject({ id: created.id })}_${v.key}`, policy: v.policy, dataPlane: v.dataPlane, state: "pending-data" })),
+        volumes: res.volumes.map((v) => ({ key: v.key, dockerName: `${composeProject({ id: created.id })}_${v.key}`, policy: v.policy, dataPlane: v.dataPlane, state: "pending-data", mounts: v.mounts.map((m) => ({ service: m.service, path: m.path })) })),
         hold: res.hold,
         checklist,
       };
