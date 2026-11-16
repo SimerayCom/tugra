@@ -15,14 +15,12 @@ describe("production env default for the custom web server", () => {
 
   it("defaults NODE_ENV to production when unset (the stock `next start` did this; server.mjs must too)", async () => {
     delete (process.env as Record<string, string | undefined>).NODE_ENV;
-    // @ts-expect-error plain .mjs module without types
     await import("../../server/production-env.mjs");
     expect(process.env.NODE_ENV).toBe("production");
   });
 
   it("keeps an explicit NODE_ENV", async () => {
     (process.env as Record<string, string | undefined>).NODE_ENV = "development";
-    // @ts-expect-error plain .mjs module without types
     await import("../../server/production-env.mjs");
     expect(process.env.NODE_ENV).toBe("development");
   });
