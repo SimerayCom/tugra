@@ -87,7 +87,8 @@ type output struct {
 	Engines     []string     `json:"engines,omitempty"`
 	Counts      counts       `json:"counts"`
 	Items       []itemResult `json:"items"`
-	Certs       *certsResult `json:"certs,omitempty"` // only present when --certs was set
+	Certs       *certsResult `json:"certs,omitempty"`  // only present when --certs was set
+	Verify      *verifyOut   `json:"verify,omitempty"` // only present when --verify was set
 }
 
 type stringList []string
@@ -127,6 +128,11 @@ type cli struct {
 	hubOutageWait    time.Duration
 	speedtestMiB     int
 	restartOnFailure bool
+
+	// --verify: report the SOURCE side of DB logical parity (row/key counts) to the hub after the data arms.
+	verify           bool
+	verifyMode       string // exact | estimate
+	verifyExactBelow int64  // estimate mode counts exactly below this row estimate
 }
 
 // RunCLI is the `tugra-agent migrate` entrypoint. It installs its own signal handling (no agent
@@ -315,9 +321,19 @@ func RunCLI(args []string, version string, stdout, stderr io.Writer) (code int) 
 		maxGz: maxGz, c: c, sc: sc, logf: logf, parsed: parsed, rejected: rejected, overrides: mapOverrides,
 		usedIDs: map[string]string{}}
 
+	// --verify measures every database the plan lists (a physically-copied one is usually stopped and reports `skipped`),
+	// independent of which arm moved the data, so a verify-only re-run after the copy works.
+	var verifyScope []Target
+	if c.verify {
+		verifyScope = selectTargets(targets.Targets, c.only, false)
+	}
+
 	if len(inScope) == 0 && len(volScope) == 0 {
 		out.NoTargets = true
 		code = exitOK
+		if c.verify && ctx.Err() == nil && !c.dryRun && c.speedtestMiB == 0 {
+			code = verifyPhase(ctx, run, verifyScope, &out, code)
+		}
 		if c.certs && ctx.Err() == nil && !c.dryRun {
 			code = certsPhase(ctx, run, &out, code)
 		}
@@ -414,6 +430,9 @@ func RunCLI(args []string, version string, stdout, stderr io.Writer) (code int) 
 		return
 	}
 	code = partialOrOK(out.Counts)
+	if c.verify && ctx.Err() == nil {
+		code = verifyPhase(ctx, run, verifyScope, &out, code)
+	}
 	if c.certs {
 		code = certsPhase(ctx, run, &out, code)
 	}
@@ -691,6 +710,9 @@ func parseFlags(args []string, stderr io.Writer) (*cli, error) {
 	fs.DurationVar(&c.hubOutageWait, "hub-outage-wait", 15*time.Minute, "how long to wait for a restarting hub before giving up on a part")
 	fs.IntVar(&c.speedtestMiB, "speedtest-mib", 0, "measure the end-to-end rate by streaming the first N MiB of the real volume through the relay to the target, then discard it")
 	fs.BoolVar(&c.restartOnFailure, "restart-on-failure", true, "restart a source container this run stopped when the copy does not complete")
+	fs.BoolVar(&c.verify, "verify", false, "after the data arms, measure each source database's row/key counts (read-only) and report them to the hub as logical-parity evidence")
+	fs.StringVar(&c.verifyMode, "verify-mode", verifyModeEstimate, "verify cost mode: exact (count every table) or estimate (planner estimate for big tables)")
+	fs.Int64Var(&c.verifyExactBelow, "verify-exact-below", defaultVerifyExactBelow, "estimate mode: tables under this many estimated rows are still counted exactly")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
@@ -704,6 +726,10 @@ func parseFlags(args []string, stderr io.Writer) (*cli, error) {
 		return nil, err
 	}
 	if err := c.validateVolumeFlags(); err != nil {
+		fmt.Fprintln(stderr, err)
+		return nil, err
+	}
+	if err := c.validateVerifyFlags(); err != nil {
 		fmt.Fprintln(stderr, err)
 		return nil, err
 	}

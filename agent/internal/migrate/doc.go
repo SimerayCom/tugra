@@ -41,11 +41,16 @@
 //     volume-source-missing, volume-bind-refused, volume-special-files, volume-disk-insufficient, volume-aborted,
 //     volume-not-migrated): nothing is skipped without a reported reason.
 //
+// The VERIFY PHASE (`--verify`) measures the SOURCE side of DB logical parity after the data arms (Redis-family key counts,
+// Postgres/MySQL/MariaDB per-table row counts; exact or planner estimates) with read-only, no-shell, pinned commands and
+// reports them to the hub (verify.go), which labels them `migrator-reported` and measures the target itself.
+//
 // The source files mirror the concerns designed in S4-3: scrub.go (secret
 // redaction), recipe.go (the pinned recipe/engine contract + child-env build),
 // creds.go (per-engine credential discovery), discover.go (itemRef -> container),
 // dump.go (no-shell dump -> gzip -> spool+sha256), hubclient.go (the hub HTTP
 // client) and run.go (the status-first orchestration + exit-code contract); volume.go
 // (volume resolution, quiescence, bind denylist, inventory), runvolume.go (the volume arm's
-// orchestration), vxclient.go (the volume-stream hub calls) and vxstream.go (the tar -> parts streamer).
+// orchestration), vxclient.go (the volume-stream hub calls), vxstream.go (the tar -> parts streamer) and verify.go (the
+// --verify logical-parity measurements).
 package migrate
