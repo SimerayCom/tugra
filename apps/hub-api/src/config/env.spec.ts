@@ -235,6 +235,30 @@ describe("validateEnv — HUB_TRUSTED_PROXY_STRICT", () => {
   });
 });
 
+describe("validateEnv — HUB_TRUSTED_PROXY_CLOUDFLARE", () => {
+  const env = { ...base, NODE_ENV: "development" };
+  it("is off by default and when false", () => {
+    expect(() => validateEnv({ ...env })).not.toThrow();
+    expect(() => validateEnv({ ...env, HUB_TRUSTED_PROXY_CLOUDFLARE: "false" })).not.toThrow();
+  });
+  it("accepts true with HUB_TRUSTED_PROXY=true", () => {
+    expect(() => validateEnv({ ...env, HUB_TRUSTED_PROXY: "true", HUB_TRUSTED_PROXY_CLOUDFLARE: "true" })).not.toThrow();
+  });
+  it("fails boot without HUB_TRUSTED_PROXY=true (fail closed)", () => {
+    expect(() => validateEnv({ ...env, HUB_TRUSTED_PROXY_CLOUDFLARE: "true" })).toThrow(/HUB_TRUSTED_PROXY_CLOUDFLARE/);
+    expect(() => validateEnv({ ...env, HUB_TRUSTED_PROXY: "false", HUB_TRUSTED_PROXY_CLOUDFLARE: "true" })).toThrow(/HUB_TRUSTED_PROXY_CLOUDFLARE/);
+  });
+  it("rejects a non-enum value", () => {
+    expect(() => validateEnv({ ...env, HUB_TRUSTED_PROXY: "true", HUB_TRUSTED_PROXY_CLOUDFLARE: "yes" })).toThrow(/HUB_TRUSTED_PROXY_CLOUDFLARE/);
+  });
+  it("validates the extra-ranges list", () => {
+    const ok = { ...env, HUB_TRUSTED_PROXY: "true", HUB_TRUSTED_PROXY_CLOUDFLARE: "true" };
+    expect(() => validateEnv({ ...ok, HUB_TRUSTED_PROXY_CLOUDFLARE_EXTRA_CIDRS: "198.51.100.0/24,2001:db8::/32" })).not.toThrow();
+    expect(() => validateEnv({ ...ok, HUB_TRUSTED_PROXY_CLOUDFLARE_EXTRA_CIDRS: "198.51.100.0/99" })).toThrow(/EXTRA_CIDRS/);
+    expect(() => validateEnv({ ...ok, HUB_TRUSTED_PROXY_CLOUDFLARE_EXTRA_CIDRS: "nonsense" })).toThrow(/EXTRA_CIDRS/);
+  });
+});
+
 describe("validateEnv — MOVE_PART_MIB (clamped, never a boot failure for a number)", () => {
   const run = (v: Record<string, unknown>) => validateEnv({ ...base, NODE_ENV: "development", ...v }).MOVE_PART_MIB;
   let warn: jest.SpyInstance;

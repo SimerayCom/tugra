@@ -6,7 +6,7 @@ import {
 } from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { InstanceSettingsService } from "../instance/instance-settings.service";
-import { observedIp, trustProxyEnabled } from "../common/observed-ip";
+import { requestClientIp } from "../common/observed-ip";
 import { ipMatchesAllowlist } from "../common/ip-allowlist";
 import { ApiTokensService } from "./api-tokens.service";
 import { isApiToken } from "./api-token.util";
@@ -38,12 +38,7 @@ export class ApiAuthGuard extends JwtAuthGuard {
       const settings = await this.instance.get();
       if (!settings.apiEnabled) throw new ForbiddenException("api access is disabled");
       if (settings.apiAllowedIps.length > 0) {
-        const fwd = req.headers?.["x-forwarded-for"];
-        const ip = observedIp(
-          req.socket?.remoteAddress,
-          Array.isArray(fwd) ? fwd[0] : fwd,
-          trustProxyEnabled(),
-        );
+        const ip = requestClientIp(req);
         if (!ip || !ipMatchesAllowlist(ip, settings.apiAllowedIps)) {
           throw new ForbiddenException("api access from this address is not allowed");
         }

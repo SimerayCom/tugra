@@ -18,7 +18,7 @@ import { scopeSatisfies } from "../api-tokens/scopes";
 import { AuditService } from "../audit/audit.service";
 import { isApiToken } from "../api-tokens/api-token.util";
 import { InstanceSettingsService } from "../instance/instance-settings.service";
-import { observedIp, trustProxyEnabled } from "../common/observed-ip";
+import { requestClientIp } from "../common/observed-ip";
 import { ipMatchesAllowlist } from "../common/ip-allowlist";
 import { parseCookies, TG_ACCESS } from "../common/cookies";
 import { webBaseUrl } from "../common/web-url";
@@ -284,12 +284,7 @@ export class TerminalGateway
       const settings = await this.instance.get();
       if (!settings.apiEnabled) return null;
       if (settings.apiAllowedIps.length > 0) {
-        const fwd = req.headers["x-forwarded-for"];
-        const ip = observedIp(
-          req.socket?.remoteAddress,
-          Array.isArray(fwd) ? fwd[0] : fwd,
-          trustProxyEnabled(),
-        );
+        const ip = requestClientIp(req);
         if (!ip || !ipMatchesAllowlist(ip, settings.apiAllowedIps)) return null;
       }
       return u.userId;

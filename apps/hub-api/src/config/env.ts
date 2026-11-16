@@ -125,6 +125,20 @@ export const envSchema = z
   // (default mode also trusts any private/loopback/docker peer, so another host on the same LAN that reaches the raw
   // hub port could forge its source IP). Requires HUB_TRUSTED_PROXY=true and at least one CIDR, or boot fails.
   HUB_TRUSTED_PROXY_STRICT: z.enum(["true", "false"]).optional(),
+  // Opt-in Cloudflare orange-cloud mode, off by default. Behind Cloudflare's proxy every peer is a Cloudflare edge, so
+  // the client is CF-Connecting-IP — trusted ONLY when the hop the trusted proxy observed (the rightmost
+  // X-Forwarded-For entry) is a published Cloudflare edge range (vendored in @tugra/shared). Requires
+  // HUB_TRUSTED_PROXY=true, or boot fails.
+  HUB_TRUSTED_PROXY_CLOUDFLARE: z.enum(["true", "false"]).optional(),
+  // Extra Cloudflare edge ranges (comma-separated IPs/CIDRs), ADDITIVE to the vendored list — an operator escape hatch
+  // when Cloudflare publishes a new range before the next release. Only meaningful with HUB_TRUSTED_PROXY_CLOUDFLARE.
+  HUB_TRUSTED_PROXY_CLOUDFLARE_EXTRA_CIDRS: z
+    .string()
+    .optional()
+    .refine(
+      (v) => !v || v.split(",").every((p) => !p.trim() || isValidIpOrCidr(p.trim())),
+      "every HUB_TRUSTED_PROXY_CLOUDFLARE_EXTRA_CIDRS entry must be a valid IP or CIDR (comma-separated)",
+    ),
   // Product edition (open-core): "community" (OSS, default) | "pro" | "cloud". Build/license-injected,
   // not owner-settable. Validated here for fail-fast boot; @tugra/shared also normalises it defensively.
   TUGRA_EDITION: z.enum(["community", "pro", "cloud"]).default("community"),
@@ -290,6 +304,14 @@ export const envSchema = z
           message: "HUB_TRUSTED_PROXY_STRICT=true requires HUB_TRUSTED_PROXY_CIDRS with at least one valid IP or CIDR",
         });
       }
+    }
+    // Cloudflare mode reads CF-Connecting-IP out of a forwarding chain it only believes when a trusted proxy is declared.
+    if (v.HUB_TRUSTED_PROXY_CLOUDFLARE === "true" && v.HUB_TRUSTED_PROXY !== "true") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["HUB_TRUSTED_PROXY_CLOUDFLARE"],
+        message: "HUB_TRUSTED_PROXY_CLOUDFLARE=true requires HUB_TRUSTED_PROXY=true",
+      });
     }
     if (v.TUGRA_HOSTPORT_MIN >= v.TUGRA_HOSTPORT_MAX) {
       ctx.addIssue({

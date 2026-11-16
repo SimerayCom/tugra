@@ -3,7 +3,15 @@ import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
 import { configureApp } from "./app-config";
 import { setupOpenApi } from "./openapi/openapi";
-import { parseTrustedProxyCidrs, strictProxyTrust, trustProxyEnabled, trustProxyFn } from "./common/observed-ip";
+import {
+  cloudflareClientIpMiddleware,
+  cloudflareProxyEnabled,
+  parseCloudflareExtraCidrs,
+  parseTrustedProxyCidrs,
+  strictProxyTrust,
+  trustProxyEnabled,
+  trustProxyFn,
+} from "./common/observed-ip";
 import { applyTransferTimeouts } from "./common/http-timeouts";
 
 async function bootstrap() {
@@ -21,6 +29,15 @@ async function bootstrap() {
     console.log(
       `HUB_TRUSTED_PROXY=true: X-Forwarded-For honored only from private/loopback/docker peers (+HUB_TRUSTED_PROXY_CIDRS=${cidrs.length ? cidrs.join(",") : "none"})${strictProxyTrust() ? " strict=true (only HUB_TRUSTED_PROXY_CIDRS peers are trusted)" : ""}; direct public peers use the socket IP`,
     );
+    if (cloudflareProxyEnabled()) {
+      // Express derives req.ip (throttling, request logs) from X-Forwarded-For alone, which behind Cloudflare is the
+      // edge: replace it with the verified CF-Connecting-IP (see cloudflareClientIpMiddleware) before anything reads it.
+      app.use(cloudflareClientIpMiddleware);
+      // eslint-disable-next-line no-console
+      console.log(
+        `HUB_TRUSTED_PROXY_CLOUDFLARE=true: CF-Connecting-IP honored only when the observed hop is a published Cloudflare edge range (+${parseCloudflareExtraCidrs().length} extra); any other source keeps its own address`,
+      );
+    }
   }
   configureApp(app); // /api/v1 prefix (+ webhook/oauth/health/version exemptions)
   // Mount Swagger UI (/api/docs) + the JSON contract (/api/v1/openapi.json) after the prefix is applied.

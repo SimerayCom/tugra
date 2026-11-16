@@ -44,7 +44,7 @@ import { MetricsService } from "../metrics/metrics.service";
 import { ContainerMetricsService } from "../metrics/container-metrics.service";
 import { TrafficMetricsService } from "../traffic/traffic-metrics.service";
 import { ServersService } from "../servers/servers.service";
-import { observedIp, trustProxyEnabled } from "../common/observed-ip";
+import { requestClientIp } from "../common/observed-ip";
 
 /** Normalize an agent's advertised feature list (bounded, strings only). */
 function featureSet(raw: unknown): Set<string> {
@@ -254,14 +254,9 @@ export class AgentWsServer implements OnApplicationBootstrap, OnModuleDestroy {
 
   private onConnection(socket: WebSocket, req?: import("node:http").IncomingMessage): void {
     const nonce = randomUUID();
-    const fwd = req?.headers["x-forwarded-for"];
-    // Trust X-Forwarded-For only when the hub is explicitly behind a reverse proxy;
-    // otherwise the raw TCP peer address (which an agent cannot spoof) is used.
-    const remoteIp = observedIp(
-      req?.socket?.remoteAddress,
-      Array.isArray(fwd) ? fwd[0] : fwd,
-      trustProxyEnabled(),
-    );
+    // Trust X-Forwarded-For (and, in Cloudflare mode, a verified CF-Connecting-IP) only when the hub is explicitly
+    // behind a reverse proxy; otherwise the raw TCP peer address (which an agent cannot spoof) is used.
+    const remoteIp = requestClientIp(req);
     // Close the socket if it hasn't authenticated by the deadline (an unauthenticated peer can otherwise
     // hold a connection open indefinitely). Cleared on successful enroll/auth and on close.
     const authTimer = setTimeout(() => this.closeIfUnauthed(socket), AUTH_DEADLINE_MS);

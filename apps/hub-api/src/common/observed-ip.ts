@@ -1,62 +1,28 @@
 import { isIP } from "node:net";
-import { ipMatchesAllowlist, isValidIpOrCidr } from "./ip-allowlist";
+import {
+  CLOUDFLARE_IP_RANGES,
+  isCgnatV4,
+  isIpv6,
+  isLoopbackIp,
+  isPrivateV4,
+  isPublicIp,
+  isTrustedProxyPeer as isTrustedProxyPeerWith,
+  normalizeIp,
+  parseCidrList,
+  parseForwardedToken,
+  resolveClientIp,
+  type ClientIpPolicy,
+} from "@tugra/shared";
 
-/** A normalized IP address is IPv6 when it contains a colon. */
-export function isIpv6(ip: string): boolean {
-  return ip.includes(":");
-}
-
-/** A loopback address is never externally reachable. */
-export function isLoopbackIp(ip: string): boolean {
-  return ip.startsWith("127.") || ip === "::1" || ip.toLowerCase() === "0:0:0:0:0:0:0:1";
-}
-
-/** RFC 1918 private IPv4 ranges (LAN, still often reachable but not public). */
-export function isPrivateV4(ip: string): boolean {
-  return /^10\./.test(ip) || /^192\.168\./.test(ip) || /^172\.(1[6-9]|2\d|3[01])\./.test(ip);
-}
-
-/** RFC 6598 carrier-grade NAT (100.64.0.0/10) — a shared ISP address, never publicly reachable. */
-export function isCgnatV4(ip: string): boolean {
-  return /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(ip);
-}
+// The pure address helpers and the trust algorithm live in @tugra/shared (single source of truth, also used by the
+// web server's forwarded-header guard). This module keeps the env-reading wrappers the hub calls.
+export { isCgnatV4, isIpv6, isLoopbackIp, isPrivateV4, isPublicIp, normalizeIp, parseForwardedToken };
 
 /** The 172.16.0.0/12 slice Docker hands its bridge networks (default bridge 172.17, user networks 172.18-31).
  *  It is a valid RFC1918 range, but an agent reporting one is almost always exposing a docker-internal address
  *  that is NOT reachable from other devices — so a real LAN IP (10.x / 192.168.x) is preferred over it. */
 export function isDockerBridgeV4(ip: string): boolean {
   return /^172\.(1[6-9]|2\d|3[01])\./.test(normalizeIp(ip));
-}
-
-/** Strip an IPv4-mapped IPv6 prefix (::ffff:1.2.3.4 → 1.2.3.4) so a mapped address
- *  is judged and stored as its underlying IPv4, never as an opaque "IPv6". */
-export function normalizeIp(ip: string): string {
-  return ip.replace(/^::ffff:(?=\d+\.\d+\.\d+\.\d+$)/i, "");
-}
-
-/**
- * Is this a globally-routable public address (safe to embed in a magic domain
- * that resolves back to it)? Excludes loopback, unspecified, RFC1918, CGNAT and
- * link-local for IPv4; loopback, unspecified, link-local (fe80::/10) and ULA
- * (fc00::/7) for IPv6. IPv4-mapped IPv6 is judged as its IPv4 — otherwise a mapped
- * private/link-local address (e.g. ::ffff:169.254.169.254) would slip the guard
- * and point the hub's own probes at internal/metadata hosts (SSRF).
- */
-export function isPublicIp(ip: string): boolean {
-  if (!ip) return false;
-  const v = normalizeIp(ip);
-  // Reject anything that is not a well-formed IP literal (isIP → 0). Without this, a range-based
-  // exclusion alone accepts a garbage/multi-line string (e.g. one embedding a newline), which callers
-  // then trust as a real address — and it could be baked into config/compose downstream.
-  if (isIP(v) === 0) return false;
-  if (isLoopbackIp(v)) return false;
-  if (isIpv6(v)) {
-    if (v === "::") return false; // unspecified
-    return !/^fe[89ab][0-9a-f]:/i.test(v) && !/^f[cd][0-9a-f]{2}:/i.test(v); // link-local /10 + ULA /7
-  }
-  if (v === "0.0.0.0") return false; // unspecified IPv4 (resolves to localhost on connect)
-  if (/^169\.254\./.test(v)) return false; // link-local IPv4
-  return !isPrivateV4(v) && !isCgnatV4(v);
 }
 
 /**
@@ -191,10 +157,7 @@ let cidrCache: string[] = [];
 export function parseTrustedProxyCidrs(raw: string | undefined = process.env.HUB_TRUSTED_PROXY_CIDRS): string[] {
   if (raw === cidrCacheRaw) return cidrCache;
   cidrCacheRaw = raw;
-  cidrCache = (raw ?? "")
-    .split(",")
-    .map((e) => e.trim())
-    .filter((e) => e && isValidIpOrCidr(e));
+  cidrCache = parseCidrList(raw);
   return cidrCache;
 }
 
@@ -209,6 +172,40 @@ export function strictProxyTrust(): boolean {
   return process.env.HUB_TRUSTED_PROXY_STRICT === "true";
 }
 
+/** Opt-in Cloudflare orange-cloud mode (HUB_TRUSTED_PROXY_CLOUDFLARE=true; requires HUB_TRUSTED_PROXY=true). The client
+ *  is then CF-Connecting-IP, but only when the hop the trusted proxy observed is a published Cloudflare edge range. */
+export function cloudflareProxyEnabled(): boolean {
+  return process.env.HUB_TRUSTED_PROXY_CLOUDFLARE === "true";
+}
+
+let cfExtraRaw: string | undefined;
+let cfExtra: string[] = [];
+
+/** HUB_TRUSTED_PROXY_CLOUDFLARE_EXTRA_CIDRS: extra Cloudflare ranges (additive to the vendored list; malformed dropped). */
+export function parseCloudflareExtraCidrs(raw: string | undefined = process.env.HUB_TRUSTED_PROXY_CLOUDFLARE_EXTRA_CIDRS): string[] {
+  if (raw === cfExtraRaw) return cfExtra;
+  cfExtraRaw = raw;
+  cfExtra = parseCidrList(raw);
+  return cfExtra;
+}
+
+/** The effective client-IP trust policy from the environment. `trustProxy` overrides HUB_TRUSTED_PROXY (callers pass
+ *  trustProxyEnabled()); Cloudflare mode can never be on without it. Read per call so tests/operators see changes. */
+export function currentClientIpPolicy(trustProxy: boolean = trustProxyEnabled()): ClientIpPolicy {
+  return {
+    trustProxy,
+    strict: strictProxyTrust(),
+    trustedCidrs: parseTrustedProxyCidrs(),
+    cloudflare: trustProxy && cloudflareProxyEnabled(),
+    cloudflareExtraCidrs: parseCloudflareExtraCidrs(),
+  };
+}
+
+/** The vendored Cloudflare edge ranges plus any operator-added extras (for the boot log / diagnostics). */
+export function effectiveCloudflareRanges(): string[] {
+  return [...CLOUDFLARE_IP_RANGES, ...parseCloudflareExtraCidrs()];
+}
+
 /**
  * May this TCP peer speak for a client via X-Forwarded-For? Only a well-formed address that is NOT publicly
  * routable (loopback, RFC1918/docker bridge, CGNAT, link-local, ULA) or that is listed in
@@ -218,34 +215,11 @@ export function strictProxyTrust(): boolean {
  * reaches the raw hub port can then no longer forge its source IP either).
  */
 export function isTrustedProxyPeer(remote: string | null | undefined): boolean {
-  if (!remote) return false;
-  const addr = normalizeIp(remote);
-  if (isIP(addr) === 0) return false;
-  if (strictProxyTrust()) return ipMatchesAllowlist(addr, parseTrustedProxyCidrs());
-  return !isPublicIp(addr) || ipMatchesAllowlist(addr, parseTrustedProxyCidrs());
+  return isTrustedProxyPeerWith(remote, currentClientIpPolicy());
 }
 
 /** Express `trust proxy` predicate: trust exactly ONE hop, and only when that hop is a trusted proxy peer. */
 export const trustProxyFn = (addr: string, hop: number): boolean => hop === 0 && isTrustedProxyPeer(addr);
-
-/**
- * Parse one X-Forwarded-For token into a bare IP, or null when it is not an IP address. Accepts a quoted token,
- * a bracketed IPv6 (with an optional port) and an IPv4 with a port; an IPv4-mapped IPv6 is folded to its IPv4.
- * Anything else (`unknown`, a hostname, a truncated address, free text) is rejected so it is never recorded as a
- * client IP or matched against an allowlist.
- */
-export function parseForwardedToken(tok: string): string | null {
-  let t = tok.trim();
-  if (t.length >= 2 && t.startsWith('"') && t.endsWith('"')) t = t.slice(1, -1).trim();
-  const v6 = /^\[([^\]]+)\](?::\d+)?$/.exec(t);
-  if (v6) t = v6[1] as string;
-  else {
-    const v4 = /^(\d{1,3}(?:\.\d{1,3}){3}):\d+$/.exec(t);
-    if (v4) t = v4[1] as string;
-  }
-  const ip = normalizeIp(t);
-  return isIP(ip) !== 0 ? ip : null;
-}
 
 /**
  * The reachable source IP of an inbound connection.
@@ -259,9 +233,9 @@ export function parseForwardedToken(tok: string): string | null {
  *
  * With a trusted proxy we take the RIGHTMOST X-Forwarded-For entry — the peer the
  * proxy itself observed and appended. The leftmost entries are client-supplied
- * and spoofable (a proxy that appends, e.g. nginx `proxy_add_x_forwarded_for`, or
- * a CDN, would otherwise let an agent forge its own IP). That entry must parse as an IP
- * (parseForwardedToken); a malformed one yields null (fail closed) — never the proxy's own address.
+ * and spoofable. That entry must parse as an IP; a malformed one yields null (fail closed) — never the proxy's
+ * own address. With HUB_TRUSTED_PROXY_CLOUDFLARE=true and that entry inside a published Cloudflare edge range, the
+ * client is `cfConnectingIp` instead (null when absent/malformed — never the edge address).
  *
  * Normalizes IPv4-mapped IPv6 (`::ffff:1.2.3.4` -> `1.2.3.4`). Returns null when
  * nothing usable is present.
@@ -270,11 +244,48 @@ export function observedIp(
   remoteAddress: string | null | undefined,
   forwardedFor: string | null | undefined,
   trustProxy: boolean,
+  cfConnectingIp?: string | string[] | null,
 ): string | null {
-  if (trustProxy && forwardedFor && isTrustedProxyPeer(remoteAddress)) {
-    const parts = forwardedFor.split(",");
-    return parseForwardedToken(parts[parts.length - 1] ?? "");
+  return resolveClientIp(remoteAddress, forwardedFor, cfConnectingIp, currentClientIpPolicy(trustProxy));
+}
+
+/** The shape of a Node/Express request the IP helpers need (an HTTP request or a WebSocket upgrade request). */
+export interface IpRequestLike {
+  headers?: Record<string, string | string[] | undefined>;
+  socket?: { remoteAddress?: string | null } | null;
+}
+
+/**
+ * The client IP of an HTTP request or WebSocket upgrade, honoring HUB_TRUSTED_PROXY (+ _STRICT/_CIDRS/_CLOUDFLARE).
+ * Single entry point for the PAT allowlist guard, the terminal gateway and the agent gateway, so they can never
+ * disagree on which header wins.
+ */
+export function requestClientIp(req: IpRequestLike | null | undefined): string | null {
+  const h = req?.headers;
+  const fwd = h?.["x-forwarded-for"];
+  const cf = h?.["cf-connecting-ip"];
+  return observedIp(req?.socket?.remoteAddress, Array.isArray(fwd) ? fwd[0] : fwd, trustProxyEnabled(), cf);
+}
+
+/**
+ * Express middleware for Cloudflare mode: Express derives `req.ip` (throttling buckets, request logs) from
+ * X-Forwarded-For alone, which behind Cloudflare is the Cloudflare edge. When the observed hop is a verified
+ * Cloudflare edge, rewrite X-Forwarded-For to the verified CF-Connecting-IP; when it is a Cloudflare edge with no
+ * usable CF-Connecting-IP, rewrite it to `unknown` (req.ip then has no address: fail closed, never the edge IP).
+ * Does nothing for any other request, so a non-Cloudflare client keeps its own address.
+ */
+export function cloudflareClientIpMiddleware(
+  req: IpRequestLike & { headers: Record<string, string | string[] | undefined> },
+  _res: unknown,
+  next: () => void,
+): void {
+  const fwd = req.headers["x-forwarded-for"];
+  const xff = Array.isArray(fwd) ? fwd[0] : fwd;
+  const policy = currentClientIpPolicy();
+  if (policy.cloudflare && xff && isTrustedProxyPeerWith(req.socket?.remoteAddress, policy)) {
+    const ip = resolveClientIp(req.socket?.remoteAddress, xff, req.headers["cf-connecting-ip"], policy);
+    const edge = parseForwardedToken(xff.split(",").pop() ?? "");
+    if (edge && ip !== edge) req.headers["x-forwarded-for"] = ip ?? "unknown";
   }
-  const raw = (remoteAddress ?? "").replace(/^::ffff:/i, "");
-  return raw || null;
+  next();
 }

@@ -15,6 +15,10 @@ import {
   parseForwardedToken,
   strictProxyTrust,
   trustProxyEnabled,
+  cloudflareProxyEnabled,
+  cloudflareClientIpMiddleware,
+  requestClientIp,
+  parseCloudflareExtraCidrs,
 } from "./observed-ip";
 
 describe("observedPublicIpFromUrl", () => {
@@ -441,5 +445,115 @@ describe("HUB_TRUSTED_PROXY_STRICT", () => {
     expect(trustProxyFn("172.18.0.2", 0)).toBe(true);
     expect(trustProxyFn("10.0.0.9", 0)).toBe(false);
     expect(trustProxyFn("172.18.0.2", 1)).toBe(false);
+  });
+});
+
+describe("HUB_TRUSTED_PROXY_CLOUDFLARE — CF-Connecting-IP only from a Cloudflare edge hop", () => {
+  const KEYS = [
+    "HUB_TRUSTED_PROXY",
+    "HUB_TRUSTED_PROXY_STRICT",
+    "HUB_TRUSTED_PROXY_CIDRS",
+    "HUB_TRUSTED_PROXY_CLOUDFLARE",
+    "HUB_TRUSTED_PROXY_CLOUDFLARE_EXTRA_CIDRS",
+  ] as const;
+  const prev: Record<string, string | undefined> = {};
+  beforeEach(() => {
+    for (const k of KEYS) {
+      prev[k] = process.env[k];
+      delete process.env[k];
+    }
+    process.env.HUB_TRUSTED_PROXY = "true";
+    process.env.HUB_TRUSTED_PROXY_CLOUDFLARE = "true";
+  });
+  afterEach(() => {
+    for (const k of KEYS) {
+      if (prev[k] === undefined) delete process.env[k];
+      else process.env[k] = prev[k];
+    }
+  });
+  const EDGE = "104.16.1.1";
+  const CLIENT = "203.0.113.7";
+
+  it("is off unless explicitly enabled", () => {
+    delete process.env.HUB_TRUSTED_PROXY_CLOUDFLARE;
+    expect(cloudflareProxyEnabled()).toBe(false);
+    expect(observedIp("172.18.0.5", EDGE, true, CLIENT)).toBe(EDGE); // CF header ignored, edge is what the proxy saw
+    process.env.HUB_TRUSTED_PROXY_CLOUDFLARE = "false";
+    expect(cloudflareProxyEnabled()).toBe(false);
+  });
+
+  it("uses CF-Connecting-IP behind a Cloudflare edge, via the single request helper", () => {
+    const req = { headers: { "x-forwarded-for": EDGE, "cf-connecting-ip": CLIENT }, socket: { remoteAddress: "172.18.0.5" } };
+    expect(requestClientIp(req)).toBe(CLIENT);
+  });
+
+  it("a spoofed CF-Connecting-IP from a non-Cloudflare hop is ignored (attacker bypasses Cloudflare)", () => {
+    const req = { headers: { "x-forwarded-for": "198.51.100.77", "cf-connecting-ip": "1.1.1.1" }, socket: { remoteAddress: "172.18.0.5" } };
+    expect(requestClientIp(req)).toBe("198.51.100.77");
+  });
+
+  it("a spoofed leftmost X-Forwarded-For entry cannot pose as a Cloudflare edge", () => {
+    const req = { headers: { "x-forwarded-for": `${EDGE}, 198.51.100.77`, "cf-connecting-ip": "1.1.1.1" }, socket: { remoteAddress: "172.18.0.5" } };
+    expect(requestClientIp(req)).toBe("198.51.100.77");
+  });
+
+  it("a direct public hit claiming to be Cloudflare is not trusted at all", () => {
+    const req = { headers: { "x-forwarded-for": EDGE, "cf-connecting-ip": "1.1.1.1" }, socket: { remoteAddress: "198.51.100.77" } };
+    expect(requestClientIp(req)).toBe("198.51.100.77");
+  });
+
+  it("fails closed: missing, repeated or malformed CF-Connecting-IP behind an edge yields no address", () => {
+    const base = { "x-forwarded-for": EDGE };
+    const sock = { remoteAddress: "172.18.0.5" };
+    expect(requestClientIp({ headers: base, socket: sock })).toBeNull();
+    expect(requestClientIp({ headers: { ...base, "cf-connecting-ip": "1.1.1.1, 2.2.2.2" }, socket: sock })).toBeNull();
+    expect(requestClientIp({ headers: { ...base, "cf-connecting-ip": ["1.1.1.1", "2.2.2.2"] }, socket: sock })).toBeNull();
+    expect(requestClientIp({ headers: { ...base, "cf-connecting-ip": "10.0.0.1" }, socket: sock })).toBeNull();
+    expect(requestClientIp({ headers: { ...base, "cf-connecting-ip": "evil" }, socket: sock })).toBeNull();
+  });
+
+  it("never enables without HUB_TRUSTED_PROXY (the CF header is then just a header)", () => {
+    delete process.env.HUB_TRUSTED_PROXY;
+    const req = { headers: { "x-forwarded-for": EDGE, "cf-connecting-ip": CLIENT }, socket: { remoteAddress: "172.18.0.5" } };
+    expect(requestClientIp(req)).toBe("172.18.0.5");
+  });
+
+  it("strict mode keeps requiring a listed proxy peer", () => {
+    process.env.HUB_TRUSTED_PROXY_STRICT = "true";
+    process.env.HUB_TRUSTED_PROXY_CIDRS = "172.18.0.0/16";
+    const hdr = { "x-forwarded-for": EDGE, "cf-connecting-ip": CLIENT };
+    expect(requestClientIp({ headers: hdr, socket: { remoteAddress: "172.18.0.5" } })).toBe(CLIENT);
+    expect(requestClientIp({ headers: hdr, socket: { remoteAddress: "10.9.9.9" } })).toBe("10.9.9.9");
+  });
+
+  it("extra CIDRs extend the edge set additively; malformed extras are dropped", () => {
+    process.env.HUB_TRUSTED_PROXY_CLOUDFLARE_EXTRA_CIDRS = "198.51.100.0/24, nonsense";
+    expect(parseCloudflareExtraCidrs()).toEqual(["198.51.100.0/24"]);
+    const req = { headers: { "x-forwarded-for": "198.51.100.4", "cf-connecting-ip": CLIENT }, socket: { remoteAddress: "172.18.0.5" } };
+    expect(requestClientIp(req)).toBe(CLIENT);
+  });
+
+  describe("cloudflareClientIpMiddleware (req.ip for throttling/logging)", () => {
+    const run = (headers: Record<string, string | string[] | undefined>, remote: string) => {
+      const req = { headers: { ...headers }, socket: { remoteAddress: remote } };
+      const next = jest.fn();
+      cloudflareClientIpMiddleware(req, {}, next);
+      expect(next).toHaveBeenCalledTimes(1);
+      return req.headers["x-forwarded-for"];
+    };
+    it("rewrites X-Forwarded-For to the verified client behind an edge", () => {
+      expect(run({ "x-forwarded-for": EDGE, "cf-connecting-ip": CLIENT }, "172.18.0.5")).toBe(CLIENT);
+    });
+    it("rewrites to 'unknown' (no address) behind an edge with no usable CF-Connecting-IP", () => {
+      expect(run({ "x-forwarded-for": EDGE }, "172.18.0.5")).toBe("unknown");
+    });
+    it("leaves a non-Cloudflare client and an untrusted peer untouched", () => {
+      expect(run({ "x-forwarded-for": "198.51.100.77", "cf-connecting-ip": "1.1.1.1" }, "172.18.0.5")).toBe("198.51.100.77");
+      expect(run({ "x-forwarded-for": EDGE, "cf-connecting-ip": CLIENT }, "198.51.100.77")).toBe(EDGE);
+    });
+    it("does nothing when Cloudflare mode is off", () => {
+      process.env.HUB_TRUSTED_PROXY_CLOUDFLARE = "false";
+      expect(run({ "x-forwarded-for": EDGE, "cf-connecting-ip": CLIENT }, "172.18.0.5")).toBe(EDGE);
+    });
   });
 });

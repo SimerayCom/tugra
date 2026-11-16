@@ -5,9 +5,13 @@ import type { InstanceSettingsService } from "../instance/instance-settings.serv
 
 const PAT = "tugra_pat_abc123";
 
-function ctxFor(remoteAddress: string | undefined, forwardedFor?: string): ExecutionContext {
+function ctxFor(remoteAddress: string | undefined, forwardedFor?: string, cfConnectingIp?: string): ExecutionContext {
   const req = {
-    headers: { authorization: `Bearer ${PAT}`, ...(forwardedFor ? { "x-forwarded-for": forwardedFor } : {}) },
+    headers: {
+      authorization: `Bearer ${PAT}`,
+      ...(forwardedFor ? { "x-forwarded-for": forwardedFor } : {}),
+      ...(cfConnectingIp ? { "cf-connecting-ip": cfConnectingIp } : {}),
+    },
     socket: { remoteAddress },
     user: undefined as unknown,
   };
@@ -23,6 +27,7 @@ function guard(settings: { apiEnabled: boolean; apiAllowedIps: string[] }, valid
 describe("ApiAuthGuard — PAT-only API gating", () => {
   afterEach(() => {
     delete process.env.HUB_TRUSTED_PROXY;
+    delete process.env.HUB_TRUSTED_PROXY_CLOUDFLARE;
   });
 
   it("allows a valid PAT when the API is enabled and no allowlist is set", async () => {
@@ -68,6 +73,26 @@ describe("ApiAuthGuard — PAT-only API gating", () => {
     await expect(
       guard({ apiEnabled: true, apiAllowedIps: ["10.0.0.0/8"] }).canActivate(ctxFor("10.9.9.9", "1.2.3.4, unknown")),
     ).rejects.toThrow(/not allowed/);
+  });
+
+  describe("behind Cloudflare (HUB_TRUSTED_PROXY_CLOUDFLARE=true)", () => {
+    const allow = { apiEnabled: true, apiAllowedIps: ["203.0.113.0/24"] };
+    beforeEach(() => {
+      process.env.HUB_TRUSTED_PROXY = "true";
+      process.env.HUB_TRUSTED_PROXY_CLOUDFLARE = "true";
+    });
+    it("matches the allowlist against CF-Connecting-IP when the observed hop is a Cloudflare edge", async () => {
+      await expect(guard(allow).canActivate(ctxFor("172.18.0.5", "104.16.1.1", "203.0.113.7"))).resolves.toBe(true);
+    });
+    it("denies an off-allowlist client even though it is behind Cloudflare", async () => {
+      await expect(guard(allow).canActivate(ctxFor("172.18.0.5", "104.16.1.1", "198.51.100.9"))).rejects.toThrow(/not allowed/);
+    });
+    it("a forged CF-Connecting-IP on a request that did NOT come through Cloudflare cannot satisfy the allowlist", async () => {
+      await expect(guard(allow).canActivate(ctxFor("172.18.0.5", "198.51.100.9", "203.0.113.7"))).rejects.toThrow(/not allowed/);
+    });
+    it("denies (fail closed) when the Cloudflare hop carries no usable CF-Connecting-IP", async () => {
+      await expect(guard({ apiEnabled: true, apiAllowedIps: ["104.16.0.0/13"] }).canActivate(ctxFor("172.18.0.5", "104.16.1.1"))).rejects.toThrow(/not allowed/);
+    });
   });
 
   it("ignores X-Forwarded-For when the proxy is untrusted (default)", async () => {
