@@ -1060,6 +1060,25 @@ model MigrationVolumePart {
   @@id([transferId, idx])
 }
 
+/// One verification result of a migration run (P7 lane B): a queryable parity check with an honest trust label
+/// (`evidenceKind`: hub-verified | migrator-reported | operator-attested), the same idea as the volume panel's
+/// "reported by the migrator" note. Loose `runId` (no FK) like AppMove.appId, so the evidence survives run deletion
+/// for audit. `evidence` is secret-free and capped at 8 KiB by the writer.
+model MigrationRunCheck {
+  id           String   @id @default(cuid())
+  runId        String
+  stepKey      String // VERIFY | DATA_SEED | DATA_FINAL ...
+  checkId      String // stable check id, e.g. volume-parity, db-logical-parity
+  subject      String // item ref, host or bucket ("" when the check has none)
+  status       String // pass | fail | warn | unknown
+  evidenceKind String // hub-verified | migrator-reported | operator-attested
+  evidence     Json? // secret-free, <= 8 KiB
+  at           DateTime @default(now())
+
+  @@unique([runId, stepKey, checkId, subject])
+  @@index([runId, stepKey])
+}
+
 model BulkTask {
   id           String         @id @default(cuid())
   operation    BulkOperation  @relation(fields: [opId], references: [id], onDelete: Cascade)

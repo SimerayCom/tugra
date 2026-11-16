@@ -360,7 +360,7 @@ export interface Fs2ResultMsg {
  * Every capability the hub can grant a server (and the agent can locally allowlist). This is the SINGLE
  * SOURCE OF TRUTH: the hub's grantable set and the grant-API validation schema both derive from it, so a
  * new capability can never be added in one place and silently rejected by the other. "terminal", "swarm",
- * "files" and "files_write" are opt-in (granted explicitly per server), never in a default grant.
+ * "files", "files_write" and "migrate" are opt-in (granted explicitly per server), never in a default grant.
  */
 export const AGENT_CAPABILITIES = [
   "deploy",
@@ -375,6 +375,7 @@ export const AGENT_CAPABILITIES = [
   "swarm",
   "files", // read/list/stat/download an app volume's files via the sandboxed fsd helper; default-off
   "files_write", // opt-in, requires "files": upload/create/edit/rename/chmod/delete (volume write profile); never default
+  "migrate", // opt-in, default-off: lets the hub start the one-click migrator (`docker run` of the agent image) and stop/start RECORDED source containers on THIS host; granted for a migration run and revoked when it ends
 ] as const;
 
 /** What a command is for — the agent can locally allowlist these. */
