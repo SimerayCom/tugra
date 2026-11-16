@@ -132,7 +132,7 @@ A real cluster (`POSTGRES_USER=tugra`, about 200 MiB of rows) is **SIGKILLed** (
 `/var/lib/postgresql/data`): the gates pass, the copy applies, `postmaster.pid` is not copied, the database is provisioned on the target,
 logs show WAL replay, and the row count and `pg_total_relation_size` equal the values frozen before the kill. On 16 the negatives run
 first: a running source (`volume-skipped-running`), an Alpine source against a Debian target image, a major mismatch, a started
-destination; each must be refused with the gate's own text. 18 (volume mounted at `/var/lib/postgresql`, PGDATA one level down): the
+destination; each must be refused (`refused: <the gate's own text>`, and `dest-dirty` for the started destination). 18 (volume mounted at `/var/lib/postgresql`, PGDATA one level down): the
 `layout` gate must fail with exactly "PostgreSQL 18 data layout is not supported by Tugra database volumes yet", no transfer starts, and
 the database stays on the logical dump path.
 

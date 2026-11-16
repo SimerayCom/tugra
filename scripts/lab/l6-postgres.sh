@@ -67,7 +67,7 @@ if [ "$MAJOR" = 16 ]; then
   lab_seed op --name "lab-started-$(date +%s)" --source labsrc --kind db --image "$IMAGE" --version "$MAJOR" >"$LAB_DIR/op.started.env"
   (lab_op_load started; lab_seed db-set "$DB_ID" RUNNING >/dev/null)
   LAB_OP=started lab_run started --arms all
-  (lab_op_load started; lab_expect_item started failed "was started")
+  (lab_op_load started; lab_expect_item started failed dest-dirty) # the migrator maps the hub's "destination was started" 409 to dest-dirty
 fi
 
 if [ "$MAJOR" -ge 18 ]; then
