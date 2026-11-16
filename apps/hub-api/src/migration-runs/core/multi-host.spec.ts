@@ -4,7 +4,7 @@
  * columns, driven through the real service and engine over the in-memory world.
  */
 import { Logger } from "@nestjs/common";
-import { ACTOR, RunWorld, SERVER, TEAM } from "./testing/run-world";
+import { ACTOR, RunWorld, SERVER, TEAM, defaultPlan } from "./testing/run-world";
 import { confirmMatches } from "./migration-runs.service";
 import { MigrationRunSummarySchema, MigrationRunViewSchema, RunReportSchema, type ApprovalBinding } from "./dto";
 import type { StepContext } from "./run-contract";
@@ -22,6 +22,14 @@ const MAP = { "src-a": "srv2", "src-b": "srv3", "src-c": "srv2" };
 /** A world with three more Tugra servers on the team and one on a foreign team. */
 function world(opts: ConstructorParameters<typeof RunWorld>[0] = {}): RunWorld {
   const w = new RunWorld(opts);
+  // the default plan's items have an unknown source server; with a map those must sit on a mapped server (never the silent default)
+  w.port.plan_ = defaultPlan({
+    items: [
+      { itemRef: "database:src-a:db1", kind: "database", name: "pg-main", proposed: { engine: "POSTGRES" }, risks: [], dependsOn: [] },
+      { itemRef: "app:src-b:web", kind: "app", name: "web", proposed: { domain: "web.example.com" }, risks: [], dependsOn: ["database:src-a:db1"] },
+      { itemRef: "app:src-c:static", kind: "app", name: "static-site", proposed: { domain: "static.example.com" }, risks: [], dependsOn: [] },
+    ],
+  });
   for (const [id, name] of [["srv2", "host-2"], ["srv3", "host-3"], ["srv4", "host-4"]] as const) w.env.serversById.set(id, { id, name, teamId: TEAM });
   w.env.serversById.set("srv-foreign", { id: "srv-foreign", name: "host-x", teamId: "t-other" });
   return w;
