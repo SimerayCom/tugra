@@ -9,7 +9,7 @@ const DB_REF = `database:src-a:${DB}`;
 const DB2_REF = `database:src-b:${DB2}`;
 const SVC_REF = `service:src-a:${SVC}`;
 
-interface AppSpec { id: string; itemRef: string; serverId: string; env: Record<string, string>; networks?: string[]; source?: string; dockerOptions?: string | null; clusterId?: string | null }
+interface AppSpec { aliases?: Array<{ from: string; to: string }>; id: string; itemRef: string; serverId: string; env: Record<string, string>; networks?: string[]; source?: string; dockerOptions?: string | null; clusterId?: string | null }
 interface DbSpec { id: string; itemRef: string; internalHost: string; serverId: string; status?: string; ssl?: boolean; engine?: string }
 
 function harness(o: { apps: AppSpec[]; dbs: DbSpec[]; svc?: { serverId: string; privateNetwork?: { network: string; alias: string }; domains?: Array<{ service: string; host: string; port: number }>; choices?: Record<string, unknown> }; setSslFails?: boolean }) {
@@ -27,7 +27,7 @@ function harness(o: { apps: AppSpec[]; dbs: DbSpec[]; svc?: { serverId: string; 
     migrationTokenExpiresAt: null,
     tasks: [
       ...o.dbs.map((d) => ({ status: "DONE", resourceType: "database", resourceId: d.id, itemRef: d.itemRef, serverId: d.serverId })),
-      ...o.apps.map((a) => ({ status: "DONE", resourceType: "application", resourceId: a.id, itemRef: a.itemRef, serverId: a.serverId, result: { name: a.id } })),
+      ...o.apps.map((a) => ({ status: "DONE", resourceType: "application", resourceId: a.id, itemRef: a.itemRef, serverId: a.serverId, result: { name: a.id, ...(a.aliases ? { networkAliases: a.aliases } : {}) } })),
       ...(o.svc ? [{ status: "DONE", resourceType: "application", resourceId: "app-svc", itemRef: SVC_REF, serverId: o.svc.serverId, result: { name: "search", ...(o.svc.privateNetwork ? { privateNetwork: o.svc.privateNetwork } : {}) } }] : []),
     ],
   };
@@ -262,5 +262,27 @@ describe("TLS (R22)", () => {
     expect(first.undone).toBe(false);
     expect(first.failed).toEqual([{ appId: "db-1", name: "name-db-1" }]);
     expect((await h.svc.remapEnvUndo("u1", "op-1")).undone).toBe(true);
+  });
+});
+
+describe("source network aliases through the preview (C17)", () => {
+  it("a dependent's reference to an alias an imported app carries is rewritten to its label (same server), reported otherwise", async () => {
+    const h = harness({
+      dbs: [],
+      apps: [
+        { id: "app-api", itemRef: `app:src-a:${APP}`, serverId: "tgt-1", aliases: [{ from: "api.internal", to: "api-internal" }], env: {} },
+        { id: "app-web", itemRef: "app:src-a:wwwwwwwwwwwwwwwwwwwwwwww", serverId: "tgt-1", env: { API_URL: "http://api.internal:3000" } },
+        { id: "app-far", itemRef: "app:src-b:ffffffffffffffffffffffff", serverId: "tgt-2", env: { API_URL: "http://api.internal:3000" } },
+      ],
+    });
+    const plan = await h.svc.remapEnvPlan("u1", "op-1");
+    const web = plan.apps.find((a) => a.appId === "app-web")!;
+    expect(web.changes).toEqual([expect.objectContaining({ key: "API_URL", rule: "app-alias", targetItemRef: `app:src-a:${APP}`, newMasked: "http://api-internal:3000" })]);
+    const far = plan.apps.find((a) => a.appId === "app-far")!;
+    expect(far.changes).toEqual([]);
+    expect(far.needsManual).toContainEqual(expect.objectContaining({ key: "API_URL", reason: "cross-server-target" }));
+    const res = await h.svc.remapEnvApply("u1", "op-1", plan.planHash);
+    expect(res.apps.map((a) => a.appId)).toEqual(["app-web"]);
+    expect(h.env.get("app-web")!.API_URL).toBe("http://api-internal:3000");
   });
 });

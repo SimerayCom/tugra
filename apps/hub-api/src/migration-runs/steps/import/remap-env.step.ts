@@ -84,8 +84,12 @@ export class RemapEnvStep implements StepHandler<RemapObs>, OnModuleInit {
     }
   }
 
-  async dryRun(): Promise<DryRunItem[]> {
-    return [{ code: "remap-env.projected-after-import", level: "info" }];
+  async dryRun(ctx: StepContext): Promise<DryRunItem[]> {
+    const out: DryRunItem[] = [{ code: "remap-env.projected-after-import", level: "info" }];
+    // Multi-host: the remap runs per app against ITS server. A database or service on another server cannot be reached by its
+    // container name or private alias, so such references are listed for a manual fix instead of being rewritten.
+    if (ctx.targetServerIds.length > 1) out.push({ code: "remap-env.per-host", level: "info", params: { targets: ctx.targetServerIds.length } });
+    return out;
   }
 
   private needsManual(obs: RemapObs): boolean {

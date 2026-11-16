@@ -8,6 +8,7 @@ import {
   mapDatabase,
   mapService,
   tlsExpectation,
+  parseNetworkAliases,
   buildCoolifyFleet,
   normalizeGitUrl,
   isGithubAppRepo,
@@ -415,5 +416,20 @@ describe("tlsExpectation / mapDatabase tls (R22)", () => {
     expect(Object.prototype.hasOwnProperty.call(without, "tls")).toBe(false);
     const fleet = (d: unknown) => ({ servers: [], apps: [], databases: [d], services: [], volumes: [], sharedEnv: [], warnings: [] }) as never;
     expect(planImport(fleet(withTls), { sourceKind: "coolify" }).planHash).toBe(planImport(fleet(without), { sourceKind: "coolify" }).planHash);
+  });
+});
+
+describe("parseNetworkAliases / mapApplication networkAliases (C17)", () => {
+  it("splits a comma/space separated string or a list, lower-cases, dedupes and drops anything that is not a host name", () => {
+    expect(parseNetworkAliases("Api.Internal, app.internal  api.internal")).toEqual(["api.internal", "app.internal"]);
+    expect(parseNetworkAliases(["a.b", "bad host", "-x", "ok-1", 5 as never])).toEqual(["a.b", "ok-1"]);
+    expect(parseNetworkAliases(null)).toEqual([]);
+    expect(parseNetworkAliases("")).toEqual([]);
+    expect(parseNetworkAliases(Array.from({ length: 30 }, (_, i) => `h${i}`))).toHaveLength(20);
+  });
+  it("mapApplication carries them only when present", () => {
+    const base = { uuid: "a1", name: "x", build_pack: "dockerfile", git_repository: "o/r" } as never;
+    expect(mapApplication({ ...(base as object), custom_network_aliases: "api.internal" } as never, { envs: [], volumes: [] }).networkAliases).toEqual(["api.internal"]);
+    expect(Object.prototype.hasOwnProperty.call(mapApplication(base, { envs: [], volumes: [] }), "networkAliases")).toBe(false);
   });
 });

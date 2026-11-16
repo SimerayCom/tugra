@@ -834,7 +834,7 @@ export class ImportExecutorService {
           resourceType: "application",
           resourceId: created.id,
           // count only — never the values; `volumes` omitted entirely for an app with no mounts (byte-identical to before)
-          result: { name: created.name, ...(eff ? { sourceName: app.name, mapped: true } : {}), appId: created.id, unresolvedEnv: unresolved.length, ...(alias ? { aliasApplied: alias.applied } : {}), ...(unresolvedKeys.length ? { unresolvedKeys: unresolvedKeys.slice(0, 50) } : {}), ...(droppedInvalid.length ? { droppedInvalidKeys: droppedInvalid.slice(0, 50) } : {}), ...(git ? { git: git.result } : {}), ...(volumes ? { volumes } : {}), ...(postCreate.applied.length || postCreate.unmapped.length ? { postCreate } : {}), ...(ingress.applied.length || ingress.unmapped.length ? { ingress } : {}) },
+          result: { name: created.name, ...(eff ? { sourceName: app.name, mapped: true } : {}), appId: created.id, unresolvedEnv: unresolved.length, ...(alias ? { aliasApplied: alias.applied } : {}), ...(unresolvedKeys.length ? { unresolvedKeys: unresolvedKeys.slice(0, 50) } : {}), ...(droppedInvalid.length ? { droppedInvalidKeys: droppedInvalid.slice(0, 50) } : {}), ...(git ? { git: git.result } : {}), ...(volumes ? { volumes } : {}), ...(postCreate.applied.length || postCreate.unmapped.length ? { postCreate: { applied: postCreate.applied, unmapped: postCreate.unmapped } } : {}), ...(postCreate.aliases ? { networkAliases: postCreate.aliases } : {}), ...(ingress.applied.length || ingress.unmapped.length ? { ingress } : {}) },
           ...(note ? { output: note } : {}),
           finishedAt: new Date(),
         },
@@ -969,8 +969,9 @@ export class ImportExecutorService {
     app: ForeignApp,
     targetServerId: string,
     extras?: SourceAppExtras,
-  ): Promise<{ applied: string[]; unmapped: Unmapped[] }> {
+  ): Promise<{ applied: string[]; unmapped: Unmapped[]; aliases?: Array<{ from: string; to: string }> }> {
     const applied: string[] = [];
+    let aliases: Array<{ from: string; to: string }> | undefined;
     const cfg = foreignAppToPostCreateConfig(app, extras);
     const unmapped = [...cfg.unmapped];
     const run = async (field: string, fn: () => Promise<unknown>) => {
@@ -995,6 +996,10 @@ export class ImportExecutorService {
     if (cfg.autoDeploy !== undefined) await run("autoDeploy", () => this.apps.setAutoDeploy(userId, appId, cfg.autoDeploy!));
     if (cfg.limits) await run("limits", () => this.apps.setLimits(userId, appId, cfg.limits!));
     if (cfg.containerCommand) await run("containerCommand", () => this.apps.setContainerCommand(userId, appId, cfg.containerCommand!));
+    if (cfg.networkAliases) {
+      await run("networkAliases", () => this.apps.setNetworkAliases(userId, appId, cfg.networkAliases!.map((a) => a.to)));
+      if (applied.includes("networkAliases")) aliases = cfg.networkAliases; // the remap reads them back from the task result
+    }
     if (cfg.replicas !== undefined) {
       // Replicas map to setClusterConfig, which CONVERTS the app into a swarm service (re-homes its domain, pins
       // a stateful app to the cluster manager instead of the chosen target server, and needs apps:deploy + a
@@ -1002,7 +1007,7 @@ export class ImportExecutorService {
       // surfaces replicas as an explicit choice (next slice).
       unmapped.push({ field: "replicas", ...why("replicas") });
     }
-    return { applied, unmapped };
+    return { applied, unmapped, ...(aliases ? { aliases } : {}) };
   }
 
   /** Apply {@link foreignAppToIngressPlan} through the ApplicationsService setters, in order: extra domains →
@@ -1538,7 +1543,21 @@ export class ImportExecutorService {
         oldPassword: rec?.password,
       };
     });
-    const appTargets: AppRemapTarget[] = appEnvs.map((a) => ({ itemRef: a.itemRef, name: a.name, oldHost: sourceRefOf(a.itemRef) ?? "\u0000none", newHost: `tugra_${a.appId}` }));
+    const appTargets: AppRemapTarget[] = appEnvs.map((a) => {
+      const task = op.tasks.find((t) => t.itemRef === a.itemRef);
+      const res = typeof task?.result === "object" && task.result ? (task.result as { networkAliases?: unknown }) : {};
+      const aliases = Array.isArray(res.networkAliases)
+        ? (res.networkAliases as Array<{ from?: unknown; to?: unknown }>).filter((x): x is { from: string; to: string } => typeof x?.from === "string" && typeof x?.to === "string")
+        : [];
+      return {
+        itemRef: a.itemRef,
+        name: a.name,
+        oldHost: sourceRefOf(a.itemRef) ?? "\u0000none",
+        newHost: `tugra_${a.appId}`,
+        ...(appRowById.get(a.appId) ? { serverId: appRowById.get(a.appId)!.serverId } : {}),
+        ...(aliases.length ? { aliases } : {}),
+      };
+    });
 
     // Raw per-app rewrites ({key,newValue}) the apply writer sets — NEVER returned to a client (secret values).
     const writes: Array<{ appId: string; name: string; itemRef: string; entries: Array<{ key: string; newValue: string }>; joinNetworks: string[] }> = [];

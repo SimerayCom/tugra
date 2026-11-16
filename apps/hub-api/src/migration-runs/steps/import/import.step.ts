@@ -181,6 +181,10 @@ export class ImportStep implements StepHandler<ImportObs>, OnModuleInit {
       params: { done, skipped, failed: bad.length, total: tasks.length },
       evidence: "hub-verified",
     });
+    // C14/R30: backends need their Meilisearch, gotenberg and object-store services to be verified dark. A service the import did
+    // not create (skipped by the importer's verdict or by a choice) cannot be started later, so the run says so up front.
+    const svcSkipped = tasks.filter((t) => t.kind === "service" && t.status === "SKIPPED").map((t) => t.name ?? t.itemRef ?? "");
+    if (svcSkipped.length) checks.push({ id: "import.services-skipped", status: "warn", code: "import.services-skipped", params: { count: svcSkipped.length, items: svcSkipped.slice(0, 10) }, evidence: "hub-verified" });
     const needsSource = tasks.filter((t) => t.gitStatus === "needs_source").map((t) => t.name ?? t.itemRef ?? "");
     if (needsSource.length) checks.push({ id: "import.git-needs-source", status: "warn", code: "import.git-needs-source", params: { count: needsSource.length, items: needsSource.slice(0, 10) }, evidence: "hub-verified" });
     if (obs.wave) {

@@ -1,5 +1,5 @@
 import type { CreateAppInput, SetBuildInput, SetContainerCommandInput, SetCustomLabelsInput, SetLimitsInput } from "../applications/dto";
-import { INLINE_DOCKERFILE_MAX, SetBuildSchema, SetContainerCommandSchema, SetCustomLabelsSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetLimitsSchema, SetRedirectsSchema, SetVolumesSchema, SetWatchPathsSchema, inlineDockerfileProblem } from "../applications/dto";
+import { INLINE_DOCKERFILE_MAX, SetBuildSchema, SetContainerCommandSchema, SetCustomLabelsSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetLimitsSchema, SetNetworkAliasesSchema, SetRedirectsSchema, SetVolumesSchema, SetWatchPathsSchema, inlineDockerfileProblem } from "../applications/dto";
 import type { AppVolume } from "../deploy/deploy-script";
 import { CUSTOM_LABEL_KEY_RE, CUSTOM_LABEL_LIMITS, reservedLabelNamespace } from "../deploy/label-namespaces";
 import type { ImportReasonCode } from "@tugra/shared";
@@ -218,9 +218,14 @@ export interface PostCreateConfig {
   containerCommand?: SetContainerCommandInput;
   /** `setClusterConfig.replicas` — only meaningful when the import targets a swarm cluster. */
   replicas?: number;
+  /** `setNetworkAliases` — each source alias (`from`) and the single DNS label Tugra answers to (`to`). */
+  networkAliases?: Array<{ from: string; to: string }>;
   /** Source fields that were present but could NOT be carried (no Tugra target, or invalid for Tugra's schema). */
   unmapped: Unmapped[];
 }
+
+/** The single DNS label Tugra answers to for a source network alias: dots become hyphens (`api.internal` is `api-internal`). */
+export const aliasLabelOf = (alias: string): string => alias.toLowerCase().replace(/\./g, "-");
 
 /**
  * Pure: derive the setter inputs for the fields `foreignAppToCreateInput` cannot carry (autoDeploy, watch
@@ -322,6 +327,20 @@ export function foreignAppToPostCreateConfig(app: ForeignApp, extras?: SourceApp
   if (extras?.unmapped.length) out.unmapped.push(...extras.unmapped);
 
   if (app.replicas !== undefined && app.replicas > 1) out.replicas = app.replicas;
+
+  // Extra network aliases (C17: the fleet's `*.internal` names). Tugra aliases are single DNS labels, so a dotted source name is
+  // carried as its label form (`api.internal` becomes `api-internal`); dependents are rewritten by the env remap. A compose app
+  // manages its own networks, so it carries none. An alias Tugra would refuse (reserved prefix, too long) is reported.
+  if (app.networkAliases?.length) {
+    if (build.source === "COMPOSE") {
+      skip("networkAliases", why("setting_rejected"));
+    } else {
+      const pairs = app.networkAliases.map((from) => ({ from, to: aliasLabelOf(from) }));
+      const ok = SetNetworkAliasesSchema.safeParse({ aliases: pairs.map((p) => p.to) });
+      if (ok.success) out.networkAliases = pairs;
+      else skip("networkAliases", why("setting_rejected"));
+    }
+  }
 
   // Present on the source, but Tugra has no target — surfaced, never silently dropped.
   if (app.dockerContextPath && !/^\.?\/?$/.test(app.dockerContextPath)) skip("dockerContextPath", why("context_path"));

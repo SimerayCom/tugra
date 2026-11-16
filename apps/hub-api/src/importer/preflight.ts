@@ -152,7 +152,19 @@ export function buildCutoverHint(fleet: ForeignFleet): ImportCutoverHint {
       if (c && hs.includes(c)) counterpart.add(h);
     }
   }
-  return { hosts: hosts.size, generatedHosts: [...generated].sort(), counterpartHosts: [...counterpart].sort() };
+  // R13: the services' own routes (the importer carries them as compose service domains) flip at cutover too. Only the rows the
+  // import would actually create count: a service it skips, or a member it drops, brings no route to flip.
+  const serviceHosts = new Set<string>();
+  for (const svc of fleet.services) {
+    for (const row of analyzeService(svc).result?.domains ?? []) {
+      const h = row.hostname.trim().toLowerCase();
+      if (!h) continue;
+      serviceHosts.add(h);
+      hosts.add(h);
+      if (isGeneratedHost(h)) generated.add(h);
+    }
+  }
+  return { hosts: hosts.size, generatedHosts: [...generated].sort(), counterpartHosts: [...counterpart].sort(), ...(serviceHosts.size ? { serviceHosts: [...serviceHosts].sort() } : {}) };
 }
 
 /**

@@ -84,6 +84,7 @@ function harness(over: { fleet?: ForeignFleet; inflightOn?: string[]; prior?: Ar
     setLimits: jest.fn().mockResolvedValue(undefined),
     setContainerCommand: jest.fn().mockResolvedValue(undefined),
     setContainerPort: jest.fn().mockResolvedValue(undefined),
+    setNetworkAliases: jest.fn().mockResolvedValue(undefined),
   };
   const dbs = {
     create: jest.fn().mockImplementation(async (_u: string, i: { name: string }) => ({ id: `db-${i.name}`, name: i.name })),
@@ -301,5 +302,42 @@ describe("ImportExecutorService.runCreateDb: TLS for a PostgreSQL source that ex
       await flush();
       expect(setSsl).not.toHaveBeenCalled();
     }
+  });
+});
+
+describe("ImportExecutorService.runCopyApp: network aliases (C17)", () => {
+  const withAliases = (): ForeignFleet => ({
+    servers: [],
+    apps: [{ sourceRef: "app-a", name: "web-a", kind: "git", buildPack: "dockerfile", git: { url: "o/a", branch: "main" }, ports: [3000], serverRef: "src-a", env: [], volumes: [], domains: [], networkAliases: ["api.internal"] }],
+    databases: [],
+    services: [],
+    volumes: [],
+    sharedEnv: [],
+    warnings: [],
+  });
+  const appDone = (h: ReturnType<typeof harness>) => (h.prisma.bulkTask.update as jest.Mock).mock.calls.map((c) => c[0]).find((c: { data: { resourceType?: string } }) => c.data.resourceType === "application");
+
+  it("sets the label form on the created app and records the pair on the task for the env remap", async () => {
+    const f = withAliases();
+    const h = harness({ fleet: f });
+    await h.svc.apply("u1", input(f));
+    await flush();
+    expect(h.apps.setNetworkAliases).toHaveBeenCalledWith("u1", "app-web-a", ["api-internal"]);
+    const done = appDone(h);
+    expect(done.data.status).toBe("DONE");
+    expect(done.data.result.networkAliases).toEqual([{ from: "api.internal", to: "api-internal" }]);
+    expect(done.data.result.postCreate.applied).toContain("networkAliases");
+  });
+
+  it("a refused alias never fails the app and leaves no pair behind", async () => {
+    const f = withAliases();
+    const h = harness({ fleet: f });
+    h.apps.setNetworkAliases.mockRejectedValue(new Error("taken"));
+    await h.svc.apply("u1", input(f));
+    await flush();
+    const done = appDone(h);
+    expect(done.data.status).toBe("DONE");
+    expect(done.data.result.networkAliases).toBeUndefined();
+    expect(JSON.stringify(done.data.result.postCreate.unmapped)).toContain("networkAliases");
   });
 });

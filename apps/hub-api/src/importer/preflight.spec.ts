@@ -144,6 +144,37 @@ describe("buildPreflight — MinIO services point at Object migration (everythin
   });
 });
 
+describe("buildCutoverHint: service hosts (R13)", () => {
+  const { fixtureByName } = jest.requireActual("./testing/service-fixtures") as typeof import("./testing/service-fixtures");
+  const withServices = (names: string[], apps: Parameters<typeof fleet>[0] = {}) => fleet({ ...apps, services: names.map((n) => fixtureByName(n).svc) });
+
+  it("the importer-carried service routes (a stack's UI and its collector endpoint) count as hosts to flip, listed apart", () => {
+    const hint = buildCutoverHint(withServices(["signoz-hub", "beszel-hub"]));
+    expect(hint.serviceHosts).toHaveLength(3);
+    expect(hint.hosts).toBe(3);
+    expect(hint.serviceHosts).toEqual([...hint.serviceHosts!].sort());
+  });
+
+  it("a host an app and a service share counts once in `hosts`; an app-only fleet has no serviceHosts key", () => {
+    const [h] = buildCutoverHint(withServices(["beszel-hub"])).serviceHosts!;
+    const app = { sourceRef: "a", name: "a", kind: "image" as const, buildPack: "image" as const, image: "x", domains: [{ host: h, primary: true }] };
+    expect(buildCutoverHint(withServices(["beszel-hub"], { apps: [app] })).hosts).toBe(1);
+    const only = buildCutoverHint(fleet({ apps: [app] }));
+    expect(Object.prototype.hasOwnProperty.call(only, "serviceHosts")).toBe(false);
+  });
+
+  it("a service the import skips (no compose, gate refusal) brings no route", () => {
+    const svc = { ...fixtureByName("beszel-hub").svc, composeFile: undefined };
+    expect(buildCutoverHint(fleet({ services: [svc] })).serviceHosts).toBeUndefined();
+  });
+
+  it("the hint reaches the copy-mode preflight and never changes the plan hash", () => {
+    const f = withServices(["signoz-hub"]);
+    expect(buildPreflight(f, { sourceKind: "coolify" }).cutover?.serviceHosts).toHaveLength(2);
+    expect(planImport(f, { sourceKind: "coolify" }).planHash).toBe(planImport(withServices(["signoz-hub"]), { sourceKind: "coolify" }).planHash);
+  });
+});
+
 describe("buildCutoverHint (source-only cutover facts, advisory)", () => {
   const app = (name: string, hosts: string[]) => ({ sourceRef: name, name, kind: "image" as const, buildPack: "image" as const, image: "x", domains: hosts.map((host, i) => ({ host, primary: i === 0 })) });
   it("counts hosts, lists Coolify-generated ones and hosts whose www/bare sibling the source also served", () => {

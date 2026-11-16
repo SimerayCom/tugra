@@ -46,6 +46,8 @@ export interface CoolifyApp {
   docker_compose_raw?: string | null; // may need read:sensitive for an app (a service's raw compose was readable)
   // ── Presence-only / apply-time reads. Names + encodings are HAND-BUILT from Coolify v4 sources, UNVERIFIED until
   // the live check (spec G3-C section 11); a wrong name only loses a coverage note, never produces wrong data.
+  /** Extra docker network aliases: a comma/space separated string (or a list). Config only. */
+  custom_network_aliases?: string | string[] | null;
   custom_labels?: string | null; // container labels, one `key=value` per line (believed base64 over the API); read:sensitive-gated
   dockerfile?: string | null; // inline Dockerfile text (alias `dockerfile_raw`); read:sensitive-gated
   dockerfile_raw?: string | null;
@@ -368,6 +370,24 @@ function mapVolume(v: CoolifyVolume, ownerRef: string): ForeignVolume {
   };
 }
 
+/**
+ * Pure: the host names of Coolify's `custom_network_aliases` (a comma / space / newline separated string, or a list): trimmed,
+ * lower-cased, de-duplicated, at most 20, each a plain host name (labels of a-z 0-9 hyphen joined by dots, 253 chars at most).
+ * Anything else is dropped.
+ */
+export function parseNetworkAliases(raw: unknown): string[] {
+  const parts = Array.isArray(raw) ? raw : typeof raw === "string" ? raw.split(/[\s,]+/) : [];
+  const out: string[] = [];
+  for (const p of parts) {
+    if (typeof p !== "string") continue;
+    const a = p.trim().toLowerCase();
+    if (a.length < 1 || a.length > 253 || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/.test(a)) continue;
+    if (!out.includes(a)) out.push(a);
+    if (out.length === 20) break;
+  }
+  return out;
+}
+
 export function mapApplication(
   app: CoolifyApp,
   ctx: { envs: CoolifyEnv[]; volumes: CoolifyVolume[]; serverRef?: string },
@@ -416,6 +436,7 @@ export function mapApplication(
     env: ctx.envs.map(mapEnv),
     volumes: ctx.volumes.map((v) => mapVolume(v, app.uuid)),
     internalHost: app.uuid, // Coolify's internal docker hostname is the resource uuid
+    ...(parseNetworkAliases(app.custom_network_aliases).length ? { networkAliases: parseNetworkAliases(app.custom_network_aliases) } : {}),
     serverRef: ctx.serverRef,
     ...(Object.keys(sourceExtras).length ? { sourceExtras } : {}),
     ...(notCarried.length ? { notCarried } : {}),

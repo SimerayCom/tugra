@@ -1,4 +1,4 @@
-import { foreignAppToCreateInput, foreignAppToIngressPlan, foreignAppToPostCreateConfig, foreignAppToVolumes, mapCustomLabels } from "./apply-map";
+import { aliasLabelOf, foreignAppToCreateInput, foreignAppToIngressPlan, foreignAppToPostCreateConfig, foreignAppToVolumes, mapCustomLabels } from "./apply-map";
 import type { SourceAppExtras } from "./import-source";
 import { CreateAppSchema, SetVolumesSchema } from "../applications/dto";
 import type { ForeignApp, ForeignVolume } from "./foreign-fleet";
@@ -640,5 +640,26 @@ describe("service import flags (serviceImport / noPrimary / templateSlug)", () =
     const many = Array.from({ length: 22 }, (_, i) => ({ host: `h${i}.example.test`, https: true, port: 80, serviceRef: "web", primary: false }));
     expect(foreignAppToIngressPlan(composeApp(many), { noPrimary: true }).serviceDomains).toHaveLength(20);
     expect(foreignAppToIngressPlan(composeApp([{ host: "x.example.test", port: 80, serviceRef: "bad name", primary: false }]), { noPrimary: true }).serviceDomains).toEqual([]);
+  });
+});
+
+describe("foreignAppToPostCreateConfig: network aliases (C17)", () => {
+  it("a dotted source alias is carried as its single DNS label, keeping the pair for the env remap", () => {
+    const cfg = foreignAppToPostCreateConfig(base({ networkAliases: ["api.internal", "app.internal"] }));
+    expect(cfg.networkAliases).toEqual([{ from: "api.internal", to: "api-internal" }, { from: "app.internal", to: "app-internal" }]);
+    expect(cfg.unmapped.filter((u) => u.field === "networkAliases")).toEqual([]);
+    expect(aliasLabelOf("Api.Internal")).toBe("api-internal");
+    expect(aliasLabelOf("plain")).toBe("plain");
+  });
+  it("an alias Tugra refuses (reserved prefix) is reported, never carried; a compose app carries none", () => {
+    const bad = foreignAppToPostCreateConfig(base({ networkAliases: ["tugra-x.internal"] }));
+    expect(bad.networkAliases).toBeUndefined();
+    expect(bad.unmapped).toContainEqual(expect.objectContaining({ field: "networkAliases", reasonCode: "setting_rejected" }));
+    const compose = foreignAppToPostCreateConfig(base({ kind: "compose", buildPack: "dockercompose", networkAliases: ["api.internal"] }));
+    expect(compose.networkAliases).toBeUndefined();
+    expect(compose.unmapped).toContainEqual(expect.objectContaining({ field: "networkAliases" }));
+  });
+  it("no aliases: the config is exactly what it was", () => {
+    expect(foreignAppToPostCreateConfig(base({})).networkAliases).toBeUndefined();
   });
 });

@@ -101,3 +101,28 @@ describe("IMPORT with a serverMap", () => {
     expect((await importStep(w, id)).progress!.dryRun!.map((i) => i.code)).not.toContain("import.placement");
   });
 });
+
+describe("IMPORT: services the import did not create (C14)", () => {
+  it("a skipped service is a warning on the settled import, naming it; created services are not mentioned", async () => {
+    const w = world();
+    const orig = w.port.apply.bind(w.port);
+    w.port.apply = async (u, input) => {
+      const r = await orig(u, input);
+      const op = w.port.ops.get(r.opId)!;
+      op.tasks.push({ itemRef: "service:src-a:s1", kind: "service", status: "SKIPPED", resourceType: null, resourceId: null, name: "svc-skipped", gitStatus: null, stage: 0 } as never);
+      op.tasks.push({ itemRef: "service:src-a:s2", kind: "service", status: "DONE", resourceType: "application", resourceId: "app-s2", name: "svc-ok", gitStatus: null, stage: 0 } as never);
+      return r;
+    };
+    const id = await w.run({ serverMap: MAP });
+    const out = JSON.stringify(await w.view(id));
+    expect(out).toContain("import.services-skipped");
+    expect(out).toContain("svc-skipped");
+    expect(out).not.toContain("svc-ok");
+  });
+
+  it("no service task, no warning", async () => {
+    const w = world();
+    const id = await w.run({ serverMap: MAP });
+    expect(JSON.stringify(await w.view(id))).not.toContain("import.services-skipped");
+  });
+});

@@ -126,6 +126,10 @@ export interface ForeignApp {
    *  so a password-gated app is never imported silently public. */
   basicAuth?: { users: string[] };
   internalHost?: string; // how other apps reach this one on the source (for rewriting their env)
+  /** Extra docker network aliases the source gave this app (Coolify `custom_network_aliases`), lower-case host names, possibly
+   *  dotted (`api.internal`). Names only. Tugra aliases are single DNS labels, so the importer carries each as its label form and
+   *  rewrites other apps' env that reference the dotted name. */
+  networkAliases?: string[];
   env?: ForeignEnv[];
   volumes?: ForeignVolume[];
   links?: ForeignLink[];
@@ -379,4 +383,7 @@ export interface ImportCutoverHint {
   generatedHosts: string[];
   /** Apps whose primary host has a www/bare sibling that the source also served (the importer sets no redirect). */
   counterpartHosts: string[];
+  /** Hostnames of the imported SERVICES (their members' routes: a stack's UI, a collector endpoint): they flip at cutover like an
+   *  app's. Counted inside `hosts` too. Absent when no service carries a domain. */
+  serviceHosts?: string[];
 }

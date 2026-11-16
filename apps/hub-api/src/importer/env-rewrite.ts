@@ -67,6 +67,11 @@ export interface AppRemapTarget {
   name: string;
   oldHost: string; // source app uuid
   newHost: string; // tugra_<appId>
+  /** The Tugra server the app runs on (multi-host). */
+  serverId?: string;
+  /** Extra network aliases the source gave the app (`api.internal`) and the single DNS label Tugra answers to (`api-internal`). A
+   *  dependent's reference to the source name is rewritten to the label when it can reach it. */
+  aliases?: Array<{ from: string; to: string }>;
 }
 
 export interface RemapContext {
@@ -97,7 +102,7 @@ export interface RemapContext {
   appCanJoinNetwork?: boolean;
 }
 
-export type RemapRule = "url" | "host" | "host-port" | "user" | "database" | "password" | "port" | "service-host" | "service-public-host";
+export type RemapRule = "url" | "host" | "host-port" | "user" | "database" | "password" | "port" | "service-host" | "service-public-host" | "app-alias";
 
 export interface RemapChange {
   key: string;
@@ -343,6 +348,20 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
     changes.push({ key, rule: "service-public-host", target: { itemRef: hit.sv.itemRef, kind: "service", name: hit.sv.name }, oldMasked: mask(oldValue), newMasked: mask(next), newValue: next, confidence: "exact" });
   };
 
+  // Source network aliases of the migrated apps: host (lower-case) to the app and the Tugra label.
+  const aliasByHost = new Map<string, { app: AppRemapTarget; to: string }>();
+  for (const a of ctx.apps) for (const al of a.aliases ?? []) aliasByHost.set(al.from.toLowerCase(), { app: a, to: al.to });
+  /** A reference to a source network alias: rewritten to the Tugra label only for a dependent that shares the alias owner's server
+   *  and is a classic app (the label lives on the per-server apps network); otherwise reported with the reason. */
+  const aliasRef = (key: string, hit: { app: AppRemapTarget; to: string }, rebuild: (host: string) => string, mask: (v: string) => string, oldValue: string): void => {
+    if (crossServer(ctx.appServerId, hit.app.serverId)) needsManual.push({ key, reason: RM_CROSS_SERVER, target: hit.app.itemRef });
+    else if (ctx.appCanJoinNetwork !== true) needsManual.push({ key, reason: RM_APP_LINK_REVIEW, target: hit.app.itemRef });
+    else {
+      const next = rebuild(hit.to);
+      changes.push({ key, rule: "app-alias", target: { itemRef: hit.app.itemRef, kind: "app", name: hit.app.name }, oldMasked: mask(oldValue), newMasked: mask(next), newValue: next, confidence: "exact" });
+    }
+  };
+
   const embeddedTarget = (value: string): string | undefined => {
     for (const [tok, d] of dbByHost) if (value.includes(tok)) return d.itemRef;
     for (const [tok, a] of appByHost) if (value.includes(tok)) return a.itemRef;
@@ -395,6 +414,11 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
         needsManual.push({ key, reason: RM_APP_LINK_REVIEW, target: app.itemRef });
         continue;
       }
+      const aliasHit = aliasByHost.get(auth.host.toLowerCase());
+      if (aliasHit) {
+        aliasRef(key, aliasHit, (h) => `${auth.scheme}://${auth.hasUserinfo ? `${auth.userinfo}@` : ""}${h}${auth.port ? `:${auth.port}` : ""}${auth.rest}`, maskConnString, value);
+        continue;
+      }
       const hit = serviceHit(auth.host);
       if (hit) {
         internalService(key, hit, (h) => `${auth.scheme}://${auth.hasUserinfo ? `${auth.userinfo}@` : ""}${h}${auth.port ? `:${auth.port}` : ""}${auth.rest}`, maskConnString, value);
@@ -438,6 +462,12 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
         }
         changes.push({ key, rule: "host-port", target: dbRef(db), oldMasked: value, newMasked: `${db.newHost}:${db.newPort}`, newValue: `${db.newHost}:${db.newPort}`, confidence: "exact" });
         referencedDbs.add(db);
+        continue;
+      }
+      const bareAlias = aliasByHost.get((hp ? hp[1] : value).toLowerCase());
+      if (bareAlias) {
+        const port = hp ? `:${hp[2]}` : "";
+        aliasRef(key, bareAlias, (h) => `${h}${port}`, (v) => v, value);
         continue;
       }
       const bareHit = services.length ? serviceHit(hp ? hp[1] : value) : undefined; // bare host or host:port of an old service

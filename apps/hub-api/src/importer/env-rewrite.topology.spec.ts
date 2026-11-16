@@ -1,5 +1,5 @@
 /** The env remap beyond DB hosts (grup-7, R12/R22/R23): cross-server references, service endpoints and sslmode. */
-import { remapEnv, sslmodeOf, RM_CROSS_SERVER, RM_SERVICE_LINK_REVIEW, RM_SERVICE_NET, RM_TLS_VERIFY, type DbRemapTarget, type RemapContext, type ServiceRemapTarget } from "./env-rewrite";
+import { remapEnv, sslmodeOf, RM_APP_LINK_REVIEW, RM_CROSS_SERVER, RM_SERVICE_LINK_REVIEW, RM_SERVICE_NET, RM_TLS_VERIFY, type DbRemapTarget, type RemapContext, type ServiceRemapTarget } from "./env-rewrite";
 
 const DB = "3f1a9c0b2d4e6f8a1b3c5d7e";
 const SVC = "9a8b7c6d5e4f3a2b1c0d9e8f";
@@ -145,5 +145,28 @@ describe("service endpoints (R23)", () => {
   it("the new fields are absent when nothing applies (the result keeps its old shape)", () => {
     const r = run({ X: "plain" }, { services: [meili()], dbs: [pg()] });
     expect(Object.keys(r).sort()).toEqual(["changes", "needsManual", "unchanged"]);
+  });
+});
+
+describe("source network aliases (C17)", () => {
+  const owner = { itemRef: "app:src-a:o1", name: "api", oldHost: "o1o1o1o1o1o1o1o1o1o1o1o1", newHost: "tugra_o1", serverId: "tgt-1", aliases: [{ from: "api.internal", to: "api-internal" }] };
+  const ok = { apps: [owner], appServerId: "tgt-1", appCanJoinNetwork: true };
+
+  it("a dependent's reference to the dotted alias becomes the label, in URL, bare and host:port forms", () => {
+    const r = remapEnv({ API_URL: "http://api.internal:3000/v1", API_HOST: "api.internal", API_ADDR: "API.internal:3000" }, { dbs: [], ...ok });
+    expect(r.changes.map((c) => [c.key, c.rule, c.newValue])).toEqual([
+      ["API_URL", "app-alias", "http://api-internal:3000/v1"],
+      ["API_HOST", "app-alias", "api-internal"],
+      ["API_ADDR", "app-alias", "api-internal:3000"],
+    ]);
+    expect(r.changes[0].target).toEqual({ itemRef: "app:src-a:o1", kind: "app", name: "api" });
+  });
+  it("another server is reported cross-server; a dependent that is not a classic app stays a manual link review", () => {
+    expect(remapEnv({ U: "http://api.internal" }, { dbs: [], ...ok, appServerId: "tgt-2" }).needsManual[0]).toMatchObject({ reason: RM_CROSS_SERVER, target: "app:src-a:o1" });
+    expect(remapEnv({ U: "http://api.internal" }, { dbs: [], ...ok, appCanJoinNetwork: false }).needsManual[0]).toMatchObject({ reason: RM_APP_LINK_REVIEW });
+  });
+  it("an unrelated host with the same suffix is left alone", () => {
+    const r = remapEnv({ U: "http://other.internal", V: "api.internal.example.test" }, { dbs: [], ...ok });
+    expect(r.changes).toEqual([]);
   });
 });

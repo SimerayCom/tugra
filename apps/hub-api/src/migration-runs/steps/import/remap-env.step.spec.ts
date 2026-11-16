@@ -138,3 +138,17 @@ describe("REMAP_ENV", () => {
     expect(w2.port.calls.some((c) => c.startsWith("remapUndo"))).toBe(false); // REMAP_ENV never started
   });
 });
+
+describe("REMAP_ENV: multi-host dry-run (grup-7)", () => {
+  it("says the rewrite runs per host when the run has more than one target; a single-target run has no such line", async () => {
+    const w = new RunWorld();
+    w.env.serversById.set("srv2", { id: "srv2", name: "host-2", teamId: "t1" });
+    w.env.serversById.set("srv3", { id: "srv3", name: "host-3", teamId: "t1" });
+    const multi = await w.create({ dryRun: true, serverMap: { "src-a": "srv2", "src-b": "srv3" } });
+    await w.settle(multi);
+    expect((await remap(w, multi)).progress!.dryRun).toContainEqual({ code: "remap-env.per-host", level: "info", params: { targets: 3 } });
+    const single = await w.create({ dryRun: true });
+    await w.settle(single);
+    expect((await remap(w, single)).progress!.dryRun!.map((i) => i.code)).toEqual(["remap-env.projected-after-import"]);
+  });
+});
