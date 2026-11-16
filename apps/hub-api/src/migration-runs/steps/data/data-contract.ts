@@ -105,6 +105,8 @@ export interface SourceItem {
   itemRef: string;
   /** Display name (the destination's name; no secret). */
   name: string | null;
+  /** How the destination app is built (`GIT` = an image build inside the downtime window, R27/C5); absent for services and when unknown. */
+  source?: "IMAGE" | "GIT" | "COMPOSE";
 }
 
 export interface DataSnapshot {

@@ -218,12 +218,12 @@ describe("estimateWindow", () => {
     const e = estimateWindow(snap, NOW);
     const copy = Math.ceil((30 * 1024 ** 3) / (100 * 1024 ** 2));
     expect(e.freezeToFlipSec).toBe(copy + 15 * 60 + 2 * 60 + 120);
-    expect(e.basis.map((b) => b.code)).toEqual(["data-seed.estimate.bytes", "data-seed.estimate.rate-observed", "data-seed.estimate.extract", "data-seed.estimate.databases"]);
+    expect(e.basis.map((b) => b.code)).toEqual(["data-seed.estimate.bytes", "data-seed.estimate.hub-bytes", "data-seed.estimate.rate-observed", "data-seed.estimate.extract", "data-seed.estimate.databases"]);
     expect(e.estimatedAt).toBe(NOW.toISOString());
   });
   it("uses a conservative assumed rate when nothing was measured, and says so", () => {
     const e = estimateWindow(makeSnap({ volumes: [inspected("v1", 2 * 1024 ** 3)] }), NOW);
-    expect(e.basis[1]).toMatchObject({ code: "data-seed.estimate.rate-assumed", params: { bytesPerSec: ASSUMED_BYTES_PER_SEC } });
+    expect(e.basis.find((b) => b.code === "data-seed.estimate.rate-assumed")).toMatchObject({ params: { bytesPerSec: ASSUMED_BYTES_PER_SEC } });
     expect(e.freezeToFlipSec).toBeGreaterThan(0);
   });
   it("an unknown volume size makes the estimate unknown (null), never a guess", () => {

@@ -5,9 +5,14 @@
  */
 import { createHash } from "node:crypto";
 import type { GateCheck, WindowEstimate } from "../../core/dto";
-import { largeDbModeOf, resolveOwnerInput, type RunSnapshot } from "../../core/run-contract";
+import { deployConcurrencyOf, largeDbModeOf, resolveOwnerInput, type RunSnapshot } from "../../core/run-contract";
 import { DATA_CODES, LIVE_VOLUME_STATES, type DataSnapshot, type DbDataItem, type ObjectView, type VolumeDataItem } from "./data-contract";
 import { DUMP_MEASURE_BELOW_BYTES, VX_409, artifactCapBytes, isStreamDumpEngine } from "../../../importer/volume-stream/vx-constants";
+import { HOST_LOOP_CODES } from "./inventory/host-codes";
+import { dataItemsOfHost } from "./inventory/host-hosts";
+import { loopVerdict } from "./inventory/host-protocol";
+import { loopByHost, type HostView } from "./inventory/host-view";
+import { deployWindow } from "../import/baseline/build-window";
 
 // ───────────────────────────── hashing ─────────────────────────────
 
@@ -350,6 +355,65 @@ export function finalChecks(snap: DataSnapshot, objects: readonly ObjectView[], 
   return checks;
 }
 
+// ───────────────────────────── DATA_FINAL with the coolify-host-loop runner ─────────────────────────────
+
+/** The codes the host-loop runner adds to DATA_FINAL (the web renders `migrationRun.codes.<code>`). */
+export const FINAL_HOST_LOOP_CODES = {
+  run: "data-final.host-loop-run",
+  hostFailed: "data-final.host-loop-host-failed",
+  stopMigrators: "data-final.host-loop-stop-migrators",
+  dryPlan: "data-final.dry.host-loop",
+} as const;
+
+export interface FinalHostTally {
+  /** Hosts that hold data of the run (the ones the script has work on). */
+  hosts: string[];
+  /** The script ran there and ended well. */
+  ok: string[];
+  /** The script could not run there, or its migrator died: named so one dead host is a clear failure. */
+  failed: string[];
+  /** No report yet, or the migrator is still running. */
+  pending: string[];
+}
+
+/** Where every host with data stands for the DATA_FINAL pass of the loop script (pure: the latest stored loop status per host). */
+export function finalHostTally(hosts: readonly string[], snap: Pick<DataSnapshot, "databases" | "volumes">, view: HostView): FinalHostTally {
+  const loop = loopByHost(view, "DATA_FINAL");
+  const out: FinalHostTally = { hosts: [], ok: [], failed: [], pending: [] };
+  for (const h of hosts) {
+    if (dataItemsOfHost(h, snap).length === 0) continue;
+    out.hosts.push(h);
+    const v = loopVerdict(loop.get(h) ?? null);
+    (v === "ok" ? out.ok : v === "bad" ? out.failed : out.pending).push(h);
+  }
+  return out;
+}
+
+/**
+ * One gate check per host that reported for DATA_FINAL: a dead host fails with its name (the others stay `pass` so the report
+ * shows who finished), a running one is `unknown`. A host that never reported has no check of its own: its volumes' and
+ * databases' checks already say their data is not there.
+ */
+export function finalHostChecks(hosts: readonly string[], snap: Pick<DataSnapshot, "databases" | "volumes">, view: HostView): GateCheck[] {
+  const loop = loopByHost(view, "DATA_FINAL");
+  const checks: GateCheck[] = [];
+  for (const ref of hosts) {
+    if (dataItemsOfHost(ref, snap).length === 0) continue;
+    const st = loop.get(ref);
+    if (!st) continue;
+    const v = loopVerdict(st);
+    checks.push({
+      id: checkKey("host-loop-final", ref),
+      status: v === "ok" ? "pass" : v === "bad" ? "fail" : "unknown",
+      code: v === "ok" ? HOST_LOOP_CODES.hostOk : v === "bad" ? HOST_LOOP_CODES.hostFailed : HOST_LOOP_CODES.hostPending,
+      subject: ref,
+      params: { host: ref, state: st.state, code: st.code },
+      evidence: "host-loop-reported",
+    });
+  }
+  return checks;
+}
+
 /** True when the migrator still has something to move (a database not yet restored since the freeze, or an unfinished volume). */
 export function migratorWorkRemains(snap: DataSnapshot, freezeStartedAt?: Date | null): boolean {
   return snap.databases.some((d) => dbIsPending(d, freezeStartedAt)) || snap.volumes.some((v) => !v.excluded && v.state !== "DONE");
@@ -375,7 +439,60 @@ export const WINDOW_BASE_OVERHEAD_SEC = 120;
 export const STREAM_RESTORE_BYTES_PER_SEC: Readonly<Record<string, number>> = { POSTGRES: 10 * 1024 * 1024, MARIADB: 6 * 1024 * 1024, MYSQL: 6 * 1024 * 1024 };
 export const DEFAULT_STREAM_RESTORE_BYTES_PER_SEC = 6 * 1024 * 1024;
 
-export function estimateWindow(snap: DataSnapshot, now: Date): WindowEstimate {
+/**
+ * What happens AFTER the data in the design order (FREEZE, DATA_FINAL, REMAP_ENV, DEPLOY_DARK, TLS_PREISSUE, VERIFY, CUTOVER) is also
+ * inside the downtime window (R27/C5): the builds and starts of DEPLOY_DARK, the dark health probes, and the ACME issuance of
+ * TLS_PREISSUE. Every number here is an ASSUMPTION (nothing measures them before the run does) and every place that shows them
+ * says "estimate". The deploy part comes from `build-window.ts` (`deployWindow`).
+ */
+/** One dark health probe round (the hub probes a few hosts at once; each answers within its timeout). */
+export const HEALTH_PROBE_SEC_ASSUMED = 10;
+export const HEALTH_PROBE_PARALLEL = 4;
+/** Fixed cost of the health gates: the dark probe, VERIFY's own re-read and the cutover check. */
+export const HEALTH_BASE_SEC = 30;
+/** Certificate issuance on the dark proxy: DNS-01 normally takes a minute or two, in parallel; rate limits add a little per host. */
+export const ACME_BASE_SEC = 120;
+export const ACME_PER_HOST_SEC = 3;
+/** Every byte of a relayed copy crosses the hub's network twice (in from the source, out to the target): R38. */
+export const HUB_BYTE_FACTOR = 2;
+
+/** The inputs of the estimate that do not come from the data snapshot. */
+export interface WindowExtras {
+  /** What DEPLOY_DARK adds (builds that remain, starts, concurrency, target servers). Absent = nothing deploys inside the window. */
+  deploy?: { builds: number; starts: number; concurrency: number; targets: number };
+  /** Hosts whose health and certificate the run waits for (health gates and ACME terms). */
+  hosts?: number;
+}
+
+/**
+ * The deploy part of the window for a run: the apps that are built from git (`SourceItem.source`) and remain to build inside
+ * the window (none with `earlyBuild`), every app to start, at the run's build concurrency over its target servers. Held workers
+ * are counted too (the data snapshot cannot tell them apart): the estimate errs long, never short.
+ */
+export function windowExtrasOf(run: Pick<RunSnapshot, "options" | "serverMap" | "targetServerId">, snap: Pick<DataSnapshot, "apps">): WindowExtras {
+  const early = run.options.deployWaves === "earlyBuild";
+  const builds = early ? 0 : snap.apps.filter((a) => a.source === "GIT").length;
+  return {
+    deploy: { builds, starts: snap.apps.length, concurrency: deployConcurrencyOf(run.options), targets: new Set([run.targetServerId, ...Object.values(run.serverMap ?? {})]).size },
+    hosts: snap.apps.length,
+  };
+}
+
+/** The parts of the estimate, in seconds (and bytes), for the FREEZE approval and the report. */
+export interface WindowTerms {
+  dataSec: number;
+  buildSec: number;
+  startSec: number;
+  healthSec: number;
+  acmeSec: number;
+  /** Bytes that move as volumes and dumps (what crosses the hub, once). */
+  bytes: number;
+  /** Bytes through the hub's NIC: {@link HUB_BYTE_FACTOR} times `bytes`. */
+  hubBytes: number;
+  totalSec: number | null;
+}
+
+export function estimateWindowDetail(snap: DataSnapshot, now: Date, extras: WindowExtras = {}): { estimate: WindowEstimate; terms: WindowTerms } {
   const all = inScopeVolumes(snap);
   const vols = all.filter((v) => v.destType !== "db-dump");
   const dumps = all.filter((v) => v.destType === "db-dump");
@@ -396,10 +513,18 @@ export function estimateWindow(snap: DataSnapshot, now: Date): WindowEstimate {
   const extractSec = Math.ceil(bytes * EXTRACT_SEC_PER_BYTE);
   // a streamed dump has no warm seed: its dump, its transfer and its restore all run INSIDE the freeze (transfer first, restore after the last part)
   const streamSec = Math.ceil(dumpBytes / rate) + restoreSec;
-  const total = copySec + extractSec + dbs * DB_DUMP_OVERHEAD_SEC + streamSec + WINDOW_BASE_OVERHEAD_SEC;
+  const dataSec = copySec + extractSec + dbs * DB_DUMP_OVERHEAD_SEC + streamSec + WINDOW_BASE_OVERHEAD_SEC;
+  // R27/C5: DEPLOY_DARK, the dark health gates and the ACME issuance happen after the freeze too
+  const deploy = extras.deploy ? deployWindow(extras.deploy) : { buildSec: 0, startSec: 0, totalSec: 0 };
+  const hosts = Math.max(0, Math.floor(extras.hosts ?? 0));
+  const healthSec = hosts > 0 ? HEALTH_BASE_SEC + Math.ceil(hosts / HEALTH_PROBE_PARALLEL) * HEALTH_PROBE_SEC_ASSUMED : 0;
+  const acmeSec = hosts > 0 ? ACME_BASE_SEC + hosts * ACME_PER_HOST_SEC : 0;
+  const total = dataSec + deploy.totalSec + healthSec + acmeSec;
   const unknownSizes = all.filter((v) => !v.inventory?.found && v.rawBytesTotal === null).length;
+  const hubBytes = HUB_BYTE_FACTOR * (bytes + dumpBytes);
   const basis: WindowEstimate["basis"] = [
     { code: "data-seed.estimate.bytes", params: { bytes, volumes: vols.length, unknown: unknownSizes } },
+    { code: "data-seed.estimate.hub-bytes", params: { bytes: hubBytes, factor: HUB_BYTE_FACTOR } },
     { code: observed.length ? "data-seed.estimate.rate-observed" : "data-seed.estimate.rate-assumed", params: { bytesPerSec: rate } },
     { code: "data-seed.estimate.extract", params: { seconds: extractSec } },
     { code: "data-seed.estimate.databases", params: { count: dbs, secondsEach: DB_DUMP_OVERHEAD_SEC } },
@@ -410,7 +535,32 @@ export function estimateWindow(snap: DataSnapshot, now: Date): WindowEstimate {
       { code: "data-seed.estimate.stream-in-freeze", params: { count: dumps.length } },
     );
   }
-  return { freezeToFlipSec: unknownSizes > 0 ? null : total, basis, estimatedAt: now.toISOString() };
+  if (extras.deploy) basis.push({ code: "data-seed.estimate.deploy", params: { builds: extras.deploy.builds, starts: extras.deploy.starts, buildSeconds: deploy.buildSec, startSeconds: deploy.startSec } });
+  if (hosts > 0) basis.push({ code: "data-seed.estimate.health-acme", params: { hosts, healthSeconds: healthSec, acmeSeconds: acmeSec } });
+  const totalSec = unknownSizes > 0 ? null : total;
+  return {
+    estimate: { freezeToFlipSec: totalSec, basis, estimatedAt: now.toISOString() },
+    terms: { dataSec, buildSec: deploy.buildSec, startSec: deploy.startSec, healthSec, acmeSec, bytes: bytes + dumpBytes, hubBytes, totalSec },
+  };
+}
+
+export const estimateWindow = (snap: DataSnapshot, now: Date, extras: WindowExtras = {}): WindowEstimate => estimateWindowDetail(snap, now, extras).estimate;
+
+// ───────────────────────────── write gap (R42/N2) ─────────────────────────────
+
+export interface TickGap {
+  /** The estimated minutes the source's writers stay stopped (freeze to the first moved host answering); null = the estimate is not known yet. */
+  gapMinutes: number | null;
+  /** The longest gap the owner accepts (`tickGapAcceptMinutes`; 0 = none). */
+  acceptedMinutes: number;
+  /** The gap is over what the owner accepted, or cannot be told (an unknown gap is never inside the tolerance). */
+  over: boolean;
+}
+
+/** Compare the window estimate with the owner's accepted write gap. Whole minutes, rounded UP: a 61 second window is a 2 minute gap. */
+export function tickGapOf(estimateSec: number | null, acceptedMinutes: number): TickGap {
+  const gapMinutes = estimateSec === null ? null : Math.ceil(estimateSec / 60);
+  return { gapMinutes, acceptedMinutes, over: gapMinutes === null || gapMinutes > acceptedMinutes };
 }
 
 /** Same estimate ignoring the timestamp: lets a handler avoid rewriting an unchanged estimate every tick. */

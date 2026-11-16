@@ -31,13 +31,13 @@ import {
   type SourceApiPort,
   type SourceHostPort,
 } from "./data-contract";
-import { estimateEquals, estimateWindow, sha256Hex } from "./data-logic";
+import { estimateEquals, estimateWindowDetail, sha256Hex, tickGapOf, windowExtrasOf, type TickGap, type WindowTerms } from "./data-logic";
 import { HOST_LOOP_CODES } from "./inventory/host-codes";
 import { planRefsOf, serverRefOfItem, sourceHostsOf } from "./inventory/host-hosts";
 import { attestableFindings, crossCheckChecks } from "./inventory/cross-check";
 import { emptyHostView, loadHostView, type HostView } from "./inventory/host-view";
 import { HOST_REPORT_PORT, type HostReportPort } from "./inventory/inventory-contract";
-import { classifyAgentError, compOf, gateFrom, loadSnapshot, releaseIfOurs } from "./handler-util";
+import { classifyAgentError, compOf, gateFrom, loadSnapshot, releaseIfOurs, type StepComp } from "./handler-util";
 import {
   buildSourceInspectScript,
   buildSourceStartScript,
@@ -67,6 +67,10 @@ export interface FreezeObs extends Observation {
   apiAvailable: "ok" | ApiFailure | null;
   /** The downtime estimate from the CURRENT facts (the approval reviews this, not a stale stored value). */
   estimateSec: number | null;
+  /** The parts of that estimate (data, builds, starts, health, ACME, bytes through the hub), shown in full in the approval. */
+  terms: WindowTerms;
+  /** The estimated write gap against the owner's accepted `tickGapAcceptMinutes` (R42/N2). */
+  gap: TickGap;
   /** The stored reports of the host-loop runner (freeze outcome per source host); empty unless that runner freezes. */
   hosts: HostView;
 }
@@ -76,6 +80,13 @@ export const STOP_CONFIRM_TIMEOUT_MS = 5 * 60_000;
 const SCRIPT_TIMEOUT_MS = 300_000;
 /** The operator attestation that stop-list items matching no container may be left as they are (they are not writers). */
 export const UNRESOLVED_CHECK = "freeze-containers-unresolved";
+/**
+ * N2: the explicit attestation that the estimated write gap (the source writers stay stopped for the whole window) is accepted
+ * although it is over the owner's `tickGapAcceptMinutes` (default 0: any gap needs it). Append-only feeds (price ticks, metrics)
+ * lose what they would have written during that gap.
+ */
+export const TICK_GAP_CHECK = "tick-gap-accepted";
+export const TICK_GAP_CODES = { exceeded: "freeze.tick-gap-exceeded", attested: "freeze.tick-gap-attested", within: "freeze.tick-gap-within" } as const;
 
 /**
  * The Coolify items the freeze stops: apps and services (the writers), plus every database that is copied PHYSICALLY (its data
@@ -184,11 +195,12 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
       const av = await this.api.available(run);
       apiAvailable = av.ok ? "ok" : av.reason;
     }
-    const estimate = estimateWindow(snap, ctx.now());
+    const { estimate, terms } = estimateWindowDetail(snap, ctx.now(), windowExtrasOf(run, snap));
+    const gap = tickGapOf(estimate.freezeToFlipSec, resolveOwnerInput(run.inputs, "tickGapAcceptMinutes") ?? 0);
     // the host reports are also read when DATA_SEED was skipped: the docker-vs-API cross-check lives in DATA_SEED, and a skip must not
     // silently reopen "data left behind" (R2), so the freeze judges the same findings itself
     const hosts = hostLoopFreeze(run) || ctx.stepState("DATA_SEED").status === "SKIPPED" ? await loadHostView(this.reports, run.id).catch(() => emptyHostView()) : emptyHostView();
-    return { snap, controller, stop: buildStopList(snap), record, attested, apiAvailable, estimateSec: estimate.freezeToFlipSec, hosts, states: record ? await this.readStates(ctx, record) : null };
+    return { snap, controller, stop: buildStopList(snap), record, attested, apiAvailable, estimateSec: estimate.freezeToFlipSec, terms, gap, hosts, states: record ? await this.readStates(ctx, record) : null };
   }
 
   /** Re-read what the freeze stopped. Never throws: an unreadable state is `unknown` and therefore not quiesced. */
@@ -252,7 +264,23 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
         }
       } else checks.push({ id: "dns-prepared", status: "fail", code: "freeze.dns-not-prepared", params: { status: dns.status } });
     }
+    checks.push(...this.tickGapChecks(ctx, obs));
     return { checks, timer };
+  }
+
+  /**
+   * R42/N2: the source writers stay stopped for the whole window. When the estimated gap is over what the owner accepts
+   * (`tickGapAcceptMinutes`, default 0), or cannot be told yet, FREEZE needs the explicit `tick-gap-accepted` attestation: an
+   * append-only feed writer (price ticks, metrics) loses what it would have written. Nothing is stopped, so nothing is lost, when
+   * the run stops no writer at all.
+   */
+  private tickGapChecks(ctx: StepContext, obs: FreezeObs): GateCheck[] {
+    if (obs.stop.length === 0) return [];
+    const g = obs.gap;
+    const params = { gapMinutes: g.gapMinutes, acceptedMinutes: g.acceptedMinutes, writers: obs.stop.length };
+    if (!g.over) return [{ id: "freeze.tick-gap", status: "pass", code: TICK_GAP_CODES.within, params, evidence: "hub-verified" }];
+    if (ctx.step.evidence.attestations.some((a) => a.checkId === TICK_GAP_CHECK)) return [{ id: "freeze.tick-gap", status: "warn", code: TICK_GAP_CODES.attested, params, evidence: "operator-attested" }];
+    return [{ id: "freeze.tick-gap", status: "fail", code: TICK_GAP_CODES.exceeded, params, ownerInput: "tickGapAcceptMinutes", attestable: [TICK_GAP_CHECK], evidence: "hub-verified" }];
   }
 
   /**
@@ -283,16 +311,20 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
     if (timer) return gateFrom(checks, { kind: "timer", notBefore: timer, code: "freeze.ttl-wait" });
     // a finding the owner/operator has not settled parks the step as an operator wait that offers the inventory and the attestations
     const finding = checks.find((c) => c.status !== "pass" && c.status !== "warn" && c.code.startsWith("inventory."));
-    if (!finding) return gateFrom(checks);
-    const attest = attestableFindings(checks);
-    return gateFrom(checks, { kind: "operator", code: finding.code, params: finding.params ?? {}, offersCommand: true, commandKind: "inventory", ...(attest.length ? { attest } : {}) });
+    // N2: a write gap over the accepted one parks the step the same way, with its own attestation
+    const gap = checks.find((c) => c.status === "fail" && c.code === TICK_GAP_CODES.exceeded);
+    if (!finding && !gap) return gateFrom(checks);
+    const attest = [...attestableFindings(checks), ...(gap ? [TICK_GAP_CHECK] : [])];
+    const first = finding ?? gap!;
+    return gateFrom(checks, { kind: "operator", code: first.code, params: first.params ?? {}, ...(finding ? { offersCommand: true, commandKind: "inventory" as const } : {}), ...(attest.length ? { attest } : {}) });
   }
 
   async approvalBinding(ctx: StepContext, obs: FreezeObs): Promise<ApprovalBinding | null> {
     const est = obs.estimateSec;
     const refs = obs.stop.map((s) => s.itemRef).join(",");
+    const t = obs.terms;
     return {
-      inputHash: sha256Hex(`freeze|${ctx.run.id}|${obs.controller}|${refs}|${est ?? "unknown"}`),
+      inputHash: sha256Hex(`freeze|${ctx.run.id}|${obs.controller}|${refs}|${est ?? "unknown"}|${obs.gap.acceptedMinutes}`),
       ponr: false,
       confirm: "run-id",
       ttlSec: null,
@@ -304,7 +336,19 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
         apps: obs.snap.apps.length,
         services: obs.snap.services.length,
         stopList: obs.stop.slice(0, 40).map((s) => s.name),
+        // R27/C5/R38: the FULL estimate, term by term (every one of them an assumption until the run measures it)
         estimateSec: est,
+        estimateDataSec: t.dataSec,
+        estimateBuildSec: t.buildSec,
+        estimateStartSec: t.startSec,
+        estimateHealthSec: t.healthSec,
+        estimateAcmeSec: t.acmeSec,
+        estimateBytes: t.bytes,
+        estimateHubBytes: t.hubBytes,
+        // R42/N2: how long the writers stay stopped, against what the owner accepted
+        writeGapSec: est,
+        tickGapAcceptedSec: obs.gap.acceptedMinutes * 60,
+        tickGapNeedsAttestation: obs.gap.over && obs.stop.length > 0,
         keepsStopped: true,
         scheduledFor: ctx.run.options.freezeAt ?? null,
       },
@@ -362,13 +406,20 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
   async act(ctx: StepContext, obs: FreezeObs): Promise<ActResult> {
     const run = ctx.run;
     if (!ctx.approval) return { outcome: "fail", code: "freeze.approval-missing", retryable: true };
+    // N2: the approval is not enough when the write gap is over what the owner accepts: the attestation is the explicit word
+    const gapAttested = ctx.step.evidence.attestations.some((a) => a.checkId === TICK_GAP_CHECK);
+    if (obs.stop.length > 0 && obs.gap.over && !gapAttested) return { outcome: "fail", code: "freeze.tick-gap-not-accepted", params: { gapMinutes: obs.gap.gapMinutes, acceptedMinutes: obs.gap.acceptedMinutes }, retryable: true };
     const freezeAt = run.options.freezeAt ? new Date(run.options.freezeAt) : null;
     if (freezeAt && freezeAt.getTime() > ctx.now().getTime()) {
       return { outcome: "wait", wait: { kind: "timer", notBefore: freezeAt.toISOString(), code: DATA_CODES.freezeScheduled } };
     }
     await ctx.patchRun({ freezeStartedAt: ctx.now() }); // first call wins: the downtime window opens now
-    const est = estimateWindow(obs.snap, ctx.now());
+    const est = estimateWindowDetail(obs.snap, ctx.now(), windowExtrasOf(run, obs.snap)).estimate;
     if (!estimateEquals(run.windowEstimate, est)) await ctx.patchRun({ windowEstimate: est }); // the report compares it with the measured window
+    if (obs.stop.length > 0 && obs.gap.over && !(compOf(ctx) as StepComp & { tickGapNoted?: boolean }).tickGapNoted) {
+      await ctx.recordCompensation({ tickGapNoted: true });
+      await ctx.emit({ stepKey: "FREEZE", level: "warn", code: TICK_GAP_CODES.attested, params: { gapMinutes: obs.gap.gapMinutes, acceptedMinutes: obs.gap.acceptedMinutes, writers: obs.stop.length } });
+    }
 
     switch (obs.controller) {
       case "manual":

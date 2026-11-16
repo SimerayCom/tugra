@@ -4,7 +4,7 @@
  * (including crash-resume: the compensation a handler wrote is fed back into the next context).
  */
 import { RunLeaseLostError, targetServerFor, targetServerIdsOf, type RunSnapshot, type StepContext, type StepKey, type StepSnapshot, type RunEventInput } from "../../../core/run-contract";
-import { OwnerInputsSchema, RunOptionsSchema, type OwnerInputs, type RunOptions, type StepApprovalRecord, type StepProgress, type WaitSpec, type WindowEstimate } from "../../../core/dto";
+import { OwnerInputsSchema, RunOptionsSchema, type OwnerInputs, type RunOptions, type SourceBaseline, type StepApprovalRecord, type StepProgress, type WaitSpec, type WindowEstimate } from "../../../core/dto";
 import type {
   ApiFailure,
   ApiResourceKind,
@@ -40,6 +40,7 @@ export interface RunOverrides {
   sessionId?: string | null;
   dryRun?: boolean;
   serverMap?: Record<string, string>;
+  sourceBaseline?: SourceBaseline | null;
 }
 
 export function makeRun(o: RunOverrides = {}): RunSnapshot {
@@ -52,7 +53,7 @@ export function makeRun(o: RunOverrides = {}): RunSnapshot {
     sourceKind: o.sourceKind ?? "coolify",
     sourceVersion: null,
     campaign: null,
-    sourceBaseline: null,
+    sourceBaseline: o.sourceBaseline ?? null,
     sourceHost: "coolify.example.com",
     sessionId: o.sessionId === undefined ? "sess1" : o.sessionId,
     opId: o.opId === undefined ? "op1" : o.opId,
@@ -64,7 +65,8 @@ export function makeRun(o: RunOverrides = {}): RunSnapshot {
     promotedFromId: null,
     applyInput: { sourceKind: o.sourceKind ?? "coolify", targetServerId: "srv-target", planHash: "0123456789abcdef0123456789abcdef" },
     options: RunOptionsSchema.parse(o.options ?? {}),
-    inputs: OwnerInputsSchema.parse(o.inputs ?? {}),
+    // the write gap (N2) is accepted by default in fixtures (the owner default 0 would park every FREEZE spec on the attestation); specs of the gap answer it explicitly
+    inputs: OwnerInputsSchema.parse({ tickGapAcceptMinutes: { value: 10_080, source: "request", setBy: "user1", at: NOW.toISOString() }, ...(o.inputs ?? {}) }),
     status: "RUNNING",
     currentStep: null,
     ponrAt: null,

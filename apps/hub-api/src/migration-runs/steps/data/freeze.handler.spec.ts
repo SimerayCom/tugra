@@ -3,7 +3,7 @@ import type { RunSnapshot } from "../../core/run-contract";
 import { DATA_CODES, type FreezeRecord } from "./data-contract";
 import { FreezeHandler, STOP_CONFIRM_TIMEOUT_MS, UNRESOLVED_CHECK, buildStopList, controllerOf } from "./freeze.handler";
 import { SourceHostFake, ctrId } from "./testing/source-host-fake";
-import { estimateWindow } from "./data-logic";
+import { estimateWindow, windowExtrasOf } from "./data-logic";
 import { FakeCaps, FakeDataPort, FakeSourceApi, NOW, answered, inspected, makeCtx, makeRun, makeSnap, type CtxHarness } from "./testing/fakes";
 
 const A = ctrId("a");
@@ -80,7 +80,7 @@ describe("FREEZE approval binding and gates", () => {
   it("binds the approval to the controller, the stop list and the CURRENT estimate, and asks for the run id", async () => {
     const { handler, ctx, data } = build(manualRun());
     data.snap.volumes = [inspected("volume:s:a:data", 3 * 1024 ** 3)];
-    const want = estimateWindow(data.snap, NOW).freezeToFlipSec;
+    const want = estimateWindow(data.snap, NOW, windowExtrasOf(manualRun(), data.snap)).freezeToFlipSec;
     const h = ctx();
     const obs = await handler.observe(h.ctx);
     const b = (await handler.approvalBinding(h.ctx, obs))!;
@@ -128,7 +128,7 @@ describe("FREEZE approval binding and gates", () => {
     const hb = b.ctx({ steps: { DATA_SEED: { status: "WAITING_OPERATOR" }, DNS_PREPARE: { status: "RUNNING" } } });
     const pb = b.handler.preGate(hb.ctx, await b.handler.observe(hb.ctx));
     expect(pb.passed).toBe(false);
-    expect(pb.checks.map((c) => c.code).sort()).toEqual(["freeze.data-seed-not-passed", "freeze.dns-not-prepared"]);
+    expect(pb.checks.map((c) => c.code).filter((c) => c !== "freeze.tick-gap-within").sort()).toEqual(["freeze.data-seed-not-passed", "freeze.dns-not-prepared"]);
   });
 
   it("an api controller that cannot be used, and an agent controller off the same host, block before anything happens", async () => {

@@ -59,9 +59,10 @@ export class PrismaDataPort implements DataPort {
     const dbIds = tasks.filter((t) => t.status === "DONE" && t.resourceType === "database" && t.resourceId).map((t) => t.resourceId as string);
     const appIds = tasks.filter((t) => t.status === "DONE" && t.resourceType === "application" && t.resourceId).map((t) => t.resourceId as string);
     const dbRows = dbIds.length ? await this.prisma.database.findMany({ where: { id: { in: dbIds } }, select: { id: true, name: true, engine: true, version: true, image: true } }) : [];
-    const appRows = appIds.length ? await this.prisma.application.findMany({ where: { id: { in: appIds } }, select: { id: true, name: true } }) : [];
+    const appRows = appIds.length ? await this.prisma.application.findMany({ where: { id: { in: appIds } }, select: { id: true, name: true, source: true } }) : [];
     const dbById = new Map(dbRows.map((d) => [d.id, d]));
     const nameOf = new Map<string, string>([...dbRows, ...appRows].map((r) => [r.id, r.name]));
+    const sourceOf = new Map(appRows.map((a) => [a.id, a.source as "IMAGE" | "GIT" | "COMPOSE"]));
 
     const volumeRefs = dbVolumeModeRefs(meta.plan?.items);
     const dump = vxDumpEnabled();
@@ -144,7 +145,7 @@ export class PrismaDataPort implements DataPort {
     const named = (kind: "app" | "service"): SourceItem[] =>
       tasks
         .filter((t) => t.status === "DONE" && t.itemRef?.startsWith(`${kind}:`))
-        .map((t) => ({ itemRef: t.itemRef as string, name: t.resourceId ? (nameOf.get(t.resourceId) ?? null) : null }))
+        .map((t) => ({ itemRef: t.itemRef as string, name: t.resourceId ? (nameOf.get(t.resourceId) ?? null) : null, ...(kind === "app" && t.resourceId && sourceOf.has(t.resourceId) ? { source: sourceOf.get(t.resourceId)! } : {}) }))
         .sort((a, b) => (a.itemRef < b.itemRef ? -1 : 1));
 
     const active = !!op.migrationTokenHash && !!op.migrationTokenExpiresAt && op.migrationTokenExpiresAt.getTime() > Date.now() && !op.cancelRequestedAt;
