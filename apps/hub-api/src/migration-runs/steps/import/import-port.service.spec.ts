@@ -3,7 +3,9 @@ import { ImportPortService } from "./import-port.service";
 function make(over: { opMeta?: unknown; cancelRequestedAt?: Date | null; statusView?: unknown } = {}) {
   const prisma = {
     importSession: { findUnique: jest.fn(), update: jest.fn() },
-    server: { findUnique: jest.fn().mockResolvedValue({ name: "box", proxyBind: "public", dnsCredentialId: "cred1", capabilities: ["deploy", "database"] }) },
+    server: { findUnique: jest.fn().mockResolvedValue({ name: "box", proxyBind: "public", dnsCredentialId: "cred1", capabilities: ["deploy", "database"], teamId: "team1", os: "ubuntu", osVersion: "24.04" }) },
+    metric: { findFirst: jest.fn().mockResolvedValue({ diskUsed: BigInt(30 * 1024 ** 3), diskTotal: BigInt(100 * 1024 ** 3), ts: new Date(Date.now() - 60_000) }) },
+    backupDestination: { count: jest.fn().mockResolvedValue(2) },
     bulkOperation: { findUnique: jest.fn().mockResolvedValue({ meta: over.opMeta ?? {}, cancelRequestedAt: over.cancelRequestedAt ?? null }), findMany: jest.fn().mockResolvedValue([{ id: "op-9" }]) },
     application: { findUnique: jest.fn() },
     database: { findUnique: jest.fn() },
@@ -112,6 +114,24 @@ describe("ImportPortService", () => {
     agentWs.isOnline.mockReturnValue(false);
     proxyConfig.resolveFor.mockResolvedValue({ acmeEmail: "admin@example.com" }); // a placeholder address is not a real one
     expect(await svc.target("u1", { serverId: "srv1", hosts: [] })).toMatchObject({ agentOnline: false, acmeEmailOk: false });
+  });
+
+  it("target reports the free disk, the OS and the team's backup destinations (R7); a missing reading and a failed read are both said, never left out", async () => {
+    const { svc, prisma } = make();
+    const t = await svc.target("u1", { serverId: "srv1", hosts: [] });
+    expect(t.disk).toMatchObject({ totalBytes: 100 * 1024 ** 3, freeBytes: 70 * 1024 ** 3 });
+    expect(t.disk!.ageSec).toBeGreaterThanOrEqual(59);
+    expect(t).toMatchObject({ os: "ubuntu", osVersion: "24.04", backupDestinations: 2 });
+    expect(prisma.backupDestination.count).toHaveBeenCalledWith({ where: { teamId: "team1" } });
+    // the server never reported a metric: the fact is `null` (the gate says so), never "free"
+    prisma.metric.findFirst.mockResolvedValueOnce(null);
+    expect((await svc.target("u1", { serverId: "srv1", hosts: [] })).disk).toBeNull();
+    // the read itself failed: the fact is given as unreadable (null), not left out, so the gate can say so
+    prisma.metric.findFirst.mockRejectedValueOnce(new Error("db down"));
+    prisma.backupDestination.count.mockRejectedValueOnce(new Error("db down"));
+    const t3 = await svc.target("u1", { serverId: "srv1", hosts: [] });
+    expect(t3.disk).toBeNull();
+    expect(t3.backupDestinations).toBeNull();
   });
 
   it("opSnapshot reads the op through the executor and its meta flags", async () => {

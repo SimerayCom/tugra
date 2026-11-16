@@ -21,6 +21,7 @@ import type {
   MigrationRunStepKind,
   MigrationRunStepStatus,
   MigrationRunRollbackClass,
+  MigrationRunReport,
   MigrationRunSummary,
   MigrationRunTopology,
   MigrationRunView,
@@ -620,6 +621,8 @@ export const UNKNOWN_SOURCE_HOST = "_";
 export interface SourceServerRow {
   /** The Coolify server uuid, or {@link UNKNOWN_SOURCE_HOST}. */
   ref: string;
+  /** The server's name as the source calls it, when the plan lists it: what the operator reads instead of the uuid. */
+  name?: string;
   apps: number;
   databases: number;
   services: number;
@@ -627,7 +630,7 @@ export interface SourceServerRow {
 }
 
 /** The source hosts a plan spans, read from the item refs (`<kind>:<serverRef|_>:<ref>`), sorted, with what lives on each. */
-export function sourceServersOf(items: ReadonlyArray<Pick<ImportPlanItem, "itemRef" | "kind">>): SourceServerRow[] {
+export function sourceServersOf(items: ReadonlyArray<Pick<ImportPlanItem, "itemRef" | "kind">>, hosts?: ReadonlyArray<{ ref: string; name?: string }>): SourceServerRow[] {
   const by = new Map<string, SourceServerRow>();
   for (const it of items) {
     const i1 = it.itemRef.indexOf(":");
@@ -640,7 +643,54 @@ export function sourceServersOf(items: ReadonlyArray<Pick<ImportPlanItem, "itemR
     else row.volumes += 1;
     by.set(ref, row);
   }
-  return [...by.values()].sort((a, b) => (a.ref === UNKNOWN_SOURCE_HOST ? 1 : b.ref === UNKNOWN_SOURCE_HOST ? -1 : a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0));
+  const names = new Map((hosts ?? []).filter((h) => h.name && h.name.trim() !== "").map((h) => [h.ref, h.name!.trim()] as const));
+  for (const row of by.values()) {
+    const name = names.get(row.ref);
+    if (name) row.name = name;
+  }
+  // by name when there is one (what the operator reads), else by ref; the unknown-host row stays last
+  const key = (r: SourceServerRow) => (r.name ?? r.ref).toLowerCase();
+  return [...by.values()].sort((a, b) => (a.ref === UNKNOWN_SOURCE_HOST ? 1 : b.ref === UNKNOWN_SOURCE_HOST ? -1 : key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0));
+}
+
+/** The label of a source host: its name, else its ref. The placement rows and the run's placement card use it. */
+export const sourceHostLabel = (names: Readonly<Record<string, string>>, ref: string): string => (Object.prototype.hasOwnProperty.call(names, ref) && names[ref] ? names[ref] : ref);
+
+const PREFLIGHT_GATE_CHECKS = (run: Pick<MigrationRunView, "steps">): MigrationRunGateCheck[] => run.steps.find((s) => s.key === "PREFLIGHT")?.gate?.checks ?? [];
+
+/** The source servers' names as PREFLIGHT recorded them (`preflight.hosts` carries two parallel lists), source ref to name.
+ *  Empty until PREFLIGHT ran, and for a source that names none. */
+export function sourceHostNames(run: Pick<MigrationRunView, "steps">): Record<string, string> {
+  const p = PREFLIGHT_GATE_CHECKS(run).find((c) => c.id === "preflight.hosts")?.params;
+  const refs = p?.refs;
+  const names = p?.names;
+  const out: Record<string, string> = Object.create(null);
+  if (!Array.isArray(refs) || !Array.isArray(names)) return { ...out };
+  refs.forEach((r, i) => {
+    const n = names[i];
+    if (typeof r === "string" && typeof n === "string" && n.trim() !== "") out[r] = n.trim();
+  });
+  return { ...out };
+}
+
+export interface HeldWorkers {
+  /** What the run does with an app that serves no domain: keep it stopped until after the cutover, leave it out, or start it dark. */
+  policy: "hold-dark" | "exclude" | "start-dark";
+  count: number;
+  /** Every worker's name, as PREFLIGHT listed them (at most 200). */
+  names: string[];
+}
+
+/** The workers PREFLIGHT found (apps with no domain, or marked job runners) with what the run does with them (R26); null when the
+ *  run has none or PREFLIGHT has not run. The whole list, not the ten names of the sentence. */
+export function heldWorkersOf(run: Pick<MigrationRunView, "steps">): HeldWorkers | null {
+  const c = PREFLIGHT_GATE_CHECKS(run).find((x) => x.id === "preflight.workers");
+  const p = c?.params;
+  if (!c || !p || !Array.isArray(p.workers)) return null;
+  const names = p.workers.filter((n): n is string => typeof n === "string");
+  const policy = p.policy === "exclude" || p.policy === "start-dark" ? p.policy : "hold-dark";
+  if (names.length === 0) return null;
+  return { policy, count: typeof p.count === "number" ? p.count : names.length, names };
 }
 
 /** The default placement of every source host: all on `defaultId` (the operator then moves some). */
@@ -829,6 +879,119 @@ export function campaignRollup(rows: ReadonlyArray<Pick<MigrationRunSummary, "ca
   }
   return [...by.values()].sort((a, b) => (a.campaign < b.campaign ? -1 : a.campaign > b.campaign ? 1 : 0));
 }
+
+// ───────────────────────────── campaign report (R15/R69) ─────────────────────────────
+
+/** The campaign report reads the final report of at most this many runs (one request each); a campaign is a few runs to a few dozen. */
+export const CAMPAIGN_REPORT_RUN_CAP = 60;
+
+export interface CampaignRunRow {
+  id: string;
+  status: MigrationRunStatus;
+  currentStep: MigrationRunStepKey | null;
+  mode: MigrationRunMode;
+  topology: MigrationRunTopology;
+  dryRun: boolean;
+  sourceHost: string | null;
+  /** The target servers' names (the run's report lists them all); the default server alone until the report is loaded. */
+  targetNames: string[];
+  targetCount: number;
+  estimatedSec: number | null;
+  measuredSec: number | null;
+  /** What the run's report counted per outcome; null until the report is loaded (or when it could not be read). */
+  items: { moved: number; skipped: number; acked: number; failed: number; notCutOver: number } | null;
+  /** The code the run itself failed with. */
+  failure: { step: MigrationRunStepKey | null; code: string } | null;
+  /** The items that failed or were not cut over, with the code that says why (at most 20 per run). */
+  problemItems: Array<{ kind: string; name: string; outcome: "failed" | "not-cut-over"; code: string | null }>;
+  createdAt: string;
+}
+
+export interface CampaignReportData {
+  campaign: string;
+  runs: CampaignRunRow[];
+  rollup: Omit<CampaignRollup, "campaign">;
+  /** Items over the runs whose report is loaded. */
+  totals: { moved: number; skipped: number; acked: number; failed: number; notCutOver: number };
+  window: {
+    /** Sum of the measured windows (each run's own downtime) and the longest one; null while no run has one. */
+    measuredTotalSec: number | null;
+    measuredLongestSec: number | null;
+    estimatedTotalSec: number | null;
+  };
+  /** Distinct source hosts and target servers across the runs. */
+  sourceHosts: string[];
+  targetServers: string[];
+  /** Runs whose report is not loaded yet. */
+  pendingReports: number;
+}
+
+const PROBLEM_ITEM_CAP = 20;
+
+/** Every run of one campaign rolled up: per run its state, hosts, window and failures, plus the totals. `reports` maps a run id
+ *  to its final report (`undefined` = not loaded yet, `null` = could not be read); a run without one still has its row. */
+export function buildCampaignReport(
+  campaign: string,
+  runs: ReadonlyArray<MigrationRunSummary>,
+  reports: ReadonlyMap<string, MigrationRunReport | null | undefined>,
+): CampaignReportData {
+  const mine = runs.filter((r) => r.campaign === campaign).sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.id < b.id ? -1 : 1));
+  const rows: CampaignRunRow[] = mine.map((r) => {
+    const rep = reports.get(r.id) ?? null;
+    const items = rep ? { moved: 0, skipped: 0, acked: 0, failed: 0, notCutOver: 0 } : null;
+    const problems: CampaignRunRow["problemItems"] = [];
+    for (const it of rep?.items ?? []) {
+      if (it.outcome === "moved") items!.moved += 1;
+      else if (it.outcome === "skipped") items!.skipped += 1;
+      else if (it.outcome === "acked") items!.acked += 1;
+      else if (it.outcome === "failed") items!.failed += 1;
+      else items!.notCutOver += 1;
+      if ((it.outcome === "failed" || it.outcome === "not-cut-over") && problems.length < PROBLEM_ITEM_CAP) problems.push({ kind: it.kind, name: it.name, outcome: it.outcome, code: it.code });
+    }
+    const named = (rep?.targets ?? []).map((t) => t.serverName ?? t.serverId);
+    return {
+      id: r.id,
+      status: r.status,
+      currentStep: r.currentStep,
+      mode: r.mode,
+      topology: r.topology,
+      dryRun: r.dryRun,
+      sourceHost: r.sourceHost,
+      targetNames: named.length > 0 ? named : [r.targetServerName ?? r.targetServerId],
+      targetCount: Math.max(r.targetServerCount, named.length),
+      estimatedSec: rep?.window.estimatedSec ?? null,
+      measuredSec: rep?.window.measuredSec ?? null,
+      items,
+      failure: r.failure,
+      problemItems: problems,
+      createdAt: r.createdAt,
+    };
+  });
+  const roll = campaignRollup(mine)[0];
+  const rollup = roll ? { total: roll.total, completed: roll.completed, live: roll.live, failed: roll.failed, other: roll.other } : { total: 0, completed: 0, live: 0, failed: 0, other: 0 };
+  const totals = { moved: 0, skipped: 0, acked: 0, failed: 0, notCutOver: 0 };
+  for (const r of rows) if (r.items) for (const k of Object.keys(totals) as Array<keyof typeof totals>) totals[k] += r.items[k];
+  const measured = rows.map((r) => r.measuredSec).filter((n): n is number => n !== null);
+  const estimated = rows.map((r) => r.estimatedSec).filter((n): n is number => n !== null);
+  const distinct = (xs: ReadonlyArray<string | null>) => [...new Set(xs.filter((x): x is string => !!x))].sort();
+  return {
+    campaign,
+    runs: rows,
+    rollup,
+    totals,
+    window: {
+      measuredTotalSec: measured.length ? measured.reduce((a, b) => a + b, 0) : null,
+      measuredLongestSec: measured.length ? Math.max(...measured) : null,
+      estimatedTotalSec: estimated.length ? estimated.reduce((a, b) => a + b, 0) : null,
+    },
+    sourceHosts: distinct(rows.map((r) => r.sourceHost)),
+    targetServers: distinct(rows.flatMap((r) => r.targetNames)),
+    pendingReports: rows.filter((r) => reports.get(r.id) === undefined).length,
+  };
+}
+
+/** The panel link of a campaign's report. */
+export const campaignReportHref = (campaign: string): string => `/import/runs/campaign?c=${encodeURIComponent(campaign)}`;
 
 // ───────────────────────────── errors ─────────────────────────────
 

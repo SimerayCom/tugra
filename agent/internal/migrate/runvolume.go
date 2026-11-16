@@ -185,7 +185,7 @@ func (v *volRunner) inspect(ctx context.Context, tg Target, mayStop bool) volume
 			return f
 		}
 	}
-	inv, ierr := InventoryVolume(ctx, v.dockerPath, v.dockerEnv, v.c.helperImage, src, excludesFor(tg))
+	inv, ierr := InventoryVolumeFor(ctx, v.runID, v.dockerPath, v.dockerEnv, v.c.helperImage, src, excludesFor(tg))
 	if ierr != nil {
 		f.state, f.reason = volumeOutcome(ierr)
 		return f

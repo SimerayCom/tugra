@@ -1,7 +1,7 @@
 import { Logger } from "@nestjs/common";
 import { ACTOR, RunWorld, defaultPlan, H32 } from "../../core/testing/run-world";
 import type { ImportPlanResponse } from "../../../importer/importer.service";
-import { preflightChecks, type PreflightObs } from "./preflight.step";
+import { PreflightStep, preflightChecks, type PreflightObs } from "./preflight.step";
 import { OwnerInputsSchema } from "../../core/dto";
 import type { RunSnapshot } from "../../core/run-contract";
 import type { ResolvedMapping } from "../../../importer/import-mapping";
@@ -125,7 +125,7 @@ describe("PREFLIGHT checks (pure)", () => {
       applyInput: { sourceKind: "coolify", targetServerId: "srv1", planHash: H32 },
       ...over,
     }) as RunSnapshot;
-  const target = (over: Partial<TargetFacts> = {}): TargetFacts => ({ serverName: "box", agentOnline: true, capabilities: ["deploy", "database"], acmeEmailOk: true, proxyBind: "public", dnsCredential: false, zones: [], ...over });
+  const target = (over: Partial<TargetFacts> = {}): TargetFacts => ({ serverName: "box", agentOnline: true, capabilities: ["deploy", "database", "backup"], acmeEmailOk: true, proxyBind: "public", dnsCredential: false, zones: [], ...over });
   const obs = (over: Partial<PreflightObs> = {}): PreflightObs => ({ session: "active", plan: defaultPlan(), planError: null, target: target(), mapping: null, storedMappingBlocks: false, services: null, ...over });
   const byId = (cs: ReturnType<typeof preflightChecks>, id: string) => cs.find((c) => c.id === id);
 
@@ -425,7 +425,7 @@ function baseRun(over: Partial<RunSnapshot> = {}): RunSnapshot {
   } as unknown as RunSnapshot;
 }
 function baseObs(over: Partial<PreflightObs> = {}): PreflightObs {
-  return { session: "active", plan: defaultPlan(), planError: null, target: { serverName: "box", agentOnline: true, capabilities: ["deploy", "database"], acmeEmailOk: true, proxyBind: "public", dnsCredential: false, zones: [] }, mapping: null, storedMappingBlocks: false, services: null, ...over };
+  return { session: "active", plan: defaultPlan(), planError: null, target: { serverName: "box", agentOnline: true, capabilities: ["deploy", "database", "backup"], acmeEmailOk: true, proxyBind: "public", dnsCredential: false, zones: [] }, mapping: null, storedMappingBlocks: false, services: null, ...over };
 }
 
 describe("PREFLIGHT safety checks over the plan (R11, R26/C13, R27/C5)", () => {
@@ -515,5 +515,164 @@ describe("PREFLIGHT safety checks over the plan (R11, R26/C13, R27/C5)", () => {
     const two = byId(preflightChecks(baseRun({ options: { deployWaves: "single", deployConcurrency: 2 } as never }), baseObs({ plan: p })), "preflight.deploy-window");
     expect((two!.params as { minutes: number }).minutes).toBeLessThan(27);
     expect(byId(preflightChecks(baseRun(), baseObs()), "preflight.deploy-window")).toBeUndefined();
+  });
+});
+
+describe("PREFLIGHT target readiness for every target server (R7)", () => {
+  const GiB = 1024 ** 3;
+  const reading = (freeGib: number, totalGib = 100, ageSec = 30) => ({ freeBytes: freeGib * GiB, totalBytes: totalGib * GiB, ageSec });
+  const facts = (over: Partial<TargetFacts> = {}): TargetFacts => ({ serverName: "box", agentOnline: true, capabilities: ["deploy", "database", "backup"], acmeEmailOk: true, proxyBind: "public", dnsCredential: false, zones: [], ...over });
+  const items = [
+    { itemRef: "database:h1:db1", kind: "database", name: "db-a", proposed: { engine: "POSTGRES" }, risks: [], dependsOn: [] },
+    { itemRef: "database:h2:db2", kind: "database", name: "db-b", proposed: { engine: "POSTGRES" }, risks: [], dependsOn: [] },
+    { itemRef: "app:h2:web", kind: "app", name: "web", proposed: { domain: "web.example.test" }, risks: [], dependsOn: [] },
+  ];
+  const plan = () => defaultPlan({ items: items as never });
+  const multi = (over: Partial<RunSnapshot> = {}) => baseRun({ targetServerId: "srv1", serverMap: { h1: "srv1", h2: "srv2" }, ...over });
+  const byId = (cs: ReturnType<typeof preflightChecks>, id: string) => cs.find((c) => c.id === id);
+
+  it("a low-disk target FAILS (ackable); a roomy one passes; no reading at all is said, never read as free", () => {
+    const low = preflightChecks(baseRun(), baseObs({ target: facts({ disk: reading(4) }) }));
+    expect(byId(low, "preflight.disk.srv1")).toMatchObject({ status: "fail", code: "preflight.disk-low", ackable: true, params: { server: "box", freeGib: 4, totalGib: 100, minGib: 10 } });
+    // a big disk that is nearly full fails on the share, not on the floor
+    const full = preflightChecks(baseRun(), baseObs({ target: facts({ disk: reading(40, 1000) }) }));
+    expect(byId(full, "preflight.disk.srv1")).toMatchObject({ status: "fail", code: "preflight.disk-low" });
+    const ok = preflightChecks(baseRun(), baseObs({ target: facts({ disk: reading(60) }) }));
+    expect(byId(ok, "preflight.disk.srv1")).toMatchObject({ status: "pass", code: "preflight.disk-ok" });
+    const none = preflightChecks(baseRun(), baseObs({ target: facts({ disk: null }) }));
+    expect(byId(none, "preflight.disk.srv1")).toMatchObject({ status: "warn", code: "preflight.disk-unknown" });
+    // a reading from hours ago is not a reading of the disk as it is now
+    const stale = preflightChecks(baseRun(), baseObs({ target: facts({ disk: reading(60, 100, 4 * 3600) }) }));
+    expect(byId(stale, "preflight.disk.srv1")).toMatchObject({ status: "warn", code: "preflight.disk-unknown" });
+    // a port that cannot say gives no check at all
+    expect(byId(preflightChecks(baseRun(), baseObs({ target: facts() })), "preflight.disk.srv1")).toBeUndefined();
+  });
+
+  it("the approval binding of a low-disk target does not move with the live reading", async () => {
+    const w = new RunWorld();
+    const step = new PreflightStep(w.registry, w.port);
+    const bind = async (freeGib: number) => step.approvalBinding({ run: baseRun() } as never, baseObs({ target: facts({ disk: reading(freeGib) }) }));
+    const a = await bind(4);
+    const b = await bind(3.2);
+    expect(a).not.toBeNull();
+    // both are failing readings: the number moved, what the operator accepts did not
+    expect(preflightChecks(baseRun(), baseObs({ target: facts({ disk: reading(3.2) }) })).find((c) => c.id === "preflight.disk.srv1")!.params).toMatchObject({ freeGib: 3.2 });
+    expect(b!.inputHash).toBe(a!.inputHash);
+    // a different shortfall (a second target's disk) is a different approval
+    const two = await step.approvalBinding({ run: baseRun({ serverMap: { h1: "srv1", h2: "srv2" } }) } as never, baseObs({ plan: defaultPlan(), target: facts({ disk: reading(4) }), extraTargets: [{ serverId: "srv2", facts: facts({ serverName: "box-2", disk: reading(2) }) }] }));
+    expect(two!.inputHash).not.toBe(a!.inputHash);
+  });
+
+  it("every server of the serverMap is checked, one check per target, and an unreadable one is unknown", () => {
+    const cs = preflightChecks(multi(), baseObs({ plan: plan(), target: facts({ disk: reading(60) }), extraTargets: [{ serverId: "srv2", facts: facts({ serverName: "box-2", disk: reading(3) }) }] }));
+    expect(byId(cs, "preflight.disk.srv1")).toMatchObject({ status: "pass" });
+    expect(byId(cs, "preflight.disk.srv2")).toMatchObject({ status: "fail", subject: "box-2", params: { server: "box-2" } });
+    const unreadable = preflightChecks(multi(), baseObs({ plan: plan(), target: facts(), extraTargets: [{ serverId: "srv2", facts: null }] }));
+    expect(byId(unreadable, "preflight.target.srv2")).toMatchObject({ status: "unknown", code: "preflight.target-unreadable" });
+  });
+
+  it("the approval accepts one target's shortfall by its own check id, not the whole run's", () => {
+    const cs = preflightChecks(multi(), baseObs({ plan: plan(), target: facts({ disk: reading(3) }), extraTargets: [{ serverId: "srv2", facts: facts({ serverName: "box-2", disk: reading(2) }) }] }));
+    expect(cs.filter((c) => c.code === "preflight.disk-low").map((c) => [c.id, c.ackable])).toEqual([["preflight.disk.srv1", true], ["preflight.disk.srv2", true]]);
+  });
+
+  it("databases that land on a server without the backup capability fail (ackable) and name the databases; without a destination they warn", () => {
+    const cs = preflightChecks(
+      multi(),
+      baseObs({ plan: plan(), target: facts({ backupDestinations: 1 }), extraTargets: [{ serverId: "srv2", facts: facts({ serverName: "box-2", capabilities: ["deploy", "database"], backupDestinations: 0 }) }] }),
+    );
+    // srv1 gets db-a and can back it up to a destination
+    expect(byId(cs, "preflight.backup-destination.srv1")).toMatchObject({ status: "pass", code: "preflight.backup-destination-ok", params: { count: 1, destinations: 1 } });
+    // srv2 gets db-b but cannot back it up at all
+    expect(byId(cs, "preflight.backup-capability.srv2")).toMatchObject({ status: "fail", ackable: true, code: "preflight.backup-capability-missing", params: { server: "box-2", count: 1, items: ["db-b"] } });
+    const noDest = preflightChecks(baseRun(), baseObs({ target: facts({ backupDestinations: 0 }) }));
+    expect(byId(noDest, "preflight.backup-destination.srv1")).toMatchObject({ status: "warn", code: "preflight.backup-destination-missing", params: { count: 1, items: ["pg-main"] } });
+    // a target that receives no database has nothing to back up: no check for it
+    const noDbs = preflightChecks(multi(), baseObs({ plan: defaultPlan({ items: [items[2]] as never }), target: facts(), extraTargets: [{ serverId: "srv2", facts: facts({ capabilities: ["deploy"] }) }] }));
+    expect(noDbs.some((c) => c.id.startsWith("preflight.backup"))).toBe(false);
+  });
+
+  it("a backup-destination read that failed is said, not skipped", () => {
+    const cs = preflightChecks(multi(), baseObs({ plan: plan(), target: facts({ backupDestinations: null, disk: null }) }));
+    expect(byId(cs, "preflight.backup-destination.srv1")).toMatchObject({ status: "warn", code: "preflight.backup-destination-unknown", params: { server: "box", count: 1 } });
+    expect(byId(cs, "preflight.disk.srv1")).toMatchObject({ status: "warn", code: "preflight.disk-unknown" });
+  });
+
+  it("a very new OS release on a target is flagged, an older one and an unlisted distribution are not", () => {
+    const flag = (os: string, osVersion: string | null) => byId(preflightChecks(baseRun(), baseObs({ target: facts({ os, osVersion }) })), "preflight.target-os.srv1");
+    expect(flag("ubuntu", "26.04")).toMatchObject({ status: "warn", code: "preflight.target-os-new", params: { os: "ubuntu 26.04", tested: "ubuntu 24.04, debian 12" } });
+    expect(flag("Ubuntu 26.04.1 LTS", null)).toMatchObject({ status: "warn" });
+    expect(flag("ubuntu", "24.04")).toBeUndefined();
+    expect(flag("ubuntu", "22.04")).toBeUndefined();
+    expect(flag("alpine", "3.20")).toBeUndefined();
+  });
+
+  it("a whole run parks on an approval for a low disk and the approval lets it continue", async () => {
+    const w = new RunWorld();
+    w.port.target_ = { ...w.port.target_, disk: reading(2) };
+    const id = await w.run();
+    expect(w.stepStatus(id, "PREFLIGHT")).toBe("WAITING_APPROVAL");
+    const b = (await w.view(id)).nextAction.approval!;
+    expect(b.requiredAcks).toEqual(["preflight.disk.srv1"].map((x) => expect.stringMatching(/^preflight\.disk\./)));
+    await w.service.approve(ACTOR, id, "PREFLIGHT", { boundHash: b.inputHash, acks: b.requiredAcks });
+    await w.settle(id, "approve");
+    expect(w.status(id)).toBe("COMPLETED");
+  });
+});
+
+describe("PREFLIGHT source host classification (R5)", () => {
+  const plan = (hosts: Array<Record<string, unknown>>, items: Array<{ itemRef: string; kind: string; name: string }>) =>
+    defaultPlan({ items: items.map((i) => ({ ...i, proposed: {}, risks: [], dependsOn: [] })) as never, preflight: { databases: [], services: [], appsWithVolumeData: 0, hosts } as never });
+  const byId = (cs: ReturnType<typeof preflightChecks>, id: string) => cs.find((c) => c.id === id);
+  const two = [
+    { itemRef: "app:ha:a", kind: "app", name: "app-a" },
+    { itemRef: "app:hb:b", kind: "app", name: "app-b" },
+    { itemRef: "app:hc:c", kind: "app", name: "app-c" },
+  ];
+
+  it("flags a host with a high unreachable count and a very new OS, and counts the host that carries nothing as skipped", () => {
+    const cs = preflightChecks(
+      baseRun(),
+      baseObs({
+        plan: plan(
+          [
+            { ref: "ha", name: "host-1", unreachableCount: 40, os: "Ubuntu 24.04.4 LTS" },
+            { ref: "hb", name: "host-2", unreachableCount: 1, os: "Ubuntu 26.04.1 LTS" },
+            { ref: "hc", name: "host-3", unreachableCount: 2 },
+            { ref: "hd", name: "host-empty", unreachableCount: 900 },
+          ],
+          two,
+        ),
+      }),
+    );
+    expect(byId(cs, "preflight.hosts")).toMatchObject({ status: "pass", params: { hosts: 4, empty: 1, osReported: 2, refs: ["ha", "hb", "hc", "hd"], names: ["host-1", "host-2", "host-3", "host-empty"] } });
+    expect(byId(cs, "preflight.host-flaky")).toMatchObject({ status: "warn", params: { count: 1, items: ["host-1 (40)"] } });
+    expect(byId(cs, "preflight.host-os-new")).toMatchObject({ status: "warn", params: { count: 1, items: ["host-2: ubuntu 26.04"], tested: "ubuntu 24.04, debian 12" } });
+    // the empty host is only informed about: its flaky count is no concern of this run
+    expect(byId(cs, "preflight.host-empty")).toMatchObject({ status: "pass", params: { count: 1, items: ["host-empty"] } });
+    expect(cs.filter((c) => c.code === "preflight.host-flaky")).toHaveLength(1);
+  });
+
+  it("marks the control-plane host: a warning when the run moves things off it, plain information when it carries nothing", () => {
+    const moves = preflightChecks(baseRun(), baseObs({ plan: plan([{ ref: "ha", name: "host-1", controlPlane: true }, { ref: "hb", name: "host-2" }], two) }));
+    expect(byId(moves, "preflight.host-control-plane")).toMatchObject({ status: "warn", code: "preflight.host-control-plane-moves", subject: "host-1", params: { host: "host-1", items: 1 } });
+    const idle = preflightChecks(baseRun(), baseObs({ plan: plan([{ ref: "hz", name: "host-cp", controlPlane: true }, { ref: "ha", name: "host-1" }], two) }));
+    expect(byId(idle, "preflight.host-control-plane")).toMatchObject({ status: "pass", code: "preflight.host-control-plane", params: { host: "host-cp", items: 0 } });
+  });
+
+  it("a host the mapping excludes carries nothing of this run; a plan without host facts says nothing", () => {
+    const run = baseRun({ applyInput: { sourceKind: "coolify", targetServerId: "srv1", planHash: H32, mapping: { version: 1, items: { "app:hb:b": { include: false }, "app:hc:c": { include: false } }, projects: {}, gitSources: {}, acks: [] }, mappingHash: "f".repeat(32) } as never });
+    const cs = preflightChecks(run, baseObs({ plan: plan([{ ref: "ha", name: "host-1" }, { ref: "hb", name: "host-2" }, { ref: "hc", name: "host-3" }], two) }));
+    expect(byId(cs, "preflight.host-empty")).toMatchObject({ params: { count: 2, items: ["host-2", "host-3"] } });
+    expect(preflightChecks(baseRun(), baseObs()).some((c) => c.id.startsWith("preflight.host"))).toBe(false);
+  });
+
+  it("every worker is listed in full for the panel, beyond the ten names the sentence shows", () => {
+    const apps = Array.from({ length: 14 }, (_, n) => ({ itemRef: `app:ha:w${n}`, kind: "app", name: `worker-${n}`, proposed: { domain: null }, risks: [], dependsOn: [] }));
+    const cs = preflightChecks(baseRun(), baseObs({ plan: defaultPlan({ items: apps as never }) }));
+    const w = byId(cs, "preflight.workers")!;
+    expect((w.params as { items: string[] }).items).toHaveLength(10);
+    expect((w.params as { workers: string[] }).workers).toHaveLength(14);
+    expect(w.params).toMatchObject({ count: 14, policy: "hold-dark" });
   });
 });

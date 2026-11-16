@@ -122,6 +122,32 @@ describe("GuidedRunLauncher", () => {
       expect(create.mock.calls[0][0]).toMatchObject({ targetServerId: "srv1", serverMap: { "host-a": "srv1", "host-b": "srv2" } });
     });
 
+    it("lists each source host by the name the plan gives it, and still maps it by its uuid", async () => {
+      const create = vi.spyOn(api, "createMigrationRun").mockResolvedValue(mkRun());
+      const named = { ...fleetPlan, preflight: { databases: [], services: [], appsWithVolumeData: 0, hosts: [{ ref: "host-a", name: "Alpha box" }, { ref: "host-b", name: "Beta box" }] } } as unknown as ImportPlan;
+      mount({ plan: named });
+      fireEvent.click(screen.getByRole("button", { name: "Run guided migration" }));
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.click(within(dialog).getByRole("checkbox", { name: "Place source hosts on different Tugra servers" }));
+      expect(within(dialog).getByText("Source host Alpha box")).toBeTruthy();
+      expect(within(dialog).queryByText("Source host host-a")).toBeNull();
+      fireEvent.change(within(dialog).getByLabelText("Tugra server for Beta box"), { target: { value: "srv2" } });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Create dry run" }));
+      await waitFor(() => expect(create).toHaveBeenCalled());
+      expect(create.mock.calls[0][0]).toMatchObject({ serverMap: { "host-a": "srv1", "host-b": "srv2" } });
+    });
+
+    it("explains what each large-database choice does, and the text follows the choice", async () => {
+      mount({ plan: fleetPlan });
+      fireEvent.click(screen.getByRole("button", { name: "Run guided migration" }));
+      const dialog = await screen.findByRole("dialog");
+      expect(within(dialog).getByText(/stops at the data copy and the run waits for you/)).toBeTruthy();
+      expect(within(dialog).queryByText(/counts as downtime/)).toBeNull();
+      fireEvent.change(within(dialog).getByLabelText("Databases too large for a dump artifact"), { target: { value: "stream-logical" } });
+      expect(within(dialog).getByText(/whole duration counts as downtime/)).toBeTruthy();
+      expect(within(dialog).queryByText(/stops at the data copy and the run waits for you/)).toBeNull();
+    });
+
     it("a plain run sends no serverMap, and placement is hidden when there is only one server to choose", async () => {
       const create = vi.spyOn(api, "createMigrationRun").mockResolvedValue(mkRun());
       mount({ plan: fleetPlan });

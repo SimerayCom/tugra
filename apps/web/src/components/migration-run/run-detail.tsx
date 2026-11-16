@@ -11,6 +11,7 @@ import { RUN_STATUS_KEY } from "../../lib/migration-run";
 import type { MigrationRunView } from "../../lib/types";
 import { ModeBadges } from "./badges";
 import { EventLog } from "./event-log";
+import { HeldWorkersCard } from "./held-workers-card";
 import { NextActionCard } from "./next-action-card";
 import { OwnerInputsCard } from "./owner-inputs-card";
 import { ReportCard } from "./report-card";
@@ -61,6 +62,7 @@ export function RunDetail({ id }: { id: string }) {
         <StepTimeline run={run} />
         <RunFacts run={run} />
         <PlacementCard run={run} />
+        <HeldWorkersCard run={run} />
         <OwnerInputsCard key={JSON.stringify(run.inputs)} run={run} />
         <SafetyCard run={run} />
         <RunDrawers run={run} />

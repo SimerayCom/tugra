@@ -20,6 +20,11 @@ import {
   humanizeCode,
   humanizeKey,
   campaignRollup,
+  buildCampaignReport,
+  campaignReportHref,
+  heldWorkersOf,
+  sourceHostLabel,
+  sourceHostNames,
   defaultPlacement,
   evidenceTone,
   hintsClosed,
@@ -538,5 +543,100 @@ describe("run list helpers", () => {
     expect(hintsClosed({ status: "DRY_RUN_DONE", ponrAt: null })).toBe(false);
     expect(hintsClosed({ status: "WAITING", ponrAt: "2026-11-16T10:00:00Z" })).toBe(true);
     expect(hintsClosed({ status: "COMPLETED", ponrAt: null })).toBe(true);
+  });
+});
+
+describe("source hosts by name (placement)", () => {
+  const items = [
+    { itemRef: "app:aaaa-1111:web", kind: "app" as const },
+    { itemRef: "app:bbbb-2222:api", kind: "app" as const },
+    { itemRef: "app:_:orphan", kind: "app" as const },
+  ];
+  it("attaches the name the plan gives each host and sorts the hosts by name, the unknown host last", () => {
+    const rows = sourceServersOf(items, [{ ref: "aaaa-1111", name: "zeta-host" }, { ref: "bbbb-2222", name: "Alpha-host" }, { ref: "cccc-3333", name: "unused" }]);
+    expect(rows.map((r) => [r.ref, r.name])).toEqual([["bbbb-2222", "Alpha-host"], ["aaaa-1111", "zeta-host"], ["_", undefined]]);
+    // no names, or an empty one: the ref stays the label
+    expect(sourceServersOf(items, [{ ref: "aaaa-1111", name: "  " }, { ref: "bbbb-2222" }]).every((r) => r.name === undefined)).toBe(true);
+  });
+  it("reads the names PREFLIGHT recorded and labels a host with its name, else its uuid", () => {
+    const run = {
+      steps: [{ key: "PREFLIGHT", gate: { passed: true, checks: [{ id: "preflight.hosts", status: "pass", code: "preflight.hosts-classified", params: { refs: ["aaaa-1111", "bbbb-2222", "__proto__"], names: ["host-1", "", "evil"] } }] } }],
+    } as never;
+    const names = sourceHostNames(run);
+    expect(names).toEqual({ "aaaa-1111": "host-1", ["__proto__"]: "evil" });
+    expect(sourceHostLabel(names, "aaaa-1111")).toBe("host-1");
+    expect(sourceHostLabel(names, "bbbb-2222")).toBe("bbbb-2222");
+    expect(sourceHostLabel(names, "constructor")).toBe("constructor"); // never resolved through the prototype
+    expect(sourceHostNames({ steps: [] } as never)).toEqual({});
+  });
+});
+
+describe("held workers (R26)", () => {
+  const withCheck = (params: Record<string, unknown> | null) =>
+    ({ steps: [{ key: "PREFLIGHT", gate: { passed: true, checks: params ? [{ id: "preflight.workers", status: "pass", code: "preflight.workers-held", params }] : [] } }] }) as never;
+  it("lists every worker of the PREFLIGHT check with the policy, not just the ten of its sentence", () => {
+    const names = Array.from({ length: 14 }, (_, i) => `worker-${i}`);
+    expect(heldWorkersOf(withCheck({ count: 14, items: names.slice(0, 10), workers: names, policy: "hold-dark" }))).toEqual({ policy: "hold-dark", count: 14, names });
+    expect(heldWorkersOf(withCheck({ count: 1, workers: ["w"], policy: "start-dark" }))?.policy).toBe("start-dark");
+    expect(heldWorkersOf(withCheck({ count: 1, workers: ["w"], policy: "exclude" }))?.policy).toBe("exclude");
+    expect(heldWorkersOf(withCheck({ count: 1, workers: ["w"] }))?.policy).toBe("hold-dark");
+  });
+  it("is null when there is no worker, no list (an older run) or no PREFLIGHT gate", () => {
+    expect(heldWorkersOf(withCheck(null))).toBeNull();
+    expect(heldWorkersOf(withCheck({ count: 2, items: ["a", "b"] }))).toBeNull();
+    expect(heldWorkersOf(withCheck({ count: 0, workers: [] }))).toBeNull();
+    expect(heldWorkersOf({ steps: [] } as never)).toBeNull();
+  });
+});
+
+describe("campaign report (R15/R69)", () => {
+  const run = (id: string, over: Record<string, unknown> = {}) =>
+    ({
+      id, teamId: "t1", targetServerId: "srv1", targetServerName: "tugra-1", targetServerCount: 1, sourceKind: "coolify", sourceHost: "src.example.test", sourceVersion: null, campaign: "wave-1", mode: "copy", topology: "two-box", dryRun: false,
+      status: "COMPLETED", currentStep: null, ponrAt: null, stepsPassed: 13, stepsTotal: 13, nextActionKind: "none", failure: null, createdAt: `2026-11-2${id.length}T10:00:00.000Z`, startedAt: null, finishedAt: null, ...over,
+    }) as never;
+  const report = (id: string, over: Record<string, unknown> = {}) =>
+    ({
+      runId: id, generatedAt: "2026-11-25T10:00:00.000Z", status: "COMPLETED", mode: "copy", topology: "two-box", dryRun: false, source: { kind: "coolify", host: "src.example.test" }, target: { serverId: "srv1", serverName: "tugra-1" },
+      targets: [{ serverId: "srv1", serverName: "tugra-1" }, { serverId: "srv2", serverName: "tugra-2" }], ponrAt: null, window: { estimatedSec: 600, measuredSec: 420 }, steps: [], evidenceSummary: {}, manual: [],
+      items: [{ kind: "app", name: "app-a", outcome: "moved", code: null, evidence: null }, { kind: "database", name: "db-a", outcome: "moved", code: null, evidence: null }, { kind: "app", name: "app-b", outcome: "not-cut-over", code: "cutover.host-held", evidence: null }], ...over,
+    }) as never;
+
+  it("rolls the runs up per state, with hosts, windows, item counts and the items that need attention", () => {
+    const runs = [
+      run("r1"),
+      run("rr2", { status: "FAILED", sourceHost: "other.example.test", failure: { step: "DATA_FINAL", code: "data-final.host-failed" } }),
+      run("rrr3", { status: "WAITING", currentStep: "VERIFY", campaign: "wave-2" }), // another campaign: left out
+    ];
+    const reports = new Map([
+      ["r1", report("r1")],
+      ["rr2", report("rr2", { window: { estimatedSec: 300, measuredSec: null }, items: [{ kind: "database", name: "db-b", outcome: "failed", code: "data.dump-too-big", evidence: null }] })],
+    ]);
+    const d = buildCampaignReport("wave-1", runs, reports);
+    expect(d.runs.map((r) => r.id)).toEqual(["r1", "rr2"]);
+    expect(d.rollup).toEqual({ total: 2, completed: 1, live: 0, failed: 1, other: 0 });
+    expect(d.totals).toEqual({ moved: 2, skipped: 0, acked: 0, failed: 1, notCutOver: 1 });
+    expect(d.runs[0]).toMatchObject({ targetNames: ["tugra-1", "tugra-2"], targetCount: 2, estimatedSec: 600, measuredSec: 420, items: { moved: 2, notCutOver: 1 } });
+    expect(d.runs[0].problemItems).toEqual([{ kind: "app", name: "app-b", outcome: "not-cut-over", code: "cutover.host-held" }]);
+    expect(d.runs[1]).toMatchObject({ failure: { step: "DATA_FINAL", code: "data-final.host-failed" }, measuredSec: null, problemItems: [{ name: "db-b", outcome: "failed", code: "data.dump-too-big" }] });
+    expect(d.window).toEqual({ measuredTotalSec: 420, measuredLongestSec: 420, estimatedTotalSec: 900 });
+    expect(d.sourceHosts).toEqual(["other.example.test", "src.example.test"]);
+    expect(d.targetServers).toEqual(["tugra-1", "tugra-2"]);
+    expect(d.pendingReports).toBe(0);
+  });
+
+  it("a run whose report is not loaded still has its row; one that could not be read is not pending", () => {
+    const d = buildCampaignReport("wave-1", [run("r1"), run("rr2")], new Map<string, never | null | undefined>([["rr2", null]]));
+    expect(d.runs.map((r) => [r.id, r.items])).toEqual([["r1", null], ["rr2", null]]);
+    expect(d.runs[0]).toMatchObject({ targetNames: ["tugra-1"], targetCount: 1, measuredSec: null });
+    expect(d.pendingReports).toBe(1);
+    expect(d.window).toEqual({ measuredTotalSec: null, measuredLongestSec: null, estimatedTotalSec: null });
+    expect(buildCampaignReport("none", [run("r1")], new Map()).runs).toEqual([]);
+  });
+
+  it("keeps at most twenty problem items per run and links the report with the label encoded", () => {
+    const items = Array.from({ length: 30 }, (_, i) => ({ kind: "app", name: `a${i}`, outcome: "failed", code: null, evidence: null }));
+    expect(buildCampaignReport("wave-1", [run("r1")], new Map([["r1", report("r1", { items })]])).runs[0].problemItems).toHaveLength(20);
+    expect(campaignReportHref("wave 1/a")).toBe("/import/runs/campaign?c=wave%201%2Fa");
   });
 });

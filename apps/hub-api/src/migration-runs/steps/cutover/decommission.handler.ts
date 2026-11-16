@@ -18,11 +18,14 @@ import {
 import { CutoverStepBase, rethrowLeaseLost } from "./cutover-step-base";
 import { CutoverWorld } from "./cutover-world.service";
 import {
+  CONTROL_PLANE_REMOVAL_COMMANDS,
+  CONTROL_PLANE_STOP_COMMANDS,
   DECOMMISSION_MAX_CONTAINERS,
-  REMOVAL_COMMANDS,
-  STOP_COMMANDS,
+  MANAGED_REMOVAL_COMMANDS,
+  MANAGED_STOP_COMMANDS,
   buildDecommissionDiscoverScript,
   buildDecommissionStopScript,
+  parseControlPlaneMarker,
   parseDecommissionDiscover,
   parseDecommissionStop,
   removalCommandFor,
@@ -31,6 +34,12 @@ import {
 import { capHosts, chk, decommissionBindingHash, hasAttestation, timerGate } from "./run-cutover-logic";
 
 export const DECOMMISSION_ATTEST = "decommission.source-stopped";
+/**
+ * The operator stopped the containers of the FIRST list (the managed hosts, without the control plane's own containers). It only
+ * settles the step while other runs of the source are still to come: once they are all done the control plane's list is asked for
+ * again, so the host that goes last is never closed by an attestation that did not cover it.
+ */
+export const DECOMMISSION_FIRST_ATTEST = "decommission.managed-stopped";
 
 export interface DecommissionObs extends Observation {
   controller: SourceController;
@@ -40,6 +49,10 @@ export interface DecommissionObs extends Observation {
   containers: SourceContainer[] | null;
   databases: Array<{ databaseId: string; hasSuccess: boolean }>;
   ageHours: number;
+  /** This box carries the Coolify control plane itself; null = the hub has no shell here to see (a manual controller or a two-box run), which is NOT "no". */
+  controlPlane: boolean | null;
+  /** The other real runs of the same source: how many still move production and how many finished without stopping their own hosts; null = unreadable. */
+  siblings: { live: number; undecommissioned: number } | null;
 }
 
 /**
@@ -50,6 +63,10 @@ export interface DecommissionObs extends Observation {
  *
  * Preconditions: FINALIZE passed, the run is old enough (`decommissionMinAgeHours`, default 72 h) and every migrated
  * database has at least one successful Tugra backup.
+ *
+ * The runbook order (R67/R70): the remote hosts are stopped team by team, and the Coolify host, which carries the control plane
+ * and the telemetry the apps still send to it, goes LAST. A box that carries the control plane is refused while any other run of
+ * the same source still lives; where the hub cannot see the box, the control-plane commands are simply not printed until none does.
  */
 @Injectable()
 export class DecommissionHandler extends CutoverStepBase implements StepHandler<DecommissionObs> {
@@ -82,6 +99,7 @@ export class DecommissionHandler extends CutoverStepBase implements StepHandler<
     return [
       { code: "decommission.dry.stop-only", level: "info", params: { controller: this.controllerOf(run), hubStops: this.hubStops(run) } },
       { code: "decommission.dry.min-age", level: "info", params: { hours: run.options.decommissionMinAgeHours } },
+      { code: "decommission.dry.order", level: "info" },
     ];
   }
 
@@ -95,10 +113,20 @@ export class DecommissionHandler extends CutoverStepBase implements StepHandler<
       containers: null,
       databases: await this.world.backupCoverage(dbIds),
       ageHours: (ctx.now().getTime() - run.createdAt.getTime()) / 3_600_000,
+      controlPlane: null,
+      siblings: null,
     };
+    try {
+      obs.siblings = await this.world.siblingRuns({ id: run.id, teamId: run.teamId, actorId: run.actorId, sourceKind: run.sourceKind, sourceHost: run.sourceHost, serverMap: run.serverMap, sourceBaseline: run.sourceBaseline });
+    } catch (e) {
+      rethrowLeaseLost(e);
+      obs.siblings = null;
+    }
     if (hubStops) {
       try {
-        obs.containers = parseDecommissionDiscover((await this.world.exec(run.targetServerId, buildDecommissionDiscoverScript(), 60_000)).output);
+        const out = (await this.world.exec(run.targetServerId, buildDecommissionDiscoverScript(), 60_000)).output;
+        obs.containers = parseDecommissionDiscover(out);
+        obs.controlPlane = parseControlPlaneMarker(out);
       } catch (e) {
         rethrowLeaseLost(e);
         obs.containers = null;
@@ -123,6 +151,8 @@ export class DecommissionHandler extends CutoverStepBase implements StepHandler<
         containers: (obs.containers ?? []).map((c) => c.name).slice(0, 200),
         databases: obs.databases.length,
         stopOnly: true,
+        controlPlane: obs.controlPlane,
+        otherLiveRuns: obs.siblings?.live ?? null,
       },
     };
   }
@@ -141,16 +171,64 @@ export class DecommissionHandler extends CutoverStepBase implements StepHandler<
       checks.push(chk("decommission.discover", obs.containers === null ? "unknown" : "pass", "decommission.discover-failed"));
       if (obs.containers && obs.containers.length > DECOMMISSION_MAX_CONTAINERS) checks.push(chk("decommission.too-many", "fail", "decommission.too-many-containers"));
     }
+    checks.push(...this.orderChecks(obs));
     const until = new Date(run.createdAt.getTime() + minAge * 3_600_000);
     return timerGate(checks, ["decommission.min-age"], oldEnough ? null : until, "decommission.too-young");
   }
 
+  /**
+   * The runbook order (R67/R70). A box the hub SEES carrying the control plane is refused while another run of the source lives, and
+   * says so when other finished runs have not stopped their hosts yet; a box the hub cannot see only gets the warning (the order is
+   * then kept by the printed commands, see {@link controlPlaneNow}). An unreadable sibling list is unknown, never "none".
+   */
+  private orderChecks(obs: DecommissionObs): GateCheck[] {
+    if (obs.controlPlane === false) return [];
+    const out: GateCheck[] = [];
+    const sib = obs.siblings;
+    if (obs.controlPlane === true) {
+      if (sib === null) out.push(chk("decommission.control-plane-last", "unknown", "decommission.siblings-unreadable"));
+      else if (sib.live > 0) out.push(chk("decommission.control-plane-last", "fail", "decommission.control-plane-last", { params: { runs: sib.live }, evidence: "hub-verified" }));
+      else if (sib.undecommissioned > 0) out.push(chk("decommission.control-plane-last", "fail", "decommission.control-plane-last-hosts", { params: { runs: sib.undecommissioned }, evidence: "hub-verified" }));
+      else out.push(chk("decommission.control-plane-last", "pass", "decommission.control-plane-last-ok", { evidence: "hub-verified" }));
+    } else if (sib && sib.undecommissioned > 0) {
+      out.push(chk("decommission.hosts-pending", "warn", "decommission.hosts-pending", { params: { runs: sib.undecommissioned }, evidence: "hub-verified" }));
+    }
+    return out;
+  }
+
+  /**
+   * May the printed commands include the control plane's own containers? Only when the other runs of the source are known and none
+   * still lives or is waiting to stop its own hosts: a finished takeover that has not decommissioned its hosts is not done yet.
+   */
+  private controlPlaneNow(obs: DecommissionObs): boolean {
+    return obs.siblings !== null && obs.siblings.live === 0 && obs.siblings.undecommissioned === 0;
+  }
+
+  /** The code and params of the first list: with the sibling list unreadable it says so, instead of a count it does not have. */
+  private firstListWait(obs: DecommissionObs): { code: string; params: Record<string, string[] | number> } {
+    const params = { stop: [...MANAGED_STOP_COMMANDS], remove: [...MANAGED_REMOVAL_COMMANDS] };
+    if (obs.siblings === null) return { code: "decommission.stop-source-unknown", params };
+    return { code: "decommission.stop-source-first", params: { ...params, runs: obs.siblings.live + obs.siblings.undecommissioned } };
+  }
+
   async act(ctx: StepContext, obs: DecommissionObs): Promise<ActResult> {
     const run = ctx.run;
+    const withControlPlane = this.controlPlaneNow(obs);
     if (!obs.hubStops) {
       // The hub has no shell on the source host: print the commands, the operator stops it and attests.
       if (hasAttestation(ctx.step.evidence, DECOMMISSION_ATTEST)) return { outcome: "done" };
-      return { outcome: "wait", wait: { kind: "operator", code: "decommission.stop-source", params: { stop: [...STOP_COMMANDS], remove: [...REMOVAL_COMMANDS] }, attest: [DECOMMISSION_ATTEST] } };
+      // The hub cannot tell whether this host carries the control plane, so the control plane's commands stay out of the list
+      // until no other run of this source is open: the Coolify host is last, whichever host this run is for. An attestation of the
+      // first list closes the step only while that still holds; once the others are done the full list is asked for.
+      if (!withControlPlane) {
+        // Only while another run of the source is KNOWN to be open: an unreadable sibling list never settles the step on the first
+        // list, or a run that was in fact the last one would close without the control plane's commands ever being printed.
+        const settles = obs.siblings !== null;
+        if (settles && hasAttestation(ctx.step.evidence, DECOMMISSION_FIRST_ATTEST)) return { outcome: "done" };
+        const first = this.firstListWait(obs);
+        return { outcome: "wait", wait: { kind: "operator", code: first.code, params: first.params, ...(settles ? { attest: [DECOMMISSION_FIRST_ATTEST] } : {}) } };
+      }
+      return { outcome: "wait", wait: { kind: "operator", code: "decommission.stop-source", params: { stop: [...MANAGED_STOP_COMMANDS, ...CONTROL_PLANE_STOP_COMMANDS], remove: [...MANAGED_REMOVAL_COMMANDS, ...CONTROL_PLANE_REMOVAL_COMMANDS] }, attest: [DECOMMISSION_ATTEST] } };
     }
     const running = (obs.containers ?? []).filter((c) => c.running);
     if (running.length > 0) {
@@ -164,12 +242,27 @@ export class DecommissionHandler extends CutoverStepBase implements StepHandler<
       await ctx.emit({ stepKey: "DECOMMISSION", level: "info", code: "decommission.stopped", params: { containers: running.length } });
     }
     const names = (obs.containers ?? []).map((c) => c.name);
-    await ctx.emit({ stepKey: "DECOMMISSION", level: "info", code: "decommission.removal-commands", params: { commands: [...(removalCommandFor(names) ? [removalCommandFor(names)!] : []), ...REMOVAL_COMMANDS], keepsVolumes: true } });
+    await ctx.emit({ stepKey: "DECOMMISSION", level: "info", code: "decommission.removal-commands", params: { commands: [...(removalCommandFor(names) ? [removalCommandFor(names)!] : []), ...MANAGED_REMOVAL_COMMANDS, ...(withControlPlane ? CONTROL_PLANE_REMOVAL_COMMANDS : [])], keepsVolumes: true } });
     return { outcome: "done" };
   }
 
   postGate(ctx: StepContext, obs: DecommissionObs): GateResult {
-    if (!obs.hubStops) return makeGate([chk("decommission.stopped", hasAttestation(ctx.step.evidence, DECOMMISSION_ATTEST) ? "pass" : "fail", "decommission.stop-source", { evidence: "operator-attested" })]);
+    if (!obs.hubStops) {
+      const first = !this.controlPlaneNow(obs);
+      const full = hasAttestation(ctx.step.evidence, DECOMMISSION_ATTEST);
+      const firstOnly = !full && first && obs.siblings !== null && hasAttestation(ctx.step.evidence, DECOMMISSION_FIRST_ATTEST);
+      // Settling on the first list leaves the control plane owed. The other runs may all be aborted before any of them reaches this
+      // step, and then nobody prints its commands: the passed gate carries them, on this run, which is the one place left to read them.
+      if (firstOnly) {
+        return makeGate([chk("decommission.stopped", "pass", "decommission.control-plane-owed", { params: { stop: [...CONTROL_PLANE_STOP_COMMANDS], remove: [...CONTROL_PLANE_REMOVAL_COMMANDS] }, evidence: "operator-attested" })]);
+      }
+      const attested = full;
+      if (first) {
+        const w = this.firstListWait(obs);
+        return makeGate([chk("decommission.stopped", attested ? "pass" : "fail", w.code, { params: w.params, evidence: "operator-attested" })]);
+      }
+      return makeGate([chk("decommission.stopped", attested ? "pass" : "fail", "decommission.stop-source", { params: { stop: [...MANAGED_STOP_COMMANDS, ...CONTROL_PLANE_STOP_COMMANDS] }, evidence: "operator-attested" })]);
+    }
     if (obs.containers === null) return makeGate([chk("decommission.stopped", "unknown", "decommission.discover-failed")]);
     const running = obs.containers.filter((c) => c.running);
     return makeGate([chk("decommission.stopped", running.length === 0 ? "pass" : "fail", "decommission.still-running", { params: { containers: capHosts(running.map((c) => c.name)) }, evidence: "hub-verified" })]);

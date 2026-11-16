@@ -43,14 +43,16 @@ export function PlacementFields({
         <>
           <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))" }}>
             {rows.map((r) => {
-              const label = r.ref === UNKNOWN_SOURCE_HOST ? t("migrationRun.launch.placement.unknownHost") : t("migrationRun.launch.placement.host", { ref: r.ref });
+              // the source's own name for the host when the plan lists one; the uuid only when it does not
+              const shown = r.name ?? r.ref;
+              const label = r.ref === UNKNOWN_SOURCE_HOST ? t("migrationRun.launch.placement.unknownHost") : r.name ? t("migrationRun.launch.placement.hostNamed", { name: r.name }) : t("migrationRun.launch.placement.host", { ref: r.ref });
               return (
                 <Field
                   key={r.ref}
                   label={label}
                   hint={t("migrationRun.launch.placement.counts", { apps: r.apps, databases: r.databases, services: r.services, volumes: r.volumes })}
                 >
-                  <Select value={value?.[r.ref] ?? defaultId} onChange={(id) => set(r.ref, id)} options={options} ariaLabel={t("migrationRun.launch.placement.target", { ref: r.ref })} style={{ minHeight: 44 }} />
+                  <Select value={value?.[r.ref] ?? defaultId} onChange={(id) => set(r.ref, id)} options={options} ariaLabel={r.name ? t("migrationRun.launch.placement.targetNamed", { name: r.name }) : t("migrationRun.launch.placement.target", { ref: shown })} style={{ minHeight: 44 }} />
                 </Field>
               );
             })}

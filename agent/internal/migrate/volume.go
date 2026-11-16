@@ -341,10 +341,27 @@ var helperOwner = func() string {
 	return h
 }()
 
+// inventoryHelperName is the docker name of the inventory helper of one container. Two migrators on one host (two runs, or
+// two teams of one fleet) can inventory the same container at the same time, and docker refuses a second container of the
+// same name, so the name carries the run id exactly like the tar helper's (`tugra-vx-<run>-<container>`). An empty run id
+// keeps the legacy run-less name.
+func inventoryHelperName(runID, containerID string) string {
+	if runID == "" {
+		return "tugra-vx-inv-" + shortID(containerID)
+	}
+	return "tugra-vx-inv-" + shortRun(runID) + "-" + shortID(containerID)
+}
+
 // InventoryVolume measures the source volume with the helper image (the migrator's own image: never a pull on the
 // customer's host). Output is parsed strictly and any deviation is an error (fail closed). excludes are the tar
-// excludes (`postmaster.pid`), so the entry count equals what the archive will hold.
+// excludes (`postmaster.pid`), so the entry count equals what the archive will hold. It names its helper without a run id;
+// a migrator that has one calls {@link InventoryVolumeFor}.
 func InventoryVolume(ctx context.Context, dockerPath string, env []string, helper string, s *volSource, excludes []string) (Inventory, error) {
+	return InventoryVolumeFor(ctx, "", dockerPath, env, helper, s, excludes)
+}
+
+// InventoryVolumeFor is InventoryVolume with the migrator's run id in the helper's name (see inventoryHelperName).
+func InventoryVolumeFor(ctx context.Context, runID, dockerPath string, env []string, helper string, s *volSource, excludes []string) (Inventory, error) {
 	if helper == "" {
 		return Inventory{}, ErrNoHelper
 	}
@@ -360,7 +377,7 @@ func InventoryVolume(ctx context.Context, dockerPath string, env []string, helpe
 		excl += "! -path /data/" + e + " "
 	}
 	script := fmt.Sprintf(invScript, strings.TrimSpace(excl))
-	argv := append([]string{dockerPath, "run"}, helperHardening("tugra-vx-inv-"+shortID(s.ContainerID))...)
+	argv := append([]string{dockerPath, "run"}, helperHardening(inventoryHelperName(runID, s.ContainerID))...)
 	argv = append(argv, "-v", src+":/data:ro", "--entrypoint", "sh", helper, "-c", script)
 	cctx, cancel := context.WithTimeout(ctx, inventoryTimeout)
 	defer cancel()

@@ -4,11 +4,16 @@ import {
   STOP_COMMANDS,
   buildDecommissionDiscoverScript,
   buildDecommissionStopScript,
+  parseControlPlaneMarker,
   parseDecommissionDiscover,
   parseDecommissionStop,
   removalCommandFor,
 } from "./decommission-script";
 import { expectGolden } from "./testing/golden";
+import { execFileSync } from "child_process";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 
 describe("decommission scripts (golden)", () => {
   it("discover is read-only, never lists a tugra container", () => {
@@ -66,5 +71,37 @@ describe("parsers", () => {
     expect(removalCommandFor(["app-1", "db_2"])).toBe("docker rm 'app-1' 'db_2'");
     expect(removalCommandFor(["a;b", "$(id)"])).toBeNull();
     expect(removalCommandFor(["ok", "a b"])).toBe("docker rm 'ok'");
+  });
+});
+
+describe("the control-plane marker of the discovery fails closed", () => {
+  /** Runs the real discovery script with a fake `docker` first on the PATH (a temp dir, never the host's own docker). */
+  const run = (dockerBody: string): string => {
+    const dir = mkdtempSync(join(tmpdir(), "tugra-fake-docker-"));
+    try {
+      writeFileSync(join(dir, "docker"), `#!/bin/sh\n${dockerBody}\n`);
+      chmodSync(join(dir, "docker"), 0o755);
+      return execFileSync("/bin/sh", ["-c", buildDecommissionDiscoverScript()], { env: { PATH: `${dir}:/usr/bin:/bin` }, encoding: "utf8" });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+
+  it("a daemon that cannot list containers is unknown, not 'no control plane here'", () => {
+    const out = run("exit 1");
+    expect(out).toContain("TUGRA_SRC_CP unknown");
+    expect(parseControlPlaneMarker(out)).toBeNull();
+  });
+
+  it("a readable list says yes for the Coolify image and no for anything else", () => {
+    expect(parseControlPlaneMarker(run('echo "coolify ghcr.io/coollabsio/coolify:4.7.5"'))).toBe(true);
+    expect(parseControlPlaneMarker(run('echo "web nginx:1"'))).toBe(false);
+    expect(parseControlPlaneMarker(run("exit 0"))).toBe(false);
+  });
+
+  it("the marker line parses unknown as null", () => {
+    expect(parseControlPlaneMarker("TUGRA_SRC_CP unknown\nTUGRA_SRC_END")).toBeNull();
+    expect(parseControlPlaneMarker("TUGRA_SRC_CP yes")).toBe(true);
+    expect(parseControlPlaneMarker("TUGRA_SRC_CP no")).toBe(false);
   });
 });

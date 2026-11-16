@@ -82,7 +82,7 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, onClose }: Props
   // Only servers of the target's team can take part in the run (the hub refuses another team's server).
   const teamId = servers.find((s) => s.id === targetServerId)?.teamId;
   const placeable = useMemo(() => servers.filter((s) => !teamId || s.teamId === teamId), [servers, teamId]);
-  const sourceRows = useMemo(() => sourceServersOf(plan.items ?? []), [plan.items]);
+  const sourceRows = useMemo(() => sourceServersOf(plan.items ?? [], plan.preflight?.hosts), [plan.items, plan.preflight?.hosts]);
   const changeTarget = (id: string) => {
     // a host that was on the old default follows the new default; hosts the operator moved elsewhere stay where they are
     if (placement) setPlacement(Object.fromEntries(Object.entries(placement).map(([ref, sid]) => [ref, sid === targetServerId ? id : sid])));

@@ -5,6 +5,7 @@ import { mapLimit } from "./map-limit";
 import { buildEnvReport, classifyEnvRow } from "../env-report";
 import {
   buildCoolifyFleet,
+  withServerDetail,
   decodeCoolifyDockerfile,
   decodeCoolifyLabels,
   type CoolifyApp,
@@ -107,7 +108,19 @@ export class CoolifySource implements ImportSource {
     };
 
     // Core fleet: a failure here is a real error (bad token / wrong URL) — let it throw so the caller knows.
-    const servers = (await this.client.get<CoolifyServer[]>("/servers")) ?? [];
+    const listed = (await this.client.get<CoolifyServer[]>("/servers")) ?? [];
+    // The list rows do not carry the unreachable counter or the specs (OS) a run's PREFLIGHT classifies a host by: those are on the
+    // single-server read. A server whose detail cannot be read keeps its list row, and the plan says so.
+    let detailFailed = 0;
+    const servers = await mapLimit(listed, DISCOVER_CONCURRENCY, async (s) => {
+      try {
+        return withServerDetail(s, await this.client.get<CoolifyServer>(`/servers/${s.uuid}`));
+      } catch {
+        detailFailed += 1;
+        return s;
+      }
+    });
+    if (detailFailed > 0) warnings.push(`could not read the details of ${detailFailed} server(s) — their reachability and OS checks are skipped`);
     const apps = (await this.client.get<CoolifyApp[]>("/applications")) ?? [];
     const databases = (await this.client.get<CoolifyDatabase[]>("/databases")) ?? [];
     const serviceList = await tryGet<CoolifyService[]>("/services", [], "services");

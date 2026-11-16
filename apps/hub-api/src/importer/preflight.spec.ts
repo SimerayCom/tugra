@@ -276,3 +276,15 @@ describe("buildPreflight (streamed copy ON, the default)", () => {
     expect(pf.volumes![0]).not.toHaveProperty("fidelity");
   });
 });
+
+describe("buildPreflight: source hosts", () => {
+  it("lists the source servers by name with their classification facts and no address", () => {
+    const f = fleet({ servers: [{ ref: "s1", name: "host-1", ip: "10.0.0.1", controlPlane: true, unreachableCount: 7, os: "Ubuntu 24.04" }, { ref: "s2" }] });
+    const pf = buildPreflight(f, { sourceKind: "coolify" } as ImportOptions);
+    expect(pf.hosts).toEqual([{ ref: "s1", name: "host-1", controlPlane: true, unreachableCount: 7, os: "Ubuntu 24.04" }, { ref: "s2" }]);
+    expect(JSON.stringify(pf.hosts)).not.toContain("10.0.0.1");
+  });
+  it("a source with no servers has no host list", () => {
+    expect(buildPreflight(fleet({ servers: [] }), { sourceKind: "coolify" } as ImportOptions).hosts).toBeUndefined();
+  });
+});

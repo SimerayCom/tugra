@@ -464,7 +464,9 @@
       "none": "The plan names no source host, so there is nothing to place.",
       "invalid": "Every source host needs a Tugra server, and at most {max} hosts can be mapped.",
       "summary": "{hosts} source hosts on {servers} Tugra servers.",
-      "teamOnly": "Only servers of the target server's team are offered."
+      "teamOnly": "Only servers of the target server's team are offered.",
+      "hostNamed": "Source host {name}",
+      "targetNamed": "Tugra server for {name}"
     },
     "advanced": {
       "title": "Advanced options",
@@ -511,7 +513,9 @@
         "stream-logical": "Stream a logical dump"
       },
       "stopSource": "Let the migrator stop the source writers itself",
-      "stopSourceHint": "Off by default. Without it the freeze step asks you to stop the writers."
+      "stopSourceHint": "Off by default. Without it the freeze step asks you to stop the writers.",
+      "largeDbHintRefuse": "A PostgreSQL, MySQL or MariaDB database whose dump is over the size cap stops at the data copy and the run waits for you. Nothing is moved for it. Pick Stream a logical dump if the plan has databases that large.",
+      "largeDbHintStream": "A database over the cap is dumped and restored as a stream in resumable parts, with no size cap. The source stays stopped while it runs, so its whole duration counts as downtime. Rehearse it with a dry run first."
     }
   },
   "units": {
@@ -986,7 +990,7 @@
     "decommission_no-backup": "This database has no successful Tugra backup yet.",
     "decommission_discover-failed": "The source containers could not be listed on the host.",
     "decommission_too-many-containers": "There are too many source containers to stop in one go.",
-    "decommission_stop-source": "Stop the source yourself, then confirm that it is stopped.",
+    "decommission_stop-source": "Stop the source yourself on its host with these commands, in this order: {stop}. Then confirm that it is stopped. The control plane's own containers are last in the list, and only the Coolify host has them.",
     "decommission_stop-failed": "Stopping the source containers failed.",
     "decommission_still-running": "Source containers still running: {containers}.",
     "decommission_stopped": "Stopped {containers} source containers.",
@@ -1120,7 +1124,30 @@
     "inventory_reach-ok": "Host {host} reaches this hub, and an upload of {acceptedMiB} MiB passes (part size {partMiB} MiB).",
     "inventory_reach-failed": "Host {host} cannot reach this hub (HTTP {httpCode}), so the migrator cannot work from there.",
     "inventory_reach-unknown": "Whether host {host} can reach this hub has not been measured yet.",
-    "inventory_part-size-exceeds-cap": "The path from host {host} to this hub accepts uploads of {acceptedMiB} MiB, less than the part size of {partMiB} MiB (a proxy in front of the hub caps request bodies). Set MIGRATION_VX_PART_MIB to {recommendMiB} (0 means even 32 MiB fails) or remove the cap, then run the inventory again."
+    "inventory_part-size-exceeds-cap": "The path from host {host} to this hub accepts uploads of {acceptedMiB} MiB, less than the part size of {partMiB} MiB (a proxy in front of the hub caps request bodies). Set MIGRATION_VX_PART_MIB to {recommendMiB} (0 means even 32 MiB fails) or remove the cap, then run the inventory again.",
+    "preflight_hosts-classified": "The source lists {hosts} servers; {empty} of them carry nothing of this run. The operating system was reported for {osReported}.",
+    "preflight_host-control-plane": "{host} is the server the source's control plane runs on. This run does not move anything off it. Decommission it last, after every other run of this source has finished.",
+    "preflight_host-control-plane-moves": "{host} is the server the source's control plane runs on, and this run moves {items} items off it. Decommission it last, after every other run of this source has finished.",
+    "preflight_host-flaky": "{count} source servers were unreachable several checks in a row: {items}. Their data steps may fail or stall; run them when the host is stable.",
+    "preflight_host-os-new": "{count} source servers run an operating system newer than the newest one tested ({tested}): {items}. The migrator and agent are untested there; try one host first.",
+    "preflight_host-empty": "{count} source servers carry nothing of this run and are skipped: {items}.",
+    "preflight_disk-unknown": "The target server has no recent disk reading from its agent, so its free space could not be checked now.",
+    "preflight_disk-low": "{server} has {freeGib} GiB free of {totalGib} GiB. A run needs at least {minGib} GiB free, and the streamed copy needs about twice the data size. Free some space, or accept the risk if everything moving is small.",
+    "preflight_disk-ok": "{server} has {freeGib} GiB free of {totalGib} GiB.",
+    "preflight_target-os-new": "{server} runs {os}, newer than the newest operating system the agent is tested on ({tested}).",
+    "preflight_backup-capability-missing": "{server} does not have the backup capability, but {count} databases land on it: {items}. They could not be backed up. Grant the capability, or accept that these databases have no Tugra backup.",
+    "preflight_backup-destination-missing": "{count} databases land on {server}, but the team has no backup destination: {items}. Backups will only be kept on the server's own disk until you add one.",
+    "preflight_backup-destination-unknown": "{count} databases land on {server}, but the team's backup destinations could not be read now, so it is not known whether they can be backed up.",
+    "preflight_backup-destination-ok": "{count} databases land on {server}; the team has {destinations} backup destinations to send their backups to.",
+    "decommission_stop-source-first": "Stop the source's containers yourself on its host: {stop}. The control plane's containers are not listed yet: other runs of this source are not known to be finished ({runs} still open), and the Coolify host goes last. Confirm once the containers are stopped. The control plane's commands are then recorded on this run, so they are still there once the other runs are done.",
+    "decommission_dry_order": "Decommission order: stop each team's remote hosts first, and the Coolify host last. A host that carries the control plane is refused while another run of the same source is still not finished.",
+    "decommission_control-plane-last": "This server carries the Coolify control plane, and {runs} other runs of the same source are not finished. Decommission it last: finish or abort those runs first.",
+    "decommission_control-plane-last-hosts": "This server carries the Coolify control plane, and {runs} finished runs of the same source have not stopped their own hosts yet. Decommission it last: stop those hosts first, or skip their decommission step.",
+    "decommission_stop-source-unknown": "Stop the source's containers yourself on its host: {stop}. The control plane's containers are not listed: the other runs of this source could not be read, and the Coolify host goes last. This cannot be confirmed until the other runs can be read; it is checked again on its own.",
+    "decommission_control-plane-owed": "The Coolify control plane is still to stop, and this run will not print it again. Once every other run of this source is finished, stop it yourself on the Coolify host: {stop}. Remove it only when you are sure of your backups: {remove}.",
+    "decommission_control-plane-last-ok": "This server carries the Coolify control plane, and no other run of the same source is still running.",
+    "decommission_siblings-unreadable": "This server carries the Coolify control plane, and the other runs of this source could not be read, so it is not clear whether it is the last one.",
+    "decommission_hosts-pending": "{runs} other finished runs of this source have not stopped their own hosts yet. The Coolify host should go after them."
   },
   "version": {
     "title": "Source version",
@@ -1147,7 +1174,8 @@
     "host": "Source host",
     "target": "Tugra server",
     "unknownHost": "Resources with no source host",
-    "defaultNote": "The default target is {name}."
+    "defaultNote": "The default target is {name}.",
+    "idTitle": "Source server id {ref}"
   },
   "safety": {
     "title": "Held workers and image pins",
@@ -1180,5 +1208,46 @@
     "pinRemove": "Remove the digest of {image}",
     "saved": "Recorded.",
     "open": "Show and edit"
+  },
+  "heldWorkers": {
+    "title": "Workers",
+    "holdDark": "{count} apps serve no domain, so the run treats them as workers. They stay stopped until after the cutover, so they cannot send mail or repeat jobs next to the source.",
+    "exclude": "{count} apps serve no domain and are left out of this run. They are not migrated.",
+    "startDark": "{count} apps serve no domain. The run starts them before the cutover, next to the source, so they may send mail or repeat jobs.",
+    "hint": "Wrong list? Mark an app as a job runner or a web app in the facts card below the owner inputs.",
+    "listLabel": "Worker apps"
+  },
+  "campaign": {
+    "title": "Campaign report",
+    "subtitle": "Every run of the campaign: where it stands, which hosts it moved, how long the window was and what failed.",
+    "back": "All runs",
+    "openRun": "Open run {id}",
+    "noRuns": "No run carries this campaign label.",
+    "noLabel": "Choose a campaign on the runs page to see its report.",
+    "loading": "Loading the reports of the runs.",
+    "pending": "{count} reports are still loading.",
+    "capped": "Only the first {max} runs are read.",
+    "summaryTitle": "Summary",
+    "runs": "{total} runs: {completed} completed, {live} live, {failed} failed, {other} dry-run or stopped",
+    "items": "{moved} moved, {failed} failed, {notCutOver} not cut over, {skipped} skipped, {acked} accepted",
+    "itemsNone": "No item counts yet.",
+    "sourceHosts": "Source hosts: {hosts}",
+    "targetServers": "Target servers: {servers}",
+    "windowTotal": "Measured downtime in total: {time}",
+    "windowLongest": "Longest window: {time}",
+    "windowNone": "No window has been measured yet.",
+    "runsTitle": "Runs",
+    "hosts": "{source} to {targets}",
+    "window": "Window {estimated} estimated, {measured} measured",
+    "reportFailed": "The report of this run could not be read.",
+    "failuresTitle": "What failed or was not cut over",
+    "failuresNone": "Nothing failed and nothing was left on the source.",
+    "failedItem": "{name}: {reason}",
+    "outcome": {
+      "failed": "Failed",
+      "not-cut-over": "Not cut over"
+    },
+    "open": "Campaign report",
+    "runFailed": "The run failed"
   }
 }

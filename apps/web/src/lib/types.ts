@@ -1069,6 +1069,8 @@ export interface ImportPreflight {
   env?: { tokenReadOnlyApps: number };
   /** Git hosts the apps clone from (host + app count). */
   git?: { hosts: Array<{ host: string; apps: number }> };
+  /** The source servers by name (Coolify, Dokploy), so a host is shown by its name and not by its uuid. */
+  hosts?: Array<{ ref: string; name?: string; controlPlane?: true; unreachableCount?: number; os?: string }>;
 }
 export interface ImportPlan {
   sourceKind: string;

@@ -45,6 +45,8 @@ export class SimHost {
   dark = new Map<string, { verify: number | null; status: number; traefik404: boolean }>();
   loopback = new Map<string, number>();
   sourceContainers: SourceContainer[] = [];
+  /** What the decommission discovery says about the control plane on this box; `null` = no such line (an older script). */
+  cpMarker: boolean | null = false;
   log: Array<{ kind: string; ponr: boolean }> = [];
   failNext: string | null = null;
   onCommand: (kind: string) => void = () => undefined;
@@ -102,7 +104,7 @@ export class SimHost {
     }
     if (script.includes("TUGRA_SRC_END")) {
       this.note("decommission-discover");
-      return ok([...this.sourceContainers.map((c) => `TUGRA_SRC id=${c.id} name=${c.name} running=${c.running}`), "TUGRA_SRC_END"].join("\n"));
+      return ok([...(this.cpMarker === null ? [] : [`TUGRA_SRC_CP ${this.cpMarker ? "yes" : "no"}`]), ...this.sourceContainers.map((c) => `TUGRA_SRC id=${c.id} name=${c.name} running=${c.running}`), "TUGRA_SRC_END"].join("\n"));
     }
     if (script.includes("TUGRA_SRC_STATE_END")) {
       this.note("decommission-stop");
@@ -125,6 +127,8 @@ export class FakeWorld {
   apps: OpApp[] = [];
   databaseIds: string[] = [];
   backups = new Map<string, boolean>();
+  /** The other real runs of the same source (null = unreadable). */
+  siblings: { live: number; undecommissioned: number } | null = { live: 0, undecommissioned: 0 };
   crashes: Array<{ name: string; ts: Date }> = [];
   server: ServerFacts = { id: SRV, name: "target", teamId: "team1", publicIp: IP, proxyBind: "public" };
   /** appId -> env names that point at an object store. */
@@ -261,6 +265,10 @@ export class FakeWorld {
   }
   async crashEventsSince(_serverId: string, names: readonly string[], since: Date): Promise<number> {
     return this.crashes.filter((c) => names.some((n) => c.name === n || c.name.startsWith(`${n}-`)) && c.ts >= since).length;
+  }
+  async siblingRuns(): Promise<{ live: number; undecommissioned: number }> {
+    if (this.siblings === null) throw new Error("db down");
+    return { ...this.siblings };
   }
   async backupCoverage(ids: readonly string[]): Promise<Array<{ databaseId: string; hasSuccess: boolean }>> {
     return ids.map((databaseId) => ({ databaseId, hasSuccess: this.backups.get(databaseId) === true }));

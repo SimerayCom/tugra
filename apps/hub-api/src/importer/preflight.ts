@@ -5,7 +5,7 @@ import { gitUrlHost } from "../deploy/deploy-script";
 import { DEFAULT_MAX_ARTIFACT_BYTES } from "./migration-staging";
 import { maxVolumeBytes } from "./migration-volume";
 import { vxEnabled, vxPartRawBytes } from "./volume-stream/vx-constants";
-import type { DbDataPlane, ForeignApp, ForeignFleet, ImportCutoverHint, ImportOptions, ImportPreflight, VolumeDataPlane } from "./foreign-fleet";
+import type { DbDataPlane, ForeignApp, ForeignFleet, ImportCutoverHint, ImportOptions, ImportPreflight, PreflightHost, VolumeDataPlane } from "./foreign-fleet";
 import { counterpartOf, isGeneratedHost } from "../cutover/cutover.logic";
 
 const VX_DB_VOLUME_REASON =
@@ -221,6 +221,15 @@ export function buildPreflight(fleet: ForeignFleet, options: ImportOptions, inve
   }
   const git = [...gitHosts.entries()].sort((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : 1)).map(([host, apps]) => ({ host, apps }));
 
+  // the source servers by name, with the facts a run's PREFLIGHT classifies them by (no address leaves the hub through the plan)
+  const hosts: PreflightHost[] = fleet.servers.map((s) => ({
+    ref: s.ref,
+    ...(s.name ? { name: s.name } : {}),
+    ...(s.controlPlane ? { controlPlane: true as const } : {}),
+    ...(s.unreachableCount !== undefined ? { unreachableCount: s.unreachableCount } : {}),
+    ...(s.os ? { os: s.os } : {}),
+  }));
+
   return {
     databases,
     services,
@@ -239,5 +248,7 @@ export function buildPreflight(fleet: ForeignFleet, options: ImportOptions, inve
     ...(envApps.length ? { env: { tokenReadOnlyApps: envApps.filter((a) => a.envReport!.tokenReadOnly).length } } : {}),
     ...(git.length ? { git: { hosts: git } } : {}),
     ...(carried ? {} : { cutover: buildCutoverHint(fleet) }),
+    // the source servers by name with their classification facts; a local-docker source has only its own anonymous server
+    ...(hosts.length > 0 && !carried ? { hosts } : {}),
   };
 }

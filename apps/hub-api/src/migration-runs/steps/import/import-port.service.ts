@@ -29,6 +29,7 @@ import type { ResolvedMapping } from "../../../importer/import-mapping";
 import type { ServicePreview } from "../../../importer/service-preview";
 import type { RunReport } from "../../core/dto";
 import { stable } from "../../core/run-logic";
+import { diskReadingOf } from "./baseline/host-class";
 import type {
   DeploymentRef,
   ImportStepsPort,
@@ -150,7 +151,7 @@ export class ImportPortService implements ImportStepsPort {
   }
 
   async target(userId: string, input: { serverId: string; dnsCredentialId?: string; hosts: readonly string[] }): Promise<TargetFacts> {
-    const server = await this.prisma.server.findUnique({ where: { id: input.serverId }, select: { name: true, proxyBind: true, dnsCredentialId: true, capabilities: true } });
+    const server = await this.prisma.server.findUnique({ where: { id: input.serverId }, select: { name: true, proxyBind: true, dnsCredentialId: true, capabilities: true, teamId: true, os: true, osVersion: true } });
     if (!server) return { serverName: "", agentOnline: false, capabilities: [], acmeEmailOk: false, proxyBind: null, dnsCredential: false, zones: [] };
     const cfg = await this.proxyConfig.resolveFor(input.serverId).catch(() => null);
     let acmeEmailOk = false;
@@ -171,7 +172,23 @@ export class ImportPortService implements ImportStepsPort {
           }
         })
       : [];
-    return { serverName: server.name, agentOnline: this.agentWs.isOnline(input.serverId), capabilities: server.capabilities ?? [], acmeEmailOk, proxyBind: server.proxyBind, dnsCredential: !!credentialId, zones };
+    // R7: the newest disk reading the agent sent, and what the team can back up to (a failed read is reported as unreadable, never left out)
+    const metric = await this.prisma.metric.findFirst({ where: { serverId: input.serverId }, orderBy: { ts: "desc" }, select: { diskUsed: true, diskTotal: true, ts: true } }).catch(() => undefined);
+    const disk = metric ? diskReadingOf(metric, Date.now()) : null; // no row and a failed read both say "no reading", which the gate warns about
+    const backupDestinations = await this.prisma.backupDestination.count({ where: { teamId: server.teamId } }).catch(() => null);
+    return {
+      serverName: server.name,
+      agentOnline: this.agentWs.isOnline(input.serverId),
+      capabilities: server.capabilities ?? [],
+      acmeEmailOk,
+      proxyBind: server.proxyBind,
+      dnsCredential: !!credentialId,
+      zones,
+      disk,
+      os: server.os,
+      osVersion: server.osVersion,
+      backupDestinations,
+    };
   }
 
   // ── IMPORT ──

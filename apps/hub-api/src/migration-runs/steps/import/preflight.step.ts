@@ -21,6 +21,8 @@ import {
   deployConcurrencyOf,
   makeGate,
   resolveOwnerInput,
+  targetServerFor,
+  targetServerIdsOf,
   type ActResult,
   type CompResult,
   type Observation,
@@ -41,6 +43,8 @@ import { RUN_HINTS, type RunHint, type RunHintStore } from "./baseline/run-hints
 import { baselineItemRef, buildSourceBaseline, isDegradedAtSource, sameBaseline } from "./baseline/source-health";
 import { isWorker, markConflicts, unmatchedMarks, workerMarks, workerSets } from "./baseline/workers";
 import { RunAbortRequestedError } from "../../core/run-engine.service";
+import { serverRefOfItemRef } from "../../../importer/server-map";
+import { classifyHosts, gib, isNewerThanTested, lowDisk, osLabel, parseOsRelease, testedOsLabel, DISK_READING_MAX_AGE_SEC, TARGET_MIN_FREE_BYTES } from "./baseline/host-class";
 
 const MEMO_MS = 60_000;
 
@@ -75,6 +79,8 @@ export interface PreflightObs extends Observation {
   hints?: readonly RunHint[];
   /** The stored host reports of the run (the inventory the docker-vs-API cross-check reads); absent = none were read. */
   hosts?: HostView;
+  /** The other target servers of a multi-host run (the `serverMap`'s), each with what PREFLIGHT could read of it; `facts: null` = unreadable. */
+  extraTargets?: Array<{ serverId: string; facts: TargetFacts | null }>;
 }
 
 const ev = { evidence: "hub-verified" as const };
@@ -139,7 +145,7 @@ function safetyChecks(run: RunSnapshot, obs: PreflightObs, plan: ImportPlanRespo
   const workers = cands.filter((cd) => isWorker(cd, run.applyInput, marks));
   if (workers.length) {
     const code = policy === "hold-dark" ? "preflight.workers-held" : policy === "exclude" ? "preflight.workers-excluded" : "preflight.workers-start-dark";
-    out.push({ id: "preflight.workers", status: policy === "start-dark" ? "warn" : "pass", code, params: { count: workers.length, items: names(workers.map((w) => nameOf.get(w.itemRef) ?? w.itemRef)) }, ...ev });
+    out.push({ id: "preflight.workers", status: policy === "start-dark" ? "warn" : "pass", code, params: { count: workers.length, items: names(workers.map((w) => nameOf.get(w.itemRef) ?? w.itemRef)), workers: workers.slice(0, 200).map((w) => (nameOf.get(w.itemRef) ?? w.itemRef).slice(0, 300)), policy }, ...ev });
   }
 
   // a `job-runner` mark on an app that serves a domain cannot hold it (a cutover host must run dark): refuse until the mark goes
@@ -174,6 +180,112 @@ function safetyChecks(run: RunSnapshot, obs: PreflightObs, plan: ImportPlanRespo
 
 /** The primary host of an app item: `null` = none, `undefined` = the item does not say (never read as "none"). */
 const domainOf = (i: { proposed: Record<string, unknown> }): string | null | undefined => (!("domain" in i.proposed) ? undefined : typeof i.proposed.domain === "string" && i.proposed.domain ? i.proposed.domain : null);
+
+/** The run's included items counted per source server ref (`""` for an item whose source server the source did not say). */
+function itemsPerHost(items: ImportPlanResponse["items"]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const i of items) out.set(serverRefOfItemRef(i.itemRef) ?? "", (out.get(serverRefOfItemRef(i.itemRef) ?? "") ?? 0) + 1);
+  return out;
+}
+
+/**
+ * The source servers by name for the panel, which must show a host by its name and not by its uuid: two parallel lists (`refs[i]` is
+ * called `names[i]`; an unnamed server has an empty name). The names are the source's own text, so they ride as params, never in a sentence.
+ */
+function hostNames(hosts: ReadonlyArray<{ ref: string; name?: string }>): { refs: string[]; names: string[] } {
+  const list = hosts.slice(0, 200);
+  return { refs: list.map((h) => h.ref.slice(0, 300)), names: list.map((h) => (h.name ?? "").slice(0, 300)) };
+}
+
+/**
+ * R5: what the source says about its own servers, before any step: the control-plane box (it goes last, R67/R70), hosts whose
+ * reachability flaps, hosts on a very new OS release and hosts the run puts nothing on. Warnings only: a run may well move
+ * from a flaky host, it should just not be a surprise.
+ */
+export function hostChecks(plan: ImportPlanResponse, items: ImportPlanResponse["items"]): GateCheck[] {
+  const hosts = plan.preflight?.hosts;
+  if (!hosts || hosts.length === 0) return [];
+  const cls = classifyHosts(hosts, itemsPerHost(items));
+  const out: GateCheck[] = [{ id: "preflight.hosts", status: "pass", code: "preflight.hosts-classified", params: { hosts: hosts.length, empty: cls.empty.length, osReported: cls.osReported, ...hostNames(hosts) }, evidence: "source-api-reported" }];
+  for (const h of cls.controlPlane) {
+    out.push({
+      id: "preflight.host-control-plane",
+      status: h.items > 0 ? "warn" : "pass",
+      code: h.items > 0 ? "preflight.host-control-plane-moves" : "preflight.host-control-plane",
+      params: { host: h.name, items: h.items },
+      subject: h.name,
+      evidence: "source-api-reported",
+    });
+  }
+  if (cls.flaky.length) out.push({ id: "preflight.host-flaky", status: "warn", code: "preflight.host-flaky", params: { count: cls.flaky.length, items: names(cls.flaky.map((h) => `${h.name} (${h.count})`)) }, evidence: "source-api-reported" });
+  if (cls.newOs.length) out.push({ id: "preflight.host-os-new", status: "warn", code: "preflight.host-os-new", params: { count: cls.newOs.length, items: names(cls.newOs.map((h) => `${h.name}: ${h.os}`)), tested: testedOsLabel() }, evidence: "source-api-reported" });
+  if (cls.empty.length) out.push({ id: "preflight.host-empty", status: "pass", code: "preflight.host-empty", params: { count: cls.empty.length, items: names(cls.empty) }, evidence: "source-api-reported" });
+  return out;
+}
+
+/**
+ * R7: readiness of EVERY target server of the run (the default and each server of the `serverMap`), not just the first: the free
+ * disk, the OS release and, for a server that receives databases, whether they can be backed up (the capability, and a destination
+ * to send backups to). The default server's agent, capabilities and proxy are checked above; DEPLOY_DARK checks every agent. One check per target and fact, so an approval can accept one server's shortfall without
+ * accepting another's. A fact the port cannot give (`undefined`) is not checked; one the port tried and could not read is said so.
+ */
+export function targetChecks(run: RunSnapshot, obs: PreflightObs, items: ImportPlanResponse["items"]): GateCheck[] {
+  const out: GateCheck[] = [];
+  const ids = targetServerIdsOf(run);
+  const dbsOn = new Map<string, string[]>();
+  for (const i of items) if (i.kind === "database") {
+    const sid = targetServerFor(run, serverRefOfItemRef(i.itemRef));
+    dbsOn.set(sid, [...(dbsOn.get(sid) ?? []), i.name]);
+  }
+  for (const sid of ids) {
+    const isDefault = sid === run.targetServerId;
+    const facts = isDefault ? obs.target : (obs.extraTargets?.find((t) => t.serverId === sid)?.facts ?? null);
+    const known = isDefault || obs.extraTargets?.some((t) => t.serverId === sid);
+    if (!known && !isDefault) continue; // a caller that did not look at the other targets (the pure list says nothing about them)
+    if (!facts) {
+      if (!isDefault) out.push({ id: `preflight.target.${sid}`, status: "unknown", code: "preflight.target-unreadable", ...ev });
+      continue;
+    }
+    const subject = facts.serverName || sid;
+    if (facts.disk !== undefined) {
+      const d = facts.disk;
+      if (d === null || d.ageSec > DISK_READING_MAX_AGE_SEC) out.push({ id: `preflight.disk.${sid}`, status: "warn", code: "preflight.disk-unknown", subject, ...ev });
+      else if (lowDisk(d)) out.push({ id: `preflight.disk.${sid}`, status: "fail", code: "preflight.disk-low", params: { server: subject, freeGib: gib(d.freeBytes), totalGib: gib(d.totalBytes), minGib: gib(TARGET_MIN_FREE_BYTES) }, subject, ackable: true, ...ev });
+      else out.push({ id: `preflight.disk.${sid}`, status: "pass", code: "preflight.disk-ok", params: { server: subject, freeGib: gib(d.freeBytes), totalGib: gib(d.totalBytes) }, subject, ...ev });
+    }
+    const release = parseOsRelease(facts.os, facts.osVersion);
+    if (release && isNewerThanTested(release)) out.push({ id: `preflight.target-os.${sid}`, status: "warn", code: "preflight.target-os-new", params: { server: subject, os: osLabel(release), tested: testedOsLabel() }, subject, ...ev });
+    const dbs = dbsOn.get(sid) ?? [];
+    if (dbs.length) {
+      if (!facts.capabilities.includes("backup")) {
+        out.push({ id: `preflight.backup-capability.${sid}`, status: "fail", code: "preflight.backup-capability-missing", params: { server: subject, count: dbs.length, items: names(dbs) }, subject, ackable: true, ...ev });
+      } else if (facts.backupDestinations === null) {
+        out.push({ id: `preflight.backup-destination.${sid}`, status: "warn", code: "preflight.backup-destination-unknown", params: { server: subject, count: dbs.length }, subject, ...ev });
+      } else if (facts.backupDestinations !== undefined) {
+        out.push(
+          facts.backupDestinations > 0
+            ? { id: `preflight.backup-destination.${sid}`, status: "pass", code: "preflight.backup-destination-ok", params: { server: subject, count: dbs.length, destinations: facts.backupDestinations }, subject, ...ev }
+            : { id: `preflight.backup-destination.${sid}`, status: "warn", code: "preflight.backup-destination-missing", params: { server: subject, count: dbs.length, items: names(dbs) }, subject, ...ev },
+        );
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * What of an open ackable check an approval is bound to. A live reading (the free disk of a host that is still writing) is shown
+ * to the operator but is not what they accept: binding it would void a given approval whenever the number moves by a rounding step
+ * between the render, the click and the next tick. The shortfall itself (the check, its status, the server and the threshold) is
+ * what is bound.
+ */
+export function bindingParams(c: GateCheck): unknown {
+  if (c.code === "preflight.disk-low" && c.params) {
+    const { freeGib: _free, totalGib: _total, ...stable } = c.params as Record<string, unknown>;
+    return stable;
+  }
+  return c.params ?? null;
+}
 
 /** The pure check list (no I/O): shared by the gate, the approval binding and the dry-run projection. */
 export function preflightChecks(run: RunSnapshot, obs: PreflightObs): GateCheck[] {
@@ -243,6 +355,7 @@ export function preflightChecks(run: RunSnapshot, obs: PreflightObs): GateCheck[
   c.push(...safetyChecks(run, obs, plan));
   // R2/C6: the docker-vs-API inventory cross-check, as a warning only (DATA_SEED stays the gate that blocks on it)
   c.push(...preflightCrossCheck(run, plan, obs.hosts));
+  c.push(...hostChecks(plan, items));
 
   // live service probe (owner question 7)
   const hasServices = plan.items.some((i) => i.kind === "service");
@@ -263,6 +376,7 @@ export function preflightChecks(run: RunSnapshot, obs: PreflightObs): GateCheck[
   const t = obs.target;
   if (!t) {
     c.push({ id: "preflight.target", status: "unknown", code: "preflight.target-unreadable", ...ev });
+    c.push(...targetChecks(run, obs, items));
     return c;
   }
   c.push({ id: "preflight.agent", status: t.agentOnline ? "pass" : "fail", code: t.agentOnline ? "preflight.agent-online" : "preflight.agent-offline", ...ev });
@@ -290,6 +404,7 @@ export function preflightChecks(run: RunSnapshot, obs: PreflightObs): GateCheck[
     const risky = [...new Set(t.zones.filter((z) => z.sslMode === "flexible" || z.sslMode === "off").map((z) => `${z.zone}:${z.sslMode}`))];
     if (risky.length) c.push({ id: "preflight.cf-ssl-mode", status: "fail", code: "preflight.cf-ssl-mode", params: { zones: risky.slice(0, 10) }, ackable: true, ...ev });
   }
+  c.push(...targetChecks(run, obs, items));
   return c;
 }
 
@@ -343,6 +458,8 @@ export class PreflightStep implements StepHandler<PreflightObs>, OnModuleInit {
       .get(`${run.id}|${run.targetServerId}`, bypass, now, () => this.port.target(userId, { serverId: run.targetServerId, ...(run.options.dnsCredentialId ? { dnsCredentialId: run.options.dnsCredentialId } : {}), hosts }))
       .catch(() => null);
 
+    const extraTargets = await this.extraTargetsOf(ctx, bypass);
+
     let mapping: PreflightObs["mapping"] = null;
     let storedMappingBlocks = false;
     const a = run.applyInput;
@@ -387,7 +504,20 @@ export class PreflightStep implements StepHandler<PreflightObs>, OnModuleInit {
     const baseline = await this.baselineOf(ctx, bypass);
     const hints = this.hintStore ? await this.hintStore.list(run.id, run.promotedFromId).catch(() => []) : [];
     const hostView = this.reports ? await loadHostView(this.reports, run.id).catch(() => emptyHostView()) : undefined;
-    return { session, plan, planError: null, target, mapping, storedMappingBlocks, services, sourceVersion, ...(baseline ? { baseline } : {}), hints, ...(hostView ? { hosts: hostView } : {}) };
+    return { session, plan, planError: null, target, mapping, storedMappingBlocks, services, sourceVersion, ...(baseline ? { baseline } : {}), hints, ...(hostView ? { hosts: hostView } : {}), ...(extraTargets.length ? { extraTargets } : {}) };
+  }
+
+  /** R7: what PREFLIGHT can read of every OTHER target server of a multi-host run (an unreadable one is `facts: null`, never skipped). */
+  private async extraTargetsOf(ctx: StepContext, bypass: boolean): Promise<NonNullable<PreflightObs["extraTargets"]>> {
+    const run = ctx.run;
+    const others = targetServerIdsOf(run).filter((id) => id !== run.targetServerId);
+    const now = () => ctx.now().getTime();
+    return Promise.all(
+      others.map(async (serverId) => ({
+        serverId,
+        facts: await this.targets.get(`${run.id}|${serverId}`, bypass, now, () => this.port.target(ctx.actor.userId, { serverId, hosts: [] })).catch(() => null),
+      })),
+    );
   }
 
   /**
@@ -463,7 +593,7 @@ export class PreflightStep implements StepHandler<PreflightObs>, OnModuleInit {
     if (!open.length) return null;
     const ids = open.map((c) => c.id).slice(0, 200);
     return {
-      inputHash: hashOf(open.map((c) => [c.id, c.status, c.params ?? null])),
+      inputHash: hashOf(open.map((c) => [c.id, c.status, bindingParams(c)])),
       ponr: false,
       confirm: "none",
       ttlSec: null,

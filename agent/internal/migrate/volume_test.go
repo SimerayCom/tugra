@@ -349,6 +349,30 @@ func TestParseInventory(t *testing.T) {
 	}
 }
 
+// Two migrators (two runs of one fleet) that inventory the same container at the same time must not collide on the docker
+// container name: the helper's name carries the run id like the tar helper's does.
+func TestInventoryHelperNameCarriesTheRunID(t *testing.T) {
+	a, b := inventoryHelperName("run_aaaaaaaa1111", appCtrID), inventoryHelperName("run_bbbbbbbb2222", appCtrID)
+	if a == b {
+		t.Fatalf("two runs must get two names, both %q", a)
+	}
+	if want := "tugra-vx-inv-aaaaaaaa-" + shortID(appCtrID); a != want {
+		t.Errorf("name %q, want %q", a, want)
+	}
+	if got := inventoryHelperName("", appCtrID); got != "tugra-vx-inv-"+shortID(appCtrID) {
+		t.Errorf("run-less name changed: %q", got)
+	}
+	d := &volDocker{invOut: "TUGRA_INV bytes=5 entries=2 sockets=0 fifos=0 devices=0 pgv=- nested=-\n"}
+	d.install(t)
+	src := &volSource{ContainerID: appCtrID, Name: "pg", Image: "postgres:16-alpine", MountType: "volume", VolumeName: "pg_data", Destination: "/var/lib/postgresql/data"}
+	if _, err := InventoryVolumeFor(context.Background(), "run_aaaaaaaa1111", "docker", nil, "ghcr.io/x/tugra-agent:1", src, nil); err != nil {
+		t.Fatal(err)
+	}
+	if argv := strings.Join(d.runCalls[0], " "); !strings.Contains(argv, "--name "+a) {
+		t.Errorf("the docker run does not use the run-scoped name %q: %s", a, argv)
+	}
+}
+
 func TestInventoryVolumeArgvIsHardenedAndNeverPulls(t *testing.T) {
 	d := &volDocker{invOut: "TUGRA_INV bytes=5 entries=2 sockets=0 fifos=0 devices=0 pgv=16 nested=-\n"}
 	d.install(t)
