@@ -4,6 +4,7 @@ import {
   UnauthorizedException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { LIVE_RUN_STATUSES } from "../migration-runs/core/run-contract";
 import { CryptoService } from "../crypto/crypto.service";
 import { AuditService } from "../audit/audit.service";
 import { ApplicationsService } from "../applications/applications.service";
@@ -205,6 +206,14 @@ export class WebhooksService {
     }
   }
 
+  /** Is the app a resource of the import op of a live migration run that has not passed its point of no return? One cheap read when no run is live. */
+  private async heldByMigrationRun(appId: string): Promise<boolean> {
+    const runs = await this.prisma.migrationRun.findMany({ where: { ponrAt: null, opId: { not: null }, status: { in: [...LIVE_RUN_STATUSES] } }, select: { opId: true }, take: 100 });
+    const opIds = runs.map((r) => r.opId).filter((x): x is string => !!x);
+    if (!opIds.length) return false;
+    return (await this.prisma.bulkTask.count({ where: { opId: { in: opIds }, kind: "app", resourceType: "application", resourceId: appId } })) > 0;
+  }
+
   private async handlePush(
     app: Application,
     rawBody: Buffer | string,
@@ -215,6 +224,12 @@ export class WebhooksService {
     // deploy runs — pause auto-deploy without deleting the webhook.
     if (app.autoDeploy === false) {
       return { deployed: false, reason: "auto-deploy disabled (ignored)" };
+    }
+    // An app a guided migration run imported is not deployed by a push until the run passed its point of no return: while the
+    // source is authoritative a push would deploy it on both sides. The run switches the per-app flag off once its import settled;
+    // this closes the gap while the import is still creating apps (the flag is not set yet then).
+    if (await this.heldByMigrationRun(app.id)) {
+      return { deployed: false, reason: "held by a guided migration run (ignored)" };
     }
     // Only deploy when the pushed branch matches the app's tracked branch. This applies to a GIT build AND
     // a git-sourced compose (source=COMPOSE + gitUrl); a ping (no ref) or a push to another branch is

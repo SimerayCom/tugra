@@ -9,6 +9,7 @@ import type { ImportPlanResponse } from "../../../importer/importer.service";
 import type { ResolvedMapping } from "../../../importer/import-mapping";
 import type { ServicePreview } from "../../../importer/service-preview";
 import type { RollbackOptions } from "../../../importer/import-executor.service";
+import type { SourceHealthRow } from "../../../importer/import-source";
 import type { RunImportPort } from "../../core/run-ports";
 
 /** Nest token of the {@link ImportStepsPort} (the same adapter also serves the core's {@link RunImportPort} token). */
@@ -35,8 +36,12 @@ export interface OpSnapshot {
   rolledBack: boolean;
   cancelRequested: boolean;
   tasks: OpTask[];
-  /** The plan captured at apply time: itemRef -> the items it depends on (a stateless app has none). */
-  planItems: Array<{ itemRef: string; kind: string; dependsOn: string[] }>;
+  /**
+   * The plan captured at apply time: itemRef -> the items it depends on (a stateless app has none). `domain` (the primary
+   * host, null = none) and `image` (the declared image ref of an image app) are what the safety logic (held workers, image
+   * pins) needs; both are absent when the port cannot say, which every consumer reads as "unknown", never as "none".
+   */
+  planItems: Array<{ itemRef: string; kind: string; dependsOn: string[]; domain?: string | null; image?: string | null }>;
 }
 
 export interface RemapSummary {
@@ -121,4 +126,15 @@ export interface ImportStepsPort extends RunImportPort {
   cancelDeployment(userId: string, appId: string, deploymentId: string): Promise<void>;
   /** Enqueue + run a deploy under the idempotency key (the finished/queued row). */
   deploy(userId: string, appId: string, key: string): Promise<DeploymentRef | null>;
+
+  // ── safety lane (grup-7). OPTIONAL: a port without one reads as "the world cannot do that", never as an error. ──
+  /** How every source resource is doing right now (the PREFLIGHT baseline). `null` = the source has no health read. Writes nothing. */
+  sourceHealth?(userId: string, input: { sessionId: string; sourceKind: RemoteSourceKind }): Promise<SourceHealthRow[] | null>;
+  /** The app's push-to-deploy switch; null when the app is gone. */
+  autoDeployState?(userId: string, appId: string): Promise<boolean | null>;
+  setAutoDeploy?(userId: string, appId: string, enabled: boolean): Promise<void>;
+  /** Build the app's image on its server without starting it (early build). `built:false` = nothing to build for this app. */
+  prebuild?(userId: string, appId: string): Promise<{ built: boolean }>;
+  /** Pin an IMAGE app to the digest the source runs (`repo@sha256:...`); `pinned:false` when it was already pinned or is no image app. */
+  pinImage?(userId: string, appId: string, digest: string): Promise<{ pinned: boolean }>;
 }

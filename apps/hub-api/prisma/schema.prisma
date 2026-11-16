@@ -2453,6 +2453,7 @@ model MigrationRun {
   steps       MigrationRunStep[]
   events      MigrationRunEvent[]
   serverLocks MigrationRunServerLock[]
+  hints       MigrationRunHint[]
 
   @@index([teamId, createdAt(sort: Desc)])
   @@index([status])
@@ -2470,6 +2471,22 @@ model MigrationRunServerLock {
   createdAt DateTime     @default(now())
 
   @@index([runId])
+}
+
+/// Operator/host-attested safety facts the run's import-side steps consult (grup-7 safety lane): `image-pin` = the digest the
+/// SOURCE runs for an unpinned image (key = the image ref as the plan shows it, scope = the source server uuid or "" for every
+/// server), `worker-mark` = whether an app is a job runner or serves traffic (key = the plan itemRef, scope = ""). Secret-free.
+model MigrationRunHint {
+  run       MigrationRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  runId     String
+  kind      String // image-pin | worker-mark
+  key       String
+  scope     String       @default("")
+  value     String // sha256:<64 hex> | job-runner | web
+  evidence  String // operator-attested | host-loop-reported | source-api-reported
+  createdAt DateTime     @default(now())
+
+  @@id([runId, kind, key, scope])
 }
 
 model MigrationRunStep {

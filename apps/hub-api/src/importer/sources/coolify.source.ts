@@ -1,5 +1,5 @@
 import type { ForeignEnv, ForeignFleet, ServiceBundle } from "../foreign-fleet";
-import type { ImportSource, ImportSourceCapabilities, FetchedSecrets, SourceAppExtras } from "../import-source";
+import type { ImportSource, ImportSourceCapabilities, FetchedSecrets, SourceAppExtras, SourceHealthRow } from "../import-source";
 import { why } from "../reason";
 import { mapLimit } from "./map-limit";
 import { buildEnvReport, classifyEnvRow } from "../env-report";
@@ -14,6 +14,7 @@ import {
   type CoolifyService,
   type CoolifyVolume,
 } from "./coolify-map";
+import { coolifyHealthRows, coolifyVersionToken, type CoolifyHealthRow } from "./coolify-health";
 
 /**
  * A minimal authenticated GET client for one Coolify instance. The concrete implementation (base URL +
@@ -22,6 +23,8 @@ import {
  */
 export interface CoolifyClient {
   get<T>(path: string): Promise<T>;
+  /** OPTIONAL: a GET for an endpoint that answers plain text (`GET /version`). A client without it simply reports no version. */
+  getText?(path: string): Promise<string>;
 }
 
 /**
@@ -45,10 +48,48 @@ export class CoolifySource implements ImportSource {
       // GET /servers needs a valid token + a reachable Coolify API; a non-array means the base path is wrong.
       const servers = await this.client.get<CoolifyServer[]>("/servers");
       if (!Array.isArray(servers)) return { ok: false, detail: "unexpected response — is the URL a Coolify API root?" };
-      return { ok: true };
+      // The version is best effort (GET /version answers plain text and needs no extra ability): a source that does not say
+      // leaves it unknown for the run's PREFLIGHT to judge. Reading it never fails the verification.
+      const version = await this.readVersion();
+      return version ? { ok: true, version } : { ok: true };
     } catch (e) {
       return { ok: false, detail: e instanceof Error ? e.message : "verification failed" };
     }
+  }
+
+  private async readVersion(): Promise<string | null> {
+    try {
+      return this.client.getText ? coolifyVersionToken(await this.client.getText("/version")) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Health of every app, database and service right now, from the list rows' `status` and `restart_count` (read-only, the same
+   * reads discover() makes). A failed core read throws: a half-read baseline would classify the missing resources as healthy.
+   * The per-server resource lists only place a resource on its host; losing one leaves that resource's `serverRef` unset.
+   */
+  async healthBaseline(): Promise<SourceHealthRow[]> {
+    const servers = (await this.client.get<CoolifyServer[]>("/servers")) ?? [];
+    const apps = (await this.client.get<CoolifyHealthRow[]>("/applications")) ?? [];
+    const databases = (await this.client.get<CoolifyHealthRow[]>("/databases")) ?? [];
+    let services: CoolifyHealthRow[] = [];
+    try {
+      services = (await this.client.get<CoolifyHealthRow[]>("/services")) ?? [];
+    } catch {
+      services = []; // like discover(): a team without service access still has a baseline of its apps and databases
+    }
+    const serverOf = new Map<string, string>();
+    await mapLimit(servers, DISCOVER_CONCURRENCY, async (s) => {
+      try {
+        const resources = (await this.client.get<Array<{ uuid?: string }>>(`/servers/${s.uuid}/resources`)) ?? [];
+        for (const r of resources) if (r?.uuid && !serverOf.has(r.uuid)) serverOf.set(r.uuid, s.uuid);
+      } catch {
+        /* the resource stays without a serverRef */
+      }
+    });
+    return [...coolifyHealthRows("app", apps, serverOf), ...coolifyHealthRows("database", databases, serverOf), ...coolifyHealthRows("service", services, serverOf)];
   }
 
   async discover(): Promise<ForeignFleet> {

@@ -1,5 +1,8 @@
 import { H, IP, makeRig, zoneRec, type Rig } from "./testing/cutover-rig";
-import { TLS_DEADLINE_MS } from "./tls-preissue.handler";
+import { StepHandlerRegistryService } from "../../core/step-handler.registry";
+import type { PostPonrRelease } from "../import/baseline/post-ponr";
+import type { CutoverWorld } from "./cutover-world.service";
+import { TLS_DEADLINE_MS, TlsPreissueHandler } from "./tls-preissue.handler";
 
 afterEach(() => jest.useRealTimers());
 
@@ -333,3 +336,26 @@ describe("TLS_PREISSUE: review fixes", () => {
   });
 });
 
+
+describe("TLS_PREISSUE never starts a withheld worker (R26/C13)", () => {
+  const handlerWith = (rig: Rig, withheld: string[]) => {
+    const release = { withheldAppIds: jest.fn(async () => new Set(withheld)) } as unknown as PostPonrRelease;
+    return new TlsPreissueHandler(new StepHandlerRegistryService(), rig.cutover, rig.certs as never, rig.world as unknown as CutoverWorld, rig.proxyOps as never, rig.appsSvc as never, release);
+  };
+
+  it("skips the redeploy of a held worker that has a hostname, redeploys the others, and tells the operator once", async () => {
+    const rig = makeRig({ apps: apps(2), zone: zoneFor(2) });
+    const h = handlerWith(rig, ["a2"]);
+    await rig.driver.drive(h, { maxTicks: 4 });
+    expect(rig.appsSvc.deploy.mock.calls.map((c) => (c as unknown[])[1])).toEqual(["a1"]);
+    expect(rig.driver.events.filter((e) => e.code === "tls-preissue.worker-not-redeployed").map((e) => e.params)).toEqual([{ count: 1 }]);
+    expect(rig.driver.rec("TLS_PREISSUE").compensation!.redeployed).toEqual(["a1"]);
+  });
+
+  it("without a release in the world the redeploy is exactly what it was", async () => {
+    const rig = makeRig({ apps: apps(2), zone: zoneFor(2) });
+    await rig.driver.drive(rig.handlers.tls, { maxTicks: 4 });
+    expect(rig.appsSvc.deploy.mock.calls.map((c) => (c as unknown[])[1])).toEqual(["a1", "a2"]);
+    expect(rig.driver.eventCodes()).not.toContain("tls-preissue.worker-not-redeployed");
+  });
+});

@@ -5,6 +5,7 @@ import { ClustersModule } from "../../../clusters/clusters.module";
 import { CutoverModule } from "../../../cutover/cutover.module";
 import { NetProbe } from "../../../cutover/net-probe";
 import { ImporterModule } from "../../../importer/importer.module";
+import { RunImportStepsModule } from "../import/run-import-steps.module";
 import { ProxyOpsService } from "../../../server-ops/proxy-ops.service";
 import { CutoverHandler } from "./cutover.handler";
 import { CutoverPlanService } from "./cutover-plan.service";
@@ -25,7 +26,7 @@ import { TlsPreissueHandler } from "./tls-preissue.handler";
  * CutoverModule does not export it). Prisma, TeamAccess, Audit, Config, InstanceSettings and ProxyConfig are global.
  */
 @Module({
-  imports: [CutoverModule, ImporterModule, ApplicationsModule, AgentGatewayModule, ClustersModule],
+  imports: [CutoverModule, ImporterModule, ApplicationsModule, AgentGatewayModule, ClustersModule, RunImportStepsModule],
   providers: [CutoverWorld, NetProbe, ProxyOpsService, CutoverPlanService, DnsPrepareHandler, TlsPreissueHandler, CutoverHandler, ObserveHandler, FinalizeHandler, DecommissionHandler],
   exports: [CutoverPlanService],
 })

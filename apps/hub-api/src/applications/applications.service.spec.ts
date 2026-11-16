@@ -8998,3 +8998,71 @@ describe("ApplicationsService per-host DNS-01 (dnsChallenge)", () => {
     expect(up).toEqual({ certType: "custom" });
   });
 });
+
+describe("ApplicationsService.prebuild (guided-migration early build)", () => {
+  const gitApp = {
+    ...app,
+    source: "GIT",
+    image: null,
+    gitUrl: "https://github.com/acme/app.git",
+    gitBranch: "main",
+    gitSourceId: null,
+    buildType: "DOCKERFILE",
+    disableBuildCache: false,
+    clusterId: null,
+    buildServerId: null,
+    dockerOptions: null,
+    allowPrivilegedDockerOptions: false,
+  };
+
+  function deps(row: Record<string, unknown>, send: jest.Mock = jest.fn().mockResolvedValue({ exitCode: 0, output: "built" })) {
+    const prisma = {
+      application: { findUnique: jest.fn().mockResolvedValue(row) },
+      deployment: { create: jest.fn(), update: jest.fn() },
+      sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaService;
+    const svc = make(prisma, {}, { sendCommand: send } as unknown as AgentWsServer);
+    const audit = jest.fn().mockResolvedValue(undefined);
+    (svc as unknown as { audit: { log: jest.Mock } }).audit = { log: audit };
+    return { svc, send, audit, prisma };
+  }
+
+  it("builds the image on the app's own server with a build-only script and creates no deployment row", async () => {
+    const { svc, send, audit, prisma } = deps(gitApp);
+    expect(await svc.prebuild("u1", "app1")).toEqual({ built: true });
+    expect(send).toHaveBeenCalledTimes(1);
+    const [serverId, script, cap] = send.mock.calls[0];
+    expect([serverId, cap]).toEqual(["s1", "deploy"]);
+    expect(script).toContain("docker build");
+    expect(script).toContain(":prebuild"); // one fixed local tag: repeats never accumulate tags
+    expect(script).not.toMatch(/docker (run|stop|rm )/); // nothing is started or replaced
+    expect((prisma as unknown as { deployment: { create: jest.Mock } }).deployment.create).not.toHaveBeenCalled();
+    expect(audit.mock.calls[0][0]).toMatchObject({ action: "app.prebuild", target: "app1" });
+  });
+
+  it("has nothing to build for an image app, a swarm service or an app with its own build server: no command is sent", async () => {
+    for (const [row, reason] of [
+      [{ ...gitApp, source: "IMAGE", image: "nginx" }, "not-git"],
+      [{ ...gitApp, clusterId: "c1" }, "swarm"],
+      [{ ...gitApp, buildServerId: "s2" }, "build-server"],
+    ] as const) {
+      const { svc, send } = deps(row);
+      expect(await svc.prebuild("u1", "app1")).toEqual({ built: false, reason });
+      expect(send).not.toHaveBeenCalled();
+    }
+  });
+
+  it("a failed build is a 503 with an audit row and no success row", async () => {
+    const { svc, audit } = deps(gitApp, jest.fn().mockResolvedValue({ exitCode: 2, output: "boom" }));
+    await expect(svc.prebuild("u1", "app1")).rejects.toThrow(/early build failed/);
+    expect(audit.mock.calls.map((c) => c[0].action)).toEqual(["app.prebuild_failed"]);
+  });
+
+  it("needs the deploy permission", async () => {
+    const prisma = { application: { findUnique: jest.fn().mockResolvedValue(gitApp) } } as unknown as PrismaService;
+    const requirePermission = jest.fn().mockRejectedValue(new ForbiddenException());
+    const svc = make(prisma, { requirePermission } as Partial<TeamAccessService>, { sendCommand: jest.fn() } as unknown as AgentWsServer);
+    await expect(svc.prebuild("u1", "app1")).rejects.toBeInstanceOf(ForbiddenException);
+    expect(requirePermission).toHaveBeenCalledWith("u1", "t1", "apps:deploy");
+  });
+});

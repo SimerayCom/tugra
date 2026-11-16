@@ -29,4 +29,8 @@ export class CoolifyHttpClient implements CoolifyClient {
   get<T>(path: string): Promise<T> {
     return this.http.get<T>(path);
   }
+
+  getText(path: string): Promise<string> {
+    return this.http.getText(path);
+  }
 }

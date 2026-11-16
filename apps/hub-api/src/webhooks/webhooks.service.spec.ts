@@ -14,7 +14,9 @@ function sign(body: string): string {
 }
 
 function make(prisma: Partial<PrismaService>, apps: Partial<ApplicationsService>) {
-  return new WebhooksService(prisma as PrismaService, crypto, audit, apps as ApplicationsService);
+  // no migration run is live unless a spec says so
+  const withRuns = { migrationRun: { findMany: jest.fn().mockResolvedValue([]) }, bulkTask: { count: jest.fn().mockResolvedValue(0) }, ...prisma };
+  return new WebhooksService(withRuns as PrismaService, crypto, audit, apps as ApplicationsService);
 }
 
 describe("WebhooksService.handleGithubApp", () => {
@@ -502,5 +504,34 @@ describe("WebhooksService.handleGithubApp: previews", () => {
     await svc.handleGithubApp("s1", { "x-hub-signature-256": sign(body), "x-github-event": "push" }, body);
     expect(deployFromWebhook).toHaveBeenCalledTimes(1);
     expect(deployFromWebhook).toHaveBeenCalledWith("p1");
+  });
+});
+
+describe("WebhooksService.handle: apps a guided migration run holds (R17/R64)", () => {
+  const base = { id: "a1", source: "GIT", gitBranch: "main", webhookToken: "tok", webhookSecret: "enc", autoDeploy: true };
+  const body = JSON.stringify({ ref: "refs/heads/main", head_commit: { message: "feat: x" } });
+  const call = (svc: WebhooksService) => svc.handle("tok", { "x-hub-signature-256": sign(body) }, body);
+
+  it("acknowledges the push and deploys nothing while the app belongs to a run's import op before the point of no return", async () => {
+    const deployFromWebhook = jest.fn();
+    const findMany = jest.fn().mockResolvedValue([{ opId: "op1" }]);
+    const count = jest.fn().mockResolvedValue(1);
+    const svc = make({ application: { findUnique: jest.fn().mockResolvedValue(base) }, migrationRun: { findMany }, bulkTask: { count } } as unknown as PrismaService, { deployFromWebhook });
+    const r = await call(svc);
+    expect(r).toMatchObject({ deployed: false, reason: expect.stringMatching(/guided migration run/) });
+    expect(deployFromWebhook).not.toHaveBeenCalled();
+    expect(findMany.mock.calls[0][0].where).toMatchObject({ ponrAt: null, opId: { not: null } });
+    expect(count.mock.calls[0][0].where).toMatchObject({ opId: { in: ["op1"] }, resourceId: "a1" });
+  });
+
+  it("deploys an app that is not part of the live run's op, and asks nothing more when no run is live", async () => {
+    const deployFromWebhook = jest.fn().mockResolvedValue(undefined);
+    const count = jest.fn().mockResolvedValue(0);
+    const other = make({ application: { findUnique: jest.fn().mockResolvedValue(base) }, migrationRun: { findMany: jest.fn().mockResolvedValue([{ opId: "op1" }]) }, bulkTask: { count } } as unknown as PrismaService, { deployFromWebhook });
+    expect((await call(other)).deployed).toBe(true);
+    const none = jest.fn();
+    const quiet = make({ application: { findUnique: jest.fn().mockResolvedValue(base) }, bulkTask: { count: none } } as unknown as PrismaService, { deployFromWebhook });
+    expect((await call(quiet)).deployed).toBe(true);
+    expect(none).not.toHaveBeenCalled();
   });
 });

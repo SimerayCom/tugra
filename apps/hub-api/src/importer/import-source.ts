@@ -61,6 +61,21 @@ export interface SourceAppExtras {
   unmapped: Unmapped[]; // fixed reasons only
 }
 
+/** How a source resource was doing when the run looked (P7 health baseline): the enum is the one `SourceBaseline` stores. */
+export type SourceHealth = "healthy" | "unhealthy" | "unknown" | "exited";
+
+/** One resource's health at the source, read-only and secret-free (refs, an enum and a counter). */
+export interface SourceHealthRow {
+  kind: "app" | "database" | "service";
+  /** The resource's source ref (a Coolify uuid): the same ref the plan item uses. */
+  ref: string;
+  /** The source server the resource runs on, when the source says (the plan's `serverRef`). */
+  serverRef?: string;
+  health: SourceHealth;
+  /** Container restart count at read time; null when the source does not report one. */
+  restartCount: number | null;
+}
+
 /**
  * One competitor adapter. Every source (Coolify/Dokploy/CapRover/Dokku + local-docker + a pasted compose
  * file) implements this, so the planner and executor stay source-independent. The adapter is constructed
@@ -92,6 +107,10 @@ export interface ImportSource {
    *  by the discovered service's `sourceRef`. `undefined` when the token cannot read them (403/404). Any other error is
    *  re-thrown with a FIXED message. Dokploy/local-docker do not implement it. */
   fetchServiceBundle?(ref: string): Promise<ServiceBundle | undefined>;
+  /** OPTIONAL read-only: how every app, database and service is doing at the source right now (status string + restart
+   *  counter), keyed by the same refs as the plan. Called by the run's PREFLIGHT to take the health baseline; a source that does
+   *  not implement it simply has no baseline. A failure MUST throw (a half-read baseline would be read as "healthy"). */
+  healthBaseline?(): Promise<SourceHealthRow[]>;
   /** Dump a database's contents (requires capabilities().dbDataDump). */
   dumpDb?(ref: string): Promise<DumpHandle>;
   /** Open a volume's bytes as a tar stream (requires capabilities().volumeRead). */

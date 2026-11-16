@@ -12,14 +12,24 @@
  *    (and, because its fan-out died with the process, redone).
  * Abort cancels the op (and revokes its migration token); the optional cleanup is the importer's rollback, widened by
  * `RollbackOptions` for the run's own deployments and (with typed names) data-bearing resources.
+ *
+ * Grup-7 safety rules, applied once the op's tasks settled and before anything is deployed:
+ *  - push-to-deploy is switched OFF on every imported app that had it on (R17/R64): while the source is authoritative a push
+ *    would otherwise deploy on Tugra too. The ids are recorded before the switch; OBSERVE/FINALIZE restore them after the
+ *    point of no return (`baseline/post-ponr.ts`);
+ *  - `deployWaves: earlyBuild` builds every app image on its target server, `deployConcurrency` at a time per server, with
+ *    nothing started (R27/C5): the freeze window then holds only starts;
+ *  - `earlyStateless` never starts a held worker (R26/C13).
  */
-import { HttpException, Inject, Injectable, OnModuleInit } from "@nestjs/common";
+import { HttpException, Inject, Injectable, OnModuleInit, Optional } from "@nestjs/common";
 import type { ImportApplyInput } from "../../../importer/dto";
 import type { ImportPlanResponse } from "../../../importer/importer.service";
 import type { DryRunItem, GateCheck, GateResult } from "../../core/dto";
 import {
   STEP_HANDLERS,
+  RunLeaseLostError,
   StepFailure,
+  deployConcurrencyOf,
   makeGate,
   unmappedSourceServers,
   type ActResult,
@@ -30,11 +40,13 @@ import {
   type StepHandler,
   type StepHandlerRegistry,
 } from "../../core/run-contract";
-import { CLEANUP_REQUEST_KEY, type CleanupRequest } from "../../core/run-engine.service";
+import { CLEANUP_REQUEST_KEY, RunAbortRequestedError, type CleanupRequest } from "../../core/run-engine.service";
 import { SESSION_EXPIRED_CODE } from "../../core/run-logic";
 import { UNKNOWN_SERVER_REF, serverRefOfItemRef } from "../../../importer/server-map";
 import { IMPORT_STEPS_PORT, type DeploymentRef, type ImportStepsPort, type OpSnapshot, type SessionState } from "./import-ports";
 import { applyInputOf, deployKeyBase, failureOf, hasActive, hasBad, includedItems, isConflict, itemTasks, stopRunApps, unackedBlockers } from "./step-utils";
+import { appTasksOf, duePinsOf, pinFloatingImages, targetOfTask, workerSetsOfOp } from "./baseline/op-safety";
+import { RUN_HINTS, type RunHint, type RunHintStore } from "./baseline/run-hints";
 
 /** How long a redo waits for orphaned RUNNING tasks to settle before it gives up (the importer's reaper frees them after 10 min). */
 const REDO_PATIENCE_MS = 15 * 60_000;
@@ -50,6 +62,12 @@ export interface ImportObs extends Observation {
    * place. Any of them would silently land on the default target, so the pre-gate fails closed. null = not checked.
    */
   placement: { unmapped: string[]; unreadable: boolean } | null;
+  /** earlyBuild: the apps whose image is still to be built, per target server. `null` = not an earlyBuild run (or the port cannot build). */
+  build: { total: number; pending: Array<{ appId: string; name: string; server: string }> } | null;
+  /** Apps of the settled op whose push-to-deploy is still ON (to be switched off). `null` = not observed (op running, or the port cannot say). */
+  autoDeployOn: string[] | null;
+  /** R11: how many image apps still have to be pointed at the digest the source runs (0 = none, or already done / not possible with this port). */
+  pinsDue: number;
 }
 
 interface Comp {
@@ -61,6 +79,12 @@ interface Comp {
   redoAt?: string;
   /** earlyStateless: the apps the early wave may have deployed (written before the first deploy). */
   earlyAppIds?: string[];
+  /** The apps this run switched push-to-deploy off for (written BEFORE the switch; the release restores them after the PONR). */
+  autoDeployHeld?: string[];
+  /** earlyBuild: the apps whose image build finished (or that have nothing to build). */
+  prebuilt?: string[];
+  /** R11: the image apps of THIS op were pointed at the digests the source runs (before any deploy path can start them). */
+  imagesPinned?: boolean;
   [CLEANUP_REQUEST_KEY]?: CleanupRequest;
 }
 
@@ -98,7 +122,12 @@ export class ImportStep implements StepHandler<ImportObs>, OnModuleInit {
   constructor(
     @Inject(STEP_HANDLERS) private readonly registry: StepHandlerRegistry,
     @Inject(IMPORT_STEPS_PORT) private readonly port: ImportStepsPort,
+    @Optional() @Inject(RUN_HINTS) private readonly hintStore?: RunHintStore,
   ) {}
+
+  private hints(run: { id: string; promotedFromId: string | null }): Promise<RunHint[]> {
+    return this.hintStore ? this.hintStore.list(run.id, run.promotedFromId).catch(() => []) : Promise.resolve([]);
+  }
 
   onModuleInit(): void {
     this.registry.register(this);
@@ -115,11 +144,17 @@ export class ImportStep implements StepHandler<ImportObs>, OnModuleInit {
     const run = ctx.run;
     const session = await this.port.sessionState(userId, run.sessionId);
     const op = run.opId ? await this.port.opSnapshot(userId, run.opId) : null;
-    const wave = op && !op.rolledBack && run.options.deployWaves === "earlyStateless" ? await this.waveState(ctx, op) : null;
+    const live = !!op && !op.rolledBack;
+    const hints = live ? await this.hints(run) : [];
+    const wave = live && run.options.deployWaves === "earlyStateless" ? await this.waveState(ctx, op!, hints) : null;
+    const settledOp = live && !hasActive(op!) && !hasBad(op!);
+    const build = settledOp && run.options.deployWaves === "earlyBuild" && this.port.prebuild ? this.buildState(ctx, op!) : null;
+    const autoDeployOn = settledOp ? await this.autoDeployOn(ctx, op!) : null;
+    const pinsDue = settledOp && this.port.pinImage && compOf(ctx).imagesPinned !== true ? duePinsOf(op!, hints).length : 0;
     const tasks = op ? itemTasks(op) : [];
     const settled = tasks.filter((t) => !["PENDING", "RUNNING", "AWAITING_CUTOVER"].includes(t.status)).length;
     const placement = await this.placementOf(ctx, session, op);
-    return { session, op, wave, placement, progress: { done: settled, total: tasks.length, unit: "item" } };
+    return { session, op, wave, build, autoDeployOn, pinsDue, placement, progress: { done: settled, total: tasks.length, unit: "item" } };
   }
 
   /** Multi-host: which source servers the serverMap leaves unplaced. Read-only (the adapter memoizes the plan for a short while). */
@@ -134,9 +169,28 @@ export class ImportStep implements StepHandler<ImportObs>, OnModuleInit {
     }
   }
 
-  private async waveState(ctx: StepContext, op: OpSnapshot): Promise<NonNullable<ImportObs["wave"]>> {
+  /** The op's apps whose push-to-deploy is still on. Null when the port cannot read it (nothing to enforce then). */
+  private async autoDeployOn(ctx: StepContext, op: OpSnapshot): Promise<string[] | null> {
+    if (!this.port.autoDeployState || !this.port.setAutoDeploy) return null;
+    const on: string[] = [];
+    for (const t of appTasksOf(op)) if ((await this.port.autoDeployState(ctx.actor.userId, t.resourceId!)) === true) on.push(t.resourceId!);
+    return on;
+  }
+
+  /** earlyBuild: every app of the op whose image build is not recorded yet, with the target server each builds on. */
+  private buildState(ctx: StepContext, op: OpSnapshot): NonNullable<ImportObs["build"]> {
+    const done = new Set(compOf(ctx).prebuilt ?? []);
+    const apps = appTasksOf(op);
+    return {
+      total: apps.length,
+      pending: apps.filter((t) => !done.has(t.resourceId!)).map((t) => ({ appId: t.resourceId!, name: t.name ?? t.itemRef ?? "", server: targetOfTask(ctx.targetFor, t) })),
+    };
+  }
+
+  private async waveState(ctx: StepContext, op: OpSnapshot, hints: readonly RunHint[]): Promise<NonNullable<ImportObs["wave"]>> {
     const userId = ctx.actor.userId;
-    const stateless = new Set(op.planItems.filter((p) => p.kind === "app" && p.dependsOn.length === 0).map((p) => p.itemRef));
+    const sets = workerSetsOfOp(ctx.run, op, hints); // a worker never starts before the cutover, whatever it depends on
+    const stateless = new Set(op.planItems.filter((p) => p.kind === "app" && p.dependsOn.length === 0 && !sets.held.has(p.itemRef) && !sets.excluded.has(p.itemRef)).map((p) => p.itemRef));
     const candidates = op.tasks.filter((t) => t.kind === "app" && t.status === "DONE" && t.resourceType === "application" && !!t.resourceId && !!t.itemRef && stateless.has(t.itemRef));
     let deployed = 0;
     let failed = 0;
@@ -192,6 +246,15 @@ export class ImportStep implements StepHandler<ImportObs>, OnModuleInit {
       const ok = w.deployed === w.candidates.length;
       checks.push({ id: "import.early-wave", status: ok ? "pass" : "fail", code: ok ? "import.early-wave-done" : "import.early-wave-pending", params: { deployed: w.deployed, total: w.candidates.length }, evidence: "hub-verified" });
     }
+    if (obs.pinsDue > 0) checks.push({ id: "import.images-pin", status: "fail", code: "import.images-pin-pending", params: { count: obs.pinsDue }, evidence: "hub-verified" });
+    if (obs.autoDeployOn) {
+      const n = obs.autoDeployOn.length;
+      checks.push({ id: "import.auto-deploy", status: n ? "fail" : "pass", code: n ? "import.auto-deploy-pending" : "import.auto-deploy-held", params: { count: n }, evidence: "hub-verified" });
+    }
+    if (obs.build) {
+      const left = obs.build.pending.length;
+      checks.push({ id: "import.early-build", status: left ? "fail" : "pass", code: left ? "import.early-build-pending" : "import.early-build-done", params: { built: obs.build.total - left, total: obs.build.total }, evidence: "hub-verified" });
+    }
     void ctx;
     return makeGate(checks);
   }
@@ -214,9 +277,87 @@ export class ImportStep implements StepHandler<ImportObs>, OnModuleInit {
       if (comp.redoOpen === true || orphan || (failed && ctx.trigger === "retry")) return this.redo(ctx, obs, op);
       if (active) return { outcome: "continue", pollAfterMs: 2000 };
       if (failed) return { outcome: "fail", code: "import.tasks-failed", params: { failed: itemTasks(op).filter((t) => ["FAILED", "FAILED_VERIFY", "CANCELLED"].includes(t.status)).length }, retryable: true };
+      if (comp.imagesPinned !== true) return this.pinImages(ctx, op);
+      if (obs.autoDeployOn?.length) return this.holdAutoDeploy(ctx, obs.autoDeployOn);
+      const built = await this.earlyBuild(ctx, obs);
+      if (built) return built;
       return this.earlyWave(ctx, obs);
     }
     return this.applyNow(ctx);
+  }
+
+  /**
+   * R11: a floating image app is pointed at the digest the source runs as soon as the op settled, so EVERY later way of starting it
+   * (the early wave, DEPLOY_DARK, the worker release after the point of no return, TLS_PREISSUE's redeploy) runs that digest and
+   * never today's `latest`. Idempotent: an app on its digest, or without a recorded digest, is untouched.
+   */
+  private async pinImages(ctx: StepContext, op: OpSnapshot): Promise<ActResult> {
+    await ctx.assertLease();
+    let pinned: string[];
+    try {
+      pinned = await pinFloatingImages(this.port, ctx.actor.userId, op, await this.hints(ctx.run));
+    } catch (e) {
+      throw failureOf(e, "import.image-pin");
+    }
+    await ctx.recordCompensation({ imagesPinned: true });
+    if (pinned.length) await ctx.emit({ level: "info", code: "import.images-pinned", params: { count: pinned.length } });
+    return { outcome: "continue", pollAfterMs: 1000 };
+  }
+
+  /**
+   * R17/R64: switch push-to-deploy off for the apps that have it on. The ids are recorded BEFORE the first switch (a crash right
+   * after one still tells the release what to restore); an app that was already off is never touched, so it is never switched on.
+   */
+  private async holdAutoDeploy(ctx: StepContext, on: readonly string[]): Promise<ActResult> {
+    const userId = ctx.actor.userId;
+    const held = [...new Set([...(compOf(ctx).autoDeployHeld ?? []), ...on])];
+    await ctx.recordCompensation({ autoDeployHeld: held });
+    for (const id of on) {
+      await ctx.assertLease();
+      try {
+        await this.port.setAutoDeploy!(userId, id, false);
+      } catch (e) {
+        throw failureOf(e, "import.auto-deploy");
+      }
+    }
+    await ctx.emit({ level: "info", code: "import.auto-deploy-held", params: { count: on.length } });
+    return { outcome: "continue", pollAfterMs: 1000 };
+  }
+
+  /**
+   * R27/C5 (`deployWaves: earlyBuild`): build every image now, nothing started. One chunk per act: up to `deployConcurrency`
+   * builds per target server, the servers in parallel (a build blocks until it ends, so a tick is one build long). Returns null
+   * when there is nothing (left) to build.
+   */
+  private async earlyBuild(ctx: StepContext, obs: ImportObs): Promise<ActResult | null> {
+    const b = obs.build;
+    if (!b || !b.pending.length || !this.port.prebuild) return null;
+    const userId = ctx.actor.userId;
+    const slots = deployConcurrencyOf(ctx.run.options);
+    const taken = new Map<string, number>();
+    const chunk = b.pending.filter((a) => {
+      const n = taken.get(a.server) ?? 0;
+      taken.set(a.server, n + 1);
+      return n < slots;
+    });
+    const done = [...(compOf(ctx).prebuilt ?? [])];
+    const results = await Promise.allSettled(
+      chunk.map(async (a) => {
+        if (ctx.signal.aborted) return null;
+        await ctx.assertLease();
+        await this.port.prebuild!(userId, a.appId);
+        return a.appId;
+      }),
+    );
+    for (const r of results) if (r.status === "fulfilled" && r.value) done.push(r.value);
+    await ctx.recordCompensation({ prebuilt: done });
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
+      if (r.status !== "rejected") continue;
+      if (r.reason instanceof RunLeaseLostError || r.reason instanceof RunAbortRequestedError) throw r.reason; // control flow, never a failure code
+      throw new StepFailure("import.early-build-failed", { name: chunk[i].name }, true);
+    }
+    return { outcome: "continue", pollAfterMs: 1000 };
   }
 
   private async applyNow(ctx: StepContext): Promise<ActResult> {
@@ -237,7 +378,7 @@ export class ImportStep implements StepHandler<ImportObs>, OnModuleInit {
       throw f;
     }
     await ctx.patchRun({ opId });
-    await ctx.recordCompensation({ applyDone: true, adopted: false, redoOpen: false });
+    await ctx.recordCompensation({ applyDone: true, adopted: false, redoOpen: false, imagesPinned: false });
     await ctx.emit({ level: "info", code: "import.applied" });
     return { outcome: "continue", pollAfterMs: 1000 };
   }

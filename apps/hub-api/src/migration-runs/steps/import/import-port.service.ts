@@ -21,6 +21,8 @@ import { buildPreflight } from "../../../importer/preflight";
 import { buildCoverage } from "../../../importer/coverage";
 import { mapLimit } from "../../../importer/sources/map-limit";
 import type { ImportApplyInput, ImportMappingResolveInput, RemoteSourceKind, ServiceChoice } from "../../../importer/dto";
+import type { SourceHealthRow } from "../../../importer/import-source";
+import { pinnedImageRef } from "./baseline/image-pins";
 import type { ResolvedMapping } from "../../../importer/import-mapping";
 import type { ServicePreview } from "../../../importer/service-preview";
 import type { RunReport } from "../../core/dto";
@@ -97,6 +99,16 @@ export class ImportPortService implements ImportStepsPort {
     try {
       const v = await source.verify();
       return v.ok && v.version ? v.version : null;
+    } finally {
+      await source.close();
+    }
+  }
+
+  /** Health of every source resource right now, or null when the source offers no such read. Writes nothing. */
+  async sourceHealth(userId: string, i: { sessionId: string; sourceKind: RemoteSourceKind }): Promise<SourceHealthRow[] | null> {
+    const { source } = await this.importer.openSession(userId, i.sessionId, i.sourceKind);
+    try {
+      return source.healthBaseline ? await source.healthBaseline() : null;
     } finally {
       await source.close();
     }
@@ -185,7 +197,16 @@ export class ImportPortService implements ImportStepsPort {
       })),
       planItems: (plan?.items ?? [])
         .filter((i) => typeof i.itemRef === "string" && typeof i.kind === "string")
-        .map((i) => ({ itemRef: i.itemRef as string, kind: i.kind as string, dependsOn: Array.isArray(i.dependsOn) ? i.dependsOn.filter((d): d is string => typeof d === "string") : [] })),
+        .map((i) => {
+          const proposed = (i as { proposed?: { domain?: unknown; image?: unknown } }).proposed;
+          return {
+            itemRef: i.itemRef as string,
+            kind: i.kind as string,
+            dependsOn: Array.isArray(i.dependsOn) ? i.dependsOn.filter((d): d is string => typeof d === "string") : [],
+            ...(proposed && "domain" in proposed ? { domain: typeof proposed.domain === "string" && proposed.domain ? proposed.domain : null } : {}),
+            ...(proposed && "image" in proposed ? { image: typeof proposed.image === "string" && proposed.image ? proposed.image : null } : {}),
+          };
+        }),
     };
   }
 
@@ -284,6 +305,29 @@ export class ImportPortService implements ImportStepsPort {
 
   stopApp(userId: string, appId: string): Promise<void> {
     return this.apps.stop(userId, appId);
+  }
+
+  async autoDeployState(userId: string, appId: string): Promise<boolean | null> {
+    void userId;
+    const a = await this.prisma.application.findUnique({ where: { id: appId }, select: { autoDeploy: true } });
+    return a ? a.autoDeploy : null;
+  }
+
+  setAutoDeploy(userId: string, appId: string, enabled: boolean): Promise<void> {
+    return this.apps.setAutoDeploy(userId, appId, enabled);
+  }
+
+  prebuild(userId: string, appId: string): Promise<{ built: boolean }> {
+    return this.apps.prebuild(userId, appId).then((r) => ({ built: r.built }));
+  }
+
+  async pinImage(userId: string, appId: string, digest: string): Promise<{ pinned: boolean }> {
+    const a = await this.prisma.application.findUnique({ where: { id: appId }, select: { source: true, image: true } });
+    if (!a || a.source !== "IMAGE" || !a.image) return { pinned: false };
+    const ref = pinnedImageRef(a.image, digest);
+    if (!ref || ref === a.image) return { pinned: false };
+    await this.apps.setSource(userId, appId, { image: ref });
+    return { pinned: true };
   }
 
   async deployments(appId: string, keyPrefix: string): Promise<DeploymentRef[]> {
