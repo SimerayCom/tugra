@@ -28,9 +28,36 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  plan:
+    name: Pick lab items
+    runs-on: ubuntu-latest
+    outputs:
+      tar: ${{ steps.pick.outputs.tar }}
+      core: ${{ steps.pick.outputs.core }}
+      restart: ${{ steps.pick.outputs.restart }}
+      postgres: ${{ steps.pick.outputs.postgres }}
+      memory: ${{ steps.pick.outputs.memory }}
+      seats: ${{ steps.pick.outputs.seats }}
+      throttle: ${{ steps.pick.outputs.throttle }}
+    steps:
+      - id: pick
+        env:
+          EVENT: ${{ github.event_name }}
+          ITEMS: ${{ inputs.items }}
+        run: |
+          list=",$(printf '%s' "${ITEMS:-all}" | tr -d ' '),"
+          for i in tar core restart postgres memory seats throttle; do
+            if [ "$EVENT" != "workflow_dispatch" ] || [ "$list" = ",all," ] || case "$list" in *",$i,"*) true;; *) false;; esac; then
+              echo "$i=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "$i=false" >> "$GITHUB_OUTPUT"
+            fi
+          done
+
   tar:
     name: L4 tar fidelity (busybox apply)
-    if: github.event_name != 'workflow_dispatch' || inputs.items == 'all' || contains(format(',{0},', replace(inputs.items, ' ', '')), ',tar,')
+    needs: plan
+    if: needs.plan.outputs.tar == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -58,7 +85,8 @@ jobs:
 
   core:
     name: L0 dry-run, L1a stream, L1b interrupt and resume
-    if: github.event_name != 'workflow_dispatch' || inputs.items == 'all' || contains(format(',{0},', replace(inputs.items, ' ', '')), ',core,')
+    needs: plan
+    if: needs.plan.outputs.core == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -103,7 +131,8 @@ jobs:
 
   restart:
     name: L2 hub restart mid-part and mid-apply
-    if: github.event_name != 'workflow_dispatch' || inputs.items == 'all' || contains(format(',{0},', replace(inputs.items, ' ', '')), ',restart,')
+    needs: plan
+    if: needs.plan.outputs.restart == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -144,7 +173,8 @@ jobs:
 
   postgres:
     name: L6 PostgreSQL ${{ matrix.image }}
-    if: github.event_name != 'workflow_dispatch' || inputs.items == 'all' || contains(format(',{0},', replace(inputs.items, ' ', '')), ',postgres,')
+    needs: plan
+    if: needs.plan.outputs.postgres == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -190,7 +220,8 @@ jobs:
 
   memory:
     name: L7 migrator memory under the 768 MiB cap
-    if: github.event_name != 'workflow_dispatch' || inputs.items == 'all' || contains(format(',{0},', replace(inputs.items, ' ', '')), ',memory,')
+    needs: plan
+    if: needs.plan.outputs.memory == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -231,7 +262,8 @@ jobs:
 
   seats:
     name: L8 relay seats vs a concurrent app move
-    if: github.event_name != 'workflow_dispatch' || inputs.items == 'all' || contains(format(',{0},', replace(inputs.items, ' ', '')), ',seats,')
+    needs: plan
+    if: needs.plan.outputs.seats == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -272,7 +304,8 @@ jobs:
 
   throttle:
     name: L3 throttled link (mechanics)
-    if: github.event_name != 'workflow_dispatch' || inputs.items == 'all' || contains(format(',{0},', replace(inputs.items, ' ', '')), ',throttle,')
+    needs: plan
+    if: needs.plan.outputs.throttle == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:

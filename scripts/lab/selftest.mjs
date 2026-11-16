@@ -28,16 +28,23 @@ test("workflow: items=restart does not also schedule the tar job", () => {
   const yml = readFileSync(join(ROOT, ".github/workflows/vx-lab.yml"), "utf8");
   const jobs = [...yml.matchAll(/^  ([a-z]+):\n(?:    [^\n]*\n)*?    if: ([^\n]+)\n/gm)].map((m) => ({ key: m[1], cond: m[2] }));
   assert.deepEqual(jobs.map((j) => j.key), ["tar", "core", "restart", "postgres", "memory", "seats", "throttle"]);
-  const selected = (items) =>
-    jobs.filter((j) => {
-      const m = /^github\.event_name != 'workflow_dispatch' \|\| inputs\.items == 'all' \|\| contains\(format\(',\{0\},', replace\(inputs\.items, ' ', ''\)\), ',([a-z]+),'\)$/.exec(j.cond);
-      assert.ok(m, `job ${j.key}: the condition must match whole comma-list entries (got: ${j.cond})`);
-      assert.equal(m[1], j.key);
-      return items === "all" || `,${items.replace(/ /g, "")},`.includes(`,${m[1]},`);
-    }).map((j) => j.key);
+  for (const j of jobs) assert.equal(j.cond, `needs.plan.outputs.${j.key} == 'true'`, `job ${j.key} must be gated by the plan job`);
+  // run the plan job's own script, exactly as written in the workflow
+  const block = /      - id: pick\n[\s\S]*?        run: \|\n((?:          [^\n]*\n)+)/.exec(yml);
+  assert.ok(block, "plan job pick step not found");
+  const script = block[1].replace(/^          /gm, "");
+  const selected = (items, event = "workflow_dispatch") => {
+    const out = join(tmp(), "out");
+    writeFileSync(out, "");
+    const r = bash(script, { ITEMS: items, EVENT: event, GITHUB_OUTPUT: out });
+    assert.equal(r.status, 0, r.stderr);
+    const flags = Object.fromEntries(readFileSync(out, "utf8").trim().split("\n").map((l) => l.split("=")));
+    return jobs.map((j) => j.key).filter((k) => flags[k] === "true");
+  };
   assert.deepEqual(selected("restart"), ["restart"]);
   assert.deepEqual(selected("core, tar"), ["tar", "core"]);
   assert.deepEqual(selected("all").length, 7);
+  assert.deepEqual(selected("", "schedule").length, 7);
 });
 
 // ---- the destructive guard ---------------------------------------------------------------------------------------------------
