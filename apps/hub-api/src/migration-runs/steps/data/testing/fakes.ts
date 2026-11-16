@@ -269,6 +269,17 @@ export class FakeDataPort implements DataPort {
   /** Databases the run put on the streamed dump lane (the fake flips the snapshot's plane like the real port's next read would). */
   streamed: string[] = [];
   streamRefused = false;
+  /** Containers the run bound to a new database item; the fake adds a done database to the snapshot like the real port's next read would. */
+  carried: Array<{ itemRef: string; engine: string; serverId: string }> = [];
+  carryFails = false;
+  async carryUnlistedDb(_run: unknown, spec: { host: string; container: string; engine: string; name: string }, serverId: string): Promise<{ itemRef: string; created: boolean }> {
+    if (this.carryFails) throw new Error("create refused");
+    const itemRef = `database:${spec.host}:${spec.container}`;
+    if (this.snap.databases.some((d) => d.itemRef === itemRef)) return { itemRef, created: false };
+    this.carried.push({ itemRef, engine: spec.engine, serverId });
+    this.snap.databases.push({ itemRef, dbId: `db-${spec.container}`, name: spec.name, engine: spec.engine, plane: "logical", unsupportedReason: null, task: "none", taskFailure: null, finishedAt: null });
+    return { itemRef, created: true };
+  }
   async enableStream(_run: unknown, dbItemRef: string, on: boolean): Promise<boolean> {
     if (on && this.streamRefused) return false;
     if (on) this.streamed.push(dbItemRef);

@@ -19,7 +19,8 @@ import { mapSourceEnvFlags } from "./env-auto-flags";
 import { mapBuildPack } from "./buildpack-map";
 import { IMPORT_REASON_CODES, type ImportReasonCode } from "@tugra/shared";
 import { why, type Reasoned, type Unmapped } from "./reason";
-import { foreignAppToCreateInput, foreignAppToIngressPlan, foreignAppToPostCreateConfig, foreignAppToVolumes } from "./apply-map";
+import { foreignAppToCreateInput, foreignAppToIngressPlan, foreignAppToPostCreateConfig, foreignAppToVolumes, foreignDbToCreateInput } from "./apply-map";
+import { MIGRATOR_ENGINES } from "./migrator-recipe";
 import { seedTasks, deriveOpStatus, isAcked, isRunnable, skipReason, hasUnackedBlocker, type TaskSeed, type TaskStatus } from "./import-executor.logic";
 import { MigrationTokenService } from "./migration-token.service";
 import { assertSafeBase, buildMigrationCommand, buildMigrationCommands, buildMigrationCommandsTemplate, buildMigrationCommandTemplate } from "./migration-command";
@@ -1196,6 +1197,53 @@ export class ImportExecutorService {
       });
     } catch (e) {
       await this.prisma.bulkTask.update({ where: { id: taskId }, data: { status: "FAILED", output: msg(e), finishedAt: new Date() } });
+    }
+  }
+
+  /**
+   * R2: bind a database CONTAINER the source API does not list to a NEW database plan item of this op. A Tugra database is created on
+   * `targetServerId` (fresh credentials; the source password is never read by the hub: the migrator reads it from the container on the
+   * source host when it dumps) and the op gets a finished `database` task for `database:<host>:<container>`, shaped like the task of
+   * any listed database, so the data lane, the verify step and the env remap (which maps the container name to the new host) treat it
+   * the same. The environment is the one the op's own resources went to. Idempotent per item: a finished task answers `created:false`;
+   * a task a failed attempt left without a database is reused. The op must be the actor's and not rolled back or cancelled.
+   */
+  async carryUnlistedDb(userId: string, opId: string, db: ForeignDb, targetServerId: string): Promise<{ itemRef: string; created: boolean }> {
+    const op = await this.loadOwnedOp(userId, opId, { reapData: false });
+    const meta = typeof op.meta === "object" && op.meta ? (op.meta as { rolledBackAt?: string; sourceKind?: string }) : {};
+    if (meta.sourceKind !== "coolify") throw new ConflictException("only a Coolify import can carry a database the source does not list");
+    if (meta.rolledBackAt || op.cancelRequestedAt) throw new ConflictException("the import operation was cancelled or rolled back");
+    if (!(MIGRATOR_ENGINES as readonly string[]).includes(db.engine)) throw new BadRequestException(`${db.engine} cannot be carried: the migrator cannot dump it`);
+    const itemRef = ns("database", db.serverRef, db.sourceRef);
+    const existing = op.tasks.find((t) => t.itemRef === itemRef);
+    if (existing?.status === "DONE" && existing.resourceId) return { itemRef, created: false };
+    if (existing && (existing.resourceId || existing.status === "RUNNING")) throw new ConflictException("the database of this item is being created");
+    const server = await this.prisma.server.findUnique({ where: { id: targetServerId }, select: { teamId: true } });
+    if (!server) throw new NotFoundException("target server not found");
+    await this.access.requirePermission(userId, server.teamId, "databases");
+    // the environment the op's own resources went to (a created database or app of the op), else the team default (createCore)
+    const sibling = op.tasks.find((t) => t.status === "DONE" && !!t.resourceId && (t.resourceType === "database" || t.resourceType === "application"));
+    const env = sibling?.resourceId
+      ? sibling.resourceType === "database"
+        ? await this.prisma.database.findUnique({ where: { id: sibling.resourceId }, select: { environmentId: true } })
+        : await this.prisma.application.findUnique({ where: { id: sibling.resourceId }, select: { environmentId: true } })
+      : null;
+    const task = existing
+      ? await this.prisma.bulkTask.update({ where: { id: existing.id }, data: { status: "RUNNING", output: null, startedAt: new Date(), finishedAt: null } })
+      : await this.prisma.bulkTask.create({
+          data: { opId, serverId: targetServerId, kind: "database", itemRef, status: "RUNNING", dependsOn: [], result: { name: db.name, carried: true }, startedAt: new Date() },
+        });
+    try {
+      const created = await this.dbs.create(userId, foreignDbToCreateInput(db, { serverId: targetServerId, environmentId: env?.environmentId ?? undefined }));
+      await this.prisma.bulkTask.update({
+        where: { id: task.id },
+        data: { status: "DONE", resourceType: "database", resourceId: created.id, result: { name: created.name, databaseId: created.id, carried: true, credentialsCarried: false }, finishedAt: new Date() },
+      });
+      await this.audit.log({ actor: userId, action: "import.unlisted_db_carried", target: opId, meta: { itemRef, engine: db.engine, databaseId: created.id } });
+      return { itemRef, created: true };
+    } catch (e) {
+      await this.prisma.bulkTask.update({ where: { id: task.id }, data: { status: "FAILED", output: msg(e), finishedAt: new Date() } });
+      throw e;
     }
   }
 

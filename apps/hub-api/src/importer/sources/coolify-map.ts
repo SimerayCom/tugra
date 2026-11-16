@@ -537,6 +537,25 @@ export function tlsExpectation(db: Pick<CoolifyDatabase, "database_type" | "imag
   return undefined;
 }
 
+/**
+ * Pure: the neutral {@link ForeignDb} of a database CONTAINER the source API does not list (R2), built from what the host inventory
+ * read of it. `sourceRef` is the container name, which is what the migrator matches byte-exactly on the source host and what the
+ * apps' env points at (a Coolify container is named by its uuid). The credentials carry only the NON-secret identity: the password
+ * is never in the fleet, the plan or the hub (the migrator reads it from the container's own environment when it dumps).
+ */
+export function foreignDbOfContainer(c: { host: string; container: string; engine: TugraDbEngine; version: string; image: string; name: string; user?: string | null; database?: string | null }): ForeignDb {
+  return {
+    sourceRef: c.container,
+    name: c.name,
+    engine: c.engine,
+    version: c.version,
+    image: c.image,
+    credentials: { username: c.user ?? undefined, database: c.database ?? undefined },
+    hostInternal: c.container,
+    serverRef: c.host === "_" ? undefined : c.host,
+  };
+}
+
 export function mapService(svc: CoolifyService, ctx: { serverRef?: string }): ForeignService {
   // Members: the compose service key is the Coolify member name. Apps carry their fqdn rows (parseFqdns dedupes the
   // http/https pair and keeps the port); databases of a service are compose containers and carry none. Sorted by name

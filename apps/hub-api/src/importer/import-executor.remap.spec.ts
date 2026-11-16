@@ -204,6 +204,24 @@ describe("ImportExecutorService.remapEnvPlan", () => {
     expect(JSON.stringify(plan)).not.toContain("pw@");
   });
 
+  it("R2: an app's env that points at a CARRIED (previously unlisted) database container is rewritten to its new Tugra host, not reported", async () => {
+    const GHOST = "qrstuvwxyz0123456789abcd";
+    const { svc } = harness({
+      op: {
+        tasks: [
+          { status: "DONE", resourceType: "database", resourceId: "db-1", itemRef: `database:srv-a:${GHOST}`, result: { carried: true, credentialsCarried: false } },
+          { status: "DONE", resourceType: "application", resourceId: "app-1", itemRef: `app:srv-a:${APPUUID}`, result: { name: "web" } },
+        ],
+      },
+      apps: [{ id: "app-1", itemRef: `app:srv-a:${APPUUID}`, name: "web", env: { DATABASE_URL: `postgres://appuser:S3cr3t@${GHOST}:5432/appdb`, REDIS_HOST: "feedfacefeedfacefeedface" } }],
+    });
+    const plan = await svc.remapEnvPlan("user-1", "op-1");
+    expect(plan.apps[0].changes).toEqual([expect.objectContaining({ key: "DATABASE_URL", rule: "url", targetItemRef: `database:srv-a:${GHOST}`, newMasked: "postgres://tugra:***@tugra_db_1:5432/appdb" })]);
+    // the container the plan still does not know is the one reported, with the stable code
+    expect(plan.apps[0].needsManual).toEqual([expect.objectContaining({ key: "REDIS_HOST", reason: "unresolved-uuid-host" })]);
+    expect(JSON.stringify(plan)).not.toContain("S3cr3t");
+  });
+
   it("a DB that cannot be loaded is SKIPPED (preview does not throw) and its apps show target-unavailable", async () => {
     const { svc } = harness({ dbGetError: true });
     const plan = await svc.remapEnvPlan("user-1", "op-1");

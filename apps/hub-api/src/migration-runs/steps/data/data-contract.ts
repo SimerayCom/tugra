@@ -8,6 +8,7 @@
  */
 import type { EvidenceKind, RunSnapshot, StepKey } from "../../core/run-contract";
 import type { GateResult } from "../../core/dto";
+import type { CarrySpec } from "./inventory/cross-check";
 
 // ───────────────────────────── DI tokens ─────────────────────────────
 
@@ -152,6 +153,13 @@ export interface DataPort {
    * restored by the artifact route or copied as files, or the lane is unavailable. The lane switch is the importer's; this only asks.
    */
   enableStream(run: RunSnapshot, dbItemRef: string, on: boolean): Promise<boolean>;
+  /**
+   * R2: bind a database container the source API does not list to a NEW database plan item of the run's import op: a Tugra database
+   * is created on `targetServerId` and the op gets a finished database task for `database:<host>:<container>`, so the normal
+   * database lane (DATA_SEED / DATA_FINAL / VERIFY) and the env remap treat it like any other database. Idempotent per item.
+   * Throws when the database cannot be created (the step reports it). The spec carries no secret.
+   */
+  carryUnlistedDb(run: RunSnapshot, spec: CarrySpec, targetServerId: string): Promise<{ itemRef: string; created: boolean }>;
 }
 
 export class DataPortError extends Error {
@@ -367,6 +375,7 @@ export const DATA_CODES = {
   seedDbOverCapRefused: "data-seed.db-over-cap-refused",
   seedDbPhysicalRefused: "data-seed.db-physical-refused",
   seedDbStreamUnavailable: "data-seed.db-stream-unavailable",
+  seedCarryFailed: "data-seed.carry-failed",
   seedObjectGone: "data-seed.object-migration-gone",
   // freeze
   freezeScheduled: "freeze.scheduled",

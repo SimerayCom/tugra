@@ -1,9 +1,10 @@
+import type { CreateDatabaseInput } from "../databases/dto";
 import type { CreateAppInput, SetBuildInput, SetContainerCommandInput, SetCustomLabelsInput, SetLimitsInput } from "../applications/dto";
 import { INLINE_DOCKERFILE_MAX, SetBuildSchema, SetContainerCommandSchema, SetCustomLabelsSchema, SetDomainOptionsSchema, SetExtraDomainsSchema, SetLimitsSchema, SetNetworkAliasesSchema, SetRedirectsSchema, SetVolumesSchema, SetWatchPathsSchema, inlineDockerfileProblem } from "../applications/dto";
 import type { AppVolume } from "../deploy/deploy-script";
 import { CUSTOM_LABEL_KEY_RE, CUSTOM_LABEL_LIMITS, reservedLabelNamespace } from "../deploy/label-namespaces";
 import type { ImportReasonCode } from "@tugra/shared";
-import type { ForeignApp, ForeignDomain } from "./foreign-fleet";
+import type { ForeignApp, ForeignDb, ForeignDomain } from "./foreign-fleet";
 import type { SourceAppExtras } from "./import-source";
 import { REASON_EN, why, type Reasoned, type Unmapped } from "./reason";
 import { mapBuildPack } from "./buildpack-map";
@@ -105,6 +106,21 @@ export function foreignAppToCreateInput(
   const mapped = mappedFlags ?? mapSourceEnvFlags(env, flags, build.source);
   if (Object.keys(mapped.flags).length) input.envFlags = mapped.flags;
   return input;
+}
+
+/**
+ * Pure: the create input of the NEW Tugra database a carried (unlisted) database container becomes (R2). The engine and version are
+ * those the inventory proved; the image is Tugra's standard image of that engine and version (never the source's own), and the
+ * credentials are fresh ones Tugra mints (the source password is never read by the hub: the migrator uses it on the source host).
+ */
+export function foreignDbToCreateInput(db: ForeignDb, opts: { serverId: string; environmentId?: string }): CreateDatabaseInput {
+  return {
+    name: db.name,
+    serverId: opts.serverId,
+    engine: db.engine as CreateDatabaseInput["engine"],
+    ...(db.version ? { version: db.version } : {}),
+    ...(opts.environmentId ? { environmentId: opts.environmentId } : {}),
+  };
 }
 
 /** The reserved label namespace -> its reason code (the per-namespace "why" text lives in the translated string). */
