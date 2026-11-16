@@ -13,7 +13,7 @@
  * Abort cancels the op (and revokes its migration token); the optional cleanup is the importer's rollback, widened by
  * `RollbackOptions` for the run's own deployments and (with typed names) data-bearing resources.
  */
-import { Inject, Injectable, OnModuleInit } from "@nestjs/common";
+import { HttpException, Inject, Injectable, OnModuleInit } from "@nestjs/common";
 import type { DryRunItem, GateCheck, GateResult } from "../../core/dto";
 import {
   STEP_HANDLERS,
@@ -186,8 +186,9 @@ export class ImportStep implements StepHandler<ImportObs>, OnModuleInit {
       opId = (await this.port.apply(ctx.actor.userId, applyInputOf(run, run.sessionId))).opId;
     } catch (e) {
       const f = failureOf(e, "import.apply");
-      // a definitive refusal created no op: forget the marker so a retry does not go looking for one
-      if (!f.retryable) await ctx.recordCompensation({ applyStartedAt: null });
+      // an HTTP answer is a definitive refusal that created no op: forget the marker so a retry never goes looking for one
+      // (and never adopts somebody else's import). Any other error may have left an op behind: keep the marker.
+      if (e instanceof HttpException) await ctx.recordCompensation({ applyStartedAt: null });
       throw f;
     }
     await ctx.patchRun({ opId });

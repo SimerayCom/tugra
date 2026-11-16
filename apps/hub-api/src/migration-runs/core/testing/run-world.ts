@@ -461,6 +461,8 @@ export class ScriptedImportPort implements ImportStepsPort {
   deploys: Array<DeploymentRef & { appId: string }> = [];
   /** itemRefs whose task FAILs when the fan-out reaches them (consumed once, so a re-apply succeeds) */
   failItems = new Set<string>();
+  /** itemRef -> git link status reported on the task (e.g. `needs_source`) */
+  gitStatus = new Map<string, string>();
   failDeployApps = new Set<string>();
   failApplyWith: HttpException | null = null;
   failStartDb = new Set<string>();
@@ -501,7 +503,7 @@ export class ScriptedImportPort implements ImportStepsPort {
     this.reads.push("previewServices");
     return this.services;
   }
-  async target(): Promise<TargetFacts> {
+  async target(_u?: string, _i?: { serverId: string; dnsCredentialId?: string; hosts: readonly string[] }): Promise<TargetFacts> {
     this.reads.push("target");
     return this.target_;
   }
@@ -545,6 +547,7 @@ export class ScriptedImportPort implements ImportStepsPort {
         } else {
           t.status = "DONE";
           t.resourceType = t.kind === "database" ? "database" : "application";
+          t.gitStatus = this.gitStatus.get(t.itemRef ?? "") ?? null;
           t.resourceId = `${t.kind}-${++this.n}`;
           const map = t.kind === "database" ? this.dbs : this.apps;
           map.set(t.resourceId, { id: t.resourceId, name: t.name ?? "", status: "NEW" });

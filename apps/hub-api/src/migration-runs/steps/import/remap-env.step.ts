@@ -118,9 +118,10 @@ export class RemapEnvStep implements StepHandler<RemapObs>, OnModuleInit {
   }
 
   preGate(ctx: StepContext, obs: RemapObs): GateResult {
-    // preconditions only: "the remap is not applied yet" is the post-gate's business, and an unacknowledged manual-key
-    // check is shown as a warning because the approval gate (not this one) parks it
-    return makeGate(this.checks(ctx, obs, true).filter((c) => c.id !== "remap-env.plan"));
+    // preconditions only: whether the remap is applied (or partial) is the post-gate's business, and an unacknowledged
+    // manual-key check is shown as a warning because the approval gate (not this one) parks it
+    const manual = this.checks(ctx, obs, true).filter((c) => c.id === MANUAL_ACK);
+    return makeGate([{ id: "remap-env.ready", status: "pass", code: "remap-env.ready", evidence: "hub-verified" }, ...manual]);
   }
 
   postGate(ctx: StepContext, obs: RemapObs): GateResult {
