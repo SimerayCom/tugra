@@ -266,6 +266,20 @@ export function targetChecks(run: RunSnapshot, obs: PreflightObs, items: ImportP
   return out;
 }
 
+/**
+ * What of an open ackable check an approval is bound to. A live reading (the free disk of a host that is still writing) is shown
+ * to the operator but is not what they accept: binding it would void a given approval whenever the number moves by a rounding step
+ * between the render, the click and the next tick. The shortfall itself (the check, its status, the server and the threshold) is
+ * what is bound.
+ */
+export function bindingParams(c: GateCheck): unknown {
+  if (c.code === "preflight.disk-low" && c.params) {
+    const { freeGib: _free, totalGib: _total, ...stable } = c.params as Record<string, unknown>;
+    return stable;
+  }
+  return c.params ?? null;
+}
+
 /** The pure check list (no I/O): shared by the gate, the approval binding and the dry-run projection. */
 export function preflightChecks(run: RunSnapshot, obs: PreflightObs): GateCheck[] {
   const c: GateCheck[] = [];
@@ -568,7 +582,7 @@ export class PreflightStep implements StepHandler<PreflightObs>, OnModuleInit {
     if (!open.length) return null;
     const ids = open.map((c) => c.id).slice(0, 200);
     return {
-      inputHash: hashOf(open.map((c) => [c.id, c.status, c.params ?? null])),
+      inputHash: hashOf(open.map((c) => [c.id, c.status, bindingParams(c)])),
       ponr: false,
       confirm: "none",
       ttlSec: null,

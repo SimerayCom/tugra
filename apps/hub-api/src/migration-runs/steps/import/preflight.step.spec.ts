@@ -1,7 +1,7 @@
 import { Logger } from "@nestjs/common";
 import { ACTOR, RunWorld, defaultPlan, H32 } from "../../core/testing/run-world";
 import type { ImportPlanResponse } from "../../../importer/importer.service";
-import { preflightChecks, type PreflightObs } from "./preflight.step";
+import { PreflightStep, preflightChecks, type PreflightObs } from "./preflight.step";
 import { OwnerInputsSchema } from "../../core/dto";
 import type { RunSnapshot } from "../../core/run-contract";
 import type { ResolvedMapping } from "../../../importer/import-mapping";
@@ -546,6 +546,21 @@ describe("PREFLIGHT target readiness for every target server (R7)", () => {
     expect(byId(stale, "preflight.disk.srv1")).toMatchObject({ status: "warn", code: "preflight.disk-unknown" });
     // a port that cannot say gives no check at all
     expect(byId(preflightChecks(baseRun(), baseObs({ target: facts() })), "preflight.disk.srv1")).toBeUndefined();
+  });
+
+  it("the approval binding of a low-disk target does not move with the live reading", async () => {
+    const w = new RunWorld();
+    const step = new PreflightStep(w.registry, w.port);
+    const bind = async (freeGib: number) => step.approvalBinding({ run: baseRun() } as never, baseObs({ target: facts({ disk: reading(freeGib) }) }));
+    const a = await bind(4);
+    const b = await bind(3.2);
+    expect(a).not.toBeNull();
+    // both are failing readings: the number moved, what the operator accepts did not
+    expect(preflightChecks(baseRun(), baseObs({ target: facts({ disk: reading(3.2) }) })).find((c) => c.id === "preflight.disk.srv1")!.params).toMatchObject({ freeGib: 3.2 });
+    expect(b!.inputHash).toBe(a!.inputHash);
+    // a different shortfall (a second target's disk) is a different approval
+    const two = await step.approvalBinding({ run: baseRun({ serverMap: { h1: "srv1", h2: "srv2" } }) } as never, baseObs({ plan: defaultPlan(), target: facts({ disk: reading(4) }), extraTargets: [{ serverId: "srv2", facts: facts({ serverName: "box-2", disk: reading(2) }) }] }));
+    expect(two!.inputHash).not.toBe(a!.inputHash);
   });
 
   it("every server of the serverMap is checked, one check per target, and an unreadable one is unknown", () => {
