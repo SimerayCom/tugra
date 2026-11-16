@@ -77,9 +77,6 @@ export const STREAM_DUMP_ENGINES = ["POSTGRES", "MARIADB", "MYSQL"] as const;
 export type StreamDumpEngine = (typeof STREAM_DUMP_ENGINES)[number];
 export const isStreamDumpEngine = (e: string): e is StreamDumpEngine => (STREAM_DUMP_ENGINES as readonly string[]).includes(e);
 
-/** Hub-side guess of how much the staged parts weigh against the raw dump (gzip level 1 of dump text is far better than this). Conservative. */
-export const DUMP_STAGED_RATIO = 0.6;
-
 /** The volume name of a streamed dump row: `volume:<serverRef>:<sourceRef>:dump`. */
 export const DUMP_VOLUME_NAME = "dump";
 /** `volumeIngest` of a dump row in `GET targets` (an older migrator ignores a value it does not know). */

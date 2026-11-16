@@ -21,7 +21,7 @@ import {
   parseMigrationStateProbe,
   type MigrationStateProbe,
 } from "./vx-scripts";
-import { dbGates, dumpDestGate, firstGate } from "./vx-dest-gate";
+import { DUMP_DEST_PG_LAYOUT_TEXT, dbGates, dumpDestGate, dumpDestLayout, firstGate } from "./vx-dest-gate";
 import { VX_RESTORE_BY_PREFIX, dumpRestoreTimeoutMs } from "./vx-dump";
 import type { VxCtx } from "./vx.service";
 import { pgMajorOf } from "./vx-targets";
@@ -282,14 +282,25 @@ export class VxApplyService {
       return await this.fail(ctx, t, gate.reason === "gone" ? "destination no longer exists" : "the database was started or holds data not restored by this migration: refusing to restore over it", null, steps);
     }
 
+    const layout = await dumpDestLayout(this.prisma, ctx.resourceId);
+    if (!layout.ok) {
+      steps[steps.length - 1].status = "FAILED";
+      return await this.fail(ctx, t, DUMP_DEST_PG_LAYOUT_TEXT, null, steps);
+    }
+
     // 1. the database must be running to take a restore
     const db = await this.prisma.database.findUnique({ where: { id: ctx.resourceId }, select: { id: true, engine: true, image: true, port: true, hostPort: true, credentials: true, status: true } });
     if (!db) return await this.fail(ctx, t, "destination no longer exists", null, steps);
+    let rec: { id: string } | null = null;
     if (db.status !== "RUNNING") {
       steps.push({ name: "db-provisioned", status: "RUNNING" });
       await this.task(t, ctx, { steps });
+      // The `vx:` Restore row is written BEFORE the database is started: it is what marks the started database as this lane's own, so
+      // a start that fails (status FAILED) or outlasts its wait (PROVISIONING, RUNNING later) can still be retried by the next begin.
+      rec = await this.prisma.restore.create({ data: { databaseId: ctx.resourceId, kind: RestoreKind.IMPORT_URL, status: RestoreStatus.RUNNING, createdBy: `${VX_RESTORE_BY_PREFIX}${t.id}` } });
       const started = await this.provisionAndWait(ctx, t);
       steps[steps.length - 1].status = started ? "DONE" : "FAILED";
+      if (!started) await this.prisma.restore.update({ where: { id: rec.id }, data: { status: RestoreStatus.FAILED, errorTail: "the destination database did not start", completedAt: new Date() } }).catch(() => undefined);
       if (!started) return await this.fail(ctx, t, "the destination database did not start: fix the cause and re-run the migrator (the staged parts are kept)", null, steps);
     }
 
@@ -302,13 +313,15 @@ export class VxApplyService {
       const spec: DbSpec = { id: db.id, engine: db.engine as DbEngine, image: db.image, port: db.port, hostPort: db.hostPort, credentials: creds };
       script = buildDumpApplyScript({ transferId: t.id, rawBytes, db: spec });
     } catch (e) {
+      if (rec) await this.prisma.restore.update({ where: { id: rec.id }, data: { status: RestoreStatus.FAILED, errorTail: "could not build the restore", completedAt: new Date() } }).catch(() => undefined);
       return await this.fail(ctx, t, e instanceof Error && !/credential|decrypt/i.test(e.message) ? e.message : "could not build the restore", null, steps);
     }
 
     // 3. run it, recording the attempt
     steps.push({ name: "restoring", status: "RUNNING" });
     await this.task(t, ctx, { steps });
-    const rec = await this.prisma.restore.create({ data: { databaseId: ctx.resourceId, kind: RestoreKind.IMPORT_URL, status: RestoreStatus.RUNNING, createdBy: `${VX_RESTORE_BY_PREFIX}${t.id}` } });
+    rec ??= await this.prisma.restore.create({ data: { databaseId: ctx.resourceId, kind: RestoreKind.IMPORT_URL, status: RestoreStatus.RUNNING, createdBy: `${VX_RESTORE_BY_PREFIX}${t.id}` } });
+    const recId = rec.id;
     let exitCode: number | null = null;
     let output = "";
     try {
@@ -317,17 +330,17 @@ export class VxApplyService {
       output = r.output;
     } catch (e) {
       steps[steps.length - 1].status = "FAILED";
-      await this.prisma.restore.update({ where: { id: rec.id }, data: { status: RestoreStatus.FAILED, errorTail: "the target could not be reached while restoring", completedAt: new Date() } }).catch(() => undefined);
+      await this.prisma.restore.update({ where: { id: recId }, data: { status: RestoreStatus.FAILED, errorTail: "the target could not be reached while restoring", completedAt: new Date() } }).catch(() => undefined);
       return await this.fail(ctx, t, `the target could not be reached while restoring (${e instanceof Error ? e.message : "error"}); the outcome is unknown, re-run the migrator to restore again`, null, steps);
     }
     const ok = exitCode === 0 && parseMigrationApplyOk(output) === 0;
     if (!ok) {
       steps[steps.length - 1].status = "FAILED";
       const tail = scrubRestoreOutput(scrubRunOutput(output, [password]));
-      await this.prisma.restore.update({ where: { id: rec.id }, data: { status: RestoreStatus.FAILED, exitCode, errorTail: tail, completedAt: new Date() } }).catch(() => undefined);
+      await this.prisma.restore.update({ where: { id: recId }, data: { status: RestoreStatus.FAILED, exitCode, errorTail: tail, completedAt: new Date() } }).catch(() => undefined);
       return await this.fail(ctx, t, explainDumpApplyExit(exitCode === 0 ? null : exitCode), null, steps);
     }
-    await this.prisma.restore.update({ where: { id: rec.id }, data: { status: RestoreStatus.SUCCESS, exitCode: 0, completedAt: new Date() } });
+    await this.prisma.restore.update({ where: { id: recId }, data: { status: RestoreStatus.SUCCESS, exitCode: 0, completedAt: new Date() } });
     steps[steps.length - 1].status = "DONE";
     steps.push({ name: "applied", status: "DONE" });
     await this.task(t, ctx, { steps });

@@ -3,6 +3,7 @@ import { VxPartRegistry } from "./vx-part-registry";
 import { memTasks, memTransfers } from "./testing/vx-memdb";
 import { DB_DUMP_REF, DB_ID, DB_REF, GiB, OP, SERVER_ID, TEAM_ID } from "./testing/vx-fixtures";
 import { dumpRestoreTimeoutMs } from "./vx-dump";
+import { DUMP_DEST_PG_LAYOUT_TEXT, dumpDestGate } from "./vx-dest-gate";
 import { MIGRATION_EXIT } from "./vx-scripts";
 import type { VxCtx } from "./vx.service";
 
@@ -20,7 +21,7 @@ const dumpCtx = (): VxCtx => ({
   server: { id: SERVER_ID, teamId: TEAM_ID, capabilities: ["backup"] },
 });
 
-function make(o: { dbStatus?: string; backups?: number; foreignRestores?: number; ourRestores?: number; script?: (s: string) => Promise<{ exitCode: number; output: string }>; provisionRejects?: boolean; decryptFails?: boolean } = {}) {
+function make(o: { dbStatus?: string; backups?: number; foreignRestores?: number; ourRestores?: number; script?: (s: string) => Promise<{ exitCode: number; output: string }>; provisionRejects?: boolean; decryptFails?: boolean; version?: string; image?: string } = {}) {
   const transfers = memTransfers();
   const tasks = memTasks();
   const sent: Array<{ script: string; timeout: number }> = [];
@@ -39,10 +40,10 @@ function make(o: { dbStatus?: string; backups?: number; foreignRestores?: number
     bulkOperation: { findUnique: jest.fn().mockResolvedValue({ meta: {}, actorId: "user-1" }) },
     deployment: { count: jest.fn().mockResolvedValue(0) },
     database: {
-      findUnique: jest.fn(async () => ({ id: DB_ID, status: dbStatus, engine: "POSTGRES", version: "16", image: "postgres:16", port: 5432, hostPort: null, credentials: "enc" })),
+      findUnique: jest.fn(async () => ({ id: DB_ID, status: dbStatus, engine: "POSTGRES", version: o.version ?? "16", image: o.image ?? "postgres:16", port: 5432, hostPort: null, credentials: "enc" })),
     },
     restore: {
-      count: jest.fn(async (a: { where: { NOT?: unknown; createdBy?: unknown } }) => (a.where.NOT ? (o.foreignRestores ?? 0) : a.where.createdBy ? (o.ourRestores ?? 0) : 0)),
+      count: jest.fn(async (a: { where: { NOT?: unknown; createdBy?: unknown } }) => (a.where.NOT ? (o.foreignRestores ?? 0) : a.where.createdBy ? (o.ourRestores ?? restores.filter((r) => String(r.createdBy).startsWith("vx:")).length) : 0)),
       create: jest.fn(async (a: { data: Record<string, unknown> }) => {
         const row = { id: `rs${restores.length + 1}`, ...a.data };
         restores.push(row);
@@ -73,7 +74,7 @@ function make(o: { dbStatus?: string; backups?: number; foreignRestores?: number
     }),
   };
   const apply = new VxApplyService(prisma as never, agentWs as never, databases as never, audit as never, new VxPartRegistry(), crypto as never);
-  return { apply, prisma, transfers, tasks, sent, restores, databases, audit };
+  return { apply, prisma, transfers, tasks, sent, restores, databases, audit, opts: o };
 }
 
 async function seed(m: ReturnType<typeof make>, over: Record<string, unknown> = {}) {
@@ -157,6 +158,44 @@ describe("VxApplyService: the streamed dump's restore", () => {
     expect(m.sent.some((s) => s.script.includes("pg_restore"))).toBe(false);
   });
 
+  it("a start that failed leaves the lane's own marker, so the destination is still open for the retry (and the retry starts and restores)", async () => {
+    const m = make({ provisionRejects: true });
+    const first = await run(m);
+    expect(first.state).toBe("FAILED");
+    expect(m.restores).toHaveLength(1);
+    expect(m.restores[0]).toMatchObject({ createdBy: `vx:${first.id}`, status: "FAILED" });
+    await expect(m.prisma.database.findUnique()).resolves.toMatchObject({ status: "FAILED" });
+    await expect(dumpDestGate(m.prisma as never, DB_ID)).resolves.toEqual({ open: true }); // FAILED + no marker used to read as dirty
+    m.opts.provisionRejects = false; // the operator fixed the cause: the next begin re-applies the staged parts
+    await m.transfers.updateMany({ where: { id: first.id }, data: { state: "APPLYING" } });
+    m.apply.start(dumpCtx(), m.transfers.rows[0] as never);
+    await settled(m, String(first.id));
+    expect(m.transfers.rows[0].state).toBe("DONE");
+    expect(m.databases.provision).toHaveBeenCalledTimes(2);
+    expect(m.sent.some((s) => s.script.includes("pg_restore"))).toBe(true);
+  });
+
+  it("a database that outlasts the start wait (still PROVISIONING, RUNNING later) is already this lane's own", async () => {
+    const m = make({ provisionRejects: true });
+    await run(m);
+    (m.prisma.database.findUnique as jest.Mock).mockImplementation(async () => ({ id: DB_ID, status: "RUNNING", engine: "POSTGRES", version: "16", image: "postgres:16" }));
+    await expect(dumpDestGate(m.prisma as never, DB_ID)).resolves.toEqual({ open: true });
+  });
+
+  it("a destination that is PostgreSQL 18 or newer is refused before anything starts or runs (its data directory would not persist)", async () => {
+    for (const over of [{ version: "18" }, { version: "18.1" }, { version: "latest", image: "postgres:19-alpine" }, { version: "", image: "docker.io/library/postgres:18" }]) {
+      const m = make(over);
+      const row = await run(m);
+      expect(row.state).toBe("FAILED");
+      expect(row.error).toBe(DUMP_DEST_PG_LAYOUT_TEXT);
+      expect(m.databases.provision).not.toHaveBeenCalled();
+      expect(m.sent).toHaveLength(0);
+      expect(m.restores).toHaveLength(0);
+    }
+    const ok = make({ version: "17" });
+    expect((await run(ok)).state).toBe("DONE");
+  });
+
   it("an agent that cannot be reached while restoring is an unknown outcome, recorded FAILED", async () => {
     const m = make({ script: async () => Promise.reject(new Error("agent offline")) });
     const row = await run(m);
@@ -200,5 +239,26 @@ describe("VxRecoveryService: a dump whose migrator went silent", () => {
       expect(String(m.transfers.rows[0].error)).toMatch(want);
       expect(String(m.tasks.rows[0].output)).toMatch(want);
     }
+  });
+});
+
+describe("VxRecoveryService: a dump restore that is still running after a hub restart", () => {
+  const minutes = (n: number) => new Date(Date.now() - n * 60_000);
+  async function sweepAt(ageMin: number, destType: "db-dump" | "app-volume") {
+    const { VxRecoveryService } = await import("./vx-recovery.service");
+    const m = make();
+    await seed(m, { state: "APPLYING", destType, runId: "run_x", rawBytesFinal: 30 * GiB, lastBeatAt: minutes(ageMin) });
+    const applySvc = { isRunning: jest.fn().mockReturnValue(false), probeTargetState: jest.fn().mockResolvedValue({ running: true, applied: false, parts: 5, rollbackVolume: false }), resumeAfterApplied: jest.fn() };
+    const vx = { resolve: jest.fn().mockResolvedValue(dumpCtx()) };
+    const prisma = { ...m.prisma, bulkOperation: { findUnique: jest.fn().mockResolvedValue({ actorId: "user-1" }) } };
+    await new VxRecoveryService(prisma as never, vx as never, applySvc as never, new VxPartRegistry()).sweep();
+    return m.transfers.rows[0];
+  }
+
+  it("waits for the dump's own restore budget (15 min + 6 min/GiB), not the volume extract's (10 min + 4 min/GiB)", async () => {
+    // 30 GiB: the extract deadline is ~132 min, the restore deadline ~195 min
+    expect((await sweepAt(150, "db-dump")).state).toBe("APPLYING"); // pg_restore is still within the budget it was given
+    expect((await sweepAt(150, "app-volume")).state).toBe("FAILED"); // the same age is past a volume extract's deadline
+    expect((await sweepAt(200, "db-dump")).state).toBe("FAILED");
   });
 });

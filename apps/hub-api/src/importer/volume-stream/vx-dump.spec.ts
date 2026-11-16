@@ -1,5 +1,5 @@
-import { dumpDiskVerdict, dumpRawEstimate, dumpRestoreTimeoutMs, dumpWasCounted } from "./vx-dump";
-import { DUMP_STAGED_RATIO, artifactCapBytes, isStreamDumpEngine, vxDumpEnabled, vxMaxDumpBytes } from "./vx-constants";
+import { dumpDiskVerdict, dumpRawEstimate, dumpStagedBytes, dumpRestoreTimeoutMs, dumpWasCounted } from "./vx-dump";
+import { artifactCapBytes, isStreamDumpEngine, vxDumpEnabled, vxMaxDumpBytes } from "./vx-constants";
 import { dbStreamModeRefs, buildVolumeTargets } from "./vx-targets";
 import { VxDbSizesBodySchema } from "./vx.dto";
 
@@ -20,18 +20,34 @@ describe("dumpRawEstimate / dumpWasCounted", () => {
 
 describe("dumpDiskVerdict", () => {
   const base = { rawDumpBytes: 30 * GiB, dbBytes: 32 * GiB, targetStagingFreeBytes: 500 * GiB, targetDockerFreeBytes: 500 * GiB, targetSameDevice: true };
-  it("needs the staged parts (a fraction of the dump, never the decoded dump) plus the restored database", () => {
+  it("needs the staged parts (the raw size while the gzip size is unknown, never the decoded dump) plus the restored database", () => {
     const v = dumpDiskVerdict(base);
     expect(v.ok).toBe(true);
-    expect(v.details).toMatchObject({ lane: "dump", stagedBytes: Math.ceil(30 * GiB * DUMP_STAGED_RATIO), databaseBytes: Math.ceil(32 * GiB * 1.1 + GiB) });
-    const staged = Math.ceil(30 * GiB * DUMP_STAGED_RATIO);
+    expect(v.details).toMatchObject({ lane: "dump", stagedBytes: 30 * GiB, databaseBytes: Math.ceil(32 * GiB * 1.1 + GiB) });
+    const staged = 30 * GiB;
     const db = Math.ceil(32 * GiB * 1.1 + GiB);
     expect(dumpDiskVerdict({ ...base, targetStagingFreeBytes: staged + db - 1 }).ok).toBe(false); // one filesystem: both add up
     expect(dumpDiskVerdict({ ...base, targetStagingFreeBytes: staged + db }).ok).toBe(true);
   });
+  it("an incompressible dump cannot slip past the check: without a counted gzip size the staged parts are budgeted at the raw size", () => {
+    const stagingOnly = { ...base, targetSameDevice: false, targetDockerFreeBytes: 500 * GiB };
+    expect(dumpDiskVerdict({ ...stagingOnly, targetStagingFreeBytes: 20 * GiB }).ok).toBe(false); // 0.6x would have been 18 GiB
+    expect(dumpDiskVerdict({ ...stagingOnly, targetStagingFreeBytes: 30 * GiB }).ok).toBe(true);
+  });
+  it("a COUNTED dump is budgeted at its real gzip size plus 5%, whatever its raw size", () => {
+    const counted = { ...base, targetSameDevice: false, targetDockerFreeBytes: 500 * GiB, countedGzBytes: 29 * GiB };
+    const need = Math.ceil(29 * GiB * 1.05);
+    expect(dumpDiskVerdict({ ...counted, targetStagingFreeBytes: need - 1 })).toMatchObject({ ok: false, details: { stagedBytes: need } });
+    expect(dumpDiskVerdict({ ...counted, targetStagingFreeBytes: need }).ok).toBe(true);
+    const small = { ...counted, countedGzBytes: 3 * GiB, targetStagingFreeBytes: 4 * GiB };
+    expect(dumpDiskVerdict(small).ok).toBe(true); // a well-compressed dump needs far less than its raw size
+    expect(dumpStagedBytes(100, 0)).toBe(0);
+    expect(dumpStagedBytes(100, null)).toBe(100);
+    expect(dumpStagedBytes(100)).toBe(100);
+  });
   it("on separate filesystems staging and the docker root are judged on their own", () => {
     const sep = { ...base, targetSameDevice: false };
-    expect(dumpDiskVerdict({ ...sep, targetStagingFreeBytes: Math.ceil(30 * GiB * DUMP_STAGED_RATIO), targetDockerFreeBytes: Math.ceil(32 * GiB * 1.1 + GiB) }).ok).toBe(true);
+    expect(dumpDiskVerdict({ ...sep, targetStagingFreeBytes: 30 * GiB, targetDockerFreeBytes: Math.ceil(32 * GiB * 1.1 + GiB) }).ok).toBe(true);
     expect(dumpDiskVerdict({ ...sep, targetDockerFreeBytes: 10 * GiB }).ok).toBe(false);
     expect(dumpDiskVerdict({ ...sep, targetStagingFreeBytes: 1 * GiB }).ok).toBe(false);
   });

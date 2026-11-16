@@ -1,5 +1,4 @@
 import type { VxDbSizeItem } from "./vx.dto";
-import { DUMP_STAGED_RATIO } from "./vx-constants";
 
 /**
  * Pure helpers of the STREAMED DATABASE DUMP lane: what the migrator measured for a database, the best size estimate the hub can
@@ -34,6 +33,8 @@ export interface DumpDiskInput {
   rawDumpBytes: number;
   /** The database's own on-disk size on the source: the target's docker root has to hold the restored database. */
   dbBytes: number;
+  /** The dump's gzip size when the migrator COUNTED it (`dumpGzBytes`): the real size of the staged parts. Absent = unknown. */
+  countedGzBytes?: number | null;
   targetStagingFreeBytes: number | null;
   targetDockerFreeBytes: number | null;
   targetSameDevice: boolean;
@@ -47,14 +48,21 @@ export interface DumpDiskVerdict {
 
 const GiB = 1024 ** 3;
 
+/** The bytes the staged parts may take on the target: the counted gzip size (+5%), else the raw size (the safe bound; see {@link dumpDiskVerdict}). */
+export function dumpStagedBytes(rawDumpBytes: number, countedGzBytes?: number | null): number {
+  if (countedGzBytes !== undefined && countedGzBytes !== null && countedGzBytes >= 0) return Math.ceil(countedGzBytes * 1.05);
+  return Math.ceil(rawDumpBytes);
+}
+
 /**
- * Free-space verdict for a streamed dump on the TARGET. Two things land there: the staged compressed parts (about the dump size
- * times {@link DUMP_STAGED_RATIO}, the decoded dump is never on disk) and the restored database itself (the source's on-disk size
+ * Free-space verdict for a streamed dump on the TARGET. Two things land there: the staged compressed parts (the COUNTED gzip size
+ * plus 5% when the migrator counted the dump; otherwise the raw size, because data that is already compressed or random
+ * gzips to about 1.0x and an optimistic ratio would only fail hours into the transfer; the decoded dump is never on disk) and the restored database itself (the source's on-disk size
  * with 10% headroom plus 1 GiB for indexes, WAL and temporary files). On one filesystem both must fit together. An unreadable probe
  * is `unknown`, never `ok` (fail closed).
  */
 export function dumpDiskVerdict(i: DumpDiskInput): DumpDiskVerdict {
-  const staged = Math.ceil(i.rawDumpBytes * DUMP_STAGED_RATIO);
+  const staged = dumpStagedBytes(i.rawDumpBytes, i.countedGzBytes);
   const dbNeed = Math.ceil(Math.max(i.dbBytes, i.rawDumpBytes) * 1.1 + GiB);
   const details = { totalBytes: i.rawDumpBytes, stagedBytes: staged, databaseBytes: dbNeed, targetStagingFreeBytes: i.targetStagingFreeBytes, targetDockerFreeBytes: i.targetDockerFreeBytes, targetSameDevice: i.targetSameDevice, lane: "dump" };
   if (i.targetStagingFreeBytes === null || i.targetDockerFreeBytes === null) return { ok: false, unknown: true, details };

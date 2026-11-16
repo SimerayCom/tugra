@@ -3,6 +3,7 @@ import { BadRequestException, ConflictException, NotFoundException, PayloadTooLa
 import { harness, type Harness } from "./testing/vx-harness";
 import { DB_DUMP_REF, DB_ID, DB_REF, DB_VOL_REF, GiB, OP, RUN, SERVER_ID, dbTask, appTask, probeOutput } from "./testing/vx-fixtures";
 import { VX_409, vxPartRawBytes } from "./vx-constants";
+import { DUMP_DEST_PG_LAYOUT_TEXT } from "./vx-dest-gate";
 
 const sha = (b: Buffer | string) => createHash("sha256").update(b).digest("hex");
 const R = vxPartRawBytes();
@@ -161,6 +162,33 @@ describe("the streamed dump lane: begin", () => {
     await expect(h.svc.begin(ctxOp, DB_DUMP_REF, beginBody())).resolves.toMatchObject({ state: "COPYING" });
   });
 
+  it("a destination that is PostgreSQL 18 or newer is refused before any byte moves, whatever the stream lane could restore", async () => {
+    for (const db of [{ version: "18" }, { version: "18.0" }, { version: "latest", image: "postgres:18-alpine" }]) {
+      const h = dumpHarness({ db });
+      await expect(h.svc.begin(ctxOp, DB_DUMP_REF, beginBody())).rejects.toThrow(DUMP_DEST_PG_LAYOUT_TEXT);
+      expect(h.transfers.rows).toHaveLength(0);
+    }
+    await expect(dumpHarness({ db: { version: "17" } }).svc.begin(ctxOp, DB_DUMP_REF, beginBody())).resolves.toMatchObject({ state: "COPYING" });
+    const mariadb = dumpHarness({ db: { engine: "MARIADB", version: "11", image: "mariadb:11" }, op: { meta: streamMeta({ vxDbSizes: { [DB_REF]: measured({ engine: "MARIADB" }) } }) } });
+    await expect(mariadb.svc.begin(ctxOp, DB_DUMP_REF, beginBody())).resolves.toMatchObject({ state: "COPYING" });
+  });
+
+  it("the staged parts are budgeted at the raw dump size unless the migrator COUNTED the gzip size (an incompressible dump must not fill the target hours in)", async () => {
+    // uncounted 30 GiB catalog size, one filesystem: raw 30 + database 34 GiB = 64 GiB needed (0.6x would have said 52)
+    const tight = dumpHarness({ freeKb: 55 * 1024 * 1024 });
+    await expect(tight.svc.begin(ctxOp, DB_DUMP_REF, beginBody({ rawTotal: 30 * GiB }))).rejects.toThrow(/vx-disk-insufficient: the dump needs about 30\.0 GiB of staging/);
+    const counted = dumpHarness({ freeKb: 55 * 1024 * 1024, op: { meta: streamMeta({ vxDbSizes: { [DB_REF]: measured({ dumpRawBytes: 30 * GiB, dumpGzBytes: 3 * GiB, measuredBy: "dump" }) } }) } });
+    await expect(counted.svc.begin(ctxOp, DB_DUMP_REF, beginBody({ rawTotal: 30 * GiB }))).resolves.toMatchObject({ diskVerdict: { ok: true, details: { stagedBytes: Math.ceil(3 * GiB * 1.05) } } });
+    // a counted dump that has since grown more than 5% is no longer vouched for by the counted ratio
+    const grown = dumpHarness({ freeKb: 55 * 1024 * 1024, op: { meta: streamMeta({ vxDbSizes: { [DB_REF]: measured({ dumpRawBytes: 30 * GiB, dumpGzBytes: 3 * GiB, measuredBy: "dump" }) } }) } });
+    await expect(grown.svc.begin(ctxOp, DB_DUMP_REF, beginBody({ rawTotal: 40 * GiB }))).rejects.toThrow(/vx-disk-insufficient/);
+  });
+
+  it("the dry-run disk check applies the same budget", async () => {
+    const h = dumpHarness({ freeKb: 55 * 1024 * 1024 });
+    await expect(h.svc.diskCheck(OP, "user-1", DB_DUMP_REF)).resolves.toMatchObject({ ok: false, details: { stagedBytes: 30 * GiB } });
+  });
+
   it("a live lease of another run is refused; the same run's repeated begin keeps it", async () => {
     const h = dumpHarness();
     await h.svc.begin(ctxOp, DB_DUMP_REF, beginBody());
@@ -183,6 +211,16 @@ describe("the streamed dump lane: a dump cannot resume from the middle", () => {
     expect(h.parts.rows).toHaveLength(0);
     expect(h.transfers.rows[0]).toMatchObject({ partsDone: 0, rawBytesDone: 0, runId: "run_second_0001" });
     expect(h.tasks.rows.find((t) => t.itemRef === `data:${DB_DUMP_REF}`)).toBeDefined();
+  });
+
+  it("an attempt that staged NOTHING (it failed before its first part) does not hold the old source fingerprint: a restarted or recreated source can retry", async () => {
+    const h = dumpHarness();
+    await h.svc.begin(ctxOp, DB_DUMP_REF, beginBody());
+    Object.assign(h.transfers.rows[0], { state: "FAILED", runId: null, error: "pg_dump: connection refused", phase: null }); // no part, no finish
+    expect(h.transfers.rows[0].partsDone).toBe(0);
+    const recreated = { ...fp, containerId: "f".repeat(64), startedAt: "2026-11-16T09:00:00Z", imageId: "sha256:img2" };
+    await expect(h.svc.begin(ctxOp, DB_DUMP_REF, beginBody({ runId: "run_second_0001", fingerprint: recreated }))).resolves.toMatchObject({ state: "COPYING", attempt: 1 });
+    expect(h.transfers.rows[0]).toMatchObject({ runId: "run_second_0001", fingerprint: recreated });
   });
 
   it("a restart is refused while the target cannot be cleaned (never starts over on top of stale parts)", async () => {

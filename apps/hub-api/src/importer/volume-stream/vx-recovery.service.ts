@@ -3,6 +3,7 @@ import type { MigrationVolumeTransfer } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { MOVE_TIMEOUTS } from "../../app-moves/app-move-scripts";
 import { VxPartRegistry } from "./vx-part-registry";
+import { dumpRestoreTimeoutMs } from "./vx-dump";
 import { VxApplyService } from "./vx-apply.service";
 import { VxService } from "./vx.service";
 import { vxEnabled, vxStaleMs } from "./vx-constants";
@@ -105,7 +106,9 @@ export class VxRecoveryService implements OnModuleInit, OnModuleDestroy {
     }
     if (probe.running) {
       // Still extracting on the target: keep waiting, up to the apply deadline counted from the last heartbeat.
-      const deadline = (t.lastBeatAt?.getTime() ?? now) + MOVE_TIMEOUTS.apply(Number(t.rawBytesFinal ?? 0)) + 120_000;
+      // a streamed dump's restore runs under its own (longer) budget, the one the apply gave pg_restore / the SQL client
+      const budget = t.destType === "db-dump" ? dumpRestoreTimeoutMs(Number(t.rawBytesFinal ?? 0)) : MOVE_TIMEOUTS.apply(Number(t.rawBytesFinal ?? 0));
+      const deadline = (t.lastBeatAt?.getTime() ?? now) + budget + 120_000;
       if (now > deadline) await this.failApply(t, "the apply did not finish in time: reset the volume and copy it again");
       return;
     }

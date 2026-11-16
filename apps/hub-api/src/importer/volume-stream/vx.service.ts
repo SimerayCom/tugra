@@ -13,7 +13,7 @@ import { dbVolumeName } from "../../databases/database-script";
 import { ImportExecutorService } from "../import-executor.service";
 import { MigrationTokenService, type MigrationTokenContext } from "../migration-token.service";
 import type { GateResult } from "./vx-gates";
-import { dbGates, dumpDestGate } from "./vx-dest-gate";
+import { dbGates, dumpDestGate, dumpDestLayout } from "./vx-dest-gate";
 import { DUMP_VOLUME_NAME, VOLUME_INGEST_DUMP, VX_409, VX_PROTOCOL, VX_VOL_IDX, isStreamDumpEngine, vxDataRef, vxDumpEnabled, vxEnabled, vxMaxBytes, vxMaxDumpBytes, vxMaxParts, vxPartRawBytes, vxPrincipal, vxCommitWaitMs, vxStaleMs } from "./vx-constants";
 import { VxPartRegistry, type InflightPart, type PartOutcome } from "./vx-part-registry";
 import { VxApplyService } from "./vx-apply.service";
@@ -220,7 +220,7 @@ export class VxService {
    * The same read-only probe, sized for a STREAMED DUMP: the staged compressed parts plus the restored database (see
    * {@link dumpDiskVerdict}); the decoded dump never touches disk. Unknown (never ok) when the target cannot be read.
    */
-  async diskVerdictForDump(ctx: Pick<VxCtx, "targetServerId" | "dockerVolume" | "server">, rawDumpBytes: number, dbBytes: number): Promise<VxDiskResult> {
+  async diskVerdictForDump(ctx: Pick<VxCtx, "targetServerId" | "dockerVolume" | "server">, rawDumpBytes: number, dbBytes: number, countedGzBytes?: number | null): Promise<VxDiskResult> {
     const p = await this.probeTarget(ctx);
     if (!p.probe) return { ok: false, unknown: true, details: { totalBytes: rawDumpBytes, lane: "dump", reason: p.why } };
     const stage = p.probe.df[MOVE_STAGING_ROOT];
@@ -228,6 +228,7 @@ export class VxService {
     return dumpDiskVerdict({
       rawDumpBytes,
       dbBytes,
+      countedGzBytes,
       targetStagingFreeBytes: stage?.availKb != null ? stage.availKb * 1024 : null,
       targetDockerFreeBytes: dock?.availKb != null ? dock.availKb * 1024 : null,
       targetSameDevice: !!stage?.dev && !!dock?.dev && stage.dev === dock.dev,
@@ -237,6 +238,15 @@ export class VxService {
   /** What the migrator measured for the database a dump row moves (undefined until `--measure-dbs` ran). */
   private dumpMeasure(meta: OpMetaVx, target: Pick<VxVolumeTarget, "databaseItemRef">): DbSizeRecord | undefined {
     return target.databaseItemRef ? meta.vxDbSizes?.[target.databaseItemRef] : undefined;
+  }
+
+  /**
+   * The gzip size of a dump the migrator COUNTED (the real size of its staged parts); null when only the catalog size is known, or
+   * when the size being checked is more than 5% above the counted dump (the database grew since: the counted ratio no longer vouches for it).
+   */
+  private countedGz(m: DbSizeRecord | undefined, checkedRawBytes: number): number | null {
+    if (!m || m.state !== "measured" || m.dumpGzBytes === undefined || m.dumpRawBytes === undefined) return null;
+    return checkedRawBytes <= m.dumpRawBytes * 1.05 ? m.dumpGzBytes : null;
   }
 
   /** The read-only probe of the TARGET host; `probe: null` carries WHY it is unknown (offline, old agent, no capability, bad output). */
@@ -288,7 +298,7 @@ export class VxService {
     const est = rawBytes ?? dumpRawEstimate(m);
     if (est === null || est === undefined) throw new ConflictException("this database has not been measured yet: run the migrator with --dry-run --measure-dbs first, or pass rawBytes");
     if (est > vxMaxDumpBytes()) return { ok: false, unknown: false, details: { totalBytes: est, maxBytes: vxMaxDumpBytes(), lane: "dump", reason: "the dump exceeds the per-dump limit" } };
-    const v = await this.diskVerdictForDump(ctx, est, m?.state === "measured" ? m.dbBytes : est);
+    const v = await this.diskVerdictForDump(ctx, est, m?.state === "measured" ? m.dbBytes : est, this.countedGz(m, est));
     await this.storeDisk(ctx.opId, ctx.target.itemRef, v);
     return v;
   }
@@ -417,6 +427,8 @@ export class VxService {
    * volume it cannot be resumed from the middle by comparing raw hashes:
    *  - every part is staged (the finish was accepted) but the restore failed: re-apply it, without dumping again;
    *  - parts of an unfinished stream, from a migrator that is gone: discard them and start over (explicitly, never silently);
+   *  - an attempt that staged nothing (it failed before its first part, e.g. a refused login or an unhealthy container): only its
+   *    stored source fingerprint is dropped, because the operator's fix is usually to restart or recreate the source, which changes it;
    *  - a live lease held by another run: refused as always.
    */
   private async dumpBeginExisting(ctx: VxCtx, t: MigrationVolumeTransfer, body: VxBeginBody, op: MigrationTokenContext): Promise<{ view?: Record<string, unknown>; transfer: MigrationVolumeTransfer | null }> {
@@ -439,6 +451,11 @@ export class VxService {
     if (t.partsDone > 0 || t.rawBytesFinal != null) {
       if (t.state === "COPYING" && t.runId === body.runId) return { transfer: t }; // this very run re-sent its begin (a lost answer): nothing to discard
       return { transfer: await this.restartDump(ctx, t) };
+    }
+    if (t.fingerprint) {
+      // Nothing was staged, so nothing depends on the earlier source: the retry stores the fingerprint it begins with.
+      await this.prisma.migrationVolumeTransfer.update({ where: { id: t.id }, data: { fingerprint: Prisma.DbNull } });
+      return { transfer: (await this.findTransfer(t.opId, t.itemRef)) ?? t };
     }
     return { transfer: t };
   }
@@ -497,6 +514,11 @@ export class VxService {
     if (t?.state === "DONE") return { ...this.beginView(t, await this.expiry(op), []), alreadyDone: true };
     if (t?.state === "ABORTED") throw new ConflictException(VX_409.aborted);
     if (t && (t.state === "COPIED" || t.state === "APPLYING")) return this.beginView(t, await this.expiry(op), []); // the apply is running: just poll status
+    if (isDump) {
+      // Refused before a byte moves (and before a re-apply of staged parts): the destination could not keep the restored database.
+      const layout = await dumpDestLayout(this.prisma, ctx.resourceId);
+      if (!layout.ok) throw new ConflictException(layout.reason);
+    }
     if (isDump && t) {
       // A dump cannot resume from the middle (not byte-deterministic): a transfer whose parts are ALL staged is re-applied without
       // dumping again; anything else starts over, with the stale parts discarded. Neither compares the source fingerprint of the
@@ -530,7 +552,7 @@ export class VxService {
     const bytes = body.rawTotal ?? (isDump ? (dumpRawEstimate(measure) ?? 0) : (inv?.rawBytes ?? 0));
     let disk: VxDiskResult | null = null;
     if (!t || t.partsDone === 0) {
-      disk = isDump ? await this.diskVerdictForDump(ctx, bytes, measure?.state === "measured" ? measure.dbBytes : bytes) : await this.diskVerdictFor(ctx, bytes);
+      disk = isDump ? await this.diskVerdictForDump(ctx, bytes, measure?.state === "measured" ? measure.dbBytes : bytes, this.countedGz(measure, bytes)) : await this.diskVerdictFor(ctx, bytes);
       if (disk.unknown) throw new ConflictException(`${VX_409.diskInsufficient}: could not verify the free space on the target (${String(disk.details.reason ?? "unknown")})`);
       if (!disk.ok) {
         const d = disk.details;
