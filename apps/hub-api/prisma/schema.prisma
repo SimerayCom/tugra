@@ -2318,3 +2318,121 @@ model CutoverCert {
   @@unique([opId, fingerprint])
   @@index([opId])
 }
+
+// ── One-click migration orchestrator (P7): MigrationRun sits ABOVE the import BulkOperation, it never replaces it. ──
+// Lane A owns this hunk. Lane B appends MigrationRunCheck (after MigrationVolumePart) and lane C MigrationRunSwap
+// (after CutoverCert); both reference a run by a LOOSE `runId` (no FK), like AppMove.appId.
+
+/// Lifecycle of a run. FAILED is never terminal in practice: the operator can retry the step or abort.
+enum MigrationRunStatus {
+  QUEUED
+  RUNNING
+  WAITING // a step waits for an operator, an approval, a timer or an unblocked gate
+  PAUSED
+  ABORTING // pre-PONR abort in flight (Coolify becomes authoritative again)
+  ABORTED
+  ROLLING_BACK // optional cleanup of Tugra-side created resources after an abort
+  ROLLED_BACK
+  REVERSING // post-PONR lossy reverse in flight
+  REVERSED
+  COMPLETED
+  FAILED
+  DRY_RUN_DONE // terminal for a dry-run; it can be promoted to a real run
+}
+
+enum MigrationRunStepStatus {
+  PENDING
+  RUNNING
+  WAITING_OPERATOR
+  WAITING_APPROVAL
+  WAITING_TIMER
+  PASSED
+  FAILED
+  SKIPPED
+  COMPENSATED
+}
+
+model MigrationRun {
+  id              String             @id @default(cuid())
+  teamId          String // loose refs (no FK) like AppMove, so audit/report survive team/server deletion
+  actorId         String // only the creator drives the run (same rule as the importer's loadOwnedOp)
+  targetServerId  String
+  sourceKind      String // coolify | dokploy
+  sourceHost      String? // snapshot of the source instance host (typed confirmation + list display, no secret)
+  sessionId       String? // ImportSession (1 h TTL; refreshed via POST /:id/source-session)
+  opId            String?            @unique // the CURRENT import BulkOperation; null before IMPORT
+  opHistory       String[]           @default([]) // earlier ops redone by an IMPORT retry
+  planHash        String
+  mode            String             @default("copy") // ImportMode: copy | takeover (arms DECOMMISSION)
+  topology        String             @default("two-box") // CoexistenceStrategy: two-box | swap-proxy
+  dryRun          Boolean            @default(false)
+  promotedFromId  String? // the dry-run this run was promoted from
+  applyInput      Json // frozen, secret-free apply input (see RunApplyInputSchema)
+  options         Json // RunOptions (see RunOptionsSchema)
+  inputs          Json // OwnerInputs with provenance
+  status          MigrationRunStatus @default(QUEUED)
+  currentStep     String?
+  ponrAt          DateTime? // monotonic: set BEFORE the first command that can route stateful production traffic to Tugra
+  ponrByUserId    String?
+  pauseRequested  Boolean            @default(false)
+  abortRequested  Boolean            @default(false)
+  ownerId         String? // hub bootId lease (DeployLeaseService.bootId); null = awaiting recovery
+  heartbeatAt     DateTime?
+  activeKey       String?            @unique // "srv:<targetServerId>" while a REAL run is non-terminal => one live run per target server
+  eventSeq        Int                @default(0)
+  windowEstimate  Json? // {freezeToFlipSec, basis[], estimatedAt}
+  freezeStartedAt DateTime?
+  freezeEndedAt   DateTime? // first host VERIFIED after the flip/swap => measured downtime
+  failureStep     String?
+  failureCode     String? // stable code => i18n key
+  report          Json? // final secret-free report
+  createdAt       DateTime           @default(now())
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  updatedAt       DateTime           @updatedAt
+
+  steps  MigrationRunStep[]
+  events MigrationRunEvent[]
+
+  @@index([teamId, createdAt(sort: Desc)])
+  @@index([status])
+  @@index([actorId])
+}
+
+model MigrationRunStep {
+  run           MigrationRun           @relation(fields: [runId], references: [id], onDelete: Cascade)
+  runId         String
+  key           String // PREFLIGHT ... DECOMMISSION (StepKey)
+  idx           Int
+  kind          String // auto | operator | approval | timer (the step's PRIMARY mode)
+  status        MigrationRunStepStatus @default(PENDING)
+  rollbackClass String // FREE | UNDOABLE | LOSSY_AFTER_PONR | IRREVERSIBLE
+  attempt       Int                    @default(0)
+  gate          Json? // {passed, checks:[{id,status,code,params,evidence,ownerInput}], wait?}
+  approval      Json? // {byUserId, at, boundHash, acks[], confirmedName, acceptDataRisk, expiresAt}
+  inputHash     String? // the hash the approval/act is bound to
+  progress      Json? // {done,total,unit,etaSec,dryRun?} (refs to existing tables, not copies)
+  compensation  Json? // ids only; written BEFORE the side effect
+  evidence      Json? // {attestations[], attachments[]}: operator attestations and attached resources
+  wait          Json? // what the step is waiting for (WaitSpec); drives the view's nextAction
+  notBefore     DateTime? // timer gates (TTL wait, scheduled freeze, observe window)
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  lastError     String? // fixed code, never raw text
+
+  @@id([runId, key])
+}
+
+model MigrationRunEvent {
+  run     MigrationRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  runId   String
+  seq     Int
+  at      DateTime     @default(now())
+  stepKey String?
+  level   String // info | warn | error
+  code    String
+  params  Json?
+  actorId String? // codes + params only: no English text, no secrets
+
+  @@id([runId, seq])
+}

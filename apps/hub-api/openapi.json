@@ -64829,6 +64829,3478 @@
         ]
       }
     },
+    "/api/v1/migration-runs": {
+      "post": {
+        "operationId": "MigrationRunsController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "sessionId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "sourceKind": {
+                    "type": "string",
+                    "enum": [
+                      "coolify",
+                      "dokploy"
+                    ]
+                  },
+                  "targetServerId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "environmentId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "planHash": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{32}$"
+                  },
+                  "acks": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "app.env.unresolved",
+                            "app.env.key.invalid"
+                          ]
+                        },
+                        "itemRef": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 300
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 2000
+                  },
+                  "serviceChoices": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "object",
+                      "properties": {
+                        "skip": {
+                          "type": "boolean"
+                        },
+                        "name": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]{0,62}$"
+                        },
+                        "environmentId": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "targetServerId": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "serviceDomains": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "service": {
+                                "type": "string",
+                                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$"
+                              },
+                              "hostname": {
+                                "type": "string",
+                                "maxLength": 253,
+                                "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$"
+                              },
+                              "port": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 65535
+                              }
+                            },
+                            "required": [
+                              "service",
+                              "hostname",
+                              "port"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "maxItems": 20
+                        },
+                        "hostnameMap": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string",
+                            "maxLength": 253,
+                            "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$"
+                          }
+                        },
+                        "volumes": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                              "policy": {
+                                "type": "string",
+                                "enum": [
+                                  "copy",
+                                  "empty",
+                                  "skip"
+                                ]
+                              },
+                              "owner": {
+                                "type": "object",
+                                "properties": {
+                                  "uid": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 65535
+                                  },
+                                  "gid": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 65535
+                                  }
+                                },
+                                "required": [
+                                  "uid",
+                                  "gid"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": [
+                              "policy"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "dropMembers": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$"
+                          },
+                          "maxItems": 32
+                        },
+                        "pinImages": {
+                          "type": "boolean"
+                        },
+                        "pins": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,200}(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?(@sha256:[a-f0-9]{64})?$"
+                          }
+                        },
+                        "privateNetwork": {
+                          "type": "boolean"
+                        },
+                        "hold": {
+                          "type": "boolean"
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "mapping": {
+                    "type": "object",
+                    "properties": {
+                      "version": {
+                        "type": "number",
+                        "enum": [
+                          1
+                        ]
+                      },
+                      "scope": {
+                        "type": "object",
+                        "properties": {
+                          "sourceKind": {
+                            "type": "string",
+                            "enum": [
+                              "coolify",
+                              "dokploy"
+                            ]
+                          },
+                          "scopeKey": {
+                            "type": "string",
+                            "maxLength": 64
+                          }
+                        },
+                        "required": [
+                          "sourceKind"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "properties": {
+                            "include": {
+                              "type": "boolean"
+                            },
+                            "name": {
+                              "type": "string",
+                              "maxLength": 400
+                            },
+                            "project": {
+                              "type": "string",
+                              "maxLength": 400
+                            },
+                            "environment": {
+                              "type": "string",
+                              "maxLength": 400
+                            },
+                            "containerAlias": {
+                              "type": "string",
+                              "maxLength": 64,
+                              "nullable": true
+                            },
+                            "dbIdentifier": {
+                              "type": "string",
+                              "maxLength": 63
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        "default": {}
+                      },
+                      "projects": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "type": "string",
+                              "maxLength": 400
+                            },
+                            "environments": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": "string",
+                                "maxLength": 400
+                              }
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        "default": {}
+                      },
+                      "gitSources": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "type": "string",
+                              "maxLength": 400
+                            }
+                          },
+                          "required": [
+                            "name"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "default": {}
+                      },
+                      "acks": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "maxLength": 340
+                        },
+                        "maxItems": 5000,
+                        "default": []
+                      }
+                    },
+                    "required": [
+                      "version"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "mappingHash": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{32}$"
+                  },
+                  "reconcile": {
+                    "type": "boolean"
+                  },
+                  "ignoreStoredMapping": {
+                    "type": "boolean"
+                  },
+                  "saveMapping": {
+                    "type": "boolean"
+                  },
+                  "dbDataModes": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string",
+                      "enum": [
+                        "volume"
+                      ]
+                    }
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "copy",
+                      "takeover"
+                    ],
+                    "default": "copy"
+                  },
+                  "topology": {
+                    "type": "string",
+                    "enum": [
+                      "two-box",
+                      "swap-proxy"
+                    ],
+                    "default": "two-box"
+                  },
+                  "dryRun": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "options": {
+                    "type": "object",
+                    "properties": {
+                      "ttlPolicy": {
+                        "type": "string",
+                        "enum": [
+                          "wait",
+                          "skip-ack"
+                        ],
+                        "default": "wait"
+                      },
+                      "deployWaves": {
+                        "type": "string",
+                        "enum": [
+                          "single",
+                          "earlyStateless"
+                        ],
+                        "default": "single"
+                      },
+                      "warmDbSeed": {
+                        "type": "boolean",
+                        "default": false
+                      },
+                      "stopSource": {
+                        "type": "boolean",
+                        "default": false
+                      },
+                      "sourceRunner": {
+                        "type": "string",
+                        "enum": [
+                          "operator",
+                          "agent"
+                        ],
+                        "default": "operator"
+                      },
+                      "certs": {
+                        "type": "string",
+                        "enum": [
+                          "none",
+                          "seed"
+                        ],
+                        "default": "none"
+                      },
+                      "acceptHttp01Gap": {
+                        "type": "boolean",
+                        "default": false
+                      },
+                      "freezeAt": {
+                        "type": "string",
+                        "minLength": 10,
+                        "maxLength": 40
+                      },
+                      "observeMinutes": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 4320,
+                        "default": 30
+                      },
+                      "manualFinalize": {
+                        "type": "boolean",
+                        "default": false
+                      },
+                      "batchSize": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 25,
+                        "default": 5
+                      },
+                      "intervalSec": {
+                        "type": "integer",
+                        "minimum": 5,
+                        "maximum": 600,
+                        "default": 30
+                      },
+                      "dnsCredentialId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      },
+                      "healthPath": {
+                        "type": "string",
+                        "pattern": "^\\/[\\x21-\\x7e]{0,254}$"
+                      },
+                      "rowCountMode": {
+                        "type": "string",
+                        "enum": [
+                          "exact",
+                          "estimate"
+                        ],
+                        "default": "estimate"
+                      },
+                      "decommissionMinAgeHours": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 2160,
+                        "default": 72
+                      },
+                      "stuckOperatorMinutes": {
+                        "type": "integer",
+                        "minimum": 5,
+                        "maximum": 1440,
+                        "default": 60
+                      }
+                    },
+                    "additionalProperties": false,
+                    "default": {}
+                  },
+                  "inputs": {
+                    "type": "object",
+                    "properties": {
+                      "acmeEmail": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "format": "email",
+                            "maxLength": 254
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "unknown"
+                            ]
+                          }
+                        ]
+                      },
+                      "allowBind": {
+                        "anyOf": [
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "unknown"
+                            ]
+                          }
+                        ]
+                      },
+                      "allowLiveShapeProbe": {
+                        "anyOf": [
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "unknown"
+                            ]
+                          }
+                        ]
+                      },
+                      "sourceController": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "manual",
+                              "api",
+                              "agent"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "unknown"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "additionalProperties": false,
+                    "default": {}
+                  }
+                },
+                "required": [
+                  "sessionId",
+                  "sourceKind",
+                  "targetServerId",
+                  "planHash"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MigrationRunView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      },
+      "get": {
+        "operationId": "MigrationRunsController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      },
+                      "teamId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      },
+                      "targetServerId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      },
+                      "targetServerName": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "sourceKind": {
+                        "type": "string",
+                        "enum": [
+                          "coolify",
+                          "dokploy"
+                        ]
+                      },
+                      "sourceHost": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "copy",
+                          "takeover"
+                        ]
+                      },
+                      "topology": {
+                        "type": "string",
+                        "enum": [
+                          "two-box",
+                          "swap-proxy"
+                        ]
+                      },
+                      "dryRun": {
+                        "type": "boolean"
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "QUEUED",
+                          "RUNNING",
+                          "WAITING",
+                          "PAUSED",
+                          "ABORTING",
+                          "ABORTED",
+                          "ROLLING_BACK",
+                          "ROLLED_BACK",
+                          "REVERSING",
+                          "REVERSED",
+                          "COMPLETED",
+                          "FAILED",
+                          "DRY_RUN_DONE"
+                        ]
+                      },
+                      "currentStep": {
+                        "type": "string",
+                        "enum": [
+                          "PREFLIGHT",
+                          "IMPORT",
+                          "DNS_PREPARE",
+                          "DATA_SEED",
+                          "FREEZE",
+                          "DATA_FINAL",
+                          "REMAP_ENV",
+                          "DEPLOY_DARK",
+                          "TLS_PREISSUE",
+                          "VERIFY",
+                          "CUTOVER",
+                          "OBSERVE",
+                          "FINALIZE",
+                          "DECOMMISSION"
+                        ],
+                        "nullable": true
+                      },
+                      "ponrAt": {
+                        "type": "string",
+                        "minLength": 10,
+                        "maxLength": 40,
+                        "nullable": true
+                      },
+                      "stepsPassed": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "stepsTotal": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "nextActionKind": {
+                        "type": "string",
+                        "enum": [
+                          "operator",
+                          "approval",
+                          "timer",
+                          "gate",
+                          "session",
+                          "paused",
+                          "failed",
+                          "engine",
+                          "none"
+                        ]
+                      },
+                      "failure": {
+                        "type": "object",
+                        "properties": {
+                          "step": {
+                            "type": "string",
+                            "enum": [
+                              "PREFLIGHT",
+                              "IMPORT",
+                              "DNS_PREPARE",
+                              "DATA_SEED",
+                              "FREEZE",
+                              "DATA_FINAL",
+                              "REMAP_ENV",
+                              "DEPLOY_DARK",
+                              "TLS_PREISSUE",
+                              "VERIFY",
+                              "CUTOVER",
+                              "OBSERVE",
+                              "FINALIZE",
+                              "DECOMMISSION"
+                            ],
+                            "nullable": true
+                          },
+                          "code": {
+                            "type": "string",
+                            "maxLength": 80,
+                            "pattern": "^[a-z0-9]+([.-][a-z0-9]+)*$"
+                          }
+                        },
+                        "required": [
+                          "step",
+                          "code"
+                        ],
+                        "additionalProperties": false,
+                        "nullable": true
+                      },
+                      "createdAt": {
+                        "type": "string",
+                        "minLength": 10,
+                        "maxLength": 40
+                      },
+                      "startedAt": {
+                        "type": "string",
+                        "minLength": 10,
+                        "maxLength": 40,
+                        "nullable": true
+                      },
+                      "finishedAt": {
+                        "type": "string",
+                        "minLength": 10,
+                        "maxLength": 40,
+                        "nullable": true
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "teamId",
+                      "targetServerId",
+                      "targetServerName",
+                      "sourceKind",
+                      "sourceHost",
+                      "mode",
+                      "topology",
+                      "dryRun",
+                      "status",
+                      "currentStep",
+                      "ponrAt",
+                      "stepsPassed",
+                      "stepsTotal",
+                      "nextActionKind",
+                      "failure",
+                      "createdAt",
+                      "startedAt",
+                      "finishedAt"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/migration-runs/{id}": {
+      "get": {
+        "operationId": "MigrationRunsController_get",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MigrationRunView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/migration-runs/{id}/events": {
+      "get": {
+        "operationId": "MigrationRunsController_events",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "seq": {
+                            "type": "integer"
+                          },
+                          "at": {
+                            "type": "string",
+                            "minLength": 10,
+                            "maxLength": 40
+                          },
+                          "stepKey": {
+                            "type": "string",
+                            "enum": [
+                              "PREFLIGHT",
+                              "IMPORT",
+                              "DNS_PREPARE",
+                              "DATA_SEED",
+                              "FREEZE",
+                              "DATA_FINAL",
+                              "REMAP_ENV",
+                              "DEPLOY_DARK",
+                              "TLS_PREISSUE",
+                              "VERIFY",
+                              "CUTOVER",
+                              "OBSERVE",
+                              "FINALIZE",
+                              "DECOMMISSION"
+                            ],
+                            "nullable": true
+                          },
+                          "level": {
+                            "type": "string",
+                            "enum": [
+                              "info",
+                              "warn",
+                              "error"
+                            ]
+                          },
+                          "code": {
+                            "type": "string",
+                            "maxLength": 80,
+                            "pattern": "^[a-z0-9]+([.-][a-z0-9]+)*$"
+                          },
+                          "params": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "maxLength": 500
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "enum": [
+                                    "null"
+                                  ],
+                                  "nullable": true
+                                },
+                                {
+                                  "type": "array",
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "maxLength": 300
+                                      },
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "boolean"
+                                      },
+                                      {
+                                        "enum": [
+                                          "null"
+                                        ],
+                                        "nullable": true
+                                      }
+                                    ]
+                                  },
+                                  "maxItems": 200
+                                }
+                              ]
+                            },
+                            "nullable": true
+                          },
+                          "actorId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64,
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "seq",
+                          "at",
+                          "stepKey",
+                          "level",
+                          "code",
+                          "params",
+                          "actorId"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "lastSeq": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "hasMore": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "events",
+                    "lastSeq",
+                    "hasMore"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/migration-runs/{id}/start": {
+      "post": {
+        "operationId": "MigrationRunsController_start",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "sessionId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MigrationRunView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/migration-runs/{id}/steps/{key}/approve": {
+      "post": {
+        "operationId": "MigrationRunsController_approve",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "boundHash": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "acks": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "maxItems": 200,
+                    "default": []
+                  },
+                  "confirmName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 253
+                  },
+                  "acceptDataRisk": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "boundHash"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MigrationRunView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/migration-runs/{id}/steps/{key}/retry": {
+      "post": {
+        "operationId": "MigrationRunsController_retry",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MigrationRunView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/migration-runs/{id}/steps/{key}/skip": {
+      "post": {
+        "operationId": "MigrationRunsController_skip",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 300
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MigrationRunView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/migration-runs/{id}/steps/{key}/evidence": {
+      "post": {
+        "operationId": "MigrationRunsController_evidence",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "checkId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  },
+                  "subject": {
+                    "type": "string",
+                    "maxLength": 300
+                  },
+                  "note": {
+                    "type": "string",
+                    "maxLength": 500
+                  }
+                },
+                "required": [
+                  "checkId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MigrationRunView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/migration-runs/{id}/steps/{key}/attach": {
+      "post": {
+        "operationId": "MigrationRunsController_attach",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "object-migration"
+                    ]
+                  },
+                  "resourceId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                },
+                "required": [
+                  "kind",
+                  "resourceId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MigrationRunView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/migration-runs/{id}/steps/{key}/command": {
+      "post": {
+        "operationId": "MigrationRunsController_command",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reissue": {
+                    "type": "boolean",
+                    "default": false
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "stepKey": {
+                      "type": "string",
+                      "enum": [
+                        "PREFLIGHT",
+                        "IMPORT",
+                        "DNS_PREPARE",
+                        "DATA_SEED",
+                        "FREEZE",
+                        "DATA_FINAL",
+                        "REMAP_ENV",
+                        "DEPLOY_DARK",
+                        "TLS_PREISSUE",
+                        "VERIFY",
+                        "CUTOVER",
+                        "OBSERVE",
+                        "FINALIZE",
+                        "DECOMMISSION"
+                      ]
+                    },
+                    "opId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "minLength": 10,
+                      "maxLength": 40
+                    },
+                    "command": {
+                      "type": "string"
+                    },
+                    "commands": {
+                      "type": "object",
+                      "properties": {
+                        "dryRun": {
+                          "type": "string"
+                        },
+                        "run": {
+                          "type": "string"
+                        },
+                        "resume": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "dryRun",
+                        "run",
+                        "resume"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "shownOnce": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    }
+                  },
+                  "required": [
+                    "stepKey",
+                    "opId",
+                    "expiresAt",
+                    "command",
+                    "shownOnce"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/migration-runs/{id}/inputs": {
+      "post": {
+        "operationId": "MigrationRunsController_setInputs",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "acmeEmail": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "email",
+                        "maxLength": 254
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "unknown"
+                        ]
+                      }
+                    ]
+                  },
+                  "allowBind": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "unknown"
+                        ]
+                      }
+                    ]
+                  },
+                  "allowLiveShapeProbe": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "unknown"
+                        ]
+                      }
+                    ]
+                  },
+                  "sourceController": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "manual",
+                          "api",
+                          "agent"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "unknown"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MigrationRunView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/migration-runs/{id}/pause": {
+      "post": {
+        "operationId": "MigrationRunsController_pause",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MigrationRunView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/migration-runs/{id}/resume": {
+      "post": {
+        "operationId": "MigrationRunsController_resume",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MigrationRunView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/migration-runs/{id}/abort": {
+      "post": {
+        "operationId": "MigrationRunsController_abort",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "confirmName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 253
+                  }
+                },
+                "required": [
+                  "confirmName"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MigrationRunView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/migration-runs/{id}/cleanup": {
+      "post": {
+        "operationId": "MigrationRunsController_cleanup",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "confirmName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 253
+                  },
+                  "includeData": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "dataConfirmNames": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 253
+                    },
+                    "maxItems": 500,
+                    "default": []
+                  }
+                },
+                "required": [
+                  "confirmName"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MigrationRunView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/migration-runs/{id}/reverse": {
+      "post": {
+        "operationId": "MigrationRunsController_reverse",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "confirmName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 253
+                  },
+                  "acknowledgeDataLoss": {
+                    "type": "boolean",
+                    "enum": [
+                      true
+                    ]
+                  }
+                },
+                "required": [
+                  "confirmName",
+                  "acknowledgeDataLoss"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MigrationRunView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/migration-runs/{id}/decommission": {
+      "post": {
+        "operationId": "MigrationRunsController_decommission",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "confirmName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 253
+                  }
+                },
+                "required": [
+                  "confirmName"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MigrationRunView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/migration-runs/{id}/source-session": {
+      "post": {
+        "operationId": "MigrationRunsController_sourceSession",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "token": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  }
+                },
+                "required": [
+                  "token"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "minLength": 10,
+                      "maxLength": 40
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "expiresAt"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or malformed request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/v1/migration-runs/{id}/report": {
+      "get": {
+        "operationId": "MigrationRunsController_report",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "runId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    },
+                    "generatedAt": {
+                      "type": "string",
+                      "minLength": 10,
+                      "maxLength": 40
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "QUEUED",
+                        "RUNNING",
+                        "WAITING",
+                        "PAUSED",
+                        "ABORTING",
+                        "ABORTED",
+                        "ROLLING_BACK",
+                        "ROLLED_BACK",
+                        "REVERSING",
+                        "REVERSED",
+                        "COMPLETED",
+                        "FAILED",
+                        "DRY_RUN_DONE"
+                      ]
+                    },
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "copy",
+                        "takeover"
+                      ]
+                    },
+                    "topology": {
+                      "type": "string",
+                      "enum": [
+                        "two-box",
+                        "swap-proxy"
+                      ]
+                    },
+                    "dryRun": {
+                      "type": "boolean"
+                    },
+                    "source": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "coolify",
+                            "dokploy"
+                          ]
+                        },
+                        "host": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "host"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "target": {
+                      "type": "object",
+                      "properties": {
+                        "serverId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64
+                        },
+                        "serverName": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "serverId",
+                        "serverName"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "ponrAt": {
+                      "type": "string",
+                      "minLength": 10,
+                      "maxLength": 40,
+                      "nullable": true
+                    },
+                    "window": {
+                      "type": "object",
+                      "properties": {
+                        "estimatedSec": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "nullable": true
+                        },
+                        "measuredSec": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "estimatedSec",
+                        "measuredSec"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "steps": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string",
+                            "enum": [
+                              "PREFLIGHT",
+                              "IMPORT",
+                              "DNS_PREPARE",
+                              "DATA_SEED",
+                              "FREEZE",
+                              "DATA_FINAL",
+                              "REMAP_ENV",
+                              "DEPLOY_DARK",
+                              "TLS_PREISSUE",
+                              "VERIFY",
+                              "CUTOVER",
+                              "OBSERVE",
+                              "FINALIZE",
+                              "DECOMMISSION"
+                            ]
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "PENDING",
+                              "RUNNING",
+                              "WAITING_OPERATOR",
+                              "WAITING_APPROVAL",
+                              "WAITING_TIMER",
+                              "PASSED",
+                              "FAILED",
+                              "SKIPPED",
+                              "COMPENSATED"
+                            ]
+                          },
+                          "attempts": {
+                            "type": "integer"
+                          },
+                          "durationSec": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "nullable": true
+                          },
+                          "code": {
+                            "type": "string",
+                            "maxLength": 80,
+                            "pattern": "^[a-z0-9]+([.-][a-z0-9]+)*$",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "status",
+                          "attempts",
+                          "durationSec",
+                          "code"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "app",
+                              "database",
+                              "service",
+                              "volume",
+                              "bucket",
+                              "domain"
+                            ]
+                          },
+                          "name": {
+                            "type": "string",
+                            "maxLength": 300
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "moved",
+                              "skipped",
+                              "acked",
+                              "failed",
+                              "not-cut-over"
+                            ]
+                          },
+                          "code": {
+                            "type": "string",
+                            "maxLength": 80,
+                            "pattern": "^[a-z0-9]+([.-][a-z0-9]+)*$",
+                            "nullable": true
+                          },
+                          "evidence": {
+                            "type": "string",
+                            "enum": [
+                              "hub-verified",
+                              "migrator-reported",
+                              "operator-attested"
+                            ],
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "name",
+                          "outcome",
+                          "code",
+                          "evidence"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "maxItems": 5000
+                    },
+                    "evidenceSummary": {
+                      "type": "object",
+                      "properties": {
+                        "hub-verified": {
+                          "type": "integer"
+                        },
+                        "migrator-reported": {
+                          "type": "integer"
+                        },
+                        "operator-attested": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "hub-verified",
+                        "migrator-reported",
+                        "operator-attested"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "manual": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string",
+                            "maxLength": 80,
+                            "pattern": "^[a-z0-9]+([.-][a-z0-9]+)*$"
+                          },
+                          "params": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "maxLength": 500
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "enum": [
+                                    "null"
+                                  ],
+                                  "nullable": true
+                                },
+                                {
+                                  "type": "array",
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "maxLength": 300
+                                      },
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "boolean"
+                                      },
+                                      {
+                                        "enum": [
+                                          "null"
+                                        ],
+                                        "nullable": true
+                                      }
+                                    ]
+                                  },
+                                  "maxItems": 200
+                                }
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "code"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "maxItems": 200
+                    }
+                  },
+                  "required": [
+                    "runId",
+                    "generatedAt",
+                    "status",
+                    "mode",
+                    "topology",
+                    "dryRun",
+                    "source",
+                    "target",
+                    "ponrAt",
+                    "window",
+                    "steps",
+                    "items",
+                    "evidenceSummary",
+                    "manual"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated but not permitted (scope or team permission).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded; see Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "pat": []
+          }
+        ],
+        "tags": [
+          "import"
+        ]
+      }
+    },
     "/api/v1/cloud-credentials": {
       "get": {
         "operationId": "CloudCredentialsController_list",
@@ -70638,6 +74110,1976 @@
           "error",
           "message",
           "code"
+        ],
+        "additionalProperties": false
+      },
+      "MigrationRunView": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "teamId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "actorId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "targetServerId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "targetServerName": {
+            "type": "string",
+            "nullable": true
+          },
+          "sourceKind": {
+            "type": "string",
+            "enum": [
+              "coolify",
+              "dokploy"
+            ]
+          },
+          "sourceHost": {
+            "type": "string",
+            "nullable": true
+          },
+          "opId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "nullable": true
+          },
+          "opHistory": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          },
+          "planHash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "copy",
+              "takeover"
+            ]
+          },
+          "topology": {
+            "type": "string",
+            "enum": [
+              "two-box",
+              "swap-proxy"
+            ]
+          },
+          "dryRun": {
+            "type": "boolean"
+          },
+          "promotedFromId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "QUEUED",
+              "RUNNING",
+              "WAITING",
+              "PAUSED",
+              "ABORTING",
+              "ABORTED",
+              "ROLLING_BACK",
+              "ROLLED_BACK",
+              "REVERSING",
+              "REVERSED",
+              "COMPLETED",
+              "FAILED",
+              "DRY_RUN_DONE"
+            ]
+          },
+          "currentStep": {
+            "type": "string",
+            "enum": [
+              "PREFLIGHT",
+              "IMPORT",
+              "DNS_PREPARE",
+              "DATA_SEED",
+              "FREEZE",
+              "DATA_FINAL",
+              "REMAP_ENV",
+              "DEPLOY_DARK",
+              "TLS_PREISSUE",
+              "VERIFY",
+              "CUTOVER",
+              "OBSERVE",
+              "FINALIZE",
+              "DECOMMISSION"
+            ],
+            "nullable": true
+          },
+          "ponrAt": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 40,
+            "nullable": true
+          },
+          "pauseRequested": {
+            "type": "boolean"
+          },
+          "abortRequested": {
+            "type": "boolean"
+          },
+          "options": {
+            "type": "object",
+            "properties": {
+              "ttlPolicy": {
+                "type": "string",
+                "enum": [
+                  "wait",
+                  "skip-ack"
+                ],
+                "default": "wait"
+              },
+              "deployWaves": {
+                "type": "string",
+                "enum": [
+                  "single",
+                  "earlyStateless"
+                ],
+                "default": "single"
+              },
+              "warmDbSeed": {
+                "type": "boolean",
+                "default": false
+              },
+              "stopSource": {
+                "type": "boolean",
+                "default": false
+              },
+              "sourceRunner": {
+                "type": "string",
+                "enum": [
+                  "operator",
+                  "agent"
+                ],
+                "default": "operator"
+              },
+              "certs": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "seed"
+                ],
+                "default": "none"
+              },
+              "acceptHttp01Gap": {
+                "type": "boolean",
+                "default": false
+              },
+              "freezeAt": {
+                "type": "string",
+                "minLength": 10,
+                "maxLength": 40
+              },
+              "observeMinutes": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4320,
+                "default": 30
+              },
+              "manualFinalize": {
+                "type": "boolean",
+                "default": false
+              },
+              "batchSize": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 25,
+                "default": 5
+              },
+              "intervalSec": {
+                "type": "integer",
+                "minimum": 5,
+                "maximum": 600,
+                "default": 30
+              },
+              "dnsCredentialId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "healthPath": {
+                "type": "string",
+                "pattern": "^\\/[\\x21-\\x7e]{0,254}$"
+              },
+              "rowCountMode": {
+                "type": "string",
+                "enum": [
+                  "exact",
+                  "estimate"
+                ],
+                "default": "estimate"
+              },
+              "decommissionMinAgeHours": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2160,
+                "default": 72
+              },
+              "stuckOperatorMinutes": {
+                "type": "integer",
+                "minimum": 5,
+                "maximum": 1440,
+                "default": 60
+              }
+            },
+            "additionalProperties": false
+          },
+          "inputs": {
+            "type": "object",
+            "properties": {
+              "acmeEmail": {
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "email",
+                        "maxLength": 254
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "unknown"
+                        ]
+                      }
+                    ]
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "request",
+                      "default",
+                      "derived"
+                    ]
+                  },
+                  "setBy": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "nullable": true
+                  },
+                  "at": {
+                    "type": "string",
+                    "minLength": 10,
+                    "maxLength": 40
+                  }
+                },
+                "required": [
+                  "value",
+                  "source",
+                  "setBy",
+                  "at"
+                ],
+                "additionalProperties": false
+              },
+              "allowBind": {
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "unknown"
+                        ]
+                      }
+                    ]
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "request",
+                      "default",
+                      "derived"
+                    ]
+                  },
+                  "setBy": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "nullable": true
+                  },
+                  "at": {
+                    "type": "string",
+                    "minLength": 10,
+                    "maxLength": 40
+                  }
+                },
+                "required": [
+                  "value",
+                  "source",
+                  "setBy",
+                  "at"
+                ],
+                "additionalProperties": false
+              },
+              "allowLiveShapeProbe": {
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "unknown"
+                        ]
+                      }
+                    ]
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "request",
+                      "default",
+                      "derived"
+                    ]
+                  },
+                  "setBy": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "nullable": true
+                  },
+                  "at": {
+                    "type": "string",
+                    "minLength": 10,
+                    "maxLength": 40
+                  }
+                },
+                "required": [
+                  "value",
+                  "source",
+                  "setBy",
+                  "at"
+                ],
+                "additionalProperties": false
+              },
+              "sourceController": {
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "manual",
+                          "api",
+                          "agent"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "unknown"
+                        ]
+                      }
+                    ]
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "request",
+                      "default",
+                      "derived"
+                    ]
+                  },
+                  "setBy": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "nullable": true
+                  },
+                  "at": {
+                    "type": "string",
+                    "minLength": 10,
+                    "maxLength": 40
+                  }
+                },
+                "required": [
+                  "value",
+                  "source",
+                  "setBy",
+                  "at"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          "windowEstimate": {
+            "type": "object",
+            "properties": {
+              "freezeToFlipSec": {
+                "type": "integer",
+                "minimum": 0,
+                "nullable": true
+              },
+              "basis": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "maxLength": 80,
+                      "pattern": "^[a-z0-9]+([.-][a-z0-9]+)*$"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "maxLength": 500
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "enum": [
+                              "null"
+                            ],
+                            "nullable": true
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "maxLength": 300
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "enum": [
+                                    "null"
+                                  ],
+                                  "nullable": true
+                                }
+                              ]
+                            },
+                            "maxItems": 200
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "code"
+                  ],
+                  "additionalProperties": false
+                },
+                "maxItems": 20
+              },
+              "estimatedAt": {
+                "type": "string",
+                "minLength": 10,
+                "maxLength": 40
+              }
+            },
+            "required": [
+              "freezeToFlipSec",
+              "basis",
+              "estimatedAt"
+            ],
+            "additionalProperties": false,
+            "nullable": true
+          },
+          "freezeStartedAt": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 40,
+            "nullable": true
+          },
+          "freezeEndedAt": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 40,
+            "nullable": true
+          },
+          "measuredDowntimeSec": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          },
+          "failure": {
+            "type": "object",
+            "properties": {
+              "step": {
+                "type": "string",
+                "enum": [
+                  "PREFLIGHT",
+                  "IMPORT",
+                  "DNS_PREPARE",
+                  "DATA_SEED",
+                  "FREEZE",
+                  "DATA_FINAL",
+                  "REMAP_ENV",
+                  "DEPLOY_DARK",
+                  "TLS_PREISSUE",
+                  "VERIFY",
+                  "CUTOVER",
+                  "OBSERVE",
+                  "FINALIZE",
+                  "DECOMMISSION"
+                ],
+                "nullable": true
+              },
+              "code": {
+                "type": "string",
+                "maxLength": 80,
+                "pattern": "^[a-z0-9]+([.-][a-z0-9]+)*$"
+              }
+            },
+            "required": [
+              "step",
+              "code"
+            ],
+            "additionalProperties": false,
+            "nullable": true
+          },
+          "nextAction": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "operator",
+                  "approval",
+                  "timer",
+                  "gate",
+                  "session",
+                  "paused",
+                  "failed",
+                  "engine",
+                  "none"
+                ]
+              },
+              "stepKey": {
+                "type": "string",
+                "enum": [
+                  "PREFLIGHT",
+                  "IMPORT",
+                  "DNS_PREPARE",
+                  "DATA_SEED",
+                  "FREEZE",
+                  "DATA_FINAL",
+                  "REMAP_ENV",
+                  "DEPLOY_DARK",
+                  "TLS_PREISSUE",
+                  "VERIFY",
+                  "CUTOVER",
+                  "OBSERVE",
+                  "FINALIZE",
+                  "DECOMMISSION"
+                ],
+                "nullable": true
+              },
+              "code": {
+                "type": "string",
+                "maxLength": 80,
+                "pattern": "^[a-z0-9]+([.-][a-z0-9]+)*$"
+              },
+              "params": {
+                "type": "object",
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 500
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "enum": [
+                        "null"
+                      ],
+                      "nullable": true
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "maxLength": 300
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "enum": [
+                              "null"
+                            ],
+                            "nullable": true
+                          }
+                        ]
+                      },
+                      "maxItems": 200
+                    }
+                  ]
+                }
+              },
+              "since": {
+                "type": "string",
+                "minLength": 10,
+                "maxLength": 40
+              },
+              "notBefore": {
+                "type": "string",
+                "minLength": 10,
+                "maxLength": 40,
+                "nullable": true
+              },
+              "approval": {
+                "type": "object",
+                "properties": {
+                  "inputHash": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "ponr": {
+                    "type": "boolean"
+                  },
+                  "confirm": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "run-id",
+                      "target-server",
+                      "target-server+source-host",
+                      "source-host"
+                    ]
+                  },
+                  "ttlSec": {
+                    "type": "integer",
+                    "exclusiveMinimum": true,
+                    "minimum": 0,
+                    "nullable": true
+                  },
+                  "requiresDataRisk": {
+                    "type": "boolean"
+                  },
+                  "ackable": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "maxLength": 80
+                    },
+                    "maxItems": 200
+                  },
+                  "requiredAcks": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "maxLength": 80
+                    },
+                    "maxItems": 200
+                  },
+                  "review": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 500
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "enum": [
+                            "null"
+                          ],
+                          "nullable": true
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "maxLength": 300
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "enum": [
+                                  "null"
+                                ],
+                                "nullable": true
+                              }
+                            ]
+                          },
+                          "maxItems": 200
+                        }
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "inputHash",
+                  "ponr",
+                  "confirm",
+                  "ttlSec",
+                  "requiresDataRisk",
+                  "ackable",
+                  "requiredAcks",
+                  "review"
+                ],
+                "additionalProperties": false
+              },
+              "attest": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 80
+                }
+              },
+              "offersCommand": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "kind",
+              "stepKey",
+              "code",
+              "since"
+            ],
+            "additionalProperties": false
+          },
+          "allowed": {
+            "type": "object",
+            "properties": {
+              "start": {
+                "type": "boolean"
+              },
+              "pause": {
+                "type": "boolean"
+              },
+              "resume": {
+                "type": "boolean"
+              },
+              "abort": {
+                "type": "boolean"
+              },
+              "cleanup": {
+                "type": "boolean"
+              },
+              "reverse": {
+                "type": "boolean"
+              },
+              "decommission": {
+                "type": "boolean"
+              },
+              "setInputs": {
+                "type": "boolean"
+              },
+              "sourceSession": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "start",
+              "pause",
+              "resume",
+              "abort",
+              "cleanup",
+              "reverse",
+              "decommission",
+              "setInputs",
+              "sourceSession"
+            ],
+            "additionalProperties": false
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "enum": [
+                    "PREFLIGHT",
+                    "IMPORT",
+                    "DNS_PREPARE",
+                    "DATA_SEED",
+                    "FREEZE",
+                    "DATA_FINAL",
+                    "REMAP_ENV",
+                    "DEPLOY_DARK",
+                    "TLS_PREISSUE",
+                    "VERIFY",
+                    "CUTOVER",
+                    "OBSERVE",
+                    "FINALIZE",
+                    "DECOMMISSION"
+                  ]
+                },
+                "idx": {
+                  "type": "integer"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "auto",
+                    "operator",
+                    "approval",
+                    "timer"
+                  ]
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "PENDING",
+                    "RUNNING",
+                    "WAITING_OPERATOR",
+                    "WAITING_APPROVAL",
+                    "WAITING_TIMER",
+                    "PASSED",
+                    "FAILED",
+                    "SKIPPED",
+                    "COMPENSATED"
+                  ]
+                },
+                "rollbackClass": {
+                  "type": "string",
+                  "enum": [
+                    "FREE",
+                    "UNDOABLE",
+                    "LOSSY_AFTER_PONR",
+                    "IRREVERSIBLE"
+                  ]
+                },
+                "attempt": {
+                  "type": "integer"
+                },
+                "skippedCode": {
+                  "type": "string",
+                  "maxLength": 80,
+                  "pattern": "^[a-z0-9]+([.-][a-z0-9]+)*$",
+                  "nullable": true
+                },
+                "gate": {
+                  "type": "object",
+                  "properties": {
+                    "passed": {
+                      "type": "boolean"
+                    },
+                    "checks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 80
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "pass",
+                              "fail",
+                              "warn",
+                              "unknown"
+                            ]
+                          },
+                          "code": {
+                            "type": "string",
+                            "maxLength": 80,
+                            "pattern": "^[a-z0-9]+([.-][a-z0-9]+)*$"
+                          },
+                          "params": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "maxLength": 500
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "enum": [
+                                    "null"
+                                  ],
+                                  "nullable": true
+                                },
+                                {
+                                  "type": "array",
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "maxLength": 300
+                                      },
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "boolean"
+                                      },
+                                      {
+                                        "enum": [
+                                          "null"
+                                        ],
+                                        "nullable": true
+                                      }
+                                    ]
+                                  },
+                                  "maxItems": 200
+                                }
+                              ]
+                            }
+                          },
+                          "subject": {
+                            "type": "string",
+                            "maxLength": 300
+                          },
+                          "evidence": {
+                            "type": "string",
+                            "enum": [
+                              "hub-verified",
+                              "migrator-reported",
+                              "operator-attested"
+                            ]
+                          },
+                          "ownerInput": {
+                            "type": "string",
+                            "enum": [
+                              "acmeEmail",
+                              "allowBind",
+                              "allowLiveShapeProbe",
+                              "sourceController"
+                            ]
+                          },
+                          "ackable": {
+                            "type": "boolean"
+                          },
+                          "acked": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "status",
+                          "code"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "maxItems": 500
+                    },
+                    "wait": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "operator"
+                              ]
+                            },
+                            "code": {
+                              "type": "string",
+                              "maxLength": 80,
+                              "pattern": "^[a-z0-9]+([.-][a-z0-9]+)*$"
+                            },
+                            "params": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "maxLength": 500
+                                  },
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "enum": [
+                                      "null"
+                                    ],
+                                    "nullable": true
+                                  },
+                                  {
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "maxLength": 300
+                                        },
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "boolean"
+                                        },
+                                        {
+                                          "enum": [
+                                            "null"
+                                          ],
+                                          "nullable": true
+                                        }
+                                      ]
+                                    },
+                                    "maxItems": 200
+                                  }
+                                ]
+                              }
+                            },
+                            "offersCommand": {
+                              "type": "boolean"
+                            },
+                            "attest": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "maxLength": 80
+                              },
+                              "maxItems": 50
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "code"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "approval"
+                              ]
+                            },
+                            "binding": {
+                              "type": "object",
+                              "properties": {
+                                "inputHash": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "ponr": {
+                                  "type": "boolean"
+                                },
+                                "confirm": {
+                                  "type": "string",
+                                  "enum": [
+                                    "none",
+                                    "run-id",
+                                    "target-server",
+                                    "target-server+source-host",
+                                    "source-host"
+                                  ]
+                                },
+                                "ttlSec": {
+                                  "type": "integer",
+                                  "exclusiveMinimum": true,
+                                  "minimum": 0,
+                                  "nullable": true
+                                },
+                                "requiresDataRisk": {
+                                  "type": "boolean"
+                                },
+                                "ackable": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "maxLength": 80
+                                  },
+                                  "maxItems": 200
+                                },
+                                "requiredAcks": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "maxLength": 80
+                                  },
+                                  "maxItems": 200
+                                },
+                                "review": {
+                                  "type": "object",
+                                  "additionalProperties": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "maxLength": 500
+                                      },
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "boolean"
+                                      },
+                                      {
+                                        "enum": [
+                                          "null"
+                                        ],
+                                        "nullable": true
+                                      },
+                                      {
+                                        "type": "array",
+                                        "items": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string",
+                                              "maxLength": 300
+                                            },
+                                            {
+                                              "type": "number"
+                                            },
+                                            {
+                                              "type": "boolean"
+                                            },
+                                            {
+                                              "enum": [
+                                                "null"
+                                              ],
+                                              "nullable": true
+                                            }
+                                          ]
+                                        },
+                                        "maxItems": 200
+                                      }
+                                    ]
+                                  }
+                                }
+                              },
+                              "required": [
+                                "inputHash",
+                                "ponr",
+                                "confirm",
+                                "ttlSec",
+                                "requiresDataRisk",
+                                "ackable",
+                                "requiredAcks",
+                                "review"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "binding"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "timer"
+                              ]
+                            },
+                            "notBefore": {
+                              "type": "string",
+                              "minLength": 10,
+                              "maxLength": 40
+                            },
+                            "code": {
+                              "type": "string",
+                              "maxLength": 80,
+                              "pattern": "^[a-z0-9]+([.-][a-z0-9]+)*$"
+                            },
+                            "params": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "maxLength": 500
+                                  },
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "enum": [
+                                      "null"
+                                    ],
+                                    "nullable": true
+                                  },
+                                  {
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "maxLength": 300
+                                        },
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "boolean"
+                                        },
+                                        {
+                                          "enum": [
+                                            "null"
+                                          ],
+                                          "nullable": true
+                                        }
+                                      ]
+                                    },
+                                    "maxItems": 200
+                                  }
+                                ]
+                              }
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "notBefore",
+                            "code"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "passed",
+                    "checks"
+                  ],
+                  "additionalProperties": false,
+                  "nullable": true
+                },
+                "approval": {
+                  "type": "object",
+                  "properties": {
+                    "byUserId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    },
+                    "at": {
+                      "type": "string",
+                      "minLength": 10,
+                      "maxLength": 40
+                    },
+                    "boundHash": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "acks": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "maxLength": 80
+                      },
+                      "maxItems": 200
+                    },
+                    "acceptDataRisk": {
+                      "type": "boolean"
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "minLength": 10,
+                      "maxLength": 40,
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "byUserId",
+                    "at",
+                    "boundHash",
+                    "acks",
+                    "acceptDataRisk",
+                    "expiresAt"
+                  ],
+                  "additionalProperties": false,
+                  "nullable": true
+                },
+                "wait": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "operator"
+                          ]
+                        },
+                        "code": {
+                          "type": "string",
+                          "maxLength": 80,
+                          "pattern": "^[a-z0-9]+([.-][a-z0-9]+)*$"
+                        },
+                        "params": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "maxLength": 500
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "enum": [
+                                  "null"
+                                ],
+                                "nullable": true
+                              },
+                              {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "maxLength": 300
+                                    },
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "boolean"
+                                    },
+                                    {
+                                      "enum": [
+                                        "null"
+                                      ],
+                                      "nullable": true
+                                    }
+                                  ]
+                                },
+                                "maxItems": 200
+                              }
+                            ]
+                          }
+                        },
+                        "offersCommand": {
+                          "type": "boolean"
+                        },
+                        "attest": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "maxLength": 80
+                          },
+                          "maxItems": 50
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "code"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "approval"
+                          ]
+                        },
+                        "binding": {
+                          "type": "object",
+                          "properties": {
+                            "inputHash": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "ponr": {
+                              "type": "boolean"
+                            },
+                            "confirm": {
+                              "type": "string",
+                              "enum": [
+                                "none",
+                                "run-id",
+                                "target-server",
+                                "target-server+source-host",
+                                "source-host"
+                              ]
+                            },
+                            "ttlSec": {
+                              "type": "integer",
+                              "exclusiveMinimum": true,
+                              "minimum": 0,
+                              "nullable": true
+                            },
+                            "requiresDataRisk": {
+                              "type": "boolean"
+                            },
+                            "ackable": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "maxLength": 80
+                              },
+                              "maxItems": 200
+                            },
+                            "requiredAcks": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "maxLength": 80
+                              },
+                              "maxItems": 200
+                            },
+                            "review": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "maxLength": 500
+                                  },
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "enum": [
+                                      "null"
+                                    ],
+                                    "nullable": true
+                                  },
+                                  {
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "maxLength": 300
+                                        },
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "boolean"
+                                        },
+                                        {
+                                          "enum": [
+                                            "null"
+                                          ],
+                                          "nullable": true
+                                        }
+                                      ]
+                                    },
+                                    "maxItems": 200
+                                  }
+                                ]
+                              }
+                            }
+                          },
+                          "required": [
+                            "inputHash",
+                            "ponr",
+                            "confirm",
+                            "ttlSec",
+                            "requiresDataRisk",
+                            "ackable",
+                            "requiredAcks",
+                            "review"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "binding"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "timer"
+                          ]
+                        },
+                        "notBefore": {
+                          "type": "string",
+                          "minLength": 10,
+                          "maxLength": 40
+                        },
+                        "code": {
+                          "type": "string",
+                          "maxLength": 80,
+                          "pattern": "^[a-z0-9]+([.-][a-z0-9]+)*$"
+                        },
+                        "params": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "maxLength": 500
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "enum": [
+                                  "null"
+                                ],
+                                "nullable": true
+                              },
+                              {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "maxLength": 300
+                                    },
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "boolean"
+                                    },
+                                    {
+                                      "enum": [
+                                        "null"
+                                      ],
+                                      "nullable": true
+                                    }
+                                  ]
+                                },
+                                "maxItems": 200
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "notBefore",
+                        "code"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ],
+                  "nullable": true
+                },
+                "progress": {
+                  "type": "object",
+                  "properties": {
+                    "done": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "total": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "unit": {
+                      "type": "string",
+                      "enum": [
+                        "item",
+                        "byte",
+                        "volume",
+                        "host",
+                        "app",
+                        "database",
+                        "bucket",
+                        "second"
+                      ]
+                    },
+                    "etaSec": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "nullable": true
+                    },
+                    "dryRun": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string",
+                            "maxLength": 80,
+                            "pattern": "^[a-z0-9]+([.-][a-z0-9]+)*$"
+                          },
+                          "level": {
+                            "type": "string",
+                            "enum": [
+                              "info",
+                              "warn",
+                              "block",
+                              "unknown"
+                            ]
+                          },
+                          "subject": {
+                            "type": "string",
+                            "maxLength": 300
+                          },
+                          "params": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "maxLength": 500
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "enum": [
+                                    "null"
+                                  ],
+                                  "nullable": true
+                                },
+                                {
+                                  "type": "array",
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "maxLength": 300
+                                      },
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "boolean"
+                                      },
+                                      {
+                                        "enum": [
+                                          "null"
+                                        ],
+                                        "nullable": true
+                                      }
+                                    ]
+                                  },
+                                  "maxItems": 200
+                                }
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "level"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "maxItems": 500
+                    }
+                  },
+                  "required": [
+                    "done",
+                    "total",
+                    "unit"
+                  ],
+                  "additionalProperties": false,
+                  "nullable": true
+                },
+                "evidence": {
+                  "type": "object",
+                  "properties": {
+                    "attestations": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "checkId": {
+                            "type": "string",
+                            "maxLength": 80
+                          },
+                          "subject": {
+                            "type": "string",
+                            "maxLength": 300
+                          },
+                          "note": {
+                            "type": "string",
+                            "maxLength": 500
+                          },
+                          "byUserId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "at": {
+                            "type": "string",
+                            "minLength": 10,
+                            "maxLength": 40
+                          }
+                        },
+                        "required": [
+                          "checkId",
+                          "byUserId",
+                          "at"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "maxItems": 200
+                    },
+                    "attachments": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "object-migration"
+                            ]
+                          },
+                          "resourceId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "byUserId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "at": {
+                            "type": "string",
+                            "minLength": 10,
+                            "maxLength": 40
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "resourceId",
+                          "byUserId",
+                          "at"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "maxItems": 50
+                    }
+                  },
+                  "required": [
+                    "attestations",
+                    "attachments"
+                  ],
+                  "additionalProperties": false
+                },
+                "notBefore": {
+                  "type": "string",
+                  "minLength": 10,
+                  "maxLength": 40,
+                  "nullable": true
+                },
+                "startedAt": {
+                  "type": "string",
+                  "minLength": 10,
+                  "maxLength": 40,
+                  "nullable": true
+                },
+                "finishedAt": {
+                  "type": "string",
+                  "minLength": 10,
+                  "maxLength": 40,
+                  "nullable": true
+                },
+                "lastError": {
+                  "type": "string",
+                  "maxLength": 80,
+                  "pattern": "^[a-z0-9]+([.-][a-z0-9]+)*$",
+                  "nullable": true
+                },
+                "allowed": {
+                  "type": "object",
+                  "properties": {
+                    "approve": {
+                      "type": "boolean"
+                    },
+                    "retry": {
+                      "type": "boolean"
+                    },
+                    "skip": {
+                      "type": "boolean"
+                    },
+                    "evidence": {
+                      "type": "boolean"
+                    },
+                    "attach": {
+                      "type": "boolean"
+                    },
+                    "command": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "approve",
+                    "retry",
+                    "skip",
+                    "evidence",
+                    "attach",
+                    "command"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "key",
+                "idx",
+                "kind",
+                "status",
+                "rollbackClass",
+                "attempt",
+                "skippedCode",
+                "gate",
+                "approval",
+                "wait",
+                "progress",
+                "evidence",
+                "notBefore",
+                "startedAt",
+                "finishedAt",
+                "lastError",
+                "allowed"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "eventSeq": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "createdAt": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 40
+          },
+          "startedAt": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 40,
+            "nullable": true
+          },
+          "finishedAt": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 40,
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 40
+          }
+        },
+        "required": [
+          "id",
+          "teamId",
+          "actorId",
+          "targetServerId",
+          "targetServerName",
+          "sourceKind",
+          "sourceHost",
+          "opId",
+          "opHistory",
+          "planHash",
+          "mode",
+          "topology",
+          "dryRun",
+          "promotedFromId",
+          "status",
+          "currentStep",
+          "ponrAt",
+          "pauseRequested",
+          "abortRequested",
+          "options",
+          "inputs",
+          "windowEstimate",
+          "freezeStartedAt",
+          "freezeEndedAt",
+          "measuredDowntimeSec",
+          "failure",
+          "nextAction",
+          "allowed",
+          "steps",
+          "eventSeq",
+          "createdAt",
+          "startedAt",
+          "finishedAt",
+          "updatedAt"
         ],
         "additionalProperties": false
       }
