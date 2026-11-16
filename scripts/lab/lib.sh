@@ -178,7 +178,12 @@ lab_run_wait() {
   local tag="$1" t="${2:-1800}" i=0
   while [ ! -f "$LAB_DIR/run.$tag.rc" ]; do
     sleep 1; i=$((i + 1))
-    [ "$i" -lt "$t" ] || lab_die "run $tag did not finish within ${t}s"
+    if [ "$i" -ge "$t" ]; then
+      # what is still alive: the migrator container, the installer, its docker client and the log tee (the evidence a hang needs)
+      { echo "--- run $tag: processes"; ps -eo pid,ppid,stat,etime,args 2>/dev/null | grep -E 'migrate\.sh|install/migrator|docker (run|kill|rm)|tee .*run\.' | grep -v grep || true
+        echo "--- run $tag: containers"; docker ps -a --format '{{.Names}} {{.Status}}' 2>/dev/null || true; } >&2
+      lab_die "run $tag did not finish within ${t}s"
+    fi
   done
   cat "$LAB_DIR/run.$tag.rc"
 }

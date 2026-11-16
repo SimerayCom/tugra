@@ -10,15 +10,20 @@ name: Migration lab (vx)
 # has to move: running uuid-named sources, a multi-GB time-series PostgreSQL, a MariaDB over the logical cap, a 12-bucket MinIO on a
 # bind mount, Coolify 4.1.2 discovery, and an Ubuntu 26.04 userland. Their data is generated on the runner (nothing big lives in git).
 #
+# streamdump (L15) and pgtls (L16) are the data-plane legs the fleet's biggest databases and its TLS clients need: the streamed dump lane
+# (largeDbMode stream-logical) for PostgreSQL and MariaDB with the hub killed mid-dump, and PostgreSQL with sslmode=require on 16, 17 and 18
+# and pgvector. Their pass condition is data integrity, not row counts: a checksum over every column, extensions, sequences, collation, and
+# the roles, ownership and grants the dump lanes are recorded to drop (scripts/lab/integrity.sh).
+#
 # Not part of CI on every push: it moves gigabytes through docker. Nightly, and on demand from the Actions tab
 # (items: all, or a comma list of tar, core, restart, postgres, memory, seats, throttle, fleetpg, fleetdb, fleetminio, fleethosts,
-# fleetcoolify, ubuntu; `fleet` selects the six fleet-shaped ones).
+# fleetcoolify, ubuntu, streamdump, pgtls; `fleet` selects the six fleet-shaped ones, `stream` the two data-plane legs L15 and L16).
 
 on:
   workflow_dispatch:
     inputs:
       items:
-        description: "all, fleet, or a comma list of: tar (L4), core (L0 L1a L1b), restart (L2), postgres (L6), memory (L7), seats (L8), throttle (L3 mechanics), fleetpg (L9), fleetdb (L10), fleetminio (L11), fleethosts (L12), fleetcoolify (L13), ubuntu (L14)"
+        description: "all, fleet, or a comma list of: tar (L4), core (L0 L1a L1b), restart (L2), postgres (L6), memory (L7), seats (L8), throttle (L3 mechanics), fleetpg (L9), fleetdb (L10), fleetminio (L11), fleethosts (L12), fleetcoolify (L13), ubuntu (L14), streamdump (L15), pgtls (L16); fleet = the six fleet-shaped ones, stream = streamdump and pgtls"
         required: false
         default: all
         type: string
@@ -60,6 +65,8 @@ jobs:
       fleethosts: ${{ steps.pick.outputs.fleethosts }}
       fleetcoolify: ${{ steps.pick.outputs.fleetcoolify }}
       ubuntu: ${{ steps.pick.outputs.ubuntu }}
+      streamdump: ${{ steps.pick.outputs.streamdump }}
+      pgtls: ${{ steps.pick.outputs.pgtls }}
     steps:
       - id: pick
         env:
@@ -67,9 +74,10 @@ jobs:
           ITEMS: ${{ inputs.items }}
         run: |
           list=",$(printf '%s' "${ITEMS:-all}" | tr -d ' '),"
-          for i in tar core restart postgres memory seats throttle fleetpg fleetdb fleetminio fleethosts fleetcoolify ubuntu; do
+          for i in tar core restart postgres memory seats throttle fleetpg fleetdb fleetminio fleethosts fleetcoolify ubuntu streamdump pgtls; do
             fleet=false
             case "$i" in fleetpg|fleetdb|fleetminio|fleethosts|fleetcoolify|ubuntu) case "$list" in *",fleet,"*) fleet=true;; esac;; esac
+            case "$i" in streamdump|pgtls) case "$list" in *",stream,"*) fleet=true;; esac;; esac
             if [ "$EVENT" != "workflow_dispatch" ] || [ "$list" = ",all," ] || [ "$fleet" = true ] || case "$list" in *",$i,"*) true;; *) false;; esac; then
               echo "$i=true" >> "$GITHUB_OUTPUT"
             else
@@ -95,7 +103,7 @@ jobs:
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/lab-logs"
-          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/l7.summary "$LAB_DIR"/l8.summary "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
+          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/*.fp.* "$LAB_DIR"/*.summary "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
           docker ps -a --format '{{.Names}} {{.Status}}' > "$RUNNER_TEMP/lab-logs/docker-ps.txt" 2>/dev/null || true
           docker logs lab-agent > "$RUNNER_TEMP/lab-logs/lab-agent.log" 2>&1 || true
       - uses: actions/upload-artifact@v4
@@ -138,7 +146,7 @@ jobs:
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/lab-logs"
-          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/l7.summary "$LAB_DIR"/l8.summary "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
+          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/*.fp.* "$LAB_DIR"/*.summary "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
           docker ps -a --format '{{.Names}} {{.Status}}' > "$RUNNER_TEMP/lab-logs/docker-ps.txt" 2>/dev/null || true
           docker logs lab-agent > "$RUNNER_TEMP/lab-logs/lab-agent.log" 2>&1 || true
       - uses: actions/upload-artifact@v4
@@ -180,7 +188,7 @@ jobs:
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/lab-logs"
-          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/l7.summary "$LAB_DIR"/l8.summary "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
+          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/*.fp.* "$LAB_DIR"/*.summary "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
           docker ps -a --format '{{.Names}} {{.Status}}' > "$RUNNER_TEMP/lab-logs/docker-ps.txt" 2>/dev/null || true
           docker logs lab-agent > "$RUNNER_TEMP/lab-logs/lab-agent.log" 2>&1 || true
       - uses: actions/upload-artifact@v4
@@ -228,7 +236,7 @@ jobs:
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/lab-logs"
-          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/l7.summary "$LAB_DIR"/l8.summary "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
+          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/*.fp.* "$LAB_DIR"/*.summary "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
           docker ps -a --format '{{.Names}} {{.Status}}' > "$RUNNER_TEMP/lab-logs/docker-ps.txt" 2>/dev/null || true
           docker logs lab-agent > "$RUNNER_TEMP/lab-logs/lab-agent.log" 2>&1 || true
       - uses: actions/upload-artifact@v4
@@ -270,7 +278,7 @@ jobs:
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/lab-logs"
-          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/l7.summary "$LAB_DIR"/l8.summary "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
+          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/*.fp.* "$LAB_DIR"/*.summary "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
           docker ps -a --format '{{.Names}} {{.Status}}' > "$RUNNER_TEMP/lab-logs/docker-ps.txt" 2>/dev/null || true
           docker logs lab-agent > "$RUNNER_TEMP/lab-logs/lab-agent.log" 2>&1 || true
       - uses: actions/upload-artifact@v4
@@ -323,7 +331,7 @@ jobs:
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/lab-logs"
-          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/l7.summary "$LAB_DIR"/l8.summary "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
+          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/*.fp.* "$LAB_DIR"/*.summary "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
           docker ps -a --format '{{.Names}} {{.Status}}' > "$RUNNER_TEMP/lab-logs/docker-ps.txt" 2>/dev/null || true
           docker logs lab-agent > "$RUNNER_TEMP/lab-logs/lab-agent.log" 2>&1 || true
       - uses: actions/upload-artifact@v4
@@ -361,7 +369,7 @@ jobs:
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/lab-logs"
-          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/l7.summary "$LAB_DIR"/l8.summary "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
+          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/*.fp.* "$LAB_DIR"/*.summary "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
           docker ps -a --format '{{.Names}} {{.Status}}' > "$RUNNER_TEMP/lab-logs/docker-ps.txt" 2>/dev/null || true
           docker logs lab-agent > "$RUNNER_TEMP/lab-logs/lab-agent.log" 2>&1 || true
       - uses: actions/upload-artifact@v4
@@ -412,7 +420,7 @@ jobs:
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/lab-logs"
-          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/*.summary "$LAB_DIR"/l13.plan.*.json "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
+          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/*.fp.* "$LAB_DIR"/*.summary "$LAB_DIR"/l13.plan.*.json "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
           docker ps -a --format '{{.Names}} {{.Status}}' > "$RUNNER_TEMP/lab-logs/docker-ps.txt" 2>/dev/null || true
           docker logs lab-agent > "$RUNNER_TEMP/lab-logs/lab-agent.log" 2>&1 || true
       - uses: actions/upload-artifact@v4
@@ -454,7 +462,7 @@ jobs:
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/lab-logs"
-          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/*.summary "$LAB_DIR"/l13.plan.*.json "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
+          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/*.fp.* "$LAB_DIR"/*.summary "$LAB_DIR"/l13.plan.*.json "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
           docker ps -a --format '{{.Names}} {{.Status}}' > "$RUNNER_TEMP/lab-logs/docker-ps.txt" 2>/dev/null || true
           docker logs lab-agent > "$RUNNER_TEMP/lab-logs/lab-agent.log" 2>&1 || true
       - uses: actions/upload-artifact@v4
@@ -498,7 +506,7 @@ jobs:
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/lab-logs"
-          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/*.summary "$LAB_DIR"/l13.plan.*.json "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
+          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/*.fp.* "$LAB_DIR"/*.summary "$LAB_DIR"/l13.plan.*.json "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
           docker ps -a --format '{{.Names}} {{.Status}}' > "$RUNNER_TEMP/lab-logs/docker-ps.txt" 2>/dev/null || true
           docker logs lab-agent > "$RUNNER_TEMP/lab-logs/lab-agent.log" 2>&1 || true
       - uses: actions/upload-artifact@v4
@@ -540,7 +548,7 @@ jobs:
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/lab-logs"
-          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/*.summary "$LAB_DIR"/l13.plan.*.json "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
+          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/*.fp.* "$LAB_DIR"/*.summary "$LAB_DIR"/l13.plan.*.json "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
           docker ps -a --format '{{.Names}} {{.Status}}' > "$RUNNER_TEMP/lab-logs/docker-ps.txt" 2>/dev/null || true
           docker logs lab-agent > "$RUNNER_TEMP/lab-logs/lab-agent.log" 2>&1 || true
       - uses: actions/upload-artifact@v4
@@ -582,7 +590,7 @@ jobs:
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/lab-logs"
-          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/*.summary "$LAB_DIR"/l13.plan.*.json "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
+          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/*.fp.* "$LAB_DIR"/*.summary "$LAB_DIR"/l13.plan.*.json "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
           docker ps -a --format '{{.Names}} {{.Status}}' > "$RUNNER_TEMP/lab-logs/docker-ps.txt" 2>/dev/null || true
           docker logs lab-agent > "$RUNNER_TEMP/lab-logs/lab-agent.log" 2>&1 || true
       - uses: actions/upload-artifact@v4
@@ -624,13 +632,113 @@ jobs:
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/lab-logs"
-          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/*.summary "$LAB_DIR"/l13.plan.*.json "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
+          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/*.fp.* "$LAB_DIR"/*.summary "$LAB_DIR"/l13.plan.*.json "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
           docker ps -a --format '{{.Names}} {{.Status}}' > "$RUNNER_TEMP/lab-logs/docker-ps.txt" 2>/dev/null || true
           docker logs lab-agent > "$RUNNER_TEMP/lab-logs/lab-agent.log" 2>&1 || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: vx-lab-ubuntu
+          path: ${{ runner.temp }}/lab-logs
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Tear down
+        if: always()
+        run: scripts/lab/down.sh
+
+  streamdump:
+    name: L15 streamed dump lane ${{ matrix.image }}
+    needs: plan
+    if: needs.plan.outputs.streamdump == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - postgres:17-alpine
+          - pgvector/pgvector:pg17
+          - postgres:18-alpine
+          - mariadb:11
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lab state directory
+        run: echo "LAB_DIR=$RUNNER_TEMP/tugra-lab" >> "$GITHUB_ENV"
+      - name: Free disk space (the lab keeps the source, staged parts and the restored destination)
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet /opt/hostedtoolcache/CodeQL
+          df -h /
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Bring the lab up (registry, agent image, hub, target agent)
+        run: scripts/lab/up.sh
+      - name: L15 streamed dump of a running source, the hub killed mid-dump, rows, checksums and integrity compared
+        env:
+          L15_IMAGE: ${{ matrix.image }}
+        run: scripts/lab/l15-stream-dump.sh
+      - name: Collect logs
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/lab-logs"
+          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/*.fp.* "$LAB_DIR"/*.summary "$LAB_DIR"/l13.plan.*.json "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
+          docker ps -a --format '{{.Names}} {{.Status}}' > "$RUNNER_TEMP/lab-logs/docker-ps.txt" 2>/dev/null || true
+          docker logs lab-agent > "$RUNNER_TEMP/lab-logs/lab-agent.log" 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vx-lab-streamdump-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/lab-logs
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Tear down
+        if: always()
+        run: scripts/lab/down.sh
+
+  pgtls:
+    name: L16 PostgreSQL TLS ${{ matrix.image }}
+    needs: plan
+    if: needs.plan.outputs.pgtls == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - postgres:16-alpine
+          - postgres:17-alpine
+          - postgres:18-alpine
+          - pgvector/pgvector:pg17
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lab state directory
+        run: echo "LAB_DIR=$RUNNER_TEMP/tugra-lab" >> "$GITHUB_ENV"
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Bring the lab up (registry, agent image, hub, target agent)
+        run: scripts/lab/up.sh
+      - name: L16 TLS destination (sslmode=require from inside and from a client container), then the streamed restore read back over TLS
+        env:
+          L16_IMAGE: ${{ matrix.image }}
+        run: scripts/lab/l16-pg-tls.sh
+      - name: Collect logs
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/lab-logs"
+          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/*.fp.* "$LAB_DIR"/*.summary "$LAB_DIR"/l13.plan.*.json "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
+          docker ps -a --format '{{.Names}} {{.Status}}' > "$RUNNER_TEMP/lab-logs/docker-ps.txt" 2>/dev/null || true
+          docker logs lab-agent > "$RUNNER_TEMP/lab-logs/lab-agent.log" 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vx-lab-pgtls-${{ strategy.job-index }}
           path: ${{ runner.temp }}/lab-logs
           if-no-files-found: ignore
           retention-days: 14

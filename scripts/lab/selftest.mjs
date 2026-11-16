@@ -12,7 +12,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { select } from "./scope.mjs";
 import { parseDockerSize } from "./units.mjs";
-import { resolveDbMode } from "./seed-mode.mjs";
+import { itemRefFor, resolveDbMode, withStreamMode } from "./seed-mode.mjs";
 import { buildFleet, route, summary, tokenOf, TEAMS, VERSION } from "./coolify-fleet.mjs";
 
 const LAB = dirname(fileURLToPath(import.meta.url));
@@ -30,7 +30,7 @@ const has = (cmd, args = ["--version"]) => spawnSync(cmd, args, { encoding: "utf
 test("workflow: items=restart does not also schedule the tar job", () => {
   const yml = readFileSync(join(ROOT, ".github/workflows/vx-lab.yml"), "utf8");
   const jobs = [...yml.matchAll(/^  ([a-z]+):\n(?:    [^\n]*\n)*?    if: ([^\n]+)\n/gm)].map((m) => ({ key: m[1], cond: m[2] }));
-  assert.deepEqual(jobs.map((j) => j.key), ["tar", "core", "restart", "postgres", "memory", "seats", "throttle", "fleetpg", "fleetdb", "fleetminio", "fleethosts", "fleetcoolify", "ubuntu"]);
+  assert.deepEqual(jobs.map((j) => j.key), ["tar", "core", "restart", "postgres", "memory", "seats", "throttle", "fleetpg", "fleetdb", "fleetminio", "fleethosts", "fleetcoolify", "ubuntu", "streamdump", "pgtls"]);
   for (const j of jobs) assert.equal(j.cond, `needs.plan.outputs.${j.key} == 'true'`, `job ${j.key} must be gated by the plan job`);
   // run the plan job's own script, exactly as written in the workflow
   const block = /      - id: pick\n[\s\S]*?        run: \|\n((?:          [^\n]*\n)+)/.exec(yml);
@@ -46,14 +46,36 @@ test("workflow: items=restart does not also schedule the tar job", () => {
   };
   assert.deepEqual(selected("restart"), ["restart"]);
   assert.deepEqual(selected("core, tar"), ["tar", "core"]);
-  assert.deepEqual(selected("all").length, 13);
-  assert.deepEqual(selected("", "schedule").length, 13);
+  assert.deepEqual(selected("all").length, 15);
+  assert.deepEqual(selected("", "schedule").length, 15);
   // the fleet-shaped items: by name, as a group, and never by substring
   assert.deepEqual(selected("fleetpg"), ["fleetpg"]);
   assert.deepEqual(selected("fleet"), ["fleetpg", "fleetdb", "fleetminio", "fleethosts", "fleetcoolify", "ubuntu"]);
   assert.deepEqual(selected("tar,fleet,seats"), ["tar", "seats", "fleetpg", "fleetdb", "fleetminio", "fleethosts", "fleetcoolify", "ubuntu"]);
   assert.deepEqual(selected("postgres"), ["postgres"], "postgres must not also select fleetpg");
   assert.deepEqual(selected("fleetdb, ubuntu"), ["fleetdb", "ubuntu"]);
+  // the data-plane legs: by name, or as the `stream` group, and `fleet` does not select them
+  assert.deepEqual(selected("streamdump"), ["streamdump"]);
+  assert.deepEqual(selected("pgtls"), ["pgtls"]);
+  assert.deepEqual(selected("stream"), ["streamdump", "pgtls"]);
+  assert.deepEqual(selected("fleet").includes("streamdump"), false);
+  assert.deepEqual(selected("postgres"), ["postgres"], "postgres must not select pgtls either");
+});
+
+test("workflow: L15 and L16 matrices, their scripts and the artifacts the integrity checks write", () => {
+  const yml = readFileSync(join(ROOT, ".github/workflows/vx-lab.yml"), "utf8");
+  const section = (key) => new RegExp(`^  ${key}:\n[\\s\\S]*?(?=^  [a-z]+:\n|(?![\\s\\S]))`, "m").exec(yml)?.[0] ?? "";
+  for (const img of ["postgres:17-alpine", "pgvector/pgvector:pg17", "postgres:18-alpine", "mariadb:11"]) assert.ok(section("streamdump").includes(`- ${img}`), `L15 matrix lacks ${img}`);
+  for (const img of ["postgres:16-alpine", "postgres:17-alpine", "postgres:18-alpine", "pgvector/pgvector:pg17"]) assert.ok(section("pgtls").includes(`- ${img}`), `L16 matrix lacks ${img}`);
+  assert.match(section("streamdump"), /L15_IMAGE: \$\{\{ matrix\.image \}\}/);
+  assert.match(section("pgtls"), /L16_IMAGE: \$\{\{ matrix\.image \}\}/);
+  assert.ok(section("streamdump").includes("scripts/lab/l15-stream-dump.sh") && existsSync(join(LAB, "l15-stream-dump.sh")));
+  assert.ok(section("pgtls").includes("scripts/lab/l16-pg-tls.sh") && existsSync(join(LAB, "l16-pg-tls.sh")));
+  assert.ok(section("streamdump").includes("name: vx-lab-streamdump-${{ strategy.job-index }}") && section("pgtls").includes("name: vx-lab-pgtls-${{ strategy.job-index }}"));
+  // every job's log collection ships the scenario summaries and the fingerprints, not only l7 and l8
+  for (const line of yml.split("\n").filter((l) => l.includes('cp -f "$LAB_DIR"/*.log'))) {
+    assert.ok(line.includes('"$LAB_DIR"/*.summary') && line.includes('"$LAB_DIR"/*.fp.*'), `a log collection misses the summaries or fingerprints: ${line.trim().slice(0, 80)}`);
+  }
 });
 
 test("workflow: the matrices and inputs the fleet scenarios read", () => {
@@ -416,8 +438,33 @@ test("seed: PostgreSQL stays a physical copy by default, every other engine is l
   assert.throws(() => resolveDbMode("db", "MONGO", ""), /bad --engine/);
   assert.throws(() => resolveDbMode("db", "POSTGRES", "rsync"), /bad --data-mode/);
   const seed = read("seed.mjs");
-  assert.match(seed, /kv\("ITEMREF", plan\.mode === "dump" \? ownerRef/, "a logical op reports the database ref");
+  assert.match(seed, /kv\("ITEMREF", itemRefFor\(plan, f\.kind, f\.source, f\.volume\)\)/, "the op reports the row its lane moves");
   assert.match(seed, /proposed: plan\.mode === "volume" \? \{ dataMode: "volume" \}/, "only a physical op carries dataMode volume");
+  // the migrator row of each lane: the database ref (artifact route), the volume ref (physical copy, app volume), `<ref>:dump` (stream)
+  assert.equal(itemRefFor({ mode: "dump" }, "db", "src1", "data"), "database:_:src1");
+  assert.equal(itemRefFor({ mode: "volume" }, "db", "src1", "data"), "volume:_:src1:data");
+  assert.equal(itemRefFor({ mode: "volume" }, "app", "src1", "media"), "volume:_:src1:media");
+  assert.equal(itemRefFor({ mode: "stream" }, "db", "src1", "data"), "volume:_:src1:dump");
+});
+
+test("seed: the streamed dump lane is PostgreSQL, MariaDB and MySQL, and a stream op puts its database in meta.vxStream", () => {
+  assert.deepEqual(resolveDbMode("db", "POSTGRES", "stream"), { engine: "POSTGRES", mode: "stream" });
+  assert.deepEqual(resolveDbMode("db", "MARIADB", "stream"), { engine: "MARIADB", mode: "stream" });
+  assert.throws(() => resolveDbMode("db", "REDIS", "stream"), /PostgreSQL, MariaDB and MySQL/);
+  // what DATA_SEED writes: a new object, the op's other meta untouched, and off removes only that database
+  const meta = { serverId: "s1", plan: { items: [] } };
+  const on = withStreamMode(meta, "database:_:src1", true, "u1", "2026-01-01T00:00:00.000Z");
+  assert.deepEqual(on.vxStream, { "database:_:src1": { at: "2026-01-01T00:00:00.000Z", by: "u1" } });
+  assert.equal(on.serverId, "s1");
+  assert.equal(meta.vxStream, undefined, "the input meta is not mutated");
+  const two = withStreamMode(on, "database:_:src2", true, "u1", "t");
+  assert.deepEqual(Object.keys(two.vxStream).sort(), ["database:_:src1", "database:_:src2"]);
+  assert.deepEqual(Object.keys(withStreamMode(two, "database:_:src1", false, "u1", "t").vxStream), ["database:_:src2"]);
+  assert.deepEqual(withStreamMode(null, "database:_:x", true, "u", "t").vxStream, { "database:_:x": { at: "t", by: "u" } });
+  const seed = read("seed.mjs");
+  assert.match(seed, /streamMeta = withStreamMode\(\{\}, ownerRef, true, userId/);
+  assert.match(seed, /\.\.\.\(streamMeta \? \{ vxStream: streamMeta \} : \{\}\)/);
+  assert.match(seed, /--ssl is PostgreSQL only/);
 });
 
 // ---- the fleet library --------------------------------------------------------------------------------------------------------
@@ -585,6 +632,14 @@ test("L9: --stop-source on a running uuid-named source, the 18 refusal restarts 
   assert.match(s, /lab_expect_item logical failed dump-too-big/);
   assert.match(s, /LAYOUT_TEXT="PostgreSQL 18 data layout is not supported by Tugra database volumes yet"/);
   assert.match(s, /fleet_snapshot_others "\$SRC" "tugra_db_\$DB_ID"/, "the database the hub starts is the one expected difference");
+  // the 4 GiB table is compared by content, never by bytes after a stop (pg_total_relation_size legitimately moves)
+  assert.doesNotMatch(s, /test "\$DST_SIZE" = "\$SRC_SIZE"/);
+  assert.match(s, /lab_fingerprint_compare l9 "\$LAB_DIR\/l9\.fp\.src" "\$LAB_DIR\/l9\.fp\.dst" L9 strict-access/);
+  // the dump-too-big of the artifact route is the DEFAULT policy; the same source then goes through the streamed lane (largeDbMode stream-logical)
+  assert.match(s, /--data-mode stream/);
+  assert.match(s, /lab_stream_expect_applied stream/);
+  assert.match(s, /L9_STREAM:-1/);
+  assert.doesNotMatch(s, /no automatic lane on PostgreSQL 18\)"/, "the stale finding is gone: stream-logical is the lane");
   assert.ok(s.indexOf("lab_run dry") < s.indexOf("lab_run copy"), "a plain dry run comes before the stopping run");
   assert.ok(s.indexOf("fleet_pg_load_ticks") < s.indexOf("SRC_COUNT="), "rows are counted after the load");
   // the 256 MiB artifact cap is only asserted when the data compresses over it
@@ -605,6 +660,14 @@ test("L10: the dump size decides: a 32 MiB cap, the default cap, then the real s
   assert.match(s, /lab_expect_item capped failed dump-too-big/);
   assert.match(s, /lab_expect_item over failed dump-too-big/);
   assert.ok(s.indexOf("lab_run under") < s.indexOf("lab_run over"), "the small database first, then it grows to the real size");
+  // the over-cap run is a FRESH op: the first one is restored, and a second run on it reports already-restored (lab run 3)
+  assert.match(s, /lab_seed op --name "lab-over-[^\n]*--data-mode dump >"\$LAB_DIR\/op\.over\.env"/);
+  assert.match(s, /LAB_OP=over lab_run over --arms databases/);
+  assert.match(s, /lab_expect_item under restored/);
+  // the same database on the streamed lane, compared by fingerprint, with the source untouched
+  assert.match(s, /--data-mode stream/);
+  assert.match(s, /lab_fingerprint_compare l10-stream/);
+  assert.match(s, /L10_STREAM:-1/);
   assert.match(s, /OVER="\$\{L10_OVER_MIB:-1800\}"/, "the real mariadb is 1.8 GB");
   assert.doesNotMatch(s, /--stop-source/, "the logical arm never stops the source");
   assert.match(s, /fleet_running "\$SRC"/);
@@ -621,6 +684,14 @@ test("L11: the bind mount is refused by default, a system path stays refused, --
   assert.match(s, /compare\.sh" "\$BIND" "\$DEST_VOLUME"/);
   assert.match(s, /mc diff|fleet_mc diff/);
   assert.match(s, /test "\$BUCKETS" = 12/);
+  // the image: minio/minio and minio/mc are not pullable (lab run 3), so the pin is a pullable archive by digest and mc is the agent image's own
+  const fl = read("fleet.sh");
+  assert.doesNotMatch(fl.split("\n").filter((l) => l.startsWith(": ")).join("\n"), /minio\/minio|minio\/mc/);
+  assert.match(fl, /FLEET_MINIO_IMAGE:=bitnamilegacy\/minio:2025\.4\.22@sha256:[0-9a-f]{64}/);
+  assert.match(fl, /FLEET_MC_IMAGE:=\$\{LAB_IMAGE/);
+  assert.match(fl, /--entrypoint mc "\$FLEET_MC_IMAGE"/);
+  assert.match(fl, /--entrypoint minio "\$FLEET_MINIO_IMAGE" server \/data/);
+  assert.match(fl, /fleet_pull "\$FLEET_MINIO_IMAGE"/);
   // the bind lives below /mnt (the real estate's attached volumes), and the migrator's own bind charset accepts it
   assert.match(read("fleet.sh"), /FLEET_BIND_ROOT:-\/mnt\/tugra-lab-binds/);
   assert.match("/mnt/tugra-lab-binds/minio-a", /^\/[A-Za-z0-9._@+/-]+$/);
@@ -643,6 +714,9 @@ test("L12: A to F cases and the blast-radius check after every one", () => {
   const e = s.slice(s.indexOf("# ---- E:"), s.indexOf("# ---- F:"));
   assert.match(e, /lab_run "redis-\$tag-real" --arms databases\n/, "the real logical arm, no --dry-run");
   assert.match(e, /password-not-discoverable \| acl-user-unsupported\) lab_die/);
+  // the hub starts the destination redis when it restores the dump: those containers are named, never a blanket allowance
+  assert.match(e, /DEST_DBS\+=\("tugra_db_\$\(sed -n 's\/\^DB_ID=\/\/p'/);
+  assert.match(e, /case_untouched "\$\{DEST_DBS\[@\]\}"/);
   assert.match(e, /was dumped and uploaded[^\n]*"\$\(lab_item "redis-\$tag-real" bytes/);
   assert.doesNotMatch(s.split("\n").filter((l) => l.startsWith("#")).join("\n"), /dry run discovers/, "the header does not claim a dry run discovers anything");
   // F: the blast-radius check closes the case, with the case's own containers excluded
@@ -691,8 +765,183 @@ test("L4 and the fixture: the owners of the real estate (999, 70, 65534, 1000) a
 
 test("L6 and L0: pgvector keeps its extension data, a dry run with --stop-source stops nothing", () => {
   const l6 = read("l6-postgres.sh");
-  assert.match(l6, /create extension vector/);
+  assert.match(read("integrity.sh"), /create extension if not exists vector/);
+  assert.match(l6, /lab_pg_integrity_seed labsrc tugra postgres "\$VEC_ARG"/);
   assert.match(l6, /the pgvector table and its extension came across/);
   const l0 = read("l0-dry-run.sh");
   assert.match(l0, /lab_expect_item wouldstop planned would-stop-source/);
+});
+
+// ---- data integrity: fingerprints, the streamed dump lane and TLS legs ------------------------------------------------------------
+// A docker stub that records its argv and prints a canned answer, so the shell helpers can be exercised without a daemon.
+function fakeDocker(dir, body) {
+  const bin = join(dir, "bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "docker"), `#!/bin/sh\n${body}\n`);
+  chmodSync(join(bin, "docker"), 0o755);
+  return { PATH: `${bin}:${process.env.PATH}`, LAB_DIR: dir };
+}
+
+test("L6: the destination is compared by content (a checksum over every column and the access objects), never by bytes after SIGKILL", () => {
+  const s = read("l6-postgres.sh");
+  assert.doesNotMatch(s, /test "\$DST_SIZE" = "\$SRC_SIZE"/, "pg_total_relation_size moves after crash recovery (lab run 3: 234553344 vs 234627072 with every row equal)");
+  assert.match(s, /lab_fingerprint_compare l6 "\$LAB_DIR\/l6\.fp\.src" "\$LAB_DIR\/l6\.fp\.dst" L6 strict-access/, "a physical copy carries the whole cluster: roles and grants are strict");
+  assert.ok(s.indexOf('lab_pg_fingerprint labsrc') < s.indexOf("docker kill labsrc"), "the source is fingerprinted before the unclean stop");
+  assert.match(s, /\. "\$\(dirname "\$\{BASH_SOURCE\[0\]\}"\)\/integrity\.sh"/);
+});
+
+test("integrity: strict facts must be equal, the access objects are strict for a physical copy and a recorded finding for a dump", () => {
+  const dir = tmp();
+  const run = (src, dst, extra = "", env = {}) => {
+    writeFileSync(join(dir, "s.fp"), src);
+    writeFileSync(join(dir, "d.fp"), dst);
+    return bash(`. ${join(LAB, "integrity.sh")}; lab_fingerprint_compare l10-stream ${join(dir, "s.fp")} ${join(dir, "d.fp")} L10_STREAM ${extra}`, { LAB_DIR: dir, ...env });
+  };
+  const strict = "strict.rows=500000:123\nstrict.seq.lab_seq=7777\nstrict.extensions=vector@0.8.0\n";
+  const access = "access.owner=lab_app\naccess.acl={lab_app=arwdDxt/lab_app,lab_ro=r/lab_app}\n";
+  const summary = () => readFileSync(join(dir, "l10.summary"), "utf8");
+  // everything equal: carried
+  let r = run(strict + access, strict + access);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(summary(), /L10_STREAM_ACCESS=carried/);
+  // a strict difference fails, with the diff on stderr: the data does not mean the same on the target
+  r = run(strict + access, strict.replace("7777", "1") + access);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /-strict\.seq\.lab_seq=7777/);
+  assert.match(r.stderr, /strict fingerprint differs/);
+  r = run(strict + access, strict.replace("123", "124") + access);
+  assert.equal(r.status, 1, "a different checksum over the rows is a failure");
+  // an empty source fingerprint is a harness failure, never a vacuous pass
+  r = run("", "");
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /source fingerprint is empty/);
+  // an access difference in a dump lane: recorded as a FINDING, not a failure
+  const dropped = "access.owner=tugra\naccess.acl=none\n";
+  r = run(strict + access, strict + dropped);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /FINDING l10-stream/);
+  assert.match(summary(), /L10_STREAM_ACCESS=dropped/);
+  // ...a failure for a physical copy (strict-access) and when required
+  r = run(strict + access, strict + dropped, "strict-access");
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /were not carried/);
+  r = run(strict + access, strict + dropped, "", { L_INTEGRITY_ACCESS: "require" });
+  assert.equal(r.status, 1);
+});
+
+test("integrity: the PostgreSQL and MariaDB fingerprints read the same facts from source and destination", () => {
+  const dir = tmp();
+  const env = fakeDocker(dir, `printf '%s\\n' "$*" >>"$LAB_DIR/argv"; for a in "$@"; do last="$a"; done; printf '%s\\n' "$last" >>"$LAB_DIR/sql"; echo "strict.rows=1:2"`);
+  const run = (cmd) => bash(`. ${join(LAB, "integrity.sh")}; ${cmd}`, env);
+  assert.equal(run("lab_pg_fingerprint src tugra postgres ticks vector").status, 0);
+  const sql = readFileSync(join(dir, "sql"), "utf8");
+  // rows by count AND a checksum over every column of every row (not a byte size), extensions, sequences' last_value, collation, roles, owner, ACL
+  for (const frag of ["hashtextextended(x::text, 0)), 0) from ticks x", "pg_extension", "pg_sequences", "lab_seq", "lab_ser_id_seq", "datcollate", "collate", "pg_roles", "tableowner", "relacl", "lab_v x", "hnsw"]) {
+    assert.ok(sql.toLowerCase().includes(frag.toLowerCase()), `the PostgreSQL fingerprint lacks ${frag}`);
+  }
+  assert.doesNotMatch(sql, /pg_total_relation_size/);
+  // without the vector flag the pgvector facts are not asked for
+  writeFileSync(join(dir, "sql"), "");
+  run("lab_pg_fingerprint src tugra postgres lab_t");
+  assert.doesNotMatch(readFileSync(join(dir, "sql"), "utf8"), /lab_v/);
+  writeFileSync(join(dir, "sql"), "");
+  assert.equal(run("lab_maria_fingerprint src pw fleetdb").status, 0);
+  const m = readFileSync(join(dir, "sql"), "utf8");
+  for (const frag of ["sum(crc32(v))", "auto_increment", "default_collation_name", "table_collation", "mysql.user", "schema_privileges", "information_schema.routines"]) assert.ok(m.toLowerCase().includes(frag.toLowerCase()), `the MariaDB fingerprint lacks ${frag}`);
+  // the password rides the environment of docker exec by name=value into the container, never an argument of a mariadb option
+  assert.doesNotMatch(readFileSync(join(dir, "argv"), "utf8").split("\n").filter((l) => l.includes("mariadb")).join("\n"), /-p/);
+});
+
+test("integrity: TLS connections ask for sslmode=require over TCP on the container's loopback, a plain one uses the socket", () => {
+  const dir = tmp();
+  const env = fakeDocker(dir, `printf '%s\\n' "$*" >"$LAB_DIR/argv"; echo t`);
+  const run = (cmd, e = {}) => bash(`. ${join(LAB, "integrity.sh")}; ${cmd}`, { ...env, ...e });
+  run("lab_pg_q c1 tugra postgres 'select 1'");
+  assert.doesNotMatch(readFileSync(join(dir, "argv"), "utf8"), /PGSSLMODE|-h 127/);
+  run("lab_pg_q c1 tugra postgres 'select 1'", { LAB_PG_TLS: "1" });
+  const tls = readFileSync(join(dir, "argv"), "utf8");
+  assert.match(tls, /-e PGSSLMODE=require/);
+  assert.match(tls, /psql -h 127\.0\.0\.1 -U tugra -d postgres/);
+});
+
+test("integrity: the seeds create what a row count cannot see", () => {
+  const i = read("integrity.sh");
+  for (const frag of ["create role lab_app login", "create role lab_ro nologin", "alter table lab_own owner to lab_app", "grant select on lab_own to lab_ro", "setval('lab_seq', 7777)", "collate \\\"C\\\"", "create extension if not exists vector", "using hnsw"]) assert.ok(i.includes(frag), `the PostgreSQL seed lacks ${frag}`);
+  for (const frag of ["create user 'lab_u'@'%'", "grant select, insert on", "latin1_bin", "auto_increment=1000", "create function lab_fn"]) assert.ok(i.includes(frag), `the MariaDB seed lacks ${frag}`);
+  assert.doesNotMatch(i, /\/etc\//, "the integrity checks never read the host's files");
+});
+
+test("L15: the streamed dump lane for PostgreSQL and MariaDB, the hub killed mid-dump, rows and fingerprint verified", () => {
+  const s = read("l15-stream-dump.sh");
+  assert.match(s, /--data-mode stream/);
+  assert.match(s, /lab_stream_plan plan --part-mib 32/);
+  assert.match(s, /lab_run_bg stream --hub "\$LAB_PROXY_URL" --arms volumes --part-mib 32 --hub-outage-wait 10m/, "behind the throttle proxy, so a part in flight is a window");
+  assert.ok(s.indexOf("lab_wait 900") < s.indexOf('"$LAB_SELF_DIR/hub.sh" kill'), "the hub is killed after a part was committed");
+  assert.ok(s.indexOf('"$LAB_SELF_DIR/hub.sh" kill') < s.indexOf('"$LAB_SELF_DIR/hub.sh" start'));
+  assert.match(s, /MIGRATION_VX_PART_MIB=32 MIGRATION_VX_STALE_MS=300000/, "the stale window outlives the outage (the L2-A reasoning)");
+  const stale = num(s, /MIGRATION_VX_STALE_MS=(\d+)/);
+  const outage = num(s, /hub\.sh" kill\nsleep (\d+)/);
+  assert.ok(stale >= (outage + 90) * 1000);
+  assert.match(s, /lab_stream_expect_applied stream/);
+  assert.match(s, /lab_fingerprint_compare l15 /);
+  assert.match(s, /the row count equals the source/);
+  assert.match(s, /postgres:\* \| pgvector\/\*\)/);
+  assert.match(s, /mariadb:\*\)/);
+  assert.match(s, /fleet_snapshot_others "\$SRC" "\$DST_CTR"/, "the destination the hub started is the one expected difference");
+  assert.match(s, /the source was never stopped or restarted by the dump/);
+  assert.doesNotMatch(s, /--stop-source/, "the dump lane never stops the source");
+  // a PostgreSQL 18 destination is a named product finding, not a skipped or relaxed check
+  assert.doesNotMatch(s, /MAJOR[^\n]*18[^\n]*(skip|exit 0)/i);
+  assert.match(read("stream.sh"), /PRODUCT FINDING: the hub refuses a streamed dump into a PostgreSQL 18 destination \(importer\/volume-stream\/vx-dest-gate\.ts dumpDestLayout/);
+});
+
+test("stream.sh: the plan measures first with the caller's hub flag in front, and a refused 18 destination is named", () => {
+  const s = read("stream.sh");
+  assert.match(s, /lab_run "\$tag" "\$@" --arms volumes --dry-run --measure-dbs --measure-dump/, "migrate.sh reads --hub only in front of the other flags");
+  assert.match(s, /lab_expect_item "\$tag" planned would-stream-dump/);
+  assert.match(s, /lab_expect_item "\$tag" volume-applied/);
+});
+
+test("L16: a TLS destination read from inside and from a client container, the restore read back over TLS, 18 skips only the restore", () => {
+  const s = read("l16-pg-tls.sh");
+  assert.match(s, /--data-mode dump --ssl/);
+  assert.match(s, /lab_api POST "\/databases\/\$DB_ID\/provision"/);
+  assert.match(s, /test "\$\(lab_pg_q "\$CTR" "\$U" "\$D" 'show ssl'\)" = on/);
+  assert.match(s, /select ssl from pg_stat_ssl where pid = pg_backend_pid\(\)/);
+  assert.match(s, /tls_client require/);
+  assert.match(s, /sslmode=verify-ca is refused/);
+  assert.match(s, /create extension if not exists vector/);
+  assert.match(s, /--data-mode stream --ssl/);
+  assert.match(s, /export LAB_PG_TLS=1\nlab_check "the restored database is served over TLS/);
+  assert.match(s, /L16_RESTORE=skipped-pg18-destination-refused/, "the skip is recorded, not hidden");
+  assert.match(s, /\[ "\$MAJOR" -ge 18 \]/);
+  assert.doesNotMatch(s, /sslmode=disable/);
+});
+
+test("fleet.sh: a pull that cannot succeed says which image and why, after retries", () => {
+  const dir = tmp();
+  const env = fakeDocker(dir, `echo x >>"$LAB_DIR/pulls"; echo 'pull access denied for minio/minio' >&2; exit 1`);
+  let r = bash(`. ${join(LAB, "fleet.sh")}; fleet_pull minio/minio:gone`, { ...env, FLEET_PULL_SLEEP: "0" });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /cannot pull minio\/minio:gone/);
+  assert.match(r.stderr, /pull access denied/);
+  assert.equal(readFileSync(join(dir, "pulls"), "utf8").trim().split("\n").length, 3, "three attempts");
+  const ok = tmp();
+  const env2 = fakeDocker(ok, `exit 0`);
+  r = bash(`. ${join(LAB, "fleet.sh")}; fleet_pull alpine:3.21 && echo pulled`, { ...env2, FLEET_PULL_SLEEP: "0" });
+  assert.equal(r.stdout.trim(), "pulled");
+});
+
+test("migrate.sh and lib.sh: the log tee drains within a bound, a run that never ends names what is still alive", () => {
+  const m = read("migrate.sh");
+  assert.doesNotMatch(m.split("\n").filter((l) => !l.startsWith("#")).join("\n"), /^wait$/m, "a bare wait has no limit (lab run 3: L1b waited 120 s for a killed migrator's run)");
+  assert.match(m, /: >"\$ERR\.done"/);
+  assert.match(m, /seq 1 50/);
+  const l = read("lib.sh");
+  assert.match(l, /run \$tag: processes/);
+  assert.match(l, /run \$tag: containers/);
+});
+
+test("the lab never names a pullable-looking image it cannot pull: minio/minio and minio/mc are gone from fleet.sh", () => {
+  assert.doesNotMatch(read("fleet.sh").split("\n").filter((l) => !l.trim().startsWith("#")).join("\n"), /minio\/(minio|mc)[:\s"]/);
 });

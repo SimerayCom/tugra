@@ -20,8 +20,13 @@ FLEET_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${FLEET_PG_BATCH_ROWS:=1000000}"
 : "${FLEET_REDIS_IMAGE:=redis:7.2-alpine}"
 : "${FLEET_MARIADB_IMAGE:=mariadb:11}"
-: "${FLEET_MINIO_IMAGE:=minio/minio:RELEASE.2025-04-22T22-12-26Z}"
-: "${FLEET_MC_IMAGE:=minio/mc:latest}"
+# MinIO: the real estate runs the minio/minio images, which Docker Hub no longer serves (`pull access denied`, lab run 3), and the minio/mc
+# image is gone with them. The server is the same RELEASE (2025-04-22) from the frozen bitnamilegacy archive, pinned by digest; it runs
+# as root here (the bind directory is root-owned, as a Coolify host path is) with the `minio` binary as the entrypoint, which bypasses
+# the image's setup script. The client is the `mc` the agent image vendors (the lab's own image, the one object migration runs): no
+# second image to pull.
+: "${FLEET_MINIO_IMAGE:=bitnamilegacy/minio:2025.4.22@sha256:50cec18ac4184af4671a78aedd5554942c8ae105d51a465fa82037949046da01}"
+: "${FLEET_MC_IMAGE:=${LAB_IMAGE:-localhost:5000/tugra-agent:lab}}"
 : "${FLEET_MEILI_OLD:=getmeili/meilisearch:v1.31.0}"
 : "${FLEET_MEILI_NEW:=getmeili/meilisearch:latest}"
 # MinIO bucket size classes (MiB) of the real object store: 12 buckets, the biggest 3.9 GB. FLEET_MINIO_DIV scales them down for a
@@ -174,14 +179,27 @@ fleet_mc() {
   docker run --rm --network "$FLEET_NET" --label "$FLEET_LABEL" -v "${FLEET_MC_STAGE:-$LAB_DIR/minio-stage}":/stage:ro \
     -e "MC_HOST_src=http://${FLEET_MINIO_USER}:${FLEET_MINIO_PASS}@${FLEET_MC_SRC:-none}:9000" \
     -e "MC_HOST_dst=http://${FLEET_MINIO_USER}:${FLEET_MINIO_PASS}@${FLEET_MC_DST:-none}:9000" \
-    "$FLEET_MC_IMAGE" "$@"
+    -e HOME=/tmp --entrypoint mc "$FLEET_MC_IMAGE" "$@"
+}
+
+# fleet_pull <image>: pull with retries, and say which image and why when it cannot be had (a registry that dropped a tag is a harness
+# finding, not a product one: this is the message lab run 3 lacked).
+fleet_pull() {
+  local i=1
+  while [ "$i" -le 3 ]; do
+    docker pull -q "$1" >/dev/null 2>"$LAB_DIR/pull.err" && return 0
+    i=$((i + 1)); sleep $((i * ${FLEET_PULL_SLEEP:-3}))
+  done
+  tail -3 "$LAB_DIR/pull.err" >&2
+  lab_die "cannot pull $1 (a registry dropped it or is unreachable): pin a pullable image through the FLEET_*_IMAGE variable"
 }
 
 # fleet_minio_run <container> <data-mount-source>: a RUNNING single-drive MinIO, its /data a bind mount (a host path) or a volume.
 fleet_minio_run() {
   fleet_net_up
-  fleet_run --name "$1" --network "$FLEET_NET" -e "MINIO_ROOT_USER=$FLEET_MINIO_USER" -e "MINIO_ROOT_PASSWORD=$FLEET_MINIO_PASS" \
-    -v "$2:/data" "$FLEET_MINIO_IMAGE" server /data --console-address :9001
+  fleet_pull "$FLEET_MINIO_IMAGE"
+  fleet_run --name "$1" --network "$FLEET_NET" --user 0 -e "MINIO_ROOT_USER=$FLEET_MINIO_USER" -e "MINIO_ROOT_PASSWORD=$FLEET_MINIO_PASS" \
+    -v "$2:/data" --entrypoint minio "$FLEET_MINIO_IMAGE" server /data --console-address :9001
   FLEET_MC_SRC="$1" lab_wait 90 "MinIO $1 to answer" fleet_mc ls src
 }
 

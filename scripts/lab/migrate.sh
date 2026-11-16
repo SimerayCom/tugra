@@ -35,9 +35,12 @@ if [ -n "${LAB_INSTALLER_IMAGE:-}" ]; then
   # the token rides the environment of the docker client and is passed into the container by name only, as the installer itself does
   runner=(docker run --rm -i --network host -v /var/run/docker.sock:/var/run/docker.sock -e TUGRA_MIGRATION_TOKEN "$LAB_INSTALLER_IMAGE" sh)
 fi
-curl -fsSL "http://127.0.0.1:${LAB_HUB_PORT}/install/migrator.sh" | TUGRA_MIGRATION_TOKEN="$MIG_TOKEN" "${runner[@]}" -s -- --hub "$HUB" --image "$IMAGE" --allow-insecure-http "$@" >"$OUT" 2> >(tee "$ERR" >&2)
+rm -f "$ERR.done"
+curl -fsSL "http://127.0.0.1:${LAB_HUB_PORT}/install/migrator.sh" | TUGRA_MIGRATION_TOKEN="$MIG_TOKEN" "${runner[@]}" -s -- --hub "$HUB" --image "$IMAGE" --allow-insecure-http "$@" >"$OUT" 2> >(tee "$ERR" >&2; : >"$ERR.done")
 rc=$?
-wait
+# the log is complete once the stderr tee has drained; bounded (5 s), so a stray descendant that inherited the pipe can never hang a run
+# (a bare `wait` here waits for every background job, the tee included, with no limit)
+for _ in $(seq 1 50); do [ -e "$ERR.done" ] && break; sleep 0.1; done
 cat "$OUT"
 lab_log "migrator exit $rc (result: $OUT)"
 exit "$rc"
