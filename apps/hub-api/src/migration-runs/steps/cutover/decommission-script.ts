@@ -21,7 +21,13 @@ export interface SourceContainer {
 export function buildDecommissionDiscoverScript(): string {
   return [
     "set -u",
-    `cp=no; docker ps -a --format '{{.Names}} {{.Image}}' 2>/dev/null | while read -r n i; do case "$n" in coolify) case "$i" in *coollabsio/coolify*|*coolify:*) echo yes;; esac;; esac; done | grep -q yes && cp=yes`,
+    // the daemon's own status decides: a failing `docker ps` is `unknown`, never read as "no control plane here"
+    "cp=no",
+    `if out=$(docker ps -a --format '{{.Names}} {{.Image}}' 2>/dev/null); then`,
+    `  printf '%s\\n' "$out" | while read -r n i; do case "$n" in coolify) case "$i" in *coollabsio/coolify*|*coolify:*) echo yes;; esac;; esac; done | grep -q yes && cp=yes`,
+    "else",
+    "  cp=unknown",
+    "fi",
     'echo "TUGRA_SRC_CP $cp"',
     `docker ps -a --filter label=coolify.managed=true --format '{{.ID}} {{.Names}} {{.State}}' 2>/dev/null | while read -r id name state; do`,
     '  case "$name" in tugra*) continue;; esac',
@@ -48,11 +54,11 @@ export function parseDecommissionDiscover(out: string): SourceContainer[] | null
   return res;
 }
 
-/** Does the discovery output say this box carries the Coolify control plane? `null` = the output has no such line (cut or an older script): unknown, never "no". */
+/** Does the discovery output say this box carries the Coolify control plane? `null` = the output has no such line (cut or an older script) or the box could not list its containers: unknown, never "no". */
 export function parseControlPlaneMarker(out: string): boolean | null {
   for (const l of out.split(/\r?\n/)) {
-    const m = /^TUGRA_SRC_CP (yes|no)$/.exec(l);
-    if (m) return m[1] === "yes";
+    const m = /^TUGRA_SRC_CP (yes|no|unknown)$/.exec(l);
+    if (m) return m[1] === "unknown" ? null : m[1] === "yes";
   }
   return null;
 }
