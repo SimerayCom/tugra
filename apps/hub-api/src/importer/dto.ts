@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { VOLUME_NAME_RE } from "./migration-volume";
 import { ImportMappingDocSchema } from "./import-mapping";
+import { ImportServerMapSchema } from "./server-map";
 
 /**
  * The REMOTE (copy-mode) source PaaS kinds the importer can connect to over an API with a stored session.
@@ -110,6 +111,9 @@ const remoteApplyFields = {
   serviceChoices: ServiceChoicesSchema.optional(),
   ...remoteMappingFields,
   dbDataModes: ImportDbDataModesSchema.optional(),
+  /** Multi-host placement: source server ref to Tugra server id (same team as `targetServerId`, which stays the default for
+   *  every source server not listed). Outside planHash (placement is not part of the source plan); it binds the mappingHash. */
+  serverMap: ImportServerMapSchema.optional(),
 };
 export const ImportApplySchema = z
   .discriminatedUnion("sourceKind", [
@@ -168,6 +172,8 @@ export const ImportMappingResolveSchema = z.object({
   dbDataModes: ImportDbDataModesSchema.optional(),
   /** The operator's risk acks from the plan step — the preview then treats an acked item as runnable, like apply. */
   acks: z.array(ImportAckSchema).max(2000).optional(),
+  /** Multi-host placement the apply will use: it changes where items land, so it binds the mappingHash. */
+  serverMap: ImportServerMapSchema.optional(),
   mapping: ImportMappingDocSchema,
 });
 export type ImportMappingResolveInput = z.infer<typeof ImportMappingResolveSchema>;

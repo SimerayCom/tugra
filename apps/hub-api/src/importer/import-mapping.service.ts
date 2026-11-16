@@ -17,6 +17,7 @@ import {
   resolveMapping,
   unackedConflicts,
 } from "./import-mapping";
+import { hasServerMap, placementFor, placementTargets, serverRefOfItemRef } from "./server-map";
 
 /** The slice of an import session the mapping profile is keyed by. */
 export interface MappingSession {
@@ -36,6 +37,9 @@ export interface ApplyMappingInput {
   saveMapping?: boolean;
   /** Operator risk acks (the apply's `acks`): bound into the mappingHash and used by the resolver's runnable predicate. */
   acks?: readonly RiskAck[];
+  /** Multi-host placement (source server ref to Tugra server id): per-item "already imported here" and the alias clash
+   *  scan follow each item's own target, and a non-empty map binds the mappingHash. */
+  serverMap?: Readonly<Record<string, string>>;
 }
 
 export interface StoredProfile {
@@ -129,9 +133,19 @@ export class ImportMappingService {
    * checked FIRST — the same gate as apply — so a caller without it can never probe which names exist there.
    * Every query is team-scoped.
    */
-  async buildSnapshot(userId: string, server: { id: string; teamId: string }, itemRefs: string[]): Promise<TargetSnapshot> {
+  async buildSnapshot(userId: string, server: { id: string; teamId: string }, itemRefs: string[], serverMap?: Readonly<Record<string, string>> | null): Promise<TargetSnapshot> {
     await this.access.requirePermission(userId, server.teamId, "apps:config");
     const teamId = server.teamId;
+    // Multi-host: every placement target must be a server of this team (a foreign server id is refused before anything is read).
+    const targets = new Set(placementTargets(server.id, hasServerMap(serverMap) ? serverMap : null));
+    const others = [...targets].filter((t) => t !== server.id);
+    if (others.length) {
+      const rows = await this.prisma.server.findMany({ where: { id: { in: others }, teamId }, select: { id: true } });
+      if (rows.length !== others.length) {
+        throw new UnprocessableEntityException({ statusCode: 422, message: "a server in the serverMap is not a server of this team", code: "import.server_map_invalid" });
+      }
+    }
+    const targetOf = (itemRef: string): string => placementFor(server.id, serverMap, serverRefOfItemRef(itemRef));
     const perms = await this.access.membershipPermissions(userId, teamId);
     const [projectRows, apps, dbs, gitRows, taskRows] = await Promise.all([
       this.prisma.project.findMany({ where: { teamId }, select: { id: true, name: true, isDefault: true, environments: { select: { id: true, name: true, isDefault: true } } } }),
@@ -167,7 +181,8 @@ export class ImportMappingService {
     const dbById = new Map(dbs.map((d) => [d.id, d]));
     for (const a of apps) {
       slot(a.environmentId).apps.set(a.name.toLowerCase(), a.id);
-      if (a.serverId === server.id) {
+      if (targets.has(a.serverId)) {
+        // Multi-host: an alias taken on ANY placement target counts (conservative: it never misses a clash on the item's own target).
         if (a.containerAlias) aliasesOnServer.add(a.containerAlias.toLowerCase());
         for (const n of a.networkAliases ?? []) aliasesOnServer.add(n.toLowerCase());
       }
@@ -186,7 +201,7 @@ export class ImportMappingService {
       const liveDb = isDb ? dbById.get(t.resourceId) : undefined;
       const live = liveApp ?? liveDb;
       if (!live) continue;
-      if (t.serverId === server.id) {
+      if (t.serverId === targetOf(t.itemRef)) {
         existing.set(t.itemRef, {
           resourceType: isDb ? "database" : "application",
           resourceId: t.resourceId,
@@ -228,15 +243,16 @@ export class ImportMappingService {
     fleet: ForeignFleet,
     plan: ImportPlan,
     server: { id: string; teamId: string },
-    input: { mapping: ImportMappingDoc; environmentId?: string; reconcile?: boolean; acks?: readonly RiskAck[] },
+    input: { mapping: ImportMappingDoc; environmentId?: string; reconcile?: boolean; acks?: readonly RiskAck[]; serverMap?: Readonly<Record<string, string>> },
   ): Promise<ResolvedMapping> {
-    const snap = await this.buildSnapshot(userId, server, plan.items.map((i) => i.itemRef));
+    const snap = await this.buildSnapshot(userId, server, plan.items.map((i) => i.itemRef), input.serverMap);
     return resolveMapping(fleet, plan, input.mapping, snap, {
       planHash: plan.planHash,
       targetServerId: server.id,
       environmentId: input.environmentId,
       reconcile: !!input.reconcile,
       acks: input.acks,
+      ...(hasServerMap(input.serverMap) ? { serverMap: input.serverMap } : {}),
       session: { sourceKind: session.sourceKind, scopeKey: session.scopeKey },
     });
   }
@@ -267,7 +283,7 @@ export class ImportMappingService {
       return undefined;
     }
     if (!input.mappingHash) throw conflict("import.mapping_changed", "the mapping changed since it was reviewed — resolve it again and review");
-    const res = await this.resolve(userId, session, fleet, plan, server, { mapping: input.mapping, environmentId: input.environmentId, reconcile: input.reconcile, acks: input.acks });
+    const res = await this.resolve(userId, session, fleet, plan, server, { mapping: input.mapping, environmentId: input.environmentId, reconcile: input.reconcile, acks: input.acks, serverMap: input.serverMap });
     if (res.mappingHash !== input.mappingHash) throw conflict("import.mapping_changed", "the mapping, the source or the target changed since it was reviewed — resolve it again and review");
     if (res.orphans.length) throw conflict("import.mapping_orphans", "the mapping refers to items the source no longer has — remove them and review again", { orphans: res.orphans });
     const errors = blockingErrors(res);

@@ -149,11 +149,15 @@ export interface MappingHashInput {
   /** The operator's plan-risk acknowledgements: they change which items are runnable, so they bind the hash (a
    *  preview resolved without them cannot be applied with them). Absent/empty leaves the hash byte-identical. */
   acks?: readonly RiskAck[];
+  /** Multi-host placement (source server ref to Tugra server id). It changes where items land, so a non-empty map binds the
+   *  hash; an absent or empty map leaves the hash byte-identical to a single-target resolve. */
+  serverMap?: Readonly<Record<string, string>> | null;
 }
 export function mappingHashOf(norm: unknown, i: MappingHashInput): string {
   const riskAcks = [...new Set((i.acks ?? []).map((a) => `${a.code}\u0000${a.itemRef ?? "*"}`))].sort();
+  const placed = i.serverMap && Object.keys(i.serverMap).length ? Object.fromEntries(Object.entries(i.serverMap).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : undefined;
   return createHash("sha256")
-    .update(canonicalJson({ v: 1, planHash: i.planHash, targetServerId: i.targetServerId, environmentId: i.environmentId ?? null, reconcile: !!i.reconcile, ...(riskAcks.length ? { riskAcks } : {}), mapping: norm }))
+    .update(canonicalJson({ v: 1, planHash: i.planHash, targetServerId: i.targetServerId, environmentId: i.environmentId ?? null, reconcile: !!i.reconcile, ...(riskAcks.length ? { riskAcks } : {}), ...(placed ? { serverMap: placed } : {}), mapping: norm }))
     .digest("hex")
     .slice(0, 32);
 }

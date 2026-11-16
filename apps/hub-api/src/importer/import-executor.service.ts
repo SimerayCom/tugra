@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, HttpException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, HttpException, Injectable, Logger, NotFoundException, Optional, UnprocessableEntityException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -39,6 +39,7 @@ import { SetBasicAuthSchema } from "../applications/dto";
 import type { ImportSource, FetchedDbCredentials, SourceAppExtras } from "./import-source";
 import { REMOTE_SOURCE_KINDS, type ImportApplyInput, type RemoteSourceKind, type ServiceChoice } from "./dto";
 import { ImportMappingService } from "./import-mapping.service";
+import { hasServerMap, placementFor, serverRefOfItemRef, unplacedRefs } from "./server-map";
 import type { EffectiveItem, ResolvedMapping } from "./import-mapping";
 import { slug as dbSlug } from "../databases/databases.service";
 import { VX_DATA_PREFIX, isVxDataTask, vxEnabled } from "./volume-stream/vx-constants";
@@ -180,9 +181,12 @@ export class ImportExecutorService {
       if (!server) throw new NotFoundException("target server not found");
       await this.access.requirePermission(userId, server.teamId, "apps:config");
       await this.assertNoInflight(input.targetServerId);
+      // Multi-host placement (grup-7): every mapped target is a server of the same team, authorised and idle like the default.
+      const serverMap = hasServerMap(input.serverMap) ? input.serverMap : undefined;
+      const mapTargets = await this.authorizePlacementTargets(userId, server.teamId, input.targetServerId, serverMap);
       // A service may be placed on a different server by its choice: each distinct target is re-authorised (same team as
       // the op) and gets its own in-flight check.
-      const svcTargets = await this.authorizeServiceTargets(userId, server.teamId, input.targetServerId, serviceChoices);
+      const svcTargets = await this.authorizeServiceTargets(userId, server.teamId, input.targetServerId, serviceChoices, mapTargets);
 
       // Editable mapping: resolve + validate BEFORE anything is created (fail closed — a refusal here has created
       // nothing: no git source, no project, no op row). `res` is undefined on the legacy no-mapping path, which
@@ -195,6 +199,7 @@ export class ImportExecutorService {
             ignoreStoredMapping: input.ignoreStoredMapping,
             environmentId: input.environmentId,
             acks: input.acks,
+            serverMap,
           })
         : undefined;
       const effByRef = new Map((res?.effective ?? []).map((e) => [e.itemRef, e]));
@@ -227,9 +232,36 @@ export class ImportExecutorService {
         ...(res?.conflicts.some((c) => c.code === "gitsource.exists_not_renamed") ? ["a git source for a GitHub App already exists on the target team — its name was kept (a rename applies on create only)"] : []),
       ];
 
+      // Item lookups by itemRef (fleet-only, so they can be built before the op row exists).
+      const svcByRef = new Map(fleet.services.map((sv) => [ns("service", sv.serverRef, sv.sourceRef), sv]));
+      const appByRef = new Map(fleet.apps.map((a) => [`app:${a.serverRef ?? "_"}:${a.sourceRef}`, a]));
+      const dbByRef = new Map(fleet.databases.map((d) => [`database:${d.serverRef ?? "_"}:${d.sourceRef}`, d]));
+      /** The source server of a plan item (the Coolify server uuid), undefined when its placement is unknown. */
+      const sourceServerOf = (itemRef: string): string | undefined => appByRef.get(itemRef)?.serverRef ?? dbByRef.get(itemRef)?.serverRef ?? svcByRef.get(itemRef)?.serverRef;
+      // Fail closed: with a non-empty serverMap, an item whose source server the map does not place would silently land on the
+      // default server. Refused BEFORE anything is created (an excluded item places nothing; a service with its own
+      // explicit target server, or skipped by choice, is placed or dropped by that choice).
+      if (serverMap) {
+        const unplaced = unplacedRefs(
+          serverMap,
+          plan.items
+            .filter((i) => {
+              if (i.kind !== "app" && i.kind !== "database" && i.kind !== "service") return false;
+              if (effByRef.get(i.itemRef)?.include === false) return false;
+              const c = i.kind === "service" ? serviceChoices[i.itemRef] : undefined;
+              return !(c?.skip || c?.targetServerId);
+            })
+            .map((i) => sourceServerOf(i.itemRef)),
+        );
+        if (unplaced.length) {
+          throw new UnprocessableEntityException({ statusCode: 422, message: "some source servers are not in the serverMap", code: "import.server_unmapped", servers: unplaced.slice(0, 20), count: unplaced.length });
+        }
+      }
+
       const op = await this.createOp(userId, input.sourceKind, input.targetServerId, plan.planHash, {
         sessionId: input.sessionId,
         plan,
+        ...(serverMap ? { serverMap } : {}),
         ...(opWarnings.length ? { warnings: opWarnings } : {}),
         ...(tree.summary.length ? { projects: tree.summary } : {}),
         // Audit trail of what the operator acknowledged (codes + itemRefs only — never a variable name or value).
@@ -247,15 +279,16 @@ export class ImportExecutorService {
       // so a re-apply after a partial/cancelled run does not create duplicate Tugra apps.
       const already = await this.alreadyImported(input.targetServerId, plan.items.map((i) => i.itemRef), op.id);
 
-      const svcByRef = new Map(fleet.services.map((sv) => [ns("service", sv.serverRef, sv.sourceRef), sv]));
       // Idempotency per placement target: a service placed on another server is matched against THAT server's prior imports.
       const alreadyOnTarget = new Map<string, Set<string>>([[input.targetServerId, already]]);
+      for (const t of mapTargets) {
+        if (alreadyOnTarget.has(t)) continue;
+        alreadyOnTarget.set(t, await this.alreadyImported(t, plan.items.map((i) => i.itemRef), op.id));
+      }
       for (const t of svcTargets) {
         if (alreadyOnTarget.has(t)) continue;
         alreadyOnTarget.set(t, await this.alreadyImported(t, plan.items.filter((i) => i.kind === "service").map((i) => i.itemRef), op.id));
       }
-      const appByRef = new Map(fleet.apps.map((a) => [`app:${a.serverRef ?? "_"}:${a.sourceRef}`, a]));
-      const dbByRef = new Map(fleet.databases.map((d) => [`database:${d.serverRef ?? "_"}:${d.sourceRef}`, d]));
       // Per task, the exact work to run. Apps are copied; databases are provisioned as empty resources
       // (their DATA is restored later by the migrator) so a destResourceId exists to restore INTO.
       // Volume items stay SKIPPED here — a volume is DECLARED (empty) inside its owning app's task; its DATA
@@ -267,8 +300,9 @@ export class ImportExecutorService {
         const db = item.kind === "database" ? dbByRef.get(item.itemRef) : undefined;
         const service = item.kind === "service" ? svcByRef.get(item.itemRef) : undefined;
         const choice = item.kind === "service" ? serviceChoices[item.itemRef] : undefined;
-        // targetFor(item): the service choice's own target, else the op target (the serverMap lane is not in this slice).
-        const targetServerId = choice?.targetServerId ?? input.targetServerId;
+        // targetFor(item): the service choice's own target, else the serverMap entry of the item's source server, else the op's
+        // default target. A volume item follows its owner's source server (its itemRef carries it).
+        const targetServerId = choice?.targetServerId ?? placementFor(input.targetServerId, serverMap, sourceServerOf(item.itemRef) ?? serverRefOfItemRef(item.itemRef));
         const dup = (alreadyOnTarget.get(targetServerId) ?? already).has(item.itemRef);
         const hasBlocker = hasUnackedBlocker(item, input.acks);
         const serviceRunnable = !!service && !choice?.skip && item.proposed.verdict !== "skipped" && typeof service.composeFile === "string" && typeof source.fetchServiceBundle === "function";
@@ -311,8 +345,8 @@ export class ImportExecutorService {
         const ackedCodes = new Set(item.risks.filter((r) => isAcked(input.acks, item.itemRef, r.code)).map((r) => r.code));
         if (reconciles && eff) runners.set(task.id, () => this.runReconcile(task.id, userId, eff, tree.envByItemRef?.get(item.itemRef)));
         else if (runnable && service) runners.set(task.id, () => this.runCopyService(task.id, source, service, userId, targetServerId, input.sourceKind, environmentId, choice));
-        else if (runnable && app) runners.set(task.id, () => this.runCopyApp(task.id, source, app, userId, input.targetServerId, input.sourceKind, environmentId, gitSourceByRef, ackedCodes, gitLinks, eff));
-        else if (runnable && db) runners.set(task.id, () => this.runCreateDb(task.id, source, db, userId, input.targetServerId, environmentId, eff));
+        else if (runnable && app) runners.set(task.id, () => this.runCopyApp(task.id, source, app, userId, targetServerId, input.sourceKind, environmentId, gitSourceByRef, ackedCodes, gitLinks, eff));
+        else if (runnable && db) runners.set(task.id, () => this.runCreateDb(task.id, source, db, userId, targetServerId, environmentId, eff));
       }
       await this.audit.log({
         actor: userId,
@@ -335,8 +369,26 @@ export class ImportExecutorService {
 
   /** Authorise every distinct placement target a service choice names: it must exist, belong to the SAME team as the op's
    *  target, grant the actor `apps:config`, and have no import in flight. Returns the distinct extra targets. */
-  private async authorizeServiceTargets(userId: string, teamId: string, opTarget: string, choices: Record<string, ServiceChoice>): Promise<string[]> {
-    const targets = [...new Set(Object.values(choices).map((c) => c.targetServerId).filter((t): t is string => !!t && t !== opTarget))].sort();
+  /**
+   * Multi-host placement targets (the serverMap values other than the default): each must exist, belong to the SAME team as the
+   * default target, grant the caller `apps:config`, and have no import in flight. Returns the distinct extra targets (sorted).
+   * Authorised up front, before any op or task row is written.
+   */
+  private async authorizePlacementTargets(userId: string, teamId: string, opTarget: string, serverMap: Readonly<Record<string, string>> | undefined): Promise<string[]> {
+    const targets = [...new Set(Object.values(serverMap ?? {}).filter((t) => t !== opTarget))].sort();
+    for (const t of targets) {
+      const srv = await this.prisma.server.findUnique({ where: { id: t } });
+      if (!srv) throw new NotFoundException("target server not found");
+      if (srv.teamId !== teamId) throw new ForbiddenException("every server in the serverMap must be in the same team as the import target");
+      await this.access.requirePermission(userId, srv.teamId, "apps:config");
+      await this.assertNoInflight(t);
+    }
+    return targets;
+  }
+
+  private async authorizeServiceTargets(userId: string, teamId: string, opTarget: string, choices: Record<string, ServiceChoice>, alreadyAuthorized: readonly string[] = []): Promise<string[]> {
+    const done = new Set(alreadyAuthorized);
+    const targets = [...new Set(Object.values(choices).map((c) => c.targetServerId).filter((t): t is string => !!t && t !== opTarget && !done.has(t)))].sort();
     for (const t of targets) {
       const srv = await this.prisma.server.findUnique({ where: { id: t } });
       if (!srv) throw new NotFoundException("target server not found");
@@ -619,7 +671,14 @@ export class ImportExecutorService {
   /** One import per target server at a time (a small check-then-create window remains; create/adopt guards back it). */
   private async assertNoInflight(serverId: string): Promise<void> {
     const inflight = await this.prisma.bulkOperation.findFirst({
-      where: { kind: "import", meta: { path: ["serverId"], equals: serverId }, tasks: { some: { status: { in: ["PENDING", "RUNNING"] } } } },
+      // The op's default server OR any server one of its (multi-host) tasks is placed on.
+      where: {
+        kind: "import",
+        OR: [
+          { meta: { path: ["serverId"], equals: serverId }, tasks: { some: { status: { in: ["PENDING", "RUNNING"] } } } },
+          { tasks: { some: { serverId, status: { in: ["PENDING", "RUNNING"] } } } },
+        ],
+      },
       select: { id: true },
     });
     if (inflight) throw new ConflictException("an import for this server is already in progress");

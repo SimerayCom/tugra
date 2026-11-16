@@ -154,6 +154,30 @@ describe("ImportMappingService.buildSnapshot", () => {
     expect(snap.elsewhere.get("app:s:b")).toEqual({ serverId: "srv-2", serverName: "Second" });
     expect(snap.gitSourcesByAppId).toEqual(new Set(["77"]));
   });
+  it("multi-host serverMap: existing/elsewhere follow each item's own target, aliases are scanned on every target, a foreign server id is refused", async () => {
+    const { svc, prisma } = make();
+    prisma.application.findMany.mockResolvedValue([
+      { id: "a1", name: "Web", environmentId: "e1", serverId: "srv", containerAlias: "one", networkAliases: [] },
+      { id: "a2", name: "Api", environmentId: "e1", serverId: "srv-2", containerAlias: "two", networkAliases: [] },
+      { id: "a3", name: "Far", environmentId: "e1", serverId: "srv-9", containerAlias: "far", networkAliases: [] },
+    ]);
+    prisma.bulkTask.findMany.mockResolvedValue([
+      { itemRef: "app:src-a:a", resourceId: "a1", resourceType: "application", serverId: "srv" },
+      { itemRef: "app:src-b:b", resourceId: "a2", resourceType: "application", serverId: "srv-2" },
+      { itemRef: "app:src-b:c", resourceId: "a3", resourceType: "application", serverId: "srv-9" },
+    ]);
+    prisma.server.findMany.mockImplementation(async ({ where }: { where: { id: { in: string[] } } }) => where.id.in.map((id) => ({ id, name: `name-${id}` })));
+    const snap = await svc.buildSnapshot("u1", { id: "srv", teamId: "team-a" }, ["app:src-a:a", "app:src-b:b", "app:src-b:c"], { "src-a": "srv", "src-b": "srv-2" });
+    // a lives where it is placed (srv); b lives where it is placed (srv-2): both "existing" even though srv-2 is not the default
+    expect(snap.existing.has("app:src-a:a")).toBe(true);
+    expect(snap.existing.has("app:src-b:b")).toBe(true);
+    // c was imported on srv-9, which is not where src-b places it
+    expect(snap.existing.has("app:src-b:c")).toBe(false);
+    expect(snap.elsewhere.get("app:src-b:c")).toMatchObject({ serverId: "srv-9" });
+    expect([...snap.aliasesOnServer].sort()).toEqual(["one", "two"]);
+    prisma.server.findMany.mockResolvedValueOnce([]); // the extra target is not a server of this team
+    await expect(svc.buildSnapshot("u1", { id: "srv", teamId: "team-a" }, [], { "src-a": "someone-elses" })).rejects.toMatchObject({ response: { code: "import.server_map_invalid" } });
+  });
   it("canCreateProjects follows the caller's projects permission", async () => {
     const { svc, access } = make();
     access.membershipPermissions.mockResolvedValue(new Set(["apps:config"]));
