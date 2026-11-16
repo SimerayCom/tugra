@@ -1052,6 +1052,73 @@ describe("guided migration run tools", () => {
     await expect(run("migration_run_set_inputs", w, { runId: id, sourceController: "ssh" })).rejects.toThrow(/invalid arguments/);
   });
 
+  describe("fleet runs", () => {
+    const withTwoServers = () => {
+      const w = new RunWorld();
+      w.env.serversById.set("srv2", { id: "srv2", name: "tugra-b", teamId: "t1" });
+      w.env.serversById.set("srv-other", { id: "srv-other", name: "other-team", teamId: "t-other" });
+      return w;
+    };
+
+    it("create takes a multi-host placement and a campaign, and the view names every target server", async () => {
+      const w = withTwoServers();
+      const v = (await run("migration_run_create", w, { ...base, serverMap: { "host-a": "srv1", "host-b": "srv2" }, campaign: "wave-1" })) as {
+        serverMap: Record<string, string>; campaign: string | null; targetServers: Array<{ serverId: string; primary: boolean }>;
+      };
+      expect(v.serverMap).toEqual({ "host-a": "srv1", "host-b": "srv2" });
+      expect(v.campaign).toBe("wave-1");
+      expect(v.targetServers.map((x) => [x.serverId, x.primary])).toEqual([["srv1", true], ["srv2", false]]);
+    });
+
+    it("create refuses a target server of another team, a prototype name and an oversized map before anything is written", async () => {
+      const w = withTwoServers();
+      await expect(run("migration_run_create", w, { ...base, serverMap: { "host-a": "srv-other" } })).rejects.toThrow(/server-not-found/);
+      await expect(run("migration_run_create", w, { ...base, serverMap: JSON.parse('{"__proto__":"srv2"}') })).rejects.toThrow(/invalid arguments/);
+      await expect(run("migration_run_create", w, { ...base, serverMap: Object.fromEntries(Array.from({ length: 65 }, (_, i) => [`h${i}`, "srv1"])) })).rejects.toThrow(/invalid arguments/);
+      await expect(run("migration_run_create", w, { ...base, campaign: "" })).rejects.toThrow(/invalid arguments/);
+    });
+
+    it("create accepts the host-loop runner and the new run options, and refuses an unsafe key directory", async () => {
+      const w = withTwoServers();
+      const v = (await run("migration_run_create", w, { ...base, options: { sourceRunner: "coolify-host-loop", hostLoop: { keyDir: "/data/coolify/ssh/keys", parallel: 2 }, deployWaves: "earlyBuild", deployConcurrency: 2, largeDbMode: "stream-logical" } })) as { options: Record<string, unknown> };
+      expect(v.options).toMatchObject({ sourceRunner: "coolify-host-loop", deployWaves: "earlyBuild", deployConcurrency: 2, largeDbMode: "stream-logical", hostLoop: { keyDir: "/data/coolify/ssh/keys", parallel: 2 } });
+      await expect(run("migration_run_create", w, { ...base, options: { sourceRunner: "coolify-host-loop", hostLoop: { keyDir: "/data/../etc" } } })).rejects.toThrow(/invalid arguments/);
+      await expect(run("migration_run_create", w, { ...base, options: { hostLoop: { keyDir: "/k", privateKey: "x" } } })).rejects.toThrow(/invalid arguments/); // no key travels through a run
+    });
+
+    it("create takes the fleet policies as owner inputs, set_inputs changes them, and an unknown choice is refused", async () => {
+      const w = withTwoServers();
+      const v = (await run("migration_run_create", w, { ...base, inputs: { minioPolicy: "mirror", tickGapAcceptMinutes: 20 } })) as { id: string; inputs: Record<string, { value: unknown }> };
+      expect(v.inputs.minioPolicy.value).toBe("mirror");
+      expect(v.inputs.tickGapAcceptMinutes.value).toBe(20);
+      const next = (await run("migration_run_set_inputs", w, { runId: v.id, workerPolicy: "exclude", unlistedDbPolicy: "carry", orphanVolumePolicy: "skip", minioPolicy: "unknown" })) as { inputs: Record<string, { value: unknown }> };
+      expect(next.inputs.workerPolicy.value).toBe("exclude");
+      expect(next.inputs.unlistedDbPolicy.value).toBe("carry");
+      expect(next.inputs.orphanVolumePolicy.value).toBe("skip");
+      expect(next.inputs.minioPolicy.value).toBe("unknown");
+      await expect(run("migration_run_set_inputs", w, { runId: v.id, minioPolicy: "ignore" })).rejects.toThrow(/invalid arguments/);
+      await expect(run("migration_run_set_inputs", w, { runId: v.id, tickGapAcceptMinutes: 99999 })).rejects.toThrow(/invalid arguments/);
+    });
+
+    it("list filters by campaign and reports the server count, source version and campaign", async () => {
+      const w = withTwoServers();
+      const a = (await run("migration_run_create", w, { ...base, serverMap: { "host-a": "srv1", "host-b": "srv2" }, campaign: "wave-1" })) as { id: string };
+      await run("migration_run_create", w, { ...base, campaign: "wave-2" });
+      const list = (await run("migration_run_list", w, { campaign: "wave-1" }, ["read"])) as { runs: Array<{ id: string; targetServerCount: number; campaign: string | null }> };
+      expect(list.runs.map((r) => [r.id, r.targetServerCount, r.campaign])).toEqual([[a.id, 2, "wave-1"]]);
+    });
+
+    it("advertises the new arguments, and still exposes no script, attestation or safety-fact writer", () => {
+      const create = tool("migration_run_create").inputSchema as { properties: Record<string, unknown> };
+      expect(Object.keys(create.properties)).toEqual(expect.arrayContaining(["serverMap", "campaign"]));
+      const inputs = tool("migration_run_set_inputs").inputSchema as { properties: Record<string, unknown> };
+      expect(Object.keys(inputs.properties)).toEqual(expect.arrayContaining(["minioPolicy", "tickGapAcceptMinutes", "workerPolicy", "unlistedDbPolicy", "orphanVolumePolicy"]));
+      expect(Object.keys((tool("migration_run_list").inputSchema as { properties: Record<string, unknown> }).properties)).toContain("campaign");
+      const names = MCP_TOOLS.map((t) => t.name);
+      expect(names.some((n) => /image_pin|worker_mark|host_loop|inventory|safety/.test(n))).toBe(false);
+    });
+  });
+
   it("pause and resume drive the facade (a run that is not running cannot be paused)", async () => {
     const w = new RunWorld({ stubs: { FREEZE: { binding: () => plain() } } });
     const id = await w.create();

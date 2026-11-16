@@ -877,22 +877,30 @@ export const MCP_TOOLS: McpTool[] = [
   // Every tool delegates to the migration-run facade (the same service the REST routes call), which re-checks
   // creator-only ownership, team permissions and its per-route scopes against the token's scopes. Views and the
   // report are secret-free and carry codes + params only. Deliberately NOT exposed over MCP: the source-host
-  // command (it carries a live migrator token), operator attestations (a human vouches for the source host), the
-  // source-token re-entry, and DECOMMISSION. The point-of-no-return approval is refused by the facade with 403
+  // command and the host-loop / inventory scripts (they carry a live migrator token), operator attestations
+  // (a human vouches for the source host), the image-digest and job-runner facts (`image-pins`, `worker-marks`:
+  // only someone who can see the source host can vouch for them), the source-token re-entry, and DECOMMISSION. The point-of-no-return approval is refused by the facade with 403
   // `human-confirmation-required`: an agent prepares and observes, a human crosses the point of no return.
   {
     name: "migration_run_list",
     description:
-      "List your guided migration runs (newest first), optionally filtered by teamId, status or active=true (live runs only). Each row has the status, current step, point-of-no-return time, steps passed/total and what the run is waiting for. Read-only.",
+      "List your guided migration runs (newest first), optionally filtered by teamId, status, campaign (the exact label a run was created with) or active=true (live runs only). Each row has the status, current step, point-of-no-return time, steps passed/total, how many target servers the run places resources on, the source version, the campaign and what the run is waiting for. Read-only.",
     scope: "read",
     inputSchema: {
       type: "object",
-      properties: { teamId: { type: "string" }, status: { type: "string" }, active: { type: "boolean", description: "true = only live runs" }, limit: { type: "number" } },
+      properties: {
+        teamId: { type: "string" },
+        status: { type: "string" },
+        campaign: { type: "string", description: "only the runs of this campaign label (exact match)" },
+        active: { type: "boolean", description: "true = only live runs" },
+        limit: { type: "number" },
+      },
     },
     execute: async (d, userId, a, ctx) => {
       const query = parseWith(ListMigrationRunsQuerySchema, {
         ...(optStr(a, "teamId") ? { teamId: optStr(a, "teamId") } : {}),
         ...(optStr(a, "status") ? { status: optStr(a, "status") } : {}),
+        ...(optStr(a, "campaign") ? { campaign: optStr(a, "campaign") } : {}),
         ...(a.active === true ? { active: "true" } : a.active === false ? { active: "false" } : {}),
         ...(a.limit !== undefined ? { limit: clampInt(a.limit, 1, 200, 50) } : {}),
       });
@@ -902,7 +910,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "migration_run_create",
     description:
-      "Create a guided Coolify/Dokploy -> Tugra migration run bound to a reviewed import plan (import_connect, then import_plan; pass the same sessionId, planHash and mapping/acks/dbDataModes you will apply). DEFAULTS TO dryRun=true: the run only projects what each step would do, writes nothing outside its own run rows and ends DRY_RUN_DONE; call migration_run_start on it to promote it into a real run. Pass dryRun=false only when the human asked for a real run. mode: copy (default) | takeover; topology: two-box (default) | swap-proxy; options and inputs (acmeEmail, allowBind, allowLiveShapeProbe, sourceController) are optional with safe defaults. Needs deploy AND read:secrets scopes. Returns the run view.",
+      "Create a guided Coolify/Dokploy -> Tugra migration run bound to a reviewed import plan (import_connect, then import_plan; pass the same sessionId, planHash and mapping/acks/dbDataModes you will apply). DEFAULTS TO dryRun=true: the run only projects what each step would do, writes nothing outside its own run rows and ends DRY_RUN_DONE; call migration_run_start on it to promote it into a real run. Pass dryRun=false only when the human asked for a real run. mode: copy (default) | takeover; topology: two-box (default) | swap-proxy; options and inputs are optional with safe, fail-closed defaults. A project that spans several source servers is ONE run: pass serverMap (source server = the Coolify server uuid in the plan's item refs, to a Tugra server id of the same team; targetServerId stays the default) and list EVERY source server in it, because a source server missing from a non-empty map stops the run instead of landing on the default server. campaign groups the runs of one migration campaign. sourceRunner coolify-host-loop prints one script for the Coolify host (a human runs it) that loops over the source hosts. Needs deploy AND read:secrets scopes. Returns the run view.",
     scope: "deploy",
     inputSchema: {
       type: "object",
@@ -915,8 +923,18 @@ export const MCP_TOOLS: McpTool[] = [
         mode: { type: "string", enum: ["copy", "takeover"] },
         topology: { type: "string", enum: ["two-box", "swap-proxy"] },
         dryRun: { type: "boolean", description: "default TRUE for agents" },
-        options: { type: "object", description: "run options (ttlPolicy, deployWaves, warmDbSeed, stopSource, sourceRunner, certs, acceptHttp01Gap, freezeAt, observeMinutes, manualFinalize, batchSize, intervalSec, dnsCredentialId, healthPath, rowCountMode, decommissionMinAgeHours, stuckOperatorMinutes)" },
-        inputs: { type: "object", description: 'owner inputs: acmeEmail, allowBind, allowLiveShapeProbe, sourceController (manual|api|agent); each may be "unknown"' },
+        serverMap: { type: "object", description: "multi-host placement: { <source server uuid>: <Tugra server id> }, at most 64 entries, every source server listed; targetServerId is the default for none", additionalProperties: { type: "string" } },
+        campaign: { type: "string", description: "a label (1-80 printable characters) that groups the runs of one campaign" },
+        options: {
+          type: "object",
+          description:
+            "run options (ttlPolicy, deployWaves single|earlyStateless|earlyBuild, deployConcurrency 1-8 builds per target server, warmDbSeed, stopSource, sourceRunner operator|agent|coolify-host-loop, hostLoop {keyDir, parallel, connectTimeoutSec, retries} (only the key DIRECTORY on the Coolify host, never a key), largeDbMode refuse|stream-logical, certs, acceptHttp01Gap, freezeAt, observeMinutes, manualFinalize, batchSize, intervalSec, dnsCredentialId, healthPath, rowCountMode, decommissionMinAgeHours, stuckOperatorMinutes)",
+        },
+        inputs: {
+          type: "object",
+          description:
+            'owner inputs, each may be "unknown" (the safe default then applies): acmeEmail, allowBind, allowLiveShapeProbe, sourceController (manual|api|agent), minioPolicy (hold|mirror|external: hosts that use the source\'s object storage; default hold), tickGapAcceptMinutes (0-10080; default 0), workerPolicy (hold-dark|start-dark|exclude: apps without a domain; default hold-dark), unlistedDbPolicy (block|carry|skip: database containers the source API does not list; default block), orphanVolumePolicy (block|skip; default block)',
+        },
         acks: { type: "array", items: { type: "object" } },
         serviceChoices: { type: "object" },
         mapping: { type: "object" },
@@ -937,7 +955,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "migration_run_status",
     description:
-      "The full run view: every step with its status, gate checks (with evidence kind), progress and attempts; the single nextAction naming exactly what the run is waiting for (an operator command, an approval with its hash binding, a timer, a gate, a re-entered source session); the window estimate vs measured downtime; ponrAt; and which actions are allowed now. Secret-free, codes + params only. Read-only.",
+      "The full run view: every step with its status, gate checks (with evidence kind: hub-verified, migrator-reported, source-api-reported, host-loop-reported or operator-attested), progress and attempts; the single nextAction naming exactly what the run is waiting for (an operator command, an approval with its hash binding, a timer, a gate, a re-entered source session); the placement (serverMap and targetServers, the default first); the source version with its verdict (supported | newer | too-old | unknown | unchecked), the campaign and when the source health baseline was recorded; the window estimate vs measured downtime; ponrAt; and which actions are allowed now. Secret-free, codes + params only. Read-only.",
     scope: "read",
     inputSchema: runIdSchema,
     execute: async (d, userId, a, ctx) => d.migrationRuns.get(mcpActor(userId, ctx), reqRunId(a)),
@@ -957,7 +975,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "migration_run_report",
-    description: "The run's secret-free report: what moved, what did not (reason codes), the evidence kinds the run relied on (hub-verified, migrator-reported, operator-attested), the estimated vs measured downtime window and the manual actions still required. Built on demand for an unfinished run. Read-only.",
+    description: "The run's secret-free report: what moved, what did not (reason codes), the source version, every target server and the campaign, the evidence kinds the run relied on (hub-verified, migrator-reported, source-api-reported, host-loop-reported, operator-attested), the estimated vs measured downtime window and the manual actions still required. Built on demand for an unfinished run. Read-only.",
     scope: "read",
     inputSchema: runIdSchema,
     execute: async (d, userId, a, ctx) => d.migrationRuns.report(mcpActor(userId, ctx), reqRunId(a)),
@@ -973,7 +991,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "migration_run_set_inputs",
     description:
-      'Answer or change owner inputs on a run: acmeEmail (blocks only TLS and CUTOVER while unknown), allowBind (bind-mount apps; default refuse), allowLiveShapeProbe (consent for the read-only live probe; default off), sourceController (manual | api | agent; default manual). Each value may be "unknown". Unblocks the step that needed it.',
+      'Answer or change owner inputs on a run: acmeEmail (blocks only TLS and CUTOVER while unknown), allowBind (bind-mount apps; default refuse), allowLiveShapeProbe (consent for the read-only live probe; default off), sourceController (manual | api | agent; default manual), and the fleet policies, all fail-closed: minioPolicy (hold | mirror | external; hosts that use the source\'s object storage stay on the source by default), tickGapAcceptMinutes (0-10080; default 0 = no write gap accepted), workerPolicy (hold-dark | start-dark | exclude; apps without a domain stay stopped until after the cutover by default), unlistedDbPolicy (block | carry | skip; default block) and orphanVolumePolicy (block | skip; default block). Each value may be "unknown", which keeps the safe default. Unblocks the step that needed it.',
     scope: "deploy",
     inputSchema: {
       type: "object",
@@ -983,6 +1001,11 @@ export const MCP_TOOLS: McpTool[] = [
         allowBind: { type: "boolean" },
         allowLiveShapeProbe: { type: "boolean" },
         sourceController: { type: "string", enum: ["manual", "api", "agent"] },
+        minioPolicy: { type: "string", enum: ["hold", "mirror", "external"] },
+        tickGapAcceptMinutes: { type: "number", description: "0-10080" },
+        workerPolicy: { type: "string", enum: ["hold-dark", "start-dark", "exclude"] },
+        unlistedDbPolicy: { type: "string", enum: ["block", "carry", "skip"] },
+        orphanVolumePolicy: { type: "string", enum: ["block", "skip"] },
       },
       required: ["runId"],
     },
@@ -995,7 +1018,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "migration_run_approve",
     description:
-      "Approve a step that is WAITING_APPROVAL. boundHash MUST equal the hash in migration_run_status.nextAction.approval (a stale hash is refused with 409 approval-stale and the human must review again); acks and confirmName come from that same binding. The POINT-OF-NO-RETURN approval (the VERIFY step that leads to the CUTOVER) and the decommission approval are REFUSED here with 403 human-confirmation-required: tell the human to approve it in the panel or with `tugra import run approve`.",
+      "Approve a step that is WAITING_APPROVAL. boundHash MUST equal the hash in migration_run_status.nextAction.approval (a stale hash is refused with 409 approval-stale and the human must review again); acks and confirmName come from that same binding (on a multi-host run a typed confirmation names EVERY target server: the distinct names sorted by code point, joined with a comma and a space, then the source host for the +source-host kinds). The POINT-OF-NO-RETURN approval (the VERIFY step that leads to the CUTOVER) and the decommission approval are REFUSED here with 403 human-confirmation-required: tell the human to approve it in the panel or with `tugra import run approve`.",
     scope: "deploy",
     inputSchema: {
       type: "object",
