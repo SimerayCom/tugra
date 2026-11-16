@@ -58839,6 +58839,14 @@
                             "volume"
                           ]
                         }
+                      },
+                      "serverMap": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64
+                        }
                       }
                     },
                     "required": [
@@ -59160,6 +59168,14 @@
                           "enum": [
                             "volume"
                           ]
+                        }
+                      },
+                      "serverMap": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64
                         }
                       }
                     },
@@ -59514,6 +59530,14 @@
                       "additionalProperties": false
                     },
                     "maxItems": 2000
+                  },
+                  "serverMap": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    }
                   },
                   "mapping": {
                     "type": "object",

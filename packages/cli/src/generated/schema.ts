@@ -38803,6 +38803,9 @@ export interface operations {
                     dbDataModes?: {
                         [key: string]: "volume";
                     };
+                    serverMap?: {
+                        [key: string]: string;
+                    };
                 } | {
                     /** @enum {string} */
                     sourceKind: "dokploy";
@@ -38891,6 +38894,9 @@ export interface operations {
                     saveMapping?: boolean;
                     dbDataModes?: {
                         [key: string]: "volume";
+                    };
+                    serverMap?: {
+                        [key: string]: string;
                     };
                 };
             };
@@ -39124,6 +39130,9 @@ export interface operations {
                         code: "app.env.unresolved" | "app.env.key.invalid";
                         itemRef?: string;
                     }[];
+                    serverMap?: {
+                        [key: string]: string;
+                    };
                     mapping: {
                         /** @enum {number} */
                         version: 1;
