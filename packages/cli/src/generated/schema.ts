@@ -10826,7 +10826,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    capabilities: ("deploy" | "database" | "backup" | "cleanup" | "bulk" | "terminal" | "schedule" | "patch" | "logs" | "swarm" | "files" | "files_write")[];
+                    capabilities: ("deploy" | "database" | "backup" | "cleanup" | "bulk" | "terminal" | "schedule" | "patch" | "logs" | "swarm" | "files" | "files_write" | "migrate")[];
                 };
             };
         };
