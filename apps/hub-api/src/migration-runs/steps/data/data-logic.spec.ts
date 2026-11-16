@@ -285,7 +285,7 @@ describe("estimateWindow: a measured per-host speed (R37)", () => {
   it("a run with no speed test estimates exactly as before", () => {
     const vols = [inspected("volume:host-1:a:data", 7 * GiB), inspected("volume:host-2:b:data", 3 * GiB)];
     const e = estimateWindow(makeSnap({ volumes: vols }), NOW);
-    expect(e.basis.map((b) => b.code)).toEqual(["data-seed.estimate.bytes", "data-seed.estimate.rate-assumed", "data-seed.estimate.extract", "data-seed.estimate.databases"]);
+    expect(e.basis.map((b) => b.code)).toEqual(["data-seed.estimate.bytes", "data-seed.estimate.hub-bytes", "data-seed.estimate.rate-assumed", "data-seed.estimate.extract", "data-seed.estimate.databases"]);
     expect(e.freezeToFlipSec).toBe(Math.ceil((10 * GiB) / ASSUMED_BYTES_PER_SEC) + Math.ceil(10 * GiB * ((15 * 60) / (30 * GiB))) + 120);
   });
 
