@@ -97,7 +97,6 @@ export interface RunOpts {
   allowLiveProbe?: boolean;
   sourceController?: string;
   minioPolicy?: string;
-  tickGapAccept?: number;
   workerPolicy?: string;
   unlistedDbPolicy?: string;
   orphanVolumePolicy?: string;
@@ -227,7 +226,6 @@ export function buildCreateRequest(o: RunOpts): Req {
   oneOf(o.workerPolicy, WORKER_POLICIES, "--worker-policy");
   oneOf(o.unlistedDbPolicy, UNLISTED_DB_POLICIES, "--unlisted-db-policy");
   oneOf(o.orphanVolumePolicy, ORPHAN_VOLUME_POLICIES, "--orphan-volume-policy");
-  int(o.tickGapAccept, 0, 7 * 24 * 60, "--tick-gap-accept");
   int(o.deployConcurrency, 1, 8, "--deploy-concurrency");
   int(o.hostLoopParallel, 1, 8, "--host-loop-parallel");
   int(o.hostLoopConnectTimeout, 5, 120, "--host-loop-connect-timeout");
@@ -315,7 +313,6 @@ export function buildCreateRequest(o: RunOpts): Req {
 function policyBody(o: RunOpts): Record<string, unknown> {
   return {
     ...(o.minioPolicy ? { minioPolicy: o.minioPolicy } : {}),
-    ...(o.tickGapAccept !== undefined ? { tickGapAcceptMinutes: o.tickGapAccept } : {}),
     ...(o.workerPolicy ? { workerPolicy: o.workerPolicy } : {}),
     ...(o.unlistedDbPolicy ? { unlistedDbPolicy: o.unlistedDbPolicy } : {}),
     ...(o.orphanVolumePolicy ? { orphanVolumePolicy: o.orphanVolumePolicy } : {}),
@@ -361,15 +358,14 @@ export function buildRequest(action: RunAction, runId: string, o: RunOpts): Req 
       oneOf(o.workerPolicy, WORKER_POLICIES, "--worker-policy");
       oneOf(o.unlistedDbPolicy, UNLISTED_DB_POLICIES, "--unlisted-db-policy");
       oneOf(o.orphanVolumePolicy, ORPHAN_VOLUME_POLICIES, "--orphan-volume-policy");
-      int(o.tickGapAccept, 0, 7 * 24 * 60, "--tick-gap-accept");
-      const body = {
+          const body = {
         ...(o.acmeEmail ? { acmeEmail: o.acmeEmail } : {}),
         ...(o.allowBind !== undefined ? { allowBind: o.allowBind } : {}),
         ...(o.allowLiveProbe !== undefined ? { allowLiveShapeProbe: o.allowLiveProbe } : {}),
         ...(o.sourceController ? { sourceController: o.sourceController } : {}),
         ...policyBody(o),
       };
-      need(Object.keys(body).length > 0, "give at least one input: --acme-email, --allow-bind, --allow-live-probe, --source-controller, --minio-policy, --tick-gap-accept, --worker-policy, --unlisted-db-policy or --orphan-volume-policy");
+      need(Object.keys(body).length > 0, "give at least one input: --acme-email, --allow-bind, --allow-live-probe, --source-controller, --minio-policy, --worker-policy, --unlisted-db-policy or --orphan-volume-policy");
       return { method: "POST", path: `${base(runId)}/inputs`, body };
     }
     case "pause":
@@ -777,7 +773,6 @@ export function register(program: Command): void {
     .option("--no-allow-live-probe", "owner input: no live source probe")
     .option("--source-controller <controller>", `owner input: ${SOURCE_CONTROLLERS.join(" | ")} (default manual)`)
     .option("--minio-policy <policy>", `owner input: ${MINIO_POLICIES.join(" | ")}: hosts that use the source's object storage (default hold)`)
-    .option("--tick-gap-accept <minutes>", "owner input: minutes of missing writes you accept between the last copy and the switch (0-10080, default 0)", num)
     .option("--worker-policy <policy>", `owner input: ${WORKER_POLICIES.join(" | ")}: apps without a domain (default hold-dark)`)
     .option("--unlisted-db-policy <policy>", `owner input: ${UNLISTED_DB_POLICIES.join(" | ")}: database containers the source API does not list (default block)`)
     .option("--orphan-volume-policy <policy>", `owner input: ${ORPHAN_VOLUME_POLICIES.join(" | ")}: volumes no container uses (default block)`)
@@ -842,7 +837,6 @@ export function register(program: Command): void {
     .option("--no-allow-live-probe", "no live source probe")
     .option("--source-controller <controller>", SOURCE_CONTROLLERS.join(" | "))
     .option("--minio-policy <policy>", MINIO_POLICIES.join(" | "))
-    .option("--tick-gap-accept <minutes>", "minutes of missing writes you accept (0-10080)", num)
     .option("--worker-policy <policy>", WORKER_POLICIES.join(" | "))
     .option("--unlisted-db-policy <policy>", UNLISTED_DB_POLICIES.join(" | "))
     .option("--orphan-volume-policy <policy>", ORPHAN_VOLUME_POLICIES.join(" | "))
@@ -855,7 +849,7 @@ export function register(program: Command): void {
     .option("--evidence <kind>", `${PIN_EVIDENCE.join(" | ")} (default operator-attested)`)
     .option("--remove", "remove the recorded digest")
     .action((id: string, o: RunOpts & { evidence?: string; json?: boolean }) => perform("image-pin", id, { ...o, evidenceKind: o.evidence }));
-  sub("worker-mark", "<runId>", "Mark an app as a job runner (held until after the cutover) or a web app (starts dark); none removes the mark")
+  sub("worker-mark", "<runId>", "Mark an app a job runner (for an app with no domain whose role the plan cannot infer; a job-runner mark on an app that serves a domain fails preflight until removed) or a web app (starts dark); none removes the mark")
     .requiredOption("--item <itemRef>", "the plan item of the app, e.g. app:<server>:<ref>")
     .requiredOption("--role <role>", WORKER_ROLES.join(" | "))
     .action((id: string, o) => perform("worker-mark", id, o));

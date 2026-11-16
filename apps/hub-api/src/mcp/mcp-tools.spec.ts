@@ -1088,16 +1088,14 @@ describe("guided migration run tools", () => {
 
     it("create takes the fleet policies as owner inputs, set_inputs changes them, and an unknown choice is refused", async () => {
       const w = withTwoServers();
-      const v = (await run("migration_run_create", w, { ...base, inputs: { minioPolicy: "mirror", tickGapAcceptMinutes: 20 } })) as { id: string; inputs: Record<string, { value: unknown }> };
+      const v = (await run("migration_run_create", w, { ...base, inputs: { minioPolicy: "mirror" } })) as { id: string; inputs: Record<string, { value: unknown }> };
       expect(v.inputs.minioPolicy.value).toBe("mirror");
-      expect(v.inputs.tickGapAcceptMinutes.value).toBe(20);
       const next = (await run("migration_run_set_inputs", w, { runId: v.id, workerPolicy: "exclude", unlistedDbPolicy: "carry", orphanVolumePolicy: "skip", minioPolicy: "unknown" })) as { inputs: Record<string, { value: unknown }> };
       expect(next.inputs.workerPolicy.value).toBe("exclude");
       expect(next.inputs.unlistedDbPolicy.value).toBe("carry");
       expect(next.inputs.orphanVolumePolicy.value).toBe("skip");
       expect(next.inputs.minioPolicy.value).toBe("unknown");
       await expect(run("migration_run_set_inputs", w, { runId: v.id, minioPolicy: "ignore" })).rejects.toThrow(/invalid arguments/);
-      await expect(run("migration_run_set_inputs", w, { runId: v.id, tickGapAcceptMinutes: 99999 })).rejects.toThrow(/invalid arguments/);
     });
 
     it("list filters by campaign and reports the server count, source version and campaign", async () => {
@@ -1112,7 +1110,11 @@ describe("guided migration run tools", () => {
       const create = tool("migration_run_create").inputSchema as { properties: Record<string, unknown> };
       expect(Object.keys(create.properties)).toEqual(expect.arrayContaining(["serverMap", "campaign"]));
       const inputs = tool("migration_run_set_inputs").inputSchema as { properties: Record<string, unknown> };
-      expect(Object.keys(inputs.properties)).toEqual(expect.arrayContaining(["minioPolicy", "tickGapAcceptMinutes", "workerPolicy", "unlistedDbPolicy", "orphanVolumePolicy"]));
+      expect(Object.keys(inputs.properties)).toEqual(expect.arrayContaining(["minioPolicy", "workerPolicy", "unlistedDbPolicy", "orphanVolumePolicy"]));
+      // an input no step reads is not advertised
+      expect(Object.keys(inputs.properties)).not.toContain("tickGapAcceptMinutes");
+      expect(JSON.stringify(tool("migration_run_create"))).not.toContain("tickGap");
+      expect(tool("migration_run_set_inputs").description).not.toContain("tickGap");
       expect(Object.keys((tool("migration_run_list").inputSchema as { properties: Record<string, unknown> }).properties)).toContain("campaign");
       const names = MCP_TOOLS.map((t) => t.name);
       expect(names.some((n) => /image_pin|worker_mark|host_loop|inventory|safety/.test(n))).toBe(false);

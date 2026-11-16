@@ -58,7 +58,7 @@ Sub-commands: `list`, `create`, `status`, `events`, `watch`, `start`, `approve`,
 - Fleet options of `create`: `--map <source=target>` (repeat for each source host; every source host must be listed once a
   map is given) or `--server-map-file`, `--campaign`, `--source-runner coolify-host-loop` with `--host-loop-key-dir`,
   `--host-loop-parallel`, `--host-loop-connect-timeout`, `--host-loop-retries`, `--deploy-waves earlyBuild`,
-  `--deploy-concurrency`, `--large-db-mode`, and the owner policies `--minio-policy`, `--tick-gap-accept`,
+  `--deploy-concurrency`, `--large-db-mode`, and the owner policies `--minio-policy`,
   `--worker-policy`, `--unlisted-db-policy`, `--orphan-volume-policy` (also on `inputs`). Nothing answered, nothing sent:
   the hub's fail-closed defaults apply.
 - On a multi-server run `status` prints every target server, the placement, the source version with its verdict and the

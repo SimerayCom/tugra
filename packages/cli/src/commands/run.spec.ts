@@ -371,18 +371,17 @@ describe("tugra import run: fleet runs", () => {
   it("sends the build, large-database options and the fleet policy answers, and refuses an unknown choice", () => {
     const req = buildCreateRequest({
       ...create, deployWaves: "earlyBuild", deployConcurrency: 2, largeDbMode: "stream-logical",
-      minioPolicy: "mirror", tickGapAccept: 15, workerPolicy: "exclude", unlistedDbPolicy: "carry", orphanVolumePolicy: "skip",
+      minioPolicy: "mirror", workerPolicy: "exclude", unlistedDbPolicy: "carry", orphanVolumePolicy: "skip",
     });
     expect(req.body).toMatchObject({
       options: { deployWaves: "earlyBuild", deployConcurrency: 2, largeDbMode: "stream-logical" },
-      inputs: { minioPolicy: "mirror", tickGapAcceptMinutes: 15, workerPolicy: "exclude", unlistedDbPolicy: "carry", orphanVolumePolicy: "skip" },
+      inputs: { minioPolicy: "mirror", workerPolicy: "exclude", unlistedDbPolicy: "carry", orphanVolumePolicy: "skip" },
     });
     expect(() => buildCreateRequest({ ...create, largeDbMode: "stream" })).toThrow(/--large-db-mode/);
     expect(() => buildCreateRequest({ ...create, minioPolicy: "ignore" })).toThrow(/--minio-policy/);
     expect(() => buildCreateRequest({ ...create, workerPolicy: "x" })).toThrow(/--worker-policy/);
     expect(() => buildCreateRequest({ ...create, unlistedDbPolicy: "x" })).toThrow(/--unlisted-db-policy/);
     expect(() => buildCreateRequest({ ...create, orphanVolumePolicy: "x" })).toThrow(/--orphan-volume-policy/);
-    expect(() => buildCreateRequest({ ...create, tickGapAccept: 10081 })).toThrow(/--tick-gap-accept/);
     expect(() => buildCreateRequest({ ...create, deployConcurrency: 9 })).toThrow(/--deploy-concurrency/);
     // nothing answered, nothing sent: the hub's fail-closed defaults apply
     expect(buildCreateRequest(create).body).not.toHaveProperty("inputs");
@@ -394,12 +393,11 @@ describe("tugra import run: fleet runs", () => {
   });
 
   it("inputs accepts the fleet policies and names them when none is given", () => {
-    expect(buildRequest("inputs", "r1", { minioPolicy: "hold", tickGapAccept: 0, orphanVolumePolicy: "block" })).toEqual({
-      method: "POST", path: "/migration-runs/r1/inputs", body: { minioPolicy: "hold", tickGapAcceptMinutes: 0, orphanVolumePolicy: "block" },
+    expect(buildRequest("inputs", "r1", { minioPolicy: "hold", orphanVolumePolicy: "block" })).toEqual({
+      method: "POST", path: "/migration-runs/r1/inputs", body: { minioPolicy: "hold", orphanVolumePolicy: "block" },
     });
     expect(() => buildRequest("inputs", "r1", {})).toThrow(/--minio-policy/);
     expect(() => buildRequest("inputs", "r1", { workerPolicy: "nope" })).toThrow(/--worker-policy/);
-    expect(() => buildRequest("inputs", "r1", { tickGapAccept: -1 })).toThrow(/--tick-gap-accept/);
   });
 
   it("list filters by campaign", () => {
@@ -482,12 +480,19 @@ describe("tugra import run: fleet runs", () => {
     register(program);
     const run = program.commands.find((c) => c.name() === "import")!.commands.find((c) => c.name() === "run")!;
     const createCmd = run.commands.find((c) => c.name() === "create")!;
-    for (const flag of ["--map", "--server-map-file", "--campaign", "--host-loop-key-dir", "--host-loop-parallel", "--deploy-concurrency", "--large-db-mode", "--minio-policy", "--tick-gap-accept", "--worker-policy", "--unlisted-db-policy", "--orphan-volume-policy"]) {
+    for (const flag of ["--map", "--server-map-file", "--campaign", "--host-loop-key-dir", "--host-loop-parallel", "--deploy-concurrency", "--large-db-mode", "--minio-policy", "--worker-policy", "--unlisted-db-policy", "--orphan-volume-policy"]) {
       expect(createCmd.options.map((o) => o.long)).toContain(flag);
     }
     expect(run.commands.find((c) => c.name() === "list")!.options.map((o) => o.long)).toContain("--campaign");
     expect(run.commands.find((c) => c.name() === "command")!.options.map((o) => o.long)).toContain("--kind");
     expect(run.commands.find((c) => c.name() === "image-pin")!.options.find((o) => o.long === "--image")?.required).toBe(true);
     expect(run.commands.find((c) => c.name() === "worker-mark")!.options.find((o) => o.long === "--role")?.required).toBe(true);
+    // an input no step reads is not offered
+    expect(createCmd.options.map((o) => o.long)).not.toContain("--tick-gap-accept");
+    expect(run.commands.find((c) => c.name() === "inputs")!.options.map((o) => o.long)).not.toContain("--tick-gap-accept");
+    // the job-runner mark holds only an app WITHOUT a domain; the help must not promise more
+    const markHelp = run.commands.find((c) => c.name() === "worker-mark")!.description();
+    expect(markHelp).toMatch(/no domain/i);
+    expect(markHelp).not.toMatch(/held until after the cutover\)/);
   });
 });

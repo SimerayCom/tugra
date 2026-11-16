@@ -933,7 +933,7 @@ export const MCP_TOOLS: McpTool[] = [
         inputs: {
           type: "object",
           description:
-            'owner inputs, each may be "unknown" (the safe default then applies): acmeEmail, allowBind, allowLiveShapeProbe, sourceController (manual|api|agent), minioPolicy (hold|mirror|external: hosts that use the source\'s object storage; default hold), tickGapAcceptMinutes (0-10080; default 0), workerPolicy (hold-dark|start-dark|exclude: apps without a domain; default hold-dark), unlistedDbPolicy (block|carry|skip: database containers the source API does not list; default block), orphanVolumePolicy (block|skip; default block)',
+            'owner inputs, each may be "unknown" (the safe default then applies): acmeEmail, allowBind, allowLiveShapeProbe, sourceController (manual|api|agent), minioPolicy (hold|mirror|external: hosts that use the source\'s object storage; default hold), workerPolicy (hold-dark|start-dark|exclude: apps without a domain; default hold-dark), unlistedDbPolicy (block|carry|skip: database containers the source API does not list; default block), orphanVolumePolicy (block|skip; default block)',
         },
         acks: { type: "array", items: { type: "object" } },
         serviceChoices: { type: "object" },
@@ -991,7 +991,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "migration_run_set_inputs",
     description:
-      'Answer or change owner inputs on a run: acmeEmail (blocks only TLS and CUTOVER while unknown), allowBind (bind-mount apps; default refuse), allowLiveShapeProbe (consent for the read-only live probe; default off), sourceController (manual | api | agent; default manual), and the fleet policies, all fail-closed: minioPolicy (hold | mirror | external; hosts that use the source\'s object storage stay on the source by default), tickGapAcceptMinutes (0-10080; default 0 = no write gap accepted), workerPolicy (hold-dark | start-dark | exclude; apps without a domain stay stopped until after the cutover by default), unlistedDbPolicy (block | carry | skip; default block) and orphanVolumePolicy (block | skip; default block). Each value may be "unknown", which keeps the safe default. Unblocks the step that needed it.',
+      'Answer or change owner inputs on a run: acmeEmail (blocks only TLS and CUTOVER while unknown), allowBind (bind-mount apps; default refuse), allowLiveShapeProbe (consent for the read-only live probe; default off), sourceController (manual | api | agent; default manual), and the fleet policies, all fail-closed: minioPolicy (hold | mirror | external; hosts that use the source\'s object storage stay on the source by default), workerPolicy (hold-dark | start-dark | exclude; apps without a domain stay stopped until after the cutover by default), unlistedDbPolicy (block | carry | skip; default block) and orphanVolumePolicy (block | skip; default block). Each value may be "unknown", which keeps the safe default. Unblocks the step that needed it.',
     scope: "deploy",
     inputSchema: {
       type: "object",
@@ -1002,7 +1002,6 @@ export const MCP_TOOLS: McpTool[] = [
         allowLiveShapeProbe: { type: "boolean" },
         sourceController: { type: "string", enum: ["manual", "api", "agent"] },
         minioPolicy: { type: "string", enum: ["hold", "mirror", "external"] },
-        tickGapAcceptMinutes: { type: "number", description: "0-10080" },
         workerPolicy: { type: "string", enum: ["hold-dark", "start-dark", "exclude"] },
         unlistedDbPolicy: { type: "string", enum: ["block", "carry", "skip"] },
         orphanVolumePolicy: { type: "string", enum: ["block", "skip"] },
