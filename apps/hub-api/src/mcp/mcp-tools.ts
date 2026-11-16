@@ -12,7 +12,7 @@ import type { BackupsService } from "../backups/backups.service";
 import type { MonitorsService } from "../monitors/monitors.service";
 import type { ImporterService } from "../importer/importer.service";
 import type { ImportExecutorService } from "../importer/import-executor.service";
-import { REMOTE_SOURCE_KINDS, ServiceChoicesSchema, ImportAckSchema, isRemoteSourceKind, ImportMappingResolveSchema, ImportMappingPutSchema } from "../importer/dto";
+import { REMOTE_SOURCE_KINDS, ServiceChoicesSchema, ImportAckSchema, ImportDbDataModesSchema, isRemoteSourceKind, ImportMappingResolveSchema, ImportMappingPutSchema } from "../importer/dto";
 import { ImportMappingDocSchema } from "../importer/import-mapping";
 import type { LicenseService } from "../license/license.service";
 import type { MetricsService } from "../metrics/metrics.service";
@@ -65,6 +65,14 @@ function reqStr(args: Record<string, unknown>, key: string): string {
 function optStr(args: Record<string, unknown>, key: string): string | undefined {
   const v = args[key];
   return typeof v === "string" && v.length > 0 ? v : undefined;
+}
+/** Shared description of the `dbDataModes` input (import_plan / import_apply / import_mapping_resolve). */
+const DB_DATA_MODES_DESC =
+  'Coolify/Dokploy only: per-database data mode, keyed by the database plan itemRef ("database:<serverRef>:<sourceRef>") with the only value "volume" (a physical copy of a PostgreSQL data directory; any other engine is a plan blocker). Absent = the default logical dump. It is part of the planHash, so import_apply (and import_mapping_resolve) must send EXACTLY the dbDataModes the plan was made with, or the apply is refused with 409. Not accepted for local-docker.';
+/** local-docker adopts in place (no data copy), so a data mode has nothing to act on: refuse it loudly rather than
+ *  silently dropping a choice the caller believes is in effect. */
+function rejectLocalDockerDbDataModes(args: Record<string, unknown>): void {
+  if (args.dbDataModes !== undefined) throw new Error("dbDataModes is only for a Coolify/Dokploy source; local-docker adopts containers in place and copies no data");
 }
 function optBool(args: Record<string, unknown>, key: string): boolean {
   return args[key] === true;
@@ -676,24 +684,34 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "import_plan",
     description:
-      "Dry-run preview of what an import would create in Tugra, with per-item risks. Pass a local-docker serverId (adopt the host's standalone containers) or a Coolify/Dokploy sessionId. Returns a secret-free plan incl. a planHash to pass to import_apply. Reveals env KEYS → read:secrets.",
+      "Dry-run preview of what an import would create in Tugra, with per-item risks. Pass a local-docker serverId (adopt the host's standalone containers) or a Coolify/Dokploy sessionId. Returns a secret-free plan incl. a planHash to pass to import_apply. Optional dbDataModes (Coolify/Dokploy) opts a PostgreSQL database into a physical volume copy; send the same dbDataModes to import_apply. Reveals env KEYS → read:secrets.",
     scope: "read:secrets",
     inputSchema: {
       type: "object",
-      properties: { sourceKind: { type: "string", enum: ["local-docker", ...REMOTE_SOURCE_KINDS] }, serverId: { type: "string" }, sessionId: { type: "string" } },
+      properties: {
+        sourceKind: { type: "string", enum: ["local-docker", ...REMOTE_SOURCE_KINDS] },
+        serverId: { type: "string" },
+        sessionId: { type: "string" },
+        dbDataModes: { type: "object", description: DB_DATA_MODES_DESC, additionalProperties: { type: "string", enum: ["volume"] } },
+      },
       required: ["sourceKind"],
     },
     execute: async (d, userId, a) => {
       const k = optStr(a, "sourceKind");
-      if (k === "local-docker") return d.importer.plan(userId, { sourceKind: "local-docker", serverId: reqStr(a, "serverId") });
-      if (isRemoteSourceKind(k)) return d.importer.plan(userId, { sourceKind: k, sessionId: reqStr(a, "sessionId") });
+      if (k === "local-docker") {
+        rejectLocalDockerDbDataModes(a);
+        return d.importer.plan(userId, { sourceKind: "local-docker", serverId: reqStr(a, "serverId") });
+      }
+      if (isRemoteSourceKind(k)) {
+        return d.importer.plan(userId, { sourceKind: k, sessionId: reqStr(a, "sessionId"), ...(a.dbDataModes !== undefined ? { dbDataModes: ImportDbDataModesSchema.parse(a.dbDataModes) } : {}) });
+      }
       throw new Error(`sourceKind must be "local-docker" or one of: ${REMOTE_SOURCE_KINDS.join(", ")}`);
     },
   },
   {
     name: "import_apply",
     description:
-      "Apply a reviewed import plan. Pass the planHash from import_plan (the apply is refused if the source changed since). local-docker adopts the host's containers in place; a remote source (Coolify/Dokploy) COPIES each app onto targetServerId. Optional mapping (+ the mappingHash from import_mapping_resolve) renames and re-places items; if a saved mapping exists for the source the apply is refused (409) unless you send the mapping or ignoreStoredMapping. Blocked env rows (app.env.unresolved / app.env.key.invalid) are skipped unless acknowledged via acks. Returns an opId to poll with import_status.",
+      "Apply a reviewed import plan. Pass the planHash from import_plan (the apply is refused if the source changed since). local-docker adopts the host's containers in place; a remote source (Coolify/Dokploy) COPIES each app onto targetServerId. Optional mapping (+ the mappingHash from import_mapping_resolve) renames and re-places items; if a saved mapping exists for the source the apply is refused (409) unless you send the mapping or ignoreStoredMapping. Blocked env rows (app.env.unresolved / app.env.key.invalid) are skipped unless acknowledged via acks. dbDataModes (Coolify/Dokploy) must be EXACTLY what import_plan was called with (it is part of the planHash; a mismatch is a 409). Returns an opId to poll with import_status.",
     scope: "deploy",
     inputSchema: {
       type: "object",
@@ -720,13 +738,17 @@ export const MCP_TOOLS: McpTool[] = [
         reconcile: { type: "boolean" },
         ignoreStoredMapping: { type: "boolean" },
         saveMapping: { type: "boolean" },
+        dbDataModes: { type: "object", description: DB_DATA_MODES_DESC, additionalProperties: { type: "string", enum: ["volume"] } },
       },
       required: ["sourceKind", "planHash"],
     },
     execute: async (d, userId, a) => {
       const k = optStr(a, "sourceKind");
       const planHash = reqStr(a, "planHash");
-      if (k === "local-docker") return d.executor.apply(userId, { sourceKind: "local-docker", serverId: reqStr(a, "serverId"), planHash });
+      if (k === "local-docker") {
+        rejectLocalDockerDbDataModes(a);
+        return d.executor.apply(userId, { sourceKind: "local-docker", serverId: reqStr(a, "serverId"), planHash });
+      }
       if (isRemoteSourceKind(k)) {
         const mapping = a.mapping === undefined ? undefined : ImportMappingDocSchema.parse(a.mapping);
         const mappingHash = optStr(a, "mappingHash");
@@ -743,6 +765,7 @@ export const MCP_TOOLS: McpTool[] = [
           ...(a.reconcile === true ? { reconcile: true } : {}),
           ...(a.ignoreStoredMapping === true ? { ignoreStoredMapping: true } : {}),
           ...(a.saveMapping === false ? { saveMapping: false } : {}),
+          ...(a.dbDataModes !== undefined ? { dbDataModes: ImportDbDataModesSchema.parse(a.dbDataModes) } : {}),
         });
       }
       throw new Error(`sourceKind must be "local-docker" or one of: ${REMOTE_SOURCE_KINDS.join(", ")}`);
@@ -763,6 +786,7 @@ export const MCP_TOOLS: McpTool[] = [
         environmentId: { type: "string" },
         reconcile: { type: "boolean" },
         acks: { type: "array", description: "the same acks you will send to import_apply: an acked blocker item previews as runnable and binds into the mappingHash", items: { type: "object" } },
+        dbDataModes: { type: "object", description: "the same dbDataModes import_plan was called with (the resolve re-plans with them so the planHash matches; a plan made with modes is refused with 409 without them)", additionalProperties: { type: "string", enum: ["volume"] } },
         mapping: { type: "object" },
       },
       required: ["sourceKind", "sessionId", "planHash", "targetServerId", "mapping"],

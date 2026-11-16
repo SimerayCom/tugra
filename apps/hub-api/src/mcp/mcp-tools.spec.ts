@@ -126,6 +126,69 @@ describe("MCP_TOOLS catalog", () => {
       expect(tool("import_apply").description).toContain("acks");
     });
 
+    describe("dbDataModes (PostgreSQL physical volume copy, same semantics as the REST/web flow)", () => {
+      const modes = { "database:srv-a:pg": "volume" };
+      const base = { sourceKind: "coolify", sessionId: "s1", targetServerId: "t-srv", planHash: "a".repeat(32) };
+
+      it("import_plan forwards dbDataModes for a remote source only when sent", async () => {
+        const { deps, importer } = mk();
+        await tool("import_plan").execute(deps, "u1", { sourceKind: "coolify", sessionId: "s1", dbDataModes: modes });
+        expect(importer.plan).toHaveBeenLastCalledWith("u1", { sourceKind: "coolify", sessionId: "s1", dbDataModes: modes });
+        await tool("import_plan").execute(deps, "u1", { sourceKind: "dokploy", sessionId: "s1", dbDataModes: modes });
+        expect(importer.plan).toHaveBeenLastCalledWith("u1", { sourceKind: "dokploy", sessionId: "s1", dbDataModes: modes });
+        await tool("import_plan").execute(deps, "u1", { sourceKind: "coolify", sessionId: "s1" });
+        expect(importer.plan).toHaveBeenLastCalledWith("u1", { sourceKind: "coolify", sessionId: "s1" });
+      });
+
+      it("import_apply forwards dbDataModes together with planHash and acks (acks are independent of the mode)", async () => {
+        const { deps, executor } = mk();
+        const acks = [{ code: "app.env.unresolved", itemRef: "app:x" }];
+        await tool("import_apply").execute(deps, "u1", { ...base, acks, dbDataModes: modes });
+        expect(executor.apply).toHaveBeenLastCalledWith("u1", expect.objectContaining({ planHash: base.planHash, acks, dbDataModes: modes }));
+        await tool("import_apply").execute(deps, "u1", base);
+        expect(executor.apply).toHaveBeenLastCalledWith("u1", expect.not.objectContaining({ dbDataModes: expect.anything() }));
+        // an empty record is valid (the executor treats it as "no modes", like the REST body)
+        await tool("import_apply").execute(deps, "u1", { ...base, dbDataModes: {} });
+        expect(executor.apply).toHaveBeenLastCalledWith("u1", expect.objectContaining({ dbDataModes: {} }));
+      });
+
+      it("import_mapping_resolve passes dbDataModes through to the re-plan", async () => {
+        const { deps, importer } = mk();
+        await tool("import_mapping_resolve").execute(deps, "u1", { sourceKind: "coolify", sessionId: "s1", planHash: "a".repeat(32), targetServerId: "t", mapping: { version: 1 }, dbDataModes: modes });
+        expect(importer.resolveMapping).toHaveBeenLastCalledWith("u1", expect.objectContaining({ dbDataModes: modes }));
+        expect(JSON.stringify(tool("import_mapping_resolve").inputSchema)).toContain("dbDataModes");
+      });
+
+      it("rejects invalid dbDataModes before anything is called (plan, apply)", async () => {
+        const { deps, importer, executor } = mk();
+        const tooMany = Object.fromEntries(Array.from({ length: 501 }, (_, i) => [`database:s:${i}`, "volume"]));
+        const bad: unknown[] = [{ "database:s:p": "logical" }, { "database:s:p": true }, { "": "volume" }, tooMany, "volume", ["volume"], null];
+        for (const dbDataModes of bad) {
+          await expect(Promise.resolve().then(() => tool("import_plan").execute(deps, "u1", { sourceKind: "coolify", sessionId: "s1", dbDataModes }))).rejects.toThrow();
+          await expect(Promise.resolve().then(() => tool("import_apply").execute(deps, "u1", { ...base, dbDataModes }))).rejects.toThrow();
+        }
+        expect(importer.plan).not.toHaveBeenCalled();
+        expect(executor.apply).not.toHaveBeenCalled();
+      });
+
+      it("refuses dbDataModes for local-docker instead of silently dropping the choice", async () => {
+        const { deps, importer, executor } = mk();
+        await expect(Promise.resolve().then(() => tool("import_plan").execute(deps, "u1", { sourceKind: "local-docker", serverId: "srv1", dbDataModes: modes }))).rejects.toThrow(/Coolify\/Dokploy/);
+        await expect(Promise.resolve().then(() => tool("import_apply").execute(deps, "u1", { sourceKind: "local-docker", serverId: "srv1", planHash: "h", dbDataModes: modes }))).rejects.toThrow(/Coolify\/Dokploy/);
+        expect(importer.plan).not.toHaveBeenCalled();
+        expect(executor.apply).not.toHaveBeenCalled();
+      });
+
+      it("documents dbDataModes and the planHash coupling in the tool schemas and descriptions", () => {
+        for (const name of ["import_plan", "import_apply", "import_mapping_resolve"]) {
+          const t = tool(name);
+          expect(t.inputSchema).toMatchObject({ properties: { dbDataModes: { type: "object", additionalProperties: { enum: ["volume"] } } } });
+        }
+        expect(tool("import_apply").description).toContain("dbDataModes");
+        expect(tool("import_plan").description).toContain("dbDataModes");
+      });
+    });
+
     it("the mapping tools exist with REST-equivalent scopes and delegate", async () => {
       const { deps, importer } = mk();
       expect(tool("import_mapping_resolve").scope).toBe("read:secrets");
