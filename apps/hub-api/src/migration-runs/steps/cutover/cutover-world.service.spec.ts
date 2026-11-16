@@ -18,6 +18,7 @@ function make() {
     bulkOperation: { findUnique: jest.fn(), updateMany: jest.fn() },
     containerEvent: { count: jest.fn() },
     backup: { findMany: jest.fn() },
+    migrationRun: { findMany: jest.fn() },
     migrationRunSwap: {
       findUnique: jest.fn(async ({ where }: { where: { runId_serverId: { runId: string; serverId: string } } }) => swaps.find((s) => s.runId === where.runId_serverId.runId && s.serverId === where.runId_serverId.serverId) ?? null),
       create: jest.fn(async ({ data }: { data: Record<string, unknown> }) => {
@@ -303,6 +304,30 @@ describe("CutoverWorld", () => {
     expect(await m.world.backupCoverage(["d1", "d2"])).toEqual([{ databaseId: "d1", hasSuccess: true }, { databaseId: "d2", hasSuccess: false }]);
     expect(m.prisma.backup.findMany).toHaveBeenCalledWith({ where: { databaseId: { in: ["d1", "d2"] }, status: "SUCCESS" }, select: { databaseId: true }, distinct: ["databaseId"] });
     expect(await m.world.backupCoverage([])).toEqual([]);
+  });
+
+  it("siblingRuns counts the other real runs of the same source: unsettled ones as live, finished takeovers that never stopped their hosts as undecommissioned", async () => {
+    const m = make();
+    m.prisma.migrationRun.findMany.mockResolvedValue([
+      { status: "RUNNING", mode: "copy", steps: [] },
+      { status: "FAILED", mode: "takeover", steps: [] }, // a retry resumes it
+      { status: "COMPLETED", mode: "copy", steps: [] }, // finished, nothing to stop
+      { status: "COMPLETED", mode: "takeover", steps: [{ status: "PENDING" }] },
+      { status: "COMPLETED", mode: "takeover", steps: [] },
+      { status: "COMPLETED", mode: "takeover", steps: [{ status: "PASSED" }] },
+      { status: "COMPLETED", mode: "takeover", steps: [{ status: "SKIPPED" }] },
+    ]);
+    expect(await m.world.siblingRuns({ id: "r1", sourceKind: "coolify", sourceHost: "coolify.example.test" })).toEqual({ live: 2, undecommissioned: 2 });
+    expect(m.prisma.migrationRun.findMany).toHaveBeenCalledWith({
+      where: { id: { not: "r1" }, sourceKind: "coolify", sourceHost: "coolify.example.test", dryRun: false, status: { notIn: ["ABORTED", "ROLLED_BACK", "REVERSED", "DRY_RUN_DONE"] } },
+      select: { status: true, mode: true, steps: { where: { key: "DECOMMISSION" }, select: { status: true } } },
+    });
+  });
+
+  it("siblingRuns of a run with no recorded source host reads nothing and counts none", async () => {
+    const m = make();
+    expect(await m.world.siblingRuns({ id: "r1", sourceKind: "coolify", sourceHost: null })).toEqual({ live: 0, undecommissioned: 0 });
+    expect(m.prisma.migrationRun.findMany).not.toHaveBeenCalled();
   });
 
   it("serverFacts returns null for an unknown server", async () => {

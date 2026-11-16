@@ -297,6 +297,26 @@ export class CutoverWorld {
     return this.prisma.containerEvent.count({ where: { serverId, ts: { gte: since }, OR: [{ containerName: { in: names } }, ...names.map((n) => ({ containerName: { startsWith: `${n}-` } }))] } });
   }
 
+  /**
+   * The OTHER real runs of the same source (kind and host), for the "Coolify host goes last" rule (R67/R70): `live` still move
+   * production or can (anything not settled, a FAILED run included, since a retry resumes it); `undecommissioned` finished as
+   * takeovers whose own source hosts have not been stopped yet. Counts only: another team's run is never named.
+   */
+  async siblingRuns(run: { id: string; sourceKind: string; sourceHost: string | null }): Promise<{ live: number; undecommissioned: number }> {
+    if (!run.sourceHost) return { live: 0, undecommissioned: 0 };
+    const rows = await this.prisma.migrationRun.findMany({
+      where: { id: { not: run.id }, sourceKind: run.sourceKind, sourceHost: run.sourceHost, dryRun: false, status: { notIn: ["ABORTED", "ROLLED_BACK", "REVERSED", "DRY_RUN_DONE"] } },
+      select: { status: true, mode: true, steps: { where: { key: "DECOMMISSION" }, select: { status: true } } },
+    });
+    let live = 0;
+    let undecommissioned = 0;
+    for (const r of rows) {
+      if (r.status !== "COMPLETED") live += 1;
+      else if (r.mode === "takeover" && !r.steps.some((s) => s.status === "PASSED" || s.status === "SKIPPED")) undecommissioned += 1;
+    }
+    return { live, undecommissioned };
+  }
+
   /** For each database: has Tugra taken at least one SUCCESSFUL backup of it? (the DECOMMISSION precondition) */
   async backupCoverage(databaseIds: readonly string[]): Promise<Array<{ databaseId: string; hasSuccess: boolean }>> {
     if (databaseIds.length === 0) return [];

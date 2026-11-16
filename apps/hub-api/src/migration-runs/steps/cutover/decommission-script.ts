@@ -16,10 +16,13 @@ export interface SourceContainer {
   running: boolean;
 }
 
-/** Containers Coolify manages on a host (label `coolify.managed=true`), including stopped ones. Read-only; never lists a `tugra*` container. */
+/** Containers Coolify manages on a host (label `coolify.managed=true`), including stopped ones. Read-only; never lists a `tugra*` container.
+ *  It also says whether this box carries the Coolify control plane itself (a container named exactly `coolify` from a Coolify image). */
 export function buildDecommissionDiscoverScript(): string {
   return [
     "set -u",
+    `cp=no; docker ps -a --format '{{.Names}} {{.Image}}' 2>/dev/null | while read -r n i; do case "$n" in coolify) case "$i" in *coollabsio/coolify*|*coolify:*) echo yes;; esac;; esac; done | grep -q yes && cp=yes`,
+    'echo "TUGRA_SRC_CP $cp"',
     `docker ps -a --filter label=coolify.managed=true --format '{{.ID}} {{.Names}} {{.State}}' 2>/dev/null | while read -r id name state; do`,
     '  case "$name" in tugra*) continue;; esac',
     '  r=false; [ "$state" = "running" ] && r=true',
@@ -43,6 +46,15 @@ export function parseDecommissionDiscover(out: string): SourceContainer[] | null
     if (res.length > DECOMMISSION_MAX_CONTAINERS) return null;
   }
   return res;
+}
+
+/** Does the discovery output say this box carries the Coolify control plane? `null` = the output has no such line (cut or an older script): unknown, never "no". */
+export function parseControlPlaneMarker(out: string): boolean | null {
+  for (const l of out.split(/\r?\n/)) {
+    const m = /^TUGRA_SRC_CP (yes|no)$/.exec(l);
+    if (m) return m[1] === "yes";
+  }
+  return null;
 }
 
 /** `docker stop` of EXACT ids (validated, quoted), then each id's running state. A removed id reports `absent`. */
@@ -74,11 +86,17 @@ export function parseDecommissionStop(out: string): Record<string, boolean | "ab
 }
 
 /** Printed for the operator to run themselves, on the SOURCE host, after stopping. Tugra never executes these. */
-export const STOP_COMMANDS: readonly string[] = ["docker ps -q --filter label=coolify.managed=true | xargs -r docker stop", "docker stop coolify coolify-realtime coolify-redis coolify-db coolify-proxy"];
-export const REMOVAL_COMMANDS: readonly string[] = [
-  "docker ps -aq --filter label=coolify.managed=true | xargs -r docker rm",
-  "docker rm coolify coolify-realtime coolify-redis coolify-db coolify-proxy",
-];
+export const MANAGED_STOP_COMMANDS: readonly string[] = ["docker ps -q --filter label=coolify.managed=true | xargs -r docker stop"];
+export const MANAGED_REMOVAL_COMMANDS: readonly string[] = ["docker ps -aq --filter label=coolify.managed=true | xargs -r docker rm"];
+/**
+ * The control plane's own containers (R67/R70). They run on ONE box, the Coolify host, and stopping them ends the source's panel,
+ * its API and the telemetry the apps still send there, for every team at once: these commands are printed LAST, only after every
+ * other run of the same source has finished, and never while one is still moving production.
+ */
+export const CONTROL_PLANE_STOP_COMMANDS: readonly string[] = ["docker stop coolify coolify-realtime coolify-redis coolify-db coolify-proxy"];
+export const CONTROL_PLANE_REMOVAL_COMMANDS: readonly string[] = ["docker rm coolify coolify-realtime coolify-redis coolify-db coolify-proxy"];
+export const STOP_COMMANDS: readonly string[] = [...MANAGED_STOP_COMMANDS, ...CONTROL_PLANE_STOP_COMMANDS];
+export const REMOVAL_COMMANDS: readonly string[] = [...MANAGED_REMOVAL_COMMANDS, ...CONTROL_PLANE_REMOVAL_COMMANDS];
 
 /** Container names validated for the printed per-container removal command. */
 export function removalCommandFor(names: readonly string[]): string | null {
