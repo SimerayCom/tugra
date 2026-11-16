@@ -721,3 +721,113 @@ func TestDumpSpoolFlagsAreValidated(t *testing.T) {
 		t.Errorf("defaults: %+v %v", c, err)
 	}
 }
+
+// ---- review follow-ups --------------------------------------------------------------------------------------------------
+
+// Close can land between the reader opening a segment and registering its handle: that handle must not outlive the spool.
+func TestSpoolReadAfterCloseDoesNotKeepASegmentHandleOpen(t *testing.T) {
+	s, _ := spoolFor(t, io.NopCloser(bytes.NewReader(streamBytes(2500))), DumpSpoolOpts{SegBytes: 1000, Free: noMargin})
+	eventually(t, "the stream to be drained", 5*time.Second, func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.eof
+	})
+	s.mu.Lock()
+	seg := s.segs[0]
+	s.mu.Unlock()
+	s.afterOpen = func() { s.Close() }
+	n, err := s.Read(make([]byte, 100))
+	if n != 0 || !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("a read racing Close must fail with ErrClosedPipe, got n=%d err=%v", n, err)
+	}
+	s.mu.Lock()
+	rf := seg.rf
+	s.mu.Unlock()
+	if rf != nil {
+		t.Error("the segment handle opened after Close was kept (a leaked file descriptor)")
+	}
+}
+
+// A dump client that failed is reported when its stream ends, not after the whole backlog has been uploaded.
+func TestStreamDumpClientFailureStopsTheUploadOfTheBacklog(t *testing.T) {
+	noSleep(t)
+	stream := pgDump(2 << 20) // 32 parts of 64 KiB, all of them on disk at once
+	fakeDump(t, stream, fmt.Errorf("%w (exit 3): mariadb-dump: Error 2013: Lost connection", ErrDumpStream))
+	f := newFakeRelayHub(t)
+	h, release := stalledHub(t, f)
+	go func() { time.Sleep(300 * time.Millisecond); release() }() // the hub is back long after the client has finished and failed
+	root := t.TempDir()
+	_, err := StreamDump(context.Background(), h, testPlan, "volume:s:a:dump", dumpOptsWithSpool(root, 0, nil))
+	if !errors.Is(err, ErrDumpStream) || !strings.Contains(err.Error(), "exit 3") || !strings.Contains(err.Error(), "Lost connection") {
+		t.Fatalf("want the dump client's own error, got %v", err)
+	}
+	if strings.Contains(err.Error(), "reading the archive") {
+		t.Errorf("the client's error must not be re-wrapped as an archive read error: %v", err)
+	}
+	if n := len(f.putBodies); n >= 8 {
+		t.Errorf("%d of 32 parts were uploaded although the client had already failed", n)
+	}
+	if entries, _ := os.ReadDir(root); len(entries) != 0 {
+		t.Errorf("the spool was not removed: %v", entries)
+	}
+}
+
+// Flushing a sealed segment must not stop the drain from reading the client: a slow disk would otherwise hold the pipe for as
+// long as one fsync, the very stall the spool exists to remove.
+func TestSpoolSegmentFlushDoesNotStallTheDrain(t *testing.T) {
+	gate := make(chan struct{})
+	var syncs atomic.Int32
+	pr, pw := io.Pipe()
+	root := t.TempDir()
+	s, err := newDumpSpool(context.Background(), pr, DumpSpoolOpts{Dir: root, SegBytes: 1000, Free: noMargin, Poll: 5 * time.Millisecond,
+		Sync: func(f *os.File) error { syncs.Add(1); <-gate; return f.Sync() }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		select {
+		case <-gate:
+		default:
+			close(gate)
+		}
+		s.Close()
+	})
+	data := streamBytes(4500)
+	written := make(chan error, 1)
+	go func() {
+		for off := 0; off < len(data); off += 500 {
+			if _, err := pw.Write(data[off : off+500]); err != nil {
+				written <- err
+				return
+			}
+		}
+		written <- pw.Close()
+	}()
+	select {
+	case err := <-written:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the drain stopped reading the client while a sealed segment was being flushed")
+	}
+	if syncs.Load() == 0 {
+		t.Fatal("no segment was flushed")
+	}
+	close(gate)
+	got, err := io.ReadAll(s)
+	if err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("round trip: err=%v equal=%v", err, bytes.Equal(got, data))
+	}
+}
+
+// A failed flush still fails the spool (and is not lost behind a clean end of stream).
+func TestSpoolSegmentFlushErrorIsReturnedToTheReader(t *testing.T) {
+	boom := errors.New("input/output error")
+	s, _ := spoolFor(t, io.NopCloser(bytes.NewReader(streamBytes(2500))), DumpSpoolOpts{SegBytes: 1000, Free: noMargin,
+		Sync: func(*os.File) error { return boom }})
+	_, err := io.ReadAll(s)
+	if !errors.Is(err, boom) {
+		t.Fatalf("want the flush error, got %v", err)
+	}
+}

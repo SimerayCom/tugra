@@ -415,7 +415,7 @@ func produce(ctx context.Context, r io.Reader, o StreamOpts, jobs chan<- partJob
 			return
 		}
 		if err != nil {
-			jobs <- partJob{err: fmt.Errorf("%w: reading the archive: %v", ErrTarFailed, err)}
+			jobs <- partJob{err: fmt.Errorf("%w: reading the archive: %w", ErrTarFailed, err)}
 			return
 		}
 		last := n < len(raw)
@@ -423,7 +423,7 @@ func produce(ctx context.Context, r io.Reader, o StreamOpts, jobs chan<- partJob
 			if _, perr := br.Peek(1); perr == io.EOF {
 				last = true
 			} else if perr != nil {
-				jobs <- partJob{err: fmt.Errorf("%w: reading the archive: %v", ErrTarFailed, perr)}
+				jobs <- partJob{err: fmt.Errorf("%w: reading the archive: %w", ErrTarFailed, perr)}
 				return
 			}
 		}

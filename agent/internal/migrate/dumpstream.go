@@ -8,6 +8,7 @@ import (
 	"io"
 	"os/exec"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -116,12 +117,19 @@ func StreamDump(ctx context.Context, h *Hub, p Plan, itemRef string, o StreamOpt
 		return StreamResult{}, fmt.Errorf("%w: could not start the dump", ErrDumpStream)
 	}
 	limitMigratorMemory()
+	// The exit status is read once: the spool's drain asks for it at the end of the stream, deliverParts again afterwards.
+	var waitOnce sync.Once
+	var waitErr error
+	rawWait := wait
+	wait = func() error { waitOnce.Do(func() { waitErr = rawWait() }); return waitErr }
 	// The dump client's stdout is drained into an on-disk spool as fast as the client writes it, so a stalled upload (a hub
 	// restart) never stops the reader: the server would cut the dump connection at its net_write_timeout. A spool that cannot be
 	// made leaves the direct pipe (the old behaviour, back-pressure only) and says so.
 	var src io.ReadCloser = stdout
 	var spool *dumpSpool
-	if sp, serr := newDumpSpool(sctx, stdout, o.Spool); serr != nil {
+	so := o.Spool
+	so.Exit = wait // a client that failed is noticed when its stream ends, not after the whole backlog has been uploaded
+	if sp, serr := newDumpSpool(sctx, stdout, so); serr != nil {
 		if o.Spool.Logf != nil {
 			o.Spool.Logf("dump spool: unavailable (%v); the dump is read only as fast as it is uploaded", serr)
 		}
@@ -132,6 +140,10 @@ func StreamDump(ctx context.Context, h *Hub, p Plan, itemRef string, o StreamOpt
 	res, derr := deliverParts(sctx, cancel, ctx, h, itemRef, o, &sanityReader{r: src, engine: p.Engine}, wait, true)
 	if spool != nil {
 		res.SpoolPeakBytes = spool.PeakBacklog()
+	}
+	var xe *dumpExitError
+	if errors.As(derr, &xe) { // the spool stopped the upload because the client had already failed: its own error is the result
+		derr = xe.err
 	}
 	if derr != nil && errors.Is(derr, ErrTarFailed) {
 		derr = fmt.Errorf("%w: %v", ErrDumpStream, strings.TrimPrefix(derr.Error(), ErrTarFailed.Error()+": "))

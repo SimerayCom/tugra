@@ -46,7 +46,20 @@ type DumpSpoolOpts struct {
 	Free func(dir string) (uint64, bool)
 	// Logf receives the one line that says the drain paused.
 	Logf func(string, ...any)
+	// Exit, when set, is called once by the drain after the client's stdout ended cleanly (every read of the pipe is done, so waiting
+	// for the process is safe). A non-nil result is a terminal error: the reader returns it at once instead of first serving the
+	// whole backlog, so a dump that already failed does not upload gigabytes of a doomed stream.
+	Exit func() error
+	// Sync flushes a sealed segment (package default: (*os.File).Sync). It runs off the drain, so a slow disk never stops the reads.
+	Sync func(*os.File) error
 }
+
+// dumpExitError carries the dump client's failed exit status through the reader; StreamDump unwraps it so the reported error is the
+// client's own, exactly as when the status was read only after the last part.
+type dumpExitError struct{ err error }
+
+func (e *dumpExitError) Error() string { return e.err.Error() }
+func (e *dumpExitError) Unwrap() error { return e.err }
 
 // spoolFreeBytes is the default free-space probe.
 func spoolFreeBytes(dir string) (uint64, bool) {
@@ -77,6 +90,9 @@ type dumpSpool struct {
 	poll        time.Duration
 	free        func(string) (uint64, bool)
 	logf        func(string, ...any)
+	exit        func() error
+	syncFn      func(*os.File) error
+	afterOpen   func() // test hook: runs in Read between opening a segment and registering the handle
 
 	mu      sync.Mutex
 	segs    []*spoolSeg // live segments in stream order; the last may still be written
@@ -95,6 +111,7 @@ type dumpSpool struct {
 	quit  chan struct{}
 	done  chan struct{} // the drain goroutine exited
 	once  sync.Once
+	syncs sync.WaitGroup // sealed segments being flushed and closed off the drain
 }
 
 // newDumpSpool creates the spool directory and starts draining src. The caller owns src through the returned spool: Close closes it.
@@ -109,7 +126,7 @@ func newDumpSpool(ctx context.Context, src io.ReadCloser, o DumpSpoolOpts) (*dum
 		return nil, err
 	}
 	s := &dumpSpool{ctx: ctx, src: src, dir: dir, segBytes: o.SegBytes, capBytes: o.CapBytes, marginBytes: o.MarginBytes,
-		poll: o.Poll, free: o.Free, logf: o.Logf,
+		poll: o.Poll, free: o.Free, logf: o.Logf, exit: o.Exit, syncFn: o.Sync,
 		avail: make(chan struct{}, 1), freed: make(chan struct{}, 1), quit: make(chan struct{}), done: make(chan struct{})}
 	if s.segBytes <= 0 {
 		s.segBytes = defaultDumpSpoolSegment
@@ -128,6 +145,9 @@ func newDumpSpool(ctx context.Context, src io.ReadCloser, o DumpSpoolOpts) (*dum
 	}
 	if s.free == nil {
 		s.free = spoolFreeBytes
+	}
+	if s.syncFn == nil {
+		s.syncFn = func(f *os.File) error { return f.Sync() }
 	}
 	if s.segBytes > s.capBytes { // a segment larger than the cap could never be sealed in time
 		s.segBytes = s.capBytes
@@ -169,8 +189,17 @@ func (s *dumpSpool) drain() {
 					s.fail(err)
 					return
 				}
+				s.syncs.Wait() // the flushes of the sealed segments have a say (an error) before the stream may end cleanly
+				if s.exit != nil && s.ctx.Err() == nil {
+					if xerr := s.exit(); xerr != nil && s.ctx.Err() == nil {
+						s.fail(&dumpExitError{xerr})
+						return
+					}
+				}
 				s.mu.Lock()
-				s.eof = true
+				if s.err == nil {
+					s.eof = true
+				}
 				s.mu.Unlock()
 				ping(s.avail)
 				return
@@ -248,8 +277,10 @@ func (s *dumpSpool) openSeg() (*spoolSeg, error) {
 	return seg, nil
 }
 
-// sealCur ends the segment being written: it is synced (its pages become clean and reclaimable, which matters under a container
-// memory cap) and handed to the reader as complete.
+// sealCur ends the segment being written and hands it to the reader as complete. The segment is flushed and closed by a
+// goroutine of its own (its pages become clean and reclaimable, which matters under a container memory cap): the drain must keep
+// reading the client meanwhile, a slow or contended disk must not stall it for the length of one fsync. A flush error fails the
+// spool (the reader returns it); the reader may delete the file before the flush ends, which is harmless.
 func (s *dumpSpool) sealCur() error {
 	s.mu.Lock()
 	seg := s.cur
@@ -258,19 +289,24 @@ func (s *dumpSpool) sealCur() error {
 	if seg == nil {
 		return nil
 	}
-	serr := seg.wf.Sync()
-	cerr := seg.wf.Close()
-	seg.wf = nil
+	wf := seg.wf
+	s.syncs.Add(1)
+	go func() {
+		defer s.syncs.Done()
+		serr := s.syncFn(wf)
+		cerr := wf.Close()
+		switch {
+		case serr != nil:
+			s.fail(fmt.Errorf("the dump spool could not be written: %w", serr))
+		case cerr != nil:
+			s.fail(fmt.Errorf("the dump spool could not be written: %w", cerr))
+		}
+	}()
 	s.mu.Lock()
+	seg.wf = nil
 	seg.sealed = true
 	s.mu.Unlock()
 	ping(s.avail)
-	if serr != nil {
-		return fmt.Errorf("the dump spool could not be written: %w", serr)
-	}
-	if cerr != nil {
-		return fmt.Errorf("the dump spool could not be written: %w", cerr)
-	}
 	return nil
 }
 
@@ -279,10 +315,13 @@ func (s *dumpSpool) sealCur() error {
 func (s *dumpSpool) waitRoom(n int64) error {
 	for {
 		s.mu.Lock()
-		disk, closed := s.disk, s.closed
+		disk, closed, ferr := s.disk, s.closed, s.err
 		s.mu.Unlock()
 		if closed {
 			return io.ErrClosedPipe
+		}
+		if ferr != nil { // a flush of a sealed segment failed: stop draining
+			return ferr
 		}
 		if err := s.ctx.Err(); err != nil {
 			return err
@@ -372,7 +411,15 @@ func (s *dumpSpool) Read(p []byte) (int, error) {
 				if err != nil {
 					return 0, fmt.Errorf("the dump spool could not be read: %w", err)
 				}
+				if s.afterOpen != nil {
+					s.afterOpen()
+				}
 				s.mu.Lock()
+				if s.closed { // Close has already swept the handles: this one would never be closed
+					s.mu.Unlock()
+					_ = f.Close()
+					return 0, io.ErrClosedPipe
+				}
 				seg.rf = f
 				s.mu.Unlock()
 			}
@@ -410,6 +457,7 @@ func (s *dumpSpool) Close() error {
 		close(s.quit)
 		_ = s.src.Close() // unblocks a drain that is reading
 		<-s.done
+		s.syncs.Wait()
 		s.mu.Lock()
 		for _, seg := range s.segs {
 			if seg.wf != nil {
