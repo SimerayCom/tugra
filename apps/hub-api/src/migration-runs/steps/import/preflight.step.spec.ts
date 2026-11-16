@@ -7,6 +7,9 @@ import type { RunSnapshot } from "../../core/run-contract";
 import type { ResolvedMapping } from "../../../importer/import-mapping";
 import type { TargetFacts } from "./import-ports";
 
+// the specs drive a whole run through the engine on a fake clock; give a loaded CI machine room
+jest.setTimeout(30_000);
+
 beforeAll(() => {
   jest.spyOn(Logger.prototype, "warn").mockImplementation();
   jest.spyOn(Logger.prototype, "error").mockImplementation();

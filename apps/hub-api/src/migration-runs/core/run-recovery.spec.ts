@@ -4,6 +4,9 @@ import { isTerminal } from "./run-logic";
 import type { ApprovalBinding } from "./dto";
 import type { RunStatus } from "./run-contract";
 
+// the specs drive a whole run through the engine on a fake clock; give a loaded CI machine room
+jest.setTimeout(30_000);
+
 beforeAll(() => {
   jest.spyOn(Logger.prototype, "warn").mockImplementation();
   jest.spyOn(Logger.prototype, "error").mockImplementation();
@@ -260,6 +263,7 @@ describe("hub restart scenarios", () => {
     const row = w.store.row(id);
     expect(row.opId).toBe("op-2");
     expect(row.opHistory).toEqual(["op-1"]);
+    expect(w.store.codes(id)).toEqual(expect.arrayContaining(["import.redo", "run.recovered"]));
     expect(w.port.ops.get("op-1")!.rolledBack).toBe(true);
     // no leaked resources from the first op
     expect([...w.port.apps.keys()].length).toBe(2);

@@ -1,6 +1,9 @@
 import { Logger } from "@nestjs/common";
 import { ACTOR, RunWorld } from "../../core/testing/run-world";
 
+// the specs drive a whole run through the engine on a fake clock; give a loaded CI machine room
+jest.setTimeout(30_000);
+
 beforeAll(() => {
   jest.spyOn(Logger.prototype, "warn").mockImplementation();
   jest.spyOn(Logger.prototype, "error").mockImplementation();

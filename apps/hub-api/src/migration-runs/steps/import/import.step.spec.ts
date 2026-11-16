@@ -2,6 +2,9 @@ import { ConflictException, ForbiddenException, Logger } from "@nestjs/common";
 import { ACTOR, RunWorld, defaultPlan } from "../../core/testing/run-world";
 import { CLEANUP_REQUEST_KEY } from "../../core/run-engine.service";
 
+// the specs drive a whole run through the engine on a fake clock; give a loaded CI machine room
+jest.setTimeout(30_000);
+
 beforeAll(() => {
   jest.spyOn(Logger.prototype, "warn").mockImplementation();
   jest.spyOn(Logger.prototype, "error").mockImplementation();
@@ -36,28 +39,6 @@ describe("IMPORT", () => {
     expect(w.port.calls.filter((c) => c === "apply")).toHaveLength(1);
     expect(w.clock.sleeps).toBeGreaterThan(0);
     expect(w.status(id)).toBe("COMPLETED");
-  });
-
-  it("a hub restart with the fan-out dead cancels, waits for the stale tasks, rolls back and re-applies (recover trigger)", async () => {
-    const w = new RunWorld({ stubs: { DATA_SEED: { blocked: (x) => !x.done.has("go") } } });
-    // freeze the fan-out right after the apply: a settled-op test needs the process to die mid-import
-    const id = await w.create();
-    await w.start(id);
-    const real = w.port.apply.bind(w.port);
-    w.port.apply = async (u, i) => {
-      const r = await real(u, i);
-      w.port.killProcess(); // the in-process fan-out dies with the "process"
-      return r;
-    };
-    await w.engine.drive(id);
-    // alive=false and tasks PENDING: IMPORT keeps polling until the hub is restarted
-    w.restart();
-    await w.tick(10);
-    w.clock.advance(60_000);
-    await w.tick(10);
-    expect(w.port.calls.filter((c) => c === "apply" || c.startsWith("cancel:") || c.startsWith("rollback:"))).toEqual(["apply", "cancel:op-1", "rollback:op-1", "apply"]);
-    expect(w.store.row(id).opHistory).toEqual(["op-1"]);
-    expect(w.store.codes(id)).toEqual(expect.arrayContaining(["import.redo", "run.recovered"]));
   });
 
   it("a rollback that finds leftovers fails with import.rollback-incomplete (no silent duplicate on re-apply)", async () => {

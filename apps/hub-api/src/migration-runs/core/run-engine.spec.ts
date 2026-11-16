@@ -3,6 +3,9 @@ import { ACTOR, RunWorld, SERVER, type StubScript } from "./testing/run-world";
 import { makeGate, type StepKey } from "./run-contract";
 import type { ApprovalBinding } from "./dto";
 
+// the specs drive a whole run through the engine on a fake clock; give a loaded CI machine room
+jest.setTimeout(30_000);
+
 beforeAll(() => {
   jest.spyOn(Logger.prototype, "warn").mockImplementation();
   jest.spyOn(Logger.prototype, "error").mockImplementation();

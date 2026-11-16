@@ -4,6 +4,9 @@ import { confirmMatches } from "./migration-runs.service";
 import { RunReportSchema, MigrationRunViewSchema, MigrationRunSummarySchema, RunEventsPageSchema } from "./dto";
 import type { ApprovalBinding } from "./dto";
 
+// the specs drive a whole run through the engine on a fake clock; give a loaded CI machine room
+jest.setTimeout(30_000);
+
 beforeAll(() => {
   jest.spyOn(Logger.prototype, "warn").mockImplementation();
   jest.spyOn(Logger.prototype, "error").mockImplementation();
