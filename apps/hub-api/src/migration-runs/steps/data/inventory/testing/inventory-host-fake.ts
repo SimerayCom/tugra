@@ -78,7 +78,7 @@ else if (cmd === "ps") {
   for (const e of c.env || []) { const i = e.indexOf("="); env[e.slice(0, i)] = e.slice(i + 1); }
   if (args[2] === "psql") {
     const user = args[args.indexOf("-U") + 1];
-    if (user !== (env.POSTGRES_USER || "postgres") || args[args.indexOf("-d") + 1] !== "postgres") { console.error("FATAL: role does not exist"); process.exit(2); }
+    if (user !== (env.POSTGRES_USER || "postgres") || !args.includes("--dbname=postgres")) { console.error("FATAL: role does not exist"); process.exit(2); }
     for (const d of c.databases || []) if (!["template0", "template1", "postgres"].includes(d)) console.log(d);
   } else if (args[2] === "sh" && args[3] === "-c") {
     const pw = env.MYSQL_ROOT_PASSWORD || env.MARIADB_ROOT_PASSWORD;

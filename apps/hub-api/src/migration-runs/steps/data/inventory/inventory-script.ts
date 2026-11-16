@@ -175,7 +175,7 @@ tugra_inventory() {
     if [ "$4" = running ] && [ "$5" = env ]; then
       case "$2" in
         pg)
-          docker exec "$1" psql -U "$3" -d postgres -Atc "select datname from pg_database where not datistemplate and datname <> 'postgres' order by 1 limit 33" > "$W/dbl" 2>/dev/null </dev/null && ok=1
+          docker exec "$1" psql -U "$3" --dbname=postgres -Atc "select datname from pg_database where not datistemplate and datname <> 'postgres' order by 1 limit 33" > "$W/dbl" 2>/dev/null </dev/null && ok=1
           ;;
         *)
           if [ "$3" = root ]; then

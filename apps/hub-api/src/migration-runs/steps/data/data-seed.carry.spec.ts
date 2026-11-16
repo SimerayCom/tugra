@@ -31,7 +31,7 @@ const inv = (ghost: Record<string, unknown> | null): HostInventory => ({
   rejected: 0,
 });
 
-const PG17 = { image: "postgres:17-alpine", db: { user: "appuser", database: "appdb", cred: "env", version: null } };
+const PG17 = { image: "postgres:17-alpine", db: { user: "appuser", database: "appdb", cred: "env", version: null, databases: ["appdb"] } };
 
 function build(run: RunSnapshot, ghost: Record<string, unknown> | null) {
   const registry = new StepHandlerRegistryService();
@@ -77,6 +77,9 @@ describe("DATA_SEED: unlistedDbPolicy carry (R2)", () => {
       [{ ...PG17, db: { user: "u", database: "d", cred: "file", version: null } }, "secret-file-unsupported"],
       [{ image: "redis:7", db: { user: null, database: null, cred: "none", version: null } }, "credentials-not-discoverable"],
       [{ image: "postgres:16" }, "meta-missing"],
+      [{ ...PG17, db: { ...PG17.db, databases: null } }, "databases-unknown"],
+      [{ ...PG17, db: { ...PG17.db, databases: ["appdb", "other_db"] } }, "multiple-databases"],
+      [{ image: "postgres:18-alpine", db: PG17.db }, "pg-layout-unsupported"],
     ] as const) {
       const { handler, data, ctx } = build(carryRun(), ghost as never);
       const h = ctx();
