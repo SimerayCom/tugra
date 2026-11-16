@@ -17,13 +17,50 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   point-of-no-return approval is refused over MCP. Always start with a dry run: it writes nothing outside its own run
   rows. The engine is covered by tests against in-memory fakes; it has not yet been driven against a live Coolify
   fleet, so read the verification status in `docs/runbooks/guided-migration.md` first.
+- **Guided migrations for real multi-host Coolify fleets.** A run can now span several source servers: a server map
+  places each source server on a Tugra server, an unmapped source server stops the run instead of landing on the
+  default one, and the one-live-run-per-server rule and the typed point-of-no-return approval cover every target
+  server. Runs can be grouped into campaigns, with a roll-up on the run list.
+  - New `coolify-host-loop` source runner: the hub prints one script for the Coolify host that reaches each source host
+    over Coolify's own per-server SSH keys, starts the migrator (and optionally the freeze) on each, resumes safely when
+    re-run and reports per-host status. A host inventory compares `docker ps` and volumes with the Coolify API;
+    unlisted database containers and orphan volumes block until the owner decides. Bind-mount sizes come from `du` and
+    unmeasurable sizes are reported as unknown, never zero. Each host is probed for hub reachability and request-size
+    caps.
+  - Fail-closed owner policies: object-storage dependants (hold, mirror or external; default hold), an accepted write
+    gap (default none), workers without a domain (held stopped until after the cutover by default), unlisted database
+    containers and orphan volumes (default block).
+  - The source Coolify version is recorded and checked: older than 4.1.2 blocks, newer than 4.7.5 asks for an
+    acknowledgement.
+  - Safety: the source's health is recorded before anything changes, so the post-cutover crash watch ignores apps that
+    were already failing; push-to-deploy stays off until the point of no return; floating image tags are flagged and
+    image apps are pinned to the digest the source runs; `earlyBuild` builds images before the freeze, and
+    `deployConcurrency` caps builds per server.
+  - Large databases: PostgreSQL, MariaDB and MySQL databases whose dump is over the 256 MiB artifact cap, or that cannot
+    be copied as files (PostgreSQL 18 layouts, for example), stream through the relay as a dump with no size cap and
+    are restored without spooling (opt in with large databases set to `stream-logical`). The lane is chosen from the
+    measured dump size, and the downtime estimate includes it. New migrator flags `--measure-dbs`, `--measure-dump`
+    and `--measure-dump-below`.
+  - Import and env rewrite: services get private aliases and their hosts are flipped at cutover, Coolify custom
+    `*.internal` aliases are carried, PostgreSQL copies can serve TLS when the source expected it, and cross-server
+    references are reported for a manual fix instead of being rewritten to a name that cannot resolve.
+  - Cutover: only hosts that depend on object storage are held back, one target server flips at a time, and manual DNS
+    and the HTTP-01 gap are decided per host (an exact-record checklist, per-host confirmation, "leave this host out"),
+    so one host the customer cannot change no longer stalls the run. The same-host proxy swap refuses the Coolify
+    control plane's own box and takes the ports back if Coolify restarts its proxy. Git apps behind a moved host get a
+    webhook-repoint warning.
+  - Panel, CLI (`tugra import run create --map ...`, `--campaign`, policy flags, `command --kind`) and MCP surfaces
+    for all of the above.
 - **Migration lab.** `scripts/lab/` and the `Migration lab (vx)` workflow run the real Go migrator against a real
   hub, agent and the alpine busybox extractor (scenarios L0-L8: dry run, streaming, interrupt and resume, hub restart,
-  tar fidelity, Postgres, memory, relay seats, throttling). Nightly and on demand. Runbook:
+  tar fidelity, Postgres, memory, relay seats, throttling) plus fleet-shaped scenarios L9-L14 (multi-GB PostgreSQL 17
+  and 18, MariaDB over the dump cap, a bind-mounted MinIO, running sources, Coolify 4.1.2 discovery, an Ubuntu 26.04
+  userland). Nightly and on demand. Runbook:
   `docs/runbooks/migration-lab.md`.
 - **Migrator memory.** Member buffers are allocated once and reused, and the Go heap limit is set below the
   container's memory limit so the garbage collector works before the kernel kills it. The migrator also reports source row and key
-  counts during `--verify` and splits that report so a large fleet stays under the hub's request size limit.
+  counts during `--verify` and splits that report so a large fleet stays under the hub's request size limit. Two
+  migrators on one docker host no longer remove each other's live helper containers at start.
 - **The in-app updater applies releases that change the compose file or the installer scripts.** "Update now" no
   longer needs `git pull && ./scripts/install.sh` for those. Each release publishes its compose file and scripts with
   a separately signed per-file hash list, committed to by the signed update manifest (`hostFilesDigest`). The updater
