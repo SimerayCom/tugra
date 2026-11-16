@@ -21,6 +21,39 @@ Add `--json` to any command for scriptable output.
 The complete command list, configuration and token-security notes live in the package README:
 **[packages/cli/README.md](../packages/cli/README.md)**.
 
+## Migrating from Coolify / Dokploy
+
+Two groups under `tugra import` cover a migration (procedure:
+[guided migration runbook](runbooks/guided-migration.md), [Coolify migration](coolify-migration.md)):
+
+- `tugra import cutover <opId> <action>` and `tugra import volumes`, `tugra import git-links`, `tugra objects ...`:
+  the individual pieces (SSL/DNS cutover, streamed volume copies, git links, object migration).
+- `tugra import run <subcommand>`: the **guided migration run**, one resumable flow over all of them.
+
+```bash
+# rehearse: projects every step, writes nothing outside the run's own rows
+tugra import run create --dry-run --session <sessionId> --server <targetServerId> --plan-hash <planHash> --acme-email ops@example.com
+tugra import run status <runId>           # steps, gate checks with evidence kinds, what it waits for, the approval to review
+tugra import run start <dryRunId>         # promotes the dry run into a NEW real run and prints it
+tugra import run watch <runId> --until-waiting
+tugra import run command <runId> DATA_SEED                  # the source-host command (live token, shown once)
+tugra import run approve <runId> FREEZE --hash <inputHash> --confirm <typed name>   # `status` prints this line for you
+tugra import run abort <runId> --confirm <runId>            # before the point of no return only; deletes nothing
+tugra import run report <runId> --format md
+```
+
+Sub-commands: `list`, `create`, `status`, `events`, `watch`, `start`, `approve`, `retry`, `skip`, `evidence`, `attach`,
+`command`, `inputs`, `pause`, `resume`, `abort`, `cleanup`, `reverse`, `decommission`, `source-session`, `report`.
+Notes:
+
+- `create` and `command` need a token with `deploy` **and** `read:secrets`; `cleanup`, `reverse` and `decommission`
+  need `admin` (see [scopes](api.md#scopes)).
+- Secrets never travel as flags: `source-session` reads the source API token from `$TUGRA_SOURCE_TOKEN`; object-store
+  keys stay in the object migration (`tugra objects create`), which you `attach` by id.
+- `approve` requires the `--hash` that `status` showed you, so an approval is only ever for what you reviewed.
+  `abort`, `cleanup` and `reverse` require `--confirm <runId>`; `reverse` also `--acknowledge-data-loss`.
+- The guided run has **not been run against a live Coolify yet** (see the runbook's verification status).
+
 ## API & scopes
 
 The CLI is a thin client over the [REST API](api.md); commands like `tugra apps deploy` need the matching

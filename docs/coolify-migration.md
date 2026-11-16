@@ -16,6 +16,25 @@ Two paths, used **together**:
 > DNS. Rollback is "point DNS back at Coolify" — **but only works cleanly if you did the cutover window
 > below**, because once Tugra starts taking writes, the two databases diverge.
 
+## Guided migration run (one flow for all of it)
+
+Everything below can be driven one piece at a time, as this page describes. A **guided migration run** strings the
+same pieces into one resumable, observable, abortable flow: preflight, config import, data (databases, volumes,
+objects), TLS pre-issue, verification, the DNS cutover and an observe window, with a typed approval at the freeze and
+at the **point of no return**, and an abort that restores Coolify as the authoritative system until that point.
+Start it from the import wizard ("Run guided migration"), `tugra import run create`, or the `/migration-runs` API.
+Always start with `--dry-run`: it projects every step and writes nothing outside its own run rows.
+
+- Full procedure, step table, guarantees and troubleshooting: **[guided migration runbook](runbooks/guided-migration.md)**.
+- **Status, stated plainly:** the run's engine and contracts are tested against in-memory fakes. **No live lab run has
+  been done yet** (no real Coolify host, Cloudflare zone, migrator run or DNS flip). The manual path on this page is the
+  one exercised on real hosts so far; treat the guided run as the way to *rehearse and orchestrate* it, and rehearse
+  before using it on a fleet that matters.
+- The golden rule is unchanged: the run **never deletes anything on Coolify**. Before the point of no return an abort
+  restarts the source containers the run stopped; after it, the only way back is a lossy reverse.
+- Not zero downtime for stateful apps, and not a replacement for the checks below: read the verification evidence
+  (`hub-verified`, `migrator-reported`, `operator-attested`) before you approve the cutover.
+
 ## What moves how
 
 | What | How |
@@ -31,7 +50,7 @@ Two paths, used **together**:
 | Environment variables | Strict: a variable the import cannot carry (unresolved shared, magic, invalid name, or an API token without `read:sensitive`) is a plan blocker; acknowledge it to create the app without it (see "Strict environment variables" below) |
 | Private git repositories | Linked at apply to the connected GitHub/Gitea source that can see the repo (see "Git links" below) |
 | **MinIO / S3 object data** | **Object migration** (below): `mc mirror` run by the target agent, bucket by bucket |
-| DNS cutover | **Manual** (point your records at the Tugra server) |
+| SSL + DNS cutover | **Cutover panel** / `tugra import cutover` (certificate pre-issue, paced Cloudflare flip, ledger revert; [runbook](runbooks/cutover.md)), or the same step inside a [guided run](runbooks/guided-migration.md). A zone Tugra cannot write to stays manual: the panel prints the records. |
 
 ---
 
@@ -481,7 +500,8 @@ write to has a bounded gap while the certificate is issued after the switch.
 - **Rollback** (before Tugra has taken real writes): in the cutover panel, *Revert* restores each DNS record
   exactly as it was (it refuses to overwrite a record changed since the flip unless you force it), then restart
   the Coolify app — its copy is untouched. Auto-revert is **off**: the panel never reverts on its own. **After** Tugra has taken writes, rolling back means dumping Tugra back to Coolify first, or you
-  lose those writes.
+  lose those writes. A guided run draws the same line explicitly: `abort` is refused after the point of no return
+  and `reverse` is the lossy path (it requires an acknowledgement that data Tugra wrote is not restored).
 - Stateless apps first, then small DBs, then large/critical DBs last. One app + its DB at a time; verify each.
 - Keep Coolify around for at least a few clean days. Never delete anything on Coolify until the Tugra copy has
   served real traffic and backed up successfully.

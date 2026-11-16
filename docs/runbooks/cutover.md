@@ -2,7 +2,10 @@
 
 Moves the hostnames of an imported Coolify app to Tugra with a valid certificate and a controlled DNS switch.
 Where it lives: the cutover step of the import wizard, the API under `/import/operations/<opId>/cutover/*`, and
-the CLI `tugra import cutover <opId> <action>`.
+the CLI `tugra import cutover <opId> <action>`. The same steps also run inside a
+[guided migration run](guided-migration.md) (DNS_PREPARE, TLS_PREISSUE, CUTOVER, OBSERVE, FINALIZE), which adds the
+data copy, a verification gate, a typed point-of-no-return approval and an abort path around them; this page remains
+the reference for what each cutover action does.
 
 ## What it promises (and what it does not)
 
@@ -90,6 +93,28 @@ account is not invented), rewrites it atomically and **always** recreates the pr
 for every app on that server for a few seconds, so do it before live apps land there (`--acknowledge-proxy-restart`).
 Staged keys are blanked once applied. Experimental until verified on a real Traefik; `check` is the only judge of
 whether a certificate is actually served.
+
+## Inside a guided run
+
+When a [guided run](guided-migration.md) drives the cutover, these rules are unchanged and the run adds to them:
+
+- **The same plan-hash flip.** The run calls `flip` with the plan hash it showed you; a provider-side change since you
+  reviewed it aborts the flip exactly as it does by hand. It also passes the data-risk acknowledgement from your typed
+  approval, so a stateful host never flips without it.
+- **The point of no return is set before the first stateful write.** From then on the run refuses `abort`; the way back
+  is `reverse`, which uses the same ledger restore as `revert --acknowledge-data-loss` and is equally lossy for data
+  Tugra wrote after the flip.
+- **Auto-revert stays off** for stateful hosts.
+- **The Coolify freeze is still yours unless you configured otherwise.** The Coolify API token is read-only, so by
+  default the run prints the stop steps and records your attestation as `operator-attested` evidence. Only a write
+  token (`sourceController: api`) or an agent on the source host (`sourceController: agent`) lets the run stop the
+  source itself; neither has been exercised on a real host yet.
+- **Same-host takeover (proxy swap) is different.** There is no DNS write, so there is nothing to lower or flip: the
+  run stops the Coolify proxy, starts Tugra's, and verifies from the hub with SNI for every host. The loopback probe
+  of `check` is **not** valid there while Coolify still owns :80/:443 (it would verify Coolify's router, not Tugra's),
+  so the run uses a separate dark probe against the Tugra proxy container. HTTP-01 certificates cannot be issued while
+  Coolify owns port 80: DNS-01 or seeded certificates are required before the swap. None of this has been verified
+  on a real host; see the verification status in the guided runbook.
 
 ## Troubleshooting
 
