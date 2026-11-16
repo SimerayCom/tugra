@@ -89,14 +89,14 @@ export interface TargetFacts {
   zones: Array<{ host: string; zone: string | null; sslMode: string | null; lookupFailed: boolean }>;
   /**
    * Free space on the server's disk as its agent last reported it (R7). `undefined` = the port cannot say (nothing is checked);
-   * `null` = the server has no reading at all (never reported: the gate says so, it never reads that as free).
+   * `null` = the server has no reading, or the read failed (the gate says so, it never reads that as free).
    */
   disk?: { freeBytes: number; totalBytes: number; ageSec: number } | null;
   /** The OS the agent reported (`ubuntu` and `26.04`); null = not reported. Left out by a port that cannot say. */
   os?: string | null;
   osVersion?: string | null;
-  /** How many backup destinations the server's team has (R7). `undefined` = the port cannot say. */
-  backupDestinations?: number;
+  /** How many backup destinations the server's team has (R7). `undefined` = the port cannot say; `null` = the read failed (the gate says so). */
+  backupDestinations?: number | null;
 }
 
 export interface ImportStepsPort extends RunImportPort {

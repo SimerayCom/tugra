@@ -254,6 +254,8 @@ export function targetChecks(run: RunSnapshot, obs: PreflightObs, items: ImportP
     if (dbs.length) {
       if (!facts.capabilities.includes("backup")) {
         out.push({ id: `preflight.backup-capability.${sid}`, status: "fail", code: "preflight.backup-capability-missing", params: { server: subject, count: dbs.length, items: names(dbs) }, subject, ackable: true, ...ev });
+      } else if (facts.backupDestinations === null) {
+        out.push({ id: `preflight.backup-destination.${sid}`, status: "warn", code: "preflight.backup-destination-unknown", params: { server: subject, count: dbs.length }, subject, ...ev });
       } else if (facts.backupDestinations !== undefined) {
         out.push(
           facts.backupDestinations > 0

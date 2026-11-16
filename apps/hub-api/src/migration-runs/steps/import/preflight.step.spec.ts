@@ -592,6 +592,12 @@ describe("PREFLIGHT target readiness for every target server (R7)", () => {
     expect(noDbs.some((c) => c.id.startsWith("preflight.backup"))).toBe(false);
   });
 
+  it("a backup-destination read that failed is said, not skipped", () => {
+    const cs = preflightChecks(multi(), baseObs({ plan: plan(), target: facts({ backupDestinations: null, disk: null }) }));
+    expect(byId(cs, "preflight.backup-destination.srv1")).toMatchObject({ status: "warn", code: "preflight.backup-destination-unknown", params: { server: "box", count: 1 } });
+    expect(byId(cs, "preflight.disk.srv1")).toMatchObject({ status: "warn", code: "preflight.disk-unknown" });
+  });
+
   it("a very new OS release on a target is flagged, an older one and an unlisted distribution are not", () => {
     const flag = (os: string, osVersion: string | null) => byId(preflightChecks(baseRun(), baseObs({ target: facts({ os, osVersion }) })), "preflight.target-os.srv1");
     expect(flag("ubuntu", "26.04")).toMatchObject({ status: "warn", code: "preflight.target-os-new", params: { os: "ubuntu 26.04", tested: "ubuntu 24.04, debian 12" } });

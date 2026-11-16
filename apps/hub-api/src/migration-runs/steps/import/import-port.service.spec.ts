@@ -116,7 +116,7 @@ describe("ImportPortService", () => {
     expect(await svc.target("u1", { serverId: "srv1", hosts: [] })).toMatchObject({ agentOnline: false, acmeEmailOk: false });
   });
 
-  it("target reports the free disk, the OS and the team's backup destinations (R7); a missing reading is null, a failed read is left out", async () => {
+  it("target reports the free disk, the OS and the team's backup destinations (R7); a missing reading and a failed read are both said, never left out", async () => {
     const { svc, prisma } = make();
     const t = await svc.target("u1", { serverId: "srv1", hosts: [] });
     expect(t.disk).toMatchObject({ totalBytes: 100 * 1024 ** 3, freeBytes: 70 * 1024 ** 3 });
@@ -126,12 +126,12 @@ describe("ImportPortService", () => {
     // the server never reported a metric: the fact is `null` (the gate says so), never "free"
     prisma.metric.findFirst.mockResolvedValueOnce(null);
     expect((await svc.target("u1", { serverId: "srv1", hosts: [] })).disk).toBeNull();
-    // the read itself failed: the fact is not given at all
+    // the read itself failed: the fact is given as unreadable (null), not left out, so the gate can say so
     prisma.metric.findFirst.mockRejectedValueOnce(new Error("db down"));
     prisma.backupDestination.count.mockRejectedValueOnce(new Error("db down"));
     const t3 = await svc.target("u1", { serverId: "srv1", hosts: [] });
-    expect(t3.disk).toBeUndefined();
-    expect(t3.backupDestinations).toBeUndefined();
+    expect(t3.disk).toBeNull();
+    expect(t3.backupDestinations).toBeNull();
   });
 
   it("opSnapshot reads the op through the executor and its meta flags", async () => {

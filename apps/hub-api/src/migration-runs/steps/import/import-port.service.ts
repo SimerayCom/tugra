@@ -169,10 +169,10 @@ export class ImportPortService implements ImportStepsPort {
           }
         })
       : [];
-    // R7: the newest disk reading the agent sent, and what the team can back up to (a failed read leaves the fact unknown)
+    // R7: the newest disk reading the agent sent, and what the team can back up to (a failed read is reported as unreadable, never left out)
     const metric = await this.prisma.metric.findFirst({ where: { serverId: input.serverId }, orderBy: { ts: "desc" }, select: { diskUsed: true, diskTotal: true, ts: true } }).catch(() => undefined);
-    const disk = metric === undefined ? undefined : metric ? diskReadingOf(metric, Date.now()) : null;
-    const backupDestinations = await this.prisma.backupDestination.count({ where: { teamId: server.teamId } }).catch(() => undefined);
+    const disk = metric ? diskReadingOf(metric, Date.now()) : null; // no row and a failed read both say "no reading", which the gate warns about
+    const backupDestinations = await this.prisma.backupDestination.count({ where: { teamId: server.teamId } }).catch(() => null);
     return {
       serverName: server.name,
       agentOnline: this.agentWs.isOnline(input.serverId),
@@ -181,10 +181,10 @@ export class ImportPortService implements ImportStepsPort {
       proxyBind: server.proxyBind,
       dnsCredential: !!credentialId,
       zones,
-      ...(disk !== undefined ? { disk } : {}),
+      disk,
       os: server.os,
       osVersion: server.osVersion,
-      ...(backupDestinations !== undefined ? { backupDestinations } : {}),
+      backupDestinations,
     };
   }
 

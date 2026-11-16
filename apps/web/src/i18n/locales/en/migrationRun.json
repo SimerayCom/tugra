@@ -1067,6 +1067,7 @@
     "preflight_target-os-new": "{server} runs {os}, newer than the newest operating system the agent is tested on ({tested}).",
     "preflight_backup-capability-missing": "{server} does not have the backup capability, but {count} databases land on it: {items}. They could not be backed up. Grant the capability, or accept that these databases have no Tugra backup.",
     "preflight_backup-destination-missing": "{count} databases land on {server}, but the team has no backup destination: {items}. Backups will only be kept on the server's own disk until you add one.",
+    "preflight_backup-destination-unknown": "{count} databases land on {server}, but the team's backup destinations could not be read now, so it is not known whether they can be backed up.",
     "preflight_backup-destination-ok": "{count} databases land on {server}; the team has {destinations} backup destinations to send their backups to.",
     "decommission_stop-source-first": "Stop the source's containers yourself on its host: {stop}. The control plane's containers are not listed yet: other runs of this source are not known to be finished ({runs} still open), and the Coolify host goes last. Confirm once the containers are stopped. The control plane's commands are then recorded on this run, so they are still there once the other runs are done.",
     "decommission_dry_order": "Decommission order: stop each team's remote hosts first, and the Coolify host last. A host that carries the control plane is refused while another run of the same source is still not finished.",
