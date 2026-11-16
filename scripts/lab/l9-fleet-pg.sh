@@ -12,6 +12,8 @@
 set -euo pipefail
 # shellcheck source=fleet.sh
 . "$(dirname "${BASH_SOURCE[0]}")/fleet.sh"
+# shellcheck source=stream.sh
+. "$(dirname "${BASH_SOURCE[0]}")/stream.sh"
 
 IMAGE="${L9_IMAGE:?set L9_IMAGE, e.g. postgres:17-alpine}"
 MAJOR="$(fleet_pg_major "$IMAGE")"
@@ -32,9 +34,11 @@ NEIGHBOR_A="$(fleet_uuid)"; NEIGHBOR_B="$(fleet_uuid)"
 fleet_redis "$NEIGHBOR_A"; fleet_redis "$NEIGHBOR_B"
 fleet_pg_source "$SRC" "$IMAGE" "$SRC_VOLUME"
 fleet_pg_load_ticks "$SRC" "$MIB"
+lab_pg_integrity_seed "$SRC" tugra postgres
 SRC_COUNT="$(fleet_pg_sql "$SRC" 'select count(*) from ticks')"
 SRC_SIZE="$(fleet_pg_sql "$SRC" "select pg_total_relation_size('ticks')")"
-lab_log "source $SRC: $SRC_COUNT rows, $SRC_SIZE bytes (frozen before the stop)"
+lab_log "source $SRC: $SRC_COUNT rows, $SRC_SIZE bytes (frozen before the stop; the size is informational)"
+lab_pg_fingerprint "$SRC" tugra postgres ticks >"$LAB_DIR/l9.fp.src"
 lab_check "the source holds at least the requested size" test "$SRC_SIZE" -ge $(( MIB * 1048576 ))
 lab_check "the source is a RUNNING container with a 24 character name" bash -c "[ ${#SRC} = 24 ] && docker inspect -f '{{.State.Running}}' $SRC | grep -qx true"
 OTHERS_BEFORE="$(fleet_snapshot_others "$SRC")"
@@ -60,18 +64,43 @@ if [ "$MAJOR" -ge 18 ]; then
   lab_expect_item gate failed "$LAYOUT_TEXT"
   lab_check "the source the migrator stopped for the refused copy is running again" fleet_running "$SRC"
   lab_check "no transfer was started" test "$(lab_transfer | awk '{print $1}')" = NONE
-  # the lane the gate leaves is the logical dump, capped at the hub's artifact size (256 MiB compressed)
+  # the lane the gate leaves under the default policy is the logical dump, capped at the hub's artifact size (256 MiB compressed)
   lab_seed op --name "lab-logical-$(date +%s)" --source "$SRC" --kind db --image "$IMAGE" --version "$MAJOR" --engine POSTGRES --data-mode dump >"$LAB_DIR/op.logical.env"
   LAB_OP=logical lab_run logical --arms databases
   if [ "$MIB" -ge 1024 ]; then
     (lab_op_load logical; lab_expect_item logical failed dump-too-big)
-    echo "L9_LOGICAL=dump-too-big (the biggest database has no automatic lane on PostgreSQL 18)" >>"$LAB_DIR/l9.summary"
+    echo "L9_LOGICAL=dump-too-big (the artifact route under the default refuse policy; the streamed lane below carries it)" >>"$LAB_DIR/l9.summary"
   else
     lab_log "skip: $MIB MiB compresses under the 256 MiB artifact cap, no dump-too-big to show"
   fi
   lab_check "the logical attempt left the source running" fleet_running "$SRC"
   lab_check "nothing else on the host changed" test "$OTHERS_BEFORE" = "$(fleet_snapshot_others "$SRC")"
-  lab_pass "L9 $IMAGE: layout gate refuses, the source is restarted, the logical lane is over the cap"
+  # the lane for this database: largeDbMode stream-logical. The same running source, a fresh op on the streamed lane, no size cap.
+  if [ "${L9_STREAM:-1}" = 1 ]; then
+    SRC_STARTED="$(docker inspect -f '{{.State.StartedAt}}' "$SRC")"
+    lab_seed op --name "lab-stream-$(date +%s)" --source "$SRC" --kind db --image "$IMAGE" --version "$MAJOR" --engine POSTGRES --data-mode stream >"$LAB_DIR/op.stream.env"
+    (
+      lab_op_load stream
+      LAB_OP=stream lab_stream_plan splan ${hubargs[@]+"${hubargs[@]}"}
+      t1=$(date +%s)
+      LAB_OP=stream lab_run stream ${hubargs[@]+"${hubargs[@]}"} --arms volumes
+      secs1=$(( $(date +%s) - t1 ))
+      [ "$LAB_RC" = 0 ] || lab_stream_fail stream "streamed lane: migrator exit $LAB_RC"
+      lab_stream_expect_applied stream
+      echo "L9_STREAM_SECONDS=$secs1 L9_STREAM_PARTS=$(lab_item stream parts) L9_STREAM_RAW_BYTES=$(lab_item stream rawBytes)" >>"$LAB_DIR/l9.summary"
+      lab_stream_transfer_done "$OP_ID"
+      lab_stream_dest
+      U="$(lab_ctr_env "$DST_CTR" POSTGRES_USER)"; D="$(lab_ctr_env "$DST_CTR" POSTGRES_DB)"
+      lab_wait 120 "the destination postgres to accept connections" docker exec "$DST_CTR" pg_isready -U "$U"
+      lab_check "the streamed row count equals the source ($SRC_COUNT)" test "$(lab_pg_q "$DST_CTR" "$U" "$D" 'select count(*) from ticks')" = "$SRC_COUNT"
+      lab_pg_fingerprint "$DST_CTR" "$U" "$D" ticks >"$LAB_DIR/l9.fp.dst"
+      lab_fingerprint_compare l9 "$LAB_DIR/l9.fp.src" "$LAB_DIR/l9.fp.dst" L9
+      lab_dest_survives_recreate "$DST_CTR" "$U" "$D" ticks "$SRC_COUNT" "$DB_ID" || lab_die "the streamed destination did not survive a recreate of its container (PRODUCT FINDING above)"
+    )
+    lab_check "the streamed dump never stopped or restarted the source" test "$(docker inspect -f '{{.State.StartedAt}}' "$SRC")" = "$SRC_STARTED"
+    lab_check "the source is still running after the streamed dump" fleet_running "$SRC"
+  fi
+  lab_pass "L9 $IMAGE: layout gate refuses, the source is restarted, the artifact route is over the cap and the streamed lane carries it"
   exit 0
 fi
 
@@ -97,5 +126,8 @@ DST_COUNT="$(docker exec "$CTR" psql -U tugra -d postgres -At -c 'select count(*
 DST_SIZE="$(docker exec "$CTR" psql -U tugra -d postgres -At -c "select pg_total_relation_size('ticks')")"
 lab_log "target: $DST_COUNT rows, $DST_SIZE bytes"
 lab_check "the row count equals the source ($SRC_COUNT)" test "$DST_COUNT" = "$SRC_COUNT"
-lab_check "pg_total_relation_size equals the source ($SRC_SIZE)" test "$DST_SIZE" = "$SRC_SIZE"
-lab_pass "L9 $IMAGE: $(( SRC_SIZE / 1048576 )) MiB time-series copied in ${secs} s, rows and size equal"
+# not bytes: the source stopped cleanly, but the destination's own start still rewrites pages (visibility map, hint bits), so the size is
+# informational. The proof is the data: a checksum over every column of every row, the extensions, sequences, collation, roles and grants.
+lab_pg_fingerprint "$CTR" tugra postgres ticks >"$LAB_DIR/l9.fp.dst"
+lab_fingerprint_compare l9 "$LAB_DIR/l9.fp.src" "$LAB_DIR/l9.fp.dst" L9 strict-access
+lab_pass "L9 $IMAGE: $(( SRC_SIZE / 1048576 )) MiB time-series copied in ${secs} s, rows, checksums and access objects equal"

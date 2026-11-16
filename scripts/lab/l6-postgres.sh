@@ -2,14 +2,19 @@
 # L6: the PostgreSQL physical-copy gate against a REAL cluster. One run per image (a CI matrix):
 #   L6_IMAGE=postgres:16-alpine  postgres:17-alpine  pgvector/pgvector:pg17  postgres:18-alpine   (the four images of the real estate)
 # 16 and 17 mount PGDATA at /var/lib/postgresql/data: the gates pass, the copy applies, postmaster.pid is excluded, the
-# database starts on the target after WAL replay (the source is SIGKILLed: no checkpoint) and the row count and
-# pg_total_relation_size equal the frozen source values. 18 keeps PGDATA one level down (/var/lib/postgresql/18/docker): the
+# database starts on the target after WAL replay (the source is SIGKILLed: no checkpoint) and the destination carries the same data
+# AND the same meaning: a fingerprint of row count plus a checksum over every column, extensions (pgvector), sequences' last_value,
+# collation, roles, table ownership and grants (integrity.sh). pg_total_relation_size is logged, not compared: it is the one number
+# that legitimately moves (a crash recovery sets hint bits, creates visibility-map and free-space pages; lab run 3 saw 234553344 B
+# on the source and 234627072 B on every copy, with every row equal), so a byte assertion after SIGKILL is a harness bug. 18 keeps PGDATA one level down (/var/lib/postgresql/18/docker): the
 # `layout` gate must refuse with the exact text. On 16 the negative gates run too: running source, Alpine vs Debian image,
 # major mismatch, a started destination. A pgvector image also carries a vector table (the extension's data must survive the copy).
 # 18 stays on the logical path, where the fleet's biggest database cannot go (L9 shows the 256 MiB cap on a multi-GB source).
 set -euo pipefail
 # shellcheck source=lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=integrity.sh
+. "$(dirname "${BASH_SOURCE[0]}")/integrity.sh"
 
 IMAGE="${L6_IMAGE:?set L6_IMAGE, e.g. postgres:16-alpine}"
 case "$IMAGE" in
@@ -37,15 +42,17 @@ sleep 3 # the image's init phase restarts the server once; wait for the final on
 lab_wait 60 "the source postgres after its init restart" docker exec labsrc pg_isready -U tugra
 psql_src "create table lab_t as select g as id, md5(g::text) as m, repeat(md5(g::text), 10) as pad from generate_series(1, $ROWS) g; create index lab_t_m on lab_t (m);" >/dev/null
 VECTOR=0
-case "$IMAGE" in pgvector/*)
-  VECTOR=1
-  psql_src "create extension vector; create table lab_v (id int primary key, e vector(3)); insert into lab_v select g, ('[' || g || ',' || (g % 7) || ',' || (g % 13) || ']')::vector from generate_series(1, 2000) g; create index lab_v_e on lab_v using hnsw (e vector_l2_ops)" >/dev/null
-  ;;
-esac
+VEC_ARG=""
+case "$IMAGE" in pgvector/*) VECTOR=1; VEC_ARG=vector ;; esac
+# roles, a table owned by one and granted to another, sequences past 1, an explicit collation, and the pgvector table and index
+lab_pg_integrity_seed labsrc tugra postgres "$VEC_ARG"
 SRC_COUNT="$(psql_src 'select count(*) from lab_t')"
 SRC_SIZE="$(psql_src "select pg_total_relation_size('lab_t')")"
-lab_log "source: $SRC_COUNT rows, $SRC_SIZE bytes (frozen before the unclean stop)"
+lab_log "source: $SRC_COUNT rows, $SRC_SIZE bytes (frozen before the unclean stop; the size is informational)"
 lab_check "the source holds the rows" test "$SRC_COUNT" = "$ROWS"
+lab_pg_fingerprint labsrc tugra postgres lab_t "$VEC_ARG" >"$LAB_DIR/l6.fp.src"
+: >"$LAB_DIR/l6.summary"
+lab_log "source fingerprint: $(wc -l <"$LAB_DIR/l6.fp.src" | tr -d ' ') facts"
 
 # negative 1 (16 only): a RUNNING source is refused, never stopped without --stop-source
 if [ "$MAJOR" = 16 ]; then
@@ -54,7 +61,11 @@ if [ "$MAJOR" = 16 ]; then
   lab_check "the running source was left running" test "$(docker inspect -f '{{.State.Running}}' labsrc)" = true
 fi
 
-# the unclean stop: SIGKILL, exit 137, no checkpoint (the target must replay WAL)
+# the unclean stop: SIGKILL, exit 137 (the target must run crash recovery). One checkpoint first, AFTER the fingerprint: PostgreSQL logs a
+# serial's value 32 ahead in the WAL, so redo of a record newer than the last checkpoint moves lab_ser_id_seq's last_value (250 -> 264 on a
+# plain 15) while no row changed. With the checkpoint there is nothing newer to redo, the sequence is exactly what the fingerprint saw, and
+# the data directory is still "not properly shut down" (SIGKILL), so recovery runs.
+psql_src "checkpoint" >/dev/null
 docker kill labsrc >/dev/null
 lab_check "the source exited 137" test "$(docker inspect -f '{{.State.ExitCode}}' labsrc)" = 137
 
@@ -116,11 +127,14 @@ lab_wait 120 "the destination postgres to accept connections" docker exec "$CTR"
 lab_check "WAL replay ran on the copied cluster (the source was SIGKILLed, so its data directory needs recovery)" bash -c "docker logs $CTR 2>&1 | grep -qi -E 'not properly shut down|automatic recovery in progress|redo starts'"
 DST_COUNT="$(docker exec "$CTR" psql -U tugra -d postgres -At -c 'select count(*) from lab_t')"
 DST_SIZE="$(docker exec "$CTR" psql -U tugra -d postgres -At -c "select pg_total_relation_size('lab_t')")"
-lab_log "target: $DST_COUNT rows, $DST_SIZE bytes"
+lab_log "target: $DST_COUNT rows, $DST_SIZE bytes (source $SRC_SIZE; the size is informational)"
 lab_check "the row count equals the source ($SRC_COUNT)" test "$DST_COUNT" = "$SRC_COUNT"
 if [ "$VECTOR" = 1 ]; then
   lab_check "the pgvector table and its extension came across" test "$(docker exec "$CTR" psql -U tugra -d postgres -At -c "select count(*) from lab_v v, pg_extension x where x.extname = 'vector'")" = 2000
   lab_check "the vector index answers a nearest-neighbour query on the target" test -n "$(docker exec "$CTR" psql -U tugra -d postgres -At -c "select id from lab_v order by e <-> '[5,5,5]' limit 1")"
 fi
-lab_check "pg_total_relation_size equals the source ($SRC_SIZE)" test "$DST_SIZE" = "$SRC_SIZE"
-lab_pass "L6 $IMAGE: gates, copy, WAL replay, rows and size"
+# a column checksum instead of bytes: every column of every row, the extensions, the sequences, the collation, and (a physical copy
+# carries the whole cluster, so strictly) the roles, the table ownership and the grants
+lab_pg_fingerprint "$CTR" tugra postgres lab_t "$VEC_ARG" >"$LAB_DIR/l6.fp.dst"
+lab_fingerprint_compare l6 "$LAB_DIR/l6.fp.src" "$LAB_DIR/l6.fp.dst" L6 strict-access
+lab_pass "L6 $IMAGE: gates, copy, WAL replay, rows and checksums, extensions, sequences, collation, roles and grants"

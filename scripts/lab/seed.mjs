@@ -9,10 +9,14 @@
 //   seed.mjs token                      a fresh access token (stdout)
 //   seed.mjs server-status [id]         ONLINE | OFFLINE | PENDING
 //   seed.mjs op --name N --source REF [--kind app|db] [--image I] [--version V] [--volume data] [--path /var/www/data]
-//               [--engine POSTGRES|MARIADB|MYSQL|REDIS] [--data-mode volume|dump]
-//               [--server-id ID] [--no-credentials]   an import op + token; prints KEY=VALUE lines.
+//               [--engine POSTGRES|MARIADB|MYSQL|REDIS] [--data-mode volume|dump|stream]
+//               [--server-id ID] [--no-credentials] [--ssl]   an import op + token; prints KEY=VALUE lines.
 //               --kind db defaults to a PostgreSQL physical copy (volume). --data-mode dump is the logical arm (ITEMREF is then the
 //               database ref `database:_:REF`); any engine other than POSTGRES is dump only (only PostgreSQL has a physical lane).
+//               --data-mode stream puts the database on the streamed dump lane (the run's largeDbMode stream-logical: the op's
+//               meta.vxStream names it) and ITEMREF is the migrator row `volume:_:REF:dump`; PostgreSQL, MariaDB and MySQL only.
+//               --ssl makes the destination PostgreSQL serve TLS (Database.ssl, what the importer sets from a sslmode=require source).
+//   seed.mjs stream-mode OP_ID [on|off]  put the op's database on (or take it off) the streamed dump lane after the fact
 //   seed.mjs transfer OP_ID             "STATE PARTS_DONE ERROR ATTEMPT" of the op's volume transfer(s)
 //   seed.mjs db-status DB_ID            the Database row's status/image/version (for the L6 gates)
 //   seed.mjs db-set DB_ID STATUS        force the Database row's status (L6: a started destination must be refused)
@@ -27,7 +31,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveDbMode } from "./seed-mode.mjs";
+import { itemRefFor, resolveDbMode, withStreamMode } from "./seed-mode.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../..");
@@ -157,7 +161,7 @@ async function main() {
       break;
     }
     case "op": {
-      const f = flags({ name: `lab-${Date.now()}`, source: "labsrc", kind: "app", image: "", version: "16", volume: "data", path: "/var/www/data", engine: "POSTGRES", "data-mode": "", "server-id": "", "no-credentials": false });
+      const f = flags({ name: `lab-${Date.now()}`, source: "labsrc", kind: "app", image: "", version: "16", volume: "data", path: "/var/www/data", engine: "POSTGRES", "data-mode": "", "server-id": "", "no-credentials": false, ssl: false });
       const plan = resolveDbMode(f.kind, f.engine, f["data-mode"]);
       if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(f.source)) throw new Error("bad --source");
       if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(f.volume)) throw new Error("bad --volume");
@@ -171,13 +175,19 @@ async function main() {
       let resourceId;
       let result;
       let destVolume;
+      let streamMeta;
       if (f.kind === "db") {
         const d = must(await api("POST", "/databases", { name: f.name, serverId, engine: plan.engine, version: f.version }, token), [201], "create the database");
         resourceId = d.id;
         // the destination runs the SAME image as the source when asked (the physical-copy image gate compares them exactly)
         if (f.image) await db.database.update({ where: { id: resourceId }, data: { image: f.image } });
+        if (f.ssl) {
+          if (plan.engine !== "POSTGRES") throw new Error("--ssl is PostgreSQL only");
+          await db.database.update({ where: { id: resourceId }, data: { ssl: true } });
+        }
         result = { name: f.name, databaseId: resourceId, credentialsCarried: !f["no-credentials"], imageCarried: true };
         items.push({ itemRef: ownerRef, kind: "database", proposed: plan.mode === "volume" ? { dataMode: "volume" } : { engine: plan.engine } });
+        if (plan.mode === "stream") streamMeta = withStreamMode({}, ownerRef, true, userId, new Date().toISOString()).vxStream;
         destVolume = `tugra_dbv_${resourceId}`;
       } else {
         const a = must(await api("POST", "/apps", { name: f.name, serverId, image: "nginx:alpine" }, token), [201], "create the app");
@@ -193,7 +203,7 @@ async function main() {
           command: "",
           kind: "import",
           planId: "lab",
-          meta: { sourceKind: "coolify", serverId, hubBase: process.env.HUB_URL || hub, plan: { items } },
+          meta: { sourceKind: "coolify", serverId, hubBase: process.env.HUB_URL || hub, plan: { items }, ...(streamMeta ? { vxStream: streamMeta } : {}) },
           migrationTokenHash: createHash("sha256").update(migToken).digest("hex"),
           migrationTokenExpiresAt: new Date(Date.now() + 6 * 3600_000),
         },
@@ -204,11 +214,25 @@ async function main() {
       kv("OP_ID", op.id);
       kv("MIG_TOKEN", migToken);
       kv(f.kind === "db" ? "DB_ID" : "APP_ID", resourceId);
-      // the logical arm reports the DATABASE ref (database:_:<source>); a physical copy and an app volume report the volume ref
-      kv("ITEMREF", plan.mode === "dump" ? ownerRef : `volume:_:${f.source}:${f.kind === "db" ? "data" : f.volume}`);
-      kv("DEST_VOLUME", plan.mode === "dump" ? "" : destVolume);
+      // the logical arm reports the DATABASE ref (database:_:<source>), the streamed lane `volume:_:<source>:dump`; a physical copy and
+      // an app volume report the volume ref
+      kv("ITEMREF", itemRefFor(plan, f.kind, f.source, f.volume));
+      kv("DEST_VOLUME", plan.mode === "volume" ? destVolume : "");
       kv("DB_ENGINE", plan.engine);
       kv("SRC_CONTAINER", f.source);
+      break;
+    }
+    case "stream-mode": {
+      const opId = argv[0];
+      const on = (argv[1] || "on") !== "off";
+      const { userId } = await login();
+      const db = await prisma();
+      const op = await db.bulkOperation.findUnique({ where: { id: opId }, include: { tasks: true } });
+      const task = op?.tasks.find((t) => t.kind === "database");
+      if (!op || !task) throw new Error(`op ${opId} has no database task`);
+      await db.bulkOperation.update({ where: { id: opId }, data: { meta: withStreamMode(op.meta, task.itemRef, on, userId, new Date().toISOString()) } });
+      kv("STREAM_REF", task.itemRef);
+      kv("STREAM", on ? "on" : "off");
       break;
     }
     case "transfer": {
@@ -253,7 +277,7 @@ async function main() {
       break;
     }
     default:
-      throw new Error(`usage: seed.mjs base|server|token|server-status|op|transfer|db-status|db-set|ids|app (got ${cmd ?? "nothing"})`);
+      throw new Error(`usage: seed.mjs base|server|token|server-status|op|stream-mode|transfer|db-status|db-set|ids|app (got ${cmd ?? "nothing"})`);
   }
 }
 

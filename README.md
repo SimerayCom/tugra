@@ -52,7 +52,7 @@ curl -s https://your-tugra-host/api/v1/mcp \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_applications","arguments":{}}}'
 ```
 
-It's the same `POST /api/v1/mcp` endpoint, the same personal-access-token auth, scopes and IP allowlist as the REST API underneath — no separate credential to manage, and no decrypted secret values are ever returned to the model. The catalog is **56 tools**: 33 read-only (including one-call fleet status / health / app-listing rollups and a sandboxed volume file browser), plus 23 PAT-scoped mutate/ops tools (deploy · cancel a queued deploy · restart · live-scale · roll back · set env · form/grow a swarm · fleet-wide actions across a cluster · one-click domain DNS setup). Every mutate tool reuses the REST API's exact team-permission checks and audit trail, and the irreversible ones (dissolve a swarm, remove an app) require an explicit name-confirmation. OAuth for third-party clients is still on the roadmap.
+It's the same `POST /api/v1/mcp` endpoint, the same personal-access-token auth, scopes and IP allowlist as the REST API underneath — no separate credential to manage, and no decrypted secret values are ever returned to the model. The catalog is **70 tools**: 37 read-only (including one-call fleet status / health / app-listing rollups and a sandboxed volume file browser), plus 33 PAT-scoped mutate/ops tools (deploy · cancel a queued deploy · restart · live-scale · roll back · set env · form/grow a swarm · fleet-wide actions across a cluster · one-click domain DNS setup · the guided-migration run, dry-run by default). Every mutate tool reuses the REST API's exact team-permission checks and audit trail, and the irreversible ones (dissolve a swarm, remove an app) require an explicit name-confirmation. OAuth for third-party clients is still on the roadmap.
 
 ## What is Tugra?
 
@@ -61,7 +61,7 @@ Tugra is a self-hostable, open-core control plane for deploying, monitoring and 
 ## Why Tugra
 
 - **Fleet-first, not single-box** — group servers into clusters, form a real Docker Swarm across them, and run one command across your whole fleet in a single bulk-ops call instead of SSH-ing into each box.
-- **Agent-native too** — a built-in MCP server exposes 56 tools (read + PAT-scoped mutate/fleet ops) over `POST /api/v1/mcp`, scoped by the same personal-access tokens as the REST API.
+- **Agent-native too** — a built-in MCP server exposes 70 tools (read + PAT-scoped mutate/fleet ops) over `POST /api/v1/mcp`, scoped by the same personal-access tokens as the REST API.
 - **9 database engines, one workflow** — PostgreSQL, MySQL, MariaDB, MongoDB, Redis, KeyDB, Dragonfly, ClickHouse and LibSQL, all provisioned the same way; eight have built-in logical dump/restore backups (LibSQL, which has no dump tool, is covered only by file-level volume backups — stop the app first for a consistent copy).
 - **Real TLS, real wildcards** — automatic Let's Encrypt per app via Traefik, plus DNS-01 wildcard certificates (`*.yourdomain.com`) for clustered/Swarm ingress — not just single-domain HTTP-01.
 - **Backups that leave the building** — scheduled dumps to local disk or S3-compatible storage (S3/R2/MinIO), encrypted by default (gpg AES-256, with a recovery key shown once), with one-click restore; scheduled **restore-verify drills** prove a backup actually restores, and PostgreSQL gets **point-in-time recovery** (WAL shipping + base backups, restore to any second from the panel).
@@ -105,7 +105,7 @@ A side-by-side with the self-hostable PaaS tools people actually evaluate (compe
 | Teams / RBAC | ✅ | ✅ | ✅ | ~⁷ | — | — |
 | SSO / OIDC | ✅ (Pro)⁸ | ✅ | ✅ | ~⁷ | — | — |
 | Audit log | ✅ | ✅ | ✅ | ~⁷ | — | — |
-| MCP / agent control | ✅ 56 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
+| MCP / agent control | ✅ 70 tools⁵ | ✅ | ✅ | ~⁷ | — | ~² |
 | **Trust & license** | | | | | | |
 | Telemetry | Anonymous, opt-out (counts only) | n/a | n/a | n/a | n/a | n/a |
 | Migrate in (import from Coolify) | ✅⁹ | — | — | — | — | — |
@@ -192,7 +192,7 @@ Live logs, metrics and the terminal stream over WebSockets. Full breakdown in [d
 - [x] Live metrics, build logs & web terminal (WebSocket streams; the terminal is capability-gated and off by default)
 - [x] Databases (9 engines) with backups & restore (local + S3/R2 off-site)
 - [x] Multi-server clusters + Docker Swarm formation, bulk ops across the fleet
-- [x] Native MCP server — 56 tools (read + PAT-scoped mutate/fleet ops) + guided prompts
+- [x] Native MCP server — 70 tools (read + PAT-scoped mutate/fleet ops) + guided prompts
 - [x] App store — 280+ one-click templates + Home-mode launcher
 - [x] File manager for app volumes — browse, download, upload, edit, rename, permissions and delete (writes are an opt-in server capability; web UI, plus MCP `list_files` for reads)
 - [x] Preview deployments (per pull request)
@@ -202,7 +202,7 @@ Live logs, metrics and the terminal stream over WebSockets. Full breakdown in [d
 - [x] Public API (OpenAPI) + CLI (`tugra`)
 - [x] Server patching (OS package updates)
 - [x] Self-update (signed releases) + guided onboarding
-- [x] Migrator — adopt local Docker containers + import from Coolify (web wizard) and Dokploy (web wizard / API / MCP / CLI) (connect · plan · apply · rollback) + one-command cross-host DB-data migration (Postgres · MySQL · MariaDB · Redis · KeyDB · Dragonfly) + streamed, resumable app-volume copy
+- [x] Migrator — adopt local Docker containers + import from Coolify (web wizard) and Dokploy (web wizard / API / MCP / CLI) (connect · plan · apply · rollback) + one-command cross-host DB-data migration (Postgres · MySQL · MariaDB · Redis · KeyDB · Dragonfly) + streamed, resumable app-volume copy + a guided, resumable migration run (`tugra import run` and the `migration_run_*` MCP tools: dry-run first, approvals, abort/reverse) with a streamed large-database dump lane (Postgres · MySQL · MariaDB) — its data plane is exercised in a CI lab on generated data, not yet on a real fleet
 - [x] Restore-verify drills (scheduled, with a liveness watchdog) · PostgreSQL point-in-time recovery (WAL shipping · base backups · restore to any second)
 - [x] Rolling deploys with a health gate + opt-in post-cutover soak and auto-revert · fleet rollouts (canary → waves → health gate → halt/resume/rollback)
 - [x] Deploys survive a hub restart (agent command journal + outcome adoption) · per-deployment detail page (timeline · live log · config diff)

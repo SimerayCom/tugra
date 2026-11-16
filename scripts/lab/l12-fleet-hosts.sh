@@ -129,6 +129,7 @@ lab_log "D: ok"
 
 # ---- E: redis with the password on the command line --------------------------------------------------------------------------------
 BASE="$(fleet_snapshot_others)"
+DEST_DBS=() # the destination databases the hub starts when it restores a dump: the case's own containers, on the target side of the run
 for pair in "plain:$REDIS_PLAIN" "conf:$REDIS_CONF"; do
   tag="${pair%%:*}"; ref="${pair#*:}"
   lab_seed op --name "lab-redis-$tag-$(date +%s)" --source "$ref" --kind db --engine REDIS --version 7 --data-mode dump >"$LAB_DIR/op.redis-$tag.env"
@@ -145,8 +146,11 @@ for pair in "plain:$REDIS_PLAIN" "conf:$REDIS_CONF"; do
   )
   lab_check "redis $tag is still running after the real run" fleet_running "$ref"
   lab_check "redis $tag still holds its 100 keys after the dry run" test "$(fleet_redis_cli "$ref" dbsize)" = 100
+  DEST_DBS+=("tugra_db_$(sed -n 's/^DB_ID=//p' "$LAB_DIR/op.redis-$tag.env")")
 done
-case_untouched
+# the restore of a real logical run starts the destination redis (lab run 3: tugra_db_<id> next to the sources): excluded by name, so a
+# source container that changed still fails the check
+case_untouched "${DEST_DBS[@]}"
 lab_log "E: ok"
 
 # ---- F: Meilisearch, pinned old and latest -----------------------------------------------------------------------------------------
