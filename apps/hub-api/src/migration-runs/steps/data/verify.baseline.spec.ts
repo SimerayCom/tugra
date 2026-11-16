@@ -31,11 +31,35 @@ describe("judgeAgainstBaseline (R52): VERIFY judges against the source, not agai
     expect(classifySuite(out.suite)).toEqual({ blocked: [], pending: [], acked: [] });
   });
 
-  it("an exited container and a crash loop at the source are pre-existing too; so is a database", () => {
-    const suite = [check("app-running", "app:s:a", "fail"), check("app-running", "app:s:b", "fail"), check("database-running", "database:s:d", "fail", { ackable: false })];
-    const out = judgeAgainstBaseline(suite, baseline([entry("app", "a", "exited"), entry("app", "b", "unknown", 90_000), entry("database", "d", "unhealthy")]));
-    expect(out.suite.map((c) => c.status)).toEqual(["warn", "warn", "warn"]);
-    expect(out.preExisting).toBe(3);
+  it("an exited container and a crash loop at the source are pre-existing apps", () => {
+    const suite = [check("app-running", "app:s:a", "fail"), check("app-running", "app:s:b", "fail")];
+    const out = judgeAgainstBaseline(suite, baseline([entry("app", "a", "exited"), entry("app", "b", "unknown", 90_000)]));
+    expect(out.suite.map((c) => c.status)).toEqual(["warn", "warn"]);
+    expect(out.preExisting).toBe(2);
+  });
+
+  it("a database is excused only on a comparable state: not running at the source (exited) and stopped here", () => {
+    const stopped = check("database-running", "database:s:d", "fail", { ackable: false });
+    const out = judgeAgainstBaseline([stopped], baseline([entry("database", "d", "exited")]));
+    expect(out.suite[0]).toMatchObject({ status: "warn", code: BASELINE_CODES.preExisting, ackable: false });
+    expect(out.preExisting).toBe(1);
+  });
+
+  it("a database that was merely unhealthy at the source (a health check) but does not run on Tugra is still a hard block", () => {
+    for (const health of ["unhealthy", "unknown"] as const) {
+      const out = judgeAgainstBaseline([check("database-running", "database:s:d", "fail", { ackable: false })], baseline([entry("database", "d", health, 90_000)]));
+      expect(out.suite[0].status).toBe("fail");
+      expect(out.suite[0].ackable).toBe(false);
+      expect(out.preExisting).toBe(0);
+      expect(classifySuite(out.suite).blocked).toHaveLength(1);
+    }
+  });
+
+  it("a database that FAILED or is missing on Tugra is a hard block even when it was exited at the source", () => {
+    for (const status of ["FAILED", "MISSING", "NEW"]) {
+      const out = judgeAgainstBaseline([check("database-running", "database:s:d", "fail", { ackable: false, params: { status, name: "d" } })], baseline([entry("database", "d", "exited")]));
+      expect(out.suite[0].status).toBe("fail");
+    }
   });
 
   it("a NEW failure still fails: healthy at the source, unchecked at the source, or not in the baseline at all", () => {
