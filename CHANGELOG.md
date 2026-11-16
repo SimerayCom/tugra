@@ -17,6 +17,34 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   point-of-no-return approval is refused over MCP. Always start with a dry run: it writes nothing outside its own run
   rows. The engine is covered by tests against in-memory fakes; it has not yet been driven against a live Coolify
   fleet, so read the verification status in `docs/runbooks/guided-migration.md` first.
+- **PostgreSQL 18 databases keep their data across a container recreate.** PostgreSQL 18 stores its cluster under
+  `/var/lib/postgresql/18/docker`, outside the path Tugra mounted, so the data of a Tugra-provisioned PostgreSQL 18
+  database lived in an anonymous Docker volume. New PostgreSQL 18 databases now mount their data volume where the cluster
+  lives. Existing PostgreSQL 18 databases keep working: their anonymous volume is re-attached on every recreate, and the
+  database page shows a warning with the remedy (back up, restore into a new database, switch the apps over). Point-in-time
+  restore now works for PostgreSQL 18 targets.
+- **Guided migration fleet readiness.**
+  - Data: the streamed dump restores into PostgreSQL 18; compose-service volumes (search indexes, converter state) copy
+    through the streamed lane with resume; a slow link no longer loses a part's lease; a measured link speed
+    (`--speedtest-mib`) feeds the per-host window estimate.
+  - Gates: VERIFY, CUTOVER and OBSERVE treat apps already unhealthy at the source as pre-existing warnings while a new
+    failure still fails; DATA_FINAL of the host-loop runner names a dead host; the downtime estimate includes builds,
+    starts, health checks, certificates and the bytes crossing the hub twice, and the FREEZE approval shows every term; a
+    write gap longer than the accepted minutes needs an explicit attestation at FREEZE; a plan with object-storage
+    dependants and no object migration stops at DATA_SEED unless the policy is external.
+  - Services: DEPLOY_DARK starts the services dark apps depend on first (`serviceStart`); VERIFY lists uncopied service
+    volumes as not migrated.
+  - Import: Coolify watch paths, static sites, redirect mode and custom `redis.conf` are carried or reported; env values
+    pointing at an unresolved Coolify container are flagged; the host inventory records image digests and pins
+    floating-tag apps; `unlistedDbPolicy: carry` moves unlisted PostgreSQL, MySQL, MariaDB, Redis, KeyDB and Dragonfly
+    containers into new Tugra databases.
+  - Operations: PREFLIGHT checks free disk and backups on every target server and flags the control-plane host, flaky
+    hosts and very new OS releases; decommissioning the Coolify control-plane host waits for every other run of the
+    same source; a campaign report page and `tugra import run report --campaign <name>`; held workers and source server
+    names in the panel.
+  - Known limits: dumps carry data and schema but not roles, grants or MariaDB stored routines (Tugra creates its own
+    owner); verify those by hand where an app relies on them.
+- **Container health no longer fails every minute on a server with no containers.**
 - **Guided migrations for real multi-host Coolify fleets.** A run can now span several source servers: a server map
   places each source server on a Tugra server, an unmapped source server stops the run instead of landing on the
   default one, and the one-live-run-per-server rule and the typed point-of-no-return approval cover every target
