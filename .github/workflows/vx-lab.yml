@@ -37,7 +37,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Lab state directory
         run: echo "LAB_DIR=$RUNNER_TEMP/tugra-lab" >> "$GITHUB_ENV"
-      - name: Harness self-test (no docker: the lab scripts' own decision logic)
+      - name: Harness self-test (no docker, the lab scripts' own decision logic)
         run: node --test scripts/lab/selftest.mjs
       - name: L4 - the migrator tar stream into the pinned alpine busybox tar
         run: scripts/lab/vx-tar-fidelity.sh
