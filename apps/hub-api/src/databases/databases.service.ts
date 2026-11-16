@@ -234,6 +234,8 @@ export class DatabasesService {
       database: string;
       hostPort?: number;
       environmentId?: string;
+      /** PostgreSQL only: serve TLS (self-signed) so a client URL saying sslmode=require connects. Ignored for other engines. */
+      ssl?: boolean;
     },
   ): Promise<DatabaseView> {
     const server = await this.prisma.server.findUnique({ where: { id: input.serverId } });
@@ -258,20 +260,26 @@ export class DatabasesService {
       password: input.password,
       database: input.database,
     };
-    const view = await this.persistDatabase(userId, server, {
-      name: input.name,
-      engine: input.engine,
-      version,
-      image,
-      hostPort: input.hostPort ?? null,
-      environmentId,
-      creds,
-    });
+    const ssl = input.engine === "POSTGRES" && input.ssl === true;
+    const view = await this.persistDatabase(
+      userId,
+      server,
+      {
+        name: input.name,
+        engine: input.engine,
+        version,
+        image,
+        hostPort: input.hostPort ?? null,
+        environmentId,
+        creds,
+      },
+      ssl ? { ssl: true } : {},
+    );
     await this.audit.log({
       actor: userId,
       action: "database.import_create",
       target: view.id,
-      meta: { engine: input.engine, customImage: Boolean(input.image) },
+      meta: { engine: input.engine, customImage: Boolean(input.image), ...(ssl ? { ssl: true } : {}) },
     });
     return view;
   }
@@ -290,7 +298,7 @@ export class DatabasesService {
       creds: DbCredentials;
     },
     // Optional carried config (PITR replay target copies the source's). Absent for every existing caller.
-    extra: Pick<Prisma.DatabaseUncheckedCreateInput, "status" | "backupDestinationId" | "healthCmd" | "memoryMb" | "cpus" | "tags" | "envEnc" | "volumes"> = {},
+    extra: Pick<Prisma.DatabaseUncheckedCreateInput, "status" | "backupDestinationId" | "healthCmd" | "memoryMb" | "cpus" | "tags" | "envEnc" | "volumes" | "ssl"> = {},
   ): Promise<Database> {
     return this.prisma.database.create({
       data: {
@@ -323,8 +331,9 @@ export class DatabasesService {
       environmentId: string;
       creds: DbCredentials;
     },
+    extra: Pick<Prisma.DatabaseUncheckedCreateInput, "ssl"> = {},
   ): Promise<DatabaseView> {
-    const db = await this.persistDatabaseRow(server, fields);
+    const db = await this.persistDatabaseRow(server, fields, extra);
     // Grant-on-create: the creator keeps access to what they made even if later restricted.
     await this.access.grantResourceAccess(userId, server.teamId, db.id);
     const role = (await this.access.teamRole(userId, server.teamId))!;
@@ -608,6 +617,7 @@ export class DatabasesService {
           env: this.dbEnv(db),
           volumes: this.dbVolumes(db),
           pitr: opts.pitr ?? db.pitrEnabled,
+          ssl: db.ssl,
           // PITR replay only (never persisted): start in archive recovery toward the target time.
           recovery: opts.recovery ?? null,
         }),
@@ -667,7 +677,7 @@ export class DatabasesService {
     await this.agentWs
       .sendCommand(
         db.serverId,
-        buildDbRemoveScript({ id: db.id, volumes: this.dbVolumes(db) }, { ...opts, walSpool: db.pitrEnabled, walRestore: opts.walRestore ?? db.engine === "POSTGRES" }),
+        buildDbRemoveScript({ id: db.id, volumes: this.dbVolumes(db) }, { ...opts, walSpool: db.pitrEnabled, walRestore: opts.walRestore ?? db.engine === "POSTGRES", ssl: db.ssl }),
         "database",
       )
       .catch(() => undefined);
@@ -943,6 +953,20 @@ export class DatabasesService {
       data: { envEnc: this.crypto.encrypt(JSON.stringify(env)) },
     });
     await this.audit.log({ actor: userId, action: "database.env.update", target: id });
+  }
+
+  /**
+   * Turn TLS on or off for a PostgreSQL database (writer-only). The flag is read when the container is (re)created, so on a
+   * database that is already running it only takes effect at its next provision: the answer says so (`restartRequired`) and
+   * never restarts the database itself. Idempotent.
+   */
+  async setSsl(userId: string, id: string, on: boolean): Promise<{ changed: boolean; restartRequired: boolean }> {
+    const db = await this.requireWrite(userId, id);
+    if (db.engine !== "POSTGRES") throw new BadRequestException("TLS is only offered for PostgreSQL databases");
+    if (db.ssl === on) return { changed: false, restartRequired: false };
+    await this.prisma.database.update({ where: { id }, data: { ssl: on } });
+    await this.audit.log({ actor: userId, action: "database.ssl.update", target: id, meta: { ssl: on } });
+    return { changed: true, restartRequired: db.status === DbStatus.RUNNING || db.status === DbStatus.PROVISIONING };
   }
 
   private async require(userId: string, id: string): Promise<Database> {

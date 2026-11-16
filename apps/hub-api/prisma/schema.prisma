@@ -1744,6 +1744,9 @@ model Database {
   // this column is the inert anchor those build on. pitrEnabledAt stamps when it was switched on.
   pitrEnabled             Boolean           @default(false)
   pitrEnabledAt           DateTime?
+  // TLS (Postgres only): when on, the container serves TLS with a self-signed certificate kept in its own volume, so an
+  // app whose connection URL says sslmode=require connects. Default-off: the run script of an existing DB is byte-identical.
+  ssl                     Boolean           @default(false)
   tags                    String[]          @default([])
   backups                 Backup[]
   baseBackups             BaseBackup[]

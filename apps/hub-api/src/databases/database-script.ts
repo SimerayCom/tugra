@@ -83,6 +83,43 @@ export function pgRecoveryArgs(targetTime: Date): string {
   ].join(" ");
 }
 
+// TLS (Postgres only, R22). A source database whose clients say sslmode=require needs a server that speaks TLS. The cert is a
+// per-database self-signed pair generated ONCE on the host (kept across container recreates) and copied by a tiny wrapper into a
+// directory the postgres user owns (Postgres refuses a key file it does not own), then the stock entrypoint starts the server
+// with ssl=on. sslmode=require and prefer connect; verify-ca / verify-full need a CA the client trusts and stay a manual step.
+export const SSL_HOST_ROOT = "/etc/tugra/dbssl";
+export const SSL_CONTAINER_SRC = "/tugra-ssl-src";
+const SSL_CONTAINER_DIR = "/var/lib/tugra-ssl";
+
+/** The per-database host dir holding the self-signed pair. Keyed on the row id, never user input. */
+export function sslHostDir(dbId: string): string {
+  return `${SSL_HOST_ROOT}/${dbId}`;
+}
+
+/** Host-side step: create the self-signed pair once (idempotent; the key is 0600 and the dir 0700). Fails loudly without openssl. */
+export function sslPrepareScript(dbId: string): string {
+  const d = sslHostDir(dbId);
+  return [
+    "command -v openssl >/dev/null 2>&1 || { echo 'openssl is required on the host to enable database TLS' >&2; exit 1; }",
+    `mkdir -p ${d} && chmod 700 ${d}`,
+    `[ -s ${d}/server.crt ] && [ -s ${d}/server.key ] || openssl req -new -x509 -days 3650 -nodes -subj '/CN=tugra-db' -out ${d}/server.crt -keyout ${d}/server.key`,
+    `chmod 600 ${d}/server.key && chmod 644 ${d}/server.crt`,
+  ].join("\n");
+}
+
+/** The wrapper the container runs instead of the image's default command: install the pair, then hand over to the stock entrypoint. */
+export function pgSslWrapper(): string {
+  const d = SSL_CONTAINER_DIR;
+  return [
+    "set -e",
+    `mkdir -p ${d}`,
+    `cp ${SSL_CONTAINER_SRC}/server.crt ${SSL_CONTAINER_SRC}/server.key ${d}/`,
+    `chown postgres:postgres ${d}/server.crt ${d}/server.key`,
+    `chmod 600 ${d}/server.key`,
+    `exec docker-entrypoint.sh postgres -c ssl=on -c ssl_cert_file=${d}/server.crt -c ssl_key_file=${d}/server.key "$@"`,
+  ].join("; ");
+}
+
 export type DbEngine =
   | "POSTGRES"
   | "MYSQL"
@@ -154,6 +191,9 @@ export interface DbSpec {
   // staging dir of restored WAL segments read-only and pass the recovery targets as ephemeral `-c` flags, so the
   // cluster promotes at `targetTime` and carries NO recovery settings afterwards. Absent → byte-identical script.
   recovery?: { targetTime: Date } | null;
+  // TLS (Postgres only): serve TLS with the per-database self-signed pair (see sslPrepareScript). Absent/false → the run script is
+  // byte-identical to a non-TLS database.
+  ssl?: boolean;
 }
 
 export interface DbVolume {
@@ -345,11 +385,16 @@ export function buildDatabaseRunScript(db: DbSpec): string {
   const recovery = db.engine === "POSTGRES" && db.recovery ? db.recovery : null;
   const recFlag = recovery ? `-v ${walRestoreHostDir(db.id)}:${WAL_RESTORE_CONTAINER_DIR}:ro` : "";
   const baseCommand = engineCommand(db.engine, db.credentials);
-  const command = recovery
+  const serverArgs = recovery
     ? [baseCommand, pgRecoveryArgs(recovery.targetTime)].filter(Boolean).join(" ")
     : pitr
       ? [baseCommand, pgArchiveArgs()].filter(Boolean).join(" ")
       : baseCommand;
+  // TLS (Postgres only): run the wrapper (`sh -c <wrapper> sh <server args>`); the stock entrypoint then starts the server with
+  // the same args after ssl=on. Off → the command is exactly what it was.
+  const ssl = db.engine === "POSTGRES" && !!db.ssl;
+  const sslFlag = ssl ? `-v ${sslHostDir(db.id)}:${SSL_CONTAINER_SRC}:ro` : "";
+  const command = ssl ? ["sh -c", shq(pgSslWrapper()), "sh", serverArgs].filter(Boolean).join(" ") : serverArgs;
 
   // Optional resource limits + container health check (mirrors app deploys).
   const limitArgs: string[] = [];
@@ -377,6 +422,7 @@ export function buildDatabaseRunScript(db: DbSpec): string {
     extraVolFlags,
     walFlag,
     recFlag,
+    sslFlag,
     limitArgs.join(" "),
     userEnvFlags,
     credEnvFlags,
@@ -395,6 +441,7 @@ export function buildDatabaseRunScript(db: DbSpec): string {
     // into a root-owned bind, so after the container is up we chown the mount to its runtime uid. Both lines
     // are emitted only when pitr is on, so the off-path script is byte-identical to today.
     ...(pitr ? [`mkdir -p ${walHostDir(db.id)} && chmod 700 ${walHostDir(db.id)}`] : []),
+    ...(ssl ? [sslPrepareScript(db.id)] : []),
     `docker pull ${shq(db.image)}`,
     `docker rm -f ${name} 2>/dev/null || true`,
     runArgs,
@@ -417,7 +464,7 @@ export function buildDbStopScript(db: { id: string }, opts: { graceSec?: number;
 /** Destroy: remove the container AND its volumes (the data is intentionally dropped). */
 export function buildDbRemoveScript(
   db: { id: string; volumes?: DbVolume[] | null },
-  opts: { keepVolume?: boolean; walSpool?: boolean; walRestore?: boolean } = {},
+  opts: { keepVolume?: boolean; walSpool?: boolean; walRestore?: boolean; ssl?: boolean } = {},
 ): string {
   const lines = [`docker rm -f ${dbContainerName(db)} 2>/dev/null || true`];
   // keepVolume: leave the data volume on the host (recreate the DB over it later, or copy it off). Default
@@ -434,5 +481,7 @@ export function buildDbRemoveScript(
   // walRestore: a PITR replay target's staged-WAL dir (only ever exists for such a target). Opt-in, so every
   // other remove script stays byte-identical.
   if (opts.walRestore) lines.push(`rm -rf ${walRestoreHostDir(db.id)} 2>/dev/null || true`);
+  // ssl: this DB served TLS, so its self-signed pair on the host goes with it (opt-in, like the WAL dirs).
+  if (opts.ssl && !opts.keepVolume) lines.push(`rm -rf ${sslHostDir(db.id)} 2>/dev/null || true`);
   return lines.join("\n");
 }

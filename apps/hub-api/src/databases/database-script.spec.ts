@@ -1,5 +1,8 @@
 import {
   buildDatabaseRunScript,
+  pgSslWrapper,
+  sslHostDir,
+  sslPrepareScript,
   reservedDbEnvKeys,
   buildDbRemoveScript,
   buildDbStopScript,
@@ -402,3 +405,55 @@ describe("database-script", () => {
     });
   });
 });
+
+describe("database-script: TLS for PostgreSQL (R22)", () => {
+  const pg = (extra: Record<string, unknown> = {}) => ({ ...spec("POSTGRES"), ...extra });
+
+  it("ssl off or absent: the run script is byte-identical to before (no wrapper, no mount, no host cert step)", () => {
+    const plain = buildDatabaseRunScript(spec("POSTGRES"));
+    expect(buildDatabaseRunScript(pg({ ssl: false }))).toBe(plain);
+    expect(plain).not.toContain("tugra-ssl");
+    expect(plain).not.toContain("openssl");
+  });
+
+  it("ssl on: prepares the pair on the host once, mounts it read-only and starts the server through the wrapper", () => {
+    const s = buildDatabaseRunScript(pg({ ssl: true }));
+    expect(s).toContain("openssl req -new -x509");
+    expect(s).toContain(`-v ${sslHostDir("db1")}:/tugra-ssl-src:ro`);
+    expect(s).toContain("docker-entrypoint.sh postgres -c ssl=on");
+    expect(s).toContain("ssl_cert_file=/var/lib/tugra-ssl/server.crt");
+    expect(s).toContain("chown postgres:postgres");
+    // the prepare step runs BEFORE the container starts
+    expect(s.indexOf("openssl req")).toBeLessThan(s.indexOf("docker run"));
+    // the image stays the last quoted word before the wrapper; the wrapper is a single shell word
+    expect(s).toMatch(/'postgres:16' sh -c '.*' sh/);
+  });
+
+  it("the cert is generated only when missing, the key is 0600 and the dir 0700", () => {
+    const p = sslPrepareScript("db1");
+    expect(p).toContain(`[ -s ${sslHostDir("db1")}/server.crt ] && [ -s ${sslHostDir("db1")}/server.key ] || openssl`);
+    expect(p).toContain("chmod 600");
+    expect(p).toContain("chmod 700");
+    expect(p).toContain("command -v openssl");
+  });
+
+  it("server args (PITR archiving) ride after the wrapper so the entrypoint forwards them to postgres", () => {
+    const s = buildDatabaseRunScript(pg({ ssl: true, pitr: true }));
+    const wrapperEnd = s.indexOf("' sh ");
+    expect(wrapperEnd).toBeGreaterThan(0);
+    expect(s.slice(wrapperEnd)).toContain("-c archive_mode=on");
+    expect(pgSslWrapper()).toContain('"$@"');
+  });
+
+  it("only PostgreSQL gets TLS: any other engine ignores the flag", () => {
+    expect(buildDatabaseRunScript({ ...spec("MYSQL"), ssl: true })).toBe(buildDatabaseRunScript(spec("MYSQL")));
+    expect(buildDatabaseRunScript({ ...spec("REDIS"), ssl: true })).toBe(buildDatabaseRunScript(spec("REDIS")));
+  });
+
+  it("the remove script drops the host pair only when asked (opt-in), and never when the volume is kept", () => {
+    expect(buildDbRemoveScript({ id: "db1" })).not.toContain("dbssl");
+    expect(buildDbRemoveScript({ id: "db1" }, { ssl: true })).toContain(`rm -rf ${sslHostDir("db1")}`);
+    expect(buildDbRemoveScript({ id: "db1" }, { ssl: true, keepVolume: true })).not.toContain("dbssl");
+  });
+});
+

@@ -188,6 +188,18 @@ describe("DatabasesService", () => {
       );
     });
 
+    it("ssl: persists the TLS flag for PostgreSQL only, default off", async () => {
+      const { svc, create } = setup();
+      await svc.createForImport("u1", { ...input, ssl: true });
+      expect(create.mock.calls[0][0].data.ssl).toBe(true);
+      const { svc: s2, create: c2 } = setup();
+      await s2.createForImport("u1", input);
+      expect(c2.mock.calls[0][0].data.ssl).toBeUndefined();
+      const { svc: s3, create: c3 } = setup();
+      await s3.createForImport("u1", { ...input, engine: "REDIS" as never, ssl: true });
+      expect(c3.mock.calls[0][0].data.ssl).toBeUndefined();
+    });
+
     it("keeps a custom image when supplied, and defaults to the resolved engine image otherwise", async () => {
       const { svc, create } = setup();
       await svc.createForImport("u1", { ...input, image: "pgvector/pgvector:pg16" });
@@ -822,5 +834,36 @@ describe("DatabasesService.withSystemThrowaway (ungated system seam)", () => {
     const { svc, create } = setup();
     await expect(svc.withSystemThrowaway({ ...input, database: "bad name" }, "actor1", jest.fn())).rejects.toBeInstanceOf(BadRequestException);
     expect(create).not.toHaveBeenCalled();
+  });
+});
+
+describe("DatabasesService.setSsl (R22)", () => {
+  const run = (row: Record<string, unknown>) => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = { database: { findUnique: jest.fn().mockResolvedValue({ id: "d1", teamId: "t1", engine: "POSTGRES", status: "NEW", ssl: false, ...row }), update } } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+    return { svc: make(prisma, access), update, access };
+  };
+
+  it("flips the flag on a database that has not started: no restart needed; audited; needs the databases permission", async () => {
+    const { svc, update, access } = run({});
+    await expect(svc.setSsl("u1", "d1", true)).resolves.toEqual({ changed: true, restartRequired: false });
+    expect(update).toHaveBeenCalledWith({ where: { id: "d1" }, data: { ssl: true } });
+    expect(access.requirePermission).toHaveBeenCalledWith("u1", "t1", "databases");
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "database.ssl.update", target: "d1" }));
+  });
+
+  it("a running (or provisioning) database is told to restart; nothing restarts it", async () => {
+    for (const status of ["RUNNING", "PROVISIONING"]) {
+      const { svc } = run({ status });
+      await expect(svc.setSsl("u1", "d1", true)).resolves.toEqual({ changed: true, restartRequired: true });
+    }
+  });
+
+  it("is idempotent and refuses a non-PostgreSQL engine", async () => {
+    const same = run({ ssl: true });
+    await expect(same.svc.setSsl("u1", "d1", true)).resolves.toEqual({ changed: false, restartRequired: false });
+    expect(same.update).not.toHaveBeenCalled();
+    await expect(run({ engine: "MYSQL" }).svc.setSsl("u1", "d1", true)).rejects.toBeInstanceOf(BadRequestException);
   });
 });
