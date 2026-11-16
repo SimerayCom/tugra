@@ -1,20 +1,24 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { Btn } from "../ui";
 import { Field, TextInput } from "../form";
-import { useRunPlumbing } from "./use-run-actions";
+import { sessionQueryKey, useFreshSession, useRunPlumbing } from "./use-run-actions";
 
 /** The import session lasts one hour; a run lasts hours or days. When a step needs the source again, the operator
  *  re-enters the source API token here. It goes straight into the hub's encrypted session and is never shown again. */
 export function SourceSessionForm({ runId }: { runId: string }) {
   const { onError, toast, t } = useRunPlumbing(runId);
   const [token, setToken] = useState("");
+  const qc = useQueryClient();
+  const fresh = useFreshSession(runId);
   const refresh = useMutation({
     mutationFn: () => api.migrationRunSourceSession(runId, { token: token.trim() }),
-    onSuccess: () => {
+    onSuccess: (r) => {
+      // Keep the session id (not the token) so promoting a dry run can use it.
+      qc.setQueryData(sessionQueryKey(runId), { sessionId: r.sessionId, expiresAt: r.expiresAt });
       setToken("");
       toast(t("migrationRun.session.refreshed"), "success");
     },
@@ -32,6 +36,7 @@ export function SourceSessionForm({ runId }: { runId: string }) {
       <Field label={t("migrationRun.session.token")} hint={t("migrationRun.session.hint")}>
         <TextInput type="password" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off" spellCheck={false} style={{ minHeight: 44 }} />
       </Field>
+      {fresh && <div style={{ fontSize: 12, color: "var(--c-g)" }}>{t("migrationRun.session.active", { when: new Date(fresh.expiresAt).toLocaleTimeString() })}</div>}
       <div>
         <Btn type="submit" disabled={!token.trim()} loading={refresh.isPending}>{t("migrationRun.session.button")}</Btn>
       </div>

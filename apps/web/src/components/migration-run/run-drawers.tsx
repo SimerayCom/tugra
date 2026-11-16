@@ -27,8 +27,12 @@ function Drawer({ title, note, children }: { title: string; note: string; childr
       </button>
       {open && (
         <div id={id} style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 12 }}>
-          <p style={{ margin: 0, fontSize: 12, color: "var(--c-am)", lineHeight: 1.5 }}>{note}</p>
-          {children}
+          <p style={{ margin: 0, fontSize: 12, color: "var(--c-tx3)", lineHeight: 1.5 }}>{note}</p>
+          {/* Read-only: a hand flip or transfer here would cross the point of no return without the run knowing it.
+              A disabled fieldset turns every control inside into an inert one, whatever component renders it. */}
+          <fieldset disabled data-testid="run-drawer-readonly" style={{ border: 0, margin: 0, padding: 0, minInlineSize: 0 }}>
+            {children}
+          </fieldset>
         </div>
       )}
     </Card>

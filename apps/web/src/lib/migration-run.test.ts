@@ -92,6 +92,10 @@ describe("polling", () => {
     expect(runRefetchInterval({ status: "FAILED" })).toBe(5000);
     expect(runRefetchInterval({ status: "COMPLETED" })).toBe(false);
     expect(runRefetchInterval({ status: "DRY_RUN_DONE" })).toBe(false);
+    // a settled run whose async step (decommission) is still moving keeps polling
+    expect(runRefetchInterval({ status: "COMPLETED", steps: [{ status: "PASSED" }, { status: "RUNNING" }] })).toBe(2000);
+    expect(runRefetchInterval({ status: "COMPLETED", steps: [{ status: "WAITING_TIMER" }] })).toBe(5000);
+    expect(runRefetchInterval({ status: "COMPLETED", steps: [{ status: "PASSED" }, { status: "WAITING_APPROVAL" }] })).toBe(false);
   });
   it("polls the list fast only while a run is live", () => {
     expect(runListRefetchInterval([{ status: "RUNNING" }])).toBe(4000);

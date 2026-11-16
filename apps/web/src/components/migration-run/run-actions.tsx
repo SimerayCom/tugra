@@ -11,7 +11,7 @@ import { Checkbox, Textarea } from "../form";
 import { confirmNames, joinConfirmNames } from "../../lib/migration-run";
 import type { MigrationRunView } from "../../lib/types";
 import { TypedConfirmDialog } from "./typed-confirm";
-import { useRunPlumbing } from "./use-run-actions";
+import { useFreshSession, useRunPlumbing } from "./use-run-actions";
 
 type Dialog = "abort" | "cleanup" | "reverse" | "decommission" | null;
 
@@ -21,8 +21,11 @@ export function RunHeaderActions({ run }: { run: MigrationRunView }) {
   const router = useRouter();
   const confirm = useConfirm();
   const promoting = run.status === "DRY_RUN_DONE";
+  const fresh = useFreshSession(run.id);
   const start = useMutation({
-    mutationFn: () => api.startMigrationRun(run.id),
+    // A dry run sits for review, so its import session has usually expired: promote with the one the operator
+    // just re-entered through the source-session form, when there is one.
+    mutationFn: () => (promoting && fresh ? api.startMigrationRun(run.id, { sessionId: fresh.sessionId }) : api.startMigrationRun(run.id)),
     onSuccess: (next) => {
       adopt(next);
       // Promoting a dry-run creates a NEW real run: go to it.

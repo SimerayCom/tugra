@@ -34,8 +34,7 @@ export function RunBanners({ run }: { run: MigrationRunView }) {
         </div>
       ) : (
         !run.dryRun &&
-        run.status !== "ABORTED" &&
-        run.status !== "ROLLED_BACK" && (
+        run.allowed.abort && (
           <div role="status" style={{ display: "flex", gap: 10, alignItems: "flex-start", border: "1px solid var(--c-bd)", borderRadius: "var(--r1)", padding: "10px 12px" }}>
             <ShieldCheck size={18} color="var(--c-g)" aria-hidden style={{ flexShrink: 0, marginTop: 1 }} />
             <div style={{ fontSize: 13, lineHeight: 1.5, color: "var(--c-tx2)" }}>{t("migrationRun.banner.ponrBefore")}</div>

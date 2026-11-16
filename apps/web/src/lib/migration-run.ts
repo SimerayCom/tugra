@@ -7,6 +7,7 @@ import type {
   MigrationRunEvidenceKind,
   MigrationRunGate,
   MigrationRunGateCheck,
+  MigrationRunStepView,
   MigrationRunMode,
   MigrationRunNextAction,
   MigrationRunOptions,
@@ -293,9 +294,15 @@ export const checkStatusColor = (s: MigrationRunCheckStatus): string => (s === "
 export const evidenceTone = (k: MigrationRunEvidenceKind): "ok" | "warn" | "muted" => (k === "hub-verified" ? "ok" : k === "migrator-reported" ? "warn" : "muted");
 
 /** Poll fast while the hub is moving by itself, slowly while it waits for a human, never once settled. */
-export function runRefetchInterval(run: Pick<MigrationRunView, "status"> | undefined): number | false {
+export function runRefetchInterval(run: (Pick<MigrationRunView, "status"> & { steps?: Pick<MigrationRunStepView, "status">[] }) | undefined): number | false {
   if (!run) return 3000;
-  if (isTerminalRun(run.status)) return false;
+  if (isTerminalRun(run.status)) {
+    // A settled run can still have an asynchronous step moving (a takeover's DECOMMISSION runs after COMPLETED), or
+    // one counting down. A step waiting for a person changes only through an action, whose answer is adopted at once.
+    const steps = run.steps ?? [];
+    if (steps.some((s) => s.status === "RUNNING")) return 2000;
+    return steps.some((s) => s.status === "WAITING_TIMER") ? 5000 : false;
+  }
   return BUSY_RUN_STATUSES.has(run.status) ? 2000 : 5000;
 }
 export function runListRefetchInterval(rows: Pick<MigrationRunSummary, "status">[] | undefined): number {

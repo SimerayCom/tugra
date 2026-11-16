@@ -78,7 +78,7 @@ export function NextActionCard({ run }: { run: MigrationRunView }) {
           </>
         )}
 
-        {na.kind === "session" && <SourceSessionForm runId={run.id} />}
+        {(na.kind === "session" || run.allowed.sourceSession) && <SourceSessionForm runId={run.id} />}
 
         {na.kind === "paused" && run.allowed.resume && (
           <div>

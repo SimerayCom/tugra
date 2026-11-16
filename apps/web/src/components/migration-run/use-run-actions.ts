@@ -1,13 +1,28 @@
 "use client";
 
 import { useCallback } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useT } from "../../i18n/provider";
 import { useToast } from "../toast";
 import { errorText } from "../../lib/migration-run";
 import type { MigrationRunView } from "../../lib/types";
 
 export const runQueryKey = (id: string) => ["migration-run", id] as const;
+
+/** A source session the operator just re-created for a run: kept in memory only (never the token), so a dry-run
+ *  promotion can hand the fresh session to the new run. */
+export interface FreshSession {
+  sessionId: string;
+  expiresAt: string;
+}
+export const sessionQueryKey = (id: string) => ["migration-run-source-session", id] as const;
+
+/** The fresh source session for a run, or null when none was entered or it has expired. */
+export function useFreshSession(runId: string): FreshSession | null {
+  const { data } = useQuery<FreshSession | null>({ queryKey: sessionQueryKey(runId), queryFn: () => null, enabled: false, staleTime: Infinity, gcTime: Infinity });
+  if (!data) return null;
+  return Date.parse(data.expiresAt) > Date.now() ? data : null;
+}
 
 /** Shared plumbing of every run action: put the fresh view the hub returned into the cache (so the page updates at
  *  once instead of waiting for the next poll), refresh the list, and localize the hub's error. */

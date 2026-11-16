@@ -263,7 +263,8 @@
     "token": "Source API token",
     "hint": "Sent to the hub only; the page does not keep it.",
     "button": "Refresh the session",
-    "refreshed": "The source session was refreshed."
+    "refreshed": "The source session was refreshed.",
+    "active": "A fresh source session is ready (valid until {when})."
   },
   "inputs": {
     "title": "Owner inputs",
@@ -363,7 +364,7 @@
   "drawer": {
     "volumes": "Volume transfers",
     "cutover": "SSL and DNS cutover details",
-    "bypass": "These are the operation's own panels. Acting here by hand bypasses the guided run's gates and approvals."
+    "bypass": "Read-only view of the operation's own panel. Changes are made through the run's steps and approvals, so its gates cannot be bypassed from here."
   },
   "launch": {
     "title": "Run guided migration",

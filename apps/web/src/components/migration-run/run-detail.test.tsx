@@ -108,6 +108,52 @@ describe("RunDetail", () => {
     expect(document.body.textContent).not.toContain("tok-secret");
   });
 
+  it("promoting a dry run whose session expired: the token form is offered and the fresh session id is sent to start", async () => {
+    vi.spyOn(api, "getMigrationRun").mockResolvedValue(
+      mkRun({ dryRun: true, status: "DRY_RUN_DONE", currentStep: null, allowed: { ...mkRun().allowed, start: true, pause: false, abort: false, sourceSession: true }, nextAction: { kind: "none", stepKey: null, code: "run.dry-run-done", since: "2026-11-16T10:00:00.000Z" } }),
+    );
+    vi.spyOn(api, "migrationRunSourceSession").mockResolvedValue({ sessionId: "s-fresh", expiresAt: new Date(Date.now() + 3600_000).toISOString() });
+    const start = vi.spyOn(api, "startMigrationRun").mockResolvedValue(mkRun({ id: "newrun1" }));
+    wrap();
+    fireEvent.change(await screen.findByLabelText("Source API token"), { target: { value: "tok" } });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh the session" }));
+    await screen.findByText(/A fresh source session is ready/);
+    fireEvent.click(screen.getByRole("button", { name: "Promote to real run" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Promote to real run" }));
+    await waitFor(() => expect(start).toHaveBeenCalledWith("run12345abcdef", { sessionId: "s-fresh" }));
+  });
+
+  it("attestations are per subject: attesting one subject leaves the other open and sends its subject", async () => {
+    const step = mkStep("DATA_FINAL", "WAITING_OPERATOR", {
+      kind: "operator",
+      allowed: { approve: false, retry: false, skip: false, evidence: true, attach: false, command: false },
+      gate: { passed: false, checks: [
+        { id: "volume-copied", status: "unknown", code: "data-final.volume-unconfirmed", subject: "vol-a" },
+        { id: "volume-copied", status: "unknown", code: "data-final.volume-unconfirmed", subject: "vol-b" },
+      ] },
+      evidence: { attestations: [{ checkId: "volume-copied", subject: "vol-a", byUserId: "u1", at: "2026-11-16T10:00:00.000Z" }], attachments: [] },
+    });
+    vi.spyOn(api, "getMigrationRun").mockResolvedValue(
+      mkRun({ currentStep: "DATA_FINAL", nextAction: { kind: "operator", stepKey: "DATA_FINAL", code: "data-final.run-migrator", since: "2026-11-16T10:00:00.000Z", attest: ["volume-copied"] } }, stepsWith({ DATA_FINAL: step })),
+    );
+    const attest = vi.spyOn(api, "attestMigrationRunStep").mockResolvedValue(mkRun());
+    wrap();
+    await screen.findByText("Recorded as attested by you.");
+    expect(screen.getAllByText("Recorded as attested by you.")).toHaveLength(1);
+    const buttons = screen.getAllByRole("button", { name: "I did this" });
+    expect(buttons).toHaveLength(1);
+    fireEvent.click(buttons[0]);
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "I did this" }));
+    await waitFor(() => expect(attest).toHaveBeenCalledWith("run12345abcdef", "DATA_FINAL", { checkId: "volume-copied", subject: "vol-b" }));
+  });
+
+  it("the abort-is-safe banner is shown only while abort is actually allowed", async () => {
+    vi.spyOn(api, "getMigrationRun").mockResolvedValue(mkRun({ status: "COMPLETED", currentStep: null, allowed: { ...mkRun().allowed, abort: false, pause: false } }));
+    wrap();
+    await screen.findByText("coolify.example.org → tugra-1");
+    expect(screen.queryByText(/Before the point of no return you can abort/)).toBeNull();
+  });
+
   it("gate checks carry an evidence badge and a link to the owner input that would resolve them", async () => {
     const step = mkStep("TLS_PREISSUE", "WAITING_OPERATOR", {
       gate: { passed: false, checks: [
@@ -239,7 +285,9 @@ describe("RunDetail", () => {
     expect(screen.queryByText("volumes-panel:op9")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Volume transfers" }));
     expect(screen.getByText("volumes-panel:op9")).toBeTruthy();
-    expect(screen.getAllByText(/bypasses the guided run's gates/).length).toBe(1);
+    expect(screen.getAllByText(/Read-only view of the operation's own panel/).length).toBe(1);
+    // the embedded panels are inert: nothing inside them can act on the operation
+    expect((screen.getByTestId("run-drawer-readonly") as HTMLFieldSetElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "SSL and DNS cutover details" }));
     expect(screen.getByText("cutover-panel:op9")).toBeTruthy();
   });
