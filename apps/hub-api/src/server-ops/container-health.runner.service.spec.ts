@@ -109,6 +109,14 @@ describe("ContainerHealthRunnerService.runTick", () => {
     expect(deleteMany).toHaveBeenCalled(); // the tick ran to completion past the failed row
   });
 
+  it("a server with no containers clears its rows without a NUL placeholder (PostgreSQL rejects 0x00 in a query)", async () => {
+    const { svc, deleteMany } = make({ rows: [prevRow({ restartCount: 0 })], output: "" });
+    await svc.runTick();
+    expect(deleteMany).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(deleteMany.mock.calls[0][0])).not.toContain("\\u0000");
+    expect(deleteMany.mock.calls[0][0].where).not.toHaveProperty("containerName");
+  });
+
   it("strips NUL bytes from the captured log tail (Postgres TEXT rejects 0x00)", async () => {
     const { svc, create } = make({ rows: [prevRow({ restartCount: 2, restartCountAtNotify: 2 })], output: inspectOut(3) });
     (svc as unknown as { agentWs: AgentWsServer }).agentWs.sendCommand = jest

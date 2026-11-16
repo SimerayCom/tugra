@@ -232,7 +232,8 @@ export class ContainerHealthRunnerService {
 
     // Drop rows for containers that no longer exist (removed/renamed) so the table stays bounded.
     const liveNames = parsed.containers.map((c) => c.name);
-    await this.prisma.containerState.deleteMany({ where: { serverId: server.id, containerName: { notIn: liveNames.length ? liveNames : ["\u0000"] } } });
+    // No live container: drop every row of the server (a NUL placeholder in notIn is rejected by PostgreSQL as invalid UTF-8).
+    await this.prisma.containerState.deleteMany({ where: liveNames.length ? { serverId: server.id, containerName: { notIn: liveNames } } : { serverId: server.id } });
   }
 
   /** Grab the last log lines of a just-crashed container over the "logs" capability (same gate as the
