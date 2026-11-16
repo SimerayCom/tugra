@@ -30,6 +30,8 @@ ARG HUB_INTERNAL_URL=http://hub-api:3000
 ENV HUB_INTERNAL_URL=$HUB_INTERNAL_URL
 # No phone-home: Next.js collects anonymous telemetry during `next build` unless this is set.
 ENV NEXT_TELEMETRY_DISABLED=1
+# Run Next in production mode at runtime (no error message/stack in rendered HTML). server.mjs also defaults this.
+ENV NODE_ENV=production
 RUN pnpm --filter @tugra/shared build \
  && pnpm --filter @tugra/web build
 

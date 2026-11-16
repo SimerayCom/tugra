@@ -1,6 +1,7 @@
 // Production entry point (`pnpm start`): the stock `next start` server plus a forwarded-header guard in front of it.
 // See server/forwarded-guard.mjs for why. Everything else (routing, rewrites, streaming handlers, WebSocket upgrades
 // for proxied rewrites) is Next's own request/upgrade handler, unchanged.
+import "./server/production-env.mjs"; // must precede `next` (static imports evaluate in order)
 import http from "node:http";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";

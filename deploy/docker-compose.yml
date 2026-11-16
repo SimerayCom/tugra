@@ -130,6 +130,8 @@ services:
     restart: unless-stopped
     # Only the internal proxy target — NO secrets in the web container (it never touches the DB or keys).
     environment:
+      # Production mode for Next at runtime (the custom server entry does not go through `next start`, which forced it).
+      NODE_ENV: "production"
       HUB_INTERNAL_URL: "http://hub-api:3000"
       # Idle timeout of the web -> hub hop for file uploads/downloads (above the hub's 10-minute apply budget).
       HUB_PROXY_TIMEOUT_MS: "${HUB_PROXY_TIMEOUT_MS:-660000}"
