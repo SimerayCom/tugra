@@ -254,7 +254,10 @@ export type WorkerPolicy = (typeof WORKER_POLICIES)[number];
  * N3 / R2 / C6: containers the source API does not list (3 DB containers on the real fleet), found by the host-loop
  * inventory cross-check.
  *  - `block` (default): the preflight gate fails until the owner decides.
- *  - `carry`: the owner wants them migrated (a lane builds a ledger row for them).
+ *  - `carry`: the owner wants them migrated. DATA_SEED binds every container the inventory proves carryable (a running PostgreSQL / MySQL /
+ *    MariaDB / Redis / KeyDB / Dragonfly the migrator can open with a password it discovers, and a known version) to a NEW database plan
+ *    item, which the normal database lane then moves and the env remap points the apps at. One that cannot be carried in full is
+ *    refused with a reason code (`inventory.carry-refused-*`) and parks the step until an operator excludes or maps it.
  *  - `skip`: the owner acknowledges they are not migrated (listed as not-carried in the report).
  */
 export const UNLISTED_DB_POLICIES = ["block", "carry", "skip"] as const;

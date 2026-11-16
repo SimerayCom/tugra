@@ -165,6 +165,7 @@ function assertValidDbImage(image: string): string {
 // (always safe); the importer may pass them, so re-assert the invariant the engine scripts rely on (e.g. the
 // ClickHouse backup/restore splices the database name into a query). A valid DB version tag is similar.
 const DB_IDENT_RE = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,62}$/;
+const DB_MARKER_RE = /^[a-z0-9][a-z0-9-]{6,38}[a-z0-9]$/;
 const DB_VERSION_RE = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
 
 @Injectable()
@@ -194,7 +195,30 @@ export class DatabasesService {
     return this.createCore(userId, dto, opts);
   }
 
-  private async createCore(userId: string, dto: CreateDatabaseInput, opts?: { database?: string }): Promise<DatabaseView> {
+  /**
+   * Internal (the importer, R2 carry): `create()` with an op-scoped MARKER kept as a tag on the new row, written in the same insert, so a retry
+   * after a crash between the insert and the caller's own bookkeeping finds the row ({@link findMarked}) instead of creating a second one.
+   * The marker is a lower-case `[a-z0-9-]` word of 8 to 40 characters. NOT on the public DTO.
+   */
+  async createMarked(userId: string, dto: CreateDatabaseInput, marker: string): Promise<DatabaseView> {
+    if (!DB_MARKER_RE.test(marker)) throw new BadRequestException("invalid database marker");
+    return this.createCore(userId, dto, { tags: [marker] });
+  }
+
+  /** The database on `serverId` that {@link createMarked} created with this marker (null when none). */
+  async findMarked(serverId: string, marker: string): Promise<{ id: string; name: string } | null> {
+    if (!DB_MARKER_RE.test(marker)) return null;
+    return this.prisma.database.findFirst({ where: { serverId, tags: { has: marker } }, select: { id: true, name: true }, orderBy: { createdAt: "asc" } });
+  }
+
+  /** Take the marker off a database once its creator has recorded it (the tag is bookkeeping, not something the operator should see). */
+  async dropMarker(id: string, marker: string): Promise<void> {
+    const row = await this.prisma.database.findUnique({ where: { id }, select: { tags: true } });
+    if (!row || !row.tags.includes(marker)) return;
+    await this.prisma.database.update({ where: { id }, data: { tags: row.tags.filter((t) => t !== marker) } });
+  }
+
+  private async createCore(userId: string, dto: CreateDatabaseInput, opts?: { database?: string; tags?: string[] }): Promise<DatabaseView> {
     const server = await this.prisma.server.findUnique({ where: { id: dto.serverId } });
     if (!server) throw new NotFoundException("server not found");
     await this.access.requirePermission(userId, server.teamId, "databases");
@@ -218,7 +242,7 @@ export class DatabasesService {
       hostPort: dto.hostPort ?? null,
       environmentId,
       creds,
-    });
+    }, opts?.tags ? { tags: normalizeTags(opts.tags) } : {});
     await this.audit.log({ actor: userId, action: "database.create", target: view.id });
     return view;
   }
@@ -340,7 +364,7 @@ export class DatabasesService {
       environmentId: string;
       creds: DbCredentials;
     },
-    extra: Pick<Prisma.DatabaseUncheckedCreateInput, "ssl"> = {},
+    extra: Pick<Prisma.DatabaseUncheckedCreateInput, "ssl" | "tags"> = {},
   ): Promise<DatabaseView> {
     const db = await this.persistDatabaseRow(server, fields, extra);
     // Grant-on-create: the creator keeps access to what they made even if later restricted.

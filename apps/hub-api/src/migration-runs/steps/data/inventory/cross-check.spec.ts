@@ -1,4 +1,4 @@
-import { INVENTORY_ATTEST, INVENTORY_CODES, attestableFindings, crossCheckChecks, findingsOf, recommendPartMib, type CrossCheckInput } from "./cross-check";
+import { CARRY_REFUSALS, CARRY_REFUSED_CODES, INVENTORY_ATTEST, INVENTORY_CODES, attestableFindings, carriedItemRef, carryAssessment, carryDecisions, carryEngineOfImage, crossCheckChecks, findingsOf, recommendPartMib, type CrossCheckInput } from "./cross-check";
 import type { HostInventory, ReachReport } from "./host-protocol";
 
 const id = (c: string) => c.repeat(64);
@@ -61,10 +61,13 @@ describe("R2/C6: a database container the API does not list", () => {
     expect(c).toMatchObject({ status: "fail", subject: `host-1/${GHOST}`, ownerInput: "unlistedDbPolicy", evidence: "host-loop-reported", params: { host: "host-1", container: GHOST, engine: "MARIADB" } });
   });
 
-  it("unlistedDbPolicy skip / carry turn it into a visible warning (the owner decided), never silence", () => {
-    const run = (unlistedDbPolicy: "skip" | "carry") => codes(crossCheckChecks(base({ inventories: new Map([["host-1", ghost]]), unlistedDbPolicy })));
-    expect(run("skip")).toContain(`warn:${INVENTORY_CODES.unlistedDbSkipped}`);
-    expect(run("carry")).toContain(`warn:${INVENTORY_CODES.unlistedDbCarry}`);
+  it("unlistedDbPolicy skip turns it into a visible warning (the owner decided), never silence", () => {
+    expect(codes(crossCheckChecks(base({ inventories: new Map([["host-1", ghost]]), unlistedDbPolicy: "skip" })))).toContain(`warn:${INVENTORY_CODES.unlistedDbSkipped}`);
+  });
+
+  it("unlistedDbPolicy carry on a container the inventory cannot vouch for FAILS with the reason: it is never a silent warning", () => {
+    const c = crossCheckChecks(base({ inventories: new Map([["host-1", ghost]]), unlistedDbPolicy: "carry" })).find((x) => x.subject === `host-1/${GHOST}`)!;
+    expect(c).toMatchObject({ status: "fail", code: CARRY_REFUSED_CODES["meta-missing"], params: { reason: "meta-missing", engine: "MARIADB" }, attestable: [INVENTORY_ATTEST.excluded, INVENTORY_ATTEST.mapped] });
   });
 
   it("an operator attestation on that exact finding excludes it; a mapping needs a note that names a real plan item", () => {
@@ -203,5 +206,131 @@ describe("every check id fits the 80-char limit and is unique per finding", () =
     const ids = crossCheckChecks(base({ inventories: new Map([["host-1", i]]) })).map((c) => c.id);
     for (const x of ids) expect(x.length).toBeLessThanOrEqual(80);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe("R2: carry of an unlisted database", () => {
+  const ghostOf = (image: string, over: Record<string, unknown> = {}, db: Record<string, unknown> | null = { user: "appuser", database: "appdb", cred: "env", version: null }) =>
+    // a fixture that names a database holds exactly that one unless it says otherwise (`databases`: the inventory's own listing)
+    inv({ containers: [{ id: id("f"), name: GHOST, image, state: "running", ...(db ? { db: ("databases" in db ? db : { ...db, databases: db.database ? [db.database] : [] }) as never } : {}), ...over }] });
+  const inputOf = (i: HostInventory, over: Partial<CrossCheckInput> = {}) => base({ inventories: new Map([["host-1", i]]), planRefs: [], unlistedDbPolicy: "carry", ...over });
+
+  it("carryEngineOfImage: only the engines the migrator dumps; keydb / dragonfly by their image; valkey, redis-stack, mongo and clickhouse are none", () => {
+    expect(["postgres:17-alpine", "pgvector/pgvector:pg16", "mariadb:11", "mysql:8", "redis:7", "eqalpha/keydb", "docker.dragonflydb.io/dragonflydb/dragonfly"].map(carryEngineOfImage)).toEqual(["POSTGRES", "POSTGRES", "MARIADB", "MYSQL", "REDIS", "KEYDB", "DRAGONFLY"]);
+    expect(["valkey/valkey:8", "redis/redis-stack:latest", "mongo:7", "clickhouse/clickhouse-server", "nginx"].map(carryEngineOfImage)).toEqual([null, null, null, null, null]);
+  });
+
+  it("a running PostgreSQL container whose password the migrator can find is carried: engine, version (image tag), user, database and a neutral name", () => {
+    const a = carryAssessment("host-1", ghostOf("postgres:17-alpine").containers[0]);
+    expect(a).toEqual({ ok: true, spec: { host: "host-1", container: GHOST, engine: "POSTGRES", version: "17", image: "postgres:17-alpine", user: "appuser", database: "appdb", name: `unlisted-postgres-${GHOST.slice(0, 8)}` } });
+    const checks = crossCheckChecks(inputOf(ghostOf("postgres:17-alpine")));
+    expect(checks.find((x) => x.subject === `host-1/${GHOST}`)).toMatchObject({ status: "warn", code: INVENTORY_CODES.unlistedDbCarry, params: { name: `unlisted-postgres-${GHOST.slice(0, 8)}`, version: "17" } });
+    expect(carryDecisions(inputOf(ghostOf("postgres:17-alpine")))).toEqual([expect.objectContaining({ host: "host-1", container: GHOST, engine: "POSTGRES", version: "17" })]);
+    expect(carriedItemRef("host-1", GHOST)).toBe(`database:host-1:${GHOST}`);
+  });
+
+  it("a floating tag takes the version the container reported for itself, and none at all refuses", () => {
+    expect(carryAssessment("h", ghostOf("postgres:latest", {}, { user: "u", database: "d", cred: "env", version: "16" }).containers[0])).toMatchObject({ ok: true, spec: { version: "16" } });
+    expect(carryAssessment("h", ghostOf("postgres", {}).containers[0])).toEqual({ ok: false, reason: "version-unknown" });
+  });
+
+  it("the engine's own version variable wins over the tag, and a version Tugra's image does not have is never guessed", () => {
+    const env = (version: string | null) => ({ user: "u", database: "d", cred: "env", version });
+    const v = (image: string, version: string | null = null) => carryAssessment("h", ghostOf(image, {}, env(version) as never).containers[0]);
+    expect(v("postgres:16.2-bookworm", "16")).toMatchObject({ ok: true, spec: { version: "16" } });
+    expect(v("postgres:15-alpine", "16")).toMatchObject({ ok: true, spec: { version: "16" } });
+    expect(v("mysql:8.0.36")).toMatchObject({ ok: true, spec: { version: "8.0.36" } });
+    expect(v("redis:7.2.4-alpine", "7.2.4")).toMatchObject({ ok: true, spec: { version: "7.2.4" } });
+    // KeyDB and Dragonfly tags are not numbers: the tag itself is the version, so the image Tugra builds is the one that runs
+    expect(v("eqalpha/keydb:x86_64_v6.3.4")).toMatchObject({ ok: true, spec: { engine: "KEYDB", version: "x86_64_v6.3.4" } });
+    expect(v("docker.dragonflydb.io/dragonflydb/dragonfly:v1.14.0")).toMatchObject({ ok: true, spec: { engine: "DRAGONFLY", version: "v1.14.0" } });
+    expect(v("eqalpha/keydb:latest")).toEqual({ ok: false, reason: "version-unknown" });
+    expect(v("dragonflydb/dragonfly")).toEqual({ ok: false, reason: "version-unknown" });
+    // a tag that is no version, even with a digit in it, and no version variable
+    expect(v("postgres:pg16-bookworm")).toEqual({ ok: false, reason: "version-unknown" });
+    expect(v("mariadb:lts")).toEqual({ ok: false, reason: "version-unknown" });
+  });
+
+  it.each([
+    "pgvector/pgvector:0.7.0-pg16",
+    "timescale/timescaledb:2.14.2-pg16",
+    "postgis/postgis:16-3.4",
+    "bitnami/postgresql:16",
+    "bitnami/redis:7.2",
+    "percona/percona-server:8.0",
+    "registry.example.test/postgres:16",
+  ])("%s is not Tugra's standard image of its engine: engine-unsupported, so its extensions are never lost silently", (image) => {
+    const i = ghostOf(image, {}, { user: "u", database: "d", cred: "env", version: "16" });
+    expect(carryAssessment("h", i.containers[0])).toEqual({ ok: false, reason: "engine-unsupported" });
+    expect(carryDecisions(inputOf(i))).toEqual([]);
+  });
+
+  it("the engine's own image under a Docker Hub spelling is carried", () => {
+    expect(carryAssessment("h", ghostOf("docker.io/library/postgres:16").containers[0])).toMatchObject({ ok: true, spec: { engine: "POSTGRES", version: "16" } });
+    expect(carryAssessment("h", ghostOf("library/mysql:8.4").containers[0])).toMatchObject({ ok: true, spec: { engine: "MYSQL", version: "8.4" } });
+  });
+
+  it.each([
+    ["engine-unsupported", "mongo:7", {}, { user: null, database: null, cred: "env", version: null }],
+    ["engine-unsupported", "valkey/valkey:8", {}, { user: null, database: null, cred: "env", version: null }],
+    ["name-unsupported", "postgres:16", { name: "my.db" }, { user: "u", database: "d", cred: "env", version: null }],
+    ["not-running", "postgres:16", { state: "exited" }, { user: "u", database: "d", cred: "env", version: null }],
+    ["meta-missing", "postgres:16", {}, null],
+    ["secret-file-unsupported", "postgres:16", {}, { user: "u", database: "d", cred: "file", version: null }],
+    ["acl-user-unsupported", "redis:7", {}, { user: null, database: null, cred: "acl", version: null }],
+    ["credentials-not-discoverable", "redis:7", {}, { user: null, database: null, cred: "none", version: null }],
+    ["db-not-discoverable", "mysql:8", {}, { user: "root", database: null, cred: "env", version: null }],
+    ["pg-layout-unsupported", "postgres:18-alpine", {}, { user: "u", database: "d", cred: "env", version: null }],
+    ["pg-layout-unsupported", "postgres:latest", {}, { user: "u", database: "d", cred: "env", version: "18" }],
+    ["databases-unknown", "postgres:16", {}, { user: "u", database: "d", cred: "env", version: null, databases: null }],
+    ["databases-unknown", "mariadb:11", {}, { user: "root", database: "d", cred: "env", version: null, databases: null }],
+    ["multiple-databases", "postgres:16", {}, { user: "u", database: "d", cred: "env", version: null, databases: ["d", "other"] }],
+    ["multiple-databases", "mysql:8", {}, { user: "root", database: "d", cred: "env", version: null, databases: ["other"] }],
+    ["multiple-databases", "postgres:16", {}, { user: "u", database: "d", cred: "env", version: null, databases: ["!"] }],
+  ] as const)("refuses with %s (%s)", (reason, image, over, db) => {
+    const i = ghostOf(image, over as Record<string, unknown>, db as never);
+    expect(carryAssessment("h", i.containers[0])).toEqual({ ok: false, reason });
+    const c = crossCheckChecks(inputOf(i)).find((x) => x.subject === `host-1/${i.containers[0].name}`)!;
+    expect(c).toMatchObject({ status: "fail", code: CARRY_REFUSED_CODES[reason], params: { reason } });
+    expect(CARRY_REFUSED_CODES[reason]).toBe(`inventory.carry-refused-${reason}`);
+    expect(carryDecisions(inputOf(i))).toEqual([]);
+    expect(CARRY_REFUSALS).toContain(reason);
+  });
+
+  it("PostgreSQL 17 and a server with no user database yet are carried; the Redis family has no database list to check", () => {
+    expect(carryAssessment("h", ghostOf("postgres:17", {}, { user: "u", database: "d", cred: "env", version: null, databases: [] }).containers[0])).toMatchObject({ ok: true, spec: { version: "17" } });
+    expect(carryAssessment("h", ghostOf("redis:7", {}, { user: null, database: null, cred: "env", version: "7.2.4", databases: null }).containers[0])).toMatchObject({ ok: true, spec: { engine: "REDIS" } });
+  });
+
+  it("a carry refusal parks the step and offers the attestations that settle it; excluding or mapping settles it", () => {
+    const i = ghostOf("mongo:7", {}, null);
+    expect(attestableFindings(crossCheckChecks(inputOf(i)))).toEqual([INVENTORY_ATTEST.excluded, INVENTORY_ATTEST.mapped]);
+    const key = `host-1/${GHOST}`;
+    const withAtt = (a: CrossCheckInput["attestations"]) => crossCheckChecks(inputOf(i, { attestations: a })).find((x) => x.subject === key)!;
+    expect(withAtt([{ checkId: INVENTORY_ATTEST.excluded, subject: key }])).toMatchObject({ status: "warn", code: INVENTORY_CODES.unlistedDbExcluded });
+  });
+
+  it("carryDecisions: only under the carry policy, never for a settled or incomplete finding, and not again once the plan accounts for the new item", () => {
+    const i = ghostOf("postgres:17");
+    expect(carryDecisions({ ...inputOf(i), unlistedDbPolicy: "block" })).toEqual([]);
+    expect(carryDecisions({ ...inputOf(i), unlistedDbPolicy: "skip" })).toEqual([]);
+    expect(carryDecisions(inputOf({ ...i, complete: false }))).toEqual([]);
+    expect(carryDecisions(inputOf(i, { attestations: [{ checkId: INVENTORY_ATTEST.excluded, subject: `host-1/${GHOST}` }] }))).toEqual([]);
+    expect(carryDecisions(inputOf(i, { planRefs: [carriedItemRef("host-1", GHOST)] }))).toEqual([]); // carried: the finding is gone
+    expect(crossCheckChecks(inputOf(i, { planRefs: [carriedItemRef("host-1", GHOST)] })).some((x) => x.subject === `host-1/${GHOST}`)).toBe(false);
+  });
+
+  it("after a skipped DATA_SEED (findingsOnly) a carryable container that was never carried blocks: it is not passed off as handled", () => {
+    const c = crossCheckChecks(inputOf(ghostOf("postgres:17"), { findingsOnly: true })).find((x) => x.subject === `host-1/${GHOST}`)!;
+    expect(c).toMatchObject({ status: "fail", code: INVENTORY_CODES.unlistedDbCarryPending, attestable: [INVENTORY_ATTEST.excluded, INVENTORY_ATTEST.mapped] });
+    expect(attestableFindings([c])).toEqual([INVENTORY_ATTEST.excluded, INVENTORY_ATTEST.mapped]);
+    const done = crossCheckChecks(inputOf(ghostOf("postgres:17"), { findingsOnly: true, planRefs: [carriedItemRef("host-1", GHOST)] }));
+    expect(done.some((x) => x.subject === `host-1/${GHOST}`)).toBe(false);
+  });
+
+  it("two hosts with an unlisted database each are decided in host order, each bound to its own host", () => {
+    const second = { ...ghostOf("redis:7", { name: "cache0bbbbbbbbbbbbbbbbbbbb" }, { user: null, database: null, cred: "env", version: null }), ref: "host-2" };
+    const out = carryDecisions(inputOf(ghostOf("postgres:17"), { inventories: new Map([["host-2", second], ["host-1", ghostOf("postgres:17")]]) }));
+    expect(out.map((o) => [o.host, o.engine, o.version])).toEqual([["host-1", "POSTGRES", "17"], ["host-2", "REDIS", "7"]]);
   });
 });

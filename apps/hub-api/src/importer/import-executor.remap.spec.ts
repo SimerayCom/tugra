@@ -191,6 +191,53 @@ describe("ImportExecutorService.remapEnvPlan", () => {
     expect(plan.databases[0].mode).toBe("rotate");
   });
 
+  it("R21: an env value pointing at a uuid-shaped container no plan item owns is needsManual, its own host and the plan's databases are not", async () => {
+    const GHOST = "qrstuvwxyz0123456789abcd";
+    const { svc } = harness({
+      apps: [{ id: "app-1", itemRef: `app:_:${APPUUID}`, env: { DATABASE_URL: `postgres://appuser:pw@${UUID}:5432/appdb`, CACHE_URL: `redis://:pw@${GHOST}:6379/0`, SELF_URL: `http://${APPUUID}:3000` } }],
+    });
+    const plan = await svc.remapEnvPlan("user-1", "op-1");
+    const keys = plan.apps[0].needsManual.map((n) => `${n.key}:${n.reason}`);
+    expect(keys).toContain("CACHE_URL:unresolved-uuid-host");
+    expect(keys.some((k) => k.startsWith("SELF_URL"))).toBe(false);
+    expect(plan.apps[0].changes.map((c) => c.key)).toEqual(["DATABASE_URL"]);
+    expect(JSON.stringify(plan)).not.toContain("pw@");
+  });
+
+  it("R2: an app's env that points at a CARRIED (previously unlisted) database container is rewritten to its new Tugra host, not reported", async () => {
+    const GHOST = "qrstuvwxyz0123456789abcd";
+    const { svc } = harness({
+      op: {
+        tasks: [
+          { status: "DONE", resourceType: "database", resourceId: "db-1", itemRef: `database:srv-a:${GHOST}`, result: { carried: true, credentialsCarried: false } },
+          { status: "DONE", resourceType: "application", resourceId: "app-1", itemRef: `app:srv-a:${APPUUID}`, result: { name: "web" } },
+        ],
+      },
+      apps: [{ id: "app-1", itemRef: `app:srv-a:${APPUUID}`, name: "web", env: { DATABASE_URL: `postgres://appuser:S3cr3t@${GHOST}:5432/appdb`, REDIS_HOST: "zyxwvutsrq9876543210abcd" } }],
+    });
+    const plan = await svc.remapEnvPlan("user-1", "op-1");
+    expect(plan.apps[0].changes).toEqual([expect.objectContaining({ key: "DATABASE_URL", rule: "url", targetItemRef: `database:srv-a:${GHOST}`, newMasked: "postgres://tugra:***@tugra_db_1:5432/appdb" })]);
+    // the container the plan still does not know is the one reported, with the stable code
+    expect(plan.apps[0].needsManual).toEqual([expect.objectContaining({ key: "REDIS_HOST", reason: "unresolved-uuid-host" })]);
+    expect(JSON.stringify(plan)).not.toContain("S3cr3t");
+  });
+
+  it("R2: a carried container with an operator-chosen (non-uuid) name is rewritten under a host-like key and reported under any other", async () => {
+    const { svc } = harness({
+      op: {
+        tasks: [
+          { status: "DONE", resourceType: "database", resourceId: "db-1", itemRef: "database:srv-a:redis-legacy", result: { carried: true, credentialsCarried: false } },
+          { status: "DONE", resourceType: "application", resourceId: "app-1", itemRef: `app:srv-a:${APPUUID}`, result: { name: "web" } },
+        ],
+      },
+      dbView: { engine: "REDIS", internalHost: "tugra_db_1", port: 6379 },
+      apps: [{ id: "app-1", itemRef: `app:srv-a:${APPUUID}`, name: "web", env: { REDIS_HOST: "redis-legacy", REDIS_ADDR: "redis-legacy:6379", CACHE_DRIVER: "redis-legacy" } }],
+    });
+    const plan = await svc.remapEnvPlan("user-1", "op-1");
+    expect(plan.apps[0].changes.map((c) => `${c.key}:${c.rule}`).sort()).toEqual(["REDIS_ADDR:host-port", "REDIS_HOST:host"]);
+    expect(plan.apps[0].needsManual).toEqual([expect.objectContaining({ key: "CACHE_DRIVER", reason: "contains-old-token", targetItemRef: "database:srv-a:redis-legacy" })]);
+  });
+
   it("a DB that cannot be loaded is SKIPPED (preview does not throw) and its apps show target-unavailable", async () => {
     const { svc } = harness({ dbGetError: true });
     const plan = await svc.remapEnvPlan("user-1", "op-1");

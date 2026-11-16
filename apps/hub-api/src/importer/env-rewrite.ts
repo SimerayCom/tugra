@@ -81,8 +81,20 @@ export interface RemapContext {
    *  {@link UUID_RE}, so every caller that omits it (Coolify, whose internal hosts are uuid-shaped) behaves
    *  byte-identically. It is ONLY a shape gate: a value is still rewritten solely when it EQUALS a known
    *  `oldHost` from `dbs`/`apps` (exact string equality) — a looser shape never turns an arbitrary word into a
-   *  host. The substring guard ({@link RM_CONTAINS_TOKEN}) is shape-independent. */
+   *  host. The substring guard ({@link RM_CONTAINS_TOKEN}) is shape-independent.
+   *  The {@link RM_UNRESOLVED_HOST} detection is NOT driven by it (see {@link flagUnresolvedHosts}). */
   hostShape?: RegExp;
+  /** OPTIONAL (Coolify, R21): report a value whose host is a uuid-shaped container name that no plan item owns
+   *  ({@link RM_UNRESOLVED_HOST}) instead of leaving a dead host in place. Off by default: a caller that omits it is byte-identical. */
+  flagUnresolvedHosts?: boolean;
+  /** OPTIONAL: hosts a plan item DOES own but that this pass cannot rewrite (a database that could not be loaded, the app's own
+   *  name). They are never reported as unresolved: the caller has its own, more precise handling of them. */
+  ownedHosts?: readonly string[];
+  /** OPTIONAL: names of plan items that are NOT uuid-shaped (a carried database container is named by its operator: `redis-legacy`).
+   *  Such a name is a host as well, but a short readable word may sit in any variable, so a bare value or `host:port` equal to it is
+   *  rewritten only under a host-like KEY (anything else is reported as {@link RM_CONTAINS_TOKEN}) and it is found inside a longer value
+   *  only as a whole word. A uuid-shaped name needs none of this and is handled as before. */
+  readableHosts?: readonly string[];
   /** OPTIONAL (Dokploy): when true, a BARE value that equals a known `oldHost` is rewritten as a host ONLY if its
    *  KEY looks host-like (`DB_HOST`, `*_HOST`, `*_ADDR`, `ENDPOINT`, `SERVER`…). Dokploy internal hosts are
    *  readable slugs, so a non-host var (`APP_NAME`, `COMPOSE_PROJECT_NAME`) could legitimately HOLD that slug and
@@ -148,9 +160,58 @@ export const RM_QUERY_CREDS = "credentials-in-query"; // a connection URL carrie
 export const RM_CROSS_SERVER = "cross-server-target"; // the database/service runs on another Tugra server than this app: its container name / alias does not resolve here
 export const RM_TLS_VERIFY = "tls-verify-unsupported"; // sslmode=verify-ca/verify-full: the copy serves a self-signed certificate the client cannot verify
 export const RM_SERVICE_NET = "service-network-unsupported"; // a private-alias service this app cannot join (compose, swarm, raw --network)
+export const RM_UNRESOLVED_HOST = "unresolved-uuid-host"; // R21: the host is a Coolify uuid-shaped name that no plan item (database, app, service) owns: after the move it resolves to nothing
 
 /** A Coolify resource uuid: ~16-40 chars of [a-z0-9]. Required before matching a bare token as a host. */
 const UUID_RE = /^[a-z0-9]{16,40}$/i;
+/**
+ * R21: a Coolify container host: exactly 24 lower-case letters and digits (a resource uuid), or a service member's name, `<service>-<uuid>`.
+ * The member form must carry both letters and digits in its uuid part so an ordinary `name-word` host is never taken for one.
+ */
+const COOLIFY_HOST_RE = /^[a-z0-9]{24}$/;
+const COOLIFY_MEMBER_HOST_RE = /^[a-z][a-z0-9-]*-([a-z0-9]{24})$/;
+export function isCoolifyUuidHost(host: string): boolean {
+  if (COOLIFY_HOST_RE.test(host)) return true;
+  const m = COOLIFY_MEMBER_HOST_RE.exec(host);
+  return !!m && /[a-z]/.test(m[1]) && /[0-9]/.test(m[1]);
+}
+/**
+ * A BARE value is judged a host only under a key that names one (a 24-character generated password is common and must be left alone):
+ * the key ends in a host word (`DBHOST`, `REDIS_ADDR`) or carries one as a whole `_`-separated word (`DB_HOST_PRIMARY`, `MASTER_NODE`), and no
+ * word of it says the value is a secret (`MASTER_KEY`, `NODE_AUTH_TOKEN`, `APP_SERVER_SECRET` hold generated strings, not hosts).
+ */
+const BARE_HOST_KEY_END = /(?:HOST|HOSTNAME|ADDR|ADDRESS|ENDPOINT)$/i;
+const BARE_SECRET_KEY = /(?:^|_)(SECRET|KEY|TOKEN|PASSWORD|PASSWD|PASS|SALT|SIGNATURE|CREDENTIALS?)(?:_|$)/i;
+const bareHostKey = (key: string): boolean => !BARE_SECRET_KEY.test(key) && (BARE_HOST_KEY_END.test(key) || HOST_LIKE_KEY.test(key));
+
+/**
+ * R21, a bare value: a key whose last word says the value is an identifier, not a host (`NODE_ID`, `MASTER_UUID`), and a value that is 24
+ * hexadecimal digits (a database object id, a Mongo ObjectId: a Coolify uuid is base-36 and is all hex only with a chance of about one in a billion)
+ * are never an unresolved host, whatever host word the key also carries.
+ */
+const IDENTIFIER_KEY_END = /(?:^|_)(ID|IDS|UUID|GUID|HASH|SHA|COMMIT|REV|REVISION|VERSION|NUMBER|COUNT|PORT)$/i;
+const unresolvedBareKeyOk = (key: string, value: string): boolean => bareHostKey(key) && !IDENTIFIER_KEY_END.test(key) && !/^[0-9a-f]{24}$/.test(value);
+
+/**
+ * R21, a value that is not one host: every host an embedded connection string carries whose name is a Coolify uuid. Looked for in the
+ * authority of every `//` (a JDBC url `jdbc:postgresql://<uuid>:5432/db`, a multi-host list `mongodb://u:p@<uuid>:27017,<uuid>:27017`), after an `@`
+ * (`user:pw@<uuid>:5432`) and as a `host=` / `hostaddr=` pair (a libpq or ADO string), never inside a longer word or a dotted name.
+ */
+function embeddedUuidHosts(value: string): string[] {
+  const found: string[] = [];
+  const consider = (hostPort: string): void => {
+    const h = /^([^:/?#\s,;'"@]+)(?::\d{1,5})?$/.exec(hostPort);
+    if (h && isCoolifyUuidHost(h[1])) found.push(h[1]);
+  };
+  for (const m of value.matchAll(/:\/\/([^/?#\s'"]*)/g)) {
+    const authority = m[1];
+    for (const part of authority.slice(authority.lastIndexOf("@") + 1).split(",")) consider(part);
+  }
+  for (const m of value.matchAll(/@([^:/?#\s,;'"@]+)(?::\d{1,5})?(?=[/?#\s,;'"]|$)/g)) if (isCoolifyUuidHost(m[1])) found.push(m[1]);
+  for (const m of value.matchAll(/(?:^|[\s;,])host(?:addr)?=([^\s;,'"]+)/gi)) consider(m[1]);
+  return found;
+}
+
 /** A var KEY that plausibly holds a host (used only when ctx.bareHostKeyGate is on — i.e. a readable-slug source
  *  like Dokploy — so a name-shaped value in a non-host var is not mistaken for a host). */
 const HOST_LIKE_KEY = /(?:^|_)(HOST|HOSTNAME|ADDR|ADDRESS|ENDPOINT|SERVER|NODE|MASTER|PRIMARY|REPLICA|LEADER)(?:_|$)/i;
@@ -159,6 +220,12 @@ const shapeTest = (re: RegExp, v: string): boolean => {
   re.lastIndex = 0;
   return re.test(v);
 };
+
+/** `word` inside `value` as a whole name: not part of a longer host name or word (`redis` is not in `redis-cache` nor in `myredis`). */
+function wholeWord(value: string, word: string): boolean {
+  const esc = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![A-Za-z0-9_.-])${esc}(?![A-Za-z0-9_-])`).test(value);
+}
 
 const enc = encodeURIComponent;
 const REDIS_FAMILY = new Set(["REDIS", "KEYDB", "DRAGONFLY"]);
@@ -293,6 +360,13 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
   const unchanged: string[] = [];
   const needsManual: RemapNeedsManual[] = [];
   const hostShape = ctx.hostShape ?? UUID_RE;
+  const flagUnresolved = ctx.flagUnresolvedHosts === true;
+  const owned = new Set(ctx.ownedHosts ?? []);
+  // a readable (non-uuid) plan-item name: it passes the shape gate by name, but only under a host-like key
+  const readable = new Set((ctx.readableHosts ?? []).filter((h) => !shapeTest(hostShape, h)));
+  const isHostShaped = (h: string): boolean => shapeTest(hostShape, h) || readable.has(h);
+  const bareKeyOk = (h: string, key: string): boolean => (ctx.bareHostKeyGate ? HOST_LIKE_KEY.test(key) : readable.has(h) ? bareHostKey(key) : true);
+  const portKeyOk = (h: string, key: string): boolean => !readable.has(h) || bareHostKey(key);
   const dbByHost = new Map(ctx.dbs.map((d) => [d.oldHost, d]));
   const appByHost = new Map(ctx.apps.map((a) => [a.oldHost, a]));
   const referencedDbs = new Set<DbRemapTarget>(); // DBs an R1/R2 match in THIS env pointed at (gates R3)
@@ -363,8 +437,9 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
   };
 
   const embeddedTarget = (value: string): string | undefined => {
-    for (const [tok, d] of dbByHost) if (value.includes(tok)) return d.itemRef;
-    for (const [tok, a] of appByHost) if (value.includes(tok)) return a.itemRef;
+    const has = (tok: string): boolean => (readable.has(tok) ? wholeWord(value, tok) : value.includes(tok));
+    for (const [tok, d] of dbByHost) if (has(tok)) return d.itemRef;
+    for (const [tok, a] of appByHost) if (has(tok)) return a.itemRef;
     return undefined;
   };
 
@@ -429,13 +504,17 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
         publicService(key, pub, (h) => `${auth.scheme}://${auth.hasUserinfo ? `${auth.userinfo}@` : ""}${h}${auth.port ? `:${auth.port}` : ""}${auth.rest}`, maskConnString, value);
         continue;
       }
+      if (flagUnresolved && isCoolifyUuidHost(auth.host) && !owned.has(auth.host)) {
+        needsManual.push({ key, reason: RM_UNRESOLVED_HOST });
+        continue;
+      }
       // a URL to something we don't manage: fall through to the embedded-token scan (host may be <uuid>.suffix).
     } else {
       // R2 — the value is exactly an old host token, or <host>:<port>.
       const hostOnly = dbByHost.get(value) ?? appByHost.get(value);
       // bareHostKeyGate (Dokploy): a readable slug could be a non-host var's value — only treat a bare host-equal
       // value as a host when the KEY looks host-like; otherwise fall through to the RM_CONTAINS_TOKEN report.
-      if (hostOnly && shapeTest(hostShape, value) && (!ctx.bareHostKeyGate || HOST_LIKE_KEY.test(key))) {
+      if (hostOnly && isHostShaped(value) && bareKeyOk(value, key)) {
         const isDb = "engine" in hostOnly;
         if (isDb && crossServer(ctx.appServerId, (hostOnly as DbRemapTarget).serverId)) {
           needsManual.push({ key, reason: RM_CROSS_SERVER, target: hostOnly.itemRef });
@@ -454,7 +533,7 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
         continue;
       }
       const hp = /^([^:]+):(\d+)$/.exec(value); // <host>:<port>; the host must pass the shape gate AND equal a known oldHost
-      if (hp && shapeTest(hostShape, hp[1]) && dbByHost.has(hp[1])) {
+      if (hp && isHostShaped(hp[1]) && dbByHost.has(hp[1]) && portKeyOk(hp[1], key)) {
         const db = dbByHost.get(hp[1])!;
         if (crossServer(ctx.appServerId, db.serverId)) {
           needsManual.push({ key, reason: RM_CROSS_SERVER, target: db.itemRef });
@@ -482,12 +561,22 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
         publicService(key, barePub, (h) => `${h}${port}`, (v) => v, value);
         continue;
       }
+      // R21: `<uuid>` under a host-like key, or `<uuid>:<port>` under any key, that nothing above recognised
+      if (flagUnresolved && (hp ? isCoolifyUuidHost(hp[1]) && !owned.has(hp[1]) : isCoolifyUuidHost(value) && !owned.has(value) && unresolvedBareKeyOk(key, value))) {
+        needsManual.push({ key, reason: RM_UNRESOLVED_HOST });
+        continue;
+      }
     }
 
     // Any value (incl. an unmatched URL) that embeds a known token elsewhere → too risky to edit blindly.
     const embedded = embeddedTarget(value);
     if (embedded) {
       needsManual.push({ key, reason: RM_CONTAINS_TOKEN, target: embedded });
+      continue;
+    }
+    // R21: a connection string with more than one host, a JDBC url or a key=value string that carries a dead uuid host
+    if (flagUnresolved && embeddedUuidHosts(value).some((h) => !owned.has(h))) {
+      needsManual.push({ key, reason: RM_UNRESOLVED_HOST });
       continue;
     }
     companionKeys.push(key);

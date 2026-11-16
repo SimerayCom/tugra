@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Inject, Injectable, Logger, PayloadTooLargeException, UnsupportedMediaTypeException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Inject, Injectable, Logger, Optional, PayloadTooLargeException, UnsupportedMediaTypeException } from "@nestjs/common";
 import type { Readable } from "node:stream";
 import { PrismaService } from "../../../../prisma/prisma.service";
 import { TeamAccessService } from "../../../../common/team-access.service";
@@ -6,10 +6,12 @@ import type { MigrationTokenContext } from "../../../../importer/migration-token
 import { vxPartRawBytes } from "../../../../importer/volume-stream/vx-constants";
 import { isTerminalRunStatus, type RunStatus } from "../../../core/run-contract";
 import { HOST_REPORT_PORT, type HostReportPort } from "./inventory-contract";
-import { REF_RE, REPORT_MAX_BYTES, parseReportBody } from "./host-protocol";
+import { REF_RE, REPORT_MAX_BYTES, parseReportBody, type HostInventory } from "./host-protocol";
 import { PROBE_MAX_BYTES } from "./inventory-script";
 import { mergeFreeze } from "./report-merge";
 import { serverRefOfItem } from "./host-hosts";
+import { RUN_HINTS, type RunHintStore } from "../../import/baseline/run-hints";
+import { derivePins, pinsToWrite, type PinCandidate } from "./inventory-pins";
 
 type RawReq = Readable & { headers: Record<string, string | string[] | undefined> };
 
@@ -54,6 +56,7 @@ export class HostReportService {
     private readonly prisma: PrismaService,
     private readonly access: TeamAccessService,
     @Inject(HOST_REPORT_PORT) private readonly reports: HostReportPort,
+    @Optional() @Inject(RUN_HINTS) private readonly hints?: RunHintStore,
   ) {}
 
   /** The hub's part size, which the source-side probe tries first. */
@@ -68,7 +71,7 @@ export class HostReportService {
     if (Buffer.byteLength(text) > REPORT_MAX_BYTES) throw new PayloadTooLargeException("report too large");
     const parsed = parseReportBody(text);
     if (parsed.lines === 0) throw new BadRequestException("empty report");
-    const run = await this.prisma.migrationRun.findUnique({ where: { opId: op.opId }, select: { id: true, actorId: true, status: true, targetServerId: true, serverMap: true } });
+    const run = await this.prisma.migrationRun.findUnique({ where: { opId: op.opId }, select: { id: true, actorId: true, status: true, targetServerId: true, serverMap: true, promotedFromId: true } });
     if (!run || isTerminalRunStatus(run.status as RunStatus)) return { stored: 0, ignored: parsed.lines };
     if (run.actorId !== op.actorId) throw new ConflictException("not your operation");
     const server = await this.prisma.server.findUnique({ where: { id: run.targetServerId }, select: { teamId: true } });
@@ -126,6 +129,27 @@ export class HostReportService {
       stored++;
     }
     if (ignored) this.logger.warn(`run ${run.id}: ${ignored} host report line(s) ignored (unknown host label or invalid line)`);
+    if (parsed.inventory.size) await this.autoPins(op.opId, run.id, run.promotedFromId ?? null, parsed.inventory);
     return { stored, ignored };
+  }
+
+  /**
+   * R11: record, as hints of the run, the digest the host reports for every floating-tag image app of the plan. Best effort: a
+   * failure here never fails the report (the operator can still set a pin by hand). An operator's own pin is never replaced.
+   */
+  private async autoPins(opId: string, runId: string, promotedFromId: string | null, inventories: ReadonlyMap<string, HostInventory>): Promise<void> {
+    if (!this.hints) return;
+    try {
+      const row = await this.prisma.bulkOperation.findUnique({ where: { id: opId }, select: { meta: true } });
+      const meta = typeof row?.meta === "object" && row.meta ? (row.meta as { plan?: { items?: Array<{ itemRef?: unknown; kind?: unknown; proposed?: { source?: unknown; image?: unknown } }> } }) : {};
+      const candidates: PinCandidate[] = (meta.plan?.items ?? []).flatMap((i) =>
+        i.kind === "app" && typeof i.itemRef === "string" && i.proposed?.source === "IMAGE" && typeof i.proposed.image === "string" ? [{ itemRef: i.itemRef, image: i.proposed.image }] : [],
+      );
+      if (!candidates.length) return;
+      const write = pinsToWrite(derivePins(candidates, inventories), await this.hints.list(runId, promotedFromId));
+      if (write.length) await this.hints.upsert(runId, write);
+    } catch (e) {
+      this.logger.warn(`run ${runId}: could not record image pins from the inventory: ${e instanceof Error ? e.constructor.name : "error"}`);
+    }
   }
 }

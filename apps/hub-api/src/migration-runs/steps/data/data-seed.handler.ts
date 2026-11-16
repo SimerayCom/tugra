@@ -21,7 +21,7 @@ import { MigratorRunner } from "./launcher/migrator-runner.service";
 import { OBJECT_PLAN_ID, objectPlanChecks } from "./object-plan-check";
 import type { LauncherStatus } from "./launcher/migrator-launcher";
 import { vxPartRawBytes } from "../../../importer/volume-stream/vx-constants";
-import { attestableFindings, crossCheckChecks } from "./inventory/cross-check";
+import { attestableFindings, carryDecisions, crossCheckChecks } from "./inventory/cross-check";
 import { HOST_LOOP_CODES } from "./inventory/host-codes";
 import { dataItemsOfHost, planRefsOf, sourceHostsOf } from "./inventory/host-hosts";
 import { loopVerdict } from "./inventory/host-protocol";
@@ -210,6 +210,36 @@ export class DataSeedHandler implements StepHandler<SeedObs>, OnModuleInit {
     if (!estimateEquals(run.windowEstimate, est)) await ctx.patchRun({ windowEstimate: est });
 
     if (obs.missingObjects.length) return { outcome: "fail", code: DATA_CODES.seedObjectGone, params: { count: obs.missingObjects.length }, retryable: false };
+
+    // R2: under `unlistedDbPolicy: carry` every database container the inventory proved carryable (and no operator settled) is bound to a
+    // NEW database plan item BEFORE any data moves, so the normal database lane copies it and the env remap finds its new host. A container
+    // that cannot be carried in full never gets here: its gate check failed with the reason and the step is parked on it.
+    const carry = carryDecisions({
+      inventories: obs.hosts.inventories,
+      planRefs: planRefsOf(snap),
+      unlistedDbPolicy: resolveOwnerInput(run.inputs, "unlistedDbPolicy") ?? "block",
+      attestations: ctx.step.evidence.attestations,
+    });
+    if (carry.length) {
+      let failed = 0;
+      for (const spec of carry) {
+        await ctx.assertLease();
+        try {
+          const res = await this.data.carryUnlistedDb(run, spec, ctx.targetFor(spec.host === "_" ? null : spec.host));
+          // an item that already existed while the container is still a finding does not account for it: stop instead of looping
+          if (!res.created) {
+            failed++;
+            continue;
+          }
+          await ctx.emit({ stepKey: "DATA_SEED", level: "info", code: "data-seed.db-carried", params: { engine: spec.engine, container: spec.container, host: spec.host, name: spec.name } });
+        } catch (e) {
+          if (e instanceof RunLeaseLostError) throw e;
+          failed++;
+        }
+      }
+      if (failed) return { outcome: "fail", code: DATA_CODES.seedCarryFailed, params: { count: failed }, retryable: true };
+      return { outcome: "continue", pollAfterMs: 1_000 }; // re-read the world: the carried databases are items now
+    }
 
     // per-database lane: a database whose measured DUMP is over the artifact cap (or whose physical copy cannot run) goes on the
     // streamed dump lane when the owner allowed it. The decision is a pure function of what the migrator measured; this only applies it.

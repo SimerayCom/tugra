@@ -9,6 +9,8 @@ import {
   RM_AMBIGUOUS,
   RM_UNCONFIRMED_CRED,
   RM_SERVICE_LINK_REVIEW,
+  RM_UNRESOLVED_HOST,
+  isCoolifyUuidHost,
 } from "./env-rewrite";
 
 const UUID = "3f1a9c0b2d4e6f8a1b3c5d7e"; // 24 hex-ish, matches UUID_RE
@@ -442,3 +444,143 @@ describe("remapEnv — old source services (RM_SERVICE_LINK_REVIEW)", () => {
     expect(r.needsManual).toEqual([]);
   });
 });
+
+describe("R21: a uuid-shaped host no plan item owns", () => {
+  const GHOST = "qrstuvwxyz0123456789abcd"; // 24 chars, owned by no database / app / service of the plan
+  const known = (extra: Partial<RemapContext> = {}): RemapContext => ({ dbs: [pgTarget("preserve")], apps: [], flagUnresolvedHosts: true, ...extra });
+
+  it("isCoolifyUuidHost: 24 lower-case letters+digits, or <service>-<uuid> with both letters and digits in the uuid; nothing else", () => {
+    expect(isCoolifyUuidHost(GHOST)).toBe(true);
+    expect(isCoolifyUuidHost(`meili-${GHOST}`)).toBe(true);
+    expect(isCoolifyUuidHost("a".repeat(23))).toBe(false);
+    expect(isCoolifyUuidHost("a".repeat(25))).toBe(false);
+    expect(isCoolifyUuidHost("Q".repeat(24))).toBe(false);
+    expect(isCoolifyUuidHost(`cache-${"a".repeat(24)}`)).toBe(false); // a plain word after a dash is not a member container
+    expect(isCoolifyUuidHost("db.example.test")).toBe(false);
+  });
+
+  it("a connection URL whose host is an unknown uuid is needsManual with the stable code, and nothing is rewritten", () => {
+    const r = remapEnv({ CACHE_URL: `redis://:pw@${GHOST}:6379/0`, DATABASE_URL: `postgres://appuser:pw@${UUID}:5432/appdb` }, known());
+    expect(r.needsManual).toEqual([{ key: "CACHE_URL", reason: RM_UNRESOLVED_HOST }]);
+    expect(r.changes.map((c) => c.key)).toEqual(["DATABASE_URL"]); // the database the plan owns is still rewritten
+    expect(RM_UNRESOLVED_HOST).toBe("unresolved-uuid-host");
+  });
+
+  it("a bare host, host:port and a service member name are flagged; a bare value is judged only under a host-like key", () => {
+    const r = remapEnv({ REDIS_HOST: GHOST, PGHOST: GHOST, OTHER_ADDR: `${GHOST}:5432`, ODD: `${GHOST}:6379`, SEARCH_HOST: `meili-${GHOST}`, DB_PASSWORD: GHOST, API_KEY: GHOST }, known());
+    expect(r.needsManual.map((n) => n.key).sort()).toEqual(["ODD", "OTHER_ADDR", "PGHOST", "REDIS_HOST", "SEARCH_HOST"]);
+    expect(r.needsManual.every((n) => n.reason === RM_UNRESOLVED_HOST)).toBe(true);
+    expect(r.unchanged.sort()).toEqual(["API_KEY", "DB_PASSWORD"]); // a 24-character generated password is never taken for a host
+  });
+
+  it("a host the plan owns (database, app, service) keeps its own handling and is never reported unresolved", () => {
+    const r = remapEnv(
+      { DB_HOST: UUID, OTHER: `http://${APPUUID}:3000`, MINIO: `http://${GHOST}:9000` },
+      known({ apps: [{ itemRef: `app:_:${APPUUID}`, name: "other", oldHost: APPUUID, newHost: "tugra_x" }], services: [{ itemRef: `service:_:${GHOST}`, name: "minio", oldHost: GHOST }] }),
+    );
+    expect(r.changes.map((c) => c.key)).toEqual(["DB_HOST"]);
+    expect(r.needsManual).toEqual([
+      { key: "OTHER", reason: RM_APP_LINK_REVIEW, target: `app:_:${APPUUID}` },
+      { key: "MINIO", reason: RM_SERVICE_LINK_REVIEW, target: `service:_:${GHOST}` },
+    ]);
+  });
+
+  it("is opt-in (a caller that omits flagUnresolvedHosts is byte-identical) and never flags a host the caller says a plan item owns", () => {
+    const env = { REDIS_HOST: GHOST, CACHE_URL: `redis://${GHOST}:6379` };
+    expect(remapEnv(env, known({ flagUnresolvedHosts: undefined })).needsManual).toEqual([]);
+    expect(remapEnv(env, known({ flagUnresolvedHosts: false })).needsManual).toEqual([]);
+    expect(remapEnv(env, known({ ownedHosts: [GHOST] })).needsManual).toEqual([]);
+    expect(remapEnv(env, known({ ownedHosts: [GHOST] })).unchanged.sort()).toEqual(["CACHE_URL", "REDIS_HOST"]);
+  });
+
+  it("an ordinary hostname, an empty value and a longer host are untouched", () => {
+    const r = remapEnv({ A: "https://api.example.test/x", B: "", C_HOST: "localhost", D: `http://${GHOST}x.example.test` }, known());
+    expect(r.needsManual).toEqual([]);
+  });
+});
+
+describe("R21 key gate and readable (carried) hosts", () => {
+  const GHOST = "qrstuvwxyz0123456789abcd";
+  const known = (extra: Partial<RemapContext> = {}): RemapContext => ({ dbs: [pgTarget("preserve")], apps: [], flagUnresolvedHosts: true, ...extra });
+
+  it("a generated 24-character secret under a key that merely CONTAINS a host word is not an unresolved host", () => {
+    const secret = "0123456789abcdef01234567";
+    const r = remapEnv({ MASTER_KEY: secret, NODE_AUTH_TOKEN: secret, APP_SERVER_SECRET: secret, PRIMARY_PASSWORD: secret, REPLICA_PASS: secret, NODENAME: secret, ENDPOINTS: secret }, known());
+    expect(r.needsManual).toEqual([]);
+  });
+
+  it("the host words still count as a whole word or as the end of the key (DBHOST, REDIS_ADDR, DB_HOST_PRIMARY, MASTER_NODE)", () => {
+    const r = remapEnv({ DBHOST: GHOST, REDIS_ADDR: GHOST, DB_HOST_PRIMARY: GHOST, MASTER_NODE: GHOST, SERVER: GHOST }, known());
+    expect(r.needsManual.map((n) => n.key).sort()).toEqual(["DBHOST", "DB_HOST_PRIMARY", "MASTER_NODE", "REDIS_ADDR", "SERVER"]);
+  });
+
+  it("an identifier under a key that carries a host word (a 24-hex object id under NODE_ID) is not an unresolved host; the same key holding a real uuid host is", () => {
+    const objectId = "507f1f77bcf86cd799439011";
+    const r = remapEnv({ NODE_ID: objectId, MASTER_SERVER_ID: GHOST, REPLICA_UUID: GHOST, SERVER: objectId, NODE_HOST: objectId, MASTER_NODE: GHOST }, known());
+    expect(r.needsManual.map((n) => n.key)).toEqual(["MASTER_NODE"]);
+  });
+
+  describe("embedded dead hosts: JDBC, multi-host lists, userinfo and key=value strings", () => {
+    const SECOND = "abcdefghij0123456789klmn";
+    it("a JDBC url, a multi-host list and a host after an @ are reported with the stable code", () => {
+      const r = remapEnv(
+        {
+          JDBC: `jdbc:postgresql://${GHOST}:5432/appdb?user=u`,
+          MONGO: `mongodb://u:p@${GHOST}:27017,${SECOND}:27017/app?replicaSet=rs0`,
+          DSN: `u:p@${GHOST}:5432/appdb`,
+          LIBPQ: `host=${GHOST} port=5432 dbname=appdb`,
+          MEMBER: `amqp://u:p@queue-${GHOST}:5672`,
+        },
+        known(),
+      );
+      expect(r.needsManual.map((n) => `${n.key}:${n.reason}`).sort()).toEqual(["DSN:unresolved-uuid-host", "JDBC:unresolved-uuid-host", "LIBPQ:unresolved-uuid-host", "MEMBER:unresolved-uuid-host", "MONGO:unresolved-uuid-host"]);
+    });
+
+    it("a host the plan owns is not reported, and values that only look similar are left alone", () => {
+      const r = remapEnv(
+        {
+          JDBC: `jdbc:postgresql://${GHOST}:5432/appdb`,
+          IDS: `${GHOST},${SECOND}`,
+          MAIL: `admin@${GHOST}.example.test`,
+          NOTE: `contact: user@example.test and ${GHOST}`,
+          PATHISH: `/srv/${GHOST}/data`,
+          LIBPQ_OK: "host=db.example.test port=5432",
+          MONGO_OK: "mongodb://u:p@db-a.example.test:27017,db-b.example.test:27017/app",
+        },
+        known({ ownedHosts: [GHOST] }),
+      );
+      expect(r.needsManual).toEqual([]);
+      const r2 = remapEnv({ IDS: `${GHOST},${SECOND}`, MAIL: `admin@${GHOST}.example.test`, PATHISH: `/srv/${GHOST}/data`, MONGO_OK: "mongodb://u:p@db-a.example.test:27017,db-b.example.test:27017/app" }, known());
+      expect(r2.needsManual).toEqual([]);
+    });
+  });
+
+  describe("readableHosts: a carried container with an operator-chosen name", () => {
+    const target = (name: string) => pgTarget("rotate", { oldHost: name, itemRef: `database:srv-a:${name}` });
+    const rc = (name: string, extra: Partial<RemapContext> = {}): RemapContext => ({ dbs: [target(name)], apps: [], flagUnresolvedHosts: true, readableHosts: [name], ...extra });
+
+    it("a bare host and host:port under a host-like key are rewritten to the new host (they were reported as contains-old-token)", () => {
+      const r = remapEnv({ DB_HOST: "pg_main", PRIMARY_ADDR: "pg_main:5432", DATABASE_URL: "postgres://appuser:pw@pg_main:5432/appdb" }, rc("pg_main"));
+      expect(r.changes.map((c) => `${c.key}:${c.rule}`).sort()).toEqual(["DATABASE_URL:url", "DB_HOST:host", "PRIMARY_ADDR:host-port"]);
+      expect(r.needsManual).toEqual([]);
+    });
+
+    it("without readableHosts the same name is NOT rewritten (the shape gate is unchanged for every other caller)", () => {
+      const r = remapEnv({ DB_HOST: "pg_main" }, { dbs: [target("pg_main")], apps: [] });
+      expect(r.changes).toEqual([]);
+    });
+
+    it("a short name is never rewritten under a non-host key: a bare value is reported, and only a whole word is found in a longer one", () => {
+      const r = remapEnv({ CACHE_DRIVER: "redis", LABEL: "myredis-cache", NOTE: "uses redis-cache", DSN: "host=redis port=6379" }, rc("redis"));
+      expect(r.changes).toEqual([]);
+      expect(r.needsManual.map((n) => `${n.key}:${n.reason}`).sort()).toEqual(["CACHE_DRIVER:contains-old-token", "DSN:contains-old-token"]);
+      expect(r.unchanged.sort()).toEqual(["LABEL", "NOTE"]);
+    });
+
+    it("a secret under a host-like key is not a host", () => {
+      const r = remapEnv({ DB_HOST_SECRET: "pg_main" }, rc("pg_main"));
+      expect(r.changes).toEqual([]);
+    });
+  });
+});
+

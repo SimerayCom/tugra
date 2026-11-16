@@ -867,3 +867,49 @@ describe("DatabasesService.setSsl (R22)", () => {
     await expect(run({ engine: "MYSQL" }).svc.setSsl("u1", "d1", true)).rejects.toBeInstanceOf(BadRequestException);
   });
 });
+
+describe("DatabasesService carry marker (R2)", () => {
+  const setup = (rows: Array<{ id: string; name: string; tags: string[]; serverId: string }> = []) => {
+    const create = jest.fn().mockImplementation(({ data }) => ({ id: "dbm", createdAt: new Date(), ...data }));
+    const prisma = {
+      server: { findUnique: jest.fn().mockResolvedValue({ id: "s1", teamId: "t1" }) },
+      database: {
+        create,
+        findFirst: jest.fn(async ({ where }: { where: { serverId: string; tags: { has: string } } }) => rows.find((r) => r.serverId === where.serverId && r.tags.includes(where.tags.has)) ?? null),
+        findUnique: jest.fn(async ({ where }: { where: { id: string } }) => rows.find((r) => r.id === where.id) ?? null),
+        update: jest.fn(async ({ where, data }: { where: { id: string }; data: { tags: string[] } }) => Object.assign(rows.find((r) => r.id === where.id)!, data)),
+      },
+    } as unknown as PrismaService;
+    const access = { requirePermission: jest.fn().mockResolvedValue(undefined), teamRole: jest.fn().mockResolvedValue("OWNER") } as unknown as TeamAccessService;
+    return { svc: make(prisma, access), create, prisma };
+  };
+  const marker = `import-${"a1".repeat(12)}`;
+
+  it("createMarked inserts the row WITH the marker as its tag in the same insert", async () => {
+    const { svc, create } = setup();
+    await svc.createMarked("u1", { name: "carried", serverId: "s1", engine: "POSTGRES" as never }, marker);
+    expect(create.mock.calls[0][0].data.tags).toEqual([marker]);
+  });
+
+  it("createMarked refuses a marker that is not a plain lower-case word, and create() sets no tag at all", async () => {
+    const { svc, create } = setup();
+    for (const bad of ["", "short", "UPPERCASE-MARKER-123", "has space in it 123", "x".repeat(41), "-leading-dash-marker"]) {
+      await expect(svc.createMarked("u1", { name: "c", serverId: "s1", engine: "POSTGRES" as never }, bad)).rejects.toThrow("invalid database marker");
+    }
+    expect(create).not.toHaveBeenCalled();
+    await svc.create("u1", { name: "c", serverId: "s1", engine: "POSTGRES" as never });
+    expect(create.mock.calls[0][0].data.tags).toBeUndefined();
+  });
+
+  it("findMarked finds the row by its marker on that server only; dropMarker takes the marker off and keeps the other tags", async () => {
+    const rows = [{ id: "d1", name: "n", tags: ["prod", marker], serverId: "s1" }];
+    const { svc } = setup(rows);
+    await expect(svc.findMarked("s1", marker)).resolves.toMatchObject({ id: "d1" });
+    await expect(svc.findMarked("s2", marker)).resolves.toBeNull();
+    await expect(svc.findMarked("s1", "not-a-marker-at-all-x")).resolves.toBeNull();
+    await svc.dropMarker("d1", marker);
+    expect(rows[0].tags).toEqual(["prod"]);
+    await svc.dropMarker("d1", marker); // idempotent
+    await svc.dropMarker("missing", marker);
+  });
+});

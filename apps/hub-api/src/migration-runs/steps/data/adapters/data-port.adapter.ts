@@ -4,6 +4,7 @@ import { PrismaService } from "../../../../prisma/prisma.service";
 import { AuditService } from "../../../../audit/audit.service";
 import { CryptoService } from "../../../../crypto/crypto.service";
 import { ImportExecutorService } from "../../../../importer/import-executor.service";
+import { foreignDbOfContainer } from "../../../../importer/sources/coolify-map";
 import { MIGRATOR_ENGINES, MIGRATOR_UNSUPPORTED } from "../../../../importer/migrator-recipe";
 import { VxService } from "../../../../importer/volume-stream/vx.service";
 import { dbGates } from "../../../../importer/volume-stream/vx-dest-gate";
@@ -12,6 +13,7 @@ import { buildVolumeTargets, dbStreamModeRefs, dbVolumeModeRefs, isObjectStoreRe
 import { dumpRawEstimate, type DbSizeRecord } from "../../../../importer/volume-stream/vx-dump";
 import type { VxInventoryItem } from "../../../../importer/volume-stream/vx.dto";
 import type { RunSnapshot } from "../../../core/run-contract";
+import type { CarrySpec } from "../inventory/cross-check";
 import { DataPortError, type DataPort, type DataSnapshot, type DbDataItem, type DbMeasureLite, type ServiceVolumeItem, type SourceItem, type VolumeDataItem, type VolumeState } from "../data-contract";
 import { objectStorageFacts } from "./object-storage-facts";
 import { classifyDbTaskFailure, classifyTransferError } from "../data-logic";
@@ -204,6 +206,11 @@ export class PrismaDataPort implements DataPort {
     if (!run.opId) return;
     const res = await this.prisma.bulkOperation.updateMany({ where: { id: run.opId, migrationTokenHash: { not: null } }, data: { migrationTokenHash: null, migrationTokenExpiresAt: null } });
     if (res.count > 0) await this.audit.log({ actor: run.actorId, action: "import.migration_token.revoke", target: run.opId, meta: { runId: run.id } });
+  }
+
+  async carryUnlistedDb(run: RunSnapshot, spec: CarrySpec, targetServerId: string): Promise<{ itemRef: string; created: boolean }> {
+    if (!run.opId) throw new DataPortError("op-missing");
+    return this.executor.carryUnlistedDb(run.actorId, run.opId, foreignDbOfContainer(spec), targetServerId);
   }
 
   async enableStream(run: RunSnapshot, dbItemRef: string, on: boolean): Promise<boolean> {

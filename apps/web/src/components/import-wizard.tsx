@@ -688,7 +688,7 @@ function RemapEnvCard({ opId, sourceKind = "coolify" }: { opId: string; sourceKi
                   </div>
                 ))}
                 {a.needsManual.map((m) => (
-                  <div key={m.key} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--c-am)", marginTop: 4 }}><TriangleAlert size={12} aria-hidden style={{ flexShrink: 0 }} /> <span className="mono">{m.key}</span> — {m.reason === "service-link-review" ? t("import.remap.serviceLinkReview") : m.reason}</div>
+                  <div key={m.key} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--c-am)", marginTop: 4 }}><TriangleAlert size={12} aria-hidden style={{ flexShrink: 0 }} /> <span className="mono">{m.key}</span> — {m.reason === "service-link-review" ? t("import.remap.serviceLinkReview") : m.reason === "unresolved-uuid-host" ? t("import.remap.unresolvedHost") : m.reason}</div>
                 ))}
                 {a.dbNetwork && (
                   <div style={{ fontSize: 11, color: a.dbNetwork.willLink ? "var(--c-g)" : "var(--c-am)", marginTop: 4 }}>

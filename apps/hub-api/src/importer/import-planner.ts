@@ -101,6 +101,7 @@ function planDatabase(db: ForeignDb, tree?: ImportRisk, volumeMode = false): Imp
   if (db.engine === "MONGO") {
     risks.push({ level: "warn", code: "db.mongo.name", message: "name the target so its slug equals the source database name — mongorestore restores into the archive's DB names" });
   }
+  for (const n of db.notCarried ?? []) risks.push({ level: n.level, code: `db.notCarried.${n.field}`, message: `${n.field}: ${n.reason}` });
   if (!db.version) risks.push({ level: "warn", code: "db.version.missing", message: "source version unknown — pin the target to the source's major version" });
   if (db.image) risks.push({ level: "info", code: "db.image.custom", message: `keeps custom image ${db.image}` });
   if (!db.credentials?.secretRef && !db.credentials?.username) {

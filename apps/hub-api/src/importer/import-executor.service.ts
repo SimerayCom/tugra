@@ -19,7 +19,8 @@ import { mapSourceEnvFlags } from "./env-auto-flags";
 import { mapBuildPack } from "./buildpack-map";
 import { IMPORT_REASON_CODES, type ImportReasonCode } from "@tugra/shared";
 import { why, type Reasoned, type Unmapped } from "./reason";
-import { foreignAppToCreateInput, foreignAppToIngressPlan, foreignAppToPostCreateConfig, foreignAppToVolumes } from "./apply-map";
+import { foreignAppToCreateInput, foreignAppToIngressPlan, foreignAppToPostCreateConfig, foreignAppToVolumes, foreignDbToCreateInput } from "./apply-map";
+import { MIGRATOR_ENGINES } from "./migrator-recipe";
 import { seedTasks, deriveOpStatus, isAcked, isRunnable, skipReason, hasUnackedBlocker, type TaskSeed, type TaskStatus } from "./import-executor.logic";
 import { MigrationTokenService } from "./migration-token.service";
 import { assertSafeBase, buildMigrationCommand, buildMigrationCommands, buildMigrationCommandsTemplate, buildMigrationCommandTemplate } from "./migration-command";
@@ -60,6 +61,8 @@ export const DOKPLOY_HOST_SHAPE = /^[a-z0-9][a-z0-9_-]{5,62}$/i;
 const remapHostShapeFor = (sourceKind: string | undefined): RegExp | undefined => (sourceKind === "dokploy" ? DOKPLOY_HOST_SHAPE : undefined);
 /** A DB_IDENT_RE-safe database name derived from a display name (fallback when the source has no database name). */
 const safeDbIdent = (name: string): string => name.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 63) || "app";
+/** The tag a carried database is created with (R2): deterministic for this op and item, 31 characters of `[a-z0-9-]`, so a retry finds the row. */
+const carryMarker = (opId: string, itemRef: string): string => `import-${createHash("sha256").update(`${opId}|${itemRef}`).digest("hex").slice(0, 24)}`;
 const msg = (e: unknown): string => (e instanceof Error ? e.message : "failed");
 /** The private network a single-service import joins: `svc-<app name slug>` (a DNS label, at most 63 chars), or undefined. */
 function privateNetworkName(appName: string): string | undefined {
@@ -1199,6 +1202,58 @@ export class ImportExecutorService {
     }
   }
 
+  /**
+   * R2: bind a database CONTAINER the source API does not list to a NEW database plan item of this op. A Tugra database is created on
+   * `targetServerId` (fresh credentials; the source password is never read by the hub: the migrator reads it from the container on the
+   * source host when it dumps) and the op gets a finished `database` task for `database:<host>:<container>`, shaped like the task of
+   * any listed database, so the data lane, the verify step and the env remap (which maps the container name to the new host) treat it
+   * the same. The environment is the one the op's own resources went to. Idempotent per item: a finished task answers `created:false`;
+   * a task a failed attempt left without a database is reused. The op must be the actor's and not rolled back or cancelled.
+   */
+  async carryUnlistedDb(userId: string, opId: string, db: ForeignDb, targetServerId: string): Promise<{ itemRef: string; created: boolean }> {
+    const op = await this.loadOwnedOp(userId, opId, { reapData: false });
+    const meta = typeof op.meta === "object" && op.meta ? (op.meta as { rolledBackAt?: string; sourceKind?: string }) : {};
+    if (meta.sourceKind !== "coolify") throw new ConflictException("only a Coolify import can carry a database the source does not list");
+    if (meta.rolledBackAt || op.cancelRequestedAt) throw new ConflictException("the import operation was cancelled or rolled back");
+    if (!(MIGRATOR_ENGINES as readonly string[]).includes(db.engine)) throw new BadRequestException(`${db.engine} cannot be carried: the migrator cannot dump it`);
+    const itemRef = ns("database", db.serverRef, db.sourceRef);
+    const existing = op.tasks.find((t) => t.itemRef === itemRef);
+    if (existing?.status === "DONE" && existing.resourceId) return { itemRef, created: false };
+    if (existing && (existing.resourceId || existing.status === "RUNNING")) throw new ConflictException("the database of this item is being created");
+    const server = await this.prisma.server.findUnique({ where: { id: targetServerId }, select: { teamId: true } });
+    if (!server) throw new NotFoundException("target server not found");
+    await this.access.requirePermission(userId, server.teamId, "databases");
+    // the environment the op's own resources went to (a created database or app of the op), else the team default (createCore)
+    const sibling = op.tasks.find((t) => t.status === "DONE" && !!t.resourceId && (t.resourceType === "database" || t.resourceType === "application"));
+    const env = sibling?.resourceId
+      ? sibling.resourceType === "database"
+        ? await this.prisma.database.findUnique({ where: { id: sibling.resourceId }, select: { environmentId: true } })
+        : await this.prisma.application.findUnique({ where: { id: sibling.resourceId }, select: { environmentId: true } })
+      : null;
+    const task = existing
+      ? await this.prisma.bulkTask.update({ where: { id: existing.id }, data: { status: "RUNNING", output: null, startedAt: new Date(), finishedAt: null } })
+      : await this.prisma.bulkTask.create({
+          data: { opId, serverId: targetServerId, kind: "database", itemRef, status: "RUNNING", dependsOn: [], result: { name: db.name, carried: true }, startedAt: new Date() },
+        });
+    try {
+      // The row is created WITH an op-scoped marker (one insert), and looked up by it first: a crash between the insert and the task update
+      // below leaves a RUNNING task with no resourceId, and the retry must adopt that row, never create a second one nobody tracks.
+      const marker = carryMarker(opId, itemRef);
+      const earlier = await this.dbs.findMarked(targetServerId, marker);
+      const created = earlier ?? (await this.dbs.createMarked(userId, foreignDbToCreateInput(db, { serverId: targetServerId, environmentId: env?.environmentId ?? undefined }), marker));
+      await this.prisma.bulkTask.update({
+        where: { id: task.id },
+        data: { status: "DONE", resourceType: "database", resourceId: created.id, result: { name: created.name, databaseId: created.id, carried: true, credentialsCarried: false }, finishedAt: new Date() },
+      });
+      await this.dbs.dropMarker(created.id, marker).catch((e) => this.logger.warn(`carry marker of ${created.id} not removed: ${msg(e)}`));
+      await this.audit.log({ actor: userId, action: "import.unlisted_db_carried", target: opId, meta: { itemRef, engine: db.engine, databaseId: created.id, ...(earlier ? { adopted: true } : {}) } });
+      return { itemRef, created: true };
+    } catch (e) {
+      await this.prisma.bulkTask.update({ where: { id: task.id }, data: { status: "FAILED", output: msg(e), finishedAt: new Date() } });
+      throw e;
+    }
+  }
+
   /** Poll an operation's progress. Scoped to its creator. Returns a redacted view (no compensation blobs). */
   async status(userId: string, opId: string) {
     const op = await this.loadOwnedOp(userId, opId);
@@ -1514,6 +1569,8 @@ export class ImportExecutorService {
     // current creds; a mismatch, or apps that disagree, falls to rotate (every URL rewritten to the one Tugra
     // credential) and leaves the old identity ambiguous so split vars are reported, never half-rewritten.
     const DB_NAME_ENGINES = new Set(["POSTGRES", "MYSQL", "MARIADB"]); // engines whose URL path is the db-name (not a redis index / mongo params)
+    // a carried database container keeps the name its operator gave it on the source (any `[A-Za-z0-9_-]` name, not only a uuid): the remap finds it by that name
+    const carriedHosts = dbInfos.filter((d) => (op.tasks.find((t) => t.itemRef === d.itemRef)?.result as { carried?: unknown } | null | undefined)?.carried === true).map((d) => d.oldHost);
     const targets: DbRemapTarget[] = dbInfos.map(({ itemRef, oldHost, dv }) => {
       const distinct = new Map<string, { user?: string; password?: string; database?: string }>();
       for (const a of appEnvs) {
@@ -1571,7 +1628,9 @@ export class ImportExecutorService {
       const res = remapEnv(a.env, {
         dbs: targets,
         apps: appTargets.filter((at) => at.itemRef !== a.itemRef),
-        ...(hostShape ? { hostShape, bareHostKeyGate: true } : {}),
+        ...(hostShape
+          ? { hostShape, bareHostKeyGate: true }
+          : { flagUnresolvedHosts: true, readableHosts: carriedHosts, ownedHosts: [...skippedDbHosts, ...(sourceRefOf(a.itemRef) ? [sourceRefOf(a.itemRef) as string] : [])] }), // R21: a Coolify uuid host no plan item owns is reported, never left as a dead host
         ...(sourceServices?.length ? { services: sourceServices } : {}),
         ...(row ? { appServerId: row.serverId, appCanJoinNetwork: canJoin } : {}),
       });

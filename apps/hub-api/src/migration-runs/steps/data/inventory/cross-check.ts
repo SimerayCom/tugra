@@ -7,6 +7,10 @@
  *  - a database container (recognised by its image) that no plan item of that host accounts for is a BLOCKING `unlisted-db`
  *    finding until the owner decides: `unlistedDbPolicy` skip/carry (an explicit input) or an operator attestation on that exact
  *    finding, `inventory-excluded` (accepted: not migrated) or `inventory-mapped` (it IS this plan item, named in the note);
+ *  - `unlistedDbPolicy: carry` is a REAL carry (R2): every unlisted database the inventory proves carryable is bound to a NEW
+ *    database plan item (see {@link carryDecisions}) which the DATA_SEED step creates; the normal database lane then moves it. A
+ *    container whose data cannot be carried in full (an engine the migrator cannot dump, a password it cannot discover, an ACL
+ *    user, no known version...) is REFUSED with a `inventory.carry-refused-<reason>` code: never a silent warning;
  *  - a named volume no container mounts (LINKS 0) that no plan `volume:` item accounts for is a blocking `orphan-volume` finding
  *    until `orphanVolumePolicy: skip` or an `inventory-excluded` attestation (a volume the plan carries is not an orphan, even when
  *    its container was removed);
@@ -29,6 +33,7 @@ export const INVENTORY_CODES = {
   unlistedDb: "inventory.unlisted-db",
   unlistedDbSkipped: "inventory.unlisted-db-skipped",
   unlistedDbCarry: "inventory.unlisted-db-carry",
+  unlistedDbCarryPending: "inventory.unlisted-db-carry-pending",
   unlistedDbExcluded: "inventory.unlisted-db-excluded",
   unlistedDbMapped: "inventory.unlisted-db-mapped",
   orphanVolume: "inventory.orphan-volume",
@@ -40,6 +45,23 @@ export const INVENTORY_CODES = {
   reachUnknown: "inventory.reach-unknown",
   partSizeExceedsCap: "inventory.part-size-exceeds-cap",
 } as const;
+
+/** One gate code per reason a carry is refused (so each has its own sentence in the locale), keyed by {@link CarryRefusal}. */
+export const CARRY_REFUSED_CODES = {
+  "engine-unsupported": "inventory.carry-refused-engine-unsupported",
+  "name-unsupported": "inventory.carry-refused-name-unsupported",
+  "not-running": "inventory.carry-refused-not-running",
+  "meta-missing": "inventory.carry-refused-meta-missing",
+  "credentials-not-discoverable": "inventory.carry-refused-credentials-not-discoverable",
+  "secret-file-unsupported": "inventory.carry-refused-secret-file-unsupported",
+  "acl-user-unsupported": "inventory.carry-refused-acl-user-unsupported",
+  "db-not-discoverable": "inventory.carry-refused-db-not-discoverable",
+  "version-unknown": "inventory.carry-refused-version-unknown",
+  "pg-layout-unsupported": "inventory.carry-refused-pg-layout-unsupported",
+  "databases-unknown": "inventory.carry-refused-databases-unknown",
+  "multiple-databases": "inventory.carry-refused-multiple-databases",
+} as const;
+const CARRY_REFUSED_SET: ReadonlySet<string> = new Set(Object.values(CARRY_REFUSED_CODES));
 
 /** The attestation check ids an operator may use on a finding (listed in the wait's `attest`). */
 export const INVENTORY_ATTEST = { excluded: "inventory-excluded", mapped: "inventory-mapped" } as const;
@@ -134,6 +156,145 @@ export function findingsOf(inv: HostInventory, planRefs: readonly string[]): Fin
   return out;
 }
 
+// ───────────────────────────── carry (R2) ─────────────────────────────
+
+/** The engines the migrator can dump and the hub can restore (`MIGRATOR_ENGINES`): the only ones an unlisted container can be carried as. */
+export type CarryEngine = "POSTGRES" | "MYSQL" | "MARIADB" | "REDIS" | "KEYDB" | "DRAGONFLY";
+
+/** Why a container cannot be carried in full. Fixed, value-free codes (they travel in gate params and the locale has a sentence each). */
+export const CARRY_REFUSALS = ["engine-unsupported", "name-unsupported", "not-running", "meta-missing", "credentials-not-discoverable", "secret-file-unsupported", "acl-user-unsupported", "db-not-discoverable", "version-unknown", "pg-layout-unsupported", "databases-unknown", "multiple-databases"] as const;
+export type CarryRefusal = (typeof CARRY_REFUSALS)[number];
+
+/** What the DATA_SEED step needs to bind a container to a new database plan item. No secret: the password is read by the migrator on the source host. */
+export interface CarrySpec {
+  host: string;
+  container: string;
+  engine: CarryEngine;
+  version: string;
+  image: string;
+  user: string | null;
+  database: string | null;
+  /** The display name of the new Tugra database. */
+  name: string;
+}
+
+/** The one repository (registry-less or Docker Hub spelling) and, for Dragonfly, its own registry, that Tugra's standard image of each carryable engine comes from. */
+const STOCK_IMAGES: Record<CarryEngine, { repo: string; registries: readonly string[] }> = {
+  POSTGRES: { repo: "postgres", registries: ["", "docker.io", "index.docker.io", "registry-1.docker.io"] },
+  MYSQL: { repo: "mysql", registries: ["", "docker.io", "index.docker.io", "registry-1.docker.io"] },
+  MARIADB: { repo: "mariadb", registries: ["", "docker.io", "index.docker.io", "registry-1.docker.io"] },
+  REDIS: { repo: "redis", registries: ["", "docker.io", "index.docker.io", "registry-1.docker.io"] },
+  KEYDB: { repo: "eqalpha/keydb", registries: ["", "docker.io", "index.docker.io", "registry-1.docker.io"] },
+  DRAGONFLY: { repo: "dragonflydb/dragonfly", registries: ["", "docker.dragonflydb.io", "docker.io", "index.docker.io", "registry-1.docker.io"] },
+};
+
+/** The `registry`, `repository` and `tag` of an image reference (`tag` is "" when there is none, a digest is dropped). */
+function splitImage(image: string): { registry: string; repo: string; tag: string } {
+  const noDigest = image.split("@")[0];
+  const lastColon = noDigest.lastIndexOf(":");
+  const hasTag = lastColon > noDigest.lastIndexOf("/");
+  const repoFull = hasTag ? noDigest.slice(0, lastColon) : noDigest;
+  const parts = repoFull.split("/");
+  let registry = "";
+  if (parts.length > 1 && (/[.:]/.test(parts[0]) || parts[0] === "localhost")) registry = parts.shift() as string;
+  let repo = parts.join("/").toLowerCase();
+  if (repo.startsWith("library/")) repo = repo.slice("library/".length);
+  return { registry: registry.toLowerCase(), repo, tag: hasTag ? noDigest.slice(lastColon + 1) : "" };
+}
+
+/**
+ * The version Tugra's standard image of the engine is pulled with, from what the source container PROVES, or null when none can be
+ * named without guessing. Tugra builds `<stock image>:<version>`, so the version must be a tag that image really has:
+ *  - PostgreSQL / MySQL / MariaDB / Redis: the engine's own version variable the inventory read (`PG_MAJOR`, `MYSQL_MAJOR`, ...), else the
+ *    numeric lead of the image tag (`16-alpine` -> `16`, `8.0.36` -> `8.0.36`); a tag that does not start with a number (`pg16`, `lts`) names none;
+ *  - KeyDB / Dragonfly: their tags are not plain numbers (`x86_64_v6.3.4`, `v1.14.0`), so the tag is taken verbatim and only when it is a pinned one.
+ */
+function carryVersion(engine: CarryEngine, tag: string, reported: string | null): string | null {
+  if (engine === "KEYDB" || engine === "DRAGONFLY") return /\d/.test(tag) && /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/.test(tag) ? tag : null;
+  const numeric = /^\d+(\.\d+)*$/;
+  if (reported && numeric.test(reported)) return reported;
+  const lead = tag.match(/^(\d+(?:\.\d+)*)(?:-|$)/);
+  return lead ? lead[1] : null;
+}
+
+/** The Tugra engine a database IMAGE is carried as, or null when it has none the migrator can move (MongoDB, ClickHouse, Valkey, Redis Stack...). */
+export function carryEngineOfImage(image: string): CarryEngine | null {
+  const family = dbEngineOfImage(image);
+  const base = (image.split("@")[0].split("/").pop() ?? "").split(":")[0].toLowerCase();
+  if (family === "POSTGRES") return "POSTGRES";
+  if (family === "MARIADB") return "MARIADB";
+  if (family === "MYSQL") return "MYSQL";
+  if (family === "REDIS") return /keydb/.test(base) ? "KEYDB" : /dragonfly/.test(base) ? "DRAGONFLY" : base === "redis" ? "REDIS" : null;
+  return null;
+}
+
+/**
+ * Can this unlisted database container be carried IN FULL, and as what? Pure. Every refusal is a fixed reason:
+ *  - the engine must be one the migrator dumps; the container name must be a plain reference (letters, digits, `_`, `-`; no dot);
+ *    the container must be running (the migrator opens a running source);
+ *  - the inventory must carry the database facts (an older script's report does not: run the inventory again);
+ *  - the migrator must be able to discover the password (`env`); a `*_FILE` secret, no password or an ACL user is refused;
+ *  - the image must be the engine's own standard one (extension and vendor builds are `engine-unsupported`: their extensions would be missing);
+ *  - a MySQL / MariaDB container must name its database (the dump covers exactly one) and every engine needs a version Tugra's standard
+ *    image really has (the engine's own version variable, else the image tag; KeyDB / Dragonfly only a pinned tag): a copy on another
+ *    major could not open the data, and a version that names no image is `version-unknown`, never a guess;
+ *  - PostgreSQL 18 or newer is `pg-layout-unsupported`: Tugra mounts its database volume at the pre-18 data path, so a restored 18+ cluster would
+ *    sit in an anonymous volume that the next container recreate orphans, while the run read DONE;
+ *  - a PostgreSQL / MySQL / MariaDB container must be KNOWN to hold no user database besides the one the migrator dumps (it dumps exactly one):
+ *    a list the inventory could not take is `databases-unknown`, any other database is `multiple-databases`: never a silent partial carry.
+ */
+export function carryAssessment(host: string, c: InvContainer): { ok: true; spec: CarrySpec } | { ok: false; reason: CarryRefusal } {
+  const engine = carryEngineOfImage(c.image);
+  if (!engine) return { ok: false, reason: "engine-unsupported" };
+  // the copy is created from Tugra's standard image of the engine: a variant with more in it (PostGIS, pgvector, TimescaleDB, a Bitnami or
+  // Percona build) would lose what its data needs at restore, so only the engine's own image is carried
+  const img = splitImage(c.image);
+  if (img.repo !== STOCK_IMAGES[engine].repo || !STOCK_IMAGES[engine].registries.includes(img.registry)) return { ok: false, reason: "engine-unsupported" };
+  // the plan item is `database:<host>:<container>`, matched byte-exactly by the migrator and by the plan's own reference rules: a name outside them cannot be one
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(c.name)) return { ok: false, reason: "name-unsupported" };
+  if (c.state !== "running") return { ok: false, reason: "not-running" };
+  if (!c.db) return { ok: false, reason: "meta-missing" };
+  if (c.db.cred === "file") return { ok: false, reason: "secret-file-unsupported" };
+  if (c.db.cred === "acl") return { ok: false, reason: "acl-user-unsupported" };
+  if (c.db.cred !== "env") return { ok: false, reason: "credentials-not-discoverable" };
+  if ((engine === "MYSQL" || engine === "MARIADB") && !c.db.database) return { ok: false, reason: "db-not-discoverable" };
+  const version = carryVersion(engine, img.tag, c.db.version);
+  if (!version) return { ok: false, reason: "version-unknown" };
+  if (engine === "POSTGRES" && parseInt(version, 10) >= 18) return { ok: false, reason: "pg-layout-unsupported" };
+  if (engine === "POSTGRES" || engine === "MYSQL" || engine === "MARIADB") {
+    const held = c.db.databases;
+    if (!held) return { ok: false, reason: "databases-unknown" };
+    if (held.some((n) => n !== c.db!.database)) return { ok: false, reason: "multiple-databases" };
+  }
+  return { ok: true, spec: { host, container: c.name, engine, version, image: c.image, user: c.db.user, database: c.db.database, name: `unlisted-${engine.toLowerCase()}-${c.name.slice(0, 8)}` } };
+}
+
+/** The plan itemRef a carried container becomes. `data:`-free and in the same namespace the migrator resolves by container name. */
+export const carriedItemRef = (host: string, container: string): string => `database:${host}:${container}`;
+
+type Settled = Pick<CrossCheckInput, "attestations" | "planRefs">;
+const settledBy = (i: Settled, key: string): boolean => i.attestations.some((x) => (x.checkId === INVENTORY_ATTEST.excluded && x.subject === key) || (x.checkId === INVENTORY_ATTEST.mapped && x.subject === key && !!x.note && i.planRefs.includes(x.note.trim())));
+
+/**
+ * The containers the run must still carry: under `unlistedDbPolicy: carry`, every unlisted database of a COMPLETE inventory that no
+ * operator attestation settled and that {@link carryAssessment} accepts. Empty under any other policy. A container the plan
+ * accounts for (including one an earlier carry already created) is not an unlisted finding, so a second call returns nothing for it.
+ */
+export function carryDecisions(i: Pick<CrossCheckInput, "inventories" | "planRefs" | "unlistedDbPolicy" | "attestations">): CarrySpec[] {
+  if (i.unlistedDbPolicy !== "carry") return [];
+  const out: CarrySpec[] = [];
+  for (const [host, inv] of [...i.inventories].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    if (!inv.complete) continue;
+    for (const f of findingsOf(inv, i.planRefs)) {
+      if (f.kind !== "unlisted-db" || settledBy(i, f.key)) continue;
+      const c = inv.containers.find((x) => x.name === f.name);
+      const a = c ? carryAssessment(host, c) : null;
+      if (a?.ok) out.push(a.spec);
+    }
+  }
+  return out;
+}
+
 const HOST_EVIDENCE = "host-loop-reported" as const;
 
 /** The gate checks of the cross-check (see the module comment). */
@@ -167,8 +328,15 @@ export function crossCheckChecks(i: CrossCheckInput): GateCheck[] {
         if (mapped) checks.push({ ...base, id: checkKey("inventory-unlisted-db", f.key), status: "warn", code: INVENTORY_CODES.unlistedDbMapped, params: { ...params, item: mapped } });
         else if (excluded(f.key)) checks.push({ ...base, id: checkKey("inventory-unlisted-db", f.key), status: "warn", code: INVENTORY_CODES.unlistedDbExcluded, params });
         else if (i.unlistedDbPolicy === "skip") checks.push({ ...base, id: checkKey("inventory-unlisted-db", f.key), status: "warn", code: INVENTORY_CODES.unlistedDbSkipped, params });
-        else if (i.unlistedDbPolicy === "carry") checks.push({ ...base, id: checkKey("inventory-unlisted-db", f.key), status: "warn", code: INVENTORY_CODES.unlistedDbCarry, params });
-        else checks.push({ ...base, id: checkKey("inventory-unlisted-db", f.key), status: "fail", code: INVENTORY_CODES.unlistedDb, params, attestable: [INVENTORY_ATTEST.excluded, INVENTORY_ATTEST.mapped] });
+        else if (i.unlistedDbPolicy === "carry") {
+          const c = inv.containers.find((x) => x.name === f.name);
+          const a = c ? carryAssessment(host, c) : ({ ok: false, reason: "meta-missing" } as const);
+          // `findingsOnly` is the judgement after a SKIPPED DATA_SEED (the step that carries): a carryable container still unlisted here was
+          // never carried, and nothing later will, so it blocks until an operator settles it instead of passing as if it were handled
+          if (a.ok && i.findingsOnly) checks.push({ ...base, id: checkKey("inventory-unlisted-db", f.key), status: "fail", code: INVENTORY_CODES.unlistedDbCarryPending, params: { ...params, name: a.spec.name, version: a.spec.version }, attestable: [INVENTORY_ATTEST.excluded, INVENTORY_ATTEST.mapped] });
+          else if (a.ok) checks.push({ ...base, id: checkKey("inventory-unlisted-db", f.key), status: "warn", code: INVENTORY_CODES.unlistedDbCarry, params: { ...params, name: a.spec.name, version: a.spec.version } });
+          else checks.push({ ...base, id: checkKey("inventory-unlisted-db", f.key), status: "fail", code: CARRY_REFUSED_CODES[a.reason], params: { ...params, reason: a.reason }, attestable: [INVENTORY_ATTEST.excluded, INVENTORY_ATTEST.mapped] });
+        } else checks.push({ ...base, id: checkKey("inventory-unlisted-db", f.key), status: "fail", code: INVENTORY_CODES.unlistedDb, params, attestable: [INVENTORY_ATTEST.excluded, INVENTORY_ATTEST.mapped] });
       } else {
         const base = { subject: f.key, evidence: HOST_EVIDENCE, ownerInput: "orphanVolumePolicy" as const };
         const params = { host, volume: f.name, sizeKiB: f.sizeKiB ?? null };
@@ -211,6 +379,6 @@ function reachChecks(host: string, r: ReachReport | null, partMiB: number | null
 /** The attestation ids a wait should list when the checks contain a blocking finding the operator may settle. */
 export function attestableFindings(checks: readonly GateCheck[]): string[] {
   const failing = (code: string) => checks.some((c) => c.status === "fail" && c.code === code);
-  if (failing(INVENTORY_CODES.unlistedDb)) return [INVENTORY_ATTEST.excluded, INVENTORY_ATTEST.mapped];
+  if (failing(INVENTORY_CODES.unlistedDb) || failing(INVENTORY_CODES.unlistedDbCarryPending) || checks.some((c) => c.status === "fail" && CARRY_REFUSED_SET.has(c.code ?? ""))) return [INVENTORY_ATTEST.excluded, INVENTORY_ATTEST.mapped];
   return failing(INVENTORY_CODES.orphanVolume) ? [INVENTORY_ATTEST.excluded] : [];
 }
