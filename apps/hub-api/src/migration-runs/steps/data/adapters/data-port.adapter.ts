@@ -135,7 +135,7 @@ export class PrismaDataPort implements DataPort {
         etaSec: state === "COPYING" && bps && rawTotal ? Math.ceil(Math.max(0, rawTotal - rawDone) / bps) : null,
         entries: t?.entries ?? null,
         error: t?.error ?? null,
-        inventory: inv ? { found: inv.found, rawBytes: inv.rawBytes, entries: inv.entries, running: inv.running, mountType: inv.mountType, ...(inv.pgMajor ? { pgMajor: inv.pgMajor } : {}), ...(inv.pgLayout ? { pgLayout: inv.pgLayout } : {}) } : null,
+        inventory: inv ? { found: inv.found, rawBytes: inv.rawBytes, entries: inv.entries, running: inv.running, mountType: inv.mountType, ...(inv.pgMajor ? { pgMajor: inv.pgMajor } : {}), ...(inv.pgLayout ? { pgLayout: inv.pgLayout } : {}), ...(inv.speedMBps ? { speedMBps: inv.speedMBps } : {}) } : null,
         disk: meta.vxDisk?.[target.itemRef] ? { ok: meta.vxDisk[target.itemRef].ok, unknown: meta.vxDisk[target.itemRef].unknown } : null,
         gates,
       });

@@ -40,6 +40,7 @@ type streamHub struct {
 	speedFail    bool
 	recipes      string // overrides the /recipes answer (the streamed dump lane needs real recipes)
 	dbSizes      []dbSizeReq
+	invPosts     []invReq // every inventory body the migrator posted, in order
 }
 
 func (s *streamHub) serve(t *testing.T) *httptest.Server {
@@ -71,6 +72,12 @@ func (s *streamHub) serve(t *testing.T) *httptest.Server {
 			s.mu2.Unlock()
 			io.WriteString(w, `{"expiresAt":"2999-01-01T00:00:00Z"}`)
 		case p == "vx/inventory":
+			b, _ := io.ReadAll(r.Body)
+			var ireq invReq
+			_ = json.Unmarshal(b, &ireq)
+			s.mu2.Lock()
+			s.invPosts = append(s.invPosts, ireq)
+			s.mu2.Unlock()
 			io.WriteString(w, `{"stored":1,"expiresAt":"2999-01-01T00:00:00Z"}`)
 		case strings.HasSuffix(p, "/begin"):
 			b, _ := io.ReadAll(r.Body)
@@ -607,5 +614,57 @@ func TestSpeedtestMiBBounds(t *testing.T) {
 		if code := RunCLI([]string{"--hub", "https://hub.example", "--speedtest-mib", v}, "test", &stdout, &stderr); code != exitUsage {
 			t.Errorf("%s: exit=%d", v, code)
 		}
+	}
+}
+
+func TestSpeedtestRidesTheInventoryToTheHub(t *testing.T) {
+	hub := streamHubWith(t, withPolicy(appRow))
+	d := &volDocker{ctrs: []*vctr{stoppedApp()}, invOut: invFor(10 * 1024 * 1024)}
+	out, code, stderr := runStream(t, hub, d, streamBytes(10*1024*1024), "--dry-run", "--speedtest-mib", "2")
+	if code != exitOK {
+		t.Fatalf("exit=%d %+v %s", code, out, stderr)
+	}
+	hub.mu2.Lock()
+	posts := append([]invReq(nil), hub.invPosts...)
+	hub.mu2.Unlock()
+	if len(posts) != 2 {
+		t.Fatalf("the inventory is posted once, then again with the measured rate: %d posts", len(posts))
+	}
+	if posts[0].Items[0].SpeedMBps != 0 {
+		t.Errorf("the first post carries no speed: %+v", posts[0].Items[0])
+	}
+	second := posts[1].Items
+	if len(second) != 1 || second[0].ItemRef != out.Items[0].ItemRef || second[0].SpeedMBps != out.Items[0].SpeedMBps || second[0].SpeedMBps <= 0 {
+		t.Errorf("the re-post must carry the measured %v MB/s of %s: %+v", out.Items[0].SpeedMBps, out.Items[0].ItemRef, second)
+	}
+	if second[0].RawBytes != posts[0].Items[0].RawBytes || !second[0].Found || second[0].MountType != "volume" {
+		t.Errorf("the re-post replaces the item as a whole, so it must repeat the other facts: %+v", second[0])
+	}
+}
+
+func TestNoSpeedtestMeansOneInventoryPostAndNoSpeed(t *testing.T) {
+	hub := streamHubWith(t, withPolicy(appRow))
+	d := &volDocker{ctrs: []*vctr{stoppedApp()}, invOut: invFor(1024 * 1024)}
+	if _, code, _ := runStream(t, hub, d, streamBytes(1024*1024), "--dry-run"); code != exitOK {
+		t.Fatalf("exit=%d", code)
+	}
+	hub.mu2.Lock()
+	defer hub.mu2.Unlock()
+	if len(hub.invPosts) != 1 || hub.invPosts[0].Items[0].SpeedMBps != 0 {
+		t.Errorf("off by default: %+v", hub.invPosts)
+	}
+}
+
+func TestAFailedSpeedtestPostsNoSpeed(t *testing.T) {
+	hub := streamHubWith(t, withPolicy(appRow))
+	hub.speedFail = true
+	d := &volDocker{ctrs: []*vctr{stoppedApp()}, invOut: invFor(1024 * 1024)}
+	if _, code, _ := runStream(t, hub, d, streamBytes(1024*1024), "--dry-run", "--speedtest-mib", "1"); code != exitOK {
+		t.Fatalf("exit=%d", code)
+	}
+	hub.mu2.Lock()
+	defer hub.mu2.Unlock()
+	if len(hub.invPosts) != 1 {
+		t.Errorf("a failed test is reported, never posted as a speed: %d posts", len(hub.invPosts))
 	}
 }

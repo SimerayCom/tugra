@@ -34,6 +34,8 @@ type InvItem struct {
 	PgLayout   string      `json:"pgLayout,omitempty"`
 	MountDest  string      `json:"mountDest,omitempty"`
 	Reason     string      `json:"reason,omitempty"`
+	// SpeedMBps is the end-to-end rate --speedtest-mib measured for this volume's source host (raw MB/s); the hub feeds it to its window estimate.
+	SpeedMBps float64 `json:"speedMBps,omitempty"`
 }
 
 // InvSpecials counts the entries a tar cannot carry faithfully (sockets are skipped, fifos archived, devices refused).

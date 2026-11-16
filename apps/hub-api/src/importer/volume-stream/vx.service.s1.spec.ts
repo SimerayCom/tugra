@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, NotFoundException } from "@nest
 import { harness } from "./testing/vx-harness";
 import { appTask, dbTask, opRow, APP_ID, APP_VOL_REF, DB_ID, DB_VOL_REF, GiB, OP, RUN, SERVER_ID, TEAM_ID, probeOutput } from "./testing/vx-fixtures";
 import { dbVolumeName } from "../../databases/database-script";
+import { VxInventoryItemSchema } from "./vx.dto";
 
 const ctxOp = { opId: OP, actorId: "user-1", expiresAt: new Date(Date.now() + 1_800_000) };
 const inv = (over: Record<string, unknown> = {}) => ({ itemRef: APP_VOL_REF, found: true, mountType: "volume" as const, rawBytes: 5 * GiB, entries: 10, specials: { sockets: 0, fifos: 0, devices: 0 }, running: false, exitCode: 0, ...over });
@@ -72,6 +73,14 @@ describe("VxService.inventory", () => {
     expect(sql.values[sql.values.length - 1]).toBe(OP);
     const patch = JSON.parse(sql.values[0] as string);
     expect(patch[APP_VOL_REF]).toMatchObject({ rawBytes: 5 * GiB, runId: RUN });
+  });
+  it("keeps the measured link speed of a volume (--speedtest-mib) and refuses a nonsensical one", async () => {
+    const h = harness();
+    await h.svc.inventory(ctxOp, { runId: RUN, items: [inv({ speedMBps: 42.5 })] });
+    const patch = JSON.parse((h.prisma.$executeRaw.mock.calls[0][0] as { values: unknown[] }).values[0] as string);
+    expect(patch[APP_VOL_REF]).toMatchObject({ speedMBps: 42.5 });
+    for (const bad of [0, -3, 1e9, Number.NaN]) expect(VxInventoryItemSchema.safeParse({ ...inv(), speedMBps: bad }).success).toBe(false);
+    expect(VxInventoryItemSchema.safeParse(inv()).success).toBe(true);
   });
   it("falls back to the token's own expiry when no renewal is allowed (no transfer yet)", async () => {
     const h = harness();

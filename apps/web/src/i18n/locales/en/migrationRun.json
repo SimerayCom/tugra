@@ -698,6 +698,7 @@
     "data-seed_estimate": "Estimated downtime window: {seconds} seconds (- means it cannot be estimated yet).",
     "data-seed_estimate_bytes": "Estimate input: {bytes} bytes across {volumes} volumes ({unknown} of unknown size).",
     "data-seed_estimate_rate-observed": "Transfer rate used: {bytesPerSec} bytes per second, measured.",
+    "data-seed_estimate_rate-measured": "Measured link speed used for {hosts} source host(s): about {bytesPerSec} bytes per second (a short test copy, not a promise).",
     "data-seed_estimate_rate-assumed": "Transfer rate used: {bytesPerSec} bytes per second, assumed because nothing was measured yet.",
     "data-seed_estimate_extract": "Extracting on the target after the last part takes about {seconds} seconds.",
     "data-seed_estimate_databases": "{count} database dumps at about {secondsEach} seconds each.",

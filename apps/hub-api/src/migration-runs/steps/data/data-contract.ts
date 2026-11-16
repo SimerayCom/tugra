@@ -33,6 +33,8 @@ export interface InventoryLite {
   mountType: "volume" | "bind";
   pgMajor?: string;
   pgLayout?: string;
+  /** `--speedtest-mib`: raw MB/s the migrator measured end to end from this volume's source host (advisory, from an untrusted host). */
+  speedMBps?: number;
 }
 
 /** Volume transfer states of the importer (`MigrationVolumeTransfer.state`) plus the two the view adds. */

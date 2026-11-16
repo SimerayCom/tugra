@@ -375,6 +375,22 @@ export const WINDOW_BASE_OVERHEAD_SEC = 120;
 export const STREAM_RESTORE_BYTES_PER_SEC: Readonly<Record<string, number>> = { POSTGRES: 10 * 1024 * 1024, MARIADB: 6 * 1024 * 1024, MYSQL: 6 * 1024 * 1024 };
 export const DEFAULT_STREAM_RESTORE_BYTES_PER_SEC = 6 * 1024 * 1024;
 
+/** The source host of a data item (`volume:<host>:<ref>:<name>`); "" for a ref that has none. */
+const hostOfRef = (itemRef: string): string => itemRef.split(":")[1] ?? "";
+
+/** Bytes per second per source host from the `--speedtest-mib` results of its volumes (their mean); hosts that were not measured are absent. */
+export function measuredHostRates(volumes: ReadonlyArray<Pick<VolumeDataItem, "itemRef" | "excluded" | "inventory">>): Map<string, number> {
+  const sums = new Map<string, { sum: number; n: number }>();
+  for (const v of volumes) {
+    const mbps = v.excluded ? 0 : (v.inventory?.speedMBps ?? 0);
+    if (!(mbps > 0)) continue;
+    const h = hostOfRef(v.itemRef);
+    const cur = sums.get(h) ?? { sum: 0, n: 0 };
+    sums.set(h, { sum: cur.sum + mbps * 1e6, n: cur.n + 1 });
+  }
+  return new Map([...sums].map(([h, c]) => [h, Math.max(1, Math.round(c.sum / c.n))]));
+}
+
 export function estimateWindow(snap: DataSnapshot, now: Date): WindowEstimate {
   const all = inScopeVolumes(snap);
   const vols = all.filter((v) => v.destType !== "db-dump");
@@ -391,16 +407,37 @@ export function estimateWindow(snap: DataSnapshot, now: Date): WindowEstimate {
   }
   const observed = snap.volumes.map((v) => v.bps ?? 0).filter((x) => x > 0);
   const rate = observed.length ? Math.max(1, Math.round(observed.reduce((a, b) => a + b, 0) / observed.length)) : ASSUMED_BYTES_PER_SEC;
+  // A source host whose link was measured by `--speedtest-mib` (and that has no transfer of its own to observe yet) is estimated at ITS rate;
+  // every other volume keeps the run-wide rate above, so a run without a speed test reads exactly as before.
+  const measured = measuredHostRates(snap.volumes);
+  const observedHosts = new Set(snap.volumes.filter((v) => (v.bps ?? 0) > 0).map((v) => hostOfRef(v.itemRef)));
+  const hostRate = (v: VolumeDataItem): number | null => {
+    const h = hostOfRef(v.itemRef);
+    return observedHosts.has(h) ? null : (measured.get(h) ?? null);
+  };
+  // seconds to move `items` at their rates: bytes are grouped by rate, so the single-rate case is the plain ceil(bytes / rate)
+  const moveSec = (items: VolumeDataItem[]): number => {
+    const groups = new Map<number, number>();
+    for (const v of items) {
+      const r = hostRate(v) ?? rate;
+      groups.set(r, (groups.get(r) ?? 0) + sizeOf(v));
+    }
+    let sec = 0;
+    for (const [r, n] of groups) sec += Math.ceil(n / r);
+    return sec;
+  };
+  const measuredUsed = [...new Set([...vols, ...dumps].filter((v) => hostRate(v) !== null).map((v) => hostOfRef(v.itemRef)))];
   const dbs = snap.databases.filter((d) => d.plane === "logical").length;
-  const copySec = Math.ceil(bytes / rate);
+  const copySec = moveSec(vols);
   const extractSec = Math.ceil(bytes * EXTRACT_SEC_PER_BYTE);
   // a streamed dump has no warm seed: its dump, its transfer and its restore all run INSIDE the freeze (transfer first, restore after the last part)
-  const streamSec = Math.ceil(dumpBytes / rate) + restoreSec;
+  const streamSec = moveSec(dumps) + restoreSec;
   const total = copySec + extractSec + dbs * DB_DUMP_OVERHEAD_SEC + streamSec + WINDOW_BASE_OVERHEAD_SEC;
   const unknownSizes = all.filter((v) => !v.inventory?.found && v.rawBytesTotal === null).length;
   const basis: WindowEstimate["basis"] = [
     { code: "data-seed.estimate.bytes", params: { bytes, volumes: vols.length, unknown: unknownSizes } },
     { code: observed.length ? "data-seed.estimate.rate-observed" : "data-seed.estimate.rate-assumed", params: { bytesPerSec: rate } },
+    ...(measuredUsed.length ? [{ code: "data-seed.estimate.rate-measured", params: { hosts: measuredUsed.length, bytesPerSec: Math.round(measuredUsed.reduce((a, h) => a + (measured.get(h) ?? 0), 0) / measuredUsed.length) } }] : []),
     { code: "data-seed.estimate.extract", params: { seconds: extractSec } },
     { code: "data-seed.estimate.databases", params: { count: dbs, secondsEach: DB_DUMP_OVERHEAD_SEC } },
   ];

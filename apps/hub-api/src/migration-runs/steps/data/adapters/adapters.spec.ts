@@ -42,7 +42,7 @@ describe("PrismaDataPort.snapshot", () => {
       serverId: "srv-target",
       hubBase: "https://hub.example.com",
       plan: { items: [{ itemRef: "database:s:pgvol", kind: "database", proposed: { dataMode: "volume" } }] },
-      vxInventory: { "volume:s:abc:data": { found: true, rawBytes: 100, entries: 7, running: true, mountType: "volume", runId: "r" } },
+      vxInventory: { "volume:s:abc:data": { found: true, rawBytes: 100, entries: 7, running: true, mountType: "volume", runId: "r", speedMBps: 12.5 } },
       vxDisk: { "volume:s:abc:data": { ok: true, unknown: false } },
       vxExcluded: { "volume:s:ex:cache": { reason: "r", at: "t", by: "u" } },
     },
@@ -90,7 +90,7 @@ describe("PrismaDataPort.snapshot", () => {
     expect(byRef["database:s:mongo"]).toMatchObject({ plane: "unsupported", unsupportedReason: expect.any(String) });
 
     const vols = Object.fromEntries(s.volumes.map((v) => [v.itemRef, v]));
-    expect(vols["volume:s:abc:data"]).toMatchObject({ state: "DONE", rawBytesDone: 100, bytesDone: 40, bps: 10, entries: 7, inventory: { found: true, rawBytes: 100, entries: 7 }, disk: { ok: true, unknown: false }, destType: "app-volume", ownerName: "web", excluded: false });
+    expect(vols["volume:s:abc:data"]).toMatchObject({ state: "DONE", rawBytesDone: 100, bytesDone: 40, bps: 10, entries: 7, inventory: { found: true, rawBytes: 100, entries: 7, speedMBps: 12.5 }, disk: { ok: true, unknown: false }, destType: "app-volume", ownerName: "web", excluded: false });
     expect(vols["volume:s:ex:cache"]).toMatchObject({ state: "EXCLUDED", excluded: true });
     expect(vols["volume:srv:pgvol:data"] ?? vols["volume:s:pgvol:data"]).toMatchObject({ destType: "db-data", gates: expect.any(Array) });
   });

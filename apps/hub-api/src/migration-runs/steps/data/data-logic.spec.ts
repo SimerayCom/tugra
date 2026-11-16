@@ -1,4 +1,4 @@
-import { assertSafeFlags, canonicalJson, checkKey, classifyDbTaskFailure, classifyTransferError, estimateEquals, estimateWindow, finalChecks, dbRestoredAfterFreeze, ASSUMED_BYTES_PER_SEC, migratorFlags, migratorWorkRemains, objectFinalChecks, objectSeedChecks, seedChecks, sha256Hex, subjectKey } from "./data-logic";
+import { assertSafeFlags, canonicalJson, checkKey, classifyDbTaskFailure, classifyTransferError, estimateEquals, estimateWindow, measuredHostRates, finalChecks, dbRestoredAfterFreeze, ASSUMED_BYTES_PER_SEC, migratorFlags, migratorWorkRemains, objectFinalChecks, objectSeedChecks, seedChecks, sha256Hex, subjectKey } from "./data-logic";
 import { VX_409 } from "../../../importer/volume-stream/vx-constants";
 import { DATA_CODES } from "./data-contract";
 import { answered, copied, database, inspected, makeRun, makeSnap, volume, NOW } from "./testing/fakes";
@@ -236,6 +236,62 @@ describe("estimateWindow", () => {
     expect(estimateEquals(a, b)).toBe(true);
     expect(estimateEquals(null, b)).toBe(false);
     expect(estimateEquals(a, estimateWindow(makeSnap({ volumes: [inspected("v1", 2 * 1024 ** 3)] }), NOW))).toBe(false);
+  });
+});
+
+describe("estimateWindow: a measured per-host speed (R37)", () => {
+  const GiB = 1024 ** 3;
+  const withSpeed = (itemRef: string, bytes: number, mbps?: number, o: Record<string, unknown> = {}) => {
+    const v = inspected(itemRef, bytes, 10, o);
+    return mbps === undefined ? v : { ...v, inventory: { ...v.inventory!, speedMBps: mbps } };
+  };
+  const rateOf = (e: ReturnType<typeof estimateWindow>) => e.basis.find((b) => b.code.startsWith("data-seed.estimate.rate-"));
+
+  it("uses the measured rate of a host instead of the assumed one, and says which", () => {
+    const e = estimateWindow(makeSnap({ volumes: [withSpeed("volume:host-1:app-a:data", 10 * GiB, 50)] }), NOW);
+    const copy = Math.ceil((10 * GiB) / 50e6);
+    expect(e.freezeToFlipSec).toBe(copy + Math.ceil(10 * GiB * (15 * 60) / (30 * GiB)) + 120);
+    expect(e.basis.map((b) => b.code)).toContain("data-seed.estimate.rate-measured");
+    expect(e.basis.find((b) => b.code === "data-seed.estimate.rate-measured")).toMatchObject({ params: { hosts: 1, bytesPerSec: 50e6 } });
+  });
+
+  it("is per host: a measured host is faster than the assumed rate, an unmeasured host keeps the run-wide rate", () => {
+    const fast = withSpeed("volume:host-1:app-a:data", 10 * GiB, 200);
+    const unmeasured = inspected("volume:host-2:app-b:data", 10 * GiB);
+    const both = estimateWindow(makeSnap({ volumes: [fast, unmeasured] }), NOW);
+    const onlyUnmeasured = estimateWindow(makeSnap({ volumes: [inspected("volume:host-1:app-a:data", 10 * GiB), unmeasured] }), NOW);
+    expect(both.freezeToFlipSec!).toBeLessThan(onlyUnmeasured.freezeToFlipSec!);
+    const expected = Math.ceil((10 * GiB) / 200e6) + Math.ceil((10 * GiB) / ASSUMED_BYTES_PER_SEC);
+    const extract = Math.ceil(20 * GiB * ((15 * 60) / (30 * GiB)));
+    expect(both.freezeToFlipSec).toBe(expected + extract + 120);
+  });
+
+  it("a streamed dump on a measured host is estimated at that host's rate", () => {
+    const dump = { ...inspected("volume:host-1:db-big:dump", 4 * GiB, 0), destType: "db-dump" as const, engine: "POSTGRES" };
+    const slow = estimateWindow(makeSnap({ volumes: [dump] }), NOW);
+    const fast = estimateWindow(makeSnap({ volumes: [dump, withSpeed("volume:host-1:app-a:data", 1, 400)] }), NOW);
+    expect(fast.freezeToFlipSec!).toBeLessThan(slow.freezeToFlipSec!);
+  });
+
+  it("a transfer already observed on the host wins over the test, and an excluded volume's test counts for nothing", () => {
+    const observedHost = withSpeed("volume:host-1:app-a:data", 10 * GiB, 5000, { bps: 100 * 1024 ** 2 });
+    const e = estimateWindow(makeSnap({ volumes: [observedHost] }), NOW);
+    expect(e.basis.map((b) => b.code)).not.toContain("data-seed.estimate.rate-measured");
+    expect(e.basis.map((b) => b.code)).toContain("data-seed.estimate.rate-observed");
+    const excluded = { ...withSpeed("volume:host-1:app-a:data", 10 * GiB, 5000), excluded: true };
+    expect(measuredHostRates([excluded as never]).size).toBe(0);
+  });
+
+  it("a run with no speed test estimates exactly as before", () => {
+    const vols = [inspected("volume:host-1:a:data", 7 * GiB), inspected("volume:host-2:b:data", 3 * GiB)];
+    const e = estimateWindow(makeSnap({ volumes: vols }), NOW);
+    expect(e.basis.map((b) => b.code)).toEqual(["data-seed.estimate.bytes", "data-seed.estimate.rate-assumed", "data-seed.estimate.extract", "data-seed.estimate.databases"]);
+    expect(e.freezeToFlipSec).toBe(Math.ceil((10 * GiB) / ASSUMED_BYTES_PER_SEC) + Math.ceil(10 * GiB * ((15 * 60) / (30 * GiB))) + 120);
+  });
+
+  it("measuredHostRates averages a host's tests and ignores nonsense", () => {
+    const m = measuredHostRates([withSpeed("volume:host-1:a:data", 1, 40), withSpeed("volume:host-1:b:data", 1, 60), withSpeed("volume:host-2:c:data", 1, 0), withSpeed("volume:host-3:c:data", 1)]);
+    expect([...m]).toEqual([["host-1", 50e6]]);
   });
 });
 

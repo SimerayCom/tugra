@@ -293,6 +293,7 @@ func (v *volRunner) dryRunVolumes(ctx context.Context, scope []Target) []itemRes
 		}
 	}
 	posted := false
+	speeds := map[string]float64{}
 	if len(inv) > 0 {
 		exp, err := v.hub.VxInventory(ctx, v.runID, inv)
 		if err == nil {
@@ -337,10 +338,38 @@ func (v *volRunner) dryRunVolumes(ctx context.Context, scope []Target) []itemRes
 		}
 		if res.State == "planned" && v.c.speedtestMiB > 0 && f.src != nil {
 			v.speedtest(ctx, tg, f, &res)
+			if res.SpeedMBps > 0 {
+				speeds[tg.ItemRef] = res.SpeedMBps
+			}
 		}
 		results = append(results, res)
 	}
+	v.postMeasuredSpeeds(ctx, inv, speeds)
 	return results
+}
+
+// postMeasuredSpeeds sends the inventory again with the rate each speed test measured, so the hub's window estimate can use the real link of
+// this source host instead of an assumed rate. Only the items that were measured are sent; the hub replaces an item as a whole, so the
+// re-post carries every other field again. A failure is logged and never fatal: the estimate then simply keeps its assumed rate.
+func (v *volRunner) postMeasuredSpeeds(ctx context.Context, inv []InvItem, speeds map[string]float64) {
+	if len(speeds) == 0 {
+		return
+	}
+	var again []InvItem
+	for _, it := range inv {
+		if s, ok := speeds[it.ItemRef]; ok {
+			it.SpeedMBps = s
+			again = append(again, it)
+		}
+	}
+	if len(again) == 0 {
+		return
+	}
+	if exp, err := v.hub.VxInventory(ctx, v.runID, again); err != nil {
+		v.logf("inventory (measured speed): %v", err)
+	} else if !exp.IsZero() {
+		v.expiry = exp
+	}
 }
 
 func fillFacts(res *itemResult, f volumeFacts) {

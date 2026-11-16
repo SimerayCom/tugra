@@ -34,6 +34,8 @@ export const VxInventoryItemSchema = z
     pgLayout: z.enum(PG_LAYOUTS).optional(),
     mountDest: shortStr(256).optional(),
     reason: shortStr(200).optional(),
+    // `--speedtest-mib`: the end-to-end rate the migrator measured from this source host to the target (raw MB/s, an estimate input only).
+    speedMBps: z.number().min(0.01).max(100_000).optional(),
   })
   .strict();
 export type VxInventoryItem = z.infer<typeof VxInventoryItemSchema>;
