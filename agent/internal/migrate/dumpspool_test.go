@@ -197,8 +197,12 @@ func TestSpoolFreeSpaceMarginPausesTheDrain(t *testing.T) {
 	s, _ := spoolFor(t, pr, DumpSpoolOpts{SegBytes: 1000, MarginBytes: 1000, Free: func(string) (uint64, bool) { return uint64(free.Load()), true },
 		Logf: func(string, ...any) { logs.Add(1) }})
 	var done atomic.Int32
+	cont := make(chan struct{}) // the client writes 4 chunks, then waits until the free space has dropped (no race with a fast writer)
 	go func() {
 		for i := 0; i < 20; i++ {
+			if i == 4 {
+				<-cont
+			}
 			if _, err := pw.Write(make([]byte, 500)); err != nil {
 				return
 			}
@@ -208,6 +212,7 @@ func TestSpoolFreeSpaceMarginPausesTheDrain(t *testing.T) {
 	}()
 	eventually(t, "some bytes to be spooled", 5*time.Second, func() bool { return done.Load() >= 4 })
 	free.Store(1200) // only 200 bytes above the margin: with a backlog on disk, a 500 byte chunk no longer fits
+	close(cont)
 	eventually(t, "the drain to pause on free space", 5*time.Second, func() bool { return logs.Load() == 1 })
 	paused := done.Load()
 	time.Sleep(100 * time.Millisecond)
@@ -811,9 +816,8 @@ func TestSpoolSegmentFlushDoesNotStallTheDrain(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the drain stopped reading the client while a sealed segment was being flushed")
 	}
-	if syncs.Load() == 0 {
-		t.Fatal("no segment was flushed")
-	}
+	// flushes run off the drain, in their own goroutines: wait for the first to start rather than racing it
+	eventually(t, "a sealed segment to be flushed", 5*time.Second, func() bool { return syncs.Load() > 0 })
 	close(gate)
 	got, err := io.ReadAll(s)
 	if err != nil || !bytes.Equal(got, data) {

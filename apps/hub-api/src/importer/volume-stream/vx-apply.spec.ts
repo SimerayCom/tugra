@@ -250,13 +250,28 @@ describe("VxRecoveryService", () => {
     expect(m.transfers.rows[0].error).toMatch(/did not finish in time/);
   });
 
-  it("stale APPLYING + not running, not applied, parts on the target: FAILED `apply interrupted` (re-run applies the staged parts)", async () => {
-    const { m, svc } = rec({}, { running: false, applied: false, parts: 5, rollbackVolume: true });
+  it("stale APPLYING + not running, not applied, parts on the target: a volume apply is restarted from the top once, then FAILED `apply interrupted`", async () => {
+    const start = jest.fn();
+    const { m, svc } = rec({ start }, { running: false, applied: false, parts: 5, rollbackVolume: true });
     await seed(m, appCtx(), { lastBeatAt: old(APPLY_STALE_MS + 60_000) });
     await svc.sweep();
+    expect(start).toHaveBeenCalledTimes(1); // the hub died between apply steps: nothing runs on the target, the apply re-runs (it wipes first)
+    expect(m.transfers.rows[0].state).toBe("APPLYING");
+    m.transfers.rows[0].lastBeatAt = old(APPLY_STALE_MS + 60_000); // interrupted again
+    await svc.sweep();
+    expect(start).toHaveBeenCalledTimes(1);
     expect(m.transfers.rows[0]).toMatchObject({ state: "FAILED" });
     expect(m.transfers.rows[0].error).toMatch(/apply interrupted/);
     expect(m.tasks.rows[0].status).toBe("FAILED");
+  });
+
+  it("stale APPLYING streamed dump with staged parts is never restarted by recovery (a half-restored database is not wiped)", async () => {
+    const start = jest.fn();
+    const { m, svc } = rec({ start }, { running: false, applied: false, parts: 5, rollbackVolume: false });
+    await seed(m, appCtx(), { lastBeatAt: old(APPLY_STALE_MS + 60_000), destType: "db-dump" });
+    await svc.sweep();
+    expect(start).not.toHaveBeenCalled();
+    expect(m.transfers.rows[0].error).toMatch(/apply interrupted/);
   });
 
   it("anything it cannot prove is FAILED fail-closed `target state unknown` (probe unusable, offline, nothing staged)", async () => {

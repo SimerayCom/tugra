@@ -13,6 +13,9 @@ import { scrubMoveOutput } from "../../app-moves/app-move-scripts";
 export const APPLY_STALE_MS = 3 * 60_000;
 const SWEEP_MS = 60_000;
 
+/** How many times recovery re-runs an interrupted volume apply itself before it asks the operator to re-run the migrator. */
+export const MAX_APPLY_RESTARTS = 1;
+
 /**
  * Settles streamed copies whose driver disappeared:
  *  - COPYING with no beat/commit for MIGRATION_VX_STALE_MS: the migrator is gone -> FAILED and resumable (parts kept).
@@ -22,6 +25,8 @@ const SWEEP_MS = 60_000;
  */
 @Injectable()
 export class VxRecoveryService implements OnModuleInit, OnModuleDestroy {
+  /** Interrupted volume applies this process restarted from the top (bounded by MAX_APPLY_RESTARTS). */
+  private readonly applyRestarts = new Map<string, number>();
   private readonly logger = new Logger(VxRecoveryService.name);
   private timer?: NodeJS.Timeout;
   private busy = false;
@@ -113,6 +118,17 @@ export class VxRecoveryService implements OnModuleInit, OnModuleDestroy {
       return;
     }
     if (probe.parts > 0) {
+      // The hub drives the apply step by step (destination check, wipe, extract); a hub that died between steps leaves the parts
+      // staged and nothing running. A volume apply starts by wiping its (disposable) destination, so it is safe to run again from
+      // the top: do it once per transfer in this process instead of asking the operator to re-run. A streamed dump's restore is
+      // not re-run (a half-restored database is not wiped by the apply), and a second interruption still fails with the hint.
+      const restarts = this.applyRestarts.get(t.id) ?? 0;
+      if (t.destType !== "db-dump" && restarts < MAX_APPLY_RESTARTS) {
+        this.applyRestarts.set(t.id, restarts + 1);
+        const r = await this.prisma.migrationVolumeTransfer.updateMany({ where: { id: t.id, state: "APPLYING" }, data: { lastBeatAt: new Date(now), phase: "applying" } });
+        if (r.count === 1) this.apply.start(ctx, t);
+        return;
+      }
       await this.failApply(t, "apply interrupted; re-run the migrator to apply the staged parts again (they are still on the target)");
       return;
     }
