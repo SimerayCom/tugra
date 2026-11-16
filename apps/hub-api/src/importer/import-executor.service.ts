@@ -1562,6 +1562,8 @@ export class ImportExecutorService {
     // current creds; a mismatch, or apps that disagree, falls to rotate (every URL rewritten to the one Tugra
     // credential) and leaves the old identity ambiguous so split vars are reported, never half-rewritten.
     const DB_NAME_ENGINES = new Set(["POSTGRES", "MYSQL", "MARIADB"]); // engines whose URL path is the db-name (not a redis index / mongo params)
+    // a carried database container keeps the name its operator gave it on the source (any `[A-Za-z0-9_-]` name, not only a uuid): the remap finds it by that name
+    const carriedHosts = dbInfos.filter((d) => (op.tasks.find((t) => t.itemRef === d.itemRef)?.result as { carried?: unknown } | null | undefined)?.carried === true).map((d) => d.oldHost);
     const targets: DbRemapTarget[] = dbInfos.map(({ itemRef, oldHost, dv }) => {
       const distinct = new Map<string, { user?: string; password?: string; database?: string }>();
       for (const a of appEnvs) {
@@ -1621,7 +1623,7 @@ export class ImportExecutorService {
         apps: appTargets.filter((at) => at.itemRef !== a.itemRef),
         ...(hostShape
           ? { hostShape, bareHostKeyGate: true }
-          : { flagUnresolvedHosts: true, ownedHosts: [...skippedDbHosts, ...(sourceRefOf(a.itemRef) ? [sourceRefOf(a.itemRef) as string] : [])] }), // R21: a Coolify uuid host no plan item owns is reported, never left as a dead host
+          : { flagUnresolvedHosts: true, readableHosts: carriedHosts, ownedHosts: [...skippedDbHosts, ...(sourceRefOf(a.itemRef) ? [sourceRefOf(a.itemRef) as string] : [])] }), // R21: a Coolify uuid host no plan item owns is reported, never left as a dead host
         ...(sourceServices?.length ? { services: sourceServices } : {}),
         ...(row ? { appServerId: row.serverId, appCanJoinNetwork: canJoin } : {}),
       });

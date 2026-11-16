@@ -498,3 +498,48 @@ describe("R21: a uuid-shaped host no plan item owns", () => {
     expect(r.needsManual).toEqual([]);
   });
 });
+
+describe("R21 key gate and readable (carried) hosts", () => {
+  const GHOST = "qrstuvwxyz0123456789abcd";
+  const known = (extra: Partial<RemapContext> = {}): RemapContext => ({ dbs: [pgTarget("preserve")], apps: [], flagUnresolvedHosts: true, ...extra });
+
+  it("a generated 24-character secret under a key that merely CONTAINS a host word is not an unresolved host", () => {
+    const secret = "0123456789abcdef01234567";
+    const r = remapEnv({ MASTER_KEY: secret, NODE_AUTH_TOKEN: secret, APP_SERVER_SECRET: secret, PRIMARY_PASSWORD: secret, REPLICA_PASS: secret, NODENAME: secret, ENDPOINTS: secret }, known());
+    expect(r.needsManual).toEqual([]);
+  });
+
+  it("the host words still count as a whole word or as the end of the key (DBHOST, REDIS_ADDR, DB_HOST_PRIMARY, MASTER_NODE)", () => {
+    const r = remapEnv({ DBHOST: GHOST, REDIS_ADDR: GHOST, DB_HOST_PRIMARY: GHOST, MASTER_NODE: GHOST, SERVER: GHOST }, known());
+    expect(r.needsManual.map((n) => n.key).sort()).toEqual(["DBHOST", "DB_HOST_PRIMARY", "MASTER_NODE", "REDIS_ADDR", "SERVER"]);
+  });
+
+  describe("readableHosts: a carried container with an operator-chosen name", () => {
+    const target = (name: string) => pgTarget("rotate", { oldHost: name, itemRef: `database:srv-a:${name}` });
+    const rc = (name: string, extra: Partial<RemapContext> = {}): RemapContext => ({ dbs: [target(name)], apps: [], flagUnresolvedHosts: true, readableHosts: [name], ...extra });
+
+    it("a bare host and host:port under a host-like key are rewritten to the new host (they were reported as contains-old-token)", () => {
+      const r = remapEnv({ DB_HOST: "pg_main", PRIMARY_ADDR: "pg_main:5432", DATABASE_URL: "postgres://appuser:pw@pg_main:5432/appdb" }, rc("pg_main"));
+      expect(r.changes.map((c) => `${c.key}:${c.rule}`).sort()).toEqual(["DATABASE_URL:url", "DB_HOST:host", "PRIMARY_ADDR:host-port"]);
+      expect(r.needsManual).toEqual([]);
+    });
+
+    it("without readableHosts the same name is NOT rewritten (the shape gate is unchanged for every other caller)", () => {
+      const r = remapEnv({ DB_HOST: "pg_main" }, { dbs: [target("pg_main")], apps: [] });
+      expect(r.changes).toEqual([]);
+    });
+
+    it("a short name is never rewritten under a non-host key: a bare value is reported, and only a whole word is found in a longer one", () => {
+      const r = remapEnv({ CACHE_DRIVER: "redis", LABEL: "myredis-cache", NOTE: "uses redis-cache", DSN: "host=redis port=6379" }, rc("redis"));
+      expect(r.changes).toEqual([]);
+      expect(r.needsManual.map((n) => `${n.key}:${n.reason}`).sort()).toEqual(["CACHE_DRIVER:contains-old-token", "DSN:contains-old-token"]);
+      expect(r.unchanged.sort()).toEqual(["LABEL", "NOTE"]);
+    });
+
+    it("a secret under a host-like key is not a host", () => {
+      const r = remapEnv({ DB_HOST_SECRET: "pg_main" }, rc("pg_main"));
+      expect(r.changes).toEqual([]);
+    });
+  });
+});
+
