@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { z } from "zod";
 import { normalizeTags } from "../common/tags";
 import { ENV_KEY_RE, ENV_KEY_DENY } from "../common/env-key";
 import type { Scope } from "../api-tokens/scopes";
@@ -21,6 +22,20 @@ import { summarizeContainer, summarizeHost } from "../metrics/metrics-summary";
 import type { SecretProvidersService } from "../secret-providers/secret-providers.service";
 import type { DnsCredentialsService } from "../dns/dns-credentials.service";
 import type { TunnelService } from "../tunnel/tunnel.service";
+import type { MigrationRunsFacade, RunActor } from "../migration-runs/core/run-contract";
+import {
+  AbortRunSchema,
+  CleanupRunSchema,
+  CreateMigrationRunSchema,
+  ListMigrationRunsQuerySchema,
+  ReverseRunSchema,
+  RunEventsQuerySchema,
+  SetRunInputsSchema,
+  StartRunSchema,
+  StepApproveSchema,
+  StepKeySchema,
+  StepRetrySchema,
+} from "../migration-runs/core/dto";
 
 /** The domain services an MCP tool may call. Every read tool passes the caller's `userId` straight
  *  through — team scoping is resolved DB-side inside each service (never trusted from the client). */
@@ -40,6 +55,14 @@ export interface McpDeps {
   secretProviders: SecretProvidersService;
   dnsCredentials: DnsCredentialsService;
   tunnel: TunnelService;
+  migrationRuns: MigrationRunsFacade;
+}
+
+/** What the MCP server knows about the call beyond the user id: the token's granted scopes. The migration-run
+ *  facade re-checks its own per-route scopes (`deploy` + `read:secrets`, `admin`) against them, so a tool whose
+ *  single advertised `scope` is weaker than a route's needs still fails closed. */
+export interface McpCallCtx {
+  scopes: readonly string[];
 }
 
 export interface McpTool {
@@ -53,7 +76,7 @@ export interface McpTool {
   /** Argument names whose VALUES are secret and must be redacted from the audit-log `meta.args` (e.g. an env
    *  var value the caller is setting). The MCP server nulls these before persisting the audit entry. */
   sensitiveArgs?: string[];
-  execute: (deps: McpDeps, userId: string, args: Record<string, unknown>) => Promise<unknown>;
+  execute: (deps: McpDeps, userId: string, args: Record<string, unknown>, ctx?: McpCallCtx) => Promise<unknown>;
 }
 
 // ── input helpers (never trust the advertised schema) ────────────────────────────────────────────
@@ -73,6 +96,12 @@ const DB_DATA_MODES_DESC =
  *  silently dropping a choice the caller believes is in effect. */
 function rejectLocalDockerDbDataModes(args: Record<string, unknown>): void {
   if (args.dbDataModes !== undefined) throw new Error("dbDataModes is only for a Coolify/Dokploy source; local-docker adopts containers in place and copies no data");
+}
+/** Parse tool input with a zod schema and surface the issues as a readable message (never a JSON dump). */
+function parseWith<T extends z.ZodTypeAny>(schema: T, value: unknown): z.output<T> {
+  const r = schema.safeParse(value);
+  if (r.success) return r.data;
+  throw new Error(`invalid arguments: ${r.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ")}`);
 }
 function optBool(args: Record<string, unknown>, key: string): boolean {
   return args[key] === true;
@@ -113,6 +142,18 @@ function reqInt(args: Record<string, unknown>, key: string, min: number, max: nu
   const v = args[key];
   if (typeof v !== "number" || !Number.isFinite(v)) throw new Error(`missing or invalid required argument: ${key} (expected an integer ${min}-${max})`);
   return Math.min(max, Math.max(min, Math.trunc(v)));
+}
+
+
+/** The facade actor of an MCP call. Channel `mcp` is what makes the facade refuse the point-of-no-return approval
+ *  (403 `human-confirmation-required`); a call without a ctx carries no scopes, so the facade refuses it too. */
+function mcpActor(userId: string, ctx: McpCallCtx | undefined): RunActor {
+  return { userId, scopes: ctx?.scopes ?? [], channel: "mcp" };
+}
+/** The run id every `migration_run_*` tool takes. */
+const runIdSchema = { type: "object", properties: { runId: { type: "string" } }, required: ["runId"] } as const;
+function reqRunId(args: Record<string, unknown>): string {
+  return reqStr(args, "runId");
 }
 
 const idSchema = { type: "object", properties: { id: { type: "string" } }, required: ["id"] } as const;
@@ -829,6 +870,226 @@ export const MCP_TOOLS: McpTool[] = [
       const opId = reqStr(a, "opId");
       requireConfirmName(a, opId, "import operation"); // echo the opId to confirm the irreversible undo
       return d.executor.rollback(userId, opId);
+    },
+  },
+
+  // ── guided migration runs (P7): one resumable, abortable Coolify/Dokploy -> Tugra run ─────────────────────
+  // Every tool delegates to the migration-run facade (the same service the REST routes call), which re-checks
+  // creator-only ownership, team permissions and its per-route scopes against the token's scopes. Views and the
+  // report are secret-free and carry codes + params only. Deliberately NOT exposed over MCP: the source-host
+  // command (it carries a live migrator token), operator attestations (a human vouches for the source host), the
+  // source-token re-entry, and DECOMMISSION. The point-of-no-return approval is refused by the facade with 403
+  // `human-confirmation-required`: an agent prepares and observes, a human crosses the point of no return.
+  {
+    name: "migration_run_list",
+    description:
+      "List your guided migration runs (newest first), optionally filtered by teamId, status or active=true (live runs only). Each row has the status, current step, point-of-no-return time, steps passed/total and what the run is waiting for. Read-only.",
+    scope: "read",
+    inputSchema: {
+      type: "object",
+      properties: { teamId: { type: "string" }, status: { type: "string" }, active: { type: "boolean", description: "true = only live runs" }, limit: { type: "number" } },
+    },
+    execute: async (d, userId, a, ctx) => {
+      const query = parseWith(ListMigrationRunsQuerySchema, {
+        ...(optStr(a, "teamId") ? { teamId: optStr(a, "teamId") } : {}),
+        ...(optStr(a, "status") ? { status: optStr(a, "status") } : {}),
+        ...(a.active === true ? { active: "true" } : a.active === false ? { active: "false" } : {}),
+        ...(a.limit !== undefined ? { limit: clampInt(a.limit, 1, 200, 50) } : {}),
+      });
+      return { runs: await d.migrationRuns.list(mcpActor(userId, ctx), query) };
+    },
+  },
+  {
+    name: "migration_run_create",
+    description:
+      "Create a guided Coolify/Dokploy -> Tugra migration run bound to a reviewed import plan (import_connect, then import_plan; pass the same sessionId, planHash and mapping/acks/dbDataModes you will apply). DEFAULTS TO dryRun=true: the run only projects what each step would do, writes nothing outside its own run rows and ends DRY_RUN_DONE; call migration_run_start on it to promote it into a real run. Pass dryRun=false only when the human asked for a real run. mode: copy (default) | takeover; topology: two-box (default) | swap-proxy; options and inputs (acmeEmail, allowBind, allowLiveShapeProbe, sourceController) are optional with safe defaults. Needs deploy AND read:secrets scopes. Returns the run view.",
+    scope: "deploy",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: { type: "string" },
+        sourceKind: { type: "string", enum: [...REMOTE_SOURCE_KINDS] },
+        targetServerId: { type: "string" },
+        environmentId: { type: "string" },
+        planHash: { type: "string", description: "the planHash from import_plan (mode/topology are not part of it)" },
+        mode: { type: "string", enum: ["copy", "takeover"] },
+        topology: { type: "string", enum: ["two-box", "swap-proxy"] },
+        dryRun: { type: "boolean", description: "default TRUE for agents" },
+        options: { type: "object", description: "run options (ttlPolicy, deployWaves, warmDbSeed, stopSource, sourceRunner, certs, acceptHttp01Gap, freezeAt, observeMinutes, manualFinalize, batchSize, intervalSec, dnsCredentialId, healthPath, rowCountMode, decommissionMinAgeHours, stuckOperatorMinutes)" },
+        inputs: { type: "object", description: 'owner inputs: acmeEmail, allowBind, allowLiveShapeProbe, sourceController (manual|api|agent); each may be "unknown"' },
+        acks: { type: "array", items: { type: "object" } },
+        serviceChoices: { type: "object" },
+        mapping: { type: "object" },
+        mappingHash: { type: "string" },
+        reconcile: { type: "boolean" },
+        ignoreStoredMapping: { type: "boolean" },
+        saveMapping: { type: "boolean" },
+        dbDataModes: { type: "object", description: DB_DATA_MODES_DESC, additionalProperties: { type: "string", enum: ["volume"] } },
+      },
+      required: ["sessionId", "sourceKind", "targetServerId", "planHash"],
+    },
+    execute: async (d, userId, a, ctx) => {
+      // Unknown argument names are refused by the strict schema (a typo never silently drops a safety input).
+      const body = parseWith(CreateMigrationRunSchema, { ...a, dryRun: a.dryRun !== false });
+      return d.migrationRuns.create(mcpActor(userId, ctx), body);
+    },
+  },
+  {
+    name: "migration_run_status",
+    description:
+      "The full run view: every step with its status, gate checks (with evidence kind), progress and attempts; the single nextAction naming exactly what the run is waiting for (an operator command, an approval with its hash binding, a timer, a gate, a re-entered source session); the window estimate vs measured downtime; ponrAt; and which actions are allowed now. Secret-free, codes + params only. Read-only.",
+    scope: "read",
+    inputSchema: runIdSchema,
+    execute: async (d, userId, a, ctx) => d.migrationRuns.get(mcpActor(userId, ctx), reqRunId(a)),
+  },
+  {
+    name: "migration_run_events",
+    description: "Poll a run's append-only event log. Pass afterSeq = the last seq you saw (0 = from the start); the page carries the next cursor. Codes + params only. Read-only.",
+    scope: "read",
+    inputSchema: { type: "object", properties: { runId: { type: "string" }, afterSeq: { type: "number" }, limit: { type: "number" } }, required: ["runId"] },
+    execute: async (d, userId, a, ctx) => {
+      const query = parseWith(RunEventsQuerySchema, {
+        ...(a.afterSeq !== undefined ? { afterSeq: clampInt(a.afterSeq, 0, Number.MAX_SAFE_INTEGER, 0) } : {}),
+        ...(a.limit !== undefined ? { limit: clampInt(a.limit, 1, 500, 200) } : {}),
+      });
+      return d.migrationRuns.events(mcpActor(userId, ctx), reqRunId(a), query);
+    },
+  },
+  {
+    name: "migration_run_report",
+    description: "The run's secret-free report: what moved, what did not (reason codes), the evidence kinds the run relied on (hub-verified, migrator-reported, operator-attested), the estimated vs measured downtime window and the manual actions still required. Built on demand for an unfinished run. Read-only.",
+    scope: "read",
+    inputSchema: runIdSchema,
+    execute: async (d, userId, a, ctx) => d.migrationRuns.report(mcpActor(userId, ctx), reqRunId(a)),
+  },
+  {
+    name: "migration_run_start",
+    description:
+      "Start a QUEUED run, or PROMOTE a DRY_RUN_DONE run: promotion creates a NEW real run (frozen inputs copied, planHash re-validated) and returns THAT run, whose id differs from the one you passed. sessionId is only needed when the dry run's source session expired. The run then drives itself and stops at every step that needs an operator, an approval or a timer: read migration_run_status.nextAction.",
+    scope: "deploy",
+    inputSchema: { type: "object", properties: { runId: { type: "string" }, sessionId: { type: "string" } }, required: ["runId"] },
+    execute: async (d, userId, a, ctx) => d.migrationRuns.start(mcpActor(userId, ctx), reqRunId(a), parseWith(StartRunSchema, optStr(a, "sessionId") ? { sessionId: optStr(a, "sessionId") } : {})),
+  },
+  {
+    name: "migration_run_set_inputs",
+    description:
+      'Answer or change owner inputs on a run: acmeEmail (blocks only TLS and CUTOVER while unknown), allowBind (bind-mount apps; default refuse), allowLiveShapeProbe (consent for the read-only live probe; default off), sourceController (manual | api | agent; default manual). Each value may be "unknown". Unblocks the step that needed it.',
+    scope: "deploy",
+    inputSchema: {
+      type: "object",
+      properties: {
+        runId: { type: "string" },
+        acmeEmail: { type: "string" },
+        allowBind: { type: "boolean" },
+        allowLiveShapeProbe: { type: "boolean" },
+        sourceController: { type: "string", enum: ["manual", "api", "agent"] },
+      },
+      required: ["runId"],
+    },
+    execute: async (d, userId, a, ctx) => {
+      const { runId, ...inputs } = a;
+      void runId;
+      return d.migrationRuns.setInputs(mcpActor(userId, ctx), reqRunId(a), parseWith(SetRunInputsSchema, inputs));
+    },
+  },
+  {
+    name: "migration_run_approve",
+    description:
+      "Approve a step that is WAITING_APPROVAL. boundHash MUST equal the hash in migration_run_status.nextAction.approval (a stale hash is refused with 409 approval-stale and the human must review again); acks and confirmName come from that same binding. The POINT-OF-NO-RETURN approval (the VERIFY step that leads to the CUTOVER) and the decommission approval are REFUSED here with 403 human-confirmation-required: tell the human to approve it in the panel or with `tugra import run approve`.",
+    scope: "deploy",
+    inputSchema: {
+      type: "object",
+      properties: {
+        runId: { type: "string" },
+        stepKey: { type: "string" },
+        boundHash: { type: "string" },
+        acks: { type: "array", items: { type: "string" } },
+        confirmName: { type: "string" },
+        acceptDataRisk: { type: "boolean" },
+      },
+      required: ["runId", "stepKey", "boundHash"],
+    },
+    execute: async (d, userId, a, ctx) => {
+      const key = parseWith(StepKeySchema, a.stepKey);
+      const { runId, stepKey, ...body } = a;
+      void runId;
+      void stepKey;
+      return d.migrationRuns.approve(mcpActor(userId, ctx), reqRunId(a), key, parseWith(StepApproveSchema, body));
+    },
+  },
+  {
+    name: "migration_run_retry",
+    description: "Re-enter a FAILED or waiting step. Retrying IMPORT is a rollback of the failed op plus a re-apply on a fresh op (at most 2 attempts). Nothing is retried automatically.",
+    scope: "deploy",
+    inputSchema: { type: "object", properties: { runId: { type: "string" }, stepKey: { type: "string" } }, required: ["runId", "stepKey"] },
+    execute: async (d, userId, a, ctx) => d.migrationRuns.retry(mcpActor(userId, ctx), reqRunId(a), parseWith(StepKeySchema, a.stepKey), parseWith(StepRetrySchema, {})),
+  },
+  {
+    name: "migration_run_pause",
+    description: "Stop a run's forward progress. Nothing is undone and the source is not touched; resume with migration_run_resume.",
+    scope: "deploy",
+    inputSchema: runIdSchema,
+    execute: async (d, userId, a, ctx) => d.migrationRuns.pause(mcpActor(userId, ctx), reqRunId(a)),
+  },
+  {
+    name: "migration_run_resume",
+    description: "Resume a paused run.",
+    scope: "deploy",
+    inputSchema: runIdSchema,
+    execute: async (d, userId, a, ctx) => d.migrationRuns.resume(mcpActor(userId, ctx), reqRunId(a)),
+  },
+  {
+    name: "migration_run_abort",
+    description:
+      "Abort a run BEFORE its point of no return (409 run-past-ponr afterwards): makes the source authoritative again (cancels in-flight copies, revokes the migrator token, restarts the recorded frozen source containers or reports them for a manual restart, restores DNS TTLs, stops the Tugra copies, undoes the env remap). Never deletes data. Requires confirmName to equal the runId.",
+    scope: "deploy",
+    inputSchema: { type: "object", properties: { runId: { type: "string" }, confirmName: { type: "string" } }, required: ["runId", "confirmName"] },
+    execute: async (d, userId, a, ctx) => {
+      const runId = reqRunId(a);
+      requireConfirmName(a, runId, "migration run"); // echo the run id to confirm
+      return d.migrationRuns.abort(mcpActor(userId, ctx), runId, parseWith(AbortRunSchema, { confirmName: runId }));
+    },
+  },
+  {
+    name: "migration_run_cleanup",
+    description:
+      "DESTRUCTIVE: after an ABORTED run, remove the Tugra-side resources the run created. Data-bearing resources (databases, volumes) are only removed with includeData=true AND each resource's exact name in dataConfirmNames. Requires confirmName to equal the runId and the admin scope.",
+    scope: "admin",
+    inputSchema: {
+      type: "object",
+      properties: {
+        runId: { type: "string" },
+        confirmName: { type: "string" },
+        includeData: { type: "boolean" },
+        dataConfirmNames: { type: "array", items: { type: "string" } },
+      },
+      required: ["runId", "confirmName"],
+    },
+    execute: async (d, userId, a, ctx) => {
+      const runId = reqRunId(a);
+      requireConfirmName(a, runId, "migration run");
+      return d.migrationRuns.cleanup(
+        mcpActor(userId, ctx),
+        runId,
+        parseWith(CleanupRunSchema, { confirmName: runId, includeData: a.includeData === true, dataConfirmNames: a.dataConfirmNames ?? [] }),
+      );
+    },
+  },
+  {
+    name: "migration_run_reverse",
+    description:
+      "DESTRUCTIVE, LOSSY: after the point of no return, restore DNS from the cutover ledger (or reverse the proxy swap) so traffic returns to the source. Data Tugra wrote after the cutover is NOT restored and nothing syncs backwards. Requires confirmName equal to the runId, acknowledgeDataLoss=true and the admin scope.",
+    scope: "admin",
+    inputSchema: {
+      type: "object",
+      properties: { runId: { type: "string" }, confirmName: { type: "string" }, acknowledgeDataLoss: { type: "boolean" } },
+      required: ["runId", "confirmName", "acknowledgeDataLoss"],
+    },
+    execute: async (d, userId, a, ctx) => {
+      const runId = reqRunId(a);
+      requireConfirmName(a, runId, "migration run");
+      if (a.acknowledgeDataLoss !== true) throw new Error("reverse refused — pass acknowledgeDataLoss=true: data Tugra wrote after the cutover is not restored on the source");
+      return d.migrationRuns.reverse(mcpActor(userId, ctx), runId, parseWith(ReverseRunSchema, { confirmName: runId, acknowledgeDataLoss: true }));
     },
   },
 

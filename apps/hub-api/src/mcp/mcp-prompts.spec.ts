@@ -36,4 +36,14 @@ describe("MCP_PROMPTS catalog", () => {
       expect(() => p.build(onlyRequired)).not.toThrow();
     }
   });
+
+  it("guided_migration never tells the agent to approve the point of no return and works with or without a run id", () => {
+    const p = MCP_PROMPTS.find((x) => x.name === "guided_migration")!;
+    const fresh = p.build({});
+    const sup = p.build({ runId: "run-1" });
+    expect(fresh).toContain("migration_run_create");
+    expect(fresh).toContain("dryRun at its default (true)");
+    expect(sup).toContain('migration_run_status({runId:"run-1"})');
+    for (const t of [fresh, sup]) expect(t).toMatch(/never approve the point-of-no-return/);
+  });
 });

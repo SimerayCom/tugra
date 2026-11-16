@@ -1,4 +1,5 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
+import { MIGRATION_RUNS_FACADE, type MigrationRunsFacade } from "../migration-runs/core/run-contract";
 import { AuditService } from "../audit/audit.service";
 import { scopeSatisfies } from "../api-tokens/scopes";
 import { ApplicationsService } from "../applications/applications.service";
@@ -65,9 +66,10 @@ export class McpService {
     secretProviders: SecretProvidersService,
     dnsCredentials: DnsCredentialsService,
     tunnel: TunnelService,
+    @Inject(MIGRATION_RUNS_FACADE) migrationRuns: MigrationRunsFacade,
     private readonly audit: AuditService,
   ) {
-    this.deps = { apps, dbLinks, servers, clusters, swarm, databases, backups, monitors, importer, executor, license, metrics, secretProviders, dnsCredentials, tunnel };
+    this.deps = { apps, dbLinks, servers, clusters, swarm, databases, backups, monitors, importer, executor, license, metrics, secretProviders, dnsCredentials, tunnel, migrationRuns };
   }
 
   /** Handle one JSON-RPC message. Returns the response object, or null for notifications (no body). */
@@ -114,7 +116,7 @@ export class McpService {
         // `value`), which must NOT be persisted in cleartext to AuditLog.meta. Redact those before auditing.
         const auditArgs = this.redactArgs(args, tool.sensitiveArgs);
         try {
-          const data = await tool.execute(this.deps, ctx.userId, args);
+          const data = await tool.execute(this.deps, ctx.userId, args, { scopes: ctx.scopes });
           const sanitized = sanitizeToolResult(data);
           this.auditCall(ctx, name!, auditArgs, "ok");
           return this.result(id, { content: [{ type: "text", text: JSON.stringify(sanitized) }] });

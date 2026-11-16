@@ -5,7 +5,7 @@ import type { McpTool } from "./mcp-tools";
 function make() {
   const audit = { log: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService;
   const empty = {} as never;
-  const svc = new McpService(empty, empty, empty, empty, empty, empty, empty, empty, empty, empty, empty, empty, empty, empty, empty, audit);
+  const svc = new McpService(empty, empty, empty, empty, empty, empty, empty, empty, empty, empty, empty, empty, empty, empty, empty, empty, audit);
   return { svc, audit };
 }
 
@@ -161,7 +161,7 @@ describe("McpService.handle", () => {
     svc.tools = [{ name: "set_env_var", description: "x", scope: "write", inputSchema: { type: "object", properties: {} }, sensitiveArgs: ["value"], execute }];
     await svc.handle(ctx(["write"]), rpc("tools/call", { name: "set_env_var", arguments: { id: "app1", key: "API_KEY", value: "sk_live_TOPSECRET" } }));
     // the tool still RECEIVES the real value...
-    expect(execute).toHaveBeenCalledWith(expect.anything(), "u1", { id: "app1", key: "API_KEY", value: "sk_live_TOPSECRET" });
+    expect(execute).toHaveBeenCalledWith(expect.anything(), "u1", { id: "app1", key: "API_KEY", value: "sk_live_TOPSECRET" }, { scopes: ["write"] });
     // ...but the audit entry has it nulled, and the secret never appears anywhere in the audit args
     const auditCall = (audit.log as jest.Mock).mock.calls.find((c) => c[0].action === "mcp.tools_call");
     expect(auditCall![0].meta.args).toEqual({ id: "app1", key: "API_KEY", value: null });

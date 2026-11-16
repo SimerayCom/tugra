@@ -1,4 +1,7 @@
+import { Logger } from "@nestjs/common";
 import { MCP_TOOLS, type McpDeps } from "./mcp-tools";
+import { RunWorld } from "../migration-runs/core/testing/run-world";
+import type { ApprovalBinding } from "../migration-runs/core/dto";
 
 function tool(name: string) {
   const t = MCP_TOOLS.find((x) => x.name === name);
@@ -7,9 +10,12 @@ function tool(name: string) {
 }
 
 const LIFECYCLE_TOOLS = ["deploy_application", "cancel_deployment", "restart_application", "stop_application", "start_application", "rollback_application", "scale_application"];
-const DEPLOY_TOOLS = [...LIFECYCLE_TOOLS, "form_swarm", "join_swarm_node", "add_swarm_manager", "set_ingress_replicas", "fleet_app_action", "setup_app_domain", "import_apply", "import_mapping_put"];
+const MIGRATION_READ_TOOLS = ["migration_run_list", "migration_run_status", "migration_run_events", "migration_run_report"];
+const MIGRATION_DEPLOY_TOOLS = ["migration_run_create", "migration_run_start", "migration_run_set_inputs", "migration_run_approve", "migration_run_retry", "migration_run_pause", "migration_run_resume", "migration_run_abort"];
+const MIGRATION_ADMIN_TOOLS = ["migration_run_cleanup", "migration_run_reverse"];
+const DEPLOY_TOOLS = [...LIFECYCLE_TOOLS, "form_swarm", "join_swarm_node", "add_swarm_manager", "set_ingress_replicas", "fleet_app_action", "setup_app_domain", "import_apply", "import_mapping_put", ...MIGRATION_DEPLOY_TOOLS];
 const WRITE_TOOLS = ["set_env_var", "delete_env_var", "import_connect"];
-const ADMIN_TOOLS = ["dissolve_swarm", "remove_application", "remove_swarm_manager", "leave_swarm_node", "import_rollback"];
+const ADMIN_TOOLS = ["dissolve_swarm", "remove_application", "remove_swarm_manager", "leave_swarm_node", "import_rollback", ...MIGRATION_ADMIN_TOOLS];
 
 describe("MCP_TOOLS catalog", () => {
   it("every tool has a valid scope + name/description/inputSchema", () => {
@@ -24,7 +30,7 @@ describe("MCP_TOOLS catalog", () => {
   it("has the expected tool count — keep docs (README/api.md) in sync when this changes", () => {
     // A drift guard: the MCP tool count is referenced in prose in README.md + docs/api.md. When you add or
     // remove a tool, bump this number AND those docs in the same commit.
-    expect(MCP_TOOLS).toHaveLength(56);
+    expect(MCP_TOOLS).toHaveLength(70);
     // Names are unique.
     expect(new Set(MCP_TOOLS.map((t) => t.name)).size).toBe(MCP_TOOLS.length);
   });
@@ -940,5 +946,158 @@ describe("import_apply serviceChoices (Coolify services)", () => {
     const exec = jest.fn().mockResolvedValue({ opId: "o1" });
     await tool("import_apply").execute({ executor: { apply: exec } } as unknown as McpDeps, "u1", args);
     expect(exec.mock.calls[0][1]).not.toHaveProperty("serviceChoices");
+  });
+});
+
+
+describe("guided migration run tools", () => {
+  jest.setTimeout(30_000);
+  beforeAll(() => {
+    jest.spyOn(Logger.prototype, "warn").mockImplementation();
+    jest.spyOn(Logger.prototype, "error").mockImplementation();
+    jest.spyOn(Logger.prototype, "log").mockImplementation();
+  });
+
+  const ALL = ["read", "write", "deploy", "admin", "read:secrets"];
+  const ponr = (hash = "a".repeat(64)): ApprovalBinding => ({ inputHash: hash, ponr: true, confirm: "run-id", ttlSec: 1800, requiresDataRisk: false, ackable: [], requiredAcks: [], review: {} });
+  const plain = (hash = "b".repeat(64)): ApprovalBinding => ({ inputHash: hash, ponr: false, confirm: "run-id", ttlSec: null, requiresDataRisk: false, ackable: [], requiredAcks: [], review: {} });
+  const depsOf = (w: RunWorld) => ({ migrationRuns: w.service }) as unknown as McpDeps;
+  const run = (name: string, w: RunWorld, args: Record<string, unknown>, scopes: string[] = ALL) => tool(name).execute(depsOf(w), "u1", args, { scopes });
+  const base = { sessionId: "s1", sourceKind: "coolify", targetServerId: "srv1", planHash: "d".repeat(32) };
+
+  it("scopes: reads are read, drive tools are deploy, cleanup and reverse are admin", () => {
+    for (const n of MIGRATION_READ_TOOLS) expect(tool(n).scope).toBe("read");
+    for (const n of MIGRATION_DEPLOY_TOOLS) expect(tool(n).scope).toBe("deploy");
+    for (const n of MIGRATION_ADMIN_TOOLS) expect(tool(n).scope).toBe("admin");
+  });
+
+  it("deliberately exposes no source-host command, attestation, source-session or decommission tool", () => {
+    const names = MCP_TOOLS.map((t) => t.name).filter((n) => n.startsWith("migration_run_"));
+    expect(names.sort()).toEqual([...MIGRATION_READ_TOOLS, ...MIGRATION_DEPLOY_TOOLS, ...MIGRATION_ADMIN_TOOLS].sort());
+    expect(names.some((n) => /command|evidence|attest|session|decommission/.test(n))).toBe(false);
+  });
+
+  it("create defaults to a dry run, which ends DRY_RUN_DONE and writes no real run; start promotes it into a NEW run", async () => {
+    const w = new RunWorld();
+    const v = (await run("migration_run_create", w, base)) as { id: string; dryRun: boolean };
+    expect(v.dryRun).toBe(true);
+    expect(w.store.row(v.id).dryRun).toBe(true);
+    await w.settle(v.id);
+    expect(w.status(v.id)).toBe("DRY_RUN_DONE");
+    const real = (await run("migration_run_start", w, { runId: v.id })) as { id: string; promotedFromId: string | null; dryRun: boolean };
+    expect(real.id).not.toBe(v.id);
+    expect(real).toMatchObject({ promotedFromId: v.id, dryRun: false });
+  });
+
+  it("create only makes a real run when dryRun is explicitly false, and refuses an unknown argument", async () => {
+    const w = new RunWorld();
+    const real = (await run("migration_run_create", w, { ...base, dryRun: false })) as { dryRun: boolean };
+    expect(real.dryRun).toBe(false);
+    await expect(run("migration_run_create", w, { ...base, topology: "side-by-side" })).rejects.toThrow(/invalid arguments.*topology/);
+    await expect(run("migration_run_create", w, { ...base, typo: 1 })).rejects.toThrow(/invalid arguments/);
+    await expect(run("migration_run_create", w, { sessionId: "s1" })).rejects.toThrow(/invalid arguments/);
+  });
+
+  it("the facade's own scopes apply: create needs read:secrets as well as deploy, and a call without a scope context is refused", async () => {
+    const w = new RunWorld();
+    await expect(run("migration_run_create", w, base, ["deploy"])).rejects.toThrow(/insufficient-scope/);
+    await expect(tool("migration_run_create").execute(depsOf(w), "u1", base)).rejects.toThrow(/insufficient-scope/);
+    const ok = (await run("migration_run_create", w, base, ["deploy", "read:secrets"])) as { id: string };
+    expect(ok.id).toBeTruthy();
+    await expect(run("migration_run_cleanup", w, { runId: ok.id, confirmName: ok.id }, ["deploy"])).rejects.toThrow(/insufficient-scope/);
+  });
+
+  it("status, events, list and report are secret-free reads of the caller's own runs", async () => {
+    const w = new RunWorld();
+    const id = await w.run();
+    const status = (await run("migration_run_status", w, { runId: id }, ["read"])) as { id: string; nextAction: { kind: string } };
+    expect(status).toMatchObject({ id, nextAction: { kind: "none" } });
+    const p1 = (await run("migration_run_events", w, { runId: id, afterSeq: 0, limit: 3 }, ["read"])) as { events: Array<{ seq: number }>; lastSeq: number; hasMore: boolean };
+    expect(p1.events.map((e) => e.seq)).toEqual([1, 2, 3]);
+    expect(p1.hasMore).toBe(true);
+    const list = (await run("migration_run_list", w, { active: false }, ["read"])) as { runs: Array<{ id: string }> };
+    expect(list.runs.map((r) => r.id)).toEqual([id]);
+    const report = (await run("migration_run_report", w, { runId: id }, ["read"])) as { runId: string };
+    expect(report.runId).toBe(id);
+    expect(JSON.stringify([status, p1, list, report])).not.toMatch(/tugra_mig_|token/i);
+    // another user's call cannot see it
+    await expect(tool("migration_run_status").execute(depsOf(w), "someone-else", { runId: id }, { scopes: ["read"] })).rejects.toThrow(/run-not-found/);
+  });
+
+  it("approve: a non-PONR step is approved over MCP, the PONR approval is refused with human-confirmation-required", async () => {
+    const w = new RunWorld({ stubs: { FREEZE: { binding: () => plain() }, VERIFY: { binding: () => ponr() } } });
+    const id = await w.run();
+    expect(w.stepStatus(id, "FREEZE")).toBe("WAITING_APPROVAL");
+    await expect(run("migration_run_approve", w, { runId: id, stepKey: "FREEZE", boundHash: "c".repeat(64), confirmName: id })).rejects.toThrow(/approval-stale/);
+    await run("migration_run_approve", w, { runId: id, stepKey: "FREEZE", boundHash: "b".repeat(64), confirmName: id });
+    expect(w.store.step(id, "FREEZE").approval).toMatchObject({ byUserId: "u1", boundHash: "b".repeat(64) });
+    await expect(run("migration_run_approve", w, { runId: id, stepKey: "NOPE", boundHash: "b".repeat(64) })).rejects.toThrow(/invalid arguments/);
+    await w.settle(id);
+    expect(w.stepStatus(id, "VERIFY")).toBe("WAITING_APPROVAL");
+    await expect(run("migration_run_approve", w, { runId: id, stepKey: "VERIFY", boundHash: "a".repeat(64), confirmName: id })).rejects.toThrow(/human-confirmation-required/);
+    expect(w.stepStatus(id, "VERIFY")).toBe("WAITING_APPROVAL");
+    expect(w.store.step(id, "VERIFY").approval).toBeNull();
+    // the same approval over a PAT/session channel is accepted: only the MCP channel is refused
+    await w.service.approve({ userId: "u1", scopes: ["*"], channel: "pat" }, id, "VERIFY", { boundHash: "a".repeat(64), acks: [], confirmName: id });
+    expect(w.store.step(id, "VERIFY").approval).toMatchObject({ boundHash: "a".repeat(64) });
+  });
+
+  it("set_inputs forwards only the owner inputs and refuses an empty or unknown set", async () => {
+    const w = new RunWorld();
+    const id = await w.create();
+    const v = (await run("migration_run_set_inputs", w, { runId: id, acmeEmail: "ops@example.com", sourceController: "api" })) as { inputs: { acmeEmail: { value: string }; sourceController: { value: string } } };
+    expect(v.inputs.acmeEmail.value).toBe("ops@example.com");
+    expect(v.inputs.sourceController.value).toBe("api");
+    await expect(run("migration_run_set_inputs", w, { runId: id })).rejects.toThrow(/invalid arguments/);
+    await expect(run("migration_run_set_inputs", w, { runId: id, sourceController: "ssh" })).rejects.toThrow(/invalid arguments/);
+  });
+
+  it("pause and resume drive the facade (a run that is not running cannot be paused)", async () => {
+    const w = new RunWorld({ stubs: { FREEZE: { binding: () => plain() } } });
+    const id = await w.create();
+    await expect(run("migration_run_pause", w, { runId: id })).rejects.toThrow(/run-not-pausable/); // still QUEUED
+    await w.start(id);
+    await w.settle(id);
+    expect(w.status(id)).toBe("WAITING");
+    expect(((await run("migration_run_pause", w, { runId: id })) as { pauseRequested: boolean }).pauseRequested).toBe(true);
+    await w.settle(id);
+    expect(w.status(id)).toBe("PAUSED");
+    await run("migration_run_resume", w, { runId: id });
+    expect(w.status(id)).toBe("RUNNING");
+  });
+
+  describe("destructive tools echo the run id before they reach the facade", () => {
+    const mk = () => {
+      const migrationRuns = { abort: jest.fn().mockResolvedValue({ id: "r1" }), cleanup: jest.fn().mockResolvedValue({ id: "r1" }), reverse: jest.fn().mockResolvedValue({ id: "r1" }) };
+      return { deps: { migrationRuns } as unknown as McpDeps, migrationRuns };
+    };
+    const ctx = { scopes: ALL };
+
+    it("abort", async () => {
+      const { deps, migrationRuns } = mk();
+      await expect(Promise.resolve().then(() => tool("migration_run_abort").execute(deps, "u1", { runId: "r1" }, ctx))).rejects.toThrow(/confirmName/);
+      await expect(Promise.resolve().then(() => tool("migration_run_abort").execute(deps, "u1", { runId: "r1", confirmName: "r2" }, ctx))).rejects.toThrow(/confirmName/);
+      expect(migrationRuns.abort).not.toHaveBeenCalled();
+      await tool("migration_run_abort").execute(deps, "u1", { runId: "r1", confirmName: "r1" }, ctx);
+      expect(migrationRuns.abort).toHaveBeenCalledWith({ userId: "u1", scopes: ALL, channel: "mcp" }, "r1", { confirmName: "r1" });
+    });
+
+    it("cleanup keeps data-bearing resources behind includeData plus their names", async () => {
+      const { deps, migrationRuns } = mk();
+      await expect(Promise.resolve().then(() => tool("migration_run_cleanup").execute(deps, "u1", { runId: "r1", confirmName: "x" }, ctx))).rejects.toThrow(/confirmName/);
+      await tool("migration_run_cleanup").execute(deps, "u1", { runId: "r1", confirmName: "r1" }, ctx);
+      expect(migrationRuns.cleanup).toHaveBeenLastCalledWith(expect.objectContaining({ channel: "mcp" }), "r1", { confirmName: "r1", includeData: false, dataConfirmNames: [] });
+      await tool("migration_run_cleanup").execute(deps, "u1", { runId: "r1", confirmName: "r1", includeData: true, dataConfirmNames: ["db1"] }, ctx);
+      expect(migrationRuns.cleanup).toHaveBeenLastCalledWith(expect.anything(), "r1", { confirmName: "r1", includeData: true, dataConfirmNames: ["db1"] });
+    });
+
+    it("reverse also needs the literal data-loss acknowledgement", async () => {
+      const { deps, migrationRuns } = mk();
+      await expect(Promise.resolve().then(() => tool("migration_run_reverse").execute(deps, "u1", { runId: "r1", confirmName: "r2", acknowledgeDataLoss: true }, ctx))).rejects.toThrow(/confirmName/);
+      await expect(Promise.resolve().then(() => tool("migration_run_reverse").execute(deps, "u1", { runId: "r1", confirmName: "r1" }, ctx))).rejects.toThrow(/acknowledgeDataLoss/);
+      expect(migrationRuns.reverse).not.toHaveBeenCalled();
+      await tool("migration_run_reverse").execute(deps, "u1", { runId: "r1", confirmName: "r1", acknowledgeDataLoss: true }, ctx);
+      expect(migrationRuns.reverse).toHaveBeenCalledWith(expect.objectContaining({ channel: "mcp" }), "r1", { confirmName: "r1", acknowledgeDataLoss: true });
+    });
   });
 });

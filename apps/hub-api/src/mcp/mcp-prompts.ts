@@ -67,4 +67,20 @@ export const MCP_PROMPTS: McpPrompt[] = [
       );
     },
   },
+  {
+    name: "guided_migration",
+    description: "Prepare, dry-run and supervise a guided Coolify/Dokploy -> Tugra migration run; a human approves the point of no return.",
+    arguments: [{ name: "runId", description: "An existing migration run to supervise. Omit to prepare a new dry run.", required: false }],
+    build: (a) => {
+      const run = s(a, "runId");
+      const head = run
+        ? `Supervise migration run "${run}". Call migration_run_status({runId:"${run}"}) and report the status, the current step and exactly what migration_run_status.nextAction says the run is waiting for, then poll migration_run_events from the last seq you saw. `
+        : `Prepare a guided migration. Call import_connect, then import_plan, and show me the plan with its blockers. When I confirm, call migration_run_create with the SAME sessionId, planHash, mapping, acks and dbDataModes and leave dryRun at its default (true); report the per-step projection from migration_run_status. Only after I ask for a real run call migration_run_start on the dry run (it returns a NEW run) and then supervise that one. `;
+      return (
+        head +
+        `Rules: never approve the point-of-no-return step yourself (migration_run_approve refuses it; tell me to approve it in the panel or with the CLI), never abort, clean up or reverse without my explicit instruction, and read each approval's binding to me before approving a non-PONR step. ` +
+        `The source-host command, operator attestations and the source token are handled by a human outside MCP. Report evidence kinds honestly (hub-verified vs migrator-reported vs operator-attested).`
+      );
+    },
+  },
 ];

@@ -229,9 +229,11 @@ Tugra also runs an [MCP](https://modelcontextprotocol.io) (Model Context Protoco
 plain HTTP (Streamable-HTTP transport, protocol version `2025-06-18`) — no SSE or stdio; `GET /api/v1/mcp`
 returns `405` with `Allow: POST`.
 
-- **Status:** read **and** write. 56 tools total — 33 read + 23 PAT-scoped mutate/ops tools. The server also
+- **Status:** read **and** write. 70 tools total — 37 read + 33 PAT-scoped mutate/ops tools (14 of them are the `migration_run_*`
+  guided-migration tools: dry-run by default, and a human approves the point of no return, see
+  [guided migration](runbooks/guided-migration.md)). The server also
   exposes **guided prompts** (`prompts/list` + `prompts/get`: diagnose a failing deploy, fleet rollout, fleet
-  health review) — inert recipes that steer the agent through the scoped tools. OAuth for third-party clients
+  health review, guided migration) — inert recipes that steer the agent through the scoped tools. OAuth for third-party clients
   (dynamic client registration, `/authorize`, `/token`, PKCE) is still planned; today a PAT is the only credential.
 - **Auth:** the same PAT/session + scope model as the REST API above — a PAT works out of the box, and the
   `apiEnabled` kill-switch and IP allowlist apply here too. The caller's identity always comes from the
