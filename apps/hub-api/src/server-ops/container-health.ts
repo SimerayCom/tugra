@@ -145,7 +145,15 @@ function cleanTime(v: string): string | null {
 
 /** Parse the two-section TSV output. Tolerant: strips leading "/", drops malformed/partial lines, and treats
  *  a missing/empty ##EVENTS section as "no events" (crash detection via RestartCount still works). */
-export function parseHealthOutput(out: string): { containers: ContainerSnap[]; events: DockerEvt[]; truncated: boolean } {
+// Docker container names as docker itself allows them; anything else on a line is noise (a stream header,
+// a partial write) and must never reach the database, where a NUL byte fails the whole tick.
+const DOCKER_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/;
+// C0 controls except tab and newline (the TSV separators), plus DEL.
+// eslint-disable-next-line no-control-regex
+const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f]/g;
+
+export function parseHealthOutput(raw: string): { containers: ContainerSnap[]; events: DockerEvt[]; truncated: boolean } {
+  const out = raw.replace(CONTROL, "");
   const truncated = out.includes("…(truncated)");
   const inspectIdx = out.indexOf("##INSPECT");
   const eventsIdx = out.indexOf("##EVENTS");
@@ -157,7 +165,7 @@ export function parseHealthOutput(out: string): { containers: ContainerSnap[]; e
     const parts = line.split("\t");
     if (parts.length < 8) continue; // header/blank/truncated-partial line
     const name = (parts[0] ?? "").replace(/^\//, "").trim();
-    if (!name) continue;
+    if (!DOCKER_NAME.test(name)) continue;
     containers.push({
       name,
       id: (parts[1] ?? "").trim(),
@@ -178,7 +186,7 @@ export function parseHealthOutput(out: string): { containers: ContainerSnap[]; e
     const ts = Number.parseInt(parts[0] ?? "", 10);
     const name = (parts[1] ?? "").replace(/^\//, "").trim();
     const action = (parts[2] ?? "").trim();
-    if (!Number.isFinite(ts) || !name || !action) continue;
+    if (!Number.isFinite(ts) || !DOCKER_NAME.test(name) || !action) continue;
     const ec = Number.parseInt(parts[3] ?? "", 10);
     events.push({ ts, name, action, exitCode: Number.isFinite(ec) ? ec : null });
   }

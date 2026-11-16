@@ -63,6 +63,14 @@ describe("parseHealthOutput", () => {
       { ts: 1700000050, name: "tugra_db_d1", action: "die", exitCode: 1 },
     ]);
   });
+  it("never lets control bytes or a stream header reach a stored name", () => {
+    const hdr = "\u0001\u0000\u0000\u0000\u0000\u0000\u0001\u0010";
+    const out = `##INSPECT\n${hdr}/tugra_app1\tc1\trunning\t0\tfalse\t0\t\t\t\n/bad\u0000name\tc2\trunning\t0\tfalse\t0\t\t\t\n/x y\tc3\trunning\t0\tfalse\t0\t\t\t\n##EVENTS\n1700000100\tev\u0000il\tdie\t1\n1700000101\t/a b\tdie\t1`;
+    const { containers, events } = parseHealthOutput(out);
+    for (const c of containers) expect(c.name).toMatch(/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/);
+    expect(containers.map((c) => c.name)).toEqual(["tugra_app1", "badname"]);
+    expect(events.map((e) => e.name)).toEqual(["evil"]);
+  });
   it("tolerates a missing events section, malformed/partial lines, and the truncation marker", () => {
     const { containers, events, truncated } = parseHealthOutput("##INSPECT\ngarbage\ntugra_x\tc\trunning\n…(truncated)");
     expect(containers).toHaveLength(0); // the partial line (<8 cols) is dropped
