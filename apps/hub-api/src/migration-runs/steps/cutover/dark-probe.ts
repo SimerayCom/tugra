@@ -38,7 +38,7 @@ export function buildDarkProbeScript(o: { hosts: readonly string[]; path: string
   return [
     "set -u",
     `P=${shq(o.path)}`,
-    `IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' ${PROXY} 2>/dev/null | awk '{print $1}')`,
+    `IP=$(docker container inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' ${PROXY} 2>/dev/null | awk '{print $1}')`,
     'case "$IP" in \'\'|*[!0-9.]*) echo "TUGRA_DARK_PROBE_NOPROXY"; exit 0;; esac',
     'command -v curl >/dev/null 2>&1 || { echo "TUGRA_DARK_PROBE_UNAVAILABLE"; exit 0; }',
     'T=$(mktemp) || exit 0',
