@@ -73,6 +73,7 @@ const FLIP_POLL_MS = 5_000;
 const SWAP_POLL_MS = 10_000;
 /** Re-exported: the attestation ids live with the pure hold rules (the web offers them per host). */
 export { HTTP01_GAP_ATTEST, LEFT_OUT_ATTEST, MANUAL_DNS_ATTEST, MANUAL_DNS_DEFER_ATTEST, OBJECT_CLEARED_ATTEST };
+const OBJECT_KEYS_TTL_MS = 30_000;
 const MANUAL_DNS_STALE_MINUTES = MANUAL_DNS_STALE_MS / 60_000;
 /** How many times the swap takes the box back when Coolify restarts its own proxy between the stop and Tugra's proxy start (C11). */
 export const SWAP_GUARD_ATTEMPTS = 2;
@@ -248,7 +249,7 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     const run = ctx.run;
     if (obs.entries.length === 0) return;
     const policy = resolveOwnerInput(run.inputs, "minioPolicy") ?? "hold";
-    if (policy !== "external") obs.objectKeys = await this.world.appObjectKeys(obs.apps.map((a) => a.appId));
+    if (policy !== "external") obs.objectKeys = await this.objectKeysOf(ctx, obs.apps);
     if (policy === "mirror") {
       const ids = ["DATA_SEED", "DATA_FINAL"].flatMap((k) => ctx.stepState(k as "DATA_SEED" | "DATA_FINAL").evidence.attachments.filter((a) => a.kind === "object-migration").map((a) => a.resourceId));
       obs.objects = await this.world.objectsVerification(run.teamId, [...new Set(ids)]);
@@ -257,6 +258,18 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     obs.dependants = policy === "external" ? new Map() : objectDependants(obs.entries, holdApps, obs.objectKeys);
     if (run.topology !== "two-box") return;
     obs.holds = computeHolds({ entries: obs.entries, apps: holdApps, objectKeys: obs.objectKeys, policy, objects: obs.objects, cutoverEvidence: ctx.step.evidence, tlsEvidence: ctx.stepState("TLS_PREISSUE").evidence, acceptHttp01Gap: run.options.acceptHttp01Gap });
+  }
+
+  private readonly keyCache = new Map<string, { at: number; ids: string; keys: Map<string, string[]> }>();
+
+  /** The object-store env names of the op's apps: the env is decrypted to list its keys, so the answer is reused for 30 s (an env edit mid-run is picked up on the next window). */
+  private async objectKeysOf(ctx: StepContext, apps: readonly OpApp[]): Promise<Map<string, string[]>> {
+    const ids = apps.map((a) => a.appId).sort().join(",");
+    const hit = this.keyCache.get(ctx.run.id);
+    if (hit && hit.ids === ids && ctx.now().getTime() - hit.at < OBJECT_KEYS_TTL_MS) return hit.keys;
+    const keys = await this.world.appObjectKeys(apps.map((a) => a.appId));
+    this.keyCache.set(ctx.run.id, { at: ctx.now().getTime(), ids, keys });
+    return keys;
   }
 
   private holdApps(apps: readonly OpApp[]): Map<string, HoldApp> {

@@ -167,6 +167,21 @@ describe("object storage (R34 / R61 / C7)", () => {
   });
 });
 
+describe("the env names are read sparingly", () => {
+  it("the object-store env names are listed once per 30 seconds, not on every tick", async () => {
+    const rig = await ready({ apps: [{ id: "a1", host: H(1) }, { id: "a2", host: H(2) }], zone: zoneFor([H(1), H(2)]), policy: "mirror" });
+    const read = jest.spyOn(rig.world, "appObjectKeys");
+    await rig.driver.tick(rig.handlers.cut);
+    await rig.driver.tick(rig.handlers.cut);
+    expect(read).toHaveBeenCalledTimes(1);
+    await rig.driver.tick(rig.handlers.cut);
+    expect(read).toHaveBeenCalledTimes(1);
+    rig.driver.advance(31_000);
+    await rig.driver.tick(rig.handlers.cut);
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("compose services are flippable hosts (R13)", () => {
   it("a service host flips like any host once its service runs; until then only it waits", async () => {
     const rig = await ready({ apps: [{ id: "a1", host: H(1) }, { id: "a2", host: H(2), service: true, hasData: true }], zone: zoneFor([H(1), H(2)]) });
