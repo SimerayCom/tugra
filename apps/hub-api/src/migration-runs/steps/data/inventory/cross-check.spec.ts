@@ -246,7 +246,7 @@ describe("R2: carry of an unlisted database", () => {
   ] as const)("refuses with %s (%s)", (reason, image, over, db) => {
     const i = ghostOf(image, over as Record<string, unknown>, db as never);
     expect(carryAssessment("h", i.containers[0])).toEqual({ ok: false, reason });
-    const c = crossCheckChecks(inputOf(i)).find((x) => x.subject === `host-1/${GHOST}`)!;
+    const c = crossCheckChecks(inputOf(i)).find((x) => x.subject === `host-1/${i.containers[0].name}`)!;
     expect(c).toMatchObject({ status: "fail", code: CARRY_REFUSED_CODES[reason], params: { reason } });
     expect(CARRY_REFUSED_CODES[reason]).toBe(`inventory.carry-refused-${reason}`);
     expect(carryDecisions(inputOf(i))).toEqual([]);
