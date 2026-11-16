@@ -1,4 +1,4 @@
-import { CanActivate, ExecutionContext, INestApplication, Injectable, Module } from "@nestjs/common";
+import { CanActivate, ExecutionContext, INestApplication, Injectable } from "@nestjs/common";
 import { APP_FILTER, Reflector } from "@nestjs/core";
 import { ConfigService } from "@nestjs/config";
 import { Test } from "@nestjs/testing";
@@ -208,13 +208,11 @@ describe("MigrationRunsController maps the caller to a RunActor and forwards the
   });
 });
 
-/** Lane B filled the data steps module (it needs the whole app's providers): this test only needs the registry, so it swaps it for an empty one. */
-@Module({})
-class EmptyDataStepsModule {}
 
 describe("module wiring", () => {
-  it("the stub step modules compile empty and the global registry is injectable from the core module tree", async () => {
-    const mod = await Test.createTestingModule({ imports: [StepRegistryModule, RunDataStepsModule, RunCutoverStepsModule] }).overrideModule(RunDataStepsModule).useModule(EmptyDataStepsModule).compile();
+  // The real step modules need the whole app (Prisma, metrics, importer); their wiring is covered by the e2e boot.
+  it("the global registry is injectable on its own and starts empty", async () => {
+    const mod = await Test.createTestingModule({ imports: [StepRegistryModule] }).compile();
     const reg = mod.get<StepHandlerRegistry>(STEP_HANDLERS);
     expect(reg).toBeInstanceOf(StepHandlerRegistryService);
     expect(reg.list()).toEqual([]);
