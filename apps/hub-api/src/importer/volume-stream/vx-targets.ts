@@ -53,6 +53,16 @@ export interface ServiceVolumeRow {
   mountPath: string | null;
 }
 
+/**
+ * A compose service is an object store when one of its kept members is a MinIO (the importer stores the member names in the task
+ * result). An object store's data is NEVER streamed as a raw volume: its buckets move through Object migration (`mc mirror`), which
+ * knows keys, metadata and the policy the owner chose (mirror / hold / external).
+ */
+export function isObjectStoreResult(result: unknown): boolean {
+  const members = result && typeof result === "object" ? (result as { members?: unknown }).members : undefined;
+  return Array.isArray(members) && members.some((m) => typeof m === "string" && /minio/i.test(m));
+}
+
 /** A container path the stream may carry in a target row: absolute, plain, no traversal and no control characters. */
 const SERVICE_MOUNT_RE = /^\/[A-Za-z0-9._@+=,\/-]{0,299}$/;
 export function validServiceMountPath(p: unknown): p is string {
@@ -157,7 +167,9 @@ export function buildVolumeTargets(opts: {
         out.push({ itemRef: ref, destType: "app-volume", name: m.name, mountPath: m.path, appItemRef: t.itemRef });
       }
     } else if (t.resourceType === "application" && t.kind === "service") {
-      // a compose SERVICE (search engine, document converter, ...): each copy volume is an app-volume target owned by the service's app
+      // a compose SERVICE (search engine, document converter, ...): each copy volume is an app-volume target owned by the service's app.
+      // An object store (MinIO) is the exception: its buckets move through Object migration, never as a raw volume copy.
+      if (isObjectStoreResult(t.result)) continue;
       for (const v of serviceVolumesOf(t.result)) {
         if (!serviceVolumeStreamable(v)) continue;
         const ref = volumeItemRef(t.itemRef, v.key);

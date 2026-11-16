@@ -7,12 +7,10 @@
  *
  * The owner's `minioPolicy` (Q6) decides what is expected:
  *  - `external`: the store stays where it is and the apps keep its public endpoint, so there is nothing to migrate: no row.
- *  - `mirror`: the buckets must be mirrored, so an attached migration with at least one selected bucket is required: FAIL without one.
- *    (An attached migration that selects a bucket accounts for the object data under any policy: PASS.)
- *  - `hold` that the owner answered: the buckets stay on the source and every dependent host stays with them (the cutover holds them
- *    back and says so per host): a visible WARN, never a failure.
- *  - `hold` that nobody answered (the default): the question is still open, so the gate FAILS and asks for it (`ownerInput`). An open
- *    question about where the object data lives blocks the data steps, it never lets them run on a guess.
+ *  - any other policy (`mirror`, `hold`): the object data must be accounted for before data moves, so an attached migration with at
+ *    least one selected bucket is required: FAIL without one (`migration-missing`; the fix is to attach one or to declare the store
+ *    external). `hold` that nobody answered (the default) fails with its own code (`policy-unanswered`) that asks the question first.
+ *    An attached migration that selects a bucket accounts for the object data under any policy: PASS.
  * A pure function of the snapshot, the attached migrations and the owner inputs: no I/O.
  */
 import type { GateCheck } from "../../core/dto";
@@ -27,8 +25,6 @@ export const OBJECT_PLAN_CODES = {
   migrationMissing: "data-seed.object-migration-missing",
   /** FAIL: object storage is in the plan and the owner has not said what happens to it (default `hold`). */
   policyUnanswered: "data-seed.object-policy-unanswered",
-  /** WARN: the owner chose to hold: the buckets stay on the source and the dependants stay with them. */
-  heldBySource: "data-seed.object-held-on-source",
   /** PASS: an object migration is attached. */
   migrationAttached: "data-seed.object-migration-attached",
 } as const;
@@ -62,10 +58,7 @@ export function objectPlanChecks(run: Pick<RunSnapshot, "inputs">, snap: Pick<Da
   const id = OBJECT_PLAN_ID;
   // an attached migration that actually selects a bucket accounts for the object data under any policy
   if (objects.length > 0 && selected > 0) return [{ id, status: "pass", code: OBJECT_PLAN_CODES.migrationAttached, params, evidence: "hub-verified" }];
-  if (policy === "hold") {
-    return policyAnswered(run)
-      ? [{ id, status: "warn", code: OBJECT_PLAN_CODES.heldBySource, params, ownerInput: "minioPolicy", evidence: "hub-verified" }]
-      : [{ id, status: "fail", code: OBJECT_PLAN_CODES.policyUnanswered, params, ownerInput: "minioPolicy", evidence: "hub-verified" }];
-  }
+  // nobody answered the question (default hold): ask it before anything else
+  if (policy === "hold" && !policyAnswered(run)) return [{ id, status: "fail", code: OBJECT_PLAN_CODES.policyUnanswered, params, ownerInput: "minioPolicy", evidence: "hub-verified" }];
   return [{ id, status: "fail", code: OBJECT_PLAN_CODES.migrationMissing, params, ownerInput: "minioPolicy", evidence: "hub-verified" }];
 }

@@ -37,12 +37,13 @@ describe("objectPlanChecks (R33)", () => {
   it("external adds no row at all: the store stays where it is", () => {
     expect(objectPlanChecks(run("external"), { objectStorage: facts({ stores: [STORE], dependants: [API] }) }, [])).toEqual([]);
   });
-  it("hold the owner never answered (the default) fails and asks the question; an answered hold is a visible warning, never a failure", () => {
+  it("hold the owner never answered (the default) fails and asks the question; an answered hold with no attached migration fails too (only external lets it through)", () => {
     const f = { objectStorage: facts({ dependants: [API] }) };
     expect(objectPlanChecks(run(), f, [])[0]).toMatchObject({ status: "fail", code: OBJECT_PLAN_CODES.policyUnanswered, ownerInput: "minioPolicy" });
     expect(objectPlanChecks(run("hold", "default"), f, [])[0]).toMatchObject({ status: "fail", code: OBJECT_PLAN_CODES.policyUnanswered });
     expect(objectPlanChecks(makeRun({ inputs: { minioPolicy: { ...answered("hold"), value: "unknown" } as never } }), f, [])[0]).toMatchObject({ status: "fail", code: OBJECT_PLAN_CODES.policyUnanswered });
-    expect(objectPlanChecks(run("hold"), f, [])[0]).toMatchObject({ status: "warn", code: OBJECT_PLAN_CODES.heldBySource });
+    expect(objectPlanChecks(run("hold"), f, [])[0]).toMatchObject({ status: "fail", code: OBJECT_PLAN_CODES.migrationMissing, ownerInput: "minioPolicy", params: { policy: "hold", attached: 0 } });
+    expect(objectPlanChecks(run("hold"), { objectStorage: facts({ stores: [STORE] }) }, [view(false)])[0]).toMatchObject({ status: "fail", code: OBJECT_PLAN_CODES.migrationMissing });
   });
 });
 
@@ -81,6 +82,14 @@ describe("DATA_SEED gate with object storage in the plan", () => {
     const obs = await handler.observe(h.ctx);
     expect(handler.preGate(h.ctx, obs).passed).toBe(true);
     expect(handler.postGate(h.ctx, obs).checks.some((c) => c.id === OBJECT_PLAN_ID)).toBe(false);
+  });
+  it("an answered hold with no migration parks the gate before anything moves, like mirror", async () => {
+    const { handler, ctx } = build(facts({ stores: [STORE] }), run("hold"));
+    const h = ctx();
+    const obs = await handler.observe(h.ctx);
+    const pre = handler.preGate(h.ctx, obs);
+    expect(pre.passed).toBe(false);
+    expect(pre.checks.map((c) => c.code)).toContain(OBJECT_PLAN_CODES.migrationMissing);
   });
   it("the dry run reports the verdict as a block item", async () => {
     const { handler, ctx } = build(facts({ stores: [STORE] }));

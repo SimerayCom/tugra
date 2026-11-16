@@ -170,7 +170,7 @@ export function buildVerifySuite(i: SuiteInputs): SuiteCheck[] {
 }
 
 /**
- * One coverage row per service volume that is not on the streamed lane. `copy` that cannot be streamed and `skip` (an explicit choice
+ * One coverage row per service volume that is not on the streamed lane (an object store's volume says it is moved by Object migration). `copy` that cannot be streamed and `skip` (an explicit choice
  * not to carry the data) fail and need an acknowledgement; `empty` starts empty by design and is a warning, so it is listed but does
  * not hold the approval. An excluded volume has its own `volume-parity` row.
  */
@@ -178,6 +178,11 @@ export function serviceVolumeCoverage(snap: DataSnapshot): SuiteCheck[] {
   const out: SuiteCheck[] = [];
   for (const v of snap.serviceVolumes ?? []) {
     if (v.streamed) continue;
+    if (v.objectStore) {
+      // an object store's volume is never streamed: its buckets move through Object migration (judged by the object checks and the DATA_SEED plan check)
+      out.push(mk("coverage-service-volume", `${v.serviceItemRef}/${v.key}`, { status: "warn", code: DATA_CODES.verifyServiceVolumeObjectStore, params: { service: v.serviceName ?? v.serviceItemRef, key: v.key, outcome: "moved-by-object-migration", reason: "object-store" }, ackable: false, evidence: "hub-verified" }));
+      continue;
+    }
     const reason = v.policy === "copy" ? "not-streamable" : v.policy === "skip" ? "policy-skip" : "starts-empty";
     const code = v.policy === "copy" ? DATA_CODES.verifyServiceVolume : v.policy === "skip" ? DATA_CODES.verifyServiceVolumeSkipped : DATA_CODES.verifyServiceVolumeEmpty;
     out.push(

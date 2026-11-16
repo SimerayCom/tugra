@@ -103,4 +103,9 @@ describe("buildCoverage: services (R39/R53/R33)", () => {
     const c = buildCoverage(fleetOf([svc(compose("  store:\n", "      - store:/data", "minio/minio:latest"), { name: "storage-a" })]), o);
     expect(entry(c, "objectData")).toMatchObject({ level: "warn", reason: expect.stringContaining("Object migration") });
   });
+  it("a MinIO service's data volume is not reported as a copy the stream cannot carry (it is never streamed; the objectData row says so)", () => {
+    const c = buildCoverage(fleetOf([svc(compose("  store:\n", "      - \"store:/my data\"", "minio/minio:latest"), { name: "storage-a" })]), o);
+    expect(entry(c, "volume:store")).toBeUndefined();
+    expect(entry(c, "objectData")).toBeDefined();
+  });
 });

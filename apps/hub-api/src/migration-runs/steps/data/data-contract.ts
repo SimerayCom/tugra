@@ -143,6 +143,8 @@ export interface ServiceVolumeItem {
   policy: "copy" | "empty" | "skip" | string;
   /** True when the streamed lane has a target for it (its parity row is in `volumes`). */
   streamed: boolean;
+  /** The service is a MinIO object store: its volume is never streamed, its buckets move through Object migration. */
+  objectStore?: boolean;
 }
 
 /** What the plan needs object migration for: names only, never an endpoint or a credential. */
@@ -443,6 +445,8 @@ export const DATA_CODES = {
   verifyCoverage: "verify.coverage",
   /** A copy volume of a compose service the streamed lane cannot carry. */
   verifyServiceVolume: "verify.service-volume-not-migrated",
+  /** A volume of an object store (MinIO): moved by Object migration, never by the volume stream. */
+  verifyServiceVolumeObjectStore: "verify.service-volume-object-store",
   /** A service volume whose policy is `skip`: its data is not carried. */
   verifyServiceVolumeSkipped: "verify.service-volume-skipped",
   /** A service volume that starts empty by design. */

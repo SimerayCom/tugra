@@ -103,6 +103,8 @@ export interface ServiceLink {
   objectStore: boolean;
   /** Ids of the op's apps that joined the service's private network: the apps that need it. */
   dependants: string[];
+  /** The service carries public domains of its own (cutover hosts) and is not held: no private network exists for it, so `dependants` cannot name its users. */
+  public?: boolean;
   /** A data volume of the service has no finished copy yet (starting it would put its first deploy on an empty volume). */
   dataPending: boolean;
 }

@@ -2,7 +2,8 @@
  * DEPLOY_DARK and the compose SERVICES of the import (C14/R30), pure. A real stack's apps cannot answer their health path without the
  * services they call (a search engine, a document converter, an object store), so DEPLOY_DARK starts those services BEFORE the apps
  * that need them. Which ones is the owner's `serviceStart` choice (see `SERVICE_START_MODES`):
- *  - `dependencies` (default): a service starts when a dark app depends on it, every other service stays stopped;
+ *  - `dependencies` (default): a service starts when a dark app depends on it, or when it serves public domains of its own (its hosts
+ *    are cutover hosts, which the cutover parks on while the service is not running); every other service stays stopped;
  *  - `none`: no service starts;
  *  - `all`: every service the import created starts.
  * A dark app DEPENDS on a service when it joined the service's private network (the REMAP_ENV rewrite that points the app's env at the
@@ -13,7 +14,7 @@ import type { MinioPolicy, ServiceStartMode } from "../../core/run-contract";
 import type { DeploymentRef, ServiceLink } from "./import-ports";
 
 /** Why a service starts or stays stopped (shown to the operator as a code). */
-export type ServiceWhy = "dependency" | "all" | "unused" | "choice-none" | "minio-held";
+export type ServiceWhy = "dependency" | "public" | "all" | "unused" | "choice-none" | "minio-held";
 
 /** One service of the op as the step tracks it: the Tugra app behind it, its deployments and the plan's verdict. */
 export interface SvcRow {
@@ -54,9 +55,14 @@ export function planServiceStart(mode: ServiceStartMode, minioPolicy: MinioPolic
     const base = { id: f.link.appId, itemRef: f.link.itemRef, name: f.name, status: f.status, exists: f.exists, deployments: f.deployments, server: f.server, dependants: dependantIds.map((id) => appNameOf.get(id) ?? id).sort(), objectStore: f.link.objectStore, dataPending: f.link.dataPending };
     if (mode === "none") return { ...base, start: false, why: "choice-none" };
     if (mode === "all") return { ...base, start: true, why: "all" };
-    // an object store whose buckets stay on the source (policy hold / external) is not started: an empty store on the target helps nobody
+    // a dark app that joined the service's network needs it up to answer its health path, whatever the service is: that includes an
+    // object store (REMAP_ENV already pointed the app at it; an empty store is what a dark app boots against, the buckets follow by Object migration)
+    if (dependantIds.length > 0) return { ...base, start: true, why: "dependency" };
+    // an object store nobody depends on whose buckets stay on the source (policy hold / external) is not started: an empty store helps nobody
     if (f.link.objectStore && minioPolicy !== "mirror") return { ...base, start: false, why: "minio-held" };
-    return dependantIds.length > 0 ? { ...base, start: true, why: "dependency" } : { ...base, start: false, why: "unused" };
+    // a service with domains of its own has no private network (so no named dependants), but its hosts are cutover hosts: start it
+    if (f.link.public === true) return { ...base, start: true, why: "public" };
+    return { ...base, start: false, why: "unused" };
   });
   return rows.sort((a, b) => (a.name === b.name ? (a.itemRef < b.itemRef ? -1 : 1) : a.name < b.name ? -1 : 1));
 }

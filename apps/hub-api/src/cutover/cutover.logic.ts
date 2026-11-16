@@ -1,4 +1,5 @@
 import { createHash, X509Certificate, createPrivateKey } from "node:crypto";
+import { isObjectStoreResult } from "../importer/volume-stream/vx-targets";
 
 /**
  * Pure logic of the SSL/DNS cutover (no I/O): the per-hostname state machine, the DNS record planner with its
@@ -127,6 +128,9 @@ export function isStateful(appItemRef: string | null, tasks: OpTaskLite[]): bool
   const app = tasks.find((t) => t.itemRef === appItemRef && (t.kind === "app" || t.kind === "service"));
   if (!app) return false;
   if (app.kind === "service") {
+    // An object store (MinIO) never has a streamed volume copy: its buckets move through Object migration (the DATA_SEED plan check and
+    // the cutover holds account for them), so it is not "waiting for a copy" here.
+    if (isObjectStoreResult(app.result)) return false;
     // A compose service: its data volumes arrive as streamed copies `data:volume:<s>:<r>:<key>` (the service ref is `service:<s>:<r>`).
     // Matched BY KEY: every copy volume needs its OWN finished streamed copy (a count would let one volume's copy stand in for another's).
     const keys = serviceDataKeys(app.result);

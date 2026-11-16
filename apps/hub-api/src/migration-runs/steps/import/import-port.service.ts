@@ -22,8 +22,8 @@ import { buildCoverage } from "../../../importer/coverage";
 import { mapLimit } from "../../../importer/sources/map-limit";
 import type { ImportApplyInput, ImportMappingResolveInput, RemoteSourceKind, ServiceChoice } from "../../../importer/dto";
 import type { SourceHealthRow } from "../../../importer/import-source";
-import { serviceVolumeStreamable, serviceVolumesOf, volumeItemRef } from "../../../importer/volume-stream/vx-targets";
-import { isMinioResult } from "../cutover/cutover-world.service";
+import { vxEnabled } from "../../../importer/volume-stream/vx-constants";
+import { isObjectStoreResult, serviceVolumeStreamable, serviceVolumesOf, volumeItemRef } from "../../../importer/volume-stream/vx-targets";
 import { pinnedImageRef } from "./baseline/image-pins";
 import type { ResolvedMapping } from "../../../importer/import-mapping";
 import type { ServicePreview } from "../../../importer/service-preview";
@@ -228,8 +228,11 @@ export class ImportPortService implements ImportStepsPort {
     const doneData = new Set(tasks.filter((t) => t.kind === "data" && t.status === "DONE" && !!t.itemRef).map((t) => t.itemRef as string));
     // a copy that is STILL EXPECTED: a streamable copy volume the owner did not exclude and whose data task has not finished. A volume the
     // stream cannot carry is not "expected" (VERIFY lists it as not migrated and the owner acknowledges it there).
+    // With the stream switched off no target, transfer or data task can ever exist (VERIFY lists the volumes as not migrated, ackable), and
+    // an object store's volume is not streamed at all (Object migration moves the buckets): neither is ever "still expected".
+    const streamOn = vxEnabled();
     const dataPending = (itemRef: string, result: unknown): boolean =>
-      serviceVolumesOf(result).some((v) => {
+      streamOn && !isObjectStoreResult(result) && serviceVolumesOf(result).some((v) => {
         const ref = serviceVolumeStreamable(v) ? volumeItemRef(itemRef, v.key) : null;
         return !!ref && !(excluded && typeof excluded === "object" && ref in (excluded as Record<string, unknown>)) && !doneData.has(`data:${ref}`);
       });
@@ -238,13 +241,15 @@ export class ImportPortService implements ImportStepsPort {
     return services.map((t) => {
       const net = (t.result as { privateNetwork?: { network?: unknown } } | null)?.privateNetwork?.network;
       const network = typeof net === "string" ? net : null;
+      const r = (t.result ?? {}) as { serviceDomains?: { applied?: unknown }; hold?: unknown };
       return {
         itemRef: t.itemRef as string,
         appId: t.resourceId as string,
         name: nameOf.get(t.resourceId as string) ?? null,
-        objectStore: isMinioResult(t.result),
+        objectStore: isObjectStoreResult(t.result),
         dependants: network ? rows.filter((r) => (r.networks ?? []).includes(network)).map((r) => r.id).sort() : [],
         dataPending: dataPending(t.itemRef as string, t.result),
+        public: !network && r.hold !== true && typeof r.serviceDomains?.applied === "number" && r.serviceDomains.applied > 0,
       };
     });
   }

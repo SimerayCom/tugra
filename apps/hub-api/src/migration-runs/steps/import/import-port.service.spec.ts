@@ -268,4 +268,41 @@ describe("ImportPortService", () => {
     expect(await svc.pinImage("u1", "a1", "sha256:bad")).toEqual({ pinned: false });
     expect(apps.setSource).not.toHaveBeenCalled();
   });
+
+  describe("serviceLinks", () => {
+    const vol = (key: string, mount = "/data") => ({ key, policy: "copy", mounts: [{ service: "m", path: mount }] });
+    const links = async (tasks: unknown[], apps: unknown[] = []) => {
+      const { svc, prisma } = make();
+      (prisma as Record<string, unknown>).bulkTask = { findMany: jest.fn().mockResolvedValue(tasks) };
+      prisma.bulkOperation.findUnique.mockResolvedValue({ meta: {} });
+      (prisma.application as Record<string, unknown>).findMany = jest.fn().mockImplementation(async (a: { select: Record<string, boolean> }) => (a.select.networks ? apps : [{ id: "s1", name: "search-a" }, { id: "st1", name: "store-a" }, { id: "p1", name: "public-a" }]));
+      return svc.serviceLinks("u1", "op-1");
+    };
+    const svcTask = (itemRef: string, id: string, result: unknown) => ({ itemRef, kind: "service", status: "DONE", resourceType: "application", resourceId: id, result });
+    const tasks = [
+      svcTask("service:s:a", "s1", { members: ["search"], volumes: [vol("index")], privateNetwork: { network: "net-a" } }),
+      svcTask("service:s:st", "st1", { members: ["minio"], volumes: [vol("minio-data")], privateNetwork: { network: "net-st" } }),
+      svcTask("service:s:p", "p1", { members: ["search"], volumes: [], serviceDomains: { applied: 1, unmapped: [] }, hold: false }),
+    ];
+    const restore = () => { delete process.env.MIGRATION_VX_ENABLED; };
+    afterEach(restore);
+
+    it("flags a streamable copy volume that has no finished data task as still pending, but never an object store's volume", async () => {
+      const out = await links(tasks);
+      expect(out.map((l) => [l.name, l.objectStore, l.dataPending])).toEqual([["search-a", false, true], ["store-a", true, false], ["public-a", false, false]]);
+    });
+    it("is NOT pending when the volume stream is switched off: no target or data task can ever exist, VERIFY's acknowledgement path owns the volume", async () => {
+      process.env.MIGRATION_VX_ENABLED = "false";
+      const out = await links(tasks);
+      expect(out.every((l) => !l.dataPending)).toBe(true);
+    });
+    it("marks a service with public domains and no private network as public (a held one is not)", async () => {
+      const out = await links([...tasks, svcTask("service:s:h", "p1", { members: ["tunnel"], volumes: [], serviceDomains: { applied: 1, unmapped: [] }, hold: true })]);
+      expect(out.map((l) => [l.itemRef, l.public])).toEqual([["service:s:a", false], ["service:s:st", false], ["service:s:p", true], ["service:s:h", false]]);
+    });
+    it("names the dark apps that joined the service's private network", async () => {
+      const out = await links(tasks, [{ id: "w1", networks: ["net-a"] }, { id: "w2", networks: [] }]);
+      expect(out.find((l) => l.itemRef === "service:s:a")!.dependants).toEqual(["w1"]);
+    });
+  });
 });

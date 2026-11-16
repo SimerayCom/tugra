@@ -441,7 +441,7 @@ describe("PrismaDataPort.snapshot: compose services and object storage", () => {
       meta: { serverId: "srv-target", hubBase: "https://hub.example.com" },
       tasks: [
         task({ itemRef: "service:s:svc1", kind: "service", resourceType: "application", resourceId: "svc1", result: { kind: "service", members: ["search"], volumes: [svcVol("index", "copy", [{ service: "search", path: "/data" }]), svcVol("odd", "copy", []), svcVol("old", "skip", [{ service: "search", path: "/old" }]), svcVol("tmp", "empty", [])] } }),
-        task({ itemRef: "service:s:store", kind: "service", resourceType: "application", resourceId: "store1", result: { kind: "service", members: ["minio"], volumes: [] } }),
+        task({ itemRef: "service:s:store", kind: "service", resourceType: "application", resourceId: "store1", result: { kind: "service", members: ["minio"], volumes: [svcVol("minio-data", "copy", [{ service: "minio", path: "/data" }])] } }),
         task({ itemRef: "app:s:api", kind: "app", resourceType: "application", resourceId: "api1" }),
         task({ itemRef: "app:s:web", kind: "app", resourceType: "application", resourceId: "web1" }),
       ],
@@ -464,6 +464,8 @@ describe("PrismaDataPort.snapshot: compose services and object storage", () => {
   it("lists every service volume and whether the stream has a target for it", async () => {
     const s = await build({}, crypto).snapshot(makeRun());
     expect(s.serviceVolumes).toEqual([
+      // an object store's volume is never streamed: the buckets move through Object migration
+      { serviceItemRef: "service:s:store", serviceName: "store-a", key: "minio-data", policy: "copy", streamed: false, objectStore: true },
       { serviceItemRef: "service:s:svc1", serviceName: "search-a", key: "index", policy: "copy", streamed: true },
       { serviceItemRef: "service:s:svc1", serviceName: "search-a", key: "odd", policy: "copy", streamed: false },
       { serviceItemRef: "service:s:svc1", serviceName: "search-a", key: "old", policy: "skip", streamed: false },

@@ -1,4 +1,4 @@
-import { DATA_CODES, type DbStats, type FlipPlanLite, type RuntimeSnapshot } from "../data-contract";
+import { DATA_CODES, type ServiceVolumeItem, type DbStats, type FlipPlanLite, type RuntimeSnapshot } from "../data-contract";
 import { PARITY_CODES } from "./db-stats";
 import { buildVerifySuite, classifySuite, ponrBindingHash, reportHash, toGateCheck, type SuiteInputs } from "./verify-suite";
 import { copied, database, inspected, makeSnap, measured, volume } from "../testing/fakes";
@@ -222,8 +222,8 @@ describe("reportHash and ponrBindingHash", () => {
 });
 
 describe("service volume coverage (R53)", () => {
-  const sv = (key: string, policy: string, streamed: boolean, serviceName: string | null = "search-a") => ({ serviceItemRef: "service:s:svc1", serviceName, key, policy, streamed });
-  const rows = (items: ReturnType<typeof sv>[], extra: Partial<SuiteInputs> = {}) => find(buildVerifySuite(inputs({ snap: makeSnap({ volumes: [copied("volume:s:abc:data")], databases: [], serviceVolumes: items }), ...extra })), "coverage-service-volume");
+  const sv = (key: string, policy: string, streamed: boolean, serviceName: string | null = "search-a"): ServiceVolumeItem => ({ serviceItemRef: "service:s:svc1", serviceName, key, policy, streamed });
+  const rows = (items: ServiceVolumeItem[], extra: Partial<SuiteInputs> = {}) => find(buildVerifySuite(inputs({ snap: makeSnap({ volumes: [copied("volume:s:abc:data")], databases: [], serviceVolumes: items }), ...extra })), "coverage-service-volume");
 
   it("a volume the stream moved has no coverage row of its own (its volume-parity row judges it)", () => {
     expect(rows([sv("index", "copy", true)])).toEqual([]);
@@ -248,6 +248,12 @@ describe("service volume coverage (R53)", () => {
     const [r] = rows([sv("k".repeat(60), "copy", false, null)]);
     expect(r.params).toMatchObject({ service: "service:s:svc1" });
     expect(r.id.length).toBeLessThanOrEqual(80);
+  });
+  it("an object store's volume is listed as moved by Object migration: visible, not ackable, never a failure and never streamed", () => {
+    const [r] = rows([{ ...sv("minio-data", "copy", false, "store-a"), objectStore: true }]);
+    expect(r).toMatchObject({ subject: "service:s:svc1/minio-data", status: "warn", code: DATA_CODES.verifyServiceVolumeObjectStore, ackable: false, params: { service: "store-a", key: "minio-data", outcome: "moved-by-object-migration", reason: "object-store" } });
+    const s = buildVerifySuite(inputs({ snap: makeSnap({ volumes: [copied("volume:s:abc:data")], databases: [database("database:s:pg", { task: "done" })], serviceVolumes: [{ ...sv("minio-data", "copy", false), objectStore: true }] }) }));
+    expect(classifySuite(s)).toEqual({ blocked: [], pending: [], acked: [] });
   });
   it("a snapshot from a port that cannot say adds nothing", () => {
     expect(find(buildVerifySuite(inputs()), "coverage-service-volume")).toEqual([]);

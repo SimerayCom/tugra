@@ -444,10 +444,12 @@ export const hostLoopOf = (o: Pick<RunOptions, "hostLoop">): { keyDir: string; p
 /**
  * C14 / R30: which imported compose SERVICES (a search engine, a document converter, an object store) DEPLOY_DARK starts. The apps of
  * a real stack cannot answer their health path without the services they call, so a service is started BEFORE the apps that need it:
- *  - `dependencies` (default): start the services a dark app depends on (it joined the service's private network), keep the others stopped;
+ *  - `dependencies` (default): start the services a dark app depends on (it joined the service's private network) and the services that
+ *    serve public domains of their own (cutover hosts), keep the others stopped;
  *  - `none`: start no service (the operator starts them by hand);
  *  - `all`: start every service the import created.
- * A MinIO object store is started only under `minioPolicy: mirror` (under `hold` the buckets stay on the source and the store stays stopped).
+ * A MinIO object store follows the same rule (a dark app that depends on it needs it up); one nobody depends on starts only under
+ * `minioPolicy: mirror`. Its buckets arrive through Object migration, never through a volume copy.
  */
 export const SERVICE_START_MODES = ["dependencies", "none", "all"] as const;
 export type ServiceStartMode = (typeof SERVICE_START_MODES)[number];

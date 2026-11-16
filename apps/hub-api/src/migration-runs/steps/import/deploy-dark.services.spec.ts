@@ -22,6 +22,8 @@ interface Svc {
   /** names of the apps that joined the service's network */
   deps: string[];
   minio?: boolean;
+  /** the service serves public domains of its own (no private network) */
+  pub?: boolean;
   pending?: boolean;
 }
 
@@ -31,7 +33,7 @@ function withServices(w: RunWorld, services: Svc[]): { pending: Set<string> } {
   for (const s of services) w.port.apps.set(`svc-${s.name}`, { id: `svc-${s.name}`, name: s.name, status: "NEW" });
   const idOf = (name: string) => [...w.port.apps.values()].find((a) => a.name === name && !a.id.startsWith("svc-"))?.id;
   (w.port as ImportStepsPort).serviceLinks = async (): Promise<ServiceLink[]> =>
-    services.map((s) => ({ itemRef: `service:_:${s.name}`, appId: `svc-${s.name}`, name: s.name, objectStore: !!s.minio, dependants: s.deps.map(idOf).filter((x): x is string => !!x), dataPending: pending.has(s.name) }));
+    services.map((s) => ({ itemRef: `service:_:${s.name}`, appId: `svc-${s.name}`, name: s.name, objectStore: !!s.minio, dependants: s.deps.map(idOf).filter((x): x is string => !!x), dataPending: pending.has(s.name), public: !!s.pub }));
   return { pending };
 }
 const deploys = (w: RunWorld) => w.port.deploys.map((d) => w.port.apps.get(d.appId)!.name);
@@ -94,17 +96,30 @@ describe("DEPLOY_DARK services (C14/R30)", () => {
     expect(deploys(w)).toEqual(["search", "web"]);
   });
 
-  it("an object store is started only under minioPolicy mirror (under the default hold its buckets stay on the source)", async () => {
+  it("an object store a dark app depends on is started under every policy (the app was rewritten to it); one nobody uses only under mirror", async () => {
     const store: Svc[] = [{ name: "object-store", deps: ["web"], minio: true }];
     const a = safetyWorld(items);
     withServices(a.w, store);
     await a.w.run();
-    expect(deploys(a.w)).toEqual(["web"]);
+    expect(deploys(a.w)).toEqual(["object-store", "web"]);
+    const idle = safetyWorld(items);
+    withServices(idle.w, [{ name: "idle-store", deps: [], minio: true }]);
+    await idle.w.run();
+    expect(deploys(idle.w)).toEqual(["web"]);
     const b = safetyWorld(items);
     withServices(b.w, store);
     const id = await b.w.run({ inputs: { minioPolicy: "mirror" } });
     expect(b.w.status(id)).toBe("COMPLETED");
     expect(deploys(b.w)).toEqual(["object-store", "web"]);
+  });
+
+  it("a service with public domains of its own is started too (its cutover hosts would otherwise park on a stopped service), before the apps", async () => {
+    const { w } = safetyWorld(items);
+    withServices(w, [{ name: "public-search", deps: [], pub: true }, { name: "converter", deps: [] }]);
+    const id = await w.run();
+    expect(w.status(id)).toBe("COMPLETED");
+    expect(deploys(w)).toEqual(["public-search", "web"]);
+    expect(w.port.apps.get("svc-converter")!.status).toBe("NEW");
   });
 
   it("a service whose data has not arrived is never started on an empty volume: the step fails and nothing is deployed", async () => {
@@ -178,8 +193,19 @@ describe("planServiceStart", () => {
     const f = [link("a", ["w1"]), link("store", ["w1"], { objectStore: true })];
     expect(planServiceStart("none", "mirror", f, new Set(["w1"]), names).every((r) => !r.start)).toBe(true);
     expect(planServiceStart("all", "hold", f, new Set(), names).every((r) => r.start)).toBe(true);
-    expect(planServiceStart("dependencies", "hold", f, new Set(["w1"]), names).map((r) => [r.name, r.why])).toEqual([["a", "dependency"], ["store", "minio-held"]]);
-    expect(planServiceStart("dependencies", "external", f, new Set(["w1"]), names).find((r) => r.name === "store")!.start).toBe(false);
-    expect(planServiceStart("dependencies", "mirror", f, new Set(["w1"]), names).find((r) => r.name === "store")!.start).toBe(true);
+    for (const p of ["hold", "external", "mirror"] as const) expect(planServiceStart("dependencies", p, f, new Set(["w1"]), names).map((r) => [r.name, r.why])).toEqual([["a", "dependency"], ["store", "dependency"]]);
+    const idle = [link("idle-store", [], { objectStore: true })];
+    expect(planServiceStart("dependencies", "hold", idle, new Set(["w1"]), names)[0]).toMatchObject({ start: false, why: "minio-held" });
+    expect(planServiceStart("dependencies", "external", idle, new Set(["w1"]), names)[0].start).toBe(false);
+    expect(planServiceStart("dependencies", "mirror", idle, new Set(["w1"]), names)[0].start).toBe(false); // nobody depends on it and it has no domain
+    // a held dependant is not required, so it does not pull the store up
+    expect(planServiceStart("dependencies", "hold", f, new Set(), names).every((r) => !r.start)).toBe(true);
+  });
+  it("a service with public domains of its own starts in dependencies mode (its hosts are cutover hosts), a held or domain-less one does not", () => {
+    const f = [link("public-search", [], { public: true }), link("plain", []), link("public-store", [], { public: true, objectStore: true })];
+    const rows = planServiceStart("dependencies", "hold", f, new Set(["w1"]), names);
+    expect(rows.map((r) => [r.name, r.start, r.why])).toEqual([["plain", false, "unused"], ["public-search", true, "public"], ["public-store", false, "minio-held"]]);
+    expect(planServiceStart("dependencies", "mirror", f, new Set(["w1"]), names).find((r) => r.name === "public-store")).toMatchObject({ start: true, why: "public" });
+    expect(planServiceStart("none", "hold", f, new Set(), names).every((r) => !r.start)).toBe(true);
   });
 });

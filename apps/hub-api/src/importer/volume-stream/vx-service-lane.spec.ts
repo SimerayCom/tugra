@@ -1,5 +1,5 @@
 import { ConflictException, NotFoundException } from "@nestjs/common";
-import { buildVolumeTargets, serviceVolumeName, serviceVolumeStreamable, serviceVolumesOf, validServiceMountPath } from "./vx-targets";
+import { buildVolumeTargets, isObjectStoreResult, serviceVolumeName, serviceVolumeStreamable, serviceVolumesOf, validServiceMountPath } from "./vx-targets";
 import { VxApplyService } from "./vx-apply.service";
 import { VxPartRegistry } from "./vx-part-registry";
 import { harness } from "./testing/vx-harness";
@@ -44,6 +44,14 @@ describe("buildVolumeTargets: compose services", () => {
     for (const bad of ["", "rel/path", "/a/../b", "/a b", "/a;rm", "/a\nb", "/" + "x".repeat(400), 7, null]) expect(validServiceMountPath(bad)).toBe(false);
     expect(validServiceMountPath("/data.ms")).toBe(true);
     expect(serviceVolumeStreamable({ key: "k", policy: "copy", mountPath: null })).toBe(false);
+  });
+  it("an object store (MinIO) service gets NO volume target: its buckets move only through Object migration", () => {
+    const store = svcTask({ result: { ...svcResult([vol("minio-data", { mounts: [{ service: "minio", path: "/data" }] })]), members: ["minio", "console"] } });
+    expect(buildVolumeTargets({ tasks: [lite(store)], dbs: noDbs, dbVolumeRefs: new Set() })).toEqual([]);
+    expect(isObjectStoreResult(store.result)).toBe(true);
+    expect(isObjectStoreResult(svcTask().result)).toBe(false);
+    expect(isObjectStoreResult({ members: "minio" })).toBe(false);
+    expect(isObjectStoreResult(null)).toBe(false);
   });
   it("marks an explicit exclusion on a service volume like on any other", () => {
     const t = buildVolumeTargets({ tasks: [lite(svcTask())], dbs: noDbs, dbVolumeRefs: new Set(), excluded: { [SVC_VOL_REF]: { reason: "rebuilt from the database", at: "x", by: "u" } } });

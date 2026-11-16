@@ -8,7 +8,7 @@ import { MIGRATOR_ENGINES, MIGRATOR_UNSUPPORTED } from "../../../../importer/mig
 import { VxService } from "../../../../importer/volume-stream/vx.service";
 import { dbGates } from "../../../../importer/volume-stream/vx-dest-gate";
 import { vxDumpEnabled, vxEnabled } from "../../../../importer/volume-stream/vx-constants";
-import { buildVolumeTargets, dbStreamModeRefs, dbVolumeModeRefs, serviceVolumesOf, volumeItemRef, type VxVolumeTarget } from "../../../../importer/volume-stream/vx-targets";
+import { buildVolumeTargets, dbStreamModeRefs, dbVolumeModeRefs, isObjectStoreResult, serviceVolumesOf, volumeItemRef, type VxVolumeTarget } from "../../../../importer/volume-stream/vx-targets";
 import { dumpRawEstimate, type DbSizeRecord } from "../../../../importer/volume-stream/vx-dump";
 import type { VxInventoryItem } from "../../../../importer/volume-stream/vx.dto";
 import type { RunSnapshot } from "../../../core/run-contract";
@@ -37,9 +37,10 @@ function serviceVolumeItems(tasks: ReadonlyArray<{ itemRef: string | null; kind:
   const out: ServiceVolumeItem[] = [];
   for (const t of tasks) {
     if (t.kind !== "service" || t.status !== "DONE" || t.resourceType !== "application" || !t.itemRef) continue;
+    const objectStore = isObjectStoreResult(t.result);
     for (const v of serviceVolumesOf(t.result)) {
       const ref = volumeItemRef(t.itemRef, v.key);
-      out.push({ serviceItemRef: t.itemRef, serviceName: t.resourceId ? (nameOf.get(t.resourceId) ?? null) : null, key: v.key, policy: v.policy, streamed: !!ref && streamed.has(ref) });
+      out.push({ serviceItemRef: t.itemRef, serviceName: t.resourceId ? (nameOf.get(t.resourceId) ?? null) : null, key: v.key, policy: v.policy, streamed: !!ref && streamed.has(ref), ...(objectStore ? { objectStore: true } : {}) });
     }
   }
   return out.sort((a, b) => (a.serviceItemRef + "/" + a.key < b.serviceItemRef + "/" + b.key ? -1 : 1));
