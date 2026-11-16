@@ -9,7 +9,10 @@
 //   seed.mjs token                      a fresh access token (stdout)
 //   seed.mjs server-status [id]         ONLINE | OFFLINE | PENDING
 //   seed.mjs op --name N --source REF [--kind app|db] [--image I] [--version V] [--volume data] [--path /var/www/data]
-//               [--server-id ID] [--no-credentials]   an import op + token; prints KEY=VALUE lines
+//               [--engine POSTGRES|MARIADB|MYSQL|REDIS] [--data-mode volume|dump]
+//               [--server-id ID] [--no-credentials]   an import op + token; prints KEY=VALUE lines.
+//               --kind db defaults to a PostgreSQL physical copy (volume). --data-mode dump is the logical arm (ITEMREF is then the
+//               database ref `database:_:REF`); any engine other than POSTGRES is dump only (only PostgreSQL has a physical lane).
 //   seed.mjs transfer OP_ID             "STATE PARTS_DONE ERROR ATTEMPT" of the op's volume transfer(s)
 //   seed.mjs db-status DB_ID            the Database row's status/image/version (for the L6 gates)
 //   seed.mjs db-set DB_ID STATUS        force the Database row's status (L6: a started destination must be refused)
@@ -24,6 +27,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveDbMode } from "./seed-mode.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../..");
@@ -153,7 +157,8 @@ async function main() {
       break;
     }
     case "op": {
-      const f = flags({ name: `lab-${Date.now()}`, source: "labsrc", kind: "app", image: "", version: "16", volume: "data", path: "/var/www/data", "server-id": "", "no-credentials": false });
+      const f = flags({ name: `lab-${Date.now()}`, source: "labsrc", kind: "app", image: "", version: "16", volume: "data", path: "/var/www/data", engine: "POSTGRES", "data-mode": "", "server-id": "", "no-credentials": false });
+      const plan = resolveDbMode(f.kind, f.engine, f["data-mode"]);
       if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(f.source)) throw new Error("bad --source");
       if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(f.volume)) throw new Error("bad --volume");
       const serverId = f["server-id"] || process.env.SERVER_ID;
@@ -167,12 +172,12 @@ async function main() {
       let result;
       let destVolume;
       if (f.kind === "db") {
-        const d = must(await api("POST", "/databases", { name: f.name, serverId, engine: "POSTGRES", version: f.version }, token), [201], "create the database");
+        const d = must(await api("POST", "/databases", { name: f.name, serverId, engine: plan.engine, version: f.version }, token), [201], "create the database");
         resourceId = d.id;
         // the destination runs the SAME image as the source when asked (the physical-copy image gate compares them exactly)
         if (f.image) await db.database.update({ where: { id: resourceId }, data: { image: f.image } });
         result = { name: f.name, databaseId: resourceId, credentialsCarried: !f["no-credentials"], imageCarried: true };
-        items.push({ itemRef: ownerRef, kind: "database", proposed: { dataMode: "volume" } });
+        items.push({ itemRef: ownerRef, kind: "database", proposed: plan.mode === "volume" ? { dataMode: "volume" } : { engine: plan.engine } });
         destVolume = `tugra_dbv_${resourceId}`;
       } else {
         const a = must(await api("POST", "/apps", { name: f.name, serverId, image: "nginx:alpine" }, token), [201], "create the app");
@@ -199,8 +204,10 @@ async function main() {
       kv("OP_ID", op.id);
       kv("MIG_TOKEN", migToken);
       kv(f.kind === "db" ? "DB_ID" : "APP_ID", resourceId);
-      kv("ITEMREF", `volume:_:${f.source}:${f.kind === "db" ? "data" : f.volume}`);
-      kv("DEST_VOLUME", destVolume);
+      // the logical arm reports the DATABASE ref (database:_:<source>); a physical copy and an app volume report the volume ref
+      kv("ITEMREF", plan.mode === "dump" ? ownerRef : `volume:_:${f.source}:${f.kind === "db" ? "data" : f.volume}`);
+      kv("DEST_VOLUME", plan.mode === "dump" ? "" : destVolume);
+      kv("DB_ENGINE", plan.engine);
       kv("SRC_CONTAINER", f.source);
       break;
     }

@@ -6,16 +6,31 @@ name: Migration lab (vx)
 # A local registry:2 holds the agent image so the REAL installer line (`curl .../install/migrator.sh | sh -s -- --image ...`)
 # runs. Harness and scenario scripts: scripts/lab/. Runbook and the Tier B (two real hosts) plan: docs/runbooks/migration-lab.md.
 #
+# The fleet-shaped items (fleetpg, fleetdb, fleetminio, fleethosts, fleetcoolify, ubuntu) model the real estate the guided migration
+# has to move: running uuid-named sources, a multi-GB time-series PostgreSQL, a MariaDB over the logical cap, a 12-bucket MinIO on a
+# bind mount, Coolify 4.1.2 discovery, and an Ubuntu 26.04 userland. Their data is generated on the runner (nothing big lives in git).
+#
 # Not part of CI on every push: it moves gigabytes through docker. Nightly, and on demand from the Actions tab
-# (items: all, or a comma list of tar, core, restart, postgres, memory, seats, throttle).
+# (items: all, or a comma list of tar, core, restart, postgres, memory, seats, throttle, fleetpg, fleetdb, fleetminio, fleethosts,
+# fleetcoolify, ubuntu; `fleet` selects the six fleet-shaped ones).
 
 on:
   workflow_dispatch:
     inputs:
       items:
-        description: "all, or a comma list of: tar (L4), core (L0 L1a L1b), restart (L2), postgres (L6), memory (L7), seats (L8), throttle (L3 mechanics)"
+        description: "all, fleet, or a comma list of: tar (L4), core (L0 L1a L1b), restart (L2), postgres (L6), memory (L7), seats (L8), throttle (L3 mechanics), fleetpg (L9), fleetdb (L10), fleetminio (L11), fleethosts (L12), fleetcoolify (L13), ubuntu (L14)"
         required: false
         default: all
+        type: string
+      pg_gib:
+        description: "fleetpg: GiB of time-series data in the L9 PostgreSQL (the real one is about 31 GB; a runner has room for about 4-6)"
+        required: false
+        default: "4"
+        type: string
+      minio_div:
+        description: "fleetminio: divisor of the real bucket sizes (1 = the real 8.8 GB shape, 4 = about 2.1 GiB)"
+        required: false
+        default: "4"
         type: string
   schedule:
     - cron: "17 2 * * *"
@@ -39,6 +54,12 @@ jobs:
       memory: ${{ steps.pick.outputs.memory }}
       seats: ${{ steps.pick.outputs.seats }}
       throttle: ${{ steps.pick.outputs.throttle }}
+      fleetpg: ${{ steps.pick.outputs.fleetpg }}
+      fleetdb: ${{ steps.pick.outputs.fleetdb }}
+      fleetminio: ${{ steps.pick.outputs.fleetminio }}
+      fleethosts: ${{ steps.pick.outputs.fleethosts }}
+      fleetcoolify: ${{ steps.pick.outputs.fleetcoolify }}
+      ubuntu: ${{ steps.pick.outputs.ubuntu }}
     steps:
       - id: pick
         env:
@@ -46,8 +67,10 @@ jobs:
           ITEMS: ${{ inputs.items }}
         run: |
           list=",$(printf '%s' "${ITEMS:-all}" | tr -d ' '),"
-          for i in tar core restart postgres memory seats throttle; do
-            if [ "$EVENT" != "workflow_dispatch" ] || [ "$list" = ",all," ] || case "$list" in *",$i,"*) true;; *) false;; esac; then
+          for i in tar core restart postgres memory seats throttle fleetpg fleetdb fleetminio fleethosts fleetcoolify ubuntu; do
+            fleet=false
+            case "$i" in fleetpg|fleetdb|fleetminio|fleethosts|fleetcoolify|ubuntu) case "$list" in *",fleet,"*) fleet=true;; esac;; esac
+            if [ "$EVENT" != "workflow_dispatch" ] || [ "$list" = ",all," ] || [ "$fleet" = true ] || case "$list" in *",$i,"*) true;; *) false;; esac; then
               echo "$i=true" >> "$GITHUB_OUTPUT"
             else
               echo "$i=false" >> "$GITHUB_OUTPUT"
@@ -182,6 +205,7 @@ jobs:
       matrix:
         image:
           - postgres:16-alpine
+          - postgres:17-alpine
           - pgvector/pgvector:pg17
           - postgres:18-alpine
     steps:
@@ -261,11 +285,19 @@ jobs:
         run: scripts/lab/down.sh
 
   seats:
-    name: L8 relay seats vs a concurrent app move
+    name: L8 relay seats, ${{ matrix.migrators }} migrators on ${{ matrix.seats }} seat(s)
     needs: plan
     if: needs.plan.outputs.seats == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - migrators: 2
+            seats: 1
+          - migrators: 4
+            seats: 2
     steps:
       - uses: actions/checkout@v4
       - name: Lab state directory
@@ -282,7 +314,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Bring the lab up (registry, agent image, hub, target agent)
         run: scripts/lab/up.sh
-      - name: L8 two migrations and an app move with one seat per pool
+      - name: L8 concurrent migrations and an app move, one seat in the app-move pool
+        env:
+          L8_MIGRATORS: ${{ matrix.migrators }}
+          L8_SEATS: ${{ matrix.seats }}
         run: scripts/lab/l8-relay-seats.sh
       - name: Collect logs
         if: always()
@@ -294,7 +329,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: vx-lab-seats
+          name: vx-lab-seats-${{ strategy.job-index }}
           path: ${{ runner.temp }}/lab-logs
           if-no-files-found: ignore
           retention-days: 14
@@ -333,6 +368,269 @@ jobs:
         if: always()
         with:
           name: vx-lab-throttle
+          path: ${{ runner.temp }}/lab-logs
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Tear down
+        if: always()
+        run: scripts/lab/down.sh
+
+  fleetpg:
+    name: L9 big time-series PostgreSQL ${{ matrix.image }}
+    needs: plan
+    if: needs.plan.outputs.fleetpg == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - postgres:17-alpine
+          - postgres:18-alpine
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lab state directory
+        run: echo "LAB_DIR=$RUNNER_TEMP/tugra-lab" >> "$GITHUB_ENV"
+      - name: Free disk space (the lab keeps source, staged parts and destination copies of a volume)
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet /opt/hostedtoolcache/CodeQL
+          df -h /
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Bring the lab up (registry, agent image, hub, target agent)
+        run: scripts/lab/up.sh
+      - name: L9 time-series PostgreSQL on a running uuid-named source, copied with --stop-source
+        env:
+          L9_IMAGE: ${{ matrix.image }}
+          L9_GIB: ${{ inputs.pg_gib || '4' }}
+        run: scripts/lab/l9-fleet-pg.sh
+      - name: Collect logs
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/lab-logs"
+          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/*.summary "$LAB_DIR"/l13.plan.*.json "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
+          docker ps -a --format '{{.Names}} {{.Status}}' > "$RUNNER_TEMP/lab-logs/docker-ps.txt" 2>/dev/null || true
+          docker logs lab-agent > "$RUNNER_TEMP/lab-logs/lab-agent.log" 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vx-lab-fleetpg-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/lab-logs
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Tear down
+        if: always()
+        run: scripts/lab/down.sh
+
+  fleetdb:
+    name: L10 MariaDB against the logical-dump cap
+    needs: plan
+    if: needs.plan.outputs.fleetdb == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lab state directory
+        run: echo "LAB_DIR=$RUNNER_TEMP/tugra-lab" >> "$GITHUB_ENV"
+      - name: Free disk space (the lab keeps source, staged parts and destination copies of a volume)
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet /opt/hostedtoolcache/CodeQL
+          df -h /
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Bring the lab up (registry, agent image, hub, target agent)
+        run: scripts/lab/up.sh
+      - name: L10 mariadb:11 under and over the 256 MiB dump cap
+        run: scripts/lab/l10-fleet-mariadb.sh
+      - name: Collect logs
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/lab-logs"
+          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/*.summary "$LAB_DIR"/l13.plan.*.json "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
+          docker ps -a --format '{{.Names}} {{.Status}}' > "$RUNNER_TEMP/lab-logs/docker-ps.txt" 2>/dev/null || true
+          docker logs lab-agent > "$RUNNER_TEMP/lab-logs/lab-agent.log" 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vx-lab-fleetdb
+          path: ${{ runner.temp }}/lab-logs
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Tear down
+        if: always()
+        run: scripts/lab/down.sh
+
+  fleetminio:
+    name: L11 MinIO, 12 buckets on a bind mount
+    needs: plan
+    if: needs.plan.outputs.fleetminio == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lab state directory
+        run: echo "LAB_DIR=$RUNNER_TEMP/tugra-lab" >> "$GITHUB_ENV"
+      - name: Free disk space (the lab keeps source, staged parts and destination copies of a volume)
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet /opt/hostedtoolcache/CodeQL
+          df -h /
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Bring the lab up (registry, agent image, hub, target agent)
+        run: scripts/lab/up.sh
+      - name: L11 bind-mounted MinIO, refused by default, measured and copied with --allow-bind
+        env:
+          FLEET_MINIO_DIV: ${{ inputs.minio_div || '4' }}
+        run: scripts/lab/l11-fleet-minio.sh
+      - name: Collect logs
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/lab-logs"
+          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/*.summary "$LAB_DIR"/l13.plan.*.json "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
+          docker ps -a --format '{{.Names}} {{.Status}}' > "$RUNNER_TEMP/lab-logs/docker-ps.txt" 2>/dev/null || true
+          docker logs lab-agent > "$RUNNER_TEMP/lab-logs/lab-agent.log" 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vx-lab-fleetminio
+          path: ${{ runner.temp }}/lab-logs
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Tear down
+        if: always()
+        run: scripts/lab/down.sh
+
+  fleethosts:
+    name: L12 fleet-shaped source hosts (running uuid-named sources)
+    needs: plan
+    if: needs.plan.outputs.fleethosts == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lab state directory
+        run: echo "LAB_DIR=$RUNNER_TEMP/tugra-lab" >> "$GITHUB_ENV"
+      - name: Free disk space (the lab keeps source, staged parts and destination copies of a volume)
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet /opt/hostedtoolcache/CodeQL
+          df -h /
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Bring the lab up (registry, agent image, hub, target agent)
+        run: scripts/lab/up.sh
+      - name: L12 running, ambiguous, exited and crash-looping sources, redis, Meilisearch versions, orphans
+        run: scripts/lab/l12-fleet-hosts.sh
+      - name: Collect logs
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/lab-logs"
+          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/*.summary "$LAB_DIR"/l13.plan.*.json "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
+          docker ps -a --format '{{.Names}} {{.Status}}' > "$RUNNER_TEMP/lab-logs/docker-ps.txt" 2>/dev/null || true
+          docker logs lab-agent > "$RUNNER_TEMP/lab-logs/lab-agent.log" 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vx-lab-fleethosts
+          path: ${{ runner.temp }}/lab-logs
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Tear down
+        if: always()
+        run: scripts/lab/down.sh
+
+  fleetcoolify:
+    name: L13 discovery against a Coolify 4.1.2 shaped fleet
+    needs: plan
+    if: needs.plan.outputs.fleetcoolify == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lab state directory
+        run: echo "LAB_DIR=$RUNNER_TEMP/tugra-lab" >> "$GITHUB_ENV"
+      - name: Free disk space (the lab keeps source, staged parts and destination copies of a volume)
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet /opt/hostedtoolcache/CodeQL
+          df -h /
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Bring the lab up (registry, agent image, hub, target agent)
+        run: scripts/lab/up.sh
+      - name: L13 eight team tokens, an unfiltered /teams, 78 apps, 29 databases, 19 services
+        run: scripts/lab/l13-fleet-coolify.sh
+      - name: Collect logs
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/lab-logs"
+          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/*.summary "$LAB_DIR"/l13.plan.*.json "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
+          docker ps -a --format '{{.Names}} {{.Status}}' > "$RUNNER_TEMP/lab-logs/docker-ps.txt" 2>/dev/null || true
+          docker logs lab-agent > "$RUNNER_TEMP/lab-logs/lab-agent.log" 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vx-lab-fleetcoolify
+          path: ${{ runner.temp }}/lab-logs
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Tear down
+        if: always()
+        run: scripts/lab/down.sh
+
+  ubuntu:
+    name: L14 installers and migrator under an Ubuntu 26.04 userland
+    needs: plan
+    if: needs.plan.outputs.ubuntu == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lab state directory
+        run: echo "LAB_DIR=$RUNNER_TEMP/tugra-lab" >> "$GITHUB_ENV"
+      - name: Free disk space (the lab keeps source, staged parts and destination copies of a volume)
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet /opt/hostedtoolcache/CodeQL
+          df -h /
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Bring the lab up (registry, agent image, hub, target agent)
+        run: scripts/lab/up.sh
+      - name: L14 installers and migrator inside ubuntu:26.04 (falls back to 24.04 with a warning)
+        run: scripts/lab/l14-ubuntu-source.sh
+      - name: Collect logs
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/lab-logs"
+          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/*.summary "$LAB_DIR"/l13.plan.*.json "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
+          docker ps -a --format '{{.Names}} {{.Status}}' > "$RUNNER_TEMP/lab-logs/docker-ps.txt" 2>/dev/null || true
+          docker logs lab-agent > "$RUNNER_TEMP/lab-logs/lab-agent.log" 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vx-lab-ubuntu
           path: ${{ runner.temp }}/lab-logs
           if-no-files-found: ignore
           retention-days: 14

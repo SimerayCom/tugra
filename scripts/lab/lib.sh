@@ -237,11 +237,15 @@ lab_proxy_stop() {
 }
 
 # ---- the HTTP tap (L8): a pass-through to the hub that counts the relay's `busy` answers to part registrations -------------------
+# LAB_TAP_BARRIER=<n> makes the tap hold every migrator's `GET targets` until n migrators asked (see http-tap.mjs); the outcome line
+# ("released all n" / "released timeout k/n") lands in $LAB_DIR/tap.barrier.
 lab_tap_start() { # [port]
-  local port="${1:-4002}"
+  local port="${1:-4002}" extra=()
   lab_tap_stop
   : >"$LAB_DIR/tap.busy"
-  node "$LAB_SELF_DIR/http-tap.mjs" --listen "$port" --target "127.0.0.1:${LAB_HUB_PORT}" --busy-file "$LAB_DIR/tap.busy" 2>>"$LAB_DIR/tap.log" &
+  : >"$LAB_DIR/tap.barrier"
+  [ -z "${LAB_TAP_BARRIER:-}" ] || extra=(--barrier "$LAB_TAP_BARRIER" --barrier-file "$LAB_DIR/tap.barrier")
+  node "$LAB_SELF_DIR/http-tap.mjs" --listen "$port" --target "127.0.0.1:${LAB_HUB_PORT}" --busy-file "$LAB_DIR/tap.busy" ${extra[@]+"${extra[@]}"} 2>>"$LAB_DIR/tap.log" &
   echo $! >"$LAB_DIR/tap.pid"
   LAB_TAP_URL="http://${LAB_HOST}:${port}"
   lab_wait 10 "http tap on :$port" curl -s -o /dev/null "http://127.0.0.1:${port}/health"

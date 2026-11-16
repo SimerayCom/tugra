@@ -6,6 +6,9 @@
 # satisfied by the local registry image.
 # Output: the migrator's stdout (its single JSON result line) goes to stdout and to $LAB_DIR/run.<tag>.json; its human log goes
 # to stderr and to $LAB_DIR/run.<tag>.log (tag: LAB_RUN_TAG or the epoch). The exit code is the migrator's.
+# LAB_INSTALLER_IMAGE=<image> runs the installer's `sh` INSIDE that image (a distribution userland: ubuntu:26.04 plus a docker CLI)
+# against the host's docker socket, instead of on the lab host: the installer then meets that image's sh, coreutils and curl
+# (R31, scripts/lab/l14-ubuntu-source.sh). The migrator container itself is the agent image either way.
 set -uo pipefail
 # shellcheck source=lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -27,7 +30,12 @@ OUT="$LAB_DIR/run.$TAG.json"
 ERR="$LAB_DIR/run.$TAG.log"
 
 # the real line: curl | TUGRA_MIGRATION_TOKEN=... sh -s -- --hub ... (the hub serves it with the lab image as the default)
-curl -fsSL "http://127.0.0.1:${LAB_HUB_PORT}/install/migrator.sh" | TUGRA_MIGRATION_TOKEN="$MIG_TOKEN" sh -s -- --hub "$HUB" --image "$IMAGE" --allow-insecure-http "$@" >"$OUT" 2> >(tee "$ERR" >&2)
+runner=(sh)
+if [ -n "${LAB_INSTALLER_IMAGE:-}" ]; then
+  # the token rides the environment of the docker client and is passed into the container by name only, as the installer itself does
+  runner=(docker run --rm -i --network host -v /var/run/docker.sock:/var/run/docker.sock -e TUGRA_MIGRATION_TOKEN "$LAB_INSTALLER_IMAGE" sh)
+fi
+curl -fsSL "http://127.0.0.1:${LAB_HUB_PORT}/install/migrator.sh" | TUGRA_MIGRATION_TOKEN="$MIG_TOKEN" "${runner[@]}" -s -- --hub "$HUB" --image "$IMAGE" --allow-insecure-http "$@" >"$OUT" 2> >(tee "$ERR" >&2)
 rc=$?
 wait
 cat "$OUT"

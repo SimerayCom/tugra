@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # L7: the migrator's memory under its 768 MiB container cap (--memory=768m --memory-swap=768m: an overrun is an OOM kill,
 # exit 137, with no message). Run on INCOMPRESSIBLE data (every member is ~128 MiB, the worst case) and on zeros (best case).
+# A third case, `pgheap`, is a real cleanly stopped PostgreSQL data directory (L7_PGHEAP_MIB, default 1536): compressible heap pages
+# of an append-only time-series table, the shape of the real estate's 31 GB database, not urandom and not zeros. The 2 CPU / 4 GB
+# source class of the real hosts is Tier B (the installer line gives the migrator no CPU limit; the 768 MiB memory cap is the same).
 # Pass: exit 0, no OOM event, peak under 700 MiB (a peak above 640 MiB is flagged). L7_MIB (default 3072) is the volume size.
 set -euo pipefail
 # shellcheck source=lib.sh
@@ -16,8 +19,9 @@ mem_mib() { # "123.4MiB / 768MiB" -> 123 (integer MiB of the usage half)
 
 run_case() { # <random|zeros>
   local kind="$1" tag="mem-$1" peak=0 sample c oom_pid
+  local size="$MIB"; [ "$kind" != pgheap ] || size="${L7_PGHEAP_MIB:-1536}"
   lab_scenario_begin "l7-$kind"
-  "$LAB_SELF_DIR/fixture.sh" "$SRC_VOLUME" "$MIB" "$kind"
+  "$LAB_SELF_DIR/fixture.sh" "$SRC_VOLUME" "$size" "$kind"
   : >"$LAB_DIR/oom.$kind.log"
   docker events --filter type=container --filter event=oom >"$LAB_DIR/oom.$kind.log" 2>&1 &
   oom_pid=$!
@@ -53,7 +57,7 @@ run_case() { # <random|zeros>
   [ "$peak" -le "$PEAK_WARN" ] || lab_log "WARNING: peak memory ${peak} MiB is above ${PEAK_WARN} MiB"
   echo "L7_PEAK_${kind}=${peak}" >>"$LAB_DIR/l7.summary"
   lab_no_leftovers
-  if [ "$kind" = random ]; then lab_compare; fi
+  if [ "$kind" != zeros ]; then lab_compare; fi
   # free the disk before the next case (the volumes are recreated by the next scenario)
   docker volume rm -f "$DEST_VOLUME" >/dev/null 2>&1 || true
 }
@@ -61,5 +65,6 @@ run_case() { # <random|zeros>
 : >"$LAB_DIR/l7.summary"
 run_case random
 run_case zeros
+run_case pgheap
 cat "$LAB_DIR/l7.summary" >&2
 lab_pass "L7 memory bound"

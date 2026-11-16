@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # L0: --dry-run inventory + disk check. Nothing may move, stop, start, stage or be written on the hub besides the stored
-# inventory. Then three negative cases: a running source, an insufficient target disk, a device node in the source.
+# inventory. Then three negative cases: a running source (with and without --stop-source: a dry run never stops it), an insufficient
+# target disk, a device node in the source. The real fleet's sources are RUNNING, uuid-named containers: scripts/lab/l12-fleet-hosts.sh.
 set -euo pipefail
 # shellcheck source=lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -29,6 +30,9 @@ docker start "$SRC_CONTAINER" >/dev/null
 lab_run running --arms all --dry-run
 lab_expect_item running volume-skipped-running
 lab_check "the running source was not stopped by the dry run" test "$(docker inspect -f '{{.State.Running}}' "$SRC_CONTAINER")" = true
+lab_run wouldstop --arms all --dry-run --stop-source
+lab_expect_item wouldstop planned would-stop-source
+lab_check "a dry run with --stop-source did not stop the running source either" test "$(docker inspect -f '{{.State.Running}}' "$SRC_CONTAINER")" = true
 docker stop -t 0 "$SRC_CONTAINER" >/dev/null
 
 # --- negative 2: the target disk check names its numbers when the volume cannot fit (twice the free space asked, within
