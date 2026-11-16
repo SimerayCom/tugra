@@ -206,6 +206,7 @@ func (v *volRunner) runDump(ctx context.Context, tg Target) (res itemResult) {
 	started := time.Now()
 	sr, serr := StreamDump(ctx, v.hub, f.plan, tg.ItemRef, StreamOpts{
 		PartRawBytes: partRaw, RunID: v.runID, TotalRaw: est, MaxParts: v.policy.MaxParts,
+		Spool: DumpSpoolOpts{Dir: v.c.dumpSpoolDir, CapBytes: int64(v.c.dumpSpoolMiB) * mib, Logf: v.logf},
 		Progress: func(p Progress) {
 			secs := time.Since(started).Seconds()
 			rate := 0.0
@@ -219,6 +220,7 @@ func (v *volRunner) runDump(ctx context.Context, tg Target) (res itemResult) {
 			}
 		},
 	})
+	res.SpoolPeakBytes = sr.SpoolPeakBytes
 	if serr != nil {
 		v.setDumpFailure(ctx, &res, serr)
 		return res

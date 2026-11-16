@@ -64,6 +64,9 @@ type itemResult struct {
 	PgLayout string `json:"pgLayout,omitempty"`
 	Disk     string `json:"disk,omitempty"`
 
+	// Streamed dump lane: the most dump bytes that waited on disk for the uploader (the on-disk spool's peak backlog).
+	SpoolPeakBytes int64 `json:"spoolPeakBytes,omitempty"`
+
 	// --speedtest-mib: the measured end-to-end rate and the window it implies for this volume (an ESTIMATE).
 	SpeedMBps       float64 `json:"speedMBps,omitempty"`
 	EstimateSeconds int64   `json:"estimateSeconds,omitempty"`
@@ -111,6 +114,8 @@ type cli struct {
 	handshake      bool
 	allowInsecure  bool
 	spoolDir       string
+	dumpSpoolDir   string // where the streamed dump lane spools (an on-disk location: never a tmpfs that counts against the memory cap)
+	dumpSpoolMiB   int    // cap of the streamed dump's on-disk backlog
 	maxGzBytes     int64
 	dumpTimeout    time.Duration
 	restoreTimeout time.Duration
@@ -715,6 +720,8 @@ func parseFlags(args []string, stderr io.Writer) (*cli, error) {
 	fs.BoolVar(&c.handshake, "handshake", false, "verify the hub + recipe contract and exit")
 	fs.BoolVar(&c.allowInsecure, "allow-insecure-http", false, "permit a non-loopback http:// hub (cleartext token + dumps)")
 	fs.StringVar(&c.spoolDir, "spool-dir", "", "directory to spool gzip artifacts (default: a temp dir)")
+	fs.StringVar(&c.dumpSpoolDir, "dump-spool-dir", "", "directory of the streamed dump's on-disk spool (default: a temp dir; the installer mounts a scratch volume)")
+	fs.IntVar(&c.dumpSpoolMiB, "dump-spool-mib", defaultDumpSpoolMiB, "cap in MiB of the streamed dump's on-disk backlog (the dump client is read ahead of the upload up to this much, and never beyond the spool directory's free space)")
 	fs.Int64Var(&c.maxGzBytes, "max-gz-bytes", 0, "cap the compressed artifact size (default: the hub's cap)")
 	fs.DurationVar(&c.dumpTimeout, "dump-timeout", 20*time.Minute, "per-item dump+upload timeout")
 	fs.DurationVar(&c.restoreTimeout, "restore-timeout", 12*time.Minute, "per-item restore-wait timeout")

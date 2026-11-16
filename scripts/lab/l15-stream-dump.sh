@@ -123,6 +123,18 @@ lab_proxy_stop
 lab_stream_expect_applied stream
 [ "$rc" = 0 ] || lab_stream_fail stream "migrator exit $rc"
 lab_check "the migrator committed parts AFTER the hub came back (the dump was in flight during the outage: last part before the kill $PART_AT_KILL, after $(lab_last_part stream))" test "$(lab_last_part stream)" -gt "$PART_AT_KILL"
+# the dump was read into the migrator's on-disk spool while the link was slow or the hub was down (the MariaDB/MySQL server cuts a dump
+# whose client does not read within net_write_timeout, 60 s by default): a SOFT check, a result without the field is recorded, never fatal
+SPOOL_PEAK="$(lab_item stream spoolPeakBytes)"
+case "$SPOOL_PEAK" in
+  '' | *[!0-9]*) SPOOL_PEAK=0 ;;
+esac
+echo "L15_SPOOL_PEAK_BYTES=$SPOOL_PEAK" >>"$LAB_DIR/l15.summary"
+if [ "$SPOOL_PEAK" -gt 0 ]; then
+  lab_log "ok: the dump was read ahead of the upload: peak spool backlog $SPOOL_PEAK B"
+else
+  lab_log "FINDING L15 $ENGINE: the result carries no spoolPeakBytes: the dump was never read ahead of the upload (an old migrator image, or the link kept pace)"
+fi
 lab_log "the dump rode the hub outage and was applied: $(lab_item stream parts) parts, $(lab_item stream rawBytes) raw B, ${secs} s"
 echo "L15_COPY_SECONDS=$secs L15_PARTS=$(lab_item stream parts) L15_RAW_BYTES=$(lab_item stream rawBytes)" >>"$LAB_DIR/l15.summary"
 lab_stream_transfer_done

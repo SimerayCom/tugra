@@ -46,6 +46,8 @@ type StreamOpts struct {
 	BeatEvery time.Duration
 	// MaxParts is the hub's part-count ceiling (names are 5 digits).
 	MaxParts int
+	// Spool configures the streamed database dump's on-disk spool (dumpspool.go); the volume stream ignores it.
+	Spool DumpSpoolOpts
 }
 
 // Progress is reported once per committed part.
@@ -61,6 +63,8 @@ type StreamResult struct {
 	Parts           int
 	RawBytes        int64
 	CompressedBytes int64
+	// SpoolPeakBytes is the largest backlog of a streamed dump that waited on disk for the uploader (0 for a volume stream).
+	SpoolPeakBytes int64
 }
 
 // buildTarArgv is the helper-container command (golden-tested). The helper is the migrator's OWN image, never pulled;

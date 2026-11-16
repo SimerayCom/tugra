@@ -12,8 +12,10 @@
  *    $TUGRA_MIGRATION_TOKEN and forwards it with a bare `-e TUGRA_MIGRATION_TOKEN` (name only — the
  *    docker client copies the value from its own env). `--token`/`--token-file` are hard-rejected.
  *  - The container is `--cap-drop ALL --read-only --security-opt no-new-privileges`, writes only to two
- *    tmpfs mounts (/tmp + the /spool gzip spool, so a dump never touches the host disk), and binds the
- *    docker socket as its ONLY mount. No -d, no ports, `--rm` + an EXIT trap reap it.
+ *    tmpfs mounts (/tmp + the /spool gzip spool, so a dump never touches the host disk) and one anonymous
+ *    scratch VOLUME (/dump-spool, on the host's Docker disk, removed with the container: the streamed
+ *    database dump's backlog, which must not count against the container's memory cap as a tmpfs would),
+ *    and binds the docker socket as its ONLY host path. No -d, no ports, `--rm` + an EXIT trap reap it.
  *  - Everything that reaches docker (hub, image, spool size, network) is charset-validated fail-closed.
  *
  * Caveat: the DEFAULT image is digest-pinned to this hub's version (which includes the `migrate`
@@ -38,7 +40,7 @@ export function renderMigratorInstallScript(opts: { image: string; digests?: Arc
     "# Tugra one-click data migrator - runs the tugra-agent `migrate` subcommand as a one-shot, hardened",
     "# Docker container on the source host. The migration token rides the ENVIRONMENT, never an argv.",
     "# Usage: curl -fsSL <hub>/install/migrator.sh | TUGRA_MIGRATION_TOKEN=<token> sh -s -- --hub <hub-url> [--dry-run] [--only REF] [--map REF=CONTAINER] [--resync] [--certs] [--proxy-container NAME]",
-    "#   volume data (streamed in resumable parts): [--arms databases|volumes|all] [--stop-source] [--stop-timeout S] [--allow-bind] [--part-mib N] [--reset-volume REF] [--hub-outage-wait D] [--speedtest-mib N]",
+    "#   volume data (streamed in resumable parts): [--arms databases|volumes|all] [--stop-source] [--stop-timeout S] [--allow-bind] [--part-mib N] [--reset-volume REF] [--hub-outage-wait D] [--speedtest-mib N] [--dump-spool-mib N]",
     "#   DB logical parity (read-only counts reported to the hub after the data arms): [--verify] [--verify-mode exact|estimate] [--verify-exact-below N]",
     "#   host inventory (read-only: docker ps / volumes / bind sizes via du, plus a hub reachability + body-cap probe; runs NO migrator): --inventory [--server-ref REF]",
     "set -eu",
@@ -85,7 +87,7 @@ export function renderMigratorInstallScript(opts: { image: string; digests?: Arc
     "      --image=*) IMAGE=${a#--image=} ;;",
     "      --token|--token=*|--token-file|--token-file=*)",
     '        die "the migration token is never accepted on the command line - set TUGRA_MIGRATION_TOKEN (use the command shown in the Tugra UI)" ;;',
-    '      --spool-dir|--spool-dir=*) die "--spool-dir is fixed inside the container" ;;',
+    '      --spool-dir|--spool-dir=*|--dump-spool-dir|--dump-spool-dir=*) die "--spool-dir and --dump-spool-dir are fixed inside the container" ;;',
     '      --certs) WANT_CERTS=1; set -- "$@" "$a" ;;',
     "      --inventory) INVENTORY=1 ;;",
     '      --server-ref) [ "$n" -ge 1 ] || die "--server-ref needs a value"; SERVER_REF=$1; shift; n=$((n - 1)) ;;',
@@ -150,8 +152,8 @@ export function renderMigratorInstallScript(opts: { image: string; digests?: Arc
     "",
     "  # Idempotent (replace a stale one), and reaped on exit. A SIGINT/TERM/HUP reaches the container via the",
     "  # docker CLI (migrate exits 130 after its own cleanup); the trap then removes the container and exits 130.",
-    '  docker rm -f "$NAME" >/dev/null 2>&1 || true',
-    "  trap 'docker rm -f \"$NAME\" >/dev/null 2>&1 || true' EXIT",
+    '  docker rm -fv "$NAME" >/dev/null 2>&1 || true',
+    "  trap 'docker rm -fv \"$NAME\" >/dev/null 2>&1 || true' EXIT",
     "  trap 'exit 130' INT TERM HUP",
     "",
     "  # Keep a non-root-owned socket (rootless/userns/custom group) reachable without adding capabilities.",
@@ -186,13 +188,16 @@ export function renderMigratorInstallScript(opts: { image: string; digests?: Arc
     "    --cap-drop ALL --security-opt no-new-privileges --read-only --pids-limit 128 \\",
     "    --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m \\",
     '    --tmpfs "/spool:rw,noexec,nosuid,nodev,mode=0700,size=$SPOOL_SIZE" \\',
+    // The streamed database dump's on-disk spool: an anonymous volume (host disk, NOT a tmpfs: tmpfs pages count against --memory),
+    // owned by the container (`--rm` and the `rm -fv` above delete it), never a host path.
+    '    --mount "type=volume,dst=/dump-spool" \\',
     '    --mount "type=bind,src=$SOCK,dst=/var/run/docker.sock" \\',
     '    --group-add "$GID" \\',
     "    $NETARG $ACMEMOUNT $MEMARG \\",
     // TUGRA_SELF_IMAGE: the volume arm's tar helper is this very image (already pulled above), run with --pull=never.
     '    -e TUGRA_MIGRATION_TOKEN -e "TUGRA_SELF_IMAGE=$IMAGE" -e HOME=/tmp \\',
     "    --entrypoint tugra-agent \\",
-    '    "$IMAGE" migrate "--hub=$HUB" --spool-dir=/spool "$@" </dev/null || rc=$?',
+    '    "$IMAGE" migrate "--hub=$HUB" --spool-dir=/spool --dump-spool-dir=/dump-spool "$@" </dev/null || rc=$?',
     "  # Propagate migrate's contract exit code (0 ok, 1 partial, 3 auth, 4 unreachable, 5 skew, 6 precond, 130 int).",
     '  exit "$rc"',
     "}",

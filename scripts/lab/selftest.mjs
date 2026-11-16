@@ -884,6 +884,9 @@ test("L15: the streamed dump lane for PostgreSQL and MariaDB, the hub killed mid
   assert.ok(stale >= (outage + 90) * 1000);
   assert.match(s, /lab_stream_expect_applied stream/);
   assert.match(s, /lab_fingerprint_compare l15 /);
+  assert.match(s, /lab_item stream spoolPeakBytes/, "the on-disk spool's peak backlog is read from the item result");
+  assert.match(s, /L15_SPOOL_PEAK_BYTES=/, "and recorded in the summary");
+  assert.doesNotMatch(s, /lab_die[^\n]*spool/i, "the spool check is soft: a result without the field is a recorded finding, never a failure");
   assert.match(s, /the row count equals the source/);
   assert.match(s, /postgres:\* \| pgvector\/\*\)/);
   assert.match(s, /mariadb:\*\)/);

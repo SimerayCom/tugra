@@ -287,6 +287,7 @@ hub-side disk use: every part crosses the hub in memory only.
 | `--reset-volume <itemRef>` | discard a volume's staged parts and start it over (repeatable) |
 | `--hub-outage-wait D` | how long to wait for a restarting hub (default 15m, up to 1h) |
 | `--speedtest-mib N` | measure the real link before you stop anything: streams the first N MiB (1 to 1024) of the volume through the relay to a throwaway directory on the target, discards it and prints the measured MB/s and the window it implies (an **estimate**) |
+| `--dump-spool-mib N` | cap in MiB of the streamed database dump's on-disk backlog (default 8192, 1 to 4194304). The dump client is drained into a scratch volume (`/dump-spool`) as fast as it writes, so a hub restart or a slow link cannot make the source server cut the dump at its `net_write_timeout`; consumed segments are deleted at once, and the drain pauses at the cap or when the scratch volume's free space is short. The result reports the peak backlog as `spoolPeakBytes` |
 | `--restart-on-failure=false` | leave a container this run stopped stopped when the copy fails |
 
 Result states per volume: `volume-applied`, `volume-copied` (copied, apply not confirmed), `volume-skipped-running`,

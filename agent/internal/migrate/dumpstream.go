@@ -20,7 +20,8 @@ import (
 //
 // A dump is not byte-deterministic (its header carries the dump time), so unlike a tar of a stopped volume it cannot be
 // resumed from the middle by comparing raw hashes. What IS resumable: every part retries from the SAME in-memory buffer, a hub
-// outage or restart is waited out with the producer paused by back-pressure (the pipe fills, the dump blocks), and a transfer
+// outage or restart is waited out while the dump keeps flowing into a bounded on-disk spool (dumpspool.go; once its cap is reached the
+// producer is paused by back-pressure again: the pipe fills, the dump blocks), and a transfer
 // whose parts are all staged but whose restore failed is re-applied without dumping again. A migrator that dies mid-stream
 // starts the dump over (the hub discards the stale parts at the next `begin`): that is stated, never hidden.
 
@@ -115,7 +116,23 @@ func StreamDump(ctx context.Context, h *Hub, p Plan, itemRef string, o StreamOpt
 		return StreamResult{}, fmt.Errorf("%w: could not start the dump", ErrDumpStream)
 	}
 	limitMigratorMemory()
-	res, derr := deliverParts(sctx, cancel, ctx, h, itemRef, o, &sanityReader{r: stdout, engine: p.Engine}, wait, true)
+	// The dump client's stdout is drained into an on-disk spool as fast as the client writes it, so a stalled upload (a hub
+	// restart) never stops the reader: the server would cut the dump connection at its net_write_timeout. A spool that cannot be
+	// made leaves the direct pipe (the old behaviour, back-pressure only) and says so.
+	var src io.ReadCloser = stdout
+	var spool *dumpSpool
+	if sp, serr := newDumpSpool(sctx, stdout, o.Spool); serr != nil {
+		if o.Spool.Logf != nil {
+			o.Spool.Logf("dump spool: unavailable (%v); the dump is read only as fast as it is uploaded", serr)
+		}
+	} else {
+		spool, src = sp, sp
+		defer spool.Close() // every exit path removes the segments and the directory (deliverParts closes it first)
+	}
+	res, derr := deliverParts(sctx, cancel, ctx, h, itemRef, o, &sanityReader{r: src, engine: p.Engine}, wait, true)
+	if spool != nil {
+		res.SpoolPeakBytes = spool.PeakBacklog()
+	}
 	if derr != nil && errors.Is(derr, ErrTarFailed) {
 		derr = fmt.Errorf("%w: %v", ErrDumpStream, strings.TrimPrefix(derr.Error(), ErrTarFailed.Error()+": "))
 	}

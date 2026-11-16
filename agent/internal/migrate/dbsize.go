@@ -267,5 +267,11 @@ func (c *cli) validateDumpFlags() error {
 	if c.measureDumpBelow < 0 || c.measureDumpBelow > 1<<40 {
 		return fmt.Errorf("--measure-dump-below must be between 0 and 1 TiB")
 	}
+	if c.dumpSpoolMiB != 0 && (c.dumpSpoolMiB < 1 || c.dumpSpoolMiB > 4<<20) {
+		return fmt.Errorf("--dump-spool-mib must be between 1 and 4194304 (4 TiB)")
+	}
+	if c.dumpSpoolDir != "" && !isCleanAbs(c.dumpSpoolDir) {
+		return fmt.Errorf("--dump-spool-dir must be a clean absolute path")
+	}
 	return nil
 }

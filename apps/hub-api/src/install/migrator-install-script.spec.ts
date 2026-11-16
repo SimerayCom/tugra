@@ -33,7 +33,7 @@ describe("renderMigratorInstallScript", () => {
     expect(script).not.toMatch(/tugra_mig_[A-Za-z0-9_-]{43}/);
   });
 
-  it("hardens the container (cap-drop ALL, read-only, no-new-privileges, tmpfs spool, socket-only mount)", () => {
+  it("hardens the container (cap-drop ALL, read-only, no-new-privileges, tmpfs spool, socket as the only host path)", () => {
     expect(script).toContain("--cap-drop ALL");
     expect(script).toContain("--security-opt no-new-privileges");
     expect(script).toContain("--read-only");
@@ -42,7 +42,17 @@ describe("renderMigratorInstallScript", () => {
     expect(script).toContain("/spool:rw,noexec,nosuid,nodev");
     expect(script).toContain('--mount "type=bind,src=$SOCK,dst=/var/run/docker.sock"');
     expect(script).toContain("--entrypoint tugra-agent");
-    expect(script).toContain('"$IMAGE" migrate "--hub=$HUB" --spool-dir=/spool "$@"');
+    expect(script).toContain('"$IMAGE" migrate "--hub=$HUB" --spool-dir=/spool --dump-spool-dir=/dump-spool "$@"');
+  });
+
+  it("gives the streamed dump an ON-DISK scratch volume, never a tmpfs (a tmpfs counts against the container's memory cap)", () => {
+    // an anonymous volume: no host path, no src, removed with the container
+    expect(script).toContain('--mount "type=volume,dst=/dump-spool"');
+    expect(script).not.toMatch(/--tmpfs "?\/dump-spool/);
+    expect(script).not.toMatch(/type=volume,src=/);
+    // the anonymous volume goes away with the container on EVERY exit path: `--rm` for a normal exit, `rm -fv` for the trap and the stale reap
+    expect(script).toContain("docker rm -fv \"$NAME\"");
+    expect(script).not.toMatch(/docker rm -f \\?"\$NAME/);
   });
 
   it("is NOT privileged / not host-networked / not detached / not interactive", () => {
@@ -56,11 +66,15 @@ describe("renderMigratorInstallScript", () => {
     expect(script).not.toContain("--cap-add");
     expect(script).not.toContain("--restart");
     // the ONLY bind mount is the docker socket (the script uses --mount, never a -v volume flag; the lone
-    // `-v` in the script is `command -v docker`, not a mount)
+    // `-v` in the script is `command -v docker`, not a mount); the one other mount is the anonymous dump-spool volume (no host path)
     const mounts = script.match(/--mount \S+|--volume \S+/g) ?? [];
     expect(mounts.length).toBeGreaterThan(0);
     // the opt-in --certs path adds exactly one more mount: the proxy's acme.json, READ-ONLY, only when the flag is given
-    for (const m of mounts) expect(m.includes("docker.sock") || m.replace(/"$/, "") === "--mount type=bind,src=$ACME,dst=/acme/acme.json,readonly").toBe(true);
+    for (const m of mounts) {
+      const mm = m.replace(/"$/, "");
+      expect(m.includes("docker.sock") || mm === "--mount type=bind,src=$ACME,dst=/acme/acme.json,readonly" || mm === '--mount "type=volume,dst=/dump-spool').toBe(true);
+    }
+    expect(mounts.filter((m) => m.includes("type=bind") && !m.includes("docker.sock") && !m.includes("$ACME"))).toEqual([]);
     expect(script).not.toMatch(/docker run[\s\S]*?\s-v /); // no short -v volume flag in the run
   });
 
@@ -153,7 +167,8 @@ describe("renderMigratorInstallScript", () => {
       expect(r.code).toBe(0);
       const args = r.log.split("\n").filter((l) => l.startsWith("ARG:")).map((l) => l.slice(4));
       // forwarded flags reach `migrate`
-      expect(args).toEqual(expect.arrayContaining(["migrate", "--hub=https://hub.example.com", "--spool-dir=/spool", "--dry-run"]));
+      expect(args).toEqual(expect.arrayContaining(["migrate", "--hub=https://hub.example.com", "--spool-dir=/spool", "--dump-spool-dir=/dump-spool", "--dry-run"]));
+      expect(args).toContain("type=volume,dst=/dump-spool");
       // THE core S4-3 review finding, proven by execution: the token is on no docker argv
       for (const a of args) {
         expect(a).not.toContain("tugra_mig_");
@@ -267,11 +282,11 @@ describe("renderMigratorInstallScript", () => {
     });
 
     it("forwards every volume flag untouched and still refuses to repoint the helper image or the spool", () => {
-      const flags = ["--stop-source", "--stop-timeout", "90", "--allow-bind", "--part-mib", "128", "--reset-volume", "volume:srv1:abc:data", "--hub-outage-wait", "20m", "--speedtest-mib", "64"];
+      const flags = ["--stop-source", "--stop-timeout", "90", "--allow-bind", "--part-mib", "128", "--reset-volume", "volume:srv1:abc:data", "--hub-outage-wait", "20m", "--speedtest-mib", "64", "--dump-spool-mib", "4096"];
       const r = run(["--hub", "https://hub.example.com", "--arms", "all", ...flags]);
       expect(r.code).toBe(0);
       expect(argsOf(r)).toEqual(expect.arrayContaining(flags));
-      for (const bad of [["--helper-image", "evil:latest"], ["--helper-image=evil:latest"], ["--spool-dir", "/x"], ["--token", "X"], ["-helper-image=evil"]]) {
+      for (const bad of [["--helper-image", "evil:latest"], ["--helper-image=evil:latest"], ["--spool-dir", "/x"], ["--dump-spool-dir", "/x"], ["--dump-spool-dir=/x"], ["-dump-spool-dir=/x"], ["--token", "X"], ["-helper-image=evil"]]) {
         const rr = run(["--hub", "https://hub.example.com", ...bad]);
         expect(rr.code).not.toBe(0);
         expect(rr.log).toBe("");
@@ -314,17 +329,18 @@ describe("renderMigratorInstallScript", () => {
           "    --cap-drop ALL --security-opt no-new-privileges --read-only --pids-limit 128 \\",
           "    --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m \\",
           '    --tmpfs "/spool:rw,noexec,nosuid,nodev,mode=0700,size=$SPOOL_SIZE" \\',
+          '    --mount "type=volume,dst=/dump-spool" \\',
           '    --mount "type=bind,src=$SOCK,dst=/var/run/docker.sock" \\',
           '    --group-add "$GID" \\',
           "    $NETARG $ACMEMOUNT $MEMARG \\",
           '    -e TUGRA_MIGRATION_TOKEN -e "TUGRA_SELF_IMAGE=$IMAGE" -e HOME=/tmp \\',
           "    --entrypoint tugra-agent \\",
-          '    "$IMAGE" migrate "--hub=$HUB" --spool-dir=/spool "$@" </dev/null ',
+          '    "$IMAGE" migrate "--hub=$HUB" --spool-dir=/spool --dump-spool-dir=/dump-spool "$@" </dev/null ',
         ].join("\n"),
       );
-      // the only bind mount is still the docker socket; the volume arm's source volumes are mounted by `docker run` calls
-      // the MIGRATOR makes over that socket, never by this container
-      expect(text.match(/--mount "[^"]+"/g)).toEqual(['--mount "type=bind,src=$SOCK,dst=/var/run/docker.sock"']);
+      // the only bind mount is still the docker socket (the other mount is the anonymous dump-spool volume); the volume arm's source
+      // volumes are mounted by `docker run` calls the MIGRATOR makes over that socket, never by this container
+      expect(text.match(/--mount "[^"]+"/g)).toEqual(['--mount "type=volume,dst=/dump-spool"', '--mount "type=bind,src=$SOCK,dst=/var/run/docker.sock"']);
     });
 
     it("pull failure aborts before run; container reaped (--rm)", () => {
