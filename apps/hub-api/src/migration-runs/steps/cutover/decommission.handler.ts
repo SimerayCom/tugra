@@ -34,6 +34,12 @@ import {
 import { capHosts, chk, decommissionBindingHash, hasAttestation, timerGate } from "./run-cutover-logic";
 
 export const DECOMMISSION_ATTEST = "decommission.source-stopped";
+/**
+ * The operator stopped the containers of the FIRST list (the managed hosts, without the control plane's own containers). It only
+ * settles the step while other runs of the source are still to come: once they are all done the control plane's list is asked for
+ * again, so the host that goes last is never closed by an attestation that did not cover it.
+ */
+export const DECOMMISSION_FIRST_ATTEST = "decommission.managed-stopped";
 
 export interface DecommissionObs extends Observation {
   controller: SourceController;
@@ -111,7 +117,7 @@ export class DecommissionHandler extends CutoverStepBase implements StepHandler<
       siblings: null,
     };
     try {
-      obs.siblings = await this.world.siblingRuns({ id: run.id, sourceKind: run.sourceKind, sourceHost: run.sourceHost });
+      obs.siblings = await this.world.siblingRuns({ id: run.id, sourceKind: run.sourceKind, sourceHost: run.sourceHost, serverMap: run.serverMap, sourceBaseline: run.sourceBaseline });
     } catch (e) {
       rethrowLeaseLost(e);
       obs.siblings = null;
@@ -182,15 +188,27 @@ export class DecommissionHandler extends CutoverStepBase implements StepHandler<
     if (obs.controlPlane === true) {
       if (sib === null) out.push(chk("decommission.control-plane-last", "unknown", "decommission.siblings-unreadable"));
       else if (sib.live > 0) out.push(chk("decommission.control-plane-last", "fail", "decommission.control-plane-last", { params: { runs: sib.live }, evidence: "hub-verified" }));
+      else if (sib.undecommissioned > 0) out.push(chk("decommission.control-plane-last", "fail", "decommission.control-plane-last-hosts", { params: { runs: sib.undecommissioned }, evidence: "hub-verified" }));
       else out.push(chk("decommission.control-plane-last", "pass", "decommission.control-plane-last-ok", { evidence: "hub-verified" }));
+    } else if (sib && sib.undecommissioned > 0) {
+      out.push(chk("decommission.hosts-pending", "warn", "decommission.hosts-pending", { params: { runs: sib.undecommissioned }, evidence: "hub-verified" }));
     }
-    if (sib && sib.undecommissioned > 0) out.push(chk("decommission.hosts-pending", "warn", "decommission.hosts-pending", { params: { runs: sib.undecommissioned }, evidence: "hub-verified" }));
     return out;
   }
 
-  /** May the printed commands include the control plane's own containers? Only when the other runs of the source are known and none still lives. */
+  /**
+   * May the printed commands include the control plane's own containers? Only when the other runs of the source are known and none
+   * still lives or is waiting to stop its own hosts: a finished takeover that has not decommissioned its hosts is not done yet.
+   */
   private controlPlaneNow(obs: DecommissionObs): boolean {
-    return obs.siblings !== null && obs.siblings.live === 0;
+    return obs.siblings !== null && obs.siblings.live === 0 && obs.siblings.undecommissioned === 0;
+  }
+
+  /** The code and params of the first list: with the sibling list unreadable it says so, instead of a count it does not have. */
+  private firstListWait(obs: DecommissionObs): { code: string; params: Record<string, string[] | number> } {
+    const params = { stop: [...MANAGED_STOP_COMMANDS], remove: [...MANAGED_REMOVAL_COMMANDS] };
+    if (obs.siblings === null) return { code: "decommission.stop-source-unknown", params };
+    return { code: "decommission.stop-source-first", params: { ...params, runs: obs.siblings.live + obs.siblings.undecommissioned } };
   }
 
   async act(ctx: StepContext, obs: DecommissionObs): Promise<ActResult> {
@@ -200,12 +218,12 @@ export class DecommissionHandler extends CutoverStepBase implements StepHandler<
       // The hub has no shell on the source host: print the commands, the operator stops it and attests.
       if (hasAttestation(ctx.step.evidence, DECOMMISSION_ATTEST)) return { outcome: "done" };
       // The hub cannot tell whether this host carries the control plane, so the control plane's commands stay out of the list
-      // until no other run of this source lives: the Coolify host is last, whichever host this run is for.
+      // until no other run of this source is open: the Coolify host is last, whichever host this run is for. An attestation of the
+      // first list closes the step only while that still holds; once the others are done the full list is asked for.
       if (!withControlPlane) {
-        return {
-          outcome: "wait",
-          wait: { kind: "operator", code: "decommission.stop-source-first", params: { stop: [...MANAGED_STOP_COMMANDS], remove: [...MANAGED_REMOVAL_COMMANDS], runs: obs.siblings?.live ?? null }, attest: [DECOMMISSION_ATTEST] },
-        };
+        if (hasAttestation(ctx.step.evidence, DECOMMISSION_FIRST_ATTEST)) return { outcome: "done" };
+        const first = this.firstListWait(obs);
+        return { outcome: "wait", wait: { kind: "operator", code: first.code, params: first.params, attest: [DECOMMISSION_FIRST_ATTEST] } };
       }
       return { outcome: "wait", wait: { kind: "operator", code: "decommission.stop-source", params: { stop: [...MANAGED_STOP_COMMANDS, ...CONTROL_PLANE_STOP_COMMANDS], remove: [...MANAGED_REMOVAL_COMMANDS, ...CONTROL_PLANE_REMOVAL_COMMANDS] }, attest: [DECOMMISSION_ATTEST] } };
     }
@@ -228,8 +246,12 @@ export class DecommissionHandler extends CutoverStepBase implements StepHandler<
   postGate(ctx: StepContext, obs: DecommissionObs): GateResult {
     if (!obs.hubStops) {
       const first = !this.controlPlaneNow(obs);
-      const stop = first ? [...MANAGED_STOP_COMMANDS] : [...MANAGED_STOP_COMMANDS, ...CONTROL_PLANE_STOP_COMMANDS];
-      return makeGate([chk("decommission.stopped", hasAttestation(ctx.step.evidence, DECOMMISSION_ATTEST) ? "pass" : "fail", first ? "decommission.stop-source-first" : "decommission.stop-source", { params: { stop, runs: obs.siblings?.live ?? null }, evidence: "operator-attested" })]);
+      const attested = hasAttestation(ctx.step.evidence, DECOMMISSION_ATTEST) || (first && hasAttestation(ctx.step.evidence, DECOMMISSION_FIRST_ATTEST));
+      if (first) {
+        const w = this.firstListWait(obs);
+        return makeGate([chk("decommission.stopped", attested ? "pass" : "fail", w.code, { params: w.params, evidence: "operator-attested" })]);
+      }
+      return makeGate([chk("decommission.stopped", attested ? "pass" : "fail", "decommission.stop-source", { params: { stop: [...MANAGED_STOP_COMMANDS, ...CONTROL_PLANE_STOP_COMMANDS] }, evidence: "operator-attested" })]);
     }
     if (obs.containers === null) return makeGate([chk("decommission.stopped", "unknown", "decommission.discover-failed")]);
     const running = obs.containers.filter((c) => c.running);

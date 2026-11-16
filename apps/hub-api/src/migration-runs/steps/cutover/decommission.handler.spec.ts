@@ -1,5 +1,5 @@
 import { H, makeRig, type Rig } from "./testing/cutover-rig";
-import { DECOMMISSION_ATTEST } from "./decommission.handler";
+import { DECOMMISSION_ATTEST, DECOMMISSION_FIRST_ATTEST } from "./decommission.handler";
 import { CONTROL_PLANE_REMOVAL_COMMANDS, CONTROL_PLANE_STOP_COMMANDS, MANAGED_REMOVAL_COMMANDS, MANAGED_STOP_COMMANDS, REMOVAL_COMMANDS, STOP_COMMANDS } from "./decommission-script";
 
 afterEach(() => jest.useRealTimers());
@@ -242,7 +242,7 @@ describe("DECOMMISSION runbook order: the Coolify host goes last (R67/R70)", () 
     expect(r.gate!.checks.find((c) => c.id === "decommission.control-plane-last")).toMatchObject({ status: "unknown", code: "decommission.siblings-unreadable" });
   });
 
-  it("a box that is NOT the control plane is not held back by other live runs; finished runs that did not stop their hosts only warn on the control-plane box", async () => {
+  it("a box that is NOT the control plane is not held back by other live runs; finished runs that did not stop their hosts block the control-plane box", async () => {
     const other = afterFinalize({ controller: "agent" });
     other.host.cpMarker = false;
     other.world.siblings = SIB;
@@ -253,8 +253,15 @@ describe("DECOMMISSION runbook order: the Coolify host goes last (R67/R70)", () 
     cp.host.cpMarker = true;
     cp.world.siblings = { live: 0, undecommissioned: 3 };
     const w = await cp.driver.tick(cp.handlers.dec);
-    expect(w.status).toBe("WAITING_APPROVAL");
-    expect(cp.driver.rec("DECOMMISSION").gate!.checks.find((c) => c.id === "decommission.hosts-pending")).toMatchObject({ status: "warn", params: { runs: 3 } });
+    // a finished takeover that has not stopped its own hosts is not done: the Coolify host waits for it
+    expect(w.status).toBe("WAITING_OPERATOR");
+    expect(cp.driver.rec("DECOMMISSION").gate!.checks.find((c) => c.id === "decommission.control-plane-last")).toMatchObject({ status: "fail", code: "decommission.control-plane-last-hosts", params: { runs: 3 } });
+    // where the hub cannot see whether the box is the control plane it is only a warning (the printed list holds the order, below)
+    const unseen = afterFinalize({ controller: "agent" });
+    unseen.host.cpMarker = null;
+    unseen.world.siblings = { live: 0, undecommissioned: 3 };
+    await unseen.driver.tick(unseen.handlers.dec);
+    expect(unseen.driver.rec("DECOMMISSION").gate!.checks.find((c) => c.id === "decommission.hosts-pending")).toMatchObject({ status: "warn", params: { runs: 3 } });
   });
 
   it("an older discovery script that says nothing about the control plane is not read as 'not the control plane'", async () => {
@@ -287,20 +294,56 @@ describe("DECOMMISSION runbook order: the Coolify host goes last (R67/R70)", () 
     held.world.siblings = SIB;
     await approveCurrent(held);
     const r = await held.driver.tick(held.handlers.dec);
-    expect(r.wait).toEqual({ kind: "operator", code: "decommission.stop-source-first", params: { stop: [...MANAGED_STOP_COMMANDS], remove: [...MANAGED_REMOVAL_COMMANDS], runs: 2 }, attest: [DECOMMISSION_ATTEST] });
+    expect(r.wait).toEqual({ kind: "operator", code: "decommission.stop-source-first", params: { stop: [...MANAGED_STOP_COMMANDS], remove: [...MANAGED_REMOVAL_COMMANDS], runs: 2 }, attest: [DECOMMISSION_FIRST_ATTEST] });
     const printed = JSON.stringify(r.wait);
     for (const c of [...CONTROL_PLANE_STOP_COMMANDS, ...CONTROL_PLANE_REMOVAL_COMMANDS]) expect(printed).not.toContain(c);
     // the same for an unreadable sibling list (fail closed)
     const unknown = afterFinalize({ controller: "manual" });
     unknown.world.siblings = null;
     await approveCurrent(unknown);
-    expect((await unknown.driver.tick(unknown.handlers.dec)).wait).toMatchObject({ code: "decommission.stop-source-first", params: { runs: null } });
+    const unreadable = (await unknown.driver.tick(unknown.handlers.dec)).wait as unknown as { code: string; params: Record<string, unknown> };
+    // its own code, so the sentence never prints a count it does not have
+    expect(unreadable.code).toBe("decommission.stop-source-unknown");
+    expect(unreadable.params).not.toHaveProperty("runs");
     // and with nothing else alive the full list, control plane last, is printed
     const free = afterFinalize({ controller: "manual" });
     await approveCurrent(free);
     const w = (await free.driver.tick(free.handlers.dec)).wait as unknown as { params: { stop: string[]; remove: string[] } };
     expect(w.params.stop).toEqual([...STOP_COMMANDS]);
     expect(w.params.stop.slice(-CONTROL_PLANE_STOP_COMMANDS.length)).toEqual([...CONTROL_PLANE_STOP_COMMANDS]);
+  });
+
+  it("finished takeovers that have not stopped their hosts keep the control plane's commands out of the printed list too", async () => {
+    const held = afterFinalize({ controller: "manual" });
+    held.world.siblings = { live: 0, undecommissioned: 1 };
+    await approveCurrent(held);
+    const r = await held.driver.tick(held.handlers.dec);
+    expect(r.wait).toMatchObject({ code: "decommission.stop-source-first", params: { runs: 1 } });
+    for (const c of CONTROL_PLANE_STOP_COMMANDS) expect(JSON.stringify(r.wait)).not.toContain(c);
+  });
+
+  it("the first list's attestation closes the step only while other runs remain; once they are done the control plane's list is asked for", async () => {
+    const rig = afterFinalize({ controller: "manual" });
+    rig.world.siblings = SIB;
+    await approveCurrent(rig);
+    expect((await rig.driver.tick(rig.handlers.dec)).wait).toMatchObject({ attest: [DECOMMISSION_FIRST_ATTEST] });
+    rig.driver.attest("DECOMMISSION", DECOMMISSION_FIRST_ATTEST);
+    // the others are still open: the first list was all this run owed
+    expect((await rig.driver.drive(rig.handlers.dec)).status).toBe("PASSED");
+
+    const last = afterFinalize({ controller: "manual" });
+    last.world.siblings = SIB;
+    await approveCurrent(last);
+    await last.driver.tick(last.handlers.dec);
+    last.driver.attest("DECOMMISSION", DECOMMISSION_FIRST_ATTEST);
+    // ...but the other runs finished before this run saw the attestation: it was the last one and has not stopped the control plane
+    last.world.siblings = { live: 0, undecommissioned: 0 };
+    const r = await last.driver.tick(last.handlers.dec);
+    expect(r.status).toBe("WAITING_OPERATOR");
+    expect(r.wait).toMatchObject({ code: "decommission.stop-source", attest: [DECOMMISSION_ATTEST] });
+    expect(((r.wait as unknown as { params: { stop: string[] } }).params.stop)).toEqual(expect.arrayContaining([...CONTROL_PLANE_STOP_COMMANDS]));
+    last.driver.attest("DECOMMISSION", DECOMMISSION_ATTEST);
+    expect((await last.driver.drive(last.handlers.dec)).status).toBe("PASSED");
   });
 
   it("the approval shows whether the box carries the control plane and how many other runs live", async () => {

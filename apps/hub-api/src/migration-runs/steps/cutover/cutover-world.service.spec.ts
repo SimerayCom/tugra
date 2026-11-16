@@ -308,25 +308,39 @@ describe("CutoverWorld", () => {
 
   it("siblingRuns counts the other real runs of the same source: unsettled ones as live, finished takeovers that never stopped their hosts as undecommissioned", async () => {
     const m = make();
+    const same = { sourceHost: "coolify.example.test", serverMap: null, sourceBaseline: null };
     m.prisma.migrationRun.findMany.mockResolvedValue([
-      { status: "RUNNING", mode: "copy", steps: [] },
-      { status: "FAILED", mode: "takeover", steps: [] }, // a retry resumes it
-      { status: "COMPLETED", mode: "copy", steps: [] }, // finished, nothing to stop
-      { status: "COMPLETED", mode: "takeover", steps: [{ status: "PENDING" }] },
-      { status: "COMPLETED", mode: "takeover", steps: [] },
-      { status: "COMPLETED", mode: "takeover", steps: [{ status: "PASSED" }] },
-      { status: "COMPLETED", mode: "takeover", steps: [{ status: "SKIPPED" }] },
+      { ...same, status: "RUNNING", mode: "copy", steps: [] },
+      { ...same, status: "FAILED", mode: "takeover", steps: [] }, // a retry resumes it
+      { ...same, status: "COMPLETED", mode: "copy", steps: [] }, // finished, nothing to stop
+      { ...same, status: "COMPLETED", mode: "takeover", steps: [{ status: "PENDING" }] },
+      { ...same, status: "COMPLETED", mode: "takeover", steps: [] },
+      { ...same, status: "COMPLETED", mode: "takeover", steps: [{ status: "PASSED" }] },
+      { ...same, status: "COMPLETED", mode: "takeover", steps: [{ status: "SKIPPED" }] },
     ]);
     expect(await m.world.siblingRuns({ id: "r1", sourceKind: "coolify", sourceHost: "coolify.example.test" })).toEqual({ live: 2, undecommissioned: 2 });
     expect(m.prisma.migrationRun.findMany).toHaveBeenCalledWith({
-      where: { id: { not: "r1" }, sourceKind: "coolify", sourceHost: "coolify.example.test", dryRun: false, status: { notIn: ["ABORTED", "ROLLED_BACK", "REVERSED", "DRY_RUN_DONE"] } },
-      select: { status: true, mode: true, steps: { where: { key: "DECOMMISSION" }, select: { status: true } } },
+      where: { id: { not: "r1" }, sourceKind: "coolify", dryRun: false, status: { notIn: ["ABORTED", "ROLLED_BACK", "REVERSED", "DRY_RUN_DONE"] } },
+      select: { status: true, mode: true, sourceHost: true, serverMap: true, sourceBaseline: true, steps: { where: { key: "DECOMMISSION" }, select: { status: true } } },
     });
   });
 
-  it("siblingRuns of a run with no recorded source host reads nothing and counts none", async () => {
+  it("siblingRuns finds the same Coolify entered under another host form, through a shared source server uuid or a shared resource ref", async () => {
     const m = make();
-    expect(await m.world.siblingRuns({ id: "r1", sourceKind: "coolify", sourceHost: null })).toEqual({ live: 0, undecommissioned: 0 });
+    m.prisma.migrationRun.findMany.mockResolvedValue([
+      { status: "RUNNING", mode: "copy", sourceHost: "203.0.113.5:8000", serverMap: { "srv-a": "t1" }, sourceBaseline: null }, // same server uuid
+      { status: "RUNNING", mode: "copy", sourceHost: "203.0.113.5:8000", serverMap: null, sourceBaseline: { capturedAt: "x", entries: [{ ref: "app-9" }] } }, // same resource ref
+      { status: "RUNNING", mode: "copy", sourceHost: "other.example.test", serverMap: { "srv-z": "t9" }, sourceBaseline: { entries: [{ ref: "app-77" }] } }, // another instance
+      { status: "RUNNING", mode: "copy", sourceHost: null, serverMap: null, sourceBaseline: null }, // says nothing about its source
+    ]);
+    const r = await m.world.siblingRuns({ id: "r1", sourceKind: "coolify", sourceHost: "coolify.example.test", serverMap: { "srv-a": "t2" }, sourceBaseline: { entries: [{ ref: "app-9" }, { ref: "app-10" }] } });
+    expect(r).toEqual({ live: 2, undecommissioned: 0 });
+  });
+
+  it("siblingRuns of a run that offers no source identity at all is unknown (null), never none, and reads nothing", async () => {
+    const m = make();
+    expect(await m.world.siblingRuns({ id: "r1", sourceKind: "coolify", sourceHost: null })).toBeNull();
+    expect(await m.world.siblingRuns({ id: "r1", sourceKind: "coolify", sourceHost: null, serverMap: {}, sourceBaseline: { entries: [] } })).toBeNull();
     expect(m.prisma.migrationRun.findMany).not.toHaveBeenCalled();
   });
 

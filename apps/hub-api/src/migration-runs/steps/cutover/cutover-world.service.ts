@@ -298,19 +298,26 @@ export class CutoverWorld {
   }
 
   /**
-   * The OTHER real runs of the same source (kind and host), for the "Coolify host goes last" rule (R67/R70): `live` still move
-   * production or can (anything not settled, a FAILED run included, since a retry resumes it); `undecommissioned` finished as
-   * takeovers whose own source hosts have not been stopped yet. Counts only: another team's run is never named.
+   * The OTHER real runs of the same source, for the "Coolify host goes last" rule (R67/R70): `live` still move production or can
+   * (anything not settled, a FAILED run included, since a retry resumes it); `undecommissioned` finished as takeovers whose own
+   * source hosts have not been stopped yet. Counts only: another team's run is never named.
+   *
+   * "The same source" is not only the typed host string: the same Coolify can be entered as a name in one run and as an address in
+   * another, so two runs also belong together when they share a source server uuid (a `serverMap` key) or a source resource ref
+   * of the health baseline; those uuids are unique to one instance. A run that offers none of the three cannot be matched to
+   * anything: that reads as `null` (unknown), never as "no other run".
    */
-  async siblingRuns(run: { id: string; sourceKind: string; sourceHost: string | null }): Promise<{ live: number; undecommissioned: number }> {
-    if (!run.sourceHost) return { live: 0, undecommissioned: 0 };
+  async siblingRuns(run: { id: string; sourceKind: string; sourceHost: string | null; serverMap?: Readonly<Record<string, string>> | null; sourceBaseline?: { entries: ReadonlyArray<{ ref: string }> } | null }): Promise<{ live: number; undecommissioned: number } | null> {
+    const mine = sourceIdentityOf(run);
+    if (!mine) return null;
     const rows = await this.prisma.migrationRun.findMany({
-      where: { id: { not: run.id }, sourceKind: run.sourceKind, sourceHost: run.sourceHost, dryRun: false, status: { notIn: ["ABORTED", "ROLLED_BACK", "REVERSED", "DRY_RUN_DONE"] } },
-      select: { status: true, mode: true, steps: { where: { key: "DECOMMISSION" }, select: { status: true } } },
+      where: { id: { not: run.id }, sourceKind: run.sourceKind, dryRun: false, status: { notIn: ["ABORTED", "ROLLED_BACK", "REVERSED", "DRY_RUN_DONE"] } },
+      select: { status: true, mode: true, sourceHost: true, serverMap: true, sourceBaseline: true, steps: { where: { key: "DECOMMISSION" }, select: { status: true } } },
     });
     let live = 0;
     let undecommissioned = 0;
     for (const r of rows) {
+      if (!sameSource(mine, sourceIdentityOf({ sourceHost: r.sourceHost, serverMap: asServerMap(r.serverMap), sourceBaseline: asBaseline(r.sourceBaseline) }))) continue;
       if (r.status !== "COMPLETED") live += 1;
       else if (r.mode === "takeover" && !r.steps.some((s) => s.status === "PASSED" || s.status === "SKIPPED")) undecommissioned += 1;
     }
@@ -339,4 +346,38 @@ export function sanitizeRepo(url: string | null | undefined): string | null {
   if (m) return `${m[1].toLowerCase()}/${m[2]}`;
   const scp = /^(?:[^@\s]+@)?([A-Za-z0-9.-]+):([^\s?#:][^\s?#]*?)(?:\.git)?\/?$/.exec(url.trim());
   return scp ? `${scp[1].toLowerCase()}/${scp[2]}` : null;
+}
+
+interface SourceIdentity {
+  host: string | null;
+  serverRefs: ReadonlySet<string>;
+  resourceRefs: ReadonlySet<string>;
+}
+
+/** What identifies a run's source instance: its typed host, its source server uuids and its source resource refs; null when it has none of them. */
+function sourceIdentityOf(run: { sourceHost: string | null; serverMap?: Readonly<Record<string, string>> | null; sourceBaseline?: { entries: ReadonlyArray<{ ref: string }> } | null }): SourceIdentity | null {
+  const serverRefs = new Set(Object.keys(run.serverMap ?? {}));
+  const resourceRefs = new Set((run.sourceBaseline?.entries ?? []).map((e) => e.ref));
+  if (!run.sourceHost && serverRefs.size === 0 && resourceRefs.size === 0) return null;
+  return { host: run.sourceHost, serverRefs, resourceRefs };
+}
+
+const intersects = (a: ReadonlySet<string>, b: ReadonlySet<string>): boolean => {
+  const [small, big] = a.size <= b.size ? [a, b] : [b, a];
+  for (const v of small) if (big.has(v)) return true;
+  return false;
+};
+
+function sameSource(a: SourceIdentity, b: SourceIdentity | null): boolean {
+  if (!b) return false;
+  return (!!a.host && a.host === b.host) || intersects(a.serverRefs, b.serverRefs) || intersects(a.resourceRefs, b.resourceRefs);
+}
+
+/** A stored JSON column read defensively: anything that is not the expected shape reads as absent. */
+function asServerMap(v: unknown): Record<string, string> | null {
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, string>) : null;
+}
+function asBaseline(v: unknown): { entries: Array<{ ref: string }> } | null {
+  const entries = v && typeof v === "object" ? (v as { entries?: unknown }).entries : undefined;
+  return Array.isArray(entries) ? { entries: entries.filter((e): e is { ref: string } => !!e && typeof (e as { ref?: unknown }).ref === "string") } : null;
 }
