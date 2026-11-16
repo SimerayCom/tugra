@@ -22,7 +22,7 @@ function make(over: { opMeta?: unknown; cancelRequestedAt?: Date | null; statusV
     remapEnvApply: jest.fn(),
     remapEnvUndo: jest.fn(),
   };
-  const apps = { stop: jest.fn(), deploy: jest.fn() };
+  const apps = { stop: jest.fn(), deploy: jest.fn(), cancelDeployment: jest.fn() };
   const dbs = { provision: jest.fn(), stop: jest.fn() };
   const agentWs = { isOnline: jest.fn().mockReturnValue(true) };
   const proxyConfig = { resolveFor: jest.fn().mockResolvedValue({ acmeEmail: "ops@acme-corp.dev" }) };
@@ -181,5 +181,8 @@ describe("ImportPortService", () => {
     prisma.deployment.findMany.mockResolvedValue([{ id: "d", idempotencyKey: "migrun:r:a", status: "FAILED", trigger: "manual", requestedBy: "u1" }]);
     expect(await svc.deployments("a1", "migrun:r:a")).toEqual([{ id: "d", key: "migrun:r:a", status: "FAILED", trigger: "manual", requestedBy: "u1" }]);
     expect(prisma.deployment.findMany.mock.calls[0][0].where).toEqual({ appId: "a1", idempotencyKey: { startsWith: "migrun:r:a" } });
+    apps.cancelDeployment.mockResolvedValue({ id: "d" });
+    await expect(svc.cancelDeployment("u1", "a1", "d")).resolves.toBeUndefined();
+    expect(apps.cancelDeployment).toHaveBeenCalledWith("u1", "a1", "d");
   });
 });

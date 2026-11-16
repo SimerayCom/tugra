@@ -124,6 +124,72 @@ describe("DEPLOY_DARK", () => {
     expect(w.status(id)).toBe("ABORTED");
   });
 
+  it("abort while deploys are still QUEUED cancels them: no app comes up after the run is ABORTED", async () => {
+    const w = new RunWorld();
+    w.port.queueDeploys = true;
+    const id = await w.create();
+    await w.start(id);
+    const pass = w.engine.drive(id);
+    for (let i = 0; i < 2000 && w.port.deploys.length < 2; i++) await new Promise((r) => setImmediate(r));
+    expect(w.port.deploys.map((d) => d.status)).toEqual(["QUEUED", "QUEUED"]);
+    await w.service.abort(ACTOR, id, { confirmName: id });
+    w.engine.interrupt(id);
+    await pass;
+    await w.settle(id);
+    expect(w.status(id)).toBe("ABORTED");
+    expect(w.port.calls.filter((c) => c.startsWith("cancelDeploy:"))).toHaveLength(2);
+    w.port.settleDeploys(); // the queue drains once the abort is over
+    expect([...w.port.apps.values()].some((a) => a.status === "RUNNING")).toBe(false);
+  });
+
+  it("abort with a deployment that cannot be cancelled fails retryably, and a second abort stops the app once it settled", async () => {
+    const w = new RunWorld();
+    w.port.queueDeploys = true;
+    w.port.runQueued = true; // a build in flight: RUNNING, not cancellable
+    const id = await w.create();
+    await w.start(id);
+    const pass = w.engine.drive(id);
+    for (let i = 0; i < 2000 && w.port.deploys.length < 2; i++) await new Promise((r) => setImmediate(r));
+    await w.service.abort(ACTOR, id, { confirmName: id });
+    w.engine.interrupt(id);
+    await pass;
+    await w.settle(id);
+    expect(w.status(id)).toBe("FAILED");
+    expect(w.store.row(id).failureCode).toBe("deploy-dark.deploy-active");
+    w.port.settleDeploys(); // the deployments finish: the apps are RUNNING now
+    expect([...w.port.apps.values()].every((a) => a.status === "RUNNING")).toBe(true);
+    await w.service.abort(ACTOR, id, { confirmName: id });
+    await w.settle(id);
+    expect(w.status(id)).toBe("ABORTED");
+    expect([...w.port.apps.values()].some((a) => a.status === "RUNNING")).toBe(false);
+  });
+
+  it("a database left PROVISIONING by a dead hub fails the step after the patience instead of polling forever; retry provisions it again", async () => {
+    const w = new RunWorld();
+    let stuck = true;
+    const origState = w.port.dbState.bind(w.port);
+    w.port.dbState = async (u, dbId) => {
+      const s = await origState(u, dbId);
+      return stuck && s.exists && s.status !== "RUNNING" ? { ...s, status: "PROVISIONING" } : s;
+    };
+    const origStart = w.port.startDb.bind(w.port);
+    w.port.startDb = async (u, dbId) => {
+      stuck = false;
+      return origStart(u, dbId);
+    };
+    const id = await w.create();
+    await w.start(id);
+    await w.settle(id);
+    expect(w.store.row(id).failureCode).toBe("deploy-dark.db-stuck");
+    expect((await dd(w, id)).allowed.retry).toBe(true);
+    expect(w.port.calls.some((c) => c.startsWith("startDb:") || c.startsWith("deploy:"))).toBe(false);
+    expect(w.clock.t).toBeGreaterThanOrEqual(Date.parse("2026-11-23T08:10:00.000Z"));
+    await w.service.retry(ACTOR, id, "DEPLOY_DARK", {});
+    await w.settle(id, "retry");
+    expect(w.status(id)).toBe("COMPLETED");
+    expect(w.port.calls.filter((c) => c.startsWith("startDb:"))).toHaveLength(1);
+  });
+
   it("dry-run projects the order from the plan and writes nothing", async () => {
     const w = new RunWorld();
     const id = await w.create({ dryRun: true });

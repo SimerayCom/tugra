@@ -117,6 +117,8 @@ export interface ImportStepsPort extends RunImportPort {
   stopApp(userId: string, appId: string): Promise<void>;
   /** The run's deployments of an app (idempotency key `migrun:<runId>:<appId>` plus retry suffixes), oldest first. */
   deployments(appId: string, keyPrefix: string): Promise<DeploymentRef[]>;
+  /** Cancel a QUEUED deployment (or ask a running one to stop); throws when it can no longer be cancelled. */
+  cancelDeployment(userId: string, appId: string, deploymentId: string): Promise<void>;
   /** Enqueue + run a deploy under the idempotency key (the finished/queued row). */
   deploy(userId: string, appId: string, key: string): Promise<DeploymentRef | null>;
 }

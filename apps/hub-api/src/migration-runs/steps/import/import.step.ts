@@ -30,7 +30,7 @@ import {
 import { CLEANUP_REQUEST_KEY, type CleanupRequest } from "../../core/run-engine.service";
 import { SESSION_EXPIRED_CODE } from "../../core/run-logic";
 import { IMPORT_STEPS_PORT, type DeploymentRef, type ImportStepsPort, type OpSnapshot, type SessionState } from "./import-ports";
-import { applyInputOf, deployKeyBase, failureOf, hasActive, hasBad, includedItems, isConflict, itemTasks, unackedBlockers } from "./step-utils";
+import { applyInputOf, deployKeyBase, failureOf, hasActive, hasBad, includedItems, isConflict, itemTasks, stopRunApps, unackedBlockers } from "./step-utils";
 
 /** How long a redo waits for orphaned RUNNING tasks to settle before it gives up (the importer's reaper frees them after 10 min). */
 const REDO_PATIENCE_MS = 15 * 60_000;
@@ -50,6 +50,8 @@ interface Comp {
   redos?: number;
   redoOpen?: boolean;
   redoAt?: string;
+  /** earlyStateless: the apps the early wave may have deployed (written before the first deploy). */
+  earlyAppIds?: string[];
   [CLEANUP_REQUEST_KEY]?: CleanupRequest;
 }
 
@@ -152,16 +154,7 @@ export class ImportStep implements StepHandler<ImportObs>, OnModuleInit {
     const run = ctx.run;
 
     // A crash between `apply` and recording the op id: adopt the orphan op the apply created.
-    if (comp.applyStartedAt && comp.applyDone !== true) {
-      const known = new Set<string>([...run.opHistory, ...(run.opId ? [run.opId] : [])]);
-      const found = (await this.port.opsSince(userId, run.targetServerId, new Date(comp.applyStartedAt))).filter((id) => !known.has(id));
-      if (found.length) {
-        await ctx.patchRun({ opId: found[found.length - 1] });
-        await ctx.recordCompensation({ applyDone: true, adopted: true });
-        await ctx.emit({ level: "warn", code: "import.op-adopted" });
-        return { outcome: "continue", pollAfterMs: 1000 };
-      }
-    }
+    if (await this.adoptOrphan(ctx)) return { outcome: "continue", pollAfterMs: 1000 };
 
     const op = obs.op;
     if (op && !op.rolledBack) {
@@ -280,27 +273,63 @@ export class ImportStep implements StepHandler<ImportObs>, OnModuleInit {
 
   // ───────────────────────────── compensate ─────────────────────────────
 
+  /** When `apply` was started and never recorded, find the op it created (`opsSince`), point the run at it and return its id. */
+  private async adoptOrphan(ctx: StepContext): Promise<string | null> {
+    const comp = compOf(ctx);
+    const run = ctx.run;
+    if (!comp.applyStartedAt || comp.applyDone === true) return null;
+    const known = new Set<string>([...run.opHistory, ...(run.opId ? [run.opId] : [])]);
+    const found = (await this.port.opsSince(ctx.actor.userId, run.targetServerId, new Date(comp.applyStartedAt))).filter((id) => !known.has(id));
+    if (!found.length) return null;
+    const opId = found[found.length - 1];
+    await ctx.patchRun({ opId });
+    await ctx.recordCompensation({ applyDone: true, adopted: true });
+    await ctx.emit({ level: "warn", code: "import.op-adopted" });
+    return opId;
+  }
+
   async compensate(ctx: StepContext, how: CompensateHow): Promise<CompResult> {
     const userId = ctx.actor.userId;
     const run = ctx.run;
     if (how === "reverse") return { outcome: "nothing-to-do" };
-    if (!run.opId) return { outcome: "nothing-to-do" };
+
+    // A crash between `apply` and recording the op id left an op the run does not point at: adopt it first, so abort
+    // cancels it and cleanup can roll it back (otherwise its PENDING tasks keep the target server blocked forever).
+    let opId = run.opId;
+    try {
+      opId = (await this.adoptOrphan(ctx)) ?? opId;
+    } catch (e) {
+      return { outcome: "failed", code: failureOf(e, "import.abort").code };
+    }
+    if (!opId) return { outcome: "nothing-to-do" };
 
     if (how === "abort") {
-      const snap = await this.port.opSnapshot(userId, run.opId).catch(() => null);
-      if (!snap || snap.rolledBack) return { outcome: "nothing-to-do" };
+      // earlyStateless deployed these apps during IMPORT: they would keep running on Tugra after the abort otherwise
+      let early = { stopped: 0, failed: 0, active: 0 };
       try {
-        await this.port.cancelOp(userId, run.opId); // cancels PENDING tasks, revokes the migration token, drops staged artifacts
+        early = await stopRunApps(this.port, userId, run.id, compOf(ctx).earlyAppIds ?? []);
       } catch (e) {
         return { outcome: "failed", code: failureOf(e, "import.abort").code };
       }
-      return { outcome: "done" };
+      const snap = await this.port.opSnapshot(userId, opId).catch(() => null);
+      let cancelled = false;
+      if (snap && !snap.rolledBack) {
+        try {
+          await this.port.cancelOp(userId, opId); // cancels PENDING tasks, revokes the migration token, drops staged artifacts
+          cancelled = true;
+        } catch (e) {
+          return { outcome: "failed", code: failureOf(e, "import.abort").code };
+        }
+      }
+      if (early.active > 0) return { outcome: "failed", code: "import.early-deploy-active", params: { count: early.active } };
+      if (early.failed > 0) return { outcome: "failed", code: "import.early-stop-failed", params: { count: early.failed } };
+      return { outcome: cancelled || early.stopped > 0 ? "done" : "nothing-to-do" };
     }
 
     // cleanup: the importer's rollback with the run's own deployments (and, typed, the data-bearing resources)
     const req = compOf(ctx)[CLEANUP_REQUEST_KEY] ?? { includeData: false, dataConfirmNames: [] };
     try {
-      await this.port.rollbackOp(userId, run.opId, {
+      await this.port.rollbackOp(userId, opId, {
         runOwnedDeployments: { runId: run.id },
         includeData: req.includeData,
         dataConfirmNames: req.dataConfirmNames,
@@ -309,7 +338,7 @@ export class ImportStep implements StepHandler<ImportObs>, OnModuleInit {
       if (isConflict(e)) return { outcome: "failed", code: "import.cleanup-op-running" };
       return { outcome: "failed", code: failureOf(e, "import.cleanup").code };
     }
-    const after = await this.port.opSnapshot(userId, run.opId).catch(() => null);
+    const after = await this.port.opSnapshot(userId, opId).catch(() => null);
     const kept = after ? itemTasks(after).filter((t) => t.status === "DONE" && !!t.resourceId && (t.resourceType === "application" || t.resourceType === "database")) : [];
     if (kept.length) {
       return { outcome: "manual", manual: kept.slice(0, 50).map((t) => ({ code: "import.cleanup-kept", params: { name: t.name ?? t.itemRef ?? "", kind: t.resourceType ?? "" } })) };

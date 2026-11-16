@@ -8,7 +8,7 @@
  * Lanes B and C can build on it: register their real handlers with `world.registry` (or keep the stubs for the steps they
  * do not own) and drive them through the real engine and service.
  */
-import { ConflictException, ForbiddenException, HttpException } from "@nestjs/common";
+import { ConflictException, ForbiddenException, HttpException, NotFoundException } from "@nestjs/common";
 import type { ImportApplyInput, ImportMappingResolveInput, RemoteSourceKind } from "../../../importer/dto";
 import type { ImportPlanResponse } from "../../../importer/importer.service";
 import type { ResolvedMapping } from "../../../importer/import-mapping";
@@ -466,6 +466,10 @@ export class ScriptedImportPort implements ImportStepsPort {
   /** itemRef -> git link status reported on the task (e.g. `needs_source`) */
   gitStatus = new Map<string, string>();
   failDeployApps = new Set<string>();
+  /** deploys stay QUEUED (the app is not RUNNING yet) until {@link settleDeploys}: `apps.deploy` only enqueues in production */
+  queueDeploys = false;
+  /** deployments that run (not just queue) when queued, and cannot be cancelled: a build in flight */
+  runQueued = false;
   failApplyWith: HttpException | null = null;
   failStartDb = new Set<string>();
   remapPlan_: RemapSummary = { planHash: "e".repeat(64), appsToWrite: 1, needsManualKeys: 0, needsManualApps: 0 };
@@ -654,11 +658,27 @@ export class ScriptedImportPort implements ImportStepsPort {
     this.calls.push(`deploy:${appId}:${key}`);
     if (!this.apps.has(appId)) throw new ForbiddenException("nope");
     const failed = this.failDeployApps.has(appId);
-    const d = { appId, id: `dep-${++this.n}`, key, status: failed ? "FAILED" : "SUCCESS", trigger: "manual", requestedBy: userId };
+    const queued = this.queueDeploys && !failed;
+    const d = { appId, id: `dep-${++this.n}`, key, status: failed ? "FAILED" : queued ? (this.runQueued ? "RUNNING" : "QUEUED") : "SUCCESS", trigger: "manual", requestedBy: userId };
     this.deploys.push(d);
     if (failed) this.failDeployApps.delete(appId);
-    else this.apps.get(appId)!.status = "RUNNING";
+    else if (!queued) this.apps.get(appId)!.status = "RUNNING";
     return d;
+  }
+  async cancelDeployment(_u: string, appId: string, depId: string): Promise<void> {
+    const d = this.deploys.find((x) => x.appId === appId && x.id === depId);
+    if (!d) throw new NotFoundException("deployment not found");
+    if (d.status !== "QUEUED") throw new ConflictException("this deployment can't be cancelled");
+    this.calls.push(`cancelDeploy:${depId}`);
+    d.status = "CANCELLED";
+  }
+  /** The queue drains: every queued/running (not cancelled) deployment finishes and its app comes up. */
+  settleDeploys(): void {
+    for (const d of this.deploys) {
+      if (d.status !== "QUEUED" && d.status !== "RUNNING") continue;
+      d.status = "SUCCESS";
+      this.apps.get(d.appId)!.status = "RUNNING";
+    }
   }
 }
 

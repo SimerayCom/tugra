@@ -23,9 +23,14 @@ import {
   type StepHandlerRegistry,
 } from "../../core/run-contract";
 import { IMPORT_STEPS_PORT, type DeploymentRef, type ImportStepsPort } from "./import-ports";
-import { deployKeyBase, failureOf, includedItems } from "./step-utils";
+import { deployKeyBase, failureOf, includedItems, stopRunApps } from "./step-utils";
 
 const BATCH = 3;
+/**
+ * A database row can be left PROVISIONING by a hub that died inside `provision` (nothing reaps it; a live provision ends
+ * within the agent's 5 minute timeout). Past this patience the step stops polling it.
+ */
+const PROVISION_PATIENCE_MS = 10 * 60_000;
 
 interface DbRow {
   id: string;
@@ -50,6 +55,8 @@ export interface DeployDarkObs extends Observation {
 interface Comp {
   dbIds?: string[];
   appIds?: string[];
+  /** dbId -> ISO instant this step first saw the database PROVISIONING (the stuck-provision clock). */
+  provisioningSince?: Record<string, string>;
 }
 const compOf = (ctx: StepContext): Comp => (ctx.step.compensation ?? {}) as Comp;
 
@@ -145,12 +152,24 @@ export class DeployDarkStep implements StepHandler<DeployDarkObs>, OnModuleInit 
 
     // 1) databases, one at a time
     let started = false;
+    const since = { ...(compOf(ctx).provisioningSince ?? {}) };
     for (const d of obs.dbs) {
       if (!d.exists) return { outcome: "fail", code: "deploy-dark.db-missing", params: { name: d.name }, retryable: false };
       if (d.status === "RUNNING") continue;
       if (d.status === "PROVISIONING") {
-        started = true;
-        continue;
+        const first = since[d.id] ?? ctx.now().toISOString();
+        if (!since[d.id]) {
+          since[d.id] = first;
+          await ctx.recordCompensation({ provisioningSince: since });
+        }
+        if (ctx.now().getTime() - Date.parse(first) <= PROVISION_PATIENCE_MS) {
+          started = true;
+          continue;
+        }
+        // stuck far past any live provision (the hub that began it died): the operator's retry provisions it again
+        if (ctx.trigger !== "retry") return { outcome: "fail", code: "deploy-dark.db-stuck", params: { name: d.name }, retryable: true };
+        delete since[d.id];
+        await ctx.recordCompensation({ provisioningSince: since });
       }
       await ctx.assertLease();
       let state;
@@ -195,18 +214,11 @@ export class DeployDarkStep implements StepHandler<DeployDarkObs>, OnModuleInit 
     if (how !== "abort") return { outcome: "nothing-to-do" };
     const comp = compOf(ctx);
     const userId = ctx.actor.userId;
-    let stopped = 0;
-    let failed = 0;
-    for (const id of comp.appIds ?? []) {
-      const s = await this.port.appState(userId, id);
-      if (!s.exists || s.status !== "RUNNING") continue;
-      try {
-        await this.port.stopApp(userId, id);
-        stopped++;
-      } catch {
-        failed++;
-      }
-    }
+    // `apps.deploy` only enqueues: an app whose deploy is still queued or running turns RUNNING after the abort, so those
+    // deployments are cancelled first (and an uncancellable one fails the compensation until it settles)
+    const apps = await stopRunApps(this.port, userId, ctx.run.id, comp.appIds ?? []);
+    let stopped = apps.stopped;
+    let failed = apps.failed;
     for (const id of comp.dbIds ?? []) {
       const s = await this.port.dbState(userId, id);
       if (!s.exists || (s.status !== "RUNNING" && s.status !== "PROVISIONING")) continue;
@@ -217,6 +229,7 @@ export class DeployDarkStep implements StepHandler<DeployDarkObs>, OnModuleInit 
         failed++;
       }
     }
+    if (apps.active > 0) return { outcome: "failed", code: "deploy-dark.deploy-active", params: { count: apps.active } };
     if (failed > 0) return { outcome: "failed", code: "deploy-dark.stop-failed", params: { count: failed } };
     return { outcome: stopped > 0 ? "done" : "nothing-to-do" };
   }

@@ -284,6 +284,10 @@ export class ImportPortService implements ImportStepsPort {
     return rows.map((r) => ({ id: r.id, key: r.idempotencyKey ?? "", status: r.status, trigger: r.trigger, requestedBy: r.requestedBy }));
   }
 
+  async cancelDeployment(userId: string, appId: string, deploymentId: string): Promise<void> {
+    await this.apps.cancelDeployment(userId, appId, deploymentId);
+  }
+
   async deploy(userId: string, appId: string, key: string): Promise<DeploymentRef | null> {
     const d = await this.apps.deploy(userId, appId, undefined, key);
     return d ? { id: d.id, key: d.idempotencyKey ?? key, status: d.status, trigger: d.trigger, requestedBy: d.requestedBy } : null;

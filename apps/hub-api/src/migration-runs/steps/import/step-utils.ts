@@ -6,7 +6,7 @@ import { isAcked } from "../../../importer/import-executor.logic";
 import type { DryRunItem, GateCheck } from "../../core/dto";
 import { RunLeaseLostError, StepFailure, type RunSnapshot, type StepContext } from "../../core/run-contract";
 import { RunAbortRequestedError } from "../../core/run-engine.service";
-import type { OpSnapshot, OpTask } from "./import-ports";
+import type { DeploymentRef, ImportStepsPort, OpSnapshot, OpTask } from "./import-ports";
 
 /** Task statuses in which the op's fan-out still has work to do. */
 export const ACTIVE_TASK = new Set(["PENDING", "RUNNING", "AWAITING_CUTOVER"]);
@@ -117,3 +117,51 @@ export const isPassive = (ctx: StepContext): boolean => ctx.trigger === "tick" |
 
 /** `migrun:<runId>:<appId>` : the idempotency key prefix of an app's run-owned deployments. */
 export const deployKeyBase = (runId: string, appId: string): string => `migrun:${runId}:${appId}`;
+
+/** A run-owned deployment that has not settled (`apps.deploy` only enqueues: the app turns RUNNING when it finishes). */
+export const isActiveDeploy = (d: DeploymentRef): boolean => d.status === "QUEUED" || d.status === "RUNNING";
+
+export interface StopOutcome {
+  /** apps put in STOPPED state */
+  stopped: number;
+  /** apps whose stop (or whose deployment cancel) threw */
+  failed: number;
+  /** apps that still have a deploy in flight that could not be cancelled: they will turn RUNNING when it ends */
+  active: number;
+}
+
+/**
+ * Keep the run's apps stopped (abort): cancel each app's queued/running run-owned deployment first (a deployment that is
+ * still queued or running would bring the app up AFTER the abort finished), then stop what is running. An app whose
+ * deployment cannot be cancelled (a running build or swarm rollout) is left alone and counted in `active`: the caller fails
+ * the compensation so a repeated abort stops it once the deployment has settled. Idempotent and state-guarded.
+ */
+export async function stopRunApps(port: ImportStepsPort, userId: string, runId: string, appIds: readonly string[]): Promise<StopOutcome> {
+  const out: StopOutcome = { stopped: 0, failed: 0, active: 0 };
+  for (const id of appIds) {
+    const prefix = deployKeyBase(runId, id);
+    let deps = await port.deployments(id, prefix);
+    for (const d of deps.filter(isActiveDeploy)) {
+      try {
+        await port.cancelDeployment(userId, id, d.id);
+      } catch (e) {
+        if (e instanceof RunLeaseLostError || e instanceof RunAbortRequestedError) throw e;
+        /* a running deploy that cannot be cancelled: detected by the re-read below */
+      }
+    }
+    if (deps.some(isActiveDeploy)) deps = await port.deployments(id, prefix);
+    if (deps.some(isActiveDeploy)) {
+      out.active++;
+      continue;
+    }
+    const s = await port.appState(userId, id);
+    if (!s.exists || s.status !== "RUNNING") continue;
+    try {
+      await port.stopApp(userId, id);
+      out.stopped++;
+    } catch {
+      out.failed++;
+    }
+  }
+  return out;
+}

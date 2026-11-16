@@ -115,6 +115,68 @@ describe("IMPORT", () => {
   });
 });
 
+describe("IMPORT abort covers what IMPORT itself left behind", () => {
+  it("earlyStateless: an abort before DEPLOY_DARK starts stops the apps the early wave deployed", async () => {
+    const w = new RunWorld({ stubs: { DNS_PREPARE: { blocked: (x) => !x.done.has("go") } } });
+    const id = await w.run({ options: { ...w.createBody().options, deployWaves: "earlyStateless" } });
+    expect(w.stepStatus(id, "DEPLOY_DARK")).toBe("PENDING");
+    const early = (w.store.step(id, "IMPORT").compensation as { earlyAppIds: string[] }).earlyAppIds;
+    expect(early).toHaveLength(1);
+    expect(w.port.apps.get(early[0])!.status).toBe("RUNNING");
+    await w.service.abort(ACTOR, id, { confirmName: id });
+    await w.settle(id);
+    expect(w.status(id)).toBe("ABORTED");
+    expect(w.port.apps.get(early[0])!.status).toBe("STOPPED");
+    expect(w.port.calls).toContain(`stopApp:${early[0]}`);
+  });
+
+  it("earlyStateless: an early deployment still queued at abort is cancelled and never brings the app up", async () => {
+    const w = new RunWorld({ stubs: { DNS_PREPARE: { blocked: (x) => !x.done.has("go") } } });
+    w.port.queueDeploys = true;
+    const id = await w.create({ options: { ...w.createBody().options, deployWaves: "earlyStateless" } });
+    await w.start(id);
+    const pass = w.engine.drive(id);
+    for (let i = 0; i < 2000 && !w.port.deploys.length; i++) await new Promise((r) => setImmediate(r));
+    expect(w.port.deploys).toHaveLength(1);
+    await w.service.abort(ACTOR, id, { confirmName: id });
+    w.engine.interrupt(id);
+    await pass;
+    await w.settle(id);
+    expect(w.status(id)).toBe("ABORTED");
+    w.port.settleDeploys(); // the queue drains after the abort finished
+    expect(w.port.deploys[0].status).toBe("CANCELLED");
+    expect([...w.port.apps.values()].some((a) => a.status === "RUNNING")).toBe(false);
+  });
+
+  it("a crash between apply and recording the op id, then an abort: the orphan op is adopted, cancelled, and cleanable", async () => {
+    const w = new RunWorld();
+    const dying = w.bootId;
+    const orig = w.port.apply.bind(w.port);
+    w.port.apply = async (u, input) => {
+      const r = await orig(u, input);
+      w.store.killAfterOwnedWrites(1, dying); // the process dies right after the importer accepted the apply
+      return r;
+    };
+    const id = await w.create();
+    await w.start(id);
+    await w.engine.drive(id);
+    expect(w.store.isDead(dying)).toBe(true);
+    expect(w.store.row(id).opId).toBeNull();
+    w.restart();
+    await w.service.abort(ACTOR, id, { confirmName: id });
+    await w.settle(id);
+    expect(w.status(id)).toBe("ABORTED");
+    expect(w.port.calls).toContain("cancel:op-1");
+    expect(w.store.row(id).opId).toBe("op-1");
+    expect(w.store.codes(id)).toContain("import.op-adopted");
+    // the adopted op makes the run cleanable
+    await w.service.cleanup(ACTOR, id, { confirmName: id, includeData: false, dataConfirmNames: [] });
+    await w.settle(id);
+    expect(w.status(id)).toBe("ROLLED_BACK");
+    expect(w.port.calls).toContain("rollback:op-1:run-owned");
+  });
+});
+
 describe("IMPORT abort and cleanup", () => {
   async function abortedWorld() {
     const w = new RunWorld({ stubs: { TLS_PREISSUE: { blocked: (x) => !x.done.has("go") } } });
