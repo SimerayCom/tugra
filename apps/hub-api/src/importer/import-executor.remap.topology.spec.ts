@@ -154,6 +154,33 @@ describe("service endpoints", () => {
     expect(h.apps.setNetworks).toHaveBeenLastCalledWith("u1", "app-1", { networks: ["keep-me"] });
   });
 
+  it("undo removes only the network the apply added: a network the operator added after the apply stays", async () => {
+    const h = harness({ ...base(), apps: [{ id: "app-1", itemRef: `app:src-a:${APP}`, serverId: "tgt-1", networks: ["keep-me"], env: { MEILI_URL: `http://meilisearch-${SVC}:7700` } }] });
+    const plan = await h.svc.remapEnvPlan("u1", "op-1");
+    await h.svc.remapEnvApply("u1", "op-1", plan.planHash);
+    h.appRows.get("app-1")!.networks = ["keep-me", "svc-search", "added-later"]; // edited after the apply
+    const undo = await h.svc.remapEnvUndo("u1", "op-1");
+    expect(undo.undone).toBe(true);
+    expect(h.apps.setNetworks).toHaveBeenLastCalledWith("u1", "app-1", { networks: ["keep-me", "added-later"] });
+  });
+
+  it("undo leaves a network the app already had before the apply, and writes nothing when the join is already gone", async () => {
+    const had = harness({ ...base(), apps: [{ id: "app-1", itemRef: `app:src-a:${APP}`, serverId: "tgt-1", networks: ["svc-search"], env: { MEILI_URL: `http://meilisearch-${SVC}:7700` } }] });
+    const plan = await had.svc.remapEnvPlan("u1", "op-1");
+    await had.svc.remapEnvApply("u1", "op-1", plan.planHash);
+    await had.svc.remapEnvUndo("u1", "op-1");
+    expect(had.apps.setNetworks.mock.calls.filter((c) => c[1] === "app-1")).toHaveLength(1); // the apply's own write only
+    expect(had.appRows.get("app-1")!.networks).toEqual(["svc-search"]);
+
+    const gone = harness({ ...base(), apps: [{ id: "app-1", itemRef: `app:src-a:${APP}`, serverId: "tgt-1", networks: ["keep-me"], env: { MEILI_URL: `http://meilisearch-${SVC}:7700` } }] });
+    const plan2 = await gone.svc.remapEnvPlan("u1", "op-1");
+    await gone.svc.remapEnvApply("u1", "op-1", plan2.planHash);
+    gone.appRows.get("app-1")!.networks = ["keep-me"]; // the operator already removed it
+    const calls = gone.apps.setNetworks.mock.calls.length;
+    expect((await gone.svc.remapEnvUndo("u1", "op-1")).undone).toBe(true);
+    expect(gone.apps.setNetworks.mock.calls.length).toBe(calls);
+  });
+
   it("a network join that fails keeps the env write and is reported as a link failure", async () => {
     const h = harness({ ...base(), apps: [{ id: "app-1", itemRef: `app:src-a:${APP}`, serverId: "tgt-1", env: { MEILI_URL: `http://meilisearch-${SVC}:7700` } }] });
     h.apps.setNetworks.mockRejectedValueOnce(new Error("refused"));

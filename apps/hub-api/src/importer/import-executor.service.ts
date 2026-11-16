@@ -1754,7 +1754,7 @@ export class ImportExecutorService {
 
     // 1) Snapshot each target's CURRENT env first (fresh, writer-gated). An app we cannot read now (deleted or
     //    no longer writable since the plan) is skipped+reported — never written, never half-snapshotted.
-    const undoApps: Array<{ appId: string; name: string; priorEnc: string; keys: string[]; dbNetworkPrior?: boolean; networksPrior?: string[] }> = [];
+    const undoApps: Array<{ appId: string; name: string; priorEnc: string; keys: string[]; dbNetworkPrior?: boolean; networksAdded?: string[] }> = [];
     const targets: Array<{ appId: string; name: string; prior: Record<string, string>; entries: Array<{ key: string; newValue: string }>; joinNetworks: string[]; networksPrior: string[] }> = [];
     const unprepared: Array<{ appId: string; name: string }> = [];
     for (const w of toWrite) {
@@ -1770,10 +1770,11 @@ export class ImportExecutorService {
       // touch it — and recording only the false case means undo only ever calls setDbNetwork(false), the
       // guard-free direction that cannot throw a topology error and strand the record. Committed before any write.
       const linkEntry = linkPrior.get(w.appId) === false ? { dbNetworkPrior: false } : {};
-      // A service-endpoint rewrite also joins the app to the service's private network: remember the networks it had, so undo
-      // puts exactly those back (read fresh, like the env snapshot).
+      // A service-endpoint rewrite also joins the app to the service's private network. Undo removes ONLY the networks this apply
+      // adds (those the app did not have yet), never rewrites the whole list: like the env revert, later edits are kept.
       const networksPrior = w.joinNetworks.length ? ((await this.prisma.application.findUnique({ where: { id: w.appId }, select: { networks: true } }))?.networks ?? []) : [];
-      undoApps.push({ appId: w.appId, name: w.name, priorEnc: this.crypto.encrypt(JSON.stringify(prior)), keys: w.entries.map((e) => e.key), ...linkEntry, ...(w.joinNetworks.length ? { networksPrior } : {}) });
+      const networksAdded = w.joinNetworks.filter((n) => !networksPrior.includes(n));
+      undoApps.push({ appId: w.appId, name: w.name, priorEnc: this.crypto.encrypt(JSON.stringify(prior)), keys: w.entries.map((e) => e.key), ...linkEntry, ...(networksAdded.length ? { networksAdded } : {}) });
       targets.push({ appId: w.appId, name: w.name, prior, entries: w.entries, joinNetworks: w.joinNetworks, networksPrior });
     }
     if (targets.length === 0) {
@@ -1891,8 +1892,14 @@ export class ImportExecutorService {
         await this.apps.setEnv(userId, a.appId, next); // key-scoped revert — post-apply edits to other keys kept
         // Reverse the DB-network link too (only for an app the apply linked) — restore its prior flag.
         if (a.dbNetworkPrior !== undefined) await this.apps.setDbNetwork(userId, a.appId, a.dbNetworkPrior);
-        // ...and the service networks the apply added: put back exactly the networks the app had before
-        if (a.networksPrior !== undefined) await this.apps.setNetworks(userId, a.appId, { networks: a.networksPrior });
+        // ...and the service networks the apply added: take those (and only those) off the app's CURRENT list, so networks the
+        // operator added after the apply stay
+        if (a.networksAdded?.length) {
+          const row = await this.prisma.application.findUnique({ where: { id: a.appId }, select: { networks: true } });
+          if (!row) throw new NotFoundException("application not found");
+          const left = (row.networks ?? []).filter((n) => !a.networksAdded!.includes(n));
+          if (left.length !== (row.networks ?? []).length) await this.apps.setNetworks(userId, a.appId, { networks: left });
+        }
         restored.push({ appId: a.appId, name: a.name });
       } catch (e) {
         if (e instanceof NotFoundException) terminal.push({ appId: a.appId, name: a.name, reason: "app-deleted" });
@@ -2094,7 +2101,7 @@ interface RemapUndoRecord {
   undoneAt?: string;
   partialUndoAt?: string;
   planHash?: string;
-  apps?: Array<{ appId: string; name: string; priorEnc: string; keys?: string[]; dbNetworkPrior?: boolean; networksPrior?: string[] }>;
+  apps?: Array<{ appId: string; name: string; priorEnc: string; keys?: string[]; dbNetworkPrior?: boolean; networksAdded?: string[] }>;
   /** Databases this apply switched to TLS (they were off): undo switches them back. */
   dbSsl?: Array<{ dbId: string; name: string }>;
 }
