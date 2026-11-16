@@ -38,6 +38,28 @@ export interface DbRemapTarget {
   oldDatabase?: string; // from coolify-map (non-secret)
   oldPort?: number;
   oldPassword?: string; // only if known (e.g. derived from this app's own URL); never required
+  /** The Tugra server the database runs on (multi-host). With {@link RemapContext.appServerId} it decides whether the
+   *  container name `newHost` is reachable at all: `tugra_db_<id>` resolves on its own server only. Absent = unknown. */
+  serverId?: string;
+  /** PostgreSQL: the Tugra database already serves TLS. A rewritten URL that says sslmode=require needs it (see {@link RemapResult.tlsNeeded}). */
+  ssl?: boolean;
+}
+
+/**
+ * One imported source service (a stopped compose app on Tugra) an app's env may point at. Everything beyond the identity is
+ * optional: a caller that supplies only `{itemRef, name, oldHost}` keeps the report-only behaviour.
+ */
+export interface ServiceRemapTarget {
+  itemRef: string;
+  name: string;
+  /** The source service uuid; a member container is named `<member>-<oldHost>`. */
+  oldHost: string;
+  /** The Tugra server the service app runs on. */
+  serverId?: string;
+  /** The private network the import attached a single-member service to, and the DNS alias it answers to there. */
+  privateAlias?: { network: string; alias: string };
+  /** The service's public hostnames on Tugra. A reference to one follows the DNS flip (no rewrite) unless it carries a `rename`. */
+  publicHosts?: Array<{ host: string; rename?: string }>;
 }
 
 export interface AppRemapTarget {
@@ -66,21 +88,31 @@ export interface RemapContext {
    *  (URL host, bare host or host:port equal to the service uuid, or ending `-<uuid>` as a member container's name)
    *  is reported {@link RM_SERVICE_LINK_REVIEW} instead of staying silently `unchanged`. NEVER auto-edited: a service
    *  is not imported as an app, so there is no new host to rewrite to. Callers that omit it are byte-identical. */
-  services?: { itemRef: string; name: string; oldHost: string }[];
+  services?: ServiceRemapTarget[];
+  /** OPTIONAL (multi-host): the Tugra server THIS app runs on. A database or service on another server cannot be reached by its
+   *  container name / private alias, so such a reference is reported {@link RM_CROSS_SERVER} instead of rewritten. */
+  appServerId?: string;
+  /** OPTIONAL: this app can join a private service network (a classic docker-run app on a plain network). When false (or absent),
+   *  a reference to a private-alias service is reported {@link RM_SERVICE_NET} instead of rewritten. */
+  appCanJoinNetwork?: boolean;
 }
 
-export type RemapRule = "url" | "host" | "host-port" | "user" | "database" | "password" | "port";
+export type RemapRule = "url" | "host" | "host-port" | "user" | "database" | "password" | "port" | "service-host" | "service-public-host";
 
 export interface RemapChange {
   key: string;
   rule: RemapRule;
-  target: { itemRef: string; kind: "database" | "app"; name: string };
+  target: { itemRef: string; kind: "database" | "app" | "service"; name: string };
   oldMasked: string;
   newMasked: string;
   /** The RAW new value the apply writer sets. The MASKED pair above is for display; this is secret and MUST
    *  NOT be surfaced in a preview response — the hub projects only the masked fields (see remapEnvPlan). */
   newValue: string;
   confidence: "exact" | "derived";
+  /** A `service-host` rewrite: the private network the app must join for the alias to resolve. */
+  joinNetwork?: string;
+  /** A database URL that says sslmode=require (or prefer-style TLS): the target must serve TLS. */
+  tls?: "require";
 }
 
 export interface RemapNeedsManual {
@@ -93,6 +125,10 @@ export interface RemapResult {
   changes: RemapChange[];
   unchanged: string[];
   needsManual: RemapNeedsManual[];
+  /** Key to imported service this app depends on, however the reference was handled. Omitted when the app references no service. */
+  serviceLinks?: Array<{ key: string; target: string; via: "internal" | "public" }>;
+  /** PostgreSQL databases (itemRefs, sorted) a rewritten URL needs TLS on and that do not serve it yet. Omitted when none. */
+  tlsNeeded?: string[];
 }
 
 // needsManual reasons (stable):
@@ -104,6 +140,9 @@ export const RM_CONTAINS_TOKEN = "contains-old-token"; // a known uuid appears a
 export const RM_SERVICE_LINK_REVIEW = "service-link-review"; // points at an old source service (e.g. MinIO) that is not imported as an app
 export const RM_UNSUPPORTED_ENGINE = "unsupported-engine"; // the matched DB's engine has no connection form we rewrite
 export const RM_QUERY_CREDS = "credentials-in-query"; // a connection URL carries credentials in the query (rotate would half-rewrite)
+export const RM_CROSS_SERVER = "cross-server-target"; // the database/service runs on another Tugra server than this app: its container name / alias does not resolve here
+export const RM_TLS_VERIFY = "tls-verify-unsupported"; // sslmode=verify-ca/verify-full: the copy serves a self-signed certificate the client cannot verify
+export const RM_SERVICE_NET = "service-network-unsupported"; // a private-alias service this app cannot join (compose, swarm, raw --network)
 
 /** A Coolify resource uuid: ~16-40 chars of [a-z0-9]. Required before matching a bare token as a host. */
 const UUID_RE = /^[a-z0-9]{16,40}$/i;
@@ -229,6 +268,20 @@ export function credsFromUrlForHost(value: string, host: string): { user?: strin
   return { user, password, database };
 }
 
+const TLS_VERIFY_MODES = new Set(["verify-ca", "verify-full"]);
+
+/** The libpq `sslmode` a connection URL's query carries (lower-cased), or undefined. */
+export function sslmodeOf(rest: string): string | undefined {
+  const q = rest.indexOf("?") >= 0 ? rest.slice(rest.indexOf("?") + 1).split("#")[0] : "";
+  for (const pair of q.split(/[&;]/)) {
+    const eq = pair.indexOf("=");
+    if (eq > 0 && pair.slice(0, eq).toLowerCase() === "sslmode") return safeDecode(pair.slice(eq + 1)).trim().toLowerCase();
+  }
+  return undefined;
+}
+
+const crossServer = (a?: string, b?: string): boolean => !!a && !!b && a !== b;
+
 /** The pure remapper. See the module comment for the safety contract. */
 export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapResult {
   const changes: RemapChange[] = [];
@@ -241,12 +294,53 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
   const companionKeys: string[] = [];
   const dbRef = (d: DbRemapTarget) => ({ itemRef: d.itemRef, kind: "database" as const, name: d.name });
 
-  // Service lookup: a member container is named `<name>-<serviceUuid>`, so a host equal to the uuid or ending
-  // `-<uuid>` is the service. The uuid itself must be uuid-shaped (the existing gate) before it is ever matched.
+  // Service lookup: a member container is named `<member>-<serviceUuid>`, so a host equal to the uuid or ending
+  // `-<uuid>` is the service (and the prefix names the member). The uuid itself must be uuid-shaped (the existing gate) before
+  // it is ever matched.
   const services = (ctx.services ?? []).filter((sv) => shapeTest(hostShape, sv.oldHost));
-  const serviceFor = (host: string): string | undefined => {
-    for (const sv of services) if (host === sv.oldHost || host.endsWith(`-${sv.oldHost}`)) return sv.itemRef;
+  const serviceHit = (host: string): { sv: ServiceRemapTarget; member: string | undefined } | undefined => {
+    for (const sv of services) {
+      if (host === sv.oldHost) return { sv, member: undefined };
+      if (host.endsWith(`-${sv.oldHost}`)) return { sv, member: host.slice(0, host.length - sv.oldHost.length - 1) };
+    }
     return undefined;
+  };
+  const serviceFor = (host: string): string | undefined => serviceHit(host)?.sv.itemRef;
+  const publicHit = (host: string): { sv: ServiceRemapTarget; rename?: string } | undefined => {
+    const h = host.toLowerCase();
+    for (const sv of ctx.services ?? []) for (const p of sv.publicHosts ?? []) if (p.host.toLowerCase() === h) return { sv, rename: p.rename };
+    return undefined;
+  };
+  const serviceLinks: NonNullable<RemapResult["serviceLinks"]> = [];
+  const tlsNeeded = new Set<string>();
+
+  /**
+   * A reference to an old source service by its internal host. It is rewritten ONLY to the private alias the import gave the
+   * service, and only when this app is on the same server, can join the service's network and the member the host names is the
+   * aliased one. Anything else is reported with the reason, never guessed.
+   */
+  const internalService = (key: string, hit: NonNullable<ReturnType<typeof serviceHit>>, rebuild: (host: string) => string, mask: (v: string) => string, oldValue: string): void => {
+    const { sv, member } = hit;
+    serviceLinks.push({ key, target: sv.itemRef, via: "internal" });
+    const alias = sv.privateAlias;
+    if (crossServer(ctx.appServerId, sv.serverId)) needsManual.push({ key, reason: RM_CROSS_SERVER, target: sv.itemRef });
+    else if (!alias || member !== alias.alias) needsManual.push({ key, reason: RM_SERVICE_LINK_REVIEW, target: sv.itemRef });
+    else if (ctx.appCanJoinNetwork !== true) needsManual.push({ key, reason: RM_SERVICE_NET, target: sv.itemRef });
+    else {
+      const next = rebuild(alias.alias);
+      changes.push({ key, rule: "service-host", target: { itemRef: sv.itemRef, kind: "service", name: sv.name }, oldMasked: mask(oldValue), newMasked: mask(next), newValue: next, confidence: "exact", joinNetwork: alias.network });
+    }
+  };
+
+  /** A reference to one of an imported service's PUBLIC hostnames: renamed when the operator renamed it, else it follows the DNS flip. */
+  const publicService = (key: string, hit: NonNullable<ReturnType<typeof publicHit>>, rebuild: (host: string) => string, mask: (v: string) => string, oldValue: string): void => {
+    serviceLinks.push({ key, target: hit.sv.itemRef, via: "public" });
+    if (!hit.rename) {
+      unchanged.push(key);
+      return;
+    }
+    const next = rebuild(hit.rename);
+    changes.push({ key, rule: "service-public-host", target: { itemRef: hit.sv.itemRef, kind: "service", name: hit.sv.name }, oldMasked: mask(oldValue), newMasked: mask(next), newValue: next, confidence: "exact" });
   };
 
   const embeddedTarget = (value: string): string | undefined => {
@@ -266,13 +360,21 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
     if (auth) {
       const db = dbByHost.get(auth.host);
       if (db) {
+        const sslmode = db.engine === "POSTGRES" ? sslmodeOf(auth.rest) : undefined;
         if (!KNOWN_ENGINE(db.engine)) {
           needsManual.push({ key, reason: RM_UNSUPPORTED_ENGINE, target: db.itemRef });
+        } else if (crossServer(ctx.appServerId, db.serverId)) {
+          // `tugra_db_<id>` only resolves on the database's own server: a rewrite would point the app at a name it can never reach
+          needsManual.push({ key, reason: RM_CROSS_SERVER, target: db.itemRef });
+        } else if (sslmode && TLS_VERIFY_MODES.has(sslmode)) {
+          // the copy serves a self-signed certificate: a client that verifies the chain would refuse it
+          needsManual.push({ key, reason: RM_TLS_VERIFY, target: db.itemRef });
         } else if (db.mode === "rotate" && hasQueryCred(auth.rest)) {
           // rotating the userinfo but leaving an old password/user in the query is a half-rewrite → report.
           needsManual.push({ key, reason: RM_QUERY_CREDS, target: db.itemRef });
         } else {
           const rebuilt = rebuildDbUrl(auth, db);
+          const needsTls = sslmode === "require";
           changes.push({
             key,
             rule: "url",
@@ -281,7 +383,9 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
             newMasked: maskConnString(rebuilt),
             newValue: rebuilt,
             confidence: "exact",
+            ...(needsTls ? { tls: "require" as const } : {}),
           });
+          if (needsTls && db.ssl !== true) tlsNeeded.add(db.itemRef);
           referencedDbs.add(db);
         }
         continue;
@@ -291,9 +395,14 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
         needsManual.push({ key, reason: RM_APP_LINK_REVIEW, target: app.itemRef });
         continue;
       }
-      const svcRef = serviceFor(auth.host);
-      if (svcRef) {
-        needsManual.push({ key, reason: RM_SERVICE_LINK_REVIEW, target: svcRef });
+      const hit = serviceHit(auth.host);
+      if (hit) {
+        internalService(key, hit, (h) => `${auth.scheme}://${auth.hasUserinfo ? `${auth.userinfo}@` : ""}${h}${auth.port ? `:${auth.port}` : ""}${auth.rest}`, maskConnString, value);
+        continue;
+      }
+      const pub = publicHit(auth.host);
+      if (pub) {
+        publicService(key, pub, (h) => `${auth.scheme}://${auth.hasUserinfo ? `${auth.userinfo}@` : ""}${h}${auth.port ? `:${auth.port}` : ""}${auth.rest}`, maskConnString, value);
         continue;
       }
       // a URL to something we don't manage: fall through to the embedded-token scan (host may be <uuid>.suffix).
@@ -304,6 +413,10 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
       // value as a host when the KEY looks host-like; otherwise fall through to the RM_CONTAINS_TOKEN report.
       if (hostOnly && shapeTest(hostShape, value) && (!ctx.bareHostKeyGate || HOST_LIKE_KEY.test(key))) {
         const isDb = "engine" in hostOnly;
+        if (isDb && crossServer(ctx.appServerId, (hostOnly as DbRemapTarget).serverId)) {
+          needsManual.push({ key, reason: RM_CROSS_SERVER, target: hostOnly.itemRef });
+          continue;
+        }
         changes.push({
           key,
           rule: "host",
@@ -319,13 +432,24 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
       const hp = /^([^:]+):(\d+)$/.exec(value); // <host>:<port>; the host must pass the shape gate AND equal a known oldHost
       if (hp && shapeTest(hostShape, hp[1]) && dbByHost.has(hp[1])) {
         const db = dbByHost.get(hp[1])!;
+        if (crossServer(ctx.appServerId, db.serverId)) {
+          needsManual.push({ key, reason: RM_CROSS_SERVER, target: db.itemRef });
+          continue;
+        }
         changes.push({ key, rule: "host-port", target: dbRef(db), oldMasked: value, newMasked: `${db.newHost}:${db.newPort}`, newValue: `${db.newHost}:${db.newPort}`, confidence: "exact" });
         referencedDbs.add(db);
         continue;
       }
-      const svcRef = services.length ? serviceFor(hp ? hp[1] : value) : undefined; // bare host or host:port of an old service
-      if (svcRef) {
-        needsManual.push({ key, reason: RM_SERVICE_LINK_REVIEW, target: svcRef });
+      const bareHit = services.length ? serviceHit(hp ? hp[1] : value) : undefined; // bare host or host:port of an old service
+      if (bareHit) {
+        const port = hp ? `:${hp[2]}` : "";
+        internalService(key, bareHit, (h) => `${h}${port}`, (v) => v, value);
+        continue;
+      }
+      const barePub = publicHit(hp ? hp[1] : value);
+      if (barePub) {
+        const port = hp ? `:${hp[2]}` : "";
+        publicService(key, barePub, (h) => `${h}${port}`, (v) => v, value);
         continue;
       }
     }
@@ -343,6 +467,17 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
   const refDbs = [...referencedDbs];
   for (const key of companionKeys) {
     const value = env[key];
+    // PGSSLMODE is libpq's own switch: it governs every PostgreSQL URL of this app that has no sslmode of its own.
+    if (key.toUpperCase() === "PGSSLMODE" && refDbs.some((d) => d.engine === "POSTGRES")) {
+      const mode = value.trim().toLowerCase();
+      const pgs = refDbs.filter((d) => d.engine === "POSTGRES");
+      if (TLS_VERIFY_MODES.has(mode)) needsManual.push({ key, reason: RM_TLS_VERIFY, target: pgs[0].itemRef });
+      else {
+        if (mode === "require") for (const d of pgs) if (d.ssl !== true) tlsNeeded.add(d.itemRef);
+        unchanged.push(key);
+      }
+      continue;
+    }
     const kind = credKind(key);
     if (!kind || refDbs.length === 0) {
       unchanged.push(key);
@@ -402,5 +537,11 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
     }
   }
 
-  return { changes, unchanged, needsManual };
+  return {
+    changes,
+    unchanged,
+    needsManual,
+    ...(serviceLinks.length ? { serviceLinks } : {}),
+    ...(tlsNeeded.size ? { tlsNeeded: [...tlsNeeded].sort() } : {}),
+  };
 }
