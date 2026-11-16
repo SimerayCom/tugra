@@ -1,5 +1,5 @@
 import { ConflictException, Logger } from "@nestjs/common";
-import { ACTOR, RunWorld } from "../../core/testing/run-world";
+import { ACTOR, CrashError, RunWorld } from "../../core/testing/run-world";
 
 // the specs drive a whole run through the engine on a fake clock; give a loaded CI machine room
 jest.setTimeout(30_000);
@@ -91,6 +91,36 @@ describe("REMAP_ENV", () => {
     await w.settle(id, "retry");
     expect(w.status(id)).toBe("COMPLETED");
     expect(w.port.calls.filter((c) => c.startsWith("remapUndo") || c.startsWith("remapApply"))).toEqual(["remapApply:op-1", "remapUndo:op-1", "remapApply:op-1"]);
+  });
+
+  it("a hub crash in the middle of the apply is not accepted as a finished remap: the next boot undoes it and applies again", async () => {
+    const w = new RunWorld();
+    const dying = w.bootId;
+    const orig = w.port.remapApply.bind(w.port);
+    let crashed = false;
+    w.port.remapApply = async (u, opId, token) => {
+      if (crashed) return orig(u, opId, token);
+      crashed = true;
+      // the undo record is committed and some apps rewritten, then the process dies before the loop finishes
+      w.port.calls.push(`remapApply:${opId}`);
+      w.port.remapPendingBy.set(opId, true);
+      w.store.killAfterOwnedWrites(1, dying);
+      throw new CrashError();
+    };
+    const id = await w.create();
+    await w.start(id);
+    await w.engine.drive(id);
+    expect(w.store.isDead(dying)).toBe(true);
+    expect(w.store.step(id, "REMAP_ENV").compensation).toMatchObject({ remapStarted: true });
+    expect(w.store.step(id, "REMAP_ENV").compensation).not.toMatchObject({ remapDone: true });
+    w.restart();
+    for (let i = 0; i < 60 && w.status(id) !== "COMPLETED"; i++) {
+      await w.tick();
+      w.clock.advance(20_000);
+    }
+    expect(w.status(id)).toBe("COMPLETED");
+    expect(w.port.calls.filter((c) => c.startsWith("remapUndo") || c.startsWith("remapApply"))).toEqual(["remapApply:op-1", "remapUndo:op-1", "remapApply:op-1"]);
+    expect(w.store.step(id, "REMAP_ENV").compensation).toMatchObject({ remapDone: true });
   });
 
   it("abort undoes an applied remap (and only an applied one)", async () => {

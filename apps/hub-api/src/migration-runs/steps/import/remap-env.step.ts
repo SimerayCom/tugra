@@ -35,10 +35,20 @@ export interface RemapObs extends Observation {
 
 interface Comp {
   remapStarted?: boolean;
+  /** Recorded only after the apply came back fully applied: a started apply without it was cut short (crash or throw). */
+  remapDone?: boolean;
   remapPartial?: boolean;
   remapPlanHash?: string;
 }
 const compOf = (ctx: StepContext): Comp => (ctx.step.compensation ?? {}) as Comp;
+/**
+ * An applied-and-not-undone remap is PARTIAL when its apply reported failures, or when this run started it and never
+ * recorded it finished (the hub died, or the call threw, mid-loop: some apps are rewritten and some still point at the old DB host).
+ */
+const isPartial = (ctx: StepContext): boolean => {
+  const c = compOf(ctx);
+  return c.remapPartial === true || (c.remapStarted === true && c.remapDone !== true);
+};
 
 @Injectable()
 export class RemapEnvStep implements StepHandler<RemapObs>, OnModuleInit {
@@ -87,7 +97,7 @@ export class RemapEnvStep implements StepHandler<RemapObs>, OnModuleInit {
     const ev = { evidence: "hub-verified" as const };
     if (obs.nothing) return [{ id: "remap-env.nothing", status: "pass", code: "remap-env.nothing-to-do", ...ev }];
     if (obs.pending) {
-      const partial = compOf(ctx).remapPartial === true;
+      const partial = isPartial(ctx);
       return [{ id: "remap-env.applied", status: partial ? "fail" : "pass", code: partial ? "remap-env.partial" : "remap-env.applied", ...ev }];
     }
     const plan = obs.plan!;
@@ -133,17 +143,16 @@ export class RemapEnvStep implements StepHandler<RemapObs>, OnModuleInit {
     const userId = ctx.actor.userId;
     const opId = ctx.run.opId;
     if (!opId || obs.nothing) return { outcome: "done" };
-    const comp = compOf(ctx);
     if (obs.pending) {
-      if (comp.remapPartial !== true) return { outcome: "done" };
-      // a previous apply wrote only some apps: put everything back, then apply again from a clean state
+      if (!isPartial(ctx)) return { outcome: "done" };
+      // a previous apply wrote only some apps (or was cut short): put everything back, then apply again from a clean state
       if (!(await this.port.remapUndo(userId, opId))) return { outcome: "fail", code: "remap-env.undo-pending", retryable: true };
-      await ctx.recordCompensation({ remapPartial: false });
+      await ctx.recordCompensation({ remapPartial: false, remapDone: false });
       return { outcome: "continue", pollAfterMs: 1000 };
     }
     const plan = obs.plan!;
     if (plan.appsToWrite === 0) return { outcome: "done" };
-    await ctx.recordCompensation({ remapStarted: true, remapPlanHash: plan.planHash }); // BEFORE the first write
+    await ctx.recordCompensation({ remapStarted: true, remapDone: false, remapPlanHash: plan.planHash }); // BEFORE the first write
     let res;
     try {
       res = await this.port.remapApply(userId, opId, plan.planHash);
@@ -155,6 +164,7 @@ export class RemapEnvStep implements StepHandler<RemapObs>, OnModuleInit {
       await ctx.recordCompensation({ remapPartial: true });
       return { outcome: "fail", code: "remap-env.partial", params: { failed: res.failed }, retryable: true };
     }
+    await ctx.recordCompensation({ remapDone: true });
     if (res.linkFailed > 0) await ctx.emit({ level: "warn", code: "remap-env.link-failed", params: { count: res.linkFailed } });
     return { outcome: "done" };
   }
