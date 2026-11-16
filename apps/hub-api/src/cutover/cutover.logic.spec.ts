@@ -94,11 +94,14 @@ describe("hostnames and entry derivation", () => {
     // a stateless (empty) volume carries no data: the service is not stateful because of it
     expect(isStateful("service:_:7", [svc([{ key: "cache", policy: "empty" }])])).toBe(false);
   });
-  it("an object store (MinIO) service is never stateful for a missing volume copy: its buckets move through Object migration", () => {
+  it("an object store (MinIO) service with data volumes stays stateful: no data task records its bucket migration, so acceptDataRisk applies and a failed flip is never auto-reverted", () => {
     const store = { itemRef: "service:_:8", kind: "service", status: "DONE", dependsOn: [] as string[], result: { kind: "service", members: ["minio"], volumes: [{ key: "minio-data", policy: "copy" }] } };
-    expect(isStateful("service:_:8", [store])).toBe(false);
-    // while the same volume on a non-object-store service still waits for its copy
+    expect(isStateful("service:_:8", [store])).toBe(true);
+    // no data task clears it, and the same volume on a non-object-store service waits for its copy as well
+    expect(isStateful("service:_:8", [store, { itemRef: "data:volume:_:8:minio-data", kind: "data", status: "DONE", dependsOn: [] as string[] }])).toBe(true);
     expect(isStateful("service:_:8", [{ ...store, result: { ...store.result, members: ["search"] } }])).toBe(true);
+    // an object store whose volumes are not carried (skip / empty) has no data waiting
+    expect(isStateful("service:_:8", [{ ...store, result: { ...store.result, volumes: [{ key: "minio-data", policy: "skip" }] } }])).toBe(false);
   });
   it("counts the streamed (v2) data tasks: data:volume:<s>:<r>:<name> for app volumes, :data for a volume-mode Postgres", () => {
     const vx = { itemRef: "app:_:4", kind: "app", status: "DONE", dependsOn: ["database:_:9", "volume:_:v1"] };

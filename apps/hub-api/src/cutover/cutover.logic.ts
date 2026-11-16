@@ -128,13 +128,14 @@ export function isStateful(appItemRef: string | null, tasks: OpTaskLite[]): bool
   const app = tasks.find((t) => t.itemRef === appItemRef && (t.kind === "app" || t.kind === "service"));
   if (!app) return false;
   if (app.kind === "service") {
-    // An object store (MinIO) never has a streamed volume copy: its buckets move through Object migration (the DATA_SEED plan check and
-    // the cutover holds account for them), so it is not "waiting for a copy" here.
-    if (isObjectStoreResult(app.result)) return false;
     // A compose service: its data volumes arrive as streamed copies `data:volume:<s>:<r>:<key>` (the service ref is `service:<s>:<r>`).
     // Matched BY KEY: every copy volume needs its OWN finished streamed copy (a count would let one volume's copy stand in for another's).
     const keys = serviceDataKeys(app.result);
     if (keys.length === 0) return false;
+    // An object store (MinIO) has no streamed volume copy: its buckets move through Object migration, which no data task here records. It
+    // therefore stays stateful (the flip needs acceptDataRisk and is never auto-reverted: once the target store took writes, a revert
+    // would lose them) however far the bucket migration got; the cutover holds are what keep its host on the source until the buckets are verified.
+    if (isObjectStoreResult(app.result)) return true;
     const prefix = `data:${String(appItemRef ?? "").replace(/^service:/, "volume:")}:`;
     const done = new Set(tasks.filter((t) => t.kind === "data" && t.status === "DONE" && (t.itemRef ?? "").startsWith(prefix)).map((t) => (t.itemRef ?? "").slice(prefix.length)));
     return keys.some((k) => !done.has(k));
