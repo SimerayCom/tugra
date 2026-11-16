@@ -42,6 +42,7 @@ import {
   type HoldApp,
   type ObjectsVerification,
 } from "./cutover-holds";
+import { PRE_EXISTING_REASON, excuseSwapVerify } from "./baseline-hosts";
 import { inspectSourceProxy, reverseSwapOnHost, stopSourceProxy, swapHostState, targetPublishesWeb, verifySwapHosts, type SwapVerify } from "./swap-runtime";
 import type { SwapHostState } from "./proxy-swap";
 import {
@@ -219,7 +220,8 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     if (run.topology === "swap-proxy") {
       obs.swap = await this.world.getSwap(run.id, run.targetServerId);
       if (obs.swap?.state === "LIVE" && facts) {
-        obs.swapVerify = await verifySwapHosts(this, facts, actionableEntries(view.entries).map((e) => e.hostname), run.options.healthPath ?? "/");
+        // R52: a host whose app was already unhealthy at the source is reported as pre-existing, not as a new failure
+        obs.swapVerify = excuseSwapVerify(await verifySwapHosts(this, facts, actionableEntries(view.entries).map((e) => e.hostname), run.options.healthPath ?? "/"), run.sourceBaseline, view.entries, apps);
         obs.swapHost = await swapHostState(this.world, run.targetServerId, obs.swap.coolifyProxy.containerId);
       }
     }
@@ -790,7 +792,7 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     // Verify from the hub. A failure never auto-reverses (a stateful host may have taken writes): the run view offers the explicit reverse.
     const facts = obs.facts ?? (await this.world.serverFacts(serverId));
     if (!facts) throw new StepFailure("cutover.swap-server-missing", {}, false);
-    const verify = await verifySwapHosts(this, facts, hosts.map((e) => e.hostname), run.options.healthPath ?? "/");
+    const verify = excuseSwapVerify(await verifySwapHosts(this, facts, hosts.map((e) => e.hostname), run.options.healthPath ?? "/"), run.sourceBaseline, obs.entries, obs.apps) ?? {};
     const bad = Object.entries(verify).filter(([, v]) => !v.ok).map(([h]) => h);
     if (bad.length === 0) {
       // The window of downtime ends here (first moment every host answers through Tugra's proxy).
@@ -850,6 +852,10 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     if (obs.swap?.state === "LIVE" && obs.swapHost) checks.push(chk("cutover.swap-source-quiet", obs.swapHost.sourceRunning === true ? "fail" : "pass", "cutover.swap-source-restarted", { evidence: "hub-verified" }));
     for (const e of hosts) {
       const v = obs.swapVerify?.[e.hostname];
+      if (v?.ok && v.reason === PRE_EXISTING_REASON) {
+        checks.push(chk("cutover.host", "warn", "cutover.host-pre-existing", { subject: e.hostname, evidence: "source-api-reported" }));
+        continue;
+      }
       checks.push(v?.ok ? chk("cutover.host", "pass", "cutover.host-verified", { subject: e.hostname, evidence: "hub-verified" }) : chk("cutover.host", v ? "fail" : "unknown", "cutover.host-not-verified", { subject: e.hostname, params: { reason: v?.reason ?? "unknown" } }));
     }
     return makeGate(checks);

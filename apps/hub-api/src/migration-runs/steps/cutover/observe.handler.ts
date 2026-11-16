@@ -18,6 +18,7 @@ import {
 } from "../../core/run-contract";
 import { PostPonrRelease, type WorkerVerify } from "../import/baseline/post-ponr";
 import { degradedItemRefs } from "../import/baseline/source-health";
+import { excuseSwapVerify, excusedBoxHosts, excusedSwapHosts } from "./baseline-hosts";
 import { CutoverStepBase } from "./cutover-step-base";
 import { CutoverWorld, type SwapRow } from "./cutover-world.service";
 import { verifySwapHosts, type SwapVerify } from "./swap-runtime";
@@ -40,11 +41,13 @@ export interface ObserveObs extends Observation {
   swapVerify: SwapVerify | null;
   /** The held workers' state once the window is open (null before, or when the run holds none). */
   workers: WorkerVerify | null;
+  /** Hosts that do not answer healthily but whose app was already unhealthy at the source (R52): reported, never failed. */
+  excused: string[];
 }
 
 /** A VERIFIED host that still answers through the target with a valid certificate and a router (`needsDeploy` is the cutover probe's "router gone / unreachable" flag). */
-export function hostHealthy(e: Entry): boolean {
-  return e.state === "VERIFIED" && !e.needsDeploy && (e.certState === "ready" || e.challenge === "http01") && (e.dnsObserved === "target" || e.dnsObserved === "proxied" || e.dnsMode === "manual");
+export function hostHealthy(e: Entry, excused?: ReadonlySet<string>): boolean {
+  return e.state === "VERIFIED" && (!e.needsDeploy || excused?.has(e.hostname) === true) && (e.certState === "ready" || e.challenge === "http01") && (e.dnsObserved === "target" || e.dnsObserved === "proxied" || e.dnsMode === "manual");
 }
 
 /**
@@ -94,7 +97,7 @@ export class ObserveHandler extends CutoverStepBase implements StepHandler<Obser
     const run = ctx.run;
     const opId = run.opId;
     const startedAt = compDate(ctx.step.compensation, "observeStartedAt");
-    const base: ObserveObs = { opId, topology: run.topology, entries: [], startedAt, crashes: 0, baselineExcluded: 0, swap: null, swapVerify: null, workers: null };
+    const base: ObserveObs = { opId, topology: run.topology, entries: [], startedAt, crashes: 0, baselineExcluded: 0, swap: null, swapVerify: null, workers: null, excused: [] };
     if (!opId) return base;
     const view = await this.cutover.view(ctx.actor.userId, opId);
     const obs: ObserveObs = { ...base, entries: view.entries };
@@ -107,8 +110,9 @@ export class ObserveHandler extends CutoverStepBase implements StepHandler<Obser
     if (run.topology === "swap-proxy") {
       obs.swap = await this.world.getSwap(run.id, run.targetServerId);
       const facts = await this.world.serverFacts(run.targetServerId);
-      if (startedAt && facts && obs.swap?.state === "LIVE") obs.swapVerify = await verifySwapHosts(this, facts, actionableEntries(view.entries).map((e) => e.hostname), run.options.healthPath ?? "/");
+      if (startedAt && facts && obs.swap?.state === "LIVE") obs.swapVerify = excuseSwapVerify(await verifySwapHosts(this, facts, actionableEntries(view.entries).map((e) => e.hostname), run.options.healthPath ?? "/"), run.sourceBaseline, view.entries, await this.world.opApps(opId));
     }
+    obs.excused = run.topology === "two-box" ? [...excusedBoxHosts(view.entries, run.sourceBaseline, run.sourceBaseline ? await this.world.opApps(opId) : [])] : excusedSwapHosts(obs.swapVerify);
     return obs;
   }
 
@@ -158,11 +162,12 @@ export class ObserveHandler extends CutoverStepBase implements StepHandler<Obser
       if (verified.length) entries = (await this.cutover.check(userId, opId, { hostnames: verified, ...(run.options.healthPath ? { healthPath: run.options.healthPath } : {}) })).entries;
     } else {
       const facts = await this.world.serverFacts(run.targetServerId);
-      if (facts) swapVerify = await verifySwapHosts(this, facts, actionableEntries(entries).map((e) => e.hostname), run.options.healthPath ?? "/");
+      if (facts) swapVerify = excuseSwapVerify(await verifySwapHosts(this, facts, actionableEntries(entries).map((e) => e.hostname), run.options.healthPath ?? "/"), run.sourceBaseline, entries, await this.world.opApps(opId));
     }
     const crashes = await this.world.crashEventsSince(run.targetServerId, (await this.watched(run, opId)).names, startedAt);
     if (crashes > 0) throw new StepFailure("observe.crash-detected", { events: crashes }, true);
-    const bad = run.topology === "two-box" ? entries.filter((e) => e.state !== "BLOCKED" && e.state !== "EXCLUDED" && e.state !== "ROLLED_BACK" && !hostHealthy(e)).map((e) => e.hostname) : Object.entries(swapVerify ?? {}).filter(([, v]) => !v.ok).map(([h]) => h);
+    const excused = run.topology === "two-box" ? excusedBoxHosts(entries, run.sourceBaseline, run.sourceBaseline ? await this.world.opApps(opId) : []) : new Set<string>();
+    const bad = run.topology === "two-box" ? entries.filter((e) => e.state !== "BLOCKED" && e.state !== "EXCLUDED" && e.state !== "ROLLED_BACK" && !hostHealthy(e, excused)).map((e) => e.hostname) : Object.entries(swapVerify ?? {}).filter(([, v]) => !v.ok).map(([h]) => h);
     if (bad.length > 0) throw new StepFailure("observe.host-unhealthy", { hosts: capHosts(bad) }, true);
 
     if (now >= windowEnd) {
@@ -182,13 +187,14 @@ export class ObserveHandler extends CutoverStepBase implements StepHandler<Obser
     const checks: GateCheck[] = [chk("observe.window", ctx.now().getTime() >= end ? "pass" : "fail", "observe.window-open", { params: { windowEndsAt: iso(new Date(end)) } })];
     checks.push(chk("observe.crashes", obs.crashes === 0 ? "pass" : "fail", "observe.crash-detected", { params: { events: obs.crashes }, evidence: "hub-verified" }));
     if (obs.topology === "two-box") {
-      const bad = obs.entries.filter((e) => e.state !== "BLOCKED" && e.state !== "EXCLUDED" && e.state !== "ROLLED_BACK" && !hostHealthy(e));
+      const bad = obs.entries.filter((e) => e.state !== "BLOCKED" && e.state !== "EXCLUDED" && e.state !== "ROLLED_BACK" && !hostHealthy(e, new Set(obs.excused)));
       checks.push(chk("observe.hosts", bad.length === 0 ? "pass" : "fail", "observe.host-unhealthy", { params: { hosts: capHosts(bad.map((e) => e.hostname)) }, evidence: "hub-verified" }));
     } else {
       const bad = Object.entries(obs.swapVerify ?? {}).filter(([, v]) => !v.ok);
       const unknown = obs.swap?.state === "LIVE" && obs.swapVerify === null;
       checks.push(chk("observe.hosts", unknown ? "unknown" : bad.length === 0 ? "pass" : "fail", "observe.host-unhealthy", { params: { hosts: capHosts(bad.map(([h]) => h)) }, evidence: "hub-verified" }));
     }
+    if (obs.excused.length) checks.push(chk("observe.hosts-pre-existing", "warn", "observe.host-pre-existing", { params: { hosts: capHosts(obs.excused) }, evidence: "source-api-reported" }));
     if (obs.workers) {
       const w = obs.workers;
       if (w.failed.length) checks.push(chk("observe.workers", "fail", "observe.workers-not-running", { params: { count: w.failed.length, workers: w.failed.slice(0, 10) }, evidence: "hub-verified" }));

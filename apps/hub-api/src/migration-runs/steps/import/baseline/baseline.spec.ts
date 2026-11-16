@@ -1,6 +1,6 @@
 import { DIGEST_RE, floatingImages, imageRepoOf, isFloatingImage, pinFor, pinnedImageRef, serverRefOfItem } from "./image-pins";
 import { InMemoryRunHints, PrismaRunHints, mergeHints, type RunHint } from "./run-hints";
-import { baselineItemRef, baselineVerdict, buildSourceBaseline, degradedItemRefs, isDegradedAtSource, sameBaseline } from "./source-health";
+import { baselineEntryOf, baselineItemRef, baselineVerdict, buildSourceBaseline, degradedItemRefs, isDegradedAtSource, preExistingHosts, sameBaseline, verdictOf } from "./source-health";
 import { BUILD_SEC_ASSUMED, START_SEC_ASSUMED, deployWindow } from "./build-window";
 import { isWorker, markConflicts, workerMarks, workerSets } from "./workers";
 
@@ -146,6 +146,25 @@ describe("source health baseline (R28/R52/R66)", () => {
     expect(baselineVerdict(e("r1"), false)).toBe("regression");
     expect(baselineVerdict(e("r3"), false)).toBe("regression"); // unchecked at the source: no excuse
     expect(baselineVerdict(undefined, false)).toBe("unbaselined");
+  });
+
+  it("verdictOf looks the resource up by its plan itemRef: the one entry point VERIFY, CUTOVER and OBSERVE judge with", () => {
+    const b = buildSourceBaseline(rows, now);
+    expect(baselineEntryOf(b, "app:s1:r2")?.ref).toBe("r2");
+    expect(baselineEntryOf(b, "app:other:r2")).toBeUndefined();
+    expect(verdictOf(b, "app:s1:r2", false)).toBe("pre-existing");
+    expect(verdictOf(b, "app:s1:r2", true)).toBe("healthy");
+    expect(verdictOf(b, "app:s1:r1", false)).toBe("regression");
+    expect(verdictOf(b, "app:_:never-seen", false)).toBe("unbaselined");
+    expect(verdictOf(b, null, false)).toBe("unbaselined");
+    expect(verdictOf(null, "app:s1:r2", false)).toBe("unbaselined");
+  });
+
+  it("preExistingHosts excuses only the failing hosts whose app was degraded at the source", () => {
+    const b = buildSourceBaseline(rows, now);
+    const appOf = (h: string) => ({ "r2.example.test": "app:s1:r2", "r1.example.test": "app:s1:r1" })[h] ?? null;
+    expect([...preExistingHosts(b, ["r2.example.test", "r1.example.test", "mystery.example.test"], appOf)]).toEqual(["r2.example.test"]);
+    expect(preExistingHosts(null, ["r2.example.test"], appOf).size).toBe(0);
   });
 });
 
