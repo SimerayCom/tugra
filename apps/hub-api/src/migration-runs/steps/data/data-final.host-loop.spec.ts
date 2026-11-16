@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { StepHandlerRegistryService } from "../../core/step-handler.registry";
 import type { RunSnapshot } from "../../core/run-contract";
 import { DATA_CODES, SOURCE_STATS_CHECK } from "./data-contract";
-import { DataFinalHandler } from "./data-final.handler";
+import { DataFinalHandler, WRITERS_FROZEN_CHECK } from "./data-final.handler";
 import { FINAL_HOST_LOOP_CODES, finalHostChecks, finalHostTally } from "./data-logic";
 import { HOST_LOOP_CODES } from "./inventory/host-codes";
 import { decodeHostReports } from "./inventory/host-view";
@@ -29,14 +29,15 @@ const threeHosts = () =>
 function build(run: RunSnapshot = loopRun()) {
   const registry = new StepHandlerRegistryService();
   const data = new FakeDataPort(threeHosts());
+  const objects = new FakeObjectPort();
   const host = new SourceHostFake({ containers: [] });
   const reports = new FakeHostReports();
   const checks = new MemoryCheckStore();
-  const handler = new DataFinalHandler(registry, data, new FakeObjectPort(), new FakeCaps(), new MigratorRunner(host, data, new FakeCaps(), join(host.dir, "runs")), checks, reports);
+  const handler = new DataFinalHandler(registry, data, objects, new FakeCaps(), new MigratorRunner(host, data, new FakeCaps(), join(host.dir, "runs")), checks, reports);
   handler.onModuleInit();
   const ctx = (o: Partial<Parameters<typeof makeCtx>[0]> = {}): CtxHarness => makeCtx({ key: "DATA_FINAL", run, ...o, steps: { ...FROZEN, ...(o.steps ?? {}) } });
   const loop = (ref: string, state: string, rc: number | null = null, code = "ok", step = "DATA_FINAL") => reports.set(RUN, { stepKey: step, sourceServerRef: ref, kind: "loop", state, payload: { code, rc } });
-  return { handler, data, reports, ctx, loop, host, checks };
+  return { handler, data, reports, ctx, loop, host, checks, objects };
 }
 
 describe("DATA_FINAL with the coolify-host-loop runner (R32-FINAL)", () => {
@@ -51,6 +52,22 @@ describe("DATA_FINAL with the coolify-host-loop runner (R32-FINAL)", () => {
     expect((res as { wait: { code: string } }).wait.code).not.toBe(DATA_CODES.runMigrator);
     expect(h.comp.loopHosts).toEqual(["host-a", "host-b", "host-c"]); // an abort needs them
     host.dispose();
+  });
+
+  it("while the object writers are not attested frozen the host-loop wait offers that attestation next to the script", async () => {
+    const run = loopRun({ options: { stopSource: true } });
+    const { handler, ctx, objects, host } = build(run);
+    objects.add({ id: "om1", status: "SEEDED", buckets: [{ srcBucket: "media", selected: true, status: "SEEDED", diffMissing: null, diffDiffer: null, diffExtra: null }] });
+    const seedAttach = { DATA_SEED: { evidence: { attestations: [], attachments: [{ kind: "object-migration" as const, resourceId: "om1", byUserId: "user1", at: "x" }] } } };
+    const h = ctx({ steps: seedAttach });
+    expect(await handler.act(h.ctx, await handler.observe(h.ctx))).toMatchObject({ outcome: "wait", wait: { commandKind: "host-loop", attest: [WRITERS_FROZEN_CHECK] } });
+    expect(objects.calls).toEqual([]);
+    // without held objects nothing extra is offered
+    const plain = build();
+    const h2 = plain.ctx();
+    expect((await plain.handler.act(h2.ctx, await plain.handler.observe(h2.ctx)) as { wait: Record<string, unknown> }).wait.attest).toBeUndefined();
+    host.dispose();
+    plain.host.dispose();
   });
 
   it("one dead host is a clear failure that NAMES the host, and the hosts that finished are reported next to it", async () => {

@@ -235,7 +235,7 @@ export class DataFinalHandler implements StepHandler<FinalObs>, OnModuleInit {
       }
       if (hasLiveTransfer(snap)) return { outcome: "continue", pollAfterMs: 10_000 }; // an operator-run migrator is streaming right now
       const failing = this.checks(obs).filter((c) => c.status === "fail").length;
-      if (isHostLoop(run)) return this.hostLoopWait(ctx, obs, flags);
+      if (isHostLoop(run)) return this.hostLoopWait(ctx, obs, flags, objectsHeld);
       return {
         outcome: "wait",
         wait: {
@@ -278,7 +278,7 @@ export class DataFinalHandler implements StepHandler<FinalObs>, OnModuleInit {
    * could not run (unreachable, no key, a migrator that died) is a clear failure naming the host, the hosts that finished are
    * reported next to it, and a re-run of the script resumes the failed ones.
    */
-  private async hostLoopWait(ctx: StepContext, obs: FinalObs, flags: string[]): Promise<ActResult> {
+  private async hostLoopWait(ctx: StepContext, obs: FinalObs, flags: string[], objectsHeld: boolean): Promise<ActResult> {
     const run = ctx.run;
     const snap = obs.snap;
     if (obs.loopHosts.length === 0) return { outcome: "fail", code: HOST_LOOP_CODES.noHosts, retryable: false };
@@ -296,6 +296,8 @@ export class DataFinalHandler implements StepHandler<FinalObs>, OnModuleInit {
         params: { phase: "final", flags, pending, hosts: tally.hosts.length, failing: tally.failed.length, names: tally.failed.slice(0, 20), finished: tally.ok.length, finishedNames: tally.ok.slice(0, 20), hubTokenActive: snap.tokenActive },
         offersCommand: true,
         commandKind: "host-loop",
+        // the object final pass waits on the writers-frozen attestation: it is offered next to the script, not only after it
+        ...(objectsHeld ? { attest: [WRITERS_FROZEN_CHECK] } : {}),
       },
     };
   }
