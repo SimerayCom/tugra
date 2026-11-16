@@ -7,6 +7,34 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The in-app updater applies releases that change the compose file or the installer scripts.** "Update now" no
+  longer needs `git pull && ./scripts/install.sh` for those. Each release publishes its compose file and scripts with
+  a separately signed per-file hash list, committed to by the signed update manifest (`hostFilesDigest`). The updater
+  verifies the signature and every hash, checks that the scripts parse and the new compose is valid against your
+  `.env`, backs up the files it replaces to `backups/host-files-*`, swaps them atomically, and restores them if the
+  pull, recreate or health check fails. Your `.env` is never touched, and an images-only release takes a fast path.
+  A release that changes services other than hub, web, agent and the updater, or needs a new `.env` setting, still
+  asks for the installer. Your checkout needs one `git pull && ./scripts/install.sh` to gain this.
+- **Swarm deploys survive a hub restart.** Queued deploys and deploys still building are re-queued and run once a
+  cluster manager with a live agent connection is reachable (a backup manager is used when the primary is gone),
+  and a rollout already handed to the manager is re-adopted from the agent's command journal, never re-sent,
+  including Swarm's own auto-rollback outcome. Needs an agent that keeps the command journal.
+- **Correct client IP behind proxies and Cloudflare.** The web server guards forwarded headers on the raw socket, so a
+  client-supplied `X-Forwarded-For` or `CF-Connecting-IP` can no longer reach the hub. New opt-in Cloudflare mode
+  (`HUB_TRUSTED_PROXY_CLOUDFLARE=true`, installer `--cloudflare-proxy`) uses `CF-Connecting-IP` only when the hop
+  Traefik saw is a published Cloudflare edge range and fails closed otherwise. Refresh the vendored ranges with
+  `node scripts/refresh-cloudflare-ips.mjs`, or add ranges with `HUB_TRUSTED_PROXY_CLOUDFLARE_EXTRA_CIDRS`. The web
+  container now starts through `server.mjs` with `NODE_ENV=production`.
+- **"Sign in with GitHub" works on the raw two-port install.** When web and hub are on different ports or hosts, the
+  OAuth callback is served by the web origin at `/api/auth/oauth/github/callback`; open the panel at exactly
+  `WEB_PUBLIC_URL`. Each login is bound to the browser that started it with a short-lived httpOnly state cookie.
+  **Action needed** if you registered `<hub>/auth/oauth/github/callback` on a two-port or split-host install:
+  register the web-origin URL, or set `GITHUB_OAUTH_CALLBACK_URL` to the old one. `--domain` installs are unchanged.
+- MCP `import_plan`, `import_apply` and `import_mapping_resolve` accept `dbDataModes` (PostgreSQL physical volume
+  copy), validated like the REST body.
+- `tugra-cli` is versioned with the core, and CI fails if the two drift. `.env.example` documents the
+  `TUGRA_TELEMETRY*` settings, `.nvmrc` is 22, and the README roadmap is current in all eight languages.
+
 ## [0.1.0-beta.17] - 2026-11-15
 
 - **"Update now" shows what it is doing.** Settings → Updates has a four-step progress view (queued, pulling,
