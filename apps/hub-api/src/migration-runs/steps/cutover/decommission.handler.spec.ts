@@ -346,6 +346,38 @@ describe("DECOMMISSION runbook order: the Coolify host goes last (R67/R70)", () 
     expect((await last.driver.drive(last.handlers.dec)).status).toBe("PASSED");
   });
 
+  it("an unreadable sibling list never settles the step on the first list: nothing to attest, and a recorded attestation does not close it", async () => {
+    const rig = afterFinalize({ controller: "manual" });
+    rig.world.siblings = null;
+    await approveCurrent(rig);
+    const w = (await rig.driver.tick(rig.handlers.dec)).wait as unknown as { code: string; attest?: string[] };
+    expect(w.code).toBe("decommission.stop-source-unknown");
+    expect(w.attest ?? []).toEqual([]);
+    rig.driver.attest("DECOMMISSION", DECOMMISSION_FIRST_ATTEST);
+    expect((await rig.driver.tick(rig.handlers.dec)).status).toBe("WAITING_OPERATOR");
+    // readable again and nothing else open: the full list is asked for, not closed
+    rig.world.siblings = { live: 0, undecommissioned: 0 };
+    expect((await rig.driver.tick(rig.handlers.dec)).wait).toMatchObject({ code: "decommission.stop-source", attest: [DECOMMISSION_ATTEST] });
+  });
+
+  it("settling on the first list records the control plane's commands on the run, since the others may never reach this step", async () => {
+    const rig = afterFinalize({ controller: "manual" });
+    rig.world.siblings = SIB;
+    await approveCurrent(rig);
+    await rig.driver.tick(rig.handlers.dec);
+    rig.driver.attest("DECOMMISSION", DECOMMISSION_FIRST_ATTEST);
+    expect((await rig.driver.drive(rig.handlers.dec)).status).toBe("PASSED");
+    const gate = rig.driver.rec("DECOMMISSION").gate!;
+    expect(gate.checks.find((c) => c.id === "decommission.stopped")).toMatchObject({ status: "pass", code: "decommission.control-plane-owed", params: { stop: [...CONTROL_PLANE_STOP_COMMANDS], remove: [...CONTROL_PLANE_REMOVAL_COMMANDS] } });
+    // a run that closes on the full list owes nothing
+    const full = afterFinalize({ controller: "manual" });
+    await approveCurrent(full);
+    await full.driver.tick(full.handlers.dec);
+    full.driver.attest("DECOMMISSION", DECOMMISSION_ATTEST);
+    await full.driver.drive(full.handlers.dec);
+    expect(full.driver.rec("DECOMMISSION").gate!.checks.some((c) => c.code === "decommission.control-plane-owed")).toBe(false);
+  });
+
   it("the approval shows whether the box carries the control plane and how many other runs live", async () => {
     const rig = afterFinalize({ controller: "agent" });
     rig.host.cpMarker = true;

@@ -221,9 +221,12 @@ export class DecommissionHandler extends CutoverStepBase implements StepHandler<
       // until no other run of this source is open: the Coolify host is last, whichever host this run is for. An attestation of the
       // first list closes the step only while that still holds; once the others are done the full list is asked for.
       if (!withControlPlane) {
-        if (hasAttestation(ctx.step.evidence, DECOMMISSION_FIRST_ATTEST)) return { outcome: "done" };
+        // Only while another run of the source is KNOWN to be open: an unreadable sibling list never settles the step on the first
+        // list, or a run that was in fact the last one would close without the control plane's commands ever being printed.
+        const settles = obs.siblings !== null;
+        if (settles && hasAttestation(ctx.step.evidence, DECOMMISSION_FIRST_ATTEST)) return { outcome: "done" };
         const first = this.firstListWait(obs);
-        return { outcome: "wait", wait: { kind: "operator", code: first.code, params: first.params, attest: [DECOMMISSION_FIRST_ATTEST] } };
+        return { outcome: "wait", wait: { kind: "operator", code: first.code, params: first.params, ...(settles ? { attest: [DECOMMISSION_FIRST_ATTEST] } : {}) } };
       }
       return { outcome: "wait", wait: { kind: "operator", code: "decommission.stop-source", params: { stop: [...MANAGED_STOP_COMMANDS, ...CONTROL_PLANE_STOP_COMMANDS], remove: [...MANAGED_REMOVAL_COMMANDS, ...CONTROL_PLANE_REMOVAL_COMMANDS] }, attest: [DECOMMISSION_ATTEST] } };
     }
@@ -246,7 +249,14 @@ export class DecommissionHandler extends CutoverStepBase implements StepHandler<
   postGate(ctx: StepContext, obs: DecommissionObs): GateResult {
     if (!obs.hubStops) {
       const first = !this.controlPlaneNow(obs);
-      const attested = hasAttestation(ctx.step.evidence, DECOMMISSION_ATTEST) || (first && hasAttestation(ctx.step.evidence, DECOMMISSION_FIRST_ATTEST));
+      const full = hasAttestation(ctx.step.evidence, DECOMMISSION_ATTEST);
+      const firstOnly = !full && first && obs.siblings !== null && hasAttestation(ctx.step.evidence, DECOMMISSION_FIRST_ATTEST);
+      // Settling on the first list leaves the control plane owed. The other runs may all be aborted before any of them reaches this
+      // step, and then nobody prints its commands: the passed gate carries them, on this run, which is the one place left to read them.
+      if (firstOnly) {
+        return makeGate([chk("decommission.stopped", "pass", "decommission.control-plane-owed", { params: { stop: [...CONTROL_PLANE_STOP_COMMANDS], remove: [...CONTROL_PLANE_REMOVAL_COMMANDS] }, evidence: "operator-attested" })]);
+      }
+      const attested = full;
       if (first) {
         const w = this.firstListWait(obs);
         return makeGate([chk("decommission.stopped", attested ? "pass" : "fail", w.code, { params: w.params, evidence: "operator-attested" })]);
