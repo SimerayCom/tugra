@@ -2,6 +2,7 @@ import { EMPTY_STEP_EVIDENCE } from "../../core/run-contract";
 import type { StepEvidence } from "../../core/dto";
 import {
   HTTP01_GAP_ATTEST,
+  LEFT_OUT_ATTEST,
   MANUAL_DNS_ATTEST,
   MANUAL_DNS_DEFER_ATTEST,
   MANUAL_DNS_STALE_MS,
@@ -135,6 +136,13 @@ describe("computeHolds", () => {
     const input = base({ entries: [man], apps: apps(app("a1")) });
     expect(computeHolds({ ...input, cutoverEvidence: ev({ checkId: MANUAL_DNS_DEFER_ATTEST, subject: "man.example.test" }) }).get("man.example.test")).toMatchObject({ reason: "manual-dns-deferred", kind: "skip" });
     expect(computeHolds({ ...input, cutoverEvidence: ev({ checkId: MANUAL_DNS_DEFER_ATTEST }) }).size).toBe(0);
+  });
+
+  it("a host the operator leaves out stays on the source, whatever else is true of it; per host only, on either step", () => {
+    const input = base({ entries: [web, img], apps: apps(app("a1"), app("a2")) });
+    expect(computeHolds({ ...input, cutoverEvidence: ev({ checkId: LEFT_OUT_ATTEST, subject: "web.example.test" }) }).get("web.example.test")).toMatchObject({ reason: "host-left-out", kind: "skip" });
+    expect(computeHolds({ ...input, tlsEvidence: ev({ checkId: LEFT_OUT_ATTEST, subject: "img.example.test" }) }).get("img.example.test")).toMatchObject({ reason: "host-left-out", kind: "skip" });
+    expect(computeHolds({ ...input, cutoverEvidence: ev({ checkId: LEFT_OUT_ATTEST }) }).size).toBe(0);
   });
 
   it("hosts that already flipped (or are blocked) are never held", () => {

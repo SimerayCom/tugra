@@ -22,7 +22,7 @@ import {
 } from "../../core/run-contract";
 import { CutoverStepBase, POLL_MS, rethrowLeaseLost, requireOpId } from "./cutover-step-base";
 import { CutoverWorld, type OpApp } from "./cutover-world.service";
-import { HTTP01_GAP_ATTEST, gapAccepted } from "./cutover-holds";
+import { HTTP01_GAP_ATTEST, LEFT_OUT_ATTEST, gapAccepted, isLeftOut } from "./cutover-holds";
 import { buildDarkProbeScript, classifyDarkHost, parseDarkProbe, type DarkVerdict } from "./dark-probe";
 import { appHosts, cutoverInit } from "./dns-prepare.handler";
 import { actionableEntries, capHosts, chk, compDate, compStrings, isDns01Blocked, iso, PRE_FLIP_STATES, trackedEntries, type Entry } from "./run-cutover-logic";
@@ -267,7 +267,7 @@ export class TlsPreissueHandler extends CutoverStepBase implements StepHandler<T
     const decision = this.gapDecision(ctx, obs, entries);
     if (decision.pending.length > 0 && !decision.progressing) {
       await ctx.recordCompensation({ gapWaitAt: iso(now) });
-      return { outcome: "wait", wait: { kind: "operator", code: "tls-preissue.http01-gap-hosts", params: { hosts: capHosts(decision.pending, 200), count: decision.pending.length }, attest: [HTTP01_GAP_ATTEST] } };
+      return { outcome: "wait", wait: { kind: "operator", code: "tls-preissue.http01-gap-hosts", params: { hosts: capHosts(decision.pending, 200), count: decision.pending.length }, attest: [HTTP01_GAP_ATTEST, LEFT_OUT_ATTEST] } };
     }
 
     if (now.getTime() - pollStartedAt.getTime() > TLS_DEADLINE_MS) throw new StepFailure("tls-preissue.timeout", { minutes: Math.round(TLS_DEADLINE_MS / 60_000) }, true);
@@ -280,6 +280,11 @@ export class TlsPreissueHandler extends CutoverStepBase implements StepHandler<T
     return (e) => byApp.get(e.applicationId) || ctx.run.targetServerId;
   }
 
+  /** The operator left this host out of the run (on this step or CUTOVER): nothing is prepared or required for it. */
+  private leftOut(ctx: StepContext, hostname: string): boolean {
+    return isLeftOut(hostname, ctx.stepState("CUTOVER").evidence, ctx.step.evidence);
+  }
+
   private gapOk(ctx: StepContext, e: { hostname: string }): boolean {
     return gapAccepted(e, ctx.run.options.acceptHttp01Gap, ctx.step.evidence, ctx.stepState("CUTOVER").evidence);
   }
@@ -289,7 +294,7 @@ export class TlsPreissueHandler extends CutoverStepBase implements StepHandler<T
     const userId = ctx.actor.userId;
     const serverOf = this.serverIdOf(ctx, apps);
     const dnsReadyOf = (e: Entry): boolean => (view.servers.find((s) => s.serverId === serverOf(e)) ?? view.servers[0])?.dnsReady === true;
-    const open = view.entries.filter((e) => (PRE_FLIP_STATES as readonly string[]).includes(e.state) || isDns01Blocked(e));
+    const open = view.entries.filter((e) => ((PRE_FLIP_STATES as readonly string[]).includes(e.state) || isDns01Blocked(e)) && !this.leftOut(ctx, e.hostname));
     // Record each app's current challenge BEFORE changing it: the abort restores exactly this. First write wins per app: on a
     // retry or a crash after the change, the view already shows what THIS step set, which is not what the abort must restore.
     const prior = new Map<string, string>();
@@ -323,7 +328,7 @@ export class TlsPreissueHandler extends CutoverStepBase implements StepHandler<T
   /** Hosts blocked only because DNS-01 could not be used, whose gap was accepted after the preparation: move them to HTTP-01 (once each). */
   private async prepareAcceptedGaps(ctx: StepContext, opId: string, entries: readonly Entry[]): Promise<void> {
     const done = compStrings(ctx.step.compensation, "gapPrepared");
-    const todo = entries.filter((e) => isDns01Blocked(e) && this.gapOk(ctx, e) && !done.includes(e.hostname)).map((e) => e.hostname);
+    const todo = entries.filter((e) => isDns01Blocked(e) && !this.leftOut(ctx, e.hostname) && this.gapOk(ctx, e) && !done.includes(e.hostname)).map((e) => e.hostname);
     if (todo.length === 0) return;
     await ctx.assertLease();
     await ctx.recordCompensation({ gapPrepared: [...done, ...todo] });
@@ -339,7 +344,7 @@ export class TlsPreissueHandler extends CutoverStepBase implements StepHandler<T
     const pending: string[] = [];
     let progressing = false;
     for (const e of entries) {
-      if (e.state === "EXCLUDED" || e.state === "ROLLED_BACK") continue;
+      if (e.state === "EXCLUDED" || e.state === "ROLLED_BACK" || this.leftOut(ctx, e.hostname)) continue;
       const accepted = this.gapOk(ctx, e);
       if (e.state === "BLOCKED") {
         if (isDns01Blocked(e)) {
@@ -374,6 +379,10 @@ export class TlsPreissueHandler extends CutoverStepBase implements StepHandler<T
     for (const e of obs.entries) {
       const gap = this.gapOk(ctx, e);
       if (e.state === "EXCLUDED" || e.state === "ROLLED_BACK") continue;
+      if (this.leftOut(ctx, e.hostname)) {
+        checks.push(chk("tls-preissue.host", "warn", "tls-preissue.host-left-out", { subject: e.hostname }));
+        continue;
+      }
       if (e.state === "BLOCKED") {
         checks.push(isDns01Blocked(e) ? chk("tls-preissue.host", "fail", "tls-preissue.dns01-blocked", { subject: e.hostname, params: { reason: e.blockReason ?? "blocked" } }) : chk("tls-preissue.host", "warn", "tls-preissue.host-blocked", { subject: e.hostname, params: { reason: e.blockReason ?? "blocked" } }));
         continue;

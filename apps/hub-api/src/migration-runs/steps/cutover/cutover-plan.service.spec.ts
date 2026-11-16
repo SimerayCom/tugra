@@ -35,6 +35,28 @@ describe("CutoverPlanService (what VERIFY binds the PONR approval to)", () => {
     expect(b!.planHash).not.toBe(a!.planHash);
   });
 
+  it("two-box with several target servers: ONE plan over every host (the flip then goes group by group)", async () => {
+    const rig = makeRig({ apps: [{ id: "a1", host: H(1) }, { id: "a2", host: H(2), hasData: true, serverId: "srv-2" }], zone: zoneFor(2), options: { ttlPolicy: "skip-ack" }, run: { serverMap: { "source-b": "srv-2" } } });
+    await rig.driver.drive(rig.handlers.dns);
+    await rig.driver.drive(rig.handlers.tls);
+    const a = await planOf(rig).planHash({ ...runOf(rig), serverMap: rig.driver.run.serverMap });
+    expect(a!.statefulHosts).toEqual([H(2)]);
+    expect(a!.planHash).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("swap-proxy over several target servers has no plan to approve; nor has a swap on the control plane's box", async () => {
+    const rig = makeRig({ apps: apps(2, true), zone: zoneFor(2), run: { topology: "swap-proxy", mode: "takeover", serverMap: { "source-b": "srv-2" } } });
+    expect(await planOf(rig).planHash({ ...runOf(rig), serverMap: { "source-b": "srv-2" } })).toBeNull();
+    const single = makeRig({ apps: apps(2, true), zone: zoneFor(2), run: { topology: "swap-proxy", mode: "takeover" } });
+    single.world.server.proxyBind = "none";
+    single.host.tugra = { status: "running", ports: [] };
+    for (const h of [H(1), H(2)]) single.host.dark.set(h, { verify: 0, status: 200, traefik404: false });
+    await single.driver.drive(single.handlers.tls);
+    expect(await planOf(single).planHash(runOf(single))).not.toBeNull();
+    single.host.controlPlane = true;
+    expect(await planOf(single).planHash(runOf(single))).toBeNull();
+  });
+
   it("swap-proxy: bound to the exact source proxy and host list; nothing is written to the box", async () => {
     const rig = makeRig({ apps: apps(2, true), zone: zoneFor(2), run: { topology: "swap-proxy", mode: "takeover" } });
     rig.world.server.proxyBind = "none";

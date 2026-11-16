@@ -50,6 +50,17 @@ describe("DNS_PREPARE", () => {
     expect(rig.driver.eventCodes()).toContain("dns-prepare.manual-dns-guidance");
   });
 
+  it("customer-owned zones: the guidance names each host with its own current TTL and the moment to lower it by (a checklist per host)", async () => {
+    const hosts = ["m1.other.test", "m2.other.test", "m3.other.test"];
+    const rig = makeRig({ apps: hosts.map((h, i) => ({ id: `a${i + 1}`, host: h })), zone: [] });
+    expect((await rig.driver.drive(rig.handlers.dns)).status).toBe("PASSED");
+    const ev = rig.driver.events.find((e) => e.code === "dns-prepare.manual-dns-guidance")!;
+    expect(ev.params).toMatchObject({ hosts, count: 3 });
+    expect((ev.params as { ttl: string[] }).ttl).toHaveLength(3);
+    for (const [i, line] of (ev.params as { ttl: string[] }).ttl.entries()) expect(line).toMatch(new RegExp(`^${hosts[i].replace(/\./g, "\\.")} ttl=\\d+ lower-before=\\d{4}-`));
+    expect(rig.writes).toEqual([]);
+  });
+
   it("an op whose apps serve no hostname has nothing to prepare: the step passes without acting", async () => {
     const rig = makeRig({ apps: [{ id: "a1", host: "" }], zone: [] });
     rig.world.apps[0].domain = null;

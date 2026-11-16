@@ -89,6 +89,7 @@ export function fakeCutoverPrisma() {
   );
   const apps = new Map<string, Row>();
   const servers = new Map<string, Row>();
+  const serviceDomains: Row[] = [];
   const prisma = {
     cutoverDomain: {
       ...cutoverDomain,
@@ -106,7 +107,7 @@ export function fakeCutoverPrisma() {
     cutoverCert: { count: async () => 0 },
     bulkOperation: { findUnique: async () => ({ cancelRequestedAt: prisma.__cancel ? new Date() : null }) },
     application: { findMany: async ({ where }: { where: { id: { in: string[] } } }) => where.id.in.map((i) => apps.get(i)).filter(Boolean) },
-    appServiceDomain: { findMany: async () => [] as Row[] },
+    appServiceDomain: { rows: serviceDomains, findMany: async ({ where }: { where?: Record<string, unknown> } = {}) => serviceDomains.filter((r) => matches(r, where)).map((r) => ({ ...r })) },
     server: { findUnique: async ({ where }: { where: { id: string } }) => servers.get(where.id) ?? null },
     domain: { findUnique: async () => null, upsert: async () => ({}) },
     __cancel: false,

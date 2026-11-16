@@ -18,6 +18,12 @@ export const MANUAL_DNS_ATTEST = "cutover.manual-dns-switched";
 /** Operator attestation (subject = hostname): leave this manual-DNS host on the source for now (it is reported as not cut over). */
 export const MANUAL_DNS_DEFER_ATTEST = "cutover.manual-dns-deferred";
 
+/**
+ * Operator attestation (subject = hostname only): leave this host out of the run (it stays on the source and is reported as not cut
+ * over). The per-host alternative to accepting its HTTP-01 certificate gap, so no host needs a decision that does not fit it.
+ */
+export const LEFT_OUT_ATTEST = "cutover.host-left-out";
+
 /** How long a manual-DNS confirmation is trusted before the host is asked about again (the resolvers never showed the change). */
 export const MANUAL_DNS_STALE_MS = 30 * 60 * 1000;
 
@@ -81,8 +87,9 @@ export const objectsVerified = (v: ObjectsVerification | null): boolean => !!v &
  *  - `service-not-running`: a compose service the import created stopped: wait until it runs.
  *  - `http01-gap-not-accepted`: HTTP-01 host without a certificate and nobody accepted the gap: wait.
  *  - `manual-dns-deferred`: the operator left a manual-DNS host on the source: not cut over, no wait.
+ *  - `host-left-out`: the operator left the host out of the run: not cut over, no wait.
  */
-export const HOLD_REASONS = ["object-store-hold", "objects-unverified", "service-not-running", "http01-gap-not-accepted", "manual-dns-deferred"] as const;
+export const HOLD_REASONS = ["host-left-out", "object-store-hold", "objects-unverified", "service-not-running", "http01-gap-not-accepted", "manual-dns-deferred"] as const;
 export type HoldReason = (typeof HOLD_REASONS)[number];
 
 export interface Hold {
@@ -129,6 +136,9 @@ export function objectDependants(entries: readonly Entry[], apps: ReadonlyMap<st
   return out;
 }
 
+/** Did the operator leave this host out of the run (on either step)? Per host only: a subject-less attestation never leaves every host out. */
+export const isLeftOut = (hostname: string, cutover: StepEvidence, tls: StepEvidence): boolean => hasAttestationFor(cutover, LEFT_OUT_ATTEST, hostname, false) || hasAttestationFor(tls, LEFT_OUT_ATTEST, hostname, false);
+
 const isPreFlip = (e: Entry): boolean => (PRE_FLIP_STATES as readonly string[]).includes(e.state);
 
 /** Is the HTTP-01 certificate gap accepted for this host (the run option, or the operator's attestation on either step)? */
@@ -152,6 +162,10 @@ export function computeHolds(i: HoldInput): Map<string, Hold> {
     const hold = (reason: HoldReason, kind: Hold["kind"], via?: string[]): void => {
       out.set(e.hostname, { hostname: e.hostname, reason, kind, ...(via ? { via } : {}) });
     };
+    if (isLeftOut(e.hostname, i.cutoverEvidence, i.tlsEvidence)) {
+      hold("host-left-out", "skip");
+      continue;
+    }
     const via = dependants.get(e.hostname);
     if (via && i.policy !== "external" && !hasAttestationFor(i.cutoverEvidence, OBJECT_CLEARED_ATTEST, e.hostname, false)) {
       if (i.policy === "hold") hold("object-store-hold", "skip", via);

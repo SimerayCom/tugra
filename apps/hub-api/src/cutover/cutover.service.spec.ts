@@ -98,6 +98,21 @@ describe("CutoverService.init", () => {
     expect(m.prisma.cutoverDomain.rows).toHaveLength(v1.entries.length);
   });
 
+  it("tracks the hosts of an imported compose SERVICE like an app's (kind service), and marks it stateful while its data copy is unfinished", async () => {
+    const m = make({ zone: [rec("r1", H(1)), rec("r2", H(2))], tasks: [] });
+    m.addApp("a1", { domain: H(1) });
+    m.addApp("s1", { domain: null });
+    m.prisma.appServiceDomain.rows.push({ id: "sd1", applicationId: "s1", hostname: H(2) });
+    m.tasks.push(m.appTask("a1"));
+    m.tasks.push({ itemRef: "service:_:s1", kind: "service", status: "DONE", dependsOn: [], resourceType: "application", resourceId: "s1", result: { name: "src-s1", kind: "service", volumes: [{ key: "data", policy: "copy" }] } });
+    const v = await m.svc.init(U, OP, {});
+    expect(v.entries.map((e) => [e.hostname, e.role, e.stateful])).toEqual([[H(1), "primary", false], [H(2), "service", true]]);
+    // once its streamed copy is DONE the service is no longer stateful for the flip gate
+    m.tasks.push({ itemRef: "data:volume:_:s1:data", kind: "data", status: "DONE", dependsOn: [], resourceType: null, resourceId: null });
+    const again = await m.svc.init(U, OP, {});
+    expect(again.entries.find((e) => e.hostname === H(2))).toMatchObject({ role: "service", stateful: false });
+  });
+
   it("denies a team without apps:config and a foreign op", async () => {
     const m = make({ permissionThrows: true });
     m.addApp("a1", { domain: H(1) });

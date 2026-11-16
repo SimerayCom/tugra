@@ -77,6 +77,12 @@ describe("CutoverCertService.wanted", () => {
     expect(await m.svc.wanted(OP)).toEqual({ hosts: ["a.example.com", "www.a.example.com"] });
     expect(m.executor.loadIngestOp).toHaveBeenCalledWith("op1", "u1");
   });
+
+  it("includes the hosts of imported compose services: their tasks are read like the apps' (kind app or service)", async () => {
+    const m = make({ appsHosts: ["a.example.com"] });
+    await m.svc.wanted(OP);
+    expect(m.prisma.bulkTask.findMany).toHaveBeenCalledWith({ where: { opId: "op1", kind: { in: ["app", "service"] }, status: "DONE", resourceType: "application" }, select: { resourceId: true } });
+  });
 });
 
 describe("CutoverCertService.stage", () => {

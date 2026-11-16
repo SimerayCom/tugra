@@ -1,6 +1,6 @@
 import { H, IP, makeRig, zoneRec, type Rig } from "./testing/cutover-rig";
 import { TLS_DEADLINE_MS } from "./tls-preissue.handler";
-import { HTTP01_GAP_ATTEST } from "./cutover-holds";
+import { HTTP01_GAP_ATTEST, LEFT_OUT_ATTEST } from "./cutover-holds";
 
 afterEach(() => jest.useRealTimers());
 
@@ -47,7 +47,7 @@ describe("TLS_PREISSUE (two-box)", () => {
     // nothing else is progressing, so the step asks the operator PER HOST instead of timing out after 20 minutes
     const asked = await rig.driver.drive(rig.handlers.tls, { maxTicks: 120 });
     expect(asked.status).toBe("WAITING_OPERATOR");
-    expect(asked.wait).toMatchObject({ kind: "operator", code: "tls-preissue.http01-gap-hosts", params: { hosts: [H(1)], count: 1 }, attest: [HTTP01_GAP_ATTEST] });
+    expect(asked.wait).toMatchObject({ kind: "operator", code: "tls-preissue.http01-gap-hosts", params: { hosts: [H(1)], count: 1 }, attest: [HTTP01_GAP_ATTEST, LEFT_OUT_ATTEST] });
     expect(rig.appsSvc.setDomainOptions).toHaveBeenCalledWith("user1", "a1", { dnsChallenge: false });
     expect(rig.driver.rec("TLS_PREISSUE").compensation).toMatchObject({ gapWaitAt: expect.any(String) });
     // an attestation for ANOTHER host changes nothing
@@ -64,6 +64,20 @@ describe("TLS_PREISSUE (two-box)", () => {
     const ok = await gap.driver.drive(gap.handlers.tls);
     expect(ok.status).toBe("PASSED");
     expect(ok.gate!.checks.find((c) => c.code === "tls-preissue.http01-gap")).toMatchObject({ status: "warn", subject: H(1) });
+  });
+
+  it("a host the operator leaves out is a warning, nothing is prepared for it, and the step passes without it", async () => {
+    const rig = makeRig({ apps: apps(2), zone: zoneFor(2) });
+    rig.proxyConfig.resolveFor.mockResolvedValue({ acmeEmail: "ops@realco.io", bind: "public" } as never);
+    rig.sim.sslOk = false;
+    const asked = await rig.driver.drive(rig.handlers.tls, { maxTicks: 120 });
+    expect(asked.wait).toMatchObject({ code: "tls-preissue.http01-gap-hosts", params: { hosts: [H(1), H(2)] } });
+    rig.driver.attest("TLS_PREISSUE", HTTP01_GAP_ATTEST, H(1));
+    rig.driver.attest("TLS_PREISSUE", LEFT_OUT_ATTEST, H(2));
+    const r = await rig.driver.drive(rig.handlers.tls);
+    expect(r.status).toBe("PASSED");
+    expect(r.gate!.checks.find((c) => c.subject === H(2))).toMatchObject({ status: "warn", code: "tls-preissue.host-left-out" });
+    expect(r.gate!.checks.find((c) => c.subject === H(1))).toMatchObject({ status: "warn", code: "tls-preissue.http01-gap" });
   });
 
   it("the gap decision does not stall the other hosts: only the HTTP-01 host waits, the DNS-01 host is ready meanwhile", async () => {

@@ -24,6 +24,7 @@ import { CutoverPlanService } from "./cutover-plan.service";
 import { CutoverWorld, type GitWebhookApp, type OpApp, type ServerFacts, type SwapRow } from "./cutover-world.service";
 import {
   HTTP01_GAP_ATTEST,
+  LEFT_OUT_ATTEST,
   MANUAL_DNS_STALE_MS,
   MANUAL_DNS_ATTEST,
   MANUAL_DNS_DEFER_ATTEST,
@@ -71,7 +72,7 @@ export const SWAP_VERIFY_DEADLINE_MS = 5 * 60 * 1000;
 const FLIP_POLL_MS = 5_000;
 const SWAP_POLL_MS = 10_000;
 /** Re-exported: the attestation ids live with the pure hold rules (the web offers them per host). */
-export { HTTP01_GAP_ATTEST, MANUAL_DNS_ATTEST, MANUAL_DNS_DEFER_ATTEST, OBJECT_CLEARED_ATTEST };
+export { HTTP01_GAP_ATTEST, LEFT_OUT_ATTEST, MANUAL_DNS_ATTEST, MANUAL_DNS_DEFER_ATTEST, OBJECT_CLEARED_ATTEST };
 const MANUAL_DNS_STALE_MINUTES = MANUAL_DNS_STALE_MS / 60_000;
 /** How many times the swap takes the box back when Coolify restarts its own proxy between the stop and Tugra's proxy start (C11). */
 export const SWAP_GUARD_ATTEMPTS = 2;
@@ -200,6 +201,7 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     if (run.topology === "two-box" && view.entries.some((e) => e.state === "VERIFIED")) {
       const verifiedApps = new Set(view.entries.filter((e) => e.state === "VERIFIED").map((e) => e.applicationId));
       obs.webhooks = await this.world.gitWebhookApps([...verifiedApps]);
+      await this.emitWebhookGuidance(ctx, obs);
     }
     if (run.topology === "swap-proxy") {
       obs.swap = await this.world.getSwap(run.id, run.targetServerId);
@@ -316,7 +318,8 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
         checks.push(chk("cutover.plan-unchanged", same || obs.planPin === null ? "pass" : obs.plan === null ? "unknown" : "fail", obs.plan === null ? "cutover.plan-unavailable" : "cutover.plan-changed"));
       }
     }
-    const movers = (run.topology === "swap-proxy" ? trackedEntries(obs.entries) : actionableEntries(obs.entries)).filter((e) => run.topology === "swap-proxy" || e.state === "READY" || isFlipped(e));
+    // A host that stays on the source (a `skip` hold) moves no data to Tugra's traffic: it is not part of the data-risk question.
+    const movers = (run.topology === "swap-proxy" ? trackedEntries(obs.entries) : actionableEntries(obs.entries)).filter((e) => run.topology === "swap-proxy" || ((e.state === "READY" || isFlipped(e)) && obs.holds.get(e.hostname)?.kind !== "skip"));
     const stateful = movers.filter((e) => hostIsStateful(e, obs.dataApps));
     if (stateful.length > 0 && !committed) {
       checks.push(chk("cutover.data-risk", verify.approval?.acceptDataRisk === true ? "pass" : "fail", "cutover.data-risk-not-accepted", { params: { hosts: capHosts(stateful.map((e) => e.hostname)) } }));
@@ -373,6 +376,8 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     const by = (reason: Hold["reason"]): string[] => [...obs.holds.values()].filter((h) => h.reason === reason).map((h) => h.hostname).sort();
     const objectHold = by("object-store-hold");
     if (objectHold.length > 0) checks.push(chk("cutover.object-dependants", "warn", "cutover.object-hold", { params: { hosts: capHosts(objectHold), count: objectHold.length }, ownerInput: "minioPolicy" }));
+    const leftOut = by("host-left-out");
+    if (leftOut.length > 0) checks.push(chk("cutover.hosts-left-out", "warn", "cutover.hosts-left-out", { params: { hosts: capHosts(leftOut), count: leftOut.length } }));
     const deferred = by("manual-dns-deferred");
     if (deferred.length > 0) checks.push(chk("cutover.manual-dns-deferred", "warn", "cutover.manual-dns-deferred", { params: { hosts: capHosts(deferred), count: deferred.length } }));
     const pending = { objects: by("objects-unverified"), services: by("service-not-running"), gap: by("http01-gap-not-accepted") };
@@ -384,7 +389,8 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     if (pending.services.length > 0) checks.push(chk("cutover.hosts-pending", status, "cutover.service-not-running", { subject: "services", params: { hosts: capHosts(pending.services), count: pending.services.length }, evidence: "hub-verified" }));
     if (pending.gap.length > 0) checks.push(chk("cutover.hosts-pending", status, "cutover.http01-gap-pending", { subject: "gap", params: { hosts: capHosts(pending.gap), count: pending.gap.length } }));
     if (hasWork) return { checks, wait: null };
-    const attest = [...(pending.objects.length > 0 ? [OBJECT_CLEARED_ATTEST] : []), ...(pending.gap.length > 0 ? [HTTP01_GAP_ATTEST] : [])];
+    // Every pending host can be released per host: its condition cleared, the gap accepted, or the host left out of the run.
+    const attest = [...(pending.objects.length > 0 ? [OBJECT_CLEARED_ATTEST] : []), ...(pending.gap.length > 0 ? [HTTP01_GAP_ATTEST] : []), LEFT_OUT_ATTEST];
     return {
       checks,
       wait: { kind: "operator", code: "cutover.hosts-pending", params: { hosts: capHosts([...pending.objects, ...pending.services, ...pending.gap]), objects: capHosts(pending.objects), services: capHosts(pending.services), gap: capHosts(pending.gap) }, ...(attest.length > 0 ? { attest } : {}) },
@@ -471,8 +477,6 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     const manual = ready.filter((e) => isManualDns(e) && !obs.holds.has(e.hostname));
     if (manual.length > 0) return this.manualChecklist(ctx, obs, manual);
 
-    // 4. Everything that could move has moved: tell the operator where the git webhooks go now (R64).
-    await this.emitWebhookGuidance(ctx, obs);
     return { outcome: "done" };
   }
 
@@ -565,14 +569,31 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
         kind: "operator",
         code: "cutover.manual-dns",
         params: { hosts: capHosts(hosts, 200), records, observed, pending: hosts.length, total: manual.length },
-        attest: [MANUAL_DNS_ATTEST, MANUAL_DNS_DEFER_ATTEST],
+        // Hosts held for another reason are released from this same wait (per host), so the checklist never hides their decision.
+        attest: [MANUAL_DNS_ATTEST, MANUAL_DNS_DEFER_ATTEST, ...this.releaseAttests(obs)],
       },
     };
   }
 
-  /** Once per run, after the last host moved: where each git app's webhook points now (the guidance is a gate warning too). */
+  /** The per-host attestations that release the hosts that are waiting on a decision (pending holds), for a wait that is not the holds' own. */
+  private releaseAttests(obs: CutoverObs): string[] {
+    const pending = [...obs.holds.values()].filter((h) => h.kind === "pending");
+    if (pending.length === 0) return [];
+    return [...(pending.some((h) => h.reason === "objects-unverified") ? [OBJECT_CLEARED_ATTEST] : []), ...(pending.some((h) => h.reason === "http01-gap-not-accepted") ? [HTTP01_GAP_ATTEST] : []), LEFT_OUT_ATTEST];
+  }
+
+  private readonly webhookGuided = new Set<string>();
+
+  /**
+   * Once per run, as soon as every host that can move has moved (nothing left to flip or verify): where each git app's webhook
+   * points now (the guidance is a gate warning per app too). Said from `observe`, because the step usually passes on its post
+   * gate without another `act`; the stored marker keeps it to once across ticks and hub restarts.
+   */
   private async emitWebhookGuidance(ctx: StepContext, obs: CutoverObs): Promise<void> {
-    if (obs.webhooks.length === 0 || compString(ctx.step.compensation, "webhooksAt")) return;
+    if (obs.webhooks.length === 0 || ctx.dryRun || this.webhookGuided.has(ctx.run.id) || compString(ctx.step.compensation, "webhooksAt")) return;
+    if (obs.entries.some((e) => e.state === "SWITCHING" || e.state === "SWITCHED" || e.state === "VERIFY_FAILED") || obs.flipRun?.status === "running") return;
+    if (obs.entries.some((e) => e.state === "READY" && !obs.holds.has(e.hostname))) return;
+    this.webhookGuided.add(ctx.run.id);
     await ctx.recordCompensation({ webhooksAt: iso(ctx.now()) });
     const base = this.world.hubPublicUrl();
     const sources = [...new Set(obs.webhooks.filter((w) => w.kind === "github-app" && w.sourceId).map((w) => `${base ?? ""}/webhooks/github/${w.sourceId}`))];
