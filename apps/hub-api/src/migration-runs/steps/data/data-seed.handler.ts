@@ -13,7 +13,7 @@ import {
   type StepHandlerRegistry,
 } from "../../core/run-contract";
 import { DATA_CODES, DATA_PORT, OBJECT_PORT, type DataPort, type DataSnapshot, type ObjectPort, type ObjectView } from "./data-contract";
-import { estimateEquals, estimateWindow, hasLiveTransfer, migratorFlags, objectIsActive, seedChecks } from "./data-logic";
+import { dbsNeedingMeasure, decideLanes, estimateEquals, estimateWindow, hasLiveTransfer, migratorFlags, objectIsActive, seedChecks } from "./data-logic";
 import { compOf, gateFrom, loadObjects, loadSnapshot, takeObjectStart } from "./handler-util";
 import { MigratorRunner } from "./launcher/migrator-runner.service";
 import type { LauncherStatus } from "./launcher/migrator-launcher";
@@ -65,6 +65,15 @@ export class DataSeedHandler implements StepHandler<SeedObs>, OnModuleInit {
     if (!run.opId) return items; // no import yet: nothing to project from
     const snap = await loadSnapshot(this.data, ctx);
     const est = estimateWindow(snap, ctx.now());
+    for (const [ref, dec] of decideLanes(run, snap)) {
+      if (dec.reason === "engine-no-lane") continue;
+      items.push({
+        code: "data-seed.dry.db-lane",
+        level: dec.lane === "blocked" ? "block" : dec.lane === "pending" ? "unknown" : "info",
+        subject: ref,
+        params: { lane: dec.lane, reason: dec.reason, dumpBytes: dec.dumpBytes, counted: dec.counted },
+      });
+    }
     for (const v of snap.volumes) {
       if (v.excluded) items.push({ code: DATA_CODES.seedVolumeExcluded, level: "warn", subject: v.itemRef });
       else if (!v.inventory) items.push({ code: DATA_CODES.seedVolumeNotInspected, level: "unknown", subject: v.itemRef });
@@ -107,6 +116,19 @@ export class DataSeedHandler implements StepHandler<SeedObs>, OnModuleInit {
 
     if (obs.missingObjects.length) return { outcome: "fail", code: DATA_CODES.seedObjectGone, params: { count: obs.missingObjects.length }, retryable: false };
 
+    // per-database lane: a database whose measured DUMP is over the artifact cap (or whose physical copy cannot run) goes on the
+    // streamed dump lane when the owner allowed it. The decision is a pure function of what the migrator measured; this only applies it.
+    let switched = 0;
+    for (const [ref, dec] of decideLanes(run, snap)) {
+      const d = snap.databases.find((x) => x.itemRef === ref);
+      if (!d || dec.lane !== "stream" || d.plane === "stream") continue;
+      await ctx.assertLease();
+      if (!(await this.data.enableStream(run, ref, true))) return { outcome: "fail", code: DATA_CODES.seedDbStreamUnavailable, params: { engine: d.engine }, retryable: true };
+      switched++;
+      await ctx.emit({ stepKey: "DATA_SEED", level: "info", code: "data-seed.db-stream-enabled", params: { engine: d.engine, reason: dec.reason, dumpBytes: dec.dumpBytes, counted: dec.counted } });
+    }
+    if (switched > 0) return { outcome: "continue", pollAfterMs: 1_000 }; // re-read the world: the database now has a dump row
+
     // (b) object seed pass: auto, run by the target agent
     let objectsBusy = false;
     for (const o of obs.objects) {
@@ -130,7 +152,7 @@ export class DataSeedHandler implements StepHandler<SeedObs>, OnModuleInit {
     }
 
     // (a)+(c) migrator work: inspect every volume, then (optionally) warm the database dumps
-    const needInspect = snap.volumes.some((v) => !v.excluded && (!v.inventory || !v.disk || v.disk.unknown));
+    const needInspect = snap.volumes.some((v) => !v.excluded && (!v.inventory || !v.disk || v.disk.unknown)) || dbsNeedingMeasure(run, snap, ctx.trigger === "retry").length > 0;
     const needWarm = run.options.warmDbSeed && snap.databases.some((d) => d.plane === "logical" && d.task !== "done");
     if (needInspect || needWarm) {
       const phase = needInspect ? "inspect" : "warm-db";

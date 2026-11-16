@@ -13,15 +13,16 @@ import { dbVolumeName } from "../../databases/database-script";
 import { ImportExecutorService } from "../import-executor.service";
 import { MigrationTokenService, type MigrationTokenContext } from "../migration-token.service";
 import type { GateResult } from "./vx-gates";
-import { dbGates } from "./vx-dest-gate";
-import { VX_409, VX_PROTOCOL, VX_VOL_IDX, vxDataRef, vxEnabled, vxMaxBytes, vxMaxParts, vxPartRawBytes, vxPrincipal, vxCommitWaitMs, vxStaleMs } from "./vx-constants";
+import { dbGates, dumpDestGate } from "./vx-dest-gate";
+import { DUMP_VOLUME_NAME, VOLUME_INGEST_DUMP, VX_409, VX_PROTOCOL, VX_VOL_IDX, isStreamDumpEngine, vxDataRef, vxDumpEnabled, vxEnabled, vxMaxBytes, vxMaxDumpBytes, vxMaxParts, vxPartRawBytes, vxPrincipal, vxCommitWaitMs, vxStaleMs } from "./vx-constants";
 import { VxPartRegistry, type InflightPart, type PartOutcome } from "./vx-part-registry";
 import { VxApplyService } from "./vx-apply.service";
 import { buildMigrationPartStatScript } from "./vx-scripts";
 import { firstGate } from "./vx-dest-gate";
 import { volDataRef } from "../migration-volume";
-import { buildVolumeTargets, dbVolumeModeRefs, parseVolumeItemRef, type VxDbLite, type VxExclusion, type VxVolumeTarget } from "./vx-targets";
-import type { VxBeginBody, VxFinishBody, VxFingerprint, VxInventoryBody, VxInventoryItem, VxPartBody, VxRunBody, VxSpeedtestBody } from "./vx.dto";
+import { buildVolumeTargets, dbStreamModeRefs, dbVolumeModeRefs, parseVolumeItemRef, volumeItemRef, type VxDbLite, type VxExclusion, type VxVolumeTarget } from "./vx-targets";
+import { dumpDiskVerdict, dumpRawEstimate, type DbSizeRecord } from "./vx-dump";
+import type { VxBeginBody, VxDbSizesBody, VxFinishBody, VxFingerprint, VxInventoryBody, VxInventoryItem, VxPartBody, VxRunBody, VxSpeedtestBody } from "./vx.dto";
 import { buildVolumeView, type VolumeTransferView } from "./vx-view";
 
 /** A fully resolved, re-authorized destination of ONE volume itemRef. Everything here is hub-derived, never from the migrator. */
@@ -55,6 +56,10 @@ interface OpMetaVx {
   vxInventory?: Record<string, VxInventoryItem & { runId?: string; at?: string }>;
   vxExcluded?: Record<string, VxExclusion>;
   vxDisk?: Record<string, VxDiskResult & { at?: string }>;
+  /** Databases moved by the streamed dump lane (keys = database itemRefs), written by the run's DATA_SEED. */
+  vxStream?: Record<string, { at: string; by: string }>;
+  /** The migrator's `--measure-dbs` report by database itemRef. */
+  vxDbSizes?: Record<string, DbSizeRecord>;
 }
 
 const metaOf = (m: unknown): OpMetaVx => (typeof m === "object" && m ? (m as OpMetaVx) : {});
@@ -89,7 +94,7 @@ export class VxService {
       const rows = await this.prisma.database.findMany({ where: { id: { in: dbIds } }, select: { id: true, engine: true, version: true, image: true } });
       for (const r of rows) dbs.set(r.id, { id: r.id, engine: r.engine, version: r.version, image: r.image });
     }
-    return buildVolumeTargets({ tasks: opRow.tasks, dbs, dbVolumeRefs: dbVolumeModeRefs(meta.plan?.items), excluded: meta.vxExcluded });
+    return buildVolumeTargets({ tasks: opRow.tasks, dbs, dbVolumeRefs: dbVolumeModeRefs(meta.plan?.items), dbStreamRefs: vxDumpEnabled() ? dbStreamModeRefs(meta) : new Set<string>(), excluded: meta.vxExcluded });
   }
 
   /**
@@ -211,6 +216,29 @@ export class VxService {
     return { ok: v.ok, unknown: v.unknown, details: v.details as VxDiskResult["details"] };
   }
 
+  /**
+   * The same read-only probe, sized for a STREAMED DUMP: the staged compressed parts plus the restored database (see
+   * {@link dumpDiskVerdict}); the decoded dump never touches disk. Unknown (never ok) when the target cannot be read.
+   */
+  async diskVerdictForDump(ctx: Pick<VxCtx, "targetServerId" | "dockerVolume" | "server">, rawDumpBytes: number, dbBytes: number): Promise<VxDiskResult> {
+    const p = await this.probeTarget(ctx);
+    if (!p.probe) return { ok: false, unknown: true, details: { totalBytes: rawDumpBytes, lane: "dump", reason: p.why } };
+    const stage = p.probe.df[MOVE_STAGING_ROOT];
+    const dock = p.probe.df[DOCKER_ROOT];
+    return dumpDiskVerdict({
+      rawDumpBytes,
+      dbBytes,
+      targetStagingFreeBytes: stage?.availKb != null ? stage.availKb * 1024 : null,
+      targetDockerFreeBytes: dock?.availKb != null ? dock.availKb * 1024 : null,
+      targetSameDevice: !!stage?.dev && !!dock?.dev && stage.dev === dock.dev,
+    });
+  }
+
+  /** What the migrator measured for the database a dump row moves (undefined until `--measure-dbs` ran). */
+  private dumpMeasure(meta: OpMetaVx, target: Pick<VxVolumeTarget, "databaseItemRef">): DbSizeRecord | undefined {
+    return target.databaseItemRef ? meta.vxDbSizes?.[target.databaseItemRef] : undefined;
+  }
+
   /** The read-only probe of the TARGET host; `probe: null` carries WHY it is unknown (offline, old agent, no capability, bad output). */
   protected async probeTarget(ctx: Pick<VxCtx, "targetServerId" | "dockerVolume" | "server">): Promise<{ probe: MoveProbe | null; why: string }> {
     if (!ctx.server.capabilities.includes("backup")) return { probe: null, why: "the target server has no backup capability granted" };
@@ -238,6 +266,7 @@ export class VxService {
   /** Dry-run size check: against the stored inventory bytes unless `rawBytes` is given. No data moves. */
   async diskCheck(opId: string, actorId: string, itemRef: string, rawBytes?: number): Promise<VxDiskResult> {
     const ctx = await this.resolve(opId, actorId, itemRef);
+    if (ctx.target.destType === "db-dump") return this.dumpDiskCheck(ctx, rawBytes);
     let bytes = rawBytes;
     if (bytes === undefined) {
       const opRow = await this.prisma.bulkOperation.findUnique({ where: { id: opId }, select: { meta: true } });
@@ -249,6 +278,18 @@ export class VxService {
     }
     const v = await this.diskVerdictFor(ctx, bytes);
     await this.storeDisk(opId, itemRef, v);
+    return v;
+  }
+
+  /** Dry-run size check of a streamed dump: against the migrator's measurement unless `rawBytes` is given. No data moves. */
+  private async dumpDiskCheck(ctx: VxCtx, rawBytes?: number): Promise<VxDiskResult> {
+    const meta = await this.metaOfOp(ctx.opId);
+    const m = this.dumpMeasure(meta, ctx.target);
+    const est = rawBytes ?? dumpRawEstimate(m);
+    if (est === null || est === undefined) throw new ConflictException("this database has not been measured yet: run the migrator with --dry-run --measure-dbs first, or pass rawBytes");
+    if (est > vxMaxDumpBytes()) return { ok: false, unknown: false, details: { totalBytes: est, maxBytes: vxMaxDumpBytes(), lane: "dump", reason: "the dump exceeds the per-dump limit" } };
+    const v = await this.diskVerdictForDump(ctx, est, m?.state === "measured" ? m.dbBytes : est);
+    await this.storeDisk(ctx.opId, ctx.target.itemRef, v);
     return v;
   }
 
@@ -285,11 +326,11 @@ export class VxService {
     const rows: unknown[] = [];
     const volumeRefOfDb = new Map<string, string>();
     for (const t of targets) {
-      if (t.destType === "db-data") volumeRefOfDb.set(t.databaseItemRef!, t.itemRef);
+      if (t.destType !== "app-volume") volumeRefOfDb.set(t.databaseItemRef!, t.itemRef); // the database row is marked `dataPlane: "volume"`: its logical route is closed
       const base: Record<string, unknown> = {
         itemRef: t.itemRef,
         kind: "volume",
-        volumeIngest: t.excluded ? "excluded" : "stream-v2",
+        volumeIngest: t.excluded ? "excluded" : t.destType === "db-dump" ? VOLUME_INGEST_DUMP : "stream-v2",
         dest: { type: t.destType, name: t.name, mountPath: t.mountPath },
       };
       if (t.excluded) base.reason = t.excluded.reason;
@@ -303,7 +344,7 @@ export class VxService {
   /** What `GET targets` adds at the top level for the stream. */
   targetsEnvelope(): Record<string, unknown> {
     if (!vxEnabled()) return {};
-    return { vxProtocol: VX_PROTOCOL, vx: { partRawBytes: vxPartRawBytes(), maxBytes: vxMaxBytes(), maxParts: vxMaxParts() } };
+    return { vxProtocol: VX_PROTOCOL, vx: { partRawBytes: vxPartRawBytes(), maxBytes: vxMaxBytes(), maxParts: vxMaxParts(), ...(vxDumpEnabled() ? { dumpMaxBytes: vxMaxDumpBytes() } : {}) } };
   }
 
   // ───────────────────────────── transfer lifecycle (token routes) ─────────────────────────────
@@ -332,12 +373,23 @@ export class VxService {
 
   /** The destination must STILL be as-provisioned (a deploy or restore during a long copy aborts it). */
   private async assertDestOpen(ctx: VxCtx, inventory: VxInventoryItem | undefined): Promise<void> {
+    if (ctx.target.destType === "db-dump") return this.assertDumpDestOpen(ctx);
     if (ctx.target.destType === "app-volume") {
       if ((await this.prisma.deployment.count({ where: { appId: ctx.resourceId } })) > 0) throw new ConflictException(VX_409.destDirty);
       return;
     }
     const bad = firstGate(await dbGates(this.prisma, ctx, inventory));
     if (bad) throw new ConflictException(bad.text);
+  }
+
+  /**
+   * A streamed dump restores into the destination DATABASE, so it must still hold nothing that did not come from this migration: no
+   * backup, no restore by anyone else, and either never started (a first claim) or started by this lane's own restore (a retry of a
+   * failed apply, which Postgres rolled back and the MySQL family re-runs idempotently).
+   */
+  private async assertDumpDestOpen(ctx: VxCtx): Promise<void> {
+    const g = await dumpDestGate(this.prisma, ctx.resourceId);
+    if (!g.open) throw new ConflictException(g.reason === "gone" ? "destination no longer exists" : VX_409.destDirty);
   }
 
   private sameFingerprint(a: unknown, b: VxFingerprint): boolean {
@@ -351,6 +403,59 @@ export class VxService {
 
   private gib(n: unknown): string {
     return typeof n === "number" ? (n / 1024 ** 3).toFixed(1) : "?";
+  }
+
+  /** Is the lease of `t` free for a migrator run `runId` to take (nobody holds it, it is ours, or its holder went silent)? */
+  private leaseFree(t: MigrationVolumeTransfer, runId: string): boolean {
+    if (t.state !== "COPYING") return true;
+    if (!t.runId || t.runId === runId) return true;
+    return !t.lastBeatAt || t.lastBeatAt.getTime() < Date.now() - vxStaleMs();
+  }
+
+  /**
+   * `begin` of a streamed dump that already has a transfer row. A dump is not byte-deterministic, so unlike a tar of a stopped
+   * volume it cannot be resumed from the middle by comparing raw hashes:
+   *  - every part is staged (the finish was accepted) but the restore failed: re-apply it, without dumping again;
+   *  - parts of an unfinished stream, from a migrator that is gone: discard them and start over (explicitly, never silently);
+   *  - a live lease held by another run: refused as always.
+   */
+  private async dumpBeginExisting(ctx: VxCtx, t: MigrationVolumeTransfer, body: VxBeginBody, op: MigrationTokenContext): Promise<{ view?: Record<string, unknown>; transfer: MigrationVolumeTransfer | null }> {
+    if (!this.leaseFree(t, body.runId)) throw new ConflictException(VX_409.otherRun);
+    if (t.state === "FAILED" && t.rawBytesFinal != null) {
+      const probe = await this.apply.probeTargetState(ctx, t.id);
+      if (probe && !probe.running && probe.parts === t.partsDone && t.partsDone > 0) {
+        await this.assertDumpDestOpen(ctx);
+        const claimed = await this.prisma.migrationVolumeTransfer.updateMany({
+          where: { id: t.id, state: "FAILED" },
+          data: { state: "APPLYING", runId: body.runId, lastBeatAt: new Date(), error: null, phase: "applying", finishedAt: null },
+        });
+        if (claimed.count !== 1) throw new ConflictException(VX_409.otherRun);
+        const fresh = (await this.findTransfer(op.opId, t.itemRef))!;
+        await this.setDataTask(ctx, fresh, "RUNNING", [{ name: "source-verified", status: "DONE" }, { name: "copying", status: "DONE" }, { name: "copied", status: "DONE" }, { name: "applying", status: "RUNNING" }]);
+        this.apply.start(ctx, fresh);
+        return { view: this.beginView(fresh, await this.expiry(op), []), transfer: fresh };
+      }
+    }
+    if (t.partsDone > 0 || t.rawBytesFinal != null) {
+      if (t.state === "COPYING" && t.runId === body.runId) return { transfer: t }; // this very run re-sent its begin (a lost answer): nothing to discard
+      return { transfer: await this.restartDump(ctx, t) };
+    }
+    return { transfer: t };
+  }
+
+  /** Discard a dump's staged parts and counters so it streams again from part 0 (the destination was never touched by a copy). */
+  private async restartDump(ctx: VxCtx, t: MigrationVolumeTransfer): Promise<MigrationVolumeTransfer> {
+    this.registry.forget(t.id);
+    if (!(await this.apply.cleanupTarget(t.id, ctx.targetServerId))) throw new ConflictException("the target could not be cleaned up (is its agent online?): try again");
+    await this.prisma.$transaction([
+      this.prisma.migrationVolumePart.deleteMany({ where: { transferId: t.id } }),
+      this.prisma.migrationVolumeTransfer.update({
+        where: { id: t.id },
+        data: { attempt: { increment: 1 }, state: "PENDING", partsDone: 0, bytesDone: 0, rawBytesDone: 0, rawBytesFinal: null, entries: null, fingerprint: Prisma.DbNull, runId: null, lastBeatAt: null, phase: null, bps: null, error: null, startedAt: null, finishedAt: null },
+      }),
+    ]);
+    await this.prisma.bulkTask.updateMany({ where: { opId: t.opId, itemRef: vxDataRef(t.itemRef) }, data: { status: "FAILED", output: "the dump starts over: a dump cannot resume from the middle", finishedAt: new Date() } });
+    return (await this.findTransfer(t.opId, t.itemRef))!;
   }
 
   private beginView(t: MigrationVolumeTransfer, expiresAt: string, parts: Array<{ idx: number; rawOffset: bigint; rawLen: number; rawSha256: string }>, disk?: VxDiskResult | null): Record<string, unknown> {
@@ -376,7 +481,9 @@ export class VxService {
     const ctx = await this.resolve(op.opId, op.actorId, itemRef);
     if (ctx.target.excluded) throw new ConflictException("this volume was excluded from the migration by its owner");
     if (body.partRawBytes !== vxPartRawBytes()) throw new BadRequestException(`partRawBytes must equal the hub policy (${vxPartRawBytes()})`);
-    if (body.rawTotal !== undefined && body.rawTotal > vxMaxBytes()) throw new PayloadTooLargeException(`the volume exceeds the ${vxMaxBytes()}-byte limit`);
+    const isDump = ctx.target.destType === "db-dump";
+    const maxRaw = isDump ? vxMaxDumpBytes() : vxMaxBytes();
+    if (body.rawTotal !== undefined && body.rawTotal > maxRaw) throw new PayloadTooLargeException(`the ${isDump ? "dump" : "volume"} exceeds the ${maxRaw}-byte limit`);
     const meta = await this.metaOfOp(op.opId);
     const inv = meta.vxInventory?.[itemRef];
 
@@ -390,6 +497,14 @@ export class VxService {
     if (t?.state === "DONE") return { ...this.beginView(t, await this.expiry(op), []), alreadyDone: true };
     if (t?.state === "ABORTED") throw new ConflictException(VX_409.aborted);
     if (t && (t.state === "COPIED" || t.state === "APPLYING")) return this.beginView(t, await this.expiry(op), []); // the apply is running: just poll status
+    if (isDump && t) {
+      // A dump cannot resume from the middle (not byte-deterministic): a transfer whose parts are ALL staged is re-applied without
+      // dumping again; anything else starts over, with the stale parts discarded. Neither compares the source fingerprint of the
+      // earlier attempt (a restarted database is a fresh dump, not a divergence).
+      const handled = await this.dumpBeginExisting(ctx, t, body, op);
+      if (handled.view) return handled.view;
+      t = handled.transfer;
+    }
     if (t && t.fingerprint && !this.sameFingerprint(t.fingerprint, body.fingerprint)) throw new ConflictException(VX_409.fingerprintChanged);
     if (t && t.partsDone > 0 && t.partRawBytes !== body.partRawBytes) throw new ConflictException(VX_409.diverged);
 
@@ -409,14 +524,21 @@ export class VxService {
     // The gates run first (cheap, no agent round trip) and BEFORE the lease is taken, so a refused volume never holds one.
     await this.assertDestOpen(ctx, inv);
 
-    // Free space on the TARGET (compressed parts + the decoded copy). Skipped when parts are already staged (resume).
-    const bytes = body.rawTotal ?? inv?.rawBytes ?? 0;
+    // Free space on the TARGET (compressed parts + the decoded copy; for a dump: the staged parts + the restored database).
+    // Skipped when parts are already staged (resume).
+    const measure = isDump ? this.dumpMeasure(meta, ctx.target) : undefined;
+    const bytes = body.rawTotal ?? (isDump ? (dumpRawEstimate(measure) ?? 0) : (inv?.rawBytes ?? 0));
     let disk: VxDiskResult | null = null;
     if (!t || t.partsDone === 0) {
-      disk = await this.diskVerdictFor(ctx, bytes);
+      disk = isDump ? await this.diskVerdictForDump(ctx, bytes, measure?.state === "measured" ? measure.dbBytes : bytes) : await this.diskVerdictFor(ctx, bytes);
       if (disk.unknown) throw new ConflictException(`${VX_409.diskInsufficient}: could not verify the free space on the target (${String(disk.details.reason ?? "unknown")})`);
       if (!disk.ok) {
         const d = disk.details;
+        if (isDump) {
+          throw new ConflictException(
+            `${VX_409.diskInsufficient}: the dump needs about ${this.gib(d.stagedBytes)} GiB of staging and ${this.gib(d.databaseBytes)} GiB for the restored database (free ${this.gib(d.targetStagingFreeBytes)} GiB staging, ${this.gib(d.targetDockerFreeBytes)} GiB docker root${d.targetSameDevice ? ", one filesystem" : ""})`,
+          );
+        }
         throw new ConflictException(`${VX_409.diskInsufficient}: the transfer needs about ${this.gib(Math.max(Number(d.totalBytes) * 2.05 + 1024 ** 3, 0))} GiB free on one filesystem (data ${this.gib(d.totalBytes)} GiB; free ${this.gib(d.targetStagingFreeBytes)} GiB staging, ${this.gib(d.targetDockerFreeBytes)} GiB docker root)`);
       }
       await this.storeDisk(op.opId, itemRef, disk);
@@ -550,7 +672,8 @@ export class VxService {
     if (body.rawLen > t.partRawBytes) throw new BadRequestException("rawLen exceeds the part size");
     if (body.size > body.rawLen + Math.floor(body.rawLen / 100) + 1024) throw new BadRequestException("size exceeds the compressed bound");
     if (body.rawOffset !== Number(t.rawBytesDone)) throw new BadRequestException("rawOffset does not follow the committed parts");
-    if (body.rawOffset + body.rawLen > vxMaxBytes()) throw new PayloadTooLargeException(`the volume exceeds the ${vxMaxBytes()}-byte limit`);
+    const maxRaw = ctx.target.destType === "db-dump" ? vxMaxDumpBytes() : vxMaxBytes();
+    if (body.rawOffset + body.rawLen > maxRaw) throw new PayloadTooLargeException(`the ${ctx.target.destType === "db-dump" ? "dump" : "volume"} exceeds the ${maxRaw}-byte limit`);
     if (idx > 0) {
       const last = await this.prisma.migrationVolumePart.findUnique({ where: { transferId_idx: { transferId: t.id, idx: idx - 1 } } });
       if (!last || last.rawLen < t.partRawBytes) throw new ConflictException(VX_409.shortPart);
@@ -656,17 +779,24 @@ export class VxService {
       off += rows[i].rawLen;
     }
     if (rows.length !== t.partsDone || off !== body.rawBytes) throw new BadRequestException("rawBytes does not match the committed parts");
-    if (body.rawBytes > vxMaxBytes()) throw new PayloadTooLargeException(`the volume exceeds the ${vxMaxBytes()}-byte limit`);
+    const isDump = ctx.target.destType === "db-dump";
+    if (body.rawBytes > (isDump ? vxMaxDumpBytes() : vxMaxBytes())) throw new PayloadTooLargeException(`the ${isDump ? "dump" : "volume"} exceeds the ${isDump ? vxMaxDumpBytes() : vxMaxBytes()}-byte limit`);
     const fp = t.fingerprint as { containerId?: string; startedAt?: string; finishedAt?: string } | null;
     const after = body.fingerprintAfter;
-    if (!fp || after.running || fp.containerId !== after.containerId || fp.startedAt !== after.startedAt || fp.finishedAt !== after.finishedAt) throw new ConflictException(VX_409.fingerprintChanged);
+    if (isDump) {
+      // The source database is RUNNING by design (a dump reads through the server): what must not have changed is that it is the
+      // SAME container run (a restarted database is a different state than the one the dump began on).
+      if (!fp || fp.containerId !== after.containerId || fp.startedAt !== after.startedAt) throw new ConflictException(VX_409.fingerprintChanged);
+    } else if (!fp || after.running || fp.containerId !== after.containerId || fp.startedAt !== after.startedAt || fp.finishedAt !== after.finishedAt) throw new ConflictException(VX_409.fingerprintChanged);
 
-    // Free space for the DECODED copy now that the parts are staged (the staged parts already took their share).
+    // Free space for the DECODED copy now that the parts are staged (the staged parts already took their share). A dump is never
+    // decoded to disk: the restored database is what needs the room.
     const probe = await this.probeTarget(ctx);
     const dock = probe.probe?.df[DOCKER_ROOT];
     if (!probe.probe || dock?.availKb == null) throw new ConflictException(`${VX_409.diskInsufficient}: could not verify the free space on the target (${probe.why || "unreadable df"})`);
-    const need = 1.05 * body.rawBytes + 512 * 1024 ** 2;
-    if (dock.availKb * 1024 < need) throw new ConflictException(`${VX_409.diskInsufficient}: extracting needs about ${this.gib(need)} GiB free in the docker root, the target has ${this.gib(dock.availKb * 1024)} GiB`);
+    const dbBytes = isDump ? (this.dumpMeasure(meta, ctx.target)?.dbBytes ?? 0) : 0;
+    const need = isDump ? 1.1 * Math.max(dbBytes, body.rawBytes) + 1024 ** 3 : 1.05 * body.rawBytes + 512 * 1024 ** 2;
+    if (dock.availKb * 1024 < need) throw new ConflictException(`${VX_409.diskInsufficient}: ${isDump ? "restoring" : "extracting"} needs about ${this.gib(need)} GiB free in the docker root, the target has ${this.gib(dock.availKb * 1024)} GiB`);
 
     const copied = await this.prisma.migrationVolumeTransfer.updateMany({ where: { id: t.id, runId: body.runId, state: "COPYING" }, data: { state: "COPIED", rawBytesFinal: body.rawBytes, entries: body.entries, lastBeatAt: new Date(), phase: "applying" } });
     if (copied.count !== 1) throw new ConflictException(VX_409.otherRun);
@@ -718,6 +848,8 @@ export class VxService {
     this.registry.cancel(t.id, new Error("aborted by the migrator"));
     await this.prisma.migrationVolumeTransfer.updateMany({ where: { id: t.id, runId: body.runId, state: "COPYING" }, data: { state: "FAILED", runId: null, error: "the migrator was interrupted; re-run it to resume", phase: null } });
     await this.setDataTask(ctx, t, "FAILED", [{ name: "source-verified", status: "DONE" }, { name: "copying", status: "FAILED" }], { progress: { partsDone: t.partsDone } });
+    // The staged parts of an unfinished DUMP can never be resumed (the next begin discards them): free the target's disk now.
+    if (ctx.target.destType === "db-dump" && t.rawBytesFinal == null) await this.apply.cleanupTarget(t.id, ctx.targetServerId).catch(() => false);
     return { state: "FAILED" };
   }
 
@@ -738,10 +870,13 @@ export class VxService {
     await this.assertDestOpen(ctx, meta.vxInventory?.[t.itemRef]); // never wipe a destination that is live
     this.registry.forget(t.id);
     if (!(await this.apply.cleanupTarget(t.id, ctx.targetServerId))) throw new ConflictException("the target could not be cleaned up (is its agent online?): try again");
-    try {
-      await this.apply.wipeDest(ctx, t.id);
-    } catch (e) {
-      throw new ConflictException(e instanceof Error ? e.message : "the destination could not be emptied");
+    if (ctx.target.destType !== "db-dump") {
+      // a dump restores through the engine's own client and rolls back or re-runs idempotently: there is no volume to empty
+      try {
+        await this.apply.wipeDest(ctx, t.id);
+      } catch (e) {
+        throw new ConflictException(e instanceof Error ? e.message : "the destination could not be emptied");
+      }
     }
     await this.prisma.$transaction([
       this.prisma.migrationVolumePart.deleteMany({ where: { transferId: t.id } }),
@@ -859,6 +994,96 @@ export class VxService {
     return this.doReset(ctx, t);
   }
 
+  /** The inventory a dump row shows: synthesized from the migrator's size report (a dump row has no volume to inspect). */
+  private dumpInventory(meta: OpMetaVx, target: VxVolumeTarget): VxInventoryItem | undefined {
+    const m = this.dumpMeasure(meta, target);
+    const est = dumpRawEstimate(m);
+    if (!m || est === null) return undefined;
+    return { itemRef: target.itemRef, found: true, mountType: "volume", rawBytes: est, entries: 0, specials: { sockets: 0, fifos: 0, devices: 0 }, running: true };
+  }
+
+  // ───────────────────────────── database size report + lane switch ─────────────────────────────
+
+  /**
+   * Store the migrator's `--dry-run --measure-dbs` report (token route). Every entry must be a database this op provisioned (a DONE
+   * database task) with the same engine, so the migrator can only describe databases of its own import. The merge into
+   * `BulkOperation.meta.vxDbSizes` is one atomic jsonb statement. The numbers only ROUTE a database (they pick its lane); nothing
+   * here moves data.
+   */
+  async dbSizes(op: MigrationTokenContext, body: VxDbSizesBody): Promise<{ stored: number; expiresAt: string }> {
+    if (!vxDumpEnabled()) throw new NotFoundException("no such migration target");
+    const opRow = await this.executor.loadIngestOp(op.opId, op.actorId);
+    const meta = metaOf(opRow.meta);
+    const server = await this.prisma.server.findUnique({ where: { id: meta.serverId } });
+    if (!server) throw new ConflictException("target server not found");
+    await this.access.requirePermission(op.actorId, server.teamId, "apps:config");
+    const dbTasks = opRow.tasks.filter((t) => t.status === "DONE" && t.kind === "database" && t.resourceType === "database" && t.resourceId && t.itemRef);
+    const rows = dbTasks.length ? await this.prisma.database.findMany({ where: { id: { in: dbTasks.map((t) => t.resourceId as string) } }, select: { id: true, engine: true } }) : [];
+    const engineOf = new Map(rows.map((r) => [r.id, r.engine]));
+    const known = new Map<string, string>();
+    for (const t of dbTasks) {
+      const e = engineOf.get(t.resourceId as string);
+      if (e && t.itemRef) known.set(t.itemRef, e);
+    }
+    const seen = new Set<string>();
+    for (const it of body.items) {
+      if (!known.has(it.itemRef)) throw new BadRequestException("the report names a database that is not a target of this import");
+      if (known.get(it.itemRef) !== it.engine) throw new BadRequestException("the reported engine does not match the provisioned database");
+      if (seen.has(it.itemRef)) throw new BadRequestException("the report lists a database twice");
+      seen.add(it.itemRef);
+    }
+    const at = new Date().toISOString();
+    const patch: Record<string, unknown> = {};
+    for (const it of body.items) patch[it.itemRef] = { ...it, runId: body.runId, at };
+    await this.prisma.$executeRaw(
+      Prisma.sql`UPDATE "BulkOperation" SET "meta" = jsonb_set(COALESCE("meta", '{}'::jsonb), '{vxDbSizes}', COALESCE("meta"->'vxDbSizes', '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb, true) WHERE "id" = ${op.opId}`,
+    );
+    const renewed = await this.tokens.extend(op.opId);
+    return { stored: body.items.length, expiresAt: (renewed ?? op.expiresAt).toISOString() };
+  }
+
+  /**
+   * Put a database on (or take it off) the streamed dump lane. Called by the guided run's DATA_SEED once the measured dump size,
+   * the engine and the owner's `largeDbMode` say so; stored as `BulkOperation.meta.vxStream` and read by every target list. The
+   * lane cannot be entered once the database was already restored by the artifact route or copied as files (that data is the
+   * migration's result), and only a dump-capable engine may enter it.
+   */
+  async setStreamMode(userId: string, opId: string, dbItemRef: string, on: boolean): Promise<{ itemRef: string; stream: boolean }> {
+    if (!vxDumpEnabled()) throw new ConflictException("the streamed dump lane is switched off on this hub");
+    const opRow = await this.executor.loadIngestOp(opId, userId);
+    const meta = metaOf(opRow.meta);
+    const server = await this.prisma.server.findUnique({ where: { id: meta.serverId } });
+    if (!server) throw new ConflictException("target server not found");
+    await this.access.requirePermission(userId, server.teamId, "apps:config");
+    await this.access.requirePermission(userId, server.teamId, "databases");
+    const task = opRow.tasks.find((t) => t.itemRef === dbItemRef && t.status === "DONE" && t.kind === "database" && !!t.resourceId);
+    if (!task || !task.resourceId) throw new NotFoundException("no such migration target");
+    const db = await this.prisma.database.findUnique({ where: { id: task.resourceId }, select: { engine: true } });
+    if (!db || !isStreamDumpEngine(db.engine)) throw new ConflictException("this database engine has no streamed dump lane");
+    if (on) {
+      const logical = opRow.tasks.find((t) => t.itemRef === `data:${dbItemRef}`);
+      if (logical && ["DONE", "RUNNING"].includes(String(logical.status))) throw new ConflictException("this database was already restored by the artifact route");
+      const physical = await this.prisma.migrationVolumeTransfer.findMany({ where: { opId, itemRef: dbItemRef.replace(/^database:/, "volume:") + ":data" }, select: { state: true } });
+      if (physical.some((x) => ["COPYING", "COPIED", "APPLYING", "DONE"].includes(x.state))) throw new ConflictException("this database is already being copied as files");
+      const entry = { at: new Date().toISOString(), by: userId };
+      await this.prisma.$executeRaw(
+        Prisma.sql`UPDATE "BulkOperation" SET "meta" = jsonb_set(COALESCE("meta", '{}'::jsonb), '{vxStream}', COALESCE("meta"->'vxStream', '{}'::jsonb) || ${JSON.stringify({ [dbItemRef]: entry })}::jsonb, true) WHERE "id" = ${opId}`,
+      );
+      // the hub asks the target about its free space right away (it needs no migrator for that): the seed gate then reads a verdict
+      try {
+        const ref = volumeItemRef(dbItemRef, DUMP_VOLUME_NAME);
+        if (ref) await this.dumpDiskCheck(await this.resolve(opId, userId, ref));
+      } catch {
+        /* unknown (agent offline, no capability...): the gate shows it as unknown and the migrator's dry run asks again */
+      }
+    } else {
+      await this.prisma.$executeRaw(
+        Prisma.sql`UPDATE "BulkOperation" SET "meta" = jsonb_set(COALESCE("meta", '{}'::jsonb), '{vxStream}', COALESCE("meta"->'vxStream', '{}'::jsonb) - ${dbItemRef}, true) WHERE "id" = ${opId}`,
+      );
+    }
+    return { itemRef: dbItemRef, stream: on };
+  }
+
   /** The user-facing per-volume view: state, progress, the migrator's inventory, the disk verdict and the db-data gates. */
   async listVolumes(userId: string, opId: string): Promise<{ volumes: VolumeTransferView[]; tokenExpiresAt: string | null; enabled: boolean }> {
     if (!vxEnabled()) return { volumes: [], tokenExpiresAt: null, enabled: false };
@@ -880,7 +1105,7 @@ export class VxService {
       const ownerRef = t.destType === "app-volume" ? t.appItemRef! : t.databaseItemRef!;
       const owner = opRow.tasks.find((x) => x.itemRef === ownerRef);
       const ownerId = owner?.resourceId ?? null;
-      const inv = meta.vxInventory?.[t.itemRef];
+      const inv = t.destType === "db-dump" ? this.dumpInventory(meta, t) : meta.vxInventory?.[t.itemRef];
       const disk = meta.vxDisk?.[t.itemRef];
       let gates: GateResult[] | null = null;
       let destVolume = t.name;

@@ -89,3 +89,27 @@ export type VxExcludeBody = z.infer<typeof VxExcludeBodySchema>;
 /** Link speed test: a throwaway part of the REAL volume's first MiB, relayed to the target's staging and discarded. */
 export const VxSpeedtestBodySchema = z.object({ runId: runIdSchema, size: posInt, sha256: hex64 }).strict();
 export type VxSpeedtestBody = z.infer<typeof VxSpeedtestBodySchema>;
+
+/**
+ * The migrator's `--dry-run --measure-dbs` report (token route): one entry per dump-capable database it could reach. The hub chooses
+ * each database's lane from the DUMP size (never the volume size), so `dumpGzBytes` (the size the artifact route would carry) is
+ * what counts when it was measured; a database above the cheap-dump threshold carries its catalog size only. The numbers come from
+ * an untrusted host: they route a database, they never prove that data arrived.
+ */
+export const DB_ITEMREF_RE = /^database:([A-Za-z0-9_-]{1,128}):([a-zA-Z0-9][a-zA-Z0-9_-]{0,127})$/;
+export const VxDbSizeItemSchema = z
+  .object({
+    itemRef: z.string().min(1).max(256).regex(DB_ITEMREF_RE, "not a database itemRef"),
+    engine: z.enum(["POSTGRES", "MARIADB", "MYSQL"]),
+    state: z.enum(["measured", "failed", "skipped"]),
+    reason: shortStr(80).optional(),
+    dbBytes: nat,
+    dumpRawBytes: nat.optional(),
+    dumpGzBytes: nat.optional(),
+    measuredBy: z.enum(["catalog", "dump"]),
+    ms: nat.optional(),
+  })
+  .strict();
+export type VxDbSizeItem = z.infer<typeof VxDbSizeItemSchema>;
+export const VxDbSizesBodySchema = z.object({ runId: runIdSchema, items: z.array(VxDbSizeItemSchema).min(1).max(500) }).strict();
+export type VxDbSizesBody = z.infer<typeof VxDbSizesBodySchema>;

@@ -37,7 +37,7 @@ describe("DataSeedHandler with an operator-run migrator", () => {
     expect(handler.postGate(h.ctx, obs).passed).toBe(false); // nothing inspected yet: never passes by default
     expect(handler.preGate(h.ctx, obs).passed).toBe(true);
     const res = await handler.act(h.ctx, obs);
-    expect(res).toMatchObject({ outcome: "wait", wait: { kind: "operator", code: DATA_CODES.runMigrator, offersCommand: true, params: { phase: "inspect", flags: ["--arms", "all", "--dry-run"], pending: 1 } } });
+    expect(res).toMatchObject({ outcome: "wait", wait: { kind: "operator", code: DATA_CODES.runMigrator, offersCommand: true, params: { phase: "inspect", flags: ["--arms", "all", "--dry-run", "--measure-dbs"], pending: 1 } } });
     expect(h.patches).toHaveLength(1);
     expect((h.patches[0].windowEstimate as { freezeToFlipSec: number | null }).freezeToFlipSec).toBeNull(); // the size is not known yet
     expect(obs.progress).toEqual({ done: 0, total: 1, unit: "volume" });
@@ -299,7 +299,7 @@ describe("DataSeedHandler.dryRun", () => {
   it("projects without touching anything", async () => {
     const { handler, ctx, data, objects } = build();
     const items = await handler.dryRun(ctx({ run: makeRun({ dryRun: true, opId: null }) }).ctx);
-    expect(items).toEqual([{ code: "data-seed.dry.plan", level: "info", params: { runner: "operator", warmDbSeed: false, flags: ["--arms", "all", "--dry-run"] } }]);
+    expect(items).toEqual([{ code: "data-seed.dry.plan", level: "info", params: { runner: "operator", warmDbSeed: false, flags: ["--arms", "all", "--dry-run", "--measure-dbs"] } }]);
     expect(data.tokens + data.revoked + data.aborted.length + objects.calls.length).toBe(0);
     const withOp = await handler.dryRun(ctx({ run: makeRun({ dryRun: true }) }).ctx);
     expect(withOp.some((i) => i.code === DATA_CODES.seedVolumeNotInspected && i.level === "unknown")).toBe(true);

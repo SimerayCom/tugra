@@ -13,6 +13,7 @@ import type {
   DataPort,
   DataSnapshot,
   DbDataItem,
+  DbMeasureLite,
   DbStats,
   DbStatsPort,
   DriftPort,
@@ -207,13 +208,19 @@ export const inspected = (itemRef: string, bytes = 1024 ** 3, entries = 100, o: 
 
 export const copied = (itemRef: string, bytes = 1024 ** 3, entries = 100): VolumeDataItem => inspected(itemRef, bytes, entries, { state: "DONE", entries, rawBytesDone: bytes, bytesDone: bytes / 2 });
 
-export const database = (itemRef: string, o: Partial<DbDataItem> = {}): DbDataItem => ({ itemRef, dbId: `dbid-${itemRef}`, name: "db", engine: "POSTGRES", plane: "logical", unsupportedReason: null, task: "none", taskFailure: null, finishedAt: null, ...o });
+/** A small, counted dump: under the artifact cap, so the database stays on the standard route. */
+export const SMALL_MEASURE: DbMeasureLite = { state: "measured", reason: null, dbBytes: 5_000_000, dumpRawBytes: 4_000_000, dumpGzBytes: 1_000_000, measuredBy: "dump" };
+/** A 30 GiB database measured by catalog size only (the dump was not counted): over the cap. */
+export const BIG_MEASURE: DbMeasureLite = { state: "measured", reason: null, dbBytes: 34_100_000_000, dumpRawBytes: null, dumpGzBytes: null, measuredBy: "catalog" };
+
+export const database = (itemRef: string, o: Partial<DbDataItem> = {}): DbDataItem => ({ itemRef, dbId: `dbid-${itemRef}`, name: "db", engine: "POSTGRES", plane: "logical", unsupportedReason: null, task: "none", taskFailure: null, finishedAt: null, measure: SMALL_MEASURE, ...o });
 
 export function makeSnap(o: Partial<DataSnapshot> = {}): DataSnapshot {
   return {
     opId: "op1",
     targetServerId: "srv-target",
     vxEnabled: true,
+    dumpEnabled: true,
     tokenActive: false,
     tokenExpiresAt: null,
     hubBase: "https://hub.example.com",
@@ -258,6 +265,15 @@ export class FakeDataPort implements DataPort {
   async abortTransfers(_run: unknown, itemRefs: readonly string[]): Promise<string[]> {
     this.aborted.push(...itemRefs);
     return [...itemRefs];
+  }
+  /** Databases the run put on the streamed dump lane (the fake flips the snapshot's plane like the real port's next read would). */
+  streamed: string[] = [];
+  streamRefused = false;
+  async enableStream(_run: unknown, dbItemRef: string, on: boolean): Promise<boolean> {
+    if (on && this.streamRefused) return false;
+    if (on) this.streamed.push(dbItemRef);
+    for (const d of this.snap.databases) if (d.itemRef === dbItemRef) d.plane = on ? "stream" : "logical";
+    return true;
   }
 }
 

@@ -58,6 +58,12 @@ export function buildVerifySuite(i: SuiteInputs): SuiteCheck[] {
       out.push(mk("volume-parity", v.itemRef, { status: "warn", code: DATA_CODES.verifyCoverage, params: { kind: "volume", outcome: "excluded" }, evidence: "operator-attested" }));
       continue;
     }
+    if (v.destType === "db-dump") {
+      // a streamed dump has no entry count to compare: every part was hash-verified at the relay and on the target, the restore's own exit
+      // status is the apply's, and the rows are compared by the logical parity check below. Hub-verified, never migrator-reported.
+      out.push(mk("volume-parity", v.itemRef, { status: v.state === "DONE" ? "pass" : "fail", code: DATA_CODES.verifyVolumeParity, params: { state: v.state, entries: null, inspectedEntries: null, lane: "stream" }, evidence: "hub-verified" }));
+      continue;
+    }
     const copied = v.state === "DONE" && v.entries !== null;
     const entriesAgree = !v.inventory?.found || v.inventory.entries === v.entries;
     out.push(

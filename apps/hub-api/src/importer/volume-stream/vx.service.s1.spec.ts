@@ -172,7 +172,7 @@ describe("VxService targets + view", () => {
     expect(h.svc.targetsEnvelope()).toEqual({});
   });
   it("envelope advertises the protocol and the policy", () => {
-    expect(harness().svc.targetsEnvelope()).toEqual({ vxProtocol: 1, vx: { partRawBytes: 128 * 1024 ** 2, maxBytes: 256 * GiB, maxParts: 100000 } });
+    expect(harness().svc.targetsEnvelope()).toEqual({ vxProtocol: 1, vx: { partRawBytes: 128 * 1024 ** 2, maxBytes: 256 * GiB, maxParts: 100000, dumpMaxBytes: 1024 * GiB } });
   });
   it("listVolumes: merges inventory, disk verdict and the Postgres gates; labelled as reported by the migrator", async () => {
     const meta = { sourceKind: "coolify", serverId: SERVER_ID, plan: { items: [{ itemRef: "database:srv1:pg7c1", kind: "database", proposed: { dataMode: "volume" } }] }, vxInventory: { [DB_VOL_REF]: inv({ itemRef: DB_VOL_REF, image: "postgres:16-alpine", pgMajor: "16", pgLayout: "root", mountDest: "/var/lib/postgresql/data" }) }, vxDisk: { [DB_VOL_REF]: { ok: true, unknown: false, details: { totalBytes: 5 * GiB } } } };

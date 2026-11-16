@@ -41,7 +41,12 @@ export const LIVE_VOLUME_STATES: readonly VolumeState[] = ["PENDING", "COPYING",
 
 export interface VolumeDataItem {
   itemRef: string;
-  destType: "app-volume" | "db-data";
+  /** `db-dump` = a database moved by the STREAMED DUMP lane: it has no volume, only a stream of parts restored through the engine's client. */
+  destType: "app-volume" | "db-data" | "db-dump";
+  /** db-data / db-dump: the itemRef of the database this row moves (`database:<server>:<ref>`); null for an app volume. */
+  ownerItemRef?: string | null;
+  /** db-data / db-dump: the database engine; null for an app volume. */
+  engine?: string | null;
   /** Display name of the owning app/database (never a secret). */
   ownerName: string | null;
   excluded: boolean;
@@ -60,7 +65,23 @@ export interface VolumeDataItem {
   gates: Array<{ id: string; status: "pass" | "fail" | "unknown" }> | null;
 }
 
-export type DbPlane = "logical" | "volume" | "unsupported";
+/**
+ * How a database's data moves: `logical` = the cap-limited artifact route; `volume` = a physical copy of the data directory;
+ * `stream` = the STREAMED DUMP lane (no size cap, any layout; chosen per database from the measured dump size and the owner's policy).
+ */
+export type DbPlane = "logical" | "volume" | "stream" | "unsupported";
+
+/** The migrator's own `--measure-dbs` report for one database (reported by an UNTRUSTED host: it routes, it never proves). */
+export interface DbMeasureLite {
+  state: "measured" | "failed" | "skipped";
+  reason: string | null;
+  /** The database's catalog size on the source. */
+  dbBytes: number;
+  /** The counted dump (raw / gzip), present only when the migrator measured the dump itself. */
+  dumpRawBytes: number | null;
+  dumpGzBytes: number | null;
+  measuredBy: "catalog" | "dump";
+}
 
 export interface DbDataItem {
   itemRef: string;
@@ -75,6 +96,8 @@ export interface DbDataItem {
   taskFailure: string | null;
   /** When the `data:<itemRef>` task last finished (ISO); null while it has not. A dump restored BEFORE the freeze is not the final copy. */
   finishedAt: string | null;
+  /** What the migrator measured (`--measure-dbs`); null until it ran. */
+  measure?: DbMeasureLite | null;
 }
 
 export interface SourceItem {
@@ -88,6 +111,8 @@ export interface DataSnapshot {
   opId: string;
   targetServerId: string;
   vxEnabled: boolean;
+  /** The streamed dump lane is available on this hub (the volume stream is on and the lane's own switch is not off). */
+  dumpEnabled?: boolean;
   /** A live migration token exists (the operator can still run the migrator). */
   tokenActive: boolean;
   tokenExpiresAt: string | null;
@@ -122,6 +147,11 @@ export interface DataPort {
   revokeToken(run: RunSnapshot): Promise<void>;
   /** Abort the LIVE (not applying/done) transfers among `itemRefs`; returns the ones aborted. Never resets or wipes. */
   abortTransfers(run: RunSnapshot, itemRefs: readonly string[]): Promise<string[]>;
+  /**
+   * Put a database on the streamed dump lane (`on`) or take it off. Idempotent; refused (false) when the database was already
+   * restored by the artifact route or copied as files, or the lane is unavailable. The lane switch is the importer's; this only asks.
+   */
+  enableStream(run: RunSnapshot, dbItemRef: string, on: boolean): Promise<boolean>;
 }
 
 export class DataPortError extends Error {
@@ -332,6 +362,11 @@ export const DATA_CODES = {
   seedObjectBlocked: "data-seed.object-blocked",
   seedObjectStartRejected: "data-seed.object-start-rejected",
   seedEstimate: "data-seed.estimate",
+  seedDbLane: "data-seed.db-lane",
+  seedDbUnmeasured: "data-seed.db-unmeasured",
+  seedDbOverCapRefused: "data-seed.db-over-cap-refused",
+  seedDbPhysicalRefused: "data-seed.db-physical-refused",
+  seedDbStreamUnavailable: "data-seed.db-stream-unavailable",
   seedObjectGone: "data-seed.object-migration-gone",
   // freeze
   freezeScheduled: "freeze.scheduled",

@@ -13,7 +13,7 @@ import {
   type StepHandlerRegistry,
 } from "../../core/run-contract";
 import { CAPABILITY_PORT, CHECK_STORE, DATA_CODES, DATA_PORT, OBJECT_PORT, SOURCE_STATS_CHECK, type CapabilityPort, type CheckStore, type DataPort, type DataSnapshot, type ObjectPort, type ObjectView } from "./data-contract";
-import { dbRestoredAfterFreeze, finalChecks, hasLiveTransfer, migratorFlags, migratorWorkRemains, objectIsActive } from "./data-logic";
+import { dbRestoredAfterFreeze, finalChecks, hasLiveTransfer, isMigratorDb, migratorFlags, migratorWorkRemains, objectIsActive } from "./data-logic";
 import { compOf, gateFrom, loadObjects, loadSnapshot, releaseIfOurs, takeObjectStart } from "./handler-util";
 import type { LauncherStatus } from "./launcher/migrator-launcher";
 import { controllerOf } from "./freeze.handler";
@@ -112,7 +112,7 @@ export class DataFinalHandler implements StepHandler<FinalObs>, OnModuleInit {
   /** The databases whose source-side measurement arrived after the freeze opened (an earlier report belongs to an earlier pass). */
   private async reportedStats(ctx: StepContext, snap: DataSnapshot): Promise<Set<string>> {
     const out = new Set<string>();
-    if (!snap.databases.some((d) => d.plane === "logical")) return out;
+    if (!snap.databases.some(isMigratorDb)) return out;
     const since = ctx.run.freezeStartedAt?.getTime() ?? 0;
     for (const r of await this.checks_.list(ctx.run.id, "VERIFY")) if (r.checkId === SOURCE_STATS_CHECK && r.at.getTime() >= since) out.add(r.subject);
     return out;
@@ -269,7 +269,7 @@ export class DataFinalHandler implements StepHandler<FinalObs>, OnModuleInit {
     let due: boolean;
     if (MigratorRunner.available(run) && launched) due = obs.launcher === null || obs.launcher.state === "running";
     else if (MigratorRunner.available(run)) due = false; // nothing was launched by the hub: no report to wait for
-    else due = obs.snap.databases.some((d) => d.plane === "logical" && !obs.reportedStats.has(d.itemRef));
+    else due = obs.snap.databases.some((d) => isMigratorDb(d) && !obs.reportedStats.has(d.itemRef));
     if (!due) return null;
     const since = compOf(ctx).dataCompleteAt;
     if (!since) {

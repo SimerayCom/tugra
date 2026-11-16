@@ -11,6 +11,7 @@ import type { MigrationTokenContext } from "../migration-token.service";
 import { VxService } from "./vx.service";
 import {
   VxBeginBodySchema,
+  VxDbSizesBodySchema,
   VxFinishBodySchema,
   VxInventoryBodySchema,
   VxMigratorDiskCheckBodySchema,
@@ -18,6 +19,7 @@ import {
   VxRunBodySchema,
   VxSpeedtestBodySchema,
   type VxBeginBody,
+  type VxDbSizesBody,
   type VxFinishBody,
   type VxInventoryBody,
   type VxMigratorDiskCheckBody,
@@ -45,6 +47,13 @@ export class MigrationVolumeController {
   @Post("inventory")
   inventory(@MigrationOp() op: MigrationTokenContext, @Body(new ZodValidationPipe(VxInventoryBodySchema)) body: VxInventoryBody) {
     return this.vx.inventory(op, body);
+  }
+
+  /** `--dry-run --measure-dbs`: the size of each dump-capable source database (catalog size, plus the counted dump when cheap). Routes a database to a lane; moves nothing. */
+  @Post("db-sizes")
+  @HttpCode(200)
+  dbSizes(@MigrationOp() op: MigrationTokenContext, @Body(new ZodValidationPipe(VxDbSizesBodySchema)) body: VxDbSizesBody) {
+    return this.vx.dbSizes(op, body);
   }
 
   /** Dry-run size check of the target host against the inventory (or an explicit size). No data moves. */
