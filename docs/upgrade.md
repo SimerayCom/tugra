@@ -60,7 +60,10 @@ updated once with `git pull && ./scripts/install.sh` (below).
 
 A release can change files that live in your checkout rather than in an image: `deploy/docker-compose.yml` and the
 installer/updater shell scripts (`scripts/*.sh`, `scripts/lib/*.sh`). The in-app updater applies those too, so a
-plain **Update now** is enough — no `git pull`. Each release publishes them next to the signed manifest under
+plain **Update now** is enough for the common case — no `git pull`. The updater recreates only `hub-api`, `web`,
+`agent` and `tugra-updater`, so a release whose compose file also changes (or adds) any other service, such as
+`postgres`, `redis` or `traefik`, is refused with nothing changed and a pointer to `git pull && ./scripts/install.sh`
+(below). Each release publishes them next to the signed manifest under
 `host/<version>/`, with a `HOSTFILES` list (sha256 per file) signed by the **same publisher key** as `versions.json`;
 the signed `versions.json` commits to that list's sha256 (`hostFilesDigest`). The sidecar does not take file content
 from the hub or Redis: it downloads and verifies everything itself.
@@ -71,7 +74,8 @@ from the hub or Redis: it downloads and verifies everything itself.
    compose file and `scripts/**/*.sh`; `.env` and anything else can never be named. Only files that differ from your
    checkout are downloaded, and each must match its signed hash.
 2. **Validate**, before changing anything: every script must parse (`bash -n`), the new compose file must be valid
-   against your real `.env` (`docker compose config`), and it must not need a setting your `.env` lacks. If it does,
+   against your real `.env` (`docker compose config`), it must only change the services the updater recreates
+   (compared with `docker compose config --hash`), and it must not need a setting your `.env` lacks. If it does,
    the update stops with nothing changed and tells you to run `git pull && ./scripts/install.sh`, which generates
    the new setting.
 3. **Back up and apply.** After the pre-update restore point, the files about to change are copied to
@@ -102,7 +106,14 @@ Notes:
   feature. An older updater image refuses a release that changes compose/scripts ("run `git pull && ./scripts/install.sh`
   once to refresh it") instead of applying anything unverified.
 - Not covered (still `git pull && ./scripts/install.sh`): `Dockerfile.*` and other repository files (they only matter for
-  `--build`), and a release that needs a brand-new `.env` setting.
+  `--build`), a release that needs a brand-new `.env` setting, and a release whose compose file changes or adds a service
+  other than `hub-api`, `web`, `agent` and `tugra-updater`.
+- A custom `UPDATE_MANIFEST_URL` mirror must be https and must also host `host/<version>/` (the `HOSTFILES`,
+  `HOSTFILES.sig` and the files) next to `versions.json`, i.e. copy the whole `gh-pages` tree, not only the manifest.
+  When a release carries `hostFilesDigest` and that location cannot be fetched, the update is refused with nothing
+  changed; it is never silently reduced to an images-only update.
+- `.env` values may be quoted (`UPDATE_MANIFEST_URL=""` means unset, `TUGRA_UPDATE_CHECKS="0"` means off), the same way
+  docker compose reads them.
 
 Applying an update recreates the hub and web containers, so the hub can't do it itself — a small
 [`tugra-updater`](../SECURITY.md) sidecar drains a Redis queue and performs the recreate, then the

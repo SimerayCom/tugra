@@ -104,6 +104,12 @@ case "$1" in
     case "$*" in
       *pg_dump*) printf 'PGDMP-fake-dump'; exit 0 ;;
       *psql*) exit 0 ;;
+      *"config --hash"*)
+        f=""; prev=""; for a in "$@"; do if [ "$prev" = "-f" ]; then f="$a"; fi; prev="$a"; done
+        d="$(mktemp -d)"
+        awk -v d="$d" '/^services:/{s=1;next} /^[A-Za-z]/{s=0} s&&/^  [A-Za-z0-9_-]+:$/{name=$1; sub(":","",name)} s&&name{print >> (d "/" name)}' "$f"
+        for n in "$d"/*; do [ -f "$n" ] && echo "$(basename "$n") $(cksum < "$n" | cut -d' ' -f1)"; done
+        rm -rf "$d"; exit 0 ;;
       *" config"*)
         f=""; prev=""; for a in "$@"; do if [ "$prev" = "-f" ]; then f="$a"; fi; prev="$a"; done
         if grep -q INVALID_COMPOSE "$f" 2>/dev/null; then echo "invalid compose" >&2; exit 1; fi
@@ -112,7 +118,9 @@ case "$1" in
           else echo 'time="x" level=warning msg="The \\"NEEDS_NEW_VAR\\" variable is not set. Defaulting to a blank string."' >&2; fi
         fi
         exit 0 ;;
-      *" pull hub-api web"*) [ -n "$SHIM_PULL_FAIL" ] && exit 1; exit 0 ;;
+      *" pull hub-api web"*)
+        [ -n "$SHIM_WIPE_BACKUPS" ] && rm -rf "$SHIM_WIPE_BACKUPS"/host-files-*
+        [ -n "$SHIM_PULL_FAIL" ] && exit 1; exit 0 ;;
       *" up -d --no-deps hub-api web"*)
         [ -n "$SHIM_UP_FAIL_ALWAYS" ] && exit 1
         if [ -n "$SHIM_UP_FAIL_FIRST" ] && [ "$(grep -c 'up -d --no-deps hub-api web' "$SHIM_LOG")" -lt 2 ]; then exit 1; fi
@@ -404,12 +412,63 @@ suite("update.sh applying a release's compose + scripts (end to end)", () => {
       });
     });
 
+    it("a compose change to a service the updater does not recreate (or a new service) is refused with nothing changed", () => {
+      const rig = makeRig();
+      const cases: [string, RegExp][] = [
+        [NEW_COMPOSE + "  redis:\n    image: redis:7\n", /changes services the in-app updater does not recreate \(redis\).*install\.sh/],
+        [NEW_COMPOSE.replace("services:\n", "services:\n  postgres:\n    image: postgres:17\n"), /does not recreate \(postgres\)/],
+      ];
+      cases.forEach(([compose, why], i) => {
+        const digest = publish(rig, "0.2.0", { ...changedFiles(), "deploy/docker-compose.yml": compose });
+        const { log } = run(rig, { targetVersion: "0.2.0", hostFilesDigest: digest }, { SHIM_STATE: join(rig.dir, `state-svc${i}`) });
+        expectRefused(rig, log, why);
+      });
+    });
+
+    it("a compose change confined to hub-api, web, agent and the updater is applied", () => {
+      const rig = makeRig();
+      const compose = NEW_COMPOSE.replace("tugra-web:", "tugra-web-x:") + "  agent:\n    image: a\n  tugra-updater:\n    image: u\n";
+      const digest = publish(rig, "0.2.0", { ...changedFiles(), "deploy/docker-compose.yml": compose });
+      const { log } = run(rig, { targetVersion: "0.2.0", hostFilesDigest: digest });
+      expect(finalStatus(log)).toContain('"phase":"done"');
+      expect(read(rig, "deploy/docker-compose.yml")).toBe(compose);
+    });
+
     it("TUGRA_UPDATE_CHECKS=0 is a HARD OFF: nothing is fetched, the update is refused", () => {
       const rig = makeRig(["TUGRA_UPDATE_CHECKS=0"]);
       const digest = publish(rig, "0.2.0", changedFiles());
       const { log } = run(rig, { targetVersion: "0.2.0", hostFilesDigest: digest });
       expect(log).not.toContain("curl ");
       expectRefused(rig, log, /update checks are disabled \(TUGRA_UPDATE_CHECKS=0\)/);
+    });
+
+    it("TUGRA_UPDATE_CHECKS=\"0\" (quoted, as docker compose reads it) is a hard off too", () => {
+      const rig = makeRig(['TUGRA_UPDATE_CHECKS="0"']);
+      const digest = publish(rig, "0.2.0", changedFiles());
+      const { log } = run(rig, { targetVersion: "0.2.0", hostFilesDigest: digest });
+      expect(log).not.toContain("curl ");
+      expectRefused(rig, log, /update checks are disabled/);
+    });
+
+    it("the shipped .env.example blanks (UPDATE_MANIFEST_URL=\"\" and UPDATE_PUBLISHER_KEY=\"\") mean unset: the official source is used, not a refusal", () => {
+      const rig = makeRig();
+      const text = readFileSync(rig.envFile, "utf8").split("\n").filter((l) => !/^UPDATE_(MANIFEST_URL|PUBLISHER_KEY)=/.test(l));
+      writeFileSync(rig.envFile, [...text, 'UPDATE_MANIFEST_URL=""', "UPDATE_PUBLISHER_KEY=''"].join("\n") + "\n");
+      rig.envText = readFileSync(rig.envFile, "utf8");
+      const digest = publish(rig, "0.2.0", changedFiles());
+      const { log } = run(rig, { targetVersion: "0.2.0", hostFilesDigest: digest });
+      expect(log).toContain("curl https://simeraycom.github.io/tugra/host/0.2.0/HOSTFILES"); // the official source was tried
+      expect(finalStatus(log)).not.toMatch(/set UPDATE_MANIFEST_URL/);
+    });
+
+    it("a quoted URL and key (\"...\") in .env work exactly like unquoted ones", () => {
+      const rig = makeRig();
+      const text = readFileSync(rig.envFile, "utf8").split("\n").filter((l) => !/^UPDATE_(MANIFEST_URL|PUBLISHER_KEY)=/.test(l));
+      writeFileSync(rig.envFile, [...text, `UPDATE_MANIFEST_URL="${BASE_URL}/versions.json"`, `UPDATE_PUBLISHER_KEY='${rig.pub}'`].join("\r\n") + "\r\n");
+      const digest = publish(rig, "0.2.0", changedFiles());
+      const { log } = run(rig, { targetVersion: "0.2.0", hostFilesDigest: digest });
+      expect(finalStatus(log)).toContain('"phase":"done"');
+      expect(read(rig, "deploy/docker-compose.yml")).toBe(NEW_COMPOSE);
     });
 
     it("a half-configured source (URL without key) or a non-https URL never fetches", () => {
@@ -482,6 +541,33 @@ suite("update.sh applying a release's compose + scripts (end to end)", () => {
       expect(finalStatus(log)).toMatch(/"phase":"failed".*failed health check; restored 0\.1\.0 and verified healthy/);
       expectRestored(rig);
       expect(finalStatus(log)).toContain("replaced compose/scripts saved in:");
+    });
+
+    it("PRE_UPDATE_KEEP=0 never prunes the backup of the update in flight: a failed pull still restores the files", () => {
+      const rig = makeRig(["PRE_UPDATE_KEEP=0"]);
+      const digest = publish(rig, "0.2.0", changedFiles());
+      const { log } = run(rig, { targetVersion: "0.2.0", hostFilesDigest: digest }, { SHIM_PULL_FAIL: "1" });
+      expect(finalStatus(log)).toMatch(/"phase":"failed".*image pull failed/);
+      expect(finalStatus(log)).not.toContain("could NOT be restored");
+      expectRestored(rig);
+    });
+
+    it("a missing backup (cleaned while the update ran) is a FAILED restore, never a silent success", () => {
+      const rig = makeRig();
+      const digest = publish(rig, "0.2.0", changedFiles());
+      const { log, out } = run(rig, { targetVersion: "0.2.0", hostFilesDigest: digest }, { SHIM_PULL_FAIL: "1", SHIM_WIPE_BACKUPS: join(rig.repo, "backups") });
+      expect(out).not.toContain("host files: restored the previous compose/scripts");
+      expect(out).toContain("is missing or unreadable");
+      expect(finalStatus(log)).toContain("compose/scripts could NOT be restored");
+    });
+
+    it("a missing backup during the health-check recovery makes the status recovery_required, not 'verified healthy'", () => {
+      const rig = makeRig();
+      const digest = publish(rig, "0.2.0", changedFiles());
+      const { log } = run(rig, { targetVersion: "0.2.0", hostFilesDigest: digest }, { SHIM_UNHEALTHY_FIRST: "1", SHIM_WIPE_BACKUPS: join(rig.repo, "backups") });
+      // the wipe happens at the pull, i.e. before the failing health check
+      expect(finalStatus(log)).toContain('"phase":"recovery_required"');
+      expect(finalStatus(log)).not.toContain("verified healthy");
     });
 
     it("recovery itself fails -> recovery_required, and the status says where the previous compose/scripts are", () => {

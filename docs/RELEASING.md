@@ -68,6 +68,8 @@ applying an update. The pipeline lives in [`.github/workflows/release.yml`](../.
      `host/<version>/` on `gh-pages` in the **same commit** as `versions.json`, whose entry carries
      `hostFilesDigest` = sha256 of `HOSTFILES` (`--require-host-files true` refuses a release without it). The in-app
      updater downloads, verifies and applies these (see [Upgrade](upgrade.md#releases-that-change-the-compose-file-or-the-scripts)).
+     A mirror of the release site must copy the whole tree including `host/`, not just `versions.json`: an update whose
+     `hostFilesDigest` cannot be fetched is refused, never applied images-only.
      `host/<version>/` is immutable: re-running a release reproduces it byte for byte, and a different content for an
      already published version fails the publish. To ship a new script through the updater, add it to
      `HOST_TOP_LEVEL_FILES` in `apps/hub-api/src/update/host-files.ts` (`scripts/lib/*.sh` is picked up automatically).

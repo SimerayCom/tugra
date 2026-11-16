@@ -18,9 +18,17 @@
 # Restore: docs/disaster-recovery.md ("Restoring a pre-update snapshot").
 
 # Config from the process env first, then the .env (so PRE_UPDATE_BACKUP=0 can live in either).
+# A .env value is read the way docker compose reads it: a trailing CR and surrounding whitespace are dropped and ONE
+# pair of surrounding single or double quotes is removed, so `KEY=""` is an unset value and `KEY="0"` is `0`.
 _snap_cfg() {
   local v="${!1:-}"
-  if [ -z "$v" ] && [ -f "$ENV_FILE" ]; then v="$({ grep "^$1=" "$ENV_FILE" 2>/dev/null || true; } | head -n1 | cut -d= -f2-)"; fi
+  if [ -z "$v" ] && [ -f "$ENV_FILE" ]; then
+    v="$({ grep "^$1=" "$ENV_FILE" 2>/dev/null || true; } | head -n1 | cut -d= -f2- | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    case "$v" in
+      \"*\") v="${v#\"}"; v="${v%\"}" ;;
+      \'*\') v="${v#\'}"; v="${v%\'}" ;;
+    esac
+  fi
   printf '%s' "${v:-$2}"
 }
 

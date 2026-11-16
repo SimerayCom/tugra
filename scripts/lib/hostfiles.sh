@@ -155,7 +155,7 @@ hf_prepare() {
   case "$rc" in
     0) ;;
     2) HF_ERROR="update checks are disabled (TUGRA_UPDATE_CHECKS=0): nothing was fetched"; return 1 ;;
-    *) HF_ERROR="cannot fetch the release's compose/scripts: set UPDATE_MANIFEST_URL (https) together with UPDATE_PUBLISHER_KEY in .env, or neither"; return 1 ;;
+    *) HF_ERROR="cannot fetch the release's compose/scripts: set UPDATE_MANIFEST_URL (https) together with UPDATE_PUBLISHER_KEY in .env, or neither (a mirror must also host host/<version>/ next to versions.json)"; return 1 ;;
   esac
   command -v openssl >/dev/null 2>&1 || { HF_ERROR="this updater image has no openssl, so it cannot verify the release's compose/scripts — run git pull && ./scripts/install.sh once to refresh it"; return 1; }
   command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1 || { HF_ERROR="this updater image has no curl/wget — run git pull && ./scripts/install.sh once to refresh it"; return 1; }
@@ -169,7 +169,7 @@ hf_prepare() {
 
   hf_fetch "$url/HOSTFILES" "$HF_STAGE/HOSTFILES" "$HF_MAX_MANIFEST_BYTES" \
     && hf_fetch "$url/HOSTFILES.sig" "$HF_STAGE/HOSTFILES.sig" 512 \
-    || { HF_ERROR="could not download the release's host files manifest from $url"; return 1; }
+    || { HF_ERROR="could not download the release's host files manifest from $url (a custom UPDATE_MANIFEST_URL mirror must host host/<version>/ next to versions.json)"; return 1; }
   hf_verify_sig "$HF_STAGE/HOSTFILES" "$HF_STAGE/HOSTFILES.sig" "$HF_KEY" \
     || { HF_ERROR="host files signature verification failed"; return 1; }
   [ "$(hf_sha256 "$HF_STAGE/HOSTFILES")" = "$digest" ] \
@@ -194,6 +194,31 @@ hf_prepare() {
   return 0
 }
 
+# Services update.sh itself recreates (`up -d --no-deps hub-api web`, then agent, then the one-shot updater helper).
+# Any OTHER service's definition (or a new service) is never re-applied by an in-app update.
+HF_RECREATED_SERVICES=" hub-api web agent tugra-updater "
+
+# `<service> <config hash>` per line (compose's own recreate hash: it changes exactly when the service's resolved
+# definition does), every profile included, resolved against the real .env.
+_hf_service_hashes() {
+  local out
+  out="$(docker compose --project-directory "$REPO_DIR/deploy" --env-file "$ENV_FILE" -f "$1" --profile '*' config --hash='*' 2>/dev/null)" || return 1
+  printf '%s\n' "$out" | sort
+}
+
+# Names of the services whose definition differs between two compose files (added, removed or changed), excluding
+# the ones the updater recreates. Returns 1 when the hashes cannot be computed.
+_hf_untouched_changes() {
+  local old new line name
+  old="$(_hf_service_hashes "$1")" && [ -n "$old" ] || return 1
+  new="$(_hf_service_hashes "$2")" && [ -n "$new" ] || return 1
+  while read -r line; do
+    name="${line%% *}"
+    case "$HF_RECREATED_SERVICES" in *" $name "*) continue ;; esac
+    printf '%s\n' "$name"
+  done < <(comm -3 <(printf '%s\n' "$old") <(printf '%s\n' "$new") | sed 's/^[[:space:]]*//' | sort -u) | sort -u
+}
+
 # Warnings docker compose prints for a variable the .env does not define (one name per line, sorted). Compose
 # prints either `The "FOO" variable is not set…` or, in logfmt form, `msg="The \"FOO\" variable is not set…"`.
 _hf_unset_vars() {
@@ -205,7 +230,7 @@ _hf_unset_vars() {
 # against the REAL .env and needs no variable the .env cannot satisfy (a new required setting means the installer
 # must run to generate it — the updater never edits .env).
 hf_validate() {
-  local path f before after added
+  local path f before after added changed
   for path in "${HF_CHANGED[@]}"; do
     f="$HF_STAGE/files/$path"
     case "$path" in
@@ -225,6 +250,15 @@ hf_validate() {
   added="$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after") | tr '\n' ' ' | sed 's/ *$//')"
   if [ -n "$added" ]; then
     HF_ERROR="this release's compose file needs new settings that .env does not define ($added) — run git pull && ./scripts/install.sh, which generates them"
+    return 1
+  fi
+  # The updater recreates only hub-api, web, agent and the updater itself. A release that also changes (or adds)
+  # another service would leave the running stack on the old definition until some later `up` — and a new service
+  # hub-api needs would never start — so that release must go through the installer.
+  changed="$(_hf_untouched_changes "$REPO_DIR/deploy/docker-compose.yml" "$f")" \
+    || { HF_ERROR="cannot compare this release's service definitions with this docker compose version — run git pull && ./scripts/install.sh"; return 1; }
+  if [ -n "$changed" ]; then
+    HF_ERROR="this release's compose file changes services the in-app updater does not recreate ($(printf '%s' "$changed" | tr '\n' ' ' | sed 's/ *$//')) — run git pull && ./scripts/install.sh"
     return 1
   fi
   return 0
@@ -297,10 +331,12 @@ hf_apply() {
   _hf_write_state
   # Keep the newest PRE_UPDATE_KEEP backup sets (best-effort).
   keep="$(_snap_cfg PRE_UPDATE_KEEP 5)"; case "$keep" in ''|*[!0-9]*) keep=5 ;; esac
+  [ "$keep" -ge 1 ] || keep=1   # same floor as the snapshot prune; the backup an in-flight update may need is never removed
   n=0
   # shellcheck disable=SC2012  # generated names, mtime order is what we want
   for i in $(ls -1dt "$(dirname "$dir")"/host-files-* 2>/dev/null); do
-    n=$((n + 1)); if [ "$n" -gt "$keep" ]; then rm -rf "$i"; fi
+    [ "$i" = "$dir" ] && continue
+    n=$((n + 1)); if [ "$n" -ge "$keep" ]; then rm -rf "$i"; fi
   done
   log "host files: replaced ${#HF_CHANGED[@]} file(s) from release $to (previous copies: $dir)"
   return 0
@@ -310,6 +346,19 @@ hf_apply() {
 hf_rollback() {
   local kind path rc=0
   [ "$HF_APPLIED" -eq 1 ] && [ -n "$HF_BACKUP_DIR" ] || return 0
+  # The backup must be complete BEFORE anything is touched: a missing PATHS list or copy (backups cleaned while the
+  # update ran) is a failed restore, never a silent "nothing to restore".
+  if [ ! -r "$HF_BACKUP_DIR/PATHS" ] || [ ! -s "$HF_BACKUP_DIR/PATHS" ]; then
+    log "host files: the backup in $HF_BACKUP_DIR is missing or unreadable"
+    return 1
+  fi
+  while read -r kind path; do
+    hf_path_ok "$path" || continue
+    if [ "$kind" = "K" ] && [ ! -f "$HF_BACKUP_DIR/files/$path" ]; then
+      log "host files: the backup copy of $path is missing from $HF_BACKUP_DIR"
+      return 1
+    fi
+  done < "$HF_BACKUP_DIR/PATHS"
   while read -r kind path; do
     hf_path_ok "$path" || continue
     case "$kind" in
