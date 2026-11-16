@@ -15,7 +15,20 @@ import {
   type StepStatus,
 } from "../../../core/run-contract";
 import { EMPTY_STEP_EVIDENCE } from "../../../core/run-contract";
-import { RunOptionsSchema, type GateResult, type StepApprovalRecord, type StepEvidence, type StepProgress, type WaitSpec } from "../../../core/dto";
+import {
+  ApprovalBindingSchema,
+  CodeParamsSchema,
+  DryRunItemSchema,
+  GateResultSchema,
+  RunOptionsSchema,
+  WaitSpecSchema,
+  type GateResult,
+  type StepApprovalRecord,
+  type StepEvidence,
+  type StepProgress,
+  type WaitSpec,
+} from "../../../core/dto";
+import { isRunCode } from "../../../core/run-contract";
 
 /**
  * Thrown by a fake to simulate the hub dying at that exact line. It IS a {@link RunLeaseLostError}: that is the one error a
@@ -188,6 +201,9 @@ export class StepDriver {
         if (self.leaseLost) throw new Error("lease lost");
       },
       emit: async (e) => {
+        // The wire contract: a lower-case code and JSON-safe, secret-free params (never English text, never a secret).
+        if (!isRunCode(e.code)) throw new Error(`invalid event code ${e.code}`);
+        if (e.params) CodeParamsSchema.parse(e.params);
         self.events.push(e);
       },
       setProgress: async (p) => {
@@ -241,21 +257,23 @@ export class StepDriver {
     }
     if (this.run.dryRun) {
       const items = await h.dryRun(ctx);
+      for (const i of items) DryRunItemSchema.parse(i);
       rec.progress = { done: 0, total: items.length, unit: "item", dryRun: items };
       rec.status = "PASSED";
       return { status: "PASSED" };
     }
     try {
       const obs = await h.observe(ctx);
-      const post = h.postGate(ctx, obs);
+      const post = GateResultSchema.parse(h.postGate(ctx, obs));
       if (post.passed) {
         rec.status = "PASSED";
         rec.gate = post;
         return { status: "PASSED", gate: post };
       }
       const binding = h.approvalBinding ? await h.approvalBinding(ctx, obs) : null;
+      if (binding) ApprovalBindingSchema.parse(binding);
       if (binding && rec.approval && rec.approval.boundHash === binding.inputHash && (rec.approval.expiresAt === null || Date.parse(rec.approval.expiresAt) > this.now.getTime())) approval = rec.approval;
-      const pre = h.preGate(ctx, obs);
+      const pre = GateResultSchema.parse(h.preGate(ctx, obs));
       rec.gate = pre;
       if (!pre.passed) {
         const w = pre.wait ?? ({ kind: "operator", code: "gate.blocked" } as WaitSpec);
@@ -274,7 +292,7 @@ export class StepDriver {
       const res = await h.act(ctx, obs);
       if (res.outcome === "done") {
         const obs2 = await h.observe(ctx);
-        const post2 = h.postGate(ctx, obs2);
+        const post2 = GateResultSchema.parse(h.postGate(ctx, obs2));
         rec.gate = post2;
         if (post2.passed) {
           rec.status = "PASSED";
@@ -286,15 +304,18 @@ export class StepDriver {
       }
       if (res.outcome === "continue") return { status: "RUNNING", pollAfterMs: Math.min(60_000, Math.max(1_000, res.pollAfterMs)) };
       if (res.outcome === "wait") {
+        WaitSpecSchema.parse(res.wait);
         rec.wait = res.wait;
         rec.status = res.wait.kind === "timer" ? "WAITING_TIMER" : res.wait.kind === "approval" ? "WAITING_APPROVAL" : "WAITING_OPERATOR";
         rec.notBefore = res.wait.kind === "timer" ? new Date(res.wait.notBefore) : null;
         return { status: rec.status, wait: res.wait };
       }
+      if (!isRunCode(res.code)) throw new Error(`invalid failure code ${res.code}`);
       rec.status = "FAILED";
       return { status: "FAILED", fail: { code: res.code, params: res.params, retryable: res.retryable } };
     } catch (e) {
       if (e instanceof StepFailure) {
+        if (e.params) CodeParamsSchema.parse(e.params);
         rec.status = "FAILED";
         return { status: "FAILED", fail: { code: e.code, params: e.params, retryable: e.retryable } };
       }
@@ -330,7 +351,14 @@ export class StepDriver {
   /** Call `compensate` the way the engine does. */
   async compensate(h: AnyStepHandler, how: CompensateHow): Promise<CompResult> {
     const ctx = this.ctx(h.key, "tick", () => null);
-    return h.compensate(ctx, how);
+    const r = await h.compensate(ctx, how);
+    if (r.code && !isRunCode(r.code)) throw new Error(`invalid compensation code ${r.code}`);
+    if (r.params) CodeParamsSchema.parse(r.params);
+    for (const m of r.manual ?? []) {
+      if (!isRunCode(m.code)) throw new Error(`invalid manual code ${m.code}`);
+      if (m.params) CodeParamsSchema.parse(m.params);
+    }
+    return r;
   }
 }
 

@@ -22,8 +22,7 @@ import {
 import { CutoverStepBase, POLL_MS, rethrowLeaseLost, requireOpId } from "./cutover-step-base";
 import { CutoverWorld } from "./cutover-world.service";
 import { buildDarkProbeScript, classifyDarkHost, parseDarkProbe, type DarkVerdict } from "./dark-probe";
-import { cutoverInit } from "./dns-prepare.handler";
-import { appHosts } from "./dns-prepare.handler";
+import { appHosts, cutoverInit } from "./dns-prepare.handler";
 import { actionableEntries, capHosts, chk, compDate, compStrings, isDns01Blocked, iso, PRE_FLIP_STATES, trackedEntries, type Entry } from "./run-cutover-logic";
 import type { CutoverView } from "../../../cutover/cutover.dto";
 

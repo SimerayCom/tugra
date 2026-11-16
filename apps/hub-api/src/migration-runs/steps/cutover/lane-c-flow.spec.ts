@@ -10,6 +10,13 @@ afterEach(() => {
 
 const apps = (n: number, hasData: boolean) => Array.from({ length: n }, (_, i) => ({ id: `a${i + 1}`, host: H(i + 1), hasData }));
 const zoneFor = (n: number) => Array.from({ length: n }, (_, i) => zoneRec(`r${i + 1}`, H(i + 1)));
+/** Events, gates, waits, progress and compensation of every step are codes + params: no token, key or credential may appear in them. */
+function expectNoSecrets(rig: Rig) {
+  const dump = JSON.stringify({ events: rig.driver.events, steps: [...rig.driver.steps.entries()] });
+  expect(dump.length).toBeGreaterThan(100);
+  expect(dump).not.toMatch(/tugra_mig_|CF_DNS_API_TOKEN|"TOK"|PRIVATE KEY|ops@realco\.io|Bearer /);
+}
+
 const settle = (rig: Rig, h: AnyStepHandler) => rig.driver.drive(h, { between: () => rig.cutover.idle() });
 
 describe("lane C, the whole cutover side of a run", () => {
@@ -38,6 +45,7 @@ describe("lane C, the whole cutover side of a run", () => {
     expect(order.indexOf("observe.started")).toBeLessThan(order.indexOf("finalize.token-revoked"));
     // the TTL wait ran in the background: the flip was only gated on it, after the data steps
     expect(rig.writes.filter((w) => w.phase === "setup").map((w) => w.kind).every((k) => k === "patchDnsRecord")).toBe(true);
+    expectNoSecrets(rig);
   });
 
   it("takeover + swap-proxy: no DNS write anywhere, Coolify's proxy stopped and kept, Coolify's containers stopped (not removed) at the end", async () => {
@@ -70,6 +78,7 @@ describe("lane C, the whole cutover side of a run", () => {
     expect(scripts).not.toContain("swap-reverse");
     expect(rig.world.server.proxyBind).toBe("public");
     expect(rig.world.tokenActive).toBe(false);
+    expectNoSecrets(rig);
   });
 
   it("abort of a stateless two-box run walks the steps back: flip reverted, DNS-01 switched off, TTL restored; Coolify stays authoritative", async () => {
