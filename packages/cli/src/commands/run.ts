@@ -25,6 +25,7 @@ export const CERT_MODES = ["none", "seed"] as const;
 export const SOURCE_RUNNERS = ["operator", "agent", "coolify-host-loop"] as const;
 export const COMMAND_KINDS = ["migrator", "host-loop", "inventory"] as const;
 export const LARGE_DB_MODES = ["refuse", "stream-logical"] as const;
+export const SERVICE_START_MODES = ["dependencies", "none", "all"] as const;
 export const MINIO_POLICIES = ["hold", "mirror", "external"] as const;
 export const WORKER_POLICIES = ["hold-dark", "start-dark", "exclude"] as const;
 export const UNLISTED_DB_POLICIES = ["block", "carry", "skip"] as const;
@@ -80,6 +81,7 @@ export interface RunOpts {
   hostLoopRetries?: number;
   deployConcurrency?: number;
   largeDbMode?: string;
+  serviceStart?: string;
   certs?: string;
   acceptHttp01Gap?: boolean;
   freezeAt?: string;
@@ -222,6 +224,7 @@ export function buildCreateRequest(o: RunOpts): Req {
   oneOf(o.rowCountMode, ROW_COUNT_MODES, "--row-count-mode");
   oneOf(o.sourceController, SOURCE_CONTROLLERS, "--source-controller");
   oneOf(o.largeDbMode, LARGE_DB_MODES, "--large-db-mode");
+  oneOf(o.serviceStart, SERVICE_START_MODES, "--service-start");
   oneOf(o.minioPolicy, MINIO_POLICIES, "--minio-policy");
   oneOf(o.workerPolicy, WORKER_POLICIES, "--worker-policy");
   oneOf(o.unlistedDbPolicy, UNLISTED_DB_POLICIES, "--unlisted-db-policy");
@@ -274,6 +277,7 @@ export function buildCreateRequest(o: RunOpts): Req {
       : {}),
     ...(o.deployConcurrency !== undefined ? { deployConcurrency: o.deployConcurrency } : {}),
     ...(o.largeDbMode ? { largeDbMode: o.largeDbMode } : {}),
+    ...(o.serviceStart ? { serviceStart: o.serviceStart } : {}),
   };
   const inputs: Record<string, unknown> = {
     ...(o.acmeEmail ? { acmeEmail: o.acmeEmail } : {}),
@@ -754,6 +758,7 @@ export function register(program: Command): void {
     .option("--host-loop-retries <n>", "host-loop: extra attempts per host (0-5, default 1)", num)
     .option("--deploy-concurrency <n>", "builds at a time per target server (1-8, default 1)", num)
     .option("--large-db-mode <mode>", `${LARGE_DB_MODES.join(" | ")}: what happens to a database too large for a dump artifact (default refuse)`)
+    .option("--service-start <mode>", `${SERVICE_START_MODES.join(" | ")}: which imported services start before the apps that need them (default dependencies)`)
     .option("--certs <mode>", `${CERT_MODES.join(" | ")}: seed the source proxy's ACME certificates`)
     .option("--accept-http01-gap", "accept hosts that only have an HTTP-01 certificate gap at cutover")
     .option("--freeze-at <time>", "schedule the freeze (ISO-8601)")

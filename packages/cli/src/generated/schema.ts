@@ -6682,6 +6682,8 @@ export interface components {
                 };
                 deployConcurrency?: number;
                 /** @enum {string} */
+                serviceStart?: "dependencies" | "none" | "all";
+                /** @enum {string} */
                 largeDbMode?: "refuse" | "stream-logical";
                 /**
                  * @default none
@@ -42827,6 +42829,8 @@ export interface operations {
                             retries?: number;
                         };
                         deployConcurrency?: number;
+                        /** @enum {string} */
+                        serviceStart?: "dependencies" | "none" | "all";
                         /** @enum {string} */
                         largeDbMode?: "refuse" | "stream-logical";
                         /**

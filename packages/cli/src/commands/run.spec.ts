@@ -378,6 +378,10 @@ describe("tugra import run: fleet runs", () => {
       inputs: { minioPolicy: "mirror", workerPolicy: "exclude", unlistedDbPolicy: "carry", orphanVolumePolicy: "skip" },
     });
     expect(() => buildCreateRequest({ ...create, largeDbMode: "stream" })).toThrow(/--large-db-mode/);
+    // C14/R30: which imported services start before the apps that need them (sent only when asked for)
+    expect(buildCreateRequest({ ...create, serviceStart: "none" }).body).toMatchObject({ options: { serviceStart: "none" } });
+    expect((buildCreateRequest({ ...create }).body as { options?: Record<string, unknown> }).options ?? {}).not.toHaveProperty("serviceStart");
+    expect(() => buildCreateRequest({ ...create, serviceStart: "some" })).toThrow(/--service-start/);
     expect(() => buildCreateRequest({ ...create, minioPolicy: "ignore" })).toThrow(/--minio-policy/);
     expect(() => buildCreateRequest({ ...create, workerPolicy: "x" })).toThrow(/--worker-policy/);
     expect(() => buildCreateRequest({ ...create, unlistedDbPolicy: "x" })).toThrow(/--unlisted-db-policy/);
@@ -480,7 +484,7 @@ describe("tugra import run: fleet runs", () => {
     register(program);
     const run = program.commands.find((c) => c.name() === "import")!.commands.find((c) => c.name() === "run")!;
     const createCmd = run.commands.find((c) => c.name() === "create")!;
-    for (const flag of ["--map", "--server-map-file", "--campaign", "--host-loop-key-dir", "--host-loop-parallel", "--deploy-concurrency", "--large-db-mode", "--minio-policy", "--worker-policy", "--unlisted-db-policy", "--orphan-volume-policy"]) {
+    for (const flag of ["--map", "--server-map-file", "--campaign", "--host-loop-key-dir", "--host-loop-parallel", "--deploy-concurrency", "--large-db-mode", "--service-start", "--minio-policy", "--worker-policy", "--unlisted-db-policy", "--orphan-volume-policy"]) {
       expect(createCmd.options.map((o) => o.long)).toContain(flag);
     }
     expect(run.commands.find((c) => c.name() === "list")!.options.map((o) => o.long)).toContain("--campaign");
