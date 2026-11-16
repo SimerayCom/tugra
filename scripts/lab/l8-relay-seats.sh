@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # L8: relay seats. Migration parts draw from their OWN seat pool (MIGRATION_RELAY_CONCURRENCY), never the app-move pool
-# (MOVE_MAX_CONCURRENT_RELAYS). The hub runs with ONE seat in each pool.
+# (MOVE_MAX_CONCURRENT_RELAYS). The hub runs with ONE seat in each pool (L8_SEATS sets the migration pool, default 1).
+# The real estate has 23 source hosts and one hub: L8_MIGRATORS=4 L8_SEATS=2 runs four migrators from four different sources against
+# two seats (the CI matrix does both shapes). Each later migrator starts once the previous one committed a part.
 #  A. two migrator runs (two ops, two source volumes) race for the single migration seat: the second sees `busy` (an uncounted,
 #     jittered backoff) and both finish volume-applied, with no part failure. Both go through scripts/lab/http-tap.mjs, which
 #     counts the hub's {"busy":true} answers: zero would mean the pool was never contended and the scenario proved nothing.
@@ -18,7 +20,11 @@ set -euo pipefail
 trap 'lab_tap_stop; "$LAB_SELF_DIR/hub.sh" reset-extra >/dev/null 2>&1 || true' EXIT
 
 MIB="${L8_MIB:-512}"
-"$LAB_SELF_DIR/hub.sh" restart MIGRATION_RELAY_CONCURRENCY=1 MOVE_MAX_CONCURRENT_RELAYS=1
+N="${L8_MIGRATORS:-2}"
+SEATS="${L8_SEATS:-1}"
+case "$N" in 2 | 3 | 4) ;; *) lab_die "L8_MIGRATORS must be 2, 3 or 4" ;; esac
+[ "$N" -gt "$SEATS" ] || lab_die "L8_MIGRATORS ($N) must exceed L8_SEATS ($SEATS), or no migrator is ever told busy"
+"$LAB_SELF_DIR/hub.sh" restart "MIGRATION_RELAY_CONCURRENCY=$SEATS" MOVE_MAX_CONCURRENT_RELAYS=1
 
 # op 1 (main) and op 2 (second) on the same target server, with their own source container and volume
 lab_scenario_begin l8-a
@@ -30,6 +36,17 @@ docker volume create lab-src2 >/dev/null
 docker create --name labsrc2 -v lab-src2:/var/www/data alpine:3.21 sleep 86400 >/dev/null
 lab_seed op --name "lab-l8-b-$(date +%s)" --source labsrc2 >"$LAB_DIR/op.second.env"
 "$LAB_SELF_DIR/fixture.sh" lab-src2 "$MIB" random
+# migrators 3 and 4: their own source container, volume and op (op.m3.env, op.m4.env)
+n=3
+while [ "$n" -le "$N" ]; do
+  docker rm -f "labsrc$n" >/dev/null 2>&1 || true
+  docker volume rm -f "lab-src$n" >/dev/null 2>&1 || true
+  docker volume create "lab-src$n" >/dev/null
+  docker create --name "labsrc$n" -v "lab-src$n:/var/www/data" alpine:3.21 sleep 86400 >/dev/null
+  lab_seed op --name "lab-l8-m$n-$(date +%s)" --source "labsrc$n" >"$LAB_DIR/op.m$n.env"
+  "$LAB_SELF_DIR/fixture.sh" "lab-src$n" "$MIB" random
+  n=$((n + 1))
+done
 
 # the move leg's setup: a second agent (server B) and an app deployed on the target (server A) with data in its volume.
 # Observational: any failure here only turns the leg into "setup-failed" in the summary.
@@ -68,6 +85,13 @@ t0=$(date +%s)
 # m2 only once m1 has passed its startup (helper reaping) and committed a part, so it contends for the seat while m1 streams
 lab_wait_part m1 0
 LAB_OP=second lab_run_bg m2 --hub "$LAB_TAP_URL" --arms all --part-mib 128
+# migrators 3 and 4, each once the one before it is streaming (reapStaleHelpers is not run-scoped, see the runbook)
+n=3
+while [ "$n" -le "$N" ]; do
+  lab_wait_part "m$((n - 1))" 0
+  LAB_OP="m$n" lab_run_bg "m$n" --hub "$LAB_TAP_URL" --arms all --part-mib 128
+  n=$((n + 1))
+done
 
 # B: the move, started while both migrations stream; polled until it ends (or stays stuck 5 minutes after the migrations)
 if [ "$MOVE_OK" = ready ]; then
@@ -106,23 +130,29 @@ if [ "$MOVE_OK" = ready ]; then
   fi
 fi
 
-rc1="$(lab_run_wait m1 1800)"; rc2="$(lab_run_wait m2 1800)"
+tags=(m1 m2); n=3; while [ "$n" -le "$N" ]; do tags+=("m$n"); n=$((n + 1)); done
+rcs=""
+for t in "${tags[@]}"; do rcs="$rcs $(lab_run_wait "$t" 1800)"; done
 t1=$(( $(date +%s) - t0 ))
-lab_log "migrations finished in ${t1} s: exits $rc1 / $rc2; move: $MOVE_OK"
-[ "$rc1" = 0 ] || { tail -30 "$LAB_DIR/run.m1.log" >&2; lab_die "migration 1 exit $rc1"; }
-[ "$rc2" = 0 ] || { tail -30 "$LAB_DIR/run.m2.log" >&2; lab_die "migration 2 exit $rc2"; }
+lab_log "migrations finished in ${t1} s: exits${rcs}; move: $MOVE_OK"
+for t in "${tags[@]}"; do
+  rc="$(cat "$LAB_DIR/run.$t.rc")"
+  [ "$rc" = 0 ] || { tail -30 "$LAB_DIR/run.$t.log" >&2; lab_die "migration $t exit $rc"; }
+done
 lab_expect_item m1 volume-applied
 (lab_op_load second; lab_expect_item m2 volume-applied)
+n=3; while [ "$n" -le "$N" ]; do (lab_op_load "m$n"; lab_expect_item "m$n" volume-applied); n=$((n + 1)); done
 busy_total="$(lab_tap_busy)"
-lab_log "the hub answered busy $busy_total time(s) to the two migrators (relay pool of ONE seat)"
+lab_log "the hub answered busy $busy_total time(s) to the $N migrators (migration relay pool of $SEATS seat(s))"
 lab_check "the migration seat pool was contended (the migrators saw busy at least once): without that L8 proves nothing" test "$busy_total" -ge 1
-for t in m1 m2; do
+for t in "${tags[@]}"; do
   lab_check "no part failed ($t): busy is waited out, never counted" bash -c "! grep -q -E 'part-failed|ErrPartFailed|could not be delivered' $LAB_DIR/run.$t.log"
 done
 case "$MOVE_OK" in STUCK-*) lab_die "the app move never progressed while migrations held the migration seat: $MOVE_OK (starvation across pools)" ;; esac
 lab_no_leftovers
 lab_compare
 (lab_op_load second; SRC_VOLUME=lab-src2 lab_compare)
+n=3; while [ "$n" -le "$N" ]; do (lab_op_load "m$n"; SRC_VOLUME="lab-src$n" lab_compare); n=$((n + 1)); done
 if [ "$MOVE_OK" != skipped ] && [ "$MOVE_OK" != setup-failed ]; then
   if [ "${move_parts_during:-0}" -ge 1 ] && [ "${busy_during:-0}" -ge 1 ]; then
     lab_log "pool separation shown: the move had committed $move_parts_during part(s) while the migrators had already been told busy $busy_during time(s)"
@@ -132,5 +162,5 @@ if [ "$MOVE_OK" != skipped ] && [ "$MOVE_OK" != setup-failed ]; then
     echo "L8_SEPARATION=inconclusive move_parts=${move_parts_during:-0} busy=${busy_during:-0}" >>"$LAB_DIR/l8.summary"
   fi
 fi
-echo "L8_MOVE=$MOVE_OK busy=$busy_total" >>"$LAB_DIR/l8.summary"
+echo "L8_MIGRATORS=$N L8_SEATS=$SEATS L8_MOVE=$MOVE_OK busy=$busy_total" >>"$LAB_DIR/l8.summary"
 lab_pass "L8 relay seats (move leg: $MOVE_OK)"

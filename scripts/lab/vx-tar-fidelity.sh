@@ -2,7 +2,7 @@
 # L4: tar fidelity into the REAL apply extractor. The migrator's stream (agent-image GNU tar: --sort=name --numeric-owner
 # --format=gnu) is applied on the target with the pinned alpine busybox tar (BACKUP_HELPER_IMAGE), exactly as
 # safeWipeExtract does (validate with `tar -tf -`, wipe, `tar -xf -` with NO --no-same-owner). No hub, no agent: only docker.
-# Pass: owners 999/70/1000, modes 0600/0700/0750, hard link, symlinks, long and unicode names, the FIFO and every content hash
+# Pass: owners 999/70/65534/1000, modes 0600/0700/0750, hard link, symlinks, long and unicode names, the FIFO and every content hash
 # survive; a truncated archive is refused. Holes in a sparse file are NOT preserved (GNU tar without -S stores zeros): that is
 # recorded as a documented limit, never a failure. The same extraction is also a `dockerit` Go test (agent-docker-it in CI).
 # Usage: scripts/lab/vx-tar-fidelity.sh   (builds $LAB_IMAGE from this checkout when it is not present)
@@ -69,6 +69,8 @@ lab_check "secret is 999:999 0700" test "$(st secret '%u:%g %a')" = "999:999 700
 lab_check "secret/f is 999:999 0600" test "$(st secret/f '%u:%g %a')" = "999:999 600"
 lab_check "empty is 70:70 0750" test "$(st empty '%u:%g %a')" = "70:70 750"
 lab_check "run.sh is owned by 1000:1000" test "$(st run.sh '%u:%g')" = "1000:1000"
+lab_check "nobody-dir is 65534:65534 0750 and its file 65534:65534" test "$(st nobody-dir '%u:%g %a')|$(st nobody-dir/f '%u:%g')" = "65534:65534 750|65534:65534"
+lab_check "app-dir is 1000:1000 0755 and its file 1000:1000" test "$(st app-dir '%u:%g %a')|$(st app-dir/f '%u:%g')" = "1000:1000 755|1000:1000"
 lab_check "hard link, symlinks and FIFO exist" docker run --rm -v "$DST":/data:ro "$HELPER" sh -c '[ /data/a -ef /data/a.hardlink ] && [ "$(readlink /data/a.symlink)" = a ] && [ -L /data/dangling ] && [ -p /data/fifo ]'
 lab_check "the unicode and spaced names survive" docker run --rm -v "$DST":/data:ro "$HELPER" sh -c 'cat "/data/ünï-dir/ü.txt" >/dev/null && cat "/data/dir with spaces/x y.txt" >/dev/null'
 lab_log "setuid file on the target: $(st suid.sh '%u:%g %a') (source 1000:1000 4755; a lost setuid bit is recorded, not failed)"
