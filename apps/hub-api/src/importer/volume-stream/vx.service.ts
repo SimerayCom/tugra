@@ -680,6 +680,9 @@ export class VxService {
   async registerPart(op: MigrationTokenContext, itemRef: string, idx: number, body: VxPartBody): Promise<Record<string, unknown>> {
     const ctx = await this.resolve(op.opId, op.actorId, itemRef);
     const t = await this.assertLeased(ctx, body.runId);
+    // A part call IS proof of life: renew the lease now, so a part that starts right before the stale window ends (and then crawls over a slow
+    // link) is not taken over by another run while it is still being relayed.
+    await this.renewLease(t);
     const meta = await this.metaOfOp(op.opId);
     await this.assertDestOpen(ctx, meta.vxInventory?.[itemRef]);
     const expiresAt = await this.expiry(op);
@@ -749,7 +752,32 @@ export class VxService {
       startedAt: Date.now(),
     };
     this.registry.set(inflight);
+    this.watchRelayProgress(t, reg);
     return { srcPath: reg.srcPath, expiresAt };
+  }
+
+  /** Bump the lease of a transfer this run holds (fenced on the run and the COPYING state: a lost lease is never revived). */
+  private async renewLease(t: Pick<MigrationVolumeTransfer, "id" | "runId">): Promise<void> {
+    await this.prisma.migrationVolumeTransfer.updateMany({ where: { id: t.id, runId: t.runId, state: "COPYING" }, data: { lastBeatAt: new Date() } });
+  }
+
+  /**
+   * While a part is being relayed, keep the lease alive from the relay's own byte count: a part over a slow link can take longer than the stale
+   * window, during which the migrator is busy inside one PUT and the bytes flowing are the only sign of life. Only an ADVANCING count renews it
+   * (a stalled part must still go stale), and the watcher ends with the part (done, failed or cancelled).
+   */
+  private watchRelayProgress(t: Pick<MigrationVolumeTransfer, "id" | "runId">, reg: { done: Promise<unknown>; progress?: () => number }): void {
+    if (!reg.progress) return;
+    let last = reg.progress();
+    const timer = setInterval(() => {
+      const now = reg.progress!();
+      if (now === last) return;
+      last = now;
+      void this.renewLease(t).catch(() => undefined);
+    }, Math.max(500, Math.floor(vxStaleMs() / 4)));
+    timer.unref?.();
+    const stop = (): void => clearInterval(timer);
+    reg.done.then(stop, stop);
   }
 
   async commitPart(op: MigrationTokenContext, itemRef: string, idx: number, body: VxRunBody): Promise<Record<string, unknown>> {

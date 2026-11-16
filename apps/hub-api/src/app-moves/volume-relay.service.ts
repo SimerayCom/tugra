@@ -51,6 +51,8 @@ export interface RelayRegistration {
   done: Promise<RelayResult>;
   /** Abort: fail `done` and destroy both ends. Idempotent. */
   cancel(reason: Error): void;
+  /** Bytes of the part the source has pushed through so far (a liveness signal for a slow link; always present on the real relay). */
+  progress?: () => number;
 }
 
 /** A transfer whose hub-computed sha256 differs from the claimed one (answered 422 to the source). */
@@ -152,6 +154,7 @@ export class VolumeRelayService implements OnModuleDestroy {
       dstPath: mintRelayPath(this.secret(), this.claimOf(rv, "dst"), rv.exp),
       done,
       cancel: (reason: Error) => this.fail(rv, reason),
+      progress: () => rv.bytes,
     };
   }
 

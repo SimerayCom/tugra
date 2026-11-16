@@ -772,3 +772,90 @@ func TestReapStaleHelpersSparesLiveOwners(t *testing.T) {
 		t.Fatalf("live owner inspected %d times, want 1 (cached)", n)
 	}
 }
+
+// A fresh volume (nothing resumed) on a slow link is the case that lost a part: the source tar can stall and a part can take minutes to
+// cross the link, and the lease only lives as long as the hub hears from the migrator. The beat must run for a fresh volume too.
+func TestStreamVolumeFreshVolumeKeepsTheLeaseAliveWhileTheSourceIsSlow(t *testing.T) {
+	noSleep(t)
+	orig := startTarFn
+	t.Cleanup(func() { startTarFn = orig })
+	release := make(chan struct{})
+	stream := streamBytes(1500)
+	startTarFn = func(ctx context.Context, argv []string, env []string) (io.ReadCloser, func() error, error) {
+		pr, pw := io.Pipe()
+		go func() {
+			<-release // a slow reader: nothing until the hub has been beaten at least once
+			_, _ = pw.Write(stream)
+			_ = pw.Close()
+		}()
+		return pr, func() error { return nil }, nil
+	}
+	var beats int32
+	var phase atomic.Value
+	f := newFakeRelayHub(t)
+	inner := f.handler()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/beat") {
+			var body struct {
+				Phase string `json:"phase"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			phase.Store(body.Phase)
+			if atomic.AddInt32(&beats, 1) == 1 {
+				close(release)
+			}
+			io.WriteString(w, `{"expiresAt":"2999-01-01T00:00:00Z"}`)
+			return
+		}
+		inner.ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	h := newTestHub(t, srv)
+	done := make(chan error, 1)
+	go func() {
+		_, err := StreamVolume(context.Background(), h, "docker", nil, Target{ItemRef: "volume:s:a:data"}, testSource(), StreamOpts{PartRawBytes: 1000, Helper: "img:1", RunID: "run_abcdef12", BeatEvery: 20 * time.Millisecond})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stream never finished: a fresh volume was never beaten")
+	}
+	if atomic.LoadInt32(&beats) == 0 {
+		t.Error("no lease beat for a fresh volume while the source was slow")
+	}
+	if p, _ := phase.Load().(string); p != "streaming" {
+		t.Errorf("a fresh volume beats in the streaming phase, got %q", p)
+	}
+}
+
+// A part PUT that takes longer than the beat interval (a slow link) is beaten alongside, so the lease is not lost mid-part.
+func TestStreamVolumeBeatsWhileAPartCrawlsOverASlowLink(t *testing.T) {
+	noSleep(t)
+	fakeTar(t, streamBytes(1000), nil)
+	var beats int32
+	f := newFakeRelayHub(t)
+	inner := f.handler()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/beat"):
+			atomic.AddInt32(&beats, 1)
+			io.WriteString(w, `{"expiresAt":"2999-01-01T00:00:00Z"}`)
+			return
+		case r.Method == http.MethodPut:
+			time.Sleep(150 * time.Millisecond) // the slow link
+		}
+		inner.ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	h := newTestHub(t, srv)
+	if _, err := StreamVolume(context.Background(), h, "docker", nil, Target{ItemRef: "volume:s:a:data"}, testSource(), StreamOpts{PartRawBytes: 1000, Helper: "img:1", RunID: "run_abcdef12", BeatEvery: 20 * time.Millisecond}); err != nil {
+		t.Fatal(err)
+	}
+	if atomic.LoadInt32(&beats) < 2 {
+		t.Errorf("the lease must be renewed while a part is crossing the link: %d beats", atomic.LoadInt32(&beats))
+	}
+}

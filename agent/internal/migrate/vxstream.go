@@ -239,12 +239,14 @@ func StreamVolume(ctx context.Context, h *Hub, dockerPath string, env []string, 
 	}
 	defer func() { removeHelper(dockerPath, env, name) }() // a crashed/cancelled run never leaves the helper container behind
 
-	return deliverParts(sctx, cancel, ctx, h, tg.ItemRef, o, stdout, wait, o.ResumeFromPart > 0)
+	// The lease is renewed for EVERY volume, not only a resumed one: a fresh volume on a slow link (a stalling tar, a part that takes minutes
+	// to cross) makes no hub call for longer than the stale window, and the hub would hand the transfer to another run mid-part.
+	return deliverParts(sctx, cancel, ctx, h, tg.ItemRef, o, stdout, wait, true)
 }
 
 // deliverParts is the part pipeline shared by the volume tar stream and the streamed database dump: it cuts `stdout` into
 // independent gzip members, delivers each through the hub's relay and returns after the last commit. `beat` keeps the lease
-// alive while no other call is made (a resumed volume re-reading its committed prefix; a dump whose producer is slow).
+// alive while no other call is made (a resumed volume re-reading its committed prefix; a producer or a link that is slow).
 // `wait` reports the producer's exit status; a truncated or failed stream is never accepted. sctx is the cancellable child of
 // ctx that the producer reads under; cancel stops it.
 func deliverParts(sctx context.Context, cancel context.CancelFunc, ctx context.Context, h *Hub, itemRef string, o StreamOpts, stdout io.ReadCloser, wait func() error, beat bool) (StreamResult, error) {
