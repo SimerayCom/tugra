@@ -26,6 +26,7 @@ import { HostReportService } from "./inventory/host-report.service";
 import { PrismaHostReportStore } from "./inventory/host-report.store";
 import { HOST_REPORT_PORT, RUN_HOST_COMMANDS } from "./inventory/inventory-contract";
 import { MigratorRunner } from "./launcher/migrator-runner.service";
+import { PrismaRunHints, RUN_HINTS } from "../import/baseline/run-hints";
 import { PrismaCheckStore } from "./verify/check-store";
 import { VerifyIngestController } from "./verify/verify-ingest.controller";
 import { VerifyIngestService } from "./verify/verify-ingest.service";
@@ -55,6 +56,8 @@ import { VerifyHandler } from "./verify.handler";
     PrismaHostReportStore,
     HostCommandService,
     { provide: HOST_REPORT_PORT, useExisting: PrismaHostReportStore },
+    PrismaRunHints,
+    { provide: RUN_HINTS, useExisting: PrismaRunHints },
     { provide: RUN_HOST_COMMANDS, useExisting: HostCommandService },
     MigratorRunner,
     PrismaDataPort,
