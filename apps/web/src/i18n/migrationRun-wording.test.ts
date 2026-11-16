@@ -27,10 +27,13 @@ describe("worker-mark wording matches the hub", () => {
   });
 });
 
-describe("an owner input no step reads is not offered", () => {
-  it("has no tick-gap wording left in the panel locale or the runbook table", () => {
-    expect(JSON.stringify(locale)).not.toMatch(/tickGap|write gap you accept/i);
-    expect(runbook).not.toMatch(/\| `tickGapAcceptMinutes` \(0 to 10080\)/);
-    expect(runbook).toMatch(/No step reads it yet/);
+describe("the write gap FREEZE judges (N2) is worded", () => {
+  it("has its codes in the panel locale, and the runbook says a step reads the input", () => {
+    for (const c of ["freeze_tick-gap-exceeded", "freeze_tick-gap-attested", "freeze_tick-gap-within", "freeze_tick-gap-not-accepted"]) expect(codes[c], c).toBeTruthy();
+    expect(runbook).toMatch(/FREEZE reads it/);
+    expect(runbook).not.toMatch(/No step reads it yet/);
+  });
+  it("the panel still offers no control for the accepted minutes (the attestation is the panel's part)", () => {
+    expect(JSON.stringify(locale.inputs)).not.toMatch(/tickGap|write gap you accept/i);
   });
 });

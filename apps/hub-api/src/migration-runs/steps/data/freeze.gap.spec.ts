@@ -1,12 +1,15 @@
 import { StepHandlerRegistryService } from "../../core/step-handler.registry";
 import type { RunSnapshot } from "../../core/run-contract";
 import { FreezeHandler, TICK_GAP_CHECK, TICK_GAP_CODES } from "./freeze.handler";
+import { attestedGapOf, tickGapCovered, tickGapNote } from "./tick-gap";
 import { SourceHostFake } from "./testing/source-host-fake";
 import { estimateWindowDetail, tickGapOf, windowExtrasOf } from "./data-logic";
 import { FakeCaps, FakeDataPort, FakeSourceApi, NOW, answered, inspected, makeCtx, makeRun, makeSnap, volume, type CtxHarness } from "./testing/fakes";
 
 const APPROVAL = { byUserId: "user1", at: "2026-11-20T09:59:00.000Z", boundHash: "f".repeat(64), acks: [], confirmedName: "cmrun00000001", acceptDataRisk: false, expiresAt: null };
-const ATTEST = { checkId: TICK_GAP_CHECK, byUserId: "user1", at: "2026-11-20T09:58:00.000Z" };
+/** An attestation the hub recorded for a gap of `minutes` (the gate's own number goes into the note). */
+const attestFor = (minutes: number | null) => ({ checkId: TICK_GAP_CHECK, byUserId: "user1", at: "2026-11-20T09:58:00.000Z", note: tickGapNote(minutes) });
+const ATTEST = attestFor(10_000);
 
 const runWith = (accepted: number | "unset", o: Parameters<typeof makeRun>[0] = {}): RunSnapshot =>
   makeRun({ ...o, inputs: { ...(accepted === "unset" ? { tickGapAcceptMinutes: undefined } : { tickGapAcceptMinutes: answered(accepted) }) } });
@@ -105,6 +108,56 @@ describe("FREEZE: the estimated write gap against tickGapAcceptMinutes (N2)", ()
     const b = ctx({ steps: { DATA_SEED: { status: "PASSED" }, DNS_PREPARE: { status: "SKIPPED" }, FREEZE: { evidence: { attestations: [ATTEST], attachments: [] }, compensation: a.comp } } });
     await handler.act(b.ctx, await handler.observe(b.ctx));
     expect(b.events.filter((e) => e.code === TICK_GAP_CODES.attested)).toHaveLength(0);
+    host.dispose();
+  });
+});
+
+describe("the write-gap attestation is bound to the gap it was given for", () => {
+  it("the note carries the gap, and reads back", () => {
+    expect(tickGapNote(20)).toBe("gapMinutes=20");
+    expect(tickGapNote(20.4, "feeds can wait")).toBe("gapMinutes=20 feeds can wait");
+    expect(tickGapNote(null)).toBe("gapMinutes=unknown");
+    expect(attestedGapOf({ note: "gapMinutes=20 feeds can wait" })).toBe(20);
+    expect(attestedGapOf({ note: "gapMinutes=unknown" })).toBe("unknown");
+    expect(attestedGapOf({ note: "I accept 20" })).toBeNull();
+    expect(attestedGapOf({})).toBeNull();
+  });
+
+  it("covers a gap that is not longer, never a longer one, and the newest attestation wins", () => {
+    const at = (n: number | null, checkId = TICK_GAP_CHECK) => ({ checkId, note: tickGapNote(n) });
+    expect(tickGapCovered([at(20)], { gapMinutes: 20 })).toBe(true);
+    expect(tickGapCovered([at(20)], { gapMinutes: 12 })).toBe(true);
+    expect(tickGapCovered([at(20)], { gapMinutes: 21 })).toBe(false);
+    expect(tickGapCovered([at(20)], { gapMinutes: null })).toBe(false);
+    expect(tickGapCovered([at(null)], { gapMinutes: null })).toBe(true);
+    expect(tickGapCovered([at(null)], { gapMinutes: 5 })).toBe(false);
+    expect(tickGapCovered([at(20), at(300)], { gapMinutes: 250 })).toBe(true);
+    expect(tickGapCovered([at(300), at(20)], { gapMinutes: 250 })).toBe(false);
+    expect(tickGapCovered([{ checkId: TICK_GAP_CHECK }], { gapMinutes: 1 })).toBe(false); // records no gap: covers nothing
+    expect(tickGapCovered([at(300, "other-check")], { gapMinutes: 1 })).toBe(false);
+    expect(tickGapCovered([], { gapMinutes: 1 })).toBe(false);
+  });
+
+  it("an attestation given for a shorter gap is void once the estimate grows: the gate fails again and offers the attestation, and act refuses", async () => {
+    const probe = build(runWith(0));
+    const gap = tickGapOf(estimateWindowDetail(probe.data.snap, NOW, windowExtrasOf(runWith(0), probe.data.snap)).estimate.freezeToFlipSec, 0).gapMinutes!;
+    probe.host.dispose();
+
+    const { handler, ctx, host } = build(runWith(0));
+    const steps = (minutes: number) => ({ DATA_SEED: { status: "PASSED" as const }, DNS_PREPARE: { status: "SKIPPED" as const }, FREEZE: { evidence: { attestations: [attestFor(minutes)], attachments: [] } } });
+    const covered = ctx({ steps: steps(gap) });
+    expect(handler.preGate(covered.ctx, await handler.observe(covered.ctx)).passed).toBe(true);
+
+    const stale = ctx({ steps: steps(gap - 1) });
+    const pre = handler.preGate(stale.ctx, await handler.observe(stale.ctx));
+    expect(pre.passed).toBe(false);
+    expect(pre.checks).toContainEqual(expect.objectContaining({ id: "freeze.tick-gap", status: "fail", code: TICK_GAP_CODES.exceeded }));
+    expect(pre.wait).toMatchObject({ kind: "operator", attest: [TICK_GAP_CHECK] });
+    expect(await handler.act(stale.ctx, await handler.observe(stale.ctx))).toMatchObject({ outcome: "fail", code: "freeze.tick-gap-not-accepted" });
+    expect(stale.patches.some((p) => p.freezeStartedAt)).toBe(false);
+
+    const handWritten = ctx({ steps: { DATA_SEED: { status: "PASSED" }, DNS_PREPARE: { status: "SKIPPED" }, FREEZE: { evidence: { attestations: [{ checkId: TICK_GAP_CHECK, byUserId: "user1", at: "2026-11-20T09:58:00.000Z" }], attachments: [] } } } });
+    expect(handler.preGate(handWritten.ctx, await handler.observe(handWritten.ctx)).passed).toBe(false);
     host.dispose();
   });
 });

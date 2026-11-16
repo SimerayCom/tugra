@@ -31,6 +31,7 @@ import {
   type SourceApiPort,
   type SourceHostPort,
 } from "./data-contract";
+import { TICK_GAP_CHECK, TICK_GAP_CODES, TICK_GAP_GATE_CHECK, tickGapCovered } from "./tick-gap";
 import { estimateEquals, estimateWindowDetail, sha256Hex, tickGapOf, windowExtrasOf, type TickGap, type WindowTerms } from "./data-logic";
 import { HOST_LOOP_CODES } from "./inventory/host-codes";
 import { planRefsOf, serverRefOfItem, sourceHostsOf } from "./inventory/host-hosts";
@@ -85,8 +86,7 @@ export const UNRESOLVED_CHECK = "freeze-containers-unresolved";
  * although it is over the owner's `tickGapAcceptMinutes` (default 0: any gap needs it). Append-only feeds (price ticks, metrics)
  * lose what they would have written during that gap.
  */
-export const TICK_GAP_CHECK = "tick-gap-accepted";
-export const TICK_GAP_CODES = { exceeded: "freeze.tick-gap-exceeded", attested: "freeze.tick-gap-attested", within: "freeze.tick-gap-within" } as const;
+export { TICK_GAP_CHECK, TICK_GAP_CODES };
 
 /**
  * The Coolify items the freeze stops: apps and services (the writers), plus every database that is copied PHYSICALLY (its data
@@ -278,9 +278,9 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
     if (obs.stop.length === 0) return [];
     const g = obs.gap;
     const params = { gapMinutes: g.gapMinutes, acceptedMinutes: g.acceptedMinutes, writers: obs.stop.length };
-    if (!g.over) return [{ id: "freeze.tick-gap", status: "pass", code: TICK_GAP_CODES.within, params, evidence: "hub-verified" }];
-    if (ctx.step.evidence.attestations.some((a) => a.checkId === TICK_GAP_CHECK)) return [{ id: "freeze.tick-gap", status: "warn", code: TICK_GAP_CODES.attested, params, evidence: "operator-attested" }];
-    return [{ id: "freeze.tick-gap", status: "fail", code: TICK_GAP_CODES.exceeded, params, ownerInput: "tickGapAcceptMinutes", attestable: [TICK_GAP_CHECK], evidence: "hub-verified" }];
+    if (!g.over) return [{ id: TICK_GAP_GATE_CHECK, status: "pass", code: TICK_GAP_CODES.within, params, evidence: "hub-verified" }];
+    if (tickGapCovered(ctx.step.evidence.attestations, g)) return [{ id: TICK_GAP_GATE_CHECK, status: "warn", code: TICK_GAP_CODES.attested, params, evidence: "operator-attested" }];
+    return [{ id: TICK_GAP_GATE_CHECK, status: "fail", code: TICK_GAP_CODES.exceeded, params, ownerInput: "tickGapAcceptMinutes", attestable: [TICK_GAP_CHECK], evidence: "hub-verified" }];
   }
 
   /**
@@ -407,7 +407,7 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
     const run = ctx.run;
     if (!ctx.approval) return { outcome: "fail", code: "freeze.approval-missing", retryable: true };
     // N2: the approval is not enough when the write gap is over what the owner accepts: the attestation is the explicit word
-    const gapAttested = ctx.step.evidence.attestations.some((a) => a.checkId === TICK_GAP_CHECK);
+    const gapAttested = tickGapCovered(ctx.step.evidence.attestations, obs.gap);
     if (obs.stop.length > 0 && obs.gap.over && !gapAttested) return { outcome: "fail", code: "freeze.tick-gap-not-accepted", params: { gapMinutes: obs.gap.gapMinutes, acceptedMinutes: obs.gap.acceptedMinutes }, retryable: true };
     const freezeAt = run.options.freezeAt ? new Date(run.options.freezeAt) : null;
     if (freezeAt && freezeAt.getTime() > ctx.now().getTime()) {

@@ -1,7 +1,8 @@
 import { Logger } from "@nestjs/common";
 import { ACTOR, RunWorld, SERVER, type StubScript } from "./testing/run-world";
 import { makeGate, type ActResult, type StepKey } from "./run-contract";
-import type { ApprovalBinding } from "./dto";
+import { attestedGapOf } from "../steps/data/tick-gap";
+import type { ApprovalBinding, GateResult } from "./dto";
 
 // the specs drive a whole run through the engine on a fake clock; give a loaded CI machine room
 jest.setTimeout(30_000);
@@ -698,6 +699,27 @@ describe("RunEngine: evidence, attachments, inputs and the migrator command", ()
     // the credential is in the response only: never in a view, an event or an audit entry
     expect(JSON.stringify([await w.view(id), w.store.eventRows, w.sink.audits])).not.toContain("TOKEN");
     await expect(w.service.command(ACTOR, id, "VERIFY", { reissue: false }, "https://hub.example.com")).rejects.toThrow(/step-has-no-command/);
+  });
+
+  it("a write-gap attestation records the gap the gate showed (the hub writes it, not the client) and only for an open gap", async () => {
+    const gate = (gapMinutes: number | null): GateResult =>
+      makeGate([{ id: "freeze.tick-gap", status: "fail", code: "freeze.tick-gap-exceeded", params: { gapMinutes, acceptedMinutes: 0, writers: 2 }, ownerInput: "tickGapAcceptMinutes", attestable: ["tick-gap-accepted"] }], {
+        wait: { kind: "operator", code: "freeze.tick-gap-exceeded", attest: ["tick-gap-accepted"] },
+      });
+    const w = new RunWorld({ stubs: { DATA_FINAL: { gate: () => gate(45) } } });
+    const id = await w.run();
+    expect(w.stepStatus(id, "DATA_FINAL")).toBe("WAITING_OPERATOR");
+    const v = await w.service.evidence(ACTOR, id, "DATA_FINAL", { checkId: "tick-gap-accepted", note: "feeds are not critical" });
+    const att = v.steps.find((s) => s.key === "DATA_FINAL")!.evidence.attestations[0];
+    expect(att).toMatchObject({ checkId: "tick-gap-accepted", note: "gapMinutes=45 feeds are not critical" });
+    expect(attestedGapOf(att)).toBe(45);
+  });
+
+  it("a write-gap attestation of a gap that is not on the gate is refused", async () => {
+    const w = new RunWorld({ stubs: { DATA_FINAL: { act: async () => ({ outcome: "wait", wait: { kind: "operator", code: "data.run-migrator", attest: ["tick-gap-accepted"] } }) } } });
+    const id = await w.run();
+    expect(w.stepStatus(id, "DATA_FINAL")).toBe("WAITING_OPERATOR");
+    await expect(w.service.evidence(ACTOR, id, "DATA_FINAL", { checkId: "tick-gap-accepted" })).rejects.toThrow(/attest-subject-invalid/);
   });
 
   it("an object migration is attached to DATA_SEED/DATA_FINAL (same team only, deduplicated)", async () => {

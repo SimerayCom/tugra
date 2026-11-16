@@ -556,6 +556,22 @@ export function approvalExpired(expiresAt: string | null | undefined, now: numbe
   return Number.isFinite(ms) && ms <= now;
 }
 
+/** The write-gap attestation of FREEZE: the hub records the gap it was given for in the note (`gapMinutes=<n>`). */
+export const TICK_GAP_ATTEST = "tick-gap-accepted";
+/**
+ * Has the recorded attestation gone void? A write-gap attestation covers the gap the gate showed when it was given; once the estimate
+ * is longer (or no longer unknown) the gate asks again, so the row must offer the attestation again instead of saying "recorded".
+ */
+export function attestationVoid(checkId: string, attestations: ReadonlyArray<{ checkId: string; note?: string }>, gate: MigrationRunGateCheck | undefined): boolean {
+  if (checkId !== TICK_GAP_ATTEST || !gate || gate.status !== "fail") return false;
+  const latest = [...attestations].reverse().find((a) => a.checkId === checkId);
+  const m = latest ? /^gapMinutes=(\d+|unknown)(?: |$)/.exec(latest.note ?? "") : null;
+  if (!m) return true;
+  const now = gate.params?.gapMinutes;
+  const current = typeof now === "number" ? now : null;
+  return m[1] === "unknown" ? current !== null : current === null || current > Number(m[1]);
+}
+
 type ReviewValue = { text: string };
 /** One line of the approval's "what you are approving" list; keys ending in Sec/Bytes are humanized, booleans localized. */
 export function reviewValue(t: T, key: string, value: MigrationRunParamValue): ReviewValue {
@@ -570,6 +586,22 @@ export const REVIEW_LABEL_KEY: Record<string, string> = {
   windowEstimateSec: "migrationRun.review.windowEstimateSec",
   hosts: "migrationRun.review.hosts",
   statefulHosts: "migrationRun.review.statefulHosts",
+  controller: "migrationRun.review.controller",
+  apps: "migrationRun.review.apps",
+  services: "migrationRun.review.services",
+  estimateSec: "migrationRun.review.estimateSec",
+  estimateDataSec: "migrationRun.review.estimateDataSec",
+  estimateBuildSec: "migrationRun.review.estimateBuildSec",
+  estimateStartSec: "migrationRun.review.estimateStartSec",
+  estimateHealthSec: "migrationRun.review.estimateHealthSec",
+  estimateAcmeSec: "migrationRun.review.estimateAcmeSec",
+  estimateBytes: "migrationRun.review.estimateBytes",
+  estimateHubBytes: "migrationRun.review.estimateHubBytes",
+  writeGapSec: "migrationRun.review.writeGapSec",
+  tickGapAcceptedSec: "migrationRun.review.tickGapAcceptedSec",
+  tickGapNeedsAttestation: "migrationRun.review.tickGapNeedsAttestation",
+  keepsStopped: "migrationRun.review.keepsStopped",
+  scheduledFor: "migrationRun.review.scheduledFor",
 };
 /** "windowEstimateSec" -> "window estimate sec": a readable label for a review key the locale does not know yet. */
 export const humanizeKey = (key: string): string => key.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").toLowerCase();
