@@ -184,6 +184,34 @@ const BARE_HOST_KEY_END = /(?:HOST|HOSTNAME|ADDR|ADDRESS|ENDPOINT)$/i;
 const BARE_SECRET_KEY = /(?:^|_)(SECRET|KEY|TOKEN|PASSWORD|PASSWD|PASS|SALT|SIGNATURE|CREDENTIALS?)(?:_|$)/i;
 const bareHostKey = (key: string): boolean => !BARE_SECRET_KEY.test(key) && (BARE_HOST_KEY_END.test(key) || HOST_LIKE_KEY.test(key));
 
+/**
+ * R21, a bare value: a key whose last word says the value is an identifier, not a host (`NODE_ID`, `MASTER_UUID`), and a value that is 24
+ * hexadecimal digits (a database object id, a Mongo ObjectId: a Coolify uuid is base-36 and is all hex only with a chance of about one in a billion)
+ * are never an unresolved host, whatever host word the key also carries.
+ */
+const IDENTIFIER_KEY_END = /(?:^|_)(ID|IDS|UUID|GUID|HASH|SHA|COMMIT|REV|REVISION|VERSION|NUMBER|COUNT|PORT)$/i;
+const unresolvedBareKeyOk = (key: string, value: string): boolean => bareHostKey(key) && !IDENTIFIER_KEY_END.test(key) && !/^[0-9a-f]{24}$/.test(value);
+
+/**
+ * R21, a value that is not one host: every host an embedded connection string carries whose name is a Coolify uuid. Looked for in the
+ * authority of every `//` (a JDBC url `jdbc:postgresql://<uuid>:5432/db`, a multi-host list `mongodb://u:p@<uuid>:27017,<uuid>:27017`), after an `@`
+ * (`user:pw@<uuid>:5432`) and as a `host=` / `hostaddr=` pair (a libpq or ADO string), never inside a longer word or a dotted name.
+ */
+function embeddedUuidHosts(value: string): string[] {
+  const found: string[] = [];
+  const consider = (hostPort: string): void => {
+    const h = /^([^:/?#\s,;'"@]+)(?::\d{1,5})?$/.exec(hostPort);
+    if (h && isCoolifyUuidHost(h[1])) found.push(h[1]);
+  };
+  for (const m of value.matchAll(/:\/\/([^/?#\s'"]*)/g)) {
+    const authority = m[1];
+    for (const part of authority.slice(authority.lastIndexOf("@") + 1).split(",")) consider(part);
+  }
+  for (const m of value.matchAll(/@([^:/?#\s,;'"@]+)(?::\d{1,5})?(?=[/?#\s,;'"]|$)/g)) if (isCoolifyUuidHost(m[1])) found.push(m[1]);
+  for (const m of value.matchAll(/(?:^|[\s;,])host(?:addr)?=([^\s;,'"]+)/gi)) consider(m[1]);
+  return found;
+}
+
 /** A var KEY that plausibly holds a host (used only when ctx.bareHostKeyGate is on — i.e. a readable-slug source
  *  like Dokploy — so a name-shaped value in a non-host var is not mistaken for a host). */
 const HOST_LIKE_KEY = /(?:^|_)(HOST|HOSTNAME|ADDR|ADDRESS|ENDPOINT|SERVER|NODE|MASTER|PRIMARY|REPLICA|LEADER)(?:_|$)/i;
@@ -534,7 +562,7 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
         continue;
       }
       // R21: `<uuid>` under a host-like key, or `<uuid>:<port>` under any key, that nothing above recognised
-      if (flagUnresolved && (hp ? isCoolifyUuidHost(hp[1]) && !owned.has(hp[1]) : isCoolifyUuidHost(value) && !owned.has(value) && bareHostKey(key))) {
+      if (flagUnresolved && (hp ? isCoolifyUuidHost(hp[1]) && !owned.has(hp[1]) : isCoolifyUuidHost(value) && !owned.has(value) && unresolvedBareKeyOk(key, value))) {
         needsManual.push({ key, reason: RM_UNRESOLVED_HOST });
         continue;
       }
@@ -544,6 +572,11 @@ export function remapEnv(env: Record<string, string>, ctx: RemapContext): RemapR
     const embedded = embeddedTarget(value);
     if (embedded) {
       needsManual.push({ key, reason: RM_CONTAINS_TOKEN, target: embedded });
+      continue;
+    }
+    // R21: a connection string with more than one host, a JDBC url or a key=value string that carries a dead uuid host
+    if (flagUnresolved && embeddedUuidHosts(value).some((h) => !owned.has(h))) {
+      needsManual.push({ key, reason: RM_UNRESOLVED_HOST });
       continue;
     }
     companionKeys.push(key);

@@ -213,7 +213,7 @@ describe("ImportExecutorService.remapEnvPlan", () => {
           { status: "DONE", resourceType: "application", resourceId: "app-1", itemRef: `app:srv-a:${APPUUID}`, result: { name: "web" } },
         ],
       },
-      apps: [{ id: "app-1", itemRef: `app:srv-a:${APPUUID}`, name: "web", env: { DATABASE_URL: `postgres://appuser:S3cr3t@${GHOST}:5432/appdb`, REDIS_HOST: "feedfacefeedfacefeedface" } }],
+      apps: [{ id: "app-1", itemRef: `app:srv-a:${APPUUID}`, name: "web", env: { DATABASE_URL: `postgres://appuser:S3cr3t@${GHOST}:5432/appdb`, REDIS_HOST: "zyxwvutsrq9876543210abcd" } }],
     });
     const plan = await svc.remapEnvPlan("user-1", "op-1");
     expect(plan.apps[0].changes).toEqual([expect.objectContaining({ key: "DATABASE_URL", rule: "url", targetItemRef: `database:srv-a:${GHOST}`, newMasked: "postgres://tugra:***@tugra_db_1:5432/appdb" })]);

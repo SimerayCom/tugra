@@ -514,6 +514,47 @@ describe("R21 key gate and readable (carried) hosts", () => {
     expect(r.needsManual.map((n) => n.key).sort()).toEqual(["DBHOST", "DB_HOST_PRIMARY", "MASTER_NODE", "REDIS_ADDR", "SERVER"]);
   });
 
+  it("an identifier under a key that carries a host word (a 24-hex object id under NODE_ID) is not an unresolved host; the same key holding a real uuid host is", () => {
+    const objectId = "507f1f77bcf86cd799439011";
+    const r = remapEnv({ NODE_ID: objectId, MASTER_SERVER_ID: GHOST, REPLICA_UUID: GHOST, SERVER: objectId, NODE_HOST: objectId, MASTER_NODE: GHOST }, known());
+    expect(r.needsManual.map((n) => n.key)).toEqual(["MASTER_NODE"]);
+  });
+
+  describe("embedded dead hosts: JDBC, multi-host lists, userinfo and key=value strings", () => {
+    const SECOND = "abcdefghij0123456789klmn";
+    it("a JDBC url, a multi-host list and a host after an @ are reported with the stable code", () => {
+      const r = remapEnv(
+        {
+          JDBC: `jdbc:postgresql://${GHOST}:5432/appdb?user=u`,
+          MONGO: `mongodb://u:p@${GHOST}:27017,${SECOND}:27017/app?replicaSet=rs0`,
+          DSN: `u:p@${GHOST}:5432/appdb`,
+          LIBPQ: `host=${GHOST} port=5432 dbname=appdb`,
+          MEMBER: `amqp://u:p@queue-${GHOST}:5672`,
+        },
+        known(),
+      );
+      expect(r.needsManual.map((n) => `${n.key}:${n.reason}`).sort()).toEqual(["DSN:unresolved-uuid-host", "JDBC:unresolved-uuid-host", "LIBPQ:unresolved-uuid-host", "MEMBER:unresolved-uuid-host", "MONGO:unresolved-uuid-host"]);
+    });
+
+    it("a host the plan owns is not reported, and values that only look similar are left alone", () => {
+      const r = remapEnv(
+        {
+          JDBC: `jdbc:postgresql://${GHOST}:5432/appdb`,
+          IDS: `${GHOST},${SECOND}`,
+          MAIL: `admin@${GHOST}.example.test`,
+          NOTE: `contact: user@example.test and ${GHOST}`,
+          PATHISH: `/srv/${GHOST}/data`,
+          LIBPQ_OK: "host=db.example.test port=5432",
+          MONGO_OK: "mongodb://u:p@db-a.example.test:27017,db-b.example.test:27017/app",
+        },
+        known({ ownedHosts: [GHOST] }),
+      );
+      expect(r.needsManual).toEqual([]);
+      const r2 = remapEnv({ IDS: `${GHOST},${SECOND}`, MAIL: `admin@${GHOST}.example.test`, PATHISH: `/srv/${GHOST}/data`, MONGO_OK: "mongodb://u:p@db-a.example.test:27017,db-b.example.test:27017/app" }, known());
+      expect(r2.needsManual).toEqual([]);
+    });
+  });
+
   describe("readableHosts: a carried container with an operator-chosen name", () => {
     const target = (name: string) => pgTarget("rotate", { oldHost: name, itemRef: `database:srv-a:${name}` });
     const rc = (name: string, extra: Partial<RemapContext> = {}): RemapContext => ({ dbs: [target(name)], apps: [], flagUnresolvedHosts: true, readableHosts: [name], ...extra });
