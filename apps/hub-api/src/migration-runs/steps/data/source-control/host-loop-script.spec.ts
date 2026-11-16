@@ -7,6 +7,7 @@ import { SourceHostFake, ctrId } from "../testing/source-host-fake";
 import { InventoryHostFake } from "../inventory/testing/inventory-host-fake";
 import { HostLoopWorld, type WorldServer } from "../inventory/testing/host-loop-world";
 import { parseReportBody } from "../inventory/host-protocol";
+import { mergeFreeze } from "../inventory/report-merge";
 import { buildHostLoopScript, launchAttemptFor, onlyFlags, wrapHostLoopCommand, type HostLoopInput } from "./host-loop-script";
 
 const TOKEN = `tugra_mig_${"B".repeat(43)}`;
@@ -25,15 +26,15 @@ interface Built {
 }
 
 /** Two fake source hosts behind a fake Coolify host. `extra` adds servers (unreachable, keyless...). */
-function world(opts: { containers?: Record<string, ConstructorParameters<typeof SourceHostFake>[0]["containers"]>; extra?: WorldServer[]; psqlFails?: boolean; postFails?: boolean; curlFails?: boolean; migratorSh?: string } = {}): Built {
-  const a = new SourceHostFake({ containers: opts.containers?.a ?? [], curlFails: opts.curlFails, migratorSh: opts.migratorSh });
-  const b = new SourceHostFake({ containers: opts.containers?.b ?? [], migratorSh: opts.migratorSh });
+function world(opts: { containers?: Record<string, ConstructorParameters<typeof SourceHostFake>[0]["containers"]>; failStop?: Record<string, string[]>; extra?: WorldServer[]; psqlFails?: boolean; postFails?: boolean; postFailsFirst?: number; curlFails?: boolean; migratorSh?: string } = {}): Built {
+  const a = new SourceHostFake({ containers: opts.containers?.a ?? [], failStop: opts.failStop?.a, curlFails: opts.curlFails, migratorSh: opts.migratorSh });
+  const b = new SourceHostFake({ containers: opts.containers?.b ?? [], failStop: opts.failStop?.b, migratorSh: opts.migratorSh });
   const servers: WorldServer[] = [
     { uuid: "srv-a", ip: "10.0.0.1", port: 22, user: "root", keyUuid: "keyaaaa", hostDir: a.dir },
     { uuid: "srv-b", ip: "10.0.0.2", port: 2222, user: "root", keyUuid: "keybbbb", hostDir: b.dir },
     ...(opts.extra ?? []),
   ];
-  const w = new HostLoopWorld({ servers, psqlFails: opts.psqlFails, postFails: opts.postFails }, [ROOT, "/etc/tugra/migrate"]);
+  const w = new HostLoopWorld({ servers, psqlFails: opts.psqlFails, postFails: opts.postFails, postFailsFirst: opts.postFailsFirst }, [ROOT, "/etc/tugra/migrate"]);
   cleanups.push(() => {
     w.dispose();
     a.dispose();
@@ -200,21 +201,73 @@ describe("coolify-host-loop runner: DATA_SEED / DATA_FINAL, run for real against
     expect(loopLines(w.posted())).toEqual(expect.arrayContaining(["srv-a:failed:hub-unreachable-from-host"]));
   });
 
-  it("a migrator that ends with a failure code is reported finished/exit-N; TUGRA_LOOP_RELAUNCH=1 archives that launch and starts again", () => {
-    const failing = "#!/bin/sh\necho '{\"tool\":\"tugra-migrate\",\"exit\":6,\"code\":\"precondition\",\"counts\":{},\"items\":[]}'\nexit 6\n";
-    const { world: w, hosts } = world({ migratorSh: failing });
+  const exitingWith = (rc: number) => `#!/bin/sh\n{ echo "ARGS: $*"; } > "$FAKE_HOST_DIR/migrator.invocation"\necho '{"tool":"tugra-migrate","version":"test","schema":1,"ok":${rc === 0},"exit":${rc},"code":"x","counts":{},"items":[]}'\nexit ${rc}\n`;
+  const fetches = (h: SourceHostFake) => (h.file("curl.log") ?? "").trim().split("\n").filter(Boolean).length;
+
+  it("a migrator that ended with a failure code (exit 6) is relaunched by the NEXT plain run once its cause is fixed (no env var needed)", () => {
+    const { world: w, hosts } = world({ migratorSh: exitingWith(6) });
     const script = buildHostLoopScript(input(w));
     w.run(script);
     expect(loopLines(w.posted())).toEqual(expect.arrayContaining(["srv-a:finished:exit-6"]));
-    // without relaunch the same dead launch is just re-reported
-    w.run(script);
-    expect((hosts.a.file("curl.log") ?? "").trim().split("\n")).toHaveLength(1);
-    // the operator fixed the cause: the host now has a working migrator and asks for a relaunch
-    writeFileSync(join(hosts.a.dir, "migrator.sh"), "#!/bin/sh\n{ echo \"ARGS: $*\"; } > \"$FAKE_HOST_DIR/migrator.invocation\"\necho '{\"tool\":\"tugra-migrate\",\"exit\":0,\"code\":\"ok\",\"counts\":{},\"items\":[]}'\nexit 0\n");
-    const r = w.run(script, { TUGRA_LOOP_RELAUNCH: "1" });
+    // the operator fixed the cause: the host now has a working migrator
+    writeFileSync(join(hosts.a.dir, "migrator.sh"), exitingWith(0));
+    const r = w.run(script);
+    expect(fetches(hosts.a)).toBe(2);
     expect(loopLines(w.posted())).toEqual(expect.arrayContaining(["srv-a:launched:started"]));
     expect(hosts.a.file("migrator.invocation")).toContain("--only database:srv-a:db1");
     expect(r.stdout).toContain("[srv-a] finished ok");
+  });
+
+  it("a PARTIAL finish (exit 1) is launched again by the next run, with the flags of that run (the operator added what the first run lacked)", () => {
+    const { world: w, hosts } = world({ migratorSh: exitingWith(1) });
+    w.run(buildHostLoopScript(input(w)));
+    expect(loopLines(w.posted())).toEqual(expect.arrayContaining(["srv-a:finished:partial"]));
+    expect(hosts.a.file("migrator.invocation")).not.toContain("--stop-source");
+    writeFileSync(join(hosts.a.dir, "migrator.sh"), exitingWith(0));
+    const withStop = input(w, { hosts: input(w).hosts.map((h) => ({ ...h, flags: [...h.flags, "--stop-source"] })) });
+    const r = w.run(buildHostLoopScript(withStop));
+    expect(hosts.a.file("migrator.invocation")).toContain("--stop-source");
+    expect(r.stdout).toContain("[srv-a] finished ok");
+    // the old directory is kept as evidence, not deleted
+    expect(spawnSync("sh", ["-c", `ls ${hosts.a.dir}/runs | grep -c prev`], { encoding: "utf8" }).stdout.trim()).not.toBe("0");
+  });
+
+  it("a clean finish (exit 0) with the SAME flags is only re-reported (nothing starts twice); other flags, or TUGRA_LOOP_RELAUNCH=1, start it again", () => {
+    const { world: w, hosts } = world();
+    const script = buildHostLoopScript(input(w));
+    w.run(script);
+    const again = w.run(script);
+    expect(again.code).toBe(0);
+    expect(fetches(hosts.a)).toBe(1);
+    expect(loopLines(w.posted())).toEqual(expect.arrayContaining(["srv-a:already:already"]));
+    expect(again.stdout).toContain("[srv-a] finished ok");
+
+    const changed = buildHostLoopScript(input(w, { hosts: input(w).hosts.map((h) => ({ ...h, flags: [...h.flags, "--stop-source"] })) }));
+    w.run(changed);
+    expect(fetches(hosts.a)).toBe(2);
+    expect(hosts.a.file("migrator.invocation")).toContain("--stop-source");
+
+    w.run(changed);
+    expect(fetches(hosts.a)).toBe(2); // same flags again: not relaunched
+    w.run(changed, { TUGRA_LOOP_RELAUNCH: "1" });
+    expect(fetches(hosts.a)).toBe(3);
+  });
+
+  it("a launch that vanished (no exit code, no process) is relaunched by the next plain run; a launch that still runs is only re-attached", () => {
+    const { world: w, hosts } = world();
+    const script = buildHostLoopScript(input(w));
+    w.run(script);
+    const dir = `${hosts.a.dir}/runs/${RUN}-seed-1`;
+    // simulate a host reboot in the middle of the copy: no result, the recorded process is gone
+    spawnSync("sh", ["-c", `rm -f ${dir}/rc; echo 999999 > ${dir}/pid`]);
+    const r = w.run(script);
+    expect(fetches(hosts.a)).toBe(2);
+    expect(r.stdout).toContain("[srv-a] finished ok");
+    // alive: the recorded pid is this very shell's parent (a live process); no rc yet -> re-attach, do not launch
+    spawnSync("sh", ["-c", `rm -f ${dir}/rc; echo $PPID > ${dir}/pid`]);
+    w.run(script, { TUGRA_LOOP_NO_WAIT: "1" });
+    expect(fetches(hosts.a)).toBe(2);
+    expect(loopLines(w.posted()).filter((l) => l === "srv-a:already:already").length).toBeGreaterThan(0);
   });
 
   it("TUGRA_LOOP_ONLY restricts a re-run to the named hosts; TUGRA_LOOP_NO_WAIT launches and returns", () => {
@@ -234,6 +287,23 @@ describe("coolify-host-loop runner: DATA_SEED / DATA_FINAL, run for real against
     expect(r.code).toBe(0);
     expect(hosts.a.file("migrator.invocation")).not.toBeNull();
     expect(r.stderr).toContain("could not post to the hub");
+  });
+
+  it("a post that failed is KEPT and sent again: nothing a host reported is lost when the hub was briefly unreachable", () => {
+    const { world: w } = world({ postFailsFirst: 2 });
+    const r = w.run(buildHostLoopScript(input(w)));
+    expect(r.code).toBe(0);
+    expect(r.stderr).toContain("could not post to the hub");
+    // every state of every host arrived, in order, after the hub came back
+    expect(loopLines(w.posted())).toEqual(expect.arrayContaining(["srv-a:connecting:ssh", "srv-a:launched:started", "srv-a:finished:ok", "srv-b:finished:ok"]));
+    expect(r.stdout).not.toContain("did not receive the report");
+  });
+
+  it("a hub that never answers is named at the end of the run: the work ran, the report did not arrive", () => {
+    const { world: w } = world({ postFails: true });
+    const r = w.run(buildHostLoopScript(input(w)));
+    expect(r.code).toBe(0);
+    expect(r.stdout).toMatch(/The hub did not receive the report of: srv-a srv-b/);
   });
 
   it("runs hosts in parallel up to the option and still reports every host once", () => {
@@ -288,6 +358,46 @@ describe("coolify-host-loop runner: FREEZE (identity-checked stop and unfreeze o
     expect(parsed.freeze.get("srv-b")!.stopped).toEqual({ [C]: "stopped" });
     expect(loopLines(w.posted())).toEqual(expect.arrayContaining(["srv-a:finished:frozen", "srv-b:finished:frozen"]));
     for (const h of [hosts.a, hosts.b]) expect(h.forbiddenCalls()).toEqual([]);
+  });
+
+  it("a container that could not be stopped is `failed stop-failed` in the terminal and the exit status, like the hub's own verdict", () => {
+    const { world: w, hosts } = world({ containers, failStop: { a: [A] } });
+    const r = w.run(buildHostLoopScript(freezeInput(w)));
+    expect(r.code).not.toBe(0);
+    expect(r.stdout).toContain("[srv-a] failed stop-failed");
+    expect(r.stdout).toContain("[srv-b] finished frozen");
+    expect(r.stdout).toContain("1 of 2 hosts need attention");
+    expect(loopLines(w.posted())).toEqual(expect.arrayContaining(["srv-a:failed:stop-failed", "srv-b:finished:frozen"]));
+    expect(parseReportBody(w.posted()).freeze.get("srv-a")!.stopped).toEqual({ [A]: "failed" });
+    expect(hosts.a.container(A).running).toBe(true);
+  });
+
+  it("the hub's own freeze state agrees: a stop that failed is stop-failed there too", () => {
+    const { world: w } = world({ containers, failStop: { a: [A] } });
+    w.run(buildHostLoopScript(freezeInput(w)));
+    const part = parseReportBody(w.posted()).freeze.get("srv-a")!;
+    expect(mergeFreeze(null, part).state).toBe("stop-failed");
+  });
+
+  it("the TOKENLESS script (the rollback after an abort) unfreezes the recorded containers, posts nothing, and refuses to freeze", () => {
+    const { world: w, hosts } = world({ containers });
+    const withToken = buildHostLoopScript(freezeInput(w));
+    w.run(withToken);
+    expect(hosts.a.container(A).running).toBe(false);
+    const posts = w.curlCalls().length;
+    const tokenless = buildHostLoopScript(freezeInput(w, { token: null }));
+    expect(tokenless).not.toContain(TOKEN);
+    const r = w.run(tokenless);
+    expect(r.code).toBe(0);
+    expect(hosts.a.container(A).running).toBe(true);
+    expect(hosts.b.container(C).running).toBe(true);
+    expect(w.curlCalls().length).toBe(posts); // nothing went to the hub
+    expect(r.stdout).toContain("[srv-a] finished unfrozen");
+    const refuse = w.run(tokenless, { TUGRA_LOOP_ACTION: "run" });
+    expect(refuse.code).toBe(2);
+    expect(refuse.stderr).toContain("can only unfreeze");
+    expect(() => buildHostLoopScript(input(w, { token: null }))).toThrow(); // a data step needs its token
+    expect(spawnSync("sh", ["-n", "/dev/stdin"], { input: tokenless }).status).toBe(0);
   });
 
   it("an item no container matches blocks the stop (nothing is stopped) until the operator's attestation mints the script with allowUnresolved", () => {

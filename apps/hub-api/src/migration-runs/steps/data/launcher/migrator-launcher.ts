@@ -72,9 +72,15 @@ export const MIG_OUT_MARK = "TUGRA_MIG_OUT";
  * {@link buildLaunchScript}, but nothing run-specific is baked in. The token, the hub base and the flags arrive in the shell
  * variables `L_TOKEN`, `L_HUB` and `L_FLAGS` (newline-joined) that a PRELUDE of plain assignments defines in front of the text,
  * so one copy of the template serves every host (each host only gets its own `--only` flags) and the token appears once in the
- * script the operator pastes. `L_RELAUNCH=1` archives an earlier run directory that ended without a usable result (a migrator
- * exit other than 0/1, or one that vanished) so the host can be launched again; a finished or still running launch is
- * never touched. Every value the prelude carries was validated by the caller (token, hub base, flag words), so none needs quoting
+ * script the operator pastes.
+ *
+ * A host is launched again (its earlier run directory is archived as `<dir>.prev-*`) whenever the earlier launch cannot be what the
+ * operator now asks for: it ended with a migrator exit other than 0 (1 = partial: the cause was fixed and the operator runs the
+ * script again; the migrator is idempotent and skips what is done), it vanished (no exit code, no process, no migrator
+ * container), or it finished clean with DIFFERENT flags (the plan changed, `--stop-source` was added). `L_RELAUNCH=1` forces
+ * that for a clean finish with the same flags too. A launch that is still running is never touched (`already`: re-attach), and
+ * a clean finish with the same flags answers `already` (the operator re-running to look at the result).
+ * Every value the prelude carries was validated by the caller (token, hub base, flag words), so none needs quoting
  * beyond the single quotes the prelude puts around it.
  */
 export function buildLaunchTemplate(i: { runId: string; attempt: number; root?: string; tag?: LaunchTag }): string {
@@ -84,17 +90,24 @@ export function buildLaunchTemplate(i: { runId: string; attempt: number; root?: 
     "set -u",
     "umask 077",
     `D=${d}`,
-    'if [ "$L_RELAUNCH" = 1 ] && [ -e "$D/started" ]; then',
+    "FS=$(printf '%s' \"$L_FLAGS\" | cksum | cut -d' ' -f1)",
+    'if [ -e "$D/started" ]; then',
+    "  redo=0",
     '  if [ -f "$D/rc" ]; then',
-    '    case "$(cat "$D/rc")" in 0|1) ;; *) mv "$D" "$D.prev-$(date +%s)" ;; esac',
+    '    case "$(cat "$D/rc")" in',
+    '      0) if [ "$L_RELAUNCH" = 1 ] || { [ -f "$D/flagsum" ] && [ "$(cat "$D/flagsum")" != "$FS" ]; }; then redo=1; fi ;;',
+    "      *) redo=1 ;;",
+    "    esac",
     '  elif ! kill -0 "$(cat "$D/pid" 2>/dev/null)" 2>/dev/null && [ -z "$(docker ps -q --filter \'name=^' + MIGRATOR_CONTAINER_PREFIX + "' 2>/dev/null </dev/null)\" ]; then",
-    '    mv "$D" "$D.prev-$(date +%s)"',
+    "    redo=1",
     "  fi",
+    '  if [ "$redo" = 1 ]; then mv "$D" "$D.prev-$(date +%s)-$$"; fi',
     "fi",
     `if [ -e "$D/started" ]; then printf '${LAUNCH_MARK}\\talready\\n'; exit 0; fi`,
     'mkdir -p "$D" && chmod 700 "$D" || { printf \'' + LAUNCH_MARK + "\\tmkdir-failed\\n'; exit 0; }",
     `printf '%s' "$L_TOKEN" > "$D/tok"`,
     'if [ -n "$L_FLAGS" ]; then printf \'%s\\n\' "$L_FLAGS" > "$D/flags"; else : > "$D/flags"; fi',
+    'printf \'%s\\n\' "$FS" > "$D/flagsum"',
     `printf '%s' "$L_HUB" > "$D/hub"`,
     `if ! curl -fsSL "$L_HUB/install/migrator.sh" -o "$D/migrator.sh" </dev/null; then rm -f "$D/tok"; printf '${LAUNCH_MARK}\\tfetch-failed\\n'; exit 0; fi`,
     `cat > "$D/run.sh" <<'TUGRA_RUN_EOF'`,

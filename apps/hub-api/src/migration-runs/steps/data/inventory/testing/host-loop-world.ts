@@ -31,6 +31,8 @@ export interface HostLoopWorldOptions {
   psqlFails?: boolean;
   /** The curl that POSTs to the hub fails. */
   postFails?: boolean;
+  /** The first N posts to the hub fail, then it answers (a hub that was briefly unreachable). */
+  postFailsFirst?: number;
   /** The Coolify host is itself a source (`host.docker.internal`): its docker calls go to this fake host directory. */
   localHostDir?: string;
 }
@@ -87,6 +89,12 @@ const stdin = fs.readFileSync(0, "utf8");
 fs.appendFileSync(dir + "/curl.jsonl", JSON.stringify(args) + "\\n");
 fs.appendFileSync(dir + "/curl-stdin.log", stdin);
 if (world.postFails) process.exit(7);
+if (world.postFailsFirst) {
+  const f = dir + "/curl.count";
+  const n = fs.existsSync(f) ? Number(fs.readFileSync(f, "utf8")) : 0;
+  fs.writeFileSync(f, String(n + 1));
+  if (n < world.postFailsFirst) process.exit(7);
+}
 const d = args.indexOf("--data-binary");
 if (d >= 0 && args[d + 1].startsWith("@")) fs.appendFileSync(dir + "/posted.txt", fs.readFileSync(args[d + 1].slice(1)));
 process.exit(0);
@@ -104,7 +112,7 @@ export class HostLoopWorld {
       if (!s.noKeyFile) writeFileSync(join(this.keyDir, `ssh_key@${s.keyUuid ?? s.uuid}`), "not a real key: the fake ssh only checks that the file exists\n");
       if (s.hostDir) mkdirSync(join(s.hostDir, "runs"), { recursive: true });
     }
-    writeFileSync(join(this.dir, "world.json"), JSON.stringify({ servers: opts.servers, psqlFails: !!opts.psqlFails, postFails: !!opts.postFails, localHostDir: opts.localHostDir ?? null }));
+    writeFileSync(join(this.dir, "world.json"), JSON.stringify({ servers: opts.servers, psqlFails: !!opts.psqlFails, postFails: !!opts.postFails, postFailsFirst: opts.postFailsFirst ?? 0, localHostDir: opts.localHostDir ?? null }));
     for (const f of ["ssh.jsonl", "docker.jsonl", "curl.jsonl", "curl-stdin.log", "posted.txt"]) writeFileSync(join(this.dir, f), "");
     const bin = join(this.dir, "bin");
     mkdirSync(bin);

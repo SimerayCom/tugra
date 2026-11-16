@@ -807,7 +807,7 @@
     "deploy-dark_db_failed": "Starting a database failed.",
     "deploy-dark_deploy_failed": "Starting an app deploy failed.",
     "data-seed_host-loop-run": "Run the host-loop script on the Coolify host for the {phase} phase. It starts the migrator on {hosts} source hosts over their own SSH keys. {pending} items are still waiting for it.",
-    "data-seed_host-loop-host-failed": "{failing} of {hosts} source hosts did not finish the {phase} phase: {names}. Run the host-loop script again; it resumes where it stopped.",
+    "data-seed_host-loop-host-failed": "{failing} of {hosts} source hosts did not finish the {phase} phase: {names}. Run the host-loop script again: a host that failed or finished partial is started again (the migrator skips what is already done), a host that is still running is only re-attached. Add TUGRA_LOOP_RELAUNCH=1 to start a host that finished clean again too.",
     "data-seed_host-inventory-run": "Run the host inventory on the Coolify host first. It lists the containers, volumes and bind sizes of {hosts} source hosts and checks that each can reach this hub. {missing} hosts are still missing.",
     "data-seed_dry_host-loop": "The migrator will be started on {hosts} source hosts from the Coolify host (key directory {keyDir}, {parallel} at a time).",
     "data-seed_source-running": "{count} source containers are running: {names}. They are copied only when stopped, so enable stop-source or stop their writers at the freeze.",

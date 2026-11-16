@@ -15,11 +15,17 @@
  *    key FILE PATH to `ssh -i`. The Coolify host's own database is asked only for `uuid, ip, port, user` and the key's uuid.
  *  - THE TOKEN IS ON NO ARGV: remote scripts travel on ssh's stdin, the inventory command reads its token from stdin; the hub
  *    POST gets it as a curl config on stdin.
- *  - IDEMPOTENT AND RESUMABLE: re-running it re-attaches to a launched migrator (`already`) instead of starting a second one,
- *    and the freeze re-reports its record; `TUGRA_LOOP_ONLY="ref ref"` restricts a re-run to some hosts, `TUGRA_LOOP_RELAUNCH=1`
- *    archives a launch that ended without a usable result, `TUGRA_LOOP_NO_WAIT=1` launches and returns.
+ *  - IDEMPOTENT AND RESUMABLE: re-running it re-attaches to a migrator that is still running (`already`) instead of starting a
+ *    second one, and the freeze re-reports its record. A host whose last launch failed, was partial (exit 1), vanished, or finished
+ *    with other flags (the plan changed, `--stop-source` was added) is launched AGAIN by the next run (the migrator is idempotent:
+ *    it skips what is done); `TUGRA_LOOP_RELAUNCH=1` forces that for a clean finish too. `TUGRA_LOOP_ONLY="ref ref"` restricts a
+ *    re-run to some hosts, `TUGRA_LOOP_NO_WAIT=1` launches and returns.
  *  - STREAMS per-host status back: each state change is one `TUGRA_AT ... TUGRA_HOST` line, printed and POSTed to the hub at
  *    once (best effort: a Coolify host that cannot reach the hub still runs everything; the migrator reports its own progress).
+ *    A POST that fails is KEPT and sent again with the next line and at the end of the host, never dropped; a host whose report
+ *    still did not arrive is named at the end of the run.
+ *  - A TOKENLESS variant (`token: null`, FREEZE only) can do nothing but unfreeze and posts nothing: the rollback of a freeze must
+ *    not depend on a live migration token (the run may be aborted and its token revoked).
  *  - EVERY interpolated value is validated here and embedded single-quoted (`shq`); the per-host values read from the Coolify
  *    database (ip, port, user) are validated in the shell before they reach `ssh`.
  *
@@ -51,7 +57,8 @@ export interface HostLoopInput {
   /** DATA_SEED / DATA_FINAL: the migrator phase (names the remote run directory). */
   phase?: MigratorPhase;
   hubBase: string;
-  token: string;
+  /** The live migration token, or null for the tokenless FREEZE rollback (it can only unfreeze and posts nothing). */
+  token: string | null;
   hosts: readonly LoopHostInput[];
   keyDir: string;
   parallel: number;
@@ -89,9 +96,10 @@ const SCRIPT = String.raw`
 #!/bin/sh
 # Tugra coolify-host-loop: @@TITLE@@
 # Run this ON THE COOLIFY HOST (as root, or a user that can read the key directory and use docker).
-# Re-running is safe and resumes: a migrator that is already running on a host is re-attached, not started twice.
+# Re-running is safe and resumes: a migrator that is still running on a host is re-attached, not started twice; a host whose
+# last launch failed, was partial or ran with other flags is started again (the migrator skips what is already done).
 #   TUGRA_LOOP_ONLY="<server-uuid> ..."  restrict this run to some hosts        TUGRA_LOOP_NO_WAIT=1  launch and return
-#   TUGRA_LOOP_RELAUNCH=1                start a host again whose launch ended without a usable result
+#   TUGRA_LOOP_RELAUNCH=1                start a host again even when its last launch finished clean with the same flags
 #   TUGRA_LOOP_ACTION=unfreeze           (FREEZE only) start the stopped writers again, exactly the recorded containers
 #   TUGRA_COOLIFY_DB=<container>         the Coolify database container (default coolify-db), asked only for server uuid/ip/port/user
 set -u
@@ -106,7 +114,7 @@ RETRIES=@@RETRIES@@
 PAR=@@PAR@@
 REFS=@@REFS@@
 TAB=$(printf '\t')
-ACTION=@{TUGRA_LOOP_ACTION:-run}
+ACTION=@{TUGRA_LOOP_ACTION:-@@DEFACTION@@}
 RELAUNCH=@{TUGRA_LOOP_RELAUNCH:-0}
 NOWAIT=@{TUGRA_LOOP_NO_WAIT:-0}
 POLL=@{TUGRA_LOOP_POLL:-20}
@@ -114,6 +122,7 @@ CDB=@{TUGRA_COOLIFY_DB:-coolify-db}
 CDBUSER=@{TUGRA_COOLIFY_DB_USER:-coolify}
 STATE=@{TUGRA_LOOP_STATE:-@{HOME:-/root}/.tugra-host-loop}
 case "$ACTION" in run|unfreeze) ;; *) echo "TUGRA_LOOP_ACTION must be run or unfreeze" >&2; exit 2 ;; esac
+if [ -z "$TOK" ] && [ "$ACTION" != unfreeze ]; then echo "this script can only unfreeze" >&2; exit 2; fi
 case "$CDB$CDBUSER" in *[!A-Za-z0-9_.-]*) echo "invalid TUGRA_COOLIFY_DB / TUGRA_COOLIFY_DB_USER" >&2; exit 2 ;; esac
 case "$POLL" in ''|*[!0-9]*) POLL=20 ;; esac
 mkdir -p "$STATE" && chmod 700 "$STATE" || { echo "cannot create $STATE" >&2; exit 2; }
@@ -130,12 +139,26 @@ trap 'rm -rf "$W"' EXIT
 
 only() { case " @{TUGRA_LOOP_ONLY:-} " in "  ") return 0 ;; *" $1 "*) return 0 ;; esac; return 1; }
 
+# post_file <file>: 0 when the hub took it (or there is nothing to post / no hub to post to), 1 when the post failed.
 post_file() {
   [ -s "$1" ] || return 0
-  printf 'header = "Authorization: Bearer %s"\n' "$TOK" | curl -sS --max-time 30 --config - -X POST -H 'Content-Type: text/plain' --data-binary "@$1" -o /dev/null "$HUB/import/migration/host-report" 2>/dev/null || printf 'note: could not post to the hub (this terminal keeps the report)\n' >&2
-  return 0
+  [ -n "$TOK" ] || return 0
+  if printf 'header = "Authorization: Bearer %s"\n' "$TOK" | curl -sS --max-time 30 --config - -X POST -H 'Content-Type: text/plain' --data-binary "@$1" -o /dev/null "$HUB/import/migration/host-report" 2>/dev/null; then return 0; fi
+  [ -e "$W/n.$ref" ] || { printf 'note: could not post to the hub (this terminal keeps the report and sends it again)\n' >&2; : > "$W/n.$ref"; }
+  return 1
 }
-flush() { post_file "$W/o.$ref"; : > "$W/o.$ref"; }
+# The outbox is emptied only when the hub took it: a failed post stays queued and goes out with the next line.
+flush() { if post_file "$W/o.$ref"; then : > "$W/o.$ref"; fi; return 0; }
+# Before a host is left, send what is still queued (a few tries); a host whose report never arrived is named at the end.
+settle() {
+  n=0
+  while [ -s "$W/o.$ref" ] && [ "$n" -lt 3 ]; do
+    flush
+    n=$((n + 1))
+    if [ -s "$W/o.$ref" ] && [ "$n" -lt 3 ]; then sleep 3; fi
+  done
+  if [ -s "$W/o.$ref" ]; then echo "$ref" >> "$W/unsent"; fi
+}
 rep() { # state code rc
   printf 'TUGRA_AT\t%s\tTUGRA_HOST\t%s\t%s\t%s\t%s\n' "$ref" "$STEP" "$1" "$2" "$3" >> "$W/o.$ref"
   printf '[%s] %s %s%s\n' "$ref" "$1" "$2" "$( [ "$3" = - ] || printf ' rc=%s' "$3")"
@@ -215,7 +238,12 @@ act_freeze() {
   err=$(awk -F"$TAB" '$3=="TUGRA_FZ" && $4=="error" { print $5; exit }' "$W/r.$ref")
   if [ -n "$err" ]; then rep failed "$err" -; return; fi
   if awk -F"$TAB" '$3=="TUGRA_FZ" && $4=="done" { f=1 } END { exit !f }' "$W/r.$ref"; then
-    if [ "$ACTION" = unfreeze ]; then rep finished unfrozen 0; else rep finished frozen 0; fi
+    # the remote script prints done after trying every container: a stop or start that failed, or hit a container that is no
+    # longer the recorded one, must not read as success in this terminal either (the hub judges the same lines)
+    if awk -F"$TAB" '($3=="TUGRA_STOP" || $3=="TUGRA_START") && $5!="stopped" && $5!="started" && $5!="gone" { f=1 } END { exit !f }' "$W/r.$ref"; then
+      if [ "$ACTION" = unfreeze ]; then rep failed restart-failed -; else rep failed stop-failed -; fi
+    elif [ "$ACTION" = unfreeze ]; then rep finished unfrozen 0
+    else rep finished frozen 0; fi
   else rep failed no-result -; fi
 }
 
@@ -228,6 +256,11 @@ act_inventory() {
 }
 
 do_host() {
+  do_host_body "$1"
+  settle
+}
+
+do_host_body() {
   ref=$1
   only "$ref" || return 0
   : > "$W/o.$ref"
@@ -286,13 +319,15 @@ for r in $REFS; do
   case "$s" in unreachable|no-key|no-host|failed|died|'') bad=$((bad + 1)) ;; esac
 done
 echo "Done: $bad of $(printf '%s\n' $REFS | wc -l | tr -d ' ') hosts need attention. Re-run this script to retry them (it resumes)."
+if [ -s "$W/unsent" ]; then echo "The hub did not receive the report of: $(sort -u "$W/unsent" | tr '\n' ' '). The work itself ran; run this script again to report it."; fi
 [ "$bad" = 0 ]
 `;
 
 /** Build the script. Throws (a plain Error) on any input that is not safe to embed in a shell script run as root. */
 export function buildHostLoopScript(i: HostLoopInput): string {
   assertSafeBase(i.hubBase);
-  if (!isMigrationToken(i.token)) throw new Error("invalid migration token");
+  if (i.token !== null && !isMigrationToken(i.token)) throw new Error("invalid migration token");
+  if (i.token === null && i.step !== "FREEZE") throw new Error("a tokenless script is the FREEZE rollback only");
   if (!/^[A-Za-z0-9_-]{8,64}$/.test(i.runId)) throw new Error("invalid run id");
   if (!(LOOP_SCRIPT_STEPS as readonly string[]).includes(i.step)) throw new Error("unsupported step");
   if (!KEYDIR_RE.test(i.keyDir) || i.keyDir.includes("..") || i.keyDir.includes("//")) throw new Error("invalid key directory");
@@ -344,8 +379,9 @@ export function buildHostLoopScript(i: HostLoopInput): string {
   const text = SCRIPT.replace(/^\n/, "")
     .replaceAll("@{", () => "${")
     .replaceAll("@@TITLE@@", () => title)
-    .replace("@@HUB@@", () => shq(i.hubBase))
-    .replace("@@TOK@@", () => shq(i.token))
+    .replace("@@HUB@@", () => shq(i.token === null ? "" : i.hubBase))
+    .replace("@@TOK@@", () => shq(i.token ?? ""))
+    .replace("@@DEFACTION@@", () => (i.token === null ? "unfreeze" : "run"))
     .replace("@@RUNID@@", () => shq(i.runId))
     .replace("@@STEP@@", () => shq(i.step))
     .replace("@@KEYDIR@@", () => shq(i.keyDir))
