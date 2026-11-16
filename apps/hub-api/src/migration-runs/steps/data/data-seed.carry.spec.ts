@@ -106,6 +106,13 @@ describe("DATA_SEED: unlistedDbPolicy carry (R2)", () => {
     expect(excluded.data.carried).toEqual([]);
   });
 
+  it("an item that already exists while the container is still a finding fails the step instead of looping", async () => {
+    const { handler, data, ctx } = build(carryRun(), PG17);
+    data.carryUnlistedDb = async (_run, spec) => ({ itemRef: `database:${spec.host}:${spec.container}`, created: false }); // the port says it was there, the snapshot disagrees
+    const h = ctx();
+    expect(await handler.act(h.ctx, await handler.observe(h.ctx))).toEqual({ outcome: "fail", code: DATA_CODES.seedCarryFailed, params: { count: 1 }, retryable: true });
+  });
+
   it("a database the target refuses to create fails the step with a retryable code naming the count, never silently skipping the container", async () => {
     const { handler, data, ctx } = build(carryRun(), PG17);
     data.carryFails = true;

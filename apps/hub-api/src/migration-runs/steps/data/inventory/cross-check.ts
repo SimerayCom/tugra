@@ -34,6 +34,7 @@ export const INVENTORY_CODES = {
   unlistedDb: "inventory.unlisted-db",
   unlistedDbSkipped: "inventory.unlisted-db-skipped",
   unlistedDbCarry: "inventory.unlisted-db-carry",
+  unlistedDbCarryPending: "inventory.unlisted-db-carry-pending",
   unlistedDbExcluded: "inventory.unlisted-db-excluded",
   unlistedDbMapped: "inventory.unlisted-db-mapped",
   orphanVolume: "inventory.orphan-volume",
@@ -49,6 +50,7 @@ export const INVENTORY_CODES = {
 /** One gate code per reason a carry is refused (so each has its own sentence in the locale), keyed by {@link CarryRefusal}. */
 export const CARRY_REFUSED_CODES = {
   "engine-unsupported": "inventory.carry-refused-engine-unsupported",
+  "name-unsupported": "inventory.carry-refused-name-unsupported",
   "not-running": "inventory.carry-refused-not-running",
   "meta-missing": "inventory.carry-refused-meta-missing",
   "credentials-not-discoverable": "inventory.carry-refused-credentials-not-discoverable",
@@ -158,7 +160,7 @@ export function findingsOf(inv: HostInventory, planRefs: readonly string[]): Fin
 export type CarryEngine = "POSTGRES" | "MYSQL" | "MARIADB" | "REDIS" | "KEYDB" | "DRAGONFLY";
 
 /** Why a container cannot be carried in full. Fixed, value-free codes (they travel in gate params and the locale has a sentence each). */
-export const CARRY_REFUSALS = ["engine-unsupported", "not-running", "meta-missing", "credentials-not-discoverable", "secret-file-unsupported", "acl-user-unsupported", "db-not-discoverable", "version-unknown"] as const;
+export const CARRY_REFUSALS = ["engine-unsupported", "name-unsupported", "not-running", "meta-missing", "credentials-not-discoverable", "secret-file-unsupported", "acl-user-unsupported", "db-not-discoverable", "version-unknown"] as const;
 export type CarryRefusal = (typeof CARRY_REFUSALS)[number];
 
 /** What the DATA_SEED step needs to bind a container to a new database plan item. No secret: the password is read by the migrator on the source host. */
@@ -187,7 +189,8 @@ export function carryEngineOfImage(image: string): CarryEngine | null {
 
 /**
  * Can this unlisted database container be carried IN FULL, and as what? Pure. Every refusal is a fixed reason:
- *  - the engine must be one the migrator dumps; the container must be running (the migrator opens a running source);
+ *  - the engine must be one the migrator dumps; the container name must be a plain reference (letters, digits, `_`, `-`; no dot);
+ *    the container must be running (the migrator opens a running source);
  *  - the inventory must carry the database facts (an older script's report does not: run the inventory again);
  *  - the migrator must be able to discover the password (`env`); a `*_FILE` secret, no password or an ACL user is refused;
  *  - a MySQL / MariaDB container must name its database (the dump covers exactly one) and every engine needs a known version
@@ -196,6 +199,8 @@ export function carryEngineOfImage(image: string): CarryEngine | null {
 export function carryAssessment(host: string, c: InvContainer): { ok: true; spec: CarrySpec } | { ok: false; reason: CarryRefusal } {
   const engine = carryEngineOfImage(c.image);
   if (!engine) return { ok: false, reason: "engine-unsupported" };
+  // the plan item is `database:<host>:<container>`, matched byte-exactly by the migrator and by the plan's own reference rules: a name outside them cannot be one
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(c.name)) return { ok: false, reason: "name-unsupported" };
   if (c.state !== "running") return { ok: false, reason: "not-running" };
   if (!c.db) return { ok: false, reason: "meta-missing" };
   if (c.db.cred === "file") return { ok: false, reason: "secret-file-unsupported" };
@@ -269,7 +274,10 @@ export function crossCheckChecks(i: CrossCheckInput): GateCheck[] {
         else if (i.unlistedDbPolicy === "carry") {
           const c = inv.containers.find((x) => x.name === f.name);
           const a = c ? carryAssessment(host, c) : ({ ok: false, reason: "meta-missing" } as const);
-          if (a.ok) checks.push({ ...base, id: checkKey("inventory-unlisted-db", f.key), status: "warn", code: INVENTORY_CODES.unlistedDbCarry, params: { ...params, name: a.spec.name, version: a.spec.version } });
+          // `findingsOnly` is the judgement after a SKIPPED DATA_SEED (the step that carries): a carryable container still unlisted here was
+          // never carried, and nothing later will, so it blocks until an operator settles it instead of passing as if it were handled
+          if (a.ok && i.findingsOnly) checks.push({ ...base, id: checkKey("inventory-unlisted-db", f.key), status: "fail", code: INVENTORY_CODES.unlistedDbCarryPending, params: { ...params, name: a.spec.name, version: a.spec.version }, attestable: [INVENTORY_ATTEST.excluded, INVENTORY_ATTEST.mapped] });
+          else if (a.ok) checks.push({ ...base, id: checkKey("inventory-unlisted-db", f.key), status: "warn", code: INVENTORY_CODES.unlistedDbCarry, params: { ...params, name: a.spec.name, version: a.spec.version } });
           else checks.push({ ...base, id: checkKey("inventory-unlisted-db", f.key), status: "fail", code: CARRY_REFUSED_CODES[a.reason], params: { ...params, reason: a.reason }, attestable: [INVENTORY_ATTEST.excluded, INVENTORY_ATTEST.mapped] });
         } else checks.push({ ...base, id: checkKey("inventory-unlisted-db", f.key), status: "fail", code: INVENTORY_CODES.unlistedDb, params, attestable: [INVENTORY_ATTEST.excluded, INVENTORY_ATTEST.mapped] });
       } else {
@@ -314,6 +322,6 @@ function reachChecks(host: string, r: ReachReport | null, partMiB: number | null
 /** The attestation ids a wait should list when the checks contain a blocking finding the operator may settle. */
 export function attestableFindings(checks: readonly GateCheck[]): string[] {
   const failing = (code: string) => checks.some((c) => c.status === "fail" && c.code === code);
-  if (failing(INVENTORY_CODES.unlistedDb) || checks.some((c) => c.status === "fail" && CARRY_REFUSED_SET.has(c.code ?? ""))) return [INVENTORY_ATTEST.excluded, INVENTORY_ATTEST.mapped];
+  if (failing(INVENTORY_CODES.unlistedDb) || failing(INVENTORY_CODES.unlistedDbCarryPending) || checks.some((c) => c.status === "fail" && CARRY_REFUSED_SET.has(c.code ?? ""))) return [INVENTORY_ATTEST.excluded, INVENTORY_ATTEST.mapped];
   return failing(INVENTORY_CODES.orphanVolume) ? [INVENTORY_ATTEST.excluded] : [];
 }

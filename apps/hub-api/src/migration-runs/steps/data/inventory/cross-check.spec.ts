@@ -236,6 +236,7 @@ describe("R2: carry of an unlisted database", () => {
   it.each([
     ["engine-unsupported", "mongo:7", {}, { user: null, database: null, cred: "env", version: null }],
     ["engine-unsupported", "valkey/valkey:8", {}, { user: null, database: null, cred: "env", version: null }],
+    ["name-unsupported", "postgres:16", { name: "my.db" }, { user: "u", database: "d", cred: "env", version: null }],
     ["not-running", "postgres:16", { state: "exited" }, { user: "u", database: "d", cred: "env", version: null }],
     ["meta-missing", "postgres:16", {}, null],
     ["secret-file-unsupported", "postgres:16", {}, { user: "u", database: "d", cred: "file", version: null }],
@@ -268,6 +269,14 @@ describe("R2: carry of an unlisted database", () => {
     expect(carryDecisions(inputOf(i, { attestations: [{ checkId: INVENTORY_ATTEST.excluded, subject: `host-1/${GHOST}` }] }))).toEqual([]);
     expect(carryDecisions(inputOf(i, { planRefs: [carriedItemRef("host-1", GHOST)] }))).toEqual([]); // carried: the finding is gone
     expect(crossCheckChecks(inputOf(i, { planRefs: [carriedItemRef("host-1", GHOST)] })).some((x) => x.subject === `host-1/${GHOST}`)).toBe(false);
+  });
+
+  it("after a skipped DATA_SEED (findingsOnly) a carryable container that was never carried blocks: it is not passed off as handled", () => {
+    const c = crossCheckChecks(inputOf(ghostOf("postgres:17"), { findingsOnly: true })).find((x) => x.subject === `host-1/${GHOST}`)!;
+    expect(c).toMatchObject({ status: "fail", code: INVENTORY_CODES.unlistedDbCarryPending, attestable: [INVENTORY_ATTEST.excluded, INVENTORY_ATTEST.mapped] });
+    expect(attestableFindings([c])).toEqual([INVENTORY_ATTEST.excluded, INVENTORY_ATTEST.mapped]);
+    const done = crossCheckChecks(inputOf(ghostOf("postgres:17"), { findingsOnly: true, planRefs: [carriedItemRef("host-1", GHOST)] }));
+    expect(done.some((x) => x.subject === `host-1/${GHOST}`)).toBe(false);
   });
 
   it("two hosts with an unlisted database each are decided in host order, each bound to its own host", () => {

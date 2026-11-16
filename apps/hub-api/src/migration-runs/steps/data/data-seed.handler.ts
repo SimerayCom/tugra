@@ -218,7 +218,12 @@ export class DataSeedHandler implements StepHandler<SeedObs>, OnModuleInit {
       for (const spec of carry) {
         await ctx.assertLease();
         try {
-          await this.data.carryUnlistedDb(run, spec, ctx.targetFor(spec.host === "_" ? null : spec.host));
+          const res = await this.data.carryUnlistedDb(run, spec, ctx.targetFor(spec.host === "_" ? null : spec.host));
+          // an item that already existed while the container is still a finding does not account for it: stop instead of looping
+          if (!res.created) {
+            failed++;
+            continue;
+          }
           await ctx.emit({ stepKey: "DATA_SEED", level: "info", code: "data-seed.db-carried", params: { engine: spec.engine, container: spec.container, host: spec.host, name: spec.name } });
         } catch (e) {
           if (e instanceof RunLeaseLostError) throw e;

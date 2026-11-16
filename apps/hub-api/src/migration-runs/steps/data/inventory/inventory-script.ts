@@ -82,7 +82,7 @@ tugra_inventory() {
   # a database identifier the hub accepts (alphanumerics . _ -, at most 63 characters), else "-" (unknown)
   dbident() {
     case "$1" in ''|*[!A-Za-z0-9_.-]*|-*|.*) printf '%s' - ; return 0 ;; esac
-    if [ "$(printf '%s' "$1" | wc -c | tr -d ' ')" -le 63 ]; then printf '%s' "$1"; else printf '%s' -; fi
+    if [ "$(printf '%s' "$1" | wc -c | tr -cd '0-9')" -le 63 ]; then printf '%s' "$1"; else printf '%s' -; fi
   }
   # the value of an environment variable of the container, read from the temp file (only ever for the fixed, NON-secret names below)
   evar() { sed -n "s/^$1=//p" "$W/env" | tail -n 1; }
