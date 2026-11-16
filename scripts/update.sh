@@ -15,6 +15,10 @@
 # Queue job (flat JSON strings; no jq in this image): {"targetVersion":"X"} (legacy, tag-only) or
 # {"targetVersion":"X","hubDigest":"<64hex>","webDigest":"<64hex>"}. With BOTH digests the images are pulled by
 # digest (`repo:tag@sha256:…` via compose TUGRA_HUB_DIGEST / TUGRA_WEB_DIGEST); anything else is the legacy path.
+# An optional "hostFilesDigest":"<64hex>" (sha256 of the release's signed host files manifest, read by the hub from
+# the signature-verified versions.json) makes the update also apply the release's compose file + installer scripts:
+# this sidecar re-verifies and applies them itself (scripts/lib/hostfiles.sh) — before the pull, with a backup and an
+# automatic rollback; the .env is never edited by that step. Without it the update is images-only, as before.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
@@ -76,6 +80,8 @@ release_lock() { redis DEL "$LOCK_KEY"; }
 TUGRA_SNAPSHOT_DRY="$DRY"
 # shellcheck source=lib/snapshot.sh
 . "$SCRIPT_DIR/lib/snapshot.sh"
+# shellcheck source=lib/hostfiles.sh
+. "$SCRIPT_DIR/lib/hostfiles.sh"
 
 # The sidecar only has the checkout (/repo) mounted. A TUGRA_BACKUP_DIR outside it would be written into the
 # container's ephemeral filesystem and vanish while the log claims success — so refuse it up front.
@@ -93,7 +99,16 @@ backup_dir_ok() {
   case "$p/" in "$root"/*) return 0 ;; *) return 1 ;; esac
 }
 # " (DB restore point: <path>)" when a snapshot exists — appended to operator-facing failure text.
-snap_note() { if [ -n "$SNAPSHOT_PATH" ]; then printf '; pre-update backup: %s' "$SNAPSHOT_PATH"; fi; }
+snap_note() {
+  if [ -n "$SNAPSHOT_PATH" ]; then printf '; pre-update backup: %s' "$SNAPSHOT_PATH"; fi
+  if [ -n "$HF_BACKUP_DIR" ]; then printf '; replaced compose/scripts saved in: %s' "$HF_BACKUP_DIR"; fi
+}
+# Put the release's compose/scripts back after a failure that happened BEFORE any container was recreated (the
+# branches that only roll .env back). `hf_note` is the status-text suffix when that restore itself failed.
+hf_undo() { hf_rollback || log "host files: ROLLBACK FAILED — copy the files saved in $HF_BACKUP_DIR back into $REPO_DIR by hand"; }
+hf_note() { if [ "$HF_APPLIED" -eq 1 ] && [ -n "$HF_BACKUP_DIR" ]; then printf '; compose/scripts could NOT be restored: copy the files saved in %s back by hand' "$HF_BACKUP_DIR"; fi; }
+# A value safe to embed in the JSON status string (no quotes, backslashes or control characters).
+json_str() { printf '%s' "$1" | tr -d '"\\' | tr '\n\t\r' '   '; }
 
 # A bare lowercase 64-hex sha256 (the only digest form the manifest, the queue job and .env carry).
 is_hex64() { [[ "${1:-}" =~ ^[0-9a-f]{64}$ ]]; }
@@ -137,6 +152,16 @@ recover_previous() {
   restore_env "$@" && compose up -d --no-deps hub-api web && wait_healthy hub-api web
 }
 
+# recover_previous + the release's compose/scripts put back FIRST (the previous version must come up from the
+# previous compose file). A no-op for the host files when this update applied none. Returns 0 only when BOTH the
+# files and the running stack are verified restored.
+recover_all() {
+  local ok=0
+  hf_rollback || ok=1
+  recover_previous "$@" || ok=1
+  return "$ok"
+}
+
 # Terminal state when the previous version could NOT be restored+verified: the stack may be partly updated.
 # Record an explicit phase AND a NO-TTL marker so the recovery state doesn't silently expire back to idle.
 set_recovery_required() {
@@ -144,10 +169,12 @@ set_recovery_required() {
   # Digest pins must be restored too: to the previous digests when the stack was pinned, or CLEARED (empty) when it
   # was tag-only but the failed update wrote new pins (a restore_env that died half-way may have left them).
   if [ -n "$prevHub$prevWeb$newHub$newWeb" ]; then pins=" and TUGRA_HUB_DIGEST=${prevHub} TUGRA_WEB_DIGEST=${prevWeb}"; fi
-  log "RECOVERY REQUIRED — restore manually: set TUGRA_VERSION=$prev${pins} in $ENV_FILE then run: docker compose --env-file $ENV_FILE -f $COMPOSE_FILE up -d --no-deps hub-api web"
+  local files=""
+  if [ "$HF_APPLIED" -eq 1 ] && [ -n "$HF_BACKUP_DIR" ]; then files=" AND restore the compose/scripts saved in $HF_BACKUP_DIR (copy each file back to the same path in $REPO_DIR)"; fi
+  log "RECOVERY REQUIRED — restore manually: set TUGRA_VERSION=$prev${pins} in $ENV_FILE${files} then run: docker compose --env-file $ENV_FILE -f $COMPOSE_FILE up -d --no-deps hub-api web"
   # Write the status WITHOUT a TTL (unlike set_status, which EXpires after STATUS_TTL) so the recovery state
   # can't silently lapse back to idle, plus a durable marker the hub gates new updates on until it is cleared.
-  redis SET "$STATUS_KEY" "{\"phase\":\"recovery_required\",\"targetVersion\":\"$target\",\"error\":\"update to $target failed and the previous version could not be restored and verified — manual recovery required (set TUGRA_VERSION=$prev${pins} and recreate hub-api + web)$(snap_note)\"}"
+  redis SET "$STATUS_KEY" "{\"phase\":\"recovery_required\",\"targetVersion\":\"$target\",\"error\":\"update to $target failed and the previous version could not be restored and verified — manual recovery required (set TUGRA_VERSION=$prev${pins}${files} and recreate hub-api + web)$(snap_note)\"}"
   redis SET "instance:update:recovery_required" "{\"targetVersion\":\"$target\",\"previousVersion\":\"$prev\"}"
 }
 
@@ -272,8 +299,49 @@ resolve_pins() {
   PIN_HUB="$hub"; PIN_WEB="$web"
 }
 
+# Start the updater's OWN replacement when the release changed the compose file (its service definition and image
+# may have changed, and a container cannot recreate itself: `compose up` would kill the very process running it).
+# A one-shot helper container does it from outside: same image (docker CLI + compose), the docker socket, and the
+# checkout mounted at its HOST path — compose resolves the service's `..:/repo` bind relative to the compose file's
+# directory, so that path must be the real host path, which is read from this container's own /repo mount.
+# Detached + delayed so the status/lock are already final when this container goes away. Best-effort: on any
+# failure the old updater simply keeps running (the next installer run refreshes it), the update itself is done.
+refresh_updater_self() {
+  local cid src image
+  if [ "$DRY" -eq 1 ]; then printf 'RUN: refresh tugra-updater via a one-shot helper container\n'; return 0; fi
+  cid="$(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps -q tugra-updater 2>/dev/null | head -n1 || true)"
+  [ -n "$cid" ] || { log "warning: could not find the updater container; it will be refreshed on the next installer run"; return 0; }
+  src="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/repo"}}{{.Source}}{{end}}{{end}}' "$cid" 2>/dev/null || true)"
+  image="$(docker inspect -f '{{.Config.Image}}' "$cid" 2>/dev/null || true)"
+  case "$src" in /*) ;; *) src="" ;; esac
+  if [ -z "$src" ] || [ -z "$image" ]; then
+    log "warning: could not resolve the checkout's host path; the updater will be refreshed on the next installer run"
+    return 0
+  fi
+  docker rm -f tugra-updater-refresh >/dev/null 2>&1 || true
+  if docker run -d --rm --name tugra-updater-refresh \
+      -v /var/run/docker.sock:/var/run/docker.sock -v "$src:$src" -w "$src" --entrypoint sh "$image" \
+      -c 'sleep 5 && exec docker compose --profile updater --project-directory "$1/deploy" --env-file "$1/.env" -f "$1/deploy/docker-compose.yml" up -d --no-deps tugra-updater' \
+      sh "$src" >/dev/null 2>&1; then
+    log "updater refresh scheduled (the sidecar restarts in a few seconds)"
+  else
+    log "warning: could not start the updater refresh helper; the updater will be refreshed on the next installer run"
+  fi
+}
+
+# Set when a successful update replaced scripts: the watch loop then re-execs the (new) update.sh.
+RELOAD_SELF=0
+
 do_update() {
-  local target="$1" hubDigest="${2:-}" webDigest="${3:-}"
+  HF_APPLIED=0; HF_BACKUP_DIR=""; HF_CHANGED=(); HF_SCRIPTS_CHANGED=0; HF_COMPOSE_CHANGED=0
+  _do_update "$@"
+  local rc=$?
+  hf_cleanup   # the private staging dir never outlives a job, whatever branch it ended on
+  return "$rc"
+}
+
+_do_update() {
+  local target="$1" hubDigest="${2:-}" webDigest="${3:-}" hostDigest="${4:-}"
   local current; current="$(env_get TUGRA_VERSION)"; [ -n "$current" ] || current="latest"
   if [ "$current" != "latest" ] && ! is_newer "$target" "$current"; then
     log "refusing non-newer target $target (current $current)"
@@ -287,17 +355,28 @@ do_update() {
   local prevHub prevWeb
   prevHub="$(env_get TUGRA_HUB_DIGEST)"; is_hex64 "$prevHub" || prevHub=""
   prevWeb="$(env_get TUGRA_WEB_DIGEST)"; is_hex64 "$prevWeb" || prevWeb=""
-  resolve_pins "$hubDigest" "$webDigest"
-  hubDigest="$PIN_HUB"; webDigest="$PIN_WEB"
-  local touched=0
-  if [ -n "$prevHub$prevWeb$hubDigest$webDigest" ]; then touched=1; fi
-
-  if [ -n "$hubDigest" ]; then
-    log "updating $current -> $target (digest-pinned: hub ${hubDigest:0:12}… web ${webDigest:0:12}…)"
-  else
-    log "updating $current -> $target"
-  fi
+  log "updating $current -> $target"
   set_status pulling "$target"   # the hub knows no separate "snapshotting" phase; the snapshot runs under "pulling"
+
+  # Release host files (compose + installer scripts), PREFLIGHT: download, verify (ed25519 + hashes) and validate them
+  # in a private staging dir. Nothing in the checkout changes here, so a failure aborts with nothing changed. When the
+  # checkout already matches the release (the common case: only the images changed) this is the fast path — the
+  # signed manifest is fetched and compared, no file is downloaded and nothing is applied.
+  if [ -n "$hostDigest" ]; then
+    if ! hf_prepare "$target" "$hostDigest"; then
+      log "host files: $HF_ERROR — aborting, nothing was changed"
+      set_status failed "$target" "\"update refused: $(json_str "$HF_ERROR"); nothing was changed\""
+      release_lock
+      return 0
+    fi
+    if [ "${#HF_CHANGED[@]}" -eq 0 ]; then
+      log "host files: compose and scripts already match release $target"
+    else
+      log "host files: release $target changes ${HF_CHANGED[*]}"
+    fi
+  else
+    log "this release publishes no signed compose/scripts (images-only update; changes to them still need git pull + install.sh)"
+  fi
 
   # MANDATORY restore point BEFORE anything changes: the new hub runs `prisma migrate deploy` on boot and
   # migrations are not reversible, so a failed update needs a dump to go back to. If it cannot be taken we
@@ -316,13 +395,32 @@ do_update() {
     release_lock
     return 0
   fi
+  # Apply the release's compose/scripts (backup first, atomic renames, restored by recover_all / the branches below on
+  # any later failure). Before resolve_pins so the digest-support check reads the NEW compose file. .env is untouched.
+  if [ "${#HF_CHANGED[@]}" -gt 0 ]; then
+    if backup_dir_ok; then HF_BACKUP_ROOT="$(_snap_cfg TUGRA_BACKUP_DIR "$REPO_DIR/backups")"; else HF_BACKUP_ROOT="$REPO_DIR/backups"; fi
+    if ! hf_apply "$current" "$target"; then
+      log "host files: $HF_ERROR — aborting"
+      set_status failed "$target" "\"update refused: $(json_str "$HF_ERROR")$(snap_note)\""
+      release_lock
+      return 0
+    fi
+  fi
+  resolve_pins "$hubDigest" "$webDigest"
+  hubDigest="$PIN_HUB"; webDigest="$PIN_WEB"
+  local touched=0
+  if [ -n "$prevHub$prevWeb$hubDigest$webDigest" ]; then touched=1; fi
+  if [ -n "$hubDigest" ]; then
+    log "digest-pinned: hub ${hubDigest:0:12}… web ${webDigest:0:12}…"
+  fi
   # Tag-only -> tag-only keeps today's exact behaviour (only TUGRA_VERSION is written). Otherwise the digests are
   # written too: pinned target = the new digests; legacy target on a pinned stack = cleared (an old pin would
   # otherwise override the new tag and pull the OLD image).
   if ! write_pins "$target" "$hubDigest" "$webDigest" "$touched"; then
     log "could not write $ENV_FILE — aborting"
     restore_env "$current" "$prevHub" "$prevWeb" "$hubDigest" "$webDigest" || true
-    set_status failed "$target" "\"could not update .env\""
+    hf_undo
+    set_status failed "$target" "\"could not update .env$(hf_note)$(snap_note)\""
     release_lock
     return 0
   fi
@@ -331,7 +429,8 @@ do_update() {
   if ! compose pull hub-api web; then
     log "pull failed — rolling back .env"
     restore_env "$current" "$prevHub" "$prevWeb" "$hubDigest" "$webDigest" || log "could not roll back $ENV_FILE"
-    set_status failed "$target" "\"image pull failed\""
+    hf_undo
+    set_status failed "$target" "\"image pull failed$(hf_note)\""
     release_lock
     return 0
   fi
@@ -352,7 +451,8 @@ do_update() {
         esac
         log "$why — rolling back .env"
         restore_env "$current" "$prevHub" "$prevWeb" "$hubDigest" "$webDigest" || log "could not roll back $ENV_FILE"
-        set_status failed "$target" "\"$why\""
+        hf_undo
+        set_status failed "$target" "\"$why$(hf_note)\""
         release_lock
         return 0
       fi
@@ -365,7 +465,7 @@ do_update() {
     # `compose up` is NOT atomic across hub-api + web: a partial recreate may already have swapped one of
     # them to the new image. Actively bring the previous version back and VERIFY it, rather than only
     # rewriting the .env tag (which left a broken old/new mix running).
-    if recover_previous "$current" "$prevHub" "$prevWeb" "$hubDigest" "$webDigest"; then
+    if recover_all "$current" "$prevHub" "$prevWeb" "$hubDigest" "$webDigest"; then
       set_status failed "$target" "\"recreate failed; restored $current$(snap_note)\""
     else
       set_recovery_required "$target" "$current" "$prevHub" "$prevWeb" "$hubDigest" "$webDigest"
@@ -381,7 +481,7 @@ do_update() {
     log "hub-api did not become healthy within ${HEALTH_TIMEOUT}s — restoring $current"
     # Restore AND verify the previous version. The old code re-ran `up` without re-checking health and still
     # reported "rolled back" even when that recreate failed — a false reassurance to the operator.
-    if recover_previous "$current" "$prevHub" "$prevWeb" "$hubDigest" "$webDigest"; then
+    if recover_all "$current" "$prevHub" "$prevWeb" "$hubDigest" "$webDigest"; then
       set_status failed "$target" "\"update to $target failed health check; restored $current and verified healthy$(snap_note)\""
     else
       set_recovery_required "$target" "$current" "$prevHub" "$prevWeb" "$hubDigest" "$webDigest"
@@ -407,6 +507,10 @@ do_update() {
   redis DEL "instance:update:recovery_required" # a verified update clears any stale recovery marker
   release_lock
   log "update to $target complete"
+  # Replaced scripts take effect for the NEXT job (this process keeps running the old file); a replaced compose
+  # file also redefines the updater service itself. Both happen after the status is final.
+  if [ "$HF_SCRIPTS_CHANGED" -eq 1 ]; then RELOAD_SELF=1; fi
+  if [ "$HF_COMPOSE_CHANGED" -eq 1 ]; then refresh_updater_self; fi
 }
 
 # Extract one flat string field ("key":"value") from a queue job without jq; empty when absent. `|| true`: a
@@ -415,7 +519,7 @@ job_field() { printf '%s' "$1" | grep -o "\"$2\":\"[^\"]*\"" | head -n1 | cut -d
 
 # One queue job: {"targetVersion":"X"} (legacy) or {"targetVersion":"X","hubDigest":"<64hex>","webDigest":"<64hex>"}.
 handle_job() {
-  local job="$1" target hub web
+  local job="$1" target hub web host
   target="$(job_field "$job" targetVersion)"
   if [ -z "$target" ]; then
     log "ignoring malformed job: $job"
@@ -424,7 +528,8 @@ handle_job() {
   fi
   hub="$(job_field "$job" hubDigest)"
   web="$(job_field "$job" webDigest)"
-  do_update "$target" "$hub" "$web"
+  host="$(job_field "$job" hostFilesDigest)"
+  do_update "$target" "$hub" "$web" "$host"
 }
 
 if [ "$DRY" -eq 1 ]; then
@@ -445,4 +550,10 @@ while true; do
   job="$(redis-cli -u "$REDIS_URL" BLPOP "$QUEUE_KEY" 0 | sed -n '2p')"
   [ -n "$job" ] || continue
   handle_job "$job" || log "update run errored (continuing to watch)"
+  if [ "$RELOAD_SELF" -eq 1 ]; then
+    # The release replaced update.sh/lib/*.sh: restart the loop on the new code (its syntax was checked before it
+    # was applied). Hand the loop a fresh process rather than running old code for the next job.
+    log "scripts were updated — reloading the updater"
+    exec bash "$SCRIPT_DIR/update.sh" --watch
+  fi
 done

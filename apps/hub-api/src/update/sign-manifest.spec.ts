@@ -5,9 +5,11 @@ import { join } from "node:path";
 import { generateKeyPairSync } from "node:crypto";
 import { derivePublicKeyB64, seedToPrivateKey } from "./manifest-merge";
 import { verifyUpdateManifest } from "./update-manifest";
+import { HOST_FILES_MANIFEST_NAME, HOST_FILES_SIG_NAME, hostFilesDigest, verifyHostFilesManifest } from "./host-files";
 
 const REPO_ROOT = join(__dirname, "..", "..", "..", "..");
 const SIGN = join(REPO_ROOT, "scripts", "sign-manifest.mjs");
+const SIGN_HOST = join(REPO_ROOT, "scripts", "sign-host-files.mjs");
 const KEYGEN = join(REPO_ROOT, "scripts", "keygen-publisher.mjs");
 const DIST = join(REPO_ROOT, "apps", "hub-api", "dist", "update", "manifest-merge.js");
 
@@ -21,6 +23,7 @@ describe("scripts/*.mjs (manifest signer + keygen)", () => {
   it("both runners parse (node --check)", () => {
     expect(() => execFileSync("node", ["--check", SIGN], { stdio: "pipe" })).not.toThrow();
     expect(() => execFileSync("node", ["--check", KEYGEN], { stdio: "pipe" })).not.toThrow();
+    expect(() => execFileSync("node", ["--check", SIGN_HOST], { stdio: "pipe" })).not.toThrow();
   });
 
   it("keygen output is a usable signing pair (the documented operator flow actually works)", () => {
@@ -115,6 +118,44 @@ describe("scripts/*.mjs (manifest signer + keygen)", () => {
       // a bare `--require-digests` with a non-`true` value must not silently disable the guard
       const sloppy = fails(["--require-digests", "yes"]);
       expect(sloppy?.status).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  e2e("sign-host-files.mjs lays out a verifiable host/<version>/ tree whose digest sign-manifest.mjs then commits to", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sign-host-files-"));
+    try {
+      const { seedB64, publicKeyB64 } = seedKeypair();
+      const env = { ...process.env, UPDATE_SIGNING_KEY: seedB64 };
+      const out = execFileSync("node", [SIGN_HOST, "--version", "0.3.0-beta.1", "--repo-root", REPO_ROOT, "--out-dir", dir], { stdio: "pipe", env }).toString();
+      const hostDir = join(dir, "host", "0.3.0-beta.1");
+      const manifest = readFileSync(join(hostDir, HOST_FILES_MANIFEST_NAME), "utf8");
+      const sig = readFileSync(join(hostDir, HOST_FILES_SIG_NAME), "utf8");
+      const parsed = verifyHostFilesManifest(manifest, sig, publicKeyB64);
+      expect(parsed.entries.map((e) => e.path)).toEqual(expect.arrayContaining(["deploy/docker-compose.yml", "scripts/update.sh", "scripts/lib/hostfiles.sh"]));
+      // every listed file is published byte-for-byte at its repo path
+      for (const e of parsed.entries) {
+        expect(readFileSync(join(hostDir, e.path)).equals(readFileSync(join(REPO_ROOT, e.path)))).toBe(true);
+      }
+      const digest = hostFilesDigest(manifest);
+      expect(out.trim().split("\n").pop()).toBe(`host-files-digest=${digest}`);
+
+      execFileSync("node", [SIGN, "--version", "0.3.0-beta.1", "--channel", "beta", "--out-dir", dir, "--host-files-digest", digest, "--require-host-files", "true"], { stdio: "pipe", env });
+      const v = verifyUpdateManifest(readFileSync(join(dir, "versions.json"), "utf8"), readFileSync(join(dir, "versions.json.sig"), "utf8"), publicKeyB64);
+      expect(v.tugra.beta.hostFilesDigest).toBe(digest);
+
+      // --require-host-files without a digest refuses to publish; sign-host-files needs the key + version
+      let status: number | undefined;
+      try {
+        execFileSync("node", [SIGN, "--version", "0.3.0-beta.2", "--channel", "beta", "--out-dir", dir, "--require-host-files", "true"], { stdio: "pipe", env });
+      } catch (e) {
+        status = (e as { status: number }).status;
+      }
+      expect(status).toBe(1);
+      const noKey = { ...process.env };
+      delete noKey.UPDATE_SIGNING_KEY;
+      expect(() => execFileSync("node", [SIGN_HOST, "--version", "0.3.0", "--out-dir", dir], { stdio: "pipe", env: noKey })).toThrow();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

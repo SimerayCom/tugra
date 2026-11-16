@@ -1,6 +1,7 @@
 import { generateKeyPairSync } from "node:crypto";
 import {
   assertRequiredDigests,
+  assertRequiredHostFiles,
   buildChannelEntry,
   buildNotice,
   canonicalizeManifest,
@@ -238,5 +239,21 @@ describe("manifest-merge imageDigests (supply chain: digest-pinned updates)", ()
     expect(() => assertRequiredDigests(buildChannelEntry({ version: "1.0.0" }))).toThrow(/hub, web/);
     expect(() => assertRequiredDigests(buildChannelEntry({ version: "1.0.0", imageDigests: { hub: H } }))).toThrow(/web/);
     expect(() => assertRequiredDigests(buildChannelEntry({ version: "1.0.0", imageDigests: { hub: H, web: W } }))).not.toThrow();
+  });
+
+  it("hostFilesDigest is normalised (sha256: stripped, lowercased), signed, and verifiable; garbage THROWS", () => {
+    const { seedB64, publicKeyB64 } = keypair();
+    const F = "ab".repeat(32);
+    const entry = buildChannelEntry({ version: "1.0.0", hostFilesDigest: ` sha256:${F.toUpperCase()} ` });
+    expect(entry.hostFilesDigest).toBe(F);
+    const { body, sig } = signAndSelfVerify({ current: null, channel: "stable", entry, seedB64 });
+    expect(verifyUpdateManifest(body, sig, publicKeyB64).tugra.stable.hostFilesDigest).toBe(F);
+    expect(() => buildChannelEntry({ version: "1.0.0", hostFilesDigest: "abc" })).toThrow(/hostFilesDigest/);
+    expect("hostFilesDigest" in buildChannelEntry({ version: "1.0.0", hostFilesDigest: "  " })).toBe(false);
+  });
+
+  it("assertRequiredHostFiles refuses an entry without the host files digest", () => {
+    expect(() => assertRequiredHostFiles(buildChannelEntry({ version: "1.0.0" }))).toThrow(/hostFilesDigest/);
+    expect(() => assertRequiredHostFiles(buildChannelEntry({ version: "1.0.0", hostFilesDigest: "c".repeat(64) }))).not.toThrow();
   });
 });

@@ -41,14 +41,24 @@ export function mapStatus(raw: string | null): UpdateProgress {
  * The job the sidecar drains. When the freshly verified manifest entry carries BOTH the hub and web INDEX
  * digests the job pins them (`{targetVersion, hubDigest, webDigest}`, flat strings — the sidecar parses with
  * grep, no jq); a missing or partial pair degrades to the legacy tag-only `{targetVersion}` so old manifests
- * keep updating exactly as before. The digests are bare 64-hex (schema-validated at consume time). Pure.
+ * keep updating exactly as before. The digests are bare 64-hex (schema-validated at consume time).
+ * `hostFilesDigest` (sha256 of the release's signed host-files manifest) is added independently when the entry
+ * carries it: it tells the sidecar the release publishes compose/script files to apply. It carries NO file content —
+ * the sidecar downloads and signature-verifies those itself, so a compromised hub or Redis cannot inject a file.
+ * Pure — unit-tested directly.
  */
 export function buildUpdateJob(
   targetVersion: string,
   digests?: { hub?: string; web?: string },
-): { targetVersion: string; hubDigest?: string; webDigest?: string } {
-  if (digests?.hub && digests.web) return { targetVersion, hubDigest: digests.hub, webDigest: digests.web };
-  return { targetVersion };
+  hostFilesDigest?: string,
+): { targetVersion: string; hubDigest?: string; webDigest?: string; hostFilesDigest?: string } {
+  const job: { targetVersion: string; hubDigest?: string; webDigest?: string; hostFilesDigest?: string } = { targetVersion };
+  if (digests?.hub && digests.web) {
+    job.hubDigest = digests.hub;
+    job.webDigest = digests.web;
+  }
+  if (hostFilesDigest) job.hostFilesDigest = hostFilesDigest;
+  return job;
 }
 
 /**
@@ -96,7 +106,7 @@ export class UpdaterService {
       JSON.stringify({ phase: "queued", targetVersion: latest, error: null, actor, startedAt: new Date().toISOString() }),
       STATUS_TTL_S,
     );
-    await this.redis.client.lpush(QUEUE_KEY, JSON.stringify(buildUpdateJob(latest, verified.entry.imageDigests)));
+    await this.redis.client.lpush(QUEUE_KEY, JSON.stringify(buildUpdateJob(latest, verified.entry.imageDigests, verified.entry.hostFilesDigest)));
     this.logger.log(`update requested by ${actor} (auto=${auto}): ${current} → ${latest}`);
     return { status: "started", targetVersion: latest };
   }

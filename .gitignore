@@ -19,6 +19,9 @@ destination-keys.json
 secrets/
 # pre-update restore points (scripts/lib/snapshot.sh): DB dumps + .env copies — secret-bearing, never commit
 /backups/
+# in-app updater: private staging dir for a release's compose/scripts, and the record of what it last applied
+.update-staging.*/
+.tugra-host-applied
 
 # Node
 node_modules/

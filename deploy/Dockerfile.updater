@@ -1,5 +1,7 @@
 # Tugra self-update sidecar. Minimal image: the Docker CLI (+ compose plugin) to recreate the app
-# containers, redis-cli to drain the job queue, and bash to run scripts/update.sh (mounted from the repo).
+# containers, redis-cli to drain the job queue, bash to run scripts/update.sh (mounted from the repo), and
+# curl + openssl so it can download a release's compose/installer scripts and verify their ed25519 signature
+# itself (scripts/lib/hostfiles.sh) instead of trusting the hub or Redis for file content.
 # It has docker.sock but a FIXED command set (pull + up -d --no-deps hub-api web) — no arbitrary exec.
 FROM docker:27-cli
 
@@ -11,7 +13,7 @@ LABEL org.opencontainers.image.source="https://github.com/SimerayCom/tugra" \
       org.opencontainers.image.licenses="AGPL-3.0" \
       org.opencontainers.image.vendor="Simeray Ltd"
 
-RUN apk add --no-cache bash redis
+RUN apk add --no-cache bash redis curl openssl
 
 WORKDIR /repo
 # The script + compose file + .env are bind-mounted from the repo at runtime; the compose `command`

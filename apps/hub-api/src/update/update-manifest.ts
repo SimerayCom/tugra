@@ -34,6 +34,9 @@ export const channelEntrySchema = z.object({
   hubImage: z.string().optional(), // reserved (updater)
   webImage: z.string().optional(), // reserved (updater)
   imageDigests: imageDigestsSchema.optional(), // INDEX digests → digest-pinned hub/web updates
+  // sha256 of this release's signed `host/<version>/HOSTFILES` (compose + installer scripts, see host-files.ts).
+  // Present = the in-app updater may apply the release's compose/script changes; absent (older releases) = images only.
+  hostFilesDigest: z.string().regex(SHA256_HEX).optional(),
   agentSha256: z.record(z.string(), z.string()).optional(), // reserved (updater): arch → sha256
   minUpgradeFrom: z.string().optional(), // reserved (updater): refuse to skip past this
   publishedAt: z.string().optional(), // reserved (updater/freshness)

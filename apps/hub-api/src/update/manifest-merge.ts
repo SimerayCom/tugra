@@ -26,6 +26,7 @@ export interface ChannelEntryInput {
   webImage?: string;
   agentSha256?: Record<string, string>; // arch → digest ("sha256:…" or bare hex)
   imageDigests?: ImageDigestsInput; // per-image INDEX digests ("sha256:…" or bare hex); hub/web/updater/agent
+  hostFilesDigest?: string; // sha256 of the signed host/<version>/HOSTFILES ("sha256:…" or bare hex)
   minUpgradeFrom?: string;
   publishedAt?: string;
   changelogUrl?: string;
@@ -73,6 +74,14 @@ export function assertRequiredDigests(entry: ChannelEntry): void {
 }
 
 /**
+ * Release-time guard behind `sign-manifest --require-host-files`: the entry MUST carry the digest of the signed
+ * host-files manifest, so a release can never be advertised without the compose/scripts the updater applies.
+ */
+export function assertRequiredHostFiles(entry: ChannelEntry): void {
+  if (!entry.hostFilesDigest) throw new Error("--require-host-files: missing hostFilesDigest");
+}
+
+/**
  * Assemble a schema-clean ChannelEntry from release inputs. Empty optionals are OMITTED entirely —
  * critically `minUpgradeFrom`: a present-but-empty/garbage value makes the updater return
  * `needs-intermediate` and BLOCK the whole channel (updater.service.ts). Absent = no restriction.
@@ -88,6 +97,11 @@ export function buildChannelEntry(input: ChannelEntryInput): ChannelEntry {
   }
   const imageDigests = normalizeImageDigests(input.imageDigests);
   if (imageDigests) entry.imageDigests = imageDigests;
+  if (input.hostFilesDigest && input.hostFilesDigest.trim()) {
+    const hex = bareHex(input.hostFilesDigest.trim());
+    if (!SHA256_HEX.test(hex)) throw new Error("hostFilesDigest is not a 64-hex sha256 digest");
+    entry.hostFilesDigest = hex;
+  }
   if (input.minUpgradeFrom && input.minUpgradeFrom.trim()) entry.minUpgradeFrom = input.minUpgradeFrom.trim();
   if (input.publishedAt) entry.publishedAt = input.publishedAt;
   if (input.changelogUrl) entry.changelogUrl = input.changelogUrl;

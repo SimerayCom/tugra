@@ -143,6 +143,7 @@ describe("scripts/update.sh", () => {
     execFileSync("mkdir", ["-p", join(repo, "scripts", "lib")]);
     writeFileSync(join(repo, "scripts", "update.sh"), readFileSync(UPDATE_SH));
     writeFileSync(join(repo, "scripts", "lib", "snapshot.sh"), readFileSync(join(UPDATE_SH, "..", "lib", "snapshot.sh")));
+    writeFileSync(join(repo, "scripts", "lib", "hostfiles.sh"), readFileSync(join(UPDATE_SH, "..", "lib", "hostfiles.sh")));
     const SH = join(repo, "scripts", "update.sh");
     // docker: logs; pg_dump fails when SHIM_DUMP_FAIL is set; ps -q yields an id; inspect says healthy.
     writeFileSync(
@@ -335,8 +336,10 @@ exec ${REAL_DF} "$@"
       // (the version + digest-pin writes live in restore_env → write_pins, which sets TUGRA_VERSION first)
       expect(source).toMatch(/recover_previous\(\)\s*\{[\s\S]*?restore_env "\$@" && compose up -d --no-deps hub-api web && wait_healthy/);
       expect(source).toMatch(/write_pins\(\)\s*\{[\s\S]*?set_env TUGRA_VERSION "\$version"/);
-      // used in BOTH the recreate-fail and the health-fail branches
-      expect((source.match(/if recover_previous "\$current" /g) ?? []).length).toBe(2);
+      // used in BOTH the recreate-fail and the health-fail branches, via recover_all (which first puts the release's
+      // compose/scripts back, then runs recover_previous)
+      expect((source.match(/if recover_all "\$current" /g) ?? []).length).toBe(2);
+      expect(source).toMatch(/recover_all\(\)\s*\{[\s\S]*?hf_rollback[\s\S]*?recover_previous "\$@"/);
       // a distinct, non-expiring recovery_required terminal state when recovery itself fails
       expect(source).toContain("set_recovery_required");
       expect(source).toMatch(/redis SET "\$STATUS_KEY".*recovery_required/); // status persisted WITHOUT a TTL
@@ -515,6 +518,7 @@ exec ${REAL_DF} "$@"
       mkdirSync(join(tmp, "deploy"));
       writeFileSync(join(tmp, "scripts", "update.sh"), readFileSync(UPDATE_SH, "utf8"), { mode: 0o755 });
       writeFileSync(join(tmp, "scripts", "lib", "snapshot.sh"), readFileSync(join(UPDATE_SH, "..", "lib", "snapshot.sh")));
+      writeFileSync(join(tmp, "scripts", "lib", "hostfiles.sh"), readFileSync(join(UPDATE_SH, "..", "lib", "hostfiles.sh")));
       writeFileSync(join(tmp, "deploy", "docker-compose.yml"), "services:\n  hub-api:\n    image: ghcr.io/simeraycom/tugra-hub:${TUGRA_VERSION:-latest}\n");
       writeFileSync(join(tmp, ".env"), "TUGRA_VERSION=0.1.0\n");
       const out = execFileSync("bash", [join(tmp, "scripts", "update.sh"), "--dry-run", "--job", job("0.2.0", H, W)], {

@@ -11,6 +11,7 @@
 //     --agent-amd64 sha256:… --agent-arm64 sha256:… \
 //     --hub-digest sha256:… --web-digest sha256:… --updater-digest sha256:… --agent-index-digest sha256:… \
 //     --require-digests true \
+//     --host-files-digest <sha256 of host/<version>/HOSTFILES from sign-host-files.mjs> --require-host-files true \
 //     --changelog-url https://github.com/SimerayCom/tugra/releases/tag/v0.2.0 \
 //     --published-at 2026-07-18T00:00:00Z [--min-upgrade-from 1.9.0] \
 //     [--current ./gh-pages/versions.json] --out-dir ./out
@@ -27,6 +28,7 @@ import { existsSync } from "node:fs";
 import { resolve, join } from "node:path";
 import {
   assertRequiredDigests,
+  assertRequiredHostFiles,
   buildChannelEntry,
   buildNotice,
   signAndSelfVerify,
@@ -86,6 +88,11 @@ if ("require-digests" in args && args["require-digests"] !== "true") {
   process.exit(1);
 }
 
+if ("require-host-files" in args && args["require-host-files"] !== "true") {
+  console.error("sign-manifest: --require-host-files takes the value `true` (--require-host-files true)");
+  process.exit(1);
+}
+
 let entry = null;
 if (!noticeOnly) {
   const agentSha256 = {};
@@ -104,12 +111,14 @@ if (!noticeOnly) {
         updater: args["updater-digest"],
         agent: args["agent-index-digest"],
       },
+      hostFilesDigest: args["host-files-digest"],
       agentSha256: Object.keys(agentSha256).length ? agentSha256 : undefined,
       minUpgradeFrom: args["min-upgrade-from"],
       publishedAt: args["published-at"],
       changelogUrl: args["changelog-url"],
     });
     if (args["require-digests"] === "true") assertRequiredDigests(entry);
+    if (args["require-host-files"] === "true") assertRequiredHostFiles(entry);
   } catch (e) {
     console.error(`sign-manifest: refusing to publish — ${e.message}`);
     process.exit(1);

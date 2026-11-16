@@ -161,3 +161,23 @@ describe("verifyUpdateManifest imageDigests (consume-time validation)", () => {
     }
   });
 });
+
+describe("verifyUpdateManifest hostFilesDigest (consume-time validation)", () => {
+  const { priv, pubB64 } = keypair();
+  const verify = (over: Record<string, unknown>) => {
+    const raw = manifest(over);
+    return verifyUpdateManifest(raw, detachedSig(priv, raw), pubB64);
+  };
+  const F = "e".repeat(64);
+
+  it("accepts a 64-hex hostFilesDigest, and an old manifest without it", () => {
+    expect(verify({ hostFilesDigest: F }).tugra.stable.hostFilesDigest).toBe(F);
+    expect(verify({}).tugra.stable.hostFilesDigest).toBeUndefined();
+  });
+
+  it("rejects a malformed digest (prefix, uppercase, wrong length) as an invalid manifest", () => {
+    for (const bad of [`sha256:${F}`, "E".repeat(64), "e".repeat(63)]) {
+      expect(() => verify({ hostFilesDigest: bad })).toThrow(/invalid manifest shape/);
+    }
+  });
+});

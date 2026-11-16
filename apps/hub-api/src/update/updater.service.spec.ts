@@ -154,6 +154,26 @@ describe("UpdaterService.requestUpdate", () => {
       }
     });
 
+    it("adds hostFilesDigest (and only the digest, never file content) when the verified entry carries it", async () => {
+      const F = "f".repeat(64);
+      for (const [entry, expected] of [
+        [{ version: "1.2.4", hostFilesDigest: F }, { targetVersion: "1.2.4", hostFilesDigest: F }],
+        [{ version: "1.2.4", imageDigests: { hub: H, web: W }, hostFilesDigest: F }, { targetVersion: "1.2.4", hubDigest: H, webDigest: W, hostFilesDigest: F }],
+      ] as const) {
+        const r = redisStub();
+        const svc = new UpdaterService(r.svc, updateStub({ status: "ok", channel: "stable", entry: { ...entry } }));
+        await svc.requestUpdate({ actor: "u1", auto: false });
+        expect(queued(r)).toEqual(expected);
+      }
+    });
+
+    it("an entry without hostFilesDigest (older release) queues no host-files key at all", async () => {
+      const r = redisStub();
+      const svc = new UpdaterService(r.svc, updateStub({ status: "ok", channel: "stable", entry: { version: "1.2.4", imageDigests: { hub: H, web: W } } }));
+      await svc.requestUpdate({ actor: "u1", auto: false });
+      expect("hostFilesDigest" in queued(r)).toBe(false);
+    });
+
     it("buildUpdateJob is pure and does not add digest keys for an absent pair", () => {
       expect(buildUpdateJob("1.0.0")).toEqual({ targetVersion: "1.0.0" });
       expect("hubDigest" in buildUpdateJob("1.0.0", { hub: H })).toBe(false);
