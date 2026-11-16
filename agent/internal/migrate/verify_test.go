@@ -501,3 +501,16 @@ esac
 		t.Error("a failed table listing must fail the whole item, never report an empty success")
 	}
 }
+
+// The same two literals are asserted in apps/hub-api/src/migration-runs/steps/data/verify/db-stats.spec.ts: the migrator
+// measures the source with byte-for-byte the statements the hub runs on the target.
+func TestVerifyStatementsMatchTheHub(t *testing.T) {
+	const wantMysql = `T=$(printf '\t'); L=$(mysql -u"$1" --protocol=TCP -h127.0.0.1 -N -B -e "SELECT table_name, IFNULL(table_rows,0) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_type='BASE TABLE' ORDER BY table_name" "$2") || exit 1; [ -n "$L" ] || exit 0; printf '%s\n' "$L" | while IFS="$T" read -r t est; do case "$t" in ''|*[!A-Za-z0-9_$]*) printf '%s\t-1\t0\n' "$t"; continue;; esac; if [ "$3" = estimate ] && [ "$est" -ge "$4" ]; then printf '%s\t%s\t1\n' "$t" "$est"; continue; fi; n=$(mysql -u"$1" --protocol=TCP -h127.0.0.1 -N -B -e "SELECT COUNT(*) FROM \` + "`" + `$t\` + "`" + `" "$2") || { printf '%s\t-1\t0\n' "$t"; continue; }; printf '%s\t%s\t0\n' "$t" "$n"; done`
+	const wantPg = `SELECT n.nspname || '.' || c.relname, CASE WHEN c.reltuples >= 250000 THEN c.reltuples::bigint::text ELSE (xpath('/row/c/text()', query_to_xml(format('SELECT count(*) AS c FROM %I.%I', n.nspname, c.relname), false, true, '')))[1]::text END, CASE WHEN c.reltuples >= 250000 THEN '1' ELSE '0' END FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind IN ('r','p') AND NOT c.relispartition AND n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg\_toast%' AND n.nspname NOT LIKE 'pg\_temp%' ORDER BY 1`
+	if got := mysqlVerifyBody("mysql"); got != wantMysql {
+		t.Errorf("mysql body drifted from the hub's:\n%s", got)
+	}
+	if got := pgSQL(verifyModeEstimate, 250000); got != wantPg {
+		t.Errorf("postgres estimate SQL drifted from the hub's:\n%s", got)
+	}
+}
