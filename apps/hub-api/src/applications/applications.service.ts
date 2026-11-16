@@ -1303,6 +1303,35 @@ export class ApplicationsService {
     return this.submitDeploy(app, userId, opts?.noCache ?? false, idempotencyKey ?? null);
   }
 
+  /**
+   * Build the app's image on its own server WITHOUT starting anything (guided-migration "early build": the image layers are
+   * cached long before the downtime window, so the later real deploy only starts it). Only a classic GIT build on the app's own
+   * server is built; everything else (image pulls, compose stacks, swarm services, apps with a separate build server) has no
+   * local build to warm and answers `{ built: false, reason }`. It creates NO deployment row, never touches the running
+   * container and is safe to repeat (docker's cache makes a repeat cheap). The image keeps one fixed local tag
+   * (`<container>:prebuild`), so repeats never accumulate tags.
+   */
+  async prebuild(userId: string, id: string): Promise<{ built: boolean; reason?: "not-git" | "swarm" | "build-server" }> {
+    const app = await this.requireWrite(userId, id, "apps:deploy");
+    if (app.source !== "GIT") return { built: false, reason: "not-git" };
+    if (app.clusterId) return { built: false, reason: "swarm" };
+    if (app.buildServerId) return { built: false, reason: "build-server" };
+    assertSafeDockerOptions(app.dockerOptions, { allowPrivileged: app.allowPrivilegedDockerOptions });
+    this.assertStoredCustomLabels(app);
+    const spec = this.toSpec(app);
+    this.logAutoMultiline(app.id, (await this.attachResolvedEnv(app, spec, { withBuild: true })).autoMultiline);
+    spec.buildSecrets = this.appBuildSecrets(app);
+    if (app.buildType === "DOCKERFILE" && app.injectEnvAsBuildArgs) injectableBuildArgs(spec);
+    if (app.gitSourceId) spec.gitToken = await this.gitSources.cloneToken(app.gitSourceId, app.gitUrl);
+    const res = await this.agentWs.sendCommand(app.serverId, buildBuildOnlyScript(spec, "prebuild", app.disableBuildCache), "deploy", this.deployTimeoutMs(app));
+    if (res.exitCode !== 0) {
+      await this.audit.log({ actor: userId, action: "app.prebuild_failed", target: app.id, meta: { exitCode: res.exitCode } });
+      throw new ServiceUnavailableException(`the early build failed (exit ${res.exitCode})`);
+    }
+    await this.audit.log({ actor: userId, action: "app.prebuild", target: app.id });
+    return { built: true };
+  }
+
   /** One RUNNING deploy per app at a time (keeps the live-log stream unambiguous). Still used by rollback and
    *  the config-edit guards; the deploy queue enforces the same invariant via claimNext + the partial index. */
   private async ensureNoActiveDeploy(appId: string): Promise<void> {

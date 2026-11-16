@@ -127,7 +127,7 @@ describe("DEPLOY_DARK", () => {
   it("abort while deploys are still QUEUED cancels them: no app comes up after the run is ABORTED", async () => {
     const w = new RunWorld();
     w.port.queueDeploys = true;
-    const id = await w.create();
+    const id = await w.create({ options: { ...w.createBody().options, deployConcurrency: 2 } });
     await w.start(id);
     const pass = w.engine.drive(id);
     for (let i = 0; i < 2000 && w.port.deploys.length < 2; i++) await new Promise((r) => setImmediate(r));
@@ -146,7 +146,7 @@ describe("DEPLOY_DARK", () => {
     const w = new RunWorld();
     w.port.queueDeploys = true;
     w.port.runQueued = true; // a build in flight: RUNNING, not cancellable
-    const id = await w.create();
+    const id = await w.create({ options: { ...w.createBody().options, deployConcurrency: 2 } });
     await w.start(id);
     const pass = w.engine.drive(id);
     for (let i = 0; i < 2000 && w.port.deploys.length < 2; i++) await new Promise((r) => setImmediate(r));

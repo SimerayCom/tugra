@@ -5,6 +5,9 @@ import { DatabasesModule } from "../../../databases/databases.module";
 import { DnsModule } from "../../../dns/dns.module";
 import { ImporterModule } from "../../../importer/importer.module";
 import { RUN_IMPORT } from "../../core/run-ports";
+import { PostPonrRelease } from "./baseline/post-ponr";
+import { RunSafetyController } from "./baseline/safety.controller";
+import { PrismaRunHints, RUN_HINTS } from "./baseline/run-hints";
 import { DeployDarkStep } from "./deploy-dark.step";
 import { IMPORT_STEPS_PORT } from "./import-ports";
 import { ImportPortService } from "./import-port.service";
@@ -19,15 +22,19 @@ import { RemapEnvStep } from "./remap-env.step";
  */
 @Module({
   imports: [ImporterModule, ApplicationsModule, DatabasesModule, AgentGatewayModule, DnsModule],
+  controllers: [RunSafetyController],
   providers: [
     ImportPortService,
     { provide: IMPORT_STEPS_PORT, useExisting: ImportPortService },
     { provide: RUN_IMPORT, useExisting: ImportPortService },
+    PrismaRunHints,
+    { provide: RUN_HINTS, useExisting: PrismaRunHints },
+    PostPonrRelease,
     PreflightStep,
     ImportStep,
     RemapEnvStep,
     DeployDarkStep,
   ],
-  exports: [RUN_IMPORT, IMPORT_STEPS_PORT],
+  exports: [RUN_IMPORT, IMPORT_STEPS_PORT, RUN_HINTS, PostPonrRelease],
 })
 export class RunImportStepsModule {}

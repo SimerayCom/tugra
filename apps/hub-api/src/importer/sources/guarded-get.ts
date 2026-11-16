@@ -33,6 +33,25 @@ export class GuardedHttpGet {
 
   get<T>(path: string): Promise<T> {
     const label = this.cfg.label;
+    return this.fetchBody(path, "application/json", (body) => {
+      try {
+        return JSON.parse(body) as T;
+      } catch {
+        throw new Error(`${label} returned a non-JSON response — is the URL a ${label} API root?`);
+      }
+    });
+  }
+
+  /** The same guarded GET for an endpoint that answers PLAIN TEXT (Coolify's `GET /version`), capped small: a token, never a document. */
+  getText(path: string): Promise<string> {
+    return this.fetchBody(path, "text/plain, */*;q=0.1", (body) => {
+      if (body.length > 256) throw new Error(`${this.cfg.label} returned an unexpectedly long text response`);
+      return body;
+    });
+  }
+
+  private fetchBody<T>(path: string, accept: string, parse: (body: string) => T): Promise<T> {
+    const label = this.cfg.label;
     const url = new URL(`${this.cfg.apiPrefix}${path}`, this.base);
     if (url.origin !== this.base.origin) throw new Error(`path escaped the ${label} base origin`); // defence-in-depth
     const doRequest = url.protocol === "https:" ? httpsRequest : httpRequest;
@@ -49,7 +68,7 @@ export class GuardedHttpGet {
         url,
         {
           method: "GET",
-          headers: { Accept: "application/json", ...this.cfg.headers() },
+          headers: { Accept: accept, ...this.cfg.headers() },
           lookup: guardedLookup,
           timeout: TIMEOUT_MS,
         },
@@ -79,9 +98,9 @@ export class GuardedHttpGet {
               }
               const body = Buffer.concat(chunks).toString("utf8");
               try {
-                resolve(JSON.parse(body) as T);
-              } catch {
-                reject(new Error(`${label} returned a non-JSON response — is the URL a ${label} API root?`));
+                resolve(parse(body));
+              } catch (e) {
+                reject(e instanceof Error ? e : new Error(`${label} returned an unreadable response`));
               }
             }),
           );

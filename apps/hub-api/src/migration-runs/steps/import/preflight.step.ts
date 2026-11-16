@@ -7,14 +7,18 @@
  * automatically (bind mounts, manual data, skipped services, object stores). It writes nothing: the dry-run of the whole
  * run IS this step.
  */
-import { Inject, Injectable, OnModuleInit } from "@nestjs/common";
+import { Inject, Injectable, OnModuleInit, Optional } from "@nestjs/common";
 import { validateAcmeEmail } from "../../../deploy/panel-router";
 import type { ImportPlanResponse } from "../../../importer/importer.service";
 import type { ResolvedMapping } from "../../../importer/import-mapping";
 import type { ServicePreview } from "../../../importer/service-preview";
-import type { ApprovalBinding, DryRunItem, GateCheck, GateResult } from "../../core/dto";
+import type { ApprovalBinding, DryRunItem, GateCheck, GateResult, SourceBaseline } from "../../core/dto";
 import {
+  SOURCE_VERSION_SUPPORT,
   STEP_HANDLERS,
+  RunLeaseLostError,
+  classifySourceVersion,
+  deployConcurrencyOf,
   makeGate,
   resolveOwnerInput,
   type ActResult,
@@ -28,6 +32,12 @@ import {
 import { SESSION_EXPIRED_CODE, applyAcks, hashOf } from "../../core/run-logic";
 import { IMPORT_STEPS_PORT, type ImportStepsPort, type SessionState, type TargetFacts } from "./import-ports";
 import { Memo, failureOf, includedItems, isPassive, itemsFromChecks, softenAckable, unackedBlockers } from "./step-utils";
+import { deployWindow } from "./baseline/build-window";
+import { floatingImages } from "./baseline/image-pins";
+import { RUN_HINTS, type RunHint, type RunHintStore } from "./baseline/run-hints";
+import { baselineItemRef, buildSourceBaseline, isDegradedAtSource, sameBaseline } from "./baseline/source-health";
+import { isWorker, workerMarks, workerSets } from "./baseline/workers";
+import { RunAbortRequestedError } from "../../core/run-engine.service";
 
 const MEMO_MS = 60_000;
 
@@ -51,9 +61,102 @@ export interface PreflightObs extends Observation {
   mapping: { hashChanged: boolean; orphans: number; errors: string[]; unacked: string[] } | null;
   storedMappingBlocks: boolean;
   services: ServicePreview[] | null;
+  /**
+   * The source's version as PREFLIGHT sees it now: the live read, else the one stored at create. `null` = unknown. Left
+   * `undefined` only by callers that did not observe (the pure check list then says nothing about the version).
+   */
+  sourceVersion?: string | null;
+  /** The source health baseline: `undefined` = the port has no such read at all (nothing to say), `unavailable` = it failed or the source has none. */
+  baseline?: { state: "captured"; baseline: SourceBaseline } | { state: "unavailable" };
+  /** The run's hints (image digests, job-runner marks). */
+  hints?: readonly RunHint[];
 }
 
 const ev = { evidence: "hub-verified" as const };
+
+/**
+ * R4/C18: the source version against the range the run is validated for. Too old blocks (nothing is known to work there);
+ * newer than the newest tested warns and the operator can accept it; a version the source did not report is a warning (the
+ * hub verified it could not read one), never a pass. Dokploy has no range: no check.
+ */
+function sourceVersionChecks(run: RunSnapshot, obs: PreflightObs): GateCheck[] {
+  if (obs.sourceVersion === undefined) return [];
+  const version = obs.sourceVersion;
+  const verdict = classifySourceVersion(run.sourceKind, version);
+  const range = SOURCE_VERSION_SUPPORT[run.sourceKind];
+  if (verdict === "unchecked" || !range) return [];
+  const id = "preflight.source-version";
+  if (verdict === "supported") return [{ id, status: "pass", code: "preflight.source-version-ok", params: { version: version ?? "" }, evidence: "source-api-reported" }];
+  if (verdict === "newer") return [{ id, status: "fail", code: "preflight.source-version-newer", params: { version: version ?? "", tested: range.maxTested }, ackable: true, evidence: "source-api-reported" }];
+  if (verdict === "too-old") return [{ id, status: "fail", code: "preflight.source-version-too-old", params: { version: version ?? "", min: range.min }, evidence: "source-api-reported" }];
+  return [{ id, status: "warn", code: "preflight.source-version-unknown", params: { tested: range.maxTested }, ...ev }];
+}
+
+/** Names of up to ten items, for a check's params. */
+const names = (xs: readonly string[]): string[] => xs.slice(0, 10);
+
+/**
+ * The grup-7 safety checks over the plan: the source health baseline (R28/R52), unpinned images (R11), workers that stay
+ * stopped until after the cutover (R26/C13) and what the builds cost inside the downtime window (R27/C5).
+ */
+function safetyChecks(run: RunSnapshot, obs: PreflightObs, plan: ImportPlanResponse): GateCheck[] {
+  const out: GateCheck[] = [];
+  const items = includedItems(plan, run);
+  const hints = obs.hints ?? [];
+  const nameOf = new Map(items.map((i) => [i.itemRef, i.name]));
+
+  // R28/R52: how the source was doing before anything changed
+  if (obs.baseline?.state === "unavailable") out.push({ id: "preflight.baseline", status: "warn", code: "preflight.baseline-unavailable", ...ev });
+  else if (obs.baseline?.state === "captured") {
+    const entries = obs.baseline.baseline.entries;
+    const degraded = entries.filter((e) => isDegradedAtSource(e) && nameOf.has(baselineItemRef(e)));
+    out.push({ id: "preflight.baseline", status: "pass", code: "preflight.baseline-captured", params: { resources: entries.length, unhealthy: degraded.length }, evidence: "source-api-reported" });
+    if (degraded.length) {
+      out.push({ id: "preflight.source-unhealthy", status: "warn", code: "preflight.source-unhealthy", params: { count: degraded.length, items: names(degraded.map((e) => nameOf.get(baselineItemRef(e)) ?? e.ref)) }, evidence: "source-api-reported" });
+    }
+  }
+
+  // R11: a floating image is whatever the registry serves today, not what the source runs
+  const floating = floatingImages(items, run.applyInput, hints);
+  if (floating.length) {
+    const open = floating.filter((f) => !f.pinned);
+    out.push(
+      open.length
+        ? { id: "preflight.images", status: "fail", code: "preflight.images-unpinned", params: { count: open.length, items: names(open.map((f) => (f.member ? `${f.name}/${f.member}` : f.name))) }, ackable: true, ...ev }
+        : { id: "preflight.images", status: "pass", code: "preflight.images-pinned", params: { count: floating.length }, ...ev },
+    );
+  }
+
+  // R26/C13: workers
+  const policy = resolveOwnerInput(run.inputs, "workerPolicy") ?? "hold-dark";
+  const cands = items.filter((i) => i.kind === "app").map((i) => ({ itemRef: i.itemRef, kind: i.kind, domain: domainOf(i) }));
+  const marks = workerMarks(hints);
+  const workers = cands.filter((cd) => isWorker(cd, run.applyInput, marks));
+  if (workers.length) {
+    const code = policy === "hold-dark" ? "preflight.workers-held" : policy === "exclude" ? "preflight.workers-excluded" : "preflight.workers-start-dark";
+    out.push({ id: "preflight.workers", status: policy === "start-dark" ? "warn" : "pass", code, params: { count: workers.length, items: names(workers.map((w) => nameOf.get(w.itemRef) ?? w.itemRef)) }, ...ev });
+  }
+
+  // R27/C5: the builds that remain inside the downtime window
+  const held = workerSets(cands, run.applyInput, marks, policy);
+  const gitApps = items.filter((i) => i.kind === "app" && i.proposed.source === "GIT" && !held.held.has(i.itemRef) && !held.excluded.has(i.itemRef));
+  const apps = items.filter((i) => i.kind === "app" && !held.held.has(i.itemRef) && !held.excluded.has(i.itemRef));
+  if (gitApps.length) {
+    const early = run.options.deployWaves === "earlyBuild";
+    const w = deployWindow({ builds: early ? 0 : gitApps.length, starts: apps.length, concurrency: deployConcurrencyOf(run.options), targets: new Set([run.targetServerId, ...Object.values(run.serverMap)]).size });
+    out.push({
+      id: "preflight.deploy-window",
+      status: early ? "pass" : "warn",
+      code: early ? "preflight.deploy-window-early" : "preflight.deploy-window-inside",
+      params: { builds: gitApps.length, minutes: Math.ceil(w.totalSec / 60) },
+      ...ev,
+    });
+  }
+  return out;
+}
+
+/** The primary host of an app item: `null` = none, `undefined` = the item does not say (never read as "none"). */
+const domainOf = (i: { proposed: Record<string, unknown> }): string | null | undefined => (!("domain" in i.proposed) ? undefined : typeof i.proposed.domain === "string" && i.proposed.domain ? i.proposed.domain : null);
 
 /** The pure check list (no I/O): shared by the gate, the approval binding and the dry-run projection. */
 export function preflightChecks(run: RunSnapshot, obs: PreflightObs): GateCheck[] {
@@ -76,6 +179,8 @@ export function preflightChecks(run: RunSnapshot, obs: PreflightObs): GateCheck[
     params: { apps: items.filter((i) => i.kind === "app").length, databases: items.filter((i) => i.kind === "database").length, services: items.filter((i) => i.kind === "service").length, volumes: items.filter((i) => i.kind === "volume").length },
     ...ev,
   });
+
+  c.push(...sourceVersionChecks(run, obs));
 
   // plan blockers: an ackable approval accepts "the importer skips these items"
   for (const [code, names] of unackedBlockers(plan, run)) {
@@ -117,6 +222,8 @@ export function preflightChecks(run: RunSnapshot, obs: PreflightObs): GateCheck[
   }
   const generated = pf?.cutover?.generatedHosts ?? [];
   if (generated.length) c.push({ id: "preflight.generated-hosts", status: "warn", code: "preflight.generated-hosts", params: { count: generated.length }, ...ev });
+
+  c.push(...safetyChecks(run, obs, plan));
 
   // live service probe (owner question 7)
   const hasServices = plan.items.some((i) => i.kind === "service");
@@ -176,10 +283,15 @@ export class PreflightStep implements StepHandler<PreflightObs>, OnModuleInit {
   private readonly mappings = new Memo<ResolvedMapping | null>(MEMO_MS);
   private readonly storedMappings = new Memo<boolean>(MEMO_MS);
   private readonly probes = new Memo<ServicePreview[]>(MEMO_MS);
+  private readonly versions = new Memo<string | null>(MEMO_MS);
+  private readonly baselines = new Memo<SourceBaseline | null>(MEMO_MS);
+  /** `runId|version` already written this process: a second observe of the same tick (or a stale snapshot) never re-emits. */
+  private readonly versionWritten = new Set<string>();
 
   constructor(
     @Inject(STEP_HANDLERS) private readonly registry: StepHandlerRegistry,
     @Inject(IMPORT_STEPS_PORT) private readonly port: ImportStepsPort,
+    @Optional() @Inject(RUN_HINTS) private readonly hintStore?: RunHintStore,
   ) {}
 
   onModuleInit(): void {
@@ -196,7 +308,7 @@ export class PreflightStep implements StepHandler<PreflightObs>, OnModuleInit {
     const bypass = !isPassive(ctx);
     const now = () => ctx.now().getTime();
     const session = await this.port.sessionState(userId, run.sessionId);
-    const empty: PreflightObs = { session, plan: null, planError: null, target: null, mapping: null, storedMappingBlocks: false, services: null };
+    const empty: PreflightObs = { session, plan: null, planError: null, target: null, mapping: null, storedMappingBlocks: false, services: null, sourceVersion: run.sourceVersion };
     if (session !== "active" || !run.sessionId) return empty;
 
     let plan: ImportPlanResponse;
@@ -249,7 +361,60 @@ export class PreflightStep implements StepHandler<PreflightObs>, OnModuleInit {
         .get(run.id, bypass, now, () => this.port.previewServices(userId, { sessionId: run.sessionId!, sourceKind: run.sourceKind, ...(a.serviceChoices ? { choices: a.serviceChoices } : {}) }))
         .catch(() => null);
     }
-    return { session, plan, planError: null, target, mapping, storedMappingBlocks, services };
+    const sourceVersion = await this.sourceVersionOf(ctx, bypass);
+    const baseline = await this.baselineOf(ctx, bypass);
+    const hints = this.hintStore ? await this.hintStore.list(run.id, run.promotedFromId).catch(() => []) : [];
+    return { session, plan, planError: null, target, mapping, storedMappingBlocks, services, sourceVersion, ...(baseline ? { baseline } : {}), hints };
+  }
+
+  /**
+   * R4: the source's version, read live (memoized; a failure falls back to the one stored at create) and written to the run when
+   * it changed, with the `run.source-version` event. A read-only context (an approval lookup) refuses the write: that is fine,
+   * the next real tick makes it.
+   */
+  private async sourceVersionOf(ctx: StepContext, bypass: boolean): Promise<string | null> {
+    const run = ctx.run;
+    const stored = run.sourceVersion;
+    if (!this.port.sourceVersion || !run.sessionId) return stored;
+    const sessionId = run.sessionId;
+    const live = await this.versions
+      .get(run.id, bypass, () => ctx.now().getTime(), async () => (await this.port.sourceVersion!(ctx.actor.userId, { sessionId, sourceKind: run.sourceKind }))?.trim() || null)
+      .catch(() => null);
+    if (!live || !/^[\x21-\x7e]{1,64}$/.test(live)) return stored;
+    const mark = `${run.id}|${live}`;
+    if (live !== stored && !this.versionWritten.has(mark)) {
+      try {
+        await ctx.patchRun({ sourceVersion: live });
+        const verdict = classifySourceVersion(run.sourceKind, live);
+        await ctx.emit({ level: verdict === "supported" || verdict === "unchecked" ? "info" : "warn", code: "run.source-version", params: { version: live, verdict } });
+        this.versionWritten.add(mark);
+      } catch (e) {
+        if (e instanceof RunLeaseLostError || e instanceof RunAbortRequestedError) throw e;
+      }
+    }
+    return live;
+  }
+
+  /** R28/R52: the source health baseline, taken while PREFLIGHT is open and written to the run (the engine ignores it once FREEZE opened). */
+  private async baselineOf(ctx: StepContext, bypass: boolean): Promise<PreflightObs["baseline"] | undefined> {
+    const run = ctx.run;
+    if (!this.port.sourceHealth || !run.sessionId) return undefined;
+    const sessionId = run.sessionId;
+    const baseline = await this.baselines
+      .get(run.id, bypass, () => ctx.now().getTime(), async () => {
+        const rows = await this.port.sourceHealth!(ctx.actor.userId, { sessionId, sourceKind: run.sourceKind });
+        return rows ? buildSourceBaseline(rows, ctx.now()) : null;
+      })
+      .catch(() => null);
+    if (!baseline) return { state: "unavailable" };
+    if (run.freezeStartedAt === null && !sameBaseline(run.sourceBaseline, baseline)) {
+      try {
+        await ctx.patchRun({ sourceBaseline: baseline });
+      } catch (e) {
+        if (e instanceof RunLeaseLostError || e instanceof RunAbortRequestedError) throw e;
+      }
+    }
+    return { state: "captured", baseline };
   }
 
   async dryRun(ctx: StepContext): Promise<DryRunItem[]> {

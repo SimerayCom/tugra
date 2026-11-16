@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { CutoverService } from "../../../cutover/cutover.service";
 import type { ApprovalBinding, DryRunItem, GateResult } from "../../core/dto";
 import {
@@ -14,6 +14,7 @@ import {
   type StepHandler,
   type StepHandlerRegistry,
 } from "../../core/run-contract";
+import { PostPonrRelease } from "../import/baseline/post-ponr";
 import { CutoverStepBase } from "./cutover-step-base";
 import { CutoverWorld, type SwapRow } from "./cutover-world.service";
 import { capHosts, chk, earliestVerified, finalizeBindingHash, hasLoweredUnflippedTtl, type Entry } from "./run-cutover-logic";
@@ -41,6 +42,7 @@ export class FinalizeHandler extends CutoverStepBase implements StepHandler<Fina
     @Inject(STEP_HANDLERS) registry: StepHandlerRegistry,
     private readonly cutover: CutoverService,
     private readonly world: CutoverWorld,
+    @Optional() private readonly release?: PostPonrRelease,
   ) {
     super(registry);
   }
@@ -111,6 +113,9 @@ export class FinalizeHandler extends CutoverStepBase implements StepHandler<Fina
     }
     const revoked = await this.world.revokeMigrationToken(opId, ctx.actor.userId);
     await ctx.emit({ stepKey: "FINALIZE", level: "info", code: revoked ? "finalize.token-revoked" : "finalize.token-already-revoked" });
+    // What the run held back until after the point of no return is released here at the latest (OBSERVE does it when its window
+    // opens; with the window skipped this is the first chance). Idempotent: a second release changes nothing and says nothing.
+    await this.release?.run(ctx);
     return { outcome: "done" };
   }
 
