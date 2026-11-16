@@ -4,6 +4,7 @@ import { DATA_CODES } from "./data-contract";
 import { FreezeHandler, UNRESOLVED_CHECK, hostLoopFreeze, stopHostsOf } from "./freeze.handler";
 import { HOST_LOOP_CODES } from "./inventory/host-codes";
 import { FakeHostReports } from "./inventory/testing/fake-host-reports";
+import { INVENTORY_ATTEST, INVENTORY_CODES } from "./inventory/cross-check";
 import { SourceHostFake } from "./testing/source-host-fake";
 import { FakeCaps, FakeDataPort, FakeSourceApi, answered, makeCtx, makeRun, makeSnap, type CtxHarness } from "./testing/fakes";
 
@@ -153,5 +154,65 @@ describe("FREEZE with the coolify-host-loop runner (host-loop controller)", () =
     expect(await handler.compensate(ctx(frozen).ctx, "abort")).toEqual(manual(["srv-b"]));
     rep("srv-b", "restarted", { recorded: [{ id: id("a"), name: "n", image: "i", ports: "", itemRef: "app:srv-b:x" }], started: { [id("a")]: "started" }, action: "unfreeze" });
     expect(await handler.compensate(ctx(frozen).ctx, "abort")).toEqual({ outcome: "nothing-to-do" });
+  });
+
+  describe("R2/C6 after a SKIPPED data seed: the docker-vs-API cross-check is judged here, where nothing can be skipped", () => {
+    const UDB = "dbaaaaaaaaaaaaaaaaaaaaaa";
+    const GHOST = "dbghostgggggggggggggggggg";
+    const skipped = { steps: { DATA_SEED: { status: "SKIPPED" as const }, DNS_PREPARE: { status: "SKIPPED" as const } } };
+    const inventory = (ref: string, containers: Array<{ id: string; name: string; image: string; state: string }>) =>
+      ({ ref, host: { name: ref, docker: "27", os: "" }, containers, mounts: [], volumes: [], binds: [], complete: true, rejected: 0 }) as unknown as Record<string, unknown>;
+    const take = (reports: FakeHostReports, ref: string, ghost: boolean) =>
+      reports.set(RUN, { stepKey: "", sourceServerRef: ref, kind: "inventory", state: "complete", payload: inventory(ref, ghost ? [{ id: id("f"), name: GHOST, image: "mariadb:11", state: "running" }] : []) });
+
+    it("a database container the plan does not list blocks the freeze with an operator wait that offers the inventory and the attestations", async () => {
+      const { handler, ctx, reports } = build();
+      take(reports, "srv-a", true);
+      take(reports, "srv-b", false);
+      const h = ctx(skipped);
+      const pre = handler.preGate(h.ctx, await handler.observe(h.ctx));
+      expect(pre.passed).toBe(false);
+      expect(pre.checks).toContainEqual(expect.objectContaining({ code: INVENTORY_CODES.unlistedDb, status: "fail", subject: `srv-a/${GHOST}` }));
+      expect(pre.wait).toMatchObject({ kind: "operator", code: INVENTORY_CODES.unlistedDb, offersCommand: true, commandKind: "inventory", attest: [INVENTORY_ATTEST.excluded, INVENTORY_ATTEST.mapped] });
+    });
+
+    it("an attestation on that finding (recorded on the freeze, or earlier on the data seed) settles it; so does the owner's policy", async () => {
+      const { handler, ctx, reports } = build();
+      take(reports, "srv-a", true);
+      take(reports, "srv-b", false);
+      const att = { checkId: INVENTORY_ATTEST.excluded, subject: `srv-a/${GHOST}`, byUserId: "user1", at: "2026-11-20T10:00:00.000Z" };
+      const onFreeze = ctx({ steps: { ...skipped.steps, FREEZE: { evidence: { attestations: [att], attachments: [] } } } });
+      expect(handler.preGate(onFreeze.ctx, await handler.observe(onFreeze.ctx)).passed).toBe(true);
+      const onSeed = ctx({ steps: { ...skipped.steps, DATA_SEED: { status: "SKIPPED", evidence: { attestations: [att], attachments: [] } } } });
+      expect(handler.preGate(onSeed.ctx, await handler.observe(onSeed.ctx)).passed).toBe(true);
+      const policy = build(makeRun({ options: { sourceRunner: "coolify-host-loop" }, inputs: { sourceController: answered("agent" as const), unlistedDbPolicy: answered("skip" as const) } }));
+      take(policy.reports, "srv-a", true);
+      take(policy.reports, "srv-b", false);
+      const p = policy.ctx(skipped);
+      expect(policy.handler.preGate(p.ctx, await policy.handler.observe(p.ctx)).passed).toBe(true);
+    });
+
+    it("the host-loop runner needs an inventory of every host: with none (the seed was skipped before it) the freeze asks for it", async () => {
+      const { handler, ctx } = build();
+      const h = ctx(skipped);
+      const pre = handler.preGate(h.ctx, await handler.observe(h.ctx));
+      expect(pre.passed).toBe(false);
+      expect(pre.wait).toMatchObject({ kind: "operator", code: INVENTORY_CODES.notTaken, commandKind: "inventory", offersCommand: true });
+      expect(pre.wait).not.toHaveProperty("attest");
+    });
+
+    it("a data seed that PASSED already judged it (no second opinion), and other runners judge only the inventories that arrived", async () => {
+      const passed = build();
+      take(passed.reports, "srv-a", true);
+      const h = passed.ctx(); // DATA_SEED PASSED
+      expect(passed.handler.preGate(h.ctx, await passed.handler.observe(h.ctx)).passed).toBe(true);
+
+      const operator = build(makeRun());
+      const o = operator.ctx(skipped);
+      expect(operator.handler.preGate(o.ctx, await operator.handler.observe(o.ctx)).passed).toBe(true); // no inventory: nothing required
+      take(operator.reports, "srv-a", true);
+      const o2 = operator.ctx(skipped);
+      expect(operator.handler.preGate(o2.ctx, await operator.handler.observe(o2.ctx)).passed).toBe(false); // but a finding that arrived blocks
+    });
   });
 });

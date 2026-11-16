@@ -33,7 +33,8 @@ import {
 } from "./data-contract";
 import { estimateEquals, estimateWindow, sha256Hex } from "./data-logic";
 import { HOST_LOOP_CODES } from "./inventory/host-codes";
-import { serverRefOfItem } from "./inventory/host-hosts";
+import { planRefsOf, serverRefOfItem, sourceHostsOf } from "./inventory/host-hosts";
+import { attestableFindings, crossCheckChecks } from "./inventory/cross-check";
 import { emptyHostView, loadHostView, type HostView } from "./inventory/host-view";
 import { HOST_REPORT_PORT, type HostReportPort } from "./inventory/inventory-contract";
 import { classifyAgentError, compOf, gateFrom, loadSnapshot, releaseIfOurs } from "./handler-util";
@@ -184,7 +185,9 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
       apiAvailable = av.ok ? "ok" : av.reason;
     }
     const estimate = estimateWindow(snap, ctx.now());
-    const hosts = hostLoopFreeze(run) ? await loadHostView(this.reports, run.id) : emptyHostView();
+    // the host reports are also read when DATA_SEED was skipped: the docker-vs-API cross-check lives in DATA_SEED, and a skip must not
+    // silently reopen "data left behind" (R2), so the freeze judges the same findings itself
+    const hosts = hostLoopFreeze(run) || ctx.stepState("DATA_SEED").status === "SKIPPED" ? await loadHostView(this.reports, run.id).catch(() => emptyHostView()) : emptyHostView();
     return { snap, controller, stop: buildStopList(snap), record, attested, apiAvailable, estimateSec: estimate.freezeToFlipSec, hosts, states: record ? await this.readStates(ctx, record) : null };
   }
 
@@ -235,6 +238,7 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
     if (obs.controller === "api" && obs.apiAvailable !== "ok") checks.push({ id: "api-available", status: "fail", code: DATA_CODES.freezeApiUnavailable, params: { reason: obs.apiAvailable ?? "unknown" }, ownerInput: "sourceController" });
     const seed = ctx.stepState("DATA_SEED").status;
     if (seed !== "PASSED" && seed !== "SKIPPED") checks.push({ id: "data-seed", status: "fail", code: "freeze.data-seed-not-passed", params: { status: seed } });
+    if (seed === "SKIPPED") checks.push(...this.skippedSeedFindings(ctx, obs));
     // the TTL wait: freezing earlier is pointless, the flip cannot happen before the old TTL has expired
     const dns = ctx.stepState("DNS_PREPARE");
     if (run.topology === "two-box" && dns.status !== "SKIPPED") {
@@ -251,9 +255,37 @@ export class FreezeHandler implements StepHandler<FreezeObs>, OnModuleInit {
     return { checks, timer };
   }
 
+  /**
+   * R2/C6 after a skipped DATA_SEED: the unlisted-database and orphan-volume findings (and, for the host-loop runner, a missing
+   * inventory) are judged HERE, where nothing can be skipped. The attestations of both steps count (the operator may have settled
+   * a finding in DATA_SEED before skipping the rest). The loop runner requires an inventory of every host; other runners judge the
+   * ones that arrived.
+   */
+  private skippedSeedFindings(ctx: StepContext, obs: FreezeObs): GateCheck[] {
+    const run = ctx.run;
+    const isLoop = run.options.sourceRunner === "coolify-host-loop";
+    return crossCheckChecks({
+      hosts: isLoop ? sourceHostsOf(run, obs.snap) : [],
+      required: isLoop,
+      inventories: obs.hosts.inventories,
+      reach: obs.hosts.reach,
+      planRefs: planRefsOf(obs.snap),
+      unlistedDbPolicy: resolveOwnerInput(run.inputs, "unlistedDbPolicy") ?? "block",
+      orphanVolumePolicy: resolveOwnerInput(run.inputs, "orphanVolumePolicy") ?? "block",
+      attestations: [...ctx.stepState("DATA_SEED").evidence.attestations, ...ctx.step.evidence.attestations],
+      currentPartMiB: null,
+      findingsOnly: true,
+    });
+  }
+
   preGate(ctx: StepContext, obs: FreezeObs): GateResult {
     const { checks, timer } = this.structural(ctx, obs);
-    return gateFrom(checks, timer ? { kind: "timer", notBefore: timer, code: "freeze.ttl-wait" } : undefined);
+    if (timer) return gateFrom(checks, { kind: "timer", notBefore: timer, code: "freeze.ttl-wait" });
+    // a finding the owner/operator has not settled parks the step as an operator wait that offers the inventory and the attestations
+    const finding = checks.find((c) => c.status !== "pass" && c.status !== "warn" && c.code.startsWith("inventory."));
+    if (!finding) return gateFrom(checks);
+    const attest = attestableFindings(checks);
+    return gateFrom(checks, { kind: "operator", code: finding.code, params: finding.params ?? {}, offersCommand: true, commandKind: "inventory", ...(attest.length ? { attest } : {}) });
   }
 
   async approvalBinding(ctx: StepContext, obs: FreezeObs): Promise<ApprovalBinding | null> {

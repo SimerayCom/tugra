@@ -7,8 +7,10 @@
  *  - a database container (recognised by its image) that no plan item of that host accounts for is a BLOCKING `unlisted-db`
  *    finding until the owner decides: `unlistedDbPolicy` skip/carry (an explicit input) or an operator attestation on that exact
  *    finding, `inventory-excluded` (accepted: not migrated) or `inventory-mapped` (it IS this plan item, named in the note);
- *  - a named volume no container mounts (LINKS 0) is a blocking `orphan-volume` finding until `orphanVolumePolicy: skip` or an
- *    `inventory-excluded` attestation;
+ *  - a named volume no container mounts (LINKS 0) that no plan `volume:` item accounts for is a blocking `orphan-volume` finding
+ *    until `orphanVolumePolicy: skip` or an `inventory-excluded` attestation (a volume the plan carries is not an orphan, even when
+ *    its container was removed);
+ *  - every blocking finding carries `attestable`: the attestation check ids that settle IT (the panel offers one row per finding);
  *  - an unmeasurable size is reported as unknown (a warn with the count), never as zero;
  *  - the hub reach probe must have passed the CURRENT part size through the host's path to the hub (a proxy that caps request
  *    bodies caps a part), else the check fails and recommends the largest part size that did pass.
@@ -71,6 +73,8 @@ export interface CrossCheckInput {
   attestations: ReadonlyArray<{ checkId: string; subject?: string; note?: string }>;
   /** The hub's CURRENT part size (MiB), or null when it cannot be read. */
   currentPartMiB: number | null;
+  /** Judge only what decides whether data is left behind (not-taken / truncated / unlisted databases / orphan volumes): no reach, size or rejected-line checks. */
+  findingsOnly?: boolean;
 }
 
 export interface Finding {
@@ -98,6 +102,22 @@ function accountedFor(c: Pick<InvContainer, "name">, host: string, planRefs: rea
   return false;
 }
 
+/**
+ * Does a plan `volume:<host>:<sourceRef>:<volName>` item account for this docker volume? Coolify names an application's, a service's
+ * and a database's named volume `<sourceRef>_<volName>` (compose) or `<sourceRef>-<volName>`; a volume the plan carries is NOT an
+ * orphan even when its container was removed (a stopped Coolify resource keeps its volumes and loses its containers).
+ */
+function volumeAccountedFor(volume: string, host: string, planRefs: readonly string[]): boolean {
+  for (const ref of planRefs) {
+    const parts = ref.split(":");
+    if (parts[0] !== "volume" || parts.length !== 4) continue;
+    const [, sr, source, vol] = parts;
+    if (sr !== host && sr !== "_" && host !== "_") continue;
+    if (volume === `${source}_${vol}` || volume === `${source}-${vol}`) return true;
+  }
+  return false;
+}
+
 /** The unlisted database containers and orphan volumes of one host inventory. Pure. */
 export function findingsOf(inv: HostInventory, planRefs: readonly string[]): Finding[] {
   const out: Finding[] = [];
@@ -108,7 +128,7 @@ export function findingsOf(inv: HostInventory, planRefs: readonly string[]): Fin
     out.push({ kind: "unlisted-db", host: inv.ref, key: `${inv.ref}/${c.name}`, name: c.name, image: c.image, engine, state: c.state });
   }
   for (const v of inv.volumes) {
-    if (v.links > 0 || isAnonymousVolume(v.name)) continue;
+    if (v.links > 0 || isAnonymousVolume(v.name) || volumeAccountedFor(v.name, inv.ref, planRefs)) continue;
     out.push({ kind: "orphan-volume", host: inv.ref, key: `${inv.ref}/volume:${v.name}`, name: v.name, sizeKiB: v.sizeKiB });
   }
   return out;
@@ -137,7 +157,7 @@ export function crossCheckChecks(i: CrossCheckInput): GateCheck[] {
       checks.push({ id: checkKey("inventory-complete", host), status: "fail", code: INVENTORY_CODES.truncated, subject: host, params: { host }, evidence: HOST_EVIDENCE });
       continue;
     }
-    if (inv.rejected > 0) checks.push({ id: checkKey("inventory-rejected", host), status: "warn", code: INVENTORY_CODES.rejectedLines, subject: host, params: { host, count: inv.rejected }, evidence: HOST_EVIDENCE });
+    if (inv.rejected > 0 && !i.findingsOnly) checks.push({ id: checkKey("inventory-rejected", host), status: "warn", code: INVENTORY_CODES.rejectedLines, subject: host, params: { host, count: inv.rejected }, evidence: HOST_EVIDENCE });
 
     for (const f of findingsOf(inv, i.planRefs)) {
       if (f.kind === "unlisted-db") {
@@ -148,17 +168,18 @@ export function crossCheckChecks(i: CrossCheckInput): GateCheck[] {
         else if (excluded(f.key)) checks.push({ ...base, id: checkKey("inventory-unlisted-db", f.key), status: "warn", code: INVENTORY_CODES.unlistedDbExcluded, params });
         else if (i.unlistedDbPolicy === "skip") checks.push({ ...base, id: checkKey("inventory-unlisted-db", f.key), status: "warn", code: INVENTORY_CODES.unlistedDbSkipped, params });
         else if (i.unlistedDbPolicy === "carry") checks.push({ ...base, id: checkKey("inventory-unlisted-db", f.key), status: "warn", code: INVENTORY_CODES.unlistedDbCarry, params });
-        else checks.push({ ...base, id: checkKey("inventory-unlisted-db", f.key), status: "fail", code: INVENTORY_CODES.unlistedDb, params });
+        else checks.push({ ...base, id: checkKey("inventory-unlisted-db", f.key), status: "fail", code: INVENTORY_CODES.unlistedDb, params, attestable: [INVENTORY_ATTEST.excluded, INVENTORY_ATTEST.mapped] });
       } else {
         const base = { subject: f.key, evidence: HOST_EVIDENCE, ownerInput: "orphanVolumePolicy" as const };
         const params = { host, volume: f.name, sizeKiB: f.sizeKiB ?? null };
         if (excluded(f.key)) checks.push({ ...base, id: checkKey("inventory-orphan-volume", f.key), status: "warn", code: INVENTORY_CODES.orphanVolumeExcluded, params });
         else if (i.orphanVolumePolicy === "skip") checks.push({ ...base, id: checkKey("inventory-orphan-volume", f.key), status: "warn", code: INVENTORY_CODES.orphanVolumeSkipped, params });
-        else checks.push({ ...base, id: checkKey("inventory-orphan-volume", f.key), status: "fail", code: INVENTORY_CODES.orphanVolume, params });
+        else checks.push({ ...base, id: checkKey("inventory-orphan-volume", f.key), status: "fail", code: INVENTORY_CODES.orphanVolume, params, attestable: [INVENTORY_ATTEST.excluded] });
       }
     }
 
     // C19: sizes that could not be measured are unknown, said once per host with the count (they are not zero)
+    if (i.findingsOnly) continue;
     const unknown = [...inv.binds.filter((b) => b.sizeKiB === null).map((b) => b.source), ...inv.volumes.filter((v) => v.sizeKiB === null && v.links > 0).map((v) => v.name)];
     if (unknown.length) checks.push({ id: checkKey("inventory-size-unknown", host), status: "warn", code: INVENTORY_CODES.sizeUnknown, subject: host, params: { host, count: unknown.length, first: unknown.slice(0, 5).join(", ").slice(0, 300) }, evidence: HOST_EVIDENCE });
 

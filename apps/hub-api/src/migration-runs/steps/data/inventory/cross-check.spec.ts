@@ -106,6 +106,37 @@ describe("R14/N4: orphan volumes", () => {
     expect(run({ attestations: [{ checkId: INVENTORY_ATTEST.excluded, subject: "host-1/volume:forgotten" }] })).toMatchObject({ status: "warn", code: INVENTORY_CODES.orphanVolumeExcluded });
   });
 
+  it("a volume a plan `volume:` item carries is NOT an orphan even when its container was removed (a stopped resource keeps its volumes)", () => {
+    const stoppedResource = inv({ volumes: [{ name: `${UAPP}_uploads`, mountpoint: "/v/u/_data", sizeKiB: 9, links: 0 }, { name: `${UDB}-data`, mountpoint: "/v/d/_data", sizeKiB: 9, links: 0 }, { name: "uploads", mountpoint: "/v/x/_data", sizeKiB: 1, links: 0 }] });
+    const plan = [...planRefs, `volume:host-1:${UAPP}:uploads`, `volume:host-1:${UDB}:data`];
+    // the planned ones are accounted for; a bare `uploads` volume that merely shares a name with a planned one is still unplanned
+    expect(findingsOf(stoppedResource, plan).map((f) => f.name)).toEqual(["uploads"]);
+    expect(findingsOf(stoppedResource, planRefs).map((f) => f.name)).toEqual([`${UAPP}_uploads`, `${UDB}-data`, "uploads"]);
+    // another host's plan item does not account for it; an item with an unknown host (`_`) does
+    expect(findingsOf(stoppedResource, [...planRefs, `volume:other-host:${UAPP}:uploads`]).map((f) => f.name)).toContain(`${UAPP}_uploads`);
+    expect(findingsOf(stoppedResource, [...planRefs, `volume:_:${UAPP}:uploads`]).map((f) => f.name)).not.toContain(`${UAPP}_uploads`);
+    // with the policy `skip` the text would claim "will not be migrated": a planned volume must produce no orphan check at all
+    const checks = crossCheckChecks(base({ inventories: new Map([["host-1", stoppedResource]]), planRefs: plan, orphanVolumePolicy: "skip" }));
+    expect(checks.filter((c) => c.code === INVENTORY_CODES.orphanVolumeSkipped).map((c) => c.subject)).toEqual(["host-1/volume:uploads"]);
+  });
+
+  it("every blocking finding says which attestations settle IT, so the panel can offer one row per finding", () => {
+    const ghost = inv({ containers: [...inv().containers, { id: id("f"), name: GHOST, image: "mariadb:11", state: "running" }], volumes: [{ name: "forgotten", mountpoint: "/v/f/_data", sizeKiB: 5, links: 0 }] });
+    const checks = crossCheckChecks(base({ inventories: new Map([["host-1", ghost]]) }));
+    expect(checks.find((c) => c.code === INVENTORY_CODES.unlistedDb)!.attestable).toEqual([INVENTORY_ATTEST.excluded, INVENTORY_ATTEST.mapped]);
+    expect(checks.find((c) => c.code === INVENTORY_CODES.orphanVolume)!.attestable).toEqual([INVENTORY_ATTEST.excluded]);
+    // once settled it is a warning and no longer attestable
+    const settled = crossCheckChecks(base({ inventories: new Map([["host-1", ghost]]), attestations: [{ checkId: INVENTORY_ATTEST.excluded, subject: `host-1/${GHOST}` }] }));
+    expect(settled.find((c) => c.code === INVENTORY_CODES.unlistedDbExcluded)!.attestable).toBeUndefined();
+  });
+
+  it("findingsOnly judges what decides whether data is left behind and nothing about reach or sizes", () => {
+    const ghost = inv({ containers: [...inv().containers, { id: id("f"), name: GHOST, image: "mariadb:11", state: "running" }], binds: [{ source: "/mnt/a", sizeKiB: null }], rejected: 2 });
+    const c = codes(crossCheckChecks(base({ inventories: new Map([["host-1", ghost]]), reach: new Map(), findingsOnly: true })));
+    expect(c).toEqual([`fail:${INVENTORY_CODES.unlistedDb}`]);
+    expect(codes(crossCheckChecks(base({ inventories: new Map(), findingsOnly: true })))).toEqual([`unknown:${INVENTORY_CODES.notTaken}`]);
+  });
+
   it("only `excluded` is offered for an orphan volume (there is nothing to map it to)", () => {
     expect(attestableFindings(crossCheckChecks(base({ inventories: new Map([["host-1", orphan]]) })))).toEqual([INVENTORY_ATTEST.excluded]);
   });
