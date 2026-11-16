@@ -6,7 +6,8 @@ import type { StepKey } from "../../../core/run-contract";
 import { RunOptionsSchema, type RunOptions } from "../../../core/dto";
 import { CutoverHandler } from "../cutover.handler";
 import { CutoverPlanService } from "../cutover-plan.service";
-import type { CutoverWorld, OpApp, ServerFacts, SwapRow } from "../cutover-world.service";
+import type { CutoverWorld, GitWebhookApp, OpApp, ServerFacts, SwapRow } from "../cutover-world.service";
+import type { ObjectsVerification } from "../cutover-holds";
 import { DecommissionHandler } from "../decommission.handler";
 import { DnsPrepareHandler } from "../dns-prepare.handler";
 import { FinalizeHandler } from "../finalize.handler";
@@ -31,6 +32,8 @@ export class SimHost {
     id: COOLIFY_ID, name: "/coolify-proxy", image: "traefik:v3.1", restart: "always", running: true, ports: ["80>80/tcp", "443>443/tcp", "8080>8080/tcp"],
   };
   tugra: { status: string; ports: string[] } = { status: "absent", ports: [] };
+  /** The Coolify control plane runs on this box (a container named `coolify`). */
+  controlPlane = false;
   updateFails = false;
   /** Coolify brings its own proxy back as soon as it is stopped (lab item T1). */
   coolifyAutoRestarts = false;
@@ -55,7 +58,7 @@ export class SimHost {
       this.note("swap-inspect");
       const c = this.coolify;
       if (!c) return ok("TUGRA_SWAP_ABSENT\n");
-      return ok([`TUGRA_SWAP_ID=${c.id}`, `TUGRA_SWAP_NAME=${c.name}`, `TUGRA_SWAP_IMAGE=${c.image}`, `TUGRA_SWAP_RESTART=${c.restart}`, `TUGRA_SWAP_RUNNING=${c.running}`, `TUGRA_SWAP_PORTS=${c.ports.map((p) => `${p.split(">")[0]}>${p.split(">")[1]},`).join("")}`, "TUGRA_SWAP_END"].join("\n"));
+      return ok([`TUGRA_SWAP_ID=${c.id}`, `TUGRA_SWAP_NAME=${c.name}`, `TUGRA_SWAP_IMAGE=${c.image}`, `TUGRA_SWAP_RESTART=${c.restart}`, `TUGRA_SWAP_RUNNING=${c.running}`, `TUGRA_SWAP_PORTS=${c.ports.map((p) => `${p.split(">")[0]}>${p.split(">")[1]},`).join("")}`, `TUGRA_SWAP_CONTROL_PLANE=${this.controlPlane ? "ghcr.io/coollabsio/coolify:4.1.2" : ""}`, "TUGRA_SWAP_END"].join("\n"));
     }
     if (script.includes("docker stop tugra-proxy")) {
       this.note("swap-reverse");
@@ -122,6 +125,12 @@ export class FakeWorld {
   backups = new Map<string, boolean>();
   crashes: Array<{ name: string; ts: Date }> = [];
   server: ServerFacts = { id: SRV, name: "target", teamId: "team1", publicIp: IP, proxyBind: "public" };
+  /** appId -> env names that point at an object store. */
+  objectKeys = new Map<string, string[]>();
+  /** What the attached object migrations say (null = nothing attached). */
+  objects: ObjectsVerification | null = null;
+  gitApps: GitWebhookApp[] = [];
+  hubUrl: string | null = "https://hub.example.test";
   tokenActive = true;
   acmeKnown = true;
   otherLive = 0;
@@ -159,6 +168,18 @@ export class FakeWorld {
   }
   async opDatabaseIds(): Promise<string[]> {
     return this.databaseIds;
+  }
+  async appObjectKeys(ids: readonly string[]): Promise<Map<string, string[]>> {
+    return new Map([...this.objectKeys].filter(([id]) => ids.includes(id)));
+  }
+  async objectsVerification(): Promise<ObjectsVerification | null> {
+    return this.objects;
+  }
+  async gitWebhookApps(ids: readonly string[]): Promise<GitWebhookApp[]> {
+    return this.gitApps.filter((g) => ids.includes(g.appId));
+  }
+  hubPublicUrl(): string | null {
+    return this.hubUrl;
   }
   async opContainerNames(): Promise<string[]> {
     return [...this.apps.map((a) => `tugra_${a.appId}`), ...this.databaseIds.map((d) => `tugra_db_${d}`)];
@@ -243,8 +264,8 @@ export interface RigOpts {
   zone?: ZoneRec[];
   run?: Parameters<typeof makeRun>[0];
   options?: Partial<RunOptions>;
-  /** Apps (id -> host, hasData) of the op. */
-  apps?: Array<{ id: string; host: string; hasData?: boolean }>;
+  /** Apps (id -> host, hasData) of the op. `serverId` places the app on another target server; `service` makes it a compose service (stopped unless `status` says otherwise). */
+  apps?: Array<{ id: string; host: string; hasData?: boolean; serverId?: string; service?: boolean; status?: string; objectStore?: boolean }>;
 }
 
 /** Everything the cutover-side handlers need, wired to in-memory fakes around the REAL CutoverService. */
@@ -330,10 +351,12 @@ export function makeRig(o: RigOpts = {}) {
 
   // The op's apps: the cutover service's own tables + the world's view of them.
   for (const a of o.apps ?? []) {
-    prisma.__apps.set(a.id, { id: a.id, name: `app-${a.id}`, teamId: "team1", serverId: SRV, clusterId: null, domain: a.host, extraDomains: [], domainRedirect: null, dnsChallenge: false });
-    tasks.push({ itemRef: `app:_:${a.id}`, kind: "app", status: "DONE", dependsOn: a.hasData ? [`database:_:${a.id}`] : [], resourceType: "application", resourceId: a.id });
+    const serverId = a.serverId ?? SRV;
+    if (!prisma.__servers.has(serverId)) prisma.__servers.set(serverId, { id: serverId, name: serverId, proxyBind: "public", dnsCredentialId: "cred1", publicIp: `203.0.113.${100 + prisma.__servers.size}`, publicIpv6: null });
+    prisma.__apps.set(a.id, { id: a.id, name: `app-${a.id}`, teamId: "team1", serverId, clusterId: null, domain: a.host, extraDomains: [], domainRedirect: null, dnsChallenge: false });
+    tasks.push({ itemRef: `${a.service ? "service" : "app"}:_:${a.id}`, kind: a.service ? "service" : "app", status: "DONE", dependsOn: a.hasData && !a.service ? [`database:_:${a.id}`] : [], resourceType: "application", resourceId: a.id });
     if (a.hasData) tasks.push({ itemRef: `data:database:_:${a.id}`, kind: "data", status: "DONE", dependsOn: [], resourceType: null, resourceId: null });
-    world.apps.push({ appId: a.id, itemRef: `app:_:${a.id}`, hasData: a.hasData === true, domain: a.host, extraDomains: [], serviceHosts: [], clusterId: null });
+    world.apps.push({ appId: a.id, itemRef: `${a.service ? "service" : "app"}:_:${a.id}`, hasData: a.hasData === true, domain: a.host, extraDomains: [], serviceHosts: [], clusterId: null, kind: a.service ? "service" : "app", serverId, status: a.status ?? (a.service ? "STOPPED" : "RUNNING"), objectStore: a.objectStore === true });
   }
   const row = (hostname: string) => prisma.cutoverDomain.rows.find((r) => r.hostname === hostname)!;
   const seat = async (state: string, hostnames?: string[]) => {

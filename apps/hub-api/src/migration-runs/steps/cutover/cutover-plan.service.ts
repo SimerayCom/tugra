@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { CutoverService } from "../../../cutover/cutover.service";
-import type { RunSnapshot } from "../../core/run-contract";
+import { isMultiTarget, type RunSnapshot } from "../../core/run-contract";
 import { CutoverWorld } from "./cutover-world.service";
 import { swapPlanHash } from "./proxy-swap";
 import { inspectSourceProxy } from "./swap-runtime";
@@ -10,7 +10,10 @@ import { cutoverPlanHash, hostIsStateful, trackedEntries } from "./run-cutover-l
  * The plan the PONR approval is bound to, for VERIFY (lane B) to fold into its `inputHash`
  * (`H(verifyReportHash ‖ planHash ‖ statefulHosts)`): the cutover service's flip-plan hash (two-box) or the swap plan hash
  * (swap-proxy: the exact source proxy that would be stopped + the hosts that move with it), plus the stateful host set.
- * `null` when the plan cannot be computed yet (no import op, the source proxy is unreadable): the approval is then not possible.
+ * `null` when the plan cannot be computed yet (no import op, the source proxy is unreadable or sits on the Coolify control plane's box,
+ * or a swap spans several target servers): the approval is then not possible.
+ *
+ * A multi-target two-box run is approved as ONE plan over every host (the flip itself then goes group by group, per target server).
  * Read-only: it never writes to a provider or to the host.
  */
 @Injectable()
@@ -20,11 +23,13 @@ export class CutoverPlanService {
     private readonly world: CutoverWorld,
   ) {}
 
-  async planHash(run: Pick<RunSnapshot, "id" | "opId" | "actorId" | "topology" | "targetServerId">): Promise<{ planHash: string; statefulHosts: string[] } | null> {
+  async planHash(run: Pick<RunSnapshot, "id" | "opId" | "actorId" | "topology" | "targetServerId"> & { serverMap?: RunSnapshot["serverMap"] }): Promise<{ planHash: string; statefulHosts: string[] } | null> {
     if (!run.opId) return null;
     const [view, apps] = await Promise.all([this.cutover.view(run.actorId, run.opId), this.world.opApps(run.opId)]);
     const dataApps = new Set(apps.filter((a) => a.hasData).map((a) => a.appId));
     if (run.topology === "swap-proxy") {
+      // One swap moves one box: a multi-target run has no swap plan (the CUTOVER gate says so), so no approval can be bound to one.
+      if (isMultiTarget(run)) return null;
       // The swap moves the whole box's ingress: every tracked host (BLOCKED ones included) is part of what the approval covers.
       const hosts = trackedEntries(view.entries);
       const ident = await inspectSourceProxy(this.world, run.targetServerId);

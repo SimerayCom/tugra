@@ -93,7 +93,8 @@ export class DnsPrepareHandler extends CutoverStepBase implements StepHandler<Dn
     await ctx.recordCompensation({ ttlWaitUntil: until ? iso(until) : null, manualHosts: capHosts(t.guidance.map((g) => g.hostname)) });
     const lowered = entries.filter((e) => e.dnsMode === "cloudflare" && e.ttlWaitUntil !== null).length;
     await ctx.emit({ stepKey: "DNS_PREPARE", level: "info", code: "dns-prepare.ttl-lowered", params: { hosts: lowered, tracked: trackedEntries(entries).length } });
-    if (t.guidance.length) await ctx.emit({ stepKey: "DNS_PREPARE", level: "info", code: "dns-prepare.manual-dns-guidance", params: { hosts: capHosts(t.guidance.map((g) => g.hostname)) } });
+    // Customer-owned zones (C10): each host's own TTL guidance (current TTL and the moment to lower it by) so the checklist can be worked per host.
+    if (t.guidance.length) await ctx.emit({ stepKey: "DNS_PREPARE", level: "info", code: "dns-prepare.manual-dns-guidance", params: { hosts: capHosts(t.guidance.map((g) => g.hostname)), count: t.guidance.length, ttl: capHosts(t.guidance.map((g) => `${g.hostname} ttl=${g.oldTtl} lower-before=${g.lowerBefore}`.slice(0, 300)), 200) } });
     const blocked = entries.filter((e) => e.state === "BLOCKED").map((e) => e.hostname);
     if (blocked.length) await ctx.emit({ stepKey: "DNS_PREPARE", level: "warn", code: "dns-prepare.hosts-blocked", params: { hosts: capHosts(blocked) } });
     if (skip) await ctx.emit({ stepKey: "DNS_PREPARE", level: "warn", code: "dns-prepare.ttl-wait-skipped" });

@@ -3,6 +3,7 @@ import { Test } from "@nestjs/testing";
 import { AgentWsServer } from "../../../agent-gateway/agent-ws.server";
 import { APPLICATIONS_SERVICE } from "../../../applications/applications.tokens";
 import { AuditService } from "../../../audit/audit.service";
+import { CryptoService } from "../../../crypto/crypto.service";
 import { CutoverCertService } from "../../../cutover/cutover-cert.service";
 import { CutoverService } from "../../../cutover/cutover.service";
 import { NetProbe } from "../../../cutover/net-probe";
@@ -80,6 +81,7 @@ describe("RunCutoverStepsModule wiring", () => {
         { provide: InstanceSettingsService, useValue: {} },
         { provide: ConfigService, useValue: {} },
         { provide: AuditService, useValue: {} },
+        { provide: CryptoService, useValue: {} },
       ],
     }).compile();
     await mod.init();

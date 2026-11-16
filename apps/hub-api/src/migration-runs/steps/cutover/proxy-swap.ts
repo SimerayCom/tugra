@@ -12,6 +12,8 @@ import { shq } from "../../../deploy/deploy-script";
  */
 
 export const COOLIFY_PROXY_NAME = "coolify-proxy";
+/** The Coolify control plane's own container: where it runs, the swap is refused (its panel and API sit behind `coolify-proxy`). */
+export const COOLIFY_CONTROL_PLANE_NAME = "coolify";
 export const TUGRA_PROXY_NAME = "tugra-proxy";
 
 /** Restart policies `docker inspect` reports (`on-failure` without its retry count: the reverse restores the plain policy). */
@@ -57,11 +59,13 @@ export function buildSwapInspectScript(): string {
     `echo "TUGRA_SWAP_RESTART=$(${f("{{.HostConfig.RestartPolicy.Name}}")})"`,
     `echo "TUGRA_SWAP_RUNNING=$(${f("{{.State.Running}}")})"`,
     `echo "TUGRA_SWAP_PORTS=$(${f("{{range $p, $b := .HostConfig.PortBindings}}{{range $b}}{{.HostPort}}>{{$p}},{{end}}{{end}}")})"`,
+    // Is the Coolify CONTROL PLANE on this box? It is one container named `coolify`; its image tells (never its env).
+    `echo "TUGRA_SWAP_CONTROL_PLANE=$(docker container inspect -f '{{.Config.Image}}' ${COOLIFY_CONTROL_PLANE_NAME} 2>/dev/null)"`,
     'echo "TUGRA_SWAP_END"',
   ].join("\n");
 }
 
-export type SwapInspect = { absent: true } | { absent: false; snapshot: CoolifyProxySnapshot; name: string };
+export type SwapInspect = { absent: true } | { absent: false; snapshot: CoolifyProxySnapshot; name: string; /** A container named `coolify` from a Coolify image runs on this box. */ controlPlane: boolean };
 
 /** Parse the inspect output; `null` for anything cut or malformed (never mistaken for "absent"). */
 export function parseSwapInspect(out: string): SwapInspect | null {
@@ -79,17 +83,19 @@ export function parseSwapInspect(out: string): SwapInspect | null {
   const restart = get("RESTART");
   const running = get("RUNNING");
   const portsRaw = get("PORTS");
+  const cp = get("CONTROL_PLANE");
+  if (cp === null) return null;
   if (!id || !CONTAINER_ID_RE.test(id) || name === null || !image || !IMAGE_RE.test(image) || restart === null || (running !== "true" && running !== "false") || portsRaw === null) return null;
   // docker reports an empty policy name as "" for `no`
   const policy = restart === "" ? "no" : restart;
   if (!(RESTART_POLICIES as readonly string[]).includes(policy)) return null;
   const ports = portsRaw.split(",").filter(Boolean);
   if (!ports.every((p) => PORT_RE.test(p))) return null;
-  return { absent: false, name, snapshot: { containerId: id, name: name.replace(/^\//, ""), image, restartPolicy: policy as RestartPolicy, running: running === "true", ports } };
+  return { absent: false, name, controlPlane: /coolify/i.test(cp), snapshot: { containerId: id, name: name.replace(/^\//, ""), image, restartPolicy: policy as RestartPolicy, running: running === "true", ports } };
 }
 
 /** Is this really the source's proxy? name + a traefik image + it publishes host :80 and :443 over tcp. Otherwise NOTHING is stopped. */
-export function verifyCoolifyProxyIdentity(i: SwapInspect): { ok: true; snapshot: CoolifyProxySnapshot } | { ok: false; code: "absent" | "name" | "image" | "ports" } {
+export function verifyCoolifyProxyIdentity(i: SwapInspect): { ok: true; snapshot: CoolifyProxySnapshot } | { ok: false; code: "absent" | "name" | "image" | "ports" | "control-plane" } {
   if (i.absent) return { ok: false, code: "absent" };
   const s = i.snapshot;
   if (i.name !== `/${COOLIFY_PROXY_NAME}`) return { ok: false, code: "name" };
@@ -99,6 +105,9 @@ export function verifyCoolifyProxyIdentity(i: SwapInspect): { ok: true; snapshot
     return !!m && Number(m[1]) === hostPort && m[3] === "tcp";
   });
   if (!publishes(80) || !publishes(443)) return { ok: false, code: "ports" };
+  // The proxy is the right one, but this box runs the Coolify control plane: stopping `coolify-proxy` here takes the panel and the
+  // API of EVERY host that control plane manages out of reach (and the control plane must not be stopped to prevent a restart).
+  if (i.controlPlane) return { ok: false, code: "control-plane" };
   return { ok: true, snapshot: s };
 }
 

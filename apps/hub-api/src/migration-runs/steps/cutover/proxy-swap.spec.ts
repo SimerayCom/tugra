@@ -16,8 +16,8 @@ import {
 import { expectGolden } from "./testing/golden";
 
 const ID = "a".repeat(64);
-const inspectOut = (o: Partial<Record<"ID" | "NAME" | "IMAGE" | "RESTART" | "RUNNING" | "PORTS", string>> = {}) =>
-  [`TUGRA_SWAP_ID=${o.ID ?? ID}`, `TUGRA_SWAP_NAME=${o.NAME ?? "/coolify-proxy"}`, `TUGRA_SWAP_IMAGE=${o.IMAGE ?? "traefik:v3.1"}`, `TUGRA_SWAP_RESTART=${o.RESTART ?? "always"}`, `TUGRA_SWAP_RUNNING=${o.RUNNING ?? "true"}`, `TUGRA_SWAP_PORTS=${o.PORTS ?? "80>80/tcp,443>443/tcp,8080>8080/tcp,"}`, "TUGRA_SWAP_END"].join("\n");
+const inspectOut = (o: Partial<Record<"ID" | "NAME" | "IMAGE" | "RESTART" | "RUNNING" | "PORTS" | "CONTROL_PLANE", string>> = {}) =>
+  [`TUGRA_SWAP_ID=${o.ID ?? ID}`, `TUGRA_SWAP_NAME=${o.NAME ?? "/coolify-proxy"}`, `TUGRA_SWAP_IMAGE=${o.IMAGE ?? "traefik:v3.1"}`, `TUGRA_SWAP_RESTART=${o.RESTART ?? "always"}`, `TUGRA_SWAP_RUNNING=${o.RUNNING ?? "true"}`, `TUGRA_SWAP_PORTS=${o.PORTS ?? "80>80/tcp,443>443/tcp,8080>8080/tcp,"}`, `TUGRA_SWAP_CONTROL_PLANE=${o.CONTROL_PLANE ?? ""}`, "TUGRA_SWAP_END"].join("\n");
 
 describe("swap scripts (golden)", () => {
   it("inspect is read-only and addresses the container by name", () => {
@@ -99,6 +99,19 @@ describe("parseSwapInspect + identity", () => {
     expect(check({ PORTS: "80>80/udp,443>443/udp," })).toEqual({ ok: false, code: "ports" });
     expect(check({ PORTS: "8080>80/tcp,8443>443/tcp," })).toEqual({ ok: false, code: "ports" });
     expect(check({ IMAGE: "ghcr.io/traefik/traefik:v3" })).toMatchObject({ ok: true });
+  });
+
+  it("refuses the box that runs the Coolify control plane (C11): stopping the proxy there cuts every managed host off its panel", () => {
+    const p = parseSwapInspect(inspectOut({ CONTROL_PLANE: "ghcr.io/coollabsio/coolify:4.1.2" }));
+    expect(p).toMatchObject({ absent: false, controlPlane: true });
+    expect(verifyCoolifyProxyIdentity(p!)).toEqual({ ok: false, code: "control-plane" });
+    // a wrong proxy is reported as such first; a box without the control plane is fine
+    expect(verifyCoolifyProxyIdentity(parseSwapInspect(inspectOut({ NAME: "/x", CONTROL_PLANE: "ghcr.io/coollabsio/coolify:4.1.2" }))!)).toEqual({ ok: false, code: "name" });
+    expect(parseSwapInspect(inspectOut({ CONTROL_PLANE: "" }))).toMatchObject({ controlPlane: false });
+  });
+
+  it("output without the control-plane marker is unreadable, never `no control plane`", () => {
+    expect(parseSwapInspect(inspectOut().replace(/\nTUGRA_SWAP_CONTROL_PLANE=[^\n]*/, ""))).toBeNull();
   });
 });
 
