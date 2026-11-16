@@ -665,6 +665,7 @@ export interface LaunchForm {
   deployWaves?: RunOptionsType["deployWaves"];
   deployConcurrency?: string;
   largeDbMode?: NonNullable<RunOptionsType["largeDbMode"]>;
+  serviceStart?: NonNullable<RunOptionsType["serviceStart"]>;
   stopSource?: boolean;
   policies?: LaunchPolicies;
 }
@@ -724,6 +725,7 @@ export function buildLaunchInput(f: LaunchForm): MigrationRunCreateInput {
     ...(f.deployWaves && f.deployWaves !== "single" ? { deployWaves: f.deployWaves } : {}),
     ...(f.deployConcurrency?.trim() ? { deployConcurrency: Number(f.deployConcurrency) } : {}),
     ...(f.largeDbMode && f.largeDbMode !== "refuse" ? { largeDbMode: f.largeDbMode } : {}),
+    ...(f.serviceStart && f.serviceStart !== "dependencies" ? { serviceStart: f.serviceStart } : {}),
     ...(f.stopSource ? { stopSource: true } : {}),
   };
   return {

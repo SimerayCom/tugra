@@ -2515,6 +2515,8 @@ export type MigrationRunOrphanVolumePolicy = "block" | "skip";
 export type MigrationRunSourceRunner = "operator" | "agent" | "coolify-host-loop";
 export type MigrationRunCommandKind = "migrator" | "host-loop" | "inventory";
 export type MigrationRunLargeDbMode = "refuse" | "stream-logical";
+/** Which imported compose services DEPLOY_DARK starts, before the apps that need them. */
+export type MigrationRunServiceStart = "dependencies" | "none" | "all";
 export type MigrationRunSourceVersionVerdict = "supported" | "newer" | "too-old" | "unknown" | "unchecked";
 /** Source server (Coolify server uuid) to Tugra target server id. */
 export type MigrationRunServerMap = Record<string, string>;
@@ -2661,6 +2663,7 @@ export interface MigrationRunOptions {
   hostLoop?: MigrationRunHostLoopOptions;
   deployConcurrency?: number;
   largeDbMode?: MigrationRunLargeDbMode;
+  serviceStart?: MigrationRunServiceStart;
   certs: "none" | "seed";
   acceptHttp01Gap: boolean;
   freezeAt?: string;

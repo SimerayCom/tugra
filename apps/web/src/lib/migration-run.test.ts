@@ -438,6 +438,11 @@ describe("launch form: placement, runner, policies", () => {
     });
     expect(buildLaunchInput({ ...base, deployWaves: "single", deployConcurrency: " ", largeDbMode: "refuse", stopSource: false }).options).toEqual({ observeMinutes: 30 });
   });
+  it("sends the service start choice only when it is not the default", () => {
+    expect(buildLaunchInput({ ...base, serviceStart: "none" }).options).toEqual({ observeMinutes: 30, serviceStart: "none" });
+    expect(buildLaunchInput({ ...base, serviceStart: "all" }).options).toEqual({ observeMinutes: 30, serviceStart: "all" });
+    expect(buildLaunchInput({ ...base, serviceStart: "dependencies" }).options).toEqual({ observeMinutes: 30 });
+  });
   it("sends only the policy answers that were given; an unanswered one keeps the hub's safe default", () => {
     expect(policyInputs(undefined)).toEqual({});
     expect(policyInputs(EMPTY_POLICIES)).toEqual({});

@@ -497,6 +497,13 @@
       "deployConcurrency": "Builds at a time per server",
       "deployConcurrencyHint": "Leave empty for one at a time. Raise it only on servers with spare CPU and memory.",
       "deployConcurrencyInvalid": "Enter a whole number from 1 to 8.",
+      "serviceStart": "Which services are started before the apps",
+      "serviceStartChoice": {
+        "dependencies": "The services a dark app depends on (default)",
+        "none": "None, I start them by hand",
+        "all": "Every imported service"
+      },
+      "serviceStartHint": "Search engines and document converters start before the apps that call them, so the apps can answer their health check. An object store starts only when its buckets are mirrored.",
       "largeDbMode": "Databases too large for a dump artifact",
       "largeDbModeHint": "Stream a logical dump has no size cap but runs inside the freeze window, so it adds to the downtime.",
       "largeDbChoice": {

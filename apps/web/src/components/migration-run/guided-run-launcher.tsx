@@ -74,6 +74,7 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, onClose }: Props
     deployWaves: "single",
     deployConcurrency: "",
     largeDbMode: "refuse",
+    serviceStart: "dependencies",
     stopSource: false,
     policies: { ...EMPTY_POLICIES },
   });
@@ -90,7 +91,7 @@ function LaunchDialog({ plan, kind, sessionId, servers, extras, onClose }: Props
 
   const form = {
     sessionId, sourceKind: kind, targetServerId, planHash: plan.planHash, extras, mode, topology, dryRun, acmeEmail, allowBind, allowLiveShapeProbe: probe, sourceController: controller, observeMinutes: observe,
-    placement, campaign: adv.campaign, sourceRunner: adv.sourceRunner, hostLoop: adv.hostLoop, deployWaves: adv.deployWaves, deployConcurrency: adv.deployConcurrency, largeDbMode: adv.largeDbMode, stopSource: adv.stopSource, policies: adv.policies,
+    placement, campaign: adv.campaign, sourceRunner: adv.sourceRunner, hostLoop: adv.hostLoop, deployWaves: adv.deployWaves, deployConcurrency: adv.deployConcurrency, largeDbMode: adv.largeDbMode, serviceStart: adv.serviceStart, stopSource: adv.stopSource, policies: adv.policies,
   };
   const issues = launchIssues(form);
   const create = useMutation({
