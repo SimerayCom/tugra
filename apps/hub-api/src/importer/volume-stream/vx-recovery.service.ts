@@ -58,12 +58,14 @@ export class VxRecoveryService implements OnModuleInit, OnModuleDestroy {
 
   private async failStaleCopy(t: MigrationVolumeTransfer): Promise<void> {
     this.registry.cancel(t.id, new Error("the migrator stopped reporting"));
+    // a volume resumes from its committed parts; a dump cannot (it is not byte-deterministic), so the next run starts it over
+    const message = t.destType === "db-dump" ? "migrator stopped reporting; re-run the command (the dump starts over: a dump cannot resume from the middle)" : "migrator stopped reporting; re-run the command to resume";
     const r = await this.prisma.migrationVolumeTransfer.updateMany({
       where: { id: t.id, state: "COPYING", lastBeatAt: t.lastBeatAt },
-      data: { state: "FAILED", runId: null, error: "migrator stopped reporting; re-run the command to resume", phase: null },
+      data: { state: "FAILED", runId: null, error: message, phase: null },
     });
     if (r.count !== 1) return;
-    await this.prisma.bulkTask.updateMany({ where: { opId: t.opId, itemRef: `data:${t.itemRef}` }, data: { status: "FAILED", output: "migrator stopped reporting; re-run the command to resume", finishedAt: new Date() } });
+    await this.prisma.bulkTask.updateMany({ where: { opId: t.opId, itemRef: `data:${t.itemRef}` }, data: { status: "FAILED", output: message, finishedAt: new Date() } });
   }
 
   private async resolveCtx(t: MigrationVolumeTransfer) {

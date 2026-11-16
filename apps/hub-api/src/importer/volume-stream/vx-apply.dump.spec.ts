@@ -187,3 +187,18 @@ describe("explainDumpApplyExit", () => {
     for (const c of [1, 2, 137, null]) expect(explainDumpApplyExit(c)).toMatch(/staged parts are kept/);
   });
 });
+
+describe("VxRecoveryService: a dump whose migrator went silent", () => {
+  it("is failed with the honest message (it starts over; it does not resume)", async () => {
+    const { VxRecoveryService } = await import("./vx-recovery.service");
+    for (const [destType, want] of [["db-dump", /the dump starts over/], ["app-volume", /to resume/]] as const) {
+      const m = make();
+      await seed(m, { state: "COPYING", destType, runId: "run_x", lastBeatAt: new Date(Date.now() - 3_600_000) });
+      const rec = new VxRecoveryService(m.prisma as never, {} as never, m.apply, new VxPartRegistry());
+      await rec.sweep();
+      expect(m.transfers.rows[0]).toMatchObject({ state: "FAILED", runId: null });
+      expect(String(m.transfers.rows[0].error)).toMatch(want);
+      expect(String(m.tasks.rows[0].output)).toMatch(want);
+    }
+  });
+});
