@@ -129,7 +129,11 @@ export class PrismaRunStore implements RunStore {
       throw e;
     }
     if (r.count === 1) return true;
-    if (guard.bootId) throw new RunLeaseLostError(id);
+    if (guard.bootId) {
+      // the lease is still ours but the status moved (a service command like abort won the race): a CAS miss, not a lost lease
+      if (guard.statusIn && (await this.prisma.migrationRun.count({ where: { id, ownerId: guard.bootId } })) === 1) return false;
+      throw new RunLeaseLostError(id);
+    }
     return false;
   }
 

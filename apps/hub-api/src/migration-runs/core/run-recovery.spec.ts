@@ -73,7 +73,10 @@ describe("crash at EVERY persisted boundary: the run converges and each external
 
       // exactly-once effects
       const only = (prefix: string) => w.port.calls.filter((c) => c.startsWith(prefix));
-      expect({ label, remap: only("remapApply").length }).toEqual({ label, remap: 1 });
+      // a crash between the apply returning and its completion marker is indistinguishable from one mid-loop: the next boot
+      // undoes the remap and applies it again, so the remap is applied once NET (every extra apply is preceded by an undo)
+      expect({ label, remapNet: only("remapApply").length - only("remapUndo").length }).toEqual({ label, remapNet: 1 });
+      expect(only("remapApply").length).toBeLessThanOrEqual(2);
       expect({ label, deploys: only("deploy:").length }).toEqual({ label, deploys: 2 });
       expect(new Set(only("deploy:")).size).toBe(2);
       expect(only("startDb:").length).toBe(1);

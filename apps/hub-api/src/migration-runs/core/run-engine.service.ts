@@ -127,6 +127,7 @@ class Driving {
   }
 }
 
+const DRIVING_STATUSES: readonly RunStatus[] = ["RUNNING", "WAITING"];
 const errLog = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const isAbortLike = (e: unknown): boolean => e instanceof Error && (e.name === "AbortError" || e instanceof RunAbortRequestedError);
 
@@ -329,7 +330,7 @@ export class RunEngineService implements OnModuleDestroy {
         case "RUNNING":
         case "WAITING": {
           if (run.pauseRequested) {
-            await this.setStatus(run, "PAUSED", {});
+            if (!(await this.setStatus(run, "PAUSED", {}))) continue; // an abort/reverse won: the loop re-reads and applies it
             await this.emit(run.id, { level: "info", code: "run.paused" });
             return;
           }
@@ -339,7 +340,7 @@ export class RunEngineService implements OnModuleDestroy {
           }
           const standing = await this.env.standing(run.actorId, run.teamId);
           if (!standing.member || !standing.appsConfig || !standing.databases) {
-            await this.setStatus(run, "PAUSED", {});
+            if (!(await this.setStatus(run, "PAUSED", {}))) continue;
             await this.emit(run.id, { level: "warn", code: "run.auth-lost" });
             await this.sink.notify(run.teamId, { runId: run.id, kind: "auth-lost", mode: run.mode as RunMode, stepKey: run.currentStep, code: "run.auth-lost" }).catch(() => undefined);
             return;
@@ -404,8 +405,7 @@ export class RunEngineService implements OnModuleDestroy {
       row.startedAt = now;
     }
     if (!manual && run.status === "WAITING" && !isWaitingStep(row.status as StepStatus)) {
-      await this.setStatus(run, "RUNNING", {});
-      run.status = "RUNNING";
+      if (!(await this.setStatus(run, "RUNNING", {}))) return { kind: "advance" };
     }
 
     const ctxFor = (approval: StepApprovalRecord | null = null): StepContext => this.makeCtx(run, row, rows, trigger, d.controller.signal, approval, false);
@@ -504,7 +504,7 @@ export class RunEngineService implements OnModuleDestroy {
     await this.store.updateStep(run.id, key, { attempt, status: "RUNNING", wait: null, gate: pre, notBefore: null, lastError: null, finishedAt: null }, this.bootId);
     row.attempt = attempt;
     row.status = "RUNNING";
-    if (!manual && run.status !== "RUNNING") await this.setStatus(run, "RUNNING", {});
+    if (!manual && run.status !== "RUNNING" && !(await this.setStatus(run, "RUNNING", {}))) return { kind: "advance" }; // an abort/reverse won: do not act
     ctx = this.makeCtx(run, row, rows, trigger, d.controller.signal, approval, false);
     let res: ActResult;
     try {
@@ -597,7 +597,7 @@ export class RunEngineService implements OnModuleDestroy {
       await this.emit(run.id, { level: "info", code: "step.waiting", stepKey: key, params: { kind: wait.kind, reason: code } });
       if (!manual) await this.sink.notify(run.teamId, { runId: run.id, kind: "waiting", mode: run.mode as RunMode, stepKey: key, code }).catch(() => undefined);
     }
-    if (!manual && run.status !== "WAITING") await this.setStatus(run, "WAITING", {});
+    if (!manual && run.status !== "WAITING" && !(await this.setStatus(run, "WAITING", {}))) return { kind: "advance" }; // an abort/reverse won
     return { kind: "idle" };
   }
 
@@ -620,7 +620,7 @@ export class RunEngineService implements OnModuleDestroy {
     );
     await this.emit(run.id, { level: "error", code: "step.failed", stepKey: key, params: { code, ...(safeParams ?? {}) } });
     if (!manual) {
-      await this.owned(run.id, { status: "FAILED", failureStep: key, failureCode: code });
+      if (!(await this.setStatus(run, "FAILED", { failureStep: key, failureCode: code }))) return { kind: "advance" }; // an abort/reverse won: it compensates this step
       await this.emit(run.id, { level: "error", code: "run.failed", stepKey: key, params: { code } });
       await this.sink.notify(run.teamId, { runId: run.id, kind: "failed", mode: run.mode as RunMode, stepKey: key, code }).catch(() => undefined);
     }
@@ -631,13 +631,13 @@ export class RunEngineService implements OnModuleDestroy {
   private async completeFlow(run: RunRow): Promise<TickResult> {
     const now = this.clock.now();
     if (run.dryRun) {
-      await this.owned(run.id, { status: "DRY_RUN_DONE", finishedAt: now, currentStep: null, pauseRequested: false });
+      if (!(await this.setStatus(run, "DRY_RUN_DONE", { finishedAt: now, currentStep: null, pauseRequested: false }))) return { kind: "advance" };
       await this.emit(run.id, { level: "info", code: "run.dry-run-done" });
       await this.settled(run.id);
       await this.release(run.id);
       return { kind: "idle" };
     }
-    await this.owned(run.id, { status: "COMPLETED", finishedAt: now, currentStep: null, activeKey: null, failureStep: null, failureCode: null });
+    if (!(await this.setStatus(run, "COMPLETED", { finishedAt: now, currentStep: null, activeKey: null, failureStep: null, failureCode: null }))) return { kind: "advance" };
     await this.emit(run.id, { level: "info", code: "run.completed" });
     await this.sink.notify(run.teamId, { runId: run.id, kind: "completed", mode: run.mode as RunMode, stepKey: null, code: "run.completed" }).catch(() => undefined);
     await this.sink.audit({ actor: run.actorId, action: "migration.run.complete", target: run.id, meta: { mode: run.mode, topology: run.topology } }).catch(() => undefined);
@@ -735,9 +735,15 @@ export class RunEngineService implements OnModuleDestroy {
 
   // ───────────────────────────── helpers ─────────────────────────────
 
-  private async setStatus(run: RunRow, status: RunStatus, extra: Parameters<RunStore["updateRun"]>[2]): Promise<void> {
-    await this.owned(run.id, { status, ...extra });
-    run.status = status;
+  /**
+   * The engine's own run-status write: a compare-and-set on the driving statuses. An abort, reverse or pause issued by a
+   * service command moves the status under the driver (the loop's `run` is only a snapshot), and an unguarded write
+   * here would silently undo it. `false` means one of those won: the caller stops, and the loop re-reads the run.
+   */
+  private async setStatus(run: RunRow, status: RunStatus, extra: Parameters<RunStore["updateRun"]>[2]): Promise<boolean> {
+    const ok = await this.store.updateRun(run.id, { bootId: this.bootId, statusIn: DRIVING_STATUSES }, { status, ...extra });
+    if (ok) run.status = status;
+    return ok;
   }
 
   private async owned(runId: string, patch: Parameters<RunStore["updateRun"]>[2]): Promise<void> {

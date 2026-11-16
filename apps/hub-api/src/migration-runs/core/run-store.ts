@@ -89,6 +89,10 @@ export interface StepPatch {
 export interface RunGuard {
   /** Owned write: `ownerId` must equal this boot id (else RunLeaseLostError). */
   bootId?: string;
+  /**
+   * The run must be in one of these statuses. Combined with `bootId`, a status miss on a run whose lease is still ours is a
+   * plain `false` (a service command such as abort changed the status under the driver), never RunLeaseLostError.
+   */
   statusIn?: readonly RunStatus[];
   /** `true`: ponrAt must be null; `false`: must be set. */
   ponrUnset?: boolean;

@@ -43,6 +43,18 @@ describe("PrismaRunStore", () => {
     expect(run.updateMany.mock.calls[2][0].where).toEqual({ id: "r1", status: { in: ["PAUSED"] }, ponrAt: null });
   });
 
+  it("an owned write with a statusIn guard: a status miss on a lease that is still ours is false, a lost lease still raises", async () => {
+    const { store, run } = fake();
+    run.updateMany.mockResolvedValueOnce({ count: 0 });
+    run.count.mockResolvedValueOnce(1); // ownerId still matches: an abort moved the status
+    await expect(store.updateRun("r1", { bootId: "b1", statusIn: ["RUNNING", "WAITING"] }, { status: "PAUSED" })).resolves.toBe(false);
+    expect(run.updateMany.mock.calls[0][0].where).toEqual({ id: "r1", ownerId: "b1", status: { in: ["RUNNING", "WAITING"] } });
+    expect(run.count.mock.calls[0][0].where).toEqual({ id: "r1", ownerId: "b1" });
+    run.updateMany.mockResolvedValueOnce({ count: 0 });
+    run.count.mockResolvedValueOnce(0); // another boot owns it
+    await expect(store.updateRun("r1", { bootId: "b1", statusIn: ["RUNNING", "WAITING"] }, { status: "PAUSED" })).rejects.toBeInstanceOf(RunLeaseLostError);
+  });
+
   it("guards: ponrUnset=false means set, orphanOf selects unowned/foreign runs, activeKey clash maps to ServerHasLiveRunError", async () => {
     const { store, run } = fake();
     run.updateMany.mockResolvedValue({ count: 1 });

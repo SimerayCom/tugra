@@ -1,6 +1,6 @@
 import { Logger } from "@nestjs/common";
 import { ACTOR, RunWorld, SERVER, type StubScript } from "./testing/run-world";
-import { makeGate, type StepKey } from "./run-contract";
+import { makeGate, type ActResult, type StepKey } from "./run-contract";
 import type { ApprovalBinding } from "./dto";
 
 // the specs drive a whole run through the engine on a fake clock; give a loaded CI machine room
@@ -488,6 +488,65 @@ describe("RunEngine: the point of no return", () => {
     expect(w.status(id)).toBe("ABORTED");
     expect(flips(w)).toEqual([]);
     expect(w.store.row(id).ponrAt).toBeNull();
+  });
+
+  describe("an abort landing while a tick is in flight is never overwritten by the engine's own status write", () => {
+    // the abort arrives inside the handler (after the loop's snapshot of the run, before the engine's next write)
+    const racing = (result: (w: RunWorld) => ActResult) => {
+      let fired = false;
+      const w: RunWorld = new RunWorld({
+        stubs: {
+          DNS_PREPARE: {
+            act: async (world, ctx) => {
+              if (!fired) {
+                fired = true;
+                await world.service.abort(ACTOR, ctx.run.id, { confirmName: ctx.run.id });
+              }
+              return result(world);
+            },
+          },
+        },
+      });
+      return w;
+    };
+
+    it("a handler that parks after the abort landed: the run still ends ABORTED and compensates", async () => {
+      const w = racing(() => ({ outcome: "wait", wait: { kind: "operator", code: "step.gate-blocked" } }));
+      const id = await w.run();
+      await w.settle(id);
+      expect(w.status(id)).toBe("ABORTED");
+      expect(w.store.row(id).activeKey).toBeNull();
+    });
+
+    it("a handler that fails after the abort landed: the run still ends ABORTED (not FAILED)", async () => {
+      const w = racing(() => ({ outcome: "fail", code: "step.internal-error", retryable: true }));
+      const id = await w.run();
+      await w.settle(id);
+      expect(w.status(id)).toBe("ABORTED");
+      expect(w.store.codes(id)).not.toContain("run.failed");
+    });
+
+    it("a pause request that an abort cleared is not written over ABORTING", async () => {
+      const w = new RunWorld({ stubs: { DNS_PREPARE: { blocked: (x) => !x.done.has("go") } } });
+      const id = await w.run();
+      // the loop read the run with pauseRequested set; the abort clears it and sets ABORTING before the PAUSED write
+      await w.store.updateRun(id, {}, { pauseRequested: true });
+      const orig = w.store.get.bind(w.store);
+      let raced = false;
+      w.store.get = async (rid: string) => {
+        const r = await orig(rid);
+        if (r && !raced && r.pauseRequested) {
+          raced = true;
+          const snapshot = { ...r };
+          await w.service.abort(ACTOR, rid, { confirmName: rid });
+          return snapshot;
+        }
+        return r;
+      };
+      await w.settle(id);
+      expect(w.status(id)).toBe("ABORTED");
+      expect(w.store.row(id).abortRequested).toBe(false);
+    });
   });
 
   it("markPonr loses to an abort that is already requested, and is idempotent once set", async () => {

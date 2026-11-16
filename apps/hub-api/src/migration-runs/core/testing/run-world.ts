@@ -243,14 +243,15 @@ export class InMemoryRunStore implements RunStore {
   async updateRun(id: string, guard: RunGuard, patch: RunPatch): Promise<boolean> {
     this.owned(guard.bootId);
     const r = this.runs.get(id);
+    const leaseOk = !!r && (!guard.bootId || r.ownerId === guard.bootId);
     const ok =
       !!r &&
-      (!guard.bootId || r.ownerId === guard.bootId) &&
+      leaseOk &&
       (!guard.statusIn || guard.statusIn.includes(r.status as RunStatus)) &&
       (guard.ponrUnset === undefined || (guard.ponrUnset ? r.ponrAt === null : r.ponrAt !== null)) &&
       (!guard.orphanOf || r.ownerId === null || r.ownerId !== guard.orphanOf);
     if (!ok) {
-      if (guard.bootId) throw new RunLeaseLostError(id);
+      if (guard.bootId && !(leaseOk && guard.statusIn)) throw new RunLeaseLostError(id);
       return false;
     }
     if (patch.activeKey && [...this.runs.values()].some((x) => x.id !== id && x.activeKey === patch.activeKey)) throw new ServerHasLiveRunError();
