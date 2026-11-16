@@ -14,8 +14,10 @@ import (
 	"time"
 )
 
-// The member buffers must never double: incompressible data is the worst case for a gzip member (it is stored, so the
-// member is as large as the slice) and a bytes.Buffer that grows by doubling would hold ~2x the slice per buffer.
+// The member buffer is allocated ONCE at the incompressible worst case (memberBound). Without the pre-size a bytes.Buffer
+// fills by repeated append-growth: a 128 MiB member measured ~1.1x (a ~144 MiB capacity), an 8 MiB one 9 MiB, with the old
+// and the new backing arrays alive together during every growth step. So the strict check is not "never doubles" (it never
+// did) but "one allocation": the capacity after the FIRST compress into an empty buffer is the bound plus page-size rounding.
 func TestCompressPreSizesTheMemberBuffer(t *testing.T) {
 	raw := streamBytes(8 << 20) // incompressible
 	var out bytes.Buffer
@@ -30,8 +32,12 @@ func TestCompressPreSizesTheMemberBuffer(t *testing.T) {
 		t.Errorf("memberBound %d is below the real member size %d", memberBound(len(raw)), out.Len())
 	}
 	first := out.Cap()
-	if first > memberBound(len(raw))+(1<<20) { // size-class rounding only, never a doubling
-		t.Errorf("member capacity %d is far above the bound %d (the buffer grew by doubling)", first, memberBound(len(raw)))
+	if first < memberBound(len(raw)) {
+		t.Errorf("member capacity %d is below the bound %d: the buffer was not pre-sized", first, memberBound(len(raw)))
+	}
+	// 64 KiB of allocator rounding, nothing more: without the Grow call the capacity is ~1.1x the member (9 MiB for 8 MiB)
+	if first > memberBound(len(raw))+(64<<10) {
+		t.Errorf("member capacity %d is more than allocator rounding above the bound %d: the buffer grew by append instead of one pre-sized allocation", first, memberBound(len(raw)))
 	}
 	// reuse: a second slice of the same size must not reallocate
 	ptr := &out.Bytes()[0]
@@ -52,6 +58,25 @@ func TestCompressPreSizesTheMemberBuffer(t *testing.T) {
 	back, err := io.ReadAll(zr)
 	if err != nil || !bytes.Equal(back, raw) {
 		t.Errorf("round trip: %v", err)
+	}
+}
+
+// The same single-allocation property at the size that matters, with a buffer that starts at the size of an EARLIER, smaller
+// slice (the last slice of a volume is short, a resumed run starts with whatever was left): growing to the bound must be one
+// step, never a ladder of appends.
+func TestCompressGrowsALargerSliceInOneStep(t *testing.T) {
+	var out bytes.Buffer
+	mw := newMemberWriter()
+	small := streamBytes(1 << 20)
+	if _, err := mw.compress(small, &out); err != nil {
+		t.Fatal(err)
+	}
+	big := streamBytes(16 << 20)
+	if _, err := mw.compress(big, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Cap() > memberBound(len(big))+(64<<10) {
+		t.Errorf("capacity %d after a 16 MiB slice is above the one-step bound %d", out.Cap(), memberBound(len(big)))
 	}
 }
 
@@ -107,9 +132,11 @@ func TestStreamVolumeInstallsTheMemoryLimit(t *testing.T) {
 	}
 }
 
-// Incompressible slices are the worst case: every member is as large as its slice. With pre-sized, reused buffers the
-// live set is one raw slice, and two members (the fake hub streams the body into a hash and keeps no copy): ~3 slices, never the ~5 a
-// doubling bytes.Buffer reaches.
+// An end-to-end guard on the live heap for incompressible slices (every member as large as its slice): one raw slice and two
+// members, ~3 slices. It is deliberately NOT the strict test of the pre-sizing: measured, the heap peaks at ~50 MiB with it and
+// ~54 MiB without it for 16 MiB slices, a gap smaller than GC timing noise, so the limit leaves 8 MiB of headroom (56 MiB) and
+// catches gross regressions (a second copy of a slice, buffers that are not reused: +16 MiB each). The strict checks are
+// TestCompressPreSizesTheMemberBuffer and TestCompressGrowsALargerSliceInOneStep; L7 is the proof at the real 128 MiB size.
 func TestStreamVolumeMemoryBoundedForIncompressibleSlices(t *testing.T) {
 	noSleep(t)
 	const part = 16 << 20
@@ -145,8 +172,8 @@ func TestStreamVolumeMemoryBoundedForIncompressibleSlices(t *testing.T) {
 		t.Fatalf("%+v %v", res, err)
 	}
 	growth := int64(peak) - int64(base.HeapAlloc)
-	if limit := int64(3*part + 4<<20); growth > limit {
-		t.Errorf("heap grew by %d MiB (limit %d MiB): member buffers must be pre-sized and reused", growth>>20, limit>>20)
+	if limit := int64(3*part + 8<<20); growth > limit {
+		t.Errorf("heap grew by %d MiB (limit %d MiB): a slice copy or an unreused member buffer is the likely cause", growth>>20, limit>>20)
 	}
 	t.Logf("peak growth %d MiB for %d MiB slices", growth>>20, part>>20)
 }
