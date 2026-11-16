@@ -21,12 +21,17 @@ describe("OS release", () => {
     expect(newer("Ubuntu 22.04")).toBe(false);
     expect(newer("Debian 13")).toBe(true);
     expect(newer("Debian 12")).toBe(false);
+    // the agent reports Debian as its point release: every 12.x is the tested release
+    expect(newer("debian 12.9")).toBe(false);
+    expect(isNewerThanTested(parseOsRelease("debian", "12.9"))).toBe(false);
+    expect(newer("Debian 13.1")).toBe(true);
     expect(isNewerThanTested(null)).toBe(false);
   });
 
   it("labels are built from the parsed numbers, never from the source's own text", () => {
     expect(osLabel({ distro: "ubuntu", major: 26, minor: 4 })).toBe("ubuntu 26.04");
     expect(osLabel({ distro: "debian", major: 13, minor: 0 })).toBe("debian 13");
+    expect(osLabel({ distro: "debian", major: 13, minor: 1 })).toBe("debian 13");
     expect(testedOsLabel()).toBe("ubuntu 24.04, debian 12");
   });
 });

@@ -44,15 +44,23 @@ export function parseOsRelease(os: string | null | undefined, version?: string |
   return { distro, major: Number(rel[1]), minor: rel[2] === undefined ? 0 : Number(rel[2]) };
 }
 
+/**
+ * Only Ubuntu's minor number names a release (24.04 is not 24.10). Debian's does not: the agent reports Debian as its point
+ * release (`12.9`), and every 12.x is the same tested release, so Debian is judged by its major alone.
+ */
+const MINOR_NAMES_RELEASE: ReadonlySet<string> = new Set(["ubuntu"]);
+
 /** A release newer than the newest one tested for its distribution. */
 export function isNewerThanTested(r: OsRelease | null): boolean {
   if (!r) return false;
   const max = OS_TESTED_MAX[r.distro];
-  return !!max && (r.major > max[0] || (r.major === max[0] && r.minor > max[1]));
+  if (!max) return false;
+  if (r.major !== max[0]) return r.major > max[0];
+  return MINOR_NAMES_RELEASE.has(r.distro) && r.minor > max[1];
 }
 
 /** The label a check shows for a release (`ubuntu 26.04`). Built from the parsed numbers, never from the source's own text. */
-export const osLabel = (r: OsRelease): string => (r.distro === "ubuntu" || r.minor > 0 ? `${r.distro} ${r.major}.${String(r.minor).padStart(2, "0")}` : `${r.distro} ${r.major}`);
+export const osLabel = (r: OsRelease): string => (MINOR_NAMES_RELEASE.has(r.distro) ? `${r.distro} ${r.major}.${String(r.minor).padStart(2, "0")}` : `${r.distro} ${r.major}`);
 
 /** The newest tested releases as one label (`ubuntu 24.04, debian 12`), for the check that flags a newer one. */
 export const testedOsLabel = (): string =>
