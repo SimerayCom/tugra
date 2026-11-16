@@ -1,0 +1,306 @@
+name: Migration lab (vx)
+
+# The Tier A migration lab (L0-L8): the REAL Go migrator against a REAL hub, a REAL target agent and the REAL alpine
+# busybox apply extractor, all on one docker host (the runner). No fixture fakes the data plane:
+#   migrator -> HTTP -> hub relay -> signed WS command -> agent curl -> /etc/tugra/app-moves -> alpine apply
+# A local registry:2 holds the agent image so the REAL installer line (`curl .../install/migrator.sh | sh -s -- --image ...`)
+# runs. Harness and scenario scripts: scripts/lab/. Runbook and the Tier B (two real hosts) plan: docs/runbooks/migration-lab.md.
+#
+# Not part of CI on every push: it moves gigabytes through docker. Nightly, and on demand from the Actions tab
+# (items: all, or a comma list of tar, core, restart, postgres, memory, seats, throttle).
+
+on:
+  workflow_dispatch:
+    inputs:
+      items:
+        description: "all, or a comma list of: tar (L4), core (L0 L1a L1b), restart (L2), postgres (L6), memory (L7), seats (L8), throttle (L3 mechanics)"
+        required: false
+        default: all
+        type: string
+  schedule:
+    - cron: "17 2 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vx-lab-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  tar:
+    name: L4 tar fidelity (busybox apply)
+    if: github.event_name != 'workflow_dispatch' || inputs.items == 'all' || contains(inputs.items, 'tar')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lab state directory
+        run: echo "LAB_DIR=$RUNNER_TEMP/tugra-lab" >> "$GITHUB_ENV"
+      - name: L4 - the migrator tar stream into the pinned alpine busybox tar
+        run: scripts/lab/vx-tar-fidelity.sh
+      - name: Collect logs
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/lab-logs"
+          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/l7.summary "$LAB_DIR"/l8.summary "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
+          docker ps -a --format '{{.Names}} {{.Status}}' > "$RUNNER_TEMP/lab-logs/docker-ps.txt" 2>/dev/null || true
+          docker logs lab-agent > "$RUNNER_TEMP/lab-logs/lab-agent.log" 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vx-lab-tar
+          path: ${{ runner.temp }}/lab-logs
+          if-no-files-found: ignore
+          retention-days: 14
+
+  core:
+    name: L0 dry-run, L1a stream, L1b interrupt and resume
+    if: github.event_name != 'workflow_dispatch' || inputs.items == 'all' || contains(inputs.items, 'core')
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lab state directory
+        run: echo "LAB_DIR=$RUNNER_TEMP/tugra-lab" >> "$GITHUB_ENV"
+      - name: Free disk space (the lab keeps source, staged parts and destination copies of a volume)
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet /opt/hostedtoolcache/CodeQL
+          df -h /
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Bring the lab up (registry, agent image, hub, target agent)
+        run: scripts/lab/up.sh
+      - name: L0 dry-run inventory and disk check
+        run: scripts/lab/l0-dry-run.sh
+      - name: L1a stream a 2 GiB volume end to end
+        run: scripts/lab/l1a-stream.sh
+      - name: L1b kill -9, SIGTERM, divergence
+        run: scripts/lab/l1b-resume.sh
+      - name: Collect logs
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/lab-logs"
+          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/l7.summary "$LAB_DIR"/l8.summary "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
+          docker ps -a --format '{{.Names}} {{.Status}}' > "$RUNNER_TEMP/lab-logs/docker-ps.txt" 2>/dev/null || true
+          docker logs lab-agent > "$RUNNER_TEMP/lab-logs/lab-agent.log" 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vx-lab-core
+          path: ${{ runner.temp }}/lab-logs
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Tear down
+        if: always()
+        run: scripts/lab/down.sh
+
+  restart:
+    name: L2 hub restart mid-part and mid-apply
+    if: github.event_name != 'workflow_dispatch' || inputs.items == 'all' || contains(inputs.items, 'restart')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lab state directory
+        run: echo "LAB_DIR=$RUNNER_TEMP/tugra-lab" >> "$GITHUB_ENV"
+      - name: Free disk space (the lab keeps source, staged parts and destination copies of a volume)
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet /opt/hostedtoolcache/CodeQL
+          df -h /
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Bring the lab up (registry, agent image, hub, target agent)
+        run: scripts/lab/up.sh
+      - name: L2 hub killed mid-part and mid-apply
+        run: scripts/lab/l2-hub-restart.sh
+      - name: Collect logs
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/lab-logs"
+          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/l7.summary "$LAB_DIR"/l8.summary "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
+          docker ps -a --format '{{.Names}} {{.Status}}' > "$RUNNER_TEMP/lab-logs/docker-ps.txt" 2>/dev/null || true
+          docker logs lab-agent > "$RUNNER_TEMP/lab-logs/lab-agent.log" 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vx-lab-restart
+          path: ${{ runner.temp }}/lab-logs
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Tear down
+        if: always()
+        run: scripts/lab/down.sh
+
+  postgres:
+    name: L6 PostgreSQL ${{ matrix.image }}
+    if: github.event_name != 'workflow_dispatch' || inputs.items == 'all' || contains(inputs.items, 'postgres')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - postgres:16-alpine
+          - pgvector/pgvector:pg17
+          - postgres:18-alpine
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lab state directory
+        run: echo "LAB_DIR=$RUNNER_TEMP/tugra-lab" >> "$GITHUB_ENV"
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Bring the lab up (registry, agent image, hub, target agent)
+        run: scripts/lab/up.sh
+      - name: L6 physical-copy gate and copy
+        env:
+          L6_IMAGE: ${{ matrix.image }}
+        run: scripts/lab/l6-postgres.sh
+      - name: Collect logs
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/lab-logs"
+          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/l7.summary "$LAB_DIR"/l8.summary "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
+          docker ps -a --format '{{.Names}} {{.Status}}' > "$RUNNER_TEMP/lab-logs/docker-ps.txt" 2>/dev/null || true
+          docker logs lab-agent > "$RUNNER_TEMP/lab-logs/lab-agent.log" 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vx-lab-postgres-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/lab-logs
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Tear down
+        if: always()
+        run: scripts/lab/down.sh
+
+  memory:
+    name: L7 migrator memory under the 768 MiB cap
+    if: github.event_name != 'workflow_dispatch' || inputs.items == 'all' || contains(inputs.items, 'memory')
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lab state directory
+        run: echo "LAB_DIR=$RUNNER_TEMP/tugra-lab" >> "$GITHUB_ENV"
+      - name: Free disk space (the lab keeps source, staged parts and destination copies of a volume)
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet /opt/hostedtoolcache/CodeQL
+          df -h /
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Bring the lab up (registry, agent image, hub, target agent)
+        run: scripts/lab/up.sh
+      - name: L7 incompressible and zero volumes under --memory=768m
+        run: scripts/lab/l7-memory.sh
+      - name: Collect logs
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/lab-logs"
+          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/l7.summary "$LAB_DIR"/l8.summary "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
+          docker ps -a --format '{{.Names}} {{.Status}}' > "$RUNNER_TEMP/lab-logs/docker-ps.txt" 2>/dev/null || true
+          docker logs lab-agent > "$RUNNER_TEMP/lab-logs/lab-agent.log" 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vx-lab-memory
+          path: ${{ runner.temp }}/lab-logs
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Tear down
+        if: always()
+        run: scripts/lab/down.sh
+
+  seats:
+    name: L8 relay seats vs a concurrent app move
+    if: github.event_name != 'workflow_dispatch' || inputs.items == 'all' || contains(inputs.items, 'seats')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lab state directory
+        run: echo "LAB_DIR=$RUNNER_TEMP/tugra-lab" >> "$GITHUB_ENV"
+      - name: Free disk space (the lab keeps source, staged parts and destination copies of a volume)
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet /opt/hostedtoolcache/CodeQL
+          df -h /
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Bring the lab up (registry, agent image, hub, target agent)
+        run: scripts/lab/up.sh
+      - name: L8 two migrations and an app move with one seat per pool
+        run: scripts/lab/l8-relay-seats.sh
+      - name: Collect logs
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/lab-logs"
+          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/l7.summary "$LAB_DIR"/l8.summary "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
+          docker ps -a --format '{{.Names}} {{.Status}}' > "$RUNNER_TEMP/lab-logs/docker-ps.txt" 2>/dev/null || true
+          docker logs lab-agent > "$RUNNER_TEMP/lab-logs/lab-agent.log" 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vx-lab-seats
+          path: ${{ runner.temp }}/lab-logs
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Tear down
+        if: always()
+        run: scripts/lab/down.sh
+
+  throttle:
+    name: L3 throttled link (mechanics)
+    if: github.event_name != 'workflow_dispatch' || inputs.items == 'all' || contains(inputs.items, 'throttle')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lab state directory
+        run: echo "LAB_DIR=$RUNNER_TEMP/tugra-lab" >> "$GITHUB_ENV"
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Bring the lab up (registry, agent image, hub, target agent)
+        run: scripts/lab/up.sh
+      - name: L3 speedtest at 100, 25 and 10 MB/s and the 0.25 MB/s boundary
+        run: scripts/lab/l3-throttle.sh
+      - name: Collect logs
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/lab-logs"
+          cp -f "$LAB_DIR"/*.log "$LAB_DIR"/run.*.json "$LAB_DIR"/*.diff "$LAB_DIR"/l7.summary "$LAB_DIR"/l8.summary "$RUNNER_TEMP/lab-logs/" 2>/dev/null || true
+          docker ps -a --format '{{.Names}} {{.Status}}' > "$RUNNER_TEMP/lab-logs/docker-ps.txt" 2>/dev/null || true
+          docker logs lab-agent > "$RUNNER_TEMP/lab-logs/lab-agent.log" 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vx-lab-throttle
+          path: ${{ runner.temp }}/lab-logs
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Tear down
+        if: always()
+        run: scripts/lab/down.sh
