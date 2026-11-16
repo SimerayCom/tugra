@@ -49,8 +49,11 @@ Pick what matches how you would actually use it. Each item takes a couple of min
 - Published hub/web images are **amd64**; an arm64 host builds from source (several minutes, ~2 GB RAM).
 - Point-in-time recovery is **PostgreSQL only**; other engines have scheduled logical dumps + restore-verify.
 - Volume backups are **file-level copies**, not consistent snapshots — stop the app first for a database volume.
-- Swarm (clustered) deploys that are *queued* when the hub restarts are cancelled, not resumed (single-server
-  ones resume).
+- A hub restart no longer drops swarm (clustered) deploys: queued ones and ones still building are re-queued and run
+  when the cluster's manager is reachable, and a rollout already handed to the manager is re-adopted from its agent's
+  command journal (never re-sent). Needs an agent that keeps the command journal; a swarm manager on an older agent
+  still fails an in-flight deploy as "interrupted". A manual swarm *rollback* that is mid-run during a restart is
+  still marked interrupted (re-run it).
 - "Sign in with GitHub" works only behind the single-origin HTTPS proxy setup (`--domain`), not on the raw
   two-port install.
 - The in-app updater updates the hub and web (and now the local agent); a release that changes the compose file

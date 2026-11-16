@@ -6258,6 +6258,192 @@ describe("ApplicationsService — durable dispatch + hub-crash adoption (ACTION-
     await expect(make(prisma, access, agentWs).cancelDeployment("u1", "app1", "d1")).rejects.toBeInstanceOf(ConflictException);
   });
 
+  describe("swarm deploys survive a hub restart", () => {
+    type SwarmOpts = { durable?: { prepare: () => Promise<void>; beforeDispatch: (i: { managerId: string; reqId: string; timeoutMs: number; buildLog: string }) => Promise<void> } };
+    const sd = (svc: ApplicationsService) => (svc as unknown as { swarmDeploy: { deploy: jest.Mock; liveManager?: jest.Mock } }).swarmDeploy;
+    const phaseWrites = (updateMany: jest.Mock) => updateMany.mock.calls.map((c) => c[0]).filter((a) => a.data?.phase === "PREPARING" || a.data?.phase === "DISPATCHED");
+    const swarmApp = { clusterId: "c1", source: "IMAGE" };
+
+    it("passes durable hooks: prepare CAS-stamps CLAIMED->PREPARING (our lease only), beforeDispatch CAS-stamps DISPATCHED + the manager + a swarm plan; the live result then settles as before", async () => {
+      const d = deps({ ...swarmApp, status: "RUNNING" });
+      const svc = make(d.prisma, d.access, { sendCommand: jest.fn(), agentSupports: jest.fn().mockReturnValue(true) });
+      sd(svc).deploy.mockImplementation(async (_a: unknown, _s: unknown, _id: string, opts: SwarmOpts) => {
+        await opts.durable!.prepare();
+        await opts.durable!.beforeDispatch({ managerId: "mgr1", reqId: "dep-d1", timeoutMs: 120_000, buildLog: "TUGRA_COMMIT=abc1234\nbuilt" });
+        return { exitCode: 0, output: "TUGRA_SVC_DIGEST=ghcr.io/o/a@sha256:dd", digest: "ghcr.io/o/a@sha256:dd", registryRef: null };
+      });
+      await svc.deploy("u1", "app1");
+      const [prep, disp] = phaseWrites(d.updateMany);
+      expect(prep.where).toEqual({ id: "d1", status: "RUNNING", ownerId: TEST_BOOT_ID, phase: "CLAIMED" });
+      expect(prep.data).toEqual({ phase: "PREPARING" });
+      expect(disp.where).toEqual({ id: "d1", status: "RUNNING", ownerId: TEST_BOOT_ID });
+      expect(disp.data).toMatchObject({ phase: "DISPATCHED", agentReqId: "dep-d1", agentServerId: "mgr1", deadlineAt: expect.any(Date) });
+      expect(disp.data.deadlineAt.getTime()).toBeGreaterThan(Date.now() + 120_000); // swarm timeout + slack
+      expect(disp.data.dispatchPlan).toMatchObject({ v: 1, swarm: true, rolling: false, recreate: false, isCompose: false, runTag: null, wasRunning: true, buildLogHead: expect.stringContaining("TUGRA_COMMIT=abc1234") });
+      expect(d.depUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "SUCCESS", exitCode: 0 }) }));
+    });
+
+    it("a lost lease at prepare / at dispatch aborts the deploy (FAILED, nothing sent) instead of running without an owner", async () => {
+      for (const which of ["PREPARING", "DISPATCHED"]) {
+        const d = deps({ ...swarmApp });
+        d.updateMany.mockImplementation(async (args: { data?: { phase?: string } }) => ({ count: args.data?.phase === which ? 0 : 1 }));
+        const svc = make(d.prisma, d.access, { sendCommand: jest.fn(), agentSupports: jest.fn().mockReturnValue(true) });
+        let dispatched = false;
+        sd(svc).deploy.mockImplementation(async (_a: unknown, _s: unknown, _id: string, opts: SwarmOpts) => {
+          await opts.durable!.prepare();
+          await opts.durable!.beforeDispatch({ managerId: "mgr1", reqId: "dep-d1", timeoutMs: 1000, buildLog: "" });
+          dispatched = true;
+          return { exitCode: 0, output: "", digest: null, registryRef: null };
+        });
+        await svc.deploy("u1", "app1");
+        expect(dispatched).toBe(false);
+        expect(d.depUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED", logs: expect.stringContaining("lease lost") }) }));
+      }
+    });
+
+    it("manager socket drops AFTER the journaled dispatch: lease RELEASED for adoption (RECOVERING), no FAILED row, no app status write, adoption hook fired for the MANAGER (not app.serverId)", async () => {
+      const d = deps({ ...swarmApp, status: "RUNNING" });
+      const svc = make(d.prisma, d.access, { sendCommand: jest.fn(), agentSupports: jest.fn().mockReturnValue(true) });
+      sd(svc).deploy.mockImplementation(async (_a: unknown, _s: unknown, _id: string, opts: SwarmOpts) => {
+        await opts.durable!.prepare();
+        await opts.durable!.beforeDispatch({ managerId: "mgr1", reqId: "dep-d1", timeoutMs: 1000, buildLog: "" });
+        throw new Disconnected();
+      });
+      const hook = jest.fn();
+      svc.setLeaseReleasedHook(hook);
+      await svc.deploy("u1", "app1");
+      expect(d.updateMany).toHaveBeenCalledWith({ where: { id: "d1", status: "RUNNING", ownerId: TEST_BOOT_ID }, data: { ownerId: null, phase: "RECOVERING" } });
+      expect(d.depUpdate.mock.calls.map((c) => c[0].data?.status).filter(Boolean)).toEqual([]);
+      expect(d.appUpdate).not.toHaveBeenCalled();
+      expect(hook).toHaveBeenCalledWith("mgr1");
+    });
+
+    it("a drop BEFORE dispatch (still building) is an ordinary failure — nothing was journaled, so it is FAILED like any in-process error (a hub RESTART there re-queues instead; see reconcile)", async () => {
+      const d = deps({ ...swarmApp, status: "RUNNING" });
+      const svc = make(d.prisma, d.access, { sendCommand: jest.fn(), agentSupports: jest.fn().mockReturnValue(true) });
+      sd(svc).deploy.mockImplementation(async (_a: unknown, _s: unknown, _id: string, opts: SwarmOpts) => {
+        await opts.durable!.prepare();
+        throw new Disconnected();
+      });
+      await svc.deploy("u1", "app1");
+      expect(d.depUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED" }) }));
+    });
+
+    it("finalizeAdopted (swarm plan): exit 0 -> SUCCESS with the SERVICE digest, no local image tag, registry ref kept, app RUNNING, NO prune/cleanup/post-deploy command to any server", async () => {
+      const f = fxSwarm();
+      await f.svc.finalizeAdopted(swarmRow(), { exitCode: 0, output: "TUGRA_SVC_DIGEST=ghcr.io/o/a@sha256:dd\nconverged", killed: false });
+      expect(f.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "d1", status: "RUNNING", ownerId: TEST_BOOT_ID }, data: expect.objectContaining({ status: "SUCCESS", kind: "DEPLOY", exitCode: 0, imageTag: null, registryImage: "ghcr.io/o/tugra_app1:d1", imageDigest: "ghcr.io/o/a@sha256:dd", commitSha: "abc1234", ownerId: null, phase: null }) }));
+      expect(f.appUpdate).toHaveBeenCalledWith({ where: { id: "app1" }, data: { status: "RUNNING" } });
+      expect(f.sendCommand).not.toHaveBeenCalled();
+    });
+
+    it("finalizeAdopted (swarm plan): exit 3 = Swarm's own auto-rollback -> FAILED + AUTO_ROLLBACK with the app still RUNNING (rollback state not lost); other codes -> FAILED, app FAILED; never a local image reap", async () => {
+      const a = fxSwarm();
+      await a.svc.finalizeAdopted(swarmRow(), { exitCode: 3, output: "rolled back", killed: false });
+      expect(a.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED", kind: "AUTO_ROLLBACK", registryImage: null, imageDigest: null }) }));
+      expect(a.appUpdate).toHaveBeenCalledWith({ where: { id: "app1" }, data: { status: "RUNNING" } });
+      const b = fxSwarm();
+      await b.svc.finalizeAdopted(swarmRow(), { exitCode: 1, output: "boom", killed: false });
+      expect(b.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED", kind: "DEPLOY" }) }));
+      expect(b.appUpdate).toHaveBeenCalledWith({ where: { id: "app1" }, data: { status: "FAILED" } });
+      expect(a.sendCommand).not.toHaveBeenCalled();
+      expect(b.sendCommand).not.toHaveBeenCalled();
+    });
+
+    it("finalizeAdopted is idempotent: a second settle of the same row loses the CAS and writes nothing more", async () => {
+      const f = fxSwarm(0);
+      await f.svc.finalizeAdopted(swarmRow(), { exitCode: 0, output: "", killed: false });
+      expect(f.appUpdate).not.toHaveBeenCalled();
+      expect(f.deployLogs.finish).not.toHaveBeenCalled();
+    });
+
+    it("an adopted/running swarm rollout is NOT cancellable (a kill would report CANCELLED while Swarm keeps rolling): 409, no kill sent, cancellable=false semantics", async () => {
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue({ id: "app1", teamId: "t1" }) },
+        deployment: {
+          updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+          findFirst: jest.fn().mockResolvedValue(swarmRow({ phase: "RECOVERING", ownerId: null })),
+          findUnique: jest.fn().mockResolvedValue(swarmRow({ phase: "RECOVERING", ownerId: null })),
+        },
+      } as unknown as PrismaService;
+      const access = { requirePermission: jest.fn().mockResolvedValue(undefined) } as unknown as TeamAccessService;
+      const agentWs = { cancelCommand: jest.fn().mockReturnValue(true), sendCommand: jest.fn() } as unknown as AgentWsServer;
+      const svc = make(prisma, access, agentWs);
+      await expect(svc.cancelDeployment("u1", "app1", "d1")).rejects.toBeInstanceOf(ConflictException);
+      await expect(svc.cancelMoveDeployment("d1", "move over")).resolves.toBe(false);
+      expect(agentWs.cancelCommand).not.toHaveBeenCalled();
+    });
+
+    describe("redriveQueuedClusteredForServer (re-drive QUEUED swarm deploys when the cluster is reachable again)", () => {
+      function rd(rows: unknown[], opts: { clusterId?: string | null; live?: string | null; online?: (id: string) => boolean } = {}) {
+        const findMany = jest.fn().mockResolvedValue(rows);
+        const prisma = { deployment: { findMany }, server: { findUnique: jest.fn().mockResolvedValue({ clusterId: opts.clusterId === undefined ? "c1" : opts.clusterId }) } } as unknown as PrismaService;
+        const svc = make(prisma, {} as TeamAccessService, { isOnline: jest.fn().mockImplementation(opts.online ?? (() => true)) } as unknown as AgentWsServer);
+        sd(svc).liveManager = jest.fn().mockResolvedValue(opts.live === undefined ? "mgr1" : opts.live);
+        const drain = jest.spyOn(svc as unknown as { drain: (id: string) => Promise<void> }, "drain").mockResolvedValue(undefined);
+        return { svc, findMany, drain, live: sd(svc).liveManager! };
+      }
+
+      it("queries QUEUED rows of clustered apps in the reconnecting server's cluster OR using it as build server; one drain per distinct app", async () => {
+        const r = rd([
+          { appId: "a1", application: { clusterId: "c1", buildServerId: null } },
+          { appId: "a2", application: { clusterId: "c1", buildServerId: null } },
+        ]);
+        await r.svc.redriveQueuedClusteredForServer("m1");
+        expect(r.findMany.mock.calls[0][0].where).toEqual({ status: "QUEUED", application: { clusterId: { not: null }, OR: [{ buildServerId: "m1" }, { clusterId: "c1" }] } });
+        expect(r.findMany.mock.calls[0][0].distinct).toEqual(["appId"]);
+        expect(r.drain).toHaveBeenCalledTimes(2);
+        expect(r.drain).toHaveBeenCalledWith("a1");
+        expect(r.drain).toHaveBeenCalledWith("a2");
+      });
+
+      it("a server outside any cluster still re-drives the apps that use it as their build server", async () => {
+        const r = rd([{ appId: "a1", application: { clusterId: "c1", buildServerId: "b1" } }], { clusterId: null });
+        await r.svc.redriveQueuedClusteredForServer("b1");
+        expect(r.findMany.mock.calls[0][0].where.application.OR).toEqual([{ buildServerId: "b1" }]);
+        expect(r.drain).toHaveBeenCalledWith("a1");
+      });
+
+      it("STRICT GATE: no reachable swarm manager -> the row stays QUEUED (no drain, no spurious 'manager offline' FAILED)", async () => {
+        const r = rd([{ appId: "a1", application: { clusterId: "c1", buildServerId: null } }], { live: null });
+        await r.svc.redriveQueuedClusteredForServer("w1");
+        expect(r.live).toHaveBeenCalledWith("c1");
+        expect(r.drain).not.toHaveBeenCalled();
+      });
+
+      it("STRICT GATE: a separate build server that is offline holds the row QUEUED until it reconnects", async () => {
+        const r = rd([{ appId: "a1", application: { clusterId: "c1", buildServerId: "b1" } }], { online: (id) => id !== "b1" });
+        await r.svc.redriveQueuedClusteredForServer("m1");
+        expect(r.drain).not.toHaveBeenCalled();
+      });
+
+      it("no QUEUED rows -> nothing happens; clustered rows are never the single-server redrive's business", async () => {
+        const r = rd([]);
+        await r.svc.redriveQueuedClusteredForServer("m1");
+        expect(r.drain).not.toHaveBeenCalled();
+      });
+    });
+
+    // ── fixtures ──
+    const swarmPlan = { v: 1, swarm: true, rolling: false, recreate: false, isCompose: false, hadPrev: false, isGitCompose: false, gitSourced: true, runTag: null, registryRef: "ghcr.io/o/tugra_app1:d1", wasRunning: true, postDeploy: false, buildLogHead: "TUGRA_COMMIT=abc1234\nbuilt" };
+    function swarmRow(over: Record<string, unknown> = {}) {
+      return { id: "d1", appId: "app1", status: "RUNNING", kind: "DEPLOY", requestedBy: "u1", startedAt: new Date(Date.now() - 5000), createdAt: new Date(Date.now() - 6000), dispatchPlan: swarmPlan, ownerId: TEST_BOOT_ID, phase: "DISPATCHED", agentReqId: "dep-d1", agentServerId: "mgr1", ...over } as never;
+    }
+    function fxSwarm(count = 1) {
+      const updateMany = jest.fn().mockResolvedValue({ count });
+      const appUpdate = jest.fn().mockResolvedValue({});
+      const prisma = {
+        application: { findUnique: jest.fn().mockResolvedValue({ ...app, clusterId: "c1", source: "GIT" }), update: appUpdate },
+        deployment: { updateMany, count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn().mockResolvedValue(null), findUnique: jest.fn().mockResolvedValue(null) },
+        sharedVariable: { findMany: jest.fn().mockResolvedValue([]) },
+        server: { findUnique: jest.fn().mockResolvedValue(null) },
+      } as unknown as PrismaService;
+      const deployLogs = makeDeployLogs();
+      const sendCommand = jest.fn().mockResolvedValue({ exitCode: 0, output: "" });
+      return { svc: make(prisma, {}, { sendCommand }, deployLogs), updateMany, appUpdate, deployLogs, sendCommand };
+    }
+  });
+
   it("cancel requested + socket drop: the lease is STILL released (the kill may never have reached the agent) — the journal's killed flag decides on adoption", async () => {
     const d = deps({ status: "RUNNING" });
     const ref: { svc?: ApplicationsService } = {};

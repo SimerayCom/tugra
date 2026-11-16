@@ -1,4 +1,4 @@
-import { decideDeployOutcome, isDispatchPlan } from "./deploy-outcome";
+import { decideDeployOutcome, isDispatchPlan, isSwarmDispatch } from "./deploy-outcome";
 
 describe("decideDeployOutcome — the one exit-code contract (live path + adoption)", () => {
   const base = { rolling: false, recreate: false, isCompose: false, hadPrev: false };
@@ -27,5 +27,25 @@ describe("decideDeployOutcome — the one exit-code contract (live path + adopti
     expect(isDispatchPlan(null)).toBe(false);
     expect(isDispatchPlan({ v: 2, rolling: true })).toBe(false);
     expect(isDispatchPlan("x")).toBe(false);
+  });
+});
+
+describe("swarm deploys (plan.swarm) — the live swarm contract, shared with adoption", () => {
+  const swarm = { rolling: false, recreate: false, isCompose: false, hadPrev: false, swarm: true };
+  it("0 converged; 3 = Swarm's native auto-rollback (no hadPrev/rolling/recreate needed — the previous spec is serving); anything else failed", () => {
+    expect(decideDeployOutcome(0, swarm)).toEqual({ ok: true, rolledBack: false });
+    expect(decideDeployOutcome(3, swarm)).toEqual({ ok: false, rolledBack: true });
+    for (const code of [1, 2, 4, 137, -1]) expect(decideDeployOutcome(code, swarm)).toEqual({ ok: false, rolledBack: false });
+  });
+  it("a non-swarm plan with the same flags keeps the classic meaning (exit 3 is a hard failure without a previous image)", () => {
+    expect(decideDeployOutcome(3, { ...swarm, swarm: false })).toEqual({ ok: false, rolledBack: false });
+  });
+  it("isSwarmDispatch is true only for a valid plan flagged swarm", () => {
+    const plan = { v: 1, rolling: false, recreate: false, isCompose: false, hadPrev: false };
+    expect(isSwarmDispatch({ dispatchPlan: { ...plan, swarm: true } })).toBe(true);
+    expect(isSwarmDispatch({ dispatchPlan: plan })).toBe(false);
+    expect(isSwarmDispatch({ dispatchPlan: null })).toBe(false);
+    expect(isSwarmDispatch({ dispatchPlan: { swarm: true } })).toBe(false); // not a valid plan
+    expect(isSwarmDispatch({})).toBe(false);
   });
 });

@@ -31,7 +31,7 @@ function spec(over: Partial<AppSpec> = {}): AppSpec {
   } as AppSpec;
 }
 
-function make(opts: { swarmStatus?: string; swarmManagerId?: string | null; managerStatus?: string; backupManagerId?: string | null; sendImpl?: jest.Mock } = {}) {
+function make(opts: { swarmStatus?: string; swarmManagerId?: string | null; managerStatus?: string; backupManagerId?: string | null; sendImpl?: jest.Mock; journal?: boolean; online?: (id: string) => boolean } = {}) {
   const cluster = { swarmStatus: opts.swarmStatus ?? "ACTIVE", swarmManagerId: opts.swarmManagerId ?? "mgr" };
   const prisma = {
     cluster: { findUnique: jest.fn().mockResolvedValue(cluster) },
@@ -44,7 +44,7 @@ function make(opts: { swarmStatus?: string; swarmManagerId?: string | null; mana
   const send =
     opts.sendImpl ??
     jest.fn(async (_serverId: string, _cmd: string, _cap: string) => ({ exitCode: 0, output: "TUGRA_ROLLOUT: converged\nTUGRA_SVC_DIGEST=ghcr.io/org/app@sha256:dd" }));
-  const agent = { sendCommand: send } as unknown as AgentWsServer;
+  const agent = { sendCommand: send, agentSupports: jest.fn().mockReturnValue(opts.journal ?? false), isOnline: jest.fn().mockImplementation(opts.online ?? (() => true)) } as unknown as AgentWsServer;
   const swarmProxy = { ensure: jest.fn().mockResolvedValue(undefined) } as unknown as import("./swarm-proxy.service").SwarmProxyService;
   return { svc: new SwarmDeployService(prisma, agent, swarmProxy), send, prisma, swarmProxy };
 }
@@ -393,5 +393,93 @@ describe("SwarmDeployService custom container labels (D5)", () => {
     const { svc, send } = make();
     await svc.rollbackTo(app(), spec({ customLabels: { team: "core" } }), "ghcr.io/org/app:0", null);
     expect(send.mock.calls[0][1] as string).toContain("--container-label-add 'team=core'");
+  });
+});
+
+
+describe("SwarmDeployService.liveManager", () => {
+  it("returns the manager only when it resolves AND its agent socket is up (a DB ONLINE status can be stale after a hub restart)", async () => {
+    expect(await make().svc.liveManager("c1")).toBe("mgr");
+    expect(await make({ online: () => false }).svc.liveManager("c1")).toBeNull();
+  });
+  it("never throws: an unformed swarm / offline manager is null", async () => {
+    expect(await make({ swarmStatus: "NONE" }).svc.liveManager("c1")).toBeNull();
+    expect(await make({ managerStatus: "OFFLINE" }).svc.liveManager("c1")).toBeNull();
+  });
+  it("uses a failover manager when the primary is offline", async () => {
+    expect(await make({ managerStatus: "OFFLINE", backupManagerId: "mgr2" }).svc.liveManager("c1")).toBe("mgr2");
+  });
+});
+
+describe("SwarmDeployService.deploy — durable (hub-restart-surviving) mode", () => {
+  function hooks() {
+    const calls: string[] = [];
+    return {
+      calls,
+      durable: {
+        prepare: jest.fn(async () => void calls.push("prepare")),
+        beforeDispatch: jest.fn(async (i: { managerId: string; reqId: string; timeoutMs: number; buildLog: string }) => void calls.push(`dispatch:${i.managerId}:${i.reqId}:${i.buildLog}`)),
+      },
+    };
+  }
+
+  it("journaling manager: prepare runs BEFORE any build/inspect, then the ONE mutating command is sent durable (reqId dep-<id>) with beforeSend persisting the dispatch BEFORE the frame leaves", async () => {
+    const h = hooks();
+    const order = h.calls;
+    const send = jest.fn(async (_id: string, cmd: string, _cap: string, _t: number, _chunk?: unknown, _start?: unknown, opts?: { reqId?: string; durable?: boolean; beforeSend?: (r: string) => Promise<void> }) => {
+      order.push(opts ? "send:durable" : cmd.includes("docker build") ? "send:build" : "send:other");
+      if (opts?.beforeSend) await opts.beforeSend(opts.reqId!);
+      return { exitCode: 0, output: "TUGRA_SVC_DIGEST=ghcr.io/org/app@sha256:dd" };
+    });
+    const { svc } = make({ sendImpl: send as unknown as jest.Mock, journal: true });
+    await svc.deploy(app(), spec(), "dep1", { timeoutMs: 300_000, durable: h.durable });
+    expect(order[0]).toBe("prepare");
+    const sendIdx = order.indexOf("send:durable");
+    expect(order[sendIdx + 1]).toMatch(/^dispatch:mgr:dep-dep1:/); // hook ran inside the send, before the frame
+    const opts = send.mock.calls.at(-1)![6]!;
+    expect(opts).toMatchObject({ reqId: "dep-dep1", durable: true });
+    expect(h.durable.beforeDispatch).toHaveBeenCalledWith(expect.objectContaining({ managerId: "mgr", reqId: "dep-dep1", timeoutMs: expect.any(Number) }));
+    // the hook receives the SAME timeout the command is sent with (deadline computed from it)
+    expect(h.durable.beforeDispatch.mock.calls[0][0].timeoutMs).toBe(send.mock.calls.at(-1)![3]);
+  });
+
+  it("only the final service command is durable — the read-only image inspect (env present) stays a plain command", async () => {
+    const h = hooks();
+    const send = jest.fn(async (_id: string, cmd: string, _cap: string, _t: number, _c?: unknown, _s?: unknown, opts?: { beforeSend?: (r: string) => Promise<void>; reqId?: string }) => {
+      await opts?.beforeSend?.(opts.reqId!);
+      return { exitCode: 0, output: cmd.includes("inspect") ? '{"Entrypoint":["/app"],"Cmd":null}\nTUGRA_HAS_SHELL=1' : "TUGRA_SVC_DIGEST=x@sha256:1" };
+    });
+    const { svc } = make({ sendImpl: send as unknown as jest.Mock, journal: true });
+    await svc.deploy(app(), spec({ env: { A: "1" } }), "dep1", { timeoutMs: 300_000, durable: h.durable });
+    const durableCalls = send.mock.calls.filter((c) => c[6]);
+    expect(durableCalls).toHaveLength(1);
+    expect(h.durable.prepare).toHaveBeenCalledTimes(1);
+    expect(h.durable.beforeDispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it("OLD agent (no cmd_journal_v1): hooks are never called and the legacy 5-argument call shape is unchanged", async () => {
+    const h = hooks();
+    const { svc, send } = make({ journal: false });
+    await svc.deploy(app(), spec(), "dep1", { timeoutMs: 300_000, durable: h.durable });
+    expect(h.durable.prepare).not.toHaveBeenCalled();
+    expect(h.durable.beforeDispatch).not.toHaveBeenCalled();
+    expect(send.mock.calls.at(-1)).toHaveLength(5);
+  });
+
+  it("no hooks supplied (rollback / other callers): the legacy call shape regardless of the agent", async () => {
+    const { svc, send } = make({ journal: true });
+    await svc.deploy(app(), spec(), "dep1", { timeoutMs: 300_000 });
+    expect(send.mock.calls.at(-1)).toHaveLength(5);
+  });
+
+  it("a beforeDispatch failure (lost lease) aborts before the command is sent", async () => {
+    const h = hooks();
+    h.durable.beforeDispatch.mockRejectedValue(new Error("deploy lease lost before dispatch"));
+    const send = jest.fn(async (_id: string, _cmd: string, _cap: string, _t: number, _c?: unknown, _s?: unknown, opts?: { beforeSend?: (r: string) => Promise<void>; reqId?: string }) => {
+      await opts?.beforeSend?.(opts.reqId!); // the gateway awaits this before writing the frame
+      throw new Error("frame must not be written");
+    });
+    const { svc } = make({ sendImpl: send as unknown as jest.Mock, journal: true });
+    await expect(svc.deploy(app(), spec(), "dep1", { timeoutMs: 300_000, durable: h.durable })).rejects.toThrow("lease lost");
   });
 });
