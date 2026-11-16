@@ -36,7 +36,7 @@ run_case() { # <random|zeros>
       if [ -n "$sample" ]; then
         echo "$(date -u +%T) $sample" >>"$LAB_DIR/mem.$kind.log"
         local m; m="$(mem_mib "$sample")"
-        [ "$m" -gt "$peak" ] && peak="$m"
+        if [ "$m" -gt "$peak" ]; then peak="$m"; fi
       fi
     fi
     sleep 1

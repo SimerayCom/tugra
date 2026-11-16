@@ -18,7 +18,7 @@ want=$(( MIB / 128 ))
 lab_check "about $want parts were sent (got $parts)" test "$parts" -ge "$want"
 lab_check "the migrator logged a rate for every part" test "$(grep -c -E '^ *part [0-9]+ ' "$LAB_DIR/run.main.log")" -ge "$want"
 
-read -r state partsDone err <<<"$(lab_transfer)"
+read -r state partsDone err attempt <<<"$(lab_transfer)"
 lab_check "the hub transfer row is DONE (got $state $err)" test "$state" = DONE
 lab_no_leftovers
 lab_source_untouched

@@ -87,7 +87,7 @@ docker run --rm -v "$SRC_VOLUME":/data "$(lab_helper_image)" sh -c 'printf x >> 
 for i in $(seq 1 18); do
   sleep 10
   lab_run div2 --arms all --part-mib 128
-  [ "$(lab_item div2 reason)" != another-run-active ] && break
+  if [ "$(lab_item div2 reason)" != another-run-active ]; then break; fi
 done
 lab_expect_item div2 volume-diverged
 lab_check "a diverged resume sent no part" test "$(grep -c -E '^ *part [0-9]+ ' "$LAB_DIR/run.div2.log" || true)" = 0

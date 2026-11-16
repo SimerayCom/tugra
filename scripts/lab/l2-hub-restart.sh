@@ -50,7 +50,7 @@ rc="$(lab_run_wait applyrun 1800)"
 [ "$rc" = 0 ] || { tail -40 "$LAB_DIR/run.applyrun.log" >&2; lab_die "mid-apply: migrator exit $rc"; }
 lab_expect_item applyrun volume-applied
 lab_wait 120 "the transfer to settle DONE" bash -c "[ \"\$(node $LAB_SELF_DIR/seed.mjs transfer $OP_ID | awk '{print \$1}')\" = DONE ]"
-lab_check "still the first attempt (no second copy)" bash -c "node $LAB_SELF_DIR/seed.mjs transfer $OP_ID | grep -q '^DONE '"
+lab_check "still the first attempt: the recovery settled the apply, it did not start a second copy" bash -c "[ \"\$(node $LAB_SELF_DIR/seed.mjs transfer $OP_ID | awk '{print \$4}')\" = 1 ]"
 lab_no_leftovers
 lab_compare
 lab_pass "L2 hub restart mid-part and mid-apply"

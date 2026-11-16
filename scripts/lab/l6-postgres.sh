@@ -23,16 +23,17 @@ if [ "$MAJOR" -ge 18 ]; then MOUNT=/var/lib/postgresql; else MOUNT=/var/lib/post
 LAYOUT_TEXT="PostgreSQL 18 data layout is not supported by Tugra database volumes yet"
 export SRC_VOLUME=lab-pgsrc
 
-psql_src() { docker exec -u postgres labsrc psql -U postgres -At -c "$1"; }
+psql_src() { docker exec labsrc psql -U tugra -d postgres -At -c "$1"; }
 
 # ---- the source: a real cluster with ~200 MiB of rows --------------------------------------------------------------------
 LAB_SKIP_SOURCE=1 lab_scenario_begin "l6-$MAJOR" --kind db --image "$IMAGE" --version "$MAJOR"
 docker rm -f labsrc >/dev/null 2>&1 || true
 docker volume rm -f "$SRC_VOLUME" >/dev/null 2>&1 || true
-docker run -d --name labsrc -e POSTGRES_PASSWORD=lab -v "$SRC_VOLUME:$MOUNT" "$IMAGE" >/dev/null
-lab_wait 120 "the source postgres to accept connections" docker exec labsrc pg_isready -U postgres
+# the same superuser name the Tugra database container is started with (POSTGRES_USER=tugra), so a copied cluster fits it
+docker run -d --name labsrc -e POSTGRES_USER=tugra -e POSTGRES_PASSWORD=lab -v "$SRC_VOLUME:$MOUNT" "$IMAGE" >/dev/null
+lab_wait 120 "the source postgres to accept connections" docker exec labsrc pg_isready -U tugra
 sleep 3 # the image's init phase restarts the server once; wait for the final one
-lab_wait 60 "the source postgres after its init restart" docker exec labsrc pg_isready -U postgres
+lab_wait 60 "the source postgres after its init restart" docker exec labsrc pg_isready -U tugra
 psql_src "create table lab_t as select g as id, md5(g::text) as m, repeat(md5(g::text), 10) as pad from generate_series(1, $ROWS) g; create index lab_t_m on lab_t (m);" >/dev/null
 SRC_COUNT="$(psql_src 'select count(*) from lab_t')"
 SRC_SIZE="$(psql_src "select pg_total_relation_size('lab_t')")"
@@ -100,8 +101,8 @@ lab_wait 180 "the destination database to be RUNNING" bash -c "[ \"\$(node $LAB_
 CTR="tugra_db_$DB_ID"
 lab_wait 120 "the destination postgres to accept connections" docker exec "$CTR" pg_isready
 lab_check "WAL replay ran on the target (the source was SIGKILLed)" bash -c "docker logs $CTR 2>&1 | grep -qi -E 'not properly shut down|automatic recovery in progress|redo starts'"
-DST_COUNT="$(docker exec -u postgres "$CTR" psql -U postgres -At -c 'select count(*) from lab_t')"
-DST_SIZE="$(docker exec -u postgres "$CTR" psql -U postgres -At -c "select pg_total_relation_size('lab_t')")"
+DST_COUNT="$(docker exec "$CTR" psql -U tugra -d postgres -At -c 'select count(*) from lab_t')"
+DST_SIZE="$(docker exec "$CTR" psql -U tugra -d postgres -At -c "select pg_total_relation_size('lab_t')")"
 lab_log "target: $DST_COUNT rows, $DST_SIZE bytes"
 lab_check "the row count equals the source ($SRC_COUNT)" test "$DST_COUNT" = "$SRC_COUNT"
 lab_check "pg_total_relation_size equals the source ($SRC_SIZE)" test "$DST_SIZE" = "$SRC_SIZE"

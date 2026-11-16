@@ -89,7 +89,7 @@ lab_wait() {
   lab_die "timed out after ${t}s waiting for: $what"
 }
 
-# lab_transfer [op]: the op's volume transfer as one line "STATE PARTS_DONE ERROR" (from the hub database).
+# lab_transfer [op]: the op's volume transfer as one line "STATE PARTS_DONE ERROR ATTEMPT" (from the hub database).
 lab_transfer() { lab_seed transfer "${1:-$OP_ID}"; }
 lab_transfer_state() { lab_transfer "${1:-$OP_ID}" | awk '{print $1}'; }
 

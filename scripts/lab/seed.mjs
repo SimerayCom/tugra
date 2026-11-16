@@ -10,7 +10,7 @@
 //   seed.mjs server-status [id]         ONLINE | OFFLINE | PENDING
 //   seed.mjs op --name N --source REF [--kind app|db] [--image I] [--version V] [--volume data] [--path /var/www/data]
 //               [--server-id ID] [--no-credentials]   an import op + token; prints KEY=VALUE lines
-//   seed.mjs transfer OP_ID             "STATE PARTS_DONE ERROR" of the op's volume transfer(s)
+//   seed.mjs transfer OP_ID             "STATE PARTS_DONE ERROR ATTEMPT" of the op's volume transfer(s)
 //   seed.mjs db-status DB_ID            the Database row's status/image/version (for the L6 gates)
 //   seed.mjs db-set DB_ID STATUS        force the Database row's status (L6: a started destination must be refused)
 //   seed.mjs app --name N [--volume data] [--path P] [--server-id ID]   a plain app (no op), for the L8 app move
@@ -206,8 +206,8 @@ async function main() {
       const opId = argv[0];
       const db = await prisma();
       const rows = await db.migrationVolumeTransfer.findMany({ where: { opId }, orderBy: { createdAt: "asc" } });
-      if (rows.length === 0) console.log("NONE 0 -");
-      for (const t of rows) console.log(`${t.state} ${t.partsDone} ${(t.error || "-").replace(/\s+/g, "_")}`);
+      if (rows.length === 0) console.log("NONE 0 - 0");
+      for (const t of rows) console.log(`${t.state} ${t.partsDone} ${(t.error || "-").replace(/\s+/g, "_")} ${t.attempt}`);
       break;
     }
     case "db-status": {
