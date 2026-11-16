@@ -37,6 +37,24 @@ const states = (rig: Rig) => Object.fromEntries(rig.prisma.cutoverDomain.rows.ma
 const flips = (rig: Rig, spy: jest.SpyInstance) => spy.mock.calls.map((c) => ({ hosts: (c[2] as { hostnames: string[] }).hostnames, autoRevert: (c[2] as { autoRevert: boolean }).autoRevert }));
 const checkOf = (rig: Rig, code: string) => (rig.driver.rec("CUTOVER").gate?.checks ?? []).find((c) => c.code === code);
 
+/**
+ * The rows the web renders for the parked step (OperatorTools): one per attestation id of the CURRENT wait, one per gate check
+ * of that id with its subject (a subject-less row when no check carries the id). The hub accepts only those ids, so a click
+ * that is not in this list is refused; the subject of the attestation is the row's, never invented.
+ */
+const rows = (rig: Rig): Array<{ id: string; subject?: string }> => {
+  const rec = rig.driver.rec("CUTOVER");
+  const attest = rec.wait && rec.wait.kind === "operator" ? (rec.wait.attest ?? []) : [];
+  return attest.flatMap((id) => {
+    const subjects = (rec.gate?.checks ?? []).filter((c) => c.id === id).map((c) => c.subject);
+    return (subjects.length > 0 ? subjects : [undefined]).map((subject) => ({ id, ...(subject ? { subject } : {}) }));
+  });
+};
+const click = (rig: Rig, id: string, subject?: string): void => {
+  expect(rows(rig)).toContainEqual({ id, ...(subject ? { subject } : {}) });
+  rig.driver.attest("CUTOVER", id, subject);
+};
+
 /** A swap-proxy rig whose hosts were derived (TLS_PREISSUE on the dark proxy passed) and whose VERIFY approval is in place. */
 const swapRig = async (o: RigOpts = {}): Promise<Rig> => {
   const rig = makeRig({ apps: [{ id: "a1", host: H(1), hasData: true }, { id: "a2", host: H(2), hasData: true }], zone: zoneFor([H(1), H(2)]), ...o, run: { topology: "swap-proxy", mode: "takeover", ...(o.run ?? {}) } });
@@ -170,7 +188,7 @@ describe("object storage (R34 / R61 / C7)", () => {
 describe("the env names are read sparingly", () => {
   it("the object-store env names are listed once per 30 seconds, not on every tick", async () => {
     const rig = await ready({ apps: [{ id: "a1", host: H(1) }, { id: "a2", host: H(2) }], zone: zoneFor([H(1), H(2)]), policy: "mirror" });
-    const read = jest.spyOn(rig.world, "appObjectKeys");
+    const read = jest.spyOn(rig.world, "appObjectEnv");
     await rig.driver.tick(rig.handlers.cut);
     await rig.driver.tick(rig.handlers.cut);
     expect(read).toHaveBeenCalledTimes(1);
@@ -417,10 +435,27 @@ describe("git webhook repoint after the cutover (R64)", () => {
     const r = await drive(rig);
     expect(r.status).toBe("PASSED");
     const warns = r.gate!.checks.filter((c) => c.code === "cutover.webhook-repoint");
-    expect(warns.map((c) => [c.subject, c.status, (c.params as { kind: string }).kind])).toEqual([["web", "warn", "github-app"], ["api", "warn", "deploy-token"]]);
+    expect(warns.map((c) => [c.subject, c.status])).toEqual([["web", "warn"]]);
+    expect(warns[0].params).toEqual({ repo: "example.test/org/web", autoDeploy: true, url: "https://hub.example.test/webhooks/github/src1" });
+    expect(r.gate!.checks.filter((c) => c.code === "cutover.webhook-repoint-app").map((c) => [c.subject, c.status, c.params])).toEqual([["api", "warn", { repo: "example.test/org/web", autoDeploy: false }]]);
     const ev = rig.driver.events.filter((e) => e.code === "cutover.webhooks-repoint");
     expect(ev).toHaveLength(1);
-    expect(ev[0].params).toEqual({ apps: 2, sources: ["https://hub.example.test/webhooks/github/src1"], repos: ["example.test/org/web"] });
+    expect(ev[0].params).toEqual({ apps: 2, shared: 1, own: 1, sources: ["https://hub.example.test/webhooks/github/src1"], repos: ["example.test/org/web"] });
+  });
+
+  it("apps that all have their own deploy webhook get the per-app guidance and no shared URL", async () => {
+    const rig = await ready({ apps: [{ id: "a1", host: H(1) }, { id: "a2", host: H(2) }], zone: zoneFor([H(1), H(2)]) });
+    rig.world.gitApps = [
+      { appId: "a1", name: "web", kind: "deploy-token", repo: "example.test/org/web", sourceId: null, autoDeploy: true },
+      { appId: "a2", name: "api", kind: "deploy-token", repo: "example.test/org/api", sourceId: null, autoDeploy: false },
+    ];
+    const r = await drive(rig);
+    expect(r.status).toBe("PASSED");
+    expect(rig.driver.events.filter((e) => e.code === "cutover.webhooks-repoint")).toHaveLength(0);
+    const ev = rig.driver.events.filter((e) => e.code === "cutover.webhooks-repoint-apps");
+    expect(ev).toHaveLength(1);
+    expect(ev[0].params).toEqual({ apps: 2, shared: 0, own: 2, repos: ["example.test/org/web", "example.test/org/api"] });
+    expect(JSON.stringify(ev[0].params)).not.toContain("/webhooks/");
   });
 
   it("names no git app that has no verified host (a held host's app is repointed when it moves)", async () => {
@@ -473,6 +508,44 @@ describe("the proxy swap on a shared control plane (C11)", () => {
     expect(kinds(rig).every((k) => ["swap-inspect", "swap-status", "swap-stop-source", "loopback-probe", "swap-reverse", "dark-probe"].includes(k))).toBe(true);
   });
 
+  it("when Coolify wins the ports and Tugra's own start FAILS (port already allocated), the box is still taken back and the step passes", async () => {
+    const rig = await swapRig();
+    rig.host.startFailsOnPortConflict = true;
+    let comes = 1;
+    const start = rig.proxyOps.start.getMockImplementation() as unknown as (...a: unknown[]) => Promise<unknown>;
+    rig.proxyOps.start.mockImplementation((async (...a: unknown[]) => {
+      if (comes-- > 0 && rig.host.coolify) rig.host.coolify.running = true;
+      return start(...a);
+    }) as never);
+    const r = await drive(rig);
+    expect(r.status).toBe("PASSED");
+    expect(r.fail).toBeUndefined();
+    expect(rig.driver.events.filter((e) => e.code === "cutover.swap-source-restop")).toHaveLength(1);
+    expect(rig.proxyOps.start).toHaveBeenCalledTimes(2);
+    expect(rig.host.coolify!.running).toBe(false);
+    expect(kinds(rig)).not.toContain("swap-reverse");
+  });
+
+  it("a start that fails while Coolify's proxy is NOT running is a plain failure with its own code (retryable, no take-back)", async () => {
+    const rig = await swapRig();
+    rig.proxyOps.start.mockImplementation((async () => {
+      throw new Error("docker daemon unavailable");
+    }) as never);
+    const r = await drive(rig);
+    expect(r.fail).toMatchObject({ code: "cutover.swap-start-failed", retryable: true });
+    expect(rig.driver.events.filter((e) => e.code === "cutover.swap-source-restop")).toHaveLength(0);
+  });
+
+  it("a Coolify that keeps holding the ports while Tugra's start fails is bounded and ends with a code", async () => {
+    const rig = await swapRig();
+    rig.host.startFailsOnPortConflict = true;
+    rig.host.coolifyComesBack = true;
+    const r = await drive(rig);
+    expect(r.fail).toMatchObject({ code: "cutover.swap-source-restarted", retryable: true });
+    expect(rig.driver.events.filter((e) => e.code === "cutover.swap-source-restop")).toHaveLength(2);
+    expect(kinds(rig)).not.toContain("swap-reverse");
+  });
+
   it("a Coolify that keeps winning is bounded: the step fails with a code after the attempts and the swap stays reversible", async () => {
     const rig = await swapRig();
     rig.host.coolifyComesBack = true;
@@ -502,5 +575,162 @@ describe("the proxy swap on a shared control plane (C11)", () => {
       last = await rig.driver.tick(rig.handlers.cut);
     }
     expect(last.fail).toMatchObject({ code: "cutover.swap-source-restarted", retryable: true });
+  });
+});
+
+describe("per-host attestations are usable through the rows the web renders", () => {
+  const objApps = [{ id: "a1", host: H(1) }, { id: "a2", host: H(2) }, { id: "a3", host: H(3) }];
+
+  it("object data (mirror): each waiting host has its own release and leave-out row, carrying the hostname; a click releases exactly that host", async () => {
+    const rig = await ready({ apps: objApps, zone: zoneFor([H(1), H(2), H(3)]), policy: "mirror" });
+    rig.world.objectKeys.set("a2", ["S3_ENDPOINT"]);
+    rig.world.objectKeys.set("a3", ["S3_BUCKET"]);
+    const r = await drive(rig);
+    expect(r.status).toBe("WAITING_OPERATOR");
+    expect(rows(rig)).toEqual([
+      { id: OBJECT_CLEARED_ATTEST, subject: H(2) },
+      { id: OBJECT_CLEARED_ATTEST, subject: H(3) },
+      { id: LEFT_OUT_ATTEST, subject: H(2) },
+      { id: LEFT_OUT_ATTEST, subject: H(3) },
+    ]);
+    expect(r.gate!.checks.find((c) => c.id === OBJECT_CLEARED_ATTEST && c.subject === H(2))).toMatchObject({ code: "cutover.release-object-cleared", params: { host: H(2) } });
+    click(rig, OBJECT_CLEARED_ATTEST, H(2));
+    click(rig, LEFT_OUT_ATTEST, H(3));
+    const done = await drive(rig);
+    expect(done.status).toBe("PASSED");
+    expect(states(rig)).toMatchObject({ [H(1)]: "VERIFIED", [H(2)]: "VERIFIED", [H(3)]: "READY" });
+  });
+
+  it("a stopped service host can be left out from its own row", async () => {
+    const rig = await ready({ apps: [{ id: "a1", host: H(1) }, { id: "a2", host: H(2), service: true }], zone: zoneFor([H(1), H(2)]) });
+    expect((await drive(rig)).status).toBe("WAITING_OPERATOR");
+    expect(rows(rig)).toEqual([{ id: LEFT_OUT_ATTEST, subject: H(2) }]);
+    click(rig, LEFT_OUT_ATTEST, H(2));
+    expect((await drive(rig)).status).toBe("PASSED");
+    expect(states(rig)).toMatchObject({ [H(1)]: "VERIFIED", [H(2)]: "READY" });
+  });
+
+  it("the HTTP-01 gap is accepted from a row with the hostname", async () => {
+    const rig = makeRig({ apps: [{ id: "a1", host: H(1) }, { id: "a2", host: H(2) }], zone: zoneFor([H(1), H(2)]), options: { ttlPolicy: "skip-ack" } });
+    rig.proxyConfig.resolveFor.mockResolvedValue({ acmeEmail: "ops@realco.io", bind: "public" } as never);
+    rig.sim.sslOk = false;
+    rig.driver.attest("TLS_PREISSUE", HTTP01_GAP_ATTEST, H(1));
+    rig.driver.attest("TLS_PREISSUE", HTTP01_GAP_ATTEST, H(2));
+    expect((await rig.driver.drive(rig.handlers.dns)).status).toBe("PASSED");
+    expect((await rig.driver.drive(rig.handlers.tls, { maxTicks: 120 })).status).toBe("PASSED");
+    rig.driver.setStep("VERIFY", { status: "PASSED" });
+    rig.driver.approve("VERIFY", HASH, { acceptDataRisk: true, expiresAt: new Date(rig.driver.now.getTime() + 3 * 3600_000).toISOString() });
+    rig.phase.current = "cutover";
+    rig.driver.rec("TLS_PREISSUE").evidence.attestations = [];
+    rig.sim.sslOk = true;
+    const r = await drive(rig);
+    expect(r.status).toBe("WAITING_OPERATOR");
+    expect(rows(rig)).toEqual(expect.arrayContaining([{ id: HTTP01_GAP_ATTEST, subject: H(1) }, { id: HTTP01_GAP_ATTEST, subject: H(2) }]));
+    click(rig, HTTP01_GAP_ATTEST, H(1));
+    click(rig, HTTP01_GAP_ATTEST, H(2));
+    expect((await drive(rig)).status).toBe("PASSED");
+    expect(states(rig)).toMatchObject({ [H(1)]: "VERIFIED", [H(2)]: "VERIFIED" });
+  });
+
+  describe("manual DNS", () => {
+    const manual = ["m1.other.test", "m2.other.test", "m3.other.test"];
+    const setup = () => ready({ apps: [{ id: "a1", host: H(1) }, ...manual.map((h, i) => ({ id: `a${i + 2}`, host: h }))], zone: zoneFor([H(1)]) });
+    const resolves = (rig: Rig, hosts: string[]) => {
+      const orig = rig.lookup.resolve4.getMockImplementation()!;
+      rig.lookup.resolve4.mockImplementation((async (h: string) => (hosts.includes(h) ? [IP] : orig(h))) as never);
+    };
+
+    it("every host has its own confirm and defer row with the exact records and what the resolvers show, plus one row for all", async () => {
+      const rig = await setup();
+      const r = await drive(rig);
+      expect(r.status).toBe("WAITING_OPERATOR");
+      const gate = rig.driver.rec("CUTOVER").gate!;
+      expect(rows(rig)).toEqual([
+        { id: MANUAL_DNS_ATTEST },
+        ...manual.map((h) => ({ id: MANUAL_DNS_ATTEST, subject: h })),
+        ...manual.map((h) => ({ id: MANUAL_DNS_DEFER_ATTEST, subject: h })),
+      ]);
+      expect(gate.checks.find((c) => c.id === MANUAL_DNS_ATTEST && c.subject === manual[1])).toMatchObject({ code: "cutover.release-manual-dns", params: { host: manual[1], records: [`${manual[1]} A ${IP} ttl=60`], observed: expect.any(String) } });
+      expect(gate.checks.find((c) => c.id === MANUAL_DNS_ATTEST && c.subject === undefined)).toMatchObject({ code: "cutover.release-manual-dns-all", params: { count: 3 } });
+    });
+
+    it("defer one host, confirm another, and confirm the rest with the all-hosts row", async () => {
+      const rig = await setup();
+      await drive(rig);
+      click(rig, MANUAL_DNS_DEFER_ATTEST, manual[2]);
+      resolves(rig, [manual[0], manual[1]]);
+      click(rig, MANUAL_DNS_ATTEST, manual[0]);
+      rig.driver.advance(60_000);
+      const t = await rig.driver.tick(rig.handlers.cut, "tick");
+      expect(t.wait).toMatchObject({ code: "cutover.manual-dns", params: { hosts: [manual[1]] } });
+      expect(rows(rig)).toEqual([{ id: MANUAL_DNS_ATTEST }, { id: MANUAL_DNS_ATTEST, subject: manual[1] }, { id: MANUAL_DNS_DEFER_ATTEST, subject: manual[1] }]);
+      click(rig, MANUAL_DNS_ATTEST);
+      const done = await drive(rig);
+      expect(done.status).toBe("PASSED");
+      expect(states(rig)).toMatchObject({ [manual[0]]: "VERIFIED", [manual[1]]: "VERIFIED", [manual[2]]: "READY" });
+    });
+
+    it("a pending object host is released from the same parked checklist, by its own row", async () => {
+      const rig = await ready({ apps: [{ id: "a1", host: H(1) }, { id: "a2", host: H(2) }, { id: "a3", host: manual[0] }], zone: zoneFor([H(1), H(2)]), policy: "mirror" });
+      rig.world.objectKeys.set("a2", ["S3_ENDPOINT"]);
+      await drive(rig);
+      expect(rows(rig)).toEqual(expect.arrayContaining([{ id: OBJECT_CLEARED_ATTEST, subject: H(2) }, { id: LEFT_OUT_ATTEST, subject: H(2) }, { id: MANUAL_DNS_DEFER_ATTEST, subject: manual[0] }]));
+      click(rig, OBJECT_CLEARED_ATTEST, H(2));
+      await drive(rig);
+      expect(states(rig)[H(2)]).toBe("VERIFIED");
+    });
+  });
+
+  it("policy hold offers no release it cannot honour: the dependant stays on the source and the gate names the input that moves it", async () => {
+    const rig = await ready({ apps: objApps.slice(0, 2), zone: zoneFor([H(1), H(2)]) });
+    rig.world.objectKeys.set("a2", ["S3_ENDPOINT"]);
+    await rig.driver.tick(rig.handlers.cut);
+    expect(checkOf(rig, "cutover.object-hold")).toMatchObject({ ownerInput: "minioPolicy" });
+    const r = await drive(rig);
+    expect(r.status).toBe("PASSED");
+    expect(rows(rig)).toEqual([]);
+  });
+});
+
+describe("an app whose env cannot be read is not silently clear (fail closed)", () => {
+  const apps = [{ id: "a1", host: H(1) }, { id: "a2", host: H(2) }];
+
+  it("policy hold: the host stays on the source and a warning names it as unknown, with the input that decides it", async () => {
+    const rig = await ready({ apps, zone: zoneFor([H(1), H(2)]) });
+    rig.world.envUnreadable.add("a2");
+    const flip = jest.spyOn(rig.cutover, "flip");
+    await rig.driver.tick(rig.handlers.cut);
+    expect(checkOf(rig, "cutover.object-env-unreadable")).toMatchObject({ status: "warn", ownerInput: "minioPolicy", params: { hosts: [H(2)], count: 1 } });
+    const r = await drive(rig);
+    expect(r.status).toBe("PASSED");
+    expect(flips(rig, flip)).toEqual([{ hosts: [H(1)], autoRevert: true }]);
+    expect(states(rig)).toMatchObject({ [H(1)]: "VERIFIED", [H(2)]: "READY" });
+  });
+
+  it("policy mirror: the host waits and can be released from its row once the operator knows it does not use object storage", async () => {
+    const rig = await ready({ apps, zone: zoneFor([H(1), H(2)]), policy: "mirror" });
+    rig.world.envUnreadable.add("a2");
+    expect((await drive(rig)).status).toBe("WAITING_OPERATOR");
+    expect(rows(rig)).toContainEqual({ id: OBJECT_CLEARED_ATTEST, subject: H(2) });
+    click(rig, OBJECT_CLEARED_ATTEST, H(2));
+    expect((await drive(rig)).status).toBe("PASSED");
+    expect(states(rig)[H(2)]).toBe("VERIFIED");
+  });
+
+  it("policy external: nothing is held and nothing is said", async () => {
+    const rig = await ready({ apps, zone: zoneFor([H(1), H(2)]), policy: "external" });
+    rig.world.envUnreadable.add("a2");
+    await rig.driver.tick(rig.handlers.cut);
+    expect(checkOf(rig, "cutover.object-env-unreadable")).toBeUndefined();
+    const r = await drive(rig);
+    expect(r.status).toBe("PASSED");
+    expect(states(rig)).toMatchObject({ [H(1)]: "VERIFIED", [H(2)]: "VERIFIED" });
+  });
+
+  it("the dry run says how many apps could not be read", async () => {
+    const rig = makeRig({ apps, zone: zoneFor([H(1), H(2)]), run: { dryRun: true } });
+    rig.world.envUnreadable.add("a1");
+    const items = await rig.handlers.cut.dryRun(rig.driver.contextFor("CUTOVER"));
+    expect(items.find((i) => i.code === "cutover.dry.object-env-unreadable")).toMatchObject({ level: "warn", params: { apps: 1 } });
   });
 });

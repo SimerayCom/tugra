@@ -102,26 +102,36 @@ export class CutoverWorld {
   }
 
   /**
-   * The env var NAMES of each app that point at an object store (see `isObjectStoreKey`). Only names leave this method: the
-   * env is decrypted here to list its keys and nothing else is read or kept. An app whose env cannot be read is simply absent
-   * (no names), so the object-store dependency of such an app is unknown, which the caller treats as "no keys named".
+   * The env var NAMES of each app that point at an object store (see `isObjectStoreKey`), and the apps whose env could NOT be
+   * read (no crypto service, a value that does not decrypt, a body that is not JSON). Only names leave this method: the env is
+   * decrypted here to list its keys and nothing else is read or kept. An unreadable env is reported, never read as "no keys":
+   * the caller treats such an app as a possible dependant and names it, so the object-store default fails closed.
    */
-  async appObjectKeys(appIds: readonly string[]): Promise<Map<string, string[]>> {
-    const out = new Map<string, string[]>();
-    if (appIds.length === 0 || !this.crypto) return out;
+  async appObjectEnv(appIds: readonly string[]): Promise<{ keys: Map<string, string[]>; unreadable: string[] }> {
+    const keys = new Map<string, string[]>();
+    if (appIds.length === 0) return { keys, unreadable: [] };
+    if (!this.crypto) return { keys, unreadable: [...appIds] };
+    const unreadable: string[] = [];
     const rows = await this.prisma.application.findMany({ where: { id: { in: [...appIds] } }, select: { id: true, env: true, envEnc: true } });
     for (const r of rows) {
-      let keys: string[] = [];
+      let names: string[];
       try {
         const env = r.envEnc ? (JSON.parse(this.crypto.decrypt(r.envEnc)) as Record<string, unknown>) : ((r.env ?? {}) as Record<string, unknown>);
-        keys = Object.keys(env);
+        if (!env || typeof env !== "object" || Array.isArray(env)) throw new Error("env is not an object");
+        names = Object.keys(env);
       } catch {
+        unreadable.push(r.id);
         continue;
       }
-      const hit = objectStoreKeys(keys);
-      if (hit.length > 0) out.set(r.id, hit);
+      const hit = objectStoreKeys(names);
+      if (hit.length > 0) keys.set(r.id, hit);
     }
-    return out;
+    return { keys, unreadable: unreadable.sort() };
+  }
+
+  /** The names part of {@link appObjectEnv}. */
+  async appObjectKeys(appIds: readonly string[]): Promise<Map<string, string[]>> {
+    return (await this.appObjectEnv(appIds)).keys;
   }
 
   /**
@@ -141,11 +151,22 @@ export class CutoverWorld {
     };
   }
 
-  /** Git webhook facts of the given apps for the post-cutover repoint guidance (names, repository and source id only). */
+  /**
+   * Git webhook facts of the given apps for the post-cutover repoint guidance (names, repository and source id only). Only a
+   * GitHub-App source has the shared receiver (`/webhooks/github/<sourceId>`, it needs the source's webhook secret); an app
+   * on a token provider (gitea, forgejo, codeberg) or without a source has its own per-app deploy webhook.
+   */
   async gitWebhookApps(appIds: readonly string[]): Promise<GitWebhookApp[]> {
     if (appIds.length === 0) return [];
     const rows = await this.prisma.application.findMany({ where: { id: { in: [...appIds] }, source: "GIT" }, select: { id: true, name: true, gitUrl: true, gitSourceId: true, autoDeploy: true }, orderBy: { name: "asc" } });
-    return rows.map((r) => ({ appId: r.id, name: r.name, kind: r.gitSourceId ? ("github-app" as const) : ("deploy-token" as const), repo: sanitizeRepo(r.gitUrl), sourceId: r.gitSourceId ?? null, autoDeploy: r.autoDeploy }));
+    const sourceIds = [...new Set(rows.map((r) => r.gitSourceId).filter((x): x is string => !!x))];
+    const sources = sourceIds.length > 0 ? await this.prisma.gitSource.findMany({ where: { id: { in: sourceIds } }, select: { id: true, provider: true, webhookSecretEnc: true } }) : [];
+    const shared = new Map(sources.map((x) => [x.id, { provider: x.provider, receiver: !!x.webhookSecretEnc }]));
+    return rows.map((r) => {
+      const src = r.gitSourceId ? shared.get(r.gitSourceId) : undefined;
+      const github = !!src && src.receiver && src.provider === "github";
+      return { appId: r.id, name: r.name, kind: github ? ("github-app" as const) : ("deploy-token" as const), repo: sanitizeRepo(r.gitUrl), sourceId: github ? r.gitSourceId : null, autoDeploy: r.autoDeploy };
+    });
   }
 
   /** The hub's public base URL (no trailing slash) when configured, else null: the webhook guidance names the path only then. */

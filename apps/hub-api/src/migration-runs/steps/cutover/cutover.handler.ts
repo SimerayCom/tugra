@@ -29,6 +29,7 @@ import {
   MANUAL_DNS_ATTEST,
   MANUAL_DNS_DEFER_ATTEST,
   OBJECT_CLEARED_ATTEST,
+  ENV_UNREADABLE_VIA,
   computeHolds,
   flipGroups,
   isGapHost,
@@ -74,6 +75,8 @@ const SWAP_POLL_MS = 10_000;
 /** Re-exported: the attestation ids live with the pure hold rules (the web offers them per host). */
 export { HTTP01_GAP_ATTEST, LEFT_OUT_ATTEST, MANUAL_DNS_ATTEST, MANUAL_DNS_DEFER_ATTEST, OBJECT_CLEARED_ATTEST };
 const OBJECT_KEYS_TTL_MS = 30_000;
+/** Per-host gate rows offered at most this many per attestation (the next ones appear as these are released). */
+const ROW_CAP = 60;
 const MANUAL_DNS_STALE_MINUTES = MANUAL_DNS_STALE_MS / 60_000;
 /** How many times the swap takes the box back when Coolify restarts its own proxy between the stop and Tugra's proxy start (C11). */
 export const SWAP_GUARD_ATTEMPTS = 2;
@@ -81,6 +84,9 @@ export const SWAP_GUARD_ATTEMPTS = 2;
 const MANUAL_CHECK_EVERY_MS = 20_000;
 /** The operator's decision to go on with a plan that changed after the approval was given (see {@link CutoverHandler.preGate}). */
 export const PLAN_CHANGED_ATTEST = "cutover.plan-changed";
+
+/** One record of the manual-DNS checklist as the operator types it at the DNS provider. */
+const recordLine = (c: { name: string; type: string; content: string; ttl: number }): string => `${c.name} ${c.type} ${c.content} ttl=${c.ttl}`.slice(0, 300);
 
 export interface CutoverObs extends Observation {
   opId: string | null;
@@ -106,8 +112,12 @@ export interface CutoverObs extends Observation {
   objects: ObjectsVerification | null;
   /** The per-host holds (object storage, stopped services, HTTP-01 gap, deferred manual DNS), keyed by hostname. */
   holds: Map<string, Hold>;
-  /** Hosts that depend on object storage, with the names that say so. */
+  /** Hosts that depend on object storage, with the names that say so (`env-unreadable` when the app's env could not be read). */
   dependants: Map<string, string[]>;
+  /** Apps whose env could not be read: their object-store dependency is unknown (they are judged dependants, never silently clear). */
+  envUnreadable: string[];
+  /** Manual-DNS hosts the operator still has to act on: the exact records to enter, per host (empty while the step is not parked on the checklist). */
+  manualRecords: Map<string, string[]>;
   /** After the cutover: the git apps behind VERIFIED hosts, for the webhook repoint guidance (R64). */
   webhooks: GitWebhookApp[];
   /** swap only, once LIVE: how the two proxies look on the box right now. */
@@ -176,10 +186,11 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     const apps = await this.world.opApps(opId);
     const policy = resolveOwnerInput(ctx.run.inputs, "minioPolicy") ?? "hold";
     if (policy !== "external") {
-      const keys = await this.world.appObjectKeys(apps.map((a) => a.appId));
+      const env = await this.world.appObjectEnv(apps.map((a) => a.appId));
       const stores = apps.filter((a) => a.objectStore === true).map((a) => a.appId);
-      const names = apps.filter((a) => keys.has(a.appId) || stores.includes(a.appId)).map((a) => a.appId);
+      const names = apps.filter((a) => env.keys.has(a.appId) || stores.includes(a.appId)).map((a) => a.appId);
       if (names.length > 0) items.push({ code: "cutover.dry.object-dependants", level: policy === "hold" ? "warn" : "info", params: { apps: names.length, policy } });
+      if (env.unreadable.length > 0) items.push({ code: "cutover.dry.object-env-unreadable", level: "warn", params: { apps: env.unreadable.length } });
     }
     const git = await this.world.gitWebhookApps(apps.map((a) => a.appId));
     if (git.length > 0) items.push({ code: "cutover.dry.webhooks", level: "info", params: { apps: git.length } });
@@ -190,7 +201,7 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
   async observe(ctx: StepContext): Promise<CutoverObs> {
     const run = ctx.run;
     const opId = run.opId;
-    const base: CutoverObs = { opId, topology: run.topology, entries: [], servers: [], flipRun: null, dataApps: new Set(), facts: null, swap: null, swapVerify: null, plan: null, planPin: null, apps: [], objectKeys: new Map(), objects: null, holds: new Map(), dependants: new Map(), webhooks: [], swapHost: null };
+    const base: CutoverObs = { opId, topology: run.topology, entries: [], servers: [], flipRun: null, dataApps: new Set(), facts: null, swap: null, swapVerify: null, plan: null, planPin: null, apps: [], objectKeys: new Map(), objects: null, holds: new Map(), dependants: new Map(), envUnreadable: [], manualRecords: new Map(), webhooks: [], swapHost: null };
     if (!opId) return base;
     const [view0, apps, facts] = await Promise.all([this.cutover.view(ctx.actor.userId, opId), this.world.opApps(opId), this.world.serverFacts(run.targetServerId)]);
     let view = view0;
@@ -199,6 +210,7 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     if (run.topology === "two-box" && !ctx.signal.aborted) view = await this.verifyConfirmedManual(ctx, opId, view);
     const obs: CutoverObs = { ...base, entries: view.entries, servers: view.servers, flipRun: view.run, dataApps: new Set(apps.filter((a) => a.hasData).map((a) => a.appId)), facts, apps };
     await this.observeHolds(ctx, obs);
+    await this.observeManualRecords(ctx, obs);
     if (run.topology === "two-box" && view.entries.some((e) => e.state === "VERIFIED")) {
       const verifiedApps = new Set(view.entries.filter((e) => e.state === "VERIFIED").map((e) => e.applicationId));
       obs.webhooks = await this.world.gitWebhookApps([...verifiedApps]);
@@ -249,7 +261,13 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     const run = ctx.run;
     if (obs.entries.length === 0) return;
     const policy = resolveOwnerInput(run.inputs, "minioPolicy") ?? "hold";
-    if (policy !== "external") obs.objectKeys = await this.objectKeysOf(ctx, obs.apps);
+    if (policy !== "external") {
+      const env = await this.objectKeysOf(ctx, obs.apps);
+      // An app whose env could not be read has an UNKNOWN object-store dependency: it is judged a dependant (and named), never silently clear.
+      obs.objectKeys = new Map(env.keys);
+      for (const id of env.unreadable) if (!obs.objectKeys.has(id)) obs.objectKeys.set(id, [ENV_UNREADABLE_VIA]);
+      obs.envUnreadable = env.unreadable;
+    }
     if (policy === "mirror") {
       const ids = ["DATA_SEED", "DATA_FINAL"].flatMap((k) => ctx.stepState(k as "DATA_SEED" | "DATA_FINAL").evidence.attachments.filter((a) => a.kind === "object-migration").map((a) => a.resourceId));
       obs.objects = await this.world.objectsVerification(run.teamId, [...new Set(ids)]);
@@ -260,16 +278,57 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     obs.holds = computeHolds({ entries: obs.entries, apps: holdApps, objectKeys: obs.objectKeys, policy, objects: obs.objects, cutoverEvidence: ctx.step.evidence, tlsEvidence: ctx.stepState("TLS_PREISSUE").evidence, acceptHttp01Gap: run.options.acceptHttp01Gap });
   }
 
-  private readonly keyCache = new Map<string, { at: number; ids: string; keys: Map<string, string[]> }>();
+  private readonly recordCache = new Map<string, { at: number; key: string; records: Map<string, string[]> }>();
+
+  /**
+   * While the step can only wait on the manual-DNS checklist: the exact records to enter at the DNS provider, per host (from the
+   * flip plan), so each host's row carries its own records. Reused for a minute; a plan that cannot be read leaves the rows without
+   * records (the wait still lists the hosts), it never fails the step.
+   */
+  private async observeManualRecords(ctx: StepContext, obs: CutoverObs): Promise<void> {
+    if (ctx.run.topology !== "two-box" || !obs.opId || !this.flipIdle(obs)) return;
+    const todo = manualToDo(this.manualReady(obs), ctx.step.evidence, ctx.now()).map((m) => m.hostname).sort().slice(0, 200);
+    if (todo.length === 0) return;
+    const key = todo.join(",");
+    const hit = this.recordCache.get(ctx.run.id);
+    if (hit && hit.key === key && ctx.now().getTime() - hit.at < 60_000) {
+      obs.manualRecords = hit.records;
+      return;
+    }
+    try {
+      const plan = await this.cutover.flipPlan(ctx.actor.userId, obs.opId, { hostnames: key });
+      const records = new Map<string, string[]>();
+      for (const c of plan.copyPaste) records.set(c.hostname, [...(records.get(c.hostname) ?? []), recordLine(c)]);
+      this.recordCache.set(ctx.run.id, { at: ctx.now().getTime(), key, records });
+      obs.manualRecords = records;
+    } catch (e) {
+      rethrowLeaseLost(e);
+      this.log.warn(`run ${ctx.run.id}: manual DNS records could not be read: ${(e as Error).message}`);
+    }
+  }
+
+  /** The manual-DNS hosts that are ready and not held for another reason (the checklist's hosts). */
+  private manualReady(obs: CutoverObs): Entry[] {
+    return obs.entries.filter((e) => e.state === "READY" && isManualDns(e) && !obs.holds.has(e.hostname));
+  }
+
+  /** Nothing is flipping, verifying or left to flip at the provider: only held hosts and the manual checklist remain. */
+  private flipIdle(obs: CutoverObs): boolean {
+    if (obs.flipRun?.status === "running") return false;
+    if (obs.entries.some((e) => e.state === "SWITCHING" || e.state === "SWITCHED" || e.state === "VERIFY_FAILED")) return false;
+    return !obs.entries.some((e) => e.state === "READY" && !isManualDns(e) && !obs.holds.has(e.hostname));
+  }
+
+  private readonly keyCache = new Map<string, { at: number; ids: string; env: { keys: Map<string, string[]>; unreadable: string[] } }>();
 
   /** The object-store env names of the op's apps: the env is decrypted to list its keys, so the answer is reused for 30 s (an env edit mid-run is picked up on the next window). */
-  private async objectKeysOf(ctx: StepContext, apps: readonly OpApp[]): Promise<Map<string, string[]>> {
+  private async objectKeysOf(ctx: StepContext, apps: readonly OpApp[]): Promise<{ keys: Map<string, string[]>; unreadable: string[] }> {
     const ids = apps.map((a) => a.appId).sort().join(",");
     const hit = this.keyCache.get(ctx.run.id);
-    if (hit && hit.ids === ids && ctx.now().getTime() - hit.at < OBJECT_KEYS_TTL_MS) return hit.keys;
-    const keys = await this.world.appObjectKeys(apps.map((a) => a.appId));
-    this.keyCache.set(ctx.run.id, { at: ctx.now().getTime(), ids, keys });
-    return keys;
+    if (hit && hit.ids === ids && ctx.now().getTime() - hit.at < OBJECT_KEYS_TTL_MS) return hit.env;
+    const env = await this.world.appObjectEnv(apps.map((a) => a.appId));
+    this.keyCache.set(ctx.run.id, { at: ctx.now().getTime(), ids, env });
+    return env;
   }
 
   private holdApps(apps: readonly OpApp[]): Map<string, HoldApp> {
@@ -345,7 +404,7 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     if (run.topology === "two-box") {
       checks.push(chk("cutover.hosts-ready", obs.entries.some((e) => e.state === "READY" || isFlipped(e)) || actionableEntries(obs.entries).length === 0 ? "pass" : "fail", "cutover.no-ready-hosts"));
       const held = this.holdChecks(obs);
-      checks.push(...held.checks);
+      checks.push(...held.checks, ...this.releaseRows(ctx, obs));
       if (!committed && run.options.ttlPolicy !== "skip-ack") {
         const until = ttlWaitUntil(obs.entries);
         const waiting = until !== null && until.getTime() > ctx.now().getTime();
@@ -389,10 +448,12 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     const by = (reason: Hold["reason"]): string[] => [...obs.holds.values()].filter((h) => h.reason === reason).map((h) => h.hostname).sort();
     const objectHold = by("object-store-hold");
     if (objectHold.length > 0) checks.push(chk("cutover.object-dependants", "warn", "cutover.object-hold", { params: { hosts: capHosts(objectHold), count: objectHold.length }, ownerInput: "minioPolicy" }));
+    const unreadable = [...obs.dependants].filter(([, via]) => via.includes(ENV_UNREADABLE_VIA)).map(([h]) => h).sort();
+    if (unreadable.length > 0) checks.push(chk("cutover.object-env-unreadable", "warn", "cutover.object-env-unreadable", { params: { hosts: capHosts(unreadable), count: unreadable.length }, ownerInput: "minioPolicy" }));
     const leftOut = by("host-left-out");
     if (leftOut.length > 0) checks.push(chk("cutover.hosts-left-out", "warn", "cutover.hosts-left-out", { params: { hosts: capHosts(leftOut), count: leftOut.length } }));
     const deferred = by("manual-dns-deferred");
-    if (deferred.length > 0) checks.push(chk("cutover.manual-dns-deferred", "warn", "cutover.manual-dns-deferred", { params: { hosts: capHosts(deferred), count: deferred.length } }));
+    if (deferred.length > 0) checks.push(chk("cutover.manual-dns-deferred-hosts", "warn", "cutover.manual-dns-deferred", { params: { hosts: capHosts(deferred), count: deferred.length } }));
     const pending = { objects: by("objects-unverified"), services: by("service-not-running"), gap: by("http01-gap-not-accepted") };
     const anyPending = pending.objects.length + pending.services.length + pending.gap.length > 0;
     if (!anyPending) return { checks, wait: null };
@@ -408,6 +469,32 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
       checks,
       wait: { kind: "operator", code: "cutover.hosts-pending", params: { hosts: capHosts([...pending.objects, ...pending.services, ...pending.gap]), objects: capHosts(pending.objects), services: capHosts(pending.services), gap: capHosts(pending.gap) }, ...(attest.length > 0 ? { attest } : {}) },
     };
+  }
+
+  /**
+   * One gate row per host a per-host attestation can release, so the operator's rows carry the hostname (the web derives an
+   * attestation's subject from the gate check whose id is the attestation id; without a subject the hub ignores a per-host
+   * decision). Offered only when nothing is left to flip, i.e. when the step can actually be waiting for them: the pending holds
+   * (object data, stopped service, HTTP-01 gap: confirm, accept, or leave the host out) and the manual-DNS checklist (confirm
+   * with the exact records, or leave the host on the source for now). Every id here is also in the wait's `attest` list.
+   */
+  private releaseRows(ctx: StepContext, obs: CutoverObs): GateCheck[] {
+    if (!this.flipIdle(obs)) return [];
+    const rows: GateCheck[] = [];
+    const pending = [...obs.holds.values()].filter((h) => h.kind === "pending").sort((a, b) => a.hostname.localeCompare(b.hostname));
+    for (const h of pending.filter((x) => x.reason === "objects-unverified").slice(0, ROW_CAP)) rows.push(chk(OBJECT_CLEARED_ATTEST, "warn", "cutover.release-object-cleared", { subject: h.hostname, params: { host: h.hostname } }));
+    for (const h of pending.filter((x) => x.reason === "http01-gap-not-accepted").slice(0, ROW_CAP)) rows.push(chk(HTTP01_GAP_ATTEST, "warn", "cutover.release-http01-gap", { subject: h.hostname, params: { host: h.hostname } }));
+    for (const h of pending.slice(0, ROW_CAP)) rows.push(chk(LEFT_OUT_ATTEST, "warn", "cutover.release-left-out", { subject: h.hostname, params: { host: h.hostname } }));
+    const todo = manualToDo(this.manualReady(obs), ctx.step.evidence, ctx.now()).sort((a, b) => a.hostname.localeCompare(b.hostname));
+    if (todo.length > 0) {
+      const seen = new Map(obs.entries.map((e) => [e.hostname, e.dnsObserved]));
+      rows.push(chk(MANUAL_DNS_ATTEST, "warn", "cutover.release-manual-dns-all", { params: { count: todo.length } }));
+      for (const m of todo.slice(0, ROW_CAP)) {
+        rows.push(chk(MANUAL_DNS_ATTEST, "warn", "cutover.release-manual-dns", { subject: m.hostname, params: { host: m.hostname, records: obs.manualRecords.get(m.hostname) ?? [], observed: seen.get(m.hostname) ?? "unknown" } }));
+        rows.push(chk(MANUAL_DNS_DEFER_ATTEST, "warn", "cutover.release-manual-dns-defer", { subject: m.hostname, params: { host: m.hostname } }));
+      }
+    }
+    return rows;
   }
 
   /** Is there something for `act` to do besides waiting on held hosts: a host to flip, to verify, or a manual-DNS checklist? */
@@ -574,7 +661,7 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     }
     const hosts = todo.map((m) => m.hostname);
     const plan = await this.cutover.flipPlan(userId, opId, { hostnames: hosts.slice(0, 200).join(",") });
-    const records = plan.copyPaste.slice(0, 200).map((c) => `${c.name} ${c.type} ${c.content} ttl=${c.ttl}`.slice(0, 300));
+    const records = plan.copyPaste.slice(0, 200).map(recordLine);
     const observed = manual.filter((e) => hosts.includes(e.hostname)).slice(0, 200).map((e) => `${e.hostname}=${e.dnsObserved}`.slice(0, 300));
     return {
       outcome: "wait",
@@ -609,9 +696,13 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     this.webhookGuided.add(ctx.run.id);
     await ctx.recordCompensation({ webhooksAt: iso(ctx.now()) });
     const base = this.world.hubPublicUrl();
-    const sources = [...new Set(obs.webhooks.filter((w) => w.kind === "github-app" && w.sourceId).map((w) => `${base ?? ""}/webhooks/github/${w.sourceId}`))];
+    const shared = obs.webhooks.filter((w) => w.kind === "github-app" && w.sourceId);
+    const sources = [...new Set(shared.map((w) => `${base ?? ""}/webhooks/github/${w.sourceId}`))];
     const repos = [...new Set(obs.webhooks.map((w) => w.repo).filter((r): r is string => !!r))];
-    await ctx.emit({ stepKey: "CUTOVER", level: "info", code: "cutover.webhooks-repoint", params: { apps: obs.webhooks.length, sources: capHosts(sources), repos: capHosts(repos) } });
+    const params = { apps: obs.webhooks.length, shared: shared.length, own: obs.webhooks.length - shared.length, repos: capHosts(repos, 200) };
+    // Apps on a GitHub App source share ONE webhook per source (the event names its URL); every other git app has its own deploy webhook.
+    if (sources.length > 0) await ctx.emit({ stepKey: "CUTOVER", level: "info", code: "cutover.webhooks-repoint", params: { ...params, sources: capHosts(sources, 50) } });
+    else await ctx.emit({ stepKey: "CUTOVER", level: "info", code: "cutover.webhooks-repoint-apps", params });
   }
 
   private async actSwap(ctx: StepContext, obs: CutoverObs): Promise<ActResult> {
@@ -657,19 +748,24 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     if (swap.state === "STARTING_TARGET_PROXY") {
       await ctx.assertLease();
       await this.world.setProxyBind(serverId, "public");
-      let st = await this.startTargetProxy(ctx, serverId, swap.coolifyProxy.containerId);
+      let start = await this.startTargetProxy(ctx, serverId, swap.coolifyProxy.containerId);
       // Coolify may restart its own stopped proxy between the stop and Tugra's start and win :80/:443 (lab item T1). Stopping the
       // control plane is not an option (it manages other hosts), so the box is taken back: the source proxy is stopped again
-      // (its restart policy is already `no`) and Tugra's proxy started again, a bounded number of times.
-      for (let attempt = 1; attempt <= SWAP_GUARD_ATTEMPTS && st && st.sourceRunning === true; attempt++) {
+      // (its restart policy is already `no`) and Tugra's proxy started again, a bounded number of times. Two proxies cannot both
+      // publish :80, so the race shows up in two ways: Tugra's start succeeded next to a running source, or Tugra's start itself
+      // FAILED (port already allocated) while the source proxy is running. Both are the same race, so both take the box back.
+      for (let attempt = 1; attempt <= SWAP_GUARD_ATTEMPTS && start.state?.sourceRunning === true; attempt++) {
         await ctx.recordCompensation({ swapGuardAttempts: attempt });
         await ctx.assertLease();
         await ctx.emit({ stepKey: "CUTOVER", level: "warn", code: "cutover.swap-source-restop", params: { attempt } });
         const again = await stopSourceProxy(this.world, serverId, swap.coolifyProxy.containerId);
         if (!again) throw new StepFailure("cutover.swap-stop-failed", {}, true);
         if (again.updateFailed) throw new StepFailure("cutover.swap-restart-policy-failed", {}, true);
-        st = await this.startTargetProxy(ctx, serverId, swap.coolifyProxy.containerId);
+        start = await this.startTargetProxy(ctx, serverId, swap.coolifyProxy.containerId);
       }
+      // A start that failed while the source proxy is NOT the one holding the ports is a genuine failure (retryable: the next tick starts again).
+      if (start.failed) throw new StepFailure(start.state?.sourceRunning === true ? "cutover.swap-source-restarted" : "cutover.swap-start-failed", {}, true);
+      const st = start.state;
       if (!st || st.target !== "running" || !targetPublishesWeb(st)) throw new StepFailure("cutover.swap-ports-not-published", { target: st?.target ?? "unknown" }, true);
       if (st.sourceRunning === true) throw new StepFailure("cutover.swap-source-restarted", {}, true);
       await this.world.setSwapState(run.id, serverId, ["STARTING_TARGET_PROXY"], "LIVE");
@@ -687,7 +783,8 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
       const again = await stopSourceProxy(this.world, serverId, swap.coolifyProxy.containerId);
       if (!again) throw new StepFailure("cutover.swap-stop-failed", {}, true);
       if (again.updateFailed) throw new StepFailure("cutover.swap-restart-policy-failed", {}, true);
-      await this.startTargetProxy(ctx, serverId, swap.coolifyProxy.containerId);
+      const restarted = await this.startTargetProxy(ctx, serverId, swap.coolifyProxy.containerId);
+      if (restarted.failed && restarted.state?.sourceRunning !== true) throw new StepFailure("cutover.swap-start-failed", {}, true);
       return { outcome: "continue", pollAfterMs: SWAP_POLL_MS };
     }
     // Verify from the hub. A failure never auto-reverses (a stateful host may have taken writes): the run view offers the explicit reverse.
@@ -705,16 +802,21 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     return { outcome: "continue", pollAfterMs: SWAP_POLL_MS };
   }
 
-  /** Start Tugra's proxy on the box and read both proxies' state (never swallows a lost lease). */
-  private async startTargetProxy(ctx: StepContext, serverId: string, sourceContainerId: string): Promise<SwapHostState | null> {
+  /**
+   * Start Tugra's proxy on the box and read both proxies' state (never swallows a lost lease). A failed start is NOT thrown: it
+   * is returned with the state read afterwards, because a start that fails while Coolify's proxy holds :80/:443 is the race the
+   * caller takes the box back from, and only the caller can tell that apart from a genuine failure.
+   */
+  private async startTargetProxy(ctx: StepContext, serverId: string, sourceContainerId: string): Promise<{ failed: boolean; state: SwapHostState | null }> {
+    let failed = false;
     try {
       await this.proxyOps.start(ctx.actor.userId, serverId);
     } catch (e) {
       rethrowLeaseLost(e);
       this.log.warn(`run ${ctx.run.id}: tugra proxy start failed: ${(e as Error).message}`);
-      throw new StepFailure("cutover.swap-start-failed", {}, true);
+      failed = true;
     }
-    return swapHostState(this.world, serverId, sourceContainerId);
+    return { failed, state: await swapHostState(this.world, serverId, sourceContainerId) };
   }
 
   // ───────────────────────────── post gate ─────────────────────────────
@@ -732,7 +834,11 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
       else checks.push(chk("cutover.host", "fail", FLIPPED_STATES.includes(e.state as (typeof FLIPPED_STATES)[number]) || e.state === "CONFLICT" ? "cutover.host-not-verified" : "cutover.host-not-switched", { subject: e.hostname, params: { state: e.state, ...(hold ? { reason: hold.reason } : {}) } }));
     }
     // After the cutover each git app's webhook has to be repointed by hand (R64): one warning per app, never a failure.
-    for (const w of obs.webhooks.slice(0, 100)) checks.push(chk("cutover.webhook", "warn", "cutover.webhook-repoint", { subject: w.name, params: { kind: w.kind, repo: w.repo ?? "", autoDeploy: w.autoDeploy } }));
+    const base = this.world.hubPublicUrl() ?? "";
+    for (const w of obs.webhooks.slice(0, 100)) {
+      if (w.kind === "github-app" && w.sourceId) checks.push(chk("cutover.webhook", "warn", "cutover.webhook-repoint", { subject: w.name, params: { repo: w.repo ?? "", autoDeploy: w.autoDeploy, url: `${base}/webhooks/github/${w.sourceId}` } }));
+      else checks.push(chk("cutover.webhook", "warn", "cutover.webhook-repoint-app", { subject: w.name, params: { repo: w.repo ?? "", autoDeploy: w.autoDeploy } }));
+    }
     return makeGate(checks);
   }
 

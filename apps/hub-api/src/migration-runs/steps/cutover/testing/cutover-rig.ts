@@ -39,6 +39,8 @@ export class SimHost {
   coolifyAutoRestarts = false;
   /** Coolify brings its proxy back between the stop and Tugra's proxy start (it then owns :80/:443 again). */
   coolifyComesBack = false;
+  /** Tugra's proxy start fails (like `docker run -p 80:80` does: port already allocated) while Coolify's proxy holds :80/:443. */
+  startFailsOnPortConflict = false;
   /** dark probe answers per host: verify 0 = valid cert. */
   dark = new Map<string, { verify: number | null; status: number; traefik404: boolean }>();
   loopback = new Map<string, number>();
@@ -169,8 +171,13 @@ export class FakeWorld {
   async opDatabaseIds(): Promise<string[]> {
     return this.databaseIds;
   }
+  /** Apps whose env cannot be read (the object-store dependency is unknown). */
+  envUnreadable = new Set<string>();
+  async appObjectEnv(ids: readonly string[]): Promise<{ keys: Map<string, string[]>; unreadable: string[] }> {
+    return { keys: new Map([...this.objectKeys].filter(([id]) => ids.includes(id))), unreadable: ids.filter((id) => this.envUnreadable.has(id)).sort() };
+  }
   async appObjectKeys(ids: readonly string[]): Promise<Map<string, string[]>> {
-    return new Map([...this.objectKeys].filter(([id]) => ids.includes(id)));
+    return (await this.appObjectEnv(ids)).keys;
   }
   async objectsVerification(): Promise<ObjectsVerification | null> {
     return this.objects;
@@ -333,6 +340,10 @@ export function makeRig(o: RigOpts = {}) {
     start: jest.fn(async () => {
       world.calls.push("proxyOps.start");
       if (host.coolifyComesBack && host.coolify) host.coolify.running = true;
+      if (world.server.proxyBind === "public" && host.coolify?.running && host.startFailsOnPortConflict) {
+        host.tugra = { status: "absent", ports: [] };
+        throw new Error("reverse-proxy (Traefik) start failed: port is already allocated");
+      }
       if (world.server.proxyBind === "public" && host.coolify?.running) host.tugra = { status: "absent", ports: [] };
       else host.tugra = { status: "running", ports: world.server.proxyBind === "public" ? ["80>80/tcp", "443>443/tcp"] : [] };
       return { status: "running" };

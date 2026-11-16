@@ -61,6 +61,17 @@ describe("DNS_PREPARE", () => {
     expect(rig.writes).toEqual([]);
   });
 
+  it("many customer-owned hosts: the guidance goes out five hosts per event, so no host is cut off by the web's list limit", async () => {
+    const hosts = Array.from({ length: 12 }, (_, i) => `m${i + 1}.other.test`);
+    const rig = makeRig({ apps: hosts.map((h, i) => ({ id: `a${i + 1}`, host: h })), zone: [] });
+    expect((await rig.driver.drive(rig.handlers.dns)).status).toBe("PASSED");
+    const evs = rig.driver.events.filter((e) => e.code === "dns-prepare.manual-dns-guidance");
+    expect(evs.map((e) => (e.params as { hosts: string[] }).hosts.length)).toEqual([5, 5, 2]);
+    expect(evs.flatMap((e) => (e.params as { hosts: string[] }).hosts).sort()).toEqual([...hosts].sort());
+    expect(evs.every((e) => (e.params as { count: number }).count === 12)).toBe(true);
+    expect(evs.flatMap((e) => (e.params as { ttl: string[] }).ttl)).toHaveLength(12);
+  });
+
   it("an op whose apps serve no hostname has nothing to prepare: the step passes without acting", async () => {
     const rig = makeRig({ apps: [{ id: "a1", host: "" }], zone: [] });
     rig.world.apps[0].domain = null;

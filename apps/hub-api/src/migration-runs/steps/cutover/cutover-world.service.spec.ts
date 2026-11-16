@@ -12,6 +12,7 @@ function make() {
     objectMigrationBucket: { findMany: jest.fn() },
     application: { findMany: jest.fn(), count: jest.fn() },
     appServiceDomain: { findMany: jest.fn() },
+    gitSource: { findMany: jest.fn().mockResolvedValue([]) },
     server: { findUnique: jest.fn(), update: jest.fn() },
     user: { findUnique: jest.fn() },
     bulkOperation: { findUnique: jest.fn(), updateMany: jest.fn() },
@@ -124,7 +125,9 @@ describe("CutoverWorld", () => {
       { id: "a2", name: "api", gitUrl: "git@github.com:acme/api.git", gitSourceId: null, autoDeploy: false },
       { id: "a3", name: "odd", gitUrl: "not a url", gitSourceId: null, autoDeploy: true },
     ]);
+    m.prisma.gitSource.findMany.mockResolvedValue([{ id: "src1", provider: "github", webhookSecretEnc: "enc:whsec" }]);
     const out = await m.world.gitWebhookApps(["a1", "a2", "a3"]);
+    expect(JSON.stringify(m.prisma.gitSource.findMany.mock.calls)).toContain("webhookSecretEnc");
     expect(out).toEqual([
       { appId: "a1", name: "web", kind: "github-app", repo: "github.com/acme/web", sourceId: "src1", autoDeploy: true },
       { appId: "a2", name: "api", kind: "deploy-token", repo: "github.com/acme/api", sourceId: null, autoDeploy: false },
@@ -132,6 +135,50 @@ describe("CutoverWorld", () => {
     ]);
     expect(JSON.stringify(out)).not.toContain("abc123");
     expect(await m.world.gitWebhookApps([])).toEqual([]);
+  });
+
+  it("gitWebhookApps gives an app on a token provider (or a source without a webhook secret) the per-app deploy webhook, never the shared GitHub endpoint", async () => {
+    const m = make();
+    m.prisma.application.findMany.mockResolvedValue([
+      { id: "a1", name: "gh", gitUrl: "https://github.com/acme/gh.git", gitSourceId: "src-gh", autoDeploy: true },
+      { id: "a2", name: "gt", gitUrl: "https://git.example.test/acme/gt.git", gitSourceId: "src-gitea", autoDeploy: true },
+      { id: "a3", name: "cb", gitUrl: "https://codeberg.org/acme/cb.git", gitSourceId: "src-cb", autoDeploy: false },
+      { id: "a4", name: "nosecret", gitUrl: "https://github.com/acme/ns.git", gitSourceId: "src-ns", autoDeploy: true },
+      { id: "a5", name: "gone", gitUrl: "https://github.com/acme/gone.git", gitSourceId: "src-missing", autoDeploy: true },
+    ]);
+    m.prisma.gitSource.findMany.mockResolvedValue([
+      { id: "src-gh", provider: "github", webhookSecretEnc: "enc:x" },
+      { id: "src-gitea", provider: "gitea", webhookSecretEnc: null },
+      { id: "src-cb", provider: "codeberg", webhookSecretEnc: "enc:y" },
+      { id: "src-ns", provider: "github", webhookSecretEnc: null },
+    ]);
+    const out = await m.world.gitWebhookApps(["a1", "a2", "a3", "a4", "a5"]);
+    expect(out.map((w) => [w.name, w.kind, w.sourceId])).toEqual([["gh", "github-app", "src-gh"], ["gt", "deploy-token", null], ["cb", "deploy-token", null], ["nosecret", "deploy-token", null], ["gone", "deploy-token", null]]);
+  });
+
+  it("appObjectEnv names the apps whose env could not be read instead of reading them as having no keys", async () => {
+    const m = make();
+    m.prisma.application.findMany.mockResolvedValue([
+      { id: "a1", env: {}, envEnc: `enc:${JSON.stringify({ S3_BUCKET: "x" })}` },
+      { id: "a2", env: { PORT: "80" }, envEnc: null },
+      { id: "a3", env: {}, envEnc: "enc:{not json" },
+      { id: "a4", env: {}, envEnc: "enc:[1,2]" },
+    ]);
+    const out = await m.world.appObjectEnv(["a1", "a2", "a3", "a4"]);
+    expect([...out.keys]).toEqual([["a1", ["S3_BUCKET"]]]);
+    expect(out.unreadable).toEqual(["a3", "a4"]);
+    m.crypto.decrypt.mockImplementationOnce(() => {
+      throw new Error("bad key");
+    });
+    m.prisma.application.findMany.mockResolvedValue([{ id: "a9", env: {}, envEnc: "enc:{}" }]);
+    expect((await m.world.appObjectEnv(["a9"])).unreadable).toEqual(["a9"]);
+  });
+
+  it("without a crypto service every app's env reads as unreadable (the dependency is unknown, never absent)", async () => {
+    const m = make();
+    const bare = new CutoverWorld(m.prisma as never, m.agentWs as never, m.settings as never, m.config as never, m.audit as never);
+    expect(await bare.appObjectEnv(["a1", "a2"])).toEqual({ keys: new Map(), unreadable: ["a1", "a2"] });
+    expect(await bare.appObjectEnv([])).toEqual({ keys: new Map(), unreadable: [] });
   });
 
   it("hubPublicUrl is the configured https/http base without a trailing slash, else null", () => {

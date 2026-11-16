@@ -24,6 +24,9 @@ export const MANUAL_DNS_DEFER_ATTEST = "cutover.manual-dns-deferred";
  */
 export const LEFT_OUT_ATTEST = "cutover.host-left-out";
 
+/** The `via` name of an app whose env could not be read (the object-store dependency is unknown, so it is judged a dependant). */
+export const ENV_UNREADABLE_VIA = "env-unreadable";
+
 /** How long a manual-DNS confirmation is trusted before the host is asked about again (the resolvers never showed the change). */
 export const MANUAL_DNS_STALE_MS = 30 * 60 * 1000;
 
@@ -50,8 +53,9 @@ const OBJECT_TOKENS = new Set(["S3", "MINIO", "BUCKET", "BUCKETS"]);
 /**
  * Does an environment variable NAME point at an object store? Judged on the name only (values are secrets and are never read
  * here): a token `S3`, `MINIO`, `BUCKET`, `OBJECT STORAGE`, or `STORAGE` next to `ENDPOINT`/`URL`/`HOST`. A heuristic on purpose:
- * a false positive holds a host back and says why (the operator clears it per host with an attestation), a miss lets a host
- * flip that the list did not name, so the CUTOVER gate always shows which hosts were judged dependent and by which names.
+ * a false positive holds a host back and says why (under policy `mirror` the operator clears it per host with an attestation;
+ * policy `hold` keeps every dependant on the source until the policy changes), a miss lets a host flip that the list did not
+ * name, so the CUTOVER gate always shows which hosts were judged dependent and by which names.
  */
 export function isObjectStoreKey(key: string): boolean {
   const tokens = key.toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
