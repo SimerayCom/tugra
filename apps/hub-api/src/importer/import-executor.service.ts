@@ -61,6 +61,8 @@ export const DOKPLOY_HOST_SHAPE = /^[a-z0-9][a-z0-9_-]{5,62}$/i;
 const remapHostShapeFor = (sourceKind: string | undefined): RegExp | undefined => (sourceKind === "dokploy" ? DOKPLOY_HOST_SHAPE : undefined);
 /** A DB_IDENT_RE-safe database name derived from a display name (fallback when the source has no database name). */
 const safeDbIdent = (name: string): string => name.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 63) || "app";
+/** The tag a carried database is created with (R2): deterministic for this op and item, 31 characters of `[a-z0-9-]`, so a retry finds the row. */
+const carryMarker = (opId: string, itemRef: string): string => `import-${createHash("sha256").update(`${opId}|${itemRef}`).digest("hex").slice(0, 24)}`;
 const msg = (e: unknown): string => (e instanceof Error ? e.message : "failed");
 /** The private network a single-service import joins: `svc-<app name slug>` (a DNS label, at most 63 chars), or undefined. */
 function privateNetworkName(appName: string): string | undefined {
@@ -1234,12 +1236,17 @@ export class ImportExecutorService {
           data: { opId, serverId: targetServerId, kind: "database", itemRef, status: "RUNNING", dependsOn: [], result: { name: db.name, carried: true }, startedAt: new Date() },
         });
     try {
-      const created = await this.dbs.create(userId, foreignDbToCreateInput(db, { serverId: targetServerId, environmentId: env?.environmentId ?? undefined }));
+      // The row is created WITH an op-scoped marker (one insert), and looked up by it first: a crash between the insert and the task update
+      // below leaves a RUNNING task with no resourceId, and the retry must adopt that row, never create a second one nobody tracks.
+      const marker = carryMarker(opId, itemRef);
+      const earlier = await this.dbs.findMarked(targetServerId, marker);
+      const created = earlier ?? (await this.dbs.createMarked(userId, foreignDbToCreateInput(db, { serverId: targetServerId, environmentId: env?.environmentId ?? undefined }), marker));
       await this.prisma.bulkTask.update({
         where: { id: task.id },
         data: { status: "DONE", resourceType: "database", resourceId: created.id, result: { name: created.name, databaseId: created.id, carried: true, credentialsCarried: false }, finishedAt: new Date() },
       });
-      await this.audit.log({ actor: userId, action: "import.unlisted_db_carried", target: opId, meta: { itemRef, engine: db.engine, databaseId: created.id } });
+      await this.dbs.dropMarker(created.id, marker).catch((e) => this.logger.warn(`carry marker of ${created.id} not removed: ${msg(e)}`));
+      await this.audit.log({ actor: userId, action: "import.unlisted_db_carried", target: opId, meta: { itemRef, engine: db.engine, databaseId: created.id, ...(earlier ? { adopted: true } : {}) } });
       return { itemRef, created: true };
     } catch (e) {
       await this.prisma.bulkTask.update({ where: { id: task.id }, data: { status: "FAILED", output: msg(e), finishedAt: new Date() } });
