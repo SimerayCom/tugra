@@ -38526,6 +38526,13 @@
                           "additionalProperties": false
                         }
                       },
+                      "dataLayoutWarning": {
+                        "type": "string",
+                        "enum": [
+                          "pg_anonymous_volume"
+                        ],
+                        "nullable": true
+                      },
                       "role": {
                         "type": "string",
                         "enum": [
@@ -38906,6 +38913,13 @@
                         "additionalProperties": false
                       }
                     },
+                    "dataLayoutWarning": {
+                      "type": "string",
+                      "enum": [
+                        "pg_anonymous_volume"
+                      ],
+                      "nullable": true
+                    },
                     "role": {
                       "type": "string",
                       "enum": [
@@ -39252,6 +39266,13 @@
                         ],
                         "additionalProperties": false
                       }
+                    },
+                    "dataLayoutWarning": {
+                      "type": "string",
+                      "enum": [
+                        "pg_anonymous_volume"
+                      ],
+                      "nullable": true
                     },
                     "role": {
                       "type": "string",
@@ -39793,6 +39814,13 @@
                         ],
                         "additionalProperties": false
                       }
+                    },
+                    "dataLayoutWarning": {
+                      "type": "string",
+                      "enum": [
+                        "pg_anonymous_volume"
+                      ],
+                      "nullable": true
                     },
                     "role": {
                       "type": "string",
@@ -41397,6 +41425,13 @@
                         ],
                         "additionalProperties": false
                       }
+                    },
+                    "dataLayoutWarning": {
+                      "type": "string",
+                      "enum": [
+                        "pg_anonymous_volume"
+                      ],
+                      "nullable": true
                     },
                     "role": {
                       "type": "string",

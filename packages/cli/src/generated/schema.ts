@@ -26730,6 +26730,8 @@ export interface operations {
                             name: string;
                             path: string;
                         }[];
+                        /** @enum {string|null} */
+                        dataLayoutWarning?: "pg_anonymous_volume" | null;
                         /** @enum {string} */
                         role: "OWNER" | "ADMIN" | "VIEWER";
                         canWrite: boolean;
@@ -26854,6 +26856,8 @@ export interface operations {
                             name: string;
                             path: string;
                         }[];
+                        /** @enum {string|null} */
+                        dataLayoutWarning?: "pg_anonymous_volume" | null;
                         /** @enum {string} */
                         role: "OWNER" | "ADMIN" | "VIEWER";
                         canWrite: boolean;
@@ -26977,6 +26981,8 @@ export interface operations {
                             name: string;
                             path: string;
                         }[];
+                        /** @enum {string|null} */
+                        dataLayoutWarning?: "pg_anonymous_volume" | null;
                         /** @enum {string} */
                         role: "OWNER" | "ADMIN" | "VIEWER";
                         canWrite: boolean;
@@ -27235,6 +27241,8 @@ export interface operations {
                             name: string;
                             path: string;
                         }[];
+                        /** @enum {string|null} */
+                        dataLayoutWarning?: "pg_anonymous_volume" | null;
                         /** @enum {string} */
                         role: "OWNER" | "ADMIN" | "VIEWER";
                         canWrite: boolean;
@@ -28255,6 +28263,8 @@ export interface operations {
                             name: string;
                             path: string;
                         }[];
+                        /** @enum {string|null} */
+                        dataLayoutWarning?: "pg_anonymous_volume" | null;
                         /** @enum {string} */
                         role: "OWNER" | "ADMIN" | "VIEWER";
                         canWrite: boolean;
