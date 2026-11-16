@@ -14,11 +14,14 @@
  * `RollbackOptions` for the run's own deployments and (with typed names) data-bearing resources.
  */
 import { HttpException, Inject, Injectable, OnModuleInit } from "@nestjs/common";
+import type { ImportApplyInput } from "../../../importer/dto";
+import type { ImportPlanResponse } from "../../../importer/importer.service";
 import type { DryRunItem, GateCheck, GateResult } from "../../core/dto";
 import {
   STEP_HANDLERS,
   StepFailure,
   makeGate,
+  unmappedSourceServers,
   type ActResult,
   type CompResult,
   type CompensateHow,
@@ -29,6 +32,7 @@ import {
 } from "../../core/run-contract";
 import { CLEANUP_REQUEST_KEY, type CleanupRequest } from "../../core/run-engine.service";
 import { SESSION_EXPIRED_CODE } from "../../core/run-logic";
+import { serverRefOfItemRef } from "../../../importer/server-map";
 import { IMPORT_STEPS_PORT, type DeploymentRef, type ImportStepsPort, type OpSnapshot, type SessionState } from "./import-ports";
 import { applyInputOf, deployKeyBase, failureOf, hasActive, hasBad, includedItems, isConflict, itemTasks, stopRunApps, unackedBlockers } from "./step-utils";
 
@@ -41,6 +45,11 @@ export interface ImportObs extends Observation {
   op: OpSnapshot | null;
   /** earlyStateless: stateless apps still to deploy / already deployed / failed. */
   wave: { candidates: Array<{ appId: string; name: string }>; deployed: number; failed: number; active: number } | null;
+  /**
+   * Multi-host runs only, and only while the import is still to be applied: the source servers the run's `serverMap` does not
+   * place. Any of them would silently land on the default target, so the pre-gate fails closed. null = not checked.
+   */
+  placement: { unmapped: string[]; unreadable: boolean } | null;
 }
 
 interface Comp {
@@ -59,6 +68,26 @@ const compOf = (ctx: StepContext): Comp => (ctx.step.compensation ?? {}) as Comp
 
 /** True while the run has no usable op: the next thing to do is `apply`. */
 const needsApply = (obs: ImportObs): boolean => !obs.op || obs.op.rolledBack;
+
+/** The run has a non-empty serverMap (single-target runs skip every placement check). */
+const hasMap = (ctx: StepContext): boolean => Object.keys(ctx.run.serverMap ?? {}).length > 0;
+
+/**
+ * The source servers of the items this run would import that its serverMap does not place. A service with an explicit
+ * target server (or skipped) of its own choice is placed (or dropped) by that choice, exactly as the importer decides.
+ */
+function unmappedOf(ctx: StepContext, plan: ImportPlanResponse): string[] {
+  const choices = ctx.run.applyInput.serviceChoices ?? {};
+  const refs = includedItems(plan, ctx.run)
+    .filter((i) => {
+      if (i.kind !== "app" && i.kind !== "database" && i.kind !== "service") return false;
+      const c = i.kind === "service" ? choices[i.itemRef] : undefined;
+      return !(c?.skip || c?.targetServerId);
+    })
+    .map((i) => serverRefOfItemRef(i.itemRef))
+    .filter((r): r is string => !!r);
+  return unmappedSourceServers(ctx.run, refs).sort();
+}
 
 @Injectable()
 export class ImportStep implements StepHandler<ImportObs>, OnModuleInit {
@@ -89,7 +118,20 @@ export class ImportStep implements StepHandler<ImportObs>, OnModuleInit {
     const wave = op && !op.rolledBack && run.options.deployWaves === "earlyStateless" ? await this.waveState(ctx, op) : null;
     const tasks = op ? itemTasks(op) : [];
     const settled = tasks.filter((t) => !["PENDING", "RUNNING", "AWAITING_CUTOVER"].includes(t.status)).length;
-    return { session, op, wave, progress: { done: settled, total: tasks.length, unit: "item" } };
+    const placement = await this.placementOf(ctx, session, op);
+    return { session, op, wave, placement, progress: { done: settled, total: tasks.length, unit: "item" } };
+  }
+
+  /** Multi-host: which source servers the serverMap leaves unplaced. Read-only (the adapter memoizes the plan for a short while). */
+  private async placementOf(ctx: StepContext, session: SessionState, op: OpSnapshot | null): Promise<ImportObs["placement"]> {
+    if (!hasMap(ctx) || (op && !op.rolledBack) || session !== "active" || !ctx.run.sessionId) return null;
+    const run = ctx.run;
+    try {
+      const plan = await this.port.plan(ctx.actor.userId, { sessionId: run.sessionId!, sourceKind: run.sourceKind, ...(run.applyInput.dbDataModes ? { dbDataModes: run.applyInput.dbDataModes } : {}) });
+      return { unmapped: unmappedOf(ctx, plan), unreadable: false };
+    } catch {
+      return { unmapped: [], unreadable: true };
+    }
   }
 
   private async waveState(ctx: StepContext, op: OpSnapshot): Promise<NonNullable<ImportObs["wave"]>> {
@@ -115,6 +157,10 @@ export class ImportStep implements StepHandler<ImportObs>, OnModuleInit {
     const willApply = needsApply(obs) && !(comp.applyStartedAt && comp.applyDone !== true);
     if (willApply && obs.session !== "active") {
       return makeGate([{ id: "import.session", status: "fail", code: "import.session-expired", evidence: "hub-verified" }], { wait: { kind: "operator", code: SESSION_EXPIRED_CODE } });
+    }
+    if (willApply && obs.placement && obs.placement.unmapped.length > 0) {
+      const u = obs.placement.unmapped;
+      return makeGate([{ id: "import.placement", status: "fail", code: "import.server-unmapped", params: { count: u.length, servers: u.slice(0, 10) }, evidence: "hub-verified" }]);
     }
     return makeGate([{ id: "import.ready", status: "pass", code: "import.ready", evidence: "hub-verified" }]);
   }
@@ -176,7 +222,9 @@ export class ImportStep implements StepHandler<ImportObs>, OnModuleInit {
     await ctx.recordCompensation({ applyStartedAt: ctx.now().toISOString(), applyDone: false });
     let opId: string;
     try {
-      opId = (await this.port.apply(ctx.actor.userId, applyInputOf(run, run.sessionId))).opId;
+      // The serverMap lives on the run (not in the frozen applyInput or the plan hash): the importer places each item from it.
+      const input = hasMap(ctx) ? ({ ...applyInputOf(run, run.sessionId), serverMap: run.serverMap } as ImportApplyInput) : applyInputOf(run, run.sessionId);
+      opId = (await this.port.apply(ctx.actor.userId, input)).opId;
     } catch (e) {
       const f = failureOf(e, "import.apply");
       // an HTTP answer is a definitive refusal that created no op: forget the marker so a retry never goes looking for one
@@ -268,6 +316,17 @@ export class ImportStep implements StepHandler<ImportObs>, OnModuleInit {
       { code: plan.planHash === run.planHash ? "import.plan-fresh" : "import.plan-changed", level: plan.planHash === run.planHash ? "info" : "block" },
     ];
     for (const [code, names] of blocked) out.push({ code: "import.item-skipped", level: "warn", params: { risk: code, count: names.length, items: names.slice(0, 10) } });
+    if (hasMap(ctx)) {
+      const sources = new Set(
+        includedItems(plan, run)
+          .filter((i) => i.kind === "app" || i.kind === "database" || i.kind === "service")
+          .map((i) => serverRefOfItemRef(i.itemRef))
+          .filter((r): r is string => !!r),
+      );
+      const unmapped = unmappedOf(ctx, plan);
+      out.push({ code: "import.placement", level: "info", params: { targets: ctx.targetServerIds.length, sources: sources.size } });
+      if (unmapped.length) out.push({ code: "import.server-unmapped", level: "block", params: { count: unmapped.length, servers: unmapped.slice(0, 10) } });
+    }
     return out;
   }
 
