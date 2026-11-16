@@ -10,7 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
@@ -149,6 +151,10 @@ func newMemberWriter() *memberWriter {
 
 func (m *memberWriter) compress(raw []byte, out *bytes.Buffer) (sum [32]byte, err error) {
 	out.Reset()
+	// Pre-size to the worst case (incompressible data): a bytes.Buffer that grows by doubling reaches ~2x the member
+	// while the old and new backing arrays are both alive (a 128 MiB member -> a 256 MiB capacity plus a 128 MiB copy
+	// mid-grow). Reset keeps the capacity, so the two pooled buffers never reallocate after the first full slice.
+	out.Grow(memberBound(len(raw)))
 	m.gw.Reset(out)
 	m.gw.Header = gzip.Header{} // no name, no mtime: deterministic bytes
 	if _, err = m.gw.Write(raw); err != nil {
@@ -159,6 +165,11 @@ func (m *memberWriter) compress(raw []byte, out *bytes.Buffer) (sum [32]byte, er
 	}
 	return sha256.Sum256(out.Bytes()), nil
 }
+
+// memberBound is an upper bound for one gzip member of n raw bytes at BestSpeed: incompressible data is emitted as stored
+// blocks (5 bytes of framing per block of at least 16 KiB), plus the 10-byte header, the 8-byte trailer and a final empty
+// block. n/256 is a >10x margin over the framing; a stream that still exceeds it only costs one regrow, never correctness.
+func memberBound(n int) int { return n + n/256 + 1024 }
 
 // compressMember is the stateless form (tests and one-offs).
 func compressMember(raw []byte, out *bytes.Buffer) (sum [32]byte, err error) {
@@ -204,7 +215,8 @@ func isRetryablePartErr(err error) bool {
 // StreamVolume runs the tar helper over the (stopped) source, cuts its stream into independent gzip members of at most
 // PartRawBytes raw bytes, and delivers each through the hub's memory relay: register -> PUT -> commit. Slices already
 // committed by an earlier run are only re-read and compared by RAW hash (no network). Memory: one raw slice buffer plus
-// two member buffers. It returns after the last commit; the caller then re-verifies the source and calls `finish`.
+// two member buffers, each pre-sized once to the incompressible worst case (memberBound) and reused for every slice.
+// It returns after the last commit; the caller then re-verifies the source and calls `finish`.
 func StreamVolume(ctx context.Context, h *Hub, dockerPath string, env []string, tg Target, s *volSource, o StreamOpts) (StreamResult, error) {
 	if o.Helper == "" {
 		return StreamResult{}, ErrNoHelper
@@ -257,6 +269,7 @@ func StreamVolume(ctx context.Context, h *Hub, dockerPath string, env []string, 
 	free := make(chan *bytes.Buffer, 2)
 	free <- new(bytes.Buffer)
 	free <- new(bytes.Buffer)
+	limitMigratorMemory()
 	go produce(sctx, stdout, o, jobs, free)
 
 	var res StreamResult
@@ -322,6 +335,30 @@ func StreamVolume(ctx context.Context, h *Hub, dockerPath string, env []string, 
 		return res, errors.New("the volume exceeds the hub's part limit")
 	}
 	return res, nil
+}
+
+// migratorMemLimit is the Go runtime soft limit the streamer installs. The migrator container runs with
+// `--memory=768m --memory-swap=768m` (no swap escape: an overrun is an OOM kill, exit 137, with no message). The live set
+// is one raw slice plus two member buffers (about 3 x 128 MiB at the hub's largest part) and a few MiB of buffers, so
+// 600 MiB lets the GC reclaim garbage (dropped request bodies, old members) BEFORE the cgroup limit while staying below it.
+const migratorMemLimit = 600 << 20
+
+var memLimitOnce sync.Once
+
+// limitMigratorMemory installs the soft memory limit once per process. It lives in the streamer entry (not in run.go)
+// because only the volume arm holds slice-sized buffers; the migrate subcommand reaches it before the first slice is read.
+func limitMigratorMemory() {
+	memLimitOnce.Do(func() { applyMemoryLimit(os.LookupEnv, debug.SetMemoryLimit) })
+}
+
+// applyMemoryLimit sets migratorMemLimit through set, unless the operator exported GOMEMLIMIT (their value wins: the
+// runtime has already applied it at start). It reports whether it set the limit.
+func applyMemoryLimit(getenv func(string) (string, bool), set func(int64) int64) bool {
+	if v, ok := getenv("GOMEMLIMIT"); ok && strings.TrimSpace(v) != "" {
+		return false
+	}
+	set(migratorMemLimit)
+	return true
 }
 
 func shortRun(run string) string {

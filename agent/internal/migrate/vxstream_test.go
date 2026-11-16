@@ -178,10 +178,21 @@ func (f *fakeRelayHub) handler() http.Handler {
 			}
 			id := strings.TrimPrefix(p, "/api/v1/agent-vx/t/")
 			idx := f.srcPaths[id]
-			body, _ := io.ReadAll(r.Body)
+			// dropBodies (memory tests): hash the body as a stream so the fake hub never holds a second copy of a part
+			var body []byte
+			var bodyLen int
+			var bodySha string
+			if f.dropBodies {
+				h := sha256.New()
+				n, _ := io.Copy(h, r.Body)
+				bodyLen, bodySha = int(n), hex.EncodeToString(h.Sum(nil))
+			} else {
+				body, _ = io.ReadAll(r.Body)
+				bodyLen, bodySha = len(body), sha(body)
+			}
 			want := f.registered[idx]
-			if r.ContentLength != int64(len(body)) || len(body) != want.Size || r.TransferEncoding != nil {
-				f.t.Errorf("part %d: exact Content-Length required (cl=%d body=%d size=%d te=%v)", idx, r.ContentLength, len(body), want.Size, r.TransferEncoding)
+			if r.ContentLength != int64(bodyLen) || bodyLen != want.Size || r.TransferEncoding != nil {
+				f.t.Errorf("part %d: exact Content-Length required (cl=%d body=%d size=%d te=%v)", idx, r.ContentLength, bodyLen, want.Size, r.TransferEncoding)
 			}
 			f.putAttempt[idx]++
 			if f.putFail != nil {
@@ -190,7 +201,7 @@ func (f *fakeRelayHub) handler() http.Handler {
 					return
 				}
 			}
-			if sha(body) != want.Sha256 {
+			if bodySha != want.Sha256 {
 				w.WriteHeader(422)
 				return
 			}
