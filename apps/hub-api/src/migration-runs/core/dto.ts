@@ -91,6 +91,8 @@ export const GateCheckSchema = z.object({
   subject: z.string().max(300).optional(),
   evidence: EvidenceKindSchema.optional(),
   ownerInput: OwnerInputKeySchema.optional(),
+  /** The attestation check ids an operator may record for THIS check (one row per check and subject in the panel). */
+  attestable: z.array(z.string().max(80)).max(4).optional(),
   ackable: z.boolean().optional(),
   acked: z.boolean().optional(),
 });

@@ -1,0 +1,218 @@
+import { StepHandlerRegistryService } from "../../core/step-handler.registry";
+import type { RunSnapshot } from "../../core/run-contract";
+import { DATA_CODES } from "./data-contract";
+import { FreezeHandler, UNRESOLVED_CHECK, hostLoopFreeze, stopHostsOf } from "./freeze.handler";
+import { HOST_LOOP_CODES } from "./inventory/host-codes";
+import { FakeHostReports } from "./inventory/testing/fake-host-reports";
+import { INVENTORY_ATTEST, INVENTORY_CODES } from "./inventory/cross-check";
+import { SourceHostFake } from "./testing/source-host-fake";
+import { FakeCaps, FakeDataPort, FakeSourceApi, answered, makeCtx, makeRun, makeSnap, type CtxHarness } from "./testing/fakes";
+
+const RUN = "cmrun00000001";
+const APPROVAL = { byUserId: "user1", at: "2026-11-20T09:59:00.000Z", boundHash: "f".repeat(64), acks: [], confirmedName: RUN, acceptDataRisk: false, expiresAt: null };
+const id = (c: string) => c.repeat(64);
+
+const loopRun = (o: Parameters<typeof makeRun>[0] = {}): RunSnapshot => makeRun({ ...o, options: { sourceRunner: "coolify-host-loop", ...(o.options ?? {}) }, inputs: { sourceController: answered("agent" as const) } });
+
+function build(run: RunSnapshot = loopRun(), apps = [{ itemRef: "app:srv-a:uuaaaaaaaaaaaaaaaaaaaaaa", name: "web" }, { itemRef: "app:srv-b:uubbbbbbbbbbbbbbbbbbbbbb", name: "worker" }]) {
+  const registry = new StepHandlerRegistryService();
+  const data = new FakeDataPort(makeSnap({ apps, services: [] }));
+  const reports = new FakeHostReports();
+  const handler = new FreezeHandler(registry, data, new FakeSourceApi(), new SourceHostFake({ containers: [] }), new FakeCaps(), reports);
+  handler.onModuleInit();
+  const ctx = (o: Partial<Parameters<typeof makeCtx>[0]> = {}): CtxHarness => makeCtx({ key: "FREEZE", run, steps: { DATA_SEED: { status: "PASSED" }, DNS_PREPARE: { status: "SKIPPED" } }, approval: APPROVAL, ...o });
+  const stopped = (ref: string) => reports.set(RUN, { stepKey: "FREEZE", sourceServerRef: ref, kind: "freeze", state: "stopped", payload: { recorded: [{ id: id("a"), name: "n", image: "i", ports: "", itemRef: `app:${ref}:x` }], stopped: { [id("a")]: "stopped" }, started: {}, unresolved: [], outcome: "done", errorCode: null, action: "freeze" } });
+  return { handler, data, reports, ctx, stopped };
+}
+
+describe("FREEZE with the coolify-host-loop runner (host-loop controller)", () => {
+  it("applies only to the agent controller of a host-loop run, and does not need the same-host topology", async () => {
+    expect(hostLoopFreeze(loopRun())).toBe(true);
+    expect(hostLoopFreeze(makeRun({ options: { sourceRunner: "coolify-host-loop" } }))).toBe(false); // manual controller: the operator stops by hand
+    expect(hostLoopFreeze(makeRun({ inputs: { sourceController: answered("agent" as const) } }))).toBe(false); // operator runner
+    const { handler, ctx } = build(); // two-box topology: the same-host agent controller would refuse it
+    const h = ctx();
+    expect(handler.preGate(h.ctx, await handler.observe(h.ctx)).checks.map((c) => c.id)).not.toContain("agent-same-host");
+  });
+
+  it("groups the stop list by the host that runs each item; an item with no known host cannot be placed", () => {
+    const { byHost, unplaced } = stopHostsOf([
+      { itemRef: "app:srv-a:u1", kind: "application", uuid: "u1", name: "a1" },
+      { itemRef: "app:srv-a:u2", kind: "application", uuid: "u2", name: "a2" },
+      { itemRef: "app:_:u3", kind: "application", uuid: "u3", name: "a3" },
+    ]);
+    expect([...byHost.keys()]).toEqual(["srv-a"]);
+    expect(byHost.get("srv-a")).toHaveLength(2);
+    expect(unplaced.map((u) => u.name)).toEqual(["a3"]);
+  });
+
+  it("opens the window, records only the controller, and waits for the host-loop script with the host counts", async () => {
+    const { handler, ctx } = build();
+    const h = ctx();
+    const res = await handler.act(h.ctx, await handler.observe(h.ctx));
+    expect(res).toMatchObject({ outcome: "wait", wait: { kind: "operator", code: HOST_LOOP_CODES.freezeRun, offersCommand: true, commandKind: "host-loop", params: { hosts: 2, pending: 2, failing: 0, items: 2 } } });
+    expect(h.patches.some((p) => p.freezeStartedAt)).toBe(true);
+    expect(h.comp.freeze).toEqual({ controller: "host-loop", hosts: ["srv-a", "srv-b"] });
+  });
+
+  it("is quiesced only when EVERY host with stop items reported its recorded containers stopped (evidence: host-loop-reported)", async () => {
+    const { handler, ctx, stopped } = build();
+    stopped("srv-a");
+    const h = ctx();
+    let obs = await handler.observe(h.ctx);
+    let gate = handler.postGate(h.ctx, obs);
+    expect(gate.passed).toBe(false);
+    expect(gate.checks[0]).toMatchObject({ id: "source-quiesced", status: "unknown", params: { remaining: 1, controller: "host-loop" }, evidence: "host-loop-reported" });
+    expect(await handler.act(h.ctx, obs)).toMatchObject({ outcome: "wait", wait: { params: { pending: 1 } } });
+    stopped("srv-b");
+    obs = await handler.observe(h.ctx);
+    gate = handler.postGate(h.ctx, obs);
+    expect(gate.passed).toBe(true);
+    expect(gate.checks[0]).toMatchObject({ status: "pass", code: DATA_CODES.freezeQuiesced, evidence: "host-loop-reported" });
+    expect(await handler.act(h.ctx, obs)).toEqual({ outcome: "done" });
+  });
+
+  it("a host whose stop failed (a mismatch or a failed docker stop) fails the gate with the host named", async () => {
+    const { handler, ctx, stopped, reports } = build();
+    stopped("srv-a");
+    reports.set(RUN, { stepKey: "FREEZE", sourceServerRef: "srv-b", kind: "freeze", state: "stop-failed", payload: { recorded: [], stopped: { [id("b")]: "mismatch" }, started: {}, unresolved: [], outcome: "done", errorCode: null, action: "freeze" } });
+    const h = ctx();
+    const obs = await handler.observe(h.ctx);
+    const gate = handler.postGate(h.ctx, obs);
+    expect(gate.passed).toBe(false);
+    expect(gate.checks).toContainEqual(expect.objectContaining({ code: HOST_LOOP_CODES.freezeHostFailed, status: "fail", subject: "srv-b", params: { host: "srv-b", state: "stop-failed", code: "stop-failed" } }));
+    expect(await handler.act(h.ctx, obs)).toMatchObject({ wait: { code: HOST_LOOP_CODES.freezeRun, params: { failing: 1, names: ["srv-b"] } } });
+  });
+
+  it("a stop-list item no container matched blocks until the operator attests it; the script is then minted with the guard lifted", async () => {
+    const { handler, ctx, stopped, reports } = build();
+    stopped("srv-a");
+    reports.set(RUN, { stepKey: "FREEZE", sourceServerRef: "srv-b", kind: "freeze", state: "error", payload: { recorded: [], stopped: {}, started: {}, unresolved: ["app:srv-b:uubbbbbbbbbbbbbbbbbbbbbb"], outcome: "error", errorCode: "unresolved-items", action: "freeze" } });
+    const h = ctx();
+    const obs = await handler.observe(h.ctx);
+    expect(await handler.act(h.ctx, obs)).toMatchObject({ outcome: "wait", wait: { code: DATA_CODES.freezeContainerUnresolved, attest: [UNRESOLVED_CHECK], offersCommand: true, commandKind: "host-loop", params: { count: 1, of: 2, names: ["worker"] } } });
+    expect(h.events.map((e) => e.code)).toContain(DATA_CODES.freezeContainerUnresolved);
+    // an `unresolved-items` error is not a host failure: it is the operator's decision to make
+    expect(handler.postGate(h.ctx, obs).checks.map((c) => c.code)).not.toContain(HOST_LOOP_CODES.freezeHostFailed);
+
+    const accepted = ctx({ steps: { DATA_SEED: { status: "PASSED" }, DNS_PREPARE: { status: "SKIPPED" }, FREEZE: { evidence: { attestations: [{ checkId: UNRESOLVED_CHECK, byUserId: "user1", at: "2026-11-20T10:00:00.000Z" }], attachments: [] } } } });
+    expect(await handler.act(accepted.ctx, await handler.observe(accepted.ctx))).toMatchObject({ wait: { code: HOST_LOOP_CODES.freezeRun } }); // now re-run the script
+
+    // the re-run stopped it with the item accepted: quiesced, and the accepted item stays visible as an operator-attested warning
+    reports.set(RUN, { stepKey: "FREEZE", sourceServerRef: "srv-b", kind: "freeze", state: "stopped", payload: { recorded: [{ id: id("b"), name: "n", image: "i", ports: "", itemRef: "app:srv-b:x" }], stopped: { [id("b")]: "stopped" }, started: {}, unresolved: ["app:srv-b:uubbbbbbbbbbbbbbbbbbbbbb"], outcome: "done", errorCode: null, action: "freeze" } });
+    const gate = handler.postGate(accepted.ctx, await handler.observe(accepted.ctx));
+    expect(gate.passed).toBe(true);
+    expect(gate.checks).toContainEqual(expect.objectContaining({ id: "containers-unresolved", status: "warn", evidence: "operator-attested" }));
+  });
+
+  it("an item whose source host is unknown fails closed and the dry-run blocks it", async () => {
+    const { handler, ctx } = build(loopRun(), [{ itemRef: "app:srv-a:uuaaaaaaaaaaaaaaaaaaaaaa", name: "web" }, { itemRef: "app:_:uuccccccccccccccccccccc", name: "mystery" }]);
+    const h = ctx();
+    expect(await handler.act(h.ctx, await handler.observe(h.ctx))).toMatchObject({ outcome: "fail", code: HOST_LOOP_CODES.freezeNoHost, retryable: false, params: { count: 1, names: ["mystery"] } });
+    expect(await handler.dryRun(h.ctx)).toEqual(expect.arrayContaining([expect.objectContaining({ code: HOST_LOOP_CODES.freezeNoHost, level: "block" }), expect.objectContaining({ code: HOST_LOOP_CODES.freezeDryPlan, params: { hosts: 1, items: 1 } })]));
+  });
+
+  it("nothing to stop is done at once", async () => {
+    const { handler, ctx } = build(loopRun(), []);
+    const h = ctx();
+    expect(await handler.act(h.ctx, await handler.observe(h.ctx))).toEqual({ outcome: "done" });
+  });
+
+  it("abort names the hosts that still have recorded containers stopped (the operator runs the script with TUGRA_LOOP_ACTION=unfreeze)", async () => {
+    const { handler, ctx, stopped, reports } = build();
+    stopped("srv-a");
+    stopped("srv-b");
+    reports.set(RUN, { stepKey: "FREEZE", sourceServerRef: "srv-b", kind: "freeze", state: "restarted", payload: { recorded: [{ id: id("a"), name: "n", image: "i", ports: "", itemRef: "app:srv-b:x" }], stopped: {}, started: { [id("a")]: "started" }, unresolved: [], outcome: "done", errorCode: null, action: "unfreeze" } });
+    const h = ctx({ steps: { FREEZE: { compensation: { freeze: { controller: "host-loop", hosts: ["srv-a", "srv-b"] } } } } });
+    expect(await handler.compensate(h.ctx, "abort")).toEqual({ outcome: "manual", manual: [{ code: HOST_LOOP_CODES.freezeUnfreeze, params: { hosts: ["srv-a"], count: 1 } }] });
+    expect(await handler.compensate(ctx().ctx, "abort")).toEqual({ outcome: "nothing-to-do" }); // never froze
+  });
+
+  const frozen = { steps: { FREEZE: { compensation: { freeze: { controller: "host-loop", hosts: ["srv-a", "srv-b"] } } } } };
+  const manual = (hosts: string[]) => ({ outcome: "manual", manual: [{ code: HOST_LOOP_CODES.freezeUnfreeze, params: { hosts, count: hosts.length } }] });
+
+  it("abort names a host whose freeze report NEVER arrived (the post is best effort and the containers may be stopped)", async () => {
+    const { handler, ctx, stopped } = build();
+    stopped("srv-b"); // srv-a stopped its writers but its report was lost
+    expect(await handler.compensate(ctx(frozen).ctx, "abort")).toEqual(manual(["srv-a", "srv-b"]));
+  });
+
+  it("abort names every recorded host when the reports cannot be read, never `nothing-to-do`", async () => {
+    const { handler, ctx, reports } = build();
+    reports.list = async () => {
+      throw new Error("database unavailable");
+    };
+    expect(await handler.compensate(ctx(frozen).ctx, "abort")).toEqual(manual(["srv-a", "srv-b"]));
+  });
+
+  it("abort leaves out only a host whose report PROVES nothing is stopped (restarted, or a finished script that recorded nothing); a half report stays named", async () => {
+    const { handler, ctx, reports } = build();
+    const rep = (ref: string, state: string, payload: Record<string, unknown>) =>
+      reports.set(RUN, { stepKey: "FREEZE", sourceServerRef: ref, kind: "freeze", state, payload: { recorded: [], stopped: {}, started: {}, unresolved: [], outcome: "done", errorCode: null, action: "freeze", ...payload } });
+    rep("srv-a", "stopped", {}); // finished, found nothing running: nothing to undo
+    rep("srv-b", "partial", { outcome: null }); // the done line never arrived
+    expect(await handler.compensate(ctx(frozen).ctx, "abort")).toEqual(manual(["srv-b"]));
+    rep("srv-b", "restarted", { recorded: [{ id: id("a"), name: "n", image: "i", ports: "", itemRef: "app:srv-b:x" }], started: { [id("a")]: "started" }, action: "unfreeze" });
+    expect(await handler.compensate(ctx(frozen).ctx, "abort")).toEqual({ outcome: "nothing-to-do" });
+  });
+
+  describe("R2/C6 after a SKIPPED data seed: the docker-vs-API cross-check is judged here, where nothing can be skipped", () => {
+    const UDB = "dbaaaaaaaaaaaaaaaaaaaaaa";
+    const GHOST = "dbghostgggggggggggggggggg";
+    const skipped = { steps: { DATA_SEED: { status: "SKIPPED" as const }, DNS_PREPARE: { status: "SKIPPED" as const } } };
+    const inventory = (ref: string, containers: Array<{ id: string; name: string; image: string; state: string }>) =>
+      ({ ref, host: { name: ref, docker: "27", os: "" }, containers, mounts: [], volumes: [], binds: [], complete: true, rejected: 0 }) as unknown as Record<string, unknown>;
+    const take = (reports: FakeHostReports, ref: string, ghost: boolean) =>
+      reports.set(RUN, { stepKey: "", sourceServerRef: ref, kind: "inventory", state: "complete", payload: inventory(ref, ghost ? [{ id: id("f"), name: GHOST, image: "mariadb:11", state: "running" }] : []) });
+
+    it("a database container the plan does not list blocks the freeze with an operator wait that offers the inventory and the attestations", async () => {
+      const { handler, ctx, reports } = build();
+      take(reports, "srv-a", true);
+      take(reports, "srv-b", false);
+      const h = ctx(skipped);
+      const pre = handler.preGate(h.ctx, await handler.observe(h.ctx));
+      expect(pre.passed).toBe(false);
+      expect(pre.checks).toContainEqual(expect.objectContaining({ code: INVENTORY_CODES.unlistedDb, status: "fail", subject: `srv-a/${GHOST}` }));
+      expect(pre.wait).toMatchObject({ kind: "operator", code: INVENTORY_CODES.unlistedDb, offersCommand: true, commandKind: "inventory", attest: [INVENTORY_ATTEST.excluded, INVENTORY_ATTEST.mapped] });
+    });
+
+    it("an attestation on that finding (recorded on the freeze, or earlier on the data seed) settles it; so does the owner's policy", async () => {
+      const { handler, ctx, reports } = build();
+      take(reports, "srv-a", true);
+      take(reports, "srv-b", false);
+      const att = { checkId: INVENTORY_ATTEST.excluded, subject: `srv-a/${GHOST}`, byUserId: "user1", at: "2026-11-20T10:00:00.000Z" };
+      const onFreeze = ctx({ steps: { ...skipped.steps, FREEZE: { evidence: { attestations: [att], attachments: [] } } } });
+      expect(handler.preGate(onFreeze.ctx, await handler.observe(onFreeze.ctx)).passed).toBe(true);
+      const onSeed = ctx({ steps: { ...skipped.steps, DATA_SEED: { status: "SKIPPED", evidence: { attestations: [att], attachments: [] } } } });
+      expect(handler.preGate(onSeed.ctx, await handler.observe(onSeed.ctx)).passed).toBe(true);
+      const policy = build(makeRun({ options: { sourceRunner: "coolify-host-loop" }, inputs: { sourceController: answered("agent" as const), unlistedDbPolicy: answered("skip" as const) } }));
+      take(policy.reports, "srv-a", true);
+      take(policy.reports, "srv-b", false);
+      const p = policy.ctx(skipped);
+      expect(policy.handler.preGate(p.ctx, await policy.handler.observe(p.ctx)).passed).toBe(true);
+    });
+
+    it("the host-loop runner needs an inventory of every host: with none (the seed was skipped before it) the freeze asks for it", async () => {
+      const { handler, ctx } = build();
+      const h = ctx(skipped);
+      const pre = handler.preGate(h.ctx, await handler.observe(h.ctx));
+      expect(pre.passed).toBe(false);
+      expect(pre.wait).toMatchObject({ kind: "operator", code: INVENTORY_CODES.notTaken, commandKind: "inventory", offersCommand: true });
+      expect(pre.wait).not.toHaveProperty("attest");
+    });
+
+    it("a data seed that PASSED already judged it (no second opinion), and other runners judge only the inventories that arrived", async () => {
+      const passed = build();
+      take(passed.reports, "srv-a", true);
+      const h = passed.ctx(); // DATA_SEED PASSED
+      expect(passed.handler.preGate(h.ctx, await passed.handler.observe(h.ctx)).passed).toBe(true);
+
+      const operator = build(makeRun());
+      const o = operator.ctx(skipped);
+      expect(operator.handler.preGate(o.ctx, await operator.handler.observe(o.ctx)).passed).toBe(true); // no inventory: nothing required
+      take(operator.reports, "srv-a", true);
+      const o2 = operator.ctx(skipped);
+      expect(operator.handler.preGate(o2.ctx, await operator.handler.observe(o2.ctx)).passed).toBe(false); // but a finding that arrived blocks
+    });
+  });
+});

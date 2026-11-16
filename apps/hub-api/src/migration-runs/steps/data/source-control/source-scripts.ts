@@ -85,7 +85,8 @@ function assertRecorded(cs: readonly RecordedContainer[]): void {
   for (const c of cs) if (!isHex64(c.id) || !NAME_RE.test(c.name) || !IMAGE_RE.test(c.image)) throw new Error("invalid recorded container");
 }
 
-const IDENT = [
+/** The shell function every identity-checked script defines: 0 when the container with this id still has this name and image. */
+export const IDENT = [
   'ident() { # $1 id $2 name $3 image -> 0 when the container with this id still has this name and image',
   '  cur="$(docker inspect -f \'{{.Name}}\t{{.Config.Image}}\' "$1" 2>/dev/null)" || return 2',
   '  [ "$cur" = "/$2$(printf \'\\t\')$3" ] || return 1',

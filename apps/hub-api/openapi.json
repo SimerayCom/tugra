@@ -76342,6 +76342,14 @@
                               "orphanVolumePolicy"
                             ]
                           },
+                          "attestable": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "maxLength": 80
+                            },
+                            "maxItems": 4
+                          },
                           "ackable": {
                             "type": "boolean"
                           },

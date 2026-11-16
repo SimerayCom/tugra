@@ -27,6 +27,7 @@
  */
 
 import { assertPinnable, archPinLines, type ArchDigests } from "./image-pin";
+import { inventoryShellLines } from "../migration-runs/steps/data/inventory/inventory-script";
 
 export function renderMigratorInstallScript(opts: { image: string; digests?: ArchDigests }): string {
   const image = opts.image;
@@ -39,6 +40,7 @@ export function renderMigratorInstallScript(opts: { image: string; digests?: Arc
     "# Usage: curl -fsSL <hub>/install/migrator.sh | TUGRA_MIGRATION_TOKEN=<token> sh -s -- --hub <hub-url> [--dry-run] [--only REF] [--map REF=CONTAINER] [--resync] [--certs] [--proxy-container NAME]",
     "#   volume data (streamed in resumable parts): [--arms databases|volumes|all] [--stop-source] [--stop-timeout S] [--allow-bind] [--part-mib N] [--reset-volume REF] [--hub-outage-wait D] [--speedtest-mib N]",
     "#   DB logical parity (read-only counts reported to the hub after the data arms): [--verify] [--verify-mode exact|estimate] [--verify-exact-below N]",
+    "#   host inventory (read-only: docker ps / volumes / bind sizes via du, plus a hub reachability + body-cap probe; runs NO migrator): --inventory [--server-ref REF]",
     "set -eu",
     "",
     // Version-matched agent image, injected by the hub (the migrator is the agent image's `migrate` subcommand).
@@ -59,10 +61,15 @@ export function renderMigratorInstallScript(opts: { image: string; digests?: Arc
     'PROXY=""',
     // Which arm(s) run: the default (databases) keeps today's container exactly as it was; a volume arm adds a memory cap.
     'ARMS="databases"',
+    // `--inventory`: the read-only host inventory + hub reach probe instead of the migrator container (see inventory-script.ts).
+    'INVENTORY=""',
+    'SERVER_REF="_"',
     "",
     "# die prints to stderr WITHOUT ever echoing a token/value and exits with the given (or usage=2) code.",
     "die() { printf 'tugra-migrator: %s\\n' \"$1\" >&2; exit \"${2:-2}\"; }",
     "",
+    "# The read-only host inventory (`--inventory`): functions only, nothing runs until main() calls tugra_inventory.",
+    ...inventoryShellLines(),
     "# Everything lives in main(), invoked on the LAST line: a truncated `curl | sh` download then ends in a",
     "# parse error instead of executing a partial script (sh reads the pipe incrementally).",
     "main() {",
@@ -80,6 +87,9 @@ export function renderMigratorInstallScript(opts: { image: string; digests?: Arc
     '        die "the migration token is never accepted on the command line - set TUGRA_MIGRATION_TOKEN (use the command shown in the Tugra UI)" ;;',
     '      --spool-dir|--spool-dir=*) die "--spool-dir is fixed inside the container" ;;',
     '      --certs) WANT_CERTS=1; set -- "$@" "$a" ;;',
+    "      --inventory) INVENTORY=1 ;;",
+    '      --server-ref) [ "$n" -ge 1 ] || die "--server-ref needs a value"; SERVER_REF=$1; shift; n=$((n - 1)) ;;',
+    "      --server-ref=*) SERVER_REF=${a#--server-ref=} ;;",
     '      --proxy-container) [ "$n" -ge 1 ] || die "--proxy-container needs a value"; PROXY=$1; set -- "$@" "$a" "$1"; shift; n=$((n - 1)) ;;',
     "      --proxy-container=*) PROXY=${a#--proxy-container=}; set -- \"$@\" \"$a\" ;;",
     // The tar helper of the volume arm is THIS migrator image (never pulled onto the source host); it cannot be repointed.
@@ -112,6 +122,7 @@ export function renderMigratorInstallScript(opts: { image: string; digests?: Arc
     '  case "$SOCK" in /*) ;; *) die "TUGRA_DOCKER_SOCK must be an absolute path" ;; esac',
     '  case "$SOCK" in *[!A-Za-z0-9._/-]*) die "TUGRA_DOCKER_SOCK contains unsafe characters" ;; esac',
     '  case "$PROXY" in -*|*[!A-Za-z0-9_.-]*) die "invalid --proxy-container" ;; esac',
+    "  case \"$SERVER_REF\" in ''|*[!A-Za-z0-9_-]*) die \"invalid --server-ref\" ;; esac",
     "",
     "  # Token: env ONLY, checked WITHOUT echoing it. tugra_mig_ + 43 base64url chars = 53 (mirrors the hub).",
     '  TOK="${TUGRA_MIGRATION_TOKEN:-}"',
@@ -120,6 +131,9 @@ export function renderMigratorInstallScript(opts: { image: string; digests?: Arc
     '  case "$TOK" in *[!A-Za-z0-9_-]*) die "malformed migration token" ;; esac',
     '  [ "${#TOK}" -eq 53 ] || die "malformed migration token"',
     "  export TUGRA_MIGRATION_TOKEN",
+    "",
+    "  # --inventory is read-only host discovery: it runs here, before any docker pull/run, and starts no migrator.",
+    '  if [ -n "$INVENTORY" ]; then tugra_inventory "$SERVER_REF" "$HUB"; exit $?; fi',
     "",
     "  if ! command -v docker >/dev/null 2>&1; then",
     "    printf 'error: Docker is required on this host to run the migrator.\\n' >&2",

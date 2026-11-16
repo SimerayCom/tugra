@@ -277,8 +277,8 @@ export function deriveRunAllowed(run: RunFacts, steps: ReadonlyMap<StepKey, Step
 
 /** Steps that accept `POST /attach`. */
 export const ATTACH_STEPS: readonly StepKey[] = ["DATA_SEED", "DATA_FINAL"];
-/** Steps that can mint the migrator command. */
-export const COMMAND_STEPS: readonly StepKey[] = ["DATA_SEED", "DATA_FINAL"];
+/** Steps that can mint a source-host command: the migrator (DATA_SEED, DATA_FINAL) and, for the host-loop runner, the freeze script. */
+export const COMMAND_STEPS: readonly StepKey[] = ["DATA_SEED", "FREEZE", "DATA_FINAL"];
 
 /** What the UI may offer on one step right now. */
 export function deriveStepAllowed(run: RunFacts, step: StepFacts): StepAllowed {

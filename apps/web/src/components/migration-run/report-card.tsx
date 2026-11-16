@@ -8,6 +8,10 @@ import { formatDuration } from "../../lib/import";
 import { STEP_TITLE_KEY, codeText } from "../../lib/migration-run";
 import type { MigrationRunReport } from "../../lib/types";
 import { EvidenceBadge } from "./badges";
+import { CommandBlock } from "./command-block";
+
+/** The compensation item of a host-loop freeze that is still stopped: it comes with the token-free unfreeze script. */
+const UNFREEZE_CODE = "freeze.host-loop-unfreeze";
 
 const OUTCOME_KEY = {
   moved: "migrationRun.report.outcome.moved",
@@ -80,7 +84,14 @@ export function ReportBody({ report }: { report: MigrationRunReport }) {
           <div style={{ fontSize: 12, fontWeight: 700, color: "var(--c-am)", marginBottom: 6 }}>{t("migrationRun.report.manual")}</div>
           <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.6 }}>
             {report.manual.map((m, i) => (
-              <li key={`${m.code}:${i}`} style={{ wordBreak: "break-word" }}>{codeText(t, m.code, m.params)}</li>
+              <li key={`${m.code}:${i}`} style={{ wordBreak: "break-word" }}>
+                {codeText(t, m.code, m.params)}
+                {m.code === UNFREEZE_CODE && (
+                  <div style={{ marginTop: 8 }}>
+                    <CommandBlock runId={report.runId} stepKey="FREEZE" tokenless />
+                  </div>
+                )}
+              </li>
             ))}
           </ul>
         </div>

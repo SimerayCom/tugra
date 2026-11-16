@@ -6859,6 +6859,7 @@ export interface components {
                         evidence?: "hub-verified" | "migrator-reported" | "operator-attested" | "source-api-reported" | "host-loop-reported";
                         /** @enum {string} */
                         ownerInput?: "acmeEmail" | "allowBind" | "allowLiveShapeProbe" | "sourceController" | "minioPolicy" | "tickGapAcceptMinutes" | "workerPolicy" | "unlistedDbPolicy" | "orphanVolumePolicy";
+                        attestable?: string[];
                         ackable?: boolean;
                         acked?: boolean;
                     }[];
