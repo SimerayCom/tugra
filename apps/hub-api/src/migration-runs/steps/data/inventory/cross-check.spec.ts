@@ -233,6 +233,42 @@ describe("R2: carry of an unlisted database", () => {
     expect(carryAssessment("h", ghostOf("postgres", {}).containers[0])).toEqual({ ok: false, reason: "version-unknown" });
   });
 
+  it("the engine's own version variable wins over the tag, and a version Tugra's image does not have is never guessed", () => {
+    const env = (version: string | null) => ({ user: "u", database: "d", cred: "env", version });
+    const v = (image: string, version: string | null = null) => carryAssessment("h", ghostOf(image, {}, env(version) as never).containers[0]);
+    expect(v("postgres:16.2-bookworm", "16")).toMatchObject({ ok: true, spec: { version: "16" } });
+    expect(v("postgres:15-alpine", "16")).toMatchObject({ ok: true, spec: { version: "16" } });
+    expect(v("mysql:8.0.36")).toMatchObject({ ok: true, spec: { version: "8.0.36" } });
+    expect(v("redis:7.2.4-alpine", "7.2.4")).toMatchObject({ ok: true, spec: { version: "7.2.4" } });
+    // KeyDB and Dragonfly tags are not numbers: the tag itself is the version, so the image Tugra builds is the one that runs
+    expect(v("eqalpha/keydb:x86_64_v6.3.4")).toMatchObject({ ok: true, spec: { engine: "KEYDB", version: "x86_64_v6.3.4" } });
+    expect(v("docker.dragonflydb.io/dragonflydb/dragonfly:v1.14.0")).toMatchObject({ ok: true, spec: { engine: "DRAGONFLY", version: "v1.14.0" } });
+    expect(v("eqalpha/keydb:latest")).toEqual({ ok: false, reason: "version-unknown" });
+    expect(v("dragonflydb/dragonfly")).toEqual({ ok: false, reason: "version-unknown" });
+    // a tag that is no version, even with a digit in it, and no version variable
+    expect(v("postgres:pg16-bookworm")).toEqual({ ok: false, reason: "version-unknown" });
+    expect(v("mariadb:lts")).toEqual({ ok: false, reason: "version-unknown" });
+  });
+
+  it.each([
+    "pgvector/pgvector:0.7.0-pg16",
+    "timescale/timescaledb:2.14.2-pg16",
+    "postgis/postgis:16-3.4",
+    "bitnami/postgresql:16",
+    "bitnami/redis:7.2",
+    "percona/percona-server:8.0",
+    "registry.example.test/postgres:16",
+  ])("%s is not Tugra's standard image of its engine: engine-unsupported, so its extensions are never lost silently", (image) => {
+    const i = ghostOf(image, {}, { user: "u", database: "d", cred: "env", version: "16" });
+    expect(carryAssessment("h", i.containers[0])).toEqual({ ok: false, reason: "engine-unsupported" });
+    expect(carryDecisions(inputOf(i))).toEqual([]);
+  });
+
+  it("the engine's own image under a Docker Hub spelling is carried", () => {
+    expect(carryAssessment("h", ghostOf("docker.io/library/postgres:16").containers[0])).toMatchObject({ ok: true, spec: { engine: "POSTGRES", version: "16" } });
+    expect(carryAssessment("h", ghostOf("library/mysql:8.4").containers[0])).toMatchObject({ ok: true, spec: { engine: "MYSQL", version: "8.4" } });
+  });
+
   it.each([
     ["engine-unsupported", "mongo:7", {}, { user: null, database: null, cred: "env", version: null }],
     ["engine-unsupported", "valkey/valkey:8", {}, { user: null, database: null, cred: "env", version: null }],

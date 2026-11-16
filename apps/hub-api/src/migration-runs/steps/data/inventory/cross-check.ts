@@ -25,7 +25,6 @@ import { containerNameMatches } from "../source-control/source-scripts";
 import { checkKey } from "../data-logic";
 import { coolifyRefOf } from "../../../../importer/sources/coolify-control";
 import { dbEngineOfImage, type HostInventory, type InvContainer, type ReachReport } from "./host-protocol";
-import { versionFromImage } from "../../../../importer/sources/coolify-map";
 
 export const INVENTORY_CODES = {
   notTaken: "inventory.not-taken",
@@ -176,6 +175,45 @@ export interface CarrySpec {
   name: string;
 }
 
+/** The one repository (registry-less or Docker Hub spelling) and, for Dragonfly, its own registry, that Tugra's standard image of each carryable engine comes from. */
+const STOCK_IMAGES: Record<CarryEngine, { repo: string; registries: readonly string[] }> = {
+  POSTGRES: { repo: "postgres", registries: ["", "docker.io", "index.docker.io", "registry-1.docker.io"] },
+  MYSQL: { repo: "mysql", registries: ["", "docker.io", "index.docker.io", "registry-1.docker.io"] },
+  MARIADB: { repo: "mariadb", registries: ["", "docker.io", "index.docker.io", "registry-1.docker.io"] },
+  REDIS: { repo: "redis", registries: ["", "docker.io", "index.docker.io", "registry-1.docker.io"] },
+  KEYDB: { repo: "eqalpha/keydb", registries: ["", "docker.io", "index.docker.io", "registry-1.docker.io"] },
+  DRAGONFLY: { repo: "dragonflydb/dragonfly", registries: ["", "docker.dragonflydb.io", "docker.io", "index.docker.io", "registry-1.docker.io"] },
+};
+
+/** The `registry`, `repository` and `tag` of an image reference (`tag` is "" when there is none, a digest is dropped). */
+function splitImage(image: string): { registry: string; repo: string; tag: string } {
+  const noDigest = image.split("@")[0];
+  const lastColon = noDigest.lastIndexOf(":");
+  const hasTag = lastColon > noDigest.lastIndexOf("/");
+  const repoFull = hasTag ? noDigest.slice(0, lastColon) : noDigest;
+  const parts = repoFull.split("/");
+  let registry = "";
+  if (parts.length > 1 && (/[.:]/.test(parts[0]) || parts[0] === "localhost")) registry = parts.shift() as string;
+  let repo = parts.join("/").toLowerCase();
+  if (repo.startsWith("library/")) repo = repo.slice("library/".length);
+  return { registry: registry.toLowerCase(), repo, tag: hasTag ? noDigest.slice(lastColon + 1) : "" };
+}
+
+/**
+ * The version Tugra's standard image of the engine is pulled with, from what the source container PROVES, or null when none can be
+ * named without guessing. Tugra builds `<stock image>:<version>`, so the version must be a tag that image really has:
+ *  - PostgreSQL / MySQL / MariaDB / Redis: the engine's own version variable the inventory read (`PG_MAJOR`, `MYSQL_MAJOR`, ...), else the
+ *    numeric lead of the image tag (`16-alpine` -> `16`, `8.0.36` -> `8.0.36`); a tag that does not start with a number (`pg16`, `lts`) names none;
+ *  - KeyDB / Dragonfly: their tags are not plain numbers (`x86_64_v6.3.4`, `v1.14.0`), so the tag is taken verbatim and only when it is a pinned one.
+ */
+function carryVersion(engine: CarryEngine, tag: string, reported: string | null): string | null {
+  if (engine === "KEYDB" || engine === "DRAGONFLY") return /\d/.test(tag) && /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/.test(tag) ? tag : null;
+  const numeric = /^\d+(\.\d+)*$/;
+  if (reported && numeric.test(reported)) return reported;
+  const lead = tag.match(/^(\d+(?:\.\d+)*)(?:-|$)/);
+  return lead ? lead[1] : null;
+}
+
 /** The Tugra engine a database IMAGE is carried as, or null when it has none the migrator can move (MongoDB, ClickHouse, Valkey, Redis Stack...). */
 export function carryEngineOfImage(image: string): CarryEngine | null {
   const family = dbEngineOfImage(image);
@@ -193,12 +231,18 @@ export function carryEngineOfImage(image: string): CarryEngine | null {
  *    the container must be running (the migrator opens a running source);
  *  - the inventory must carry the database facts (an older script's report does not: run the inventory again);
  *  - the migrator must be able to discover the password (`env`); a `*_FILE` secret, no password or an ACL user is refused;
- *  - a MySQL / MariaDB container must name its database (the dump covers exactly one) and every engine needs a known version
- *    (the image tag, else the version variable of the image): a copy on another major could not open the data.
+ *  - the image must be the engine's own standard one (extension and vendor builds are `engine-unsupported`: their extensions would be missing);
+ *  - a MySQL / MariaDB container must name its database (the dump covers exactly one) and every engine needs a version Tugra's standard
+ *    image really has (the engine's own version variable, else the image tag; KeyDB / Dragonfly only a pinned tag): a copy on another
+ *    major could not open the data, and a version that names no image is `version-unknown`, never a guess.
  */
 export function carryAssessment(host: string, c: InvContainer): { ok: true; spec: CarrySpec } | { ok: false; reason: CarryRefusal } {
   const engine = carryEngineOfImage(c.image);
   if (!engine) return { ok: false, reason: "engine-unsupported" };
+  // the copy is created from Tugra's standard image of the engine: a variant with more in it (PostGIS, pgvector, TimescaleDB, a Bitnami or
+  // Percona build) would lose what its data needs at restore, so only the engine's own image is carried
+  const img = splitImage(c.image);
+  if (img.repo !== STOCK_IMAGES[engine].repo || !STOCK_IMAGES[engine].registries.includes(img.registry)) return { ok: false, reason: "engine-unsupported" };
   // the plan item is `database:<host>:<container>`, matched byte-exactly by the migrator and by the plan's own reference rules: a name outside them cannot be one
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(c.name)) return { ok: false, reason: "name-unsupported" };
   if (c.state !== "running") return { ok: false, reason: "not-running" };
@@ -207,7 +251,7 @@ export function carryAssessment(host: string, c: InvContainer): { ok: true; spec
   if (c.db.cred === "acl") return { ok: false, reason: "acl-user-unsupported" };
   if (c.db.cred !== "env") return { ok: false, reason: "credentials-not-discoverable" };
   if ((engine === "MYSQL" || engine === "MARIADB") && !c.db.database) return { ok: false, reason: "db-not-discoverable" };
-  const version = versionFromImage(c.image) ?? c.db.version;
+  const version = carryVersion(engine, img.tag, c.db.version);
   if (!version) return { ok: false, reason: "version-unknown" };
   return { ok: true, spec: { host, container: c.name, engine, version, image: c.image, user: c.db.user, database: c.db.database, name: `unlisted-${engine.toLowerCase()}-${c.name.slice(0, 8)}` } };
 }

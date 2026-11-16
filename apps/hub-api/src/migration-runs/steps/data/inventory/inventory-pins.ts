@@ -56,8 +56,12 @@ export function derivePins(candidates: readonly PinCandidate[], inventories: Rea
   return [...found.values()].filter((h): h is RunHint => h !== null).sort((a, b) => (a.key + a.scope < b.key + b.scope ? -1 : 1));
 }
 
-/** Of the derived pins, those that may be written: never over an operator-attested pin of the same image and scope. */
+/**
+ * Of the derived pins, those that may be written: never next to an operator-attested pin of the same image that already answers for the
+ * derived scope, i.e. one at that very scope or one for every server (scope ""). `pinFor` prefers a host-scoped pin over an every-server
+ * one, so a derived host pin written beside the operator's every-server pin would silently win over it.
+ */
 export function pinsToWrite(derived: readonly RunHint[], existing: readonly RunHint[]): RunHint[] {
   const operator = new Set(existing.filter((h) => h.kind === "image-pin" && h.evidence === "operator-attested").map((h) => `${h.key}\u0000${h.scope}`));
-  return derived.filter((h) => !operator.has(`${h.key}\u0000${h.scope}`));
+  return derived.filter((h) => !operator.has(`${h.key}\u0000${h.scope}`) && !operator.has(`${h.key}\u0000`));
 }

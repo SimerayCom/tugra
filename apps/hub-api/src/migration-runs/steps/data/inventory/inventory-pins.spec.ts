@@ -57,6 +57,15 @@ describe("derivePins (R11)", () => {
     expect(pinsToWrite(derived, [{ kind: "image-pin", key: "x/y:latest", scope: "host-1", value: D2, evidence: "host-loop-reported" }])).toEqual(derived);
     expect(pinsToWrite(derived, [{ kind: "image-pin", key: "x/y:latest", scope: "other", value: D2, evidence: "operator-attested" }])).toEqual(derived);
   });
+
+  it("an operator's every-server pin (scope \"\") holds against a host-scoped derived pin: pinFor would otherwise prefer the derived one", () => {
+    const derived = [{ kind: "image-pin" as const, key: "x/y:latest", scope: "host-1", value: D1, evidence: "host-loop-reported" as const }];
+    const operatorAll = { kind: "image-pin" as const, key: "x/y:latest", scope: "", value: D2, evidence: "operator-attested" as const };
+    expect(pinsToWrite(derived, [operatorAll])).toEqual([]);
+    // another image's every-server pin, and a host-reported every-server pin, do not block it
+    expect(pinsToWrite(derived, [{ ...operatorAll, key: "x/z:latest" }])).toEqual(derived);
+    expect(pinsToWrite(derived, [{ ...operatorAll, evidence: "host-loop-reported" }])).toEqual(derived);
+  });
 });
 
 describe("the whole path: the real inventory script against a fake docker, then the ingest", () => {
