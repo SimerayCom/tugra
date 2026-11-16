@@ -183,7 +183,7 @@ describe("VxApplyService: the streamed dump's restore", () => {
   });
 
   it("a PostgreSQL 18+ destination that was already started under the old mount is refused before anything runs (its cluster sits in an anonymous volume)", async () => {
-    for (const over of [{ version: "18" }, { version: "18.1" }, { version: "latest", image: "postgres:19-alpine" }, { version: "", image: "docker.io/library/postgres:18" }]) {
+    for (const over of [{ version: "18", image: "postgres:18" }, { version: "18.1", image: "postgres:18.1" }, { version: "latest", image: "postgres:19-alpine" }, { version: "", image: "docker.io/library/postgres:18" }, { version: "16", image: "postgres:18" }]) {
       const m = make({ ...over, dbStatus: "RUNNING", ourRestores: 1, pgParentMount: false });
       const row = await run(m);
       expect(row.state).toBe("FAILED");

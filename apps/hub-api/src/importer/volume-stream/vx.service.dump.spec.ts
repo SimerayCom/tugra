@@ -163,7 +163,7 @@ describe("the streamed dump lane: begin", () => {
   });
 
   it("a PostgreSQL 18+ destination started under the old mount is refused before any byte moves; one with the persistent layout (or never started) is a valid destination", async () => {
-    for (const db of [{ version: "18" }, { version: "18.0" }, { version: "latest", image: "postgres:18-alpine" }]) {
+    for (const db of [{ version: "18", image: "postgres:18" }, { version: "18.0", image: "postgres:18.0" }, { version: "latest", image: "postgres:18-alpine" }, { version: "16", image: "postgres:latest" }]) {
       const old = dumpHarness({ db: { ...db, status: "RUNNING", pgParentMount: false } });
       old.prisma.restore.count.mockImplementation(async (a: { where: { NOT?: unknown; createdBy?: unknown } }) => (a.where.createdBy ? 1 : 0));
       await expect(old.svc.begin(ctxOp, DB_DUMP_REF, beginBody())).rejects.toThrow(DUMP_DEST_PG_LAYOUT_TEXT);
