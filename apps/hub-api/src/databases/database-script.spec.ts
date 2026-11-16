@@ -1,4 +1,12 @@
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
+  dataMountFor,
+  pgDataLayout,
+  pgMajorOfDb,
+  pgWantsParentMount,
   buildDatabaseRunScript,
   pgSslWrapper,
   sslHostDir,
@@ -457,3 +465,87 @@ describe("database-script: TLS for PostgreSQL (R22)", () => {
   });
 });
 
+
+
+describe("database-script: the PostgreSQL data layout (16 / 17 / 18)", () => {
+  const mount = (s: string) => /-v tugra_dbv_db1:(\S+)/.exec(s)?.[1];
+
+  it("PostgreSQL 16 and 17 keep the original mount and a byte-identical script (no layout lines)", () => {
+    for (const v of ["16", "17"]) {
+      const s = buildDatabaseRunScript(spec("POSTGRES", { image: `postgres:${v}`, pgLayout: "data" }));
+      expect(mount(s)).toBe("/var/lib/postgresql/data");
+      expect(s).not.toContain("PGANON");
+      expect(s).toBe(buildDatabaseRunScript(spec("POSTGRES", { image: `postgres:${v}` })));
+    }
+  });
+
+  it("a new PostgreSQL 18 database mounts the volume at /var/lib/postgresql and leaves PGDATA to the image", () => {
+    const s = buildDatabaseRunScript(spec("POSTGRES", { image: "postgres:18", pgLayout: "parent" }));
+    expect(mount(s)).toBe("/var/lib/postgresql");
+    expect(s).not.toContain("PGDATA");
+    expect(s).not.toContain("PGANON");
+  });
+
+  it("a PostgreSQL 18 database created before the fix keeps its mount and re-attaches the anonymous volume it already uses", () => {
+    const s = buildDatabaseRunScript(spec("POSTGRES", { image: "postgres:18", pgLayout: "legacy-anon" }));
+    expect(mount(s)).toBe("/var/lib/postgresql/data");
+    expect(s).toContain("PGANON=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination \"/var/lib/postgresql\"}}{{.Name}}{{end}}{{end}}' tugra_db_db1 2>/dev/null || true)");
+    expect(s.indexOf("PGANON=$(")).toBeLessThan(s.indexOf("docker rm -f tugra_db_db1"));
+    expect(s).toContain("${PGANON:+-v ${PGANON}:/var/lib/postgresql}");
+  });
+
+  it("the other engines ignore a layout", () => {
+    for (const e of ["MYSQL", "REDIS", "MONGO"] as DbEngine[]) {
+      expect(buildDatabaseRunScript(spec(e, { pgLayout: "parent" }))).toBe(buildDatabaseRunScript(spec(e)));
+    }
+  });
+
+  it("layout resolution: parent flag wins, an unflagged 18+ row is legacy, 16/17/other engines are plain", () => {
+    expect(pgDataLayout({ engine: "POSTGRES", version: "18", image: "postgres:18", pgParentMount: true })).toBe("parent");
+    expect(pgDataLayout({ engine: "POSTGRES", version: "18.1", image: "postgres:18", pgParentMount: false })).toBe("legacy-anon");
+    expect(pgDataLayout({ engine: "POSTGRES", version: "latest", image: "docker.io/library/postgres:19-alpine" })).toBe("legacy-anon");
+    expect(pgDataLayout({ engine: "POSTGRES", version: "17", image: "postgres:17" })).toBe("data");
+    expect(pgDataLayout({ engine: "POSTGRES", version: "16.4", image: "postgres:16" })).toBe("data");
+    expect(pgDataLayout({ engine: "MYSQL", version: "18", image: "mysql:8", pgParentMount: true })).toBe("data");
+    expect(pgMajorOfDb("17-alpine")).toBe(17);
+    expect(pgMajorOfDb("", "postgres:18-alpine")).toBe(18);
+    expect(pgMajorOfDb("latest", "custom/img:1")).toBeNull();
+    expect(pgWantsParentMount("18")).toBe(true);
+    expect(pgWantsParentMount("17")).toBe(false);
+    expect(dataMountFor("POSTGRES", "parent")).toBe("/var/lib/postgresql");
+    expect(dataMountFor("POSTGRES", "legacy-anon")).toBe("/var/lib/postgresql/data");
+    expect(dataMountFor("MYSQL", "parent")).toBe("/var/lib/mysql");
+  });
+
+  describe("the legacy-anon script under a real shell (a fake docker on PATH)", () => {
+    function runArgs(anonName: string): string {
+      const dir = mkdtempSync(join(tmpdir(), "tugra-pgl-"));
+      try {
+        const fake = join(dir, "docker");
+        writeFileSync(fake, `#!/bin/sh\ncase "$1" in inspect) printf '%s' '${anonName}';; esac\necho "ARGS $*" >&2\nexit 0\n`);
+        chmodSync(fake, 0o755);
+        const script = join(dir, "run.sh");
+        writeFileSync(script, buildDatabaseRunScript(spec("POSTGRES", { image: "postgres:18", pgLayout: "legacy-anon" })));
+        const r = spawnSync("sh", [script], { env: { ...process.env, PATH: `${dir}:${process.env.PATH}` }, encoding: "utf8" });
+        return String(r.stderr);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+
+    it("passes the anonymous volume as its own -v argument when the old container has one", () => {
+      const err = runArgs("0123abcd");
+      const runLine = err.split("\n").find((l) => l.startsWith("ARGS run -d"));
+      expect(runLine).toBeDefined();
+      expect(runLine).toContain("-v tugra_dbv_db1:/var/lib/postgresql/data -v 0123abcd:/var/lib/postgresql ");
+    });
+
+    it("adds nothing when there is no old container (first start)", () => {
+      const err = runArgs("");
+      const runLine = err.split("\n").find((l) => l.startsWith("ARGS run -d"));
+      expect(runLine).toContain("-v tugra_dbv_db1:/var/lib/postgresql/data ");
+      expect(runLine).not.toContain("-v :");
+      expect(runLine).not.toMatch(/-v \S+:\/var\/lib\/postgresql /);
+    });
+  });
+});

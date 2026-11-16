@@ -1,6 +1,7 @@
 import {
   baseIntervals,
   buildPitrPrepareScript,
+  pitrDataLayout,
   buildPitrRecoveryWaitScript,
   buildPitrSeedScript,
   buildWalDeleteScript,
@@ -309,5 +310,32 @@ describe("pitr-restore-script — WAL-aware retention (5.7)", () => {
     });
     expect(parseWalDeleted("TUGRA_WAL_GONE A\n").total).toBeNull();
     expect(parseWalDeleted("").total).toBeNull();
+  });
+});
+
+
+describe("pitr-restore-script: the PostgreSQL 18+ layout", () => {
+  const parent = pitrDataLayout({ engine: "POSTGRES", version: "18", image: "postgres:18", pgParentMount: true });
+
+  it("layout: a parent-mount row keeps PGDATA at <mount>/<major>/docker, every other row the original data dir", () => {
+    expect(parent).toEqual({ mount: "/var/lib/postgresql", pgdata: "/var/lib/postgresql/18/docker" });
+    expect(pitrDataLayout({ engine: "POSTGRES", version: "16", image: "postgres:16" })).toEqual({ mount: "/var/lib/postgresql/data", pgdata: "/var/lib/postgresql/data" });
+    expect(pitrDataLayout({ engine: "POSTGRES", version: "18", image: "postgres:18", pgParentMount: false })).toEqual({ mount: "/var/lib/postgresql/data", pgdata: "/var/lib/postgresql/data" });
+  });
+
+  it("prepare expects the image's PGDATA to be the major's directory", () => {
+    const s = buildPitrPrepareScript("new1", "postgres:18", 10, parent);
+    expect(s).toMatch(/expected \/var\/lib\/postgresql\/18\/docker[^\n]*exit 22/);
+    expect(s).toContain("[ \"$PGD\" = '/var/lib/postgresql/18/docker' ]");
+    expect(buildPitrPrepareScript("new1", "postgres:16", 10)).toMatch(/expected \/var\/lib\/postgresql\/data[^\n]*exit 22/);
+  });
+
+  it("seed mounts the volume at the parent, extracts into PGDATA beneath it and owns the whole mount", () => {
+    const s = buildPitrSeedScript({ id: "new1", image: "postgres:18" }, { filename: "t.basebackup.tar.gz" }, "db1", LOCAL_DEST, "000000010000000000000002", parent);
+    expect(s).toContain("--user 0 --entrypoint sh -v \"$VOL\":/var/lib/postgresql \"$IMG\" -c ");
+    expect(s).toContain("mkdir -p /var/lib/postgresql/18/docker; tar -xf - -C /var/lib/postgresql/18/docker");
+    expect(s).toContain("touch /var/lib/postgresql/18/docker/recovery.signal");
+    expect(s).toContain("chown -R postgres:postgres /var/lib/postgresql; chmod 700 /var/lib/postgresql/18/docker");
+    expect(s).not.toContain("/var/lib/postgresql/data");
   });
 });

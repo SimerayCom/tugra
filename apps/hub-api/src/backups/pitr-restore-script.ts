@@ -10,7 +10,18 @@
  *   from the base tar → start the container in recovery (database-script recovery args) → wait for promote.
  */
 
-import { type DbCredentials, type DbSpec, dbContainerName, dbVolumeName, ENGINES, walRestoreHostDir } from "../databases/database-script";
+import {
+  type DbCredentials,
+  type DbSpec,
+  dbContainerName,
+  dbVolumeName,
+  ENGINES,
+  pgDataDirParent,
+  pgDataLayout,
+  pgMajorOfDb,
+  PG_PARENT_MOUNT,
+  walRestoreHostDir,
+} from "../databases/database-script";
 import { backupDir, decodeChain, storedObjectSourceCmd } from "./backup-script";
 import { baseNs } from "./base-backup-script";
 import { isShippableWalName, walNs, walObjectName } from "./wal-ship-script";
@@ -208,18 +219,34 @@ export function parseWalObjects(output: string, dest: DestinationSpec): { object
   return { objects, more: trailer.more, last: trailer.last };
 }
 
+// ── data layout ──
+
+/** Where the data volume is mounted in the recovering container and where PGDATA sits (the image default for its major). */
+export interface PitrDataLayout {
+  mount: string;
+  pgdata: string;
+}
+
+/** The layout of a PITR target row: a PostgreSQL 18+ target mounts its volume at the parent and keeps PGDATA at /var/lib/postgresql/<major>/docker. */
+export function pitrDataLayout(db: { engine: string; version?: string | null; image?: string | null; pgParentMount?: boolean | null }): PitrDataLayout {
+  const legacy = ENGINES.POSTGRES.dataDir;
+  const major = pgMajorOfDb(db.version, db.image);
+  if (pgDataLayout(db) === "parent" && major !== null) return { mount: PG_PARENT_MOUNT, pgdata: pgDataDirParent(major) };
+  return { mount: legacy, pgdata: legacy };
+}
+
 // ── staging ──
 
 /**
  * PREPARE the host staging dir for target `newId`: pull the image, refuse an image whose PGDATA is not the data
- * dir we mount (PG18+ moved it; exit 22), resolve the image's postgres uid/gid BY NAME (999 debian / 70 alpine),
+ * dir we mount (a mismatch, e.g. a custom image; exit 22), resolve the image's postgres uid/gid BY NAME (999 debian / 70 alpine),
  * require free disk for `segments` (16 MiB each + 1 GiB; exit 24), then (re)create the dir owned by that uid,
  * mode 0700 (raw customer WAL). Files are later written by root (0644) inside it, so the recovering container
  * reads them with no post-start chown (which would race recovery).
  */
-export function buildPitrPrepareScript(newId: string, image: string, segments: number): string {
+export function buildPitrPrepareScript(newId: string, image: string, segments: number, layout?: PitrDataLayout): string {
   const dir = walRestoreHostDir(newId);
-  const dataDir = ENGINES.POSTGRES.dataDir;
+  const dataDir = (layout ?? pitrDataLayout({ engine: "POSTGRES" })).pgdata;
   const needKb = Math.ceil((segments * WAL_SEGMENT_BYTES) / 1024) + 1_048_576;
   return [
     "set -e",
@@ -290,12 +317,14 @@ export function buildPitrSeedScript(
   srcId: string,
   dest: DestinationSpec,
   expectedStartSeg: string,
+  layout?: PitrDataLayout,
 ): string {
   const vol = dbVolumeName(newDb);
-  const dataDir = ENGINES.POSTGRES.dataDir;
+  const { mount, pgdata: dataDir } = layout ?? pitrDataLayout({ engine: "POSTGRES" });
   const fetch = decodeChain(dest, storedObjectSourceCmd(dest, baseNs(srcId), base.filename), { gzip: true });
   const inner = [
     "set -e",
+    ...(dataDir === mount ? [] : [`mkdir -p ${dataDir}`]),
     `tar -xf - -C ${dataDir}`,
     `[ -s ${dataDir}/backup_label ] || { echo "tugra: base tar has no backup_label" >&2; exit 21; }`,
     `PGV=$(cat ${dataDir}/PG_VERSION | cut -d. -f1)`,
@@ -306,7 +335,7 @@ export function buildPitrSeedScript(
     `[ "$PGV" -ge 12 ] 2>/dev/null || { echo "tugra: point-in-time restore needs Postgres 12 or newer (base is $PGV)" >&2; exit 25; }`,
     `grep -m1 '^START WAL LOCATION' ${dataDir}/backup_label | grep -q ${shq(`(file ${expectedStartSeg})`)} || { echo "tugra: backup_label start segment differs from the recorded start LSN" >&2; exit 23; }`,
     `touch ${dataDir}/recovery.signal`,
-    `chown -R postgres:postgres ${dataDir}`,
+    `chown -R postgres:postgres ${mount}`,
     `chmod 700 ${dataDir}`,
     `echo "TUGRA_PITR_SEED ok pgver=$PGV start=${expectedStartSeg}"`,
   ].join("; ");
@@ -318,7 +347,7 @@ export function buildPitrSeedScript(
     `docker pull "$IMG" >/dev/null 2>&1 || { echo "tugra: could not pull ${newDb.image}" >&2; exit 13; }`,
     `docker volume create "$VOL" >/dev/null`,
     `[ -z "$(docker run --rm -v "$VOL":/d --entrypoint sh "$IMG" -c 'ls -A /d')" ] || { echo "tugra: target volume is not empty" >&2; exit 20; }`,
-    `${fetch} | docker run --rm -i --user 0 --entrypoint sh -v "$VOL":${dataDir} "$IMG" -c ${shq(inner)}`,
+    `${fetch} | docker run --rm -i --user 0 --entrypoint sh -v "$VOL":${mount} "$IMG" -c ${shq(inner)}`,
   );
   return lines.join("\n");
 }
@@ -440,7 +469,7 @@ export function pitrRestoreExitHint(exitCode: number | null, phase: "prepare" | 
     prepare: {
       13: "The database image could not be pulled from its registry.",
       21: "The database image has no 'postgres' user.",
-      22: "This image keeps its data directory somewhere else (Postgres 18+); point-in-time restore does not support it yet.",
+      22: "This image keeps its data directory somewhere other than where Tugra mounts the volume (a custom image, or Postgres 18+ on a database created before the 18+ layout); point-in-time restore cannot seed it.",
       24: "Not enough free disk under /etc/tugra to stage the WAL for this restore.",
     },
     seed: {

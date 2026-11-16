@@ -21,7 +21,7 @@ const dumpCtx = (): VxCtx => ({
   server: { id: SERVER_ID, teamId: TEAM_ID, capabilities: ["backup"] },
 });
 
-function make(o: { dbStatus?: string; backups?: number; foreignRestores?: number; ourRestores?: number; script?: (s: string) => Promise<{ exitCode: number; output: string }>; provisionRejects?: boolean; decryptFails?: boolean; version?: string; image?: string } = {}) {
+function make(o: { dbStatus?: string; backups?: number; foreignRestores?: number; ourRestores?: number; script?: (s: string) => Promise<{ exitCode: number; output: string }>; provisionRejects?: boolean; decryptFails?: boolean; version?: string; image?: string; pgParentMount?: boolean } = {}) {
   const transfers = memTransfers();
   const tasks = memTasks();
   const sent: Array<{ script: string; timeout: number }> = [];
@@ -40,7 +40,7 @@ function make(o: { dbStatus?: string; backups?: number; foreignRestores?: number
     bulkOperation: { findUnique: jest.fn().mockResolvedValue({ meta: {}, actorId: "user-1" }) },
     deployment: { count: jest.fn().mockResolvedValue(0) },
     database: {
-      findUnique: jest.fn(async () => ({ id: DB_ID, status: dbStatus, engine: "POSTGRES", version: o.version ?? "16", image: o.image ?? "postgres:16", port: 5432, hostPort: null, credentials: "enc" })),
+      findUnique: jest.fn(async () => ({ id: DB_ID, status: dbStatus, engine: "POSTGRES", version: o.version ?? "16", image: o.image ?? "postgres:16", pgParentMount: o.pgParentMount ?? false, port: 5432, hostPort: null, credentials: "enc" })),
     },
     restore: {
       count: jest.fn(async (a: { where: { NOT?: unknown; createdBy?: unknown } }) => (a.where.NOT ? (o.foreignRestores ?? 0) : a.where.createdBy ? (o.ourRestores ?? restores.filter((r) => String(r.createdBy).startsWith("vx:")).length) : 0)),
@@ -182,18 +182,29 @@ describe("VxApplyService: the streamed dump's restore", () => {
     await expect(dumpDestGate(m.prisma as never, DB_ID)).resolves.toEqual({ open: true });
   });
 
-  it("a destination that is PostgreSQL 18 or newer is refused before anything starts or runs (its data directory would not persist)", async () => {
+  it("a PostgreSQL 18+ destination that was already started under the old mount is refused before anything runs (its cluster sits in an anonymous volume)", async () => {
     for (const over of [{ version: "18" }, { version: "18.1" }, { version: "latest", image: "postgres:19-alpine" }, { version: "", image: "docker.io/library/postgres:18" }]) {
-      const m = make(over);
+      const m = make({ ...over, dbStatus: "RUNNING", ourRestores: 1, pgParentMount: false });
       const row = await run(m);
       expect(row.state).toBe("FAILED");
       expect(row.error).toBe(DUMP_DEST_PG_LAYOUT_TEXT);
-      expect(m.databases.provision).not.toHaveBeenCalled();
       expect(m.sent).toHaveLength(0);
       expect(m.restores).toHaveLength(0);
     }
     const ok = make({ version: "17" });
     expect((await run(ok)).state).toBe("DONE");
+  });
+
+  it("a PostgreSQL 18+ destination with the persistent layout (or never started) takes the streamed dump", async () => {
+    // a database created with the parent mount, started by an earlier attempt of this lane: a retry restores again
+    const retry = make({ version: "18", image: "postgres:18-alpine", dbStatus: "RUNNING", ourRestores: 1, pgParentMount: true });
+    const r1 = await run(retry);
+    expect(r1.state).toBe("DONE");
+    expect(retry.sent.some((s) => s.script.includes("pg_restore"))).toBe(true);
+    // a never-started row of an older hub is given the persistent layout when it is provisioned
+    const fresh = make({ version: "18", image: "postgres:18-alpine", pgParentMount: false });
+    expect((await run(fresh)).state).toBe("DONE");
+    expect(fresh.databases.provision).toHaveBeenCalledTimes(1);
   });
 
   it("an agent that cannot be reached while restoring is an unknown outcome, recorded FAILED", async () => {

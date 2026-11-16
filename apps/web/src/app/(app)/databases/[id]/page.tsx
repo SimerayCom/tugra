@@ -264,6 +264,14 @@ export default function DatabaseDetailPage() {
         </p>
       </PageHeader>
 
+      {db.dataLayoutWarning === "pg_anonymous_volume" && (
+        <Card style={{ padding: 12, marginBottom: 12, borderColor: "var(--c-am)" }}>
+          <div role="alert" style={{ fontSize: 13 }}>
+            <strong>{t("databases.dataLayoutTitle")}</strong> {t("databases.dataLayoutBody")}
+          </div>
+        </Card>
+      )}
+
       <DatabaseIconCard id={id} iconUpdatedAt={db.iconUpdatedAt} canWrite={db.canWrite} onChanged={invalidate} />
 
       {renameOpen && (

@@ -162,11 +162,14 @@ describe("the streamed dump lane: begin", () => {
     await expect(h.svc.begin(ctxOp, DB_DUMP_REF, beginBody())).resolves.toMatchObject({ state: "COPYING" });
   });
 
-  it("a destination that is PostgreSQL 18 or newer is refused before any byte moves, whatever the stream lane could restore", async () => {
+  it("a PostgreSQL 18+ destination started under the old mount is refused before any byte moves; one with the persistent layout (or never started) is a valid destination", async () => {
     for (const db of [{ version: "18" }, { version: "18.0" }, { version: "latest", image: "postgres:18-alpine" }]) {
-      const h = dumpHarness({ db });
-      await expect(h.svc.begin(ctxOp, DB_DUMP_REF, beginBody())).rejects.toThrow(DUMP_DEST_PG_LAYOUT_TEXT);
-      expect(h.transfers.rows).toHaveLength(0);
+      const old = dumpHarness({ db: { ...db, status: "RUNNING", pgParentMount: false } });
+      old.prisma.restore.count.mockImplementation(async (a: { where: { NOT?: unknown; createdBy?: unknown } }) => (a.where.createdBy ? 1 : 0));
+      await expect(old.svc.begin(ctxOp, DB_DUMP_REF, beginBody())).rejects.toThrow(DUMP_DEST_PG_LAYOUT_TEXT);
+      expect(old.transfers.rows).toHaveLength(0);
+      await expect(dumpHarness({ db: { ...db, pgParentMount: true } }).svc.begin(ctxOp, DB_DUMP_REF, beginBody())).resolves.toMatchObject({ state: "COPYING" });
+      await expect(dumpHarness({ db }).svc.begin(ctxOp, DB_DUMP_REF, beginBody())).resolves.toMatchObject({ state: "COPYING" });
     }
     await expect(dumpHarness({ db: { version: "17" } }).svc.begin(ctxOp, DB_DUMP_REF, beginBody())).resolves.toMatchObject({ state: "COPYING" });
     const mariadb = dumpHarness({ db: { engine: "MARIADB", version: "11", image: "mariadb:11" }, op: { meta: streamMeta({ vxDbSizes: { [DB_REF]: measured({ engine: "MARIADB" }) } }) } });

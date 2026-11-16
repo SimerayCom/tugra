@@ -1747,6 +1747,10 @@ model Database {
   // TLS (Postgres only): when on, the container serves TLS with a self-signed certificate kept in its own volume, so an
   // app whose connection URL says sslmode=require connects. Default-off: the run script of an existing DB is byte-identical.
   ssl                     Boolean           @default(false)
+  // PostgreSQL 18+ keeps PGDATA under /var/lib/postgresql/<major>/docker and declares that parent as its VOLUME, so the managed data volume
+  // must be mounted there. True for a database created with that mount; false = the original /var/lib/postgresql/data mount (every
+  // pre-18 database, and a PG 18+ one created before the fix, whose cluster sits in an anonymous volume: see pgDataLayout).
+  pgParentMount           Boolean           @default(false)
   tags                    String[]          @default([])
   backups                 Backup[]
   baseBackups             BaseBackup[]

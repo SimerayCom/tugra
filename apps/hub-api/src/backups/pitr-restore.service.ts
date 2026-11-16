@@ -27,6 +27,7 @@ import { scrubRunOutput } from "./backup-script";
 import {
   baseIntervals,
   buildPitrPrepareScript,
+  pitrDataLayout,
   buildPitrRecoveryWaitScript,
   buildPitrSeedScript,
   buildWalObjectListScript,
@@ -327,7 +328,7 @@ export class PitrRestoreService implements OnApplicationBootstrap, OnModuleDestr
     let promoted: { lsn: string; timeline: number } | null = null;
     try {
       // 1. prepare the staging dir (pull image, PGDATA + uid checks, disk)
-      const prep = await this.agentWs.sendCommand(src.serverId, buildPitrPrepareScript(target.id, target.image, names.length), "backup", PREPARE_TIMEOUT_MS);
+      const prep = await this.agentWs.sendCommand(src.serverId, buildPitrPrepareScript(target.id, target.image, names.length, pitrDataLayout(target)), "backup", PREPARE_TIMEOUT_MS);
       if (prep.exitCode !== 0) return this.fail(ctx, "prepare", prep.exitCode, prep.output);
       // 2. stage the WAL (+ timeline history files) in batches; a transient agent error retries the batch for up to
       //    STAGE_RETRY_BUDGET (staging is resumable: present files are skipped); stop at the first real failure
@@ -353,7 +354,7 @@ export class PitrRestoreService implements OnApplicationBootstrap, OnModuleDestr
       if (!base) return this.fail(ctx, "seed", null, "the base backup row disappeared");
       const seed = await this.agentWs.sendCommand(
         src.serverId,
-        buildPitrSeedScript({ id: target.id, image: target.image }, { filename: base.filename }, src.id, dest, pick.startSeg),
+        buildPitrSeedScript({ id: target.id, image: target.image }, { filename: base.filename }, src.id, dest, pick.startSeg, pitrDataLayout(target)),
         "backup",
         SEED_TIMEOUT_MS,
       );

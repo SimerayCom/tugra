@@ -1917,6 +1917,7 @@ export interface Database {
   baseBackupCron: string | null;
   tags: string[];
   volumes: { name: string; path: string }[];
+  dataLayoutWarning?: "pg_anonymous_volume" | null;
   role: Role;
   canWrite: boolean;
   iconUpdatedAt: string | null;

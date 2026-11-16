@@ -30,8 +30,11 @@ import {
   publicConnectionUri,
   dbContainerName,
   dbVolumeName,
+  dataMountFor,
   enginePort,
   ENGINES,
+  pgDataLayout,
+  pgWantsParentMount,
   resolveImage,
   supportsBackup,
   type DbCredentials,
@@ -93,6 +96,9 @@ export const DatabaseViewSchema = z.object({
   baseBackupCron: z.string().nullable(),
   tags: z.array(z.string()),
   volumes: z.array(z.object({ name: z.string(), path: z.string() })),
+  // Set for a PostgreSQL 18+ database provisioned before the data volume was mounted where that major keeps its cluster: its data sits in an
+  // anonymous Docker volume. Back it up and restore it into a new database (which persists correctly). Null/absent when the layout is sound.
+  dataLayoutWarning: z.enum(["pg_anonymous_volume"]).nullable().optional(),
   role: z.nativeEnum(Role),
   canWrite: z.boolean(),
   iconUpdatedAt: z.date().nullable(), // set when a custom icon was uploaded (list-view cache-bust marker)
@@ -313,6 +319,8 @@ export class DatabasesService {
         teamId: server.teamId,
         credentials: this.crypto.encrypt(JSON.stringify(fields.creds)),
         status: DbStatus.NEW,
+        // A new PostgreSQL 18+ database mounts its volume where that major keeps its cluster, so the data survives a recreate.
+        ...(fields.engine === "POSTGRES" && pgWantsParentMount(fields.version, fields.image) ? { pgParentMount: true } : {}),
         ...extra,
       },
     });
@@ -594,14 +602,19 @@ export class DatabasesService {
   }
 
   private async runProvision(
-    db: Database,
+    dbIn: Database,
     actor: string,
     opts: { pitr?: boolean; recovery?: { targetTime: Date } | null } = {},
   ): Promise<ProvisionOutcome> {
+    let db = dbIn;
     // Claim the row as PROVISIONING before the slow (≤5 min) agent call: while it runs we are creating the
     // container + data volume on db.serverId, so a concurrent moveToServer (NEW-only) must be excluded —
     // otherwise the row's serverId could change under us and strand the volume on the old server.
-    await this.prisma.database.update({ where: { id: db.id }, data: { status: DbStatus.PROVISIONING } });
+    // A never-started PostgreSQL 18+ row created before the parent mount existed has no cluster to protect: give it the persistent layout now.
+    if (db.status === DbStatus.NEW && !db.pgParentMount && db.engine === "POSTGRES" && pgWantsParentMount(db.version, db.image)) {
+      db = { ...db, pgParentMount: true };
+    }
+    await this.prisma.database.update({ where: { id: db.id }, data: { status: DbStatus.PROVISIONING, ...(db.pgParentMount ? { pgParentMount: true } : {}) } });
     let status: DbStatus = DbStatus.FAILED;
     let exitCode: number | null = null;
     let output = "";
@@ -815,6 +828,7 @@ export class DatabasesService {
         teamId: src.teamId,
         credentials: this.crypto.encrypt(JSON.stringify(creds)),
         status: DbStatus.NEW,
+        ...(src.engine === "POSTGRES" && pgWantsParentMount(src.version, src.image) ? { pgParentMount: true } : {}), // an empty volume: always the persistent layout
         healthCmd: src.healthCmd,
         memoryMb: src.memoryMb,
         cpus: src.cpus,
@@ -904,6 +918,7 @@ export class DatabasesService {
       healthCmd: db.healthCmd,
       memoryMb: db.memoryMb,
       cpus: db.cpus,
+      pgLayout: pgDataLayout(db),
       // env is decrypted lazily at the provision call site only — view()/internalConnectionUri() never need
       // it, and keeping it out of the default spec narrows a corrupt-blob failure to the deploy path.
     };
@@ -924,7 +939,7 @@ export class DatabasesService {
    *  managed data volume is never shadowed; name/path charset is validated by the DTO. */
   async setVolumes(userId: string, id: string, volumes: DbVolume[]): Promise<void> {
     const db = await this.requireWrite(userId, id);
-    const dataDir = ENGINES[db.engine as DbEngine].dataDir;
+    const dataDir = dataMountFor(db.engine as DbEngine, pgDataLayout(db));
     // Reject any path that EQUALS, nests UNDER, or CONTAINS the managed data dir — all three either shadow it,
     // leave the engine's data directory non-empty before first init, or collide as a duplicate docker mount.
     // Paths arrive canonical (DTO), so prefix comparison is exact.
@@ -1084,6 +1099,7 @@ export class DatabasesService {
       baseBackupCron: db.baseBackupCron,
       tags: db.tags,
       volumes: this.dbVolumes(db),
+      dataLayoutWarning: pgDataLayout(db) === "legacy-anon" && db.status !== DbStatus.NEW ? "pg_anonymous_volume" : null,
       role,
       canWrite,
       iconUpdatedAt: db.iconUpdatedAt,

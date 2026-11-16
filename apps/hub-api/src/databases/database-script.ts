@@ -194,11 +194,58 @@ export interface DbSpec {
   // TLS (Postgres only): serve TLS with the per-database self-signed pair (see sslPrepareScript). Absent/false → the run script is
   // byte-identical to a non-TLS database.
   ssl?: boolean;
+  // PostgreSQL data layout (see PgDataLayout). Absent → "data": the run script is byte-identical to a pre-18 database.
+  pgLayout?: PgDataLayout;
 }
 
 export interface DbVolume {
   name: string;
   path: string;
+}
+
+// ── PostgreSQL data layout ─────────────────────────────────────────────────────────────────────────────────────
+// Up to PostgreSQL 17 the official image keeps PGDATA at /var/lib/postgresql/data, which is also the path Tugra mounts its
+// named volume on. PostgreSQL 18 moved PGDATA to /var/lib/postgresql/<major>/docker and declares VOLUME /var/lib/postgresql, so
+// the data volume has to be mounted one level up. A 18+ cluster written under a /var/lib/postgresql/data mount lands in an
+// anonymous volume and is orphaned the day the container is recreated.
+//   "data"        PG <= 17 (and every other engine's equivalent): mount /var/lib/postgresql/data. The default.
+//   "parent"      a NEW PG >= 18 database: mount /var/lib/postgresql, PGDATA stays the image default.
+//   "legacy-anon" a PG >= 18 database created before the fix: it keeps its /var/lib/postgresql/data mount (switching it would hide
+//                 the live cluster) and, on recreate, re-attaches the anonymous volume that holds the cluster.
+export type PgDataLayout = "data" | "parent" | "legacy-anon";
+export const PG_LEGACY_DATA_MOUNT = "/var/lib/postgresql/data";
+export const PG_PARENT_MOUNT = "/var/lib/postgresql";
+const PG_NEW_LAYOUT_FROM_MAJOR = 18;
+
+/** The PostgreSQL major of a database: its version, else the tag of a `postgres:<major>` image; null when neither says. */
+export function pgMajorOfDb(version: string | null | undefined, image?: string | null): number | null {
+  const v = /^(\d{1,2})(?:[.-]|$)/.exec((version ?? "").trim());
+  if (v) return Number(v[1]);
+  const m = /(?:^|\/)postgres:(\d{1,2})(?:[.-]|$)/.exec((image ?? "").trim());
+  return m ? Number(m[1]) : null;
+}
+
+/** Whether a NEW database of this version/image must use the parent mount. */
+export function pgWantsParentMount(version: string | null | undefined, image?: string | null): boolean {
+  const major = pgMajorOfDb(version, image);
+  return major !== null && major >= PG_NEW_LAYOUT_FROM_MAJOR;
+}
+
+/** The layout of a stored Postgres row (`pgParentMount` = the row was created with the parent mount). */
+export function pgDataLayout(db: { engine: string; version?: string | null; image?: string | null; pgParentMount?: boolean | null }): PgDataLayout {
+  if (db.engine !== "POSTGRES") return "data";
+  if (db.pgParentMount) return "parent";
+  return pgWantsParentMount(db.version, db.image) ? "legacy-anon" : "data";
+}
+
+/** The container path the managed data volume is mounted on. */
+export function dataMountFor(engine: DbEngine, layout?: PgDataLayout): string {
+  return engine === "POSTGRES" && layout === "parent" ? PG_PARENT_MOUNT : ENGINES[engine].dataDir;
+}
+
+/** Where PGDATA sits inside the volume for a "parent" layout (the image default for that major). */
+export function pgDataDirParent(major: number): string {
+  return `${PG_PARENT_MOUNT}/${major}/docker`;
 }
 
 export function dbContainerName(db: { id: string }): string {
@@ -363,7 +410,7 @@ export function publicConnectionUri(db: DbSpec, publicHost: string, hostPort: nu
 export function buildDatabaseRunScript(db: DbSpec): string {
   const name = dbContainerName(db);
   const vol = dbVolumeName(db);
-  const def = ENGINES[db.engine];
+  const legacyAnon = db.engine === "POSTGRES" && db.pgLayout === "legacy-anon";
   // User env FIRST, then credential env: later `-e` flags win in docker, so the managed credentials always
   // override a user var of the same name (defence-in-depth alongside the reserved-key reject in the service).
   const toEnvFlags = (env: Record<string, string>) =>
@@ -418,7 +465,8 @@ export function buildDatabaseRunScript(db: DbSpec): string {
     // in deploy-script.ts (kept inline here to keep this builder dependency-free).
     "--log-driver json-file --log-opt max-size=10m --log-opt max-file=3",
     `--network ${DB_NET}`,
-    `-v ${vol}:${def.dataDir}`,
+    `-v ${vol}:${dataMountFor(db.engine, db.pgLayout)}`,
+    legacyAnon ? `\${PGANON:+-v \${PGANON}:${PG_PARENT_MOUNT}}` : "",
     extraVolFlags,
     walFlag,
     recFlag,
@@ -443,6 +491,9 @@ export function buildDatabaseRunScript(db: DbSpec): string {
     ...(pitr ? [`mkdir -p ${walHostDir(db.id)} && chmod 700 ${walHostDir(db.id)}`] : []),
     ...(ssl ? [sslPrepareScript(db.id)] : []),
     `docker pull ${shq(db.image)}`,
+    // legacy-anon: the cluster of a PG >= 18 database provisioned before the parent mount lives in the anonymous volume Docker
+    // created for the image's VOLUME. Read its name BEFORE the old container goes and re-attach it, so a recreate keeps the data.
+    ...(legacyAnon ? [`PGANON=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "${PG_PARENT_MOUNT}"}}{{.Name}}{{end}}{{end}}' ${name} 2>/dev/null || true)`] : []),
     `docker rm -f ${name} 2>/dev/null || true`,
     runArgs,
     ...(pitr ? [`docker exec -u root ${name} chown postgres:postgres ${WAL_CONTAINER_DIR}`] : []),
