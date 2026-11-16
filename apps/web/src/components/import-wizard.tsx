@@ -17,6 +17,7 @@ import { EnvBlockers } from "./import/env-blockers";
 import { GitLinksPanel, GitRelinkCard, DeployKeyBlock } from "./import/git-links-panel";
 import { ImportServicesPanel } from "./import-services-panel";
 import { ImportChecklist } from "./import-checklist";
+import { GuidedRunLauncher } from "./migration-run/guided-run-launcher";
 import type { Team, ImportApplyExtras, ImportPlan, ImportPlanItem, ImportRiskLevel, ImportOperation, ImportOpTask, ImportRemoteKind, ImportServiceChoice, ImportTaskStatus, MintedMigrationToken, ImportRemapPlan, ImportRemapResult, VxCommands } from "../lib/types";
 
 const toneColor: Record<"danger" | "warning" | "info", string> = {
@@ -384,6 +385,7 @@ function PlanView({
         </Btn>
         </>
         )}
+        <GuidedRunLauncher plan={plan} kind={kind} sessionId={sessionId} servers={writableServers} extras={applyExtras} disabled={replanning || runnable === 0 || unackedCount > 0 || missingTargets > 0} />
       </SectionCard>
 
       <EnvBlockers plan={plan} acked={acked} onChange={setAcked} />

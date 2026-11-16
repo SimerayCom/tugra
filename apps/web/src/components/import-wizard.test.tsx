@@ -87,6 +87,21 @@ describe("ImportWizard", () => {
     expect(screen.getByText(/Importing/)).toBeTruthy(); // timeline header
   });
 
+  it("offers the guided run next to the manual apply, which stays", async () => {
+    vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s1", expiresAt: "2026-01-01T00:00:00.000Z" });
+    vi.spyOn(api, "importPlan").mockResolvedValue(plan);
+    wrap(<ImportWizard />);
+
+    await screen.findByRole("option", { name: "Team One" });
+    fireEvent.change(screen.getByLabelText("Coolify URL"), { target: { value: "https://coolify.example.com" } });
+    fireEvent.change(screen.getByLabelText("API token"), { target: { value: "tok" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect & preview" }));
+    await screen.findByText("Import preview");
+
+    expect(screen.getByRole("button", { name: "Run guided migration" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Import to Tugra" })).toBeTruthy(); // the manual flow is untouched
+  });
+
   it("offers rollback on a settled op with a created app, and runs it after confirm", async () => {
     vi.spyOn(api, "importConnect").mockResolvedValue({ sessionId: "s1", expiresAt: "2026-01-01T00:00:00.000Z" });
     vi.spyOn(api, "importPlan").mockResolvedValue(plan);

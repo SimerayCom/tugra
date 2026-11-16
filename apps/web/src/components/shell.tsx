@@ -52,6 +52,7 @@ import {
   Heart,
   Sparkles,
   Rocket,
+  Route,
   Settings,
   Store,
   Sun,
@@ -89,6 +90,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
       { key: "projects", href: "/projects", icon: FolderTree },
       { key: "appStore", href: "/app-store", icon: Store, home: true },
       { key: "import", href: "/import", icon: DownloadCloud },
+      { key: "importRuns", href: "/import/runs", icon: Route },
       { key: "sources", href: "/sources", icon: GitBranch },
       { key: "registries", href: "/registries", icon: Package },
     ],
@@ -124,6 +126,18 @@ export const NAV: { group: string; items: NavItem[] }[] = [
     ],
   },
 ];
+
+/** A nav item is active for its own path and anything below it, unless a MORE specific nav item also matches
+ *  (so /import/runs highlights "Guided migrations" only, not "Import" as well). */
+export function navItemActive(pathname: string, href: string): boolean {
+  const base = href.split("?")[0];
+  const hit = (b: string) => pathname === b || pathname.startsWith(`${b}/`);
+  if (!hit(base)) return false;
+  return !NAV.some((g) => g.items.some((o) => {
+    const ob = o.href.split("?")[0];
+    return ob !== base && ob.length > base.length && ob.startsWith(`${base}/`) && hit(ob);
+  }));
+}
 
 export const DESTS: CommandDest[] = NAV.flatMap((g) =>
   g.items.map((i) => ({ labelKey: `nav.${i.key}`, href: i.href })),
@@ -260,10 +274,7 @@ export function Sidebar({ openPalette, mobile = false, open = false, onNavigate 
       <nav style={{ flex: 1, overflowY: "auto", padding: 8 }}>
         {nav.map((g) => {
           // Icon-collapsed mode has no headers, so per-group collapse never hides items there.
-          const groupHasActive = g.items.some((it) => {
-            const b = it.href.split("?")[0];
-            return pathname === b || pathname.startsWith(`${b}/`);
-          });
+          const groupHasActive = g.items.some((it) => navItemActive(pathname, it.href));
           const groupClosed = !col && !!closedGroups[g.group];
           const panelId = `tg-navgroup-${g.group}${mobile ? "-m" : ""}`;
           return (
@@ -283,8 +294,7 @@ export function Sidebar({ openPalette, mobile = false, open = false, onNavigate 
             )}
             <div id={panelId} hidden={groupClosed}>
             {g.items.map((it) => {
-              const base = it.href.split("?")[0];
-              const active = pathname === base || pathname.startsWith(`${base}/`);
+              const active = navItemActive(pathname, it.href);
               const Icon = it.icon;
               const badge = mode !== "home" && it.key === "servers" && offline > 0 ? offline : 0;
               return (

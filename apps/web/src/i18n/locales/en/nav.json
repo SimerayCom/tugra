@@ -23,6 +23,7 @@
   "clusters": "Clusters",
   "rollouts": "Rollouts",
   "import": "Import",
+  "importRuns": "Guided migrations",
   "sources": "Git Sources",
   "registries": "Container Registries",
   "cloudCredentials": "Cloud Providers",

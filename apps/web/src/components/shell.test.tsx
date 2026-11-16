@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
-import { NAV, DESTS, noticeVisible, noticeMessage, Sidebar, UpdateBadge, nextTheme, resolveTheme } from "./shell";
+import { NAV, DESTS, navItemActive, noticeVisible, noticeMessage, Sidebar, UpdateBadge, nextTheme, resolveTheme } from "./shell";
 import type { InstanceUpdateNotice } from "../lib/types";
 import { navForMode, isHomeAllowed } from "../lib/ui-mode";
 import { translate } from "../i18n/translate";
@@ -210,7 +210,7 @@ describe("notice banner visibility", () => {
 describe("grouped, collapsible sidebar nav", () => {
   const GROUPS = {
     monitor: ["home", "dashboard", "fleet", "traffic", "uptime"],
-    build: ["projects", "appStore", "import", "sources", "registries"],
+    build: ["projects", "appStore", "import", "importRuns", "sources", "registries"],
     infrastructure: ["servers", "clusters", "rollouts", "terminal", "destinations", "domains"],
     integrations: ["cloudCredentials", "secretProviders", "sharedVars"],
     account: ["notifications", "audit", "teams", "settings"],
@@ -222,6 +222,21 @@ describe("grouped, collapsible sidebar nav", () => {
     expect(NAV.map((g) => g.group)).toEqual(Object.keys(GROUPS));
     for (const g of NAV) expect(g.items.map((i) => i.key)).toEqual(GROUPS[g.group as keyof typeof GROUPS]);
     for (const g of NAV) expect(translate(en, `nav.group.${g.group}`)).not.toBe(`nav.group.${g.group}`);
+  });
+
+  it("lists Guided migrations under Build and in the palette destinations", () => {
+    expect(DESTS.some((d) => d.href === "/import/runs" && d.labelKey === "nav.importRuns")).toBe(true);
+    expect(translate(en, "nav.importRuns")).toBe("Guided migrations");
+  });
+
+  it("highlights only the most specific nav item (Import vs Guided migrations)", () => {
+    expect(navItemActive("/import", "/import")).toBe(true);
+    expect(navItemActive("/import", "/import/runs")).toBe(false);
+    expect(navItemActive("/import/runs", "/import/runs")).toBe(true);
+    expect(navItemActive("/import/runs/abc", "/import/runs")).toBe(true);
+    expect(navItemActive("/import/runs/abc", "/import")).toBe(false);
+    expect(navItemActive("/servers/abc", "/servers")).toBe(true);
+    expect(navItemActive("/serversx", "/servers")).toBe(false);
   });
 
   it("keeps every item reachable via DESTS", () => {
