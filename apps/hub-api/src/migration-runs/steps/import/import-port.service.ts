@@ -249,6 +249,7 @@ export class ImportPortService implements ImportStepsPort {
         objectStore: isObjectStoreResult(t.result),
         dependants: network ? rows.filter((r) => (r.networks ?? []).includes(network)).map((r) => r.id).sort() : [],
         dataPending: dataPending(t.itemRef as string, t.result),
+        hold: r.hold === true,
         public: !network && r.hold !== true && typeof r.serviceDomains?.applied === "number" && r.serviceDomains.applied > 0,
       };
     });

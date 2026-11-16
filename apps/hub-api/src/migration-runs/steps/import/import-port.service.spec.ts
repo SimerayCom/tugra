@@ -299,6 +299,7 @@ describe("ImportPortService", () => {
     it("marks a service with public domains and no private network as public (a held one is not)", async () => {
       const out = await links([...tasks, svcTask("service:s:h", "p1", { members: ["tunnel"], volumes: [], serviceDomains: { applied: 1, unmapped: [] }, hold: true })]);
       expect(out.map((l) => [l.itemRef, l.public])).toEqual([["service:s:a", false], ["service:s:st", false], ["service:s:p", true], ["service:s:h", false]]);
+      expect(out.map((l) => [l.itemRef, l.hold])).toEqual([["service:s:a", false], ["service:s:st", false], ["service:s:p", false], ["service:s:h", true]]);
     });
     it("names the dark apps that joined the service's private network", async () => {
       const out = await links(tasks, [{ id: "w1", networks: ["net-a"] }, { id: "w2", networks: [] }]);

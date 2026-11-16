@@ -25,6 +25,8 @@ interface Svc {
   /** the service serves public domains of its own (no private network) */
   pub?: boolean;
   pending?: boolean;
+  /** the import created it on hold (a tunnel connector) */
+  hold?: boolean;
 }
 
 /** The op's imported services: a stopped compose app each (as the importer leaves them) plus the port's `serviceLinks`. */
@@ -33,7 +35,7 @@ function withServices(w: RunWorld, services: Svc[]): { pending: Set<string> } {
   for (const s of services) w.port.apps.set(`svc-${s.name}`, { id: `svc-${s.name}`, name: s.name, status: "NEW" });
   const idOf = (name: string) => [...w.port.apps.values()].find((a) => a.name === name && !a.id.startsWith("svc-"))?.id;
   (w.port as ImportStepsPort).serviceLinks = async (): Promise<ServiceLink[]> =>
-    services.map((s) => ({ itemRef: `service:_:${s.name}`, appId: `svc-${s.name}`, name: s.name, objectStore: !!s.minio, dependants: s.deps.map(idOf).filter((x): x is string => !!x), dataPending: pending.has(s.name), public: !!s.pub }));
+    services.map((s) => ({ itemRef: `service:_:${s.name}`, appId: `svc-${s.name}`, name: s.name, objectStore: !!s.minio, dependants: s.deps.map(idOf).filter((x): x is string => !!x), dataPending: pending.has(s.name), public: !!s.pub, hold: !!s.hold }));
   return { pending };
 }
 const deploys = (w: RunWorld) => w.port.deploys.map((d) => w.port.apps.get(d.appId)!.name);
@@ -86,6 +88,15 @@ describe("DEPLOY_DARK services (C14/R30)", () => {
     expect(b.w.status(idb)).toBe("COMPLETED");
     expect(deploys(b.w).slice(0, 2).sort()).toEqual(["converter", "search"]);
     expect(deploys(b.w).at(-1)).toBe("web");
+  });
+
+  it("serviceStart all never starts a held tunnel connector service", async () => {
+    const { w } = safetyWorld(items);
+    withServices(w, [{ name: "tunnel", deps: [], pub: true, hold: true }, { name: "search", deps: ["web"] }]);
+    const id = await w.run({ options: options(w, { serviceStart: "all" }) });
+    expect(w.status(id)).toBe("COMPLETED");
+    expect(deploys(w)).toEqual(["search", "web"]);
+    expect(w.port.apps.get("svc-tunnel")!.status).toBe("NEW");
   });
 
   it("a service only a held worker needs stays stopped: the worker does not run before the cutover", async () => {
@@ -200,6 +211,15 @@ describe("planServiceStart", () => {
     expect(planServiceStart("dependencies", "mirror", idle, new Set(["w1"]), names)[0].start).toBe(false); // nobody depends on it and it has no domain
     // a held dependant is not required, so it does not pull the store up
     expect(planServiceStart("dependencies", "hold", f, new Set(), names).every((r) => !r.start)).toBe(true);
+  });
+  it("a HELD service (tunnel connector) never starts, in any mode: a second connector on the live tunnel would split production traffic", () => {
+    const f = [link("tunnel", [], { hold: true, public: true }), link("search", ["w1"])];
+    for (const mode of ["dependencies", "all"] as const) {
+      const rows = planServiceStart(mode, "hold", f, new Set(["w1"]), names);
+      expect(rows.find((r) => r.name === "tunnel")).toMatchObject({ start: false, why: "held" });
+      expect(rows.find((r) => r.name === "search")!.start).toBe(true);
+    }
+    expect(planServiceStart("none", "hold", f, new Set(["w1"]), names).every((r) => !r.start)).toBe(true);
   });
   it("a service with public domains of its own starts in dependencies mode (its hosts are cutover hosts), a held or domain-less one does not", () => {
     const f = [link("public-search", [], { public: true }), link("plain", []), link("public-store", [], { public: true, objectStore: true })];

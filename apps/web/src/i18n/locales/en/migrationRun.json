@@ -501,7 +501,7 @@
       "serviceStartChoice": {
         "dependencies": "The services a dark app depends on, and the services that have their own domains (default)",
         "none": "None, I start them by hand",
-        "all": "Every imported service"
+        "all": "Every imported service except held tunnel connectors"
       },
       "serviceStartHint": "Search engines and document converters start before the apps that call them, so the apps can answer their health check. An object store starts when a dark app depends on it; its buckets always move through an object migration, never through a volume copy.",
       "largeDbMode": "Databases too large for a dump artifact",
@@ -1008,7 +1008,7 @@
     "preflight_deploy-window-inside": "{builds} images would be built inside the freeze window, about {minutes} minutes in total (an estimate). Build them first with the early build option.",
     "deploy-dark_workers-held": "{count} workers are kept stopped until after the cutover.",
     "deploy-dark_workers-excluded": "{count} workers are left out of this run.",
-    "deploy-dark_services-kept": "{count} services are kept stopped (no dark app depends on them, or their data stays on the source).",
+    "deploy-dark_services-kept": "{count} services are kept stopped (no dark app depends on them, their data stays on the source, or they are held tunnel connectors that start at the cutover).",
     "deploy-dark_services-started": "{count} services were started before the apps that need them.",
     "deploy-dark_service-not-running": "The service is not running (deploy {deploy}, status {status}).",
     "deploy-dark_services-summary": "{servicesUp} of {services} services are running ({kept} kept stopped).",

@@ -105,6 +105,8 @@ export interface ServiceLink {
   dependants: string[];
   /** The service carries public domains of its own (cutover hosts) and is not held: no private network exists for it, so `dependants` cannot name its users. */
   public?: boolean;
+  /** The import created the service on HOLD (a tunnel connector such as cloudflared by default): it must stay stopped until the cutover, because a second connector on the live tunnel splits production traffic with the source. */
+  hold?: boolean;
   /** A data volume of the service has no finished copy yet (starting it would put its first deploy on an empty volume). */
   dataPending: boolean;
 }
