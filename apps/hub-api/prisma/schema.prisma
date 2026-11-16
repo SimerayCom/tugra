@@ -2469,6 +2469,25 @@ model MigrationRunServerLock {
   @@index([runId])
 }
 
+/// What the `coolify-host-loop` runner and the host inventory report back, one row per (run, step, source host, kind) holding the
+/// LATEST report (a re-run overwrites it). Written only by the token-authenticated `POST /import/migration/host-report`, whose
+/// host label is validated against the run's own hosts. `payload` is secret-free (names, ids, sizes, fixed codes) and capped.
+/// kind: loop (per-host runner status) | inventory (containers + mounts + sizes) | reach (hub reachability + body cap) | freeze (stopped containers).
+/// `runId` is a LOOSE reference (no FK), like MigrationRunCheck.
+model MigrationRunHostReport {
+  id              String   @id @default(cuid())
+  runId           String
+  stepKey         String // DATA_SEED | FREEZE | DATA_FINAL for loop/freeze reports; "" for inventory/reach
+  sourceServerRef String // the Coolify server uuid of the source host
+  kind            String
+  state           String
+  payload         Json?
+  reportedAt      DateTime @default(now())
+
+  @@unique([runId, stepKey, sourceServerRef, kind])
+  @@index([runId, kind])
+}
+
 model MigrationRunStep {
   run           MigrationRun           @relation(fields: [runId], references: [id], onDelete: Cascade)
   runId         String

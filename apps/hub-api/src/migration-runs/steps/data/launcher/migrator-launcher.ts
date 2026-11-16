@@ -67,6 +67,47 @@ export const LAUNCH_MARK = "TUGRA_LAUNCH";
 export const MIG_MARK = "TUGRA_MIG";
 export const MIG_OUT_MARK = "TUGRA_MIG_OUT";
 
+/**
+ * The launch script as a TEMPLATE for the `coolify-host-loop` runner: the same detached, idempotent, token-by-file launch as
+ * {@link buildLaunchScript}, but nothing run-specific is baked in. The token, the hub base and the flags arrive in the shell
+ * variables `L_TOKEN`, `L_HUB` and `L_FLAGS` (newline-joined) that a PRELUDE of plain assignments defines in front of the text,
+ * so one copy of the template serves every host (each host only gets its own `--only` flags) and the token appears once in the
+ * script the operator pastes. `L_RELAUNCH=1` archives an earlier run directory that ended without a usable result (a migrator
+ * exit other than 0/1, or one that vanished) so the host can be launched again; a finished or still running launch is
+ * never touched. Every value the prelude carries was validated by the caller (token, hub base, flag words), so none needs quoting
+ * beyond the single quotes the prelude puts around it.
+ */
+export function buildLaunchTemplate(i: { runId: string; attempt: number; root?: string; tag?: LaunchTag }): string {
+  const dir = launcherDir(i.runId, i.attempt, i.root, i.tag);
+  const d = shq(dir);
+  return [
+    "set -u",
+    "umask 077",
+    `D=${d}`,
+    'if [ "$L_RELAUNCH" = 1 ] && [ -e "$D/started" ]; then',
+    '  if [ -f "$D/rc" ]; then',
+    '    case "$(cat "$D/rc")" in 0|1) ;; *) mv "$D" "$D.prev-$(date +%s)" ;; esac',
+    '  elif ! kill -0 "$(cat "$D/pid" 2>/dev/null)" 2>/dev/null && [ -z "$(docker ps -q --filter \'name=^' + MIGRATOR_CONTAINER_PREFIX + "' 2>/dev/null </dev/null)\" ]; then",
+    '    mv "$D" "$D.prev-$(date +%s)"',
+    "  fi",
+    "fi",
+    `if [ -e "$D/started" ]; then printf '${LAUNCH_MARK}\\talready\\n'; exit 0; fi`,
+    'mkdir -p "$D" && chmod 700 "$D" || { printf \'' + LAUNCH_MARK + "\\tmkdir-failed\\n'; exit 0; }",
+    `printf '%s' "$L_TOKEN" > "$D/tok"`,
+    'if [ -n "$L_FLAGS" ]; then printf \'%s\\n\' "$L_FLAGS" > "$D/flags"; else : > "$D/flags"; fi',
+    `printf '%s' "$L_HUB" > "$D/hub"`,
+    `if ! curl -fsSL "$L_HUB/install/migrator.sh" -o "$D/migrator.sh" </dev/null; then rm -f "$D/tok"; printf '${LAUNCH_MARK}\\tfetch-failed\\n'; exit 0; fi`,
+    `cat > "$D/run.sh" <<'TUGRA_RUN_EOF'`,
+    ...RUN_SH,
+    "TUGRA_RUN_EOF",
+    ': > "$D/started"',
+    'if command -v setsid >/dev/null 2>&1; then setsid sh "$D/run.sh" "$D" >/dev/null 2>&1 </dev/null & else nohup sh "$D/run.sh" "$D" >/dev/null 2>&1 </dev/null & fi',
+    'echo $! > "$D/pid"',
+    `printf '${LAUNCH_MARK}\\tstarted\\n'`,
+    "",
+  ].join("\n");
+}
+
 export function buildLaunchScript(i: LaunchInput): string {
   const dir = launcherDir(i.runId, i.attempt, i.root, i.tag);
   assertSafeBase(i.hubBase);
