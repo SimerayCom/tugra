@@ -276,6 +276,79 @@ describe("RunEngine: pause, resume and lost authorization", () => {
   });
 });
 
+describe("RunEngine: interrupting a handler that is mid-flight", () => {
+  const polling = (key: "DNS_PREPARE" | "DATA_SEED") => ({
+    [key]: {
+      act: async (world: RunWorld) => {
+        if (!world.done.has("go")) return { outcome: "continue" as const, pollAfterMs: 1000 };
+        world.done.add(key);
+        return { outcome: "done" as const };
+      },
+    },
+  });
+
+  it("pause lands while a `continue` act is polling: the step stays RUNNING, resume carries on", async () => {
+    const w = new RunWorld({ stubs: polling("DNS_PREPARE") });
+    const id = await w.create();
+    await w.start(id);
+    const pass = w.engine.drive(id);
+    await w.service.pause(ACTOR, id).catch(() => undefined); // lands between two ticks (or is refused if the engine already parked)
+    await pass;
+    await w.settle(id);
+    expect(w.status(id)).toBe("PAUSED");
+    expect(["PENDING", "RUNNING"]).toContain(w.stepStatus(id, "DNS_PREPARE"));
+    expect(w.stepStatus(id, "DATA_SEED")).toBe("PENDING");
+    w.done.add("go");
+    await w.service.resume(ACTOR, id);
+    await w.settle(id);
+    expect(w.status(id)).toBe("COMPLETED");
+  });
+
+  it("abort lands while an act is blocked: the act sees the signal, the run compensates and ends ABORTED", async () => {
+    const aborted = Object.assign(new Error("aborted"), { name: "AbortError" });
+    const w = new RunWorld({
+      stubs: {
+        DATA_SEED: {
+          act: async (world, ctx) => {
+            world.done.add("act-started");
+            await new Promise<void>((resolve) => ctx.signal.addEventListener("abort", () => resolve()));
+            throw aborted;
+          },
+        },
+      },
+    });
+    const id = await w.create();
+    await w.start(id);
+    const pass = w.engine.drive(id);
+    for (let i = 0; i < 1000 && !w.done.has("act-started"); i++) await new Promise((r) => setImmediate(r)); // wait until the act is blocked
+    expect(w.done.has("act-started")).toBe(true);
+    await w.service.abort(ACTOR, id, { confirmName: id });
+    w.engine.interrupt(id); // what the service's kick/interrupt does in production
+    await pass;
+    await w.settle(id);
+    expect(w.status(id)).toBe("ABORTED");
+    expect(w.store.codes(id)).not.toContain("step.failed"); // an interrupted act is not a failed step
+    expect(w.compensations).toContain("DATA_SEED:abort");
+  });
+
+  it("a command (skip) queued while the engine drives runs between two ticks, under the lease", async () => {
+    const w = new RunWorld({ stubs: polling("DNS_PREPARE") });
+    const id = await w.create();
+    await w.start(id);
+    const pass = w.engine.drive(id);
+    await new Promise((r) => setImmediate(r));
+    expect(w.engine.isDriving(id)).toBe(true);
+    // DATA_SEED has not started yet while DNS_PREPARE polls: skipping it is a command executed by the driving loop
+    await w.service.skip(ACTOR, id, "DATA_SEED", { reason: "no rehearsal" });
+    expect(w.stepStatus(id, "DATA_SEED")).toBe("SKIPPED");
+    w.done.add("go");
+    await pass;
+    await w.settle(id);
+    expect(w.status(id)).toBe("COMPLETED");
+    expect(w.compensations).not.toContain("DATA_SEED:abort"); // it never started: nothing to undo
+  });
+});
+
 describe("RunEngine: abort before the point of no return", () => {
   it("compensates in REVERSE step order and leaves the (fake) source running", async () => {
     const { w, src } = cutoverWorld({ VERIFY: { binding: () => ponrBinding() } });

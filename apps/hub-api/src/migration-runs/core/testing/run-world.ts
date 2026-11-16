@@ -70,7 +70,8 @@ export class TestClock {
     this.sleeps += 1;
     if (this.sleeps > 20_000) throw new Error("TestClock: runaway sleep loop");
     this.t += ms;
-    await Promise.resolve();
+    // yield to the event loop (not just the microtask queue): a polling handler must not starve timers, I/O or the spec itself
+    await new Promise<void>((r) => setImmediate(r));
   }
   advance(ms: number): void {
     this.t += ms;
