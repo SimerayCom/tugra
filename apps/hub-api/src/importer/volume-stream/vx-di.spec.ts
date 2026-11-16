@@ -48,7 +48,7 @@ describe("volume stream dependency-injection wiring", () => {
   it("every constructor dependency of the new services is a known provider of the importer module or an exported one", () => {
     const local = new Set(Reflect.getMetadata(MODULE_METADATA.PROVIDERS, ImporterModule) as unknown[]);
     const exported = new Set<unknown>([VolumeRelayService, AgentWsServer]);
-    const globalish = new Set(["PrismaService", "TeamAccessService", "AuditService", "ConfigService", "DatabasesService"]);
+    const globalish = new Set(["PrismaService", "TeamAccessService", "AuditService", "ConfigService", "DatabasesService", "CryptoService"]);
     const unknown: string[] = [];
     for (const cls of [VxService, VxApplyService, VxRecoveryService]) {
       for (const p of params(cls) as Array<{ name: string }>) if (!(local.has(p) || exported.has(p) || globalish.has(p.name))) unknown.push(`${cls.name} <- ${p.name}`);

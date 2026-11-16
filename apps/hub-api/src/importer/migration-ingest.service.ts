@@ -22,8 +22,8 @@ import { isValidVolumeName, maxDecodedVolumeBytes, maxVolumeBytes, scrubVolumeTa
 import { buildAllMigratorRecipes, MIGRATOR_ENGINES, MIGRATOR_UNSUPPORTED, type MigratorRecipe } from "./migrator-recipe";
 import { ImportExecutorService } from "./import-executor.service";
 import { VxService } from "./volume-stream/vx.service";
-import { VX_409, vxEnabled } from "./volume-stream/vx-constants";
-import { dbVolumeModeRefs, volumeItemRef } from "./volume-stream/vx-targets";
+import { VX_409, vxDumpEnabled, vxEnabled } from "./volume-stream/vx-constants";
+import { dbStreamModeRefs, dbVolumeModeRefs, volumeItemRef } from "./volume-stream/vx-targets";
 import type { MigrationTokenContext } from "./migration-token.service";
 import { mintArtifactUrl, verifyArtifactSig } from "./migration-artifact";
 import {
@@ -218,7 +218,9 @@ export class MigrationIngestService {
       db: { id: db.id, engine: db.engine, status: db.status, serverId: db.serverId, teamId: db.teamId },
       serverTeamId: server.teamId,
       engine: db.engine,
-      dbVolumeMode: vxEnabled() && task.itemRef !== null && dbVolumeModeRefs((opRow.meta as { plan?: { items?: unknown } } | null)?.plan?.items).has(task.itemRef),
+      // The artifact route is closed for a database moved as files (volume copy) AND for one on the streamed dump lane: an older or
+      // wrongly-run migrator that reaches this route gets the same 409 it keys on, never a second, competing restore.
+      dbVolumeMode: vxEnabled() && task.itemRef !== null && (dbVolumeModeRefs((opRow.meta as { plan?: { items?: unknown } } | null)?.plan?.items).has(task.itemRef) || (vxDumpEnabled() && dbStreamModeRefs(opRow.meta).has(task.itemRef))),
     };
   }
 

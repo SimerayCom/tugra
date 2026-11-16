@@ -27,7 +27,7 @@ function make(o: { dbVolumeMode?: boolean; transfer?: boolean; vxRows?: unknown[
   const executor = { loadIngestOp: jest.fn().mockResolvedValue(opRow) };
   const vx = { targetRows: jest.fn().mockResolvedValue({ rows: o.vxRows ?? [], volumeRefOfDb: new Map(o.dbVolumeMode ? [[DB_REF, "volume:srv1:pg7c1:data"]] : []) }), targetsEnvelope: jest.fn().mockReturnValue(o.envelope ?? {}) };
   const svc = new MigrationIngestService(prisma as never, access as never, { log: jest.fn() } as never, executor as never, {} as never, {} as never, {} as never, { get: () => "x".repeat(32) } as never, vx as never);
-  return { svc, prisma, vx };
+  return { svc, prisma, vx, executor, opRow };
 }
 const req = { headers: { "content-type": "application/octet-stream", "content-length": "5" } } as never;
 
@@ -70,6 +70,13 @@ describe("GET targets with the streamed copy", () => {
 describe("old-migrator guards (fail closed)", () => {
   it("DB stage and restore refuse once the plan chose a volume copy (`this database is set to volume copy`)", async () => {
     const { svc } = make({ dbVolumeMode: true });
+    await expect(svc.stage(OP, DB_REF, req, { gzip: true })).rejects.toThrow(VX_409.dbVolumeMode);
+    await expect(svc.restore(OP, DB_REF, { resync: false })).rejects.toThrow(VX_409.dbVolumeMode);
+  });
+
+  it("DB stage and restore also refuse once the database is on the streamed dump lane (its data moves as a dump through the volume stream)", async () => {
+    const { svc, executor, opRow } = make();
+    executor.loadIngestOp.mockResolvedValue({ ...opRow, meta: { ...(opRow.meta as object), vxStream: { [DB_REF]: { at: "t", by: "u" } } } });
     await expect(svc.stage(OP, DB_REF, req, { gzip: true })).rejects.toThrow(VX_409.dbVolumeMode);
     await expect(svc.restore(OP, DB_REF, { resync: false })).rejects.toThrow(VX_409.dbVolumeMode);
   });

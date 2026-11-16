@@ -1,13 +1,17 @@
 import { Injectable, Logger } from "@nestjs/common";
-import type { MigrationVolumeTransfer } from "@prisma/client";
+import { RestoreKind, RestoreStatus, type MigrationVolumeTransfer } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditService } from "../../audit/audit.service";
 import { AgentWsServer } from "../../agent-gateway/agent-ws.server";
 import { DatabasesService } from "../../databases/databases.service";
+import { CryptoService } from "../../crypto/crypto.service";
+import type { DbCredentials, DbEngine, DbSpec } from "../../databases/database-script";
+import { scrubRestoreOutput, scrubRunOutput } from "../../backups/backup-script";
 import { MOVE_TIMEOUTS, hasMarker, scrubMoveOutput } from "../../app-moves/app-move-scripts";
 import { VxPartRegistry } from "./vx-part-registry";
 import {
   MIGRATION_EXIT,
+  buildDumpApplyScript,
   buildMigrationApplyScript,
   buildMigrationCleanupScript,
   buildMigrationStateProbeScript,
@@ -17,7 +21,8 @@ import {
   parseMigrationStateProbe,
   type MigrationStateProbe,
 } from "./vx-scripts";
-import { dbGates, firstGate } from "./vx-dest-gate";
+import { DUMP_DEST_PG_LAYOUT_TEXT, dbGates, dumpDestGate, dumpDestLayout, firstGate } from "./vx-dest-gate";
+import { VX_RESTORE_BY_PREFIX, dumpRestoreTimeoutMs } from "./vx-dump";
 import type { VxCtx } from "./vx.service";
 import { pgMajorOf } from "./vx-targets";
 import type { VxInventoryItem } from "./vx.dto";
@@ -50,6 +55,12 @@ export function explainApplyExit(code: number | null): string {
   }
 }
 
+/** Human text for the streamed dump restore's exit codes (fail closed: anything unknown is an unknown outcome). */
+export function explainDumpApplyExit(code: number | null): string {
+  if (code === MIGRATION_EXIT.noParts) return "the staged parts are missing on the target; the dump has to be copied again";
+  return "restoring the dump into the database failed on the target; the staged parts are kept, re-run the migrator to apply them again (a PostgreSQL restore was rolled back, a MySQL-family restore is safe to repeat)";
+}
+
 /** Minutes the hub waits for a freshly copied Postgres to come up (crash recovery of an unclean stop can take minutes). */
 export function provisionWaitMs(rawBytes: number): number {
   return Math.min(30 * 60_000, 60_000 + Math.ceil((Math.max(0, rawBytes) / (200 * MiB)) * 1000));
@@ -72,6 +83,7 @@ export class VxApplyService {
     private readonly databases: DatabasesService,
     private readonly audit: AuditService,
     private readonly registry: VxPartRegistry,
+    private readonly crypto: CryptoService,
   ) {}
 
   isRunning(transferId: string): boolean {
@@ -191,6 +203,7 @@ export class VxApplyService {
     ];
     try {
       await this.task(t, ctx, { steps, result: { progress: { partsDone: t.partsDone, rawBytes: Number(t.rawBytesFinal ?? 0) } } });
+      if (ctx.target.destType === "db-dump") return await this.runDumpApply(ctx, t, steps);
       const rawBytes = Number(t.rawBytesFinal ?? 0);
       const entries = t.entries ?? -1;
       if (rawBytes < 1 || entries < 0) return await this.fail(ctx, t, "the transfer has no recorded size: copy it again", null, steps);
@@ -249,6 +262,89 @@ export class VxApplyService {
     } finally {
       clearInterval(hb);
     }
+  }
+
+  // ───────────────────────────── the streamed dump's restore ─────────────────────────────
+
+  /**
+   * Restore the staged parts into the destination DATABASE, streaming (`cat p.* | gunzip | pg_restore`, no decoded dump on disk):
+   * start the database if it has not been (the same `DatabasesService.provision` a logical restore uses), run the engine's restore
+   * pipeline on the target under a budget sized from the dump, record the attempt as a `Restore` row (so the database reads as
+   * used, and so a retry can tell its own earlier attempt from anyone else's) and end DONE. A failed restore leaves the staged parts
+   * where they are: the next `begin` re-applies them without dumping again.
+   */
+  private async runDumpApply(ctx: VxCtx, t: MigrationVolumeTransfer, steps: Step[]): Promise<void> {
+    const rawBytes = Number(t.rawBytesFinal ?? 0);
+    if (rawBytes < 1) return await this.fail(ctx, t, "the transfer has no recorded size: copy it again", null, steps);
+    const gate = await dumpDestGate(this.prisma, ctx.resourceId);
+    if (!gate.open) {
+      steps[steps.length - 1].status = "FAILED";
+      return await this.fail(ctx, t, gate.reason === "gone" ? "destination no longer exists" : "the database was started or holds data not restored by this migration: refusing to restore over it", null, steps);
+    }
+
+    const layout = await dumpDestLayout(this.prisma, ctx.resourceId);
+    if (!layout.ok) {
+      steps[steps.length - 1].status = "FAILED";
+      return await this.fail(ctx, t, DUMP_DEST_PG_LAYOUT_TEXT, null, steps);
+    }
+
+    // 1. the database must be running to take a restore
+    const db = await this.prisma.database.findUnique({ where: { id: ctx.resourceId }, select: { id: true, engine: true, image: true, port: true, hostPort: true, credentials: true, status: true } });
+    if (!db) return await this.fail(ctx, t, "destination no longer exists", null, steps);
+    let rec: { id: string } | null = null;
+    if (db.status !== "RUNNING") {
+      steps.push({ name: "db-provisioned", status: "RUNNING" });
+      await this.task(t, ctx, { steps });
+      // The `vx:` Restore row is written BEFORE the database is started: it is what marks the started database as this lane's own, so
+      // a start that fails (status FAILED) or outlasts its wait (PROVISIONING, RUNNING later) can still be retried by the next begin.
+      rec = await this.prisma.restore.create({ data: { databaseId: ctx.resourceId, kind: RestoreKind.IMPORT_URL, status: RestoreStatus.RUNNING, createdBy: `${VX_RESTORE_BY_PREFIX}${t.id}` } });
+      const started = await this.provisionAndWait(ctx, t);
+      steps[steps.length - 1].status = started ? "DONE" : "FAILED";
+      if (!started) await this.prisma.restore.update({ where: { id: rec.id }, data: { status: RestoreStatus.FAILED, errorTail: "the destination database did not start", completedAt: new Date() } }).catch(() => undefined);
+      if (!started) return await this.fail(ctx, t, "the destination database did not start: fix the cause and re-run the migrator (the staged parts are kept)", null, steps);
+    }
+
+    // 2. the restore script: the engine's own import pipeline fed by the staged parts (credentials decrypted in memory for this one call)
+    let script: string;
+    let password = "";
+    try {
+      const creds = JSON.parse(this.crypto.decrypt(db.credentials)) as DbCredentials;
+      password = creds.password;
+      const spec: DbSpec = { id: db.id, engine: db.engine as DbEngine, image: db.image, port: db.port, hostPort: db.hostPort, credentials: creds };
+      script = buildDumpApplyScript({ transferId: t.id, rawBytes, db: spec });
+    } catch (e) {
+      if (rec) await this.prisma.restore.update({ where: { id: rec.id }, data: { status: RestoreStatus.FAILED, errorTail: "could not build the restore", completedAt: new Date() } }).catch(() => undefined);
+      return await this.fail(ctx, t, e instanceof Error && !/credential|decrypt/i.test(e.message) ? e.message : "could not build the restore", null, steps);
+    }
+
+    // 3. run it, recording the attempt
+    steps.push({ name: "restoring", status: "RUNNING" });
+    await this.task(t, ctx, { steps });
+    rec ??= await this.prisma.restore.create({ data: { databaseId: ctx.resourceId, kind: RestoreKind.IMPORT_URL, status: RestoreStatus.RUNNING, createdBy: `${VX_RESTORE_BY_PREFIX}${t.id}` } });
+    const recId = rec.id;
+    let exitCode: number | null = null;
+    let output = "";
+    try {
+      const r = await this.agentWs.sendCommand(ctx.targetServerId, script, "backup", dumpRestoreTimeoutMs(rawBytes));
+      exitCode = r.exitCode;
+      output = r.output;
+    } catch (e) {
+      steps[steps.length - 1].status = "FAILED";
+      await this.prisma.restore.update({ where: { id: recId }, data: { status: RestoreStatus.FAILED, errorTail: "the target could not be reached while restoring", completedAt: new Date() } }).catch(() => undefined);
+      return await this.fail(ctx, t, `the target could not be reached while restoring (${e instanceof Error ? e.message : "error"}); the outcome is unknown, re-run the migrator to restore again`, null, steps);
+    }
+    const ok = exitCode === 0 && parseMigrationApplyOk(output) === 0;
+    if (!ok) {
+      steps[steps.length - 1].status = "FAILED";
+      const tail = scrubRestoreOutput(scrubRunOutput(output, [password]));
+      await this.prisma.restore.update({ where: { id: recId }, data: { status: RestoreStatus.FAILED, exitCode, errorTail: tail, completedAt: new Date() } }).catch(() => undefined);
+      return await this.fail(ctx, t, explainDumpApplyExit(exitCode === 0 ? null : exitCode), null, steps);
+    }
+    await this.prisma.restore.update({ where: { id: recId }, data: { status: RestoreStatus.SUCCESS, exitCode: 0, completedAt: new Date() } });
+    steps[steps.length - 1].status = "DONE";
+    steps.push({ name: "applied", status: "DONE" });
+    await this.task(t, ctx, { steps });
+    await this.postApply(ctx, t, steps);
   }
 
   /** The Postgres major the extracted cluster must report: the Tugra record's version major. */

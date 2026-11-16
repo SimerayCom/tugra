@@ -17,7 +17,7 @@ describe("MigrationVolumeController (routes, guard, strict bodies)", () => {
   let app: INestApplication;
   const TOKEN = generateMigrationToken();
   const vx = Object.fromEntries(
-    ["inventory", "diskCheck", "begin", "registerPart", "commitPart", "finish", "status", "beat", "reset", "abort", "speedtestPart", "speedtestCommit", "speedtestEnd"].map((m) => [m, jest.fn().mockResolvedValue({ ok: true })]),
+    ["inventory", "dbSizes", "diskCheck", "begin", "registerPart", "commitPart", "finish", "status", "beat", "reset", "abort", "speedtestPart", "speedtestCommit", "speedtestEnd"].map((m) => [m, jest.fn().mockResolvedValue({ ok: true })]),
   );
   const tokens = { validate: jest.fn(async (raw: string) => (raw === TOKEN ? { opId: "op-1", actorId: "user-1", expiresAt: new Date(Date.now() + 3_600_000) } : null)) };
 
@@ -45,6 +45,19 @@ describe("MigrationVolumeController (routes, guard, strict bodies)", () => {
     await post(`${ENC}/begin`, { runId: RUN, partRawBytes: 134217728, fingerprint: fp }).expect(200);
     expect(vx.begin).toHaveBeenCalledWith(expect.objectContaining({ opId: "op-1", actorId: "user-1" }), APP_VOL_REF, expect.objectContaining({ runId: RUN }));
     await post(`${ENC}/begin`, { runId: RUN, partRawBytes: 1, fingerprint: fp, opId: "another-op" }).expect(400); // a body opId is not even accepted
+  });
+
+  it("db-sizes: the migrator's size report reaches the service with the token's op, and the body is strict", async () => {
+    const item = { itemRef: "database:srv1:pg7c1", engine: "POSTGRES", state: "measured", dbBytes: 5, measuredBy: "catalog" };
+    await post("db-sizes", { runId: RUN, items: [item] }).expect(200);
+    expect(vx.dbSizes).toHaveBeenCalledWith(expect.objectContaining({ opId: "op-1" }), expect.objectContaining({ runId: RUN, items: [item] }));
+    vx.dbSizes.mockClear();
+    await post("db-sizes", { runId: RUN, items: [{ ...item, extra: 1 }] }).expect(400);
+    await post("db-sizes", { runId: RUN, items: [{ ...item, engine: "REDIS" }] }).expect(400);
+    await post("db-sizes", { runId: RUN, items: [] }).expect(400);
+    await post("db-sizes", { runId: RUN, items: [item], opId: "another-op" }).expect(400);
+    expect(vx.dbSizes).not.toHaveBeenCalled();
+    expect((await request(app.getHttpServer()).post("/api/v1/import/migration/vx/db-sizes").send({ runId: RUN, items: [item] })).status).toBe(401);
   });
 
   it("bodies are strict: unknown keys, bad hashes, bad run ids and bad ints are 400 and never reach the service", async () => {

@@ -48,6 +48,40 @@ export function vxStaleMs(): number {
   return clampInt(num("MIGRATION_VX_STALE_MS"), 300_000, 30_000, 24 * 3600_000);
 }
 
+/**
+ * Raw (dump) bytes allowed per STREAMED DATABASE DUMP: default 1 TiB, ceiling 8 TiB. Unlike the artifact route's 256 MiB cap this
+ * is only a sanity bound, so a dump of any realistic database streams; part names still bound it to 100000 parts.
+ */
+export function vxMaxDumpBytes(): number {
+  return clampInt(num("MIGRATION_VX_MAX_DUMP_BYTES"), 1024 * GiB, 1 * GiB, 8192 * GiB);
+}
+
+/** Kill switch of the streamed dump lane alone: `MIGRATION_VX_DUMP_ENABLED=false|0|off|no` (the volume stream itself is unaffected). */
+export function vxDumpEnabled(): boolean {
+  const raw = (process.env.MIGRATION_VX_DUMP_ENABLED ?? "").trim().toLowerCase();
+  return vxEnabled() && !["false", "0", "off", "no"].includes(raw);
+}
+
+/** The effective cap of the artifact route (`MIGRATION_MAX_ARTIFACT_BYTES`, default 256 MiB): the gzip dump size a logical restore may carry. */
+export const DEFAULT_ARTIFACT_CAP_BYTES = 256 * MiB;
+export function artifactCapBytes(): number {
+  const n = Number(process.env.MIGRATION_MAX_ARTIFACT_BYTES);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_ARTIFACT_CAP_BYTES;
+}
+
+/** The catalog size up to which the migrator counts the dump itself; above it the hub treats the database as over the cap. Mirrors the Go default. */
+export const DUMP_MEASURE_BELOW_BYTES = 1 * GiB;
+
+/** Engines the streamed dump lane understands: pg_dump custom format -> pg_restore, mariadb-dump / mysqldump -> the client. */
+export const STREAM_DUMP_ENGINES = ["POSTGRES", "MARIADB", "MYSQL"] as const;
+export type StreamDumpEngine = (typeof STREAM_DUMP_ENGINES)[number];
+export const isStreamDumpEngine = (e: string): e is StreamDumpEngine => (STREAM_DUMP_ENGINES as readonly string[]).includes(e);
+
+/** The volume name of a streamed dump row: `volume:<serverRef>:<sourceRef>:dump`. */
+export const DUMP_VOLUME_NAME = "dump";
+/** `volumeIngest` of a dump row in `GET targets` (an older migrator ignores a value it does not know). */
+export const VOLUME_INGEST_DUMP = "stream-dump";
+
 /** Hard cap on a migration token's total life under sliding renewal (hours → ms). */
 export function tokenMaxLifeMs(): number {
   return clampInt(num("MIGRATION_TOKEN_MAX_LIFE_HOURS"), 72, 1, 24 * 14) * 3600_000;

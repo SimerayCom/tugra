@@ -242,7 +242,7 @@ describe("estimateWindow", () => {
 describe("migratorFlags", () => {
   const snap = makeSnap({ volumes: [inspected("v1")] });
   it("inspect and warm-db are read-only / databases-only", () => {
-    expect(migratorFlags("inspect", makeRun(), snap)).toEqual(["--arms", "all", "--dry-run"]);
+    expect(migratorFlags("inspect", makeRun(), snap)).toEqual(["--arms", "all", "--dry-run", "--measure-dbs"]);
     expect(migratorFlags("warm-db", makeRun(), snap)).toEqual(["--arms", "databases"]);
   });
   it("final resyncs, verifies and follows the run's options", () => {

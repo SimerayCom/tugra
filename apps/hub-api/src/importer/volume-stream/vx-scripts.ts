@@ -6,7 +6,9 @@
  */
 import { BACKUP_HELPER_IMAGE, safeWipeExtract } from "../../volume-backups/volume-backup-script";
 import { MOVE_STAGING_ROOT, assertDockerName, assertMoveId, assertPart, partName, shq } from "../../app-moves/app-move-scripts";
-import { VX_VOL_IDX } from "./vx-constants";
+import { buildImportScript } from "../../backups/backup-script";
+import type { DbSpec } from "../../databases/database-script";
+import { VX_VOL_IDX, isStreamDumpEngine } from "./vx-constants";
 
 const IMG = BACKUP_HELPER_IMAGE;
 
@@ -190,6 +192,53 @@ export function buildMigrationPartStatScript(transferId: string, part: number): 
     'H=$(sha256sum "$F" | cut -d" " -f1)',
     'echo "TUGRA_VX_PART $S $H"',
   ].join("\n");
+}
+
+/** A placeholder URL the shared restore pipeline is built with; replaced by the staged-parts reader (never reaches a shell). */
+const DUMP_SOURCE_PLACEHOLDER = "https://dump-stream.invalid/stream";
+
+export interface DumpApplyInput {
+  transferId: string;
+  /** Decoded (dump) size: the decoded stream is cut to this many bytes (a gzip bomb cannot exceed it). */
+  rawBytes: number;
+  /** The destination database exactly as the hub's own restore paths see it (credentials decrypted in memory for this one script). */
+  db: DbSpec;
+}
+
+/**
+ * (target) Restore the staged parts into the destination DATABASE, streaming: `cat p.* | gunzip | head -c <rawBytes>` is the
+ * source of the engine's own restore pipeline, so no decoded dump ever sits on disk. The pipeline is not re-implemented here: it is
+ * the one a migrate-in URL import runs ({@link buildImportScript}: `pg_restore --no-owner --clean --if-exists --single-transaction`
+ * for a custom archive, the engine client as root for a SQL dump), with the URL fetch swapped for the staged-parts reader. A
+ * failed restore therefore rolls back (Postgres) or is idempotent to re-run (MySQL family: the dump drops each table first), and
+ * the destination is never half-wiped by this script.
+ *
+ * Exit 67 = no staged parts. The `applied` marker is written only after the pipeline succeeded and BEFORE the parts are removed
+ * (recoverable: a crash in between never re-restores). Prints `TUGRA_VX_APPLY_OK entries=0`.
+ */
+export function buildDumpApplyScript(i: DumpApplyInput): string {
+  if (!isStreamDumpEngine(i.db.engine)) throw new Error(`the streamed dump lane does not restore ${i.db.engine}`);
+  assertPosInt(i.rawBytes, "raw bytes");
+  const root = rootOf(i.transferId);
+  const pipeline = buildImportScript(i.db, DUMP_SOURCE_PLACEHOLDER, { encrypted: false, key: "", gzip: false, ...(i.db.engine === "POSTGRES" ? { pgFormat: "custom" as const } : {}) });
+  const fetch = `curl -fsSL ${shq(DUMP_SOURCE_PLACEHOLDER)}`;
+  if (pipeline.split(fetch).length !== 2) throw new Error("the restore pipeline no longer has a single URL source to replace");
+  const lines = [
+    "set -e",
+    "set -o pipefail",
+    `ROOT=${root}`,
+    `DIR="$ROOT/${VX_VOL_IDX}"`,
+    '[ -d "$DIR" ] || { echo "no staged parts" >&2; exit 67; }',
+    'echo $$ > "$ROOT/applying.lock"',
+    `trap 'rm -f "$ROOT/applying.lock"' EXIT`,
+    // glob order is lexical = part order (5-digit suffixes); head -c bounds the DECODED size
+    `vx_stream() { cat "$DIR"/p.* | gunzip | head -c ${i.rawBytes}; }`,
+    pipeline.replace(fetch, "vx_stream"),
+    ': > "$ROOT/applied"',
+    'echo "TUGRA_VX_APPLY_OK entries=0"',
+    'rm -rf "$DIR"',
+  ];
+  return lines.join("\n");
 }
 
 /** The restore id of an apply attempt: `vx<transferId><attempt>` (matches `^[A-Za-z0-9_]{1,80}$`). */

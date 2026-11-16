@@ -7,6 +7,16 @@ import { SOURCE_HOST_PORT, type DbDataItem, type DbStats, type DbStatsPort, type
 import { buildDbStatsScript, statsFromOutput, statsKindOf } from "../verify/db-stats";
 
 const STATS_TIMEOUT_MS = 10 * 60_000;
+const GiB = 1024 ** 3;
+
+/**
+ * The statement's budget: ten minutes, plus three per GiB of the database (an exact count over a table of hundreds of millions of rows
+ * is minutes, not seconds), up to three hours. The size is what the migrator measured; an unmeasured database keeps the plain budget.
+ */
+export function statsTimeoutMs(db: Pick<DbDataItem, "measure">): number {
+  const bytes = db.measure?.state === "measured" ? db.measure.dbBytes : 0;
+  return Math.min(Math.max(STATS_TIMEOUT_MS, STATS_TIMEOUT_MS + Math.ceil(bytes / GiB) * 3 * 60_000), 3 * 3600_000);
+}
 
 /**
  * Measures a TARGET database for DB logical parity: the hub builds the read-only statement, the target agent runs it
@@ -36,7 +46,7 @@ export class TargetDbStats implements DbStatsPort {
       return fail("invalid-name");
     }
     try {
-      const res = await this.host.run(row.serverId, script, "database", STATS_TIMEOUT_MS);
+      const res = await this.host.run(row.serverId, script, "database", statsTimeoutMs(db));
       return statsFromOutput({ itemRef: db.itemRef, engine: row.engine, mode, output: res.output, exitCode: res.exitCode });
     } catch {
       return fail("verify-exec");

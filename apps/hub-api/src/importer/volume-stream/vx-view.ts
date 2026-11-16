@@ -7,7 +7,7 @@ export interface VolumeTransferView {
   itemRef: string;
   resourceName: string | null;
   mountPath: string;
-  destType: "app-volume" | "db-data";
+  destType: "app-volume" | "db-data" | "db-dump";
   destVolume: string;
   /** NONE until the migrator begins; EXCLUDED when the owner explicitly chose not to migrate it. */
   state: "NONE" | "EXCLUDED" | "PENDING" | "COPYING" | "COPIED" | "APPLYING" | "DONE" | "FAILED" | "ABORTED";

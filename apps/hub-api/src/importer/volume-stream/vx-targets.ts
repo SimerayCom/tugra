@@ -1,4 +1,5 @@
-import { VOLUME_ITEMREF_RE } from "./vx-constants";
+import { DUMP_VOLUME_NAME, VOLUME_ITEMREF_RE, isStreamDumpEngine } from "./vx-constants";
+import { DB_ITEMREF_RE } from "./vx.dto";
 
 /** Source container names/uuids the hub is willing to put into a volume itemRef (mirrors the Go sourceRefRe). */
 const SOURCE_REF_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
@@ -27,8 +28,9 @@ export interface VxExclusion {
 /** One data-bearing volume the migrator may stream for an op (secret-free; no host paths). */
 export interface VxVolumeTarget {
   itemRef: string; // volume:<serverRef|_>:<sourceRef>:<volName>
-  destType: "app-volume" | "db-data";
-  name: string; // dest.name (the declared volume name, or "data")
+  /** `db-dump` = a database moved by the STREAMED DUMP lane (no volume is involved: the dump is restored through the engine's own client). */
+  destType: "app-volume" | "db-data" | "db-dump";
+  name: string; // dest.name (the declared volume name, "data", or "dump")
   mountPath: string;
   appItemRef?: string;
   databaseItemRef?: string;
@@ -70,6 +72,18 @@ export function dbVolumeModeRefs(planItems: unknown): Set<string> {
 }
 
 /**
+ * The databases of an op whose data moves by the streamed dump lane: the keys of `BulkOperation.meta.vxStream`, written by the
+ * run's DATA_SEED when the measured dump size, the engine and the owner's policy say so. Only well-formed database itemRefs count.
+ */
+export function dbStreamModeRefs(meta: unknown): Set<string> {
+  const out = new Set<string>();
+  const v = (meta && typeof meta === "object" ? (meta as { vxStream?: unknown }).vxStream : undefined) as Record<string, unknown> | undefined;
+  if (!v || typeof v !== "object" || Array.isArray(v)) return out;
+  for (const k of Object.keys(v)) if (DB_ITEMREF_RE.test(k)) out.add(k);
+  return out;
+}
+
+/**
  * Every volume the migrator can stream for an op: each DECLARED volume of a DONE app task (runCopyApp recorded the
  * mounts), plus a Postgres database whose plan item chose `dataMode:"volume"`. Deterministic order (by itemRef).
  * Pure: the caller supplies the tasks, the DB rows, the plan's volume-mode refs and the explicit exclusions.
@@ -78,6 +92,8 @@ export function buildVolumeTargets(opts: {
   tasks: VxTaskLite[];
   dbs: ReadonlyMap<string, VxDbLite>; // resourceId -> db
   dbVolumeRefs: ReadonlySet<string>;
+  /** Databases moved by the streamed dump lane: they get a `db-dump` target and NEVER a `db-data` one (the dump lane wins over a physical plan item). */
+  dbStreamRefs?: ReadonlySet<string>;
   excluded?: Readonly<Record<string, VxExclusion>>;
 }): VxVolumeTarget[] {
   const out: VxVolumeTarget[] = [];
@@ -92,6 +108,12 @@ export function buildVolumeTargets(opts: {
         if (!ref || typeof m.path !== "string") continue;
         out.push({ itemRef: ref, destType: "app-volume", name: m.name, mountPath: m.path, appItemRef: t.itemRef });
       }
+    } else if (t.resourceType === "database" && t.kind === "database" && opts.dbStreamRefs?.has(t.itemRef)) {
+      const db = opts.dbs.get(t.resourceId);
+      if (!db || !isStreamDumpEngine(db.engine)) continue;
+      const ref = volumeItemRef(t.itemRef, DUMP_VOLUME_NAME);
+      if (!ref) continue;
+      out.push({ itemRef: ref, destType: "db-dump", name: DUMP_VOLUME_NAME, mountPath: "", databaseItemRef: t.itemRef, engine: db.engine, engineVersion: db.version, sourceImage: db.image });
     } else if (t.resourceType === "database" && t.kind === "database" && opts.dbVolumeRefs.has(t.itemRef)) {
       const db = opts.dbs.get(t.resourceId);
       if (!db || db.engine !== "POSTGRES") continue;

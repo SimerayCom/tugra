@@ -49,7 +49,8 @@ function make(o: { sendCommand?: (script: string) => Promise<{ exitCode: number;
   };
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
   const registry = new VxPartRegistry();
-  const apply = new VxApplyService(prisma as never, agentWs as never, databases as never, audit as never, registry);
+  const crypto = { decrypt: jest.fn((v: string) => v) };
+  const apply = new VxApplyService(prisma as never, agentWs as never, databases as never, audit as never, registry, crypto as never);
   return { apply, prisma, transfers, tasks, agentWs, databases, audit, sent, registry };
 }
 

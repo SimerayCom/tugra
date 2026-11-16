@@ -6,12 +6,13 @@ import { ImportExecutorService } from "../../../../importer/import-executor.serv
 import { MIGRATOR_ENGINES, MIGRATOR_UNSUPPORTED } from "../../../../importer/migrator-recipe";
 import { VxService } from "../../../../importer/volume-stream/vx.service";
 import { dbGates } from "../../../../importer/volume-stream/vx-dest-gate";
-import { vxEnabled } from "../../../../importer/volume-stream/vx-constants";
-import { buildVolumeTargets, dbVolumeModeRefs, type VxVolumeTarget } from "../../../../importer/volume-stream/vx-targets";
+import { vxDumpEnabled, vxEnabled } from "../../../../importer/volume-stream/vx-constants";
+import { buildVolumeTargets, dbStreamModeRefs, dbVolumeModeRefs, type VxVolumeTarget } from "../../../../importer/volume-stream/vx-targets";
+import { dumpRawEstimate, type DbSizeRecord } from "../../../../importer/volume-stream/vx-dump";
 import type { VxInventoryItem } from "../../../../importer/volume-stream/vx.dto";
 import type { RunSnapshot } from "../../../core/run-contract";
-import { DataPortError, type DataPort, type DataSnapshot, type DbDataItem, type SourceItem, type VolumeDataItem, type VolumeState } from "../data-contract";
-import { classifyDbTaskFailure } from "../data-logic";
+import { DataPortError, type DataPort, type DataSnapshot, type DbDataItem, type DbMeasureLite, type SourceItem, type VolumeDataItem, type VolumeState } from "../data-contract";
+import { classifyDbTaskFailure, classifyTransferError } from "../data-logic";
 
 interface OpMeta {
   serverId?: string;
@@ -20,6 +21,8 @@ interface OpMeta {
   vxInventory?: Record<string, VxInventoryItem & { runId?: string; at?: string }>;
   vxExcluded?: Record<string, { reason: string; at: string; by: string }>;
   vxDisk?: Record<string, { ok: boolean; unknown: boolean }>;
+  vxStream?: Record<string, unknown>;
+  vxDbSizes?: Record<string, DbSizeRecord>;
 }
 
 const metaOf = (m: unknown): OpMeta => (m && typeof m === "object" ? (m as OpMeta) : {});
@@ -61,9 +64,15 @@ export class PrismaDataPort implements DataPort {
     const nameOf = new Map<string, string>([...dbRows, ...appRows].map((r) => [r.id, r.name]));
 
     const volumeRefs = dbVolumeModeRefs(meta.plan?.items);
+    const dump = vxDumpEnabled();
+    const streamRefs = dump ? dbStreamModeRefs(meta) : new Set<string>();
     const targets: VxVolumeTarget[] = vx
-      ? buildVolumeTargets({ tasks, dbs: new Map(dbRows.map((d) => [d.id, { id: d.id, engine: d.engine, version: d.version, image: d.image }])), dbVolumeRefs: volumeRefs, excluded: meta.vxExcluded })
+      ? buildVolumeTargets({ tasks, dbs: new Map(dbRows.map((d) => [d.id, { id: d.id, engine: d.engine, version: d.version, image: d.image }])), dbVolumeRefs: volumeRefs, dbStreamRefs: streamRefs, excluded: meta.vxExcluded })
       : [];
+    const transfers = targets.length ? await this.prisma.migrationVolumeTransfer.findMany({ where: { opId: op.id } }) : [];
+    const tByRef = new Map(transfers.map((t) => [t.itemRef, t]));
+    const dumpTransferOf = new Map<string, (typeof transfers)[number]>();
+    for (const target of targets) if (target.destType === "db-dump" && target.databaseItemRef && tByRef.has(target.itemRef)) dumpTransferOf.set(target.databaseItemRef, tByRef.get(target.itemRef)!);
 
     // ── databases
     const databases: DbDataItem[] = [];
@@ -73,8 +82,9 @@ export class PrismaDataPort implements DataPort {
       if (!db) continue;
       const data = tasks.find((x) => x.itemRef === `data:${t.itemRef}`);
       const supported = MIGRATOR_ENGINES.includes(db.engine);
-      const plane = !supported ? "unsupported" : vx && volumeRefs.has(t.itemRef) ? "volume" : "logical";
-      const taskState: DbDataItem["task"] = !data ? "none" : data.status === "DONE" ? "done" : data.status === "RUNNING" || data.status === "PENDING" ? "running" : data.status === "FAILED" || data.status === "FAILED_VERIFY" ? "failed" : "none";
+      const plane = !supported ? "unsupported" : vx && streamRefs.has(t.itemRef) ? "stream" : vx && volumeRefs.has(t.itemRef) ? "volume" : "logical";
+      const dumpT = plane === "stream" ? dumpTransferOf.get(t.itemRef) : undefined;
+      const taskState: DbDataItem["task"] = plane === "stream" ? streamTaskState(dumpT?.state) : !data ? "none" : data.status === "DONE" ? "done" : data.status === "RUNNING" || data.status === "PENDING" ? "running" : data.status === "FAILED" || data.status === "FAILED_VERIFY" ? "failed" : "none";
       databases.push({
         itemRef: t.itemRef,
         dbId: db.id,
@@ -83,22 +93,24 @@ export class PrismaDataPort implements DataPort {
         plane,
         unsupportedReason: plane === "unsupported" ? (MIGRATOR_UNSUPPORTED[db.engine] ?? "unsupported") : null,
         task: taskState,
-        taskFailure: taskState === "failed" ? classifyDbTaskFailure(data?.output ?? null) : null,
-        finishedAt: taskState === "done" && data?.finishedAt ? data.finishedAt.toISOString() : null,
+        taskFailure: taskState === "failed" ? (plane === "stream" ? streamTaskFailure(dumpT?.error ?? null) : classifyDbTaskFailure(data?.output ?? null)) : null,
+        finishedAt: taskState === "done" ? ((plane === "stream" ? dumpT?.finishedAt : data?.finishedAt)?.toISOString() ?? null) : null,
+        measure: measureOf(meta.vxDbSizes?.[t.itemRef]),
       });
     }
     databases.sort((a, b) => (a.itemRef < b.itemRef ? -1 : 1));
 
     // ── volumes
-    const transfers = targets.length ? await this.prisma.migrationVolumeTransfer.findMany({ where: { opId: op.id } }) : [];
-    const tByRef = new Map(transfers.map((t) => [t.itemRef, t]));
     const volumes: VolumeDataItem[] = [];
     for (const target of targets) {
       const t = tByRef.get(target.itemRef);
       const state: VolumeState = target.excluded && !t ? "EXCLUDED" : ((t?.state as VolumeState | undefined) ?? "NONE");
       const ownerRef = target.destType === "app-volume" ? target.appItemRef! : target.databaseItemRef!;
       const owner = tasks.find((x) => x.itemRef === ownerRef);
-      const inv = meta.vxInventory?.[target.itemRef];
+      // a streamed dump has no volume to inspect: its "inventory" is the migrator's size report (dump size, else catalog size)
+      const sized = target.destType === "db-dump" ? meta.vxDbSizes?.[target.databaseItemRef!] : undefined;
+      const sizedBytes = sized ? dumpRawEstimate(sized) : null;
+      const inv = target.destType === "db-dump" ? (sizedBytes === null ? undefined : { itemRef: target.itemRef, found: true, mountType: "volume" as const, rawBytes: sizedBytes, entries: 0, specials: { sockets: 0, fifos: 0, devices: 0 }, running: true }) : meta.vxInventory?.[target.itemRef];
       let gates: VolumeDataItem["gates"] = null;
       if (target.destType === "db-data" && owner?.resourceId) {
         const credsCarried = (owner.result as { credentialsCarried?: boolean } | null)?.credentialsCarried === true;
@@ -111,6 +123,8 @@ export class PrismaDataPort implements DataPort {
       volumes.push({
         itemRef: target.itemRef,
         destType: target.destType,
+        ownerItemRef: target.destType === "app-volume" ? null : (target.databaseItemRef ?? null),
+        engine: target.destType === "app-volume" ? null : (target.engine ?? null),
         ownerName: owner?.resourceId ? (nameOf.get(owner.resourceId) ?? null) : null,
         excluded: !!target.excluded,
         state,
@@ -138,6 +152,7 @@ export class PrismaDataPort implements DataPort {
       opId: op.id,
       targetServerId: meta.serverId ?? run.targetServerId,
       vxEnabled: vx,
+      dumpEnabled: dump,
       tokenActive: active,
       tokenExpiresAt: active && op.migrationTokenExpiresAt ? op.migrationTokenExpiresAt.toISOString() : null,
       hubBase: meta.hubBase ?? null,
@@ -166,6 +181,20 @@ export class PrismaDataPort implements DataPort {
     if (res.count > 0) await this.audit.log({ actor: run.actorId, action: "import.migration_token.revoke", target: run.opId, meta: { runId: run.id } });
   }
 
+  async enableStream(run: RunSnapshot, dbItemRef: string, on: boolean): Promise<boolean> {
+    if (!run.opId) return false;
+    const vx = this.moduleRef.get(VxService, { strict: false });
+    try {
+      await vx.setStreamMode(run.actorId, run.opId, dbItemRef, on);
+      return true;
+    } catch (e) {
+      // refused (already restored by the artifact route, copied as files, an engine with no lane, the lane switched off, no access):
+      // the run reports it through its checks; nothing here changes
+      this.logger.warn(`run ${run.id}: the streamed dump lane was refused for a database: ${e instanceof Error ? e.constructor.name : "error"}`);
+      return false;
+    }
+  }
+
   async abortTransfers(run: RunSnapshot, itemRefs: readonly string[]): Promise<string[]> {
     if (!run.opId || itemRefs.length === 0) return [];
     const vx = this.moduleRef.get(VxService, { strict: false });
@@ -180,4 +209,23 @@ export class PrismaDataPort implements DataPort {
     }
     return aborted;
   }
+}
+
+/** The migrator's size report as the run reads it (every number is a plain integer; nothing here is a secret). */
+function measureOf(m: DbSizeRecord | undefined): DbMeasureLite | null {
+  if (!m) return null;
+  return { state: m.state, reason: m.reason ?? null, dbBytes: m.dbBytes, dumpRawBytes: m.dumpRawBytes ?? null, dumpGzBytes: m.dumpGzBytes ?? null, measuredBy: m.measuredBy };
+}
+
+/** A database on the streamed lane has no `data:<itemRef>` task of its own: its dump transfer's state is its task state. */
+function streamTaskState(state: string | undefined): DbDataItem["task"] {
+  if (!state || state === "NONE") return "none";
+  if (state === "DONE") return "done";
+  if (state === "FAILED" || state === "ABORTED") return "failed";
+  return "running";
+}
+
+function streamTaskFailure(error: string | null): string {
+  const f = classifyTransferError(error);
+  return f === "dest-dirty" ? "dest-dirty" : "restore-failed";
 }

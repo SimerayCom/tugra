@@ -414,7 +414,7 @@ func (r *runner) verifyOne(ctx context.Context, tg Target) VerifyItem {
 	if berr != nil {
 		return skip("failed", "invalid-name")
 	}
-	tctx, cancel := context.WithTimeout(ctx, r.c.dumpTimeout)
+	tctx, cancel := context.WithTimeout(ctx, verifyTimeout(r.c.dumpTimeout))
 	stdout, stderr, err := runDocker(tctx, plan.Argv, plan.Env)
 	cancel()
 	if err != nil {
@@ -498,6 +498,18 @@ func verifyPhase(ctx context.Context, run *runner, scope []Target, out *output, 
 		return exitPartial
 	}
 	return code
+}
+
+// minVerifyTimeout is the floor of one database's source-side measurement. An exact count over a table of hundreds of millions
+// of rows (a database moved by the streamed dump lane) takes far longer than a small dump, so the dump timeout alone is not a
+// sane bound for it.
+const minVerifyTimeout = 60 * time.Minute
+
+func verifyTimeout(dump time.Duration) time.Duration {
+	if dump > minVerifyTimeout {
+		return dump
+	}
+	return minVerifyTimeout
 }
 
 // validateVerifyFlags rejects out-of-range verify flags before any network call (exit 2).

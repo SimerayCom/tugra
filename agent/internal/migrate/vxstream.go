@@ -239,14 +239,27 @@ func StreamVolume(ctx context.Context, h *Hub, dockerPath string, env []string, 
 	}
 	defer func() { removeHelper(dockerPath, env, name) }() // a crashed/cancelled run never leaves the helper container behind
 
-	// A resumed run re-reads the committed prefix at disk speed with no network call: keep the lease alive meanwhile.
+	return deliverParts(sctx, cancel, ctx, h, tg.ItemRef, o, stdout, wait, o.ResumeFromPart > 0)
+}
+
+// deliverParts is the part pipeline shared by the volume tar stream and the streamed database dump: it cuts `stdout` into
+// independent gzip members, delivers each through the hub's relay and returns after the last commit. `beat` keeps the lease
+// alive while no other call is made (a resumed volume re-reading its committed prefix; a dump whose producer is slow).
+// `wait` reports the producer's exit status; a truncated or failed stream is never accepted. sctx is the cancellable child of
+// ctx that the producer reads under; cancel stops it.
+func deliverParts(sctx context.Context, cancel context.CancelFunc, ctx context.Context, h *Hub, itemRef string, o StreamOpts, stdout io.ReadCloser, wait func() error, beat bool) (StreamResult, error) {
+	// While no other call is made (a resumed volume re-reading its committed prefix, a dump whose producer is slow) keep the lease alive.
+	beatPhase := "skipping"
+	if o.ResumeFromPart == 0 {
+		beatPhase = "streaming"
+	}
 	beatEvery := o.BeatEvery
 	if beatEvery <= 0 {
 		beatEvery = 60 * time.Second
 	}
 	stopBeat := make(chan struct{})
 	var beatWG sync.WaitGroup
-	if o.ResumeFromPart > 0 {
+	if beat {
 		beatWG.Add(1)
 		go func() {
 			defer beatWG.Done()
@@ -259,7 +272,7 @@ func StreamVolume(ctx context.Context, h *Hub, dockerPath string, env []string, 
 				case <-sctx.Done():
 					return
 				case <-t.C:
-					_ = h.VxBeat(sctx, tg.ItemRef, o.RunID, "skipping")
+					_ = h.VxBeat(sctx, itemRef, o.RunID, beatPhase)
 				}
 			}
 		}()
@@ -294,7 +307,7 @@ func StreamVolume(ctx context.Context, h *Hub, dockerPath string, env []string, 
 			}
 			continue
 		}
-		if err := sendPart(sctx, h, tg.ItemRef, o.RunID, j); err != nil {
+		if err := sendPart(sctx, h, itemRef, o.RunID, j); err != nil {
 			sendErr = err
 			stopped = true
 			cancel()
