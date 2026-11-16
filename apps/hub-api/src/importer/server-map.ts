@@ -27,10 +27,16 @@ const own = (m: Readonly<Record<string, string>>, k: string): string | undefined
 /** True for a map that actually places something (a missing or empty map is a single-target import). */
 export const hasServerMap = (m: Readonly<Record<string, string>> | null | undefined): m is Readonly<Record<string, string>> => !!m && Object.keys(m).length > 0;
 
-/** The Tugra server a resource from source server `ref` lands on: the mapped one, else the default. */
+/** The placement ref of an item whose source server is unknown (itemRef `<kind>:_:<ref>`). A map may list it like any server. */
+export const UNKNOWN_SERVER_REF = "_";
+
+/**
+ * The Tugra server a resource from source server `ref` lands on: the mapped one, else the default. With a non-empty map an
+ * unknown source server (no ref) is looked up as {@link UNKNOWN_SERVER_REF}; without a map everything is the default.
+ */
 export function placementFor(defaultId: string, map: Readonly<Record<string, string>> | null | undefined, ref: string | null | undefined): string {
-  if (!ref || !map) return defaultId;
-  return own(map, ref) ?? defaultId;
+  if (!hasServerMap(map)) return defaultId;
+  return own(map, ref || UNKNOWN_SERVER_REF) ?? defaultId;
 }
 
 /** Every Tugra target of an import: the default first, then each mapped server once. */
@@ -40,11 +46,17 @@ export function placementTargets(defaultId: string, map: Readonly<Record<string,
   return out;
 }
 
-/** The source servers of `refs` that a NON-EMPTY map does not place (they would silently land on the default). */
+/**
+ * The source servers of `refs` that a NON-EMPTY map does not place (they would silently land on the default). An item with an
+ * unknown source server (a falsy ref) is reported as {@link UNKNOWN_SERVER_REF}, unless the map lists that entry itself.
+ */
 export function unplacedRefs(map: Readonly<Record<string, string>> | null | undefined, refs: Iterable<string | undefined | null>): string[] {
   if (!hasServerMap(map)) return [];
   const out = new Set<string>();
-  for (const r of refs) if (r && own(map, r) === undefined) out.add(r);
+  for (const r of refs) {
+    const ref = r || UNKNOWN_SERVER_REF;
+    if (own(map, ref) === undefined) out.add(ref);
+  }
   return [...out].sort();
 }
 

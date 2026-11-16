@@ -205,6 +205,33 @@ export class ImportExecutorService {
       const effByRef = new Map((res?.effective ?? []).map((e) => [e.itemRef, e]));
       const gitNameByRef = res ? new Map(res.gitSources.map((g) => [g.ref, g.name])) : undefined;
 
+      // Item lookups by itemRef (fleet-only, so they can be built before the op row exists).
+      const svcByRef = new Map(fleet.services.map((sv) => [ns("service", sv.serverRef, sv.sourceRef), sv]));
+      const appByRef = new Map(fleet.apps.map((a) => [`app:${a.serverRef ?? "_"}:${a.sourceRef}`, a]));
+      const dbByRef = new Map(fleet.databases.map((d) => [`database:${d.serverRef ?? "_"}:${d.sourceRef}`, d]));
+      /** The source server of a plan item (the Coolify server uuid), undefined when its placement is unknown. */
+      const sourceServerOf = (itemRef: string): string | undefined => appByRef.get(itemRef)?.serverRef ?? dbByRef.get(itemRef)?.serverRef ?? svcByRef.get(itemRef)?.serverRef;
+      // Fail closed: with a non-empty serverMap, an item whose source server the map does not place would silently land on the
+      // default server. Refused before ANYTHING is created, git sources and projects included (an excluded item places nothing; a service with its own
+      // explicit target server, or skipped by choice, is placed or dropped by that choice).
+      if (serverMap) {
+        const unplaced = unplacedRefs(
+          serverMap,
+          plan.items
+            .filter((i) => {
+              if (i.kind !== "app" && i.kind !== "database" && i.kind !== "service") return false;
+              if (effByRef.get(i.itemRef)?.include === false) return false;
+              const c = i.kind === "service" ? serviceChoices[i.itemRef] : undefined;
+              return !(c?.skip || c?.targetServerId);
+            })
+            // an item whose source server is unknown is unplaced too (`_`), unless the map lists that entry
+            .map((i) => sourceServerOf(i.itemRef)),
+        );
+        if (unplaced.length) {
+          throw new UnprocessableEntityException({ statusCode: 422, message: "some source servers are not in the serverMap", code: "import.server_unmapped", servers: unplaced.slice(0, 20), count: unplaced.length });
+        }
+      }
+
       // Carry each discovered GitHub App into a Tugra GitSource on the TARGET team (credentials flow
       // source → memory → GitSourcesService, encrypted at rest; never a task/plan/log). Done BEFORE the op row so
       // any skipped-provider warning is persisted with it; per-provider failures degrade, never abort the import.
@@ -231,32 +258,6 @@ export class ImportExecutorService {
         ...tree.warnings,
         ...(res?.conflicts.some((c) => c.code === "gitsource.exists_not_renamed") ? ["a git source for a GitHub App already exists on the target team — its name was kept (a rename applies on create only)"] : []),
       ];
-
-      // Item lookups by itemRef (fleet-only, so they can be built before the op row exists).
-      const svcByRef = new Map(fleet.services.map((sv) => [ns("service", sv.serverRef, sv.sourceRef), sv]));
-      const appByRef = new Map(fleet.apps.map((a) => [`app:${a.serverRef ?? "_"}:${a.sourceRef}`, a]));
-      const dbByRef = new Map(fleet.databases.map((d) => [`database:${d.serverRef ?? "_"}:${d.sourceRef}`, d]));
-      /** The source server of a plan item (the Coolify server uuid), undefined when its placement is unknown. */
-      const sourceServerOf = (itemRef: string): string | undefined => appByRef.get(itemRef)?.serverRef ?? dbByRef.get(itemRef)?.serverRef ?? svcByRef.get(itemRef)?.serverRef;
-      // Fail closed: with a non-empty serverMap, an item whose source server the map does not place would silently land on the
-      // default server. Refused BEFORE anything is created (an excluded item places nothing; a service with its own
-      // explicit target server, or skipped by choice, is placed or dropped by that choice).
-      if (serverMap) {
-        const unplaced = unplacedRefs(
-          serverMap,
-          plan.items
-            .filter((i) => {
-              if (i.kind !== "app" && i.kind !== "database" && i.kind !== "service") return false;
-              if (effByRef.get(i.itemRef)?.include === false) return false;
-              const c = i.kind === "service" ? serviceChoices[i.itemRef] : undefined;
-              return !(c?.skip || c?.targetServerId);
-            })
-            .map((i) => sourceServerOf(i.itemRef)),
-        );
-        if (unplaced.length) {
-          throw new UnprocessableEntityException({ statusCode: 422, message: "some source servers are not in the serverMap", code: "import.server_unmapped", servers: unplaced.slice(0, 20), count: unplaced.length });
-        }
-      }
 
       const op = await this.createOp(userId, input.sourceKind, input.targetServerId, plan.planHash, {
         sessionId: input.sessionId,

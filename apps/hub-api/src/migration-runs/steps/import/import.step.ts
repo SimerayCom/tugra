@@ -32,7 +32,7 @@ import {
 } from "../../core/run-contract";
 import { CLEANUP_REQUEST_KEY, type CleanupRequest } from "../../core/run-engine.service";
 import { SESSION_EXPIRED_CODE } from "../../core/run-logic";
-import { serverRefOfItemRef } from "../../../importer/server-map";
+import { UNKNOWN_SERVER_REF, serverRefOfItemRef } from "../../../importer/server-map";
 import { IMPORT_STEPS_PORT, type DeploymentRef, type ImportStepsPort, type OpSnapshot, type SessionState } from "./import-ports";
 import { applyInputOf, deployKeyBase, failureOf, hasActive, hasBad, includedItems, isConflict, itemTasks, stopRunApps, unackedBlockers } from "./step-utils";
 
@@ -84,8 +84,8 @@ function unmappedOf(ctx: StepContext, plan: ImportPlanResponse): string[] {
       const c = i.kind === "service" ? choices[i.itemRef] : undefined;
       return !(c?.skip || c?.targetServerId);
     })
-    .map((i) => serverRefOfItemRef(i.itemRef))
-    .filter((r): r is string => !!r);
+    // an item with an unknown source server counts as `_`: with a map it never silently falls to the default
+    .map((i) => serverRefOfItemRef(i.itemRef) ?? UNKNOWN_SERVER_REF);
   return unmappedSourceServers(ctx.run, refs).sort();
 }
 

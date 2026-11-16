@@ -91,6 +91,8 @@ function harness(over: { fleet?: ForeignFleet; inflightOn?: string[]; prior?: Ar
     createForImport: jest.fn().mockImplementation(async (_u: string, i: { name: string }) => ({ id: `db-${i.name}`, name: i.name })),
     setLimits: jest.fn().mockResolvedValue(undefined),
   };
+  const gitSources = { upsertForImport: jest.fn().mockResolvedValue({ id: "gs-1" }) };
+  const projects = { findOrCreateForImport: jest.fn().mockResolvedValue({ id: "proj-1", environments: {} }) };
   const svc = new ImportExecutorService(
     prisma as never,
     {} as never,
@@ -101,11 +103,11 @@ function harness(over: { fleet?: ForeignFleet; inflightOn?: string[]; prior?: Ar
     dbs as never,
     { issue: jest.fn(), reissue: jest.fn(), revoke: jest.fn(), validate: jest.fn() } as never,
     {} as never,
-    { upsertForImport: jest.fn() } as never,
-    { findOrCreateForImport: jest.fn() } as never,
+    gitSources as never,
+    projects as never,
     { resolve: jest.fn().mockResolvedValue(new Map()) } as never,
   );
-  return { svc, prisma, apps, dbs, created, access, source };
+  return { svc, prisma, apps, dbs, created, access, source, gitSources, projects };
 }
 
 const input = (f: ForeignFleet, extra: Record<string, unknown> = {}) => ({ sourceKind: "coolify" as const, sessionId: "s1", targetServerId: "srv-default", planHash: planImport(f, { sourceKind: "coolify" }).planHash, ...extra });
@@ -159,6 +161,44 @@ describe("ImportExecutorService.applyRemote: multi-host placement (serverMap)", 
     expect(h.prisma.bulkTask.create).not.toHaveBeenCalled();
     expect(h.apps.create).not.toHaveBeenCalled();
     expect(h.source.close).toHaveBeenCalled();
+  });
+
+  it("the refusal comes before git sources and projects are created, so nothing is left on the target team", async () => {
+    const f = fleet();
+    f.gitProviders = [{ ref: "g1", kind: "github", appId: "77", appName: "Source GH App" }];
+    f.projects = [{ ref: "p1", name: "proj-a", environments: [{ ref: "e1", name: "production", isDefault: true }] }] as never;
+    const h = harness({ fleet: f });
+    h.source.fetchSecrets.mockResolvedValue({ values: { privateKey: "-----BEGIN-----" }, unresolved: [] });
+    const err = await h.svc.apply("u1", input(f, { serverMap: { "src-a": "tgt-1" } })).catch((e) => e);
+    expect(err.getResponse()).toMatchObject({ code: "import.server_unmapped" });
+    expect(h.gitSources.upsertForImport).not.toHaveBeenCalled();
+    expect(h.projects.findOrCreateForImport).not.toHaveBeenCalled();
+    expect(h.source.fetchSecrets).not.toHaveBeenCalled();
+    expect(h.prisma.bulkOperation.create).not.toHaveBeenCalled();
+  });
+
+  it("an item whose source server is unknown is unplaced too (reported as `_`), unless the map lists `_` or a choice places it", async () => {
+    const f = fleet();
+    f.apps[1].serverRef = undefined;
+    f.databases[1].serverRef = "src-a";
+    const h = harness({ fleet: f });
+    const err = await h.svc.apply("u1", input(f, { serverMap: { "src-a": "tgt-1" } })).catch((e) => e);
+    expect(err).toBeInstanceOf(UnprocessableEntityException);
+    expect(err.getResponse()).toMatchObject({ code: "import.server_unmapped", servers: ["_"], count: 1 });
+    expect(h.apps.create).not.toHaveBeenCalled();
+
+    // the operator may place unknown-placement items on purpose by mapping `_`
+    const h2 = harness({ fleet: f });
+    await h2.svc.apply("u1", input(f, { serverMap: { "src-a": "tgt-1", _: "tgt-2" } }));
+    await flush();
+    expect(h2.apps.create).toHaveBeenCalledWith("u1", expect.objectContaining({ name: "web-b", serverId: "tgt-2" }));
+    expect(h2.apps.create).toHaveBeenCalledWith("u1", expect.objectContaining({ name: "web-a", serverId: "tgt-1" }));
+
+    // no map at all: everything stays on the default, an unknown placement included
+    const h3 = harness({ fleet: f });
+    await h3.svc.apply("u1", input(f, {}));
+    await flush();
+    expect(h3.apps.create.mock.calls.map((c) => c[1].serverId)).toEqual(["srv-default", "srv-default"]);
   });
 
   it("a prototype-named source ref is never resolved through the prototype chain", async () => {

@@ -79,6 +79,37 @@ describe("IMPORT with a serverMap", () => {
     expect(seen).toHaveLength(1);
   });
 
+  it("an item with an unknown source server is unplaced too: the step names `_`, unless the map lists it or a choice places the item", async () => {
+    const unknownWorld = (): RunWorld => {
+      const w = world();
+      w.port.plan_ = defaultPlan({
+        items: [
+          { itemRef: "app:src-a:web", kind: "app", name: "app-a", proposed: {}, risks: [], dependsOn: [] },
+          { itemRef: "service:_:s1", kind: "service", name: "svc-1", proposed: { verdict: "importable" }, risks: [], dependsOn: [] },
+        ],
+        totals: { apps: 1, databases: 0, volumes: 0, blockers: 0 },
+      });
+      return w;
+    };
+    const w = unknownWorld();
+    const seen = spyApply(w);
+    const id = await w.run({ serverMap: { "src-a": "srv2" } });
+    expect(seen).toHaveLength(0);
+    const gate = JSON.stringify((await importStep(w, id)).gate ?? (await w.view(id)));
+    expect(gate).toContain("import.server-unmapped");
+    expect(gate).toContain('"_"');
+
+    const w2 = unknownWorld();
+    const seen2 = spyApply(w2);
+    await w2.run({ serverMap: { "src-a": "srv2", _: "srv3" } });
+    expect(seen2).toHaveLength(1);
+
+    const w3 = unknownWorld();
+    const seen3 = spyApply(w3);
+    await w3.run({ serverMap: { "src-a": "srv2" }, serviceChoices: { "service:_:s1": { targetServerId: "srv3" } } });
+    expect(seen3).toHaveLength(1);
+  });
+
   it("dry-run projects the placement and blocks on an unplaced source server", async () => {
     const w = world();
     const ok = await w.create({ dryRun: true, serverMap: MAP });

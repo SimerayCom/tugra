@@ -1,4 +1,4 @@
-import { hasServerMap, placementFor, placementTargets, serverRefOfItemRef, unplacedRefs } from "./server-map";
+import { UNKNOWN_SERVER_REF, hasServerMap, placementFor, placementTargets, serverRefOfItemRef, unplacedRefs } from "./server-map";
 import { mappingHashOf } from "./import-mapping";
 
 describe("server-map helpers", () => {
@@ -7,6 +7,9 @@ describe("server-map helpers", () => {
     expect(placementFor("def", map, "src-a")).toBe("tgt-1");
     expect(placementFor("def", map, "src-z")).toBe("def");
     expect(placementFor("def", map, undefined)).toBe("def");
+    expect(placementFor("def", { ...map, [UNKNOWN_SERVER_REF]: "tgt-9" }, undefined)).toBe("tgt-9");
+    expect(placementFor("def", { [UNKNOWN_SERVER_REF]: "tgt-9" }, "src-z")).toBe("def");
+    expect(placementFor("def", {}, undefined)).toBe("def");
     expect(placementFor("def", undefined, "src-a")).toBe("def");
     expect(placementFor("def", map, "constructor")).toBe("def");
     expect(placementFor("def", map, "toString")).toBe("def");
@@ -15,10 +18,11 @@ describe("server-map helpers", () => {
     expect(placementTargets("def", { a: "t1", b: "t1", c: "def", d: "t2" })).toEqual(["def", "t1", "t2"]);
     expect(placementTargets("def", null)).toEqual(["def"]);
   });
-  it("unplacedRefs: [] without a map, sorted unique refs with one, unknown placement ignored", () => {
-    expect(unplacedRefs(undefined, ["a", "b"])).toEqual([]);
+  it("unplacedRefs: [] without a map, sorted unique refs with one, an unknown placement is reported as `_`", () => {
+    expect(unplacedRefs(undefined, ["a", "b", undefined])).toEqual([]);
     expect(unplacedRefs({}, ["a"])).toEqual([]);
-    expect(unplacedRefs(map, ["src-b", "z", "y", "z", undefined, null, "toString"])).toEqual(["toString", "y", "z"]);
+    expect(unplacedRefs(map, ["src-b", "z", "y", "z", undefined, null, "toString"])).toEqual(["_", "toString", "y", "z"]);
+    expect(unplacedRefs({ ...map, _: "tgt-9" }, ["src-a", undefined])).toEqual([]);
   });
   it("hasServerMap", () => {
     expect(hasServerMap({})).toBe(false);
