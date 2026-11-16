@@ -188,10 +188,14 @@ is per slice, so the size only needs enough parts to show steady state. The fix 
 
 ### L8 relay seats (`l8-relay-seats.sh`)
 `L8_MIGRATORS` (2 to 4, default 2) and `L8_SEATS` (default 1) shape it; the workflow runs 2 on 1 and **4 on 2**: the real estate has 23
-source hosts against one hub, so several migrators from different sources race for the seats. Each later migrator starts once the one
-before it committed a part. In the default shape the hub runs with `MIGRATION_RELAY_CONCURRENCY=1` and `MOVE_MAX_CONCURRENT_RELAYS=1`. (A) Two migrator runs (two ops, two source
-volumes, one target server) race for the one migration seat; the second starts only after the first committed a part (every migrator
-removes all `tugra.vx=1` helper containers at its start, see finding 2). Both go through `http-tap.mjs`, which counts the hub's `busy`
+source hosts against one hub, so several migrators from different sources race for the seats (here they share one docker host, there
+each has its own). The migrators are all started **together**: the tap holds each one's `GET targets` (its last hub call before its
+start-up removes helper containers) until all of them asked, then releases them at once. A stagger would be wrong, see finding 2.
+In the default shape the hub runs with `MIGRATION_RELAY_CONCURRENCY=1` and `MOVE_MAX_CONCURRENT_RELAYS=1`. (A) Two migrator runs (two ops, two source
+volumes, one target server) race for the one migration seat. Every migrator removes ALL `tugra.vx=1` helper containers on its docker
+host when it starts, so the barrier makes every removal run before any migrator has created a helper; that narrows the window to the
+spread between the removals and does not close it (finding 2). A run that ends with `tar-failed` or `inventory helper failed` is
+reported as a probable collision with finding 2, not as a seat problem. All of them go through `http-tap.mjs`, which counts the hub's `busy`
 answers: at least one is required (none would mean the pool was never contended), both runs end `volume-applied`, and no part failure
 is logged. (B) While they stream, a deployed app with 256 MiB of data is moved to a second agent.
 **This leg is observational**: both "servers" are one docker host sharing `/etc/tugra` and the docker daemon, so the move itself may fail
@@ -231,7 +235,8 @@ venue and a 128 byte payload, about 190 bytes a row, a BRIN index) and two unrel
 `volume-skipped-running`; with `--stop-source` it is `planned` / `would-stop-source` with the whole data directory in `rawBytes`, and still
 nothing is stopped.
 - **17**: `--arms all --stop-source` stops only the source, applies the volume, the database the hub starts holds the frozen row count and
-  `pg_total_relation_size`, no other container on the host changed (bar that database), no helper or staged part is left. The copy time
+  `pg_total_relation_size` (the source table has autovacuum off and one explicit `VACUUM` after the load, so its size cannot drift
+  between the reading and the stop), no other container on the host changed (bar that database), no helper or staged part is left. The copy time
   goes to `l9.summary` (`L9_COPY_SECONDS`): the first real measurement of stop, stream, apply and start together. `L9_RATE=<MB/s>` sends
   it through the throttle proxy: the "L1c" run of the big database on a slow link.
 - **18**: the `layout` gate refuses with its exact text **after** the migrator stopped the source, and the migrator **restarts** it (asserted:
@@ -268,7 +273,8 @@ PostgreSQL 17 with rows, and 3 orphan volumes. Then, each asserting that **nothi
 **B** two deploys of one application: `failed` / `ambiguous`, neither is stopped. **C** an exited container with a restart history (a
 crashed service that never came back): copied without starting or stopping anything. **D** a crash-looping `restart: always` container:
 `volume-skipped-running`, then applied with `--stop-source`, and it stays stopped (the restart policy does not undo the stop). **E** the
-two kinds of redis: the dry run discovers both, `DBSIZE` is unchanged. **F** Meilisearch pinned to an old version and `latest`: the
+two kinds of redis: a dry run only plans them (it never touches docker); the real logical run finds the password on the command line,
+dumps the running instance and uploads it (bytes above zero, no credentials skip), and `DBSIZE` is unchanged. **F** Meilisearch pinned to an old version and `latest`: the
 pinned image serves the copied volume (500 documents); whether `latest` opens a copy of it is recorded in `l12.summary`
 (`L12_MEILI_LATEST_OPENS`), because version drift between instances is a finding, not a pass/fail. `L12_MEILI=0` skips F.
 
@@ -335,7 +341,9 @@ R31 is then still open. **What it cannot prove**: the 26.04 kernel and its docke
    live inventory and tar helpers of another migrator on the same docker host, which ends that run as `inventory helper failed` or a tar
    failure. Two concurrent migrators on one host (one per volume, or two operators) can hit it. A run-id label is not enough on its own: a
    dead run's helper and a live one both carry a foreign run id, so a fix needs a liveness test (for example the owning migrator
-   container still running). L8 staggers its second migrator to stay out of it.
+   container still running). A stagger does not avoid it: a LATER migrator's start removes the live helpers of the EARLIER ones. L8
+starts all its migrators together behind a barrier in the tap, which narrows the window but does not close it; the real fix is in the
+migrator (a run-scoped or liveness-tested removal), and on the real estate it does not arise while each source host runs one migrator.
 
 ## Not covered here
 

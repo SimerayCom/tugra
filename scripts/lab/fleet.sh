@@ -118,9 +118,12 @@ fleet_pg_source() {
 # fleet_pg_load_ticks <container> <MiB>: an append-only tick table (a monotonic timestamp, a symbol, two prices, a venue and a
 # 128 byte payload, about 190 bytes a row) grown in batches until pg_total_relation_size reaches the target. Heap pages like these
 # compress, unlike urandom, which is the point of the L7 and L9 cases. A BRIN index on the timestamp, as an append-only table has.
+# The size must stay FROZEN once the loader returns (L9 compares pg_total_relation_size of source and copy): autovacuum is off for the
+# table and its toast table and the BRIN index does not autosummarize, and one explicit VACUUM at the end creates the _vm/_fsm forks
+# and summarises the BRIN ranges, so nothing background-driven can change a fork between the reading and the stop.
 fleet_pg_load_ticks() {
   local c="$1" want="$2" k=0 n="$FLEET_PG_BATCH_ROWS" mib
-  fleet_pg_sql "$c" "create table if not exists ticks (ts timestamptz not null, sym int not null, bid bigint not null, ask bigint not null, venue text not null, pad text not null); create index if not exists ticks_ts_brin on ticks using brin (ts)" >/dev/null
+  fleet_pg_sql "$c" "create table if not exists ticks (ts timestamptz not null, sym int not null, bid bigint not null, ask bigint not null, venue text not null, pad text not null) with (autovacuum_enabled = false, toast.autovacuum_enabled = false); create index if not exists ticks_ts_brin on ticks using brin (ts) with (autosummarize = off)" >/dev/null
   while :; do
     mib="$(fleet_pg_sql "$c" "select pg_total_relation_size('ticks') / 1048576")"
     [ "$mib" -lt "$want" ] || break
@@ -128,7 +131,7 @@ fleet_pg_load_ticks() {
     k=$((k + 1))
     [ $((k % 5)) -ne 0 ] || lab_log "fixture: ticks at ${mib} MiB of ${want} MiB"
   done
-  fleet_pg_sql "$c" "analyze ticks" >/dev/null
+  fleet_pg_sql "$c" "vacuum (analyze) ticks" >/dev/null
   fleet_pg_sql "$c" "checkpoint" >/dev/null
   lab_log "fixture: ticks is $(fleet_pg_sql "$c" "select pg_total_relation_size('ticks') / 1048576") MiB, $(fleet_pg_sql "$c" 'select count(*) from ticks') rows"
 }

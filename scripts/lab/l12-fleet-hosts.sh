@@ -8,7 +8,9 @@
 #   C  an exited container with a restart history (a crashed API that never came back): copied without stopping or starting anything
 #   D  a crash-looping container (`restart: always`, exits after a second): `volume-skipped-running` without --stop-source, applied
 #      with it, and it stays stopped (the stop is the user's, the restart policy does not undo it)
-#   E  redis:7.2 with a password on its command line, plain and with a custom conf file: the dry run discovers both, DBSIZE is unchanged
+#   E  redis:7.2 with a password on its command line, plain and with a custom conf file: a dry run only PLANS them (it never touches
+#      docker); the real logical run finds the password in the container's command line, dumps the running instance and uploads it
+#      (bytes > 0, no credentials skip), and DBSIZE is unchanged
 #   F  Meilisearch pinned to an old version and `latest`: a volume copy of the pinned one opens on the pinned image; whether `latest`
 #      opens it is RECORDED (version drift between instances), not a gate (L12_MEILI=0 skips F)
 # Around all of it: 13+1 redis, an orphan PostgreSQL 17 the import does not list (the "unlisted DB" of the real estate), orphan
@@ -132,6 +134,16 @@ for pair in "plain:$REDIS_PLAIN" "conf:$REDIS_CONF"; do
   lab_seed op --name "lab-redis-$tag-$(date +%s)" --source "$ref" --kind db --engine REDIS --version 7 --data-mode dump >"$LAB_DIR/op.redis-$tag.env"
   LAB_OP="redis-$tag" lab_run "redis-$tag" --arms databases --dry-run
   (lab_op_load "redis-$tag"; lab_expect_item "redis-$tag" planned)
+  # the dry run above is only the plan; discovery and the password from the command line run in the real logical arm (no stop, no restart)
+  LAB_OP="redis-$tag" lab_run "redis-$tag-real" --arms databases
+  (
+    lab_op_load "redis-$tag"
+    st="$(lab_item "redis-$tag-real" state)"; why="$(lab_item "redis-$tag-real" reason)"
+    lab_log "redis $tag: real logical run -> state '$st' reason '$why' uploaded '$(lab_item "redis-$tag-real" bytes)' B"
+    case "$why" in password-not-discoverable | acl-user-unsupported) lab_die "redis $tag: the password on the command line was not found ($why)" ;; esac
+    lab_check "redis $tag was dumped and uploaded (credentials resolved from its command line)" test "$(lab_item "redis-$tag-real" bytes || echo 0)" -gt 0
+  )
+  lab_check "redis $tag is still running after the real run" fleet_running "$ref"
   lab_check "redis $tag still holds its 100 keys after the dry run" test "$(fleet_redis_cli "$ref" dbsize)" = 100
 done
 case_untouched
@@ -156,6 +168,7 @@ if [ "${L12_MEILI:-1}" = 1 ]; then
   lab_run f --arms all --stop-source
   [ "$LAB_RC" = 0 ] || { tail -30 "$LAB_DIR/run.f.log" >&2; lab_die "migrator exit $LAB_RC"; }
   lab_expect_item f volume-applied
+  lab_check "the --stop-source run left the pinned source stopped" bash -c "[ \"\$(docker inspect -f '{{.State.Running}}' $NAME_F)\" = false ]"
   docker rm -f "$NAME_F" >/dev/null
   meili_run lab-meili-dst-old "$FLEET_MEILI_OLD" "$DEST_VOLUME" 7702
   lab_wait 60 "the copied index to be served by the pinned image" bash -c "[ \"\$(curl -fsS -H 'Authorization: Bearer $KEY' http://127.0.0.1:7702/indexes/items/stats | node $LAB_SELF_DIR/jget.mjs numberOfDocuments)\" = 500 ]"
@@ -183,5 +196,7 @@ if [ "${L12_MEILI:-1}" = 1 ]; then
     echo "L12_MEILI_LATEST_OPENS=not-pullable" >>"$LAB_DIR/l12.summary"
   fi
   lab_log "F (observational): $(grep L12_MEILI_LATEST_OPENS "$LAB_DIR/l12.summary")"
+  # the stopped source was removed above; the destination containers started here are the case's own
+  case_untouched "$NAME_F" lab-meili-dst-old lab-meili-dst-new
 fi
 lab_pass "L12 fleet-shaped source hosts"

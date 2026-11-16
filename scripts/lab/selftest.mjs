@@ -224,6 +224,65 @@ test("tarlist: only DIRECTORY mtimes are masked", (t) => {
 });
 
 // ---- the HTTP tap -------------------------------------------------------------------------------------------------------------
+
+// a tap with a barrier in front of a stub hub; calls return {status, body, at} so the order of answers can be checked
+async function barrierTap(extra) {
+  const hub = http.createServer((req, res) => { req.resume(); req.on("end", () => res.end(JSON.stringify({ path: req.url }))); });
+  await new Promise((r) => hub.listen(0, "127.0.0.1", r));
+  const dir = tmp();
+  const busyFile = join(dir, "busy"), barrierFile = join(dir, "barrier");
+  writeFileSync(busyFile, ""); writeFileSync(barrierFile, "");
+  const port = 43000 + Math.floor(Math.random() * 2000);
+  const tap = spawn("node", [join(LAB, "http-tap.mjs"), "--listen", String(port), "--target", `127.0.0.1:${hub.address().port}`, "--busy-file", busyFile, "--host", "127.0.0.1", "--barrier-file", barrierFile, ...extra], { stdio: "ignore" });
+  const call = (path, token) => new Promise((resolveP, rejectP) => {
+    const r = http.request({ host: "127.0.0.1", port, path, method: "GET", headers: token ? { authorization: `Bearer ${token}` } : {} }, (res) => { let b = ""; res.on("data", (c) => (b += c)); res.on("end", () => resolveP({ status: res.statusCode, body: b, at: Date.now() })); });
+    r.on("error", rejectP);
+    r.end();
+  });
+  for (let i = 0; i < 50; i++) { try { await call("/health"); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
+  return { call, barrierFile, stop: () => { tap.kill(); hub.close(); } };
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+test("http-tap barrier: no migrator's `targets` is answered until N different tokens asked, then all at once", async () => {
+  const t = await barrierTap(["--barrier", "3"]);
+  try {
+    const answered = [];
+    const asked = (tok) => t.call("/api/v1/migrator/targets", tok).then((r) => { answered.push(tok); return r; });
+    const a = asked("a");
+    const a2 = asked("a"); // the same token twice is still ONE migrator
+    await sleep(300);
+    assert.deepEqual(answered, [], "held while only one token asked");
+    assert.equal((await t.call("/api/v1/other", "a")).status, 200, "anything but `targets` is never held");
+    const b = asked("b");
+    await sleep(300);
+    assert.deepEqual(answered, [], "held with two of three tokens");
+    const c = asked("c");
+    const all = await Promise.all([a, a2, b, c]);
+    assert.ok(all.every((r) => r.status === 200 && JSON.parse(r.body).path.endsWith("/targets")));
+    assert.equal(readFileSync(t.barrierFile, "utf8"), "released all 3\n");
+    const late = Date.now();
+    assert.ok((await asked("a")).at - late < 500, "after the release `targets` passes straight through");
+  } finally { t.stop(); }
+});
+
+test("http-tap barrier: a group that never completes is released by the timeout and the file says so", async () => {
+  const t = await barrierTap(["--barrier", "2", "--barrier-timeout", "1"]);
+  try {
+    const t0 = Date.now();
+    const r = await t.call("/api/v1/migrator/targets", "only");
+    assert.equal(r.status, 200);
+    assert.ok(r.at - t0 >= 900, "held for the timeout");
+    assert.equal(readFileSync(t.barrierFile, "utf8"), "released timeout 1/2\n");
+  } finally { t.stop(); }
+});
+
+test("http-tap barrier: a barrier needs its proof file, and a plain tap has none", () => {
+  const bad = spawnSync("node", [join(LAB, "http-tap.mjs"), "--listen", "1", "--target", "127.0.0.1:1", "--busy-file", "/dev/null", "--barrier", "2"], { encoding: "utf8" });
+  assert.equal(bad.status, 2);
+  assert.match(bad.stderr, /bad --barrier/);
+  assert.match(read("lib.sh"), /LAB_TAP_BARRIER/);
+});
 test("http-tap counts the hub's busy answers to part registrations and nothing else", async () => {
   let n = 0;
   const hub = http.createServer((req, res) => {
@@ -291,15 +350,20 @@ test("L6: the database is not provisioned a second time and WAL evidence is read
   assert.ok(s.indexOf("WAL replay ran on the copied cluster") > s.indexOf("lab_wait 180"), "the log check follows the wait for RUNNING");
 });
 
-test("L8: the second migrator starts only after the first committed a part, and the tap proves contention", () => {
+test("L8: every migrator is started together behind the tap's barrier, never staggered, and the tap proves contention", () => {
   const s = read("l8-relay-seats.sh");
   const m1 = s.indexOf("lab_run_bg m1");
-  const wait = s.indexOf("lab_wait_part m1 0");
   const m2 = s.indexOf("lab_run_bg m2");
-  assert.ok(m1 > 0 && wait > m1 && m2 > wait, "m1, then wait for its first part, then m2");
+  const released = s.indexOf('grep -q "^released all $N');
+  assert.ok(m1 > 0 && m2 > m1 && released > m2, "m1, m2 (and later m3, m4), then the proof that they all lined up");
+  assert.doesNotMatch(s.slice(m1, released), /lab_wait_part/, "no migrator waits for another to commit a part: reapStaleHelpers would remove its live helpers");
+  assert.match(s, /LAB_TAP_BARRIER="\$N" lab_tap_start/);
   assert.match(s, /lab_run_bg m1 --hub "\$LAB_TAP_URL"/);
   assert.match(s, /lab_run_bg m2 --hub "\$LAB_TAP_URL"/);
   assert.match(s, /lab_check "the migration seat pool was contended/);
+  assert.match(s, /run-scoped/, "the header names the product finding");
+  assert.doesNotMatch(s, /two starting together would delete each other/, "the old, wrong premise is gone");
+  assert.match(s, /probably another migrator on this docker host removed its helper container/, "a helper failure is reported as finding 2, not as a seat problem");
 });
 
 
@@ -526,6 +590,12 @@ test("L9: --stop-source on a running uuid-named source, the 18 refusal restarts 
   // the 256 MiB artifact cap is only asserted when the data compresses over it
   assert.match(s, /\[ "\$MIB" -ge 1024 \]/);
   assert.match(read("fleet.sh"), /POSTGRES_DB=postgres/, "the logical dump reads the database name from the environment");
+  // the size compared after the copy is frozen: no autovacuum or BRIN autosummarize between the reading and the stop
+  const f = read("fleet.sh");
+  const load = f.slice(f.indexOf("fleet_pg_load_ticks() {"), f.indexOf("# ---- MariaDB"));
+  assert.match(load, /autovacuum_enabled = false, toast\.autovacuum_enabled = false/);
+  assert.match(load, /brin \(ts\) with \(autosummarize = off\)/);
+  assert.ok(load.indexOf("vacuum (analyze) ticks") > load.indexOf("insert into ticks"), "one explicit vacuum after the load settles the forks");
 });
 
 test("L10: the dump size decides: a 32 MiB cap, the default cap, then the real size", () => {
@@ -564,11 +634,21 @@ test("L12: A to F cases and the blast-radius check after every one", () => {
   assert.match(s, /lab_expect_item b failed ambiguous/);
   assert.match(s, /lab_expect_item d-dry volume-skipped-running/);
   assert.match(s, /--restart always/);
-  assert.equal((s.match(/case_untouched /g) ?? []).length >= 5, true, "every case checks that nothing else changed");
+  assert.equal((s.match(/case_untouched( |$)/gm) ?? []).length >= 7, true, "every case, A to F, checks that nothing else changed");
   assert.match(s, /seq 1 12\); do fleet_redis/, "12 plain redis plus the plain and the custom-conf one: 14");
   assert.match(s, /UNLISTED="\$\(fleet_uuid\)"/);
   assert.match(s, /fleet_orphan_volumes 3 20/);
   assert.match(s, /FLEET_MEILI_OLD|L12_MEILI/);
+  // E: a dry run never touches docker, so only the real logical run can prove the password on the command line was found
+  const e = s.slice(s.indexOf("# ---- E:"), s.indexOf("# ---- F:"));
+  assert.match(e, /lab_run "redis-\$tag-real" --arms databases\n/, "the real logical arm, no --dry-run");
+  assert.match(e, /password-not-discoverable \| acl-user-unsupported\) lab_die/);
+  assert.match(e, /was dumped and uploaded[^\n]*"\$\(lab_item "redis-\$tag-real" bytes/);
+  assert.doesNotMatch(s.split("\n").filter((l) => l.startsWith("#")).join("\n"), /dry run discovers/, "the header does not claim a dry run discovers anything");
+  // F: the blast-radius check closes the case, with the case's own containers excluded
+  const f = s.slice(s.indexOf("# ---- F:"));
+  assert.match(f, /case_untouched "\$NAME_F" lab-meili-dst-old lab-meili-dst-new/);
+  assert.ok(f.indexOf("case_untouched") > f.indexOf("L12_MEILI_LATEST_OPENS"), "after every container F started");
   // Meilisearch latest is recorded, never a gate
   assert.doesNotMatch(s, /lab_die[^\n]*latest/);
   assert.match(read("fleet.sh"), /FLEET_MEILI_OLD:=getmeili\/meilisearch:v1\.31\.0/);
@@ -585,12 +665,12 @@ test("L13: every team token is connected and planned, and the counts are the tok
   assert.match(read("coolify-mock.mjs"), /refuses loopback/);
 });
 
-test("L8: more migrators than seats, 2 to 4 migrators, and the new ones start staggered", () => {
+test("L8: more migrators than seats, 2 to 4 migrators, all started together", () => {
   const s = read("l8-relay-seats.sh");
   assert.match(s, /L8_MIGRATORS must be 2, 3 or 4/);
   assert.match(s, /must exceed L8_SEATS/);
   assert.match(s, /"MIGRATION_RELAY_CONCURRENCY=\$SEATS"/);
-  assert.ok(s.indexOf("lab_wait_part \"m$((n - 1))\" 0") > s.indexOf("lab_run_bg m2"), "m3 and m4 start after m2, each after the one before committed a part");
+  assert.ok(s.indexOf('LAB_OP="m$n" lab_run_bg "m$n"') > s.indexOf("lab_run_bg m2"), "m3 and m4 start right after m2");
   assert.match(s, /L8_MIGRATORS=\$N L8_SEATS=\$SEATS/);
   // the default shape is unchanged: two migrators, one seat
   assert.match(s, /N="\$\{L8_MIGRATORS:-2\}"/);
