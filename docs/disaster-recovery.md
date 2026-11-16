@@ -130,7 +130,9 @@ Automate with cron (daily, keep 14 days) and **copy each dump + your `.env` offs
 ### Restoring a pre-update snapshot
 
 Every update (the in-app **Update now** and `git pull && ./scripts/install.sh` on a running stack) first writes
-`backups/pre-update-<from>-to-<to>-<UTC>.dump` and a matching `.env` copy (see [Upgrade](upgrade.md)). To go back:
+`backups/pre-update-<from>-to-<to>-<UTC>.dump` and a matching `.env` copy (see [Upgrade](upgrade.md)). An update that also replaced
+the compose file or scripts keeps the previous copies in `backups/host-files-<from>-to-<to>-<UTC>/` (restored automatically when
+the update fails). To go back:
 
 1. Stop the app containers and put the **old `TUGRA_VERSION`** (the `<from>` in the file name) back in `.env`; the
    `.env` copy next to the dump is the pre-update file if you need its other values.

@@ -61,7 +61,16 @@ applying an update. The pipeline lives in [`.github/workflows/release.yml`](../.
      64-hex **index** digests — not the agent's per-arch `agentSha256`) and the workflow passes
      `--require-digests true`, so a release without the hub + web digests is refused. The signer validates the
      digests as 64-hex, self-verifies against the real consumer verifier and refuses to publish anything that
-     wouldn't validate.
+     wouldn't validate;
+   - signs the **host files** (`deploy/docker-compose.yml`, `scripts/install.sh|update.sh|bootstrap.sh|hub-migrate.sh`
+     and every `scripts/lib/*.sh`) with `scripts/sign-host-files.mjs`: a `HOSTFILES` list (`<sha256>  <path>` per file, the
+     version inside) + detached `HOSTFILES.sig` by the same publisher key, laid out with the files themselves under
+     `host/<version>/` on `gh-pages` in the **same commit** as `versions.json`, whose entry carries
+     `hostFilesDigest` = sha256 of `HOSTFILES` (`--require-host-files true` refuses a release without it). The in-app
+     updater downloads, verifies and applies these (see [Upgrade](upgrade.md#releases-that-change-the-compose-file-or-the-scripts)).
+     `host/<version>/` is immutable: re-running a release reproduces it byte for byte, and a different content for an
+     already published version fails the publish. To ship a new script through the updater, add it to
+     `HOST_TOP_LEVEL_FILES` in `apps/hub-api/src/update/host-files.ts` (`scripts/lib/*.sh` is picked up automatically).
 
 ## First-release checklist
 

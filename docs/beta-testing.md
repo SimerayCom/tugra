@@ -54,8 +54,10 @@ Pick what matches how you would actually use it. Each item takes a couple of min
   command journal (never re-sent). Needs an agent that keeps the command journal; a swarm manager on an older agent
   still fails an in-flight deploy as "interrupted". A manual swarm *rollback* that is mid-run during a restart is
   still marked interrupted (re-run it).
-- The in-app updater updates the hub and web (and now the local agent); a release that changes the compose file
-  or the scripts still needs `git pull && ./scripts/install.sh`.
+- The in-app updater updates the hub, web and the local agent, and applies a release's changed compose file and
+  installer scripts too (signed, verified, backed up, rolled back on failure). Your checkout needs the one-time
+  `git pull && ./scripts/install.sh` to gain this, and a release that needs a brand-new `.env` setting (the updater
+  never edits `.env`) still asks for the installer.
 - Hubs on beta.16 or earlier have no working update check, so they upgrade to the first automatic-check release
   manually, once (`git pull && ./scripts/install.sh`); after that the hub finds new betas on its own.
 - Pro/Cloud (SSO/OIDC, audit export, white-label) are not available yet; the core is complete and free.

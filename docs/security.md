@@ -83,7 +83,7 @@ secrets, server names, IPs or personal data unless noted.
 | --- | --- | --- | --- |
 | Agent ↔ hub (WSS, signed commands) | On (core function) | n/a — the product | `agent-gateway/`, `scripts/agent-bootstrap` |
 | **Anonymous usage stats** → `TUGRA_TELEMETRY_URL` (default `telemetry.tugra.io`) | **On (opt-out)** | `TUGRA_TELEMETRY=0` / `install.sh --no-telemetry` / Settings toggle | `telemetry/telemetry.service.ts` |
-| Signed update-manifest check → `UPDATE_MANIFEST_URL` (default `simeraycom.github.io/tugra/versions.json`) | **On (opt-out)** — hourly + on panel open; ~2 KB GET, no identifiers | `TUGRA_UPDATE_CHECKS=0` / `install.sh --no-update-checks`; interval `UPDATE_CHECK_INTERVAL_MIN` | `update/update-check.scheduler.service.ts`, `update/update.service.ts` |
+| Signed update-manifest check → `UPDATE_MANIFEST_URL` (default `simeraycom.github.io/tugra/versions.json`) | **On (opt-out)** — hourly + on panel open; ~2 KB GET, no identifiers. Applying an update additionally GETs the release's signed `host/<version>/` compose/script files from the same origin (only on an actual update, no identifiers) | `TUGRA_UPDATE_CHECKS=0` / `install.sh --no-update-checks`; interval `UPDATE_CHECK_INTERVAL_MIN` | `update/update-check.scheduler.service.ts`, `update/update.service.ts`, `scripts/lib/hostfiles.sh` |
 | ACME / Let's Encrypt (issue TLS certs) | Only when you enable SSL for a domain | per-app/domain | `dns/`, `deploy/` |
 | Remote template catalog | Off — opt-in, signature-verified | `CATALOG_SOURCE_URL` + `CATALOG_PUBLISHER_KEY` | `catalog/` |
 | AI deploy-log analysis → Anthropic | Off — opt-in | `ANTHROPIC_API_KEY` | `deploy/` |

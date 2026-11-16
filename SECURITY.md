@@ -26,7 +26,13 @@ The one-click / auto self-update is applied by a small **`tugra-updater`** sidec
 Docker socket — a root-equivalent surface — so it is deliberately minimal:
 
 - It runs **only** `scripts/update.sh`, whose command set is fixed: `docker compose pull` + `up -d
-  --no-deps hub-api web`. There is **no arbitrary exec** path.
+  --no-deps hub-api web` (then the local agent, and — only when a release changed the compose file — a one-shot
+  helper that recreates the updater service itself). There is **no arbitrary exec** path.
+- When a release changes the compose file or the installer scripts, the sidecar replaces them only after verifying them
+  **itself**: an ed25519 signature (the publisher key that signs the release manifest, over a version-bound list of
+  per-file sha256 hashes whose own hash the signed manifest commits to), a strict path allowlist (the compose file and
+  `scripts/**/*.sh`; never `.env`), `bash -n` / `docker compose config` validation, then a backup, atomic renames and an
+  automatic rollback. File content never travels through the hub or Redis, so a compromised hub cannot inject it.
 - It reaches Redis only on the internal compose network (no external port).
 - The hub verifies the release manifest's **ed25519 signature** before queueing any update, refuses any
   **downgrade** and any **channel-skip**, and auto-update applies **patch releases only** (a minor/major
