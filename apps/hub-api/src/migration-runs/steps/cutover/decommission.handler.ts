@@ -15,7 +15,7 @@ import {
   type StepHandler,
   type StepHandlerRegistry,
 } from "../../core/run-contract";
-import { CutoverStepBase } from "./cutover-step-base";
+import { CutoverStepBase, rethrowLeaseLost } from "./cutover-step-base";
 import { CutoverWorld } from "./cutover-world.service";
 import {
   DECOMMISSION_MAX_CONTAINERS,
@@ -99,7 +99,8 @@ export class DecommissionHandler extends CutoverStepBase implements StepHandler<
     if (hubStops) {
       try {
         obs.containers = parseDecommissionDiscover((await this.world.exec(run.targetServerId, buildDecommissionDiscoverScript(), 60_000)).output);
-      } catch {
+      } catch (e) {
+        rethrowLeaseLost(e);
         obs.containers = null;
       }
     }

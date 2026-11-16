@@ -17,7 +17,7 @@ import {
   type StepHandler,
   type StepHandlerRegistry,
 } from "../../core/run-contract";
-import { CutoverStepBase, POLL_MS } from "./cutover-step-base";
+import { CutoverStepBase, POLL_MS, rethrowLeaseLost } from "./cutover-step-base";
 import { CutoverWorld, type ServerFacts, type SwapRow } from "./cutover-world.service";
 import { inspectSourceProxy, reverseSwapOnHost, stopSourceProxy, swapHostState, targetPublishesWeb, verifySwapHosts, type SwapVerify } from "./swap-runtime";
 import {
@@ -125,6 +125,12 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     if (run.topology === "swap-proxy") {
       obs.swap = await this.world.getSwap(run.id, run.targetServerId);
       if (obs.swap?.state === "LIVE" && facts) obs.swapVerify = await verifySwapHosts(this, facts, actionableEntries(view.entries).map((e) => e.hostname), run.options.healthPath ?? "/");
+    }
+    // The measured end of the downtime window is a fact about the world: the first moment a host answers through Tugra.
+    // Stamped where it is observed (the step usually passes on its post gate without another `act`); first write wins.
+    if (!run.freezeEndedAt) {
+      const at = run.topology === "swap-proxy" ? (obs.swapVerify && Object.values(obs.swapVerify).length > 0 && Object.values(obs.swapVerify).every((v) => v.ok) ? ctx.now() : null) : earliestVerified(view.entries);
+      if (at) await ctx.patchRun({ freezeEndedAt: at });
     }
     return obs;
   }
@@ -294,6 +300,7 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
       try {
         await this.proxyOps.start(userId, serverId);
       } catch (e) {
+        rethrowLeaseLost(e);
         this.log.warn(`run ${run.id}: tugra proxy start failed: ${(e as Error).message}`);
         throw new StepFailure("cutover.swap-start-failed", {}, true);
       }
@@ -381,7 +388,7 @@ export class CutoverHandler extends CutoverStepBase implements StepHandler<Cutov
     const userId = ctx.actor.userId;
     const opId = run.opId;
     if (!opId) return { outcome: "nothing-to-do" };
-    await this.cutover.cancel(userId, opId).catch(() => undefined);
+    await this.cutover.cancel(userId, opId).catch((e) => rethrowLeaseLost(e));
     const view = await this.cutover.view(userId, opId);
     const apps = await this.world.opApps(opId);
     const dataApps = new Set(apps.filter((a) => a.hasData).map((a) => a.appId));

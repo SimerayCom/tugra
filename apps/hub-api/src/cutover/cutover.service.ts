@@ -1033,13 +1033,13 @@ export class CutoverService {
   }
 
   /**
-   * Put the TTL back on hosts whose TTL was lowered but that were never flipped (an aborted migration run). A flipped host
-   * is untouched: its revert restores its own ledger. Only records that still carry the lowered TTL are patched, so a TTL
+   * Put the TTL back on hosts whose TTL was lowered and that carry no live flip any more: never flipped, or already reverted (a
+   * revert restores the records as they were just before the flip, i.e. with the lowered TTL). A host still flipped is untouched. Only records that still carry the lowered TTL are patched, so a TTL
    * the owner changed meanwhile is left alone. Returns the number of records patched.
    */
   async restoreTtlsUnflipped(userId: string, opId: string): Promise<number> {
     await this.ctx(userId, opId);
-    const rows = (await this.entries(opId)).filter((e) => !!e.ttlLoweredAt && e.originalTtl != null && e.targetTtl != null && e.dnsMode === "cloudflare" && !!e.dnsCredentialId && !!e.zoneId && !e.ledger && (PRE_FLIP.includes(e.state as CutoverState) || e.state === "BLOCKED" || e.state === "EXCLUDED"));
+    const rows = (await this.entries(opId)).filter((e) => !!e.ttlLoweredAt && e.originalTtl != null && e.targetTtl != null && e.dnsMode === "cloudflare" && !!e.dnsCredentialId && !!e.zoneId && !e.ledger && (PRE_FLIP.includes(e.state as CutoverState) || e.state === "BLOCKED" || e.state === "EXCLUDED" || e.state === "ROLLED_BACK"));
     const apps = await this.loadApps([...new Set(rows.map((r) => r.applicationId))]);
     await this.requireConfig(userId, apps.keys(), apps);
     let restored = 0;

@@ -1,3 +1,4 @@
+import { rethrowLeaseLost } from "./cutover-step-base";
 import { isAlwaysBlockedIp, isPublicIp } from "../../../common/observed-ip";
 import { buildCutoverLoopbackProbeScript } from "../../../cutover/cutover-scripts";
 import { classifyHealth, parseCutoverProbeMarkers } from "../../../cutover/cutover.logic";
@@ -30,7 +31,8 @@ export async function inspectSourceProxy(world: Pick<CutoverWorld, "exec">, serv
   let out: string;
   try {
     out = (await world.exec(serverId, buildSwapInspectScript(), T)).output;
-  } catch {
+  } catch (e) {
+    rethrowLeaseLost(e);
     return { ok: false, code: "unreadable" };
   }
   const parsed = parseSwapInspect(out);
@@ -41,7 +43,8 @@ export async function inspectSourceProxy(world: Pick<CutoverWorld, "exec">, serv
 async function state(world: Pick<CutoverWorld, "exec">, serverId: string, script: string): Promise<SwapHostState | null> {
   try {
     return parseSwapState((await world.exec(serverId, script, T)).output);
-  } catch {
+  } catch (e) {
+    rethrowLeaseLost(e);
     return null;
   }
 }
@@ -87,7 +90,8 @@ export async function verifySwapHosts(deps: { world: Pick<CutoverWorld, "exec">;
         const cls = classifyHealth(parseCutoverProbeMarkers(r.output)?.status ?? null, false);
         out[h] = { ok: cls.pass, reason: cls.pass ? "ok" : `health-${cls.kind}` };
       }
-    } catch {
+    } catch (e) {
+      rethrowLeaseLost(e);
       out[h] = { ok: false, reason: "probe-error" };
     }
   };

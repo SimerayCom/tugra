@@ -131,6 +131,8 @@ export class FakeWorld {
    */
   crashAt: { n: number; after?: boolean; methods?: string[] } | null = null;
   private seen = 0;
+  /** Number of mutating calls made so far (the crash matrix sizes itself from a clean run). */
+  mutations = 0;
   now: () => Date = () => new Date();
 
   constructor(readonly host: SimHost) {}
@@ -138,6 +140,7 @@ export class FakeWorld {
   /** Run a mutating call through the crash injector. */
   private async guard<T>(method: string, body: () => T | Promise<T>): Promise<T> {
     this.calls.push(method);
+    this.mutations++;
     const c = this.crashAt;
     if (c && (!c.methods || c.methods.includes(method))) {
       this.seen++;

@@ -1,5 +1,5 @@
 import type { OnModuleInit } from "@nestjs/common";
-import { StepFailure, type AnyStepHandler, type RunSnapshot, type StepHandlerRegistry } from "../../core/run-contract";
+import { RunLeaseLostError, StepFailure, type AnyStepHandler, type RunSnapshot, type StepHandlerRegistry } from "../../core/run-contract";
 
 /** Base of the cutover-side handlers: self-registers with the step registry on module init (the lane contract). */
 export abstract class CutoverStepBase implements OnModuleInit {
@@ -18,3 +18,8 @@ export function requireOpId(run: RunSnapshot, code: string): string {
 
 /** Poll interval of the polling `act`s (the engine clamps to 1..60 s). */
 export const POLL_MS = 30_000;
+
+/** A `catch` that turns transport trouble into a code must still let a lost lease through (handlers never swallow it). */
+export function rethrowLeaseLost(e: unknown): void {
+  if (e instanceof RunLeaseLostError) throw e;
+}

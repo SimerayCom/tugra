@@ -635,4 +635,19 @@ describe("migration-run additions", () => {
     // idempotent
     expect(await m.svc.restoreTtlsUnflipped(U, OP)).toBe(0);
   });
+
+  it("restoreTtlsUnflipped also restores the TTL of a host whose flip was already reverted (the revert keeps the lowered TTL)", async () => {
+    const m = make({ zone: [rec("r1", H(1))] });
+    m.addApp("a1", { domain: H(1) });
+    m.tasks.push(m.appTask("a1"));
+    await m.seedEntry("a1", H(1));
+    await m.svc.ttl(U, OP, { ttl: 60 });
+    m.row(H(1)).earliestFlipAt = new Date(0);
+    await planAndFlip(m, { skipTtlWait: true, acceptDataRisk: true });
+    await m.svc.revert(U, OP, { hostnames: [H(1)], acknowledgeDataLoss: true });
+    expect(m.row(H(1)).state).toBe("ROLLED_BACK");
+    expect(m.zone.records.find((r) => r.id === "r1")!.ttl).toBe(60);
+    expect(await m.svc.restoreTtlsUnflipped(U, OP)).toBe(1);
+    expect(m.zone.records.find((r) => r.id === "r1")!.ttl).toBe(3600);
+  });
 });

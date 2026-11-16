@@ -19,7 +19,7 @@ import {
   type StepHandler,
   type StepHandlerRegistry,
 } from "../../core/run-contract";
-import { CutoverStepBase, POLL_MS, requireOpId } from "./cutover-step-base";
+import { CutoverStepBase, POLL_MS, rethrowLeaseLost, requireOpId } from "./cutover-step-base";
 import { CutoverWorld } from "./cutover-world.service";
 import { buildDarkProbeScript, classifyDarkHost, parseDarkProbe, type DarkVerdict } from "./dark-probe";
 import { cutoverInit } from "./dns-prepare.handler";
@@ -124,7 +124,8 @@ export class TlsPreissueHandler extends CutoverStepBase implements StepHandler<T
       if (!parsed) return { state: "error", verdicts: null };
       if (parsed.kind !== "ok") return { state: parsed.kind, verdicts: null };
       return { state: "ok", verdicts: Object.fromEntries(batch.map((h) => [h, classifyDarkHost(parsed.hosts[h])])) };
-    } catch {
+    } catch (e) {
+      rethrowLeaseLost(e);
       return { state: "error", verdicts: null };
     }
   }

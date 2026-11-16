@@ -1,4 +1,5 @@
 import {
+  RunLeaseLostError,
   STEP_MANIFEST,
   StepFailure,
   type AnyStepHandler,
@@ -16,10 +17,14 @@ import {
 import { EMPTY_STEP_EVIDENCE } from "../../../core/run-contract";
 import { RunOptionsSchema, type GateResult, type StepApprovalRecord, type StepEvidence, type StepProgress, type WaitSpec } from "../../../core/dto";
 
-/** Thrown by a fake to simulate the hub dying at that exact line (the driver never catches it). */
-export class Crash extends Error {
+/**
+ * Thrown by a fake to simulate the hub dying at that exact line. It IS a {@link RunLeaseLostError}: that is the one error a
+ * handler must never swallow, so a handler that catches transport errors and turns them into a code lets a crash through.
+ */
+export class Crash extends RunLeaseLostError {
   constructor(readonly at: string) {
-    super(`crash at ${at}`);
+    super("run1");
+    this.message = `crash at ${at}`;
     this.name = "Crash";
   }
 }
