@@ -177,7 +177,7 @@ describe("estimateWindow: a streamed dump runs INSIDE the freeze and says so", (
   });
   it("no dump, no stream basis (the existing estimate is unchanged)", () => {
     const e = estimateWindow(makeSnap({ volumes: [inspected("volume:s:a:data")] }), NOW);
-    expect(e.basis).toHaveLength(4);
+    expect(e.basis).toHaveLength(5); // bytes, hub bytes, rate, extract, databases: no stream rows
   });
 });
 

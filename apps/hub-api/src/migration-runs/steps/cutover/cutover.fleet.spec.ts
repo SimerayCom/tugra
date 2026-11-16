@@ -251,7 +251,7 @@ describe("several target servers in one run (C1)", () => {
     const t = await rig.driver.tick(rig.handlers.cut);
     expect(t.status).toBe("RUNNING");
     expect(flip).toHaveBeenCalledTimes(1);
-    expect(check).toHaveBeenCalledWith("user1", "op1", { hostnames: [H(1)] });
+    expect(check).toHaveBeenCalledWith("user1", "op1", { hostnames: [H(1)] }, { degradedAtSource: [] });
     expect(states(rig)[H(2)]).toBe("READY");
   });
 

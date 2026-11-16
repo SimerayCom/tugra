@@ -85,6 +85,7 @@ export const WARN_KEY: Record<string, string> = {
   stateful: "cutover.warn.stateful",
   caa: "cutover.warn.caa",
   "coverage-unverified": "cutover.warn.coverageUnverified",
+  "health-pre-existing": "cutover.warn.healthPreExisting",
   "ssl-mode-weak": "cutover.warn.sslModeWeak",
   "ssl-mode-unknown": "cutover.warn.sslModeUnknown",
   "ssl-mode-bad": "cutover.warn.sslModeBad",

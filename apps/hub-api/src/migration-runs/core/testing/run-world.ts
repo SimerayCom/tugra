@@ -713,6 +713,8 @@ export class ScriptedImportPort implements ImportStepsPort {
 export interface StubScript {
   /** Gate checks block (operator wait) until this returns true. Default: never blocked. */
   blocked?: (w: RunWorld) => boolean;
+  /** A custom pre-gate (a check with its own params and attestable ids); wins over `blocked` when it returns a gate. */
+  gate?: (w: RunWorld) => GateResult | null;
   /** An approval binding shown until approved. */
   binding?: (w: RunWorld, ctx: StepContext) => ApprovalBinding | null;
   /** Act hook; default is "do the effect and finish". */
@@ -748,6 +750,8 @@ export class StubStep implements StepHandler<Observation & { done: boolean }> {
     return { done: this.w.done.has(`${this.key}`) };
   }
   preGate(): GateResult {
+    const custom = this.script.gate?.(this.w);
+    if (custom) return custom;
     return this.script.blocked?.(this.w) ? makeGate([{ id: `${this.key}.blocked`, status: "fail", code: "stub.blocked" }], { wait: { kind: "operator", code: "stub.blocked" } }) : makeGate([]);
   }
   async approvalBinding(ctx: StepContext): Promise<ApprovalBinding | null> {

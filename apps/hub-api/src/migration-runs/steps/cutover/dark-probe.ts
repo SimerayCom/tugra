@@ -82,6 +82,8 @@ export interface DarkVerdict {
   tls: "ok" | "fail" | "unknown";
   health: HealthClass["kind"] | "unknown";
   ready: boolean;
+  /** `ready` only because the app was already unhealthy at the source (the health baseline, R52): the certificate is valid, the app is not. */
+  preExisting?: boolean;
 }
 
 export function classifyDarkHost(r: DarkHostResult | undefined): DarkVerdict {

@@ -24,6 +24,7 @@ import { PostPonrRelease } from "../import/baseline/post-ponr";
 import { CutoverStepBase, POLL_MS, rethrowLeaseLost, requireOpId } from "./cutover-step-base";
 import { CutoverWorld, type OpApp } from "./cutover-world.service";
 import { HTTP01_GAP_ATTEST, LEFT_OUT_ATTEST, gapAccepted, isLeftOut } from "./cutover-holds";
+import { degradedAtSourceHosts, excuseDarkVerdicts } from "./baseline-hosts";
 import { buildDarkProbeScript, classifyDarkHost, parseDarkProbe, type DarkVerdict } from "./dark-probe";
 import { appHosts, cutoverInit } from "./dns-prepare.handler";
 import { actionableEntries, capHosts, chk, compDate, compStrings, isDns01Blocked, iso, PRE_FLIP_STATES, trackedEntries, type Entry } from "./run-cutover-logic";
@@ -120,7 +121,8 @@ export class TlsPreissueHandler extends CutoverStepBase implements StepHandler<T
       if (hosts.length > 0) {
         const probe = await this.darkProbe(run.targetServerId, hosts, run.options.healthPath ?? "/");
         obs.darkState = probe.state;
-        obs.dark = probe.verdicts;
+        // R52: an app that was already unhealthy at the source does not hold the certificate step back (its certificate is what this step is for)
+        obs.dark = excuseDarkVerdicts(probe.verdicts, run.sourceBaseline, view.entries, apps);
       }
     }
     return obs;
@@ -272,7 +274,7 @@ export class TlsPreissueHandler extends CutoverStepBase implements StepHandler<T
     if (run.topology === "two-box") {
       // A host whose gap the operator accepted AFTER the preparation moves to HTTP-01 now (per host, never for the whole run).
       await this.prepareAcceptedGaps(ctx, opId, entries);
-      entries = (await this.cutover.check(userId, opId, { ...(run.options.healthPath ? { healthPath: run.options.healthPath } : {}) })).entries;
+      entries = (await this.cutover.check(userId, opId, { ...(run.options.healthPath ? { healthPath: run.options.healthPath } : {}) }, { degradedAtSource: await degradedAtSourceHosts(this.world, opId, run.sourceBaseline, entries) })).entries;
     }
 
     // C10: hosts that can only get a certificate after the flip wait for a decision PER HOST while every other host carries on.
@@ -417,6 +419,7 @@ export class TlsPreissueHandler extends CutoverStepBase implements StepHandler<T
   private swapHostCheck(e: Entry, obs: TlsObs, gap: boolean): GateCheck {
     const v = obs.dark?.[e.hostname];
     if (!v) return chk("tls-preissue.host", "fail", "tls-preissue.dark-unknown", { subject: e.hostname });
+    if (v.ready && v.preExisting) return chk("tls-preissue.host", "warn", "tls-preissue.dark-pre-existing", { subject: e.hostname, evidence: "source-api-reported", params: { health: v.health } });
     if (v.ready) return chk("tls-preissue.host", "pass", "tls-preissue.host-ready", { subject: e.hostname, evidence: "hub-verified", params: { health: v.health } });
     // HTTP-01 cannot issue while Coolify owns :80: the owner may accept that the certificate arrives right after the swap.
     if (gap && v.tls !== "ok" && (v.health === "ok" || v.health === "redirect" || v.health === "auth" || v.health === "app-404")) return chk("tls-preissue.host", "warn", "tls-preissue.http01-gap", { subject: e.hostname, evidence: "hub-verified" });

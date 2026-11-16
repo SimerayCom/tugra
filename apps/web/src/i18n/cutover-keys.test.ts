@@ -56,7 +56,7 @@ describe("SSL/DNS cutover i18n coverage", () => {
     const dns = "source target mixed proxied tunnel unknown".split(" ");
     const certs = "unknown pending ready default-cert untrusted wrong-host expired error".split(" ");
     const blocks = "cluster-app tunnel-routed generated-host counterpart-not-served zone-not-covered no-dns-credential caa-blocks-letsencrypt record-changed record-changed-since-flip data-not-done no-target-ip".split(" ");
-    const warns = "stale-aaaa-deleted cname-replaced wildcard-explicit-record surplus-a-deleted proxied-kept proxied-dropped ttl-not-waited http01-gap stateful caa coverage-unverified ssl-mode-weak ssl-mode-unknown ssl-mode-bad".split(" ");
+    const warns = "stale-aaaa-deleted cname-replaced wildcard-explicit-record surplus-a-deleted proxied-kept proxied-dropped ttl-not-waited http01-gap stateful caa coverage-unverified health-pre-existing ssl-mode-weak ssl-mode-unknown ssl-mode-bad".split(" ");
     for (const [map, codes] of [[STATE_KEY, states], [DNS_KEY, dns], [CERT_KEY, certs], [BLOCK_KEY, blocks], [WARN_KEY, warns]] as const) {
       for (const c of codes) expect(typeof lookup(en, map[c] ?? "missing"), c).toBe("string");
     }

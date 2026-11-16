@@ -1,8 +1,9 @@
-import { Inject, Injectable, OnModuleInit } from "@nestjs/common";
+import { Inject, Injectable, OnModuleInit, Optional } from "@nestjs/common";
 import type { DryRunItem, GateCheck, GateResult } from "../../core/dto";
 import {
   RunLeaseLostError,
   STEP_HANDLERS,
+  hostLoopOf,
   type ActResult,
   type CompResult,
   type CompensateHow,
@@ -13,8 +14,12 @@ import {
   type StepHandlerRegistry,
 } from "../../core/run-contract";
 import { CAPABILITY_PORT, CHECK_STORE, DATA_CODES, DATA_PORT, OBJECT_PORT, SOURCE_STATS_CHECK, type CapabilityPort, type CheckStore, type DataPort, type DataSnapshot, type ObjectPort, type ObjectView } from "./data-contract";
-import { dbRestoredAfterFreeze, finalChecks, hasLiveTransfer, isMigratorDb, migratorFlags, migratorWorkRemains, objectIsActive } from "./data-logic";
-import { compOf, gateFrom, loadObjects, loadSnapshot, releaseIfOurs, takeObjectStart } from "./handler-util";
+import { FINAL_HOST_LOOP_CODES, dbRestoredAfterFreeze, finalChecks, finalHostChecks, finalHostTally, hasLiveTransfer, isMigratorDb, migratorFlags, migratorWorkRemains, objectIsActive } from "./data-logic";
+import { compOf, gateFrom, loadObjects, loadSnapshot, releaseIfOurs, takeObjectStart, type StepComp } from "./handler-util";
+import { HOST_LOOP_CODES } from "./inventory/host-codes";
+import { sourceHostsOf } from "./inventory/host-hosts";
+import { emptyHostView, loadHostView, type HostView } from "./inventory/host-view";
+import { HOST_REPORT_PORT, type HostReportPort } from "./inventory/inventory-contract";
 import type { LauncherStatus } from "./launcher/migrator-launcher";
 import { controllerOf } from "./freeze.handler";
 import { MigratorRunner } from "./launcher/migrator-runner.service";
@@ -30,7 +35,16 @@ export interface FinalObs extends Observation {
   freezeAt: Date | null;
   /** Logical databases whose source-side `--verify` measurement has reached the hub since the freeze. */
   reportedStats: Set<string>;
+  /** The stored reports of the host-loop runner (the per-host DATA_FINAL status); empty for any other runner. */
+  hosts: HostView;
+  /** The source hosts of the run when the host-loop runner moves the data (empty for any other runner). */
+  loopHosts: string[];
 }
+
+const isHostLoop = (run: RunSnapshot): boolean => run.options.sourceRunner === "coolify-host-loop";
+
+/** Loop states after which no migrator of the host can still be running (the host was never reached, or the migrator ended). */
+const SETTLED_LOOP_STATES = ["finished", "failed", "died", "unreachable", "no-key", "no-host", "no-items"] as const;
 
 /**
  * How long the data may be complete before the step wraps up without the migrator's source-side `--verify` report. The migrator
@@ -67,6 +81,7 @@ export class DataFinalHandler implements StepHandler<FinalObs>, OnModuleInit {
     @Inject(CAPABILITY_PORT) private readonly caps: CapabilityPort,
     private readonly runner: MigratorRunner,
     @Inject(CHECK_STORE) private readonly checks_: CheckStore,
+    @Optional() @Inject(HOST_REPORT_PORT) private readonly reports?: HostReportPort,
   ) {}
 
   onModuleInit(): void {
@@ -83,6 +98,10 @@ export class DataFinalHandler implements StepHandler<FinalObs>, OnModuleInit {
     if (run.options.sourceRunner === "agent" && run.topology !== "swap-proxy") items.push({ code: DATA_CODES.agentNeedsSameHost, level: "block" });
     if (!run.opId) return items;
     const snap = await loadSnapshot(this.data, ctx);
+    if (isHostLoop(run)) {
+      const hosts = sourceHostsOf(run, snap);
+      items.push(hosts.length ? { code: FINAL_HOST_LOOP_CODES.dryPlan, level: "info", params: { hosts: hosts.length, keyDir: hostLoopOf(run.options).keyDir, parallel: hostLoopOf(run.options).parallel } } : { code: HOST_LOOP_CODES.noHosts, level: "block" });
+    }
     for (const d of snap.databases) items.push({ code: d.plane === "unsupported" ? DATA_CODES.finalDbUnsupported : "data-final.dry.database", level: d.plane === "unsupported" ? "warn" : "info", subject: d.itemRef, params: { engine: d.engine, plane: d.plane } });
     for (const v of snap.volumes) items.push({ code: v.excluded ? DATA_CODES.seedVolumeExcluded : "data-final.dry.volume", level: v.excluded ? "warn" : "info", subject: v.itemRef, params: { rawBytes: v.inventory?.found ? v.inventory.rawBytes : v.rawBytesTotal } });
     return items;
@@ -96,6 +115,8 @@ export class DataFinalHandler implements StepHandler<FinalObs>, OnModuleInit {
     const total = snap.databases.filter((d) => d.plane === "logical").length + snap.volumes.filter((v) => !v.excluded).length;
     const done = snap.databases.filter((d) => d.plane === "logical" && dbRestoredAfterFreeze(d, freeze)).length + snap.volumes.filter((v) => !v.excluded && v.state === "DONE").length;
     const reportedStats = await this.reportedStats(ctx, snap);
+    const hosts = isHostLoop(ctx.run) ? await loadHostView(this.reports, ctx.run.id).catch(() => emptyHostView()) : emptyHostView();
+    const loopHosts = isHostLoop(ctx.run) ? sourceHostsOf(ctx.run, snap) : [];
     return {
       snap,
       objects: views,
@@ -105,6 +126,8 @@ export class DataFinalHandler implements StepHandler<FinalObs>, OnModuleInit {
       frozen: ctx.stepState("FREEZE").status === "PASSED",
       freezeAt: freeze,
       reportedStats,
+      hosts,
+      loopHosts,
       progress: { done, total, unit: "item" },
     };
   }
@@ -121,6 +144,8 @@ export class DataFinalHandler implements StepHandler<FinalObs>, OnModuleInit {
   private checks(obs: FinalObs): GateCheck[] {
     const checks = finalChecks(obs.snap, obs.objects, obs.freezeAt);
     for (const id of obs.missingObjects) checks.push({ id: `object-gone:${id.slice(0, 40)}`, status: "fail", code: DATA_CODES.seedObjectGone, subject: id });
+    // R32-FINAL: one check per source host the loop script reported for, so a dead host is named and the finished ones stay visible
+    if (obs.loopHosts.length) checks.push(...finalHostChecks(obs.loopHosts, obs.snap, obs.hosts));
     return checks;
   }
 
@@ -210,6 +235,7 @@ export class DataFinalHandler implements StepHandler<FinalObs>, OnModuleInit {
       }
       if (hasLiveTransfer(snap)) return { outcome: "continue", pollAfterMs: 10_000 }; // an operator-run migrator is streaming right now
       const failing = this.checks(obs).filter((c) => c.status === "fail").length;
+      if (isHostLoop(run)) return this.hostLoopWait(ctx, obs, flags, objectsHeld);
       return {
         outcome: "wait",
         wait: {
@@ -244,6 +270,36 @@ export class DataFinalHandler implements StepHandler<FinalObs>, OnModuleInit {
     await ctx.recordCompensation({ wrapped: true });
     await ctx.emit({ stepKey: "DATA_FINAL", level: "info", code: "data-final.wrapped-up" });
     return { outcome: "done" };
+  }
+
+  /**
+   * R32-FINAL: the final data pass of the `coolify-host-loop` runner. One script on the Coolify host runs the migrator on every
+   * source host that holds data, so the step waits on THAT script (`commandKind: host-loop`) and judges it per host: a host that
+   * could not run (unreachable, no key, a migrator that died) is a clear failure naming the host, the hosts that finished are
+   * reported next to it, and a re-run of the script resumes the failed ones.
+   */
+  private async hostLoopWait(ctx: StepContext, obs: FinalObs, flags: string[], objectsHeld: boolean): Promise<ActResult> {
+    const run = ctx.run;
+    const snap = obs.snap;
+    if (obs.loopHosts.length === 0) return { outcome: "fail", code: HOST_LOOP_CODES.noHosts, retryable: false };
+    const tally = finalHostTally(obs.loopHosts, snap, obs.hosts);
+    // BEFORE the operator can run the script: an abort must know which hosts it may have started a migrator on
+    const known = (compOf(ctx) as StepComp & { loopHosts?: string[] }).loopHosts ?? [];
+    if (tally.hosts.some((h) => !known.includes(h))) await ctx.recordCompensation({ loopHosts: [...new Set([...known, ...tally.hosts])].sort() });
+    const pending = snap.databases.filter((d) => d.plane === "logical" && !dbRestoredAfterFreeze(d, obs.freezeAt)).length + snap.volumes.filter((v) => !v.excluded && v.state !== "DONE").length;
+    const code = tally.failed.length ? FINAL_HOST_LOOP_CODES.hostFailed : FINAL_HOST_LOOP_CODES.run;
+    return {
+      outcome: "wait",
+      wait: {
+        kind: "operator",
+        code,
+        params: { phase: "final", flags, pending, hosts: tally.hosts.length, failing: tally.failed.length, names: tally.failed.slice(0, 20), finished: tally.ok.length, finishedNames: tally.ok.slice(0, 20), hubTokenActive: snap.tokenActive },
+        offersCommand: true,
+        commandKind: "host-loop",
+        // the object final pass waits on the writers-frozen attestation: it is offered next to the script, not only after it
+        ...(objectsHeld ? { attest: [WRITERS_FROZEN_CHECK] } : {}),
+      },
+    };
   }
 
   /**
@@ -307,9 +363,28 @@ export class DataFinalHandler implements StepHandler<FinalObs>, OnModuleInit {
       failed = true;
     }
     if (failed) return { outcome: "failed", code: "data-final.abort-incomplete" };
+    const manual: Array<{ code: string; params?: Record<string, string | number | string[]> }> = [];
+    if (isHostLoop(run)) {
+      // the hub cannot stop a migrator it did not start: with the token revoked it fails at its next hub call, but a container on a
+      // source host keeps running until then. Name every host the script was offered for unless its report PROVES the migrator is over
+      const offered = (compOf(ctx) as StepComp & { loopHosts?: string[] }).loopHosts ?? [];
+      if (offered.length) {
+        let loop = new Map<string, { state: string }>();
+        try {
+          loop = new Map([...(await loadHostView(this.reports, run.id)).loop.filter((l) => l.step === "DATA_FINAL").map((l) => [l.ref, l] as const)]);
+        } catch {
+          loop = new Map();
+        }
+        const live = offered.filter((h) => {
+          const st = loop.get(h);
+          return !st || !SETTLED_LOOP_STATES.includes(st.state as never);
+        });
+        if (live.length) manual.push({ code: FINAL_HOST_LOOP_CODES.stopMigrators, params: { hosts: live.slice(0, 20), count: live.length } });
+      }
+    }
     // a migrator that stopped source containers itself (`--stop-source`) did not tell the hub which: it restarts them when a
     // copy fails, but after a COMPLETED copy they stay stopped, so the operator must bring them back
-    if (run.options.stopSource) return { outcome: "manual", manual: [{ code: DATA_CODES.finalStopSourceManual }] };
-    return { outcome: "done" };
+    if (run.options.stopSource) manual.push({ code: DATA_CODES.finalStopSourceManual });
+    return manual.length ? { outcome: "manual", manual } : { outcome: "done" };
   }
 }

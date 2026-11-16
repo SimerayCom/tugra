@@ -52,3 +52,29 @@ export function baselineVerdict(entry: BaselineEntry | undefined, healthyNow: bo
   if (!entry) return "unbaselined";
   return isDegradedAtSource(entry) ? "pre-existing" : "regression";
 }
+
+/** What the comparison with the source says about one resource (see {@link baselineVerdict}). */
+export type BaselineVerdict = ReturnType<typeof baselineVerdict>;
+
+/** The baseline entry of a plan itemRef (`app:<serverRef|_>:<ref>`), or undefined when the baseline never saw it. */
+export function baselineEntryOf(baseline: SourceBaseline | null | undefined, itemRef: string): BaselineEntry | undefined {
+  return baseline?.entries.find((e) => baselineItemRef(e) === itemRef);
+}
+
+/**
+ * The verdict for one resource of the run, by its plan itemRef (R52): the single place VERIFY, CUTOVER and OBSERVE judge "is this
+ * failure new, or was it already failing at the source". A resource the baseline did not see is `unbaselined` (never excused).
+ */
+export const verdictOf = (baseline: SourceBaseline | null | undefined, itemRef: string | null | undefined, healthyNow: boolean): BaselineVerdict =>
+  baselineVerdict(itemRef ? baselineEntryOf(baseline, itemRef) : undefined, healthyNow);
+
+/**
+ * The hostnames that fail on Tugra although the app behind them was ALREADY degraded at the source: they are reported as
+ * pre-existing (a warning), not as a new failure. `failing` is every host that does not answer, `appOf` maps a host to the plan
+ * itemRef of the app that serves it (a host with no known app is never excused).
+ */
+export function preExistingHosts(baseline: SourceBaseline | null | undefined, failing: readonly string[], appOf: (hostname: string) => string | null | undefined): Set<string> {
+  const out = new Set<string>();
+  for (const h of failing) if (verdictOf(baseline, appOf(h), false) === "pre-existing") out.add(h);
+  return out;
+}

@@ -18,6 +18,7 @@ import {
 } from "../../core/run-contract";
 import { PostPonrRelease, type WorkerVerify } from "../import/baseline/post-ponr";
 import { degradedItemRefs } from "../import/baseline/source-health";
+import { degradedAtSourceHosts, excuseSwapVerify, excusedBoxHosts, excusedSwapHosts } from "./baseline-hosts";
 import { CutoverStepBase } from "./cutover-step-base";
 import { CutoverWorld, type SwapRow } from "./cutover-world.service";
 import { verifySwapHosts, type SwapVerify } from "./swap-runtime";
@@ -40,6 +41,8 @@ export interface ObserveObs extends Observation {
   swapVerify: SwapVerify | null;
   /** The held workers' state once the window is open (null before, or when the run holds none). */
   workers: WorkerVerify | null;
+  /** Hosts that do not answer healthily but whose app was already unhealthy at the source (R52): reported, never failed. */
+  excused: string[];
 }
 
 /** A VERIFIED host that still answers through the target with a valid certificate and a router (`needsDeploy` is the cutover probe's "router gone / unreachable" flag). */
@@ -94,7 +97,7 @@ export class ObserveHandler extends CutoverStepBase implements StepHandler<Obser
     const run = ctx.run;
     const opId = run.opId;
     const startedAt = compDate(ctx.step.compensation, "observeStartedAt");
-    const base: ObserveObs = { opId, topology: run.topology, entries: [], startedAt, crashes: 0, baselineExcluded: 0, swap: null, swapVerify: null, workers: null };
+    const base: ObserveObs = { opId, topology: run.topology, entries: [], startedAt, crashes: 0, baselineExcluded: 0, swap: null, swapVerify: null, workers: null, excused: [] };
     if (!opId) return base;
     const view = await this.cutover.view(ctx.actor.userId, opId);
     const obs: ObserveObs = { ...base, entries: view.entries };
@@ -107,8 +110,9 @@ export class ObserveHandler extends CutoverStepBase implements StepHandler<Obser
     if (run.topology === "swap-proxy") {
       obs.swap = await this.world.getSwap(run.id, run.targetServerId);
       const facts = await this.world.serverFacts(run.targetServerId);
-      if (startedAt && facts && obs.swap?.state === "LIVE") obs.swapVerify = await verifySwapHosts(this, facts, actionableEntries(view.entries).map((e) => e.hostname), run.options.healthPath ?? "/");
+      if (startedAt && facts && obs.swap?.state === "LIVE") obs.swapVerify = excuseSwapVerify(await verifySwapHosts(this, facts, actionableEntries(view.entries).map((e) => e.hostname), run.options.healthPath ?? "/"), run.sourceBaseline, view.entries, await this.world.opApps(opId));
     }
+    obs.excused = run.topology === "two-box" ? [...excusedBoxHosts(view.entries)] : excusedSwapHosts(obs.swapVerify);
     return obs;
   }
 
@@ -155,10 +159,10 @@ export class ObserveHandler extends CutoverStepBase implements StepHandler<Obser
     let swapVerify = obs.swapVerify;
     if (run.topology === "two-box") {
       const verified = entries.filter((e) => e.state === "VERIFIED").map((e) => e.hostname);
-      if (verified.length) entries = (await this.cutover.check(userId, opId, { hostnames: verified, ...(run.options.healthPath ? { healthPath: run.options.healthPath } : {}) })).entries;
+      if (verified.length) entries = (await this.cutover.check(userId, opId, { hostnames: verified, ...(run.options.healthPath ? { healthPath: run.options.healthPath } : {}) }, { degradedAtSource: await degradedAtSourceHosts(this.world, opId, run.sourceBaseline, entries) })).entries;
     } else {
       const facts = await this.world.serverFacts(run.targetServerId);
-      if (facts) swapVerify = await verifySwapHosts(this, facts, actionableEntries(entries).map((e) => e.hostname), run.options.healthPath ?? "/");
+      if (facts) swapVerify = excuseSwapVerify(await verifySwapHosts(this, facts, actionableEntries(entries).map((e) => e.hostname), run.options.healthPath ?? "/"), run.sourceBaseline, entries, await this.world.opApps(opId));
     }
     const crashes = await this.world.crashEventsSince(run.targetServerId, (await this.watched(run, opId)).names, startedAt);
     if (crashes > 0) throw new StepFailure("observe.crash-detected", { events: crashes }, true);
@@ -189,6 +193,7 @@ export class ObserveHandler extends CutoverStepBase implements StepHandler<Obser
       const unknown = obs.swap?.state === "LIVE" && obs.swapVerify === null;
       checks.push(chk("observe.hosts", unknown ? "unknown" : bad.length === 0 ? "pass" : "fail", "observe.host-unhealthy", { params: { hosts: capHosts(bad.map(([h]) => h)) }, evidence: "hub-verified" }));
     }
+    if (obs.excused.length) checks.push(chk("observe.hosts-pre-existing", "warn", "observe.host-pre-existing", { params: { hosts: capHosts(obs.excused) }, evidence: "source-api-reported" }));
     if (obs.workers) {
       const w = obs.workers;
       if (w.failed.length) checks.push(chk("observe.workers", "fail", "observe.workers-not-running", { params: { count: w.failed.length, workers: w.failed.slice(0, 10) }, evidence: "hub-verified" }));

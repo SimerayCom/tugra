@@ -38,6 +38,7 @@ import {
 } from "./data-contract";
 import { loadObjects, loadSnapshot } from "./handler-util";
 import { PARITY_CODES } from "./verify/db-stats";
+import { judgeAgainstBaseline } from "./verify/baseline-judge";
 import { buildVerifySuite, classifySuite, ponrBindingHash, reportHash, toGateCheck, type SuiteCheck } from "./verify/verify-suite";
 
 /** A target measurement / drift probe younger than this is reused (the run polls every few seconds). */
@@ -180,7 +181,8 @@ export class VerifyHandler implements StepHandler<VerifyObs>, OnModuleInit {
       await this.checks.upsert({ runId: run.id, stepKey: "VERIFY", checkId: TARGET_STATS_CHECK, subject: d.itemRef, status: s.state === "measured" ? "pass" : "unknown", evidenceKind: "hub-verified", evidence: s as unknown as Record<string, unknown>, at: ctx.now() });
     }
 
-    const suite = buildVerifySuite({ snap, runtime, objects: views, sourceStats, targetStats, drift: driftResult, flip, runInputs: run.inputs });
+    // R52: a resource that was already failing at the source is a pre-existing warning, a new failure still fails
+    const suite = judgeAgainstBaseline(buildVerifySuite({ snap, runtime, objects: views, sourceStats, targetStats, drift: driftResult, flip, runInputs: run.inputs }), run.sourceBaseline).suite;
     for (const id of missing) suite.push({ id: `object-gone:${id.slice(0, 40)}`, checkId: "bucket", subject: id, status: "fail", code: DATA_CODES.seedObjectGone, evidence: "hub-verified" });
     const report = reportHash(suite);
     return {

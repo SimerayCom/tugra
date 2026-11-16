@@ -69,7 +69,7 @@ describe("PrismaDataPort.snapshot", () => {
         ],
         findUnique: async () => ({ version: "16", image: "postgres:16", status: "NEW" }),
       },
-      application: { findMany: async () => [{ id: "app1", name: "web" }, { id: "app2", name: "cache-app" }, { id: "app3", name: "svc" }] },
+      application: { findMany: async () => [{ id: "app1", name: "web", source: "GIT" }, { id: "app2", name: "cache-app", source: "IMAGE" }, { id: "app3", name: "svc", source: "COMPOSE" }] },
       restore: { count: async () => 0 },
       backup: { count: async () => 0 },
       migrationVolumeTransfer: {
@@ -81,7 +81,8 @@ describe("PrismaDataPort.snapshot", () => {
   it("reads the data plane of the op: volumes, databases (plane + data task), apps, services and the token state, without writing anything", async () => {
     const s = await port().snapshot(makeRun());
     expect(s).toMatchObject({ opId: "op1", targetServerId: "srv-target", hubBase: "https://hub.example.com", tokenActive: true, vxEnabled: true });
-    expect(s.apps).toEqual([{ itemRef: "app:s:abc", name: "web" }, { itemRef: "app:s:ex", name: "cache-app" }]);
+    // an app carries how it is built (a GIT app is an image build inside the downtime window, R27/C5); a service has no such field
+    expect(s.apps).toEqual([{ itemRef: "app:s:abc", name: "web", source: "GIT" }, { itemRef: "app:s:ex", name: "cache-app", source: "IMAGE" }]);
     expect(s.services).toEqual([{ itemRef: "service:s:svc1", name: "svc" }]);
 
     const byRef = Object.fromEntries(s.databases.map((d) => [d.itemRef, d]));

@@ -15,7 +15,7 @@ import {
   type StepHandlerRegistry,
 } from "../../core/run-contract";
 import { DATA_CODES, DATA_PORT, OBJECT_PORT, type DataPort, type DataSnapshot, type ObjectPort, type ObjectView } from "./data-contract";
-import { checkKey, dbsNeedingMeasure, decideLanes, estimateEquals, estimateWindow, hasLiveTransfer, migratorFlags, objectIsActive, seedChecks } from "./data-logic";
+import { checkKey, dbsNeedingMeasure, decideLanes, estimateEquals, estimateWindow, hasLiveTransfer, migratorFlags, objectIsActive, seedChecks, windowExtrasOf } from "./data-logic";
 import { compOf, gateFrom, loadObjects, loadSnapshot, takeObjectStart, type StepComp } from "./handler-util";
 import { MigratorRunner } from "./launcher/migrator-runner.service";
 import { OBJECT_PLAN_ID, objectPlanChecks } from "./object-plan-check";
@@ -80,7 +80,7 @@ export class DataSeedHandler implements StepHandler<SeedObs>, OnModuleInit {
     if (run.options.sourceRunner === "agent" && run.topology !== "swap-proxy") items.push({ code: DATA_CODES.agentNeedsSameHost, level: "block" });
     if (!run.opId) return items; // no import yet: nothing to project from
     const snap = await loadSnapshot(this.data, ctx);
-    const est = estimateWindow(snap, ctx.now());
+    const est = estimateWindow(snap, ctx.now(), windowExtrasOf(run, snap));
     if (run.options.sourceRunner === "coolify-host-loop") {
       const hosts = sourceHostsOf(run, snap);
       items.push(hosts.length ? { code: HOST_LOOP_CODES.dryPlan, level: "info", params: { hosts: hosts.length, keyDir: hostLoopOf(run.options).keyDir, parallel: hostLoopOf(run.options).parallel } } : { code: HOST_LOOP_CODES.noHosts, level: "block" });
@@ -206,7 +206,7 @@ export class DataSeedHandler implements StepHandler<SeedObs>, OnModuleInit {
     const run = ctx.run;
     const snap = obs.snap;
     // the downtime estimate feeds the FREEZE approval and the final report; refresh it whenever the facts changed
-    const est = estimateWindow(snap, ctx.now());
+    const est = estimateWindow(snap, ctx.now(), windowExtrasOf(run, snap));
     if (!estimateEquals(run.windowEstimate, est)) await ctx.patchRun({ windowEstimate: est });
 
     if (obs.missingObjects.length) return { outcome: "fail", code: DATA_CODES.seedObjectGone, params: { count: obs.missingObjects.length }, retryable: false };

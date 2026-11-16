@@ -68,6 +68,7 @@ import { CLEANUP_REQUEST_KEY, RunEngineService, type CleanupRequest } from "./ru
 import { ATTACH_STEPS, COMMAND_STEPS, OPEN_STATUSES, approvalExpiry, deriveStepAllowed, hashOf, isTerminal, isWaitingStep, serverMapOf, stripSince } from "./run-logic";
 import { RUN_ENV, RUN_IMPORT, RUN_SINK, RUN_STORE, type RunEnvPort, type RunImportPort, type RunSessionInfo, type RunSinkPort } from "./run-ports";
 import { INVENTORY_ATTEST } from "../steps/data/inventory/cross-check";
+import { TICK_GAP_CHECK, TICK_GAP_GATE_CHECK, tickGapNote } from "../steps/data/tick-gap";
 import { HOST_REPORT_PORT, HostCommandError, RUN_HOST_COMMANDS, type HostReportPort, type RunHostCommandPort } from "../steps/data/inventory/inventory-contract";
 import { ServerHasLiveRunError, type EventRow, type RunRow, type RunStore, type StepRow } from "./run-store";
 import { buildReport, reportToMarkdown, runFacts, stepFacts, toSummary, toView } from "./run-view";
@@ -480,13 +481,21 @@ export class MigrationRunsService implements MigrationRunsFacade {
       if (!body.subject || !checks.some((c) => c.subject === body.subject && c.attestable?.includes(body.checkId))) throw bad("attest-subject-invalid");
       if (body.checkId === INVENTORY_ATTEST.mapped && !body.note) throw bad("attest-note-required"); // names the plan item the container IS
     }
+    // N2: a write-gap attestation is about the gap the gate showed: the hub records that gap with it, so a later, longer estimate voids it
+    let note = body.note;
+    if (body.checkId === TICK_GAP_CHECK) {
+      const shown = ((step.gate as GateResult | null)?.checks ?? []).find((c) => c.id === TICK_GAP_GATE_CHECK && c.attestable?.includes(TICK_GAP_CHECK));
+      if (!shown) throw bad("attest-subject-invalid");
+      const gap = (shown.params as { gapMinutes?: unknown } | undefined)?.gapMinutes;
+      note = tickGapNote(typeof gap === "number" ? gap : null, body.note);
+    }
     const ev = (step.evidence as StepEvidence | null) ?? EMPTY_STEP_EVIDENCE;
     if (ev.attestations.length >= 200) throw conflict("evidence-full");
     const next: StepEvidence = {
       ...ev,
       attestations: [
         ...ev.attestations,
-        { checkId: body.checkId, ...(body.subject ? { subject: body.subject } : {}), ...(body.note ? { note: body.note } : {}), byUserId: actor.userId, at: this.engine.clock.now().toISOString() },
+        { checkId: body.checkId, ...(body.subject ? { subject: body.subject } : {}), ...(note ? { note } : {}), byUserId: actor.userId, at: this.engine.clock.now().toISOString() },
       ],
     };
     if (!(await this.store.updateStepIf(run.id, key, ["WAITING_OPERATOR"], { evidence: next }))) throw conflict("step-not-waiting-operator");

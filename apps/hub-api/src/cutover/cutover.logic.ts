@@ -338,6 +338,16 @@ export function classifyHealth(status: number | null, traefik404: boolean): Heal
   return { pass: false, kind: "other" };
 }
 
+/**
+ * Source health baseline (R52) on a two-box host: `SOURCE_DEGRADED` marks a host whose app was already failing at the source (set by the
+ * guided run; never shown), `HEALTH_PRE_EXISTING` records that this host's health failure was excused because of it (shown as a warning).
+ */
+export const SOURCE_DEGRADED_TAG = "source-degraded";
+export const HEALTH_PRE_EXISTING_TAG = "health-pre-existing";
+
+/** Only a failure of the APP's answer can be excused by the source baseline; a missing router (traefik-404) or no answer at all cannot. */
+export const isExcusableHealth = (kind: string | null | undefined): boolean => kind === "server-error" || kind === "other";
+
 export type DnsObserved = "source" | "target" | "mixed" | "proxied" | "tunnel" | "unknown";
 
 /** Pure: where a hostname resolves today relative to the Tugra target. `proxied`/`tunnel` win (public DNS then shows

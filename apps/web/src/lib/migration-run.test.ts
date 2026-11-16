@@ -3,6 +3,7 @@ import {
   MIGRATION_RUN_STEP_KEYS,
   MIGRATION_RUN_STATUSES,
   approvalExpired,
+  attestationVoid,
   approvalIssues,
   approvalPayload,
   ackRows,
@@ -44,6 +45,7 @@ import {
   paramVars,
   progressPct,
   progressText,
+  REVIEW_LABEL_KEY,
   reviewLabel,
   reviewValue,
   runListRefetchInterval,
@@ -298,6 +300,28 @@ describe("approval bound to the reviewed hash", () => {
     expect(approvalExpired(null, now)).toBe(false);
     expect(approvalExpired("2026-11-16T09:59:00Z", now)).toBe(true);
     expect(approvalExpired("2026-11-16T10:30:00Z", now)).toBe(false);
+  });
+  it("a write-gap attestation is void once the gate shows a longer gap, so the row offers it again", () => {
+    const gate = (gapMinutes: number | null) => ({ id: "freeze.tick-gap", status: "fail" as const, code: "freeze.tick-gap-exceeded", params: { gapMinutes }, attestable: ["tick-gap-accepted"] });
+    const att = (note?: string) => [{ checkId: "tick-gap-accepted", ...(note ? { note } : {}) }];
+    expect(attestationVoid("tick-gap-accepted", att("gapMinutes=20"), gate(45))).toBe(true);
+    expect(attestationVoid("tick-gap-accepted", att("gapMinutes=45"), gate(45))).toBe(false);
+    expect(attestationVoid("tick-gap-accepted", att("gapMinutes=45 ok"), gate(30))).toBe(false);
+    expect(attestationVoid("tick-gap-accepted", att("gapMinutes=45"), gate(null))).toBe(true);
+    expect(attestationVoid("tick-gap-accepted", att("gapMinutes=unknown"), gate(null))).toBe(false);
+    expect(attestationVoid("tick-gap-accepted", att(), gate(45))).toBe(true); // records no gap
+    // no failing gap check, or another attestation: nothing is void
+    expect(attestationVoid("tick-gap-accepted", att("gapMinutes=20"), undefined)).toBe(false);
+    expect(attestationVoid("tick-gap-accepted", att("gapMinutes=20"), { ...gate(45), status: "warn" })).toBe(false);
+    expect(attestationVoid("source-quiesced", att("x"), gate(45))).toBe(false);
+  });
+  it("labels every key the FREEZE approval review lists, so none shows as a machine-derived label", () => {
+    const keys = "controller apps services stopList estimateSec estimateDataSec estimateBuildSec estimateStartSec estimateHealthSec estimateAcmeSec estimateBytes estimateHubBytes writeGapSec tickGapAcceptedSec tickGapNeedsAttestation keepsStopped scheduledFor".split(" ");
+    for (const k of keys) {
+      expect(REVIEW_LABEL_KEY[k], k).toBeTruthy();
+      expect(reviewLabel(t, k), k).not.toBe(humanizeKey(k));
+    }
+    expect(reviewLabel(t, "estimateSec")).toBe("Estimated downtime");
   });
   it("labels review rows and humanizes sizes, durations and booleans", () => {
     expect(reviewLabel(t, "statefulHosts")).toBe("Stateful hosts");

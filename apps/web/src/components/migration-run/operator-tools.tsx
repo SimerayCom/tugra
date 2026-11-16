@@ -7,7 +7,7 @@ import { Btn } from "../ui";
 import { useConfirm } from "../confirm";
 import { Field, TextInput } from "../form";
 import { CopyBtn } from "../copy-row";
-import { codeText, paramText } from "../../lib/migration-run";
+import { attestationVoid, codeText, paramText } from "../../lib/migration-run";
 import type { MigrationRunStepView } from "../../lib/types";
 import { CommandBlock } from "./command-block";
 import { useRunPlumbing } from "./use-run-actions";
@@ -21,7 +21,7 @@ function AttestRow({ runId, step, checkId, subject }: { runId: string; step: Mig
   const check = step.gate?.checks.find((c) => (c.id === checkId || c.attestable?.includes(checkId)) && c.subject === subject);
   // an inventory "mapped" attestation says WHICH plan item the container is: without that note it settles nothing
   const needsNote = checkId === "inventory-mapped";
-  const done = step.evidence.attestations.some((a) => a.checkId === checkId && a.subject === subject);
+  const done = step.evidence.attestations.some((a) => a.checkId === checkId && a.subject === subject) && !attestationVoid(checkId, step.evidence.attestations, check);
   const attest = useMutation({
     mutationFn: () => api.attestMigrationRunStep(runId, step.key, { checkId, ...(subject ? { subject } : {}), ...(note.trim() ? { note: note.trim() } : {}) }),
     onSuccess: adopt,

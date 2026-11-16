@@ -230,8 +230,11 @@ moving it. Set or change them any time: `tugra import run inputs <runId> --acme-
 "Owner inputs" card has the same fields.
 
 The hub's input contract also holds `tickGapAcceptMinutes` (how long writes may be missing between the last copy and
-the switch). **No step reads it yet**: it changes no gate and no estimate, so the panel, the CLI and the MCP tools do not
-offer it. Until a step judges a write gap, the freeze plus the final copy is what bounds the gap.
+the switch, default 0). FREEZE reads it: it compares the estimated window (the time the source writers stay stopped) with
+the accepted minutes, and over that gap the step needs the explicit `tick-gap-accepted` attestation before it stops
+anything; the default 0 means every gap needs it. The attestation is bound to the gap it was given for: a later, larger
+estimate needs it again. The panel, the CLI and the MCP tools do not set the accepted minutes yet (set the input through
+the API); the attestation itself is given in the panel.
 
 ## Fleet runs: several source hosts, one run
 
