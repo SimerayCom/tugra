@@ -457,7 +457,10 @@ func (v *volRunner) runOne(ctx context.Context, tg Target) (res itemResult) {
 		if rec := recover(); rec != nil {
 			res.State, res.Reason = "failed", "internal"
 		}
-		if leased && !copied && ctx.Err() != nil {
+		// Any exit after the claim and before COPIED releases the lease (staged parts are kept): an interrupt, and also a
+		// refusal or failure such as a diverged source, whose remedy (--reset-volume, a plain rerun) must not then wait out
+		// the stale window behind this run's own lease ("another-run-active").
+		if leased && !copied {
 			actx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			_ = v.hub.VxAbort(actx, tg.ItemRef, v.runID) // release the lease, keep the staged parts
 			cancel()

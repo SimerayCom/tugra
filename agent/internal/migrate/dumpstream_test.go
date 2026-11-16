@@ -10,6 +10,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -406,7 +408,7 @@ func TestDumpRunAFailedDumpIsNeverFinished(t *testing.T) {
 	d := &dumpDocker{running: true, started: []string{dumpStarted}}
 	fakeDump(t, pgDump(3000), fmt.Errorf("%w (exit 1)", ErrDumpStream))
 	out, code, _ := runDumpCLI(t, hub, d, "--arms", "all")
-	if code != exitPartial || out.Items[0].State != "failed" || out.Items[0].Reason != "dump-failed" {
+	if code != exitPartial || out.Items[0].State != "failed" || !strings.HasPrefix(out.Items[0].Reason, "dump-failed") {
 		t.Errorf("code=%d %+v", code, out.Items)
 	}
 	if len(hub.finishes) != 0 {
@@ -544,5 +546,27 @@ func TestDryRunMeasureFailureIsReportedNotFatal(t *testing.T) {
 	m := hub.dbSizes[0].Items[0]
 	if m.State != "failed" || m.Reason != "size-exec" || m.DbBytes != 0 {
 		t.Errorf("an unmeasurable database is reported failed with a fixed reason: %+v", m)
+	}
+}
+
+// A dump client that dies says why: its last stderr line rides the error (and so the item reason the operator and the lab see).
+func TestStartDumpFnCarriesTheClientsLastErrorLine(t *testing.T) {
+	sh := filepath.Join(t.TempDir(), "fake-dump")
+	if err := os.WriteFile(sh, []byte("#!/bin/sh\nprintf 'partial'\necho 'warming up' >&2\necho 'mariadb-dump: Error 2013: Lost connection to server during query' >&2\nexit 2\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out, wait, err := startDumpFn(context.Background(), Plan{Argv: []string{sh}, Env: []string{"PATH=/usr/bin:/bin"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, out)
+	werr := wait()
+	if !errors.Is(werr, ErrDumpStream) || !strings.Contains(werr.Error(), "(exit 2): mariadb-dump: Error 2013: Lost connection") || strings.Contains(werr.Error(), "warming up") {
+		t.Fatalf("wait error: %v", werr)
+	}
+	var res itemResult
+	(&volRunner{}).setDumpFailure(context.Background(), &res, werr)
+	if res.State != "failed" || !strings.HasPrefix(res.Reason, "dump-failed: (exit 2): mariadb-dump: Error 2013") {
+		t.Fatalf("reason: %q", res.Reason)
 	}
 }

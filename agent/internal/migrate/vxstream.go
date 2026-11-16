@@ -106,6 +106,14 @@ type limitedBuf struct {
 	buf bytes.Buffer
 }
 
+// lastLine is the last non-empty line the process wrote (an engine client prints its error last), "" when none.
+func (l *limitedBuf) lastLine() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	lines := strings.Split(strings.TrimSpace(l.buf.String()), "\n")
+	return strings.TrimSpace(lines[len(lines)-1])
+}
+
 func (l *limitedBuf) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

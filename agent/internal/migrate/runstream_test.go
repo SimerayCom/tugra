@@ -668,3 +668,20 @@ func TestAFailedSpeedtestPostsNoSpeed(t *testing.T) {
 		t.Errorf("a failed test is reported, never posted as a speed: %d posts", len(hub.invPosts))
 	}
 }
+
+// A resume that finds the source changed releases its lease before it exits, so the remedy it prints (--reset-volume) works at
+// once instead of being refused as another-run-active until the lease goes stale (lab L1b).
+func TestVolumeRunDivergedResumeReleasesTheLease(t *testing.T) {
+	hub := streamHubWith(t, withPolicy(appRow))
+	stream := streamBytes(3000)
+	hub.resumeFrom = 1
+	hub.manifest = []VxManifestEntry{{Idx: 0, RawOffset: 0, RawLen: 1000, RawSha256: sha([]byte("something else"))}}
+	d := &volDocker{ctrs: []*vctr{stoppedApp()}, invOut: invFor(3000)}
+	out, _, _ := runStream(t, hub, d, stream)
+	if out.Items[0].State != "volume-diverged" {
+		t.Fatalf("%+v", out.Items[0])
+	}
+	if atomic.LoadInt32(&hub.aborts) != 1 {
+		t.Fatalf("the diverged run must release its lease once, aborts=%d", hub.aborts)
+	}
+}

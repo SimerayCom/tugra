@@ -58,7 +58,11 @@ var startDumpFn = func(ctx context.Context, p Plan) (io.ReadCloser, func() error
 	return out, func() error {
 		if err := cmd.Wait(); err != nil {
 			var ee *exec.ExitError
+			why := stderr.lastLine() // the dump client's own error (never a credential: passwords ride the environment)
 			if errors.As(err, &ee) {
+				if why != "" {
+					return fmt.Errorf("%w (exit %d): %s", ErrDumpStream, ee.ExitCode(), why)
+				}
 				return fmt.Errorf("%w (exit %d)", ErrDumpStream, ee.ExitCode())
 			}
 			return fmt.Errorf("%w: %v", ErrDumpStream, err)

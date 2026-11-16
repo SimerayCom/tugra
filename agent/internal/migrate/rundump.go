@@ -146,7 +146,7 @@ func (v *volRunner) runDump(ctx context.Context, tg Target) (res itemResult) {
 		if rec := recover(); rec != nil {
 			res.State, res.Reason = "failed", "internal"
 		}
-		if leased && !copied && ctx.Err() != nil {
+		if leased && !copied { // any exit before COPIED releases the lease (see runOne): a failed dump's rerun must not wait it out
 			actx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			_ = v.hub.VxAbort(actx, tg.ItemRef, v.runID)
 			cancel()
@@ -252,6 +252,9 @@ func (v *volRunner) setDumpFailure(ctx context.Context, res *itemResult, err err
 		res.State, res.Reason = "volume-aborted", "interrupted"
 	case errors.Is(err, ErrDumpStream):
 		res.State, res.Reason = "failed", "dump-failed"
+		if why := strings.TrimSpace(strings.TrimPrefix(err.Error(), ErrDumpStream.Error())); why != "" {
+			res.Reason += ": " + hubText(why)
+		}
 	case kindOf(err) != KindOther:
 		v.setHubFailure(res, err)
 	default:
