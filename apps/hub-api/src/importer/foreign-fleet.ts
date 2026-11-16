@@ -258,8 +258,24 @@ export interface ServiceBundle {
   files?: Array<{ path: string; content: string; mode?: string }>;
 }
 
+/**
+ * One source server as discovery saw it. `controlPlane`, `unreachableCount` and `os` are the facts a run's PREFLIGHT classifies a host by
+ * (R5); a source that does not report one leaves it out (never a guess).
+ */
+export interface ForeignServer {
+  ref: string;
+  name?: string;
+  ip?: string;
+  /** The server is the box the source's own control plane runs on (Coolify: `is_coolify_host`). */
+  controlPlane?: boolean;
+  /** How often the source's reachability check failed in a row (Coolify: `unreachable_count`). */
+  unreachableCount?: number;
+  /** The operating system as the source reports it (a short printable string); judged by the run's PREFLIGHT, never shown as code text. */
+  os?: string;
+}
+
 export interface ForeignFleet {
-  servers: Array<{ ref: string; name?: string; ip?: string }>;
+  servers: Array<ForeignServer>;
   apps: ForeignApp[];
   databases: ForeignDb[];
   services: ForeignService[];
@@ -375,6 +391,17 @@ export interface ImportPreflight {
   /** SSL/DNS cutover facts knowable from the source alone (the target server's own readiness is shown by the
    *  cutover panel). Additive; NOT part of planHash. */
   cutover?: ImportCutoverHint;
+  /** The source servers with the facts a run classifies them by (control-plane box, reachability, OS). Additive; NOT part of planHash. */
+  hosts?: PreflightHost[];
+}
+
+/** One source server of the plan, without its address: the name the panel shows instead of the uuid, and the PREFLIGHT classification facts. */
+export interface PreflightHost {
+  ref: string;
+  name?: string;
+  controlPlane?: true;
+  unreachableCount?: number;
+  os?: string;
 }
 
 export interface ImportCutoverHint {

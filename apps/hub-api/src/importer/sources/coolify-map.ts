@@ -25,6 +25,34 @@ export interface CoolifyServer {
   uuid: string;
   name?: string | null;
   ip?: string | null;
+  /** The box Coolify itself runs on (API name `localhost`). */
+  is_coolify_host?: boolean | null;
+  /** Consecutive failed reachability checks (a flapping host has a high count). */
+  unreachable_count?: number | null;
+  /** Specs Coolify collected; only its OS text is read, and only when it is there. */
+  server_metadata?: { os?: unknown; os_release?: unknown; os_version?: unknown } | null;
+}
+
+/** The OS text of a Coolify server row: a short printable string, or undefined (never a guess). */
+export function coolifyServerOs(s: Pick<CoolifyServer, "server_metadata">): string | undefined {
+  const m = s.server_metadata;
+  if (!m || typeof m !== "object") return undefined;
+  const parts = [m.os, m.os_release, m.os_version].filter((v): v is string => typeof v === "string" && v.trim() !== "").map((v) => v.trim());
+  const text = [...new Set(parts)].join(" ").replace(/[^\x20-\x7e]/g, "").slice(0, 80).trim();
+  return text || undefined;
+}
+
+/** A discovered server with the facts PREFLIGHT classifies it by; a fact the API did not report is left out. */
+function foreignServerOf(s: CoolifyServer): ForeignFleet["servers"][number] {
+  const os = coolifyServerOs(s);
+  return {
+    ref: s.uuid,
+    name: s.name ?? undefined,
+    ip: s.ip ?? undefined,
+    ...(s.is_coolify_host === true ? { controlPlane: true } : {}),
+    ...(typeof s.unreachable_count === "number" && Number.isFinite(s.unreachable_count) && s.unreachable_count >= 0 ? { unreachableCount: Math.floor(s.unreachable_count) } : {}),
+    ...(os ? { os } : {}),
+  };
 }
 export interface CoolifyApp {
   uuid: string;
@@ -551,7 +579,7 @@ export function buildCoolifyFleet(input: CoolifyFleetInput): ForeignFleet {
   if (unknownDbs > 0) warnings.push(`${unknownDbs} database(s) have an engine with no Tugra equivalent (e.g. SQLite) and cannot be imported`);
 
   return {
-    servers: input.servers.map((s) => ({ ref: s.uuid, name: s.name ?? undefined, ip: s.ip ?? undefined })),
+    servers: input.servers.map(foreignServerOf),
     apps,
     databases,
     services,

@@ -1050,7 +1050,20 @@
     "inventory_reach-ok": "Host {host} reaches this hub, and an upload of {acceptedMiB} MiB passes (part size {partMiB} MiB).",
     "inventory_reach-failed": "Host {host} cannot reach this hub (HTTP {httpCode}), so the migrator cannot work from there.",
     "inventory_reach-unknown": "Whether host {host} can reach this hub has not been measured yet.",
-    "inventory_part-size-exceeds-cap": "The path from host {host} to this hub accepts uploads of {acceptedMiB} MiB, less than the part size of {partMiB} MiB (a proxy in front of the hub caps request bodies). Set MIGRATION_VX_PART_MIB to {recommendMiB} (0 means even 32 MiB fails) or remove the cap, then run the inventory again."
+    "inventory_part-size-exceeds-cap": "The path from host {host} to this hub accepts uploads of {acceptedMiB} MiB, less than the part size of {partMiB} MiB (a proxy in front of the hub caps request bodies). Set MIGRATION_VX_PART_MIB to {recommendMiB} (0 means even 32 MiB fails) or remove the cap, then run the inventory again.",
+    "preflight_hosts-classified": "The source lists {hosts} servers; {empty} of them carry nothing of this run. The operating system was reported for {osReported}.",
+    "preflight_host-control-plane": "{host} is the server the source's control plane runs on. This run does not move anything off it. Decommission it last, after every other run of this source has finished.",
+    "preflight_host-control-plane-moves": "{host} is the server the source's control plane runs on, and this run moves {items} items off it. Decommission it last, after every other run of this source has finished.",
+    "preflight_host-flaky": "{count} source servers were unreachable several checks in a row: {items}. Their data steps may fail or stall; run them when the host is stable.",
+    "preflight_host-os-new": "{count} source servers run an operating system newer than the newest one tested ({tested}): {items}. The migrator and agent are untested there; try one host first.",
+    "preflight_host-empty": "{count} source servers carry nothing of this run and are skipped: {items}.",
+    "preflight_disk-unknown": "The target server has no recent disk reading from its agent, so its free space could not be checked now.",
+    "preflight_disk-low": "{server} has {freeGib} GiB free of {totalGib} GiB. A run needs at least {minGib} GiB free, and the streamed copy needs about twice the data size. Free some space, or accept the risk if everything moving is small.",
+    "preflight_disk-ok": "{server} has {freeGib} GiB free of {totalGib} GiB.",
+    "preflight_target-os-new": "{server} runs {os}, newer than the newest operating system the agent is tested on ({tested}).",
+    "preflight_backup-capability-missing": "{server} does not have the backup capability, but {count} databases land on it: {items}. They could not be backed up. Grant the capability, or accept that these databases have no Tugra backup.",
+    "preflight_backup-destination-missing": "{count} databases land on {server}, but the team has no backup destination: {items}. Backups will only be kept on the server's own disk until you add one.",
+    "preflight_backup-destination-ok": "{count} databases land on {server}; the team has {destinations} backup destinations to send their backups to."
   },
   "version": {
     "title": "Source version",

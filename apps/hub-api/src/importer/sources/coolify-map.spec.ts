@@ -219,6 +219,22 @@ describe("buildCoolifyFleet", () => {
     expect(fleet.services[0]).toMatchObject({ sourceRef: "svc-1", templateSlug: "plausible" });
   });
 
+  it("carries the facts a run classifies a host by: the control-plane box, the unreachable count and the OS text; a fact the API left out stays out", () => {
+    const f = buildCoolifyFleet({
+      ...input,
+      servers: [
+        { uuid: "s1", name: "host-1", ip: "10.0.0.1", is_coolify_host: true, unreachable_count: 12, server_metadata: { os: "Ubuntu", os_release: "26.04.1 LTS" } },
+        { uuid: "s2", name: "host-2", is_coolify_host: false, unreachable_count: null, server_metadata: null },
+        { uuid: "s3", unreachable_count: -4, server_metadata: { os: 5 } },
+      ],
+    });
+    expect(f.servers).toEqual([
+      { ref: "s1", name: "host-1", ip: "10.0.0.1", controlPlane: true, unreachableCount: 12, os: "Ubuntu 26.04.1 LTS" },
+      { ref: "s2", name: "host-2", ip: undefined },
+      { ref: "s3", name: undefined, ip: undefined },
+    ]);
+  });
+
   it("warns about SQLite (no equivalent) and the service needing a sensitive token", () => {
     expect(fleet.warnings.some((w) => /no Tugra equivalent/.test(w))).toBe(true);
     expect(fleet.warnings.some((w) => /service\(s\) need a read:sensitive/.test(w))).toBe(true);
