@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { harness } from "./testing/vx-harness";
-import { APP_ID, APP_VOL_REF, DB_ID, DB_VOL_REF, GiB, OP, RUN, SERVER_ID, TEAM_ID, probeOutput } from "./testing/vx-fixtures";
+import { appTask, dbTask, opRow, APP_ID, APP_VOL_REF, DB_ID, DB_VOL_REF, GiB, OP, RUN, SERVER_ID, TEAM_ID, probeOutput } from "./testing/vx-fixtures";
 import { dbVolumeName } from "../../databases/database-script";
 
 const ctxOp = { opId: OP, actorId: "user-1", expiresAt: new Date(Date.now() + 1_800_000) };
@@ -43,6 +43,16 @@ describe("VxService.resolve (authz + destination derivation)", () => {
     await expect(harness({ app: { volumes: [] } }).svc.resolve(OP, "user-1", APP_VOL_REF)).rejects.toBeInstanceOf(NotFoundException);
     await expect(harness({ db: { serverId: "other" } }).svc.resolve(OP, "user-1", DB_VOL_REF)).rejects.toThrow(/does not belong/);
     await expect(harness({ server: null }).svc.resolve(OP, "user-1", APP_VOL_REF)).rejects.toThrow(/target server/);
+  });
+  it("multi-host: a destination placed on another target server resolves against ITS server; one that is anywhere else is refused", async () => {
+    const placed = { op: opRow({ tasks: [appTask({ serverId: "tgt-2" }), dbTask({ serverId: "tgt-2" })] }) };
+    const app = await harness({ ...placed, app: { serverId: "tgt-2" } }).svc.resolve(OP, "user-1", APP_VOL_REF);
+    expect(app.targetServerId).toBe("tgt-2");
+    const db = await harness({ ...placed, db: { serverId: "tgt-2" } }).svc.resolve(OP, "user-1", DB_VOL_REF);
+    expect(db.targetServerId).toBe("tgt-2");
+    // the resource sits on the op's default server while its task says it was placed on tgt-2 (moved since): refused
+    await expect(harness({ ...placed }).svc.resolve(OP, "user-1", APP_VOL_REF)).rejects.toThrow(/does not belong/);
+    await expect(harness({ ...placed }).svc.resolve(OP, "user-1", DB_VOL_REF)).rejects.toThrow(/does not belong/);
   });
   it("the kill switch makes every vx lookup a 404", async () => {
     process.env.MIGRATION_VX_ENABLED = "false";

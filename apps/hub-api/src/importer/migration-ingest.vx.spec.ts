@@ -100,3 +100,43 @@ describe("old-migrator guards (fail closed)", () => {
     expect((err as Error).message).toMatch(/nothing staged/); // today's behaviour
   });
 });
+
+describe("destination placement on a multi-host op (grup-7)", () => {
+  type Priv = { resolveTarget(op: typeof OP, ref: string): Promise<{ db: { serverId: string } }>; resolveVolumeTarget(op: typeof OP, ref: string, vol: string): Promise<{ app: { serverId: string } }> };
+  const placed = (taskServer: string | undefined) => (a: { where: { itemRef?: string; kind?: string } }) =>
+    Promise.resolve(
+      a.where.kind === "database"
+        ? { id: "t-db", itemRef: DB_REF, serverId: taskServer, resourceId: "db-1" }
+        : { id: "t-app", itemRef: APP_REF, serverId: taskServer, resourceId: "app-1" },
+    );
+
+  it("a database placed on another target server is a valid destination of its own task, and only of it", async () => {
+    const { svc, prisma } = make();
+    const priv = svc as unknown as Priv;
+    (prisma.bulkTask.findFirst as jest.Mock).mockImplementation(placed("tgt-2"));
+    (prisma.database.findUnique as jest.Mock).mockResolvedValue({ id: "db-1", engine: "POSTGRES", serverId: "tgt-2", teamId: "team-1", status: "NEW" });
+    await expect(priv.resolveTarget(OP, DB_REF)).resolves.toMatchObject({ db: { serverId: "tgt-2" } });
+    // the database sits on the default server while its task was placed on tgt-2: not a destination of this import
+    (prisma.database.findUnique as jest.Mock).mockResolvedValue({ id: "db-1", engine: "POSTGRES", serverId: "srv-1", teamId: "team-1", status: "NEW" });
+    await expect(priv.resolveTarget(OP, DB_REF)).rejects.toThrow(/does not belong/);
+  });
+
+  it("a task with no recorded server falls back to the op's default server (rows from before multi-host)", async () => {
+    const { svc, prisma } = make();
+    const priv = svc as unknown as Priv;
+    (prisma.bulkTask.findFirst as jest.Mock).mockImplementation(placed(undefined));
+    await expect(priv.resolveTarget(OP, DB_REF)).resolves.toMatchObject({ db: { serverId: "srv-1" } });
+    (prisma.database.findUnique as jest.Mock).mockResolvedValue({ id: "db-1", engine: "POSTGRES", serverId: "other", teamId: "team-1", status: "NEW" });
+    await expect(priv.resolveTarget(OP, DB_REF)).rejects.toThrow(/does not belong/);
+  });
+
+  it("an app volume follows its own task's server the same way", async () => {
+    const { svc, prisma } = make();
+    const priv = svc as unknown as Priv;
+    (prisma.bulkTask.findFirst as jest.Mock).mockImplementation(placed("tgt-2"));
+    (prisma.application.findUnique as jest.Mock).mockResolvedValue({ id: "app-1", serverId: "tgt-2", teamId: "team-1", clusterId: null, volumes: [{ name: "data", path: "/var/www/data" }] });
+    await expect(priv.resolveVolumeTarget(OP, APP_REF, "data")).resolves.toMatchObject({ app: { serverId: "tgt-2" } });
+    (prisma.application.findUnique as jest.Mock).mockResolvedValue({ id: "app-1", serverId: "srv-1", teamId: "team-1", clusterId: null, volumes: [{ name: "data", path: "/var/www/data" }] });
+    await expect(priv.resolveVolumeTarget(OP, APP_REF, "data")).rejects.toThrow(/does not belong/);
+  });
+});

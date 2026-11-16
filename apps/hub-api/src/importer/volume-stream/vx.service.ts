@@ -114,7 +114,7 @@ export class VxService {
     if (target.destType === "app-volume") {
       const app = await this.prisma.application.findUnique({ where: { id: task.resourceId }, select: { id: true, serverId: true, teamId: true, clusterId: true, volumes: true } });
       if (!app) throw new ConflictException("destination no longer exists");
-      if (app.serverId !== meta.serverId || app.teamId !== server.teamId) throw new ConflictException("destination does not belong to this import");
+      if (app.serverId !== (task.serverId ?? meta.serverId) || app.teamId !== server.teamId) throw new ConflictException("destination does not belong to this import");
       if (app.clusterId) throw new ConflictException("volume ingest is not supported for clustered apps");
       const declared = Array.isArray(app.volumes) ? (app.volumes as Array<{ name?: string; path?: string }>).find((v) => v?.name === target.name) : undefined;
       if (!declared || typeof declared.path !== "string") throw new NotFoundException("no such volume for this target");
@@ -136,7 +136,7 @@ export class VxService {
 
     const db = await this.prisma.database.findUnique({ where: { id: task.resourceId } });
     if (!db) throw new ConflictException("destination no longer exists");
-    if (db.serverId !== meta.serverId || db.teamId !== server.teamId) throw new ConflictException("destination does not belong to this import");
+    if (db.serverId !== (task.serverId ?? meta.serverId) || db.teamId !== server.teamId) throw new ConflictException("destination does not belong to this import");
     await this.access.requirePermission(actorId, server.teamId, "apps:config");
     await this.access.requirePermission(actorId, server.teamId, "databases");
     const res = task.result && typeof task.result === "object" ? (task.result as { credentialsCarried?: boolean }) : {};

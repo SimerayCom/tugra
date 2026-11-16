@@ -198,7 +198,9 @@ export class MigrationIngestService {
     if (!db) throw new ConflictException("destination no longer exists");
     const server = await this.prisma.server.findUnique({ where: { id: meta.serverId } });
     if (!server) throw new ConflictException("target server not found");
-    if (db.serverId !== meta.serverId || db.teamId !== server.teamId) throw new ConflictException("destination does not belong to this import");
+    // The destination must be where THIS import placed it: the op's default server, or (multi-host) the server its own task was
+    // created on. A resource on any other server is never reachable through this op.
+    if (db.serverId !== (task.serverId ?? meta.serverId) || db.teamId !== server.teamId) throw new ConflictException("destination does not belong to this import");
     // Server-ENFORCE the streamable-engine contract (not just advertise it in /targets): an engine the migrator
     // defers (ClickHouse/Mongo → S4b, LibSQL → no logical dump) is refused here too, so a non-conforming client
     // can never stage/restore a dump the restore path was never validated for.
@@ -454,7 +456,7 @@ export class MigrationIngestService {
     const meta = opRow.meta as { serverId: string; hubBase?: string };
     const task = await this.prisma.bulkTask.findFirst({
       where: { opId: op.opId, itemRef: appItemRef, status: "DONE", kind: "app", resourceType: "application" },
-      select: { id: true, itemRef: true, resourceId: true },
+      select: { id: true, itemRef: true, resourceId: true, serverId: true },
     });
     if (!task || !task.resourceId || !task.itemRef) throw new NotFoundException("no such migration target"); // 404, not 403: no itemRef oracle
     const app = await this.prisma.application.findUnique({
@@ -464,7 +466,7 @@ export class MigrationIngestService {
     if (!app) throw new ConflictException("destination no longer exists");
     const server = await this.prisma.server.findUnique({ where: { id: meta.serverId } });
     if (!server) throw new ConflictException("target server not found");
-    if (app.serverId !== meta.serverId || app.teamId !== server.teamId) throw new ConflictException("destination does not belong to this import");
+    if (app.serverId !== (task.serverId ?? meta.serverId) || app.teamId !== server.teamId) throw new ConflictException("destination does not belong to this import");
     // A clustered app's stateful volume lives on its pinned node (constraintServerId), not app.serverId — v1
     // refuses it rather than mis-targeting the write. Coolify imports normally create non-cluster apps.
     if (app.clusterId) throw new ConflictException("volume ingest is not supported for clustered apps");
