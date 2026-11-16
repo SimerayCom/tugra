@@ -5636,6 +5636,310 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/migration-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["MigrationRunsController_list"];
+        put?: never;
+        post: operations["MigrationRunsController_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/migration-runs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["MigrationRunsController_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/migration-runs/{id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["MigrationRunsController_events"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/migration-runs/{id}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["MigrationRunsController_start"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/migration-runs/{id}/steps/{key}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["MigrationRunsController_approve"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/migration-runs/{id}/steps/{key}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["MigrationRunsController_retry"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/migration-runs/{id}/steps/{key}/skip": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["MigrationRunsController_skip"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/migration-runs/{id}/steps/{key}/evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["MigrationRunsController_evidence"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/migration-runs/{id}/steps/{key}/attach": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["MigrationRunsController_attach"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/migration-runs/{id}/steps/{key}/command": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["MigrationRunsController_command"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/migration-runs/{id}/inputs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["MigrationRunsController_setInputs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/migration-runs/{id}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["MigrationRunsController_pause"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/migration-runs/{id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["MigrationRunsController_resume"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/migration-runs/{id}/abort": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["MigrationRunsController_abort"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/migration-runs/{id}/cleanup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["MigrationRunsController_cleanup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/migration-runs/{id}/reverse": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["MigrationRunsController_reverse"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/migration-runs/{id}/decommission": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["MigrationRunsController_decommission"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/migration-runs/{id}/source-session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["MigrationRunsController_sourceSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/migration-runs/{id}/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["MigrationRunsController_report"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/cloud-credentials": {
         parameters: {
             query?: never;
@@ -6259,6 +6563,323 @@ export interface components {
             message: string | string[];
             code: string;
             retryAfterSec?: number;
+        };
+        MigrationRunView: {
+            id: string;
+            teamId: string;
+            actorId: string;
+            targetServerId: string;
+            targetServerName: string | null;
+            /** @enum {string} */
+            sourceKind: "coolify" | "dokploy";
+            sourceHost: string | null;
+            opId: string | null;
+            opHistory: string[];
+            planHash: string;
+            /** @enum {string} */
+            mode: "copy" | "takeover";
+            /** @enum {string} */
+            topology: "two-box" | "swap-proxy";
+            dryRun: boolean;
+            promotedFromId: string | null;
+            /** @enum {string} */
+            status: "QUEUED" | "RUNNING" | "WAITING" | "PAUSED" | "ABORTING" | "ABORTED" | "ROLLING_BACK" | "ROLLED_BACK" | "REVERSING" | "REVERSED" | "COMPLETED" | "FAILED" | "DRY_RUN_DONE";
+            /** @enum {string|null} */
+            currentStep: "PREFLIGHT" | "IMPORT" | "DNS_PREPARE" | "DATA_SEED" | "FREEZE" | "DATA_FINAL" | "REMAP_ENV" | "DEPLOY_DARK" | "TLS_PREISSUE" | "VERIFY" | "CUTOVER" | "OBSERVE" | "FINALIZE" | "DECOMMISSION" | null;
+            ponrAt: string | null;
+            pauseRequested: boolean;
+            abortRequested: boolean;
+            options: {
+                /**
+                 * @default wait
+                 * @enum {string}
+                 */
+                ttlPolicy: "wait" | "skip-ack";
+                /**
+                 * @default single
+                 * @enum {string}
+                 */
+                deployWaves: "single" | "earlyStateless";
+                /** @default false */
+                warmDbSeed: boolean;
+                /** @default false */
+                stopSource: boolean;
+                /**
+                 * @default operator
+                 * @enum {string}
+                 */
+                sourceRunner: "operator" | "agent";
+                /**
+                 * @default none
+                 * @enum {string}
+                 */
+                certs: "none" | "seed";
+                /** @default false */
+                acceptHttp01Gap: boolean;
+                freezeAt?: string;
+                /** @default 30 */
+                observeMinutes: number;
+                /** @default false */
+                manualFinalize: boolean;
+                /** @default 5 */
+                batchSize: number;
+                /** @default 30 */
+                intervalSec: number;
+                dnsCredentialId?: string;
+                healthPath?: string;
+                /**
+                 * @default estimate
+                 * @enum {string}
+                 */
+                rowCountMode: "exact" | "estimate";
+                /** @default 72 */
+                decommissionMinAgeHours: number;
+                /** @default 60 */
+                stuckOperatorMinutes: number;
+            };
+            inputs: {
+                acmeEmail?: {
+                    value: string | "unknown";
+                    /** @enum {string} */
+                    source: "request" | "default" | "derived";
+                    setBy: string | null;
+                    at: string;
+                };
+                allowBind?: {
+                    value: boolean | "unknown";
+                    /** @enum {string} */
+                    source: "request" | "default" | "derived";
+                    setBy: string | null;
+                    at: string;
+                };
+                allowLiveShapeProbe?: {
+                    value: boolean | "unknown";
+                    /** @enum {string} */
+                    source: "request" | "default" | "derived";
+                    setBy: string | null;
+                    at: string;
+                };
+                sourceController?: {
+                    value: ("manual" | "api" | "agent") | "unknown";
+                    /** @enum {string} */
+                    source: "request" | "default" | "derived";
+                    setBy: string | null;
+                    at: string;
+                };
+            };
+            windowEstimate: {
+                freezeToFlipSec: number | null;
+                basis: {
+                    code: string;
+                    params?: {
+                        [key: string]: string | number | boolean | ("null" | null) | (string | number | boolean | ("null" | null))[];
+                    };
+                }[];
+                estimatedAt: string;
+            } | null;
+            freezeStartedAt: string | null;
+            freezeEndedAt: string | null;
+            measuredDowntimeSec: number | null;
+            failure: {
+                /** @enum {string|null} */
+                step: "PREFLIGHT" | "IMPORT" | "DNS_PREPARE" | "DATA_SEED" | "FREEZE" | "DATA_FINAL" | "REMAP_ENV" | "DEPLOY_DARK" | "TLS_PREISSUE" | "VERIFY" | "CUTOVER" | "OBSERVE" | "FINALIZE" | "DECOMMISSION" | null;
+                code: string;
+            } | null;
+            nextAction: {
+                /** @enum {string} */
+                kind: "operator" | "approval" | "timer" | "gate" | "session" | "paused" | "failed" | "engine" | "none";
+                /** @enum {string|null} */
+                stepKey: "PREFLIGHT" | "IMPORT" | "DNS_PREPARE" | "DATA_SEED" | "FREEZE" | "DATA_FINAL" | "REMAP_ENV" | "DEPLOY_DARK" | "TLS_PREISSUE" | "VERIFY" | "CUTOVER" | "OBSERVE" | "FINALIZE" | "DECOMMISSION" | null;
+                code: string;
+                params?: {
+                    [key: string]: string | number | boolean | ("null" | null) | (string | number | boolean | ("null" | null))[];
+                };
+                since: string;
+                notBefore?: string | null;
+                approval?: {
+                    inputHash: string;
+                    ponr: boolean;
+                    /** @enum {string} */
+                    confirm: "none" | "run-id" | "target-server" | "target-server+source-host" | "source-host";
+                    ttlSec: number | null;
+                    requiresDataRisk: boolean;
+                    ackable: string[];
+                    requiredAcks: string[];
+                    review: {
+                        [key: string]: string | number | boolean | ("null" | null) | (string | number | boolean | ("null" | null))[];
+                    };
+                };
+                attest?: string[];
+                offersCommand?: boolean;
+            };
+            allowed: {
+                start: boolean;
+                pause: boolean;
+                resume: boolean;
+                abort: boolean;
+                cleanup: boolean;
+                reverse: boolean;
+                decommission: boolean;
+                setInputs: boolean;
+                sourceSession: boolean;
+            };
+            steps: {
+                /** @enum {string} */
+                key: "PREFLIGHT" | "IMPORT" | "DNS_PREPARE" | "DATA_SEED" | "FREEZE" | "DATA_FINAL" | "REMAP_ENV" | "DEPLOY_DARK" | "TLS_PREISSUE" | "VERIFY" | "CUTOVER" | "OBSERVE" | "FINALIZE" | "DECOMMISSION";
+                idx: number;
+                /** @enum {string} */
+                kind: "auto" | "operator" | "approval" | "timer";
+                /** @enum {string} */
+                status: "PENDING" | "RUNNING" | "WAITING_OPERATOR" | "WAITING_APPROVAL" | "WAITING_TIMER" | "PASSED" | "FAILED" | "SKIPPED" | "COMPENSATED";
+                /** @enum {string} */
+                rollbackClass: "FREE" | "UNDOABLE" | "LOSSY_AFTER_PONR" | "IRREVERSIBLE";
+                attempt: number;
+                skippedCode: string | null;
+                gate: {
+                    passed: boolean;
+                    checks: {
+                        id: string;
+                        /** @enum {string} */
+                        status: "pass" | "fail" | "warn" | "unknown";
+                        code: string;
+                        params?: {
+                            [key: string]: string | number | boolean | ("null" | null) | (string | number | boolean | ("null" | null))[];
+                        };
+                        subject?: string;
+                        /** @enum {string} */
+                        evidence?: "hub-verified" | "migrator-reported" | "operator-attested";
+                        /** @enum {string} */
+                        ownerInput?: "acmeEmail" | "allowBind" | "allowLiveShapeProbe" | "sourceController";
+                        ackable?: boolean;
+                        acked?: boolean;
+                    }[];
+                    wait?: {
+                        /** @enum {string} */
+                        kind: "operator";
+                        code: string;
+                        params?: {
+                            [key: string]: string | number | boolean | ("null" | null) | (string | number | boolean | ("null" | null))[];
+                        };
+                        offersCommand?: boolean;
+                        attest?: string[];
+                    } | {
+                        /** @enum {string} */
+                        kind: "approval";
+                        binding: {
+                            inputHash: string;
+                            ponr: boolean;
+                            /** @enum {string} */
+                            confirm: "none" | "run-id" | "target-server" | "target-server+source-host" | "source-host";
+                            ttlSec: number | null;
+                            requiresDataRisk: boolean;
+                            ackable: string[];
+                            requiredAcks: string[];
+                            review: {
+                                [key: string]: string | number | boolean | ("null" | null) | (string | number | boolean | ("null" | null))[];
+                            };
+                        };
+                    } | {
+                        /** @enum {string} */
+                        kind: "timer";
+                        notBefore: string;
+                        code: string;
+                        params?: {
+                            [key: string]: string | number | boolean | ("null" | null) | (string | number | boolean | ("null" | null))[];
+                        };
+                    };
+                } | null;
+                approval: {
+                    byUserId: string;
+                    at: string;
+                    boundHash: string;
+                    acks: string[];
+                    acceptDataRisk: boolean;
+                    expiresAt: string | null;
+                } | null;
+                wait: ({
+                    /** @enum {string} */
+                    kind: "operator";
+                    code: string;
+                    params?: {
+                        [key: string]: string | number | boolean | ("null" | null) | (string | number | boolean | ("null" | null))[];
+                    };
+                    offersCommand?: boolean;
+                    attest?: string[];
+                } | {
+                    /** @enum {string} */
+                    kind: "approval";
+                    binding: {
+                        inputHash: string;
+                        ponr: boolean;
+                        /** @enum {string} */
+                        confirm: "none" | "run-id" | "target-server" | "target-server+source-host" | "source-host";
+                        ttlSec: number | null;
+                        requiresDataRisk: boolean;
+                        ackable: string[];
+                        requiredAcks: string[];
+                        review: {
+                            [key: string]: string | number | boolean | ("null" | null) | (string | number | boolean | ("null" | null))[];
+                        };
+                    };
+                } | {
+                    /** @enum {string} */
+                    kind: "timer";
+                    notBefore: string;
+                    code: string;
+                    params?: {
+                        [key: string]: string | number | boolean | ("null" | null) | (string | number | boolean | ("null" | null))[];
+                    };
+                }) | null;
+                progress: {
+                    done: number;
+                    total: number;
+                    /** @enum {string} */
+                    unit: "item" | "byte" | "volume" | "host" | "app" | "database" | "bucket" | "second";
+                    etaSec?: number | null;
+                    dryRun?: {
+                        code: string;
+                        /** @enum {string} */
+                        level: "info" | "warn" | "block" | "unknown";
+                        subject?: string;
+                        params?: {
+                            [key: string]: string | number | boolean | ("null" | null) | (string | number | boolean | ("null" | null))[];
+                        };
+                    }[];
+                } | null;
+                evidence: {
+                    attestations: {
+                        checkId: string;
+                        subject?: string;
+                        note?: string;
+                        byUserId: string;
+                        at: string;
+                    }[];
+                    attachments: {
+                        /** @enum {string} */
+                        kind: "object-migration";
+                        resourceId: string;
+                        byUserId: string;
+                        at: string;
+                    }[];
+                };
+                notBefore: string | null;
+                startedAt: string | null;
+                finishedAt: string | null;
+                lastError: string | null;
+                allowed: {
+                    approve: boolean;
+                    retry: boolean;
+                    skip: boolean;
+                    evidence: boolean;
+                    attach: boolean;
+                    command: boolean;
+                };
+            }[];
+            eventSeq: number;
+            createdAt: string;
+            startedAt: string | null;
+            finishedAt: string | null;
+            updatedAt: string;
         };
     };
     responses: never;
@@ -41804,6 +42425,1807 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    MigrationRunsController_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        id: string;
+                        teamId: string;
+                        targetServerId: string;
+                        targetServerName: string | null;
+                        /** @enum {string} */
+                        sourceKind: "coolify" | "dokploy";
+                        sourceHost: string | null;
+                        /** @enum {string} */
+                        mode: "copy" | "takeover";
+                        /** @enum {string} */
+                        topology: "two-box" | "swap-proxy";
+                        dryRun: boolean;
+                        /** @enum {string} */
+                        status: "QUEUED" | "RUNNING" | "WAITING" | "PAUSED" | "ABORTING" | "ABORTED" | "ROLLING_BACK" | "ROLLED_BACK" | "REVERSING" | "REVERSED" | "COMPLETED" | "FAILED" | "DRY_RUN_DONE";
+                        /** @enum {string|null} */
+                        currentStep: "PREFLIGHT" | "IMPORT" | "DNS_PREPARE" | "DATA_SEED" | "FREEZE" | "DATA_FINAL" | "REMAP_ENV" | "DEPLOY_DARK" | "TLS_PREISSUE" | "VERIFY" | "CUTOVER" | "OBSERVE" | "FINALIZE" | "DECOMMISSION" | null;
+                        ponrAt: string | null;
+                        stepsPassed: number;
+                        stepsTotal: number;
+                        /** @enum {string} */
+                        nextActionKind: "operator" | "approval" | "timer" | "gate" | "session" | "paused" | "failed" | "engine" | "none";
+                        failure: {
+                            /** @enum {string|null} */
+                            step: "PREFLIGHT" | "IMPORT" | "DNS_PREPARE" | "DATA_SEED" | "FREEZE" | "DATA_FINAL" | "REMAP_ENV" | "DEPLOY_DARK" | "TLS_PREISSUE" | "VERIFY" | "CUTOVER" | "OBSERVE" | "FINALIZE" | "DECOMMISSION" | null;
+                            code: string;
+                        } | null;
+                        createdAt: string;
+                        startedAt: string | null;
+                        finishedAt: string | null;
+                    }[];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    MigrationRunsController_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    sessionId: string;
+                    /** @enum {string} */
+                    sourceKind: "coolify" | "dokploy";
+                    targetServerId: string;
+                    environmentId?: string;
+                    planHash: string;
+                    acks?: {
+                        /** @enum {string} */
+                        code: "app.env.unresolved" | "app.env.key.invalid";
+                        itemRef?: string;
+                    }[];
+                    serviceChoices?: {
+                        [key: string]: {
+                            skip?: boolean;
+                            name?: string;
+                            environmentId?: string;
+                            targetServerId?: string;
+                            serviceDomains?: {
+                                service: string;
+                                hostname: string;
+                                port: number;
+                            }[];
+                            hostnameMap?: {
+                                [key: string]: string;
+                            };
+                            volumes?: {
+                                [key: string]: {
+                                    /** @enum {string} */
+                                    policy: "copy" | "empty" | "skip";
+                                    owner?: {
+                                        uid: number;
+                                        gid: number;
+                                    };
+                                };
+                            };
+                            dropMembers?: string[];
+                            pinImages?: boolean;
+                            pins?: {
+                                [key: string]: string;
+                            };
+                            privateNetwork?: boolean;
+                            hold?: boolean;
+                        };
+                    };
+                    mapping?: {
+                        /** @enum {number} */
+                        version: 1;
+                        scope?: {
+                            /** @enum {string} */
+                            sourceKind: "coolify" | "dokploy";
+                            scopeKey?: string;
+                        };
+                        /** @default {} */
+                        items?: {
+                            [key: string]: {
+                                include?: boolean;
+                                name?: string;
+                                project?: string;
+                                environment?: string;
+                                containerAlias?: string | null;
+                                dbIdentifier?: string;
+                            };
+                        };
+                        /** @default {} */
+                        projects?: {
+                            [key: string]: {
+                                name?: string;
+                                environments?: {
+                                    [key: string]: string;
+                                };
+                            };
+                        };
+                        /** @default {} */
+                        gitSources?: {
+                            [key: string]: {
+                                name: string;
+                            };
+                        };
+                        /** @default [] */
+                        acks?: string[];
+                    };
+                    mappingHash?: string;
+                    reconcile?: boolean;
+                    ignoreStoredMapping?: boolean;
+                    saveMapping?: boolean;
+                    dbDataModes?: {
+                        [key: string]: "volume";
+                    };
+                    /**
+                     * @default copy
+                     * @enum {string}
+                     */
+                    mode?: "copy" | "takeover";
+                    /**
+                     * @default two-box
+                     * @enum {string}
+                     */
+                    topology?: "two-box" | "swap-proxy";
+                    /** @default false */
+                    dryRun?: boolean;
+                    /** @default {} */
+                    options?: {
+                        /**
+                         * @default wait
+                         * @enum {string}
+                         */
+                        ttlPolicy?: "wait" | "skip-ack";
+                        /**
+                         * @default single
+                         * @enum {string}
+                         */
+                        deployWaves?: "single" | "earlyStateless";
+                        /** @default false */
+                        warmDbSeed?: boolean;
+                        /** @default false */
+                        stopSource?: boolean;
+                        /**
+                         * @default operator
+                         * @enum {string}
+                         */
+                        sourceRunner?: "operator" | "agent";
+                        /**
+                         * @default none
+                         * @enum {string}
+                         */
+                        certs?: "none" | "seed";
+                        /** @default false */
+                        acceptHttp01Gap?: boolean;
+                        freezeAt?: string;
+                        /** @default 30 */
+                        observeMinutes?: number;
+                        /** @default false */
+                        manualFinalize?: boolean;
+                        /** @default 5 */
+                        batchSize?: number;
+                        /** @default 30 */
+                        intervalSec?: number;
+                        dnsCredentialId?: string;
+                        healthPath?: string;
+                        /**
+                         * @default estimate
+                         * @enum {string}
+                         */
+                        rowCountMode?: "exact" | "estimate";
+                        /** @default 72 */
+                        decommissionMinAgeHours?: number;
+                        /** @default 60 */
+                        stuckOperatorMinutes?: number;
+                    };
+                    /** @default {} */
+                    inputs?: {
+                        acmeEmail?: string | "unknown";
+                        allowBind?: boolean | "unknown";
+                        allowLiveShapeProbe?: boolean | "unknown";
+                        sourceController?: ("manual" | "api" | "agent") | "unknown";
+                    };
+                };
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MigrationRunView"];
+                };
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    MigrationRunsController_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MigrationRunView"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    MigrationRunsController_events: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        events: {
+                            seq: number;
+                            at: string;
+                            /** @enum {string|null} */
+                            stepKey: "PREFLIGHT" | "IMPORT" | "DNS_PREPARE" | "DATA_SEED" | "FREEZE" | "DATA_FINAL" | "REMAP_ENV" | "DEPLOY_DARK" | "TLS_PREISSUE" | "VERIFY" | "CUTOVER" | "OBSERVE" | "FINALIZE" | "DECOMMISSION" | null;
+                            /** @enum {string} */
+                            level: "info" | "warn" | "error";
+                            code: string;
+                            params: {
+                                [key: string]: string | number | boolean | ("null" | null) | (string | number | boolean | ("null" | null))[];
+                            } | null;
+                            actorId: string | null;
+                        }[];
+                        lastSeq: number;
+                        hasMore: boolean;
+                    };
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    MigrationRunsController_start: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    sessionId?: string;
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MigrationRunView"];
+                };
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    MigrationRunsController_approve: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    boundHash: string;
+                    /** @default [] */
+                    acks?: string[];
+                    confirmName?: string;
+                    acceptDataRisk?: boolean;
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MigrationRunView"];
+                };
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    MigrationRunsController_retry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MigrationRunView"];
+                };
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    MigrationRunsController_skip: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    reason?: string;
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MigrationRunView"];
+                };
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    MigrationRunsController_evidence: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    checkId: string;
+                    subject?: string;
+                    note?: string;
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MigrationRunView"];
+                };
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    MigrationRunsController_attach: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    kind: "object-migration";
+                    resourceId: string;
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MigrationRunView"];
+                };
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    MigrationRunsController_command: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @default false */
+                    reissue?: boolean;
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        stepKey: "PREFLIGHT" | "IMPORT" | "DNS_PREPARE" | "DATA_SEED" | "FREEZE" | "DATA_FINAL" | "REMAP_ENV" | "DEPLOY_DARK" | "TLS_PREISSUE" | "VERIFY" | "CUTOVER" | "OBSERVE" | "FINALIZE" | "DECOMMISSION";
+                        opId: string;
+                        expiresAt: string;
+                        command: string;
+                        commands?: {
+                            dryRun: string;
+                            run: string;
+                            resume: string;
+                        };
+                        /** @enum {boolean} */
+                        shownOnce: true;
+                    };
+                };
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    MigrationRunsController_setInputs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    acmeEmail?: string | "unknown";
+                    allowBind?: boolean | "unknown";
+                    allowLiveShapeProbe?: boolean | "unknown";
+                    sourceController?: ("manual" | "api" | "agent") | "unknown";
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MigrationRunView"];
+                };
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    MigrationRunsController_pause: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MigrationRunView"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    MigrationRunsController_resume: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MigrationRunView"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    MigrationRunsController_abort: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    confirmName: string;
+                };
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MigrationRunView"];
+                };
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    MigrationRunsController_cleanup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    confirmName: string;
+                    /** @default false */
+                    includeData?: boolean;
+                    /** @default [] */
+                    dataConfirmNames?: string[];
+                };
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MigrationRunView"];
+                };
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    MigrationRunsController_reverse: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    confirmName: string;
+                    /** @enum {boolean} */
+                    acknowledgeDataLoss: true;
+                };
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MigrationRunView"];
+                };
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    MigrationRunsController_decommission: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    confirmName: string;
+                };
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MigrationRunView"];
+                };
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    MigrationRunsController_sourceSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    token: string;
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        sessionId: string;
+                        expiresAt: string;
+                    };
+                };
+            };
+            /** @description Invalid or malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Authenticated but not permitted (scope or team permission). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Rate limit exceeded; see Retry-After. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    MigrationRunsController_report: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        runId: string;
+                        generatedAt: string;
+                        /** @enum {string} */
+                        status: "QUEUED" | "RUNNING" | "WAITING" | "PAUSED" | "ABORTING" | "ABORTED" | "ROLLING_BACK" | "ROLLED_BACK" | "REVERSING" | "REVERSED" | "COMPLETED" | "FAILED" | "DRY_RUN_DONE";
+                        /** @enum {string} */
+                        mode: "copy" | "takeover";
+                        /** @enum {string} */
+                        topology: "two-box" | "swap-proxy";
+                        dryRun: boolean;
+                        source: {
+                            /** @enum {string} */
+                            kind: "coolify" | "dokploy";
+                            host: string | null;
+                        };
+                        target: {
+                            serverId: string;
+                            serverName: string | null;
+                        };
+                        ponrAt: string | null;
+                        window: {
+                            estimatedSec: number | null;
+                            measuredSec: number | null;
+                        };
+                        steps: {
+                            /** @enum {string} */
+                            key: "PREFLIGHT" | "IMPORT" | "DNS_PREPARE" | "DATA_SEED" | "FREEZE" | "DATA_FINAL" | "REMAP_ENV" | "DEPLOY_DARK" | "TLS_PREISSUE" | "VERIFY" | "CUTOVER" | "OBSERVE" | "FINALIZE" | "DECOMMISSION";
+                            /** @enum {string} */
+                            status: "PENDING" | "RUNNING" | "WAITING_OPERATOR" | "WAITING_APPROVAL" | "WAITING_TIMER" | "PASSED" | "FAILED" | "SKIPPED" | "COMPENSATED";
+                            attempts: number;
+                            durationSec: number | null;
+                            code: string | null;
+                        }[];
+                        items: {
+                            /** @enum {string} */
+                            kind: "app" | "database" | "service" | "volume" | "bucket" | "domain";
+                            name: string;
+                            /** @enum {string} */
+                            outcome: "moved" | "skipped" | "acked" | "failed" | "not-cut-over";
+                            code: string | null;
+                            /** @enum {string|null} */
+                            evidence: "hub-verified" | "migrator-reported" | "operator-attested" | null;
+                        }[];
+                        evidenceSummary: {
+                            "hub-verified": number;
+                            "migrator-reported": number;
+                            "operator-attested": number;
+                        };
+                        manual: {
+                            code: string;
+                            params?: {
+                                [key: string]: string | number | boolean | ("null" | null) | (string | number | boolean | ("null" | null))[];
+                            };
+                        }[];
+                    };
                 };
             };
             /** @description Missing or invalid authentication. */
