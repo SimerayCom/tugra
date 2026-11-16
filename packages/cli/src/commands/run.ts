@@ -13,16 +13,27 @@ import { printJson, printLine, printTable } from "../output";
 /** The env var `source-session` reads the Coolify/Dokploy API token from (never a flag: shell history, process list). */
 export const SOURCE_TOKEN_ENV = "TUGRA_SOURCE_TOKEN";
 
-export const RUN_ACTIONS = ["status", "start", "approve", "retry", "skip", "evidence", "attach", "command", "inputs", "pause", "resume", "abort", "cleanup", "reverse", "decommission", "source-session", "report", "events"] as const;
+export const RUN_ACTIONS = ["status", "start", "approve", "retry", "skip", "evidence", "attach", "command", "inputs", "pause", "resume", "abort", "cleanup", "reverse", "decommission", "source-session", "report", "events", "safety-hints", "image-pin", "worker-mark"] as const;
 export type RunAction = (typeof RUN_ACTIONS)[number];
 
 export const SOURCE_KINDS = ["coolify", "dokploy"] as const;
 export const MODES = ["copy", "takeover"] as const;
 export const TOPOLOGIES = ["two-box", "swap-proxy"] as const;
 export const TTL_POLICIES = ["wait", "skip-ack"] as const;
-export const DEPLOY_WAVES = ["single", "earlyStateless"] as const;
+export const DEPLOY_WAVES = ["single", "earlyStateless", "earlyBuild"] as const;
 export const CERT_MODES = ["none", "seed"] as const;
-export const SOURCE_RUNNERS = ["operator", "agent"] as const;
+export const SOURCE_RUNNERS = ["operator", "agent", "coolify-host-loop"] as const;
+export const COMMAND_KINDS = ["migrator", "host-loop", "inventory"] as const;
+export const LARGE_DB_MODES = ["refuse", "stream-logical"] as const;
+export const MINIO_POLICIES = ["hold", "mirror", "external"] as const;
+export const WORKER_POLICIES = ["hold-dark", "start-dark", "exclude"] as const;
+export const UNLISTED_DB_POLICIES = ["block", "carry", "skip"] as const;
+export const ORPHAN_VOLUME_POLICIES = ["block", "skip"] as const;
+export const WORKER_ROLES = ["job-runner", "web", "none"] as const;
+export const PIN_EVIDENCE = ["operator-attested", "host-loop-reported"] as const;
+/** The hub's limits on a placement map and a host-loop key directory. */
+export const SERVER_MAP_MAX = 64;
+export const HOST_LOOP_DEFAULT_KEY_DIR = "/data/coolify/ssh/keys";
 export const SOURCE_CONTROLLERS = ["manual", "api", "agent"] as const;
 export const ROW_COUNT_MODES = ["exact", "estimate"] as const;
 
@@ -32,7 +43,7 @@ export const TERMINAL_STATUSES: readonly string[] = ["ABORTED", "ROLLED_BACK", "
 export const HUMAN_WAITS: readonly string[] = ["operator", "approval", "session", "gate", "paused", "failed"];
 
 export interface Req {
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "PUT";
   path: string;
   body?: unknown;
 }
@@ -60,6 +71,15 @@ export interface RunOpts {
   warmDbSeed?: boolean;
   stopSource?: boolean;
   sourceRunner?: string;
+  /** Multi-host placement: source server uuid -> Tugra server id (from `--map` and/or `--server-map-file`). */
+  serverMap?: Record<string, string>;
+  campaign?: string;
+  hostLoopKeyDir?: string;
+  hostLoopParallel?: number;
+  hostLoopConnectTimeout?: number;
+  hostLoopRetries?: number;
+  deployConcurrency?: number;
+  largeDbMode?: string;
   certs?: string;
   acceptHttp01Gap?: boolean;
   freezeAt?: string;
@@ -76,6 +96,21 @@ export interface RunOpts {
   allowBind?: boolean;
   allowLiveProbe?: boolean;
   sourceController?: string;
+  minioPolicy?: string;
+  tickGapAccept?: number;
+  workerPolicy?: string;
+  unlistedDbPolicy?: string;
+  orphanVolumePolicy?: string;
+  // command
+  kind?: string;
+  // safety hints
+  image?: string;
+  digest?: string;
+  scope?: string;
+  evidenceKind?: string;
+  remove?: boolean;
+  item?: string;
+  role?: string;
   // list
   team?: string;
   status?: string;
@@ -125,8 +160,52 @@ const stepPath = (runId: string, step: string | undefined, action: string): stri
 /** `GET /migration-runs`. */
 export function buildListRequest(o: RunOpts): Req {
   int(o.limit, 1, 200, "--limit");
-  return { method: "GET", path: `/migration-runs${q({ teamId: o.team, status: o.status, active: o.active === undefined ? undefined : o.active, limit: o.limit })}` };
+  if (o.campaign !== undefined) validateCampaign(o.campaign);
+  return { method: "GET", path: `/migration-runs${q({ teamId: o.team, status: o.status, active: o.active === undefined ? undefined : o.active, campaign: o.campaign, limit: o.limit })}` };
 }
+
+/** A campaign label: 1-80 printable characters (the hub trims it). */
+function validateCampaign(v: string): void {
+  const c = v.trim();
+  need(c.length >= 1 && c.length <= 80 && !/\p{Cc}/u.test(c), "--campaign must be 1-80 printable characters");
+}
+
+/** The hub's rule for a source server ref in a placement map: printable ASCII, 1-200 characters, never a prototype name. */
+const SOURCE_REF_RE = /^[\x21-\x7e]{1,200}$/;
+
+/**
+ * Turn repeated `--map <sourceServer>=<targetServerId>` values into a placement map. The source server is the Coolify server
+ * uuid; `_` stands for resources whose source host the source did not say. A duplicate source server is refused rather than
+ * silently overwritten.
+ */
+export function parseServerMap(pairs: readonly string[]): Record<string, string> {
+  const out: Record<string, string> = Object.create(null) as Record<string, string>;
+  for (const p of pairs) {
+    const i = p.indexOf("=");
+    need(i > 0 && i < p.length - 1, `--map expects <source-server-uuid>=<tugra-server-id>, got "${p}"`);
+    const src = p.slice(0, i);
+    const dst = p.slice(i + 1).trim();
+    need(SOURCE_REF_RE.test(src) && src !== "__proto__" && src !== "constructor" && src !== "prototype", `--map: "${src}" is not a valid source server ref`);
+    need(dst.length > 0 && dst.length <= 64, `--map: "${src}" needs a Tugra server id`);
+    need(!(src in out), `--map: source server "${src}" is mapped twice`);
+    out[src] = dst;
+  }
+  return { ...out };
+}
+
+/** Validate a placement map the way the hub does, before any request is made. */
+function validateServerMap(map: Record<string, string>): void {
+  const entries = Object.entries(map);
+  need(entries.length >= 1, "the server map is empty: pass at least one --map, or leave it out for a single-target run");
+  need(entries.length <= SERVER_MAP_MAX, `a server map holds at most ${SERVER_MAP_MAX} source servers`);
+  for (const [src, dst] of entries) {
+    need(SOURCE_REF_RE.test(src) && src !== "__proto__" && src !== "constructor" && src !== "prototype", `server map: "${src}" is not a valid source server ref`);
+    need(typeof dst === "string" && dst.length > 0 && dst.length <= 64, `server map: "${src}" needs a Tugra server id`);
+  }
+}
+
+/** The hub's keyDir rule for the host-loop runner: absolute, [A-Za-z0-9._/-] only, no `..` segment. */
+const validKeyDir = (p: string): boolean => /^\/[A-Za-z0-9._\/-]{0,200}$/.test(p) && !p.split("/").includes("..");
 
 /** `POST /migration-runs`. Only what was asked for is sent; the hub applies the safe defaults. */
 export function buildCreateRequest(o: RunOpts): Req {
@@ -143,6 +222,21 @@ export function buildCreateRequest(o: RunOpts): Req {
   oneOf(o.sourceRunner, SOURCE_RUNNERS, "--source-runner");
   oneOf(o.rowCountMode, ROW_COUNT_MODES, "--row-count-mode");
   oneOf(o.sourceController, SOURCE_CONTROLLERS, "--source-controller");
+  oneOf(o.largeDbMode, LARGE_DB_MODES, "--large-db-mode");
+  oneOf(o.minioPolicy, MINIO_POLICIES, "--minio-policy");
+  oneOf(o.workerPolicy, WORKER_POLICIES, "--worker-policy");
+  oneOf(o.unlistedDbPolicy, UNLISTED_DB_POLICIES, "--unlisted-db-policy");
+  oneOf(o.orphanVolumePolicy, ORPHAN_VOLUME_POLICIES, "--orphan-volume-policy");
+  int(o.tickGapAccept, 0, 7 * 24 * 60, "--tick-gap-accept");
+  int(o.deployConcurrency, 1, 8, "--deploy-concurrency");
+  int(o.hostLoopParallel, 1, 8, "--host-loop-parallel");
+  int(o.hostLoopConnectTimeout, 5, 120, "--host-loop-connect-timeout");
+  int(o.hostLoopRetries, 0, 5, "--host-loop-retries");
+  if (o.campaign !== undefined) validateCampaign(o.campaign);
+  if (o.serverMap !== undefined) validateServerMap(o.serverMap);
+  const hostLoopFlags = o.hostLoopKeyDir !== undefined || o.hostLoopParallel !== undefined || o.hostLoopConnectTimeout !== undefined || o.hostLoopRetries !== undefined;
+  need(!hostLoopFlags || o.sourceRunner === "coolify-host-loop", "the --host-loop-* flags need --source-runner coolify-host-loop");
+  if (o.hostLoopKeyDir !== undefined) need(validKeyDir(o.hostLoopKeyDir), "--host-loop-key-dir must be an absolute path of letters, digits and . _ / - without ..");
   int(o.observeMinutes, 0, 4320, "--observe-minutes");
   int(o.batchSize, 1, 25, "--batch-size");
   int(o.interval, 5, 600, "--interval");
@@ -170,12 +264,25 @@ export function buildCreateRequest(o: RunOpts): Req {
     ...(o.rowCountMode ? { rowCountMode: o.rowCountMode } : {}),
     ...(o.decommissionMinAge !== undefined ? { decommissionMinAgeHours: o.decommissionMinAge } : {}),
     ...(o.stuckOperatorMinutes !== undefined ? { stuckOperatorMinutes: o.stuckOperatorMinutes } : {}),
+    ...(hostLoopFlags
+      ? {
+          hostLoop: {
+            keyDir: o.hostLoopKeyDir ?? HOST_LOOP_DEFAULT_KEY_DIR,
+            ...(o.hostLoopParallel !== undefined ? { parallel: o.hostLoopParallel } : {}),
+            ...(o.hostLoopConnectTimeout !== undefined ? { connectTimeoutSec: o.hostLoopConnectTimeout } : {}),
+            ...(o.hostLoopRetries !== undefined ? { retries: o.hostLoopRetries } : {}),
+          },
+        }
+      : {}),
+    ...(o.deployConcurrency !== undefined ? { deployConcurrency: o.deployConcurrency } : {}),
+    ...(o.largeDbMode ? { largeDbMode: o.largeDbMode } : {}),
   };
   const inputs: Record<string, unknown> = {
     ...(o.acmeEmail ? { acmeEmail: o.acmeEmail } : {}),
     ...(o.allowBind !== undefined ? { allowBind: o.allowBind } : {}),
     ...(o.allowLiveProbe !== undefined ? { allowLiveShapeProbe: o.allowLiveProbe } : {}),
     ...(o.sourceController ? { sourceController: o.sourceController } : {}),
+    ...policyBody(o),
   };
   return {
     method: "POST",
@@ -198,7 +305,20 @@ export function buildCreateRequest(o: RunOpts): Req {
       ...(o.saveMapping === false ? { saveMapping: false } : {}),
       ...(Object.keys(options).length ? { options } : {}),
       ...(Object.keys(inputs).length ? { inputs } : {}),
+      ...(o.serverMap !== undefined ? { serverMap: o.serverMap } : {}),
+      ...(o.campaign !== undefined ? { campaign: o.campaign.trim() } : {}),
     },
+  };
+}
+
+/** The fleet policy owner inputs that were given (an omitted one keeps the hub's fail-closed default). */
+function policyBody(o: RunOpts): Record<string, unknown> {
+  return {
+    ...(o.minioPolicy ? { minioPolicy: o.minioPolicy } : {}),
+    ...(o.tickGapAccept !== undefined ? { tickGapAcceptMinutes: o.tickGapAccept } : {}),
+    ...(o.workerPolicy ? { workerPolicy: o.workerPolicy } : {}),
+    ...(o.unlistedDbPolicy ? { unlistedDbPolicy: o.unlistedDbPolicy } : {}),
+    ...(o.orphanVolumePolicy ? { orphanVolumePolicy: o.orphanVolumePolicy } : {}),
   };
 }
 
@@ -233,16 +353,23 @@ export function buildRequest(action: RunAction, runId: string, o: RunOpts): Req 
       need(o.objectMigration, "--object-migration <id> is required (create it with `tugra objects create`)");
       return { method: "POST", path: stepPath(runId, o.step, "attach"), body: { kind: "object-migration", resourceId: o.objectMigration } };
     case "command":
-      return { method: "POST", path: stepPath(runId, o.step, "command"), body: { reissue: o.reissue === true } };
+      oneOf(o.kind, COMMAND_KINDS, "--kind");
+      return { method: "POST", path: stepPath(runId, o.step, "command"), body: { reissue: o.reissue === true, ...(o.kind ? { kind: o.kind } : {}) } };
     case "inputs": {
       oneOf(o.sourceController, SOURCE_CONTROLLERS, "--source-controller");
+      oneOf(o.minioPolicy, MINIO_POLICIES, "--minio-policy");
+      oneOf(o.workerPolicy, WORKER_POLICIES, "--worker-policy");
+      oneOf(o.unlistedDbPolicy, UNLISTED_DB_POLICIES, "--unlisted-db-policy");
+      oneOf(o.orphanVolumePolicy, ORPHAN_VOLUME_POLICIES, "--orphan-volume-policy");
+      int(o.tickGapAccept, 0, 7 * 24 * 60, "--tick-gap-accept");
       const body = {
         ...(o.acmeEmail ? { acmeEmail: o.acmeEmail } : {}),
         ...(o.allowBind !== undefined ? { allowBind: o.allowBind } : {}),
         ...(o.allowLiveProbe !== undefined ? { allowLiveShapeProbe: o.allowLiveProbe } : {}),
         ...(o.sourceController ? { sourceController: o.sourceController } : {}),
+        ...policyBody(o),
       };
-      need(Object.keys(body).length > 0, "give at least one of --acme-email, --allow-bind, --allow-live-probe, --source-controller");
+      need(Object.keys(body).length > 0, "give at least one input: --acme-email, --allow-bind, --allow-live-probe, --source-controller, --minio-policy, --tick-gap-accept, --worker-policy, --unlisted-db-policy or --orphan-volume-policy");
       return { method: "POST", path: `${base(runId)}/inputs`, body };
     }
     case "pause":
@@ -266,6 +393,24 @@ export function buildRequest(action: RunAction, runId: string, o: RunOpts): Req 
     case "source-session":
       need(o.token, `set $${SOURCE_TOKEN_ENV} (the source API token is never passed as a flag)`);
       return { method: "POST", path: `${base(runId)}/source-session`, body: { token: o.token } };
+    case "safety-hints":
+      return { method: "GET", path: `${base(runId)}/safety-hints` };
+    case "image-pin": {
+      need(o.image && /^[A-Za-z0-9][A-Za-z0-9._\/:-]{0,299}$/.test(o.image), "--image <ref> is required: the image as the plan shows it, e.g. repo/app:latest");
+      oneOf(o.evidenceKind, PIN_EVIDENCE, "--evidence");
+      need(o.scope === undefined || /^[\x21-\x7e]{0,200}$/.test(o.scope), "--scope must be a source server uuid (printable, at most 200 characters)");
+      need(o.remove ? o.digest === undefined : !!o.digest && /^sha256:[a-f0-9]{64}$/.test(o.digest), o.remove ? "--remove takes no --digest" : "--digest must be sha256: followed by 64 lower-case hex characters (docker image inspect on the source host)");
+      return {
+        method: "PUT",
+        path: `${base(runId)}/image-pins`,
+        body: { pins: [{ image: o.image, scope: o.scope ?? "", digest: o.remove ? null : o.digest, ...(o.evidenceKind ? { evidence: o.evidenceKind } : {}) }] },
+      };
+    }
+    case "worker-mark": {
+      need(o.item && /^app:[\x21-\x7e]+$/.test(o.item) && o.item.length <= 340, "--item <itemRef> is required: the plan item of the app, e.g. app:<server>:<ref>");
+      need(!!o.role && (WORKER_ROLES as readonly string[]).includes(o.role), `--role must be one of: ${WORKER_ROLES.join(", ")} (none removes the mark)`);
+      return { method: "PUT", path: `${base(runId)}/worker-marks`, body: { marks: [{ itemRef: o.item, role: o.role === "none" ? null : o.role }] } };
+    }
     case "report":
       oneOf(o.format, ["json", "md"], "--format");
       return { method: "GET", path: `${base(runId)}/report${o.format === "md" ? "?format=md" : ""}` };
@@ -301,7 +446,14 @@ export interface RunView {
   dryRun: boolean;
   ponrAt: string | null;
   targetServerName: string | null;
+  /** Every target server of the run, default first (absent on a hub that predates multi-host runs). */
+  targetServers?: Array<{ serverId: string; serverName: string | null; primary: boolean }>;
+  serverMap?: Record<string, string>;
   sourceHost: string | null;
+  sourceVersion?: string | null;
+  sourceVersionVerdict?: string;
+  campaign?: string | null;
+  baselineAt?: string | null;
   failure: { step: string | null; code: string } | null;
   nextAction: { kind: string; stepKey: string | null; code: string; since: string; notBefore?: string | null; approval?: ApprovalView; attest?: string[]; offersCommand?: boolean };
   windowEstimate: { freezeToFlipSec: number | null } | null;
@@ -321,8 +473,15 @@ export interface RunEventView {
 export const isTerminal = (status: string): boolean => TERMINAL_STATUSES.includes(status);
 
 /** What the human must type for an approval's `confirmName`. */
-export function confirmHint(confirm: string, ctx: { runId: string; serverName: string | null; sourceHost: string | null }): string | null {
+export function confirmHint(confirm: string, ctx: { runId: string; serverName: string | null; sourceHost: string | null; serverNames?: readonly (string | null)[] }): string | null {
+  // a multi-host run names EVERY target server: the distinct names sorted by code point, joined with ", " (what the hub compares)
+  const names = ctx.serverNames && ctx.serverNames.length > 0 ? ctx.serverNames : ctx.serverName ? [ctx.serverName] : [];
+  const servers = names.length > 0 && names.every((n): n is string => !!n) ? [...new Set(names)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).join(", ") : "<target server names>";
   switch (confirm) {
+    case "target-servers":
+      return servers;
+    case "target-servers+source-host":
+      return `${servers} ${ctx.sourceHost ?? "<source host>"}`;
     case "none":
       return null;
     case "run-id":
@@ -353,18 +512,26 @@ export function formatEvent(e: RunEventView): string {
 export function formatStatus(v: RunView): string[] {
   const out: string[] = [];
   out.push(`run ${v.id}  ${v.status}${v.dryRun ? "  (dry run)" : ""}  step ${v.currentStep ?? "-"}  ${v.mode}/${v.topology}`);
-  out.push(`source ${v.sourceHost ?? "?"} -> target ${v.targetServerName ?? "?"}   point of no return: ${v.ponrAt ? `reached ${v.ponrAt}` : "not reached"}`);
+  const servers = v.targetServers && v.targetServers.length > 1 ? v.targetServers.map((s) => `${s.serverName ?? s.serverId}${s.primary ? " (default)" : ""}`).join(", ") : (v.targetServerName ?? "?");
+  out.push(`source ${v.sourceHost ?? "?"} -> target ${servers}   point of no return: ${v.ponrAt ? `reached ${v.ponrAt}` : "not reached"}`);
+  if (v.serverMap && Object.keys(v.serverMap).length > 0) {
+    const name = (id: string) => v.targetServers?.find((s) => s.serverId === id)?.serverName ?? id;
+    out.push(`placement: ${Object.entries(v.serverMap).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([src, dst]) => `${src} -> ${name(dst)}`).join(", ")}`);
+  }
+  if (v.sourceVersion !== undefined || v.campaign) {
+    out.push(`source version: ${v.sourceVersion ?? "not read yet"}${v.sourceVersionVerdict ? ` (${v.sourceVersionVerdict})` : ""}${v.campaign ? `   campaign: ${v.campaign}` : ""}${v.baselineAt !== undefined ? `   health baseline: ${v.baselineAt ?? "not recorded yet"}` : ""}`);
+  }
   if (v.windowEstimate?.freezeToFlipSec != null || v.measuredDowntimeSec != null) {
     out.push(`downtime window: estimated ${v.windowEstimate?.freezeToFlipSec ?? "?"}s, measured ${v.measuredDowntimeSec ?? "-"}s`);
   }
   if (v.failure) out.push(`failed: ${v.failure.code}${v.failure.step ? ` at ${v.failure.step}` : ""}`);
   const na = v.nextAction;
   out.push(`waiting: ${na.kind}${na.stepKey ? ` ${na.stepKey}` : ""} ${na.code} (since ${na.since}${na.notBefore ? `, not before ${na.notBefore}` : ""})`);
-  if (na.offersCommand && na.stepKey) out.push(`  source-host command: tugra import run command ${v.id} ${na.stepKey}   (the token inside is shown once)`);
+  if (na.offersCommand && na.stepKey) out.push(`  command: tugra import run command ${v.id} ${na.stepKey}   (the hub picks the migrator, host-loop or inventory script this step waits for; the token inside is shown once)`);
   if (na.attest?.length && na.stepKey) out.push(`  you may attest: ${na.attest.join(", ")}   (tugra import run evidence ${v.id} ${na.stepKey} --check <id>)`);
   const ap = na.approval;
   if (na.kind === "approval" && ap && na.stepKey) {
-    const typed = confirmHint(ap.confirm, { runId: v.id, serverName: v.targetServerName, sourceHost: v.sourceHost });
+    const typed = confirmHint(ap.confirm, { runId: v.id, serverName: v.targetServerName, sourceHost: v.sourceHost, ...(v.targetServers ? { serverNames: v.targetServers.map((s) => s.serverName) } : {}) });
     out.push(`  approval${ap.ponr ? " (POINT OF NO RETURN: refused over MCP, review it yourself before approving)" : ""}: review the step, then`);
     out.push(
       `    tugra import run approve ${v.id} ${na.stepKey} --hash ${ap.inputHash}` +
@@ -472,7 +639,8 @@ async function perform(action: RunAction, runId: string, o: RunOpts & { json?: b
   const res = await api().requestRaw<unknown>(req.method, req.path, req.body);
   if (o.json || res === undefined) return void (res === undefined ? printLine("ok") : printJson(res));
   if (action === "report" && typeof res === "string") return void printLine(res);
-  if (action === "command") return printCommand(res as { command: string; commands?: { dryRun: string; run: string; resume: string }; expiresAt: string });
+  if (action === "command") return printCommand(res as CommandResult);
+  if (action === "safety-hints" || action === "image-pin" || action === "worker-mark") return printSafetyHints(res as SafetyHints);
   if (action === "events") {
     const page = res as { events: RunEventView[]; lastSeq: number; hasMore: boolean };
     for (const e of page.events) printLine(formatEvent(e));
@@ -483,8 +651,35 @@ async function perform(action: RunAction, runId: string, o: RunOpts & { json?: b
   for (const l of formatStatus(res as RunView)) printLine(l);
 }
 
-function printCommand(r: { command: string; commands?: { dryRun: string; run: string; resume: string }; expiresAt: string }): void {
-  printLine(`Run this ON THE SOURCE HOST (expires ${r.expiresAt}). It carries a live token and is shown ONCE; reissue with --reissue.`);
+interface CommandResult {
+  command: string;
+  kind?: string;
+  commands?: { dryRun: string; run: string; resume: string };
+  expiresAt: string;
+}
+interface SafetyHints {
+  imagePins: Array<{ image: string; scope: string; digest: string; evidence: string }>;
+  workerMarks: Array<{ itemRef: string; role: string }>;
+}
+
+/** The recorded safety facts: the digests the source runs and the apps marked as job runners or web apps. */
+export function formatSafetyHints(h: SafetyHints): string[] {
+  const out = ["image digests the source runs:"];
+  if (h.imagePins.length === 0) out.push("  (none)");
+  for (const p of h.imagePins) out.push(`  ${p.image}${p.scope ? ` @ ${p.scope}` : ""}  ${p.digest}  (${p.evidence})`);
+  out.push("worker marks:");
+  if (h.workerMarks.length === 0) out.push("  (none)");
+  for (const m of h.workerMarks) out.push(`  ${m.itemRef}  ${m.role}`);
+  return out;
+}
+function printSafetyHints(h: SafetyHints): void {
+  for (const l of formatSafetyHints(h)) printLine(l);
+}
+
+function printCommand(r: CommandResult): void {
+  if (r.kind === "host-loop") printLine(`Run this ON THE COOLIFY HOST (expires ${r.expiresAt}). It loops over the source hosts with Coolify's own SSH keys. It carries a live token and is shown ONCE; reissue with --reissue.`);
+  else if (r.kind === "inventory") printLine(`Run this READ-ONLY inventory ON THE COOLIFY HOST (expires ${r.expiresAt}). It lists the containers and volumes of each source host. It carries a live token and is shown ONCE; reissue with --reissue.`);
+  else printLine(`Run this ON THE SOURCE HOST (expires ${r.expiresAt}). It carries a live token and is shown ONCE; reissue with --reissue.`);
   printLine("");
   printLine(r.command);
   if (r.commands) {
@@ -508,6 +703,7 @@ export function register(program: Command): void {
     .option("--team <id>", "only this team")
     .option("--status <status>", "only this status, e.g. WAITING")
     .option("--active", "only live runs")
+    .option("--campaign <label>", "only the runs of this campaign")
     .option("--limit <n>", "at most n rows (1-200)", num)
     .option("--json", "output as JSON")
     .action(async (o: RunOpts & { json?: boolean }) => {
@@ -523,6 +719,9 @@ export function register(program: Command): void {
         { key: "dryRun", header: "DRY" },
         { key: "nextActionKind", header: "WAITING" },
         { key: "targetServerName", header: "TARGET" },
+        { key: "targetServerCount", header: "SERVERS" },
+        { key: "campaign", header: "CAMPAIGN" },
+        { key: "sourceVersion", header: "SOURCE" },
       ]);
     });
 
@@ -549,7 +748,16 @@ export function register(program: Command): void {
     .option("--deploy-waves <waves>", `${DEPLOY_WAVES.join(" | ")}`)
     .option("--warm-db-seed", "take a warm DB dump during the seed step")
     .option("--stop-source", "let the migrator stop the source writers itself")
-    .option("--source-runner <runner>", `${SOURCE_RUNNERS.join(" | ")}: who starts the migrator on the source host`)
+    .option("--source-runner <runner>", `${SOURCE_RUNNERS.join(" | ")}: who starts the migrator on the source host (coolify-host-loop: one script on the Coolify host loops over the source hosts)`)
+    .option("--map <source=target>", "multi-host placement: <source server uuid>=<Tugra server id>; repeat for each source host. Every source host must be listed once a map is given", (v: string, prev: string[] = []) => [...prev, v])
+    .option("--server-map-file <path>", "multi-host placement as a JSON object {sourceServerUuid: tugraServerId}")
+    .option("--campaign <label>", "group the runs of one migration campaign")
+    .option("--host-loop-key-dir <path>", `host-loop: the directory of Coolify's SSH keys on the Coolify host (default ${HOST_LOOP_DEFAULT_KEY_DIR}); only the path is stored`)
+    .option("--host-loop-parallel <n>", "host-loop: hosts handled at a time (1-8, default 1)", num)
+    .option("--host-loop-connect-timeout <seconds>", "host-loop: SSH connect timeout (5-120, default 15)", num)
+    .option("--host-loop-retries <n>", "host-loop: extra attempts per host (0-5, default 1)", num)
+    .option("--deploy-concurrency <n>", "builds at a time per target server (1-8, default 1)", num)
+    .option("--large-db-mode <mode>", `${LARGE_DB_MODES.join(" | ")}: what happens to a database too large for a dump artifact (default refuse)`)
     .option("--certs <mode>", `${CERT_MODES.join(" | ")}: seed the source proxy's ACME certificates`)
     .option("--accept-http01-gap", "accept hosts that only have an HTTP-01 certificate gap at cutover")
     .option("--freeze-at <time>", "schedule the freeze (ISO-8601)")
@@ -568,11 +776,20 @@ export function register(program: Command): void {
     .option("--allow-live-probe", "owner input: consent to the read-only live source probe")
     .option("--no-allow-live-probe", "owner input: no live source probe")
     .option("--source-controller <controller>", `owner input: ${SOURCE_CONTROLLERS.join(" | ")} (default manual)`)
+    .option("--minio-policy <policy>", `owner input: ${MINIO_POLICIES.join(" | ")}: hosts that use the source's object storage (default hold)`)
+    .option("--tick-gap-accept <minutes>", "owner input: minutes of missing writes you accept between the last copy and the switch (0-10080, default 0)", num)
+    .option("--worker-policy <policy>", `owner input: ${WORKER_POLICIES.join(" | ")}: apps without a domain (default hold-dark)`)
+    .option("--unlisted-db-policy <policy>", `owner input: ${UNLISTED_DB_POLICIES.join(" | ")}: database containers the source API does not list (default block)`)
+    .option("--orphan-volume-policy <policy>", `owner input: ${ORPHAN_VOLUME_POLICIES.join(" | ")}: volumes no container uses (default block)`)
     .option("--json", "output as JSON")
-    .action(async (o: RunOpts & { mappingFile?: string; acksFile?: string; serviceChoicesFile?: string; dbDataModesFile?: string; json?: boolean }) => {
+    .action(async (o: RunOpts & { map?: string[]; serverMapFile?: string; mappingFile?: string; acksFile?: string; serviceChoicesFile?: string; dbDataModesFile?: string; json?: boolean }) => {
       const file = (path: string | undefined, flag: string) => (path ? readJson(path, flag) : undefined);
+      const fromFile = file(o.serverMapFile, "--server-map-file");
+      need(fromFile === undefined || (typeof fromFile === "object" && fromFile !== null && !Array.isArray(fromFile)), "--server-map-file must hold a JSON object {sourceServerUuid: tugraServerId}");
+      const serverMap = o.map?.length || fromFile ? { ...(fromFile as Record<string, string> | undefined), ...parseServerMap(o.map ?? []) } : undefined;
       const req = buildCreateRequest({
         ...o,
+        ...(serverMap ? { serverMap } : {}),
         mapping: file(o.mappingFile, "--mapping-file"),
         acks: file(o.acksFile, "--acks-file"),
         serviceChoices: file(o.serviceChoicesFile, "--service-choices-file"),
@@ -613,7 +830,8 @@ export function register(program: Command): void {
   sub("attach", "<runId> <step>", "Attach an existing object migration to the step (credentials never pass through a run)")
     .requiredOption("--object-migration <id>", "the object migration id (`tugra objects create`)")
     .action((id: string, step: string, o) => perform("attach", id, { ...o, step }));
-  sub("command", "<runId> <step>", "Mint the source-host migrator command (carries a live token, shown ONCE)")
+  sub("command", "<runId> <step>", "Mint the command of a step: the source-host migrator, the Coolify-host loop script or the host inventory (carries a live token, shown ONCE)")
+    .option("--kind <kind>", `${COMMAND_KINDS.join(" | ")} (default: what the step waits for)`)
     .option("--reissue", "mint a fresh token (the previous command stops working)")
     .action((id: string, step: string, o) => perform("command", id, { ...o, step }));
   sub("inputs", "<runId>", "Answer or change owner inputs")
@@ -623,7 +841,24 @@ export function register(program: Command): void {
     .option("--allow-live-probe", "consent to the read-only live source probe")
     .option("--no-allow-live-probe", "no live source probe")
     .option("--source-controller <controller>", SOURCE_CONTROLLERS.join(" | "))
+    .option("--minio-policy <policy>", MINIO_POLICIES.join(" | "))
+    .option("--tick-gap-accept <minutes>", "minutes of missing writes you accept (0-10080)", num)
+    .option("--worker-policy <policy>", WORKER_POLICIES.join(" | "))
+    .option("--unlisted-db-policy <policy>", UNLISTED_DB_POLICIES.join(" | "))
+    .option("--orphan-volume-policy <policy>", ORPHAN_VOLUME_POLICIES.join(" | "))
     .action((id: string, o) => perform("inputs", id, o));
+  sub("safety-hints", "<runId>", "Show the recorded image digests and job-runner marks").action((id: string, o) => perform("safety-hints", id, o));
+  sub("image-pin", "<runId>", "Record the digest the SOURCE runs for a floating image (attested by you; the hub cannot check it), or remove it")
+    .requiredOption("--image <ref>", "the image as the plan shows it, e.g. repo/app:latest")
+    .option("--digest <sha256:...>", "the digest the source runs (docker image inspect on the source host)")
+    .option("--scope <server>", "the source server uuid that runs it (default: every server)")
+    .option("--evidence <kind>", `${PIN_EVIDENCE.join(" | ")} (default operator-attested)`)
+    .option("--remove", "remove the recorded digest")
+    .action((id: string, o: RunOpts & { evidence?: string; json?: boolean }) => perform("image-pin", id, { ...o, evidenceKind: o.evidence }));
+  sub("worker-mark", "<runId>", "Mark an app as a job runner (held until after the cutover) or a web app (starts dark); none removes the mark")
+    .requiredOption("--item <itemRef>", "the plan item of the app, e.g. app:<server>:<ref>")
+    .requiredOption("--role <role>", WORKER_ROLES.join(" | "))
+    .action((id: string, o) => perform("worker-mark", id, o));
   sub("pause", "<runId>", "Stop forward progress (nothing is undone)").action((id: string, o) => perform("pause", id, o));
   sub("resume", "<runId>", "Resume a paused run").action((id: string, o) => perform("resume", id, o));
   sub("abort", "<runId>", "Abort BEFORE the point of no return: the source becomes authoritative again; nothing is deleted")

@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { RUN_ACTIONS, buildCreateRequest, buildListRequest, buildRequest, confirmHint, formatEvent, formatStatus, isTerminal, register, shellQuote, watchRun, type RunView } from "./run";
+import { RUN_ACTIONS, buildCreateRequest, buildListRequest, buildRequest, confirmHint, formatEvent, formatSafetyHints, formatStatus, isTerminal, parseServerMap, register, shellQuote, watchRun, type RunView } from "./run";
 
 const PLAN = "a".repeat(32);
 const HASH = "b".repeat(64);
@@ -164,7 +164,7 @@ describe("tugra import run: destructive actions", () => {
   });
 
   it("every action in the list builds a request (so none is registered without a builder)", () => {
-    const o = { step: "FREEZE", hash: HASH, check: "c", objectMigration: "o1", confirm: "r1", acknowledgeDataLoss: true, token: "t", acmeEmail: "a@b.co" };
+    const o = { step: "FREEZE", hash: HASH, check: "c", objectMigration: "o1", confirm: "r1", acknowledgeDataLoss: true, token: "t", acmeEmail: "a@b.co", image: "repo/app:latest", digest: `sha256:${"a".repeat(64)}`, item: "app:host-a:web", role: "job-runner" };
     for (const a of RUN_ACTIONS) expect(() => buildRequest(a, "r1", o)).not.toThrow();
   });
 });
@@ -324,11 +324,170 @@ describe("command registration", () => {
     const runs = imps[0].commands.filter((c) => c.name() === "run");
     expect(runs).toHaveLength(1);
     const names = runs[0].commands.map((c) => c.name());
-    expect(names).toEqual(expect.arrayContaining(["list", "create", "status", "events", "watch", "start", "approve", "retry", "skip", "evidence", "attach", "command", "inputs", "pause", "resume", "abort", "cleanup", "reverse", "decommission", "source-session", "report"]));
+    expect(names).toEqual(expect.arrayContaining(["list", "create", "status", "events", "watch", "start", "approve", "retry", "skip", "evidence", "attach", "command", "inputs", "pause", "resume", "abort", "cleanup", "reverse", "decommission", "source-session", "report", "safety-hints", "image-pin", "worker-mark"]));
     for (const n of ["abort", "cleanup", "reverse", "decommission"]) {
       const c = runs[0].commands.find((x) => x.name() === n)!;
       expect(c.options.find((o) => o.long === "--confirm")?.required).toBe(true);
     }
     expect(runs[0].commands.find((c) => c.name() === "approve")!.options.find((o) => o.long === "--hash")?.required).toBe(true);
+  });
+});
+
+describe("tugra import run: fleet runs", () => {
+  it("parses --map pairs into a placement map and refuses a duplicate, a missing side and a prototype name", () => {
+    expect(parseServerMap(["host-a=srv1", "host-b=srv2"])).toEqual({ "host-a": "srv1", "host-b": "srv2" });
+    expect(() => parseServerMap(["host-a=srv1", "host-a=srv2"])).toThrow(/mapped twice/);
+    expect(() => parseServerMap(["host-a"])).toThrow(/--map expects/);
+    expect(() => parseServerMap(["host-a="])).toThrow(/--map expects/);
+    expect(() => parseServerMap(["=srv1"])).toThrow(/--map expects/);
+    expect(() => parseServerMap(["__proto__=srv1"])).toThrow(/not a valid source server ref/);
+    expect(() => parseServerMap(["has space=srv1"])).toThrow(/not a valid source server ref/);
+  });
+
+  it("sends the placement as the run-level serverMap and the campaign label, trimmed", () => {
+    const req = buildCreateRequest({ ...create, serverMap: { "host-a": "srv1", "host-b": "srv2" }, campaign: " wave-1 " });
+    expect(req.body).toMatchObject({ targetServerId: "srv1", serverMap: { "host-a": "srv1", "host-b": "srv2" }, campaign: "wave-1" });
+    expect(buildCreateRequest(create).body).not.toHaveProperty("serverMap");
+    expect(() => buildCreateRequest({ ...create, serverMap: {} })).toThrow(/server map is empty/);
+    expect(() => buildCreateRequest({ ...create, serverMap: Object.fromEntries(Array.from({ length: 65 }, (_, i) => [`h${i}`, "srv1"])) })).toThrow(/at most 64/);
+    expect(() => buildCreateRequest({ ...create, campaign: "" })).toThrow(/--campaign/);
+    expect(() => buildCreateRequest({ ...create, campaign: "x".repeat(81) })).toThrow(/--campaign/);
+  });
+
+  it("sends the host-loop runner with its tuning, and refuses the tuning for another runner or an unsafe key directory", () => {
+    const req = buildCreateRequest({ ...create, sourceRunner: "coolify-host-loop", hostLoopKeyDir: "/data/coolify/ssh/keys", hostLoopParallel: 2, hostLoopConnectTimeout: 30, hostLoopRetries: 0 });
+    expect(req.body).toMatchObject({ options: { sourceRunner: "coolify-host-loop", hostLoop: { keyDir: "/data/coolify/ssh/keys", parallel: 2, connectTimeoutSec: 30, retries: 0 } } });
+    // tuning without a key directory falls back to the documented default
+    expect(buildCreateRequest({ ...create, sourceRunner: "coolify-host-loop", hostLoopParallel: 3 }).body).toMatchObject({ options: { hostLoop: { keyDir: "/data/coolify/ssh/keys", parallel: 3 } } });
+    expect(() => buildCreateRequest({ ...create, hostLoopParallel: 2 })).toThrow(/need --source-runner coolify-host-loop/);
+    expect(() => buildCreateRequest({ ...create, sourceRunner: "agent", hostLoopKeyDir: "/keys" })).toThrow(/need --source-runner coolify-host-loop/);
+    expect(() => buildCreateRequest({ ...create, sourceRunner: "coolify-host-loop", hostLoopKeyDir: "/data/../etc" })).toThrow(/--host-loop-key-dir/);
+    expect(() => buildCreateRequest({ ...create, sourceRunner: "coolify-host-loop", hostLoopKeyDir: "/keys; rm -rf" })).toThrow(/--host-loop-key-dir/);
+    expect(() => buildCreateRequest({ ...create, sourceRunner: "coolify-host-loop", hostLoopParallel: 9 })).toThrow(/--host-loop-parallel/);
+    expect(() => buildCreateRequest({ ...create, sourceRunner: "coolify-host-loop", hostLoopConnectTimeout: 4 })).toThrow(/--host-loop-connect-timeout/);
+    expect(() => buildCreateRequest({ ...create, sourceRunner: "coolify-host-loop", hostLoopRetries: 6 })).toThrow(/--host-loop-retries/);
+  });
+
+  it("sends the build, large-database options and the fleet policy answers, and refuses an unknown choice", () => {
+    const req = buildCreateRequest({
+      ...create, deployWaves: "earlyBuild", deployConcurrency: 2, largeDbMode: "stream-logical",
+      minioPolicy: "mirror", tickGapAccept: 15, workerPolicy: "exclude", unlistedDbPolicy: "carry", orphanVolumePolicy: "skip",
+    });
+    expect(req.body).toMatchObject({
+      options: { deployWaves: "earlyBuild", deployConcurrency: 2, largeDbMode: "stream-logical" },
+      inputs: { minioPolicy: "mirror", tickGapAcceptMinutes: 15, workerPolicy: "exclude", unlistedDbPolicy: "carry", orphanVolumePolicy: "skip" },
+    });
+    expect(() => buildCreateRequest({ ...create, largeDbMode: "stream" })).toThrow(/--large-db-mode/);
+    expect(() => buildCreateRequest({ ...create, minioPolicy: "ignore" })).toThrow(/--minio-policy/);
+    expect(() => buildCreateRequest({ ...create, workerPolicy: "x" })).toThrow(/--worker-policy/);
+    expect(() => buildCreateRequest({ ...create, unlistedDbPolicy: "x" })).toThrow(/--unlisted-db-policy/);
+    expect(() => buildCreateRequest({ ...create, orphanVolumePolicy: "x" })).toThrow(/--orphan-volume-policy/);
+    expect(() => buildCreateRequest({ ...create, tickGapAccept: 10081 })).toThrow(/--tick-gap-accept/);
+    expect(() => buildCreateRequest({ ...create, deployConcurrency: 9 })).toThrow(/--deploy-concurrency/);
+    // nothing answered, nothing sent: the hub's fail-closed defaults apply
+    expect(buildCreateRequest(create).body).not.toHaveProperty("inputs");
+  });
+
+  it("the earlyBuild wave is accepted and an unknown wave is not", () => {
+    expect(buildCreateRequest({ ...create, deployWaves: "earlyBuild" }).body).toMatchObject({ options: { deployWaves: "earlyBuild" } });
+    expect(() => buildCreateRequest({ ...create, deployWaves: "late" })).toThrow(/--deploy-waves/);
+  });
+
+  it("inputs accepts the fleet policies and names them when none is given", () => {
+    expect(buildRequest("inputs", "r1", { minioPolicy: "hold", tickGapAccept: 0, orphanVolumePolicy: "block" })).toEqual({
+      method: "POST", path: "/migration-runs/r1/inputs", body: { minioPolicy: "hold", tickGapAcceptMinutes: 0, orphanVolumePolicy: "block" },
+    });
+    expect(() => buildRequest("inputs", "r1", {})).toThrow(/--minio-policy/);
+    expect(() => buildRequest("inputs", "r1", { workerPolicy: "nope" })).toThrow(/--worker-policy/);
+    expect(() => buildRequest("inputs", "r1", { tickGapAccept: -1 })).toThrow(/--tick-gap-accept/);
+  });
+
+  it("list filters by campaign", () => {
+    expect(buildListRequest({ campaign: "wave 1" }).path).toBe("/migration-runs?campaign=wave%201");
+    expect(() => buildListRequest({ campaign: "" })).toThrow(/--campaign/);
+  });
+
+  it("command can name its kind, and refuses an unknown one", () => {
+    expect(buildRequest("command", "r1", { step: "DATA_SEED", kind: "inventory" }).body).toEqual({ reissue: false, kind: "inventory" });
+    expect(buildRequest("command", "r1", { step: "FREEZE", kind: "host-loop", reissue: true }).body).toEqual({ reissue: true, kind: "host-loop" });
+    expect(buildRequest("command", "r1", { step: "DATA_SEED" }).body).toEqual({ reissue: false });
+    expect(() => buildRequest("command", "r1", { step: "DATA_SEED", kind: "ssh" })).toThrow(/--kind/);
+  });
+
+  it("image pins carry the digest the source runs (or remove it), and refuse a malformed one", () => {
+    const digest = `sha256:${"a".repeat(64)}`;
+    expect(buildRequest("image-pin", "r1", { image: "repo/app:latest", digest })).toEqual({
+      method: "PUT", path: "/migration-runs/r1/image-pins", body: { pins: [{ image: "repo/app:latest", scope: "", digest }] },
+    });
+    expect(buildRequest("image-pin", "r1", { image: "repo/app:latest", digest, scope: "host-a", evidenceKind: "host-loop-reported" }).body).toEqual({
+      pins: [{ image: "repo/app:latest", scope: "host-a", digest, evidence: "host-loop-reported" }],
+    });
+    expect(buildRequest("image-pin", "r1", { image: "repo/app:latest", remove: true }).body).toEqual({ pins: [{ image: "repo/app:latest", scope: "", digest: null }] });
+    expect(() => buildRequest("image-pin", "r1", { digest })).toThrow(/--image/);
+    expect(() => buildRequest("image-pin", "r1", { image: "bad image", digest })).toThrow(/--image/);
+    expect(() => buildRequest("image-pin", "r1", { image: "repo/app:latest", digest: "sha256:short" })).toThrow(/--digest/);
+    expect(() => buildRequest("image-pin", "r1", { image: "repo/app:latest" })).toThrow(/--digest/);
+    expect(() => buildRequest("image-pin", "r1", { image: "repo/app:latest", digest, remove: true })).toThrow(/--remove takes no --digest/);
+    expect(() => buildRequest("image-pin", "r1", { image: "repo/app:latest", digest, evidenceKind: "guess" })).toThrow(/--evidence/);
+  });
+
+  it("worker marks set a role or clear it with none", () => {
+    expect(buildRequest("worker-mark", "r1", { item: "app:host-a:queue", role: "job-runner" })).toEqual({
+      method: "PUT", path: "/migration-runs/r1/worker-marks", body: { marks: [{ itemRef: "app:host-a:queue", role: "job-runner" }] },
+    });
+    expect(buildRequest("worker-mark", "r1", { item: "app:host-a:queue", role: "none" }).body).toEqual({ marks: [{ itemRef: "app:host-a:queue", role: null }] });
+    expect(() => buildRequest("worker-mark", "r1", { role: "web" })).toThrow(/--item/);
+    expect(() => buildRequest("worker-mark", "r1", { item: "database:h:db", role: "web" })).toThrow(/--item/);
+    expect(() => buildRequest("worker-mark", "r1", { item: "app:host-a:queue", role: "boss" })).toThrow(/--role/);
+    expect(buildRequest("safety-hints", "r1", {})).toEqual({ method: "GET", path: "/migration-runs/r1/safety-hints" });
+  });
+
+  it("confirmHint names EVERY target server of a multi-host run, sorted, joined with a comma, then the source host", () => {
+    const ctx = { runId: "r1", serverName: "tugra-1", sourceHost: "coolify.example.com", serverNames: ["tugra-b", "tugra-1", "tugra-b"] };
+    expect(confirmHint("target-servers", ctx)).toBe("tugra-1, tugra-b");
+    expect(confirmHint("target-servers+source-host", ctx)).toBe("tugra-1, tugra-b coolify.example.com");
+    // a server whose name is unknown blocks a guess rather than naming only some of the hosts
+    expect(confirmHint("target-servers", { ...ctx, serverNames: ["tugra-1", null] })).toBe("<target server names>");
+    expect(confirmHint("target-servers", { runId: "r1", serverName: "tugra-1", sourceHost: null })).toBe("tugra-1");
+  });
+
+  it("status prints the placement, every server, the version verdict, the campaign and the multi-host approval command", () => {
+    const lines = formatStatus(
+      view({
+        targetServers: [{ serverId: "s1", serverName: "tugra-box", primary: true }, { serverId: "s2", serverName: "tugra-b", primary: false }],
+        serverMap: { "host-b": "s2", "host-a": "s1" },
+        sourceVersion: "4.9.0", sourceVersionVerdict: "newer", campaign: "wave-1", baselineAt: null,
+        currentStep: "VERIFY",
+        nextAction: { kind: "approval", stepKey: "VERIFY", code: "approval.required", since: "t", approval: { inputHash: HASH, ponr: true, confirm: "target-servers+source-host", ttlSec: 1800, requiresDataRisk: true, ackable: [], requiredAcks: [] } },
+      }),
+    ).join("\n");
+    expect(lines).toContain("target tugra-box (default), tugra-b");
+    expect(lines).toContain("placement: host-a -> tugra-box, host-b -> tugra-b");
+    expect(lines).toContain("source version: 4.9.0 (newer)   campaign: wave-1   health baseline: not recorded yet");
+    // sorted by code point: "tugra-b" is a prefix of "tugra-box", so it sorts first
+    expect(lines).toContain("--confirm 'tugra-b, tugra-box coolify.example.com'");
+    // a stored single-target view prints exactly as before
+    expect(formatStatus(view()).join("\n")).not.toContain("placement:");
+  });
+
+  it("prints the recorded safety facts", () => {
+    expect(formatSafetyHints({ imagePins: [], workerMarks: [] }).join("\n")).toContain("(none)");
+    const out = formatSafetyHints({ imagePins: [{ image: "repo/app:latest", scope: "host-a", digest: "sha256:abc", evidence: "operator-attested" }], workerMarks: [{ itemRef: "app:host-a:queue", role: "job-runner" }] }).join("\n");
+    expect(out).toContain("repo/app:latest @ host-a  sha256:abc  (operator-attested)");
+    expect(out).toContain("app:host-a:queue  job-runner");
+  });
+
+  it("registers the fleet options on create and the new sub-commands", () => {
+    const program = new Command();
+    register(program);
+    const run = program.commands.find((c) => c.name() === "import")!.commands.find((c) => c.name() === "run")!;
+    const createCmd = run.commands.find((c) => c.name() === "create")!;
+    for (const flag of ["--map", "--server-map-file", "--campaign", "--host-loop-key-dir", "--host-loop-parallel", "--deploy-concurrency", "--large-db-mode", "--minio-policy", "--tick-gap-accept", "--worker-policy", "--unlisted-db-policy", "--orphan-volume-policy"]) {
+      expect(createCmd.options.map((o) => o.long)).toContain(flag);
+    }
+    expect(run.commands.find((c) => c.name() === "list")!.options.map((o) => o.long)).toContain("--campaign");
+    expect(run.commands.find((c) => c.name() === "command")!.options.map((o) => o.long)).toContain("--kind");
+    expect(run.commands.find((c) => c.name() === "image-pin")!.options.find((o) => o.long === "--image")?.required).toBe(true);
+    expect(run.commands.find((c) => c.name() === "worker-mark")!.options.find((o) => o.long === "--role")?.required).toBe(true);
   });
 });
