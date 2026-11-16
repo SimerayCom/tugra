@@ -624,7 +624,7 @@ describe("PREFLIGHT source host classification (R5)", () => {
         ),
       }),
     );
-    expect(byId(cs, "preflight.hosts")).toMatchObject({ status: "pass", params: { hosts: 4, empty: 1, osReported: 2 } });
+    expect(byId(cs, "preflight.hosts")).toMatchObject({ status: "pass", params: { hosts: 4, empty: 1, osReported: 2, refs: ["ha", "hb", "hc", "hd"], names: ["host-1", "host-2", "host-3", "host-empty"] } });
     expect(byId(cs, "preflight.host-flaky")).toMatchObject({ status: "warn", params: { count: 1, items: ["host-1 (40)"] } });
     expect(byId(cs, "preflight.host-os-new")).toMatchObject({ status: "warn", params: { count: 1, items: ["host-2: ubuntu 26.04"], tested: "ubuntu 24.04, debian 12" } });
     // the empty host is only informed about: its flaky count is no concern of this run

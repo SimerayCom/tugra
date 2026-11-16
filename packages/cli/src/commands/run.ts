@@ -563,6 +563,213 @@ function formatSteps(steps: RunStepView[]): string[] {
   return [line(cols.map(([, h]) => h)), ...rows.map((r) => line(cols.map(([k]) => r[k])))];
 }
 
+// ───────────────────────────── campaign report (R15/R69) ─────────────────────────────
+
+/** The most runs one campaign report reads: the hub lists at most this many per call. */
+export const CAMPAIGN_REPORT_MAX_RUNS = 200;
+/** Reports fetched at the same time (a campaign is a few runs to a few dozen). */
+const CAMPAIGN_FETCH_PARALLEL = 4;
+
+interface ListedRun {
+  id: string;
+  status: string;
+  currentStep: string | null;
+  mode: string;
+  topology: string;
+  dryRun: boolean;
+  sourceHost: string | null;
+  targetServerName: string | null;
+  targetServerCount?: number;
+  campaign: string | null;
+  failure: { step: string | null; code: string } | null;
+  createdAt: string;
+}
+interface RunReportView {
+  targets?: Array<{ serverId: string; serverName: string | null }>;
+  window: { estimatedSec: number | null; measuredSec: number | null };
+  items: Array<{ kind: string; name: string; outcome: string; code: string | null }>;
+}
+
+export interface CampaignRunRow {
+  id: string;
+  status: string;
+  currentStep: string | null;
+  mode: string;
+  dryRun: boolean;
+  sourceHost: string | null;
+  targets: string[];
+  estimatedSec: number | null;
+  measuredSec: number | null;
+  /** Item counts by outcome; null when the run's report could not be read. */
+  items: { moved: number; skipped: number; acked: number; failed: number; notCutOver: number } | null;
+  failure: { step: string | null; code: string } | null;
+  /** The items that failed or stayed on the source, with the code that says why. */
+  problems: Array<{ kind: string; name: string; outcome: string; code: string | null }>;
+  reportUnreadable: boolean;
+  createdAt: string;
+}
+export interface CampaignReport {
+  campaign: string;
+  runs: CampaignRunRow[];
+  totals: { runs: number; completed: number; live: number; failed: number; other: number; moved: number; skipped: number; acked: number; failed_items: number; notCutOver: number };
+  window: { measuredTotalSec: number | null; measuredLongestSec: number | null; estimatedTotalSec: number | null };
+  sourceHosts: string[];
+  targetServers: string[];
+  /** True when the hub's list was as long as it can be: there may be more runs than the report holds. */
+  truncated: boolean;
+}
+
+/** `GET /migration-runs?campaign=<label>`: every run of the campaign (the hub lists at most 200). */
+export function buildCampaignListRequest(campaign: string): Req {
+  validateCampaign(campaign);
+  return buildListRequest({ campaign: campaign.trim(), limit: CAMPAIGN_REPORT_MAX_RUNS });
+}
+
+/** The campaign's runs rolled up from the run list and each run's report (`null` = that report could not be read). Pure. */
+export function aggregateCampaign(campaign: string, runs: readonly ListedRun[], reports: ReadonlyMap<string, RunReportView | null>): CampaignReport {
+  const mine = runs.filter((r) => r.campaign === campaign).sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.id < b.id ? -1 : 1));
+  const rows: CampaignRunRow[] = mine.map((r) => {
+    const rep = reports.get(r.id) ?? null;
+    const items = rep ? { moved: 0, skipped: 0, acked: 0, failed: 0, notCutOver: 0 } : null;
+    const problems: CampaignRunRow["problems"] = [];
+    for (const it of rep?.items ?? []) {
+      if (it.outcome === "moved") items!.moved++;
+      else if (it.outcome === "skipped") items!.skipped++;
+      else if (it.outcome === "acked") items!.acked++;
+      else if (it.outcome === "failed") items!.failed++;
+      else items!.notCutOver++;
+      if ((it.outcome === "failed" || it.outcome === "not-cut-over") && problems.length < 20) problems.push({ kind: it.kind, name: it.name, outcome: it.outcome, code: it.code });
+    }
+    const named = (rep?.targets ?? []).map((t) => t.serverName ?? t.serverId);
+    return {
+      id: r.id,
+      status: r.status,
+      currentStep: r.currentStep,
+      mode: r.mode,
+      dryRun: r.dryRun,
+      sourceHost: r.sourceHost,
+      targets: named.length ? named : [r.targetServerName ?? "-"],
+      estimatedSec: rep?.window.estimatedSec ?? null,
+      measuredSec: rep?.window.measuredSec ?? null,
+      items,
+      failure: r.failure,
+      problems,
+      reportUnreadable: rep === null,
+      createdAt: r.createdAt,
+    };
+  });
+  const totals = { runs: rows.length, completed: 0, live: 0, failed: 0, other: 0, moved: 0, skipped: 0, acked: 0, failed_items: 0, notCutOver: 0 };
+  for (const r of rows) {
+    if (r.status === "COMPLETED") totals.completed++;
+    else if (r.status === "FAILED") totals.failed++;
+    else if (isTerminal(r.status)) totals.other++;
+    else totals.live++;
+    if (r.items) {
+      totals.moved += r.items.moved;
+      totals.skipped += r.items.skipped;
+      totals.acked += r.items.acked;
+      totals.failed_items += r.items.failed;
+      totals.notCutOver += r.items.notCutOver;
+    }
+  }
+  const measured = rows.map((r) => r.measuredSec).filter((n): n is number => n !== null);
+  const estimated = rows.map((r) => r.estimatedSec).filter((n): n is number => n !== null);
+  const distinct = (xs: Array<string | null>) => [...new Set(xs.filter((x): x is string => !!x))].sort();
+  return {
+    campaign,
+    runs: rows,
+    totals,
+    window: {
+      measuredTotalSec: measured.length ? measured.reduce((a, b) => a + b, 0) : null,
+      measuredLongestSec: measured.length ? Math.max(...measured) : null,
+      estimatedTotalSec: estimated.length ? estimated.reduce((a, b) => a + b, 0) : null,
+    },
+    sourceHosts: distinct(rows.map((r) => r.sourceHost)),
+    targetServers: distinct(rows.flatMap((r) => r.targets)),
+    truncated: runs.length >= CAMPAIGN_REPORT_MAX_RUNS,
+  };
+}
+
+/** Read a campaign through the hub: the run list of the label, then each run's report (a few at a time). A report that cannot be read leaves its run in the table, marked. */
+export async function fetchCampaignReport(campaign: string, get: (path: string) => Promise<unknown>): Promise<CampaignReport> {
+  const label = campaign.trim();
+  const list = (await get(buildCampaignListRequest(label).path)) as ListedRun[];
+  const runs = (Array.isArray(list) ? list : []).filter((r) => r.campaign === label);
+  const reports = new Map<string, RunReportView | null>();
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const i = next++;
+      if (i >= runs.length) return;
+      try {
+        reports.set(runs[i].id, (await get(`${base(runs[i].id)}/report`)) as RunReportView);
+      } catch {
+        reports.set(runs[i].id, null);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(CAMPAIGN_FETCH_PARALLEL, runs.length) }, worker));
+  return { ...aggregateCampaign(label, runs, reports), truncated: Array.isArray(list) && list.length >= CAMPAIGN_REPORT_MAX_RUNS };
+}
+
+const dur = (n: number | null): string => (n === null ? "-" : n >= 3600 ? `${Math.floor(n / 3600)} h ${Math.round((n % 3600) / 60)} min` : n >= 60 ? `${Math.round(n / 60)} min` : `${n} s`);
+const itemsText = (i: CampaignRunRow["items"]): string => (i ? `${i.moved} moved, ${i.failed} failed, ${i.notCutOver} not cut over, ${i.skipped} skipped` : "report unreadable");
+
+/** The campaign report as terminal lines: the totals, then one row per run, then what failed or stayed on the source. */
+export function formatCampaignReport(r: CampaignReport): string[] {
+  const t = r.totals;
+  const out = [
+    `campaign ${r.campaign}: ${t.runs} runs: ${t.completed} completed, ${t.live} live, ${t.failed} failed, ${t.other} dry-run or stopped`,
+    `items: ${t.moved} moved, ${t.failed_items} failed, ${t.notCutOver} not cut over, ${t.skipped} skipped, ${t.acked} accepted`,
+    `source hosts: ${r.sourceHosts.join(", ") || "-"}`,
+    `target servers: ${r.targetServers.join(", ") || "-"}`,
+    r.window.measuredTotalSec === null ? "downtime: no window measured yet" : `downtime: ${dur(r.window.measuredTotalSec)} in total, longest ${dur(r.window.measuredLongestSec)}`,
+  ];
+  if (r.truncated) out.push(`only the newest ${CAMPAIGN_REPORT_MAX_RUNS} runs are listed by the hub; there may be more`);
+  out.push("");
+  const rows = r.runs.map((x) => ({
+    id: x.id,
+    status: x.status,
+    step: x.currentStep ?? "",
+    source: x.sourceHost ?? "-",
+    targets: x.targets.join(","),
+    window: `${dur(x.estimatedSec)} / ${dur(x.measuredSec)}`,
+    items: itemsText(x.items),
+    failure: x.failure ? `${x.failure.step ?? ""} ${x.failure.code}`.trim() : "",
+  }));
+  const cols: Array<[keyof (typeof rows)[number], string]> = [["id", "ID"], ["status", "STATUS"], ["step", "STEP"], ["source", "SOURCE"], ["targets", "TARGETS"], ["window", "WINDOW (EST / MEASURED)"], ["items", "ITEMS"], ["failure", "FAILURE"]];
+  const widths = cols.map(([k, h]) => Math.max(h.length, ...rows.map((x) => x[k].length)));
+  const line = (cells: string[]) => cells.map((c, i) => c.padEnd(widths[i])).join("  ").replace(/\s+$/, "");
+  out.push(line(cols.map(([, h]) => h)), ...rows.map((x) => line(cols.map(([k]) => x[k]))));
+  const problems = r.runs.flatMap((x) => x.problems.map((p) => `  ${x.sourceHost ?? "-"}: ${p.kind} ${p.name}: ${p.outcome}${p.code ? ` (${p.code})` : ""}`));
+  if (problems.length) out.push("", "failed or not cut over:", ...problems);
+  return out;
+}
+
+const mdCell = (v: string): string => v.replace(/[|\r\n]+/g, " ").trim();
+
+/** The same report as Markdown (what `--format md` prints), cells escaped. */
+export function formatCampaignMarkdown(r: CampaignReport): string {
+  const t = r.totals;
+  const lines = [
+    `# Campaign ${mdCell(r.campaign)}`,
+    "",
+    `- Runs: ${t.runs} (${t.completed} completed, ${t.live} live, ${t.failed} failed, ${t.other} dry-run or stopped)`,
+    `- Items: ${t.moved} moved, ${t.failed_items} failed, ${t.notCutOver} not cut over, ${t.skipped} skipped, ${t.acked} accepted`,
+    `- Source hosts: ${r.sourceHosts.map(mdCell).join(", ") || "-"}`,
+    `- Target servers: ${r.targetServers.map(mdCell).join(", ") || "-"}`,
+    `- Downtime measured: ${r.window.measuredTotalSec === null ? "none yet" : `${dur(r.window.measuredTotalSec)} in total, longest ${dur(r.window.measuredLongestSec)}`}`,
+    ...(r.truncated ? [`- Only the newest ${CAMPAIGN_REPORT_MAX_RUNS} runs are listed by the hub; there may be more`] : []),
+    "",
+    "| Run | Status | Step | Source | Targets | Window (est / measured) | Items | Failure |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    ...r.runs.map((x) => `| ${x.id} | ${x.status} | ${x.currentStep ?? ""} | ${mdCell(x.sourceHost ?? "-")} | ${mdCell(x.targets.join(", "))} | ${dur(x.estimatedSec)} / ${dur(x.measuredSec)} | ${itemsText(x.items)} | ${mdCell(x.failure ? `${x.failure.step ?? ""} ${x.failure.code}` : "")} |`),
+  ];
+  const problems = r.runs.flatMap((x) => x.problems.map((p) => `- ${mdCell(x.sourceHost ?? "-")}: ${p.kind} \`${mdCell(p.name)}\`: ${p.outcome}${p.code ? ` (${mdCell(p.code)})` : ""}`));
+  if (problems.length) lines.push("", "## Failed or not cut over", "", ...problems);
+  return lines.join("\n");
+}
+
 // ───────────────────────────── watch ─────────────────────────────
 
 export interface WatchDeps {
@@ -874,9 +1081,24 @@ export function register(program: Command): void {
     const token = process.env[SOURCE_TOKEN_ENV];
     return perform("source-session", id, { ...o, token });
   });
-  sub("report", "<runId>", "The final report: what moved, what did not, evidence kinds, measured window")
-    .option("--format <format>", "json | md (default json)")
-    .action((id: string, o) => perform("report", id, o));
+  run
+    .command("report [runId]")
+    .description("The final report of one run (what moved, what did not, evidence kinds, measured window), or with --campaign the report of every run of a campaign")
+    .option("--campaign <label>", "report every run of this campaign instead of one run: per run its state, hosts, window and failures, and the totals")
+    .option("--format <format>", "json | md (default json for a run, a table for a campaign)")
+    .option("--json", "output as JSON")
+    .action(async (id: string | undefined, o: RunOpts & { json?: boolean }) => {
+      need(!(id && o.campaign), "give a run id or --campaign, not both");
+      if (o.campaign === undefined) {
+        need(!!id, "give a run id, or --campaign <label> for the report of a whole campaign");
+        return perform("report", id!, o);
+      }
+      oneOf(o.format, ["json", "md"], "--format");
+      const rep = await fetchCampaignReport(o.campaign, (path) => api().requestRaw("GET", path));
+      if (o.json || o.format === "json") return printJson(rep);
+      if (o.format === "md") return void printLine(formatCampaignMarkdown(rep));
+      for (const l of formatCampaignReport(rep)) printLine(l);
+    });
 
   run
     .command("watch <runId>")

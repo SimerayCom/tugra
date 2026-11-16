@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Route } from "lucide-react";
@@ -9,7 +10,7 @@ import { useT } from "../../i18n/provider";
 import { scopeByTeam } from "../../lib/team-scope";
 import { useTeamScope } from "../team-scope";
 import { relativeTime } from "../../lib/fleet";
-import { CAMPAIGN_ROLLUP_LIMIT, NEXT_KIND_KEY, STEP_TITLE_KEY, campaignRollup, codeText, runListRefetchInterval, runTitleParts, validCampaign } from "../../lib/migration-run";
+import { CAMPAIGN_ROLLUP_LIMIT, NEXT_KIND_KEY, STEP_TITLE_KEY, campaignReportHref, campaignRollup, codeText, runListRefetchInterval, runTitleParts, validCampaign } from "../../lib/migration-run";
 import { Checkbox, Field, TextInput } from "../form";
 import { Badge, EmptyState, LinkBtn } from "../ui";
 import { ErrorState } from "../error-state";
@@ -84,7 +85,7 @@ export function RunList() {
       {rollup.length > 0 && (
         <ul style={{ margin: "0 0 12px", padding: 0, listStyle: "none", display: "flex", gap: 8, flexWrap: "wrap" }}>
           {rollup.map((c) => (
-            <li key={c.campaign}>
+            <li key={c.campaign} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
               <button
                 type="button"
                 className="tg-btn"
@@ -95,6 +96,9 @@ export function RunList() {
                 <strong style={{ display: "block", wordBreak: "break-word" }}>{c.campaign}</strong>
                 <span style={{ color: "var(--c-tx3)" }}>{t(rollupCapped ? "migrationRun.list.campaignRollupCapped" : "migrationRun.list.campaignRollup", { total: c.total, completed: c.completed, live: c.live, failed: c.failed, other: c.other })}</span>
               </button>
+              <Link href={campaignReportHref(c.campaign)} className="tg-link" style={{ fontSize: 12, minHeight: 28, display: "inline-flex", alignItems: "center", padding: "0 4px" }}>
+                {t("migrationRun.campaign.open")}
+              </Link>
             </li>
           ))}
         </ul>

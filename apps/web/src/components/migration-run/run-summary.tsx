@@ -4,7 +4,7 @@ import { ShieldAlert, ShieldCheck } from "lucide-react";
 import { useT } from "../../i18n/provider";
 import { Badge, Card, SectionCard } from "../ui";
 import { formatDuration } from "../../lib/import";
-import { MODE_HINT_KEY, TOPOLOGY_HINT_KEY, UNKNOWN_SOURCE_HOST, VERSION_VERDICT_HINT_KEY, VERSION_VERDICT_KEY, dryRunVerdict, stepsSummary, versionVerdictColor } from "../../lib/migration-run";
+import { MODE_HINT_KEY, TOPOLOGY_HINT_KEY, UNKNOWN_SOURCE_HOST, VERSION_VERDICT_HINT_KEY, VERSION_VERDICT_KEY, dryRunVerdict, sourceHostLabel, sourceHostNames, stepsSummary, versionVerdictColor } from "../../lib/migration-run";
 import { relativeTime } from "../../lib/fleet";
 import type { MigrationRunView } from "../../lib/types";
 import { MeterBar } from "../meter-bar";
@@ -127,13 +127,17 @@ export function PlacementCard({ run }: { run: MigrationRunView }) {
   const entries = Object.entries(run.serverMap ?? {});
   if (entries.length === 0) return null;
   const nameOf = (id: string) => run.targetServers.find((s) => s.serverId === id)?.serverName ?? id;
+  const hostNames = sourceHostNames(run);
   return (
     <SectionCard title={t("migrationRun.placement.title")} desc={t("migrationRun.placement.desc")} style={{ marginBottom: 0 }}>
       <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 8 }}>
         {entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([ref, id]) => (
           <li key={ref} style={{ display: "flex", flexWrap: "wrap", gap: "2px 12px", alignItems: "baseline", fontSize: 13, minWidth: 0 }}>
             <span style={{ fontSize: 11, color: "var(--c-tx3)", minWidth: 90 }}>{ref === UNKNOWN_SOURCE_HOST ? t("migrationRun.placement.unknownHost") : t("migrationRun.placement.host")}</span>
-            {ref !== UNKNOWN_SOURCE_HOST && <span className="mono" style={{ wordBreak: "break-all", flex: "1 1 160px", minWidth: 0 }}>{ref}</span>}
+            {ref !== UNKNOWN_SOURCE_HOST && (
+              // the source's own name for the host; its uuid only when the source gave none (and as the tooltip otherwise)
+              <span className="mono" title={t("migrationRun.placement.idTitle", { ref })} style={{ wordBreak: "break-all", flex: "1 1 160px", minWidth: 0 }}>{sourceHostLabel(hostNames, ref)}</span>
+            )}
             <span aria-hidden>→</span>
             <span className="mono" style={{ wordBreak: "break-word", flex: "1 1 120px", minWidth: 0 }}>{nameOf(id)}</span>
           </li>

@@ -464,7 +464,9 @@
       "none": "The plan names no source host, so there is nothing to place.",
       "invalid": "Every source host needs a Tugra server, and at most {max} hosts can be mapped.",
       "summary": "{hosts} source hosts on {servers} Tugra servers.",
-      "teamOnly": "Only servers of the target server's team are offered."
+      "teamOnly": "Only servers of the target server's team are offered.",
+      "hostNamed": "Source host {name}",
+      "targetNamed": "Tugra server for {name}"
     },
     "advanced": {
       "title": "Advanced options",
@@ -504,7 +506,9 @@
         "stream-logical": "Stream a logical dump"
       },
       "stopSource": "Let the migrator stop the source writers itself",
-      "stopSourceHint": "Off by default. Without it the freeze step asks you to stop the writers."
+      "stopSourceHint": "Off by default. Without it the freeze step asks you to stop the writers.",
+      "largeDbHintRefuse": "A PostgreSQL, MySQL or MariaDB database whose dump is over the size cap stops at the data copy and the run waits for you. Nothing is moved for it. Pick Stream a logical dump if the plan has databases that large.",
+      "largeDbHintStream": "A database over the cap is dumped and restored as a stream in resumable parts, with no size cap. The source stays stopped while it runs, so its whole duration counts as downtime. Rehearse it with a dry run first."
     }
   },
   "units": {
@@ -1096,7 +1100,8 @@
     "host": "Source host",
     "target": "Tugra server",
     "unknownHost": "Resources with no source host",
-    "defaultNote": "The default target is {name}."
+    "defaultNote": "The default target is {name}.",
+    "idTitle": "Source server id {ref}"
   },
   "safety": {
     "title": "Held workers and image pins",
@@ -1129,5 +1134,46 @@
     "pinRemove": "Remove the digest of {image}",
     "saved": "Recorded.",
     "open": "Show and edit"
+  },
+  "heldWorkers": {
+    "title": "Workers",
+    "holdDark": "{count} apps serve no domain, so the run treats them as workers. They stay stopped until after the cutover, so they cannot send mail or repeat jobs next to the source.",
+    "exclude": "{count} apps serve no domain and are left out of this run. They are not migrated.",
+    "startDark": "{count} apps serve no domain. The run starts them before the cutover, next to the source, so they may send mail or repeat jobs.",
+    "hint": "Wrong list? Mark an app as a job runner or a web app in the facts card below the owner inputs.",
+    "listLabel": "Worker apps"
+  },
+  "campaign": {
+    "title": "Campaign report",
+    "subtitle": "Every run of the campaign: where it stands, which hosts it moved, how long the window was and what failed.",
+    "back": "All runs",
+    "openRun": "Open run {id}",
+    "noRuns": "No run carries this campaign label.",
+    "noLabel": "Choose a campaign on the runs page to see its report.",
+    "loading": "Loading the reports of the runs.",
+    "pending": "{count} reports are still loading.",
+    "capped": "Only the first {max} runs are read.",
+    "summaryTitle": "Summary",
+    "runs": "{total} runs: {completed} completed, {live} live, {failed} failed, {other} dry-run or stopped",
+    "items": "{moved} moved, {failed} failed, {notCutOver} not cut over, {skipped} skipped, {acked} accepted",
+    "itemsNone": "No item counts yet.",
+    "sourceHosts": "Source hosts: {hosts}",
+    "targetServers": "Target servers: {servers}",
+    "windowTotal": "Measured downtime in total: {time}",
+    "windowLongest": "Longest window: {time}",
+    "windowNone": "No window has been measured yet.",
+    "runsTitle": "Runs",
+    "hosts": "{source} to {targets}",
+    "window": "Window {estimated} estimated, {measured} measured",
+    "reportFailed": "The report of this run could not be read.",
+    "failuresTitle": "What failed or was not cut over",
+    "failuresNone": "Nothing failed and nothing was left on the source.",
+    "failedItem": "{name}: {reason}",
+    "outcome": {
+      "failed": "Failed",
+      "not-cut-over": "Not cut over"
+    },
+    "open": "Campaign report",
+    "runFailed": "The run failed"
   }
 }

@@ -66,6 +66,13 @@ describe("RunList campaign roll-up", () => {
     expect(calls.some((f) => !f.active && !f.campaign && f.limit === 200)).toBe(true);
   });
 
+  it("links each campaign to its own report", async () => {
+    wrap();
+    await screen.findByText(/5 runs:/);
+    const link = screen.getByRole("link", { name: "Campaign report" });
+    expect(link.getAttribute("href")).toBe("/import/runs/campaign?c=wave-1");
+  });
+
   it("says the counts are a lower bound when the roll-up query hit its cap", async () => {
     vi.mocked(api.listMigrationRuns).mockRestore();
     vi.spyOn(api, "listMigrationRuns").mockImplementation(async (f = {}) => Array.from({ length: f.limit ?? 50 }, (_, i) => row(`r${i}`, "COMPLETED")));

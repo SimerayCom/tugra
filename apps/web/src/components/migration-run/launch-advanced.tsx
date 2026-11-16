@@ -97,7 +97,10 @@ export function AdvancedFields({ value, onChange, issues }: { value: AdvancedSta
           <Field label={t("migrationRun.launch.advanced.deployConcurrency")} hint={t("migrationRun.launch.advanced.deployConcurrencyHint")} error={issues.includes("concurrency") ? t("migrationRun.launch.advanced.deployConcurrencyInvalid") : undefined}>
             <NumberInput min={1} max={8} value={value.deployConcurrency} onChange={(e) => set("deployConcurrency", e.target.value)} style={{ minHeight: 44 }} />
           </Field>
-          <Field label={t("migrationRun.launch.advanced.largeDbMode")} hint={t("migrationRun.launch.advanced.largeDbModeHint")}>
+          <Field
+            label={t("migrationRun.launch.advanced.largeDbMode")}
+            hint={`${t("migrationRun.launch.advanced.largeDbModeHint")} ${t(value.largeDbMode === "stream-logical" ? "migrationRun.launch.advanced.largeDbHintStream" : "migrationRun.launch.advanced.largeDbHintRefuse")}`}
+          >
             <Select
               value={value.largeDbMode}
               onChange={(v) => set("largeDbMode", v as MigrationRunLargeDbMode)}

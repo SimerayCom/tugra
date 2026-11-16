@@ -184,6 +184,15 @@ function itemsPerHost(items: ImportPlanResponse["items"]): Map<string, number> {
 }
 
 /**
+ * The source servers by name for the panel, which must show a host by its name and not by its uuid: two parallel lists (`refs[i]` is
+ * called `names[i]`; an unnamed server has an empty name). The names are the source's own text, so they ride as params, never in a sentence.
+ */
+function hostNames(hosts: ReadonlyArray<{ ref: string; name?: string }>): { refs: string[]; names: string[] } {
+  const list = hosts.slice(0, 200);
+  return { refs: list.map((h) => h.ref.slice(0, 300)), names: list.map((h) => (h.name ?? "").slice(0, 300)) };
+}
+
+/**
  * R5: what the source says about its own servers, before any step: the control-plane box (it goes last, R67/R70), hosts whose
  * reachability flaps, hosts on a very new OS release and hosts the run puts nothing on. Warnings only: a run may well move
  * from a flaky host, it should just not be a surprise.
@@ -192,7 +201,7 @@ export function hostChecks(plan: ImportPlanResponse, items: ImportPlanResponse["
   const hosts = plan.preflight?.hosts;
   if (!hosts || hosts.length === 0) return [];
   const cls = classifyHosts(hosts, itemsPerHost(items));
-  const out: GateCheck[] = [{ id: "preflight.hosts", status: "pass", code: "preflight.hosts-classified", params: { hosts: hosts.length, empty: cls.empty.length, osReported: cls.osReported }, evidence: "source-api-reported" }];
+  const out: GateCheck[] = [{ id: "preflight.hosts", status: "pass", code: "preflight.hosts-classified", params: { hosts: hosts.length, empty: cls.empty.length, osReported: cls.osReported, ...hostNames(hosts) }, evidence: "source-api-reported" }];
   for (const h of cls.controlPlane) {
     out.push({
       id: "preflight.host-control-plane",

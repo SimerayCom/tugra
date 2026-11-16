@@ -400,6 +400,51 @@ describe("RunDetail", () => {
       expect(screen.getByText(/Recorded/)).toBeTruthy();
     });
 
+    const preflightWith = (checks: Array<{ id: string; code: string; params: Record<string, string | number | string[]> }>) =>
+      mkStep("PREFLIGHT", "PASSED", { gate: { passed: true, checks: checks.map((c) => ({ ...c, status: "pass" as const })) } });
+    const withPreflight = (step: MigrationRunStepView) => stepsWith({ PREFLIGHT: step, IMPORT: mkStep("IMPORT", "PASSED") });
+
+    it("shows a source host by the name PREFLIGHT recorded, and by its uuid only when the source gave no name", async () => {
+      const pre = preflightWith([{ id: "preflight.hosts", code: "preflight.hosts-classified", params: { hosts: 2, empty: 0, osReported: 0, refs: ["host-a", "host-b"], names: ["Alpha box", ""] } }]);
+      vi.spyOn(api, "getMigrationRun").mockResolvedValue(multi({}, withPreflight(pre)));
+      wrap();
+      await screen.findByText("Placement");
+      expect(screen.getByText("Alpha box")).toBeTruthy();
+      expect(screen.queryByText("host-a")).toBeNull();
+      expect(screen.getByText("host-b")).toBeTruthy(); // no name: the uuid is all there is
+    });
+
+    it("lists every held worker with what the run does with them (R26)", async () => {
+      const names = Array.from({ length: 14 }, (_, i) => `worker-${i}`);
+      const pre = preflightWith([{ id: "preflight.workers", code: "preflight.workers-held", params: { count: 14, items: names.slice(0, 10), workers: names, policy: "hold-dark" } }]);
+      vi.spyOn(api, "getMigrationRun").mockResolvedValue(multi({}, withPreflight(pre)));
+      wrap();
+      await screen.findByText(/14 apps serve no domain, so the run treats them as workers/);
+      const list = screen.getByRole("list", { name: "Worker apps" });
+      expect(within(list).getAllByRole("listitem")).toHaveLength(14); // not just the ten names of the sentence
+      expect(within(list).getByText("worker-13")).toBeTruthy();
+      expect(screen.getAllByText(/stay stopped until after the cutover/).length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("says it plainly when the workers start next to the source or are left out, and shows no card without workers", async () => {
+      const start = preflightWith([{ id: "preflight.workers", code: "preflight.workers-start-dark", params: { count: 1, items: ["w"], workers: ["w"], policy: "start-dark" } }]);
+      vi.spyOn(api, "getMigrationRun").mockResolvedValue(multi({}, withPreflight(start)));
+      wrap();
+      await screen.findByText(/may send mail or repeat jobs/);
+      cleanup();
+      qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const out = preflightWith([{ id: "preflight.workers", code: "preflight.workers-excluded", params: { count: 1, items: ["w"], workers: ["w"], policy: "exclude" } }]);
+      vi.spyOn(api, "getMigrationRun").mockResolvedValue(multi({}, withPreflight(out)));
+      wrap();
+      await screen.findByText(/are left out of this run/);
+      cleanup();
+      qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      vi.spyOn(api, "getMigrationRun").mockResolvedValue(multi({}, withPreflight(preflightWith([]))));
+      wrap();
+      await screen.findByText("Placement");
+      expect(screen.queryByRole("list", { name: "Worker apps" })).toBeNull();
+    });
+
     it("a single-target run has no placement card and says when the baseline is still missing", async () => {
       vi.spyOn(api, "getMigrationRun").mockResolvedValue(mkRun({ sourceVersion: null, sourceVersionVerdict: "unknown" }));
       wrap();

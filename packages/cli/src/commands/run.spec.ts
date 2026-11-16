@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { RUN_ACTIONS, buildCreateRequest, buildListRequest, buildRequest, confirmHint, formatEvent, formatSafetyHints, formatStatus, isTerminal, parseServerMap, register, shellQuote, watchRun, type RunView } from "./run";
+import { CAMPAIGN_REPORT_MAX_RUNS, RUN_ACTIONS, aggregateCampaign, buildCampaignListRequest, buildCreateRequest, buildListRequest, buildRequest, confirmHint, fetchCampaignReport, formatCampaignMarkdown, formatCampaignReport, formatEvent, formatSafetyHints, formatStatus, isTerminal, parseServerMap, register, shellQuote, watchRun, type RunView } from "./run";
 
 const PLAN = "a".repeat(32);
 const HASH = "b".repeat(64);
@@ -494,5 +494,100 @@ describe("tugra import run: fleet runs", () => {
     const markHelp = run.commands.find((c) => c.name() === "worker-mark")!.description();
     expect(markHelp).toMatch(/no domain/i);
     expect(markHelp).not.toMatch(/held until after the cutover\)/);
+  });
+});
+
+describe("tugra import run report --campaign (R15/R69)", () => {
+  const listed = (id: string, over: Record<string, unknown> = {}) => ({
+    id, status: "COMPLETED", currentStep: null, mode: "copy", topology: "two-box", dryRun: false, sourceHost: "src-a.example.test", targetServerName: "tugra-1", targetServerCount: 1, campaign: "wave-1",
+    failure: null, createdAt: `2026-11-2${id.length}T10:00:00Z`, ...over,
+  });
+  const rep = (over: Record<string, unknown> = {}) => ({
+    targets: [{ serverId: "s1", serverName: "tugra-1" }, { serverId: "s2", serverName: "tugra-2" }],
+    window: { estimatedSec: 600, measuredSec: 420 },
+    items: [{ kind: "app", name: "app-a", outcome: "moved", code: null }, { kind: "app", name: "app-b", outcome: "not-cut-over", code: "cutover.host-held" }],
+    ...over,
+  });
+
+  it("asks the hub for the runs of the label, newest page of 200, and refuses an unprintable label", () => {
+    expect(buildCampaignListRequest(" wave-1 ")).toEqual({ method: "GET", path: `/migration-runs?campaign=wave-1&limit=${CAMPAIGN_REPORT_MAX_RUNS}` });
+    expect(buildCampaignListRequest("wave 1/a").path).toBe(`/migration-runs?campaign=wave%201%2Fa&limit=200`);
+    expect(() => buildCampaignListRequest("")).toThrow(/--campaign/);
+    expect(() => buildCampaignListRequest("bad\u0007")).toThrow(/--campaign/);
+  });
+
+  it("rolls the runs up: per run its state, hosts, window and failures, the totals over them, another campaign left out", () => {
+    const runs = [
+      listed("r1"),
+      listed("rr2", { status: "FAILED", currentStep: "DATA_FINAL", sourceHost: "src-b.example.test", failure: { step: "DATA_FINAL", code: "data-final.host-failed" } }),
+      listed("rrr3", { status: "WAITING", currentStep: "VERIFY", sourceHost: "src-c.example.test" }),
+      listed("rrrr4", { campaign: "wave-2" }),
+    ];
+    const reports = new Map<string, never>([
+      ["r1", rep() as never],
+      ["rr2", rep({ window: { estimatedSec: 300, measuredSec: null }, items: [{ kind: "database", name: "db-big", outcome: "failed", code: "data.dump-too-big" }] }) as never],
+    ]);
+    const r = aggregateCampaign("wave-1", runs as never, reports as never);
+    expect(r.runs.map((x) => x.id)).toEqual(["r1", "rr2", "rrr3"]);
+    expect(r.totals).toEqual({ runs: 3, completed: 1, live: 1, failed: 1, other: 0, moved: 1, skipped: 0, acked: 0, failed_items: 1, notCutOver: 1 });
+    expect(r.runs[0]).toMatchObject({ targets: ["tugra-1", "tugra-2"], estimatedSec: 600, measuredSec: 420, items: { moved: 1, notCutOver: 1 }, problems: [{ name: "app-b", outcome: "not-cut-over", code: "cutover.host-held" }] });
+    expect(r.runs[1]).toMatchObject({ failure: { step: "DATA_FINAL", code: "data-final.host-failed" }, measuredSec: null, problems: [{ name: "db-big", outcome: "failed" }] });
+    // a run with no report keeps its row and says so
+    expect(r.runs[2]).toMatchObject({ items: null, reportUnreadable: true, targets: ["tugra-1"] });
+    expect(r.window).toEqual({ measuredTotalSec: 420, measuredLongestSec: 420, estimatedTotalSec: 900 });
+    expect(r.sourceHosts).toEqual(["src-a.example.test", "src-b.example.test", "src-c.example.test"]);
+    expect(r.targetServers).toEqual(["tugra-1", "tugra-2"]);
+  });
+
+  it("reads the list, then each run's report, and a report that fails does not sink the campaign", async () => {
+    const seen: string[] = [];
+    const get = async (path: string): Promise<unknown> => {
+      seen.push(path);
+      if (path.startsWith("/migration-runs?")) return [listed("r1"), listed("rr2"), listed("rrr3", { campaign: "wave-2" })];
+      if (path === "/migration-runs/rr2/report") throw new Error("503");
+      return rep();
+    };
+    const r = await fetchCampaignReport("wave-1", get);
+    expect(seen[0]).toBe("/migration-runs?campaign=wave-1&limit=200");
+    expect(seen.slice(1).sort()).toEqual(["/migration-runs/r1/report", "/migration-runs/rr2/report"]);
+    expect(r.runs.map((x) => [x.id, x.reportUnreadable])).toEqual([["r1", false], ["rr2", true]]);
+    expect(r.truncated).toBe(false);
+    // a list as long as the hub can give says it may be cut off
+    const full = await fetchCampaignReport("wave-1", async (p) => (p.startsWith("/migration-runs?") ? Array.from({ length: 200 }, (_, i) => listed(`r${i}`)) : rep()));
+    expect(full.truncated).toBe(true);
+    expect(full.runs).toHaveLength(200);
+  });
+
+  it("prints a table and a Markdown copy with the totals, the windows and what failed", async () => {
+    const r = await fetchCampaignReport("wave-1", async (path) => (path.startsWith("/migration-runs?") ? [listed("r1", { status: "FAILED", failure: { step: "FREEZE", code: "freeze.host-failed" } })] : rep()));
+    const text = formatCampaignReport(r).join("\n");
+    expect(text).toContain("campaign wave-1: 1 runs: 0 completed, 0 live, 1 failed, 0 dry-run or stopped");
+    expect(text).toContain("source hosts: src-a.example.test");
+    expect(text).toContain("downtime: 7 min in total, longest 7 min");
+    expect(text).toMatch(/r1\s+FAILED\s+.*tugra-1,tugra-2\s+10 min \/ 7 min\s+1 moved, 0 failed, 1 not cut over, 0 skipped\s+FREEZE freeze.host-failed/);
+    expect(text).toContain("src-a.example.test: app app-b: not-cut-over (cutover.host-held)");
+    const md = formatCampaignMarkdown(r);
+    expect(md).toContain("# Campaign wave-1");
+    expect(md).toContain("| r1 | FAILED |  | src-a.example.test | tugra-1, tugra-2 | 10 min / 7 min | 1 moved, 0 failed, 1 not cut over, 0 skipped | FREEZE freeze.host-failed |");
+    expect(md).toContain("## Failed or not cut over");
+    // a table cell cannot be broken out of by a value from the source
+    const nasty = await fetchCampaignReport("wave-1", async (path) => (path.startsWith("/migration-runs?") ? [listed("r1", { sourceHost: "a|b\nc" })] : rep()));
+    expect(formatCampaignMarkdown(nasty)).toContain("| a b c |");
+  });
+
+  it("an empty campaign reports no runs and no window", async () => {
+    const r = await fetchCampaignReport("wave-9", async () => []);
+    expect(r.runs).toEqual([]);
+    expect(r.window).toEqual({ measuredTotalSec: null, measuredLongestSec: null, estimatedTotalSec: null });
+    expect(formatCampaignReport(r)[0]).toBe("campaign wave-9: 0 runs: 0 completed, 0 live, 0 failed, 0 dry-run or stopped");
+  });
+
+  it("`report` takes a run id or --campaign, with --campaign and --format on the command", () => {
+    const program = new Command();
+    register(program);
+    const runCmd = program.commands.find((c) => c.name() === "import")!.commands.find((c) => c.name() === "run")!;
+    const report = runCmd.commands.find((c) => c.name() === "report")!;
+    expect(report.options.map((o) => o.long)).toEqual(expect.arrayContaining(["--campaign", "--format", "--json"]));
+    expect(report.registeredArguments[0].required).toBe(false);
   });
 });
