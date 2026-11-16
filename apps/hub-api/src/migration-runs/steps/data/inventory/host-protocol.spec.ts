@@ -7,6 +7,30 @@ const A = "a".repeat(64);
 const B = "b".repeat(64);
 const at = (ref: string, ...f: string[]) => ["TUGRA_AT", ref, ...f].join(T);
 
+describe("parseReportBody: dbnames", () => {
+  const inv = (...lines: string[]) => parseReportBody([at("srv-a", "TUGRA_INV", "ctr", A, "db-x", "postgres:16", "running"), at("srv-a", "TUGRA_INV", "dbmeta", A, "u", "d", "env", "16"), ...lines.map((l) => at("srv-a", "TUGRA_INV", ...l.split(T)))].join("\n")).inventory.get("srv-a")!;
+
+  it("reads the listed databases onto the container's facts: a list, none, or not listable", () => {
+    expect(inv(["dbnames", A, "=d,other_db"].join(T)).containers[0].db!.databases).toEqual(["d", "other_db"]);
+    expect(inv(["dbnames", A, "="].join(T)).containers[0].db!.databases).toEqual([]);
+    expect(inv(["dbnames", A, "?"].join(T)).containers[0].db!.databases).toBeNull();
+    expect(inv(["dbnames", A, "=d,!"].join(T)).containers[0].db!.databases).toEqual(["d", "!"]);
+    expect(inv().containers[0].db!.databases).toBeUndefined();
+  });
+
+  it("a malformed line, one for a container with no database facts, or one past 32 names is dropped and counted", () => {
+    const n = (k: number) => `=${Array.from({ length: k }, (_, i) => `d${i}`).join(",")}`;
+    for (const bad of ["=bad name", "=a,,b", "x", "=-lead", `${n(33)}`]) {
+      const r = inv(["dbnames", A, bad].join(T));
+      expect(r.rejected).toBe(1);
+      expect(r.containers[0].db!.databases).toBeUndefined();
+    }
+    expect(inv(["dbnames", A, n(32)].join(T)).containers[0].db!.databases).toHaveLength(32);
+    const orphan = parseReportBody([at("srv-a", "TUGRA_INV", "ctr", A, "web", "nginx", "running"), at("srv-a", "TUGRA_INV", "dbnames", A, "=d")].join("\n")).inventory.get("srv-a")!;
+    expect(orphan.rejected).toBe(1);
+  });
+});
+
 describe("parseReportBody", () => {
   it("parses loop statuses and refuses a state, step or code outside the vocabulary", () => {
     const r = parseReportBody(

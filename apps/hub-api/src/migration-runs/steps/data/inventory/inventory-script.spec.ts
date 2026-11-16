@@ -190,7 +190,7 @@ describe("database facts (R2): non-secret identity, never the password", () => {
 
   it("reads the user, database and version of a PostgreSQL container and reports that a password exists, without sending it", () => {
     const r = run(db({ image: "postgres:17-alpine", env: ["POSTGRES_USER=appuser", "POSTGRES_DB=appdb", `POSTGRES_PASSWORD=${SECRET}`, "PG_MAJOR=17"] }));
-    expect(r.parsed.inventory.get("srv-1")!.containers[0].db).toEqual({ user: "appuser", database: "appdb", cred: "env", version: "17" });
+    expect(r.parsed.inventory.get("srv-1")!.containers[0].db).toEqual({ user: "appuser", database: "appdb", cred: "env", version: "17", databases: [] });
     expect(r.stdout).not.toContain(SECRET);
     expect(r.stderr).not.toContain(SECRET);
     expect(fake!.file("posted.txt")).not.toContain(SECRET);
@@ -206,13 +206,42 @@ describe("database facts (R2): non-secret identity, never the password", () => {
 
   it("MySQL / MariaDB: root first (unless the root password is random), else the app user; the database must be named", () => {
     const root = run(db({ image: "mariadb:11", env: ["MARIADB_ROOT_PASSWORD=x", "MARIADB_DATABASE=shop", "MARIADB_MAJOR=11"] }));
-    expect(root.parsed.inventory.get("srv-1")!.containers[0].db).toEqual({ user: "root", database: "shop", cred: "env", version: "11" });
+    expect(root.parsed.inventory.get("srv-1")!.containers[0].db).toEqual({ user: "root", database: "shop", cred: "env", version: "11", databases: [] });
     const app = run(db({ image: "mysql:8.0", env: ["MYSQL_RANDOM_ROOT_PASSWORD=yes", "MYSQL_ROOT_PASSWORD=ignored", "MYSQL_USER=shopper", "MYSQL_PASSWORD=x", "MYSQL_DATABASE=shop", "MYSQL_MAJOR=8.0"] }));
-    expect(app.parsed.inventory.get("srv-1")!.containers[0].db).toEqual({ user: "shopper", database: "shop", cred: "env", version: "8.0" });
+    expect(app.parsed.inventory.get("srv-1")!.containers[0].db).toEqual({ user: "shopper", database: "shop", cred: "env", version: "8.0", databases: null });
     const file = run(db({ image: "mysql:8", env: ["MYSQL_ROOT_PASSWORD_FILE=/run/secrets/pw", "MYSQL_DATABASE=shop"] }));
     expect(file.parsed.inventory.get("srv-1")!.containers[0].db).toMatchObject({ cred: "file" });
     const nodb = run(db({ image: "mysql:8", env: ["MYSQL_ROOT_PASSWORD=x"] }));
     expect(nodb.parsed.inventory.get("srv-1")!.containers[0].db).toMatchObject({ database: null, cred: "env" });
+  });
+
+  it("lists the user databases a container holds, over the container's own login, so the hub can tell a one-database server from a shared one", () => {
+    const pg = run(db({ image: "postgres:16", env: ["POSTGRES_USER=appuser", "POSTGRES_DB=appdb", "POSTGRES_PASSWORD=x"], databases: ["template0", "template1", "postgres", "appdb", "other_db"] }));
+    expect(pg.parsed.inventory.get("srv-1")!.containers[0].db!.databases).toEqual(["appdb", "other_db"]);
+    const my = run(db({ image: "mariadb:11", env: ["MARIADB_ROOT_PASSWORD=x", "MARIADB_DATABASE=shop"], databases: ["information_schema", "mysql", "performance_schema", "sys", "shop"] }));
+    expect(my.parsed.inventory.get("srv-1")!.containers[0].db!.databases).toEqual(["shop"]);
+    const none = run(db({ image: "postgres:16", env: ["POSTGRES_PASSWORD=x"], databases: ["template0", "template1", "postgres"] }));
+    expect(none.parsed.inventory.get("srv-1")!.containers[0].db!.databases).toEqual([]);
+    expect(none.parsed.inventory.get("srv-1")!.rejected).toBe(0);
+  });
+
+  it("a database that cannot be listed is `null`, never an empty list: a failing exec, a stopped container, an app-user login, a *_FILE secret", () => {
+    const failing = run(db({ image: "postgres:16", env: ["POSTGRES_PASSWORD=x"], databases: ["a"], execFails: true }));
+    expect(failing.parsed.inventory.get("srv-1")!.containers[0].db!.databases).toBeNull();
+    const stopped = run(db({ image: "postgres:16", env: ["POSTGRES_PASSWORD=x"], databases: ["a"], state: "exited" }));
+    expect(stopped.parsed.inventory.get("srv-1")!.containers[0].db!.databases).toBeNull();
+    const appUser = run(db({ image: "mysql:8", env: ["MYSQL_USER=u", "MYSQL_PASSWORD=x", "MYSQL_DATABASE=shop"], databases: ["shop"] }));
+    expect(appUser.parsed.inventory.get("srv-1")!.containers[0].db!.databases).toBeNull();
+    const file = run(db({ image: "postgres:16", env: ["POSTGRES_PASSWORD_FILE=/run/secrets/pw"], databases: ["a"] }));
+    expect(file.parsed.inventory.get("srv-1")!.containers[0].db!.databases).toBeNull();
+    expect(fake!.calls().some((c) => c[0] === "docker" && c[1] === "exec")).toBe(false);
+  });
+
+  it("a name the hub cannot address is reported as `!`, and the root password never reaches an argv or the report", () => {
+    const r = run(db({ image: "mysql:8", env: [`MYSQL_ROOT_PASSWORD=${SECRET}`, "MYSQL_DATABASE=shop"], databases: ["shop", "bad name;x"] }));
+    expect(r.parsed.inventory.get("srv-1")!.containers[0].db!.databases).toEqual(["shop", "!"]);
+    expect(r.stdout).not.toContain(SECRET);
+    for (const c of fake!.calls()) expect(c.join(" ")).not.toContain(SECRET);
   });
 
   it("Redis family: a password on the server's command line or in the environment is `env`; an ACL user is `acl`; neither is `none`", () => {
@@ -228,7 +257,7 @@ describe("database facts (R2): non-secret identity, never the password", () => {
 
   it("a value outside the identifier charset is reported as unknown, and a container that is not a database carries no facts at all", () => {
     const odd = run(db({ image: "postgres:16", env: ["POSTGRES_USER=bad user;x", "POSTGRES_DB=ok_db", "POSTGRES_PASSWORD=x", "PG_MAJOR=sixteen"] }));
-    expect(odd.parsed.inventory.get("srv-1")!.containers[0].db).toEqual({ user: null, database: "ok_db", cred: "env", version: null });
+    expect(odd.parsed.inventory.get("srv-1")!.containers[0].db).toEqual({ user: null, database: "ok_db", cred: "env", version: null, databases: null });
     expect(odd.parsed.inventory.get("srv-1")!.rejected).toBe(0);
     const web = run(db({ image: "ghcr.io/example/web:1", env: [`SECRET_KEY=${SECRET}`] }));
     expect(web.parsed.inventory.get("srv-1")!.containers[0].db).toBeUndefined();

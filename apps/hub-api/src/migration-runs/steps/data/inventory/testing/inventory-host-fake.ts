@@ -4,7 +4,8 @@
  * experienced (which docker verbs were called, what reached an argv, what was POSTed to the hub) instead of on script text.
  *
  * The fake docker understands exactly the read-only calls the inventory makes (`version`, `ps -a`, `inspect -f` of the mounts, the image
- * id, the environment or the executed command, `image inspect -f` of the RepoDigests, `volume ls -q`, `volume inspect -f`); any other verb is recorded in `calls.jsonl` and fails, so a spec can assert nothing else was called.
+ * id, the environment or the executed command, `image inspect -f` of the RepoDigests, `volume ls -q`, `volume inspect -f`, and the one
+ * read-only database listing `exec <c> psql ...` / `exec <c> sh -c '<mysql listing>'`, answered like the engine would from the container's own environment); any other verb is recorded in `calls.jsonl` and fails, so a spec can assert nothing else was called.
  * The fake curl plays the hub: `ping` answers 200 with the configured part size, `sink` accepts a body up to the configured cap
  * (anything bigger is answered 413, like a proxy with a body limit), `host-report` records the posted text.
  */
@@ -33,6 +34,10 @@ export interface FakeInvContainer {
   args?: string[];
   /** `RepoDigests` of the container's image (`repo@sha256:<hex>`); the fake answers them for `docker image inspect`. */
   repoDigests?: string[];
+  /** Every database the engine in this container lists (system ones included): what `psql` / `mysql` print when `docker exec` asks. */
+  databases?: string[];
+  /** `docker exec` into this container fails (a login the container does not give). */
+  execFails?: boolean;
 }
 export interface InventoryHostOptions {
   containers: FakeInvContainer[];
@@ -66,6 +71,20 @@ else if (cmd === "ps") {
   else if (fmt.includes(".Path")) { console.log(c.path || ""); for (const a of c.args || []) console.log(a); }
   else if (fmt.trim() === "{{.Image}}") { console.log("sha256:" + id); }
   else for (const m of c.mounts || []) console.log([m.type, m.name || "", m.source, m.dest, m.rw === false ? "false" : "true"].join("|"));
+} else if (cmd === "exec") {
+  const c = st.containers.find((x) => x.id === args[1]);
+  if (!c || c.state !== "running" || c.execFails) { console.error("Error response from daemon: cannot exec"); process.exit(1); }
+  const env = {};
+  for (const e of c.env || []) { const i = e.indexOf("="); env[e.slice(0, i)] = e.slice(i + 1); }
+  if (args[2] === "psql") {
+    const user = args[args.indexOf("-U") + 1];
+    if (user !== (env.POSTGRES_USER || "postgres") || args[args.indexOf("-d") + 1] !== "postgres") { console.error("FATAL: role does not exist"); process.exit(2); }
+    for (const d of c.databases || []) if (!["template0", "template1", "postgres"].includes(d)) console.log(d);
+  } else if (args[2] === "sh" && args[3] === "-c") {
+    const pw = env.MYSQL_ROOT_PASSWORD || env.MARIADB_ROOT_PASSWORD;
+    if (!pw || !args[4].includes("-uroot")) { console.error("ERROR 1045 (28000): Access denied"); process.exit(1); }
+    for (const d of c.databases || []) console.log(d);
+  } else { console.error("fake docker: unsupported exec"); process.exit(2); }
 } else if (cmd === "image" && args[1] === "inspect") {
   const imgId = args[args.length - 1].replace(/^sha256:/, "");
   const c = st.containers.find((x) => x.id === imgId);

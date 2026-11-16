@@ -39,6 +39,7 @@ const FREE_RE = /^[A-Za-z0-9 ._()/+-]{0,80}$/;
 const REPO_DIGEST_RE = /^[A-Za-z0-9][A-Za-z0-9._/:-]{0,200}@sha256:[a-f0-9]{64}$/;
 const DB_IDENT_RE = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,62}$/;
 const DB_VERSION_RE = /^[0-9]{1,3}(\.[0-9]{1,3}){0,2}$/;
+const DB_NAMES_RE = /^(\?|=(?:(?:[A-Za-z0-9_][A-Za-z0-9_.-]{0,62}|!)(?:,(?:[A-Za-z0-9_][A-Za-z0-9_.-]{0,62}|!)){0,31})?)$/;
 const DB_CREDS = ["env", "file", "none", "acl"] as const;
 
 // ───────────────────────────── per-host loop status ─────────────────────────────
@@ -98,6 +99,12 @@ export interface InvDbMeta {
   cred: "env" | "file" | "none" | "acl";
   /** The engine's own version variable (`PG_MAJOR`, `MYSQL_MAJOR`, `MARIADB_MAJOR`, `REDIS_VERSION`), used when the image tag names none. */
   version: string | null;
+  /**
+   * The user databases a RUNNING PostgreSQL / MySQL / MariaDB container holds, as the container itself lists them (system databases left out;
+   * `!` stands for a name the hub cannot address). `null` = could not be listed (older script, stopped container, a login the container
+   * does not give the inventory): the carry never assumes there is only one. A Redis-family container has no such list.
+   */
+  databases?: string[] | null;
 }
 export interface InvContainer {
   id: string;
@@ -275,6 +282,11 @@ export function parseReportBody(text: string): ParsedReport {
         const ok = !!c && (a[2] === "-" || DB_IDENT_RE.test(a[2])) && (a[3] === "-" || DB_IDENT_RE.test(a[3])) && (DB_CREDS as readonly string[]).includes(a[4]) && (a[5] === "-" || DB_VERSION_RE.test(a[5]));
         if (!ok) bad();
         else c!.db = { user: a[2] === "-" ? null : a[2], database: a[3] === "-" ? null : a[3], cred: a[4] as InvDbMeta["cred"], version: a[5] === "-" ? null : a[5] };
+      } else if (kind === "dbnames") {
+        // ctrId, `?` (not listable) | `=` + comma-separated user database names (`=` alone: none)
+        const c = a.length === 3 ? i.containers.find((x) => x.id === a[1]) : undefined;
+        if (!c?.db || !DB_NAMES_RE.test(a[2])) bad();
+        else c.db.databases = a[2] === "?" ? null : a[2].length === 1 ? [] : a[2].slice(1).split(",");
       } else if (kind === "mount") {
         // ctrId, type, name|-, source, dest, rw
         const ok = a.length === 7 && HEX64_RE.test(a[1]) && (a[2] === "volume" || a[2] === "bind") && (a[3] === "-" || NAME_RE.test(a[3])) && PATH_RE.test(a[4]) && /^\/[A-Za-z0-9._@+/-]{0,500}$/.test(a[5]) && (a[6] === "true" || a[6] === "false");

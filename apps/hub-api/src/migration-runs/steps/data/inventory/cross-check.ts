@@ -57,6 +57,9 @@ export const CARRY_REFUSED_CODES = {
   "acl-user-unsupported": "inventory.carry-refused-acl-user-unsupported",
   "db-not-discoverable": "inventory.carry-refused-db-not-discoverable",
   "version-unknown": "inventory.carry-refused-version-unknown",
+  "pg-layout-unsupported": "inventory.carry-refused-pg-layout-unsupported",
+  "databases-unknown": "inventory.carry-refused-databases-unknown",
+  "multiple-databases": "inventory.carry-refused-multiple-databases",
 } as const;
 const CARRY_REFUSED_SET: ReadonlySet<string> = new Set(Object.values(CARRY_REFUSED_CODES));
 
@@ -159,7 +162,7 @@ export function findingsOf(inv: HostInventory, planRefs: readonly string[]): Fin
 export type CarryEngine = "POSTGRES" | "MYSQL" | "MARIADB" | "REDIS" | "KEYDB" | "DRAGONFLY";
 
 /** Why a container cannot be carried in full. Fixed, value-free codes (they travel in gate params and the locale has a sentence each). */
-export const CARRY_REFUSALS = ["engine-unsupported", "name-unsupported", "not-running", "meta-missing", "credentials-not-discoverable", "secret-file-unsupported", "acl-user-unsupported", "db-not-discoverable", "version-unknown"] as const;
+export const CARRY_REFUSALS = ["engine-unsupported", "name-unsupported", "not-running", "meta-missing", "credentials-not-discoverable", "secret-file-unsupported", "acl-user-unsupported", "db-not-discoverable", "version-unknown", "pg-layout-unsupported", "databases-unknown", "multiple-databases"] as const;
 export type CarryRefusal = (typeof CARRY_REFUSALS)[number];
 
 /** What the DATA_SEED step needs to bind a container to a new database plan item. No secret: the password is read by the migrator on the source host. */
@@ -234,7 +237,11 @@ export function carryEngineOfImage(image: string): CarryEngine | null {
  *  - the image must be the engine's own standard one (extension and vendor builds are `engine-unsupported`: their extensions would be missing);
  *  - a MySQL / MariaDB container must name its database (the dump covers exactly one) and every engine needs a version Tugra's standard
  *    image really has (the engine's own version variable, else the image tag; KeyDB / Dragonfly only a pinned tag): a copy on another
- *    major could not open the data, and a version that names no image is `version-unknown`, never a guess.
+ *    major could not open the data, and a version that names no image is `version-unknown`, never a guess;
+ *  - PostgreSQL 18 or newer is `pg-layout-unsupported`: Tugra mounts its database volume at the pre-18 data path, so a restored 18+ cluster would
+ *    sit in an anonymous volume that the next container recreate orphans, while the run read DONE;
+ *  - a PostgreSQL / MySQL / MariaDB container must be KNOWN to hold no user database besides the one the migrator dumps (it dumps exactly one):
+ *    a list the inventory could not take is `databases-unknown`, any other database is `multiple-databases`: never a silent partial carry.
  */
 export function carryAssessment(host: string, c: InvContainer): { ok: true; spec: CarrySpec } | { ok: false; reason: CarryRefusal } {
   const engine = carryEngineOfImage(c.image);
@@ -253,6 +260,12 @@ export function carryAssessment(host: string, c: InvContainer): { ok: true; spec
   if ((engine === "MYSQL" || engine === "MARIADB") && !c.db.database) return { ok: false, reason: "db-not-discoverable" };
   const version = carryVersion(engine, img.tag, c.db.version);
   if (!version) return { ok: false, reason: "version-unknown" };
+  if (engine === "POSTGRES" && parseInt(version, 10) >= 18) return { ok: false, reason: "pg-layout-unsupported" };
+  if (engine === "POSTGRES" || engine === "MYSQL" || engine === "MARIADB") {
+    const held = c.db.databases;
+    if (!held) return { ok: false, reason: "databases-unknown" };
+    if (held.some((n) => n !== c.db!.database)) return { ok: false, reason: "multiple-databases" };
+  }
   return { ok: true, spec: { host, container: c.name, engine, version, image: c.image, user: c.db.user, database: c.db.database, name: `unlisted-${engine.toLowerCase()}-${c.name.slice(0, 8)}` } };
 }
 

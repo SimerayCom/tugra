@@ -211,7 +211,8 @@ describe("every check id fits the 80-char limit and is unique per finding", () =
 
 describe("R2: carry of an unlisted database", () => {
   const ghostOf = (image: string, over: Record<string, unknown> = {}, db: Record<string, unknown> | null = { user: "appuser", database: "appdb", cred: "env", version: null }) =>
-    inv({ containers: [{ id: id("f"), name: GHOST, image, state: "running", ...(db ? { db: db as never } : {}), ...over }] });
+    // a fixture that names a database holds exactly that one unless it says otherwise (`databases`: the inventory's own listing)
+    inv({ containers: [{ id: id("f"), name: GHOST, image, state: "running", ...(db ? { db: ("databases" in db ? db : { ...db, databases: db.database ? [db.database] : [] }) as never } : {}), ...over }] });
   const inputOf = (i: HostInventory, over: Partial<CrossCheckInput> = {}) => base({ inventories: new Map([["host-1", i]]), planRefs: [], unlistedDbPolicy: "carry", ...over });
 
   it("carryEngineOfImage: only the engines the migrator dumps; keydb / dragonfly by their image; valkey, redis-stack, mongo and clickhouse are none", () => {
@@ -279,6 +280,13 @@ describe("R2: carry of an unlisted database", () => {
     ["acl-user-unsupported", "redis:7", {}, { user: null, database: null, cred: "acl", version: null }],
     ["credentials-not-discoverable", "redis:7", {}, { user: null, database: null, cred: "none", version: null }],
     ["db-not-discoverable", "mysql:8", {}, { user: "root", database: null, cred: "env", version: null }],
+    ["pg-layout-unsupported", "postgres:18-alpine", {}, { user: "u", database: "d", cred: "env", version: null }],
+    ["pg-layout-unsupported", "postgres:latest", {}, { user: "u", database: "d", cred: "env", version: "18" }],
+    ["databases-unknown", "postgres:16", {}, { user: "u", database: "d", cred: "env", version: null, databases: null }],
+    ["databases-unknown", "mariadb:11", {}, { user: "root", database: "d", cred: "env", version: null, databases: null }],
+    ["multiple-databases", "postgres:16", {}, { user: "u", database: "d", cred: "env", version: null, databases: ["d", "other"] }],
+    ["multiple-databases", "mysql:8", {}, { user: "root", database: "d", cred: "env", version: null, databases: ["other"] }],
+    ["multiple-databases", "postgres:16", {}, { user: "u", database: "d", cred: "env", version: null, databases: ["!"] }],
   ] as const)("refuses with %s (%s)", (reason, image, over, db) => {
     const i = ghostOf(image, over as Record<string, unknown>, db as never);
     expect(carryAssessment("h", i.containers[0])).toEqual({ ok: false, reason });
@@ -287,6 +295,11 @@ describe("R2: carry of an unlisted database", () => {
     expect(CARRY_REFUSED_CODES[reason]).toBe(`inventory.carry-refused-${reason}`);
     expect(carryDecisions(inputOf(i))).toEqual([]);
     expect(CARRY_REFUSALS).toContain(reason);
+  });
+
+  it("PostgreSQL 17 and a server with no user database yet are carried; the Redis family has no database list to check", () => {
+    expect(carryAssessment("h", ghostOf("postgres:17", {}, { user: "u", database: "d", cred: "env", version: null, databases: [] }).containers[0])).toMatchObject({ ok: true, spec: { version: "17" } });
+    expect(carryAssessment("h", ghostOf("redis:7", {}, { user: null, database: null, cred: "env", version: "7.2.4", databases: null }).containers[0])).toMatchObject({ ok: true, spec: { engine: "REDIS" } });
   });
 
   it("a carry refusal parks the step and offers the attestations that settle it; excluding or mapping settles it", () => {
