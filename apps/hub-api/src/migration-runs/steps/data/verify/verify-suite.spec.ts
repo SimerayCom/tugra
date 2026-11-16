@@ -234,8 +234,8 @@ describe("service volume coverage (R53)", () => {
   });
   it("a skipped volume is listed as not migrated and held for an acknowledgement; an empty one is a visible warning only", () => {
     const [skipped, empty] = rows([sv("analytics", "skip", false), sv("cache", "empty", false)]);
-    expect(skipped).toMatchObject({ status: "fail", ackable: true, params: { outcome: "not-migrated", reason: "policy-skip" } });
-    expect(empty).toMatchObject({ status: "warn", ackable: false, params: { outcome: "starts-empty", reason: "starts-empty" } });
+    expect(skipped).toMatchObject({ code: DATA_CODES.verifyServiceVolumeSkipped, status: "fail", ackable: true, params: { outcome: "not-migrated", reason: "policy-skip" } });
+    expect(empty).toMatchObject({ code: DATA_CODES.verifyServiceVolumeEmpty, status: "warn", ackable: false, params: { outcome: "starts-empty", reason: "starts-empty" } });
   });
   it("never reads as clean: the suite is not all-pass, the row is pending until acknowledged and an ack clears it", () => {
     const s = buildVerifySuite(inputs({ snap: makeSnap({ volumes: [copied("volume:s:abc:data")], databases: [database("database:s:pg", { task: "done" })], serviceVolumes: [sv("analytics", "skip", false)] }) }));

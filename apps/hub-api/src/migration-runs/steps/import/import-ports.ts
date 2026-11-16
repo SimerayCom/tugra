@@ -89,6 +89,24 @@ export interface TargetFacts {
   zones: Array<{ host: string; zone: string | null; sslMode: string | null; lookupFailed: boolean }>;
 }
 
+/**
+ * One imported compose SERVICE of an op as DEPLOY_DARK needs it (secret-free): the Tugra app behind it, whether it is an object store,
+ * which of the op's apps depend on it and whether its data has arrived.
+ */
+export interface ServiceLink {
+  /** `service:<serverRef|_>:<uuid>`. */
+  itemRef: string;
+  /** The Tugra application id of the service's compose app. */
+  appId: string;
+  name: string | null;
+  /** The service is a MinIO object store (its buckets move through Object migration, not through the volume copy). */
+  objectStore: boolean;
+  /** Ids of the op's apps that joined the service's private network: the apps that need it. */
+  dependants: string[];
+  /** A data volume of the service has no finished copy yet (starting it would put its first deploy on an empty volume). */
+  dataPending: boolean;
+}
+
 export interface ImportStepsPort extends RunImportPort {
   sessionState(userId: string, sessionId: string | null): Promise<SessionState>;
   /** Re-discover + plan with the session. READ-ONLY (memoized for a short while): writes nothing, not even `lastUsedAt`. */
@@ -126,6 +144,12 @@ export interface ImportStepsPort extends RunImportPort {
   cancelDeployment(userId: string, appId: string, deploymentId: string): Promise<void>;
   /** Enqueue + run a deploy under the idempotency key (the finished/queued row). */
   deploy(userId: string, appId: string, key: string): Promise<DeploymentRef | null>;
+
+  /**
+   * The op's imported compose services with the apps that depend on them (DEPLOY_DARK starts those services first). OPTIONAL: a port
+   * without one reads as "the world cannot say", and the step then starts no service on its own.
+   */
+  serviceLinks?(userId: string, opId: string): Promise<ServiceLink[]>;
 
   // ── safety lane (grup-7). OPTIONAL: a port without one reads as "the world cannot do that", never as an error. ──
   /** How every source resource is doing right now (the PREFLIGHT baseline). `null` = the source has no health read. Writes nothing. */

@@ -441,7 +441,12 @@ export const DATA_CODES = {
   verifyHost: "verify.host-ready",
   verifyEnv: "verify.env-carried",
   verifyCoverage: "verify.coverage",
+  /** A copy volume of a compose service the streamed lane cannot carry. */
   verifyServiceVolume: "verify.service-volume-not-migrated",
+  /** A service volume whose policy is `skip`: its data is not carried. */
+  verifyServiceVolumeSkipped: "verify.service-volume-skipped",
+  /** A service volume that starts empty by design. */
+  verifyServiceVolumeEmpty: "verify.service-volume-starts-empty",
   verifyDrift: "verify.source-drift",
   verifyFlipPlan: "verify.flip-plan",
   verifyEvidenceMissing: "verify.evidence-missing",

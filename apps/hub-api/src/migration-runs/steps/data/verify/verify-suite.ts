@@ -179,10 +179,11 @@ export function serviceVolumeCoverage(snap: DataSnapshot): SuiteCheck[] {
   for (const v of snap.serviceVolumes ?? []) {
     if (v.streamed) continue;
     const reason = v.policy === "copy" ? "not-streamable" : v.policy === "skip" ? "policy-skip" : "starts-empty";
+    const code = v.policy === "copy" ? DATA_CODES.verifyServiceVolume : v.policy === "skip" ? DATA_CODES.verifyServiceVolumeSkipped : DATA_CODES.verifyServiceVolumeEmpty;
     out.push(
       mk("coverage-service-volume", `${v.serviceItemRef}/${v.key}`, {
         status: v.policy === "empty" ? "warn" : "fail",
-        code: DATA_CODES.verifyServiceVolume,
+        code,
         params: { service: v.serviceName ?? v.serviceItemRef, key: v.key, outcome: v.policy === "empty" ? "starts-empty" : "not-migrated", reason },
         ackable: v.policy !== "empty",
         evidence: "hub-verified",

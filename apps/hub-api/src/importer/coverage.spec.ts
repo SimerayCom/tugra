@@ -1,6 +1,6 @@
 import { buildCoverage } from "./coverage";
 import { REPLICAS_UNMAPPED_REASON } from "./apply-map";
-import type { ForeignApp, ForeignFleet } from "./foreign-fleet";
+import type { ForeignApp, ForeignFleet, ForeignService } from "./foreign-fleet";
 
 const app = (over: Partial<ForeignApp> = {}): ForeignApp => ({ sourceRef: "a1", name: "web", kind: "git", buildPack: "nixpacks", serverRef: "s1", git: { url: "https://git/x" }, ...over });
 const fleet = (apps: ForeignApp[]): ForeignFleet => ({ servers: [], apps, databases: [], services: [], volumes: [], sharedEnv: [], warnings: [] });
@@ -84,5 +84,23 @@ describe("buildCoverage", () => {
   it("carries no value material: only the marker, never label/Dockerfile text, even when the fleet app has stray text in sourceExtras-adjacent fields", () => {
     const c = buildCoverage(fleet([app({ buildPack: "dockerfile", sourceExtras: { labels: true, dockerfile: true } })]), o)!;
     expect(JSON.stringify(c)).not.toMatch(/FROM |=/);
+  });
+});
+
+describe("buildCoverage: services (R39/R53/R33)", () => {
+  const compose = (volumes: string, mounts: string, image = "example.test/search:1") =>
+    `services:\n  search:\n    image: ${image}\n    volumes:\n${mounts}\nvolumes:\n${volumes}`;
+  const svc = (composeFile: string, over: Partial<ForeignService> = {}): ForeignService => ({ sourceRef: "svc1", name: "search-a", serverRef: "s1", composeFile, memberApps: [], memberDbs: [], members: [{ name: "search", kind: "app", ref: "m1", domains: [] }], ...over });
+  const fleetOf = (services: ForeignService[]): ForeignFleet => ({ servers: [], apps: [], databases: [], services, volumes: [], sharedEnv: [], warnings: [] });
+  const entry = (c: ReturnType<typeof buildCoverage>, field: string) => c?.apps.flatMap((a) => a.notCarried).find((e) => e.field === field);
+
+  it("a copy volume the streamed lane cannot carry (a mount path with a space) is flagged as a warning at plan time; a usable one is not", () => {
+    const c = buildCoverage(fleetOf([svc(compose("  index:\n  good-data:\n", "      - \"index:/my data\"\n      - good-data:/more"))]), o);
+    expect(entry(c, "volume:index")).toMatchObject({ level: "warn", reason: expect.stringContaining("streamed volume copy") });
+    expect(entry(c, "volume:good-data")).toBeUndefined();
+  });
+  it("a MinIO service says its buckets are not copied with it", () => {
+    const c = buildCoverage(fleetOf([svc(compose("  store:\n", "      - store:/data", "minio/minio:latest"), { name: "storage-a" })]), o);
+    expect(entry(c, "objectData")).toMatchObject({ level: "warn", reason: expect.stringContaining("Object migration") });
   });
 });
